@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.5.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.6.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.5.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.6.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -609,29 +609,26 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.5.0
+### Upgrading to v1.6.0
 
-Update the App; it installs the paired service at startup. The macOS package is now signed as a
-whole (ad-hoc), so system notifications can ask for permission and AgentNave appears in the
-notification settings; macOS may ask again once for permissions granted to the previous build,
-such as the microphone.
+Update the App; it installs the paired service at startup. Reconnect or reopen host copies as the
+boss card asks.
 
-Connection receipts now name the configuration row that started them (`host_app`), and a card
-only counts receipts of its own row. When one host has several configuration rows, reconnect or
-reopen each copy once so its card shows the connection as loaded. Cards list the CLI and desktop
-readers found for each configuration file. WorkBuddy follows `WORKBUDDY_CONFIG_DIR`, and Hermes
-follows its active profile.
+On macOS and Linux, Antigravity CLI (`agy`) now runs through its interactive terminal UI instead of
+`-p` when its permissions are skipped, which both App permission tiers do. The service turns this
+on by default and reports `interactive` in `defaults_applied`; turn it off with the Antigravity
+card's interactive switch, or set `"antigravity_interactive": false` in `settings.json` on headless
+Linux. The first interactive run adds an `agentnave-interactive` entry to
+`~/.gemini/config/hooks.json`. It acts only in `agy` processes AgentNave starts and keeps every
+other entry; a disabled entry blocks the run instead of being re-enabled. Explicit
+`interactive=true` requires `dangerously_skip_permissions=true` and rejects `print_timeout` and
+`disable_slash_commands`.
 
-Devin now runs over `devin acp`. Its `permission_mode` accepts `accept-edits`, `smart`, `ask`,
-`plan` and `bypass` (`dangerous` is an alias of `bypass`); the `-p` values `normal`, `auto`,
-`yolo` and `autonomous`, and `respect_workspace_trust`, are no longer accepted, so update any
-hand-written Devin options. The App's two permission tiers are unchanged. Codex members can pin a
-runtime source with `clis.codex.executable_source` (`desktop` or `standalone`); a pinned source
-that is missing fails the task instead of falling back. New edits to a CLI's available-model list
-keep at most 20 models.
+The App downloads the video pack from the v1.4.0 release again, so one-click video pack downloads
+work without importing from a folder.
 
-See [v1.5.0 release notes](releases/v1.5.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.4.0.md).
+See [v1.6.0 release notes](releases/v1.6.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.5.0.md).
 
 ## Uninstall
 
