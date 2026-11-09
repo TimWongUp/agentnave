@@ -12,6 +12,8 @@
 
 服务默认给 Antigravity 派发带上 `"dangerously_skip_permissions": true`（`--dangerously-skip-permissions`），自动批准全部原生工具权限请求，CLI 已存配置不变，回执 `defaults_applied` 会注明；App 不提供其他档位。要某次调用守原生权限，只能由用户本轮明确要求，boss 显式传任一权限键（`mode`、`sandbox` 或 `dangerously_skip_permissions: false`）时整档不套用。`mode` 与 `sandbox` 是独立选项，不代表 YOLO。
 
+macOS／Linux 上权限放开时默认以交互模式运行（App 关掉「交互模式运行」或显式 `interactive=false` 时改用 `-p`），回执 `defaults_applied` 注明 `interactive`；不放开权限、Windows、受限工具路径，或传了 `print_timeout`、`disable_slash_commands` 时用 `-p`。交互模式不会出现 `prompt_pending`：提问工具被自动拒绝，问题应写进最终回答；任务受阻时按回执里的画面摘录判断，不向 TUI 发按键。
+
 ## 显式受限工具
 
 `restricted_tools=true` 要求专用 `cwd` 事先含 `.agents/agents/agentnave-discussion.md`，内容须与下列定义一致；缺失或不符时 Adapter 返回错误，不代写角色文件。Studio 的隔离席位会自动准备；单任务由调用方在专用目录中准备，保持现有项目目录不变。
