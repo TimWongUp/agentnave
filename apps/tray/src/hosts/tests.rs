@@ -620,6 +620,15 @@ fn desktop_roots_follow_their_own_environment_and_active_profile() {
         workbuddy.display().to_string(),
     );
     assert_eq!(host(&hosts, "workbuddy").root.path, workbuddy);
+    // An empty variable sets nothing.
+    hosts
+        .context
+        .env
+        .insert("WORKBUDDY_CONFIG_DIR".into(), String::new());
+    assert_eq!(
+        host(&hosts, "workbuddy").root.path,
+        hosts.context.home.join(".workbuddy")
+    );
 
     let root = hosts.context.home.join(".hermes");
     save(&root.join("active_profile"), "work\n");
@@ -627,6 +636,12 @@ fn desktop_roots_follow_their_own_environment_and_active_profile() {
     assert_eq!(
         host(&hosts, "hermes").config,
         root.join("profiles/work/config.yaml")
+    );
+    save(&root.join("active_profile"), "2026\n");
+    fs::create_dir_all(root.join("profiles/2026")).unwrap();
+    assert_eq!(
+        host(&hosts, "hermes").config,
+        root.join("profiles/2026/config.yaml")
     );
     save(&root.join("active_profile"), "../elsewhere");
     assert_eq!(host(&hosts, "hermes").config, root.join("config.yaml"));
@@ -2398,6 +2413,19 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
         read["document"]["effective_apps"],
         json!({"claude": "split", "grok": "split"})
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_cli_inside_the_desktop_app_is_not_a_reader_of_its_own() {
+    let (_temp, hosts) = fixture();
+    let app = hosts.context.applications[0].join("DeepSeek Harness.app");
+    let bundled = app.join("Contents/Resources/dsh");
+    executable_file(&bundled, "fake");
+    std::os::unix::fs::symlink(&bundled, hosts.context.search[0].join("dsh")).unwrap();
+    let clients = hosts.state(&host(&hosts, "deepseek"))["clients"].clone();
+    assert_eq!(clients.as_array().unwrap().len(), 1);
+    assert_eq!(clients[0]["kind"], "desktop");
 }
 
 #[cfg(target_os = "macos")]

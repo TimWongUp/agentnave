@@ -15,7 +15,7 @@ fn active_hermes_profile(root: &Root) -> Option<PathBuf> {
     if name == "default"
         || name.is_empty()
         || name.len() > 64
-        || !name.bytes().next()?.is_ascii_lowercase()
+        || !name.bytes().next()?.is_ascii_alphanumeric()
         || !name.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
         })

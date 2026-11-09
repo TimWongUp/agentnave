@@ -181,15 +181,14 @@ pub(super) fn install_dir(display_name: &str) -> Option<PathBuf> {
             continue;
         };
         if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
-            let dir = PathBuf::from(dir);
+            let dir = registry_path(&dir);
             if dir.is_dir() {
                 return Some(dir);
             }
         }
         // Electron apps often leave `InstallLocation` out but point `DisplayIcon` at their exe.
         if let Some(icon) = registry_value(&key, "DisplayIcon") {
-            let exe = icon.split(',').next().unwrap_or(&icon).trim();
-            if let Some(parent) = Path::new(exe).parent() {
+            if let Some(parent) = registry_path(&icon).parent() {
                 return Some(parent.to_path_buf());
             }
         }
@@ -257,6 +256,17 @@ pub(crate) fn locate(name: &str) -> Option<PathBuf> {
     find(name)
 }
 
+/// The path an uninstall entry names, without the quotes and icon index Windows allows around it.
+#[cfg(any(test, windows))]
+pub(super) fn registry_path(value: &str) -> PathBuf {
+    let value = value.trim();
+    let path = match value.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(rest),
+        None => value.split(',').next().unwrap_or(value),
+    };
+    PathBuf::from(path.trim())
+}
+
 /// The executable an installed app's uninstall entry points at, for apps that install wherever
 /// the user chose and keep no other record (WorkBuddy points `DisplayIcon` at its exe).
 #[cfg(windows)]
@@ -266,16 +276,16 @@ pub(crate) fn uninstall_icon(display_name: &str) -> Option<PathBuf> {
             continue;
         };
         if let Some(icon) = registry_value(&key, "DisplayIcon") {
-            let exe = icon.split(',').next().unwrap_or(&icon).trim();
-            let path = PathBuf::from(exe);
+            let path = registry_path(&icon);
             if path.is_file() {
                 return Some(path);
             }
         }
+        // A folder left behind after uninstalling is no app; its executable must still be there.
         if let Some(dir) = registry_value(&key, "InstallLocation").filter(|dir| !dir.is_empty()) {
-            let dir = PathBuf::from(dir);
-            if dir.is_dir() {
-                return Some(dir);
+            let exe = registry_path(&dir).join(format!("{display_name}.exe"));
+            if exe.is_file() {
+                return Some(exe);
             }
         }
     }

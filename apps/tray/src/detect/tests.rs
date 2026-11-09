@@ -405,3 +405,20 @@ fn the_codex_desktop_apps_cli_is_found() {
     assert!(path.is_file(), "{}", path.display());
     assert!(path.to_string_lossy().ends_with("codex.exe"));
 }
+
+#[test]
+fn uninstall_entries_name_paths_through_quotes_and_icon_indexes() {
+    use super::locate::registry_path;
+    assert_eq!(
+        registry_path(r#""C:\Program Files\WorkBuddy\WorkBuddy.exe",0"#),
+        PathBuf::from(r"C:\Program Files\WorkBuddy\WorkBuddy.exe")
+    );
+    assert_eq!(
+        registry_path(r"C:\Apps\Dsh\dsh.exe,1"),
+        PathBuf::from(r"C:\Apps\Dsh\dsh.exe")
+    );
+    assert_eq!(
+        registry_path(r#" "C:\A, B\x.exe" "#),
+        PathBuf::from(r"C:\A, B\x.exe")
+    );
+}

@@ -7,6 +7,13 @@ impl Hosts {
         if host.id.starts_with("codex@") {
             return clients;
         }
+        let separate_desktop =
+            host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
+        let desktop = if separate_desktop {
+            None
+        } else {
+            installed::desktop(&self.context, host.boss)
+        };
         if host.id != "claude-desktop" {
             let cli = if host.boss == "codex" {
                 let names: &[&str] = if cfg!(windows) {
@@ -27,15 +34,15 @@ impl Hosts {
                     .find(host.binary)
                     .or_else(|| crate::detect::locate(host.binary))
             };
-            if let Some(path) = cli {
+            // A CLI shipped inside the desktop app (DeepSeek Harness's dsh) is that app.
+            let app = desktop.as_ref().and_then(|(_, path)| path.as_deref());
+            if let Some(path) = cli
+                && !app.is_some_and(|app| inside(&path, app))
+            {
                 clients.push(json!({"kind":"cli","source":"path","path":path}));
             }
         }
-        let separate_desktop =
-            host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
-        if !separate_desktop
-            && let Some((source, path)) = installed::desktop(&self.context, host.boss)
-        {
+        if let Some((source, path)) = desktop {
             clients.push(json!({"kind":"desktop","source":source,"path":path}));
         }
         clients
@@ -49,7 +56,9 @@ impl Hosts {
         }
         let separate_desktop =
             host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
+        // An extra Codex home is read by the CLI alone; desktop apps keep the default one.
         if !separate_desktop
+            && !host.id.starts_with("codex@")
             && let Some((source, path)) = installed::desktop(&self.context, host.boss)
         {
             return (true, source, path);
@@ -272,4 +281,15 @@ impl Hosts {
             .and_then(crate::update::installed_version);
         json!({"installed":self.launcher().is_some(),"version":version,"command":crate::update::service_command()})
     }
+}
+
+/// Whether `path` lies within an app folder, or the folder of an app's executable.
+fn inside(path: &Path, app: &Path) -> bool {
+    let dir = if app.is_file() {
+        app.parent().unwrap_or(app)
+    } else {
+        app
+    };
+    let real = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
+    real(path).starts_with(real(dir))
 }
