@@ -216,6 +216,7 @@ function renderCards() {
           el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove")))));
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
+    if (provider === "codex") card.appendChild(renderCodexSource());
     for (const row of [...poolRows(provider), ...rows, ...poolConflicts(provider)]) card.appendChild(row);
     const runtime = renderClaudeInteractive(provider);
     if (runtime) card.appendChild(runtime);
@@ -260,6 +261,8 @@ async function saveMembers() {
   feedback.className = "save-feedback";
 
   const saving = JSON.stringify(confirmScenes());
+  const sourceChanged = currentDoc.clis?.codex?.executable_source !== JSON.parse(savedSnapshot || "{}").clis?.codex?.executable_source;
+  let saved = false;
 
   try {
     if (saving !== savedSnapshot) {
@@ -273,6 +276,7 @@ async function saveMembers() {
     feedback.textContent = L("设置已保存 · 参数是否有效以 boss 读取时的校验为准", "Settings saved · Option validity is verified when read by the boss");
     feedback.className = "save-feedback success";
     showNotice(L("设置已保存", "Settings saved"));
+    saved = true;
   } catch (err) {
     feedback.textContent = L(`保存失败: ${err.message}`, `Save failed: ${err.message}`);
     feedback.className = "save-feedback error";
@@ -281,6 +285,7 @@ async function saveMembers() {
   } finally {
     busy = false;
     updateControls();
+    if (saved && sourceChanged) void refreshDetection(true);
   }
 }
 

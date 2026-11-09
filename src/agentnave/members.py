@@ -199,6 +199,7 @@ class MemberConfig(StrictModel):
 class CLIConfig(StrictModel):
     models: dict[str, MemberConfig]
     allowed_models: list[str] | None = None
+    executable_source: Literal["desktop", "standalone"] | None = None
 
     @model_validator(mode="after")
     def model_pool(self) -> CLIConfig:
@@ -244,6 +245,11 @@ class MemberFile(StrictModel):
 
     @model_validator(mode="after")
     def references(self) -> MemberFile:
+        if any(
+            provider != "codex" and cli.executable_source is not None
+            for provider, cli in self.clis.items()
+        ):
+            raise ValueError("executable_source is only supported for Codex")
         for cli in self.clis.values():
             for config in cli.models.values():
                 config.validate_effort()

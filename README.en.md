@@ -63,6 +63,8 @@ Connecting a host installs the Skills, and an employee has to be confirmed befor
 
 A host never sends a single task to its own CLI, though its CLI can take a seat in a meeting.
 
+When both a desktop bundled and a standalone Codex CLI are detected, select the employee's CLI source on the Employees page. Automatic uses the bundled CLI first. If a selected installation is unavailable, dispatch fails instead of switching to the other one.
+
 Grok Bot connects only on Linux, not through the macOS or Windows App, and its model and sessions can't be read back. See the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
 
 ## 🎀 Meet the team

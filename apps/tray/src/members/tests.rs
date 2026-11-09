@@ -127,6 +127,23 @@ fn document() -> Value {
 }
 
 #[test]
+fn codex_source_accepts_only_known_installations() {
+    for source in ["desktop", "standalone"] {
+        let mut doc = document();
+        doc["clis"]["codex"]["executable_source"] = json!(source);
+        assert!(validate(&doc).is_ok());
+    }
+    for source in [json!("auto"), json!("unknown"), json!(null), json!(1)] {
+        let mut doc = document();
+        doc["clis"]["codex"]["executable_source"] = source;
+        assert!(validate(&doc).is_err());
+    }
+    let mut doc = document();
+    doc["clis"]["claude"] = json!({"models": {}, "executable_source": "desktop"});
+    assert!(validate(&doc).is_err());
+}
+
+#[test]
 fn accepts_the_contract_example_and_rejects_structural_or_reference_errors() {
     validate(&document()).unwrap();
     validate(&empty()).unwrap();

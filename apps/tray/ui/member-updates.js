@@ -82,12 +82,33 @@ function renderCliVersion(provider, info) {
 function renderCliInstallation(provider, install) {
   const standalone = install.id === "standalone";
   const note = standalone ? "" : L("随桌面应用更新", "Updates with the desktop app");
+  const source = provider === "codex" ? currentDoc.clis?.codex?.executable_source : null;
   return el("div", { className: "cli-installation", title: [note, install.path].filter(Boolean).join("\n") },
     el("span", { className: "cli-installation-name" }, cliInstallationName(install)),
     el("span", { className: "cli-version" }, install.version || ""),
     el("span", { className: "cli-installation-active" },
-      install.active ? el("span", { className: "badge badge-accent" }, L("当前使用", "In use")) : null),
+      (source ? install.id === source : install.active) ? el("span", { className: "badge badge-accent" }, L("当前使用", "In use")) : null),
     el("span", { className: "cli-update-slot" }, standalone ? renderCliUpdateButton(provider, install.id, install) : null));
+}
+
+function renderCodexSource() {
+  const selected = currentDoc.clis?.codex?.executable_source || "auto";
+  const installs = cliUpdates.clis?.codex?.installations || [];
+  const available = selected === "auto" || installs.some((install) => install.id === selected);
+  return el("div", { className: "member-row" },
+    el("label", { className: "member-scene", htmlFor: "codex-executable-source" }, L("运行来源", "CLI source")),
+    el("div", { className: "member-line" },
+      el("select", { id: "codex-executable-source", className: "member-model", dataset: { focusKey: "codex/source" },
+        onChange: (event) => {
+          currentDoc.clis ||= {};
+          currentDoc.clis.codex ||= { models: {} };
+          if (event.target.value === "auto") delete currentDoc.clis.codex.executable_source;
+          else currentDoc.clis.codex.executable_source = event.target.value;
+          edited();
+        },
+      }, ...[["auto", L("自动", "Automatic")], ["desktop", L("桌面端内置", "Desktop built-in")], ["standalone", L("独立 CLI", "Standalone CLI")]]
+        .map(([value, label]) => el("option", { value, selected: value === selected }, label))),
+      available ? null : el("span", { className: "member-error", role: "status" }, L("所选安装不可用", "Selected installation unavailable"))));
 }
 
 function renderCliInstallations(provider) {

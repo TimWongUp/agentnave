@@ -687,7 +687,24 @@ fn probe(provider: &str) -> Value {
         "deepseek" => "dsh",
         other => other,
     };
-    let Some(path) = find(binary) else {
+    let selected = if provider == "codex" {
+        crate::members::read(&crate::data::data_root())
+            .ok()
+            .flatten()
+            .and_then(|doc| {
+                doc["clis"]["codex"]["executable_source"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+    } else {
+        None
+    };
+    let path = match selected.as_deref() {
+        Some("desktop") => codex_desktop(),
+        Some("standalone") => standalone_codex(),
+        _ => find(binary),
+    };
+    let Some(path) = path else {
         return failure(provider, None, "");
     };
     let mut result = probe_path(provider, &path);
