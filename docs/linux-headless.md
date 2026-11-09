@@ -110,7 +110,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 
 校验规则（`MemberFile.references`）：`models`、`overrides` 和 `default` 里的模型必须先在 `clis.<cli>.models` 里声明。ProviderName 只能取 `antigravity|claude|codebuddy|codex|deepseek|devin|grok|pi|zcode`。
 
-### 3.2 orchestration.json：通用与专项工位（`members.py` `OrchestrationFile`；App 端 `apps/tray/src/members.rs` `validate_orchestration`；ADR-0037/0041/0065/0068/0069）
+### 3.2 orchestration.json：通用与专项工位（`members.py` `OrchestrationFile`；App 端 `apps/tray/src/members.rs` `validate_orchestration`；ADR-0037/0041/0065/0068/0069/0073）
 
 ```jsonc
 {
@@ -139,7 +139,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 - **无头宿主不要写 `apps` 和 `effective_apps`**：`enabled()` 用 `host.app_id or host.name` 作 key。bot 两者都为空，`apps` 里找不到就回落到 `preset`；但只要文件里有 `effective_apps`，没有 `app_id` 的连接就一律视为关闭（ADR-0041）。
 - 角色键：通用组 `explorer`、`worker`；专项组 `worker_frontend`（界面制作）、`worker_writing`（写作）、`explorer_web`（网页调研）、`explorer_social`（社交平台调研）、`worker_documents`（办公文件制作）。每个角色管什么写在 `src/agentnave/orchestration_roles.json` 的 `scope_zh`，`list_members.orchestration.scopes` 会列出开启角色的范围。`worker_code`、`worker_data` 已删除，写了会被 App 拒绝。
 - 专项只提供自己绑定的档，不沿用通用工位；App 里「区分难度」关闭时，两档存的是同一个模型。
-- `preset` 的规则正文（`apps/tray/src/rules.rs` 的 `SHARED` 加 `SPLIT` 或 `PARALLEL`，再加开启角色的目录行）由 App 写进 CLI 宿主的全局规则文件。bot 宿主没有这一步：装好 skill（§4）后，`agentnave-manager` 会在 `orchestration.enabled` 为真且看不到规则块时按分工协作执行，即已确认的任务内可以主动派发，并行写入和开会须用户本人指明，工位范围从 `orchestration.scopes` 读。想让 bot 按并行分工由自己判断并行写入和开会，把 `SHARED` 与 `PARALLEL` 的正文贴进 bot 的指令入口。`split_options`（分工协作下 boss 能否主动开会）只改变 App 写入的规则正文，bot 不读。
+- `preset` 的规则正文（`apps/tray/src/rules.rs`）由 App 写进 CLI 宿主的全局规则文件：基础段 `SHARED`，加 `SPLIT` 或 `PARALLEL`，再加一行开会规则——分工协作默认 `SPLIT_MEETINGS_ASKED`（只在用户要求时开会），并行分工默认 `SPLIT_MEETINGS_OWN`（有实质取舍或分歧时 boss 自己开会），`split_options.meetings`、`parallel_options.meetings` 分别改这两处默认；`lead_only` 打开时把 `LEAD_ASKED` 换成 `LEAD_ALWAYS`；最后按开启的角色补 `apps/tray/src/rules/roles.rs` `sections()` 生成的目录行。bot 宿主没有这一步：装好 skill（§4）后，`agentnave-manager` 会在 `orchestration.enabled` 为真且看不到规则块时按分工协作执行，即已确认的任务内可以主动派发，并行写入和开会须用户本人指明，工位范围从 `orchestration.scopes` 读。想让 bot 按并行分工由自己判断并行写入和开会，把 `SHARED`、`PARALLEL`、`SPLIT_MEETINGS_OWN` 三段正文和开启角色的目录行贴进 bot 的指令入口；只在你要求时开会就换成 `SPLIT_MEETINGS_ASKED`。这些开关只改变 App 写出的规则正文，bot 不读字段，按贴进去的正文执行。
 - 派发：`start_agent(seat="explorer-easy", role="具体职责", cwd=..., prompt=...)`，不传 `provider`、`access` 和模型，由服务补齐（Explorer 自动 `access=read`）。
 
 ### 3.3 review.json：agentnave-review 评审工位（`members.py` `ReviewFile`/`ReviewRole`）
@@ -354,7 +354,7 @@ mv members.json.tmp members.json                             # 3) 原子替换
 | 员工、各模式白名单、默认模型 | `members.json`：`clis.<cli>.models`、`modes.{task,discussion}.<cli>.{models,default,overrides}`、`defaults` | `members.py` 的 `MemberFile`；`apps/tray/src/members.rs` | `list_members.members`/`restricted` | 不需要 |
 | 某个模型的默认档位和参数 | `members.json`：`clis.<cli>.models.<m>.{efforts,effort,options,notes}` | `MemberConfig`（`options` 里不能放 model/effort） | `list_members` 的组员 `options`/`effort` | 不需要 |
 | 每个 CLI 的权限档位 | `permissions.json`：`clis.<cli>` = `auto`/`full` | `PermissionFile`、`PERMISSION_TIERS` | `list_members.permissions`（auto 本身就是全权限的 CLI 会显示为 full） | 不需要 |
-| 编排档位（关闭/分工协作/并行分工/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`split_options`（分工协作下 boss 可主动开会）、`apps`/`effective_apps` | `OrchestrationFile`；`members.rs` 的 `validate_orchestration`；ADR-0041 | `list_members.orchestration.enabled` | 不需要；**不要写 `effective_apps`**（§3.2） |
+| 编排档位（关闭/分工协作/并行分工/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`split_options.meetings`（分工协作下 boss 可主动开会，默认关）、`parallel_options.meetings`（并行分工下 boss 可主动开会，默认开）、`lead_only`（两档共用，默认关；打开后小事也派出）、`apps`/`effective_apps` | `OrchestrationFile`；`members.rs` 的 `validate_orchestration`；ADR-0041/0073 | `list_members.orchestration.enabled` | 不需要；**不要写 `effective_apps`**（§3.2）；三个开关只影响 App 写出的规则正文，服务不读，无头宿主按 §3.2 自己写指令 |
 | 通用与专项工位、角色开关 | `orchestration.json`：`explorer`、`worker` 与五个专项键的 `.{easy,hard}` → `{provider,model,effort?}`；`enabled_roles` | `ReviewSeat`；`orchestration_roles.json` | `list_members.orchestration`（含 `scopes`） | 不需要 |
 | 评审工位（技能 → agentnave-review） | `review.json`：`seats.<role>` | `ReviewFile`；`ui/skills.js`、`ui/advanced.js` | `list_members.review`/`review_error` | 不需要 |
 | 评审门（是否启用 agentnave-review） | **没有对应的服务配置文件**。App 会把这个 skill 按宿主开关（`ui/skills.js`，`/app/hosts/skill`），bot 这边就是装或卸 skill 目录（§6.5） | `apps/tray/src/hosts.rs` | 看 bot 的 skill 列表 | bot 下次读 skill 时生效 |
