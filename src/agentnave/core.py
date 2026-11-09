@@ -610,7 +610,8 @@ class InvocationManager:
         record = self._record(invocation_id)
         activity = record.last_activity
         doing: str | None = None
-        if activity is not None:
+        # A CLI held by a native prompt waits for the boss; it is neither thinking nor working.
+        if activity is not None and not record.prompts.pending():
             if activity.kind == "tool":
                 # An ended call hands its result back to the model; CLIs report nothing more
                 # until the model answers, often for seconds.
