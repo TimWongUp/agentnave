@@ -54,16 +54,19 @@ for state in STATES_10:
         im.crop(box).resize((96, 96), Image.Resampling.LANCZOS).save(out_dir / "h" / f"{state}.webp", "WEBP", quality=92, method=6)
 print("Done ->", out_dir)`;
 
-  function packStatusText(pack) {
-    const dl = pack?.download;
+  const PACK_BYTES = { "272": 189160043, "544": 551420875 };
+
+  function packStatusText(pack, tier) {
+    const dl = pack?.download, size = megabytes(pack?.bytes || PACK_BYTES[tier]);
     if (dl?.state === "downloading") {
       const done = megabytes(dl.downloaded);
-      return dl.total ? L(`下载中 ${done} / ${megabytes(dl.total)}`, `Downloading ${done} / ${megabytes(dl.total)}`) : L(`下载中 ${done}`, `Downloading ${done}`);
+      const total = dl.total ? megabytes(dl.total) : size;
+      return L(`下载中 ${done} / ${total}`, `Downloading ${done} / ${total}`);
     }
-    if (dl?.state === "extracting") return L("解压校验中…", "Extracting…");
-    if (dl?.state === "failed") return dl.error || L("下载失败", "Download failed");
-    if (pack?.installed) return L(`已安装 · ${megabytes(pack.bytes)}`, `Installed · ${megabytes(pack.bytes)}`);
-    return L("未安装", "Not installed");
+    if (dl?.state === "extracting") return L(`解压校验中… · ${size}`, `Extracting… · ${size}`);
+    if (dl?.state === "failed") return `${size} · ${dl.error || L("下载失败", "Download failed")}`;
+    if (pack?.installed) return L(`已安装 · ${size}`, `Installed · ${size}`);
+    return L(`未安装 · ${size}`, `Not installed · ${size}`);
   }
 
   function ensureInstalledStyle(persist) {
@@ -183,7 +186,7 @@ print("Done ->", out_dir)`;
           actions.append(del);
         }
       }
-      const badge = h(`span.video-pack-status${pack.download?.state === "failed" ? ".bad" : ""}`, {}, packStatusText(pack));
+      const badge = h(`span.video-pack-status${pack.download?.state === "failed" ? ".bad" : ""}`, {}, packStatusText(pack, tier));
       rows.push(h("div.setting-row.video-pack-row", {}, h("div.video-pack-info", {}, h("h2", {}, title), badge), actions));
     }
     videoBox.replaceChildren(...rows);
