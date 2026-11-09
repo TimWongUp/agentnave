@@ -33,7 +33,7 @@ STOP_GRACE = 15.0
 STALL_LIMIT = 60.0
 # A call agy moves to the background names its task here, and ends with that task's message.
 BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
-FINISHED = re.compile(r'Task id "([^"]+)" finished')
+TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
 
 
 def emit(event: dict[str, object]) -> None:
@@ -119,6 +119,7 @@ class Turn:
             if isinstance(content, str) and content:
                 self.response = content
                 self.step(index, "agent_response", "DONE", text_delta=content)
+                self.shown = ""
             calls = row.get("tool_calls")
             for number, raw in enumerate(
                 cast(list[object], calls) if isinstance(calls, list) else []
@@ -146,14 +147,22 @@ class Turn:
         elif (
             kind == "SYSTEM_MESSAGE"
             and isinstance(content, str)
-            and (finished := FINISHED.search(content))
-            and finished.group(1) in self.background
+            and (ended := TASK_ENDED.search(content))
+            and ended.group(1) in self.background
         ):
-            self.step(self.background.pop(finished.group(1)), "tool", "DONE")
+            self.step(self.background.pop(ended.group(1)), "tool", "DONE")
+            self.shown = ""
 
     def watch(self, shown: str) -> None:
         """While a background call runs, the footer tells who works: idle is agy waiting on
         the call, busy is the model."""
+        if self.stopped:
+            return  # fullyIdle can leave daemon tasks running; the hook owns turn completion.
+        if self.open_tools:
+            # Transcript calls take precedence; reconsider even an unchanged footer after
+            # their output arrives and hands control back to the model/background calls.
+            self.shown = ""
+            return
         if shown == self.shown:
             return
         self.shown = shown
