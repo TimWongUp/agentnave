@@ -48,6 +48,12 @@ function textNode(content) {
   return document.createTextNode(String(content == null ? "" : content));
 }
 
+// A circled question mark that shows its hint on hover or focus; `end` opens the hint leftwards near
+// the right edge. Clicking it inside a label leaves that label's control alone.
+function settingTip(text, end = false) {
+  return el("span", { className: `setting-tip${end ? " end" : ""}`, tabindex: "0", role: "note", "aria-label": text, onClick: (e) => e.preventDefault() }, "?");
+}
+
 // Supported CLI providers
 const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "devin", "zcode"];
 const PROVIDER_NAMES = {
@@ -200,11 +206,13 @@ async function setPermissionTier(provider, tier) {
 function renderPermission(provider) {
   if (provider === "pi") return null;
   if (FULL_ONLY[provider]) {
-    return el("span", { className: "member-tier", title: FULL_ONLY[provider] }, textNode(L("权限", "Permissions")), el("span", {}, L("完全放开", "Full access")));
+    return el("span", { className: "member-tier" }, textNode(L("权限", "Permissions")), settingTip(FULL_ONLY[provider], true), el("span", {}, L("完全放开", "Full access")));
   }
   const tier = permissionTier(provider);
-  return el("label", { className: "member-tier", title: permissionsError || L(`${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} 选完立即保存。`, `${TIER_TEXT[tier][provider] || TIER_TEXT[tier].any} Saved immediately when selected.`) },
+  const tierText = (key) => TIER_TEXT[key][provider] || TIER_TEXT[key].any;
+  return el("label", { className: "member-tier", title: permissionsError },
     textNode(L("权限", "Permissions")),
+    settingTip(L(`自动：${tierText("auto")} 完全放开：${tierText("full")} 选完立即保存。`, `Auto: ${tierText("auto")} Full access: ${tierText("full")} Saved immediately when selected.`), true),
     el("select", {
       dataset: { focusKey: `${provider}/tier` },
       disabled: Boolean(permissionsError),
