@@ -92,10 +92,10 @@ Grok Bot 只能在 Linux 上接入，不支持 macOS 和 Windows App，也看不
 
 ### 方式二：手动安装（Linux，或不装 App）
 
-当前配套版本是 **`v1.4.0`**，运行时和 Skill 都要从这个 tag 安装：
+当前配套版本是 **`v1.5.0`**，运行时和 Skill 都要从这个 tag 安装：
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.4.0"
+uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.5.0"
 ```
 
 然后按[安装指南](docs/installation.md)注册 MCP、安装 [agentnave-manager](skills/agentnave-manager/SKILL.md) 和 [agentnave-handover](skills/agentnave-handover/SKILL.md) Skill，再做验证。
