@@ -1625,8 +1625,12 @@ for line in sys.stdin:
                              '_meta': {'cognition.ai/inferenceToolName': 'exec'}})
             update(session, {'sessionUpdate': 'tool_call_update', 'toolCallId': 'c1',
                              'rawInput': {'command': 'echo hi'}})
+            # A null field means unchanged.
+            update(session, {'sessionUpdate': 'tool_call_update', 'toolCallId': 'c1',
+                             'rawInput': None})
             send({'jsonrpc': '2.0', 'id': 'perm-1', 'method': 'session/request_permission',
-                  'params': {'sessionId': session, 'toolCall': {'toolCallId': 'c1'},
+                  'params': {'sessionId': session,
+                             'toolCall': {'toolCallId': 'c1', 'rawInput': None},
                              'options': [{'optionId': 'once', 'kind': 'allow_once'},
                                          {'optionId': 'always', 'kind': 'allow_always'},
                                          {'optionId': 'no', 'kind': 'reject_once'}]}})
