@@ -18,13 +18,13 @@
 
 ## 🎬 Live demo
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss brings six CLI employees into a meeting for two parallel rounds, then the boss sums up" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave live demo: the boss brings seven CLI employees into a meeting, with video characters, for two parallel rounds, then the boss sums up" width="100%"></p>
 
 ## ✨ Highlights
 
 ### 🧑‍💼 One boss, a whole office of CLIs
 
-12 hosts can be the boss and 8 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login and configuration, and you can pick up any past conversation later.
+13 hosts can be the boss and 9 CLIs can be employees, all driven through the same tools. Each CLI keeps its own login and configuration, and you can pick up any past conversation later.
 
 ### 👯 Private tasks and meetings
 

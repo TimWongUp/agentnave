@@ -18,13 +18,13 @@
 
 ## 🎬 实机演示
 
-<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 请 6 个 CLI 员工开会，在会议室里开两轮并联，最后由 boss 总结" width="100%"></p>
+<p align="center"><img src="docs/assets/readme-demo.gif" alt="AgentNave 实机演示：boss 请 7 位 CLI 员工开会，视频小人在会议室里开两轮并联，最后由 boss 总结" width="100%"></p>
 
 ## ✨ 几大特点
 
 ### 🧑‍💼 一个 boss，一屋子 CLI
 
-12 种宿主能当 boss，8 种 CLI 能当员工，派活用的是同一套工具。每个 CLI 继续用自己的登录和配置，聊过的会话之后还能接着聊。
+13 种宿主能当 boss，9 种 CLI 能当员工，派活用的是同一套工具。每个 CLI 继续用自己的登录和配置，聊过的会话之后还能接着聊。
 
 ### 👯 私聊和会议
 
