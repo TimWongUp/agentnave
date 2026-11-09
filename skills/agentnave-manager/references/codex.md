@@ -8,7 +8,7 @@
 {"model": "gpt-6.1-sol", "effort": "high"}
 ```
 
-Codex 作宿主时，`native=true` 的 Codex 工位交给自带子代理：`spawn_agent` 传 `model` 和 `reasoning_effort`，取工位的模型和档位；不传会沿用 config 里 `[agents]` 的默认子代理模型。模型须在 Codex 的模型列表里，否则报 `Unknown model`。
+Codex 作宿主时，`native=true` 的 Codex 工位交给自带子代理：按 `spawn_agent` 的实时 schema 显式传工位的 `model`；工位 `effort` 有值且工具支持 `reasoning_effort` 时才传该值，空值省略，不自行补档位。模型或已设档位不能选择时，按主 Skill 的工位不可用与同难度兜底规则处理，不用宿主默认模型顶替；用户明确授权特定替代后才采用该替代。
 
 服务总是为 Codex 带上 `--skip-git-repo-check`，非 Git 目录也能直接运行，无需传参；它只跳过仓库检查，不扩大命令权限。
 
