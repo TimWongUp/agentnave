@@ -1,61 +1,64 @@
 use super::*;
 
 impl Hosts {
+    fn clients(&self, host: &Host) -> Vec<Value> {
+        let mut clients = Vec::new();
+        // An extra Codex home proves a configuration exists, not which installed reader uses it.
+        if host.id.starts_with("codex@") {
+            return clients;
+        }
+        if host.id != "claude-desktop" {
+            let cli = if host.boss == "codex" {
+                let names: &[&str] = if cfg!(windows) {
+                    &["codex.exe", "codex.cmd", "codex.bat"]
+                } else {
+                    &["codex"]
+                };
+                self.context
+                    .search
+                    .iter()
+                    .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+                    .find(|path| {
+                        executable(path) && crate::detect::codex_desktop_app(path).is_none()
+                    })
+                    .or_else(crate::detect::standalone_codex)
+            } else {
+                self.context
+                    .find(host.binary)
+                    .or_else(|| crate::detect::locate(host.binary))
+            };
+            if let Some(path) = cli {
+                clients.push(json!({"kind":"cli","source":"path","path":path}));
+            }
+        }
+        let separate_desktop =
+            host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
+        if !separate_desktop
+            && let Some((source, path)) = installed::desktop(&self.context, host.boss)
+        {
+            clients.push(json!({"kind":"desktop","source":source,"path":path}));
+        }
+        clients
+    }
     pub(super) fn detect(&self, host: &Host) -> (bool, &'static str, Option<PathBuf>) {
-        if self.context.find(host.binary).is_some() {
+        if host.id == "claude-desktop" {
+            if let Some((source, path)) = installed::desktop(&self.context, "claude") {
+                return (true, source, path);
+            }
+            return (false, "config", None);
+        }
+        let separate_desktop =
+            host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
+        if !separate_desktop
+            && let Some((source, path)) = installed::desktop(&self.context, host.boss)
+        {
+            return (true, source, path);
+        }
+        if self.context.find(host.binary).is_some() || crate::detect::locate(host.binary).is_some()
+        {
             return (true, "path", None);
-        }
-        // A CLI that ships inside a desktop app is not on PATH; the same rules the member list
-        // uses resolve it (Codex and DeepSeek Harness both arrive this way on Windows).
-        if crate::detect::locate(host.binary).is_some() {
-            return (true, "path", None);
-        }
-        let app = match host.boss {
-            "claude" => Some("Claude.app"),
-            "workbuddy" => Some("WorkBuddy.app"),
-            "antigravity" => Some("Antigravity.app"),
-            "deepseek" => Some("DeepSeek Harness.app"),
-            "devin" => Some("Devin.app"),
-            "zcode" => Some("ZCode.app"),
-            _ => None,
-        };
-        if let Some(path) = app.and_then(|name| {
-            self.context
-                .applications
-                .iter()
-                .map(|p| p.join(name))
-                .find(|p| p.is_dir())
-        }) {
-            return (true, "app", Some(path));
-        }
-        // Windows desktop apps install a program directory, or bundle their CLI inside one;
-        // neither is on PATH.
-        #[cfg(windows)]
-        if let Some(path) = self.bundle(host.id) {
-            return (true, "app", Some(path));
         }
         (false, "config", None)
-    }
-    /// The desktop apps install a program directory. Only the ones known to ship an executable
-    /// are listed; adding a guess here would report a host as installed when it is not.
-    #[cfg(windows)]
-    pub(super) fn bundle(&self, id: &str) -> Option<PathBuf> {
-        let relative = match id {
-            "deepseek" => "DeepSeek Harness/DeepSeek Harness.exe",
-            // WorkBuddy installs wherever the user chose (D:\Workbuddy here), and only its
-            // uninstall entry records that.
-            "workbuddy" => return crate::detect::uninstall_icon("WorkBuddy"),
-            _ => return None,
-        };
-        self.context
-            .applications
-            .iter()
-            .map(|dir| dir.join(relative))
-            .find(|path| path.is_file())
-    }
-    #[cfg(not(any(target_os = "macos", windows)))]
-    pub(super) fn bundle(&self, _id: &str) -> Option<PathBuf> {
-        None
     }
     pub(super) fn command_state(&self, host: &Host, entry: &Value) -> &'static str {
         let Some(command) = host.command(entry) else {
@@ -147,6 +150,7 @@ impl Hosts {
     }
     pub(super) fn state(&self, host: &Host) -> Value {
         let (installed, source, app_path) = self.detect(host);
+        let clients = self.clients(host);
         let document = host.read();
         let entry = document.as_ref().ok().and_then(|d| d.entry.as_ref());
         let command = entry.and_then(|e| host.command(e));
@@ -225,7 +229,7 @@ impl Hosts {
         } else {
             json!({"state":"unknown","copies":[]})
         };
-        json!({"id":host.id,"boss":host.boss,"mark":host.id.split('@').next(),"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"status":status,
+        json!({"id":host.id,"boss":host.boss,"mark":host.id.split('@').next(),"label":host.label,"installed":installed,"detect_source":source,"app_path":app_path,"clients":clients,"status":status,
             "entry":kind,"command":command,"command_state":command_state,"has_host_env":has_env,"config_path":host.config,"root":{"path":host.root.path,"source":host.root.source},
             "layers":layers,"shadowed_by":shadowed,"tested":matches!(host.boss, "codex" | "claude" | "codebuddy" | "workbuddy" | "grok" | "antigravity" | "pi" | "deepseek" | "hermes"),"skill":skill,"skills":skills,"reload":reload,
             "reload_hint":reload_hint(host.id),"reopen":reopen::instructions(host),"copy_actions":reopen::copy_actions(host),"trust":trust_hint(host.boss).trim_start_matches('；'),"launcher":self.launcher_note(host),"attention":attention,"last_action":self.actions.get(host.id),"first_seen":self.settings[host.id]["first_seen"].as_str().unwrap_or(&self.detected_at)})

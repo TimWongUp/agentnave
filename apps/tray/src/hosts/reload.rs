@@ -138,6 +138,12 @@ impl Hosts {
     /// A relay whose host closed normally marks its receipt ended and keeps it as proof.
     fn receipts(&self, host: &Host, now: SystemTime, changed_at: Option<u64>) -> Receipts {
         let mut receipts = Receipts::default();
+        let legacy_unambiguous = self
+            .registry()
+            .iter()
+            .filter(|row| row.boss == host.boss)
+            .count()
+            == 1;
         let dir = self
             .connection_root(host)
             .map(|root| root.join("connections"));
@@ -145,7 +151,8 @@ impl Hosts {
             .into_iter()
             .flat_map(|dir| fs::read_dir(dir).into_iter().flatten().flatten())
         {
-            let Some((age, modified, value)) = read_receipt(&entry, now, host.boss) else {
+            let Some((age, modified, value)) = read_receipt(&entry, now, host, legacy_unambiguous)
+            else {
                 continue;
             };
             if !value["ended_ms"].is_null() {
@@ -203,7 +210,13 @@ impl Hosts {
         } else {
             processes::State::Unknown
         };
-        let old_process = matches!(process, processes::State::Running(started)
+        let old_process = self
+            .registry()
+            .iter()
+            .filter(|row| row.boss == host.boss)
+            .count()
+            == 1
+            && matches!(process, processes::State::Running(started)
             if started > 0 && changed["at_ms"].as_u64().is_some_and(|at| started.saturating_mul(1000) <= at));
         if old_process {
             ("required", "host_running")
@@ -311,7 +324,8 @@ impl Receipts {
 fn read_receipt(
     entry: &fs::DirEntry,
     now: SystemTime,
-    boss: &str,
+    host: &Host,
+    legacy_unambiguous: bool,
 ) -> Option<(u64, SystemTime, Value)> {
     let path = entry.path();
     if path.is_symlink() || path.extension().is_none_or(|ext| ext != "json") {
@@ -324,7 +338,14 @@ fn read_receipt(
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
-    (value["version"] == 1 && value["host"] == boss && value["dispatched"] != true)
+    let matching_row = match value["host_app"].as_str() {
+        Some(id) => id == host.id,
+        None => legacy_unambiguous && host.id == host.boss,
+    };
+    (value["version"] == 1
+        && value["host"] == host.boss
+        && matching_row
+        && value["dispatched"] != true)
         .then_some((age, modified, value))
 }
 

@@ -100,7 +100,7 @@ pub(crate) fn codex_desktop_app(path: &Path) -> Option<&'static str> {
     None
 }
 
-pub(super) fn standalone_codex() -> Option<PathBuf> {
+pub(crate) fn standalone_codex() -> Option<PathBuf> {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     standalone_codex_in(std::env::split_paths(&inherited).chain(common_dirs()))
 }
@@ -239,6 +239,15 @@ pub(super) fn registry(args: &[&str]) -> Vec<String> {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(windows)]
+pub(crate) fn store_packages(key: &str) -> Vec<String> {
+    registry(&["query", key])
+        .into_iter()
+        .filter_map(|line| line.trim().rsplit('\\').next().map(str::to_owned))
+        .filter(|name| name.contains('_') && !name.contains(' '))
         .collect()
 }
 

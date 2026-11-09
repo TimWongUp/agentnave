@@ -77,14 +77,14 @@ function pathRow(full, copy = true) {
     copy && copyButton(full),
   );
 }
-const sourceText = (s) =>
-  s === "path"
-    ? L("在 PATH 中找到可执行文件", "Executable found in PATH")
-    : s === "config"
-      ? L("只在配置里发现条目", "Entry found in config only")
-      : s?.startsWith("/")
-        ? L(`应用：${s}`, `App: ${s}`)
-        : s === "app" ? L("应用包", "App bundle") : s || "—";
+function sourceText(s) {
+  if (s === "path") return L("在 PATH 中找到可执行文件", "Executable found in PATH");
+  if (s === "config") return L("只在配置里发现条目", "Entry found in config only");
+  if (s === "store") return L("应用商店", "App store");
+  if (s === "package") return L("系统软件包", "System package");
+  if (s === "app") return L("应用包", "App bundle");
+  return s?.startsWith("/") ? L(`应用：${s}`, `App: ${s}`) : s || "—";
+}
 const spinBtn = (label, cls = "") =>
   h(
     "button" + cls + ".pending",
@@ -579,6 +579,8 @@ function actionButtons(host) {
 // One line under the name: the state, then what matters most about it.
 function subLine(host, word) {
   const bits = [h("span.hc-status", {}, h("i.dot", { "aria-hidden": "true" }), word)];
+  const readers = [...new Set((host.clients || []).map((client) => client.kind))];
+  if (readers.length) bits.push(h("span.hc-fact", {}, L("发现 ", "Found ") + readers.map((kind) => kind === "desktop" ? L("桌面端", "Desktop") : "CLI").join(" · ")));
   if (host.status === "connected") {
     // A Skill is only mentioned when it could not be installed.
     const s = host.skill;
@@ -644,7 +646,7 @@ function buildCard(host) {
     ),
   ];
   if (orphan)
-    main.push(h("p.hc-orphan", {}, L(`本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`, `${host.label} is no longer detected on this Mac, but its config still has the agentnave entry. Leaving it is harmless; remove it if no longer needed.`)));
+    main.push(h("p.hc-orphan", {}, L(`本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`, `${host.label} is no longer detected locally, but its config still has the agentnave entry. Leaving it is harmless; remove it if no longer needed.`)));
   if (host.shadowed_by)
     main.push(h("div.hc-note.info", {}, L("项目级配置 ", "Project config "), h("code", {}, shortPath(host.shadowed_by)), L(" 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。", " also has an agentnave entry, which takes precedence in that project. The App never modifies project configs.")));
   if (host.launcher?.stale)

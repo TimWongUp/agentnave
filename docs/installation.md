@@ -228,6 +228,8 @@ format; register it with the official CLI command below instead of copying this 
 
 托盘顶部导航的“接入”分区同时展示版本更新和宿主接入，管理用户级 `agentnave`：统一使用 `agentnave-mcp`。配置根目录自动检测，App 不提供手填；以前手动指定过的可以“恢复自动”。根目录依次取 App 用户覆盖（`user`）、GUI 环境变量（`env`）、登录 shell 探测（`shell`）、默认值（`default`）。覆盖、首次发现时间及各宿主的重启确认保存在 App 自有数据目录的 `hosts.json`；恢复自动仅移除覆盖，不删除宿主配置。
 
+一份 MCP 配置只占一张接入卡；CLI 与桌面端都被发现时，卡片列出两个客户端，配置目录不同才分卡。安装发现不证明客户端已读取配置；“已接入”表示配置中有 AgentNave 条目，实际加载另看连接状态。连接回执按配置行归属；旧回执没有行 ID 时，只有该 boss 仅有一行才采信。Windows 的 Store 包和常见安装目录、Linux 的已知软件包路径用于补足桌面端发现，未识别的安装可用宿主原生 MCP 设置核对。WSL 是独立的运行与配置环境，应在对应环境接入。
+
 更新后宿主卡片只在需要操作时提示“需要重新加载”，没有提示就无需操作：界面更新无需重启宿主。App 每次启动都把服务对齐到配套版本，新版本装进独立目录，宿主重连 AgentNave MCP 或新开会话后才使用它；连接仍在用旧版本时卡片立即提示重连（重连会结束该连接上运行中的任务），必要时才完整退出并重新打开宿主。不装 App、用 `uv tool install --force` 原地升级时，中继会在空闲时自动换用新服务。Skill 更新不提示重新加载，Agent 使用时会读取最新文件；接入配置变化后，只有变化之前就已在运行的连接会提示，重新打开宿主或新开会话后自动消除；当前没有活跃连接时不提示，下次连接自然使用新配置。不报告接口的旧中继无法自动检测，可在操作后手动确认；手动确认不会覆盖仍未同步的真实连接。
 
 登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析（同时读取代理与 uv 镜像环境变量），绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录及探测到的代理／uv 镜像变量一起显式传给 uv；更新检查与下载同样优先使用探测到的代理。App 内置同版本预构建 wheel，安装或升级本机服务（含从已下载的更新包中提取目标版本 wheel）直接由本地 wheel 安装，在已有旧版服务且联网解析失败时自动尝试 `--offline` 复用本机缓存。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测。
@@ -243,12 +245,12 @@ MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符�
 | codex | TOML 定点编辑 | `${CODEX_HOME:-~/.codex}/config.toml` | 同配置根目录的 `skills` | true |
 | claude | JSON 定点编辑 | `~/.claude.json`；设置 `CLAUDE_CONFIG_DIR` 时为该目录的 `.claude.json` | `${CLAUDE_CONFIG_DIR:-~/.claude}/skills` | true |
 | codebuddy | JSON 定点编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.codebuddy}/.mcp.json` | 同配置根目录的 `skills` | true |
-| workbuddy | JSON 定点编辑 | `${CODEBUDDY_CONFIG_DIR:-~/.workbuddy}/mcp.json` | 同配置根目录的 `skills` | true |
+| workbuddy | JSON 定点编辑 | `${WORKBUDDY_CONFIG_DIR:-~/.workbuddy}/mcp.json` | 同配置根目录的 `skills` | true |
 | grok | TOML 定点编辑 | `${GROK_HOME:-~/.grok}/config.toml` | 同配置根目录的 `skills` | true |
 | antigravity | JSON 定点编辑 | `~/.gemini/config/mcp_config.json` | `~/.gemini/config/skills` | true |
 | pi | JSON 定点编辑 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置根目录的 `skills` | true |
 | deepseek | YAML 补丁列表项 | `${DSH_HOME:-~/.dsh}/cordis.patch.yml`，`- insert:` 插入 `id: agentnave` 的 `@deepseek-ai/dsh-mcp-client` | 同配置根目录的 `skills` | true |
-| hermes | YAML 定点块编辑 | `${HERMES_HOME:-~/.hermes}/config.yaml`，`mcp_servers` | 同配置根目录的 `skills` | true |
+| hermes | YAML 定点块编辑 | 活动 profile 的 `config.yaml`，未启用 profile 时为 `${HERMES_HOME:-~/.hermes}/config.yaml` | 同活动配置根目录的 `skills` | true |
 | zcode | JSON/JSONC 定点编辑 | `~/.zcode/cli/config.json`，`mcp.servers` | `~/.zcode/skills` | false |
 
 layers 返回用户、覆盖和已知项目层。移除删除所有用户级定义，逐文件备份并在回执列出；不会在移除高层后悄然退回另一用户层。项目级只读检查限于 App 启动目录及其祖先，实际宿主的其他项目目录仍须手动核对。多文件不是原子整体，冲突时保留外部新内容，依据回执重试余下层。
@@ -314,7 +316,7 @@ Do not assume this also registers WorkBuddy desktop. In the checked macOS versio
 configuration directory, while WorkBuddy desktop used `mcp.json` under its configuration
 directory. With the CLI configured to use `~/.workbuddy`, these were respectively
 `~/.workbuddy/.mcp.json` and `~/.workbuddy/mcp.json`. Preserve `CODEBUDDY_CONFIG_DIR` when
-configured; do not copy this machine's override as a universal default. Use WorkBuddy's MCP
+configured; WorkBuddy's own root follows `WORKBUDDY_CONFIG_DIR`. Do not copy this machine's override as a universal default. Use WorkBuddy's MCP
 settings to locate and edit its effective entry, preserving other servers and environment values.
 Use the `codebuddy` exclusion for both hosts and restart each connection separately.
 

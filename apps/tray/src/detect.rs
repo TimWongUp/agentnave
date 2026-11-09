@@ -10,6 +10,9 @@ pub(crate) mod update;
 pub(crate) use probe::search_path;
 use probe::*;
 
+pub(crate) use locate::standalone_codex;
+#[cfg(windows)]
+pub(crate) use locate::store_packages;
 #[cfg(windows)]
 pub(crate) use locate::uninstall_icon;
 use locate::*;

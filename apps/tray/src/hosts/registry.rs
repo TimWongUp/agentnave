@@ -1,5 +1,32 @@
 use super::*;
 
+fn active_hermes_profile(root: &Root) -> Option<PathBuf> {
+    if root.source == "user"
+        || root
+            .path
+            .parent()?
+            .file_name()
+            .is_some_and(|name| name == "profiles")
+    {
+        return None;
+    }
+    let name = fs::read_to_string(root.path.join("active_profile")).ok()?;
+    let name = name.trim().trim_start_matches('\u{feff}');
+    if name == "default"
+        || name.is_empty()
+        || name.len() > 64
+        || !name.bytes().next()?.is_ascii_lowercase()
+        || !name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+    {
+        return None;
+    }
+    let profile = root.path.join("profiles").join(name);
+    (profile.is_dir() && !root.path.join("profiles/.deleted").join(name).exists())
+        .then_some(profile)
+}
+
 impl Hosts {
     pub(super) fn registry(&self) -> Vec<Host> {
         let h = &self.context.home;
@@ -11,6 +38,12 @@ impl Hosts {
                 .join("devin")
         } else {
             roots::env_value(&self.context.env, "XDG_CONFIG_HOME")
+                .or_else(|| {
+                    self.shell
+                        .as_ref()
+                        .and_then(|shell| shell.as_ref().ok())
+                        .and_then(|vars| vars.get("XDG_CONFIG_HOME"))
+                })
                 .map(PathBuf::from)
                 .filter(|path| path.is_absolute())
                 .unwrap_or_else(|| h.join(".config"))
@@ -29,17 +62,7 @@ impl Hosts {
             ),
             (
                 "codex",
-                match self
-                    .context
-                    .find("codex")
-                    .or_else(|| crate::detect::locate("codex"))
-                    .as_deref()
-                    .and_then(crate::detect::codex_desktop_app)
-                {
-                    Some("ChatGPT") => "ChatGPT（Codex）",
-                    Some(_) => "Codex",
-                    None => "Codex CLI",
-                },
+                "Codex",
                 "codex",
                 Some("CODEX_HOME"),
                 h.join(".codex"),
@@ -49,7 +72,7 @@ impl Hosts {
             ),
             (
                 "claude",
-                "Claude Code",
+                "Claude",
                 "claude",
                 Some("CLAUDE_CONFIG_DIR"),
                 h.join(".claude"),
@@ -71,7 +94,7 @@ impl Hosts {
                 "workbuddy",
                 "WorkBuddy 桌面",
                 "workbuddy",
-                Some("CODEBUDDY_CONFIG_DIR"),
+                Some("WORKBUDDY_CONFIG_DIR"),
                 h.join(".workbuddy"),
                 "mcp.json",
                 Format::Json,
@@ -120,7 +143,7 @@ impl Hosts {
             ),
             (
                 "devin",
-                "Devin CLI",
+                "Devin",
                 "devin",
                 None,
                 devin_config,
@@ -149,6 +172,11 @@ impl Hosts {
                 var,
                 default,
             );
+            if id == "hermes"
+                && let Some(profile) = active_hermes_profile(&root)
+            {
+                root.path = profile;
+            }
             if self.manual_roots.contains(id) {
                 root.confirmed = true;
             }

@@ -14,6 +14,7 @@ pub(super) const VARIABLES: &[&str] = &[
     "CODEX_HOME",
     "CLAUDE_CONFIG_DIR",
     "CODEBUDDY_CONFIG_DIR",
+    "WORKBUDDY_CONFIG_DIR",
     "PI_CODING_AGENT_DIR",
     "GROK_HOME",
     "HERMES_HOME",
@@ -22,6 +23,7 @@ pub(super) const VARIABLES: &[&str] = &[
     "UV_TOOL_BIN_DIR",
     "XDG_BIN_HOME",
     "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
 ];
 pub(super) const NETWORK_VARIABLES: &[&str] = &[
     "HTTPS_PROXY",
@@ -163,7 +165,7 @@ pub(super) fn resolve(
         };
     }
     if let Some(path) = var
-        .and_then(|v| context.env.get(v))
+        .and_then(|v| env_value(&context.env, v))
         .filter(|p| Path::new(p).is_absolute())
     {
         return Root {

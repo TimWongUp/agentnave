@@ -43,7 +43,7 @@
 | 0037 | [App 写入编排规则，Explorer 与 Worker 分简单、困难两档](0037-app-writes-orchestration-rules.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0051](0051-parallel-preset-without-recheck.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) |
 | 0038 | [私聊的 role 指明工位时，服务套用 App 里的工位设置](0038-role-applies-app-seat.md) | 部分取代 | [ADR-0043](0043-service-prompt-instructions.md)、[ADR-0050](0050-v1-compatibility-baseline.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0053](0053-disabled-cli-runs-for-no-seat.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) |
 | 0039 | [单席失败提醒一次，并联轮内可补跑](0039-retry-lost-seat-within-round.md) | 已接受 | — |
-| 0040 | [工作区按会话记录显示 boss 的入口，接入按配置文件划分](0040-boss-app-from-session-records.md) | 已接受 | — |
+| 0040 | [工作区按会话记录显示 boss 的入口，接入按配置文件划分](0040-boss-app-from-session-records.md) | 部分修订 | [ADR-0070](0070-cross-platform-host-readers-and-receipts.md) |
 | 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | — |
 | 0042 | [组员模型带档位，服务每次传模型与档位](0042-pass-cli-default-effort.md) | 已接受 | — |
 | 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分取代 | [ADR-0062](0062-service-owned-member-names.md) |
@@ -73,3 +73,4 @@
 | 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 已接受 | 修订 ADR-0007、ADR-0015、ADR-0066 |
 | 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 已接受 | 修订 ADR-0037、ADR-0051、ADR-0065 |
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
+| 0070 | [跨平台按配置行归属连接并展示读取者](0070-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
