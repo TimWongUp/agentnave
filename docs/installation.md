@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.4.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.5.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.4.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.5.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -609,25 +609,29 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.4.0
+### Upgrading to v1.5.0
 
-Update the App; it installs the paired service at startup. Reconnect or reopen any host copy listed
-on the boss card in Settings so it picks up the new runtime and tool schema. The App rewrites the
-orchestration block in each boss host's global rules: it now holds only authorization (Split needs
-the user's explicit instruction before parallel writes, with an optional switch letting the boss
-call meetings; Parallel lets the boss decide both), while the method lives in the
-`agentnave-manager` Skill and its new `references/workflows.md`. Generated v1.3.0 sentences copied
-into a Custom preset are migrated.
+Update the App; it installs the paired service at startup. The macOS package is now signed as a
+whole (ad-hoc), so system notifications can ask for permission and AgentNave appears in the
+notification settings; macOS may ask again once for permissions granted to the previous build,
+such as the microphone.
 
-Specialist roles are now interface work, writing, web research, social-platform research and
-office documents; `list_members` reports each visible role's scope in `orchestration.scopes`.
-`wait` waits at most 270 seconds (`wait_seconds` accepts `0` or `270`, with optional `seq`), and
-the App raises supported hosts' per-entry tool timeout to at least 360 seconds. Devin CLI joins as
-a member and boss. Headless Linux hosts should check `orchestration.json` against
-[the headless guide](linux-headless.md).
+Connection receipts now name the configuration row that started them (`host_app`), and a card
+only counts receipts of its own row. When one host has several configuration rows, reconnect or
+reopen each copy once so its card shows the connection as loaded. Cards list the CLI and desktop
+readers found for each configuration file. WorkBuddy follows `WORKBUDDY_CONFIG_DIR`, and Hermes
+follows its active profile.
 
-See [v1.4.0 release notes](releases/v1.4.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.3.0.md).
+Devin now runs over `devin acp`. Its `permission_mode` accepts `accept-edits`, `smart`, `ask`,
+`plan` and `bypass` (`dangerous` is an alias of `bypass`); the `-p` values `normal`, `auto`,
+`yolo` and `autonomous`, and `respect_workspace_trust`, are no longer accepted, so update any
+hand-written Devin options. The App's two permission tiers are unchanged. Codex members can pin a
+runtime source with `clis.codex.executable_source` (`desktop` or `standalone`); a pinned source
+that is missing fails the task instead of falling back. New edits to a CLI's available-model list
+keep at most 20 models.
+
+See [v1.5.0 release notes](releases/v1.5.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.4.0.md).
 
 ## Uninstall
 
