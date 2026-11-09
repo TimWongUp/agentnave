@@ -341,4 +341,3 @@ jobs:
           manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
           PY
           gh release upload "$RELEASE_TAG" windows-assets/latest.json --clobber
-
