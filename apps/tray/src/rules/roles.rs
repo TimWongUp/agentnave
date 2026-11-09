@@ -45,14 +45,14 @@ pub(super) fn sections() -> Value {
     Value::Object(sections)
 }
 
-pub(super) fn apply(document: &Value, mut text: String) -> String {
-    // These exact sentences belonged to our older generated preset, including copies in Custom.
+/// The exact sentences of our older generated presets, including copies in Custom, replaced by
+/// their current wording; anything else the user wrote stays as it is.
+pub(super) fn migrate_legacy(text: &str) -> String {
     let dispatch = super::SHARED
         .lines()
         .find(|line| line.contains("同难度专项优先"))
         .expect("shared dispatch instruction");
-    text = text
-        .replace(LEGACY_DISPATCH, dispatch)
+    text.replace(LEGACY_DISPATCH, dispatch)
         .replace(LEGACY_ASSIGNMENT, "")
         .replace(LEGACY_SMALL_TASKS, &small_tasks())
         .replace(
@@ -66,7 +66,11 @@ pub(super) fn apply(document: &Value, mut text: String) -> String {
         .replace("互不依赖的写入步骤并行派给多个 Worker", "互不依赖的写入步骤并行派给多个可写工位")
         .replace("同一组文件同一时间只有一个 Worker 在写", "同一组文件同一时间只有一个执行者在写")
         .replace("每次最多等十分钟", "每次最多等 270 秒")
-        .replace(LEGACY_REVIEW, "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位；没有时选择当前可见的只读工位，不可用时由 boss 自行评审。不交给实现者，尽量换模型。");
+        .replace(LEGACY_REVIEW, "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位；没有时选择当前可见的只读工位，不可用时由 boss 自行评审。不交给实现者，尽量换模型。")
+}
+
+pub(super) fn apply(document: &Value, text: String) -> String {
+    let mut text = migrate_legacy(&text);
     let sections = sections();
     let sections = sections.as_object().expect("role sections");
     let generated: Vec<String> = sections

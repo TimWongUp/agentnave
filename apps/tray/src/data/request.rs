@@ -212,7 +212,10 @@ impl Reader {
 
     pub(super) fn orchestration(&self) -> Response {
         let (document, error) = match crate::members::read_orchestration(&self.root) {
-            Ok(document) => (document, Value::Null),
+            Ok(mut document) => {
+                crate::rules::migrate_custom(&mut document);
+                (document, Value::Null)
+            }
             Err(error) => (json!({"version": 1, "preset": "off"}), json!(error)),
         };
         let rules = self.rule_files();

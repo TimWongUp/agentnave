@@ -280,23 +280,23 @@ function seatRow(group, label, name, seat, onSet) {
     ...seatSelects(group, name, seat, onSet, SEAT_UNSET));
 }
 
-// Whether the boss may call meetings without being asked: off by default in split work, on in parallel.
-const meetingsOn = (doc, preset) => preset === "split" ? doc.split_options?.meetings === true : doc.parallel_options?.meetings !== false;
-function setMeetings(preset, on) {
-  const key = `${preset}_options`;
+// A switch put back to what is saved restores the saved form of its key, so an explicit default is no edit.
+function setOption(key, matchesSaved, plain) {
+  const saved = orchestration.document;
   const { [key]: _, ...rest } = orchestrationShown();
-  orchestrationDraft = on === (preset === "parallel") ? rest : { ...rest, [key]: { meetings: on } };
+  const next = matchesSaved && Object.hasOwn(saved, key) ? saved[key] : plain;
+  orchestrationDraft = next === undefined ? rest : { ...rest, [key]: next };
   renderOrchestration();
   advancedEdited();
 }
 
+// Whether the boss may call meetings without being asked: off by default in split work, on in parallel.
+const meetingsOn = (doc, preset) => preset === "split" ? doc.split_options?.meetings === true : doc.parallel_options?.meetings !== false;
+const setMeetings = (preset, on) => setOption(`${preset}_options`, on === meetingsOn(orchestration.document, preset),
+  on === (preset === "parallel") ? undefined : { meetings: on });
+
 // Both presets' switch: the boss hands out all the work, small tasks too, and keeps only planning and checking.
-function setLeadOnly(on) {
-  const { lead_only: _, ...rest } = orchestrationShown();
-  orchestrationDraft = on ? { ...rest, lead_only: true } : rest;
-  renderOrchestration();
-  advancedEdited();
-}
+const setLeadOnly = (on) => setOption("lead_only", on === (orchestration.document.lead_only === true), on ? true : undefined);
 
 function renderSplitOptions(preset, editable) {
   const box = $("orchestration-split");

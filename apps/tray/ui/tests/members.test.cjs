@@ -133,7 +133,7 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
   const state = { saved: document, members: null };
   const presets = {
     split: "whole", parallel: "whole+", image_generation: "\nimage",
-    role_base: { parallel: "base+" },
+    role_base: { parallel: "base+" }, parallel_base: "base+",
     split_parts: { base: "base", meetings_asked: "\nasked", meetings_own: "\nown" },
     role_sections: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}`])),
   };
@@ -691,11 +691,10 @@ test("split work lets the boss call meetings only when its switch is on", async 
   assert.equal(app.run("orchestrationWanted().split_options"), undefined);
   app.run('viewMode("parallel")');
   assert.equal(app.run('$("orchestration-split").children.length'), 2);
-  app.run('orchestration.presets.parallel_base = "par"; renderOrchestration()');
-  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nown");
+  assert.equal(app.run('orchestrationPresetText("parallel")'), "base+\nown");
   meetings().listeners.change({ target: { checked: false } });
   assert.equal(app.run("JSON.stringify(orchestrationWanted().parallel_options)"), '{"meetings":false}');
-  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nasked");
+  assert.equal(app.run('orchestrationPresetText("parallel")'), "base+\nasked");
   meetings().listeners.change({ target: { checked: true } });
   assert.equal(app.run("orchestrationWanted().parallel_options"), undefined);
 });
@@ -704,19 +703,40 @@ test("the orchestration-only switch rewrites its line in split and parallel only
   const { app } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
   await app.run("loadOrchestration()");
   app.run(`orchestration.presets.split_parts.base = "base\\nlead-asked";
-    orchestration.presets.role_base.parallel = "par\\nlead-asked";
+    orchestration.presets.parallel_base = "par\\nlead-asked";
     orchestration.presets.lead = { asked: "lead-asked", always: "lead-always" }; renderOrchestration()`);
   const lead = () => app.run('$("orchestration-split").children[1].children[0]');
   lead().listeners.change({ target: { checked: true } });
   assert.equal(app.run("orchestrationWanted().lead_only"), true);
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-always\nasked");
-  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nlead-always");
+  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nlead-always\nown");
   app.run('viewMode("custom")');
   assert.equal(app.run('$("orchestration-split").hidden'), true);
   app.run('viewMode("split")');
   lead().listeners.change({ target: { checked: false } });
   assert.equal(app.run("orchestrationWanted().lead_only"), undefined);
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-asked\nasked");
+});
+
+test("a switch put back to what is saved keeps the saved form of its key", async () => {
+  const saved = { version: 1, preset: "split", enabled_roles: [], lead_only: false,
+    split_options: { meetings: false }, parallel_options: {} };
+  const { app } = rolesEditor(saved);
+  await app.run("loadOrchestration()");
+  const [meetings, lead] = [0, 1].map((i) => () => app.run(`$("orchestration-split").children[${i}].children[0]`));
+  for (const [switchOf, key] of [[meetings, "split_options"], [lead, "lead_only"]]) {
+    switchOf().listeners.change({ target: { checked: true } });
+    assert.equal(app.run("orchestrationChanged()"), true);
+    switchOf().listeners.change({ target: { checked: false } });
+    assert.deepEqual(JSON.parse(app.run(`JSON.stringify(orchestrationWanted()["${key}"])`)), saved[key]);
+    assert.equal(app.run("orchestrationChanged()"), false);
+  }
+  app.run('viewMode("parallel")');
+  meetings().listeners.change({ target: { checked: false } });
+  assert.equal(app.run("orchestrationChanged()"), true);
+  meetings().listeners.change({ target: { checked: true } });
+  assert.equal(app.run("JSON.stringify(orchestrationWanted().parallel_options)"), "{}");
+  assert.equal(app.run("orchestrationChanged()"), false);
 });
 
 // The settings scripts share one global scope: a later top-level function of the same name

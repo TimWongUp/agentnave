@@ -84,6 +84,15 @@ fn mode_of<'a>(document: &'a Value, group: &[&App]) -> &'a str {
         .unwrap_or("off")
 }
 
+/// The saved Custom text with our retired generated sentences in their current wording, as the
+/// settings page shows and edits it, so what it shows is what the rules files get.
+pub fn migrate_custom(document: &mut Value) {
+    let migrated = document["custom"].as_str().map(roles::migrate_legacy);
+    if let Some(text) = migrated {
+        document["custom"] = text.into();
+    }
+}
+
 /// The text a mode puts in the rules files, if any.
 fn text_of(document: &Value, mode: &str) -> Option<String> {
     let mut text = match mode {
