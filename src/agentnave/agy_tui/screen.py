@@ -9,6 +9,9 @@ from agentnave.claude_tui.screen import ANSI, RULE, Screen
 _SPINNER = re.compile(r"[⠀-⣿]")
 # The input box, its rules and the footer; a menu replaces the box with its own lines.
 BOTTOM = 4
+# Background tasks add a panel under the input box, one line each plus a rule, and the footer
+# counts them.
+_TASKS = re.compile(r"(\d+) task\(s\)")
 
 
 class AgyScreen(Screen):
@@ -43,7 +46,8 @@ class AgyScreen(Screen):
 
 def bottom(screen: str) -> list[str]:
     lines = [line.strip() for line in ANSI.sub("", screen).splitlines() if line.strip()]
-    return lines[-BOTTOM:]
+    tasks = _TASKS.search(lines[-1]) if lines else None
+    return lines[-(BOTTOM + (int(tasks.group(1)) + 1 if tasks else 0)) :]
 
 
 def state(screen: str) -> str:

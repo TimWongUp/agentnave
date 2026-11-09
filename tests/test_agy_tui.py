@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -202,6 +203,9 @@ def test_screen_applies_agy_edits_and_reads_only_the_bottom_lines() -> None:
     assert state(idle + "\nesc to cancel") == "busy"
     assert state(idle + "\n  ↑/↓ Navigate · enter Confirm") == "menu"
     assert state("Sign in to continue") == "unknown"
+    # A running background task draws its line and a rule between the box and the footer.
+    tasks = f"\n● [22:43:06] sleep 30 running\n{rule}\n? for shortcuts   model · 1 task(s) · /tasks"
+    assert state(f"{rule}\n>\n{rule}{tasks}") == "idle"
 
 
 def test_stalled_turns_block_on_limits_but_wait_for_background_stop() -> None:
@@ -221,3 +225,239 @@ def test_stalled_turns_block_on_limits_but_wait_for_background_stop() -> None:
     assert not run().stalled("busy", 3600, "")
     assert not run().stalled("unknown", 30, "") and run().stalled("unknown", 61, "")
     assert run().stalled("menu", 3, "")
+
+
+@pytest.mark.parametrize("ending", ["finished", "was canceled", "failed"])
+def test_background_calls_stay_open_and_the_footer_tells_who_works(
+    ending: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Rows as agy 1.5.3 writes them for a command it moves to the background.
+    turn = Turn("c", expected="task", user_seen=True)
+    turn.row(
+        {
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "source": "MODEL",
+            "tool_calls": [{"name": "run_command"}],
+        }
+    )
+    turn.row(
+        {
+            "step_index": 3,
+            "type": "GENERIC",
+            "source": "MODEL",
+            "status": "RUNNING",
+            "content": "Tool is running as a background task with task id: c/task-3\n",
+        }
+    )
+    # The footer may become idle one poll before the planner's text is written.
+    turn.watch("idle")
+    turn.row({"step_index": 5, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": "waiting"})
+    turn.watch("idle")
+    turn.watch("idle")
+    turn.watch("busy")
+    turn.row(
+        {
+            "step_index": 7,
+            "type": "SYSTEM_MESSAGE",
+            "source": "SYSTEM",
+            "content": f'sender=c/task-3 content=Task id "c/task-3" {ending}',
+        }
+    )
+    turn.watch("idle")
+    steps = [
+        cast(dict[str, object], json.loads(line)["step_update"])
+        for line in capsys.readouterr().out.splitlines()
+    ]
+    shown = [(step["step_type"], step["state"], step.get("tool_name")) for step in steps]
+    assert shown == [
+        ("tool", "ACTIVE", "run_command"),
+        ("tool", "ACTIVE", "run_command"),
+        ("agent_response", "DONE", None),
+        ("tool", "ACTIVE", "run_command"),
+        ("thinking", "ACTIVE", None),
+        ("tool", "DONE", None),
+    ]
+    assert not turn.background
+    assert not turn.stopped and turn.error is None  # A task's end is not the turn's end.
+
+
+@pytest.mark.parametrize("footer", ["busy", "idle"])
+def test_footer_does_not_override_a_foreground_call(
+    footer: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    turn = Turn("c", user_seen=True)
+    turn.row(
+        {
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "source": "MODEL",
+            "tool_calls": [{"name": "run_command"}],
+        }
+    )
+    turn.row(
+        {
+            "type": "GENERIC",
+            "source": "MODEL",
+            "status": "RUNNING",
+            "content": "Tool is running as a background task with task id: c/task-3\n",
+        }
+    )
+    turn.watch("idle" if footer == "busy" else "busy")
+    capsys.readouterr()
+    # await_stop reads the transcript in poll() before watching the same poll's footer.
+    turn.row(
+        {
+            "step_index": 4,
+            "type": "PLANNER_RESPONSE",
+            "source": "MODEL",
+            "tool_calls": [{"name": "read_file"}],
+        }
+    )
+    turn.watch(footer)
+    turn.watch("idle" if footer == "busy" else "busy")
+    turn.watch(footer)
+    steps = [json.loads(line)["step_update"] for line in capsys.readouterr().out.splitlines()]
+    assert [(s["step_index"], s["step_type"], s["state"], s.get("tool_name")) for s in steps] == [
+        (400, "tool", "ACTIVE", "read_file")
+    ]
+    # An unchanged footer becomes relevant again once the foreground call ends.
+    turn.row({"type": "GENERIC", "source": "MODEL", "content": "read"})
+    turn.watch(footer)
+    turn.watch(footer)
+    steps = [json.loads(line)["step_update"] for line in capsys.readouterr().out.splitlines()]
+    expected = (
+        (0, "thinking", "ACTIVE", None)
+        if footer == "busy"
+        else (200, "tool", "ACTIVE", "run_command")
+    )
+    assert [(s["step_index"], s["step_type"], s["state"], s.get("tool_name")) for s in steps] == [
+        (400, "tool", "DONE", None),
+        expected,
+    ]
+
+
+def test_idle_footer_redisplays_a_remaining_background_call_after_another_finishes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    turn = Turn("c", user_seen=True)
+    turn.row(
+        {
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "source": "MODEL",
+            "tool_calls": [{"name": "run_command"}, {"name": "run_command"}],
+        }
+    )
+    for task in ("first", "second"):
+        turn.row(
+            {
+                "type": "GENERIC",
+                "source": "MODEL",
+                "status": "RUNNING",
+                "content": f"Tool is running as a background task with task id: c/{task}\n",
+            }
+        )
+    turn.watch("idle")
+    capsys.readouterr()
+    turn.row(
+        {
+            "type": "SYSTEM_MESSAGE",
+            "source": "SYSTEM",
+            "content": 'sender=c/second content=Task id "c/second" finished with result:',
+        }
+    )
+    turn.watch("idle")
+    turn.watch("idle")
+    steps = [json.loads(line)["step_update"] for line in capsys.readouterr().out.splitlines()]
+    assert [(s["step_index"], s["state"], s.get("tool_name")) for s in steps] == [
+        (201, "DONE", None),
+        (200, "ACTIVE", "run_command"),
+    ]
+
+
+@pytest.mark.parametrize("error", ["", "request failed"])
+@pytest.mark.parametrize("reply_before_stop", [False, True])
+def test_poll_reads_stop_and_final_reply_without_redisplaying_a_daemon(
+    error: str, reply_before_stop: bool, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    turn = Turn("c", user_seen=True)
+    turn.row(
+        {
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "source": "MODEL",
+            "tool_calls": [{"name": "run_command"}],
+        }
+    )
+    turn.row(
+        {
+            "type": "GENERIC",
+            "source": "MODEL",
+            "status": "RUNNING",
+            "content": "Tool is running as a background task with task id: c/daemon\n",
+        }
+    )
+    turn.watch("idle")
+    turn.hook("Stop", {"conversationId": "c", "fullyIdle": False})
+    assert not turn.stopped
+    turn.watch("busy")
+    capsys.readouterr()
+    # A real poll reads hooks first, then transcript rows, then watches the footer.
+    # fullyIdle ignores daemons, so this task need not have an ending message.
+    turn.transcript = tmp_path / "transcript.jsonl"
+    turn.transcript.write_text(
+        json.dumps(
+            {"step_index": 4, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": "reply"}
+        )
+        + "\n"
+    )
+    rule = "─" * 40
+    screen = f"{rule}\n>\n{rule}\n● command running\n{rule}\n? for shortcuts · 1 task(s)"
+    terminal = cast(
+        Terminal,
+        SimpleNamespace(poll=lambda: screen, process=SimpleNamespace(pid=123, poll=lambda: None)),
+    )
+    run = Run(terminal, turn, tmp_path)
+    if reply_before_stop:
+        turn.watch(state(run.poll()))
+        assert not turn.stopped  # Text alone cannot prove this is the final reply.
+    (tmp_path / "123.1.Stop.json").write_text(
+        json.dumps({"conversationId": "c", "fullyIdle": True, "error": error})
+    )
+    run.await_stop()
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    expected = [
+        {
+            "conversation_id": "c",
+            "step_index": 4,
+            "step_type": "agent_response",
+            "state": "DONE",
+            "text_delta": "reply",
+        }
+    ]
+    if reply_before_stop:
+        # While still waiting for Stop, a tool update after text is valid. It must not
+        # change adapter success/error classification or duplicate the response text.
+        expected.append(
+            {
+                "conversation_id": "c",
+                "step_index": 200,
+                "step_type": "tool",
+                "state": "ACTIVE",
+                "tool_name": "run_command",
+            }
+        )
+    assert [e["step_update"] for e in events] == expected
+    assert turn.stopped and turn.background  # The Stop hook, not task count, ends the turn.
+    events.append(turn.result())
+    capture = (
+        AntigravityAdapter().prepare(InvocationRequest("antigravity", "w", tmp_path)).capture_line
+    )
+    assert capture is not None
+    retained = b"".join(capture(json.dumps(e).encode()) for e in events)
+    # run_main exits nonzero on a hook error; parse() must not apply print-mode recovery.
+    result = AntigravityAdapter().parse(1 if turn.error else 0, retained, b"")
+    assert result.status is (InvocationStatus.FAILED if error else InvocationStatus.SUCCEEDED)
+    assert result.output == "reply"
