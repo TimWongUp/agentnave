@@ -60,7 +60,7 @@
 | 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
 | 0056 | [Claude Code 改用交互模式运行](0056-claude-interactive-runtime.md) | 已接受 | — |
-| 0057 | [运行中的原生弹框由 boss 代答](0057-boss-answers-native-prompts.md) | 已接受 | — |
+| 0057 | [运行中的原生弹框由 boss 代答](0057-boss-answers-native-prompts.md) | 已接受 | [ADR-0070](0070-devin-runs-over-acp.md) |
 | 0058 | [Claude 子代理统一用 Claude Code 自己存的登录](0058-claude-stored-login.md) | 已接受 | — |
 | 0059 | [Claude 的两个权限档位互为退路](0059-claude-tier-fallback.md) | 已接受 | — |
 | 0060 | [托盘识别无人持有的运行记录](0060-tray-detects-orphaned-running-work.md) | 已接受 | — |
@@ -73,4 +73,5 @@
 | 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 已接受 | 修订 ADR-0007、ADR-0015、ADR-0066 |
 | 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 已接受 | 修订 ADR-0037、ADR-0051、ADR-0065 |
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
-| 0070 | [跨平台按配置行归属连接并展示读取者](0070-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
+| 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
+| 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |

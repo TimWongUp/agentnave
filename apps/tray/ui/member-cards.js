@@ -6,7 +6,10 @@ function slotRows(provider, scene, split) {
   const all = getAllModelIds(provider);
   if (native.model && !all.includes(native.model)) all.unshift(native.model);
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
-  const label = el("span", { className: "member-scene" }, split ? SCENES[scene] : L(`${SCENES.task}、${SCENES.discussion}`, `${SCENES.task}, ${SCENES.discussion}`));
+  const tip = scene === "discussion" ? null : settingTip(L("单独干活只用于没开编排的 boss，开会始终按这里设置。分开设置可以给两者选不同的默认模型和档位，或只停用其中一个。", "Solo tasks only serve bosses without orchestration; meetings always use these settings. Separate lets the two use different default models and efforts, or turns off just one."));
+  // The last scene keeps the tip beside it when the narrow column wraps the label.
+  const label = el("span", { className: "member-scene" }, split ? [SCENES[scene], tip]
+    : [L(`${SCENES.task}、`, `${SCENES.task}, `), el("span", { className: "nowrap" }, SCENES.discussion, tip)]);
   const pick = (change) => changeSlot(provider, scene, change);
   // Turning a CLI off for both scenes asks first when it drops settings.
   const off = () => (scene ? pick({ enabled: false }) : setProviderEnabled(provider, false));
@@ -148,7 +151,8 @@ function renderClaudeInteractive(provider) {
         checked: limitDoc?.claude_interactive === true,
         disabled: busy || !limitDoc || Boolean(limitError),
         onChange: (e) => setClaudeInteractive(e.target.checked),
-      }), textNode(L("交互模式运行", "Run interactively"))));
+      }), textNode(L("交互模式运行", "Run interactively")),
+      settingTip(L("用终端界面驱动 Claude Code，代替 -p 以省订阅额度。子任务会出现在 Claude 的 /resume 列表和历史记录里，不想留这些痕迹就关掉。", "Drives Claude Code through its terminal UI instead of -p to save subscription quota. Subtasks then appear in Claude’s /resume list and history; turn this off if you don’t want those traces."))));
 }
 
 // One card per CLI: one row for both scenes, or one row each once split.

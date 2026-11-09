@@ -4,11 +4,12 @@ import json
 import os
 import stat
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
-from agentnave.adapters import base, codex, get_adapter
+from agentnave.adapters import base, codex, devin_acp, get_adapter
 from agentnave.adapters import deepseek as deepseek_adapter
 from agentnave.adapters.antigravity import (
     AntigravityAdapter,
@@ -1283,6 +1284,13 @@ def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -
     assert thought is not None and thought.message is None
     reasoning_events: tuple[tuple[str, dict[str, object]], ...] = (
         ("claude", {"type": "stream_event", "event": {"type": "message_start"}}),
+        ("claude", {"type": "system", "subtype": "init"}),
+        ("claude", {"type": "system", "subtype": "status", "status": "requesting"}),
+        ("antigravity", {"event": "init"}),
+        (
+            "antigravity",
+            {"event": "step_update", "step_update": {"step_type": "unknown", "state": "DONE"}},
+        ),
         ("codebuddy", {"type": "assistant", "message": {"content": [{"type": "thinking"}]}}),
         ("codex", {"type": "turn.started"}),
         ("deepseek", {"type": "status", "phase": "step_start"}),
@@ -1292,6 +1300,8 @@ def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -
     for provider, event in reasoning_events:
         reasoning = get_adapter(provider).activity(event)
         assert reasoning is not None and reasoning.state == "reasoning"
+    ended = get_adapter("zcode").activity({"type": "tool", "name": None, "status": "result"})
+    assert ended is not None and ended.state == "completed"
     for provider in ("claude", "codebuddy", "codex", "grok", "antigravity"):
         adapter = get_adapter(provider)
         assert adapter.activity({"type": ["unknown"], "event": ["unknown"]}) is None
@@ -1801,114 +1811,86 @@ def test_zcode_result_requires_terminal_and_preserves_session(tmp_path: Path) ->
     assert adapter.parse(1, events, b"transport failed").status is InvocationStatus.FAILED
 
 
-def test_devin_adapter_prepares_prompt_export_and_parses_atif(tmp_path: Path) -> None:
-    from datetime import UTC, datetime
-
+def test_devin_adapter_prepares_the_acp_helper_and_validates_options(tmp_path: Path) -> None:
     adapter = get_adapter("devin")
+    options = {"model": "swe-2-flash-medium", "permission_mode": "dangerous", "sandbox": True}
     prepared = adapter.prepare(
         InvocationRequest(
-            "devin",
-            "hello devin",
-            tmp_path,
-            session_id="dramatic-penalty",
-            provider_options={
-                "model": "swe-1.5",
-                "permission_mode": "dangerous",
-                "sandbox": True,
-                "respect_workspace_trust": False,
-            },
+            "devin", "hello devin", tmp_path, session_id="adaptable-blue", provider_options=options
         )
     )
-    prompt_path, export_path = prepared.cleanup_paths
-    try:
-        assert prompt_path.read_text(encoding="utf-8") == "hello devin"
-        assert prepared.argv[1:] == (
-            "-p",
-            "--prompt-file",
-            str(prompt_path),
-            "--export",
-            str(export_path),
-            "--resume",
-            "dramatic-penalty",
-            "--model",
-            "swe-1.5",
-            "--permission-mode",
-            "dangerous",
-            "--sandbox",
-            "--respect-workspace-trust",
-            "false",
-        )
-        export_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": "ATIF-v1.7",
-                    "session_id": "dramatic-penalty",
-                    "steps": [
-                        {
-                            "source": "agent",
-                            "message": "exported reply",
-                            "extra": {"generation_model": "swe-1.5"},
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-        result = adapter.parse_prepared(prepared, 0, b"stdout reply\n", b"")
-        assert (result.status, result.output, result.session_id) == (
-            InvocationStatus.SUCCEEDED,
-            "stdout reply",
-            "dramatic-penalty",
-        )
-        assert adapter.session_model("dramatic-penalty", since=datetime.now(UTC)) == "swe-1.5"
-    finally:
-        for path in prepared.cleanup_paths:
-            path.unlink(missing_ok=True)
+    assert prepared.argv[1:] == ("-I", str(Path(devin_acp.__file__)))
+    assert prepared.keep_stdin_open
+    assert prepared.stdin is not None
+    assert json.loads(prepared.stdin) == {
+        "prompt": "hello devin",
+        "cwd": str(tmp_path),
+        "session_id": "adaptable-blue",
+        "options": options,
+    }
 
-    for options, match in (
+    for bad, match in (
         ({"unknown": "x"}, "unsupported devin options"),
-        ({"permission_mode": "invalid"}, "devin permission_mode must be one of"),
-        ({"permission_mode": "autonomous"}, "requires sandbox=true"),
+        # Trust is not checked over ACP, and `-p`-only modes have no ACP equivalent.
+        ({"respect_workspace_trust": False}, "unsupported devin options"),
+        ({"permission_mode": "auto"}, "devin permission_mode must be one of"),
+        ({"sandbox": "yes"}, "sandbox must be a boolean"),
         ({"restricted_tools": True}, "restricted_tools requires a registered provider"),
     ):
         with pytest.raises(ValueError, match=match):
-            adapter.prepare(InvocationRequest("devin", "hi", tmp_path, provider_options=options))
-
-    rejected = adapter.parse(
-        0,
-        b"",
-        b"User rejected a tool call that requires confirmation in non-interactive mode",
-    )
-    assert rejected.status is InvocationStatus.BLOCKED
-    rejected_with_reply = adapter.parse(
-        0,
-        b"I could not edit the file",
-        b"User rejected a tool call that requires confirmation in non-interactive mode",
-    )
-    assert (rejected_with_reply.status, rejected_with_reply.output) == (
-        InvocationStatus.BLOCKED,
-        "I could not edit the file",
-    )
-    assert adapter.parse(1, b"", b"Not logged in. Run devin auth login").status is (
-        InvocationStatus.BLOCKED
-    )
-    assert adapter.parse(1, b"", b"Refusing to run in an untrusted workspace").status is (
-        InvocationStatus.BLOCKED
-    )
+            adapter.prepare(InvocationRequest("devin", "hi", tmp_path, provider_options=bad))
 
 
-def test_devin_exports_stay_with_their_invocations(tmp_path: Path) -> None:
+def test_devin_parse_maps_acp_stop_reasons_and_errors() -> None:
     adapter = get_adapter("devin")
-    first = adapter.prepare(InvocationRequest("devin", "first", tmp_path))
-    second = adapter.prepare(InvocationRequest("devin", "second", tmp_path))
-    try:
-        for command, session_id in ((first, "first-id"), (second, "second-id")):
-            command.cleanup_paths[-1].write_text(
-                json.dumps({"session_id": session_id, "steps": []}), encoding="utf-8"
-            )
-        assert adapter.parse_prepared(second, 0, b"same reply", b"").session_id == "second-id"
-        assert adapter.parse_prepared(first, 0, b"same reply", b"").session_id == "first-id"
-    finally:
-        for command in (first, second):
-            for path in command.cleanup_paths:
-                path.unlink(missing_ok=True)
+
+    def lines(*events: Mapping[str, object]) -> bytes:
+        return b"".join(json.dumps(event).encode() + b"\n" for event in events)
+
+    session = {"type": "session", "session_id": "adaptable-blue"}
+    done = adapter.parse(
+        0, lines(session, {"type": "result", "output": "ok", "failed": False}), b""
+    )
+    assert (done.status, done.output, done.session_id) == (
+        InvocationStatus.SUCCEEDED,
+        "ok",
+        "adaptable-blue",
+    )
+    for stop, error, status in (
+        ("cancelled", "Devin stopped: cancelled", InvocationStatus.CANCELLED),
+        ("refusal", "Devin stopped: refusal", InvocationStatus.BLOCKED),
+        ("max_tokens", "Devin stopped: max_tokens", InvocationStatus.FAILED),
+        (None, "Authentication required", InvocationStatus.BLOCKED),
+    ):
+        result = {"type": "result", "failed": True, "stop_reason": stop, "error": error}
+        parsed = adapter.parse(1, lines(session, result), b"")
+        assert (parsed.status, parsed.session_id) == (status, "adaptable-blue")
+        assert parsed.error_message == error
+    assert adapter.parse(1, lines({"type": "error", "message": "boom"}), b"").status is (
+        InvocationStatus.FAILED
+    )
+    assert adapter.parse(1, b"", b"").status is InvocationStatus.FAILED
+    # Devin that quits explains itself on stderr, not in the helper's closed-pipe error.
+    closed = {"type": "result", "failed": True, "error": devin_acp.CLOSED}
+    logged_out = adapter.parse(1, lines(closed), b"Not logged in. Run devin auth login\n")
+    assert logged_out.status is InvocationStatus.BLOCKED
+    assert logged_out.error_message == "Not logged in. Run devin auth login"
+
+
+def test_devin_activity_keeps_thinking_and_tool_inputs_private() -> None:
+    adapter = get_adapter("devin")
+    thinking = adapter.activity({"type": "thinking"})
+    assert thinking is not None and thinking.state == "reasoning"
+    tool = adapter.activity({"type": "tool", "id": "c1", "name": "exec", "status": "in_progress"})
+    assert tool is not None
+    assert (tool.kind, tool.tool_name, tool.tool_call_id, tool.state) == (
+        "tool",
+        "exec",
+        "c1",
+        "in_progress",
+    )
+    text = adapter.activity({"type": "text", "text": "partial"})
+    assert text is not None and text.message_delta and text.public_output == "partial"
+    assert adapter.event_model({"type": "model", "model": "swe-2-flash-medium"}) == (
+        "swe-2-flash-medium"
+    )

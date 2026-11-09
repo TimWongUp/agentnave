@@ -10,7 +10,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict, cast
 
 
 def timestamp() -> str:
@@ -125,6 +125,41 @@ class NativePrompt:
             "answer": self.answer,
             "closed_at": self.closed_at,
         }
+
+
+def prompt_from_event(event: dict[str, object]) -> NativePrompt | None:
+    """A helper's stdout prompt event (ADR-0057); anything else or malformed is not one."""
+    if event.get("type") not in ("agentnave_prompt", "agentnave_prompt_closed"):
+        return None
+    prompt_id, kind = event.get("prompt_id"), event.get("kind")
+    if (
+        not isinstance(prompt_id, str)
+        or len(prompt_id) != 32
+        or any(c not in "0123456789abcdef" for c in prompt_id)
+    ):
+        return None
+    if event.get("type") == "agentnave_prompt_closed":
+        return NativePrompt(prompt_id, "permission", "", status="closed")
+    if kind not in ("permission", "question"):
+        return None
+    questions = event.get("questions")
+    return NativePrompt(
+        prompt_id,
+        "question" if kind == "question" else "permission",
+        str(event.get("tool_name", ""))[:200],
+        str(event.get("tool_input", "")),
+        [
+            cast(dict[str, object], q) if isinstance(q, dict) else {}
+            for q in cast(list[object], questions)
+        ]
+        if isinstance(questions, list)
+        else [],
+    )
+
+
+def encode_answer(answer: dict[str, object]) -> bytes:
+    """One answer line for the helper's stdin."""
+    return (json.dumps({"type": "agentnave_answer", **answer}, ensure_ascii=False) + "\n").encode()
 
 
 def validate_answer(

@@ -610,9 +610,13 @@ class InvocationManager:
         record = self._record(invocation_id)
         activity = record.last_activity
         doing: str | None = None
-        if activity is not None:
-            if activity.kind == "tool" and (activity.state or "").lower() not in _ENDED_TOOL_STATES:
-                doing = f"tool:{activity.tool_name or ''}"
+        # A CLI held by a native prompt waits for the boss; it is neither thinking nor working.
+        if activity is not None and not record.prompts.pending():
+            if activity.kind == "tool":
+                # An ended call hands its result back to the model; CLIs report nothing more
+                # until the model answers, often for seconds.
+                ended = (activity.state or "").lower() in _ENDED_TOOL_STATES
+                doing = "thinking" if ended else f"tool:{activity.tool_name or ''}"
             elif activity.kind == "lifecycle" and activity.state == "reasoning":
                 doing = "thinking"
             elif activity.kind == "message":

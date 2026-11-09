@@ -40,7 +40,7 @@ Click Listen and the App reads a meeting, a private chat or a whole workspace al
 
 ### 🙋 The boss answers prompts
 
-On macOS and Linux, Claude runs interactively by default, which saves subscription quota. Permission prompts, questions and plan confirmations go to the boss, so you don't have to sit and watch. Other CLIs use their own automatic approval by default, and the App can switch any of them to full access.
+On macOS and Linux, Claude runs interactively by default, which saves subscription quota. Permission prompts, questions and plan confirmations go to the boss, so you don't have to sit and watch. So do the actions Devin's automatic approval cannot judge. Other CLIs use their own automatic approval by default, and the App can switch any of them to full access.
 
 ### 🧭 Seats and review
 
@@ -122,7 +122,7 @@ whom to ask and whether to double-check stay with the boss, who already has the 
 | Runs the rounds of a meeting             | Who answers, in what order, how well   |
 
 By default AgentNave runs a dispatched CLI with its own automatic approval
-reviewer, or without approvals where it has none. When Claude runs interactively, the boss answers the prompts
+reviewer, or without approvals where it has none. When Claude runs interactively, and whenever Devin runs, the boss answers the prompts
 that still need one. The App can switch a CLI to full access. AgentNave has no
 command line for people: you just talk to the boss.
 
