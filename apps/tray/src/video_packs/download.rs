@@ -146,13 +146,11 @@ fn urls(tier: &str) -> Vec<String> {
     {
         return crate::proxy::expand_urls(&[url]);
     }
-    let root = "https://github.com/TimWongUp/agentnave/releases";
-    let name = format!("agentnave-video-{tier}.tar.gz");
-    let direct = [
-        format!("{root}/latest/download/{name}"),
-        format!("{root}/download/v{}/{name}", env!("CARGO_PKG_VERSION")),
-    ];
-    crate::proxy::expand_urls(&direct)
+    // The packs live on one fixed release so app releases do not have to carry them again.
+    let url = format!(
+        "https://github.com/TimWongUp/agentnave/releases/download/v1.4.0/agentnave-video-{tier}.tar.gz"
+    );
+    crate::proxy::expand_urls(&[url])
 }
 
 fn open_response(
