@@ -2430,6 +2430,14 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
         read["document"]["effective_apps"],
         json!({"claude": "split", "grok": "split"})
     );
+    // Custom text with retired generated wording is read back as it is written to the rules.
+    let document = json!({"version": 1, "preset": "off", "custom": "用户正文，每次最多等十分钟"});
+    let body = serde_json::to_vec(&document).unwrap();
+    let saved = reader.request("POST", "/app/orchestration", Some("1"), &body);
+    assert_eq!(saved.status, 200);
+    let read = reader.request("GET", "/app/orchestration", None, b"");
+    let read: Value = serde_json::from_slice(&read.body).unwrap();
+    assert_eq!(read["document"]["custom"], "用户正文，每次最多等 270 秒");
 }
 
 #[cfg(target_os = "macos")]
