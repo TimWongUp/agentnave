@@ -25,7 +25,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
-from agentnave.native_prompts import NativePrompt
+from agentnave.native_prompts import NativePrompt, encode_answer, prompt_from_event
 from agentnave.native_sessions import assistant_model
 
 # CodeBuddy leaves permission_denials empty and reports a denial only in the tool result.
@@ -191,34 +191,10 @@ class ClaudeAdapter(AdapterHooks):
         )
 
     def prompt_event(self, event: dict[str, object]) -> NativePrompt | None:
-        if event.get("type") not in ("agentnave_prompt", "agentnave_prompt_closed"):
-            return None
-        prompt_id, kind = event.get("prompt_id"), event.get("kind")
-        if (
-            not isinstance(prompt_id, str)
-            or len(prompt_id) != 32
-            or any(c not in "0123456789abcdef" for c in prompt_id)
-        ):
-            return None
-        if event.get("type") == "agentnave_prompt_closed":
-            return NativePrompt(prompt_id, "permission", "", status="closed")
-        if kind not in ("permission", "question"):
-            return None
-        questions = event.get("questions")
-        return NativePrompt(
-            prompt_id,
-            "question" if kind == "question" else "permission",
-            str(event.get("tool_name", ""))[:200],
-            str(event.get("tool_input", "")),
-            [object_dict(q) for q in cast(list[object], questions)]
-            if isinstance(questions, list)
-            else [],
-        )
+        return prompt_from_event(event)
 
     def encode_prompt_answer(self, answer: dict[str, object]) -> bytes:
-        return (
-            json.dumps({"type": "agentnave_answer", **answer}, ensure_ascii=False) + "\n"
-        ).encode()
+        return encode_answer(answer)
 
     def event_model(self, event: dict[str, object]) -> str | None:
         return assistant_model(event)

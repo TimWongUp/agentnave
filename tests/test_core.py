@@ -1566,31 +1566,119 @@ async def test_health_survives_retry_stall_and_success_clears_it(
 
 
 @pytest.mark.asyncio
-async def test_devin_invocation_reads_prompt_file_and_exports_atif(tmp_path: Path) -> None:
-    fake_devin = (
-        "import json, pathlib, sys; "
-        "args = sys.argv[1:]; "
-        "prompt = pathlib.Path(args[args.index('--prompt-file') + 1]).read_text('utf-8'); "
-        "export = pathlib.Path(args[args.index('--export') + 1]); "
-        "export.write_text(json.dumps({"
-        "'schema_version': 'ATIF-v1.7', "
-        "'session_id': 'dramatic-penalty', "
-        "'steps': [{'source': 'agent', 'message': prompt.splitlines()[-1], "
-        "'extra': {'generation_model': 'swe-1.5'}}]"
-        "}), 'utf-8'); "
-        "print(prompt.splitlines()[-1])"
+async def test_devin_acp_selects_options_asks_boss_and_resumes_without_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the real ACP bridge over a fake `devin acp`, including a permission request."""
+    script = tmp_path / ("devin.py" if os.name == "nt" else "devin")
+    script.write_text(
+        f"#!{sys.executable}\n"
+        + r"""
+import json, sys
+assert sys.argv[1:] == ['acp']
+config = {'model': 'swe-2-flash-medium', 'mode': 'accept-edits'}
+choices = {'model': ['swe-2-flash-medium', 'swe-1-6-slow'], 'mode': ['accept-edits', 'bypass']}
+def send(value):
+    print(json.dumps(value), flush=True)
+def options():
+    return [{'id': k, 'currentValue': v, 'options': [{'value': c} for c in choices[k]]}
+            for k, v in config.items()]
+def update(session, value):
+    send({'jsonrpc': '2.0', 'method': 'session/update',
+          'params': {'sessionId': session, 'update': value}})
+for line in sys.stdin:
+    m = json.loads(line)
+    method, p = m.get('method'), m.get('params', {})
+    if method is None:
+        continue
+    result = {}
+    if method == 'initialize':
+        result = {'protocolVersion': 1}
+    elif method == 'session/new':
+        result = {'sessionId': 'fake-session', 'configOptions': options()}
+    elif method == 'session/load':
+        # History replays before the load reply and must not count as this turn.
+        update(p['sessionId'], {'sessionUpdate': 'agent_message_chunk',
+                                'content': {'type': 'text', 'text': 'old reply'}})
+        result = {'configOptions': options()}
+    elif method == 'session/set_config_option':
+        if p['value'] not in choices[p['configId']]:
+            send({'jsonrpc': '2.0', 'id': m['id'],
+                  'error': {'code': -32602, 'message': 'Invalid params', 'data': 'Invalid value'}})
+            continue
+        config[p['configId']] = p['value']
+        result = {'configOptions': options()}
+    elif method == 'session/prompt':
+        session = p['sessionId']
+        update(session, {'sessionUpdate': 'agent_thought_chunk',
+                         'content': {'type': 'text', 'text': 'private thought'}})
+        if 'continue' in p['prompt'][0]['text']:
+            update(session, {'sessionUpdate': 'agent_message_chunk',
+                             'content': {'type': 'text', 'text': 'resumed'}})
+        else:
+            assert config == {'model': 'swe-1-6-slow', 'mode': 'bypass'}
+            update(session, {'sessionUpdate': 'agent_message_chunk',
+                             'content': {'type': 'text', 'text': 'before the tool'}})
+            update(session, {'sessionUpdate': 'tool_call', 'toolCallId': 'c1',
+                             'title': 'Ran echo secret-title', 'kind': 'execute',
+                             'rawInput': {'command': 'echo hi'},
+                             '_meta': {'cognition.ai/inferenceToolName': 'exec'}})
+            send({'jsonrpc': '2.0', 'id': 'perm-1', 'method': 'session/request_permission',
+                  'params': {'sessionId': session, 'toolCall': {'toolCallId': 'c1'},
+                             'options': [{'optionId': 'once', 'kind': 'allow_once'},
+                                         {'optionId': 'always', 'kind': 'allow_always'},
+                                         {'optionId': 'no', 'kind': 'reject_once'}]}})
+            reply = json.loads(sys.stdin.readline())
+            assert reply['id'] == 'perm-1'
+            chosen = reply['result']['outcome']['optionId']
+            update(session, {'sessionUpdate': 'tool_call_update', 'toolCallId': 'c1',
+                             'status': 'completed'})
+            update(session, {'sessionUpdate': 'agent_message_chunk',
+                             'content': {'type': 'text', 'text': f'answer {chosen}'}})
+        result = {'stopReason': 'end_turn'}
+    send({'jsonrpc': '2.0', 'id': m['id'], 'result': result})
+""",
+        encoding="utf-8",
     )
+    script.chmod(0o755)
+    if os.name == "nt":
+        (tmp_path / "devin.cmd").write_text(f'@"{sys.executable}" "%~dp0devin.py" %*\n')
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
     manager = InvocationManager()
-    request = InvocationRequest("devin", "verify fake devin", tmp_path)
-    prepared = manager.prepare(request)
-    prepared = replace(prepared, argv=(sys.executable, "-c", fake_devin, *prepared.argv[1:]))
     try:
-        result = await manager.wait(manager.start(request, prepared=prepared), 10)
-        assert result is not None
-        assert result.status is InvocationStatus.SUCCEEDED
-        assert result.output == "verify fake devin"
-        assert result.session_id == "dramatic-penalty"
-        assert result.reported_model == "swe-1.5"
-        assert all(not path.exists() for path in prepared.cleanup_paths)
+        options = {"model": "swe-1-6-slow", "permission_mode": "dangerous"}
+        invocation = manager.start(
+            InvocationRequest("devin", "use a tool", tmp_path, provider_options=options)
+        )
+        prompt = await manager.wait_for_update(invocation, 10)
+        assert isinstance(prompt, NativePrompt)
+        assert (prompt.kind, prompt.tool_name) == ("permission", "exec")
+        assert "echo hi" in prompt.tool_input and "secret-title" not in prompt.tool_input
+        await manager.answer_prompt(invocation, prompt.prompt_id, "allow")
+        result = await manager.wait(invocation, 10)
+        assert result is not None and result.status is InvocationStatus.SUCCEEDED
+        assert result.output == "answer once"
+        assert (result.session_id, result.reported_model) == ("fake-session", "swe-1-6-slow")
+
+        resumed = await manager.wait(
+            manager.start(
+                InvocationRequest("devin", "continue", tmp_path, session_id="fake-session")
+            ),
+            10,
+        )
+        assert resumed is not None and resumed.status is InvocationStatus.SUCCEEDED
+        assert (resumed.output, resumed.session_id) == ("resumed", "fake-session")
+
+        unavailable = await manager.wait(
+            manager.start(
+                InvocationRequest(
+                    "devin", "hi", tmp_path, provider_options={"model": "claude-sonnet-5-5"}
+                )
+            ),
+            10,
+        )
+        assert unavailable is not None and unavailable.status is InvocationStatus.FAILED
+        assert unavailable.error is not None
+        assert "available: swe-2-flash-medium, swe-1-6-slow" in unavailable.error.message
     finally:
         await manager.shutdown()
