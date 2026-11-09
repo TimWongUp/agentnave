@@ -202,6 +202,9 @@ def test_screen_applies_agy_edits_and_reads_only_the_bottom_lines() -> None:
     assert state(idle + "\nesc to cancel") == "busy"
     assert state(idle + "\n  ↑/↓ Navigate · enter Confirm") == "menu"
     assert state("Sign in to continue") == "unknown"
+    # A running background task draws its line and a rule between the box and the footer.
+    tasks = f"\n● [22:43:06] sleep 30 running\n{rule}\n? for shortcuts   model · 1 task(s) · /tasks"
+    assert state(f"{rule}\n>\n{rule}{tasks}") == "idle"
 
 
 def test_stalled_turns_block_on_limits_but_wait_for_background_stop() -> None:
@@ -221,3 +224,52 @@ def test_stalled_turns_block_on_limits_but_wait_for_background_stop() -> None:
     assert not run().stalled("busy", 3600, "")
     assert not run().stalled("unknown", 30, "") and run().stalled("unknown", 61, "")
     assert run().stalled("menu", 3, "")
+
+
+def test_background_calls_stay_open_and_the_footer_tells_who_works(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Rows as agy 1.5.3 writes them for a command it moves to the background.
+    turn = Turn("c", expected="task", user_seen=True)
+    turn.row(
+        {
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "source": "MODEL",
+            "tool_calls": [{"name": "run_command"}],
+        }
+    )
+    turn.row(
+        {
+            "step_index": 3,
+            "type": "GENERIC",
+            "source": "MODEL",
+            "status": "RUNNING",
+            "content": "Tool is running as a background task with task id: c/task-3\n",
+        }
+    )
+    turn.row({"step_index": 5, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": "waiting"})
+    turn.watch("idle")
+    turn.watch("idle")
+    turn.watch("busy")
+    turn.row(
+        {
+            "step_index": 7,
+            "type": "SYSTEM_MESSAGE",
+            "source": "SYSTEM",
+            "content": 'sender=c/task-3 content=Task id "c/task-3" finished with result:',
+        }
+    )
+    turn.watch("idle")
+    steps = [
+        cast(dict[str, object], json.loads(line)["step_update"])
+        for line in capsys.readouterr().out.splitlines()
+    ]
+    shown = [(step["step_type"], step["state"], step.get("tool_name")) for step in steps]
+    assert shown == [
+        ("tool", "ACTIVE", "run_command"),
+        ("agent_response", "DONE", None),
+        ("tool", "ACTIVE", "run_command"),
+        ("thinking", "ACTIVE", None),
+        ("tool", "DONE", None),
+    ]
