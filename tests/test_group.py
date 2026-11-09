@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from agentnave.adapters import codex
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.group import Groups, GroupSeat
@@ -397,7 +398,9 @@ async def test_single_seat_cancel_lets_serial_round_continue(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_invalid_rounds_and_groups_fail_before_launch(tmp_path: Path) -> None:
+async def test_invalid_rounds_and_groups_fail_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     groups, manager, group_id = open_group(tmp_path, "a", "b")
     for seats, instructions, message in (
         ([], {}, "non-empty"),
@@ -419,6 +422,12 @@ async def test_invalid_rounds_and_groups_fail_before_launch(tmp_path: Path) -> N
     seat_dir.mkdir()
     write_restricted_profile(seat_dir)
     groups.open(tmp_path, [GroupSeat("g", "antigravity", {"restricted_tools": True}, seat_dir)])
+    # A chosen Codex install that is missing fails at launch, not when the meeting opens.
+    monkeypatch.setattr(codex, "_source", lambda: "desktop")
+    monkeypatch.setattr(codex, "_bundled_paths", lambda: ())
+    groups.open(tmp_path, [GroupSeat("x", "codex", {}, tmp_path)])
+    with pytest.raises(ValueError):
+        groups.open(tmp_path, [GroupSeat("x", "codex", {"unknown": True}, tmp_path)])
 
 
 @pytest.mark.asyncio

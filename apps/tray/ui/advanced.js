@@ -525,7 +525,8 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
   }, options.map(([v, text, off]) => el("option", { value: v, selected: v === value, disabled: Boolean(off) }, text)));
 }
 
-const seatModels = (provider) => listedPool(provider) ? [...listedPool(provider)] : getAllModelIds(provider);
+const seatModels = (provider) => listedPool(provider)
+  ? listedPool(provider).filter((id) => !hiddenModel(provider, id)) : getAllModelIds(provider);
 
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
 function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`)) {

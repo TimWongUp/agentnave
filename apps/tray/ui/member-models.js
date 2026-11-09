@@ -73,8 +73,10 @@ function getAllModelIds(provider) {
   for (const selection of Object.values(currentDoc.modes || {})) {
     for (const id of selection?.[provider]?.models || []) ids.add(id);
   }
-  return [...ids].filter((id) => typeof id === "string" && id.trim());
+  return [...ids].filter((id) => typeof id === "string" && id.trim() && !hiddenModel(provider, id));
 }
+
+const hiddenModel = (provider, id) => provider === "devin" && /^fusion-/i.test(id);
 
 // A scene's effort for one model: its override, else the shared level; "" follows the CLI.
 function sceneEffort(scene, provider, modelId) {
@@ -93,7 +95,7 @@ function slot(scene, provider) {
     : Boolean(detected[provider]?.installed || currentDoc.defaults?.[scene]?.[provider]);
   const model = (selection ? selection.default : currentDoc.defaults?.[scene]?.[provider]) || "";
   const pool = hasPool(provider) ? listedPool(provider) : selection?.models;
-  const allowed = pool?.length ? [...pool] : null;
+  const allowed = hasPool(provider) && Array.isArray(pool) ? [...pool] : pool?.length ? [...pool] : null;
   const effort = enabled ? sceneEffort(scene, provider, model || nativeDefault(provider).model) : "";
   return { enabled, model: enabled ? model : "", allowed, effort };
 }

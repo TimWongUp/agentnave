@@ -251,7 +251,10 @@ MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符�
 | pi | JSON 定点编辑 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置根目录的 `skills` | true |
 | deepseek | YAML 补丁列表项 | `${DSH_HOME:-~/.dsh}/cordis.patch.yml`，`- insert:` 插入 `id: agentnave` 的 `@deepseek-ai/dsh-mcp-client` | 同配置根目录的 `skills` | true |
 | hermes | YAML 定点块编辑 | 活动 profile 的 `config.yaml`，未启用 profile 时为 `${HERMES_HOME:-~/.hermes}/config.yaml` | 同活动配置根目录的 `skills` | true |
+| devin（CLI／桌面端） | JSON 定点编辑 | `~/.config/devin/mcp_config.json`（Windows：`%APPDATA%\\devin\\mcp_config.json`） | 同配置根目录的 `skills` | true |
 | zcode | JSON/JSONC 定点编辑 | `~/.zcode/cli/config.json`，`mcp.servers` | `~/.zcode/skills` | false |
+
+Devin 桌面端可能导入 `~/.claude.json` 中的 MCP 服务。接入后用 `devin mcp list` 核对 `agentnave` 的来源是 Devin 自己的 `mcp_config.json`，重载桌面端后在 MCP 页面核对同一来源，再调用 `list_members` 确认 `host` 为 `devin`；仅显示 Connected 不代表宿主身份正确。
 
 layers 返回用户、覆盖和已知项目层。移除删除所有用户级定义，逐文件备份并在回执列出；不会在移除高层后悄然退回另一用户层。项目级只读检查限于 App 启动目录及其祖先，实际宿主的其他项目目录仍须手动核对。多文件不是原子整体，冲突时保留外部新内容，依据回执重试余下层。
 
@@ -433,7 +436,7 @@ configuration directories.
 | Antigravity | `~/.gemini/config/skills` |
 | Hermes | `~/.hermes/skills` |
 | ZCode | `~/.zcode/skills` |
-| Devin CLI | `~/.config/devin/skills`（Windows：`%APPDATA%\\devin\\skills`） |
+| Devin CLI／桌面端 | `~/.config/devin/skills`（Windows：`%APPDATA%\\devin\\skills`） |
 | Pi | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` |
 | DeepSeek Harness | `${DSH_HOME:-~/.dsh}/skills` |
 

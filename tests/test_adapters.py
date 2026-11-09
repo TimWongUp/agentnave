@@ -354,6 +354,35 @@ def test_codex_adapter_prefers_executable_desktop_bundle(
     assert not CodexAdapter().is_installed()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable fixtures")
+def test_codex_source_selects_only_requested_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(codex.sys, "platform", "darwin")
+    desktop = _fake_executable(tmp_path / "Codex.app" / "Contents" / "Resources", "codex")
+    standalone = _fake_executable(tmp_path / "bin", "codex")
+    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(desktop),))
+    monkeypatch.setenv("PATH", str(desktop.parent) + os.pathsep + str(standalone.parent))
+    monkeypatch.setattr(base, "PROVIDER_BIN_DIRS", ())
+    source = None
+    monkeypatch.setattr(codex, "_source", lambda: source)
+
+    adapter = CodexAdapter()
+    assert adapter.prepare(request(tmp_path, "codex")).argv[0] == str(desktop)
+    source = "standalone"
+    assert adapter.prepare(request(tmp_path, "codex")).argv[0] == str(standalone)
+    source = "desktop"
+    assert adapter.prepare(request(tmp_path, "codex")).argv[0] == str(desktop)
+
+    desktop.unlink()
+    with pytest.raises(FileNotFoundError, match="桌面端内置 CLI 不可用"):
+        adapter.prepare(request(tmp_path, "codex"))
+    source = "standalone"
+    standalone.unlink()
+    with pytest.raises(FileNotFoundError, match="独立 CLI 不可用"):
+        adapter.prepare(request(tmp_path, "codex"))
+
+
 def test_codex_adapter_uses_path_outside_macos(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

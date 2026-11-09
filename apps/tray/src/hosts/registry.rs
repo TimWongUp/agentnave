@@ -217,6 +217,7 @@ impl Hosts {
             }
         };
         let mut hosts: Vec<Host> = specs.into_iter().map(&build).collect();
+        // The readers of each row's file show on its card, not in its name (ADR-0071).
         let rows = split::rows(&self.context, &hosts, &self.codex_homes);
         hosts.extend(rows.into_iter().map(&build));
         hosts

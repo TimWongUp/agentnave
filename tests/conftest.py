@@ -11,13 +11,19 @@ from mcp.server.mcpserver.context import Context
 from mcp_types import CallToolResult, InputRequiredResult, TextContent
 
 from agentnave import mcp_server, members
-from agentnave.adapters import base
+from agentnave.adapters import base, codex
 
 
 @pytest.fixture(autouse=True)
 def no_common_provider_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
     # Never let a test fall back to a real provider CLI installed on this machine.
     monkeypatch.setattr(base, "PROVIDER_BIN_DIRS", ())
+
+
+@pytest.fixture(autouse=True)
+def codex_auto_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The machine's saved Codex source must not choose which CLI a test finds.
+    monkeypatch.setattr(codex, "_source", lambda: None)
 
 
 @pytest.fixture(autouse=True)

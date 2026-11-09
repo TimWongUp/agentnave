@@ -4,7 +4,7 @@ function slotRows(provider, scene, split) {
   const key = `${provider}/${scene || "both"}`;
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
-  if (native.model && !all.includes(native.model)) all.unshift(native.model);
+  if (native.model && !hiddenModel(provider, native.model) && !all.includes(native.model)) all.unshift(native.model);
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
   const tip = scene === "discussion" ? null : settingTip(L("单独干活只用于没开编排的 boss，开会始终按这里设置。分开设置可以给两者选不同的默认模型和档位，或只停用其中一个。", "Solo tasks only serve bosses without orchestration; meetings always use these settings. Separate lets the two use different default models and efforts, or turns off just one."));
   // The last scene keeps the tip beside it when the narrow column wraps the label.
@@ -62,15 +62,18 @@ function slotRows(provider, scene, split) {
 
 // What the pool row reads: scenes of an older file can still hold lists of their own.
 function poolSummary(provider, all, pool) {
+  const visible = (list) => list?.filter((id) => !hiddenModel(provider, id));
   const count = (list) => (list ? L(`${list.length} 个`, `${list.length}`) : L(`全部 ${all.length} 个`, `All ${all.length}`));
   const scenes = SCENE_IDS.filter((s) => slot(s, provider).enabled);
-  const lists = scenes.map((s) => slot(s, provider).allowed);
+  const lists = scenes.map((s) => visible(slot(s, provider).allowed));
   if (!hasPool(provider) && lists.length > 1 && !sameJson(lists[0], lists[1])) {
     return scenes.map((s, i) => `${SCENES[s]} ${count(lists[i])}`).join(L("、", ", "));
   }
-  if (!pool) return count(null);
-  const names = pool.slice(0, 3).join(L("、", ", "));
-  return L(`${pool.length} 个：${names}${pool.length > 3 ? " 等" : ""}`, `${pool.length}: ${names}${pool.length > 3 ? ", etc." : ""}`);
+  if (!pool) return L("不限模型", "Any model");
+  const shown = visible(pool);
+  if (!shown.length) return L("未选择", "None selected");
+  const names = shown.slice(0, 3).join(L("、", ", "));
+  return L(`${shown.length} 个：${names}${shown.length > 3 ? " 等" : ""}`, `${shown.length}: ${names}${shown.length > 3 ? ", etc." : ""}`);
 }
 
 // One list per CLI; every scene and seat of the CLI picks its model from it.
@@ -78,8 +81,10 @@ function poolRows(provider) {
   const key = `${provider}/pool`;
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
-  if (native.model && !all.includes(native.model)) all.unshift(native.model);
+  if (native.model && !hiddenModel(provider, native.model) && !all.includes(native.model)) all.unshift(native.model);
   const pool = shownPool(provider);
+  // Hidden models neither count nor survive an edit of the list.
+  const chosen = pool?.filter((id) => !hiddenModel(provider, id));
   const open = pickerOpen === key;
   const rows = [el("div", { className: "member-row" },
     el("span", { className: "member-scene" }, L("可用模型", "Available models")),
@@ -93,27 +98,37 @@ function poolRows(provider) {
     }, el("span", {}, poolSummary(provider, all, pool)), el("span", { className: "member-muted" }, open ? "▴" : "▾")))];
   if (open) {
     const toggle = (m, on) => {
-      const list = pool || [];
+      const list = chosen || [];
       const allowed = on ? [...list, m] : list.filter((x) => x !== m);
-      if (allowed.length) writePool(provider, allowed);
-      else renderCards();
+      // Only adding is refused, so an older list above the limit can still shrink.
+      if (on && allowed.length > MAX_SELECTED_MODELS) {
+        showNotice(L(`最多选 ${MAX_SELECTED_MODELS} 个模型`, `Select at most ${MAX_SELECTED_MODELS} models`), true);
+        renderCards();
+        return;
+      }
+      writePool(provider, allowed);
     };
     const defaults = SCENE_IDS.map((s) => slot(s, provider).model);
     rows.push(el("div", { className: "member-picker" },
-      el("label", { className: "member-option member-option-all" },
-        el("input", {
-          type: "checkbox",
-          dataset: { focusKey: `${key}/all` },
-          checked: !pool,
-          disabled: !all.length,
-          onChange: (e) => writePool(provider, e.target.checked ? null : [...all]),
-        }), textNode(L("全部模型（以后新出的也算）", "All models (including future releases)"))),
+      el("div", { className: "member-picker-actions" },
+        el("button", { type: "button", dataset: { focusKey: `${key}/all` }, disabled: !all.length,
+          onClick: () => {
+            if (all.length > MAX_SELECTED_MODELS) {
+              showNotice(L(`共有 ${all.length} 个模型，最多选 ${MAX_SELECTED_MODELS} 个`, `${all.length} models available; select at most ${MAX_SELECTED_MODELS}`), true);
+              return;
+            }
+            writePool(provider, all);
+          },
+        }, L("全选", "Select all")),
+        el("button", { type: "button", dataset: { focusKey: `${key}/none` },
+          onClick: () => writePool(provider, []),
+        }, L("全不选", "Clear all")),
+        el("span", {}, L(`已选 ${chosen?.length || 0}/${MAX_SELECTED_MODELS}`, `Selected ${chosen?.length || 0}/${MAX_SELECTED_MODELS}`))),
       ...all.map((m) => el("label", { className: "member-option" },
         el("input", {
           type: "checkbox",
           dataset: { focusKey: `${key}/allow/${m}` },
-          checked: !pool || pool.includes(m),
-          disabled: !pool,
+          checked: Boolean(pool?.includes(m)),
           onChange: (e) => toggle(m, e.target.checked),
         }),
         el("span", { className: "member-option-id" }, m),
@@ -209,6 +224,7 @@ function renderCards() {
           el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove")))));
     }
     const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
+    if (provider === "codex") card.appendChild(renderCodexSource());
     for (const row of [...poolRows(provider), ...rows, ...poolConflicts(provider)]) card.appendChild(row);
     const runtime = renderClaudeInteractive(provider);
     if (runtime) card.appendChild(runtime);
@@ -253,6 +269,8 @@ async function saveMembers() {
   feedback.className = "save-feedback";
 
   const saving = JSON.stringify(confirmScenes());
+  const sourceChanged = currentDoc.clis?.codex?.executable_source !== JSON.parse(savedSnapshot || "{}").clis?.codex?.executable_source;
+  let saved = false;
 
   try {
     if (saving !== savedSnapshot) {
@@ -266,6 +284,7 @@ async function saveMembers() {
     feedback.textContent = L("设置已保存 · 参数是否有效以 boss 读取时的校验为准", "Settings saved · Option validity is verified when read by the boss");
     feedback.className = "save-feedback success";
     showNotice(L("设置已保存", "Settings saved"));
+    saved = true;
   } catch (err) {
     feedback.textContent = L(`保存失败: ${err.message}`, `Save failed: ${err.message}`);
     feedback.className = "save-feedback error";
@@ -274,6 +293,7 @@ async function saveMembers() {
   } finally {
     busy = false;
     updateControls();
+    if (saved && sourceChanged) void refreshDetection(true);
   }
 }
 

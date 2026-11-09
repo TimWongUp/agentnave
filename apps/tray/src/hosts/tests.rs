@@ -533,6 +533,7 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 "antigravity",
                 "pi",
                 "deepseek",
+                "devin",
                 "hermes"
             ]
             .contains(&id)
@@ -2265,6 +2266,35 @@ fn connection_receipts_belong_to_the_config_row_that_started_them() {
     hosts.remember_reloads();
     assert!(hosts.settings[extra]["reload_confirmed"]["token"].is_string());
     assert!(hosts.settings["codex"]["reload_confirmed"].is_null());
+}
+
+#[test]
+fn claude_desktop_gets_a_row_only_for_a_file_of_its_own() {
+    let (_temp, mut hosts) = fixture();
+    fs::create_dir_all(hosts.context.applications[0].join("Claude.app")).unwrap();
+    let desktop_row = |hosts: &Hosts| hosts.registry().iter().any(|h| h.id == "claude-desktop");
+    assert!(!desktop_row(&hosts));
+
+    let elsewhere = hosts.context.home.join("claude-work");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        elsewhere.display().to_string(),
+    )])));
+    assert_eq!(host(&hosts, "claude").label, "Claude");
+    assert_eq!(host(&hosts, "claude-desktop").label, "Claude 桌面");
+
+    // Naming the default folder still moves Claude Code's file away from the desktop's.
+    let named = hosts.context.home.join(".claude");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        named.display().to_string(),
+    )])));
+    assert_eq!(host(&hosts, "claude").config, named.join(".claude.json"));
+    assert_eq!(host(&hosts, "claude").label, "Claude");
+    assert_eq!(
+        host(&hosts, "claude-desktop").config,
+        hosts.context.home.join(".claude.json")
+    );
 }
 
 #[cfg(not(windows))]

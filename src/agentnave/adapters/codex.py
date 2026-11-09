@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import sys
 from datetime import datetime
 
@@ -19,6 +20,7 @@ from agentnave.adapters.base import (
     object_dict,
     parse_json_lines,
     parse_json_object,
+    provider_bin_dirs,
     resolve_executable,
     restricted_options,
 )
@@ -78,7 +80,44 @@ def _skip_oversized_line(head: bytes) -> bool:
     )
 
 
-def _codex_executable() -> str:
+def _source() -> str | None:
+    # Import here because members validates providers through the adapter registry.
+    from agentnave.members import read_members
+
+    document = read_members()
+    cli = document.clis.get("codex") if document else None
+    return cli.executable_source if cli else None
+
+
+def _standalone_executable() -> str | None:
+    bundled = {os.path.normcase(os.path.realpath(path)) for path in _bundled_paths()}
+    directories = os.get_exec_path() + provider_bin_dirs()
+    for directory in directories:
+        found = shutil.which("codex", path=directory)
+        if found and not _is_desktop_path(found, bundled):
+            return os.path.abspath(found)
+    return None
+
+
+def _is_desktop_path(path: str, bundled: set[str]) -> bool:
+    real = os.path.normcase(os.path.realpath(path))
+    normal = real.replace("\\", "/").lower()
+    return real in bundled or any(
+        marker in normal
+        for marker in (
+            ".app/contents/",
+            "/openai/chatgpt/bin/",
+            "/openai/codex/bin/",
+            "/.codex/plugins/.plugin-appserver/",
+        )
+    )
+
+
+def _codex_executable(source: str | None = None) -> str:
+    if source == "desktop":
+        return next((found for path in _bundled_paths() if (found := shutil.which(path))), "codex")
+    if source == "standalone":
+        return _standalone_executable() or "codex"
     # Desktop bundles stay ahead of PATH and the common install directories.
     return resolve_executable("codex", _bundled_paths())
 
@@ -117,7 +156,7 @@ class CodexAdapter(AdapterHooks):
     _sandboxes = ("read-only", "workspace-write", "danger-full-access")
 
     def executable_path(self) -> str:
-        return _codex_executable()
+        return _codex_executable(_source())
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]:
         unknown = sorted(set(request.provider_options) - self._options)
@@ -164,7 +203,14 @@ class CodexAdapter(AdapterHooks):
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request, discussion = restricted_options(request, self)
-        argv = [self.executable_path(), "exec"]
+        # Options are checked first, so a missing install never hides an invalid request.
+        options = self.option_args(request)
+        source = _source()
+        executable = _codex_executable(source)
+        if source is not None and executable == "codex":
+            name = "桌面端内置" if source == "desktop" else "独立"
+            raise FileNotFoundError(f"指定的 Codex {name} CLI 不可用；请在员工设置中更换来源")
+        argv = [executable, "exec"]
         if request.session_id is not None:
             argv.append("resume")
         argv.append("--json")
@@ -183,7 +229,7 @@ class CodexAdapter(AdapterHooks):
             ):
                 argv.extend(("--config", setting))
 
-        argv.extend(self.option_args(request))
+        argv.extend(options)
 
         if request.session_id is not None:
             argv.append(request.session_id)

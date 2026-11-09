@@ -58,10 +58,12 @@
 
 | 角色                              | 支持                                                                                                                                |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **boss**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Devin CLI、Hermes、Grok Bot（仅 Linux） |
+| **boss**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Devin CLI／桌面端、Hermes、Grok Bot（仅 Linux） |
 | **员工**（被派活的 CLI）          | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode、Devin CLI                         |
 
 宿主不会把单个任务派给自己的 CLI，但会议里可以有它的席位。
+
+Codex 员工同时检测到桌面端内置 CLI 和独立 CLI 时，可在「员工」页选择运行来源。默认「自动」优先使用内置版；固定选择的安装不可用时，派发会报错，不会改用另一份。
 
 Grok Bot 只能在 Linux 上接入，不支持 macOS 和 Windows App，也看不到它的模型和会话记录，详见[无头 Linux 宿主指引](docs/linux-headless.md)。
 

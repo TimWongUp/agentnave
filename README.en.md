@@ -58,10 +58,12 @@ Connecting a host installs the Skills, and an employee has to be confirmed befor
 
 | Role                                                | Supported                                                                                                                                     |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Devin CLI, Hermes, Grok Bot (Linux only) |
+| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Devin CLI / desktop app, Hermes, Grok Bot (Linux only) |
 | **Employee** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode, Devin CLI                                   |
 
 A host never sends a single task to its own CLI, though its CLI can take a seat in a meeting.
+
+When both a desktop bundled and a standalone Codex CLI are detected, select the employee's CLI source on the Employees page. Automatic uses the bundled CLI first. If a selected installation is unavailable, dispatch fails instead of switching to the other one.
 
 Grok Bot connects only on Linux, not through the macOS or Windows App, and its model and sessions can't be read back. See the [headless Linux host guide](docs/linux-headless.md) (in Chinese).
 
