@@ -308,7 +308,7 @@
     const summaryOff = !config.summary.enabled;
     const parts = [
       row(L("使用摘要模型", "Use summary model"), enabled),
-      row(levelLabel, choiceButtons(levelLabel, config.summary.level, [
+      row(h("span", {}, levelLabel, settingTip(L("朗读前让摘要模型把回答缩短：简短约一句话，标准三句以内，详细六句以内；短消息不扩写。", "Before reading aloud, the summary model shortens the answer: Short is about one sentence, Standard up to three, Detailed up to six; short messages are not padded."))), choiceButtons(levelLabel, config.summary.level, [
         ["short", L("简短", "Short")],
         ["standard", L("标准", "Standard")],
         ["detailed", L("详细", "Detailed")],

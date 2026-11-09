@@ -142,7 +142,7 @@
             ], off),
           ),
           h(`div.alerts-row${off ? ".disabled" : ""}`, {},
-            h("span.alerts-label", {}, thresholdLabel),
+            h("span.alerts-label", {}, thresholdLabel, settingTip(L("任务或会议做完时，耗时超过这个时长才提醒，短任务不打扰；失败或受阻是否提醒看下一项。", "When a task or meeting finishes, notify only if it ran longer than this; failures and blocks follow the next setting."))),
             segment(thresholdLabel, "threshold", [
               [0, L("不限", "Any")],
               [10, L("超过 10 分钟", "Over 10 min")],

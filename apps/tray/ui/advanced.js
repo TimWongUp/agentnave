@@ -258,7 +258,7 @@ function setSharedSeat(group, seat) {
 }
 
 // Joining the difficulties again keeps the hard seat, or the easy one when hard is unset.
-function setSplit(group, on) {
+function setRoleSplit(group, on) {
   if (on) {
     splitOpened.add(group);
     renderOrchestration();
@@ -321,9 +321,10 @@ function roleGroup(entry, doc) {
       on && !general && el("label", { className: "orchestration-switch" },
         el("input", {
           type: "checkbox", className: "switch-input", dataset: { focusKey: `${group}/split` }, checked: split,
-          onChange: (e) => setSplit(group, e.target.checked),
+          onChange: (e) => setRoleSplit(group, e.target.checked),
         }),
-        el("span", {}, AN.L("区分难度", "By difficulty")))),
+        el("span", {}, AN.L("区分难度", "By difficulty")),
+        settingTip(AN.L("关闭时这个专项的简单、困难两档共用一个模型；打开后两档各选一个。", "Off: easy and hard share one model for this specialist. On: pick a model for each."), true))),
     ...seats);
 }
 
@@ -367,7 +368,8 @@ function renderOrchestration() {
     const { role, difficulty, name } = IMAGE_SEAT;
     roles.replaceChildren(...(preset === "off" || !roleCatalog().length ? [] : roleSections(shown)),
       el("div", { className: "review-row" },
-        el("div", { className: "review-role" }, el("strong", {}, name)),
+        el("div", { className: "review-role" }, el("strong", {}, name,
+          settingTip(AN.L("这里选的是和 CLI 对话的模型；图片由那个 CLI 调用它自己能用的生图服务来出。", "This picks the model you talk to in the CLI; the image itself comes from whatever image service that CLI can call.")))),
         ...seatSelects(`${role}/${difficulty}`, name, shown[role], (next) => setOrchestrationSeat(role, difficulty, next), SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation"))));
     if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
@@ -579,7 +581,8 @@ function renderReviewSeats() {
   const shown = seatsShown();
   const uniformName = AN.L("统一评审模型", "One review model");
   const uniform = el("div", { className: "review-row review-uniform" },
-    el("div", { className: "review-role" }, el("strong", {}, uniformName)),
+    el("div", { className: "review-role" }, el("strong", {}, uniformName,
+      settingTip(AN.L("给还没选模型的评审角色一次填上这个模型；已经单独选过的角色和「正确性（简单）」不变。", "Fills this model into every review role that has none yet; roles you already picked and Correctness (easy) stay as they are.")))),
     ...seatSelects("review/uniform", uniformName, uniformReview, setUniformReview, AN.L("未选择", "Not chosen")));
   const rows = REVIEW_ROLES.map(([role, name, hint, unset]) => {
     const seat = shown[role];

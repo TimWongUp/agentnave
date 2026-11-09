@@ -640,3 +640,18 @@ test("split work lets the boss call meetings only when its switch is on", async 
   app.run('viewMode("parallel")');
   assert.equal(app.run('$("orchestration-split").hidden'), true);
 });
+
+// The settings scripts share one global scope: a later top-level function of the same name
+// silently replaces an earlier one, as member-models.js's setSplit once did to the role switch.
+test("settings page scripts do not redeclare each other's top-level functions", () => {
+  const html = readFileSync(`${__dirname}/../settings.html`, "utf8");
+  const seen = new Map();
+  for (const [, file] of html.matchAll(/<script src="\.\/([^"]+)"/g)) {
+    const source = readFileSync(`${__dirname}/../${file}`, "utf8");
+    if (/^\s*(?:"use strict";\s*)?[{(]/.test(source)) continue; // Block-scoped files keep theirs.
+    for (const [, name] of source.matchAll(/^(?:async )?function (\w+)/gm)) {
+      assert.ok(!seen.has(name), `${name} is declared in both ${seen.get(name)} and ${file}`);
+      seen.set(name, file);
+    }
+  }
+});

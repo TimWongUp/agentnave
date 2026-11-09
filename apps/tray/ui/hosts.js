@@ -728,7 +728,8 @@ function copyRow(host, copy) {
         }, Boolean(busy) || S.updating || S.copyConfirm?.id === id);
   return h("li.hc-copy", {},
     h("div", {},
-      h("strong", {}, name),
+      h("strong", {}, name, ["daemon", "gateway"].includes(copy.kind) &&
+        settingTip(L("这是应用在后台常驻的进程，关掉窗口也不会退出；它重启后才会用上新配置。", "This is the app’s resident background process; closing the window doesn’t stop it, and it only picks up the new config after a restart."))),
       since && h("span.hc-since", {}, L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`)),
       host.reopen?.[copy.kind] && h("p", {}, host.reopen[copy.kind])),
     h("div.hc-copy-act", {}, control));
