@@ -116,7 +116,7 @@ pub(super) fn rows(context: &Context, hosts: &[Host], codex_homes: &[PathBuf]) -
     let default = home.join(".claude");
     // A variable the app itself was started with reaches Claude Desktop the same way.
     if !context.env.contains_key("CLAUDE_CONFIG_DIR")
-        && claude.is_some_and(|host| real(&host.root.path) != real(&default))
+        && claude.is_some_and(|host| real(&host.config) != real(&home.join(".claude.json")))
         && claude_desktop_here(context)
     {
         rows.push((

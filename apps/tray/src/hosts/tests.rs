@@ -2187,6 +2187,19 @@ fn shared_desktop_hosts_name_both_entry_points() {
     )])));
     assert_eq!(host(&hosts, "claude").label, "Claude Code");
     assert_eq!(host(&hosts, "claude-desktop").label, "Claude 桌面");
+
+    // Naming the default folder still moves Claude Code's file away from the desktop's.
+    let named = hosts.context.home.join(".claude");
+    hosts.shell = Some(Ok(BTreeMap::from([(
+        "CLAUDE_CONFIG_DIR".into(),
+        named.display().to_string(),
+    )])));
+    assert_eq!(host(&hosts, "claude").config, named.join(".claude.json"));
+    assert_eq!(host(&hosts, "claude").label, "Claude Code");
+    assert_eq!(
+        host(&hosts, "claude-desktop").config,
+        hosts.context.home.join(".claude.json")
+    );
 }
 
 #[cfg(not(windows))]

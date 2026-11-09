@@ -699,11 +699,14 @@ fn probe(provider: &str) -> Value {
     } else {
         None
     };
+    // A missing chosen install still finds the other one, so the card stays where its source can
+    // be changed; runs refuse the missing source.
     let path = match selected.as_deref() {
         Some("desktop") => codex_desktop(),
         Some("standalone") => standalone_codex(),
-        _ => find(binary),
-    };
+        _ => None,
+    }
+    .or_else(|| find(binary));
     let Some(path) = path else {
         return failure(provider, None, "");
     };

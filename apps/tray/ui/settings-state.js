@@ -431,7 +431,7 @@ function configurationErrors() {
     for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, L("共享", "Shared"));
     const pool = cli.allowed_models;
     const savedPool = JSON.parse(savedSnapshot || "null")?.clis?.[provider]?.allowed_models;
-    if (Array.isArray(pool) && !pool.length) {
+    if (Array.isArray(pool) && !pool.some((id) => !hiddenModel(provider, id))) {
       add(provider, L("可用模型", "Available models"), L("共享", "Shared"), L("至少选一个模型", "Select at least one model"));
     } else if (Array.isArray(pool) && pool.length > MAX_SELECTED_MODELS && !sameJson(pool, savedPool)) {
       add(provider, L("可用模型", "Available models"), L("共享", "Shared"), L(`最多选 ${MAX_SELECTED_MODELS} 个模型`, `Select at most ${MAX_SELECTED_MODELS} models`));

@@ -80,6 +80,8 @@ function poolRows(provider) {
   const all = getAllModelIds(provider);
   if (native.model && !hiddenModel(provider, native.model) && !all.includes(native.model)) all.unshift(native.model);
   const pool = shownPool(provider);
+  // Hidden models neither count nor survive an edit of the list.
+  const chosen = pool?.filter((id) => !hiddenModel(provider, id));
   const open = pickerOpen === key;
   const rows = [el("div", { className: "member-row" },
     el("span", { className: "member-scene" }, L("可用模型", "Available models")),
@@ -93,10 +95,12 @@ function poolRows(provider) {
     }, el("span", {}, poolSummary(provider, all, pool)), el("span", { className: "member-muted" }, open ? "▴" : "▾")))];
   if (open) {
     const toggle = (m, on) => {
-      const list = pool || [];
+      const list = chosen || [];
       const allowed = on ? [...list, m] : list.filter((x) => x !== m);
-      if (allowed.length > MAX_SELECTED_MODELS) {
+      // Only adding is refused, so an older list above the limit can still shrink.
+      if (on && allowed.length > MAX_SELECTED_MODELS) {
         showNotice(L(`最多选 ${MAX_SELECTED_MODELS} 个模型`, `Select at most ${MAX_SELECTED_MODELS} models`), true);
+        renderCards();
         return;
       }
       writePool(provider, allowed);
@@ -116,7 +120,7 @@ function poolRows(provider) {
         el("button", { type: "button", dataset: { focusKey: `${key}/none` },
           onClick: () => writePool(provider, []),
         }, L("全不选", "Clear all")),
-        el("span", {}, L(`已选 ${pool?.length || 0}/${MAX_SELECTED_MODELS}`, `Selected ${pool?.length || 0}/${MAX_SELECTED_MODELS}`))),
+        el("span", {}, L(`已选 ${chosen?.length || 0}/${MAX_SELECTED_MODELS}`, `Selected ${chosen?.length || 0}/${MAX_SELECTED_MODELS}`))),
       ...all.map((m) => el("label", { className: "member-option" },
         el("input", {
           type: "checkbox",

@@ -46,6 +46,9 @@ test("Devin Fusion models stay out of choices even when saved previously", () =>
   app.run("AN.L = (zh) => zh");
   app.run(readFileSync(`${__dirname}/../member-cards.js`, "utf8"));
   assert.equal(app.run('poolSummary("devin", getAllModelIds("devin"), shownPool("devin"))'), "1 个：swe-2-medium");
+  // A hidden model alone is no choice at all.
+  app.run('currentDoc.clis.devin.allowed_models = ["fusion-gpt-sidekick-swe"]');
+  assert.ok(app.run("configurationErrors().some((e) => /至少选一个模型/.test(e.message))"));
 });
 
 // The settings page's orchestration half, with a DOM just deep enough to read rendered rows.
@@ -633,6 +636,11 @@ test("model choices start unchecked, clear all stays unsaved, and selection stop
   assert.match(app.run('configurationErrors()[0].message'), /至少选一个模型/);
   app.run('poolPick("codex/pool/allow/model-0", true)');
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["model-0"]);
+
+  // An older list above the limit shrinks one model at a time.
+  app.run('currentDoc.clis.codex.allowed_models = Array.from({ length: 22 }, (_, i) => `model-${i}`); markSaved()');
+  app.run('poolPick("codex/pool/allow/model-20", false)');
+  assert.equal(app.doc().clis.codex.allowed_models.length, 21);
 });
 
 test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {
