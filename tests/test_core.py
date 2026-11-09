@@ -639,7 +639,8 @@ async def test_snapshot_retains_tool_name_across_interleaved_calls(
         assert snapshot.last_activity.tool_call_id == "a"
         assert snapshot.last_activity.tool_name == "Bash"
         assert snapshot.last_activity.state == "completed"
-        assert manager.progress(invocation_id)[0] is None  # an ended call is not current work
+        # An ended call returns its result to the model, which works on it next.
+        assert manager.progress(invocation_id)[0] == "thinking"
     finally:
         await manager.shutdown()
 
@@ -1300,6 +1301,7 @@ async def test_pending_prompts_wake_once_and_cancel_denies_before_stopping(tmp_p
     script = """
 import json, sys, time
 json.loads(sys.stdin.readline())
+print(json.dumps({'type':'system', 'subtype':'init'}), flush=True)
 for prompt_id in ['a' * 32, 'b' * 32]:
     print(json.dumps({'type':'agentnave_prompt', 'prompt_id':prompt_id,
                      'kind':'permission', 'tool_name':'Bash', 'tool_input':'echo safe'}), flush=True)
@@ -1338,6 +1340,7 @@ while line := sys.stdin.readline():
             ]
             assert all(isinstance(notice, NativePrompt) for notice in notices)
             assert await manager.wait_for_update(invocation, 0) is None
+            assert manager.progress(invocation)[0] is None
             await manager.answer_prompt(invocation, "a" * 32, "allow")
             with pytest.raises(ValueError, match="already answered"):
                 await manager.answer_prompt(invocation, "a" * 32, "deny")

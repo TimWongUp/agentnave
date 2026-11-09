@@ -1283,6 +1283,13 @@ def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -
     assert thought is not None and thought.message is None
     reasoning_events: tuple[tuple[str, dict[str, object]], ...] = (
         ("claude", {"type": "stream_event", "event": {"type": "message_start"}}),
+        ("claude", {"type": "system", "subtype": "init"}),
+        ("claude", {"type": "system", "subtype": "status", "status": "requesting"}),
+        ("antigravity", {"event": "init"}),
+        (
+            "antigravity",
+            {"event": "step_update", "step_update": {"step_type": "unknown", "state": "DONE"}},
+        ),
         ("codebuddy", {"type": "assistant", "message": {"content": [{"type": "thinking"}]}}),
         ("codex", {"type": "turn.started"}),
         ("deepseek", {"type": "status", "phase": "step_start"}),
@@ -1292,6 +1299,8 @@ def test_activity_omits_thinking_and_unknown_payloads_and_bounds_public_text() -
     for provider, event in reasoning_events:
         reasoning = get_adapter(provider).activity(event)
         assert reasoning is not None and reasoning.state == "reasoning"
+    ended = get_adapter("zcode").activity({"type": "tool", "name": None, "status": "result"})
+    assert ended is not None and ended.state == "completed"
     for provider in ("claude", "codebuddy", "codex", "grok", "antigravity"):
         adapter = get_adapter(provider)
         assert adapter.activity({"type": ["unknown"], "event": ["unknown"]}) is None

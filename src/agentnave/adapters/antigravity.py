@@ -186,8 +186,10 @@ class AntigravityAdapter(AdapterHooks):
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("event")
+        # agy reports a model step only once it ends, so the model's turns are the time after
+        # init and after each finished step that hands control back to it.
         if event_type == "init":
-            return ProviderActivity("lifecycle", "init", "initialized")
+            return ProviderActivity("lifecycle", "init", "reasoning")
         if event_type == "result":
             return ProviderActivity(
                 "lifecycle",
@@ -223,7 +225,9 @@ class AntigravityAdapter(AdapterHooks):
                 public_output=brief(step.get("text_delta"), 1000),
                 message_delta=True,
             )
-        if step_type in ("thinking", "planning", "thought"):
+        if step_type in ("thinking", "planning", "thought") or (
+            step_type in ("user_input", "unknown") and state == "DONE"
+        ):
             return ProviderActivity("lifecycle", f"step_update.{step_type}", "reasoning")
         return None
 
