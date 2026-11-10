@@ -137,7 +137,7 @@ function poolRows(provider) {
 // Bindings the pool no longer has stay as saved, each named on its CLI's card until changed.
 function poolConflicts(provider) {
   const scenes = SCENE_IDS.map((s) => [SCENES[s], slot(s, provider)])
-    .filter(([, current]) => current.enabled && current.model && outOfPool(provider, current.model))
+    .filter(([, current]) => current.enabled && current.model && (outOfPool(provider, current.model) || unlisted(provider, current.model)))
     .map(([name, current]) => L(`${name}的默认模型 ${current.model} 不在可用模型里`, `${name} default model ${current.model} is not in the available models`));
   const seats = seatConflicts().filter(({ seat }) => seat.provider === provider).map(seatConflictText);
   return [...scenes, ...seats].map((text) => el("p", { className: "member-error" }, text));

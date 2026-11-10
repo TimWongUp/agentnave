@@ -5,11 +5,10 @@ const isRestricted = (scene) => Object.hasOwn(currentDoc.modes || {}, scene);
 // lists of older files; null means any model, now or later.
 const hasPool = (provider) => Object.hasOwn(currentDoc.clis?.[provider] || {}, "allowed_models");
 const listedPool = (provider) => currentDoc.clis?.[provider]?.allowed_models || null;
-// A model the CLI no longer lists, or one the pool leaves out. Without a listing nothing counts as
-// unlisted, so a pending or failed detection raises no false alarm.
-const outOfPool = (provider, model) =>
-  (Boolean(detected[provider]?.models?.length) && !getAllModelIds(provider).includes(model)) ||
-  (Boolean(listedPool(provider)) && !listedPool(provider).includes(model));
+const outOfPool = (provider, model) => Boolean(listedPool(provider)) && !listedPool(provider).includes(model);
+// A saved model the CLI no longer lists. It is marked where it is bound but blocks no save; without
+// a listing (detection pending or failed) nothing counts as unlisted.
+const unlisted = (provider, model) => Boolean(detected[provider]?.models?.length) && !getAllModelIds(provider).includes(model);
 
 // A model the App starts configuring keeps the CLI's own default effort until one is chosen (ADR-0028).
 function ensureCliModel(provider, modelId) {
@@ -24,9 +23,11 @@ function ensureCliModel(provider, modelId) {
 }
 
 // What the CLI itself uses when the App sets nothing: its own default model and effort, if known.
+// A default its own listing lacks is no choice to offer, so the scene simply follows the CLI.
 function nativeDefault(provider) {
   const native = detected[provider]?.native || {};
-  return { model: native.model || null, effort: native.effort || null };
+  const model = native.model && !unlisted(provider, native.model) && !hiddenModel(provider, native.model) ? native.model : null;
+  return { model, effort: native.effort || null };
 }
 
 // The level the CLI runs one model at when a call names none, if known.
@@ -72,9 +73,16 @@ function savedEffort(provider, modelId, wanted) {
 }
 
 // Exactly what the CLI lists now; a saved model it no longer lists shows only where it is still
-// bound, as unavailable.
+// bound, as unavailable. Without a listing the saved models stand in, so nothing looks removed.
 function getAllModelIds(provider) {
-  const ids = new Set((detected[provider]?.models || []).map((m) => m.id));
+  const listed = detected[provider]?.models || [];
+  const ids = new Set(listed.map((m) => m.id));
+  if (!listed.length) {
+    for (const id of Object.keys(currentDoc.clis?.[provider]?.models || {})) ids.add(id);
+    for (const selection of Object.values(currentDoc.modes || {})) {
+      for (const id of selection?.[provider]?.models || []) ids.add(id);
+    }
+  }
   return [...ids].filter((id) => typeof id === "string" && id.trim() && !hiddenModel(provider, id));
 }
 

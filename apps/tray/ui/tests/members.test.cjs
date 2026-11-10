@@ -624,6 +624,25 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   assert.equal(app.run("seatConflicts().length"), 1, "enabling orchestration restores the binding conflict");
 });
 
+test("a model the CLI no longer lists is marked but blocks no save, and nothing is marked without a listing", () => {
+  const app = poolEditor();
+  app.run(`
+    currentDoc.modes.task.codex.default = "old";
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "old" } };
+    detected.codex.native = { model: "gone" };
+    markSaved();
+  `);
+  assert.equal(app.run("configurationErrors().length"), 0, "an unlisted default does not block saving");
+  assert.equal(app.run('poolConflicts("codex").length'), 2, "both bindings are named on the card");
+  assert.equal(app.run('seatConflicts().some((c) => c.blocking)'), false);
+  assert.equal(app.run('nativeDefault("codex").model'), null, "a CLI default its listing lacks is not offered");
+  assert.equal(app.run('findKey(slotRows("codex", "discussion", true), "codex/discussion/model").children.flat().some((o) => o.attrs.value === "")'), true, "the scene can still follow the CLI");
+
+  app.run('detected.codex.models = []');
+  assert.equal(app.run('poolConflicts("codex").length'), 0, "a failed or pending detection marks nothing");
+  assert.deepEqual(Array.from(app.run('getAllModelIds("codex")')), ["old"]);
+});
+
 test("model choices start unchecked, clear all stays unsaved, and selection stops at 20", () => {
   const app = poolEditor();
   app.run(`

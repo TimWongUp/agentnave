@@ -195,6 +195,11 @@ fn command_listings_are_parsed_from_their_fixed_formats() {
         native_model(&claude, Some("claude-fable-5-1")).as_deref(),
         Some("claude-fable-5-1[1m]")
     );
+    let both = listed(&["sonnet", "sonnet[1m]"]);
+    assert_eq!(
+        native_model(&both, Some("sonnet[1m]")).as_deref(),
+        Some("sonnet[1m]")
+    );
     assert_eq!(
         native_model(&grok_models(grok), None).as_deref(),
         Some("grok-4.7")
