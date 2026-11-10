@@ -1,6 +1,6 @@
 # ADR-0068：规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分
 
-- 状态：已接受；「并行分工」开会改为可关的开关，见 [ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)
+- 状态：部分修订；「并行分工」开会改为可关的开关，见 [ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)；「归属」与「退化」中 App 工位模型选择来源及 Claude 同系列映射的例外见 [ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)，任务编排授权规则不变
 - 日期：2026-11-09
 - 修订 [ADR-0037](0037-app-writes-orchestration-rules.md) 中预设正文写工位用法、「按任务难度二选一」的条款，[ADR-0051](0051-parallel-preset-without-recheck.md) 中两档内容的条款，[ADR-0065](0065-predefined-specialist-roles.md) 中「不跨难度」的适用范围；不改变 [ADR-0031](0031-prompt-only-orchestration.md)：服务仍不调度。
 
