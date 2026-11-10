@@ -149,9 +149,12 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .fig.video:not(.video-on, .walk) img.poster { display: block; }
 .fig.video:not(.video-on, .walk) :is(.fig-a, .fig-b) { animation: none; }
 /* Each character's clips are scaled so every head top (hair, not horns or ears) and every pair of shoes line up. */
-.fig :is(video, img.poster) { scale: var(--vs, 1); transform-origin: var(--vx, 50%) var(--vo, 100%); }
+/* A released player leaves its last frame as a canvas (and hides the poster) until the next clip shows. */
+.fig canvas.hold { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; }
+.fig.video.held img.poster { display: none !important; }
+.fig :is(video, img.poster, canvas.hold) { scale: var(--vs, 1); transform-origin: var(--vx, 50%) var(--vo, 100%); }
 .fig video.next { opacity: 0; }
-.fig.walk :is(video, img.poster) { display: none; }
+.fig.walk :is(video, img.poster, canvas.hold) { display: none; }
 .fig.warping { opacity: 1 !important; filter: none; }
 .fig.warping :is(.fig-a, .fig-b) { animation: none; }
 [data-mood] .fig.video:not(.walk) { filter: none; }

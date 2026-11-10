@@ -5,7 +5,7 @@ const vm = require("node:vm");
 
 // Exercise the browser-facing player with controllable media readiness and frame delivery.
 function player({ delayed = false, noFrameCallback = false } = {}) {
-  const reveals = [], violations = [], seekWaiters = [];
+  const reveals = [], violations = [], seekWaiters = [], delays = new Map(), canvas = { pixels: "ok" };
   let manualSeek = false;
   const videos = [], frames = new Map(), paints = new Map(), timers = new Map(), observers = [], observed = new Set(), srcs = [], loadWaiters = [];
   let counter = 0;
@@ -46,7 +46,7 @@ function player({ delayed = false, noFrameCallback = false } = {}) {
   // Playing media is only fresh once a frame of the current position was presented; a seek makes it stale again.
   class Video extends Node {
     constructor() {
-      super("video"); this.paused = true; this.ended = false; this.plays = 0; this.loads = 0; this.seeking = false; this.fresh = false; this.removed = false; videos.push(this);
+      super("video"); this.clientWidth = 170; this.videoWidth = this.videoHeight = 544; this.readyState = 4; this.paused = true; this.ended = false; this.plays = 0; this.loads = 0; this.seeking = false; this.fresh = false; this.removed = false; videos.push(this);
       if (noFrameCallback) this.requestVideoFrameCallback = undefined;
       const { add, remove } = this.classList;
       this.classList.add = name => { add(name); audit(this, name, false); };
@@ -89,24 +89,36 @@ function player({ delayed = false, noFrameCallback = false } = {}) {
       });
     }
   }
+  // A canvas whose pixels are transparent at the corners ("ok"), fully opaque, or empty.
+  class Canvas extends Node {
+    constructor() { super("canvas"); this.width = this.height = 0; }
+    getContext() {
+      return { drawImage() {}, getImageData: (x, y, w, h) => {
+        const data = new Uint8ClampedArray(w * h * 4);
+        if (canvas.pixels !== "blank") for (let i = 3; i < data.length; i += 4) data[i] = 255;
+        if (canvas.pixels === "ok") for (const [cx, cy] of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]) data[(cy * w + cx) * 4 + 3] = 0;
+        return { data };
+      } };
+    }
+  }
   const root = new Node("html"), host = new Node("div"), fig = new Node("span", "fig video"), body = new Node("span", "fig-b");
   const poster = new Node("img", "poster");
   root.append(host); host.append(fig); fig.append(body); body.append(poster);
   host.dataset.mood = "idle"; fig.dataset.char = "codex";
   const events = {}, still = { matches: false }, math = Object.create(Math);
   math.random = () => 0.99;
-  const document = { hidden: false, createElement: () => new Video(), addEventListener: (n, f) => { events[n] = f; } };
+  const document = { hidden: false, createElement: tag => (tag === "canvas" ? new Canvas() : new Video()), addEventListener: (n, f) => { events[n] = f; } };
   const ctx = vm.createContext({
     root, document, still, Math: math, artUrl: s => s,
     requestAnimationFrame: fn => { const id = ++counter; frames.set(id, fn); return id; }, cancelAnimationFrame: id => frames.delete(id),
-    setTimeout: fn => { const id = ++counter; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
+    setTimeout: (fn, ms) => { const id = ++counter; timers.set(id, fn); delays.set(id, ms); return id; }, clearTimeout: id => timers.delete(id),
     MutationObserver: class { constructor(fn) { observers.push(fn); } observe() {} },
     IntersectionObserver: class {
       constructor(fn) { events.intersect = fn; }
       observe(node) { observed.add(node); }
       unobserve(node) { observed.delete(node); }
     },
-    window: { addEventListener: (n, f) => { events[n] = f; }, matchMedia: () => ({ addEventListener() {} }) },
+    window: { devicePixelRatio: 2, addEventListener: (n, f) => { events[n] = f; }, matchMedia: () => ({ addEventListener() {} }) },
   });
   const source = readFileSync(`${__dirname}/../common.js`, "utf8");
   vm.runInContext(source.slice(source.indexOf("  const VIDEO_STATES"), source.indexOf("  // Every character teleports"))
@@ -123,7 +135,8 @@ function player({ delayed = false, noFrameCallback = false } = {}) {
   const visible = async () => { sync(); events.intersect([{ target: fig, isIntersecting: true }]); await flush(); };
   const resolve = () => loadWaiters.splice(0).forEach(f => f());
   return { root, host, fig, body, poster, document, still, math, videos, frames, timers, observed, srcs, events, observers,
-    reveals, violations, completeSeeks: () => seekWaiters.splice(0).forEach(f => f()), holdSeeks: () => { manualSeek = true; },
+    delays, canvas, reveals, violations, blur: on => { root.classList.toggle("blurred", on); events[on ? "agentnave:blur" : "agentnave:focus"](); },
+    reveals_: 0, violations_: 0, completeSeeks: () => seekWaiters.splice(0).forEach(f => f()), holdSeeks: () => { manualSeek = true; },
     sync, syncFigure: ctx.api.syncVideo, visible, resolve, flush, rec: () => ctx.api.videoPlayers.get(fig) };
 }
 
@@ -249,6 +262,88 @@ test("a long run of extra clips keeps at most two live players, and every droppe
   assert.ok(dropped.every(v => v.src === "" && v.paused));
   assert.equal(app.videos.length - dropped.length, app.rec().slots.length);
   assert.deepEqual(app.violations, []);
+});
+
+const heldCanvas = app => app.body.querySelectorAll("canvas")[0];
+
+test("an unfocused window freezes players on the current frame and resumes them from it", async () => {
+  const app = player(); await app.visible();
+  const player0 = app.rec().active, srcs = app.srcs.length;
+  app.blur(true);
+  assert.equal(player0.video.paused, true);
+  assert.equal(app.rec().active, player0);
+  assert.equal(app.fig.classList.contains("video-on"), true);
+  assert.equal(app.body.querySelectorAll("video").length, 1);
+  assert.equal(player0.video.src.endsWith("idle.mov"), true);
+  assert.equal(app.rec().running, false);
+  app.blur(false); await app.flush();
+  assert.equal(app.rec().active, player0);
+  assert.equal(player0.video.paused, false);
+  assert.equal(player0.video.loads, 0);
+  assert.equal(player0.video.currentTime, 0);
+  assert.equal(app.srcs.length, srcs);
+  assert.deepEqual(app.violations, []);
+});
+
+test("a window that stays unfocused lets the decoder go but keeps the frame, until the clip shows again", async () => {
+  const app = player(); await app.visible();
+  const first = app.videos[0];
+  app.blur(true);
+  assert.equal([...app.timers.keys()].length, 1);
+  assert.equal([...app.delays.values()].pop(), 45000);
+  [...app.timers.values()][0](); await app.flush();
+  assert.equal(app.rec().active, null);
+  assert.equal(first.removed, true);
+  assert.equal(first.src, "");
+  assert.equal(first.loads > 0, true);
+  assert.equal(app.fig.classList.contains("video-on"), false);
+  assert.equal(app.fig.classList.contains("held"), true);
+  assert.equal(heldCanvas(app).className, "hold");
+  assert.equal(heldCanvas(app).width, 340);
+  app.blur(false);
+  assert.equal(heldCanvas(app) !== undefined, true);
+  await app.flush();
+  assert.equal(heldCanvas(app), undefined);
+  assert.equal(app.fig.classList.contains("held"), false);
+  assert.equal(app.fig.classList.contains("video-on"), true);
+  assert.equal(app.rec().active.video.paused, false);
+  assert.equal(app.body.querySelectorAll("video").length, 1);
+});
+
+test("a frame that cannot be kept faithfully falls back to the poster, and refocusing in time keeps the decoder", async () => {
+  for (const pixels of ["opaque", "blank"]) {
+    const app = player(); await app.visible();
+    app.canvas.pixels = pixels;
+    app.blur(true); [...app.timers.values()][0](); await app.flush();
+    assert.equal(app.rec().active, null);
+    assert.equal(heldCanvas(app), undefined);
+    assert.equal(app.fig.classList.contains("held"), false);
+  }
+  const app = player(); await app.visible();
+  const kept = app.rec().active;
+  app.blur(true); app.blur(false); await app.flush();
+  assert.equal(app.timers.size, 0);
+  assert.equal(app.rec().active, kept);
+  assert.equal(kept.video.paused, false);
+});
+
+test("while unfocused, a mood change shows the new poster, and hiding the window drops the held frame", async () => {
+  const app = player(); await app.visible();
+  app.blur(true);
+  app.host.dataset.mood = "working"; app.sync();
+  assert.equal(app.rec().active, null);
+  assert.equal(app.body.querySelectorAll("video").length, 0);
+  assert.equal(app.fig.classList.contains("video-on"), false);
+  assert.match(app.poster.src, /working.webp/);
+  app.blur(false); await app.flush();
+  assert.equal(app.rec().active.state, "working");
+
+  const held = player(); await held.visible();
+  held.blur(true); [...held.timers.values()][0](); await held.flush();
+  assert.equal(heldCanvas(held) !== undefined, true);
+  held.root.dataset.windowHidden = "true"; held.sync();
+  assert.equal(heldCanvas(held), undefined);
+  assert.equal(held.fig.classList.contains("held"), false);
 });
 
 test("late loads of superseded clips cannot attach or start players", async () => {
@@ -451,6 +546,7 @@ test("video packs stay off in static mode and switch figures in place across 272
       const path = String(url);
       fetches.push(path);
       if (path.startsWith("/app/video-packs")) return { ok: true, json: async () => ({ packs }) };
+      if (path.includes("parts.json")) return { ok: true, json: async () => ({ gemini: { "ear-l": { idle: [10, 20] } } }) };
       if (path.startsWith("/app/characters") || path.includes(".json")) return { ok: true, json: async () => ({}) };
       return { ok: true };
     },
@@ -469,6 +565,9 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.equal(ctx.api.canWarp("gemini"), false);
   assert.equal(ctx.api.canWarp("@gpt@c1"), false);
   assert.equal(fetches.some(u => u.includes("/art/video/")), false);
+  await new Promise(r => setImmediate(r));
+  const partsOf = fig => fig.querySelector(".fig-b").children.filter(c => c.classList.contains("part"));
+  assert.equal(partsOf(gemini).length, 1);
 
   root.dataset.characterStyle = "video-272";
   listeners["agentnave:preferences"].forEach(fn => fn());
@@ -476,6 +575,7 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.equal(gemini.classList.contains("video"), true);
   assert.equal(customGpt.classList.contains("video"), true);
   assert.equal(previewGpt.classList.contains("video"), false);
+  assert.equal(partsOf(gemini).length, 0);
   assert.equal(ctx.api.canWarp("gemini"), true);
   assert.equal(ctx.api.canWarp("@gpt@c1"), true);
   assert.equal(gemini.querySelector("img.poster").src, "/art/video/272/gemini/idle.webp?v=s272");
@@ -501,6 +601,9 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.equal(ctx.api.canWarp("gemini"), false);
   assert.equal(ctx.api.canWarp("@gpt@c1"), false);
   assert.equal(made.filter(v => v.src).length, 0);
+  assert.equal(partsOf(gemini).length, 1);
+  assert.equal(partsOf(ctx.api.figure("gemini", "s", true)).length, 0);
+  await new Promise(r => setImmediate(r));
 });
 
 test("avatar settings disables uninstalled video tiers, falls back to CSS on delete, and embeds the DIY CSS guide", async () => {

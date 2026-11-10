@@ -316,7 +316,7 @@
     if (next === blurred) return;
     blurred = next;
     root.classList?.toggle("blurred", next);
-    if (!next) window.dispatchEvent(new Event("agentnave:focus"));
+    window.dispatchEvent(new Event(next ? "agentnave:blur" : "agentnave:focus"));
   }
   // Focus moving into an embedded frame blurs this window too; ask again once it has settled.
   const checkBlurred = () => setTimeout(syncBlurred, 0);
@@ -437,8 +437,10 @@
         } else poster.src = videoPackUrl(`${vchar}/${state}.webp`);
         fig.classList.add("video");
         scheduleVideo(fig);
+        removeParts(fig);
       } else {
         fig.classList.remove("video", "video-on");
+        addParts(fig);
       }
     }
   }
@@ -455,6 +457,32 @@
     window.AgentNaveSettingsFrame?.changed?.();
     return loadVideoPacks();
   };
+  // Each part carries its frame's s-<state> class, so it shows with that frame. A figure remembers its
+  // part nodes (fig.partNodes) so a switch to video can drop them and a switch back can build them again.
+  function addParts(fig, body = fig.querySelector(".fig-b"), name = fig.dataset.char, size = fig.dataset.size || "s") {
+    if (name.startsWith("@") || !body || fig.partNodes) return;
+    const nodes = fig.partNodes = [];
+    parts.then((all) => {
+      if (fig.partNodes !== nodes) return;
+      for (const [part, frames] of Object.entries(all[name] || {})) {
+        // A "<part>-tip" bends about its own pivot inside a box that swings about its "<part>"'s pivot.
+        const root = part.endsWith("-tip") ? all[name][part.slice(0, -4)] : null;
+        for (const [state, [x, y]] of Object.entries(frames)) {
+          const img = h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
+            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` });
+          const pivot = root?.[state];
+          const node = pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img)
+            : part === "halo" ? h("span.halo-fan", { style: `--ox:${x}%;--oy:${y}%` }, img) : img;
+          nodes.push(node);
+          body.append(node);
+        }
+      }
+    });
+  }
+  function removeParts(fig) {
+    for (const node of fig.partNodes || []) node.remove();
+    fig.partNodes = null;
+  }
   // One <img> per state; CSS shows the one matching the nearest mood class (.working, .review ...).
   // A missing optional frame marks the figure .no-<state> so CSS falls back.
   function figure(name, size = "s", staticOnly = false) {
@@ -486,20 +514,8 @@
       fig.append(fx);
       emitters.add({ name, fig, fx, spec: all[name], born: performance.now(), next: 0 });
     });
-    // Each part carries its frame's s-<state> class, so it shows with that frame.
-    if (!name.startsWith("@")) parts.then((all) => {
-      for (const [part, frames] of Object.entries(all[name] || {})) {
-        // A "<part>-tip" bends about its own pivot inside a box that swings about its "<part>"'s pivot.
-        const root = part.endsWith("-tip") ? all[name][part.slice(0, -4)] : null;
-        for (const [state, [x, y]] of Object.entries(frames)) {
-          const img = h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
-            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` });
-          const pivot = root?.[state];
-          body.append(pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img)
-            : part === "halo" ? h("span.halo-fan", { style: `--ox:${x}%;--oy:${y}%` }, img) : img);
-        }
-      }
-    });
+    // A video character shows none of them; they are built when it falls back to CSS.
+    if (!useVideo) addParts(fig, body, name, size);
     return fig;
   }
   // A character with video loops plays one <video> for its nearest mood; its images stay as the
@@ -529,7 +545,10 @@
   const videoPlayers = new Map();
   const pageMediaHidden = (fig) => document.hidden || root.dataset.artPaused === "true"
     || root.dataset.windowHidden === "true" || Boolean(fig.closest("[hidden], [inert]"));
-  const videoVisible = (fig) => fig.isConnected && !pageMediaHidden(fig)
+  // A window behind others (html.blurred) freezes its players on the current frame; they are let go if it stays so.
+  const windowBlurred = () => Boolean(root.classList?.contains("blurred"));
+  const BLUR_RELEASE_MS = 45000, OFFSCREEN_RELEASE_MS = 10000;
+  const videoVisible = (fig) => fig.isConnected && !pageMediaHidden(fig) && !windowBlurred()
     && !still.matches && !fig.classList.contains("offscreen") && !fig.classList.contains("walk");
   const currentPlayback = (rec, seq) => rec.seq === seq && rec.running && videoVisible(rec.fig);
   function cancelVideoCallbacks(slot) {
@@ -558,6 +577,42 @@
     rec.slots = rec.slots.filter((s) => s !== slot);
   }
   const dropSpares = (rec) => { for (const s of [...rec.slots]) if (s !== rec.active) dropSlot(rec, s); };
+  // A released player leaves the frame it showed as a small canvas, so the figure does not jump to its
+  // poster. A canvas that lost its transparency or came out blank is not used; the poster stays instead.
+  function clearHold(rec) {
+    if (!rec.hold) return;
+    rec.hold.remove();
+    rec.hold = null;
+    rec.fig.classList.remove("held");
+  }
+  function captureFrame(rec) {
+    const video = rec.active?.video;
+    if (!video || !rec.fig.classList.contains("video-on") || video.readyState < 2 || !video.videoWidth) return null;
+    try {
+      const scale = Math.min(1, Math.max(64, Math.ceil(video.clientWidth * (window.devicePixelRatio || 1))) / video.videoWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      const g = canvas.getContext("2d");
+      g.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const { data } = g.getImageData(0, 0, canvas.width, canvas.height);
+      const alpha = (x, y) => data[(y * canvas.width + x) * 4 + 3];
+      const corners = [alpha(0, 0), alpha(canvas.width - 1, 0), alpha(0, canvas.height - 1), alpha(canvas.width - 1, canvas.height - 1)];
+      let drawn = false;
+      for (let i = 3; i < data.length && !drawn; i += 4 * 16) drawn = data[i] > 0;
+      if (!drawn || corners.some(Boolean)) return null;
+      canvas.className = "hold";
+      return canvas;
+    } catch { return null; }
+  }
+  function releaseBlurred(rec) {
+    const canvas = rec.fig.classList.contains("offscreen") || pageMediaHidden(rec.fig) ? null : captureFrame(rec);
+    pauseVideos(rec, true);
+    if (!canvas) return;
+    rec.hold = canvas;
+    rec.fig.classList.add("held");
+    rec.fig.querySelector(".fig-b").append(canvas);
+  }
   function pauseVideos(rec, release = false) {
     if (rec.offscreenTimer) { clearTimeout(rec.offscreenTimer); rec.offscreenTimer = null; }
     cancelSettle(rec);
@@ -570,7 +625,7 @@
       else unloadVideo(slot, true);
     }
     rec.slots = release || !rec.active ? [] : [rec.active];
-    if (release) { rec.active = null; rec.failed = false; rec.fig.classList.remove("video-on"); }
+    if (release) { rec.active = null; rec.failed = false; rec.fig.classList.remove("video-on"); clearHold(rec); }
   }
   function releaseFigure(fig) {
     dirtyVideos.delete(fig);
@@ -676,6 +731,7 @@
     }
     // The old player hides and the new one shows in this one task, so both are never on screen together.
     slot.video.classList.remove("next");
+    clearHold(rec);
     rec.active = slot;
     rec.incoming = null;
     rec.fig.classList.add("video-on");
@@ -743,7 +799,7 @@
       if (onScreen) { fig.classList.add("offscreen"); onScreen.observe(fig); }
     }
     const hiddenMedia = still.matches || pageMediaHidden(fig);
-    if (hiddenMedia) rec.failed = false;
+    if (hiddenMedia) { rec.failed = false; clearHold(rec); }
     if (hiddenMedia && rec.slots.length) pauseVideos(rec, true);
     if (fig.classList.contains("warping")) {
       if (!videoVisible(fig) && rec.running) pauseVideos(rec);
@@ -753,7 +809,8 @@
     const wanted = mood === "failed" ? "sad" : mood;
     const state = VIDEO[name].includes(wanted) ? wanted : "idle";
     if (rec.state !== state) {
-      pauseVideos(rec);
+      // Only a player that keeps running may hold its old frame while the new clip loads.
+      pauseVideos(rec, !videoVisible(fig));
       rec.state = state;
       rec.failed = false;
       fig.dataset.video = state;
@@ -763,11 +820,18 @@
     if (hiddenMedia) { if (rec.slots.length) pauseVideos(rec, true); return; }
     if (!videoVisible(fig)) {
       if (rec.running) pauseVideos(rec);
-      if (fig.classList.contains("offscreen") && rec.slots.length && !rec.offscreenTimer) {
-        rec.offscreenTimer = setTimeout(() => {
-          rec.offscreenTimer = null;
-          if (!fig.isConnected || pageMediaHidden(fig) || fig.classList.contains("offscreen")) pauseVideos(rec, true);
-        }, 10000);
+      const offscreen = fig.classList.contains("offscreen");
+      if ((offscreen || windowBlurred()) && rec.slots.length) {
+        const delay = offscreen ? OFFSCREEN_RELEASE_MS : BLUR_RELEASE_MS;
+        if (rec.offscreenTimer && delay < rec.releaseDelay) { clearTimeout(rec.offscreenTimer); rec.offscreenTimer = null; }
+        if (!rec.offscreenTimer) {
+          rec.releaseDelay = delay;
+          rec.offscreenTimer = setTimeout(() => {
+            rec.offscreenTimer = null;
+            if (!fig.isConnected || pageMediaHidden(fig) || fig.classList.contains("offscreen")) pauseVideos(rec, true);
+            else if (windowBlurred()) releaseBlurred(rec);
+          }, delay);
+        }
       }
       return;
     }
@@ -840,6 +904,8 @@
   }).observe(root, { subtree: true, childList: true, attributes: true, attributeOldValue: true,
     attributeFilter: ["data-mood", "hidden", "inert", "class", "data-motion", "data-art-paused", "data-window-hidden"] });
   document.addEventListener("visibilitychange", syncAllVideos);
+  window.addEventListener("agentnave:blur", syncAllVideos);
+  window.addEventListener("agentnave:focus", syncAllVideos);
   window.addEventListener("pagehide", () => { for (const fig of [...videoPlayers.keys()]) releaseFigure(fig); });
   window.addEventListener("pageshow", () => scheduleVideoTree(root));
   window.matchMedia?.("(prefers-reduced-motion: reduce)")?.addEventListener?.("change", syncAllVideos);
