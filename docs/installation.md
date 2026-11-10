@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.6.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.7.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.6.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.7.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -518,14 +518,14 @@ not as part of a release. Keep the installed runtime's stable launcher registrat
 
 boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `list_members(provider=...)` 核对该 CLI 的允许状态与参数。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置，其中档位由服务按 CLI 自身设置显式传入并注明 `effort (CLI default)`；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 9 个。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 10 个。已有 PATH 与排除环境变量不需改写。
 
 After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
-2. Restart the server/session and confirm `start_agent`, `wait`, `cancel`, `list`,
+2. Restart the server/session and confirm `start_agent`, `wait`, `answer_prompt`, `cancel`, `list`,
    `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
-   visible (9 total).
+   visible (10 total).
    Confirm the host also discovers `agentnave-manager` and `agentnave-handover` in the intended
    scope and can read its nine referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.
@@ -609,26 +609,38 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.6.0
+### Upgrading to v1.7.0
 
-Update the App; it installs the paired service at startup. Reconnect or reopen host copies as the
-boss card asks.
+Update the App; it installs the paired service at startup and rewrites the orchestration block of
+bosses on Split work or Parallel work. Reconnect or reopen host copies as the boss card asks; the
+Antigravity interactive fix applies to new connections. Dispatching is now the default: the boss
+keeps only small tasks that read one or two files, change one place and take a few minutes, and
+hands multi-file implementations, investigation that needs locating the cause, long-form writing and
+specialist work to employees. Employees' quota is used more than before; switch orchestration to
+Off, or use Custom, to keep more work in the boss.
 
-On macOS and Linux, Antigravity CLI (`agy`) now runs through its interactive terminal UI instead of
-`-p` when its permissions are skipped, which both App permission tiers do. The service turns this
-on by default and reports `interactive` in `defaults_applied`; turn it off with the Antigravity
-card's interactive switch, or set `"antigravity_interactive": false` in `settings.json` on headless
-Linux. The first interactive run adds an `agentnave-interactive` entry to
-`~/.gemini/config/hooks.json`. It acts only in `agy` processes AgentNave starts and keeps every
-other entry; a disabled entry blocks the run instead of being re-enabled. Explicit
-`interactive=true` requires `dangerously_skip_permissions=true` and rejects `print_timeout` and
-`disable_slash_commands`.
+Split work and Parallel work share a new "boss only orchestrates" switch (`lead_only`), off by
+default. When on, even small tasks go out and the boss only splits work, writes briefs, checks
+results, merges and wraps up. When off, a request to only orchestrate still applies to the current
+task. Custom text that contains the previous generated sentences verbatim is migrated to the new
+wording; your own edits stay.
 
-The App downloads the video pack from the v1.4.0 release again, so one-click video pack downloads
-work without importing from a folder.
+Parallel work now has its own "boss may call meetings" switch (`parallel_options.meetings`), on by
+default; turn it off to hold meetings only when asked. Split work's same switch stays off by
+default.
 
-See [v1.6.0 release notes](releases/v1.6.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.5.0.md).
+Seats of the host's own kind (`native`) now use the model and effort saved in the App: the boss
+passes them to the host's built-in subagent instead of its default subagent model, and treats the
+seat as unavailable when the host cannot run them. Settings list only the models each CLI offers
+now; a saved model the CLI no longer offers is marked where it is bound and is not replaced for
+you.
+
+On headless Linux, these switches change only the rules text the App writes. Bots do not read these
+fields; copy the new text into the bot's instruction entry as the
+[headless Linux host guide](linux-headless.md) describes.
+
+See [v1.7.0 release notes](releases/v1.7.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.6.0.md).
 
 ## Uninstall
 
