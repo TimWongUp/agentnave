@@ -767,8 +767,8 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         done = _seats(await _wait(client, started["round_id"]))[0]
         assert done["status"] == "succeeded"
         ordinary_argv = cast(list[str], _seen(done)["argv"])
-        # Ordinary seats take the CLI's permission tier, auto by default, over saved model options.
-        assert ordinary_argv[ordinary_argv.index("--permission-mode") + 1] == "auto"
+        # Ordinary seats take the default full tier over saved model options.
+        assert ordinary_argv[ordinary_argv.index("--permission-mode") + 1] == "bypassPermissions"
 
 
 @pytest.mark.asyncio
@@ -2496,8 +2496,8 @@ async def test_studio_enforces_discussion_defaults_before_saving(
             == {
                 "model": "chosen",
                 "effort": "high",
-                "permission_mode": "auto",
-                "permission_fallback": "bypassPermissions",
+                "permission_mode": "bypassPermissions",
+                "permission_fallback": "auto",
             }
             for seat in saved["seats"]
         )
