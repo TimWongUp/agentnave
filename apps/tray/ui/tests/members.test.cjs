@@ -68,6 +68,7 @@ function advancedEditor(fetch) {
     document.createTextNode = (text) => text;
     document.getElementById = (id) => nodes.get(id) || nodes.set(id, node("div")).get(id);
     currentDoc.modes.task.codex = { models: ["chat-model"], overrides: {}, default: "chat-model" };
+    detected.codex.models = [{ id: "chat-model" }];
   `);
   app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
   return app;
@@ -575,8 +576,12 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
     currentDoc.modes.discussion.codex.default = "b";
     reviewSeats = { "security-reviewer": { provider: "codex", model: "b" } };
     markSaved();
+    pickerOpen = "codex/pool";
+  `);
+  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/old")'), null, "a saved model the CLI no longer lists is not offered");
+  assert.equal(app.run('seatOptions({ provider: "codex", model: "old" }).find((o) => o.attrs.value === "old").attrs.disabled'), true, "a seat bound to it shows it as unavailable");
+  app.run(`
     poolPick("codex/pool/all");
-    poolPick("codex/pool/allow/old", false);
     poolPick("codex/pool/allow/b", false);
   `);
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
@@ -608,7 +613,7 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
 
   // Select all is an explicit list; future CLI models are not silently allowed.
   app.run('poolPick("codex/pool/all"); detected.codex.models.push({ id: "next" })');
-  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b", "old"]);
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b"]);
   assert.equal(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'), false);
   app.run(`
     currentDoc.clis.codex.allowed_models = ["a"];
@@ -619,10 +624,29 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   assert.equal(app.run("seatConflicts().length"), 1, "enabling orchestration restores the binding conflict");
 });
 
+test("a model the CLI no longer lists is marked but blocks no save, and nothing is marked without a listing", () => {
+  const app = poolEditor();
+  app.run(`
+    currentDoc.modes.task.codex.default = "old";
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "old" } };
+    detected.codex.native = { model: "gone" };
+    markSaved();
+  `);
+  assert.equal(app.run("configurationErrors().length"), 0, "an unlisted default does not block saving");
+  assert.equal(app.run('poolConflicts("codex").length'), 2, "both bindings are named on the card");
+  assert.equal(app.run('seatConflicts().some((c) => c.blocking)'), false);
+  assert.equal(app.run('nativeDefault("codex").model'), null, "a CLI default its listing lacks is not offered");
+  assert.equal(app.run('findKey(slotRows("codex", "discussion", true), "codex/discussion/model").children.flat().some((o) => o.attrs.value === "")'), true, "the scene can still follow the CLI");
+
+  app.run('detected.codex.models = []');
+  assert.equal(app.run('poolConflicts("codex").length'), 0, "a failed or pending detection marks nothing");
+  assert.deepEqual(Array.from(app.run('getAllModelIds("codex")')), ["old"]);
+});
+
 test("model choices start unchecked, clear all stays unsaved, and selection stops at 20", () => {
   const app = poolEditor();
   app.run(`
-    detected.codex.models = Array.from({ length: 21 }, (_, i) => ({ id: "model-" + i }));
+    detected.codex.models = Array.from({ length: 22 }, (_, i) => ({ id: "model-" + i }));
     currentDoc.clis.codex.models = {};
     markSaved();
   `);
