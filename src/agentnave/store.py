@@ -173,7 +173,10 @@ class Conversation(BaseModel):
                     elif seat.review is None:
                         seat.review = "pending"  # ended before its review began
             if not round_.pending_review():
-                self.commit_ended(round_)
+                # Recovery reruns on every read until a writer saves it, so a seat without its
+                # own end takes the last saved activity, not the time of this read.
+                last = self.entries[-1].time if self.entries else self.created
+                self.commit_ended(round_, last)
         for run in [seat for round_ in self.rounds for seat in round_.seats] + self.tasks:
             for prompt in run.prompts:
                 if prompt.get("status") == "pending":
@@ -183,7 +186,7 @@ class Conversation(BaseModel):
                 task.status = "interrupted"
                 task.error = "server_restarted; previous invocation cannot resume"
 
-    def commit_ended(self, round_: RoundRecord) -> list[EntryRecord]:
+    def commit_ended(self, round_: RoundRecord, unfinished: str | None = None) -> list[EntryRecord]:
         """Commit what a stopped round left uncommitted, in seat order; call once no seat
         awaits review."""
         added: list[EntryRecord] = []
@@ -199,7 +202,7 @@ class Conversation(BaseModel):
                         seat=seat.seat_id,
                         text=seat.status,
                         reported_model=seat.reported_model,
-                        time=seat.finished or now(),
+                        time=seat.finished or unfinished or now(),
                     )
                 )
             elif seat.review != "private":
@@ -210,7 +213,7 @@ class Conversation(BaseModel):
                         seat=seat.seat_id,
                         text=seat.output,
                         reported_model=seat.reported_model,
-                        time=seat.finished or now(),
+                        time=seat.finished or unfinished or now(),
                     )
                 )
         self.entries.extend(added)

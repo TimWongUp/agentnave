@@ -1199,6 +1199,9 @@ def test_crash_recovery_keeps_answers_that_ended_before_the_crash(review: bool) 
         state.commit_ended(state.rounds[0])
         kinds = [(entry.kind, entry.seat, entry.text) for entry in state.entries]
     assert kinds == [("answer", "a", "done"), ("absent", "b", "interrupted")]
+    if not review:
+        # Each read reruns recovery; the interrupted seat keeps the last saved activity time.
+        assert state.entries[1].time == state.created
     state.recover()  # idempotent
     assert len(state.entries) == 2
 
