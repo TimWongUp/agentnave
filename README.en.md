@@ -32,7 +32,7 @@ Send one employee a task and the result goes back only to the boss, or bring 2�
 
 ### 🏢 An office you can see
 
-Desks, the meeting room and every conversation at a glance, and the menu bar shows who is working at any time. Characters follow the model family, or upload your own set. If a host exits abnormally, lost tasks show as interrupted instead of running forever.
+Desks, the meeting room and every conversation at a glance, and the menu bar shows who is working at any time. Characters follow the model family, or upload your own set. When a host exits, the tasks it started are cancelled and its meeting seats are marked absent for that round; if the service itself is killed before it can clean up, they show as interrupted the next time you open the app. Orphaned tasks never stay running forever.
 
 ### 🎧 An office you can hear
 
