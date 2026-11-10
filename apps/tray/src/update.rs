@@ -508,23 +508,26 @@ fn relaunch(app: &AppHandle) {
     use std::process::Stdio;
 
     let env = app.env();
-    let bundle = tauri::process::current_binary(&env)
+    let found = tauri::process::current_binary(&env)
         .ok()
         .and_then(|binary| {
             let contents = binary.parent()?.parent()?;
-            (contents.file_name()? == "Contents")
-                .then(|| contents.parent().map(Path::to_path_buf))?
+            let bundle = (contents.file_name()? == "Contents")
+                .then(|| contents.parent().map(Path::to_path_buf))??;
+            Some((binary, bundle))
         });
-    let Some(bundle) = bundle else {
+    let Some((binary, bundle)) = found else {
         app.restart();
     };
+    // Should LaunchServices refuse the bundle, start its executable directly, as Tauri does.
     let spawned = Command::new("/bin/sh")
         .arg("-c")
         .arg(
-            r#"while kill -0 "$1" 2>/dev/null; do sleep 0.1; done; shift; exec /usr/bin/open "$@""#,
+            r#"pid=$1 bin=$2; shift 2; while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done; /usr/bin/open "$@" && exit; shift 2; exec "$bin" "$@""#,
         )
         .arg("relaunch")
         .arg(std::process::id().to_string())
+        .arg(&binary)
         .arg(&bundle)
         .arg("--args")
         .args(env.args_os.iter().skip(1))
