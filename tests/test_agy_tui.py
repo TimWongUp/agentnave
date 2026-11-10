@@ -12,7 +12,7 @@ import pytest
 
 from agentnave.adapters.antigravity import AntigravityAdapter
 from agentnave.agy_tui import STOP_GRACE, Run, Turn, hooks, settings
-from agentnave.agy_tui.screen import AgyScreen, input_box, state
+from agentnave.agy_tui.screen import AgyScreen, busy_activity, input_box, state
 from agentnave.claude_tui.terminal import Terminal
 from agentnave.models import InvocationRequest, InvocationStatus
 
@@ -207,6 +207,57 @@ def test_settings_trust_the_pwd_spelling_of_the_same_folder(
     assert str(tmp_path) not in trusted()
     monkeypatch.delenv("PWD", raising=False)
     assert sorted({str(folder), os.path.realpath(folder)}) == trusted()
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("⣷  Generating...", "thinking"),
+        ("⢿  Initial concern about the use of a shell `sleep` command arose ...", "thinking"),
+        ("⣻  Running command...", "command_execution"),
+        ("⢿  Reading file...", "read_file"),
+    ],
+)
+def test_busy_activity_reads_recorded_status_only(line: str, expected: str) -> None:
+    rule = "─" * 40
+    screen = f"● Running (sleep 6)\n○ Thought for 3.7s\n{line}\n└ Tip: something\n{rule}\n>\n{rule}\nesc to cancel"
+    assert busy_activity(screen) == expected
+    assert busy_activity(screen.replace(line, "● Running (sleep 6)")) is None
+    assert busy_activity(screen.replace("esc to cancel", "? for shortcuts")) is None
+    assert (
+        busy_activity(
+            screen.replace("esc to cancel", f"background task\n{rule}\nesc to cancel · 1 task(s)")
+        )
+        == expected
+    )
+
+
+def test_busy_activity_updates_only_when_screen_changes(capsys: pytest.CaptureFixture[str]) -> None:
+    turn = Turn("c", user_seen=True)
+    turn.watch("busy", "thinking")
+    turn.watch("busy", "thinking")
+    turn.watch("busy", "command_execution")
+    turn.row({"type": "GENERIC", "source": "MODEL"})
+    turn.watch("busy", "command_execution")
+    turn.answered = True
+    turn.watch("busy", "read_file")
+    turn.stopped = True
+    turn.watch("busy", "thinking")
+    steps = [json.loads(line)["step_update"] for line in capsys.readouterr().out.splitlines()]
+    assert [(s["step_type"], s.get("tool_name")) for s in steps] == [
+        ("thinking", None),
+        ("tool", "command_execution"),
+    ]
+
+
+def test_busy_screen_tool_is_not_overridden_by_background_footer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    turn = Turn("c", user_seen=True, background={"task": 200}, tool_names={200: "run_command"})
+    turn.watch("busy", "command_execution")
+    turn.watch("busy", "command_execution")
+    steps = [json.loads(line)["step_update"] for line in capsys.readouterr().out.splitlines()]
+    assert [(s["step_type"], s.get("tool_name")) for s in steps] == [("tool", "command_execution")]
 
 
 @pytest.mark.parametrize("matches", [True, False])

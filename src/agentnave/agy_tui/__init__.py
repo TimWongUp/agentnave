@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import cast
 
 from agentnave.agy_tui.hooks import ENV, ensure_entry, read_events
-from agentnave.agy_tui.screen import AgyScreen, input_box, state
+from agentnave.agy_tui.screen import AgyScreen, busy_activity, input_box, state
 from agentnave.claude_tui.screen import ANSI, clean_paste, workspace_matches
 from agentnave.claude_tui.terminal import Terminal
 
@@ -81,6 +81,7 @@ class Turn:
     tool_names: dict[int, str] = field(default_factory=dict[int, str])
     background: dict[str, int] = field(default_factory=dict[str, int])
     shown: str = ""
+    screen_activity: str | None = None
 
     def block(self, reason: str, screen: str = "") -> None:
         self.error = f"permission required: Antigravity interactive runtime blocked: {reason}"
@@ -156,11 +157,22 @@ class Turn:
             self.step(self.background.pop(ended.group(1)), "tool", "DONE")
             self.shown = ""
 
-    def watch(self, shown: str) -> None:
+    def watch(self, shown: str, activity: str | None = None) -> None:
         """While a background call runs, the footer tells who works: idle is agy waiting on
         the call, busy is the model."""
         if self.stopped:
             return  # Stop owns turn completion; do not emit further progress.
+        if activity is not None and activity != self.screen_activity:
+            self.screen_activity = activity
+            if self.user_seen and not self.answered:
+                self.shown = shown
+                if activity == "thinking":
+                    self.step(0, "thinking", "ACTIVE")
+                else:
+                    self.step(0, "tool", "ACTIVE", tool_name=activity)
+                return
+        elif shown != "busy":
+            self.screen_activity = None
         if self.open_tools:
             # Transcript calls take precedence; reconsider even an unchanged footer after
             # their output arrives and hands control back to the model/background calls.
@@ -325,7 +337,7 @@ class Run:
         while not self.turn.stopped:
             offset = self.turn.offset
             screen = self.poll()
-            self.turn.watch(state(screen))
+            self.turn.watch(state(screen), busy_activity(screen))
             now = time.monotonic()
             if self.exited():
                 self.poll()

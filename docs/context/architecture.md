@@ -22,6 +22,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - Claude 在 macOS／Linux 默认以交互模式运行：Provider 进程是服务自带的 helper，它在同一 supervisor 进程组里用伪终端驱动 `claude`，把 transcript 与 hooks 归一成事件；Windows 与受限工具路径用 `-p`。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)）。
 - Antigravity 在 macOS／Linux 且权限放开时默认以交互模式运行，形状与 Claude 相同；helper 为此在用户的全局 `~/.gemini/config/hooks.json` 维护一条只在它启动的 agy 里起作用的门控条目（[ADR-0072](../adr/0072-antigravity-interactive-runtime.md)）。
 - 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。运行记录失去活跃运行证据时，可在服务使用的同一会话锁下确认无人持有，重读视图并仅在展示中标记中断，不回写历史；不能确认时保留服务状态（[ADR-0060](../adr/0060-tray-detects-orphaned-running-work.md)）。
+- 服务向托盘提供运行活动及其当前状态的起始时间，供界面展示持续时间；活动变化和终态仍由服务决定。
 
 ## MCP 合同
 

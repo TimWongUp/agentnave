@@ -1,4 +1,13 @@
 "use strict";
+setInterval(() => {
+  if (document.hidden) return;
+  for (const rec of state.nodes.values()) {
+    if (rec.kind !== "typing" || !rec.statusMessage || !rec.status?.isConnected) continue;
+    const status = typingStatus(rec.statusMessage);
+    setText(rec.status, status);
+    rec.status.hidden = !status;
+  }
+}, 1000);
 function applyFolds(records) {
   // Keep geometry reads together: alternating styles and scrollHeight for each message
   // forces the browser to lay out the whole conversation again for every bubble.

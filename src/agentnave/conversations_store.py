@@ -857,6 +857,7 @@ class ConversationStore(Groups):
                 "reported_model": reported_model,
                 "identity": identities[key],
                 "doing": doing,
+                "doing_since": self.manager.progress_since(invocations[key]),
                 "output_at": output_at,
             }
 

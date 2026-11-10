@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-09
 - 信任屏确认与用户配置持久化例外修订见 [ADR-0078](0078-startup-confirmations.md)。
+- 运行活动可由屏幕状态行更新，见 [ADR-0079](0079-agy-screen-activity.md)。
 - 沿用 [ADR-0056](0056-claude-interactive-runtime.md) 的形状：helper 在同一 supervisor 进程组里用伪终端驱动 CLI，一次调用一个进程，回合结束即退出。
 
 ## 背景

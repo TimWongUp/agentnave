@@ -70,6 +70,24 @@ _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "done", "failed", "error", "errored"})
 
 
+def _doing(activity: ProviderActivity | None) -> str | None:
+    if activity is None:
+        return None
+    if activity.kind == "tool":
+        return (
+            "thinking"
+            if (activity.state or "").lower() in _ENDED_TOOL_STATES
+            else f"tool:{activity.tool_name or ''}"
+        )
+    if activity.kind == "lifecycle" and activity.state == "reasoning":
+        return "thinking"
+    if activity.kind == "message":
+        return "writing"
+    if activity.kind == "retry":
+        return "retrying"
+    return None
+
+
 @dataclass(slots=True)
 class _InvocationRecord:
     request: InvocationRequest
@@ -85,6 +103,8 @@ class _InvocationRecord:
     last_event_at: float | None = None
     last_activity: ProviderActivity | None = None
     last_activity_at: float | None = None
+    doing: str | None = None
+    doing_since: float | None = None
     # When the current run of "retrying" activity began, so a stuck provider can be timed out.
     retry_since: float | None = None
     retry_at: float | None = None
@@ -157,6 +177,7 @@ class _InvocationRecord:
                 )
             self.last_activity = activity
             self.last_activity_at = self.last_event_at
+            self.update_doing(self.last_event_at)
             if activity.kind == "retry":
                 self.retry_since = _retry_streak_start(
                     self.retry_since, self.retry_at, self.last_event_at
@@ -165,6 +186,11 @@ class _InvocationRecord:
             else:
                 self.retry_since = None
                 self.retry_at = None
+
+    def update_doing(self, now: float) -> None:
+        doing = None if self.prompts.pending() else _doing(self.last_activity)
+        if doing != self.doing:
+            self.doing, self.doing_since = doing, now if doing is not None else None
 
     def take_update(self) -> InvocationResult | InvocationError | NativePrompt | None:
         """Return the final result, else consume the oldest unread blocker."""
@@ -608,26 +634,19 @@ class InvocationManager:
         """What the CLI is doing now and when its reply last grew, as labels that change only
         with the work itself: thinking, tool:<name>, writing or retrying, and a wall time."""
         record = self._record(invocation_id)
-        activity = record.last_activity
-        doing: str | None = None
-        # A CLI held by a native prompt waits for the boss; it is neither thinking nor working.
-        if activity is not None and not record.prompts.pending():
-            if activity.kind == "tool":
-                # An ended call hands its result back to the model; CLIs report nothing more
-                # until the model answers, often for seconds.
-                ended = (activity.state or "").lower() in _ENDED_TOOL_STATES
-                doing = "thinking" if ended else f"tool:{activity.tool_name or ''}"
-            elif activity.kind == "lifecycle" and activity.state == "reasoning":
-                doing = "thinking"
-            elif activity.kind == "message":
-                doing = "writing"
-            elif activity.kind == "retry":
-                doing = "retrying"
+        record.update_doing(time.monotonic())
         output_at: str | None = None
         if record.output_at is not None:
             wall = record.started_wall_at + timedelta(seconds=record.output_at - record.started_at)
             output_at = wall.replace(microsecond=0).isoformat()
-        return doing, output_at
+        return record.doing, output_at
+
+    def progress_since(self, invocation_id: str) -> str | None:
+        record = self._record(invocation_id)
+        if record.doing_since is None:
+            return None
+        wall = record.started_wall_at + timedelta(seconds=record.doing_since - record.started_at)
+        return wall.isoformat()
 
     def recent_output(self, invocation_id: str) -> tuple[str, int | None]:
         record = self._record(invocation_id)
@@ -643,6 +662,7 @@ class InvocationManager:
         return record.reported_model if record is not None else None
 
     def _prompts_changed(self, invocation_id: str) -> None:
+        self._record(invocation_id).update_doing(time.monotonic())
         if self.on_prompt_change is not None:
             self.on_prompt_change(invocation_id)
 

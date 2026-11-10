@@ -73,3 +73,33 @@ def input_box(screen: str) -> str:
     lines = [line.strip() for line in ANSI.sub("", screen).splitlines()]
     rules = [i for i, line in enumerate(lines) if RULE.fullmatch(line)]
     return " ".join(" ".join(lines[rules[-2] + 1 : rules[-1]]).split()) if len(rules) > 1 else ""
+
+
+def busy_activity(screen: str) -> str | None:
+    """Read the spinner immediately above the input box, optionally above its tip."""
+    if state(screen) != "busy":
+        return None
+    lines = [line.strip() for line in ANSI.sub("", screen).splitlines() if line.strip()]
+    rules = [i for i, line in enumerate(lines) if RULE.fullmatch(line)]
+    boxes = [
+        upper
+        for upper, lower in zip(rules, rules[1:], strict=False)
+        if any(line.startswith(">") for line in lines[upper + 1 : lower])
+    ]
+    if not boxes:
+        return None
+    before = boxes[-1] - 1
+    if before >= 0 and lines[before].startswith("└ Tip:"):
+        before -= 1
+    if before < 0 or not (match := re.fullmatch(r"[⠀-⣿]  (.+)", lines[before])):
+        return None
+    text = match.group(1).lower()
+    for prefix, tool in (
+        ("running command", "command_execution"),
+        ("reading file", "read_file"),
+        ("editing file", "file_change"),
+        ("searching web", "web_search"),
+    ):
+        if text.startswith(prefix) and text.endswith("..."):
+            return tool
+    return "thinking"

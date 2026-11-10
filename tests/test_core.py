@@ -36,11 +36,25 @@ from agentnave.models import (
     InvocationPhase,
     InvocationRequest,
     InvocationStatus,
+    ProviderActivity,
 )
 from agentnave.native_prompts import NativePrompt, PromptChannel
 from agentnave.processes import (
     _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
 )
+
+
+def test_doing_since_changes_only_with_displayed_state(tmp_path: Path) -> None:
+    record = core._InvocationRecord(InvocationRequest("antigravity", "work", tmp_path))  # pyright: ignore[reportPrivateUsage]
+    record.last_activity = ProviderActivity("lifecycle", "thinking", "reasoning")
+    record.update_doing(10)
+    assert (record.doing, record.doing_since) == ("thinking", 10)
+    record.last_activity = ProviderActivity("tool", "tool", "DONE", "read_file")
+    record.update_doing(20)
+    assert (record.doing, record.doing_since) == ("thinking", 10)
+    record.last_activity = ProviderActivity("tool", "tool", "ACTIVE", "read_file")
+    record.update_doing(30)
+    assert (record.doing, record.doing_since) == ("tool:read_file", 30)
 
 
 @pytest.mark.asyncio
