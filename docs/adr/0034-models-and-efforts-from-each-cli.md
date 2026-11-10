@@ -1,6 +1,6 @@
 # ADR-0034：模型与档位以 CLI 自己给出的为准
 
-- 状态：已接受
+- 状态：部分修订；Claude「失败时退回别名」及设置页列表的组成见 [ADR-0075](0075-model-lists-only-what-the-cli-lists.md)
 - 日期：2026-10-30
 - 修订 [ADR-0014](0014-tray-members-and-one-click-update.md) 第 2 条的“只运行列举／帮助命令、档位用静态表”。
 

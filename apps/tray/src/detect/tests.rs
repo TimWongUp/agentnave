@@ -184,6 +184,17 @@ fn command_listings_are_parsed_from_their_fixed_formats() {
         Some("gpt-6-luna")
     );
     assert_eq!(native_model(&listed(&CLAUDE_ALIASES), None), None);
+    // A setting names the picker's entry, never a second spelling beside it.
+    let mut claude = listed(&["opus", "claude-fable-5-1[1m]"]);
+    claude[0]["resolved"] = json!("claude-opus-5-5");
+    assert_eq!(
+        native_model(&claude, Some("claude-opus-5-5")).as_deref(),
+        Some("opus")
+    );
+    assert_eq!(
+        native_model(&claude, Some("claude-fable-5-1")).as_deref(),
+        Some("claude-fable-5-1[1m]")
+    );
     assert_eq!(
         native_model(&grok_models(grok), None).as_deref(),
         Some("grok-4.7")

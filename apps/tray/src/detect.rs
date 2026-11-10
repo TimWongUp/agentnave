@@ -270,15 +270,24 @@ fn failure(provider: &str, path: Option<&Path>, error: &str) -> Value {
     })
 }
 
-/// The CLI's own default model: the one its settings name (matched to a listed id by id or label),
-/// else the one its listing marks as default. Never a guess: `None` when the CLI names none.
+/// The CLI's own default model: the one its settings name, matched to a listed id by id or label,
+/// then by that id without a `[1m]`-style suffix or by the model an alias resolves to; else the one
+/// its listing marks as default. Never a guess: `None` when the CLI names none.
 fn native_model(models: &[Value], configured: Option<&str>) -> Option<String> {
     let id = |model: &Value| model["id"].as_str().map(str::to_owned);
+    fn bare(model: &Value) -> Option<&str> {
+        model["id"].as_str()?.split('[').next()
+    }
     match configured {
         Some(name) => Some(
             models
                 .iter()
                 .find(|model| model["id"] == name || model["label"] == name)
+                .or_else(|| {
+                    models
+                        .iter()
+                        .find(|model| bare(model) == Some(name) || model["resolved"] == name)
+                })
                 .and_then(id)
                 .unwrap_or_else(|| name.to_owned()),
         ),
@@ -831,17 +840,8 @@ fn listed_models(
             }
             ("codex-cache", models)
         }),
-        // Its own model picker; the aliases alone when it cannot answer.
-        "claude" => Ok(claude_models(path).map_or_else(
-            |_| {
-                let aliases = CLAUDE_ALIASES.iter();
-                (
-                    "aliases",
-                    aliases.map(|alias| model(alias, alias, false)).collect(),
-                )
-            },
-            |models| ("initialize", models),
-        )),
+        // Its own model picker; nothing stands in when it cannot answer.
+        "claude" => claude_models(path).map(|models| ("initialize", models)),
         "deepseek" => deepseek_listing(dsh_dump, configured_model),
         "grok" => run(path, &["models"]).map(|out| {
             let cache = dirs::home_dir()

@@ -5,7 +5,11 @@ const isRestricted = (scene) => Object.hasOwn(currentDoc.modes || {}, scene);
 // lists of older files; null means any model, now or later.
 const hasPool = (provider) => Object.hasOwn(currentDoc.clis?.[provider] || {}, "allowed_models");
 const listedPool = (provider) => currentDoc.clis?.[provider]?.allowed_models || null;
-const outOfPool = (provider, model) => Boolean(listedPool(provider)) && !listedPool(provider).includes(model);
+// A model the CLI no longer lists, or one the pool leaves out. Without a listing nothing counts as
+// unlisted, so a pending or failed detection raises no false alarm.
+const outOfPool = (provider, model) =>
+  (Boolean(detected[provider]?.models?.length) && !getAllModelIds(provider).includes(model)) ||
+  (Boolean(listedPool(provider)) && !listedPool(provider).includes(model));
 
 // A model the App starts configuring keeps the CLI's own default effort until one is chosen (ADR-0028).
 function ensureCliModel(provider, modelId) {
@@ -67,12 +71,10 @@ function savedEffort(provider, modelId, wanted) {
   return levels.length === 1 ? levels[0] : "";
 }
 
+// Exactly what the CLI lists now; a saved model it no longer lists shows only where it is still
+// bound, as unavailable.
 function getAllModelIds(provider) {
   const ids = new Set((detected[provider]?.models || []).map((m) => m.id));
-  for (const id of Object.keys(currentDoc.clis?.[provider]?.models || {})) ids.add(id);
-  for (const selection of Object.values(currentDoc.modes || {})) {
-    for (const id of selection?.[provider]?.models || []) ids.add(id);
-  }
   return [...ids].filter((id) => typeof id === "string" && id.trim() && !hiddenModel(provider, id));
 }
 

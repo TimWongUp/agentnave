@@ -4,7 +4,6 @@ function slotRows(provider, scene, split) {
   const key = `${provider}/${scene || "both"}`;
   const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
-  if (native.model && !hiddenModel(provider, native.model) && !all.includes(native.model)) all.unshift(native.model);
   const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
   const tip = scene === "discussion" ? null : settingTip(L("单独干活只用于没开编排的 boss，开会始终按这里设置。分开设置可以给两者选不同的默认模型和档位，或只停用其中一个。", "Solo tasks only serve bosses without orchestration; meetings always use these settings. Separate lets the two use different default models and efforts, or turns off just one."));
   // The last scene keeps the tip beside it when the narrow column wraps the label.
@@ -62,7 +61,7 @@ function slotRows(provider, scene, split) {
 
 // What the pool row reads: scenes of an older file can still hold lists of their own.
 function poolSummary(provider, all, pool) {
-  const visible = (list) => list?.filter((id) => !hiddenModel(provider, id));
+  const visible = (list) => list?.filter((id) => all.includes(id));
   const count = (list) => (list ? L(`${list.length} 个`, `${list.length}`) : L(`全部 ${all.length} 个`, `All ${all.length}`));
   const scenes = SCENE_IDS.filter((s) => slot(s, provider).enabled);
   const lists = scenes.map((s) => visible(slot(s, provider).allowed));
@@ -79,12 +78,10 @@ function poolSummary(provider, all, pool) {
 // One list per CLI; every scene and seat of the CLI picks its model from it.
 function poolRows(provider) {
   const key = `${provider}/pool`;
-  const native = nativeDefault(provider);
   const all = getAllModelIds(provider);
-  if (native.model && !hiddenModel(provider, native.model) && !all.includes(native.model)) all.unshift(native.model);
   const pool = shownPool(provider);
-  // Hidden models neither count nor survive an edit of the list.
-  const chosen = pool?.filter((id) => !hiddenModel(provider, id));
+  // Hidden and no longer listed models neither count nor survive an edit of the list.
+  const chosen = pool?.filter((id) => all.includes(id));
   const open = pickerOpen === key;
   const rows = [el("div", { className: "member-row" },
     el("span", { className: "member-scene" }, L("可用模型", "Available models")),

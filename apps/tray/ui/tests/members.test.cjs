@@ -68,6 +68,7 @@ function advancedEditor(fetch) {
     document.createTextNode = (text) => text;
     document.getElementById = (id) => nodes.get(id) || nodes.set(id, node("div")).get(id);
     currentDoc.modes.task.codex = { models: ["chat-model"], overrides: {}, default: "chat-model" };
+    detected.codex.models = [{ id: "chat-model" }];
   `);
   app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
   return app;
@@ -575,8 +576,12 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
     currentDoc.modes.discussion.codex.default = "b";
     reviewSeats = { "security-reviewer": { provider: "codex", model: "b" } };
     markSaved();
+    pickerOpen = "codex/pool";
+  `);
+  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/old")'), null, "a saved model the CLI no longer lists is not offered");
+  assert.equal(app.run('seatOptions({ provider: "codex", model: "old" }).find((o) => o.attrs.value === "old").attrs.disabled'), true, "a seat bound to it shows it as unavailable");
+  app.run(`
     poolPick("codex/pool/all");
-    poolPick("codex/pool/allow/old", false);
     poolPick("codex/pool/allow/b", false);
   `);
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
@@ -608,7 +613,7 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
 
   // Select all is an explicit list; future CLI models are not silently allowed.
   app.run('poolPick("codex/pool/all"); detected.codex.models.push({ id: "next" })');
-  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b", "old"]);
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b"]);
   assert.equal(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'), false);
   app.run(`
     currentDoc.clis.codex.allowed_models = ["a"];
@@ -622,7 +627,7 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
 test("model choices start unchecked, clear all stays unsaved, and selection stops at 20", () => {
   const app = poolEditor();
   app.run(`
-    detected.codex.models = Array.from({ length: 21 }, (_, i) => ({ id: "model-" + i }));
+    detected.codex.models = Array.from({ length: 22 }, (_, i) => ({ id: "model-" + i }));
     currentDoc.clis.codex.models = {};
     markSaved();
   `);

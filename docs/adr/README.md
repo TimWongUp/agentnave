@@ -37,7 +37,7 @@
 | 0031 | [单向编排使用派发指令约束](0031-prompt-only-orchestration.md) | 已接受 | [ADR-0043](0043-service-prompt-instructions.md) |
 | 0032 | [App 按 CLI 设权限档位](0032-cli-permission-tiers.md) | 部分取代 | [ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0059](0059-claude-tier-fallback.md) |
 | 0033 | [boss 工作区交接](0033-boss-workspace-handover.md) | 部分取代 | [ADR-0048](0048-sqlite-schema-evolution.md) |
-| 0034 | [模型与档位以 CLI 自己给出的为准](0034-models-and-efforts-from-each-cli.md) | 已接受 | — |
+| 0034 | [模型与档位以 CLI 自己给出的为准](0034-models-and-efforts-from-each-cli.md) | 部分修订 | [ADR-0075](0075-model-lists-only-what-the-cli-lists.md) |
 | 0035 | [员工卡片一行设好一个 CLI，需要时再分开两个场景](0035-member-cards-one-row-per-cli.md) | 部分取代 | [ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
 | 0036 | [本服务的 Skill 只由 App 管理](0036-app-owns-service-skills.md) | 已接受 | — |
 | 0037 | [App 写入编排规则，Explorer 与 Worker 分简单、困难两档](0037-app-writes-orchestration-rules.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0051](0051-parallel-preset-without-recheck.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) |
@@ -77,3 +77,4 @@
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
 | 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 已接受 | — |
 | 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 已接受 | 扩展并修订 ADR-0068 |
+| 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
