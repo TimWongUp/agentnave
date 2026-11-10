@@ -226,7 +226,7 @@ test("old message signatures and recipients without identity stay unknown beside
   const [legacy] = context.targets({ ...old, to: undefined, recipients: [{ focus: "a", role: "旧职责" }], thread: { kind: "desk", key: "a" } }, ctx);
   for (const recipient of [target, legacy, { kind: "desk", who: old.to[0] }]) {
     const chip = context.chip(recipient);
-    assert.equal(chip.children.at(-1), "未记录身份");
+    assert.equal(chip.children.at(-1).children.at(-1), "未记录身份");
     assert.equal(chip.attributes.title, "未记录身份，重连宿主后更新");
     assert.equal(chip.children.some(child => child?.tag === "span.at-role"), false);
   }
@@ -243,8 +243,9 @@ test("service identities preserve historical duties and duplicate ordinals in si
   assert.equal(context.speakerRole(m), "探索派");
   assert.equal(context.speakerSub(m), "Claude Code");
   const chip = context.chip(context.targets(m, ctx)[0]);
-  assert.equal(chip.children.at(-1), "claude-x #4");
-  assert.equal(chip.children.find(child => child?.tag === "span.at-role").children[0], "探索派");
+  const name = chip.children.find(child => child?.tag === "span.at-name");
+  assert.equal(name.children.at(-1), "claude-x #4");
+  assert.equal(name.children.find(child => child?.tag === "span.at-role").children[0], "探索派");
   assert.equal(chip.attributes.title, identity.handle);
   context.AN.setFullModelNames(true);
   assert.equal(context.speakerName(m), "route/claude-x #4");
@@ -340,4 +341,14 @@ test("unknown model handles localize without changing service role or duplicate 
     names.setFullModelNames(true);
     assert.equal(names.handleOf(who), expected);
   }
+});
+
+test("only meeting messages name their recipients", () => {
+  const { context } = auditUI();
+  context.state.drawer = { kind: "room" };
+  const ctx = { desks: new Map([["a", { key: "a", identity: identities.explorer }]]), rooms: new Map() };
+  const boss = { speaker: { role: "manager" }, to: [{ key: "a", identity: identities.explorer }] };
+  assert.equal(context.verbOf({ ...boss, thread: { kind: "desk", key: "a" } }, ctx)[1].length, 0);
+  assert.equal(context.verbOf({ ...boss, kind: "forward", thread: { kind: "desk", key: "a" } }, ctx)[1].length, 0);
+  assert.equal(context.verbOf({ ...boss, round: 1, thread: { kind: "room", id: "r" } }, ctx)[1].length, 1);
 });

@@ -125,13 +125,18 @@ function chip(t) {
     return h("span.at.all", { title: L("会议室里的所有人", "Everyone in the meeting room") }, "@all");
   const who = targetWho(t);
   const role = who.identity?.role;
+  // One run of inline text, so a long name wraps back under the @ instead of beside the head.
   return h(
     "span.at.who",
     { title: AN.fullHandle(who) },
-    "@",
-    t.d ? ART.head(deskChar(t.d)) : null,
-    role ? h("span.at-role", {}, role) : null,
-    AN.deskName(who),
+    h(
+      "span.at-name",
+      {},
+      "@",
+      t.d ? ART.head(deskChar(t.d)) : null,
+      role ? h("span.at-role", {}, role) : null,
+      AN.deskName(who),
+    ),
   );
 }
 // Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
@@ -143,12 +148,14 @@ function verbOf(m, ctx) {
   if (m.kind === "handover") return ["", []];
   if (m.kind === "typing") return ["", [], L("正在输入…", "Typing…"), ""];
   if (m.kind === "instruction") return ["", targets(m, ctx), "", L("仅 TA 可见", "Private")];
-  if (m.kind === "forward") return [L("转发", "Forward"), targets(m, ctx)];
+  // A private task has one recipient, so only a meeting names who a message is for.
+  const to = t?.kind === "room" ? targets(m, ctx) : [];
+  if (m.kind === "forward") return [L("转发", "Forward"), to];
   if (isBoss(m)) {
-    if (t?.kind !== "room") return [L("任务", "Task"), targets(m, ctx)];
+    if (t?.kind !== "room") return [L("任务", "Task"), to];
     const round = m.round > 0 ? L(`第 ${m.round} 轮`, `Round ${m.round}`) : "";
     const where = state.drawer.kind === "room" || !room ? round : L(`「${room.title}」${round}`, `"${room.title}"${round ? ` · ${round}` : ""}`);
-    return [m.round > 0 ? L("议题", "Topic") : L("发言", "Note"), targets(m, ctx), where];
+    return [m.round > 0 ? L("议题", "Topic") : L("发言", "Note"), to, where];
   }
   // Kept from the other seats in review: a reply only boss sees, never deleted.
   if (m.kept_private) return ["", [], "", L("未公开 · 仅 boss 可见", "Unpublished · boss only")];
