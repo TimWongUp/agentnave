@@ -215,7 +215,7 @@
   }
   // Whose words a boss forward relays. A private task's question and reply share one id, so the
   // last match is the reply; a forwarded forward relays its own source; a source out of view is
-  // still someone else's words, never boss's own.
+  // relayed from its unnamed original speaker, never read as boss speaking now.
   function source(m, ctx) {
     const id = m.forward?.message_id;
     if (!id) return null;
