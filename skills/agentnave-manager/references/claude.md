@@ -1,5 +1,7 @@
 # Claude Code
 
+Claude Code 作宿主时使用 `wait_seconds=1500`。调用转入后台后不再另发 `wait`，同一时间只挂一个；可以结束本轮或继续做其他工作，由完成通知唤醒。通知到达后需要继续等待时，再递增 `seq` 发下一次。
+
 通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
 `provider: "claude"`；用户点名时的写法示例：

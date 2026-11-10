@@ -1,7 +1,8 @@
 # ADR-0067：按宿主后台与插话边界将等待窗口定为 270 秒
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-08
+- Claude Code 的等待窗口和条目级超时下限由 [ADR-0076](0076-claude-long-wait.md) 修订。
 - 修订 [ADR-0066](0066-unified-wait-window-and-call-sequence.md) 的十分钟等待窗口与十二分钟宿主工具超时下限；补充 [ADR-0007](0007-wait-any-ready-subset.md)、[ADR-0015](0015-app-host-integration.md)。
 
 核实各宿主对长耗时 MCP `wait` 的后台与中途插话行为后，能力边界并不对称：

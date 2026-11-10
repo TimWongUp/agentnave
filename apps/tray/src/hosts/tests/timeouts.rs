@@ -4,7 +4,7 @@ use super::*;
 fn refresh_raises_existing_tool_timeouts_and_keeps_other_configurations() {
     for (id, key, minimum) in [
         ("codex", "tool_timeout_sec", 360),
-        ("claude", "timeout", 360_000),
+        ("claude", "timeout", 1_620_000),
         ("antigravity", "timeoutSeconds", 360),
         ("pi", "timeout", 360),
         ("hermes", "timeout", 360),
@@ -54,6 +54,12 @@ fn native_long_defaults_unlimited_and_grok_tool_overrides_are_preserved() {
     let mut unlimited = json!({"timeoutSeconds":-1});
     super::super::timeouts::ensure(&mut unlimited, &host(&hosts, "antigravity")).unwrap();
     assert_eq!(unlimited["timeoutSeconds"], -1);
+    let mut claude_unlimited = json!({"timeout":-1});
+    super::super::timeouts::ensure(&mut claude_unlimited, &host(&hosts, "claude")).unwrap();
+    assert_eq!(claude_unlimited["timeout"], -1);
+    let mut claude_new = json!({});
+    super::super::timeouts::ensure(&mut claude_new, &host(&hosts, "claude")).unwrap();
+    assert_eq!(claude_new["timeout"], 1_620_000);
     let mut grok =
         json!({"tool_timeout_sec":1800,"tool_timeouts":{"wait":60,"start_agent":900,"other":30}});
     super::super::timeouts::ensure(&mut grok, &host(&hosts, "grok")).unwrap();

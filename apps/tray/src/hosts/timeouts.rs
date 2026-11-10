@@ -1,10 +1,10 @@
-//! Tool-call limits for AgentNave's 270-second wait, with 90 seconds for the reply.
+//! Tool-call limits for AgentNave's wait windows and reply time.
 use super::{Host, Value, json};
 
 pub(super) fn ensure(entry: &mut Value, host: &Host) -> Result<(), String> {
     let (key, minimum) = match host.boss {
         "codex" => ("tool_timeout_sec", 360),
-        "claude" => ("timeout", 360_000),
+        "claude" => ("timeout", 1_620_000),
         "antigravity" => ("timeoutSeconds", 360),
         "pi" | "hermes" => ("timeout", 360),
         "deepseek" => ("toolCallTimeoutMs", 360_000),
@@ -16,7 +16,12 @@ pub(super) fn ensure(entry: &mut Value, host: &Host) -> Result<(), String> {
     };
     // Grok's native default is 6000 s; do not shorten it by adding an override.
     if host.boss != "grok" || entry.get(key).is_some() {
-        raise(entry, key, minimum, host.boss == "antigravity")?;
+        raise(
+            entry,
+            key,
+            minimum,
+            matches!(host.boss, "antigravity" | "claude"),
+        )?;
     }
     if host.boss == "grok"
         && let Some(overrides) = entry.get_mut("tool_timeouts")
