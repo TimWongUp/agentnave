@@ -490,13 +490,61 @@ fn install(app: &AppHandle, mut update: Update) {
                 }
                 updates.lock().enter("restart");
                 thread::sleep(RESTART_NOTE);
-                app.restart();
+                relaunch(&app);
             }
             // Drop the cached update: its download URL was rewritten for the source that just
             // failed, so retrying would hit the same one instead of re-checking.
             Err(error) => updates.set(Phase::Failed(error), None),
         }
     });
+}
+
+/// Start the updated app once this process is gone. Tauri's restart opens the new instance while
+/// this one still runs, and the Dock gives that second instance its own tile instead of the one
+/// kept in the Dock; a detached shell waits for this process to exit, then opens the app.
+#[cfg(target_os = "macos")]
+fn relaunch(app: &AppHandle) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let env = app.env();
+    let bundle = tauri::process::current_binary(&env)
+        .ok()
+        .and_then(|binary| {
+            let contents = binary.parent()?.parent()?;
+            (contents.file_name()? == "Contents")
+                .then(|| contents.parent().map(Path::to_path_buf))?
+        });
+    let Some(bundle) = bundle else {
+        app.restart();
+    };
+    let spawned = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(
+            r#"while kill -0 "$1" 2>/dev/null; do sleep 0.1; done; shift; exec /usr/bin/open "$@""#,
+        )
+        .arg("relaunch")
+        .arg(std::process::id().to_string())
+        .arg(&bundle)
+        .arg("--args")
+        .args(env.args_os.iter().skip(1))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn();
+    match spawned {
+        Ok(_) => app.exit(0),
+        Err(error) => {
+            eprintln!("无法在退出后重新打开 App，改用直接重启：{error}");
+            app.restart();
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn relaunch(app: &AppHandle) {
+    app.restart();
 }
 
 /// Bring a uv-installed service up to `version` before the app that needs it is installed.
