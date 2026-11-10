@@ -8,6 +8,8 @@
 {"model": "gpt-6.1-sol", "effort": "high"}
 ```
 
+Codex 作宿主时，`native=true` 的 Codex 工位交给自带子代理：按 `spawn_agent` 的实时 schema 显式传工位的 `model`；工位 `effort` 有值且工具支持 `reasoning_effort` 时才传该值，空值省略，不自行补档位。模型或已设档位不能选择时，按主 Skill 的工位不可用与同难度兜底规则处理，不用宿主默认模型顶替；用户明确授权特定替代后才采用该替代。
+
 服务总是为 Codex 带上 `--skip-git-repo-check`，非 Git 目录也能直接运行，无需传参；它只跳过仓库检查，不扩大命令权限。
 
 `sandbox`（`read-only`、`workspace-write`、`danger-full-access`）设定本次调用的原生沙箱模式，续接同样生效；它是权限类参数，只能来自 App 默认值或用户明确要求。
