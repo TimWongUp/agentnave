@@ -43,8 +43,8 @@ block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "NSAttributedString", "NSBitmapImageRep", "NSColor", "NSEvent", "NSFont", "NSGraphics", "NSGraphicsContext", "NSImageRep", "NSStringDrawing"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSAttributedString", "NSBundle", "NSDictionary", "NSString"] }
-objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSAttributedString", "NSBundle", "NSDictionary", "NSString", "NSUUID"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["UI_Notifications"] }

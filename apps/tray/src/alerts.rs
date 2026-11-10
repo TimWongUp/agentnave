@@ -216,6 +216,7 @@ impl Monitor {
 
 /// Native permission callbacks must not stall tray counts or keep-awake polling.
 pub(crate) fn start(app: AppHandle, reader: Arc<Reader>) {
+    permission::install();
     thread::spawn(move || {
         let mut monitor = Monitor::default();
         loop {
