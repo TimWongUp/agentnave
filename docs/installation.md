@@ -629,6 +629,12 @@ Parallel work now has its own "boss may call meetings" switch (`parallel_options
 default; turn it off to hold meetings only when asked. Split work's same switch stays off by
 default.
 
+Seats of the host's own kind (`native`) now use the model and effort saved in the App: the boss
+passes them to the host's built-in subagent instead of its default subagent model, and treats the
+seat as unavailable when the host cannot run them. Settings list only the models each CLI offers
+now; a saved model the CLI no longer offers is marked where it is bound and is not replaced for
+you.
+
 On headless Linux, these switches change only the rules text the App writes. Bots do not read these
 fields; copy the new text into the bot's instruction entry as the
 [headless Linux host guide](linux-headless.md) describes.
