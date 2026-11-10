@@ -455,15 +455,18 @@ let uniformFilled = new Set();
 const seatsShown = () => seatsDraft || reviewSeats;
 const seatsChanged = () => !sameJson(seatsShown(), reviewSeats);
 
-// Every seat in use with the model its CLI's pool left out. Orchestration seats wait unused
-// while no boss runs orchestration.
+// Every seat in use with a model its CLI's pool left out, which blocks saving its section, or one
+// the CLI no longer lists, which is only shown. Orchestration seats wait unused while no boss runs
+// orchestration.
 function seatConflicts() {
   const review = REVIEW_ROLES.map(([role, name]) => ({ section: "review", name: AN.L(`${name}评审`, `${name} review`), seat: seatsShown()[role] }));
   const doc = orchestrationShown();
   const live = Boolean(doc) && (doc.preset !== "off" || Object.values(doc.apps || {}).some((mode) => mode !== "off"));
   const roles = !live ? [] : liveSeats(doc)
     .map(({ role, difficulty, name }) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
-  return [...review, ...roles].filter(({ seat }) => seat && outOfPool(seat.provider, seat.model));
+  return [...review, ...roles]
+    .filter(({ seat }) => seat && (outOfPool(seat.provider, seat.model) || unlisted(seat.provider, seat.model)))
+    .map((conflict) => ({ ...conflict, blocking: outOfPool(conflict.seat.provider, conflict.seat.model) }));
 }
 const seatConflictText = ({ name, seat }) => AN.L(`${name} 用的 ${seat.model} 不在 ${PROVIDER_NAMES[seat.provider]} 的可用模型里`, `${name} uses ${seat.model}, which is not in the available models of ${PROVIDER_NAMES[seat.provider]}`);
 const memberSaveErrors = () => configurationErrors();
@@ -550,7 +553,7 @@ function reviewSelect(key, label, value, options, onPick, disabled = false) {
 }
 
 const seatModels = (provider) => listedPool(provider)
-  ? listedPool(provider).filter((id) => !hiddenModel(provider, id)) : getAllModelIds(provider);
+  ? listedPool(provider).filter((id) => getAllModelIds(provider).includes(id)) : getAllModelIds(provider);
 
 // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
 function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`)) {
@@ -571,7 +574,7 @@ function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), mod
   const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
     .map((p) => [p, PROVIDER_NAMES[p] + note(p), Boolean(note(p)) && p !== provider]);
   const models = provider ? seatModels(provider) : [];
-  const excluded = seat?.model && outOfPool(provider, seat.model);
+  const excluded = seat?.model && (outOfPool(provider, seat.model) || unlisted(provider, seat.model));
   if (seat?.model && !excluded && !models.includes(seat.model)) models.unshift(seat.model);
   const levels = seat?.model ? effortLevels(provider, seat.model) : [];
   if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
@@ -630,7 +633,7 @@ function advancedChanges() {
 
 const customEmpty = () => usesCustom(orchestrationShown()) && !$("custom-text").value.trim();
 // A changed section cannot save while one of its seats is outside its CLI's pool.
-const blockedSeat = () => seatConflicts().find(({ section }) => (section === "review" ? seatsChanged() : orchestrationChanged()));
+const blockedSeat = () => seatConflicts().find(({ section, blocking }) => blocking && (section === "review" ? seatsChanged() : orchestrationChanged()));
 
 function renderAdvancedBar() {
   const changes = advancedChanges();

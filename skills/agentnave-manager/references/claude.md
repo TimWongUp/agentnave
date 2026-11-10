@@ -8,6 +8,10 @@
 {"model": "claude-opus-5-5", "effort": "medium"}
 ```
 
+Claude Code 作宿主时，`native=true` 的 Claude 工位交给自带子代理。工位模型是 Claude Code 模型选单里的名字，Agent 工具的 `model` 目前只收系列别名（以实时 schema 为准）：别名 `opus`、`sonnet`、`haiku`、`fable` 原样传，完整 ID 或带 `[1m]` 的名字传它所属的系列；用户保存该工位即授权这一映射，不用逐次说明版本差异。工位档位有值时传 `effort`，空值省略。
+
+别名不带长上下文：任务需要 `[1m]` 时按工位不可用处理。
+
 权限档位「自动」传 `permission_mode=auto`，「完全放开」传 `bypassPermissions`，另附 `permission_fallback` 指向另一档；所选模式在这台电脑或账号上不可用时，服务改用另一档重跑一次，回执 `warnings` 注明实际模式，把它转告用户；两种都不可用时任务受阻。`permission_fallback` 也是权限类参数，boss 不自行传。
 
 
