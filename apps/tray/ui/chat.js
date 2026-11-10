@@ -367,7 +367,7 @@ function flash(target) {
 function jumpToMessage(mid) {
   const find = () =>
     [...el.inner.querySelectorAll("[data-mid]")]
-      .filter((n) => n.dataset.mid === mid && n.dataset.kind !== "forward")
+      .filter((n) => n.dataset.mid === mid)
       .pop();
   let target = find();
   if (!target) {
@@ -488,7 +488,7 @@ function contextOf(c) {
     fullRooms: new Set(c.rooms.filter(fullRoom).map((r) => r.id)),
     sources: new Set(
       c.messages
-        .filter((m) => m.message_id && m.kind !== "forward")
+        .filter((m) => m.message_id)
         .map((m) => m.message_id),
     ),
   };
