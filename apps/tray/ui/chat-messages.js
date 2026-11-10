@@ -342,7 +342,21 @@ const TOOL_WORDS = {
   command_execution: L("正在运行命令", "Running command"),
   file_change: L("正在修改文件", "Editing files"),
   web_search: L("正在搜索网页", "Searching web"),
+  read_file: L("正在读取文件", "Reading file"),
 };
+// Antigravity's own tool names, as its transcript reports them.
+for (const [names, word] of [
+  [["run_command"], TOOL_WORDS.command_execution],
+  [["view_file", "list_dir", "grep_search", "find_by_name"], TOOL_WORDS.read_file],
+  [["edit_file", "write_file", "write_to_file", "replace_file_content", "multi_replace_file_content"], TOOL_WORDS.file_change],
+  [["search_web", "read_url_content"], TOOL_WORDS.web_search],
+]) for (const name of names) TOOL_WORDS[name] = word;
+function activityDuration(start) {
+  const at = Date.parse(start);
+  if (!Number.isFinite(at)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
+}
 function typingStatus(m) {
   const d = m.doing || "";
   const tool = d.slice(5);
@@ -354,7 +368,8 @@ function typingStatus(m) {
         ? TOOL_WORDS[tool] || L(`正在使用 ${tool || "工具"}`, `Using ${tool || "tool"}`)
         : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
-  return [doing, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
+  const duration = doing && m.doing_since ? activityDuration(m.doing_since) : "";
+  return [doing, duration, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
 }
 const SOURCE_STAMP = / · (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))$/;
 function localizeSourceTime(text) {
@@ -436,6 +451,7 @@ function updateMessage(rec, m, ctx, id) {
     }
   }
   if (m.kind === "typing") {
+    rec.statusMessage = m;
     const status = typingStatus(m);
     setText(rec.status, status);
     rec.status.hidden = !status;

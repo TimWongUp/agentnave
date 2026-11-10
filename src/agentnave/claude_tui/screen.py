@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import os
 import re
 
 # CSI, OSC and DCS strings, then any other escape: optional intermediates and a final byte
@@ -21,6 +22,21 @@ def clean_paste(text: str) -> str:
 RULE = re.compile(r"─{20,}")
 
 
+def workspace_matches(text: str, cwd: str) -> bool:
+    """Accept only one complete path displayed before the trust choices."""
+    before_choices = re.split(r"(?:yes, i trust this folder|no, exit)", text, flags=re.I)[0]
+    lines = [line.strip() for line in ANSI.sub("", before_choices).splitlines()]
+    # agy 1.5 prints "Accessing workspace: <path>"; Claude prints the path on its own line.
+    paths = [line.removeprefix("Accessing workspace:").strip() for line in lines]
+    paths = [path for path in map(os.path.expanduser, paths) if os.path.isabs(path)]
+    if len(paths) != 1:
+        return False
+    try:
+        return os.path.samefile(paths[0], cwd)
+    except OSError:
+        return False
+
+
 def dialog_region(text: str) -> str:
     """The screen below the full-width rule above the last menu cursor or prompt: the dialog or
     input box. The conversation above it can quote any dialog's words."""
@@ -30,13 +46,27 @@ def dialog_region(text: str) -> str:
     return "\n".join(lines[rule + 1 :])
 
 
+def in_input_box(text: str) -> bool:
+    """The last cursor sits above the input box's lower border: in typed or pasted text."""
+    lines = ANSI.sub("", text).splitlines()
+    cursor = max((i for i, line in enumerate(lines) if "❯" in line), default=len(lines))
+    return any(RULE.fullmatch(line.strip()) for line in lines[cursor + 1 :])
+
+
+def bottom_choices(region: str) -> str:
+    """A two-choice dialog's own choices: the two lines right above its "Enter to confirm"
+    footer. Text the dialog quotes above them (a command preview, a file) can say anything."""
+    lines = [line.strip() for line in ANSI.sub("", region).splitlines() if line.strip()]
+    if len(lines) < 3 or not lines[-1].lower().startswith("enter to confirm"):
+        return ""
+    return "\n".join(lines[-3:-1])
+
+
 def dialog_open(text: str) -> bool:
     """A menu is open: its footer is the screen's last line, below anything Claude or the task
     text says. The input box's footer is the status line instead."""
-    lines = ANSI.sub("", text).splitlines()
-    cursor = max((i for i, line in enumerate(lines) if "❯" in line), default=len(lines))
-    if any(RULE.fullmatch(line.strip()) for line in lines[cursor + 1 :]):
-        return False  # The input box's lower border: the cursor is in typed or pasted text.
+    if in_input_box(text):
+        return False
     region = dialog_region(text)
     footer = region.lower().splitlines()[-1:] or [""]
     return any(
@@ -47,6 +77,8 @@ def dialog_open(text: str) -> bool:
 def classify_screen(text: str) -> str:
     """Dialogs take precedence over the prompt, including the prompt inside a menu."""
     lowered = dialog_region(text).lower()
+    if "allow external claude.md file imports?" in lowered:
+        return "external_imports"
     if "trust this folder" in lowered or "do you trust" in lowered:
         return "trust"
     if "resume from summary" in lowered or "resume full session as-is" in lowered:
@@ -111,6 +143,11 @@ CHOICES = {
         b"\x1b[A",
         "Claude Code now uses ANTHROPIC_API_KEY from the environment: the interactive runtime "
         "approved it as -p would use it",
+    ),
+    "external_imports": (
+        "yes, allow external imports",
+        b"\x1b[B",
+        "Claude Code approved external CLAUDE.md imports, including future imports",
     ),
 }
 

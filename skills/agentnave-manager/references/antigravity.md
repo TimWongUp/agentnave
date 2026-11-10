@@ -12,7 +12,9 @@
 
 服务默认给 Antigravity 派发带上 `"dangerously_skip_permissions": true`（`--dangerously-skip-permissions`），自动批准全部原生工具权限请求，CLI 已存配置不变，回执 `defaults_applied` 会注明；App 不提供其他档位。要某次调用守原生权限，只能由用户本轮明确要求，boss 显式传任一权限键（`mode`、`sandbox` 或 `dangerously_skip_permissions: false`）时整档不套用。`mode` 与 `sandbox` 是独立选项，不代表 YOLO。
 
-macOS／Linux 上权限放开时默认以交互模式运行（App 关掉「交互模式运行」或显式 `interactive=false` 时改用 `-p`），回执 `defaults_applied` 注明 `interactive`；不放开权限、Windows、受限工具路径，或传了 `print_timeout`、`disable_slash_commands` 时用 `-p`。交互模式不会出现 `prompt_pending`：提问工具被自动拒绝，问题应写进最终回答；任务受阻时按回执里的画面摘录判断，不向 TUI 发按键。
+macOS／Linux 上权限放开时默认以交互模式运行（App 关掉「交互模式运行」或显式 `interactive=false` 时改用 `-p`），回执 `defaults_applied` 注明 `interactive`；不放开权限、Windows、受限工具路径，或传了 `print_timeout`、`disable_slash_commands` 时用 `-p`。交互模式不会出现 `prompt_pending`：提问工具被自动拒绝，问题应写进最终回答；任务受阻时按回执里的画面摘录判断。
+
+准备阶段信任屏显示目录与派发 `cwd` 为同一目录时，服务自动确认；agy 会将选择永久写进 `~/.gemini/antigravity-cli/settings.json`，这是持久放行先问用户的限定例外。目录不符或未知屏受阻。
 
 ## 显式受限工具
 

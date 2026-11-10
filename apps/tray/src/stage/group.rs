@@ -543,7 +543,7 @@ impl Group {
                 who,
                 &tail,
             );
-            for key in ["doing", "output_at"] {
+            for key in ["doing", "doing_since", "output_at"] {
                 if let Some(value) = identity[key].as_str() {
                     message[key] = json!(value);
                 }

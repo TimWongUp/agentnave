@@ -249,7 +249,7 @@ def _transcript(host: Host, native_id: str) -> tuple[Path, bytes] | None:
         # WorkBuddy is CodeBuddy's desktop app and keeps the same records in its own folder.
         default = ".workbuddy" if host.name == "workbuddy" else ".codebuddy"
         root = _home("CODEBUDDY_CONFIG_DIR", default) / "projects"
-        pattern, marker = f"*/{native_id}.jsonl", b'"assistant"'
+        pattern, marker = f"*/{native_id}.jsonl", b'"providerData"'
     elif host.name == "grok":
         root = _home("GROK_HOME", ".grok") / "sessions"
         pattern, marker = f"*/{native_id}/chat_history.jsonl", b'"model_id"'
@@ -303,7 +303,12 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
         elif host.name == "claude":
             value = assistant_model(event)
         elif host.name in {"codebuddy", "workbuddy"}:
-            if event.get("role") == "assistant":
+            # A turn in progress has no assistant row yet: reasoning and function calls
+            # already carry the model that serves it.
+            if event.get("role") == "assistant" or event.get("type") in {
+                "reasoning",
+                "function_call",
+            }:
                 value = object_dict(event.get("providerData")).get("model")
         elif host.name == "pi":
             value = message_model(object_dict(event.get("message")))

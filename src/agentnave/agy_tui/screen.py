@@ -73,3 +73,63 @@ def input_box(screen: str) -> str:
     lines = [line.strip() for line in ANSI.sub("", screen).splitlines()]
     rules = [i for i, line in enumerate(lines) if RULE.fullmatch(line)]
     return " ".join(" ".join(lines[rules[-2] + 1 : rules[-1]]).split()) if len(rules) > 1 else ""
+
+
+def busy_activity(screen: str) -> str | None:
+    """Read the spinner immediately above the input box, optionally above its tip."""
+    if state(screen) != "busy":
+        return None
+    lines = [line.strip() for line in ANSI.sub("", screen).splitlines() if line.strip()]
+    rules = [i for i, line in enumerate(lines) if RULE.fullmatch(line)]
+    boxes = [
+        upper
+        for upper, lower in zip(rules, rules[1:], strict=False)
+        if any(line.startswith(">") for line in lines[upper + 1 : lower])
+    ]
+    if not boxes:
+        return None
+    before = boxes[-1] - 1
+    if before >= 0 and lines[before].startswith("└ Tip:"):
+        before -= 1
+    if before < 0 or not (match := re.fullmatch(r"[⠀-⣿]  (.+)", lines[before])):
+        return None
+    text = match.group(1).lower()
+    for prefix, tool in (
+        ("running command", "command_execution"),
+        ("reading file", "read_file"),
+        ("editing file", "file_change"),
+        ("searching web", "web_search"),
+    ):
+        if text.startswith(prefix) and text.endswith("..."):
+            return tool
+    return "thinking"
+
+
+TRUST_QUESTION = "Do you trust the contents of this project?"
+TRUST_CHOICES = ("Yes, I trust this folder", "No, exit")
+
+
+def trust_menu(screen: str) -> str | None:
+    """The trust dialog when it is the menu at the bottom: its two choices right above the
+    navigation footer, its question and "Accessing workspace:" just above them. The
+    conversation above can quote the same words, so only these bottom lines count."""
+    lines = [line.strip() for line in ANSI.sub("", screen).splitlines() if line.strip()]
+    if len(lines) < 5 or "navigate" not in lines[-1].lower():
+        return None
+    choices = [line.removeprefix(">").strip() for line in lines[-3:-1]]
+    if tuple(choices) != TRUST_CHOICES:
+        return None
+    first = max(0, len(lines) - 8)
+    above = lines[first:-3]
+    if TRUST_QUESTION not in above:
+        return None
+    question = first + above.index(TRUST_QUESTION)
+    start = next(
+        (
+            i
+            for i in range(question - 1, max(question - 4, -1), -1)
+            if lines[i].startswith("Accessing workspace:")
+        ),
+        None,
+    )
+    return None if start is None else "\n".join(lines[start:])

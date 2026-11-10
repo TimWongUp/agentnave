@@ -605,7 +605,7 @@ fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
             target["identity"] = tail["identity"].clone();
         }
         // What the CLI is doing now and when its reply last grew; absent from older servers.
-        for key in ["doing", "output_at"] {
+        for key in ["doing", "doing_since", "output_at"] {
             if let Some(value) = tail[key].as_str() {
                 target[key] = json!(value);
             }

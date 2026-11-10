@@ -728,9 +728,12 @@ class ConversationStore(Groups):
         self._ensure_live_writer(record)
         self._release_idle(record)
 
+    def _holds_answers(self, round_: Round) -> bool:
+        return self.records[round_.group.id].state.review
+
     async def _approve(self, round_: Round, runs: list[SeatRun]) -> set[str]:
         seat_ids = {run.seat_id for run in runs}
-        if not self.records[round_.group.id].state.review or not seat_ids:
+        if not self._holds_answers(round_) or not seat_ids:
             return seat_ids
         # Kept in memory so a save after a failed one writes the reviews back too.
         reviews = self.reviews.setdefault(round_.id, {})
@@ -854,6 +857,7 @@ class ConversationStore(Groups):
                 "reported_model": reported_model,
                 "identity": identities[key],
                 "doing": doing,
+                "doing_since": self.manager.progress_since(invocations[key]),
                 "output_at": output_at,
             }
 

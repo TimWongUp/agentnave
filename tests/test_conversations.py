@@ -880,6 +880,7 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
                         task["identity"] for task in saved_tasks if task["id"] == running_id
                     ),
                     "doing": None,
+                    "doing_since": None,
                     "output_at": None,
                 }
             },
@@ -3905,9 +3906,13 @@ async def test_live_model_save_failure_recovers_without_losing_heartbeat(
     def progress(_id: str) -> tuple[None, None]:
         return None, None
 
+    def progress_since(_id: str) -> None:
+        return None
+
     monkeypatch.setattr(manager, "recent_output", recent_output)
     monkeypatch.setattr(manager, "reported_model", reported_model)
     monkeypatch.setattr(manager, "progress", progress)
+    monkeypatch.setattr(manager, "progress_since", progress_since)
     monkeypatch.setattr(conversations_module, "_LIVE_SECONDS", 0.01)
     original = Database.save
     failed = False

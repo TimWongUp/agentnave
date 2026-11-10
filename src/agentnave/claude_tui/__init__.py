@@ -44,12 +44,15 @@ from agentnave.claude_tui.screen import (
     CHOICES,
     RULE,
     Screen,
+    bottom_choices,
     classify_screen,
     clean_paste,
     cold_resume_warning,
     dialog_open,
     dialog_region,
+    in_input_box,
     selected,
+    workspace_matches,
 )
 from agentnave.claude_tui.terminal import (
     STRIP_ENV,
@@ -193,6 +196,29 @@ class Startup:
         if kind in BLOCKING_SCREENS:
             blocked(self.turn, BLOCKING_SCREENS[kind])
             return False
+        if kind == "trust" and not workspace_matches(dialog_region(screen), os.getcwd()):
+            blocked(self.turn, "workspace trust screen does not match cwd", screen)
+            return False
+        if kind in ("trust", "external_imports"):
+            # Only the dialog's own lines count: the conversation and the input box can quote
+            # the same words, and a cursor there is not the menu's.
+            choices = "" if in_input_box(screen) else bottom_choices(dialog_region(screen))
+            affirmative = CHOICES[kind][0]
+            negatives = (
+                ("no, exit", "no, continue without these permissions")
+                if kind == "trust"
+                else ("no, disable external imports",)
+            )
+            labels = [line.replace("❯", "").strip() for line in choices.lower().splitlines()]
+            if (
+                len(labels) != 2
+                or affirmative not in labels
+                or not set(labels) & set(negatives)
+                or not any(selected(choices, label) for label in labels)
+            ):
+                blocked(self.turn, "unrecognized startup confirmation choice", screen)
+                return False
+            return None if self.choose(kind, choices) else False
         if kind in CHOICES:
             return None if self.choose(kind, screen) else False
         if kind in ONBOARDING_KEYS:

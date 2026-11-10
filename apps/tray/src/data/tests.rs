@@ -421,7 +421,7 @@ fn tail_live_files_lay_over_saved_running_work_only() {
         &root.join("live/1-tails.json"),
         &json!({"version": 2, "conversations": {
                 "a": {"tasks": {"t-a": {"output": "streamed tail", "reported_model": null,
-                    "doing": "tool:Read", "output_at": "2026-10-15T02:01:00+00:00"}}, "seats": {}},
+                    "doing": "tool:Read", "doing_since": "2026-10-15T02:00:30+00:00", "output_at": "2026-10-15T02:01:00+00:00"}}, "seats": {}},
                 "c": {"tasks": {"t-c": {"output": "late tail", "reported_model": null}}, "seats": {}},
                 // Tails without saved views beneath them show nothing.
                 "gone": {"tasks": {"t-gone": {"output": "x", "reported_model": null}}, "seats": {}}}}),
@@ -435,6 +435,7 @@ fn tail_live_files_lay_over_saved_running_work_only() {
     let typing: Vec<_> = messages.iter().filter(|m| m["kind"] == "typing").collect();
     assert_eq!(typing.len(), 1);
     assert_eq!(typing[0]["text"], "streamed tail");
+    assert_eq!(typing[0]["doing_since"], "2026-10-15T02:00:30+00:00");
     assert_eq!(
         (&typing[0]["doing"], &typing[0]["output_at"]),
         (&json!("tool:Read"), &json!("2026-10-15T02:01:00+00:00"))

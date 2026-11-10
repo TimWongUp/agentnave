@@ -46,8 +46,8 @@ def mode_warning(requested: str, fallback: str, actual: str) -> str | None:
     if actual == fallback:
         access = " (full access)" if fallback == "bypassPermissions" else ""
         return (
-            f"Claude Code {requested} mode is unavailable here, so AgentNave ran it in "
-            f"{fallback} mode{access} instead"
+            f"Claude Code {requested} mode is unavailable here; per the App permission "
+            f"tier's fallback, AgentNave ran it in {fallback} mode{access} instead"
         )
     return f"Claude Code ran in {actual} mode instead of the requested {requested} mode"
 

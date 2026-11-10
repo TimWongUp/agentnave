@@ -4,6 +4,18 @@ const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 const { common, identities } = require("./helpers/common.cjs");
 
+test("typing status measures the current activity and formats minutes", () => {
+  const source = readFileSync(`${__dirname}/../chat-messages.js`, "utf8");
+  const start = source.indexOf("const STALE_TAIL_MS");
+  const end = source.indexOf("const SOURCE_STAMP", start);
+  const context = vm.createContext({ L: zh => zh, relTime: () => "", Date });
+  vm.runInContext(source.slice(start, end), context);
+  const now = Date.now();
+  assert.equal(context.typingStatus({ doing: "thinking", doing_since: new Date(now - 23000).toISOString() }), "思考中 · 23s");
+  assert.equal(context.typingStatus({ doing: "tool:read_file", doing_since: new Date(now - 65000).toISOString() }), "正在读取文件 · 1m05s");
+  assert.equal(context.typingStatus({ doing: "thinking", doing_since: "bad" }), "思考中");
+});
+
 function office(character = (_host, model) => model || "default") {
   const node = () => ({
     dataset: {}, classList: { toggle() {} }, children: [],

@@ -328,6 +328,8 @@ mcp = _Server(
         "No always-allow rules; deny writes for access=read. Ask the user before deleting/overwriting user data, "
         "rewriting Git history, publishing/sending/buying, expanding authorization, persistent approval, "
         "or writing out-of-scope user configuration/credentials. "
+        "Startup exception: the service confirms Claude and agy workspace trust when the displayed directory matches cwd, "
+        "and Claude external CLAUDE.md imports including future imports; the CLIs persist these choices in user configuration. "
         "manager_session_id: read this chat's native ID before start_agent/run_round/answer_prompt/handover release or claim; "
         "pass it every time; same chat, same ID; new chat, new ID. "
         + session_id_hint(HOST)

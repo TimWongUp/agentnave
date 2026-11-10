@@ -702,6 +702,28 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         assert annotations is not None and annotations.read_only_hint is True
 
 
+def test_provider_option_schema_offers_booleans_before_strings() -> None:
+    from pydantic import TypeAdapter
+
+    from agentnave.models import ProviderOption
+
+    adapter: TypeAdapter[ProviderOption] = TypeAdapter(ProviderOption)
+    # A host that coerces types before validating would turn false into "false" when the
+    # string branch comes first, so the schema offers typeless booleans and numbers first.
+    schema = adapter.json_schema()
+    assert [branch["type"] for branch in schema["anyOf"]] == [
+        "boolean",
+        "integer",
+        "number",
+        "string",
+    ]
+    # The order must not make plain strings or numbers parse as booleans.
+    assert adapter.validate_python("true") == "true"
+    assert adapter.validate_python("false") == "false"
+    assert adapter.validate_python(1) == 1
+    assert adapter.validate_python(False) is False
+
+
 def test_mcp_projection_preserves_user_data_and_array_positions() -> None:
     opaque_fields = (
         "options",

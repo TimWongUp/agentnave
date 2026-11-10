@@ -195,6 +195,20 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     assert session_model(Host("codebuddy"), session) == "glm-5.3-flash"
     # WorkBuddy, CodeBuddy's desktop app, keeps the same records.
     assert session_model(Host("workbuddy"), session) == "glm-5.3-flash"
+    # Mid-turn rows have no role: reasoning and function calls already name the model.
+    running = "01a14d5a-d23d-7263-b50d-ca6b5ac429df"
+    (buddy.parent / f"{running}.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "reasoning",
+                "timestamp": 1767225600000,
+                "providerData": {"model": "glm-5.3-mid-turn"},
+            }
+        )
+        + "\n"
+        + json.dumps({"type": "function_call", "timestamp": 1767225600000, "providerData": {}})
+    )
+    assert session_model(Host("workbuddy"), running) == "glm-5.3-mid-turn"
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
     grok = tmp_path / "grok" / "sessions" / "%2Fproject" / session / "chat_history.jsonl"
     grok.parent.mkdir(parents=True)

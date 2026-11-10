@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import cast
 
 from agentnave.agy_tui.hooks import ENV, ensure_entry, read_events
-from agentnave.agy_tui.screen import AgyScreen, input_box, state
-from agentnave.claude_tui.screen import ANSI, clean_paste
+from agentnave.agy_tui.screen import AgyScreen, busy_activity, input_box, state, trust_menu
+from agentnave.claude_tui.screen import ANSI, clean_paste, workspace_matches
 from agentnave.claude_tui.terminal import Terminal
 
 STARTUP_TIMEOUT = 60.0
@@ -81,6 +81,7 @@ class Turn:
     tool_names: dict[int, str] = field(default_factory=dict[int, str])
     background: dict[str, int] = field(default_factory=dict[str, int])
     shown: str = ""
+    screen_activity: str | None = None
 
     def block(self, reason: str, screen: str = "") -> None:
         self.error = f"permission required: Antigravity interactive runtime blocked: {reason}"
@@ -100,6 +101,9 @@ class Turn:
     def close_tool(self) -> None:
         if self.open_tools:
             self.step(self.open_tools.pop(0), "tool", "DONE")
+            if self.open_tools:
+                tool = self.open_tools[0]
+                self.step(tool, "tool", "ACTIVE", tool_name=self.tool_names.get(tool))
 
     def row(self, row: dict[str, object]) -> None:
         index = row.get("step_index")
@@ -153,16 +157,30 @@ class Turn:
             self.step(self.background.pop(ended.group(1)), "tool", "DONE")
             self.shown = ""
 
-    def watch(self, shown: str) -> None:
+    def watch(self, shown: str, activity: str | None = None) -> None:
         """While a background call runs, the footer tells who works: idle is agy waiting on
         the call, busy is the model."""
         if self.stopped:
             return  # Stop owns turn completion; do not emit further progress.
         if self.open_tools:
-            # Transcript calls take precedence; reconsider even an unchanged footer after
-            # their output arrives and hands control back to the model/background calls.
-            self.shown = ""
+            # Transcript calls take precedence; reconsider even an unchanged footer after their
+            # output arrives. Remember the status line so its lag after a call ends is no news.
+            self.shown, self.screen_activity = "", activity
             return
+        if activity is None:
+            if shown != "busy":
+                self.screen_activity = None
+        elif activity != self.screen_activity:
+            # agy writes nothing while the model thinks or a call runs before its response
+            # lands; its status line does (ADR-0079).
+            self.screen_activity = activity
+            if self.user_seen:
+                self.shown = shown
+                if activity == "thinking":
+                    self.step(0, "thinking", "ACTIVE")
+                else:
+                    self.step(0, "tool", "ACTIVE", tool_name=activity)
+                return
         if shown == self.shown:
             return
         self.shown = shown
@@ -243,6 +261,7 @@ class Run:
     def await_ready(self) -> bool:
         deadline = time.monotonic() + STARTUP_TIMEOUT
         previous, since = "", time.monotonic()
+        tries = 0
         while time.monotonic() < deadline:
             screen = self.poll()
             now = time.monotonic()
@@ -254,6 +273,26 @@ class Run:
             if now - since < 1:
                 continue
             if state(screen) == "menu":
+                menu = trust_menu(screen)
+                if menu is not None:
+                    if not workspace_matches(menu, os.getcwd()):
+                        self.turn.block("workspace trust screen does not match cwd", screen)
+                        return False
+                    if tries >= 3:
+                        self.turn.block("workspace trust screen stayed after confirmation", screen)
+                        return False
+                    yes = "> Yes, I trust this folder" in menu.splitlines()
+                    if not yes and "> No, exit" not in menu.splitlines():
+                        self.turn.block("unrecognized workspace trust choice", screen)
+                        return False
+                    if yes:
+                        warning = "Antigravity CLI now trusts the dispatched workspace"
+                        if warning not in self.turn.warnings:
+                            self.turn.warnings.append(warning)
+                    self.terminal.outgoing.extend(b"\r" if yes else b"\x1b[A")
+                    tries += 1
+                    since = now
+                    continue
                 self.turn.block("unexpected startup dialog; handle it in agy", screen)
                 return False
             if state(screen) == "idle":
@@ -300,7 +339,7 @@ class Run:
         while not self.turn.stopped:
             offset = self.turn.offset
             screen = self.poll()
-            self.turn.watch(state(screen))
+            self.turn.watch(state(screen), busy_activity(screen))
             now = time.monotonic()
             if self.exited():
                 self.poll()
@@ -345,7 +384,15 @@ class Run:
 
 def settings(cwd: str) -> str:
     # Never saved by agy: trusting the folder here leaves the user's settings unchanged.
-    return json.dumps({"trustedWorkspaces": sorted({cwd, os.path.realpath(cwd)})})
+    workspaces = {cwd, os.path.realpath(cwd)}
+    # agy takes the folder from $PWD, which can spell the same one with another case.
+    if pwd := os.environ.get("PWD"):
+        try:
+            if os.path.samefile(pwd, cwd):
+                workspaces.add(pwd)
+        except OSError:
+            pass  # a path that no longer exists cannot be trusted either way
+    return json.dumps({"trustedWorkspaces": sorted(workspaces)})
 
 
 def close(terminal: Terminal) -> None:
