@@ -348,10 +348,11 @@ async def wait(
         ),
     ] = True,
     wait_seconds: Annotated[
-        Literal[0, 270] | None,
+        Literal[0, 270, 1500] | None,
         Field(
             description=(
                 "Omit to wait up to 270s; 270 explicitly selects the same window. "
+                "1500 waits up to 25 minutes and is available only to the Claude Code host. "
                 "0 checks progress immediately and includes running tails; ready results are still received; no value stops work."
             ),
         ),
@@ -395,6 +396,10 @@ async def wait(
     Unknown/expired/duplicate ids reject the whole call. Ends are never pushed: wait after
     dispatch or independent work; receive every terminal result before ending your turn.
     """
+    if wait_seconds == 1500 and runtime.HOST.name != "claude":
+        raise ToolError(
+            "wait_seconds=1500 is only available to the Claude Code host; use 0 or 270."
+        )
     payload = await _receive(ids, include_output, wait_seconds, manager_session_id, ctx)
     if seq is not None:
         payload["seq"] = seq
@@ -406,7 +411,7 @@ async def wait(
 async def _receive(
     ids: list[str] | None,
     include_output: bool,
-    wait_seconds: Literal[0, 270] | None,
+    wait_seconds: Literal[0, 270, 1500] | None,
     manager_session_id: str | None,
     ctx: Context[Runtime],
 ) -> WaitPayload:
@@ -504,7 +509,7 @@ def _wait_payload(
     results: _WaitResults,
     ids: list[str] | None,
     include_output: bool,
-    wait_seconds: Literal[0, 270] | None,
+    wait_seconds: Literal[0, 270, 1500] | None,
     manager_session_id: str | None,
 ) -> WaitPayload:
     invocation_ids, round_ids = results.invocation_ids, results.round_ids
