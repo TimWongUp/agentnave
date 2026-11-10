@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import cast
 
 from agentnave.agy_tui.hooks import ENV, ensure_entry, read_events
-from agentnave.agy_tui.screen import AgyScreen, busy_activity, input_box, state
+from agentnave.agy_tui.screen import AgyScreen, busy_activity, input_box, state, trust_menu
 from agentnave.claude_tui.screen import ANSI, clean_paste, workspace_matches
 from agentnave.claude_tui.terminal import Terminal
 
@@ -162,22 +162,25 @@ class Turn:
         the call, busy is the model."""
         if self.stopped:
             return  # Stop owns turn completion; do not emit further progress.
-        if activity is not None and activity != self.screen_activity:
+        if self.open_tools:
+            # Transcript calls take precedence; reconsider even an unchanged footer after their
+            # output arrives. Remember the status line so its lag after a call ends is no news.
+            self.shown, self.screen_activity = "", activity
+            return
+        if activity is None:
+            if shown != "busy":
+                self.screen_activity = None
+        elif activity != self.screen_activity:
+            # agy writes nothing while the model thinks or a call runs before its response
+            # lands; its status line does (ADR-0079).
             self.screen_activity = activity
-            if self.user_seen and not self.answered:
+            if self.user_seen:
                 self.shown = shown
                 if activity == "thinking":
                     self.step(0, "thinking", "ACTIVE")
                 else:
                     self.step(0, "tool", "ACTIVE", tool_name=activity)
                 return
-        elif shown != "busy":
-            self.screen_activity = None
-        if self.open_tools:
-            # Transcript calls take precedence; reconsider even an unchanged footer after
-            # their output arrives and hands control back to the model/background calls.
-            self.shown = ""
-            return
         if shown == self.shown:
             return
         self.shown = shown
@@ -270,17 +273,16 @@ class Run:
             if now - since < 1:
                 continue
             if state(screen) == "menu":
-                if "Do you trust the contents of this project?" in screen:
-                    if not workspace_matches(screen, os.getcwd()):
+                menu = trust_menu(screen)
+                if menu is not None:
+                    if not workspace_matches(menu, os.getcwd()):
                         self.turn.block("workspace trust screen does not match cwd", screen)
                         return False
                     if tries >= 3:
                         self.turn.block("workspace trust screen stayed after confirmation", screen)
                         return False
-                    lines = ANSI.sub("", screen).splitlines()
-                    yes = any(line.strip() == "> Yes, I trust this folder" for line in lines)
-                    no = any(line.strip() == "> No, exit" for line in lines)
-                    if not (yes or no):
+                    yes = "> Yes, I trust this folder" in menu.splitlines()
+                    if not yes and "> No, exit" not in menu.splitlines():
                         self.turn.block("unrecognized workspace trust choice", screen)
                         return False
                     if yes:

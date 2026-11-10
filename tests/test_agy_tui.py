@@ -239,6 +239,7 @@ def test_busy_activity_updates_only_when_screen_changes(capsys: pytest.CaptureFi
     turn.watch("busy", "command_execution")
     turn.row({"type": "GENERIC", "source": "MODEL"})
     turn.watch("busy", "command_execution")
+    # An interim reply while a background call runs does not hide what agy does next.
     turn.answered = True
     turn.watch("busy", "read_file")
     turn.stopped = True
@@ -247,6 +248,24 @@ def test_busy_activity_updates_only_when_screen_changes(capsys: pytest.CaptureFi
     assert [(s["step_type"], s.get("tool_name")) for s in steps] == [
         ("thinking", None),
         ("tool", "command_execution"),
+        ("tool", "read_file"),
+    ]
+
+
+def test_transcript_calls_take_precedence_over_the_status_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    turn = Turn("c", user_seen=True)
+    turn.row({"type": "PLANNER_RESPONSE", "step_index": 3, "tool_calls": [{"name": "view_file"}]})
+    turn.watch("busy", "thinking")  # the screen lags behind the transcript
+    turn.row({"type": "GENERIC", "source": "MODEL"})
+    turn.watch("busy", "thinking")  # still the same line: no news
+    turn.watch("busy", "command_execution")
+    steps = [json.loads(line)["step_update"] for line in capsys.readouterr().out.splitlines()]
+    assert [(s["step_type"], s["state"], s.get("tool_name")) for s in steps] == [
+        ("tool", "ACTIVE", "view_file"),
+        ("tool", "DONE", None),
+        ("tool", "ACTIVE", "command_execution"),
     ]
 
 
@@ -284,6 +303,20 @@ def test_startup_trust_requires_same_directory(
     assert bytes(terminal.outgoing) == (b"\r" if matches else b"")
     if not matches:
         assert "does not match cwd" in str(turn.error)
+
+
+def test_trust_menu_is_only_the_bottom_dialog() -> None:
+    from agentnave.agy_tui.screen import trust_menu
+
+    real = (
+        "Accessing workspace:\n/work\nDo you trust the contents of this project?\n"
+        "Antigravity CLI requires permission to read, edit, and execute files here.\n"
+        "> Yes, I trust this folder\n  No, exit\n  ↑/↓ Navigate · enter ConfirmGemini 3.8 Flash · high"
+    )
+    assert trust_menu(real) == "\n".join(line.strip() for line in real.splitlines())
+    # The same words quoted above another menu do not make that menu a trust dialog.
+    quoted = real.rsplit("\n", 1)[0] + "\n> Allow always\n  Deny\n↑/↓ Navigate · enter Confirm"
+    assert trust_menu(quoted) is None
 
 
 def test_interactive_needs_permissions_skipped_and_no_print_options(tmp_path: Path) -> None:
