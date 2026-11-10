@@ -342,3 +342,13 @@ test("unknown model handles localize without changing service role or duplicate 
     assert.equal(names.handleOf(who), expected);
   }
 });
+
+test("only meeting messages name their recipients", () => {
+  const { context } = auditUI();
+  context.state.drawer = { kind: "room" };
+  const ctx = { desks: new Map([["a", { key: "a", identity: identities.explorer }]]), rooms: new Map() };
+  const boss = { speaker: { role: "manager" }, to: [{ key: "a", identity: identities.explorer }] };
+  assert.equal(context.verbOf({ ...boss, thread: { kind: "desk", key: "a" } }, ctx)[1].length, 0);
+  assert.equal(context.verbOf({ ...boss, kind: "forward", thread: { kind: "desk", key: "a" } }, ctx)[1].length, 0);
+  assert.equal(context.verbOf({ ...boss, round: 1, thread: { kind: "room", id: "r" } }, ctx)[1].length, 1);
+});
