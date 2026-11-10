@@ -344,6 +344,13 @@ const TOOL_WORDS = {
   web_search: L("正在搜索网页", "Searching web"),
   read_file: L("正在读取文件", "Reading file"),
 };
+// Antigravity's own tool names, as its transcript reports them.
+for (const [names, word] of [
+  [["run_command"], TOOL_WORDS.command_execution],
+  [["view_file", "list_dir", "grep_search", "find_by_name"], TOOL_WORDS.read_file],
+  [["edit_file", "write_file", "write_to_file", "replace_file_content", "multi_replace_file_content"], TOOL_WORDS.file_change],
+  [["search_web", "read_url_content"], TOOL_WORDS.web_search],
+]) for (const name of names) TOOL_WORDS[name] = word;
 function activityDuration(start) {
   const at = Date.parse(start);
   if (!Number.isFinite(at)) return "";
