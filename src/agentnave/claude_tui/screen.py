@@ -46,13 +46,18 @@ def dialog_region(text: str) -> str:
     return "\n".join(lines[rule + 1 :])
 
 
+def in_input_box(text: str) -> bool:
+    """The last cursor sits above the input box's lower border: in typed or pasted text."""
+    lines = ANSI.sub("", text).splitlines()
+    cursor = max((i for i, line in enumerate(lines) if "❯" in line), default=len(lines))
+    return any(RULE.fullmatch(line.strip()) for line in lines[cursor + 1 :])
+
+
 def dialog_open(text: str) -> bool:
     """A menu is open: its footer is the screen's last line, below anything Claude or the task
     text says. The input box's footer is the status line instead."""
-    lines = ANSI.sub("", text).splitlines()
-    cursor = max((i for i, line in enumerate(lines) if "❯" in line), default=len(lines))
-    if any(RULE.fullmatch(line.strip()) for line in lines[cursor + 1 :]):
-        return False  # The input box's lower border: the cursor is in typed or pasted text.
+    if in_input_box(text):
+        return False
     region = dialog_region(text)
     footer = region.lower().splitlines()[-1:] or [""]
     return any(

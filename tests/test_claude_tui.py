@@ -111,6 +111,28 @@ def test_startup_trust_checks_displayed_directory(
     assert not terminal.outgoing
 
 
+@pytest.mark.parametrize(
+    "screen",
+    [
+        # Quoted in the input box: no dialog is open, Enter would submit the text.
+        "─" * 40 + "\n❯ Explain the quoted dialog:\nAllow external CLAUDE.md file imports?\n"
+        "❯ Yes, allow external imports\n  No, disable external imports\n"
+        + "─" * 40
+        + "\n? for shortcuts",
+        # An old quote's cursor above the dialog is not the dialog's cursor.
+        "❯ Yes, allow external imports\n" + "─" * 40 + "\nAllow external CLAUDE.md file imports?\n"
+        "  No, disable external imports\n  Yes, allow external imports\nEnter to confirm",
+    ],
+)
+def test_startup_confirmation_reads_only_the_open_dialog(screen: str) -> None:
+    terminal = SimpleNamespace(outgoing=bytearray())
+    startup = tui.Startup(
+        cast(tui.Terminal, terminal), tui.Turn("sid"), previous=screen, stable_since=0
+    )
+    assert startup.step(screen) is False
+    assert not terminal.outgoing
+
+
 def test_startup_external_imports_selects_yes() -> None:
     terminal = SimpleNamespace(outgoing=bytearray())
     turn = tui.Turn("sid")
