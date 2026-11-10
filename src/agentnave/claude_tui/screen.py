@@ -28,7 +28,7 @@ def workspace_matches(text: str, cwd: str) -> bool:
     lines = [line.strip() for line in ANSI.sub("", before_choices).splitlines()]
     # agy 1.5 prints "Accessing workspace: <path>"; Claude prints the path on its own line.
     paths = [line.removeprefix("Accessing workspace:").strip() for line in lines]
-    paths = [os.path.expanduser(path) for path in paths if path.startswith(("/", "~/"))]
+    paths = [path for path in map(os.path.expanduser, paths) if os.path.isabs(path)]
     if len(paths) != 1:
         return False
     try:
