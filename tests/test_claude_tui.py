@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -86,6 +87,42 @@ def test_menu_selection_matches_the_whole_choice() -> None:
     assert not tui.selected("❯ No, exit\n  Yes, I trust this folder", "yes, i trust this folder")
     assert tui.selected("❯ Yes\n  No (recommended)", "yes")
     assert not tui.selected("  Yes\n❯ No (recommended)", "yes")
+
+
+def test_startup_trust_checks_displayed_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    alias = tmp_path.parent / (tmp_path.name + "-alias")
+    alias.symlink_to(tmp_path)
+    terminal = SimpleNamespace(outgoing=bytearray())
+    turn = tui.Turn("sid")
+    screen = (
+        f"Accessing workspace:\n{alias}\n❯ No, exit\n  Yes, I trust this folder\nEnter to confirm"
+    )
+    startup = tui.Startup(cast(tui.Terminal, terminal), turn, previous=screen, stable_since=0)
+    assert startup.step(screen) is None
+    assert bytes(terminal.outgoing) == b"\x1b[B"
+    terminal.outgoing.clear()
+    bad = screen.replace(str(alias), str(tmp_path.parent))
+    startup.previous, startup.stable_since = bad, 0
+    assert startup.step(bad) is False
+    assert "does not match cwd" in str(turn.error)
+    assert not terminal.outgoing
+
+
+def test_startup_external_imports_selects_yes() -> None:
+    terminal = SimpleNamespace(outgoing=bytearray())
+    turn = tui.Turn("sid")
+    screen = "Allow external CLAUDE.md file imports?\n❯ No, disable external imports\n  Yes, allow external imports\nEnter to confirm"
+    startup = tui.Startup(cast(tui.Terminal, terminal), turn, previous=screen, stable_since=0)
+    assert startup.step(screen) is None
+    assert bytes(terminal.outgoing) == b"\x1b[B"
+    terminal.outgoing.clear()
+    screen = screen.replace("❯ No", "  No").replace("  Yes", "❯ Yes")
+    startup.previous, startup.stable_since = screen, 0
+    assert startup.step(screen) is None
+    assert bytes(terminal.outgoing) == b"\r"
 
 
 def test_screen_erases_dismissed_dialog_and_handles_split_cursor_query() -> None:
@@ -292,9 +329,15 @@ def hook(name, **fields):
 if case == "trust":
     output("Choose the text style\r\n❯ ✔ Dark mode")
     read_until(b"\r")
-    output("\x1b[2J\x1b[H❯ No, exit\r\n  Yes, I trust this folder\r\nEnter to confirm")
+    output("\x1b[2J\x1b[HAccessing workspace:\r\n" + os.getcwd() + "\r\n❯ No, exit\r\n  Yes, I trust this folder\r\nEnter to confirm")
     assert b"\r" not in read_until(b"\x1b[B")
-    output("\x1b[2J\x1b[H  No, exit\r\n❯ Yes, I trust this folder\r\nEnter to confirm")
+    output("\x1b[2J\x1b[HAccessing workspace:\r\n" + os.getcwd() + "\r\n  No, exit\r\n❯ Yes, I trust this folder\r\nEnter to confirm")
+    read_until(b"\r")
+    output("\x1b[2J\x1b[H")
+elif case == "imports":
+    output("Allow external CLAUDE.md file imports?\r\n❯ No, disable external imports\r\n  Yes, allow external imports\r\nEnter to confirm")
+    assert b"\r" not in read_until(b"\x1b[B")
+    output("\x1b[2J\x1b[HAllow external CLAUDE.md file imports?\r\n  No, disable external imports\r\n❯ Yes, allow external imports\r\nEnter to confirm")
     read_until(b"\r")
     output("\x1b[2J\x1b[H")
 elif case == "resume":
@@ -338,7 +381,9 @@ time.sleep(12)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY runtime")
-@pytest.mark.parametrize("case", ["success", "resume", "failure", "trust", "channel_failure"])
+@pytest.mark.parametrize(
+    "case", ["success", "resume", "failure", "trust", "imports", "channel_failure"]
+)
 def test_fake_claude_turn_through_the_standalone_helper(
     case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -408,12 +453,12 @@ def test_fake_claude_turn_through_the_standalone_helper(
     parsed = adapter.parse(completed.returncode, retained, completed.stderr)
     assert parsed.status is (
         InvocationStatus.SUCCEEDED
-        if case in ("success", "resume", "trust")
+        if case in ("success", "resume", "trust", "imports")
         else InvocationStatus.BLOCKED
     ), completed.stdout.decode()
     # A new session blocked before its prompt reached the transcript has nothing to resume.
     assert bool(parsed.session_id) == (case != "channel_failure"), case
-    if case in ("success", "resume", "trust"):
+    if case in ("success", "resume", "trust", "imports"):
         assert parsed.output == "finished"
         assert not any("denied" in warning for warning in parsed.warnings)
         events = [

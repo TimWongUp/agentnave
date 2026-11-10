@@ -17,7 +17,9 @@ Claude Code 作宿主时，`native=true` 的 Claude 工位交给自带子代理�
 权限档位「自动」传 `permission_mode=auto`，「完全放开」传 `bypassPermissions`，另附 `permission_fallback` 指向另一档；所选模式在这台电脑或账号上不可用时，服务改用另一档重跑一次，回执 `warnings` 注明实际模式，把它转告用户；两种都不可用时任务受阻。`permission_fallback` 也是权限类参数，boss 不自行传。
 
 
-macOS／Linux 默认以交互模式运行（App 关掉「交互模式」或显式 `interactive=false` 时改用 `-p`），普通任务与非隔离席位可收到 `prompt_pending`；Windows 一律 `-p`，受限工具路径也用 `-p`。交互模式只是让运行中的权限框、提问和计划确认有人接手，任务不会因此卡住或被自动拒绝；它不是员工向 boss 请示的通道。派发时不要求员工使用提问工具，需要的决定仍写在最终答复里。出现 `prompt_pending` 时按主 Skill 的代答边界调用 `answer_prompt`，不向 TUI 发按键。
+macOS／Linux 默认以交互模式运行（App 关掉「交互模式」或显式 `interactive=false` 时改用 `-p`），普通任务与非隔离席位可收到 `prompt_pending`；Windows 一律 `-p`，受限工具路径也用 `-p`。交互模式只是让运行中的权限框、提问和计划确认有人接手，任务不会因此卡住或被自动拒绝；它不是员工向 boss 请示的通道。派发时不要求员工使用提问工具，需要的决定仍写在最终答复里。出现 `prompt_pending` 时按主 Skill 的代答边界调用 `answer_prompt`。
+
+准备阶段，服务在信任屏显示目录与派发 `cwd` 为同一目录时自动确认，并自动允许外部 CLAUDE.md 导入（包含未来新增导入）；Claude 会将选择永久写进 `~/.claude.json`，这是持久放行先问用户的限定例外。目录不符或未知屏受阻。
 
 ```json
 {"invocation_id":"<wait 中的句柄>","prompt_id":"<弹框编号>","manager_session_id":"<本聊天原生 ID>","decision":"allow"}

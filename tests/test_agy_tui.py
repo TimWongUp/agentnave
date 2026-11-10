@@ -61,7 +61,11 @@ rule = "─" * 40
 def box(text):
     output("\x1b[2J\x1b[H" + "\r\n".join(["Antigravity CLI", rule, text, rule, "? for shortcuts"]))
 
-if case == "dialog":
+if case in ("trust", "trust_mismatch"):
+    folder = os.getcwd() if case == "trust" else str(Path(os.getcwd()).parent)
+    output("Accessing workspace: " + folder + "\r\nDo you trust the contents of this project?\r\n> Yes, I trust this folder\r\n  No, exit\r\n↑/↓ Navigate · enter Confirm")
+    read_until(b"\r")
+elif case == "dialog":
     # The words of a menu in the conversation above the box are not a menu.
     output("↑/↓ Navigate · enter Confirm\r\nDo you trust this folder?\r\n> Yes\r\n  No\r\n  ↑/↓ Navigate · enter Confirm")
     time.sleep(12)
@@ -86,7 +90,7 @@ time.sleep(12)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY runtime")
-@pytest.mark.parametrize("case", ["new", "resume", "dialog", "noreply"])
+@pytest.mark.parametrize("case", ["new", "resume", "dialog", "noreply", "trust", "trust_mismatch"])
 def test_fake_agy_turn_through_the_standalone_helper(
     case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -121,6 +125,10 @@ def test_fake_agy_turn_through_the_standalone_helper(
     if case == "dialog":
         assert parsed.status is InvocationStatus.BLOCKED
         assert "unexpected startup dialog" in str(parsed.error_message)
+        return
+    if case == "trust_mismatch":
+        assert parsed.status is InvocationStatus.BLOCKED
+        assert "does not match cwd" in str(parsed.error_message)
         return
     if case == "noreply":
         # The last response still calls a tool: a Stop then is no finished turn.
@@ -199,6 +207,32 @@ def test_settings_trust_the_pwd_spelling_of_the_same_folder(
     assert str(tmp_path) not in trusted()
     monkeypatch.delenv("PWD", raising=False)
     assert sorted({str(folder), os.path.realpath(folder)}) == trusted()
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_startup_trust_requires_same_directory(
+    matches: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentnave.agy_tui as agy
+
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path if matches else tmp_path.parent
+    menu = f"Accessing workspace: {folder}\nDo you trust the contents of this project?\n> Yes, I trust this folder\n  No, exit\n↑/↓ Navigate · enter Confirm"
+    terminal = SimpleNamespace(outgoing=bytearray())
+    turn = Turn(None)
+    run = Run(cast(Terminal, terminal), turn, tmp_path)
+    ticks = iter(range(100))
+    monkeypatch.setattr(agy.time, "monotonic", lambda: float(next(ticks)))
+    monkeypatch.setattr(run, "exited", lambda: False)
+    monkeypatch.setattr(
+        run,
+        "poll",
+        lambda: "─" * 40 + "\n>\n" + "─" * 40 + "\n? for shortcuts" if terminal.outgoing else menu,
+    )
+    assert run.await_ready() is matches
+    assert bytes(terminal.outgoing) == (b"\r" if matches else b"")
+    if not matches:
+        assert "does not match cwd" in str(turn.error)
 
 
 def test_interactive_needs_permissions_skipped_and_no_print_options(tmp_path: Path) -> None:
@@ -398,6 +432,26 @@ def test_idle_footer_redisplays_a_remaining_background_call_after_another_finish
     assert [(s["step_index"], s["state"], s.get("tool_name")) for s in steps] == [
         (201, "DONE", None),
         (200, "ACTIVE", "run_command"),
+    ]
+
+
+def test_multiple_tools_restore_active_after_first_finishes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    turn = Turn("c", user_seen=True)
+    turn.row(
+        {
+            "step_index": 2,
+            "type": "PLANNER_RESPONSE",
+            "tool_calls": [{"name": "read_file"}, {"name": "run_command"}],
+        }
+    )
+    capsys.readouterr()
+    turn.row({"type": "GENERIC", "source": "MODEL", "content": "read"})
+    steps = [json.loads(line)["step_update"] for line in capsys.readouterr().out.splitlines()]
+    assert [(s["step_index"], s["state"], s.get("tool_name")) for s in steps] == [
+        (200, "DONE", None),
+        (201, "ACTIVE", "run_command"),
     ]
 
 

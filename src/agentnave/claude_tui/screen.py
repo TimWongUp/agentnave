@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import os
 import re
 
 # CSI, OSC and DCS strings, then any other escape: optional intermediates and a final byte
@@ -19,6 +20,21 @@ def clean_paste(text: str) -> str:
 
 
 RULE = re.compile(r"─{20,}")
+
+
+def workspace_matches(text: str, cwd: str) -> bool:
+    """Accept only one complete path displayed before the trust choices."""
+    before_choices = re.split(r"(?:yes, i trust this folder|no, exit)", text, flags=re.I)[0]
+    lines = [line.strip() for line in ANSI.sub("", before_choices).splitlines()]
+    # agy 1.5 prints "Accessing workspace: <path>"; Claude prints the path on its own line.
+    paths = [line.removeprefix("Accessing workspace:").strip() for line in lines]
+    paths = [os.path.expanduser(path) for path in paths if path.startswith(("/", "~/"))]
+    if len(paths) != 1:
+        return False
+    try:
+        return os.path.samefile(paths[0], cwd)
+    except OSError:
+        return False
 
 
 def dialog_region(text: str) -> str:
@@ -47,6 +63,8 @@ def dialog_open(text: str) -> bool:
 def classify_screen(text: str) -> str:
     """Dialogs take precedence over the prompt, including the prompt inside a menu."""
     lowered = dialog_region(text).lower()
+    if "allow external claude.md file imports?" in lowered:
+        return "external_imports"
     if "trust this folder" in lowered or "do you trust" in lowered:
         return "trust"
     if "resume from summary" in lowered or "resume full session as-is" in lowered:
@@ -111,6 +129,11 @@ CHOICES = {
         b"\x1b[A",
         "Claude Code now uses ANTHROPIC_API_KEY from the environment: the interactive runtime "
         "approved it as -p would use it",
+    ),
+    "external_imports": (
+        "yes, allow external imports",
+        b"\x1b[B",
+        "Claude Code approved external CLAUDE.md imports, including future imports",
     ),
 }
 

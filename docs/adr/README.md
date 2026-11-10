@@ -59,8 +59,8 @@
 | 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 部分取代 | [ADR-0054](0054-members-need-confirmation.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) |
 | 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
-| 0056 | [Claude Code 改用交互模式运行](0056-claude-interactive-runtime.md) | 已接受 | — |
-| 0057 | [运行中的原生弹框由 boss 代答](0057-boss-answers-native-prompts.md) | 已接受 | [ADR-0070](0070-devin-runs-over-acp.md) |
+| 0056 | [Claude Code 改用交互模式运行](0056-claude-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md) |
+| 0057 | [运行中的原生弹框由 boss 代答](0057-boss-answers-native-prompts.md) | 部分修订 | [ADR-0070](0070-devin-runs-over-acp.md)、[ADR-0078](0078-startup-confirmations.md) |
 | 0058 | [Claude 子代理统一用 Claude Code 自己存的登录](0058-claude-stored-login.md) | 已接受 | — |
 | 0059 | [Claude 的两个权限档位互为退路](0059-claude-tier-fallback.md) | 已接受 | — |
 | 0060 | [托盘识别无人持有的运行记录](0060-tray-detects-orphaned-running-work.md) | 已接受 | — |
@@ -75,9 +75,10 @@
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
-| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 已接受 | — |
+| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md) |
 | 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 已接受 | 扩展并修订 ADR-0068 |
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
 | 0076 | [权限档位缺省为完全放开](0076-full-permission-default.md) | 已接受 | 修订 ADR-0032 |
 | 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 已接受 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限 |
+| 0078 | [启动确认屏由服务自动处理](0078-startup-confirmations.md) | 已接受 | 修订 ADR-0056、ADR-0057、ADR-0072 |

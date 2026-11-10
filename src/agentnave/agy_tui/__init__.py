@@ -20,7 +20,7 @@ from typing import cast
 
 from agentnave.agy_tui.hooks import ENV, ensure_entry, read_events
 from agentnave.agy_tui.screen import AgyScreen, input_box, state
-from agentnave.claude_tui.screen import ANSI, clean_paste
+from agentnave.claude_tui.screen import ANSI, clean_paste, workspace_matches
 from agentnave.claude_tui.terminal import Terminal
 
 STARTUP_TIMEOUT = 60.0
@@ -100,6 +100,9 @@ class Turn:
     def close_tool(self) -> None:
         if self.open_tools:
             self.step(self.open_tools.pop(0), "tool", "DONE")
+            if self.open_tools:
+                tool = self.open_tools[0]
+                self.step(tool, "tool", "ACTIVE", tool_name=self.tool_names.get(tool))
 
     def row(self, row: dict[str, object]) -> None:
         index = row.get("step_index")
@@ -243,6 +246,7 @@ class Run:
     def await_ready(self) -> bool:
         deadline = time.monotonic() + STARTUP_TIMEOUT
         previous, since = "", time.monotonic()
+        tries = 0
         while time.monotonic() < deadline:
             screen = self.poll()
             now = time.monotonic()
@@ -254,6 +258,27 @@ class Run:
             if now - since < 1:
                 continue
             if state(screen) == "menu":
+                if "Do you trust the contents of this project?" in screen:
+                    if not workspace_matches(screen, os.getcwd()):
+                        self.turn.block("workspace trust screen does not match cwd", screen)
+                        return False
+                    if tries >= 3:
+                        self.turn.block("workspace trust screen stayed after confirmation", screen)
+                        return False
+                    lines = ANSI.sub("", screen).splitlines()
+                    yes = any(line.strip() == "> Yes, I trust this folder" for line in lines)
+                    no = any(line.strip() == "> No, exit" for line in lines)
+                    if not (yes or no):
+                        self.turn.block("unrecognized workspace trust choice", screen)
+                        return False
+                    if yes:
+                        warning = "Antigravity CLI now trusts the dispatched workspace"
+                        if warning not in self.turn.warnings:
+                            self.turn.warnings.append(warning)
+                    self.terminal.outgoing.extend(b"\r" if yes else b"\x1b[A")
+                    tries += 1
+                    since = now
+                    continue
                 self.turn.block("unexpected startup dialog; handle it in agy", screen)
                 return False
             if state(screen) == "idle":

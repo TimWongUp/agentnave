@@ -50,6 +50,7 @@ from agentnave.claude_tui.screen import (
     dialog_open,
     dialog_region,
     selected,
+    workspace_matches,
 )
 from agentnave.claude_tui.terminal import (
     STRIP_ENV,
@@ -193,6 +194,19 @@ class Startup:
         if kind in BLOCKING_SCREENS:
             blocked(self.turn, BLOCKING_SCREENS[kind])
             return False
+        if kind == "trust" and not workspace_matches(dialog_region(screen), os.getcwd()):
+            blocked(self.turn, "workspace trust screen does not match cwd", screen)
+            return False
+        if kind in ("trust", "external_imports"):
+            affirmative = CHOICES[kind][0]
+            negatives = (
+                ("no, exit", "no, continue without these permissions")
+                if kind == "trust"
+                else ("no, disable external imports",)
+            )
+            if not any(selected(screen, label) for label in (affirmative, *negatives)):
+                blocked(self.turn, "unrecognized startup confirmation choice", screen)
+                return False
         if kind in CHOICES:
             return None if self.choose(kind, screen) else False
         if kind in ONBOARDING_KEYS:
