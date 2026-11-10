@@ -83,6 +83,8 @@ pub struct Response {
     pub content_type: &'static str,
     pub body: Vec<u8>,
     pub cache_control: &'static str,
+    /// Extra response headers, such as a partial response's `Content-Range`.
+    pub headers: Vec<(&'static str, String)>,
     /// Something the page should tell the user although the request succeeded.
     pub notice: Option<String>,
 }
@@ -94,6 +96,7 @@ impl Response {
             status: 200,
             content_type,
             body,
+            headers: Vec::new(),
             notice: None,
         }
     }
@@ -116,6 +119,7 @@ impl Response {
             status: 404,
             content_type: "text/plain; charset=utf-8",
             body: b"not found".to_vec(),
+            headers: Vec::new(),
             notice: None,
         }
     }

@@ -8,6 +8,7 @@ mod tests;
 use crate::data::Response;
 use serde_json::{Value, json};
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 pub const CHARACTERS: [&str; 13] = [
@@ -92,7 +93,37 @@ pub fn status(shared: &Path) -> Value {
     json!({"packs": packs})
 }
 
-pub fn asset(shared: &Path, rest: &str) -> Option<Response> {
+/// What a `Range` header asks for, against a file of `len` bytes.
+#[derive(Debug, PartialEq)]
+enum Span {
+    Whole,
+    Part(u64, u64),
+    Unsatisfiable,
+}
+
+/// A single `bytes=` range; anything else, including several ranges, is served whole.
+fn span(header: Option<&str>, len: u64) -> Span {
+    let Some(spec) = header.and_then(|h| h.trim().strip_prefix("bytes=")) else {
+        return Span::Whole;
+    };
+    let Some((first, last)) = spec.split_once('-').filter(|_| !spec.contains(',')) else {
+        return Span::Whole;
+    };
+    let (first, last) = (first.trim(), last.trim());
+    match (first.parse::<u64>(), last.parse::<u64>()) {
+        _ if len == 0 => Span::Unsatisfiable,
+        (Ok(start), _) if start >= len => Span::Unsatisfiable,
+        (Ok(start), Ok(end)) if end >= start => Span::Part(start, end.min(len - 1)),
+        (Ok(start), Err(_)) if last.is_empty() => Span::Part(start, len - 1),
+        (Err(_), Ok(0)) if first.is_empty() => Span::Unsatisfiable,
+        (Err(_), Ok(count)) if first.is_empty() => Span::Part(len.saturating_sub(count), len - 1),
+        _ => Span::Whole,
+    }
+}
+
+/// A clip is served in ranges (the player asks for the movie box at the end first) and never
+/// cached, so the player streams it from disk instead of the page holding a copy.
+pub fn asset(shared: &Path, rest: &str, range: Option<&str>) -> Option<Response> {
     let parts: Vec<_> = rest.split('/').collect();
     let [tier, character, file] = parts.as_slice() else {
         return None;
@@ -100,22 +131,50 @@ pub fn asset(shared: &Path, rest: &str) -> Option<Response> {
     if !valid_tier(tier) || !CHARACTERS.contains(character) {
         return None;
     }
-    let mime = if file
+    let (dir, _) = resolve(shared, tier)?;
+    let path = dir.join(character).join(file);
+    if file
         .strip_suffix(".webp")
         .is_some_and(|s| POSTERS.contains(&s))
     {
-        "image/webp"
-    } else if file
+        let mut response = Response::ok("image/webp", fs::read(path).ok()?);
+        response.cache_control = "public, max-age=31536000";
+        return Some(response);
+    }
+    if !file
         .strip_suffix(".mov")
         .is_some_and(|s| CLIPS.contains(&s))
     {
-        "video/quicktime"
-    } else {
         return None;
+    }
+    let mut clip = fs::File::open(path).ok()?;
+    let len = clip.metadata().ok()?.len();
+    let mut response = Response::ok("video/quicktime", Vec::new());
+    response.headers.push(("Accept-Ranges", "bytes".to_owned()));
+    let (start, end) = match span(range, len) {
+        Span::Whole => (0, len.checked_sub(1)),
+        Span::Part(start, end) => {
+            response.status = 206;
+            (start, Some(end))
+        }
+        Span::Unsatisfiable => {
+            response.status = 416;
+            response
+                .headers
+                .push(("Content-Range", format!("bytes */{len}")));
+            return Some(response);
+        }
     };
-    let (dir, _) = resolve(shared, tier)?;
-    let mut response = Response::ok(mime, fs::read(dir.join(character).join(file)).ok()?);
-    response.cache_control = "public, max-age=31536000";
+    if let Some(end) = end {
+        response.body = vec![0; (end - start + 1) as usize];
+        clip.seek(SeekFrom::Start(start)).ok()?;
+        clip.read_exact(&mut response.body).ok()?;
+        if response.status == 206 {
+            response
+                .headers
+                .push(("Content-Range", format!("bytes {start}-{end}/{len}")));
+        }
+    }
     Some(response)
 }
 

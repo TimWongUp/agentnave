@@ -699,6 +699,9 @@ fn register_protocol(
             if let Some(notice) = &reply.notice {
                 response = response.header("X-AgentNave-Notice", percent_encode(notice));
             }
+            for (name, value) in &reply.headers {
+                response = response.header(*name, value);
+            }
             let response = response
                 .status(reply.status)
                 .header(header::CONTENT_TYPE, reply.content_type)
@@ -824,6 +827,13 @@ impl ProtocolRequest {
             _ if preview_refuses(PREVIEW, method, path) => {
                 data::Response::error(403, "预览版只读：请在正式版里保存改动")
             }
+            ("GET", path) if path.starts_with("/art/video/") => reader.video_asset(
+                path,
+                self.request
+                    .headers()
+                    .get(header::RANGE)
+                    .and_then(|v| v.to_str().ok()),
+            ),
             _ if path == "/app/video-packs" || path.starts_with("/app/video-packs/") => {
                 reader.video_packs_request(Some(app), method, path, action, self.request.body())
             }

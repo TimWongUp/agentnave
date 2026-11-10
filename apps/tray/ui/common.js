@@ -441,7 +441,6 @@
         fig.classList.remove("video", "video-on");
       }
     }
-    pruneVideos();
   }
   const loadVideoPacks = () => fetch(href("/app/video-packs"), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : {})).then((data) => {
@@ -519,28 +518,6 @@
     grok: [1.017, 153], qwen: [0.975, 90], kimi: [1.041, 75.1], minimax: [0.942, 76.8], hunyuan: [1.058, 110.5], doubao: [0.95, 84.5],
     muse: [0.946, 82], default: [0.964, 79] };
   const videoAssetUrl = (path) => (typeof videoPackUrl === "function" ? videoPackUrl(path) : artUrl(`video/${path}`));
-  const videoUrls = new Map();
-  const videoUrl = (name, state) => {
-    const url = videoAssetUrl(`${name}/${state}.mov`);
-    if (!videoUrls.has(url)) {
-      const entry = { refs: 0, promise: fetch(url).then((r) => {
-        if (!r.ok) throw new Error(`Video: ${r.status}`);
-        return r.blob();
-      }).then((b) => URL.createObjectURL(b)) };
-      videoUrls.set(url, entry);
-    }
-    videoUrls.get(url).refs++;
-    return videoUrls.get(url);
-  };
-  // A slot owns a reference before its fetch completes. A cancelled fetch may finish later,
-  // but its URL is revoked only after every consumer, including pending slots, has let it go.
-  function pruneVideos() {
-    for (const [key, entry] of videoUrls) {
-      if (entry.refs) continue;
-      videoUrls.delete(key);
-      entry.promise.then((url) => URL.revokeObjectURL(url), () => {});
-    }
-  }
   // These moods loop their main clip and now and then slip in another one from the same pose.
   const EXTRAS = { idle: ["slack-1", "slack-2"], sleep: ["sleep-1"] };
   // Chance per finished loop of slipping one in; idle splits it evenly between its two clips.
@@ -560,7 +537,7 @@
     if (slot.frame != null) video.cancelVideoFrameCallback(slot.frame);
     if (slot.raf != null) cancelAnimationFrame(slot.raf);
     slot.frame = slot.raf = null;
-    video.onloadeddata = video.onerror = video.onended = video.onplaying = null;
+    video.onloadeddata = video.onerror = video.onended = video.onplaying = video.onseeked = null;
     slot.ready = null;
   }
   function unloadVideo(slot, remove = false) {
@@ -569,15 +546,21 @@
     slot.video.pause();
     slot.video.removeAttribute("src");
     slot.video.load();
-    if (slot.entry) slot.entry.refs--;
-    slot.entry = null;
+    slot.requested = false;
     slot.clip = null;
     slot.loaded = false;
     slot.video.classList.add("next");
     if (remove) slot.video.remove();
   }
+  // A spare is dropped with its element, so a long-lived player never accumulates source changes.
+  function dropSlot(rec, slot) {
+    unloadVideo(slot, true);
+    rec.slots = rec.slots.filter((s) => s !== slot);
+  }
+  const dropSpares = (rec) => { for (const s of [...rec.slots]) if (s !== rec.active) dropSlot(rec, s); };
   function pauseVideos(rec, release = false) {
     if (rec.offscreenTimer) { clearTimeout(rec.offscreenTimer); rec.offscreenTimer = null; }
+    cancelSettle(rec);
     rec.seq++;
     rec.running = false;
     rec.incoming = rec.next = null;
@@ -588,7 +571,6 @@
     }
     rec.slots = release || !rec.active ? [] : [rec.active];
     if (release) { rec.active = null; rec.failed = false; rec.fig.classList.remove("video-on"); }
-    pruneVideos();
   }
   function releaseFigure(fig) {
     dirtyVideos.delete(fig);
@@ -606,17 +588,17 @@
   function videoSlot(rec, clip) {
     let slot = rec.slots.find((s) => s.clip === clip);
     if (slot) return slot;
-    slot = rec.slots.find((s) => s !== rec.active);
-    if (slot) unloadVideo(slot);
-    else {
-      const video = document.createElement("video");
-      video.className = "next";
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "auto";
-      slot = { video, token: 0, frame: null, raf: null };
-      rec.slots.push(slot);
-    }
+    dropSpares(rec);
+    const video = document.createElement("video");
+    video.className = "next";
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    // No cast or picture-in-picture, so the page does not watch for playback targets.
+    video.disableRemotePlayback = true;
+    video.disablePictureInPicture = true;
+    slot = { video, token: 0, frame: null, raf: null };
+    rec.slots.push(slot);
     slot.clip = clip;
     slot.state = rec.state;
     slot.video.dataset.state = rec.state;
@@ -627,27 +609,22 @@
     const slot = videoSlot(rec, clip), seq = rec.seq, token = slot.token;
     slot.ready = ready;
     if (slot.loaded) { ready(slot); return slot; }
-    if (slot.entry) return slot;
-    slot.entry = videoUrl(videoChar(rec.fig.dataset.char), clip);
+    if (slot.requested) return slot;
+    slot.requested = true;
     const valid = () => currentPlayback(rec, seq) && slot.token === token;
-    slot.entry.promise.then((url) => {
+    slot.video.onloadeddata = () => {
       if (!valid()) return;
-      slot.video.onloadeddata = () => {
-        if (!valid()) return;
-        slot.loaded = true;
-        slot.video.onloadeddata = null;
-        slot.ready?.(slot);
-      };
-      slot.video.onerror = () => {
-        if (!valid()) return;
-        failVideo(rec, seq);
-      };
-      slot.video.src = url;
-      if (rec.active) rec.active.video.before(slot.video);
-      else rec.fig.querySelector(".fig-b").append(slot.video);
-    }).catch(() => {
-      if (valid()) failVideo(rec, seq);
-    });
+      slot.loaded = true;
+      slot.video.onloadeddata = null;
+      slot.ready?.(slot);
+    };
+    slot.video.onerror = () => {
+      if (!valid()) return;
+      failVideo(rec, seq);
+    };
+    slot.video.src = videoAssetUrl(`${videoChar(rec.fig.dataset.char)}/${clip}.mov`);
+    if (rec.active) rec.active.video.before(slot.video);
+    else rec.fig.querySelector(".fig-b").append(slot.video);
     return slot;
   }
   // Main loops reuse the player. Only an actual clip change needs the second slot;
@@ -656,7 +633,7 @@
     rec.next = null;
     const clip = nextClip(rec.state);
     if (clip === rec.active.clip) {
-      if (clip === rec.state) for (const s of rec.slots) if (s !== rec.active && s.clip) unloadVideo(s);
+      if (clip === rec.state) dropSpares(rec);
       rec.next = rec.active;
       return;
     }
@@ -665,6 +642,31 @@
       if (rec.waiting) runClip(rec, slot);
     });
   }
+  // After a swap, the next clip is prepared and the old player is torn down only once the new player has
+  // presented a frame of its own while visible. Doing it in the swap's own task blanks that frame on screen,
+  // and every desk that swaps in the same moment goes blank together.
+  function cancelSettle(rec) {
+    const job = rec.settle;
+    if (!job) return;
+    rec.settle = null;
+    if (job.frame != null) job.slot.video.cancelVideoFrameCallback(job.frame);
+    if (job.raf != null) cancelAnimationFrame(job.raf);
+  }
+  function settleVideo(rec) {
+    const job = rec.settle;
+    if (!job) return;
+    cancelSettle(rec);
+    if (rec.active !== job.slot) return;
+    if (!job.slot.video.loop) prepareNext(rec);
+    else dropSpares(rec);
+  }
+  function settleAfterFrame(rec, slot) {
+    const job = { slot, frame: null, raf: null };
+    rec.settle = job;
+    const run = () => settleVideo(rec);
+    if (slot.video.requestVideoFrameCallback) job.frame = slot.video.requestVideoFrameCallback(run);
+    else job.raf = requestAnimationFrame(() => { job.raf = requestAnimationFrame(run); });
+  }
   function finishVideoFrame(rec, slot, seq) {
     if (!currentPlayback(rec, seq) || rec.incoming !== slot) return;
     if (rec.active && rec.active !== slot) {
@@ -672,13 +674,13 @@
       rec.active.video.pause();
       rec.active.video.classList.add("next");
     }
+    // The old player hides and the new one shows in this one task, so both are never on screen together.
+    slot.video.classList.remove("next");
     rec.active = slot;
     rec.incoming = null;
     rec.fig.classList.add("video-on");
     rec.fig.querySelector(".fx")?.replaceChildren();
-    if (!slot.video.loop) prepareNext(rec);
-    else for (const s of rec.slots) if (s !== rec.active && s.clip) unloadVideo(s);
-    pruneVideos();
+    settleAfterFrame(rec, slot);
   }
   function runClip(rec, slot) {
     const seq = rec.seq;
@@ -689,6 +691,7 @@
     video.onerror = () => failVideo(rec, seq);
     video.onended = () => {
       if (!currentPlayback(rec, seq)) return;
+      settleVideo(rec);
       if (rec.next === slot) {
         video.currentTime = 0;
         video.play().catch(() => {});
@@ -696,21 +699,31 @@
       } else if (rec.next) runClip(rec, rec.next);
       else rec.waiting = true;
     };
-    if (rec.active !== slot) {
-      rec.incoming = slot;
-      slot.video.classList.remove("next");
-      const painted = () => {
-        slot.frame = null;
-        slot.raf = requestAnimationFrame(() => {
-          slot.raf = null;
-          finishVideoFrame(rec, slot, seq);
-        });
-      };
+    if (rec.active === slot) {
+      if (!video.loop) prepareNext(rec);
+      if (video.ended) video.currentTime = 0;
+      video.play().catch(() => {});
+      return;
+    }
+    // A clip change starts hidden: the new player first returns to its first frame if it was played before,
+    // then plays until that frame is presented, and only then does finishVideoFrame swap the two.
+    rec.incoming = slot;
+    const painted = () => {
+      slot.frame = null;
+      slot.raf = requestAnimationFrame(() => {
+        slot.raf = null;
+        finishVideoFrame(rec, slot, seq);
+      });
+    };
+    const start = () => {
       if (video.requestVideoFrameCallback) slot.frame = video.requestVideoFrameCallback(painted);
       else video.onplaying = () => { video.onplaying = null; slot.raf = requestAnimationFrame(painted); };
-    } else if (!video.loop) prepareNext(rec);
-    if (video.ended) video.currentTime = 0;
-    video.play().catch(() => {});
+      video.play().catch(() => {});
+    };
+    if (video.ended || video.currentTime > 0) {
+      video.onseeked = () => { video.onseeked = null; start(); };
+      video.currentTime = 0;
+    } else start();
   }
   // Geometry is one gate; hidden documents, covered offices, and retained settings
   // documents also stop media explicitly rather than relying on CSS animations.
@@ -802,7 +815,6 @@
       const figures = [...dirtyVideos];
       dirtyVideos.clear();
       for (const node of figures) syncVideo(node);
-      pruneVideos();
     });
   }
   function scheduleVideoTree(node) {
