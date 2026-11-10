@@ -42,7 +42,7 @@ class Host:
         return self.name
 
 
-type ProviderOption = str | int | float | bool
+type ProviderOption = bool | int | float | str
 type RoundOrder = Literal["parallel", "serial"]
 
 
