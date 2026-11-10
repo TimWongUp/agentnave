@@ -213,11 +213,15 @@
     const named = meeting ? (keys.length && keys.length < seats.length ? keys : []) : m.desk ? [m.desk] : keys.slice(0, 1);
     return named.map(key => m.to?.find(t => t.key === key)).filter(Boolean).map(who => person(who, ctx, m));
   }
-  // Whose words a boss forward relays, when the forwarded message is still in view.
+  // Whose words a boss forward relays. A private task's question and reply share one id, so the
+  // last match is the reply; a forwarded forward relays its own source; a source out of view is
+  // still someone else's words, never boss's own.
   function source(m, ctx) {
     const id = m.forward?.message_id;
-    const original = id && ctx.c.messages?.find(o => o.message_id === id);
-    if (!original) return null;
+    if (!id) return null;
+    const original = ctx.c.messages?.findLast(o => o.message_id === id);
+    if (!original) return { name: "其他人", role: "" };
+    if (original.kind === "forward") return source(original, ctx);
     if (original.speaker?.role === "manager") return { name: "boss", role: "" };
     return person(original.speaker || {}, ctx, original);
   }

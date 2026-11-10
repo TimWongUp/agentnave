@@ -777,6 +777,11 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
     message("old-brief", "2026-11-01T00:00:07Z", { conversation: "room", round: 2, thread: room, kind: "instruction", desk: "a", to: [{ key: "a", role: "旧职责", model: "claude-old" }], speaker: { role: "manager", provider: "codex", model: "gpt-boss" } }),
     message("old-task", "2026-11-01T00:00:08Z", { conversation: "t", thread: { kind: "desk", key: "a" }, kind: "prompt", desk: "a", to: [{ key: "a" }], speaker: { role: "manager", provider: "codex", model: "gpt-boss" } }),
     message("legacy-brief", "2026-11-01T00:00:09Z", { conversation: "room", round: 2, thread: room, kind: "instruction", desk: "a", speaker: { role: "manager", provider: "codex", model: "gpt-boss" } }),
+    message("job", "2026-11-01T00:00:10Z", { conversation: "t2", thread: { kind: "desk", key: "c" }, kind: "prompt", desk: "c", message_id: "m-task", to: [{ key: "c", identity: identities.coder }], speaker: { role: "manager" } }),
+    message("job-done", "2026-11-01T00:00:11Z", { conversation: "t2", thread: { kind: "desk", key: "c" }, desk: "c", message_id: "m-task", speaker: { role: "member", provider: "codex", model: "gpt-z", identity: identities.coder } }),
+    message("relay-task", "2026-11-01T00:00:12Z", { conversation: "room", round: 2, thread: room, kind: "forward", desk: null, message_id: "m-relay", forward: { message_id: "m-task" }, speaker: { role: "manager" } }),
+    message("relay-relay", "2026-11-01T00:00:13Z", { conversation: "room", round: 2, thread: room, kind: "forward", desk: null, forward: { message_id: "m-relay" }, speaker: { role: "manager" } }),
+    message("relay-gone", "2026-11-01T00:00:14Z", { conversation: "room", round: 2, thread: room, kind: "forward", desk: null, forward: { message_id: "m-gone" }, speaker: { role: "manager" } }),
   ];
   app.ctx.c.messages = list;
   app.ctx.desks = new Map(desks.map(d => [d.key, d]));
@@ -801,6 +806,10 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
   const ask = await said("ask");
   assert.deepEqual([ask.private, ask.to.map(p => p.role)], [false, ["探索派", ""]], "a meeting question to some seats names them");
   assert.deepEqual((await said("relay")).forward, { name: "Claude", role: "探索派", twin: true }, "a forward says whose words it relays");
+  const coder = { name: "GPT", role: "", twin: false };
+  assert.deepEqual((await said("relay-task")).forward, coder, "a forwarded private task relays the reply, not boss's question");
+  assert.deepEqual((await said("relay-relay")).forward, coder, "forwarding a forward relays the original speaker");
+  assert.deepEqual((await said("relay-gone")).forward, { name: "其他人", role: "" }, "a source out of view is never boss's own words");
   for (const id of ["old-brief", "old-task", "legacy-brief"]) {
     const old = await said(id);
     assert.equal(old.private, true);
