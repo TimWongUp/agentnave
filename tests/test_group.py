@@ -236,6 +236,28 @@ async def test_driver_failure_settles_other_seats_before_releasing_the_group(
 
 
 @pytest.mark.asyncio
+async def test_driver_failure_commits_a_seat_that_already_succeeded(tmp_path: Path) -> None:
+    groups, manager, group_id = open_group(tmp_path, "a", "b")
+    round_ = groups.run(group_id, ["a", "b"], "parallel", "Q", {})
+    manager.finish("2", output="B1")
+    for _ in range(100):
+        if round_.runs[1].status == "succeeded":
+            break
+        await asyncio.sleep(0.001)
+    assert round_.runs[1].status == "succeeded"
+    manager.results["1"].set_exception(RuntimeError("broken execution"))
+    await settle(groups, round_.id)
+    # Without a review the finished seat publishes its answer like a normal round, even
+    # though the other seat's driver failed before the round could approve it.
+    assert [run.status for run in round_.runs] == ["failed", "succeeded"]
+    assert [(entry.kind, entry.seat_id, entry.text) for entry in round_.group.entries] == [
+        ("task", None, "Q"),
+        ("absent", "a", "failed"),
+        ("answer", "b", "B1"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_failures_are_absent_and_only_proven_delivery_advances_sessions(
     tmp_path: Path,
 ) -> None:

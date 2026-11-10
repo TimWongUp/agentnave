@@ -181,7 +181,8 @@ class Groups:
     """Own collaboration groups only for this Python process lifetime.
 
     Subclasses may persist state in _on_change, hold answers for review in _approve and
-    report extra wake-up reasons from _ready; the defaults keep everything in memory.
+    _holds_answers, and report extra wake-up reasons from _ready; the defaults keep everything
+    in memory.
     """
 
     def __init__(self, manager: InvocationManager) -> None:
@@ -457,9 +458,16 @@ class Groups:
                 for entry in group.entries
                 if entry.round == round_.number and entry.kind in ("answer", "absent")
             }
+            # Only a review holds a successful answer; otherwise a finished seat publishes
+            # it like a normal round, even when another seat ended the round early.
+            approved = (
+                set()
+                if self._holds_answers(round_)
+                else {run.seat_id for run in round_.runs if run.status == "succeeded"}
+            )
             for run in round_.runs:
-                if run.seat_id not in committed and run.status != "succeeded":
-                    self._commit(round_, run, set())
+                if run.seat_id not in committed:
+                    self._commit(round_, run, approved)
             if isinstance(exc, asyncio.CancelledError):
                 raise
         finally:
@@ -652,6 +660,10 @@ class Groups:
 
     def _on_change(self, round_: Round) -> None:
         """Called before a seat launches, after it ends, after each commit and at round end."""
+
+    def _holds_answers(self, round_: Round) -> bool:
+        """Whether successful answers wait for the host's review before they are committed."""
+        return False
 
     async def _approve(self, round_: Round, runs: list[SeatRun]) -> set[str]:
         """Review barrier before successful answers are committed; must return on cancel."""
