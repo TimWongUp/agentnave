@@ -175,7 +175,9 @@ class Conversation(BaseModel):
             if not round_.pending_review():
                 # Recovery reruns on every read until a writer saves it, so a seat without its
                 # own end takes the last saved activity, not the time of this read.
-                last = self.entries[-1].time if self.entries else self.created
+                # Seats commit in seat order, so the latest time need not be the last entry;
+                # saved times are UTC ISO strings and compare in time order.
+                last = max((entry.time for entry in self.entries), default=self.created)
                 self.commit_ended(round_, last)
         for run in [seat for round_ in self.rounds for seat in round_.seats] + self.tasks:
             for prompt in run.prompts:
