@@ -345,7 +345,15 @@ class Run:
 
 def settings(cwd: str) -> str:
     # Never saved by agy: trusting the folder here leaves the user's settings unchanged.
-    return json.dumps({"trustedWorkspaces": sorted({cwd, os.path.realpath(cwd)})})
+    workspaces = {cwd, os.path.realpath(cwd)}
+    # agy takes the folder from $PWD, which can spell the same one with another case.
+    if pwd := os.environ.get("PWD"):
+        try:
+            if os.path.samefile(pwd, cwd):
+                workspaces.add(pwd)
+        except OSError:
+            pass  # a path that no longer exists cannot be trusted either way
+    return json.dumps({"trustedWorkspaces": sorted(workspaces)})
 
 
 def close(terminal: Terminal) -> None:

@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 
 from agentnave.adapters.antigravity import AntigravityAdapter
-from agentnave.agy_tui import STOP_GRACE, Run, Turn, hooks
+from agentnave.agy_tui import STOP_GRACE, Run, Turn, hooks, settings
 from agentnave.agy_tui.screen import AgyScreen, input_box, state
 from agentnave.claude_tui.terminal import Terminal
 from agentnave.models import InvocationRequest, InvocationStatus
@@ -175,6 +175,30 @@ def test_hook_entry_keeps_other_hooks_and_acts_only_in_agentnave_runs(
     path.write_text("{broken")
     with pytest.raises(ValueError, match="not valid JSON"):
         hooks.ensure_entry()
+
+
+def test_settings_trust_the_pwd_spelling_of_the_same_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_path / "Workbuddy"
+    folder.mkdir()
+    # agy reads $PWD, which can name this folder with another case than the disk does.
+    alias = tmp_path / "WorkBuddy"
+    try:
+        alias.symlink_to(folder)
+    except OSError:
+        pytest.skip("symlinks need extra privileges here")
+
+    def trusted() -> list[str]:
+        saved = cast(dict[str, list[str]], json.loads(settings(str(folder))))
+        return saved["trustedWorkspaces"]
+
+    monkeypatch.setenv("PWD", str(alias))
+    assert str(alias) in trusted()
+    monkeypatch.setenv("PWD", str(tmp_path))
+    assert str(tmp_path) not in trusted()
+    monkeypatch.delenv("PWD", raising=False)
+    assert sorted({str(folder), os.path.realpath(folder)}) == trusted()
 
 
 def test_interactive_needs_permissions_skipped_and_no_print_options(tmp_path: Path) -> None:
