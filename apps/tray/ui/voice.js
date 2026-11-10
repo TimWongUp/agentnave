@@ -220,7 +220,7 @@
     const id = m.forward?.message_id;
     if (!id) return null;
     const original = ctx.c.messages?.findLast(o => o.message_id === id);
-    if (!original) return { name: "其他人", role: "" };
+    if (!original) return { name: "原发言人", role: "" };
     if (original.kind === "forward") return source(original, ctx);
     if (original.speaker?.role === "manager") return { name: "boss", role: "" };
     return person(original.speaker || {}, ctx, original);

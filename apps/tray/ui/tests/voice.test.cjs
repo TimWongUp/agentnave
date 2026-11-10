@@ -809,7 +809,7 @@ test("speech says who is talking, to whom, and names the one employee a boss mes
   const coder = { name: "GPT", role: "", twin: false };
   assert.deepEqual((await said("relay-task")).forward, coder, "a forwarded private task relays the reply, not boss's question");
   assert.deepEqual((await said("relay-relay")).forward, coder, "forwarding a forward relays the original speaker");
-  assert.deepEqual((await said("relay-gone")).forward, { name: "其他人", role: "" }, "a source out of view is never boss's own words");
+  assert.deepEqual((await said("relay-gone")).forward, { name: "原发言人", role: "" }, "a source out of view is relayed, never read as boss speaking now");
   for (const id of ["old-brief", "old-task", "legacy-brief"]) {
     const old = await said(id);
     assert.equal(old.private, true);
