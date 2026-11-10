@@ -167,8 +167,15 @@
     const d = new Date(at(iso));
     return `${d.getMonth() + 1}/${d.getDate()}`;
   }
-  const clock = (iso) => new Date(at(iso)).toLocaleTimeString(L("zh-CN", "en-US"), { hour: "2-digit", minute: "2-digit", hour12: false });
-  const fullTime = (iso) => new Date(at(iso)).toLocaleString(L("zh-CN", "en-US"), { hour12: false });
+  // Formatters are built once per interface language; a language switch picks another one.
+  const formatters = new Map();
+  const formatter = (kind, options) => {
+    const locale = L("zh-CN", "en-US"), key = `${kind}|${locale}`;
+    if (!formatters.has(key)) formatters.set(key, new Intl.DateTimeFormat(locale, options));
+    return formatters.get(key);
+  };
+  const clock = (iso) => formatter("clock", { hour: "2-digit", minute: "2-digit", hour12: false }).format(at(iso));
+  const fullTime = (iso) => formatter("full", { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", hour12: false }).format(at(iso));
   function dayLabel(iso) {
     const d = new Date(at(iso));
     const today = new Date();
@@ -201,6 +208,7 @@
       .map((x) => x.id);
   }
   // 1.5 s polling that pauses while hidden and never overlaps itself.
+  // An unfocused window (see syncBlurred) polls less often.
   function poll(tick, every = 1500) {
     let timer = null, busy = false;
     async function run() {
@@ -209,11 +217,12 @@
       busy = true;
       try { await tick(); } finally {
         busy = false;
-        if (!document.hidden) timer = setTimeout(run, every);
+        if (!document.hidden) timer = setTimeout(run, blurred ? Math.max(every, BLURRED_POLL) : every);
       }
     }
     document.addEventListener("visibilitychange", run);
     window.addEventListener("focus", run);
+    window.addEventListener("agentnave:focus", run);
     run();
     return run;
   }
@@ -296,6 +305,27 @@
   const syncPaused = () => root.classList?.toggle("paused", document.hidden || root.dataset?.windowHidden === "true");
   document.addEventListener("visibilitychange", syncPaused);
   syncPaused();
+  // A page that sets data-idle-blur on <html> goes quiet while its window is behind others: figures
+  // and decorations stand still (html.blurred) and polling slows down. The App also reports the
+  // window's focus as data-window-blurred, for when the page gets no blur events. Coming back
+  // refreshes at once.
+  const BLURRED_POLL = 5000;
+  let blurred = false;
+  function syncBlurred() {
+    const next = root.dataset?.idleBlur !== undefined && (root.dataset.windowBlurred === "true" || !document.hasFocus());
+    if (next === blurred) return;
+    blurred = next;
+    root.classList?.toggle("blurred", next);
+    if (!next) window.dispatchEvent(new Event("agentnave:focus"));
+  }
+  // Focus moving into an embedded frame blurs this window too; ask again once it has settled.
+  const checkBlurred = () => setTimeout(syncBlurred, 0);
+  window.addEventListener("blur", checkBlurred);
+  window.addEventListener("focus", checkBlurred);
+  if (typeof MutationObserver === "function") {
+    new MutationObserver(syncBlurred).observe(root, { attributes: true, attributeFilter: ["data-window-blurred"] });
+  }
+  syncBlurred();
 
   // ---- painted office art (ui/art, served at /art/) -----------------------------------------
   // Characters follow the model family, like the avatars; a model without a character of its own is
@@ -340,7 +370,7 @@
   const emitters = new Set();
   const still = window.ANAppearance.reducedMotion;
   setInterval(() => {
-    if (document.hidden || still.matches) return;
+    if (document.hidden || blurred || still.matches) return;
     if (typeof root !== "undefined" && root.dataset?.windowHidden === "true") return;
     const now = performance.now();
     for (const e of emitters) {
@@ -466,7 +496,8 @@
           const img = h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
             decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` });
           const pivot = root?.[state];
-          body.append(pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img) : img);
+          body.append(pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img)
+            : part === "halo" ? h("span.halo-fan", { style: `--ox:${x}%;--oy:${y}%` }, img) : img);
         }
       }
     });

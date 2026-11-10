@@ -443,6 +443,16 @@ fn set_window_hidden(window: &WebviewWindow, hidden: bool) {
     let _ = window.eval(script);
 }
 
+/// Tell the page its window is behind others (or back in front), for pages that quiet down then.
+fn set_window_blurred(window: &WebviewWindow, blurred: bool) {
+    let script = if blurred {
+        "document.documentElement.dataset.windowBlurred = 'true';"
+    } else {
+        "delete document.documentElement.dataset.windowBlurred;"
+    };
+    let _ = window.eval(script);
+}
+
 /// Bring the main window back on the page it was left on, or open the office if there is none.
 fn restore(app: &AppHandle) {
     match app.get_webview_window("main") {
@@ -606,6 +616,9 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
         window.on_window_event(move |event| {
             if let WindowEvent::Destroyed = event {
                 voice::player::clear(closing.app_handle());
+            }
+            if let WindowEvent::Focused(focused) = event {
+                set_window_blurred(&closing, !focused);
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 save_size(&closing);

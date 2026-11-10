@@ -25,7 +25,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gl { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
 .gl-sec { padding: 12px 10px 5px; font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em; color: var(--faint); }
 .gl-empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 12.5px; }
-.gi { position: relative; display: flex; gap: 11px; padding: 10px 10px 10px 16px; margin-bottom: 2px; border-radius: 11px; color: var(--ink); }
+.gi { position: relative; display: flex; gap: 11px; padding: 10px 10px 10px 16px; margin-bottom: 2px; border-radius: 11px; color: var(--ink); content-visibility: auto; contain-intrinsic-size: auto 66px; }
 .gi::before { content: ""; position: absolute; left: 5px; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: var(--mc); opacity: 0.55; }
 .gi.hot::before, .gi.on::before { opacity: 1; }
 .gi:hover { background: var(--hover); }
@@ -39,9 +39,11 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi-prev { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pill { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 99px; font-size: 11px; font-weight: 600; line-height: 18px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--idle)) 15%, transparent); white-space: nowrap; }
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.pill.tone-run::before { animation: pulse 1.6s ease-out infinite; }
+/* the run pulse is a ring behind the dot that only scales and fades, so the compositor does it */
+.pill.tone-run { position: relative; isolation: isolate; }
+.pill.tone-run::after { content: ""; position: absolute; z-index: -1; left: 8px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: color-mix(in srgb, var(--run) 70%, transparent); animation: pulse 1.6s ease-out infinite; }
 .pill[hidden] { display: none; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 70%, transparent); } 100% { box-shadow: 0 0 0 6px transparent; } }
+@keyframes pulse { from { transform: scale(1); opacity: 1; } to { transform: scale(3); opacity: 0; } }
 .presence { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--solid); box-shadow: inset 0 0 0 1.5px var(--idle); }
 .presence.on { background: var(--done); box-shadow: 0 0 0 2px var(--solid); }
 
@@ -172,7 +174,9 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 [data-mood="failed"] .fig:not(.no-sad) .s-idle, [data-mood="failed"] .fig:not(.no-sad) .s-blink { display: none; }
 [data-mood="failed"] .fig .s-sad { display: block; }
 [data-mood="failed"] .fig.no-sad { filter: grayscale(0.6); }
-[data-mood="sleep"] .fig { filter: saturate(0.8); }
+/* on the frames, not the figure: a filter on the figure re-composites its whole subtree whenever a part moves */
+[data-mood="sleep"] .fig img { filter: saturate(0.8); }
+[data-mood] .fig.video:not(.walk) img, .fig.warping img { filter: none; }
 /* the ahoge swings about its root, wide enough to see at desk size: at rest it drifts and now and
    then springs, it wags while working or speaking, flicks when done and droops asleep. Leaning the
    curl down onto the head creases it past about 10deg, so that side swings less. It stays put
@@ -224,17 +228,19 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @keyframes pendant-swing { from { transform: rotate(calc(-1 * var(--swing))); } to { transform: rotate(var(--swing)); } }
 /* a starburst halo sits behind the head and turns about its centre, slowly at rest, faster at work
    and when done, barely asleep. The rays below the shoulders would pass behind the spreading hair
-   and show cut in half, so a fan fixed to the frame keeps them to the upper arc: the mask turns back
-   as fast as the ring turns on. Walking frames have no halo layer */
-@property --spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
-.fig img.part.halo {
-  z-index: -1; --fan: conic-gradient(from calc(-1 * var(--spin)) at var(--ox) var(--oy), #000 0 92deg, transparent 112deg 248deg, #000 268deg);
-  -webkit-mask-image: var(--fan); mask-image: var(--fan); animation: halo-spin 40s linear var(--phase, 0s) infinite;
+   and show cut in half, so a fan fixed to the frame keeps them to the upper arc: common.js wraps
+   the ring in a box that holds the fan still while only the ring inside turns. Walking frames have
+   no halo layer */
+.fig .halo-fan {
+  position: absolute; inset: 0; z-index: -1;
+  --fan: conic-gradient(from 0deg at var(--ox) var(--oy), #000 0 92deg, transparent 112deg 248deg, #000 268deg);
+  -webkit-mask-image: var(--fan); mask-image: var(--fan);
 }
+.fig img.part.halo { animation: halo-spin 40s linear var(--phase, 0s) infinite; }
 [data-mood="working"] .fig img.part.halo, [data-mood="speaking"] .fig img.part.halo { animation-duration: 12s; }
 [data-mood="done"] .fig img.part.halo { animation-duration: 4s; }
 [data-mood="sleep"] .fig img.part.halo { animation-duration: 120s; }
-@keyframes halo-spin { to { transform: rotate(360deg); --spin: 360deg; } }
+@keyframes halo-spin { to { transform: rotate(360deg); } }
 /* a devil tail in two pieces sits behind the body: the root piece carries the whole S curve about the
    tail's root and the spade follows it, bending at its narrow neck a beat later, so the tail waves like
    a whip instead of turning stiffly; it swings mostly outward so the tip never tucks behind the hair. common.js nests
@@ -349,7 +355,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @keyframes fig-bob { 50% { transform: translateY(-3px) rotate(-1deg); } }
 @keyframes fig-sway { 50% { transform: rotate(2deg); } }
 @keyframes fig-hop { 50% { transform: translateY(-8px); } }
-html.paused *, html.paused *::before, html.paused *::after { animation-play-state: paused !important; }
+html:is(.paused, .blurred) *, html:is(.paused, .blurred) *::before, html:is(.paused, .blurred) *::after { animation-play-state: paused !important; }
 
 /* ---- boss office ---- */
 /* the boss before a takeover: a framed head on the wall */

@@ -553,6 +553,7 @@ async function refresh() {
     } catch {
       setText(el.banner, L("读取中断，正在重试…", "Connection interrupted, retrying…"));
       el.banner.hidden = false;
+      state.chatKey = null;
       if (!state.loaded && !state.groupsData.length) showBlank("error");
       return;
     }
@@ -565,7 +566,11 @@ async function refresh() {
     )
       state.selected = chats.groups[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    renderList();
+    const listKey = JSON.stringify([chats.groups, state.selected, tickOf()]);
+    if (listKey !== state.listKey) {
+      state.listKey = listKey;
+      renderList();
+    }
     if (!state.selected) {
       showBlank(chats.groups.length ? "pick" : "nogroups");
       return;
@@ -588,6 +593,7 @@ async function refresh() {
         state.again = true;
         return;
       }
+      state.chatKey = null;
       if (e.status === 404) showBlank("missing");
       else {
         setText(el.banner, L("读取中断，正在重试…", "Connection interrupted, retrying…"));
@@ -598,6 +604,16 @@ async function refresh() {
     }
     const newGroup = state.loaded !== chat.group;
     state.loaded = chat.group;
+    // The same payload within the same tick draws the same office; only things that move with
+    // the clock or wait for this load need a fresh pass.
+    const chatKey = JSON.stringify([selected, hashKey, chat, tickOf(), ART.version(), document.documentElement.lang]);
+    const unchanged = state.ready && !newGroup && chatKey === state.chatKey && !state.locate
+      && !(state.hashKey && !state.focused) && !timeDriven();
+    // The voice player keeps following the workspace and reloads its own settings sparingly.
+    if (unchanged) {
+      AN.voice?.ingest(chat);
+      return;
+    }
     if (newGroup) {
       state.drawer = { kind: "all" };
       state.convOpen = false;
@@ -612,7 +628,7 @@ async function refresh() {
     renderAll(chat, newGroup);
     ingest(chat, state.ctx, newGroup);
     applyHash(state.ctx);
-    renderList(); // selected marker
+    state.chatKey = chatKey;
     state.ready = true;
   } finally {
     state.refreshing = false;

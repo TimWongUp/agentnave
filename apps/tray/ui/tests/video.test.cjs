@@ -209,18 +209,37 @@ test("a playback error releases media and leaves a static poster", async () => {
 
 test("video characters clear hidden particles instead of continuing to emit", () => {
   const source = readFileSync(`${__dirname}/../common.js`, "utf8");
-  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || still.matches) return;");
+  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
   let emitted = 0;
   const fx = { isConnected: true, childElementCount: 1, replaceChildren() { this.childElementCount = 0; }, append() { emitted++; } };
   const fig = { classList: { contains: name => name === "video" }, closest: () => ({ dataset: { mood: "idle" } }) };
   vm.runInNewContext(source.slice(start, source.indexOf("  const frameUrl", start)), {
-    document: { hidden: false }, still: { matches: false }, performance: { now: () => 10000 },
+    document: { hidden: false }, blurred: false, still: { matches: false }, performance: { now: () => 10000 },
     emitters: new Set([{ fig, fx, name: "muse", born: 0, next: 0, spec: { origin: { idle: [50, 50] }, sprites: ["note-1.webp"] } }]),
     EMIT_EVERY: { idle: 2600 }, h: () => ({ addEventListener() {} }), artUrl: s => s,
     setInterval: fn => fn(),
   });
   assert.equal(emitted, 0);
   assert.equal(fx.childElementCount, 0);
+});
+
+test("an unfocused window emits no particles", () => {
+  const source = readFileSync(`${__dirname}/../common.js`, "utf8");
+  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
+  const emitted = blurred => {
+    let count = 0;
+    const fx = { isConnected: true, childElementCount: 0, replaceChildren() {}, append() { count++; } };
+    const fig = { classList: { contains: () => false }, closest: () => ({ dataset: { mood: "idle" } }) };
+    vm.runInNewContext(source.slice(start, source.indexOf("  const frameUrl", start)), {
+      document: { hidden: false }, blurred, still: { matches: false }, performance: { now: () => 10000 },
+      emitters: new Set([{ fig, fx, name: "muse", born: 0, next: 0, spec: { origin: { idle: [50, 50] }, sprites: ["note-1.webp"] } }]),
+      EMIT_EVERY: { idle: 2600 }, h: () => ({ addEventListener() {} }), artUrl: s => s, Math,
+      setInterval: fn => fn(),
+    });
+    return count;
+  };
+  assert.equal(emitted(false), 1);
+  assert.equal(emitted(true), 0);
 });
 
 test("video packs stay off in static mode and switch figures in place across 272p, 544p and static", async () => {
