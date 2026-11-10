@@ -109,8 +109,8 @@ CLI's directory first, then the inherited `PATH`, then those directories. Deskto
 different environment from your terminal; set an explicit `PATH` in the server's host configuration
 if a CLI or its runtime lives elsewhere, or on Windows.
 AgentNave does not install providers or change their login or configuration. It passes each CLI's
-permission tier on every dispatch (its automatic approval reviewer by default, or full access when
-the CLI has no such reviewer or the App chooses full access) without changing the CLI's saved
+permission tier on every dispatch (full access by default, or automatic approval when selected
+in the App) without changing the CLI's saved
 settings.
 
 ### Select installed CLIs before locating them
@@ -561,7 +561,7 @@ with every host or availability of each account's models.
 ## Settings without the App
 
 Without the App (Linux, or a host that skips it), the service runs on defaults: each CLI uses its
-own model and effort, the permission tier is `auto`, at most 8 CLI runs are active at once, no
+own model and effort, the permission tier is `full`, at most 8 CLI runs are active at once, no
 review or orchestration seats exist (the review Skill picks members itself), and saved history is
 kept forever. App-only features (voice, notifications, appearance, updates) are not available.
 

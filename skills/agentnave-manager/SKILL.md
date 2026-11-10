@@ -110,7 +110,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 | Devin CLI | `devin` | [Devin CLI](references/devin.md) |
 | ZCode | `zcode` | [ZCode](references/zcode.md) |
 
-用户指定字段覆盖默认，但不得超出允许范围；要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自用户在 App 中设定的默认 options、服务按 CLI 套用的权限档位（缺省「自动」，用户可在 App 改为「完全放开」；见 `list_members` 的 `permissions`），或用户本轮明确要求，boss 不得自行追加；显式传任一权限参数会让该 CLI 的档位整档不套用。App 默认值续接时也会套用。终态回执的 `warnings` 报告 CLI 报成功但有工具调用被拒，按未完成处理并告知用户可在 App 调整档位。模型不可用时报告原错误，不静默替换。
+用户指定字段覆盖默认，但不得超出允许范围；要求原生设置时须同时清除对应 App 默认字段。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自用户在 App 中设定的默认 options、服务按 CLI 套用的权限档位（缺省「完全放开」，用户可在 App 改为「自动」；见 `list_members` 的 `permissions`），或用户本轮明确要求，boss 不得自行追加；显式传任一权限参数会让该 CLI 的档位整档不套用。App 默认值续接时也会套用。终态回执的 `warnings` 报告 CLI 报成功但有工具调用被拒，按未完成处理并告知用户可在 App 调整档位。模型不可用时报告原错误，不静默替换。
 
 当前宿主开启高级编排时，服务不再提供普通任务候选池或借用其场景默认值，优先按可见工位派发；会议仍独立配置。员工页 CLI 级可用模型名单共同约束普通任务、编排工位与会议，工位和会议只能选择其中的模型；绑定失效时先报告并修复配置，不自动扩大允许名单或换模型。用户点名的 CLI 已启用、却没有绑定它的工位或评审 `role` 时，仍可私聊，但不会补 task 默认模型（`members` 只剩 `discussion` 行）：先 `list_members(provider=...)` 看该 CLI 的模型行，有不限模型的 `*` 行时可省略 `model`，否则从列出的模型里选一个写进 `provider_options.model`；行上的 `default` 是会议默认，`effort` 和 options 也按会议显示，都不当作 task 默认，也不照搬；`*` 不是模型名，不填。与宿主同类的 CLI 仍不能私聊。没有可用模型时报告缺项，不自行扩大名单或换 CLI。关闭编排后恢复保留的普通任务配置。
 

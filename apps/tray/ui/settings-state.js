@@ -108,7 +108,7 @@ let probedAt = 0;
 let documentError = null;
 let reviewSeats = {}; // review.json seats; saved on their own, apart from members.json.
 let reviewError = null;
-let permissionTiers = null; // permissions.json tiers by CLI; a CLI not in it runs "auto".
+let permissionTiers = null; // permissions.json tiers by CLI; a CLI not in it runs "full".
 let permissionsError = null;
 let reviewSaves = 0; // Seats or tiers saved so far; a probe answered before a save carries old ones.
 let docVersion = 0; // Monotonic counter for save race detection
@@ -157,7 +157,7 @@ async function apiPostPermissions(doc) {
 }
 
 // What each tier means for each CLI when a task runs unattended; the server maps the tier to
-// that CLI's own options, "auto" unless the user picked "full". Pi has no approval step.
+// that CLI's own options, "full" unless the user picked "auto". Pi has no approval step.
 const TIERS = [["auto", L("自动", "Auto")], ["full", L("完全放开", "Full access")]];
 // CLIs without a usable automatic reviewer: both tiers grant full access, so there is no choice.
 const FULL_ONLY = {
@@ -181,7 +181,7 @@ const TIER_TEXT = {
 };
 
 function permissionTier(provider) {
-  return permissionTiers?.[provider] || "auto";
+  return permissionTiers?.[provider] || "full";
 }
 
 async function setPermissionTier(provider, tier) {
