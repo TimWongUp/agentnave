@@ -70,7 +70,7 @@
 | 0064 | [派发回执引导收取，可选派发后先等](0064-dispatch-receipts-steer-to-wait.md) | 已接受 | 修订 ADR-0007 |
 | 0065 | [预置专项角色、独立开关与同难度兜底](0065-predefined-specialist-roles.md) | 已接受 | 扩展 ADR-0037、ADR-0038、ADR-0052；[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md) |
 | 0066 | [统一十分钟等待窗口，用序号区分连续等待](0066-unified-wait-window-and-call-sequence.md) | 部分取代 | 修订 ADR-0007、ADR-0015；[ADR-0067](0067-wait-270s-window-and-host-background-limits.md) |
-| 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 已接受 | 修订 ADR-0007、ADR-0015、ADR-0066 |
+| 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 部分修订 | 修订 ADR-0007、ADR-0015、ADR-0066；[ADR-0077](0077-claude-long-wait.md) |
 | 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 部分修订 | 修订 ADR-0037、ADR-0051、ADR-0065；[ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) |
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
@@ -80,3 +80,4 @@
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
 | 0076 | [权限档位缺省为完全放开](0076-full-permission-default.md) | 已接受 | 修订 ADR-0032 |
+| 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 已接受 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限 |
