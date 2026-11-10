@@ -460,7 +460,7 @@ class Groups:
             }
             # Only a review holds a successful answer; otherwise a finished seat publishes
             # it like a normal round, even when another seat ended the round early.
-            approved = (
+            approved: set[str] = (
                 set()
                 if self._holds_answers(round_)
                 else {run.seat_id for run in round_.runs if run.status == "succeeded"}

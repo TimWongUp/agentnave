@@ -707,7 +707,7 @@ def test_provider_option_schema_offers_booleans_before_strings() -> None:
 
     from agentnave.models import ProviderOption
 
-    adapter = TypeAdapter(ProviderOption)
+    adapter: TypeAdapter[ProviderOption] = TypeAdapter(ProviderOption)
     # A host that coerces types before validating would turn false into "false" when the
     # string branch comes first, so the schema offers typeless booleans and numbers first.
     schema = adapter.json_schema()
