@@ -644,7 +644,12 @@ def test_print_wrapper_reruns_once_in_the_fallback_mode(
     assert parsed.status is status
     assert parsed.session_id == (None if blocked else calls[0]["session"])
     assert parsed.output == ("done" if status is InvocationStatus.SUCCEEDED else "")
-    assert any("bypassPermissions mode (full access)" in w for w in parsed.warnings) is warned
+    stated = any(
+        "per the App permission tier's fallback" in w
+        and "bypassPermissions mode (full access)" in w
+        for w in parsed.warnings
+    )
+    assert stated is warned
     if status is InvocationStatus.BLOCKED:
         assert "neither auto nor bypassPermissions" in str(parsed.error_message)
 
