@@ -130,8 +130,7 @@ function chip(t) {
     { title: AN.fullHandle(who) },
     "@",
     t.d ? ART.head(deskChar(t.d)) : null,
-    role ? h("span.at-role", {}, role) : null,
-    AN.deskName(who),
+    h("span.at-name", {}, role ? h("span.at-role", {}, role) : null, AN.deskName(who)),
   );
 }
 // Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
