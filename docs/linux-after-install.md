@@ -195,11 +195,10 @@ from pathlib import Path
 root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
 root.mkdir(parents=True, exist_ok=True)
 chosen = ["<CLI>"]  # ← 用户要求改为自动的 CLI
-json.dump(
-    {"version": 1, "clis": {c: "auto" for c in chosen}},
-    open(root / "permissions.json.tmp", "w"),
-    indent=2,
-)
+path = root / "permissions.json"
+saved = json.loads(path.read_text()) if path.exists() else {"version": 1, "clis": {}}
+saved["clis"].update({c: "auto" for c in chosen})  # 保留其他 CLI 已保存的档位
+json.dump(saved, open(root / "permissions.json.tmp", "w"), indent=2)
 (root / "permissions.json.tmp").replace(root / "permissions.json")
 PY
 ```
