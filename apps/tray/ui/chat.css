@@ -499,6 +499,7 @@ html.paused *, html.paused *::before, html.paused *::after { animation-play-stat
 .at.who { padding-left: 7px; }
 .at-role { margin-right: 4px; color: var(--show); }
 .at-name { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.at-name .head { display: inline-block; margin: 0 4px; vertical-align: -3px; }
 .at .avatar, .at .head { width: 15px; height: 15px; border-radius: 4px; font-size: 8px; flex: none; }
 .at .head { border-radius: 27%; background: center / cover; }
 .bub .at, .bub .at.who, .bub .at.boss, .bub .at.all { padding: 0; background: none; border: 0; border-radius: 0; font-size: inherit; color: var(--accent); }

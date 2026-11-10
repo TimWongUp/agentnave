@@ -125,12 +125,18 @@ function chip(t) {
     return h("span.at.all", { title: L("会议室里的所有人", "Everyone in the meeting room") }, "@all");
   const who = targetWho(t);
   const role = who.identity?.role;
+  // One run of inline text, so a long name wraps back under the @ instead of beside the head.
   return h(
     "span.at.who",
     { title: AN.fullHandle(who) },
-    "@",
-    t.d ? ART.head(deskChar(t.d)) : null,
-    h("span.at-name", {}, role ? h("span.at-role", {}, role) : null, AN.deskName(who)),
+    h(
+      "span.at-name",
+      {},
+      "@",
+      t.d ? ART.head(deskChar(t.d)) : null,
+      role ? h("span.at-role", {}, role) : null,
+      AN.deskName(who),
+    ),
   );
 }
 // Like an office chat: what boss sends carries a kind tag (任务, 议题, 转发) and its
