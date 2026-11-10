@@ -165,7 +165,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 {"version": 1, "clis": {"pi": "auto", "codebuddy": "auto", "deepseek": "auto"}}
 ```
 
-- 只有 `auto` 和 `full` 两档，没写的 CLI 也按 `auto`。**不要写 `full`**。
+- 只有 `auto` 和 `full` 两档，没写的 CLI 按 `full`。用户要求把某个 CLI 改为自动时才写 `auto`。
 - 注意：有几家 CLI 的 `auto` 本身就是全权限（源码注释：这几家没有可用的自动审批器）。`codebuddy` 的 auto 是 `bypassPermissions`，`deepseek` 是 `danger-full-access`，`antigravity` 是 `dangerously_skip_permissions`，`zcode` 是 `yolo`，所以 `list_members` 会把它们显示为 `"full"`。只有 claude、grok、codex、devin 的 auto 比 full 低（codex auto 是 `approve_for_me`，devin auto 是 `smart`）。Pi 没有档位。
 - `list_members.permissions` 返回全部 8 个有档位的 CLI（claude、grok、codex、codebuddy、deepseek、devin、antigravity、zcode），不按已选组员过滤，也不含 Pi。
 - 调用方传了 `PERMISSION_KEYS` 里的任何参数，档位就不再生效，所以 bot 不要自己追加权限参数。

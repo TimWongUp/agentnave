@@ -7,7 +7,7 @@
 - **一次只问一件事**，每个问题都给具体选项，选项按本机实际检测到的结果列，并标出推荐项。
 - 下文问题里的 CLI 名和模型名（如 `<CLI>`、`<模型>`）都是占位，必须换成用户本机检测到、用户接入的那些。**不要照搬任何一台机器的组合**，也不要推荐用户没装或没接入的 CLI。
 - 除模型相关的选择外，有推荐默认值的设置不要问，直接用默认值；用户主动提出要改时再改。模型相关的必须问，问的时候标出推荐项。
-- 用户没回答第 3 步之前，**不要启用任何 CLI**；权限只写默认的 `auto`，用户没明确要求之前绝不写 `full`。用户暂停过的 CLI，要等用户明确说恢复才动。
+- 用户没回答第 3 步之前，**不要启用任何 CLI**；权限档位不写，按缺省的 `full`；用户要求把某个 CLI 改为自动时，才为它写 `auto`。用户暂停过的 CLI，要等用户明确说恢复才动。
 - 登录只有两种做法：把桌面交给用户，让用户自己扫码或登录；或者走 CLI 自带的登录流程。**绝不在聊天里要 token 或密码**。API key 一律用密钥表单收，写进文件后 `chmod 600`，永远不要回显。
 - 数据根目录默认 `~/.agentnave/`；设过 `AGENTNAVE_DATA_DIR` 时，连接器也要传入同一目录。每次改配置前，先创建目录并备份：
   ```bash
@@ -184,7 +184,7 @@ PY
 
 ## 7. 权限档位
 
-不问用户，第 3 步接入的每个 CLI 都写默认的 `auto`。用户没有明确要求之前，**不要写 `full`**（§3.4）。
+不问用户，也不写 `permissions.json`：没写的 CLI 按缺省的 `full` 运行（§3.4）。用户要求把某些 CLI 改为自动时，只为这些 CLI 写 `auto`：
 
 ```bash
 python3 - <<'PY'
@@ -194,7 +194,7 @@ from pathlib import Path
 
 root = Path(os.environ.get("AGENTNAVE_DATA_DIR") or Path.home() / ".agentnave")
 root.mkdir(parents=True, exist_ok=True)
-chosen = ["<组员1>", "<组员2>"]  # ← 第 3 步的组员
+chosen = ["<CLI>"]  # ← 用户要求改为自动的 CLI
 json.dump(
     {"version": 1, "clis": {c: "auto" for c in chosen}},
     open(root / "permissions.json.tmp", "w"),
@@ -203,7 +203,7 @@ json.dump(
 (root / "permissions.json.tmp").replace(root / "permissions.json")
 PY
 ```
-验证：`list_members.permissions` 返回全部 7 个有档位的 CLI，不限于已选组员，也不含 Pi。默认 claude、grok、codex 显示 `auto`；codebuddy、deepseek、antigravity、zcode 的 `auto` 档本身就是全权限，会显示为 `full`，这是正常的。
+验证：`list_members.permissions` 返回全部 7 个有档位的 CLI，不限于已选组员，也不含 Pi。没写的 CLI 显示 `full`；写了 `auto` 的 claude、grok、codex、devin 显示 `auto`，codebuddy、deepseek、antigravity、zcode 的 `auto` 档本身就是全权限，仍显示为 `full`，这是正常的。
 
 ## 8. 其他设置
 
@@ -245,7 +245,7 @@ for s in agentnave-manager $EXTRA; do   # 第 6 步选了装时 EXTRA=agentnave-
 最后用一段话向用户总结：
 - 启用了哪些 CLI，各用什么模型
 - 工位和评审工位怎么分配
-- 权限档位（默认 auto）
+- 权限档位（默认完全放开，可按 CLI 改为自动）
 - 历史自动清理 90 天、同时运行上限 8，说明旧记录会被删，可以改
 - 一句话：权限、清理、并发这些默认值想改随时说
 - 连接器名字
