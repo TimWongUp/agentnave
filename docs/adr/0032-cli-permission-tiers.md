@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-28
+- 由 [ADR-0076](0076-full-permission-default.md) 修订缺省档位为「完全放开」
 - 由 [ADR-0057](0057-boss-answers-native-prompts.md) 修订「自动」档的含义：CLI 自动审核交回的请求由 boss 决定
 - 由 [ADR-0059](0059-claude-tier-fallback.md) 修订 Claude 两档：所选的权限模式不可用时，改用另一档的模式重跑一次
 

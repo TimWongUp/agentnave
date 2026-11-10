@@ -118,7 +118,7 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
 type PermissionTier = Literal["auto", "full"]
 
 # The native options each App permission tier stands for, per CLI; a CLI without a saved tier
-# runs "auto", since a dispatched CLI cannot ask anyone and native defaults deny tool calls.
+# runs "full" until the user selects another tier.
 # "auto" lets the CLI's own reviewer or classifier approve tool calls; CodeBuddy's auto denies
 # shell under -p, and DeepSeek, ZCode and Antigravity have no usable reviewer, so their auto
 # grants full access and the App offers them no choice. Pi has no approval step.
@@ -372,7 +372,7 @@ def apply_permission(
 
     Either way saved model permission options are dropped: the tier or the caller decides.
     """
-    tier = permissions.clis.get(provider, "auto") if permissions is not None else "auto"
+    tier = permissions.clis.get(provider, "full") if permissions is not None else "full"
     granted = PERMISSION_TIERS.get(provider, {}).get(tier)
     keys = PERMISSION_KEYS.get(provider, frozenset())
     # Saved model options must not mix with the tier, nor with a caller's own permissions.
@@ -725,7 +725,7 @@ class MemberList(StrictModel):
     review_error: str | None = None
     orchestration: OrchestrationStatus = Field(default_factory=OrchestrationStatus)
     orchestration_error: str | None = None
-    # The App permission tier of each CLI that has one, "auto" unless the user picked "full".
+    # The App permission tier of each CLI that has one, "full" unless the user picked "auto".
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error: str | None = None
 
@@ -925,7 +925,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     else:
         for provider in cast(tuple[ProviderName, ...], get_args(ProviderName.__value__)):
             if provider in PERMISSION_TIERS:
-                tier = saved.clis.get(provider, "auto") if saved else "auto"
+                tier = saved.clis.get(provider, "full") if saved else "full"
                 # A CLI whose auto is full access runs full whatever is saved.
                 tiers = PERMISSION_TIERS[provider]
                 permissions[provider] = "full" if tiers["auto"] == tiers["full"] else tier

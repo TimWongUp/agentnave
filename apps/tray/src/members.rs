@@ -417,7 +417,7 @@ pub fn save_review(root: &Path, document: &Value) -> Result<(), String> {
 
 /// permissions.json: `{"version": 1, "clis": {provider: "auto" | "full"}}`. Kept out of
 /// members.json so a server that predates permission tiers still reads its members. A missing
-/// file or CLI runs "auto": a dispatched CLI cannot ask anyone, so its native defaults deny.
+/// file or CLI runs "full".
 pub fn validate_permissions(document: &Value) -> Result<(), String> {
     let top = object(document, PERMISSIONS_FILE)?;
     only(top, &["version", "clis"], PERMISSIONS_FILE)?;
@@ -615,7 +615,7 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         Ok(review) => (review, Value::Null),
         Err(error) => (Value::Null, json!(error)),
     };
-    // Null until the user first picks a tier; every CLI then runs "auto".
+    // Null until the user first picks a tier; every CLI then runs "full".
     let (permissions, permissions_error) = match read_permissions(root) {
         Ok(permissions) => (permissions.unwrap_or(Value::Null), Value::Null),
         Err(error) => (Value::Null, json!(error)),

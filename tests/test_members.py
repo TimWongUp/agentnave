@@ -324,12 +324,12 @@ def test_missing_members_apply_only_the_default_tier_and_ignore_legacy_profiles(
     root = tmp_path / "data"
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
     assert read_members() is None and not root.exists()
-    # Without any App file only the default "auto" permission tier applies.
+    # Without any App file the default "full" permission tier applies.
     assert apply_member(None, "task", "claude", {"model": "explicit"}, frozenset()) == (
         {
             "model": "explicit",
-            "permission_mode": "auto",
-            "permission_fallback": "bypassPermissions",
+            "permission_mode": "bypassPermissions",
+            "permission_fallback": "auto",
         },
         ["permission_mode", "permission_fallback"],
     )
@@ -537,7 +537,7 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
     # The App shows such a CLI as full whatever was saved; one with a real choice keeps its tier.
     listed = list_members(frozenset(), Host()).permissions
     assert listed["antigravity"] == "full" and listed["zcode"] == "full"
-    assert listed["grok"] == "auto"
+    assert listed["grok"] == "full"
     document = MemberFile.model_validate(
         {
             "version": 1,
@@ -576,15 +576,18 @@ def test_cli_permission_tier_applies_to_any_model_unless_the_caller_chose(
         {"permission_mode": "bypassPermissions", "permission_fallback": "auto"},
         ["permission_mode", "permission_fallback"],
     )
-    # Pi has no approval step; a CLI missing from the file, or no file, runs "auto".
+    # Pi has no approval step; a CLI missing from the file, or no file, runs "full".
     assert apply_member(None, "task", "pi", {}, frozenset(), permissions=tiers) == ({}, [])
     assert apply_member(None, "task", "grok", {}, frozenset(), permissions=tiers) == (
-        {"permission_mode": "auto"},
+        {"permission_mode": "bypassPermissions"},
         ["permission_mode"],
     )
     assert apply_member(
         None, "task", "codex", {}, frozenset(), permissions=PermissionFile(version=1)
-    ) == ({"approve_for_me": True}, ["approve_for_me"])
+    ) == (
+        {"dangerously_bypass_approvals_and_sandbox": True},
+        ["dangerously_bypass_approvals_and_sandbox"],
+    )
 
 
 def test_unavailable_seat_offers_a_replacement_the_boss_can_use(

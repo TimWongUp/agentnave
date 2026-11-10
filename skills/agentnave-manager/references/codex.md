@@ -14,6 +14,6 @@ Codex 作宿主时，`native=true` 的 Codex 工位交给自带子代理：按 `
 
 `sandbox`（`read-only`、`workspace-write`、`danger-full-access`）设定本次调用的原生沙箱模式，续接同样生效；它是权限类参数，只能来自 App 默认值或用户明确要求。
 
-`"approve_for_me": true` 由 Codex 的自动审核批准工具调用，命令在 `workspace-write` 沙箱内运行（新任务传 `--approve-for-me`，续接改用等效的 `--config`）；不能与 `sandbox` 或 `dangerously_bypass_approvals_and_sandbox` 同传。它是权限档位「自动」（缺省）对应的选项，也是权限类参数。
+`"approve_for_me": true` 由 Codex 的自动审核批准工具调用，命令在 `workspace-write` 沙箱内运行（新任务传 `--approve-for-me`，续接改用等效的 `--config`）；不能与 `sandbox` 或 `dangerously_bypass_approvals_and_sandbox` 同传。它是权限档位「自动」对应的选项，也是权限类参数。
 
-`"dangerously_bypass_approvals_and_sandbox": true` 开启原生 YOLO（`--dangerously-bypass-approvals-and-sandbox`），本次调用及续接都跳过审批并关闭沙箱，仅在用户同时授权这两项时使用。传 `false` 或省略（且无 App 默认值）不加参数、继承原生设置，不会强制恢复沙箱或审批；CLI 已存配置不变。
+`"dangerously_bypass_approvals_and_sandbox": true` 开启原生 YOLO（`--dangerously-bypass-approvals-and-sandbox`），本次调用及续接都跳过审批并关闭沙箱。它是权限档位「完全放开」（缺省）对应的选项，由服务套用；boss 自己显式传它时，仅在用户同时授权这两项时使用。传 `false` 或省略（且无 App 默认值）不加参数、继承原生设置，不会强制恢复沙箱或审批；CLI 已存配置不变。
