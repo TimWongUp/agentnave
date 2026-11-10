@@ -53,6 +53,15 @@ def in_input_box(text: str) -> bool:
     return any(RULE.fullmatch(line.strip()) for line in lines[cursor + 1 :])
 
 
+def bottom_choices(region: str) -> str:
+    """A two-choice dialog's own choices: the two lines right above its "Enter to confirm"
+    footer. Text the dialog quotes above them (a command preview, a file) can say anything."""
+    lines = [line.strip() for line in ANSI.sub("", region).splitlines() if line.strip()]
+    if len(lines) < 3 or not lines[-1].lower().startswith("enter to confirm"):
+        return ""
+    return "\n".join(lines[-3:-1])
+
+
 def dialog_open(text: str) -> bool:
     """A menu is open: its footer is the screen's last line, below anything Claude or the task
     text says. The input box's footer is the status line instead."""

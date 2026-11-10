@@ -119,6 +119,10 @@ def test_startup_trust_checks_displayed_directory(
         "❯ Yes, allow external imports\n  No, disable external imports\n"
         + "─" * 40
         + "\n? for shortcuts",
+        # A permission dialog quoting the import dialog in its command preview.
+        "─" * 40 + "\n Bash command\n   cat <<'EOF'\n   Allow external CLAUDE.md file imports?\n"
+        "   ❯ Yes, allow external imports\n   EOF\n Do you want to proceed?\n ❯ 1. Yes\n"
+        "   3. No\n Enter to confirm · Esc to cancel",
         # An old quote's cursor above the dialog is not the dialog's cursor.
         "❯ Yes, allow external imports\n" + "─" * 40 + "\nAllow external CLAUDE.md file imports?\n"
         "  No, disable external imports\n  Yes, allow external imports\nEnter to confirm",

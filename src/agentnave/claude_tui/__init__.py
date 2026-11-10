@@ -44,6 +44,7 @@ from agentnave.claude_tui.screen import (
     CHOICES,
     RULE,
     Screen,
+    bottom_choices,
     classify_screen,
     clean_paste,
     cold_resume_warning,
@@ -201,19 +202,23 @@ class Startup:
         if kind in ("trust", "external_imports"):
             # Only the dialog's own lines count: the conversation and the input box can quote
             # the same words, and a cursor there is not the menu's.
-            region = dialog_region(screen)
+            choices = "" if in_input_box(screen) else bottom_choices(dialog_region(screen))
             affirmative = CHOICES[kind][0]
             negatives = (
                 ("no, exit", "no, continue without these permissions")
                 if kind == "trust"
                 else ("no, disable external imports",)
             )
-            if in_input_box(screen) or not any(
-                selected(region, label) for label in (affirmative, *negatives)
+            labels = [line.replace("❯", "").strip() for line in choices.lower().splitlines()]
+            if (
+                len(labels) != 2
+                or affirmative not in labels
+                or not set(labels) & set(negatives)
+                or not any(selected(choices, label) for label in labels)
             ):
                 blocked(self.turn, "unrecognized startup confirmation choice", screen)
                 return False
-            return None if self.choose(kind, region) else False
+            return None if self.choose(kind, choices) else False
         if kind in CHOICES:
             return None if self.choose(kind, screen) else False
         if kind in ONBOARDING_KEYS:
