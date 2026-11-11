@@ -536,7 +536,7 @@ def test_turn_waits_for_background_tool_notifications() -> None:
         "with the result when it completes."
     )
     turn.transcript({"type": "user", "message": {"role": "user", "content": moved}})
-    calls = [
+    calls: list[dict[str, object]] = [
         {"type": "tool_use", "id": "bash-1", "name": "Bash", "input": {}},
         {"type": "tool_use", "id": "mcp-1", "name": "mcp__agentnave__wait", "input": {}},
     ]
