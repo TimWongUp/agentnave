@@ -131,8 +131,9 @@ pub fn language(dir: &Path) -> String {
 }
 
 /// Attributes are validated before insertion; system theme is settled by CSS before paint.
+/// Attributes a page writes after `lang` (such as `data-idle-blur`) are kept.
 pub fn localize(html: &[u8], general: &Value) -> Vec<u8> {
-    let opening = br#"<html lang="zh-CN">"#;
+    let opening = br#"<html lang="zh-CN""#;
     let language = general["language"].as_str().unwrap_or("system");
     let locale = sys_locale::get_locale().unwrap_or_default();
     let lang = match general::resolved_language(language, &locale) {
@@ -149,7 +150,7 @@ pub fn localize(html: &[u8], general: &Value) -> Vec<u8> {
         ""
     };
     let replacement = format!(
-        r#"<html lang="{lang}" data-lang="{language}" data-theme="{theme}" data-motion="{motion}" data-character-style="{character_style}" data-battery-still="{battery_still}"{on_battery}>"#
+        r#"<html lang="{lang}" data-lang="{language}" data-theme="{theme}" data-motion="{motion}" data-character-style="{character_style}" data-battery-still="{battery_still}"{on_battery}"#
     );
     match html.windows(opening.len()).position(|w| w == opening) {
         Some(at) => [

@@ -566,7 +566,7 @@ async function refresh() {
     )
       state.selected = chats.groups[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([chats.groups, state.selected, tickOf()]);
+    const listKey = JSON.stringify([chats.groups, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();
@@ -629,6 +629,7 @@ async function refresh() {
     ingest(chat, state.ctx, newGroup);
     applyHash(state.ctx);
     state.chatKey = chatKey;
+    state.drawnAt = Date.now();
     state.ready = true;
   } finally {
     state.refreshing = false;

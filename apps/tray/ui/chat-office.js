@@ -552,8 +552,8 @@ function layoutIfChanged(key) {
   if (key === laidOutFor) return;
   laidOutFor = layoutRooms() ? key : "";
 }
-// A desk holds its done frame for a while without any new data.
-const timeDriven = () => [...state.deskRecs.values()].some((rec) => rec.doneUntil > Date.now());
+// A desk holds its done frame for a while without any new data, and needs one more pass once it ends.
+const timeDriven = () => [...state.deskRecs.values()].some((rec) => rec.doneUntil > (state.drawnAt || 0));
 // Scene sizes depend on the floor's width. Their height changes must not feed back into
 // this observer, and writes belong outside resize delivery to avoid a ResizeObserver loop.
 let observedFloorWidth = null;

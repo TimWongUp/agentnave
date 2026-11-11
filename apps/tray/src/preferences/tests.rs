@@ -57,6 +57,12 @@ fn pages_open_with_preferences_before_first_paint() {
         page.contains(r#"<html lang="en" data-lang="en" data-theme="dark" data-motion="reduce" data-character-style="video-272" data-battery-still="true">"#)
     );
     assert_eq!(localize(b"<html>", &general), b"<html>");
+    let office = localize(br#"<html lang="zh-CN" data-idle-blur>"#, &general);
+    assert!(
+        String::from_utf8(office)
+            .unwrap()
+            .ends_with(r#"data-battery-still="true" data-idle-blur>"#)
+    );
 }
 
 #[test]

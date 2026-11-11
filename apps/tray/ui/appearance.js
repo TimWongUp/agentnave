@@ -89,5 +89,6 @@ window.ANAppearance = (() => {
   addEventListener("DOMContentLoaded", refresh);
   applyTheme();
   return { applyTheme, applyPreferences, themeSwitch, reducedMotion,
-    preferences: () => ({ theme, motion: root.dataset.motion, character_style: characterStyle }) };
+    preferences: () => ({ theme, motion: root.dataset.motion, character_style: characterStyle,
+      battery_still: root.dataset.batteryStill !== "false" }) };
 })();

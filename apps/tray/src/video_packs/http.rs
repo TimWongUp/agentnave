@@ -1,13 +1,19 @@
 //! Loopback HTTP for character clips. WebKit plays an `http://127.0.0.1` movie from memory after
 //! one load, while a custom scheme makes it ask for small ranges on every frame.
 use super::asset;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
+use std::time::Duration;
 
 static BASE: OnceLock<String> = OnceLock::new();
+/// Connections being served; the players need a handful, anything past this is dropped.
+static OPEN: AtomicUsize = AtomicUsize::new(0);
+const MAX_OPEN: usize = 32;
+const MAX_REQUEST: u64 = 16 * 1024;
 
 /// `http://127.0.0.1:<port>/<token>`, once the listener is up.
 pub fn base() -> Option<&'static str> {
@@ -31,10 +37,15 @@ pub fn start(shared: PathBuf) {
     let shared = Arc::new(shared);
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
+            if OPEN.fetch_add(1, Ordering::Relaxed) >= MAX_OPEN {
+                OPEN.fetch_sub(1, Ordering::Relaxed);
+                continue;
+            }
             let shared = shared.clone();
             let prefix = format!("/{token}/");
             thread::spawn(move || {
                 let _ = serve(&shared, &prefix, stream);
+                OPEN.fetch_sub(1, Ordering::Relaxed);
             });
         }
     });
@@ -42,18 +53,18 @@ pub fn start(shared: PathBuf) {
 
 /// One request per connection: GET or HEAD of `/<token>/<tier>/<character>/<clip>.mov`.
 fn serve(shared: &Path, prefix: &str, stream: TcpStream) -> std::io::Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+    // A connection that never finishes its request does not keep a thread forever.
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    // The request line and headers together stay within MAX_REQUEST bytes.
+    let mut reader = BufReader::new(stream.try_clone()?.take(MAX_REQUEST));
     let mut line = String::new();
     reader.read_line(&mut line)?;
     let mut parts = line.split_whitespace();
     let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let mut range = None;
-    let mut header_bytes = 0;
     loop {
         let mut header = String::new();
-        let read = reader.read_line(&mut header)?;
-        header_bytes += read;
-        if read == 0 || header_bytes > 16 * 1024 || header.trim().is_empty() {
+        if reader.read_line(&mut header)? == 0 || header.trim().is_empty() {
             break;
         }
         if let Some((name, value)) = header.split_once(':')

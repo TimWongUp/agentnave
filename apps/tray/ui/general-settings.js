@@ -114,7 +114,7 @@
 
   // appearance.js applies theme and motion on every page; the App zooms the window itself.
   function applyAppearance() {
-    const detail = { theme: effectiveValue("theme"), motion: effectiveValue("motion") };
+    const detail = { theme: effectiveValue("theme"), motion: effectiveValue("motion"), battery_still: effectiveValue("battery_still") };
     window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail }));
   }
 
