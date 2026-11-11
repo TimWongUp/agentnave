@@ -645,8 +645,9 @@ On Windows, video character packs now use VP9-with-alpha `.webm` clips
 (`agentnave-video-webm-{272,544}.tar.gz`, about `105.9 MB` / `308.4 MB`). Previously downloaded
 `.mov` directories on Windows are no longer treated as installed and the display mode falls back
 to CSS characters; re-download the WebM pack under Settings → Appearance, then select the video
-display mode again on the same page. Old `.mov` files stay under `video-packs` in the data
-directory and the App offers no delete for them; remove them by hand to reclaim space. macOS keeps existing `.mov` packs
+display mode again on the same page (the download replaces the old `.mov` files). If you do not
+re-download, the old `.mov` files stay under `video-packs` in the data directory and the App offers
+no delete for them; remove them by hand to reclaim space. macOS keeps existing `.mov` packs
 unchanged, though any unfinished partial download from an older release will restart once under the
 format-specific `.part` filename.
 
