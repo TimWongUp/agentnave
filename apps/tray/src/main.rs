@@ -214,11 +214,17 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
     }
 }
 
+const APP_NAME: &str = if PREVIEW {
+    "AgentNave 预览"
+} else {
+    "AgentNave"
+};
+
 fn headline(overview: &Overview) -> String {
     if overview.missing {
-        return "AgentNave · 尚未找到工作室数据".to_owned();
+        return format!("{APP_NAME} · 尚未找到工作室数据");
     }
-    format!("AgentNave · 运行中 {}", overview.count("running"))
+    format!("{APP_NAME} · 运行中 {}", overview.count("running"))
 }
 
 fn url(path: &str) -> Url {
@@ -246,7 +252,7 @@ fn build_panel(app: &AppHandle) -> tauri::Result<()> {
         PANEL,
         WebviewUrl::CustomProtocol(url(if glass { "/panel/?glass" } else { "/panel/" })),
     )
-    .title("AgentNave")
+    .title(APP_NAME)
     .inner_size(PANEL_SIZE.0, PANEL_SIZE.1)
     .resizable(false)
     .decorations(false)
@@ -574,7 +580,7 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
         })
         .unwrap_or(MAIN_SIZE);
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::CustomProtocol(target))
-        .title("AgentNave")
+        .title(APP_NAME)
         .inner_size(
             width.min(max_width).max(MAIN_MIN.0),
             height.min(max_height).max(MAIN_MIN.1),
