@@ -26,6 +26,7 @@ from agentnave.core import (
     READ_ONLY_INSTRUCTIONS,
     SUBAGENT_INSTRUCTIONS,
     InvocationManager,
+    _InvocationRecord,  # pyright: ignore[reportPrivateUsage]
     _read_limited,  # pyright: ignore[reportPrivateUsage]
     _retry_streak_start,  # pyright: ignore[reportPrivateUsage]
     _stall_guard,  # pyright: ignore[reportPrivateUsage]
@@ -45,7 +46,9 @@ from agentnave.processes import (
 
 
 def test_doing_since_changes_only_with_displayed_state(tmp_path: Path) -> None:
-    record = core._InvocationRecord(InvocationRequest("antigravity", "work", tmp_path))  # pyright: ignore[reportPrivateUsage]
+    record = _InvocationRecord(  # pyright: ignore[reportPrivateUsage]
+        InvocationRequest("antigravity", "work", tmp_path)
+    )  # pyright: ignore[reportPrivateUsage]
     record.last_activity = ProviderActivity("lifecycle", "thinking", "reasoning")
     record.update_doing(10)
     assert (record.doing, record.doing_since) == ("thinking", 10)
@@ -1444,20 +1447,147 @@ def test_prompt_content_hides_credentials_before_cutting_it(
 
 
 def test_provider_health_cooldown_keeps_deadline_and_clears_success(tmp_path: Path) -> None:
-    path = tmp_path / "provider-health.json"
-    provider_health.record(tmp_path, "claude", "quota")
-    first = provider_health.active(tmp_path)["claude"]
-    until = datetime.fromisoformat(first["until"])
-    assert timedelta(minutes=14) < until - datetime.now(UTC) <= timedelta(minutes=15)
-    provider_health.record(tmp_path, "claude", "auth")
-    provider_health.record(tmp_path, "claude", "quota")
-    assert provider_health.active(tmp_path)["claude"] == {"code": "auth", "until": first["until"]}
-    assert set(json.loads(path.read_text())["providers"]["claude"]) == {"code", "until"}
+    now = datetime.now(UTC)
+    provider_health.record(tmp_path, "claude", "quota", "a")
+    assert provider_health.active(tmp_path) == {}
+    provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(days=20))
+    health = provider_health.active(tmp_path)[("claude", "a")]
+    assert health["until"] is not None
+    assert (
+        timedelta(days=7, hours=23)
+        < datetime.fromisoformat(health["until"]) - now
+        <= timedelta(days=8, seconds=1)
+    )
+    provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(days=20))
+    assert provider_health.active(tmp_path)[("claude", "a")] == health
+    provider_health.check(tmp_path, [("claude", "b")])
+    with pytest.raises(ValueError):
+        provider_health.check(tmp_path, [("claude", "a")])
+    provider_health.record(tmp_path, "claude", "auth", "a")
+    provider_health.record(tmp_path, "claude", "billing", "b")
+    assert provider_health.active(tmp_path)[("claude", "a")] == {"code": "auth", "until": None}
+    billing = provider_health.active(tmp_path)[("claude", "b")]["until"]
+    assert billing is not None and timedelta(minutes=29) < datetime.fromisoformat(
+        billing
+    ) - now <= timedelta(minutes=30, seconds=1)
+    provider_health.clear(tmp_path, "claude", "a")
+    assert set(provider_health.active(tmp_path)) == {("claude", "b")}
     provider_health.clear(tmp_path, "claude")
     assert provider_health.active(tmp_path) == {}
-    before = path.stat().st_mtime_ns
-    provider_health.clear(tmp_path, "claude")
-    assert path.stat().st_mtime_ns == before
+
+
+def test_provider_quota_extends_only_for_later_explicit_reset(tmp_path: Path) -> None:
+    now = datetime.now(UTC)
+    provider_health.record(tmp_path, "codex", "quota", "a", now + timedelta(hours=1))
+    first = provider_health.active(tmp_path)[("codex", "a")]
+    provider_health.record(tmp_path, "codex", "quota", "a", now + timedelta(minutes=30))
+    provider_health.record(tmp_path, "codex", "quota", "a")
+    assert provider_health.active(tmp_path)[("codex", "a")] == first
+    provider_health.record(tmp_path, "codex", "quota", "a", now + timedelta(hours=2))
+    assert provider_health.active(tmp_path)[("codex", "a")]["until"] != first["until"]
+
+
+def test_adapters_parse_explicit_quota_resets() -> None:
+    now = datetime.now(UTC)
+    epoch = int((now + timedelta(hours=3)).timestamp())
+    claude = json.dumps(
+        {"type": "result", "is_error": True, "errors": [f"usage limit reached|{epoch}"]}
+    ).encode()
+    codex = json.dumps(
+        {"type": "turn.failed", "error": {"message": "usage limit reached", "resets_at": epoch}}
+    ).encode()
+    assert ClaudeAdapter().quota_reset(claude, b"", now) == datetime.fromtimestamp(epoch, UTC)
+    assert CodexAdapter().quota_reset(codex, b"", now) == datetime.fromtimestamp(epoch, UTC)
+    assert CodexAdapter().quota_reset(
+        b'{"type":"turn.failed","error":{"message":"quota exceeded; try again in 2 hours"}}',
+        b"",
+        now,
+    ) == now + timedelta(hours=2)
+    assert (
+        ClaudeAdapter().quota_reset(b'{"type":"result","errors":["quota exceeded"]}', b"", now)
+        is None
+    )
+
+
+def test_quota_retry_after_in_provider_error() -> None:
+    now = datetime.now(UTC)
+    error = json.dumps(
+        {
+            "type": "turn.failed",
+            "error": {"message": "quota exceeded", "headers": {"Retry-After": "120"}},
+        }
+    ).encode()
+    assert CodexAdapter().quota_reset(error, b"", now) == now + timedelta(seconds=120)
+
+
+@pytest.mark.parametrize("first", ["quota", "billing"])
+def test_billing_quota_merge_preserves_longer_deadline(tmp_path: Path, first: str) -> None:
+    reset = datetime.now(UTC) + timedelta(days=5)
+    order = ("quota", "billing") if first == "quota" else ("billing", "quota")
+    for category in order:
+        provider_health.record(tmp_path, "codex", cast(provider_health.Code, category), "x", reset)
+    entry = provider_health.active(tmp_path)[("codex", "x")]
+    assert entry["code"] == "billing" and entry["until"] is not None
+    assert datetime.fromisoformat(entry["until"]) == reset
+    assert "reset" not in entry
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_clear_model_also_clears_cli_default(tmp_path: Path, legacy: bool) -> None:
+    path = tmp_path / "provider-health.json"
+    default = {"code": "auth", "until": None}
+    item = default if legacy else {"default": default, "models": {"other": default}}
+    path.write_text(json.dumps({"version": 1, "providers": {"claude": item}}))
+    assert provider_health.clear(tmp_path, "claude", "chosen")
+    health = provider_health.active(tmp_path)
+    assert ("claude", None) not in health
+    assert (("claude", "other") in health) is not legacy
+
+
+def test_success_clears_cli_default_and_matching_model(tmp_path: Path) -> None:
+    provider_health.record(tmp_path, "claude", "auth")
+    provider_health.record(tmp_path, "claude", "auth", "chosen")
+    provider_health.record(tmp_path, "claude", "auth", "other")
+    result = core.InvocationResult(InvocationStatus.SUCCEEDED, "claude", "ok", None, 0)
+    provider_health.observe_result(tmp_path, result, None, [], "chosen")
+    assert set(provider_health.active(tmp_path)) == {("claude", "other")}
+
+
+def test_stream_blocker_without_model_records_cli_cooldown(tmp_path: Path) -> None:
+    record = _InvocationRecord(InvocationRequest("claude", "work", tmp_path), health_root=tmp_path)
+    adapter = ClaudeAdapter()
+    model_event: dict[str, object] = {
+        "type": "assistant",
+        "message": {"model": "reported", "content": []},
+    }
+    record.observe_event(json.dumps(model_event).encode(), adapter)
+    assert record.reported_model == "reported"
+    event = {"type": "system", "subtype": "api_retry", "error": "authentication_failed"}
+    record.observe_event(json.dumps(event).encode(), adapter)
+    assert provider_health.active(tmp_path)[("claude", None)]["code"] == "auth"
+
+
+def test_retry_after_in_json_array_and_before_other_fields() -> None:
+    now = datetime.now(UTC)
+    claude = {"type": "result", "is_error": True, "errors": ["quota exceeded; Retry-After: 120"]}
+    codex = {
+        "type": "turn.failed",
+        "error": {
+            "headers": {"Retry-After": "120", "x-request-id": "1"},
+            "message": "quota exceeded",
+        },
+    }
+    for adapter, event in ((ClaudeAdapter(), claude), (CodexAdapter(), codex)):
+        assert adapter.quota_reset(json.dumps(event).encode(), b"", now) == now + timedelta(
+            seconds=120
+        )
+    date = "Wed, 21 Oct 2037 07:28:00 GMT"
+    codex["error"] = {"headers": {"Retry-After": date, "next": "value"}}
+    assert CodexAdapter().quota_reset(json.dumps(codex).encode(), b"", now) == datetime(
+        2037, 10, 21, 7, 28, tzinfo=UTC
+    )
+    codex["error"] = {"headers": {"Retry-After": "120.5"}}
+    assert CodexAdapter().quota_reset(json.dumps(codex).encode(), b"", now) is None
 
 
 def test_provider_health_bad_data_and_busy_lock_fail_open(
@@ -1487,7 +1617,7 @@ def test_provider_health_bad_data_and_busy_lock_fail_open(
             }
         )
     )
-    assert set(provider_health.active(tmp_path)) == {"claude"}
+    assert set(provider_health.active(tmp_path)) == {("claude", None), ("future", None)}
     lock = tmp_path / "locks" / "provider-health.lock"
     handle = lock_file(lock, "busy")
     before = path.read_bytes()
@@ -1498,14 +1628,20 @@ def test_provider_health_bad_data_and_busy_lock_fail_open(
     finally:
         release_and_remove(handle, lock)
     provider_health.clear(tmp_path, "absent")
-    assert set(json.loads(path.read_text())["providers"]) == {"claude"}
+    assert set(json.loads(path.read_text())["providers"]) == {
+        "expired",
+        "future",
+        "naive",
+        "invalid",
+        "claude",
+    }
 
     def fail_write(_path: Path, _data: bytes) -> None:
         raise OSError("disk unavailable")
 
     monkeypatch.setattr(provider_health, "write_file", fail_write)
     provider_health.record(tmp_path, "grok", "auth")
-    assert set(provider_health.active(tmp_path)) == {"claude"}
+    assert set(provider_health.active(tmp_path)) == {("claude", None), ("future", None)}
 
 
 @pytest.mark.parametrize(
@@ -1538,12 +1674,16 @@ async def test_health_survives_retry_stall_and_success_clears_it(
     event = (
         {"type": "system", "subtype": "api_retry", "error": "authentication_failed"}
         if reported
-        else {"type": "result", "is_error": True, "errors": ["weekly limit reached"]}
+        else {
+            "type": "result",
+            "is_error": True,
+            "errors": ["weekly limit reached; try again in 2 hours"],
+        }
     )
     manager = InvocationManager()
     manager.health_root = tmp_path
 
-    observed_during_stall: dict[str, provider_health.Health] = {}
+    observed_during_stall: dict[tuple[str, str | None], provider_health.Health] = {}
 
     async def stalled(record: Any) -> None:
         nonlocal observed_during_stall
@@ -1555,24 +1695,24 @@ async def test_health_survives_retry_stall_and_success_clears_it(
     try:
         script = f"import time; print({json.dumps(event)!r}, flush=True); time.sleep(30)"
         invocation = manager.start(
-            InvocationRequest("claude", "work", tmp_path),
+            InvocationRequest("claude", "work", tmp_path, provider_options={"model": "test"}),
             prepared=PreparedCommand((sys.executable, "-c", script), tmp_path),
         )
         result = await manager.wait(invocation)
         assert result is not None and result.status is InvocationStatus.FAILED
         assert result.error is not None and result.error.code == "provider_error"
         expected = "auth" if reported else "quota"
-        assert observed_during_stall["claude"]["code"] == expected
-        assert provider_health.active(tmp_path)["claude"]["code"] == expected
+        assert observed_during_stall[("claude", "test")]["code"] == expected
+        assert provider_health.active(tmp_path)[("claude", "test")]["code"] == expected
 
-        # Success on any model of the same CLI clears the provider-level breaker.
+        # Success on the same model clears its breaker.
         async def no_stall(_record: Any) -> None:
             await asyncio.Event().wait()
 
         monkeypatch.setattr(core, "_stall_guard", no_stall)
         script = 'print(\'{"type":"result","result":"ok","is_error":false}\')'
         successful = manager.start(
-            InvocationRequest("claude", "work", tmp_path),
+            InvocationRequest("claude", "work", tmp_path, provider_options={"model": "test"}),
             prepared=PreparedCommand((sys.executable, "-c", script), tmp_path),
         )
         result = await manager.wait(successful)

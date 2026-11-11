@@ -16,6 +16,7 @@ mod orchestration_roles;
 mod power;
 mod preferences;
 mod process;
+mod provider_health;
 mod proxy;
 mod rules;
 mod settings;
@@ -916,6 +917,7 @@ mod tests {
     fn a_preview_build_refuses_every_write_but_moving_its_window() {
         for (method, path) in [
             ("POST", "/app/members"),
+            ("POST", "/app/provider-health/clear"),
             ("POST", "/app/settings"),
             ("POST", "/app/characters/gpt"),
             ("POST", "/app/service/install"),

@@ -110,6 +110,7 @@ def _open_show(
     review: bool,
     isolated: bool,
     manager_session_id: str | None,
+    dispatch_seats: list[str] | None = None,
 ) -> tuple[str, list[GroupSeatPayload]]:
     document = read_members()
     permissions = read_permissions()
@@ -134,6 +135,15 @@ def _open_show(
                 seat.role,
                 seat.access,
             )
+        )
+    if dispatch_seats:
+        provider_health.check(
+            conversations.root,
+            (
+                (seat.provider, provider_health.model_option(seat.provider_options))
+                for seat in prepared
+                if seat.id in dispatch_seats
+            ),
         )
     state = conversations.open_show(
         title,
@@ -291,13 +301,8 @@ async def run_round(
     if group_id is None:
         assert title is not None and members is not None
         try:
-            if seats:
-                provider_health.check(
-                    conversations.root,
-                    (seat.provider for seat in members if seat.id in seats),
-                )
             group_id, opened = _open_show(
-                conversations, title, members, cwd, review, isolated, manager_session_id
+                conversations, title, members, cwd, review, isolated, manager_session_id, seats
             )
         except (MemberFileError, PermissionFileError) as exc:
             raise ToolError(str(exc)) from exc

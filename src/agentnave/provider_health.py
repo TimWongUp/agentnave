@@ -1,4 +1,4 @@
-"""Best-effort, CLI-level circuit breaker for recent account blockers."""
+"""Best-effort, CLI and model circuit breaker for recent account blockers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from agentnave.locks import lock_file, release_and_remove
 from agentnave.models import InvocationResult, InvocationStatus
@@ -18,10 +18,11 @@ type Code = Literal["auth", "billing", "quota"]
 
 class Health(TypedDict):
     code: Code
-    until: str
+    until: str | None
+    reset: NotRequired[str]
 
 
-_TTL = timedelta(minutes=15)
+_MAX_TTL = timedelta(days=8)
 _PRIORITY = {"quota": 0, "billing": 1, "auth": 2}
 _CODES: dict[str, Code] = {
     "authentication_failed": "auth",
@@ -76,92 +77,238 @@ def _read(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _active(document: dict[str, Any] | None, now: datetime) -> dict[str, Health]:
+def _entry(item: object, now: datetime) -> Health | None:
+    if not isinstance(item, dict):
+        return None
+    item = cast(dict[str, Any], item)
+    code, until = item.get("code"), item.get("until")
+    if code == "auth" and until is None:
+        return {"code": "auth", "until": None}
+    if not isinstance(code, str) or code not in _PRIORITY or not isinstance(until, str):
+        return None
+    try:
+        end = datetime.fromisoformat(until)
+        if end.tzinfo is None or not now < end <= now + _MAX_TTL:
+            return None
+    except ValueError:
+        return None
+    result: Health = {"code": cast(Code, code), "until": until}
+    if code == "quota" and isinstance(item.get("reset"), str):
+        try:
+            parsed_reset = datetime.fromisoformat(item["reset"])
+            if parsed_reset.tzinfo is not None:
+                result["reset"] = item["reset"]
+        except ValueError:
+            pass
+    return result
+
+
+def _active(document: dict[str, Any] | None, now: datetime) -> dict[tuple[str, str | None], Health]:
     if document is None or type(document.get("version")) is not int:
         return {}
     if document["version"] != 1 or not isinstance(document.get("providers"), dict):
         return {}
-    result: dict[str, Health] = {}
+    result: dict[tuple[str, str | None], Health] = {}
     for provider, item in cast(dict[str, Any], document["providers"]).items():
         if not provider or not isinstance(item, dict):
             continue
-        entry = cast(dict[str, Any], item)
-        code, until = entry.get("code"), entry.get("until")
-        if not isinstance(code, str) or code not in _PRIORITY or not isinstance(until, str):
-            continue
-        try:
-            end = datetime.fromisoformat(until)
-            if end.tzinfo is None or not now < end <= now + timedelta(days=1):
-                continue
-        except ValueError:
-            continue
-        result[provider] = {"code": cast(Code, code), "until": until}
+        item = cast(dict[str, Any], item)
+        # Version 1 previously stored a single CLI-wide record.
+        if legacy := _entry(item, now):
+            result[provider, None] = legacy
+        if default := _entry(item.get("default"), now):
+            result[provider, None] = default
+        models = item.get("models")
+        if isinstance(models, dict):
+            for model, value in cast(dict[str, object], models).items():
+                if model and (health := _entry(value, now)):
+                    result[provider, model] = health
     return result
 
 
-def active(root: Path | None = None) -> dict[str, Health]:
+def active(root: Path | None = None) -> dict[tuple[str, str | None], Health]:
     return _active(_read(_root(root) / "provider-health.json"), datetime.now(UTC))
 
 
-def reason(provider: str, health: Health) -> str:
+def matching(
+    health: dict[tuple[str, str | None], Health], provider: str, model: str | None
+) -> tuple[str | None, Health] | None:
+    if (entry := health.get((provider, None))) is not None:
+        return None, entry
+    if model and (entry := health.get((provider, model))) is not None:
+        return model, entry
+    return None
+
+
+def reason(provider: str, health: Health, model: str | None = None) -> str:
+    target = f"{provider} CLI" + (f" model {model}" if model else "")
+    duration = f"until {health['until']}" if health["until"] else "until cleared"
     return (
-        f"{provider} CLI recently reported {health['code']}; cooling down until {health['until']}. "
-        "See list_members for the seat replacement or use another available CLI."
+        f"{target} recently reported {health['code']}; cooling down {duration}. "
+        "See list_members for a replacement. The user can clear it in App, "
+        "or ask you to call clear_provider_cooldown."
     )
 
 
-def check(root: Path, providers: Iterable[str]) -> None:
+def model_option(options: dict[str, Any] | Any) -> str | None:
+    model = options.get("model")
+    return model if isinstance(model, str) and model else None
+
+
+def check(root: Path, providers: Iterable[tuple[str, str | None]]) -> None:
     health = active(root)
-    for provider in providers:
-        if provider in health:
-            raise ValueError(reason(provider, health[provider]))
+    for provider, model in providers:
+        if match := matching(health, provider, model):
+            raise ValueError(reason(provider, match[1], match[0]))
 
 
-def record(root: Path | None, provider: str, code: Code) -> None:
-    _update(_root(root), provider, code)
+def record(
+    root: Path | None,
+    provider: str,
+    code: Code,
+    model: str | None = None,
+    reset: datetime | None = None,
+) -> None:
+    _update(_root(root), provider, code, model, reset)
 
 
-def clear(root: Path | None, provider: str) -> None:
-    _update(_root(root), provider, None)
+def clear(
+    root: Path | None, provider: str, model: str | None = None, *, all_models: bool = True
+) -> bool:
+    return _update(
+        _root(root), provider, None, model, None, all_models=all_models and model is None
+    )
 
 
-def _update(root: Path, provider: str, code: Code | None) -> None:
+def _update(
+    root: Path,
+    provider: str,
+    code: Code | None,
+    model: str | None,
+    reset: datetime | None,
+    *,
+    all_models: bool = False,
+) -> bool:
     path = root / "provider-health.json"
     lock_path = root / "locks" / "provider-health.lock"
     try:
         lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         handle = lock_file(lock_path, "Provider health is busy")
     except (OSError, ValueError):
-        return
+        return False
     try:
-        document = _read(path)
-        # Preserve files written by a newer server, even when this server cannot read them.
-        if document is not None and (
-            type(document.get("version")) is not int or document["version"] != 1
-        ):
-            return
-        now = datetime.now(UTC)
-        providers = _active(document, now)
-        before = document.get("providers") if document is not None else None
-        if code is None:
-            providers.pop(provider, None)
-            if (not providers and before is None) or providers == before:
-                return
-        elif provider in providers:
-            previous = providers[provider]
-            if _PRIORITY[code] > _PRIORITY[previous["code"]]:
-                previous["code"] = code
-        else:
-            providers[provider] = {
-                "code": code,
-                "until": (now + _TTL).isoformat().replace("+00:00", "Z"),
-            }
-        write_file(path, json.dumps({"version": 1, "providers": providers}).encode())
+        return _update_locked(path, provider, code, model, reset, all_models)
     except OSError:
-        pass
+        return False
     finally:
         with suppress(OSError):
             release_and_remove(handle, lock_path)
+
+
+def _update_locked(
+    path: Path,
+    provider: str,
+    code: Code | None,
+    model: str | None,
+    reset: datetime | None,
+    all_models: bool,
+) -> bool:
+    document = _read(path)
+    if document is not None and (
+        type(document.get("version")) is not int or document["version"] != 1
+    ):
+        return False
+    if document is None:
+        if path.exists():
+            return False
+        document = cast(dict[str, Any], {"version": 1, "providers": {}})
+    providers = document.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    providers = cast(dict[str, Any], providers)
+    raw = providers.get(provider)
+    if code is None and all_models:
+        if provider not in providers:
+            return True
+        del providers[provider]
+    else:
+        if code is None and not isinstance(raw, dict):
+            return True
+        item = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+        # Keep old CLI-wide records as a default when adding model-specific records.
+        if "code" in item:
+            item = {"default": item}
+        models = item.get("models")
+        if not isinstance(models, dict):
+            models = {}
+        models = cast(dict[str, Any], models)
+        previous = _entry(models.get(model) if model else item.get("default"), datetime.now(UTC))
+        if code is None:
+            if model:
+                removed = models.pop(model, None) is not None
+                removed_default = item.pop("default", None) is not None
+                if not removed and not removed_default:
+                    return True
+            else:
+                if "default" not in item:
+                    return True
+                del item["default"]
+        else:
+            now = datetime.now(UTC)
+            if code == "quota":
+                if reset is None or reset.tzinfo is None or reset <= now:
+                    return True
+                until = min(reset.astimezone(UTC), now + _MAX_TTL)
+            else:
+                until = now + timedelta(minutes=30) if code == "billing" else None
+            entry = _merged_health(previous, code, until, reset)
+            if entry == previous:
+                return True
+            if model:
+                models[model] = dict(entry)
+            else:
+                item["default"] = dict(entry)
+        if models:
+            item["models"] = models
+        else:
+            item.pop("models", None)
+        if item:
+            providers[provider] = item
+        else:
+            providers.pop(provider, None)
+    write_file(path, json.dumps(document).encode())
+    return True
+
+
+def _merged_health(
+    previous: Health | None, code: Code, until: datetime | None, reset: datetime | None
+) -> Health:
+    if previous:
+        old_code = previous["code"]
+        if _PRIORITY[old_code] > _PRIORITY[code]:
+            code = old_code
+        old_until = previous["until"]
+        if old_until is None:
+            until = None
+        elif until is not None:
+            # A repeated quota reset beyond the cap must not extend it each time.
+            if (
+                code == "quota"
+                and reset is not None
+                and (previous_reset := previous.get("reset")) is not None
+                and reset <= datetime.fromisoformat(previous_reset)
+            ):
+                return previous
+            until = max(until, datetime.fromisoformat(old_until))
+    if code == "auth":
+        until = None
+    entry: Health = {
+        "code": code,
+        "until": until.isoformat().replace("+00:00", "Z") if until else None,
+    }
+    if code == "quota" and reset is not None:
+        entry["reset"] = reset.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return entry
 
 
 def classify(
@@ -210,15 +357,17 @@ def observe_result(
     result: InvocationResult,
     error_message: str | None,
     reported_errors: Iterable[str],
+    model: str | None = None,
+    reset: datetime | None = None,
 ) -> InvocationResult:
     if root is not None:
         if result.status is InvocationStatus.SUCCEEDED:
-            clear(root, result.provider)
+            clear(root, result.provider, model, all_models=False)
         elif category := classify(
             result.status,
             result.error.code if result.error else None,
             error_message or (result.error.message if result.error else None),
             reported_errors,
         ):
-            record(root, result.provider, category)
+            record(root, result.provider, category, model, reset)
     return result

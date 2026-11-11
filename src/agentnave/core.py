@@ -143,7 +143,13 @@ class _InvocationRecord:
                         InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
                     )
                 ):
-                    provider_health.record(self.health_root, self.request.provider, category)
+                    provider_health.record(
+                        self.health_root,
+                        self.request.provider,
+                        category,
+                        provider_health.model_option(self.request.provider_options),
+                        adapter.quota_reset(line, b"", datetime.now(UTC)),
+                    )
                 self.pending_attention.append(
                     InvocationError(
                         code, "CLI reported an execution blocker; inspect or cancel the invocation."
@@ -811,7 +817,12 @@ class InvocationManager:
                     error,
                 )
                 return provider_health.observe_result(
-                    self.health_root, result, parsed.error_message, record.reported_errors
+                    self.health_root,
+                    result,
+                    parsed.error_message,
+                    record.reported_errors,
+                    provider_health.model_option(record.request.provider_options),
+                    adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
                 )
 
             if provider_returncode is None:
@@ -830,7 +841,12 @@ class InvocationManager:
                 warnings=parsed.warnings,
             )
             return provider_health.observe_result(
-                self.health_root, result, parsed.error_message, record.reported_errors
+                self.health_root,
+                result,
+                parsed.error_message,
+                record.reported_errors,
+                provider_health.model_option(record.request.provider_options),
+                adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
             )
         except (OSError, ValueError) as exc:
             return InvocationResult(

@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import replace
+from datetime import datetime
 
 from agentnave.adapters.base import PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
@@ -35,6 +36,9 @@ class CodeBuddyAdapter(ClaudeAdapter):
         "--disallowedTools",
         "mcp__*",
     )
+
+    def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None:
+        return None
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         prepared = super().prepare(request)

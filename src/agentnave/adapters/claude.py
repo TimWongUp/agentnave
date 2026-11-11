@@ -8,6 +8,7 @@ import re
 import sys
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import datetime
 from typing import cast
 
 from agentnave.adapters.base import (
@@ -24,6 +25,7 @@ from agentnave.adapters.base import (
     resolve_executable,
     restricted_options,
 )
+from agentnave.adapters.quota_reset import parse_reset
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 from agentnave.native_prompts import NativePrompt, encode_answer, prompt_from_event
 from agentnave.native_sessions import assistant_model
@@ -334,6 +336,14 @@ class ClaudeAdapter(AdapterHooks):
             + " but reported success; the task may be incomplete. Choose a permission tier "
             "for this CLI in the AgentNave App, or pass permission options explicitly."
         )
+
+    def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None:
+        events = parse_json_lines(stdout.decode(errors="replace"))
+        errors = [event for event in events if event.get("type") in ("result",)]
+        for event in reversed(errors):
+            if reset := parse_reset(json.dumps(event, ensure_ascii=False), now):
+                return reset
+        return parse_reset(stderr.decode(errors="replace"), now)
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()

@@ -628,6 +628,7 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         "permissions": permissions,
         "permissions_error": permissions_error,
         "detected": detected,
+        "provider_health": crate::provider_health::read(root),
     })
 }
 

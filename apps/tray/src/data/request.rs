@@ -67,6 +67,26 @@ impl Reader {
                 )
             });
         }
+        if path == "/app/provider-health/clear" {
+            return post(method, action, body, |payload| {
+                let Some(provider) = payload["provider"]
+                    .as_str()
+                    .filter(|p| crate::members::PROVIDERS.contains(p))
+                else {
+                    return Response::error(400, "需要有效的 CLI");
+                };
+                if !payload["model"].is_null()
+                    && payload["model"].as_str().is_none_or(str::is_empty)
+                {
+                    return Response::error(400, "需要有效的模型");
+                }
+                match crate::provider_health::clear(&self.root, provider, payload["model"].as_str())
+                {
+                    Ok(()) => Response::json(&json!({"cleared": true})),
+                    Err(error) => Response::error(400, &error),
+                }
+            });
+        }
         if path == "/app/members" {
             return post(method, action, body, |payload| {
                 save(

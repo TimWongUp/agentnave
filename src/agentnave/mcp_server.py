@@ -5,6 +5,7 @@ from mcp_types import ToolAnnotations
 from agentnave.mcp_history import (
     _handover_conversations,
     _workspace_label,
+    clear_provider_cooldown,
     handover,
     list_all,
     list_members,
@@ -68,6 +69,7 @@ from agentnave.mcp_tasks import (
 __all__ = [
     "_handover_conversations",
     "_workspace_label",
+    "clear_provider_cooldown",
     "handover",
     "list_all",
     "list_members",
@@ -174,6 +176,13 @@ mcp.tool(
         read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )(list_members)
+
+mcp.tool(
+    title="Clear a CLI cooldown",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
+)(clear_provider_cooldown)
 
 mcp.tool(
     title="Run a meeting round",

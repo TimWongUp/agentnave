@@ -524,8 +524,8 @@ After registration or upgrade:
 
 1. Use the host's MCP list/get interface to verify the command and exclusion environment.
 2. Restart the server/session and confirm `start_agent`, `wait`, `answer_prompt`, `cancel`, `list`,
-   `list_members`, `run_round`, `decide_answers`, `handover` and `read_conversation` are
-   visible (10 total).
+   `list_members`, `clear_provider_cooldown`, `run_round`, `decide_answers`, `handover` and
+   `read_conversation` are visible (11 total).
    Confirm the host also discovers `agentnave-manager` and `agentnave-handover` in the intended
    scope and can read its nine referenced CLI files. Check for older user/project copies that
    could shadow it. For hosts without Skill support, record the installation as MCP-only.

@@ -26,7 +26,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## MCP 合同
 
-- 10 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)、[ADR-0057](../adr/0057-boss-answers-native-prompts.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
+- 11 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)、[ADR-0057](../adr/0057-boss-answers-native-prompts.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)，`clear_provider_cooldown` 见 [ADR-0081](../adr/0081-account-cooldown-duration.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
 - 可由 Manager 修正的请求错误走 Tool error 并给出重试指引；Provider 执行终态走结构化 Invocation Result，业务失败也尽量保全输出与原生 `session_id`。
 - 每次派发的 prompt 都附加单向编排指令：完成任务后回报 Manager，不再调用 AgentNave，需要决定时写进最终回答；声明 `read` 时再加只读说明（[ADR-0043](../adr/0043-service-prompt-instructions.md)）。服务不检测嵌套、不据此禁用工具；这依赖模型遵守，不是安全边界（[ADR-0031](../adr/0031-prompt-only-orchestration.md)）。
 - Invocation 只在进程内存中，终态保留七天；`wait` 返回就绪子集（[ADR-0007](../adr/0007-wait-any-ready-subset.md)）。没有总运行时限，停止靠显式 `cancel`；服务只在两种故障下主动终止进程树：保留的 stdout、stderr 超限（不静默截断为成功），或 Provider 持续重试满五分钟仍无输出（[ADR-0049](../adr/0049-service-initiated-termination.md)）。
@@ -72,7 +72,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖）。会话历史存于 SQLite（[ADR-0026](../adr/0026-sqlite-conversation-store.md)），每个会话一把 OS 文件锁：持锁的服务才能写，其他服务只读，空闲后可接手。服务回收孤儿会话锁与席位目录，删除会话后回收其席位目录；原生会话锁由持有者用完即删（[ADR-0046](../adr/0046-service-history-retention.md)）。schema 每次变化都提升 `user_version`，迁移只由服务执行（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。写入时在同一事务内更新托盘读取的视图快照（[ADR-0026](../adr/0026-sqlite-conversation-store.md)）；运行中的输出尾部只写进程级运行文件，内容不变时只刷新修改时间。中继在 `connections/` 写连接观测（宿主、连接时间、服务版本与工具定义摘要），不存原始工具定义、提示词、环境或凭据；正常结束后保留有期限的加载证据，由中继清理，App 将它与在线连接分开读取，用于确认短连接已加载配置。App 只读新鲜、大小受限、非符号链接的观测（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。
 
-服务写入数据根的 `provider-health.json`，记录近期 CLI 级硬阻断冷却；冷却期间拒绝向该 CLI 派发并将非原生工位标为不可用，任一成功调用即清除。
+服务与托盘共用数据根的 `provider-health.json`：服务记录近期 CLI 和模型的硬阻断冷却（模型未知时退回 CLI 级），托盘可解除指定记录；两端写入使用同一把锁。冷却期间拒绝向对应模型派发并将对应非原生工位标为不可用，认证冷却持续到解除；配额仅在 Adapter 能识别重置时间时冷却，计费冷却按固定时长。用户可解除冷却，任一成功调用也会清除（兼容性取舍见 [ADR-0081](../adr/0081-account-cooldown-duration.md)）。
 
 App 设置文件按写入方和损坏时的影响范围分开：
 

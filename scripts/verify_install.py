@@ -21,6 +21,7 @@ TOOLS = [
     "cancel",
     "list",
     "list_members",
+    "clear_provider_cooldown",
     "run_round",
     "decide_answers",
     "handover",
