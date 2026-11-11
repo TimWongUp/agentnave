@@ -127,9 +127,8 @@ fn span(header: Option<&str>, len: u64) -> Span {
     }
 }
 
-/// A clip is served in ranges (the player asks for the movie box at the end first) and never
-/// cached, so the player streams it from disk instead of the page holding a copy.
-pub fn asset(shared: &Path, rest: &str, range: Option<&str>) -> Option<Response> {
+/// An installed asset's file, and whether it is a still poster rather than a clip.
+fn locate(shared: &Path, rest: &str) -> Option<(PathBuf, bool)> {
     let parts: Vec<_> = rest.split('/').collect();
     let [tier, character, file] = parts.as_slice() else {
         return None;
@@ -143,43 +142,98 @@ pub fn asset(shared: &Path, rest: &str, range: Option<&str>) -> Option<Response>
         .strip_suffix(".webp")
         .is_some_and(|s| POSTERS.contains(&s))
     {
-        let mut response = Response::ok("image/webp", fs::read(path).ok()?);
-        response.cache_control = "public, max-age=31536000";
-        return Some(response);
+        return Some((path, true));
     }
-    if !file
-        .strip_suffix(".mov")
+    file.strip_suffix(".mov")
         .is_some_and(|s| CLIPS.contains(&s))
-    {
-        return None;
+        .then_some((path, false))
+}
+
+/// One asset to send without holding its bytes: the loopback server writes the head, then
+/// copies only the requested range straight from the file.
+pub(super) struct StreamAsset {
+    pub status: u16,
+    pub content_type: &'static str,
+    pub cache_control: &'static str,
+    pub content_length: u64,
+    pub headers: Vec<(&'static str, String)>,
+    /// The opened file and how many bytes to copy from its current position.
+    pub file: Option<(fs::File, u64)>,
+}
+
+pub(super) fn stream_asset(shared: &Path, rest: &str, range: Option<&str>) -> Option<StreamAsset> {
+    let (path, poster) = locate(shared, rest)?;
+    let mut file = fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if poster {
+        return Some(StreamAsset {
+            status: 200,
+            content_type: "image/webp",
+            cache_control: "public, max-age=31536000",
+            content_length: len,
+            headers: Vec::new(),
+            file: Some((file, len)),
+        });
     }
-    let mut clip = fs::File::open(path).ok()?;
-    let len = clip.metadata().ok()?.len();
-    let mut response = Response::ok("video/quicktime", Vec::new());
-    response.headers.push(("Accept-Ranges", "bytes".to_owned()));
-    let (start, end) = match span(range, len) {
-        Span::Whole => (0, len.checked_sub(1)),
-        Span::Part(start, end) => {
-            response.status = 206;
-            (start, Some(end))
-        }
+    let mut headers = vec![("Accept-Ranges", "bytes".to_owned())];
+    let (status, start, end) = match span(range, len) {
+        Span::Whole => (200, 0, len.checked_sub(1)),
+        Span::Part(start, end) => (206, start, Some(end)),
         Span::Unsatisfiable => {
-            response.status = 416;
-            response
-                .headers
-                .push(("Content-Range", format!("bytes */{len}")));
-            return Some(response);
+            headers.push(("Content-Range", format!("bytes */{len}")));
+            return Some(StreamAsset {
+                status: 416,
+                content_type: "video/quicktime",
+                cache_control: "no-store",
+                content_length: 0,
+                headers,
+                file: None,
+            });
         }
     };
-    if let Some(end) = end {
-        response.body = vec![0; (end - start + 1) as usize];
-        clip.seek(SeekFrom::Start(start)).ok()?;
-        clip.read_exact(&mut response.body).ok()?;
-        if response.status == 206 {
-            response
-                .headers
-                .push(("Content-Range", format!("bytes {start}-{end}/{len}")));
-        }
+    let Some(end) = end else {
+        return Some(StreamAsset {
+            status,
+            content_type: "video/quicktime",
+            cache_control: "no-store",
+            content_length: 0,
+            headers,
+            file: None,
+        });
+    };
+    if status == 206 {
+        headers.push(("Content-Range", format!("bytes {start}-{end}/{len}")));
+    }
+    file.seek(SeekFrom::Start(start)).ok()?;
+    Some(StreamAsset {
+        status,
+        content_type: "video/quicktime",
+        cache_control: "no-store",
+        content_length: end - start + 1,
+        headers,
+        file: Some((file, end - start + 1)),
+    })
+}
+
+/// The same asset with its bytes read up front, for the in-page server that returns a body.
+/// Clips are served in ranges (the player asks for the movie box at the end first) and never
+/// cached, so the player streams from disk instead of the page holding a copy.
+pub fn asset(shared: &Path, rest: &str, range: Option<&str>) -> Option<Response> {
+    let StreamAsset {
+        status,
+        content_type,
+        cache_control,
+        content_length,
+        headers,
+        file,
+    } = stream_asset(shared, rest, range)?;
+    let mut response = Response::ok(content_type, Vec::new());
+    response.status = status;
+    response.cache_control = cache_control;
+    response.headers = headers;
+    if let Some((mut file, _)) = file {
+        response.body = vec![0; content_length as usize];
+        file.read_exact(&mut response.body).ok()?;
     }
     Some(response)
 }

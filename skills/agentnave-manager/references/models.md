@@ -1,0 +1,26 @@
+# 点名与冷却
+
+用户点名 CLI、模型或参数，工位不可用或在冷却，或未开启编排要从 `members` 选人时读本文。
+
+## 未开启编排
+
+- `list_members`（同一聊天复用结果），从 `members` 按模式选 CLI：行内 `modes` 省略表示所有模式可用，空数组表示均不可用；`default=true` 表示两模式均为默认，模式列表表示仅这些模式默认。
+- 模型和档位由服务按 App 设置传入，回执 `defaults_applied` 注明补上的值；App 没配模型时临时用 CLI 自身的模型与档位。
+
+## 开启编排
+
+- 开启指 `list_members` 的 `orchestration.enabled=true`，「只开会」档为 `false`，按未开启处理。服务不再提供普通任务候选池，也不借用其场景默认值（关闭编排后恢复保留的普通任务配置）；会议仍独立配置。用户未点名 CLI 时传 `seat`（另写 `role` 说明职责）或评审 `role`。
+- 产品提供通用探索、通用执行，以及界面制作、写作、网页调研、社交平台调研、办公文件制作五个专项；工具 schema 给出当前启用的 `seat` 名称。专项某档未绑定时不继承通用身份，按主文件「选组」兜底；专项可以两档共用同一个模型。
+- 用户点名的 CLI 已启用、却没有绑定它的工位或评审 `role` 时，仍可私聊（与宿主同类的 CLI 仍不能私聊），但不会补 task 默认模型（`members` 只剩 `discussion` 行）：先 `list_members(provider=...)` 看该 CLI 的模型行，有不限模型的 `*` 行时可省略 `model` 或传未列出的具体模型名（不填字面量 `*`），否则从列出的模型里选一个写进 `provider_options.model`。行上的 `default` 是会议默认，`effort` 和 `options` 也按会议显示，都不当作 task 默认，也不照搬。没有可用模型时报告缺项，不自行扩大名单或换 CLI。
+
+## 用户点名参数
+
+- `model`、`effort` 等参数放在 `provider_options` 里，写在顶层会被拒绝。先用 `list_members(provider=...)` 核对允许状态和支持参数；`members` 行的 `error` 会标出未安装，不检查登录。
+- 用户指定字段覆盖默认，但不得超出允许范围；要求原生设置时须同时清除对应 App 默认字段。
+- 员工页 CLI 级可用模型名单共同约束普通任务、编排工位与会议，工位和会议只能选其中的模型；绑定失效时先报告并修复配置，不自动扩大允许名单或换模型。
+
+## 工位不可用与冷却
+
+- 工位 `available` 省略即可用。派发被拒绝、因 CLI 未安装启动失败或工位 `available=false` 时，按主文件「CLI 与模型」用 `reason` 和 `replacement` 处理。
+- `available=false` 也可能表示 CLI 和模型近期遇到 quota／auth／billing 硬阻断：认证冷却持续到解除，配额仅在重置时间明确时冷却（最长 8 天），计费冷却 30 分钟。
+- 用户可在 App 解除冷却；仅当用户在当前对话明确要求解除时，调 `clear_provider_cooldown(provider=..., model=...)`，省略 `model` 解除该 CLI 全部冷却。

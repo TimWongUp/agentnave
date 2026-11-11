@@ -14,7 +14,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, InputRequiredResult, TextContent
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentnave import __version__
 from agentnave.adapters import get_adapter
@@ -295,6 +295,31 @@ def _restrict_wait_windows(schema: dict[str, Any]) -> None:
     wait_seconds["description"] = description.replace(LONG_WAIT_SENTENCE, "")
 
 
+def _validation_error(exc: ValidationError) -> str:
+    """Format Pydantic argument errors as plain sentences without raw validation dumps."""
+    messages: list[str] = []
+    for item in exc.errors(include_url=False):
+        field = ".".join(str(part) for part in item["loc"])
+        msg = item["msg"].removeprefix("Value error, ").replace(" after validation", "")
+        ctx = item.get("ctx") or {}
+        value = item.get("input")
+        if item["type"] in ("string_too_short", "string_too_long") and isinstance(value, str):
+            msg = f"{msg}, got {len(value)}"
+        elif (
+            item["type"] in ("greater_than_equal", "less_than_equal")
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
+            msg = f"{msg}, got {value}"
+        elif item["type"] in ("too_short", "too_long") and "actual_length" in ctx:
+            msg = msg.replace(f", not {ctx['actual_length']}", f", got {ctx['actual_length']}")
+        if field and not msg.startswith((f"{field} ", f"{field}:")):
+            head = msg[0].lower() + msg[1:] if len(msg) > 1 and not msg[1].isupper() else msg
+            msg = f"{field}: {head}" if head else field
+        messages.append(msg.rstrip(".") + ".")
+    return " ".join(messages)
+
+
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         image_enabled = role_seat("image-generator", HOST) is not None
@@ -324,7 +349,12 @@ class _Server(MCPServer[Runtime]):
         tool = self._tool_manager.get_tool(name)
         if tool is not None:
             _check_arguments(name, arguments, tool.parameters)
-        result = await super().call_tool(name, arguments, context)
+        try:
+            result = await super().call_tool(name, arguments, context)
+        except ToolError as exc:
+            if isinstance(exc.__cause__, ValidationError):
+                raise ToolError(_validation_error(exc.__cause__)) from exc.__cause__
+            raise
         if (
             isinstance(result, CallToolResult)
             and not result.is_error

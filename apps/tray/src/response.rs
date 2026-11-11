@@ -56,6 +56,21 @@ impl Response {
     }
 }
 
+/// A bodyless write route: an explicit POST with the action header.
+pub(crate) fn action(
+    method: &str,
+    action: Option<&str>,
+    handle: impl FnOnce() -> Response,
+) -> Response {
+    if method != "POST" {
+        return Response::error(405, "此操作只接受 POST");
+    }
+    if action != Some("1") {
+        return Response::error(403, "缺少操作请求头");
+    }
+    handle()
+}
+
 /// A write route: an explicit POST with the action header and a JSON body.
 pub(crate) fn post(
     method: &str,

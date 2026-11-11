@@ -4,7 +4,7 @@ use tauri::{Url, WebviewWindow};
 pub(crate) fn in_place(window: &WebviewWindow, target: &Url) -> bool {
     let showing = window
         .url()
-        .is_ok_and(|current| crate::ours(&current) && current.path().starts_with("/chat/"));
+        .is_ok_and(|current| crate::window::ours(&current) && current.path().starts_with("/chat/"));
     if !showing || !(target.path().starts_with("/chat/") || target.path().starts_with("/settings/"))
     {
         return false;
@@ -13,7 +13,7 @@ pub(crate) fn in_place(window: &WebviewWindow, target: &Url) -> bool {
 }
 
 fn script(target: &Url) -> String {
-    let path = serde_json::Value::from(crate::destination(target));
+    let path = serde_json::Value::from(crate::window::destination(target));
     let fallback = if target.path().starts_with("/settings/") {
         format!("location.assign({path});")
     } else if target.query_pairs().any(|(key, _)| key == "check-update") {

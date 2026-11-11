@@ -147,9 +147,15 @@ pub fn refresh_working(app: &AppHandle, overview: &Overview) -> Result<(), Strin
             general::current,
         );
     }
+    let keep = general::current()["keep_awake"] == true;
+    // A transient SQLite/view read failure reports zero running calls; keep the current
+    // assertion until a clean scan confirms work ended, unless the user turned keep_awake off.
+    if keep && overview.count("running") == 0 && overview.running_uncertain() {
+        return Ok(());
+    }
     app.state::<Runtime>()
         .awake
-        .set(general::current()["keep_awake"] == true && overview.count("running") > 0)
+        .set(keep && overview.count("running") > 0)
 }
 
 pub fn shutdown(app: &AppHandle) {

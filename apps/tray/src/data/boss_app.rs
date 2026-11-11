@@ -9,6 +9,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -22,6 +23,8 @@ pub(crate) const CODEX_CLI: &str = "codex-cli";
 const WINDOW: u64 = 256 * 1024;
 /// A Claude Desktop record larger than this is not read.
 const RECORD_LIMIT: u64 = 8 << 20;
+/// Retry missing transcripts periodically so sessions created slightly after workspace creation resolve.
+const NEGATIVE_TTL: Duration = Duration::from_secs(15);
 
 #[derive(Default, PartialEq, Eq)]
 pub(crate) struct Homes {
@@ -68,13 +71,14 @@ struct Found {
     homes: Option<Homes>,
     transcripts: HashMap<String, PathBuf>,
     desktop: HashSet<String>,
-    /// Bosses already looked for, so one whose records are gone costs a single sweep.
-    searched: HashSet<String>,
+    /// Bosses already looked for with when they missed, so gone records do not sweep on every poll
+    /// while newly created transcripts still resolve once `NEGATIVE_TTL` passes.
+    searched: HashMap<String, Instant>,
 }
 
 pub(super) struct BossApps {
     /// The app a transcript names, by file and its length: transcripts only grow, so an
-    /// unchanged length needs no second read.
+    /// unchanged length needs no second read and appended tails only scan new bytes.
     files: Mutex<HashMap<PathBuf, (u64, Option<&'static str>)>>,
     found: Mutex<Found>,
 }
@@ -144,27 +148,55 @@ impl BossApps {
         }
         let homes = homes();
         let roots_changed = found.homes.as_ref() != Some(&homes);
-        if !roots_changed && missing.iter().all(|key| found.searched.contains(key)) {
+        let now = Instant::now();
+        if !roots_changed
+            && missing.iter().all(|key| {
+                found
+                    .searched
+                    .get(key)
+                    .is_some_and(|at| now.duration_since(*at) < NEGATIVE_TTL)
+            })
+        {
             return;
         }
-        let searched = if roots_changed {
-            HashSet::new()
+        let mut searched = if roots_changed {
+            HashMap::new()
         } else {
-            std::mem::take(&mut found.searched)
+            let mut kept = std::mem::take(&mut found.searched);
+            kept.retain(|_, at| now.duration_since(*at) < NEGATIVE_TTL);
+            kept
         };
+        for key in missing {
+            searched.insert(key, now);
+        }
         *found = sweep(&homes);
         found.homes = Some(homes);
         found.searched = searched;
-        found.searched.extend(missing);
     }
 
     fn named_by(&self, host: &str, file: &Path) -> Option<&'static str> {
         let len = fs::metadata(file).ok()?.len();
         let lock = || self.files.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(&(seen, app)) = lock().get(file)
-            && seen == len
-        {
-            return app;
+        let cached = lock().get(file).copied();
+        if let Some((seen, app)) = cached {
+            if seen == len {
+                return app;
+            }
+            // Codex's originator sits on line 1 and never changes as the rollout grows.
+            if host != "claude" && app.is_some() && len > seen {
+                lock().insert(file.to_owned(), (len, app));
+                return app;
+            }
+            // For an active Claude transcript that already named an app, scan only appended bytes.
+            if host == "claude"
+                && len > seen
+                && let Some(previous) = app
+                && let Ok(delta) = claude_entrypoint_since(file, seen, len)
+            {
+                let next = Some(delta.as_deref().map_or(previous, claude_app));
+                lock().insert(file.to_owned(), (len, next));
+                return next;
+            }
         }
         // Read without the lock; a transcript read whole that names no app is remembered too, a
         // failed read is tried again next time.
@@ -397,6 +429,18 @@ fn claude_entrypoint(path: &Path) -> std::io::Result<Option<String>> {
     chunk.clear();
     file.seek(SeekFrom::Start(0))?;
     file.take(WINDOW).read_to_end(&mut chunk)?;
+    Ok(value_of(&chunk, KEY, true))
+}
+
+fn claude_entrypoint_since(path: &Path, seen: u64, len: u64) -> std::io::Result<Option<String>> {
+    use std::io::{Seek, SeekFrom};
+    const KEY: &[u8] = b"\"entrypoint\":\"";
+    let start = seen.saturating_sub(64).max(len.saturating_sub(WINDOW));
+    let mut file = fs::File::open(path)?;
+    file.seek(SeekFrom::Start(start))?;
+    let mut chunk = Vec::new();
+    file.take(len.saturating_sub(start))
+        .read_to_end(&mut chunk)?;
     Ok(value_of(&chunk, KEY, true))
 }
 

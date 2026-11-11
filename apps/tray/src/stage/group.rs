@@ -269,7 +269,7 @@ impl Group {
         }
         let member = Member {
             at,
-            value: json!({"key": key, "provider": provider, "model": model, "label": label(Some(provider)),
+            value: json!({"key": key, "provider": provider, "model": model, "label": cli_label(identity, provider),
             "status": status, "line": line(status, output, error), "updated": time, "conversation": snapshot.item.id}),
         };
         if self.members.get(&key).is_none_or(|old| at >= old.at) {
@@ -446,8 +446,31 @@ impl Group {
         }
     }
     pub(super) fn omitted(&self, focus: Option<&str>, complete: bool) -> usize {
-        (self.messages.len() + self.typing.len())
-            .saturating_sub(self.timeline(focus, complete).len())
+        if complete {
+            return 0;
+        }
+        let total = self.messages.len() + self.typing.len();
+        let Some(focus) = focus else {
+            return total.saturating_sub(300);
+        };
+        if total <= 300 {
+            return 0;
+        }
+        let mut messages: Vec<_> = self.messages.iter().collect();
+        messages.sort_by_key(|m| timestamp(text(m, "time")).unwrap_or_default());
+        let mut typing: Vec<_> = self.typing.values().map(|(_, message)| message).collect();
+        typing.sort_by_key(|m| {
+            (
+                timestamp(text(m, "time")).unwrap_or_default(),
+                text(m, "id"),
+            )
+        });
+        messages.extend(typing);
+        let skip = messages.len().saturating_sub(300);
+        messages[..skip]
+            .iter()
+            .filter(|message| text(message, "conversation") != focus)
+            .count()
     }
     pub(super) fn threads(&self) -> Vec<Value> {
         let mut threads = BTreeMap::<String, Value>::new();

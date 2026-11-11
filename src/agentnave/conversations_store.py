@@ -204,6 +204,8 @@ class ConversationStore(Groups):
         # them. Marked only once the reply is built, so a wait cut short delivers nothing.
         self.delivered_tasks: set[str] = set()
         self.delivered_rounds: set[str] = set()
+        # Boss chats already told that their model is unknown (said once per chat).
+        self.model_warned: set[str] = set()
         self._unsaved: set[str] = set()
         # While work runs, its reply tails are written here for the tray app, then removed.
         self.live_path = self.root / "live" / f"{os.getpid()}-{uuid4().hex[:8]}.json"

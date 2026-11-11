@@ -14,58 +14,6 @@ fn unfinished(view: &Value) -> bool {
             .any(|call| call["status"] == "running" || call["status"] == "pending")
 }
 
-fn plain(meta: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if meta.file_attributes() & 0x400 != 0 {
-            return false;
-        }
-    }
-    !meta.is_symlink()
-}
-
-/// Unlike management, observing ownership must never create a lock or write its contents.
-fn probe(root: &Path, id: &str) -> Option<fs::File> {
-    let path = crate::db::lock_path(root, id);
-    let directory = fs::symlink_metadata(path.parent()?).ok()?;
-    let meta = fs::symlink_metadata(&path).ok()?;
-    if !directory.is_dir() || !plain(&directory) || !meta.is_file() || !plain(&meta) {
-        return None;
-    }
-    let mut options = fs::File::options();
-    options.read(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        // Do not follow a reparse point or allow replacement while the probe is open.
-        options.custom_flags(0x00200000).share_mode(3);
-    }
-    let file = options.open(&path).ok()?;
-    let opened = file.metadata().ok()?;
-    if !opened.is_file() || !plain(&opened) {
-        return None;
-    }
-    file.try_lock().ok()?;
-    let current = fs::symlink_metadata(&path).ok()?;
-    if !current.is_file() || !plain(&current) {
-        return None;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if (opened.dev(), opened.ino()) != (current.dev(), current.ino()) {
-            return None;
-        }
-    }
-    Some(file)
-}
-
 pub(super) fn view(
     reader: &Reader,
     connection: &rusqlite::Connection,
@@ -75,7 +23,7 @@ pub(super) fn view(
     if !unfinished(saved) {
         return saved.clone();
     }
-    let Some(lock) = probe(&reader.root, id) else {
+    let Ok(crate::db::LockProbe::Unlocked(lock)) = crate::db::probe_lock(&reader.root, id) else {
         return saved.clone();
     };
     // A busy database is insufficient evidence; never wait with the conversation locked.
