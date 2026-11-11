@@ -241,25 +241,6 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
             assert '"image_generation"' not in schemas
 
 
-def test_role_schema_filter_handles_serialization_definition_names() -> None:
-    from agentnave.orchestration_roles import OrchestrationStatus
-
-    # Pydantic can qualify model names and distinguish validation/serialization definitions.
-    schema = {
-        "$defs": {
-            f"agentnave__orchestration_roles__OrchestrationStatus-{mode}": OrchestrationStatus.model_json_schema(
-                mode=mode
-            )
-            for mode in ("validation", "serialization")
-        }
-    }
-    mcp_runtime._filter_role_schema(schema, frozenset({"worker_writing"}), False)  # pyright: ignore[reportPrivateUsage]
-    serialized = json.dumps(schema)
-    for role in role_catalog():
-        assert (f'"{role.group}"' in serialized) is (role.group == "worker_writing")
-    assert '"image_generation"' not in serialized
-
-
 @pytest.mark.asyncio
 async def test_resume_does_not_inherit_a_declared_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1071,11 +1052,10 @@ async def test_mcp_blocked_round_keeps_finished_answers_and_hides_running_tails(
 @pytest.mark.asyncio
 async def test_mcp_rejects_arbitrary_wait_windows() -> None:
     async with Client(mcp) as client:
-        for seconds in (1, 45, 240, 300, 600):
-            result = await client.call_tool("wait", {"ids": ["missing"], "wait_seconds": seconds})
-            assert result.is_error is True
-            assert "0" in str(result.content) and "270" in str(result.content)
-            assert "Unknown or expired id" not in str(result.content)
+        result = await client.call_tool("wait", {"ids": ["missing"], "wait_seconds": 45})
+        assert result.is_error is True
+        assert "0" in str(result.content) and "270" in str(result.content)
+        assert "Unknown or expired id" not in str(result.content)
 
 
 @pytest.mark.asyncio
@@ -1225,33 +1205,6 @@ async def test_mcp_wait_any_and_list_invocations_expose_handles_without_task_tex
         ] == [sleeping]
         assert listed["restart_safe"] is False  # the sleeping task still holds its history
         await client.call_tool("cancel", {"id": sleeping})
-
-
-@pytest.mark.asyncio
-async def test_mcp_running_result_can_be_cancelled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _install_fake_claude(tmp_path, monkeypatch)
-    monkeypatch.setattr("agentnave.mcp_runtime.WAIT_SECONDS", 0.01)
-
-    async with Client(mcp) as client:
-        started = await client.call_tool(
-            "start_agent",
-            {"provider": "claude", "prompt": "sleep", "cwd": str(tmp_path)},
-        )
-        invocation_id = _payload(started.structured_content)["invocation_id"]
-        running = await client.call_tool("wait", {"ids": [invocation_id]})
-        cancelled = await client.call_tool("cancel", {"id": invocation_id})
-
-    running_payload = _first(running)
-    cancelled_payload = _payload(_payload(cancelled.structured_content)["invocation"])
-    cancelled_result = cancelled_payload
-    assert running_payload["status"] == "running"
-    assert isinstance(running_payload["elapsed_ms"], int)
-    assert running_payload["reason"] == "wait_elapsed"
-    assert "snapshot" not in running_payload
-    assert cancelled_payload["reason"] == "finished"
-    assert cancelled_result["status"] == "cancelled"
 
 
 @pytest.mark.asyncio

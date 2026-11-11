@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use crate::members::PROVIDERS;
+use crate::providers::PROVIDERS;
 
 /// `agy models` waits on the network and takes about 20 seconds.
 const TIMEOUT: Duration = Duration::from_secs(45);
@@ -143,10 +143,15 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// Probe results for all providers, kept until `refresh` asks for a new probe. Probes run
 /// outside the lock; successful updates made during a probe keep their verified versions.
 /// A later probe can still observe external version changes.
-pub fn detected(refresh: bool) -> Value {
-    detected_with(refresh, &CACHE, probe, |all| {
-        publish_native(&crate::data::data_root(), all);
-    })
+pub fn detected(refresh: bool, codex_source: impl Fn() -> Option<String> + Sync) -> Value {
+    detected_with(
+        refresh,
+        &CACHE,
+        |provider| probe(provider, &codex_source),
+        |all| {
+            publish_native(&crate::data_files::data_root(), all);
+        },
+    )
 }
 
 fn detected_with(
@@ -233,7 +238,7 @@ fn publish_native(root: &Path, all: &Value) {
         .unwrap_or(Value::Null);
     let document = native_document(all, &previous);
     if document != previous {
-        let _ = crate::members::write_atomic(root, NATIVE_FILE, &document);
+        let _ = crate::data_files::write_atomic(root, NATIVE_FILE, &document);
     }
 }
 
@@ -690,7 +695,7 @@ fn probe_zcode() -> Value {
         "native":{"model":null,"effort":null},"models":models,"efforts":[]})
 }
 
-fn probe(provider: &str) -> Value {
+fn probe(provider: &str, codex_source: &impl Fn() -> Option<String>) -> Value {
     if provider == "zcode" {
         return probe_zcode();
     }
@@ -700,14 +705,7 @@ fn probe(provider: &str) -> Value {
         other => other,
     };
     let selected = if provider == "codex" {
-        crate::members::read(&crate::data::data_root())
-            .ok()
-            .flatten()
-            .and_then(|doc| {
-                doc["clis"]["codex"]["executable_source"]
-                    .as_str()
-                    .map(str::to_owned)
-            })
+        codex_source()
     } else {
         None
     };

@@ -114,9 +114,34 @@ fn clear_locked(root: &Path, provider: &str, model: Option<&str>) -> Result<(), 
         false
     };
     if changed {
-        crate::members::write_atomic(root, FILE, &document)?;
+        crate::data_files::write_atomic(root, FILE, &document)?;
     }
     Ok(())
+}
+
+pub(crate) fn request(
+    root: &std::path::Path,
+    method: &str,
+    action: Option<&str>,
+    body: &[u8],
+) -> crate::response::Response {
+    use crate::response::{Response, post};
+
+    post(method, action, body, |payload| {
+        let Some(provider) = payload["provider"]
+            .as_str()
+            .filter(|p| crate::providers::PROVIDERS.contains(p))
+        else {
+            return Response::error(400, "需要有效的 CLI");
+        };
+        if !payload["model"].is_null() && payload["model"].as_str().is_none_or(str::is_empty) {
+            return Response::error(400, "需要有效的模型");
+        }
+        match crate::provider_health::clear(root, provider, payload["model"].as_str()) {
+            Ok(()) => Response::json(&json!({"cleared": true})),
+            Err(error) => Response::error(400, &error),
+        }
+    })
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 //! Cached, fixed-script login-shell discovery. Output is data, never executable input.
-use super::{Context, atomic, transaction::safe_path};
+use super::{Context, atomic};
+use crate::config_paths::safe_path;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,

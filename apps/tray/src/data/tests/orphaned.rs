@@ -12,7 +12,7 @@ fn lock(root: &Path, id: &str) -> fs::File {
 }
 
 fn now() -> String {
-    crate::stage::iso(
+    crate::time_format::iso(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

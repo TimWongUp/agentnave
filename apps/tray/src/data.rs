@@ -13,9 +13,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+use crate::data_files::valid_id;
+use crate::response::Response;
 use boss_app::BossApps;
 
 mod alerts;
+pub(crate) mod snapshot;
+use snapshot::{Item, Overview, Snapshot, call_counts};
 pub(crate) mod boss_app;
 
 /// Studio rewrites live files every 1.5s; older ones were left by a server that crashed.
@@ -29,107 +33,6 @@ const ROUTE_REUSE: Duration = Duration::from_secs(30);
 include!(concat!(env!("OUT_DIR"), "/office_art.rs"));
 
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob: http://127.0.0.1:*; base-uri 'none'; frame-src 'self'; frame-ancestors 'self'";
-
-/// Same rule as the Studio MCP server: `AGENTNAVE_DATA_DIR`, else `~/.agentnave`.
-pub fn data_root() -> PathBuf {
-    match std::env::var_os("AGENTNAVE_DATA_DIR") {
-        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => dirs::home_dir().unwrap_or_default().join(".agentnave"),
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Item {
-    pub id: String,
-    pub title: String,
-    pub mode: String,
-    pub host: Option<String>,
-    pub manager_session: Option<String>,
-    pub status: String,
-    /// Last activity as Studio recorded it (RFC 3339); empty in older snapshots.
-    pub updated: String,
-}
-
-#[derive(Debug, Default, PartialEq)]
-pub struct Overview {
-    /// Most recently changed first.
-    pub items: Vec<Item>,
-    pub unavailable: Vec<(String, String)>,
-    /// Structured failures for consumers that need to distinguish recovery from new work.
-    unreadable: HashSet<String>,
-    scan_error: Option<String>,
-    pub missing: bool,
-    pub running: usize,
-    pub review: usize,
-}
-
-impl Overview {
-    pub fn count(&self, status: &str) -> usize {
-        match status {
-            "running" => self.running,
-            "review" => self.review,
-            _ => self
-                .items
-                .iter()
-                .filter(|item| item.status == status)
-                .count(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Response {
-    pub status: u16,
-    pub content_type: &'static str,
-    pub body: Vec<u8>,
-    pub cache_control: &'static str,
-    /// Extra response headers, such as a partial response's `Content-Range`.
-    pub headers: Vec<(&'static str, String)>,
-    /// Something the page should tell the user although the request succeeded.
-    pub notice: Option<String>,
-}
-
-impl Response {
-    pub(crate) fn ok(content_type: &'static str, body: Vec<u8>) -> Self {
-        Self {
-            cache_control: "no-store",
-            status: 200,
-            content_type,
-            body,
-            headers: Vec::new(),
-            notice: None,
-        }
-    }
-
-    pub(crate) fn with_notice(mut self, notice: Option<String>) -> Self {
-        self.notice = notice;
-        self
-    }
-
-    pub fn json(value: &serde_json::Value) -> Self {
-        Self::ok(
-            "application/json; charset=utf-8",
-            value.to_string().into_bytes(),
-        )
-    }
-
-    fn not_found() -> Self {
-        Self {
-            cache_control: "no-store",
-            status: 404,
-            content_type: "text/plain; charset=utf-8",
-            body: b"not found".to_vec(),
-            headers: Vec::new(),
-            notice: None,
-        }
-    }
-
-    pub fn error(status: u16, message: &str) -> Self {
-        let mut response = Self::json(&json!({"error": message}));
-        response.status = status;
-        response
-    }
-}
 
 /// (mtime, size, content hash, parsed value) of one JSON file.
 type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
@@ -162,17 +65,10 @@ struct Live {
 /// their addresses stay unique), the live time, and the result.
 type Merged = (Arc<Value>, Arc<Value>, Option<String>, Arc<Value>);
 
-pub(crate) struct Snapshot {
-    pub item: Item,
-    pub view: Arc<Value>,
-    pub live: bool,
-    pub live_updated: Option<String>,
-}
-
 pub struct Reader {
     root: PathBuf,
     hosts: Mutex<Option<crate::hosts::Hosts>>,
-    tools: Arc<Mutex<Option<crate::hosts::ToolDirs>>>,
+    tools: Arc<Mutex<Option<crate::tool_dirs::ToolDirs>>>,
     /// Parsed views by conversation, keyed on the row's revision, so polling parses only
     /// views that changed.
     summaries: Mutex<HashMap<String, CachedView>>,
@@ -394,7 +290,7 @@ impl Reader {
             };
             let ids: Vec<String> = conversations.keys().cloned().collect();
             // Content changes only when necessary; heartbeats refresh its mtime.
-            let updated_at = Some(crate::stage::iso(
+            let updated_at = Some(crate::time_format::iso(
                 modified
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -422,19 +318,6 @@ impl Reader {
     }
 }
 
-/// A write route: an explicit POST with the action header and a JSON body.
-fn post(
-    method: &str,
-    action: Option<&str>,
-    body: &[u8],
-    handle: impl FnOnce(Value) -> Response,
-) -> Response {
-    if method != "POST" {
-        return Response::error(405, "此操作只接受 POST");
-    }
-    with_payload(action, body, handle)
-}
-
 /// The action header and JSON body of a write, for a route that has already checked its method.
 /// A page in the interface language the user picked.
 fn page(html: &[u8]) -> Response {
@@ -443,36 +326,6 @@ fn page(html: &[u8]) -> Response {
         "text/html; charset=utf-8",
         crate::preferences::localize(html, &general),
     )
-}
-
-fn with_payload(
-    action: Option<&str>,
-    body: &[u8],
-    handle: impl FnOnce(Value) -> Response,
-) -> Response {
-    if action != Some("1") {
-        return Response::error(403, "缺少操作请求头");
-    }
-    let Ok(payload) = serde_json::from_slice::<Value>(body) else {
-        return Response::error(400, "请求必须为 JSON");
-    };
-    handle(payload)
-}
-
-/// A rejected document is the caller's error; a failed save is ours.
-fn save<T>(
-    root: &Path,
-    payload: &Value,
-    validate: impl FnOnce(&Value) -> Result<T, String>,
-    save: impl FnOnce(&Path, &Value) -> Result<(), String>,
-) -> Response {
-    if let Err(error) = validate(payload) {
-        return Response::error(400, &error);
-    }
-    match save(root, payload) {
-        Ok(()) => Response::json(&json!({"saved": true})),
-        Err(error) => Response::error(500, &error),
-    }
 }
 
 fn live_view(
@@ -615,7 +468,7 @@ fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
             }
         }
     }
-    let now = updated_at.and_then(crate::stage::timestamp);
+    let now = updated_at.and_then(crate::time_format::timestamp);
     let mut view = saved.clone();
     if let Some(tasks) = view
         .pointer_mut("/director/tasks")
@@ -629,9 +482,12 @@ fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
                 continue;
             }
             lay(task, tail);
-            if let (Some(now), Some(start)) =
-                (now, task["time"].as_str().and_then(crate::stage::timestamp))
-            {
+            if let (Some(now), Some(start)) = (
+                now,
+                task["time"]
+                    .as_str()
+                    .and_then(crate::time_format::timestamp),
+            ) {
                 task["elapsed_ms"] = json!((now - start).max(0) / 1000);
             }
         }
@@ -653,31 +509,6 @@ fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
         }
     }
     view
-}
-
-pub(crate) fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 64
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-/// Count actual invocations, never conversations or merged desk identities.
-pub(crate) fn call_counts(snapshot: &Snapshot) -> (usize, usize) {
-    let view = &snapshot.view["director"];
-    let tasks = view["tasks"].as_array().into_iter().flatten();
-    let seats = view["round"]["seats"].as_array().into_iter().flatten();
-    let mut running = 0;
-    let mut review = 0;
-    for call in tasks.chain(seats) {
-        if call["review"] == "pending" || call["status"] == "review" {
-            review += 1;
-        } else if call["status"] == "running" {
-            running += 1;
-        }
-    }
-    (running, review)
 }
 
 fn summary(snapshot: &Value) -> Option<Item> {

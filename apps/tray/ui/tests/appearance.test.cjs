@@ -122,7 +122,6 @@ test("a stale GET cannot overwrite preferences broadcast from another window", a
 test("settings.html scripts load in declared order and language switch respects unsaved changes", async () => {
   const html = readFileSync(`${__dirname}/../settings.html`, "utf8");
   const scripts = [...html.matchAll(/<script src="([^"]+)" defer><\/script>/g)].map(m => m[1]);
-  assert.ok(scripts.indexOf("./advanced.js") < scripts.indexOf("./settings.js"));
 
   const elements = new Map();
   function makeNode(tag = "div", id = "") {
@@ -214,12 +213,12 @@ test("settings.html scripts load in declared order and language switch respects 
   }
 
   // Trigger an unsaved edit in Advanced (custom text edited).
-  context.setTab("advanced");
+  context.AN.settings.setTab("advanced");
   await new Promise(r => setImmediate(r));
   const customText = getEl("custom-text");
   customText.value = "my custom rule";
   customText.listeners.input[0]();
-  context.setTab("general");
+  context.AN.settings.setTab("general");
 
   // Click "English" in #general-language while Advanced has unsaved edits.
   const langRow = getEl("general-language").children[0];

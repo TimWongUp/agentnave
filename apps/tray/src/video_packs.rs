@@ -7,7 +7,7 @@ mod picker;
 #[cfg(test)]
 mod tests;
 
-use crate::data::Response;
+use crate::response::Response;
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};

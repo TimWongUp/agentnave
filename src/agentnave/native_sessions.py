@@ -7,8 +7,9 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -119,37 +120,20 @@ def session_file(host: Host, session_id: str | None) -> Path | None:
     if session_id is None:
         return None
     try:
-        if host.name == "deepseek":
-            return _deepseek_file(session_id)
-        if host.name == "devin":
-            return _devin_file(session_id)
-        if host.name == "hermes":
-            return _shared_file(_hermes_database(), _HERMES_SESSIONS, session_id)
-        if host.name == "zcode":
-            return _shared_file(zcode_database(), _ZCODE_SESSIONS, session_id)
-        native_id = _native_id(session_id)
-        if native_id is None:
-            return None
-        if host.name == "antigravity":
-            return _antigravity_file(native_id)
-        found = _transcript(host, native_id)
+        handler = _HOSTS.get(host.name or "")
+        return handler.file(session_id) if handler else None
     except (OSError, sqlite3.Error, ValueError, RuntimeError):
         # As in session_model: an unknown home, a loop, a database in use.
         return None
-    return None if found is None else found[0]
 
 
 def shared_session_id(host: str | None, key: str) -> str | None:
     """The session behind a boss key, for a host whose sessions share one database."""
     try:
-        if host == "devin":
-            database, sessions = _devin_database(), _DEVIN_SESSIONS
-        elif host == "hermes":
-            database, sessions = _hermes_database(), _HERMES_SESSIONS
-        elif host == "zcode":
-            database, sessions = zcode_database(), _ZCODE_SESSIONS
-        else:
+        handler = _HOSTS.get(host or "")
+        if handler is None or handler.database is None:
             return None
+        database, sessions = handler.database(), handler.table
         if not database.is_file():
             return None
         with closing(_read_only(database)) as db:
@@ -201,18 +185,8 @@ def session_model(
     if session_id is None:
         return None
     try:
-        if host.name == "devin":
-            return _devin_model(session_id, since)
-        if host.name == "hermes":
-            return _hermes_model(session_id)
-        if host.name == "zcode":
-            return _zcode_model(session_id, since)
-        native_id = _native_id(session_id)
-        if native_id is None:
-            return None
-        if host.name == "antigravity":
-            return _antigravity_model(native_id)
-        return _transcript_model(host, native_id, since)
+        handler = _HOSTS.get(host.name or "")
+        return handler.model(session_id, since) if handler else None
     except (OSError, sqlite3.Error, ValueError, RuntimeError):
         # A relative HERMES_HOME (no file URI) or a missing home folder reads as unknown.
         return None
@@ -234,32 +208,26 @@ def _codex_rollout_matches(path: Path, native_id: str) -> bool:
     return bool(prefix and sep and _native_id(tail) is not None)
 
 
-def _transcript(host: Host, native_id: str) -> tuple[Path, bytes] | None:
+@dataclass(frozen=True)
+class _Transcript:
+    variable: str
+    default: str
+    folder: str
+    pattern: str
+    marker: bytes
+    model: Callable[[dict[str, object]], object]
+    timestamped: bool = True
+    matches: Callable[[Path, str], bool] = lambda _path, _id: True
+
+
+def _transcript(spec: _Transcript, native_id: str) -> tuple[Path, bytes] | None:
     """The session's transcript and the marker of lines that may name its model."""
-    if host.name == "codex":
-        root = _home("CODEX_HOME", ".codex") / "sessions"
-        pattern, marker = f"*/*/*/rollout-*-{native_id}*.jsonl", b'"turn_context"'
-    elif host.name == "claude":
-        root = _home("CLAUDE_CONFIG_DIR", ".claude") / "projects"
-        pattern, marker = f"*/{native_id}.jsonl", b'"assistant"'
-    elif host.name == "pi":
-        root = _home("PI_CODING_AGENT_DIR", ".pi/agent") / "sessions"
-        pattern, marker = f"*/*_{native_id}.jsonl", b'"assistant"'
-    elif host.name in {"codebuddy", "workbuddy"}:
-        # WorkBuddy is CodeBuddy's desktop app and keeps the same records in its own folder.
-        default = ".workbuddy" if host.name == "workbuddy" else ".codebuddy"
-        root = _home("CODEBUDDY_CONFIG_DIR", default) / "projects"
-        pattern, marker = f"*/{native_id}.jsonl", b'"providerData"'
-    elif host.name == "grok":
-        root = _home("GROK_HOME", ".grok") / "sessions"
-        pattern, marker = f"*/{native_id}/chat_history.jsonl", b'"model_id"'
-    else:
-        return None
+    root = _home(spec.variable, spec.default) / spec.folder
+    pattern, marker = spec.pattern.format(id=native_id), spec.marker
     paths = [
         path
         for path in root.glob(pattern)
-        if path.resolve().is_relative_to(root.resolve())
-        and (host.name != "codex" or _codex_rollout_matches(path, native_id))
+        if path.resolve().is_relative_to(root.resolve()) and spec.matches(path, native_id)
     ]
     if not paths:
         return None
@@ -267,8 +235,8 @@ def _transcript(host: Host, native_id: str) -> tuple[Path, bytes] | None:
     return max(paths, key=lambda path: path.stat().st_mtime_ns), marker
 
 
-def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str | None:
-    found = _transcript(host, native_id)
+def _transcript_model(spec: _Transcript, native_id: str, since: datetime | None) -> str | None:
+    found = _transcript(spec, native_id)
     if found is None:
         return None
     path, marker = found
@@ -282,7 +250,7 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
         if event is None:
             continue
         # Grok's chat history carries no timestamps; its entries are this session's own turns.
-        if host.name != "grok":
+        if spec.timestamped:
             raw = event.get("timestamp")
             try:
                 # CodeBuddy stamps lines in epoch milliseconds, the others in ISO 8601.
@@ -296,24 +264,7 @@ def _transcript_model(host: Host, native_id: str, since: datetime | None) -> str
                 continue
             if since is not None and stamp < since:
                 return None
-        value: object = None
-        if host.name == "codex":
-            if event.get("type") == "turn_context":
-                value = object_dict(event.get("payload")).get("model")
-        elif host.name == "claude":
-            value = assistant_model(event)
-        elif host.name in {"codebuddy", "workbuddy"}:
-            # A turn in progress has no assistant row yet: reasoning and function calls
-            # already carry the model that serves it.
-            if event.get("role") == "assistant" or event.get("type") in {
-                "reasoning",
-                "function_call",
-            }:
-                value = object_dict(event.get("providerData")).get("model")
-        elif host.name == "pi":
-            value = message_model(object_dict(event.get("message")))
-        elif event.get("type") == "assistant":
-            value = event.get("model_id")
+        value = spec.model(event)
         if (model := clean_model(value)) is not None:
             return model
     return None
@@ -529,3 +480,136 @@ def _lines_from_end(
                 oversized = True
         if tail and not oversized and position == 0 and len(tail) <= longest:
             yield tail
+
+
+@dataclass(frozen=True)
+class _HostSessions:
+    file: Callable[[str], Path | None]
+    model: Callable[[str, datetime | None], str | None]
+    database: Callable[[], Path] | None = None
+    table: str = ""
+
+
+def _codex_model(event: dict[str, object]) -> object:
+    return (
+        object_dict(event.get("payload")).get("model")
+        if event.get("type") == "turn_context"
+        else None
+    )
+
+
+def _codebuddy_model(event: dict[str, object]) -> object:
+    # A turn in progress can already name its model in reasoning and function calls.
+    if event.get("role") == "assistant" or event.get("type") in {"reasoning", "function_call"}:
+        return object_dict(event.get("providerData")).get("model")
+    return None
+
+
+def _grok_model(event: dict[str, object]) -> object:
+    return event.get("model_id") if event.get("type") == "assistant" else None
+
+
+def _transcript_host(spec: _Transcript) -> _HostSessions:
+    def file(session_id: str) -> Path | None:
+        native_id = _native_id(session_id)
+        found = _transcript(spec, native_id) if native_id is not None else None
+        return found[0] if found else None
+
+    def model(session_id: str, since: datetime | None) -> str | None:
+        native_id = _native_id(session_id)
+        return _transcript_model(spec, native_id, since) if native_id is not None else None
+
+    return _HostSessions(file, model)
+
+
+def _uuid_file(file: Callable[[str], Path | None], session_id: str) -> Path | None:
+    native_id = _native_id(session_id)
+    return file(native_id) if native_id is not None else None
+
+
+def _uuid_model(session_id: str, since: datetime | None) -> str | None:
+    native_id = _native_id(session_id)
+    return _antigravity_model(native_id) if native_id is not None else None
+
+
+_HOSTS = {
+    "codex": _transcript_host(
+        _Transcript(
+            "CODEX_HOME",
+            ".codex",
+            "sessions",
+            "*/*/*/rollout-*-{id}*.jsonl",
+            b'"turn_context"',
+            _codex_model,
+            matches=_codex_rollout_matches,
+        )
+    ),
+    "claude": _transcript_host(
+        _Transcript(
+            "CLAUDE_CONFIG_DIR",
+            ".claude",
+            "projects",
+            "*/{id}.jsonl",
+            b'"assistant"',
+            assistant_model,
+        )
+    ),
+    "pi": _transcript_host(
+        _Transcript(
+            "PI_CODING_AGENT_DIR",
+            ".pi/agent",
+            "sessions",
+            "*/*_{id}.jsonl",
+            b'"assistant"',
+            lambda event: message_model(object_dict(event.get("message"))),
+        )
+    ),
+    "codebuddy": _transcript_host(
+        _Transcript(
+            "CODEBUDDY_CONFIG_DIR",
+            ".codebuddy",
+            "projects",
+            "*/{id}.jsonl",
+            b'"providerData"',
+            _codebuddy_model,
+        )
+    ),
+    "workbuddy": _transcript_host(
+        _Transcript(
+            "CODEBUDDY_CONFIG_DIR",
+            ".workbuddy",
+            "projects",
+            "*/{id}.jsonl",
+            b'"providerData"',
+            _codebuddy_model,
+        )
+    ),
+    "grok": _transcript_host(
+        _Transcript(
+            "GROK_HOME",
+            ".grok",
+            "sessions",
+            "*/{id}/chat_history.jsonl",
+            b'"model_id"',
+            _grok_model,
+            timestamped=False,
+        )
+    ),
+    "antigravity": _HostSessions(
+        lambda session_id: _uuid_file(_antigravity_file, session_id), _uuid_model
+    ),
+    "deepseek": _HostSessions(_deepseek_file, lambda _session_id, _since: None),
+    "devin": _HostSessions(_devin_file, _devin_model, _devin_database, _DEVIN_SESSIONS),
+    "hermes": _HostSessions(
+        lambda session_id: _shared_file(_hermes_database(), _HERMES_SESSIONS, session_id),
+        lambda session_id, _since: _hermes_model(session_id),
+        _hermes_database,
+        _HERMES_SESSIONS,
+    ),
+    "zcode": _HostSessions(
+        lambda session_id: _shared_file(zcode_database(), _ZCODE_SESSIONS, session_id),
+        _zcode_model,
+        zcode_database,
+        _ZCODE_SESSIONS,
+    ),
+}

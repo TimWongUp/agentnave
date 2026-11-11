@@ -1,7 +1,7 @@
 //! The office alone plays voice. The menu bar panel shows what it plays and what it listens to:
 //! the office publishes that, the panel draws it and sends its clicks back to the office.
 
-use crate::data::Response;
+use crate::response::Response;
 use serde_json::{Value, json};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};

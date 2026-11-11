@@ -7,8 +7,8 @@ use std::time::Duration;
 use tauri::image::Image;
 use tauri::tray::TrayIcon;
 
-use crate::data::Overview;
-use crate::preferences::general;
+use crate::data::snapshot::Overview;
+use serde_json::Value;
 
 const DRIP_FRAME: Duration = Duration::from_millis(33);
 /// The dot falls onto the N like a drop and springs back (icons/drip.py draws the frames; the
@@ -50,16 +50,16 @@ static SHOWN: Mutex<(usize, &str)> = Mutex::new((0, FONTS[0].0));
 
 /// How many subagents to show: those running, unless the count is switched off or the system
 /// is not macOS, whose menu bar alone shows it.
-pub fn count(overview: &Overview) -> usize {
-    if cfg!(target_os = "macos") && general::current()["tray_count"] == true {
+pub fn count(overview: &Overview, current: impl FnOnce() -> Value) -> usize {
+    if cfg!(target_os = "macos") && current()["tray_count"] == true {
         overview.count("running")
     } else {
         0
     }
 }
 
-fn font() -> &'static str {
-    let chosen = general::current()["tray_font"].clone();
+fn font(general: &Value) -> &'static str {
+    let chosen = general["tray_font"].clone();
     FONTS
         .iter()
         .find(|(name, _)| chosen == *name)
@@ -68,25 +68,25 @@ fn font() -> &'static str {
 }
 
 /// The resting icon with `count` beside the N; set as the tray's first icon.
-pub fn initial(count: usize) -> Image<'static> {
-    *SHOWN.lock().unwrap() = (count, font());
+pub fn initial(count: usize, general: &Value) -> Image<'static> {
+    *SHOWN.lock().unwrap() = (count, font(general));
     rest()
 }
 
 /// Redraws the icon for a new count or font; a new count also lets the dot drip.
-pub fn show(tray: &TrayIcon, count: usize) {
-    let next = (count, font());
+pub fn show(tray: &TrayIcon, count: usize, current: impl Fn() -> Value) {
+    let next = (count, font(&current()));
     let previous = std::mem::replace(&mut *SHOWN.lock().unwrap(), next);
     if previous.0 != count {
-        drip(tray);
+        drip(tray, &current());
     } else if previous.1 != next.1 && !DRIPPING.load(Ordering::Acquire) {
         let _ = tray.set_icon_with_as_template(Some(rest()), true);
     }
 }
 
 /// Plays the drip once with the current count; a still icon takes the count when motion is reduced.
-pub fn drip(tray: &TrayIcon) {
-    if general::current()["motion"] == "reduce" {
+pub fn drip(tray: &TrayIcon, general: &Value) {
+    if general["motion"] == "reduce" {
         if !DRIPPING.load(Ordering::Acquire) {
             let _ = tray.set_icon_with_as_template(Some(rest()), true);
         }
