@@ -541,6 +541,34 @@ def test_turn_waits_for_background_tool_notifications() -> None:
     turn.transcript({"type": "user", "message": {"role": "user", "content": [refused]}})
     turn.transcript(end)
     assert turn.done
+    # An MCP call Claude moved to the background by itself names only a task id, and the
+    # completion notification carries only that id back. The same words in a prompt do not.
+    moved = (
+        'MCP tool "agentnave/wait" is still running after 120s. It was moved to the '
+        "background as task kcbon96gb and keeps running; you'll receive a notification "
+        "with the result when it completes."
+    )
+    turn.transcript({"type": "user", "message": {"role": "user", "content": moved}})
+    turn.transcript(end)
+    assert turn.done
+    receipt = {
+        "type": "tool_result",
+        "tool_use_id": "mcp-1",
+        "content": [{"type": "text", "text": moved}],
+    }
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {"role": "user", "content": [receipt]},
+            "toolUseResult": [{"type": "text", "text": moved}],
+        }
+    )
+    turn.transcript(end)
+    assert not turn.done
+    notice = "<task-notification>\n<task-id>kcbon96gb</task-id>\n</task-notification>"
+    turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
+    turn.transcript(end)
+    assert turn.done
 
 
 @pytest.mark.parametrize(

@@ -84,11 +84,21 @@ class Turn:
             text = content if isinstance(content, str) else json.dumps(content)
             for tool_use in re.findall(r"<tool-use-id>([^<]+)</tool-use-id>", text):
                 self.background.discard(tool_use)
-            # A denied or failed call never started, so no notification will follow.
+            for task in re.findall(r"<task-id>([^<]+)</task-id>", text):
+                self.background.discard(task)
             for raw in cast(list[object], content) if isinstance(content, list) else []:
                 block = object_dict(raw)
-                if block.get("type") == "tool_result" and block.get("is_error"):
+                if block.get("type") != "tool_result":
+                    continue
+                # A denied or failed call never started, so no notification will follow.
+                if block.get("is_error"):
                     self.background.discard(str(block.get("tool_use_id")))
+                    continue
+                # Claude may move a long MCP call to the background itself; only its own tool
+                # result says so, and the later notification carries just the task id.
+                result = json.dumps(block.get("content"))
+                for task in re.findall(r"was moved to the background as task (\w+)", result):
+                    self.background.add(task)
             return
         for raw in cast(list[object], content) if isinstance(content, list) else []:
             block = object_dict(raw)
