@@ -271,12 +271,13 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// orchestration.json: `{"version": 1, "preset": "off" | "split" | "parallel" | "custom",
+/// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "enabled_roles": [group],
-/// group: {"easy" | "hard": seat}, "image_generation": seat}`, with one group per catalog entry.
-/// A turned-off group keeps its seats. Interface Workers and the image seat have keys of their own
-/// so servers that predate them ignore them rather than reject the file. The App writes the chosen
-/// rules into the boss apps' global rules and
+/// group: {"easy" | "hard": seat}, "image_generation": seat,
+/// "meeting": {"count": 2..=6, "seats"?: [seat | null]}}`, with one group per catalog entry.
+/// A turned-off group keeps its seats. Interface Workers, the image seat and meeting defaults have
+/// keys of their own so servers that predate them ignore them rather than reject the file. The App
+/// writes the chosen rules into the boss apps' global rules and
 /// `effective_apps`, every connected row's mode as its group applies it, for the server.
 pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     let top = object(document, ORCHESTRATION_FILE)?;
@@ -289,6 +290,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "effective_apps",
         "enabled_roles",
         "image_generation",
+        "meeting",
         "split_options",
         "parallel_options",
         "lead_only",
@@ -335,6 +337,9 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     if let Some(seat) = top.get("image_generation").filter(|seat| !seat.is_null()) {
         validate_seat(seat, "image_generation")?;
     }
+    if let Some(meeting) = top.get("meeting") {
+        validate_meeting(meeting)?;
+    }
     for key in ["split_options", "parallel_options"] {
         if let Some(options) = top.get(key) {
             let options = object(options, key)?;
@@ -346,6 +351,30 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     }
     if top.get("lead_only").is_some_and(|on| !on.is_boolean()) {
         return Err("lead_only 必须为 true 或 false".into());
+    }
+    Ok(())
+}
+
+fn validate_meeting(meeting: &Value) -> Result<(), String> {
+    let fields = object(meeting, "meeting")?;
+    only(fields, &["count", "seats"], "meeting")?;
+    let Some(count) = fields
+        .get("count")
+        .and_then(Value::as_u64)
+        .filter(|count| (2..=6).contains(count))
+    else {
+        return Err("meeting.count 必须为 2–6 的整数".into());
+    };
+    if let Some(seats) = fields.get("seats") {
+        let list = seats.as_array().ok_or("meeting.seats 必须为数组")?;
+        if list.len() > count as usize {
+            return Err("meeting.seats 不能超过 meeting.count".into());
+        }
+        for (index, seat) in list.iter().enumerate() {
+            if !seat.is_null() {
+                validate_seat(seat, &format!("meeting.seats[{index}]"))?;
+            }
+        }
     }
     Ok(())
 }

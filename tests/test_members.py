@@ -160,6 +160,14 @@ def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
     check(Host("codex", "env", "codex@work"), True)
     check(Host("grok", "env", "grok"), True)
     check(claude, False)  # no connected row in the resolved map
+    document["effective_apps"] = {"codex": "meetings", "codex@work": "split"}
+    document["meeting"] = {
+        "count": 3,
+        "seats": [{"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"}, None],
+    }
+    check(Host("codex", "env", "codex"), False)
+    check(Host("codex", "env", "codex@work"), True)
+    assert list_members(frozenset(), Host("codex", "env", "codex")).orchestration_error is None
     document["effective_apps"] = {"codex": "split", "codex@work": "off"}
     check(codex, False)  # an old connection cannot borrow a different account's mode
     check(Host("codex", "env", "codex"), True)

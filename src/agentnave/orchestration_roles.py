@@ -35,7 +35,7 @@ type ProviderName = Literal[
     "zcode",
 ]
 type Difficulty = Literal["easy", "hard"]
-type OrchestrationPreset = Literal["off", "split", "parallel", "custom"]
+type OrchestrationPreset = Literal["off", "meetings", "split", "parallel", "custom"]
 type OrchestrationGroup = Literal[
     "explorer",
     "worker",
@@ -153,8 +153,8 @@ class OrchestrationFile(BaseModel):
             # config repair failed. Reconnect rather than borrow the default row's mode.
             if host.app_id is None:
                 return False
-            return self.effective_apps.get(key, "off") != "off"
-        return self.apps.get(key, self.preset) != "off"
+            return self.effective_apps.get(key, "off") not in ("off", "meetings")
+        return self.apps.get(key, self.preset) not in ("off", "meetings")
 
 
 class SeatReplacement(StrictModel):

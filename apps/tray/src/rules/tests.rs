@@ -145,6 +145,85 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         let lead = text_of(&json!({"preset": mode, "lead_only": true}), mode).unwrap();
         assert!(lead.contains(LEAD_ALWAYS) && !lead.contains(LEAD_ASKED));
     }
+    let meetings_only_doc = json!({
+        "preset": "meetings",
+        "lead_only": true,
+        "enabled_roles": ["explorer", "worker", "worker_writing"],
+        "image_generation": {"provider": "codex", "model": "chat"}
+    });
+    let plain_meetings = format!("{MEETINGS_HEAD}{MEETINGS_TAIL}");
+    let meetings_only = text_of(&meetings_only_doc, "meetings").unwrap();
+    assert_eq!(meetings_only, plain_meetings);
+    assert_eq!(
+        presets(&meetings_only_doc)["meetings"],
+        json!(plain_meetings)
+    );
+    assert_eq!(presets(&meetings_only_doc)["meeting"], Value::Null);
+    assert!(!meetings_only.contains("explorer-easy"));
+    assert!(!meetings_only.contains("worker-writing-easy"));
+    assert!(!meetings_only.contains("image-generator"));
+    assert!(!meetings_only.contains(LEAD_ASKED) && !meetings_only.contains(LEAD_ALWAYS));
+    for mode in ["meetings", "split", "parallel"] {
+        assert!(
+            !text_of(&json!({"preset": mode}), mode)
+                .unwrap()
+                .contains("开会默认")
+        );
+    }
+    let partial_seats = "\n- 开会默认 4 席：Codex CLI（provider=`codex`，model=`gpt-6.1-sol`，effort=`high`）、Antigravity CLI（provider=`antigravity`，model=`gemini-3.8-flash`），其余由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+    let doc_partial = json!({
+        "preset": "meetings",
+        "custom": "用户自写规则",
+        "enabled_roles": ["explorer"],
+        "meeting": {
+            "count": 4,
+            "seats": [
+                {"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"},
+                null,
+                {"provider": "antigravity", "model": "gemini-3.8-flash"}
+            ]
+        }
+    });
+    assert_eq!(
+        text_of(&doc_partial, "meetings").unwrap(),
+        format!("{MEETINGS_HEAD}{partial_seats}{MEETINGS_TAIL}")
+    );
+    assert!(text_of(&doc_partial, "split").unwrap().contains(&format!(
+        "{SPLIT_MEETINGS_ASKED}{partial_seats}\n- 通用探索"
+    )));
+    assert!(
+        text_of(&doc_partial, "parallel")
+            .unwrap()
+            .contains(&format!("{SPLIT_MEETINGS_OWN}{partial_seats}\n- 通用探索"))
+    );
+    assert!(
+        !text_of(&doc_partial, "custom")
+            .unwrap()
+            .contains("开会默认")
+    );
+    let all_seats = "\n- 开会默认 2 席：Codex CLI（provider=`codex`，model=`gpt-6.1-sol`，effort=`high`）、Codex CLI（provider=`codex`，model=`gpt-6.1-sol`）；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+    let doc_all = json!({
+        "meeting": {
+            "count": 2,
+            "seats": [
+                {"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"},
+                {"provider": "codex", "model": "gpt-6.1-sol"}
+            ]
+        }
+    });
+    for mode in ["meetings", "split", "parallel"] {
+        let generated = text_of(&doc_all, mode).unwrap();
+        assert!(generated.contains(all_seats) && !generated.contains("其余由 boss 选"));
+    }
+    let no_seats = "\n- 开会默认 5 席，成员由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+    for doc_none in [
+        json!({"meeting": {"count": 5}}),
+        json!({"meeting": {"count": 5, "seats": [null, null]}}),
+    ] {
+        for mode in ["meetings", "split", "parallel"] {
+            assert!(text_of(&doc_none, mode).unwrap().contains(no_seats));
+        }
+    }
     assert!(sync(&installed, &connected, h, &split, &[], &backup, false).is_empty());
     let claude_md = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert_eq!(
@@ -310,6 +389,22 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     assert!(
         valid(&image(
             json!({"provider": "codex", "model": "m", "effort": 1})
+        ))
+        .is_err()
+    );
+    let meeting = |m| json!({"version": 1, "preset": "meetings", "meeting": m});
+    let seat = json!({"provider": "codex", "model": "m", "effort": "high"});
+    assert!(valid(&meeting(json!({"count": 2, "seats": [&seat, &seat]}))).is_ok());
+    assert!(valid(&meeting(json!({"count": 6, "seats": [null, &seat]}))).is_ok());
+    assert!(valid(&meeting(json!({"count": 3}))).is_ok());
+    assert!(valid(&meeting(json!({"count": 1}))).is_err());
+    assert!(valid(&meeting(json!({"count": 7}))).is_err());
+    assert!(valid(&meeting(json!({"count": 2, "seats": [null, null, null]}))).is_err());
+    assert!(valid(&meeting(json!({"seats": [null]}))).is_err());
+    assert!(valid(&meeting(json!({"count": 3, "members": ["codex"]}))).is_err());
+    assert!(
+        valid(&meeting(
+            json!({"count": 2, "seats": [{"provider": "unknown", "model": "m"}]})
         ))
         .is_err()
     );

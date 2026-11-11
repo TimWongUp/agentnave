@@ -17,6 +17,7 @@
   // with every app that reads it.
   const ORCHESTRATION_EFFECTS = {
     off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
+    meetings: AN.L("写入所选 boss 的全局规则：遇到要取舍的事 boss 可以自己开会，会用到参会模型的额度；活由谁做不受影响。", "Writes to selected bosses' global rules: for choices with trade-offs the boss may call a meeting, using the attending models' quota; who does the work is unchanged."),
     split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把活派给已开启的角色，会用到它们的额度；同时改多处文件要你同意。", "Writes to selected bosses' global rules: even when not named, the boss delegates to the roles turned on, using their quota; changing several things at once needs your consent."),
     parallel: AN.L("在分工协作之外，boss 自己决定同时改多处文件，额度用得更多。", "Beyond split work, the boss decides on its own to change several things at once, using more quota."),
     custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
@@ -27,7 +28,7 @@
   // One seat with no difficulty and no switch, its model the one the CLI talks to, which calls the image service.
   const IMAGE_SEAT = { role: "image_generation", difficulty: null, name: AN.L("生图（可选）", "Image generation (optional)") };
   const orchestrationSeat = (doc, role, difficulty) => difficulty ? doc[role]?.[difficulty] : doc[role];
-  const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
+  const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), meetings: AN.L("只开会", "Meetings only"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
   let orchestration = null; // { document, error, presets, roles, files, bosses } from GET /app/orchestration: what is saved.
   let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
   let orchestrationView = "off"; // The mode being looked at; looking changes nothing.
@@ -35,6 +36,30 @@
   let customTouched = false; // Typed into the editor, so its text is saved even with no boss on it yet.
   let splitOpened = new Set(); // Specialists the user split by difficulty while both seats are still the same.
   const orchestrationShown = () => orchestrationDraft || orchestration?.document;
+  // Whether a mode sends work to the orchestration seats; off and meetings-only never do.
+  const usesSeats = (mode) => Boolean(mode) && mode !== "off" && mode !== "meetings";
+  // The default meeting line from `meeting: { count, seats? }`, built from the same parts the rules file
+  // uses; a seat left empty is one the boss picks.
+  const MEETING_COUNTS = [2, 3, 4, 5, 6];
+  const MEETING_MODES = ["meetings", "split", "parallel"];
+  const meetingDefaultCount = () => orchestration?.presets?.meeting_parts?.default_count ?? 3;
+  const trimSeats = (seats) => {
+    const list = [...seats];
+    while (list.length && !list.at(-1)) list.pop();
+    return list;
+  };
+  const meetingOf = (doc) => ({ count: doc?.meeting?.count ?? meetingDefaultCount(), seats: trimSeats(doc?.meeting?.seats || []) });
+  const meetingLive = (doc) => Boolean(doc) && [doc.preset, ...Object.values(doc.apps || {})].some((mode) => MEETING_MODES.includes(mode));
+  function meetingLine(doc) {
+    const parts = orchestration?.presets?.meeting_parts;
+    if (!parts || !doc?.meeting) return "";
+    const { count, seats } = meetingOf(doc);
+    const named = seats.slice(0, count).filter((seat) => seat?.model && PROVIDER_NAMES[seat.provider]).map((seat) => (seat.effort ? parts.seat_effort : parts.seat)
+      .replace("{name}", PROVIDER_NAMES[seat.provider]).replace("{provider}", seat.provider)
+      .replace("{model}", seat.model).replace("{effort}", seat.effort || ""));
+    const template = !named.length ? parts.none : named.length === count ? parts.all : parts.some;
+    return template.replace("{count}", String(count)).replace("{seats}", named.join(parts.separator));
+  }
   const usesCustom = (doc) => doc?.preset === "custom" || Object.values(doc?.apps || {}).includes("custom");
   // The fixed catalog, or nothing from a page that was not given one: its roles are then left as saved.
   const roleCatalog = () => orchestration?.roles || [];
@@ -116,6 +141,13 @@
       const seat = orchestrationSeat(wanted, role, difficulty);
       if (seat && (!wasLive.includes(`${role}/${difficulty}`) || !sameJson(seat, orchestrationSeat(saved, role, difficulty)))) await listSeatModel(seat);
     }
+    if (meetingLive(wanted)) {
+      const before = meetingOf(saved).seats;
+      const now = meetingOf(wanted);
+      for (const [i, seat] of now.seats.slice(0, now.count).entries()) {
+        if (seat && !(meetingLive(saved) && sameJson(seat, before[i] ?? null))) await listSeatModel(seat);
+      }
+    }
     const response = await fetch("/app/orchestration", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
@@ -140,6 +172,10 @@
     const presets = orchestration?.presets;
     const text = presets?.[mode];
     if (!text) return text;
+    if (mode === "meetings") {
+      const { head, tail } = presets.meetings_parts || {};
+      return head == null ? text : head + meetingLine(orchestrationShown()) + tail;
+    }
     const image = presets.image_generation || "";
     const shown = orchestrationShown();
     const enabled = enabledGroups(shown);
@@ -147,9 +183,9 @@
       .map((role) => presets.role_sections?.[role.group] || "");
     const parts = presets.split_parts;
     let base = mode === "split" && parts
-      ? parts.base + (shown?.split_options?.meetings ? parts.meetings_own : parts.meetings_asked)
+      ? parts.base + (shown?.split_options?.meetings ? parts.meetings_own : parts.meetings_asked) + meetingLine(shown)
       : mode === "parallel" && parts && presets.parallel_base
-        ? presets.parallel_base + (shown?.parallel_options?.meetings === false ? parts.meetings_asked : parts.meetings_own)
+        ? presets.parallel_base + (shown?.parallel_options?.meetings === false ? parts.meetings_asked : parts.meetings_own) + meetingLine(shown)
         : presets.role_base?.[mode] ?? text.replace(image, "");
     if (shown?.lead_only && presets.lead && (mode === "split" || mode === "parallel")) base = base.replace(presets.lead.asked, presets.lead.always);
     return [base, ...sections, shown?.image_generation ? image : ""].join("");
@@ -252,7 +288,7 @@
   // Bosses on a saved mode dispatch through the seats, each boss by its own row.
   function renderTaskScope() {
     const on = orchestration && !orchestration.error
-      ? orchestration.bosses.filter((boss) => bossMode(orchestration.document, boss) !== "off") : [];
+      ? orchestration.bosses.filter((boss) => usesSeats(bossMode(orchestration.document, boss))) : [];
     const names = on.flatMap((boss) => boss.labels).join(AN.L("、", ", "));
     $("task-scope").hidden = !on.length;
     $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“高级”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Advanced; solo tasks are offered only to bosses without orchestration.`) : "";
@@ -281,10 +317,10 @@
     else setSharedSeat(group, seat);
   }
 
-  function seatRow(group, label, name, seat, onSet) {
+  function seatRow(group, label, name, seat, onSet, unset = SEAT_UNSET, scene = "task") {
     return el("div", { className: "review-row" },
       el("div", { className: "review-role" }, label),
-      ...seatSelects(group, name, seat, onSet, SEAT_UNSET));
+      ...seatSelects(group, name, seat, onSet, unset, undefined, scene));
   }
 
   // A switch put back to what is saved restores the saved form of its key, so an explicit default is no edit.
@@ -326,6 +362,48 @@
       el("span", {}, AN.L("boss 只负责编排", "Boss only orchestrates")),
       settingTip(AN.L("打开后小事也交给员工，boss 只拆分、写简报和验收；更慢，也更费员工额度。关闭时 boss 自己做小事，你也可以对某个任务说「这次只负责编排」。", "On: even small tasks go to employees, and the boss only splits work, writes briefs and checks results; slower and uses more employee quota. Off: the boss does small tasks itself, and you can still say \"only orchestrate this time\" for one task."), true));
     box.replaceChildren(meetings, lead);
+  }
+
+  // Count and seats are saved together; no seat picked at the default count leaves the key out, and
+  // a pick that comes back to what is saved restores the saved form. A smaller count drops the seats past it.
+  function setMeeting({ count = meetingOf(orchestrationShown()).count, seats = meetingOf(orchestrationShown()).seats }) {
+    const saved = orchestration.document;
+    const { meeting: _, ...rest } = orchestrationShown();
+    const kept = trimSeats(seats.slice(0, count));
+    const next = kept.length ? { count, seats: kept } : { count };
+    const empty = !kept.length && count === meetingDefaultCount();
+    const same = Object.hasOwn(saved, "meeting") && sameJson(meetingOf(saved), { count, seats: kept });
+    orchestrationDraft = same ? { ...rest, meeting: saved.meeting } : empty ? rest : { ...rest, meeting: next };
+    renderOrchestration();
+    advancedEdited();
+  }
+
+  function setMeetingSeat(index, seat) {
+    const seats = Array.from({ length: Math.max(index + 1, meetingOf(orchestrationShown()).seats.length) },
+      (_, i) => meetingOf(orchestrationShown()).seats[i] ?? null);
+    seats[index] = seat;
+    setMeeting({ seats });
+  }
+
+  function renderMeetingSettings(preset, editable) {
+    const box = $("orchestration-meeting");
+    box.hidden = !MEETING_MODES.includes(preset) || !editable || !orchestration.presets?.meeting_parts;
+    if (box.hidden) return box.replaceChildren();
+    const focusKey = document.activeElement?.dataset?.focusKey;
+    const { count, seats } = meetingOf(orchestrationShown());
+    const sizeLabel = AN.L("开会人数", "Meeting size");
+    const sizes = el("div", { className: "segment-control", role: "radiogroup", "aria-label": sizeLabel },
+      ...MEETING_COUNTS.map((n) => el("button", {
+        type: "button", className: `segment-btn${n === count ? " active" : ""}`, role: "radio", dataset: { focusKey: `meeting/count/${n}` },
+        "aria-checked": String(n === count), onClick: () => setMeeting({ count: n }),
+      }, String(n))));
+    box.replaceChildren(el("div", { className: "review-row" }, el("div", { className: "review-role" }, sizeLabel), sizes),
+      ...Array.from({ length: count }, (_, i) => {
+        const label = AN.L(`席位 ${i + 1}`, `Seat ${i + 1}`);
+        return seatRow(`meeting/${i}`, label, label, seats[i] ?? null, (seat) => setMeetingSeat(i, seat),
+          AN.L("由 boss 选", "Chosen by boss"), "discussion");
+      }));
+    if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
   // A role's switch, and its seats while on; turned off, they stay saved out of sight. A specialist
@@ -391,17 +469,18 @@
     // An unread or broken file cannot take edits: nothing here could be saved or discarded.
     const editable = orchestration && !orchestration.error;
     renderSplitOptions(preset, editable);
+    renderMeetingSettings(preset, editable);
     $("orchestration-custom").hidden = preset !== "custom" || !editable;
     const roles = $("orchestration-roles");
     roles.hidden = !editable;
     if (!roles.hidden) {
       const focusKey = document.activeElement?.dataset?.focusKey;
       const { role, difficulty, name } = IMAGE_SEAT;
-      roles.replaceChildren(...(preset === "off" || !roleCatalog().length ? [] : roleSections(shown)),
-        el("div", { className: "review-row" },
+      roles.replaceChildren(...(!usesSeats(preset) || !roleCatalog().length ? [] : roleSections(shown)),
+        ...(preset === "meetings" ? [] : [el("div", { className: "review-row" },
           el("div", { className: "review-role" }, el("strong", {}, name,
             settingTip(AN.L("这里选的是和 CLI 对话的模型；图片由那个 CLI 调用它自己能用的生图服务来出。", "This picks the model you talk to in the CLI; the image itself comes from whatever image service that CLI can call.")))),
-          ...seatSelects(`${role}/${difficulty}`, name, shown[role], (next) => setOrchestrationSeat(role, difficulty, next), SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation"))));
+          ...seatSelects(`${role}/${difficulty}`, name, shown[role], (next) => setOrchestrationSeat(role, difficulty, next), SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation")))]));
       if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
     }
     renderRuleFiles();
@@ -468,10 +547,12 @@
   function seatConflicts() {
     const review = REVIEW_ROLES.map(([role, name]) => ({ section: "review", name: AN.L(`${name}评审`, `${name} review`), seat: seatsShown()[role] }));
     const doc = orchestrationShown();
-    const live = Boolean(doc) && (doc.preset !== "off" || Object.values(doc.apps || {}).some((mode) => mode !== "off"));
+    const live = Boolean(doc) && [doc.preset, ...Object.values(doc.apps || {})].some(usesSeats);
     const roles = !live ? [] : liveSeats(doc)
       .map(({ role, difficulty, name }) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
-    return [...review, ...roles]
+    const meeting = !meetingLive(doc) ? [] : (doc.meeting?.seats || []).slice(0, meetingOf(doc).count)
+      .map((seat, i) => ({ section: "orchestration", name: AN.L(`开会席位 ${i + 1}`, `Meeting seat ${i + 1}`), seat }));
+    return [...review, ...roles, ...meeting]
       .filter(({ seat }) => seat && (outOfPool(seat.provider, seat.model) || unlisted(seat.provider, seat.model)))
       .map((conflict) => ({ ...conflict, blocking: outOfPool(conflict.seat.provider, conflict.seat.model) }));
   }
@@ -563,19 +644,21 @@
     ? listedPool(provider).filter((id) => getAllModelIds(provider).includes(id)) : getAllModelIds(provider);
 
   // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
-  function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`)) {
+  function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`), scene = "task") {
     const provider = seat?.provider || "";
     // Orchestrated bosses use confirmed CLI configurations, not the hidden solo-task switches.
     const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
     const doc = orchestrationShown();
-    const orchestrated = doc && [doc.preset, ...Object.values(doc.apps || {})].some((mode) => mode && mode !== "off");
+    const orchestrated = doc && [doc.preset, ...Object.values(doc.apps || {})].some(usesSeats);
     const inScene = (p, scene) => Object.hasOwn(S.currentDoc.modes?.[scene] || {}, p);
     const confirmed = (p) => {
       if (SCENE_IDS.every(isRestricted)) return SCENE_IDS.some((scene) => inScene(p, scene));
       if (isRestricted("task")) return inScene(p, "task");
       return Object.hasOwn(S.currentDoc.clis || {}, p) || SCENE_IDS.some((scene) => inScene(p, scene));
     };
-    const usable = (p) => (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
+    // A meeting seat follows the 开会 scene as Employees sets it, and may use any CLI, the boss's own too.
+    const usable = (p) => scene !== "task" ? known(p) && slot(scene, p).enabled
+      : (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
     const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
       : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
     const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
@@ -587,13 +670,13 @@
     if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
     // A seat saves the level it runs at, as a member does.
     const seatModel = (next, model) => {
-      const effort = savedEffort(next, model, sceneEffort("task", next, model));
+      const effort = savedEffort(next, model, sceneEffort(scene, next, model));
       return effort ? { provider: next, model, effort } : { provider: next, model };
     };
     const pickCli = (next) => {
       if (!next) return onSet(null);
       const ids = seatModels(next);
-      const preferred = slot("task", next).model || nativeDefault(next).model;
+      const preferred = slot(scene, next).model || nativeDefault(next).model;
       onSet(seatModel(next, ids.includes(preferred) ? preferred : ids[0]));
     };
     const pickModel = (model) => onSet(seatModel(provider, model));

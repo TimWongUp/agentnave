@@ -2,14 +2,23 @@
   "version": 1,
   "preset": "off",
   "apps": {
+    "pi": "meetings",
     "grok": "split",
     "codex@.codex-work": "parallel"
   },
   "effective_apps": {
+    "pi": "meetings",
     "claude": "split",
     "grok": "split",
     "codex": "off",
     "codex@.codex-work": "parallel"
+  },
+  "meeting": {
+    "count": 3,
+    "seats": [
+      {"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"},
+      null
+    ]
   },
   "image_generation": null
 }

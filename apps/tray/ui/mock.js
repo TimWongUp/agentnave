@@ -142,13 +142,23 @@
 
 
   const mockOrchestration = {
-    document: { version: 1, preset: "split", apps: { codex: "off" } },
+    document: { version: 1, preset: "split", apps: { codex: "off" }, meeting: { count: 4, seats: [{ provider: "codex", model: "gpt-6.1-sol", effort: "high" }] } },
     error: null,
     bosses: [
       { keys: ["claude", "grok"], labels: ["Claude Code", "Grok"], mark: "claude" },
       { keys: ["codex"], labels: ["Codex"], mark: "codex" },
     ],
-    presets: { split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则" },
+    presets: {
+      meeting: null,
+      meetings_parts: { head: "## AgentNave 编排偏好\n\n- （示例）只开会的规则", tail: "\n- （示例）开完会再收尾。" },
+      meeting_parts: {
+        default_count: 3, separator: "、",
+        seat: "{name}（provider=`{provider}`，model=`{model}`）", seat_effort: "{name}（provider=`{provider}`，model=`{model}`，effort=`{effort}`）",
+        all: "\n- 开会默认 {count} 席：{seats}。", some: "\n- 开会默认 {count} 席：{seats}，其余由 boss 选。", none: "\n- 开会默认 {count} 席，成员由 boss 选。",
+      },
+      split_parts: { base: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。" },
+      parallel_base: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则",
+      meetings: "## AgentNave 编排偏好\n\n- （示例）只开会的规则", split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则" },
     roles: [
       ["explorer", "通用探索", "General exploration", "read", true],
       ["worker", "通用执行", "General execution", "write", true],

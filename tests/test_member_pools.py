@@ -11,7 +11,13 @@ from agentnave import mcp_runtime
 from agentnave.adapters.base import AdapterHooks
 from agentnave.host import Host
 from agentnave.mcp_server import mcp
-from agentnave.members import MemberFile, list_members, read_members
+from agentnave.members import (
+    MemberFile,
+    MemberFileError,
+    list_members,
+    read_members,
+    validate_task_seat,
+)
 from agentnave.task_start import apply_task_defaults
 
 
@@ -161,19 +167,23 @@ def test_orchestration_hides_task_catalogue_and_resolves_seats_from_clis(
         apply_task_defaults("grok", None, {"model": "seat-only"}, [], frozenset(), host)
     path.write_text(json.dumps(document))
 
-    # Turning orchestration off restores the ordinary candidates and scenario override.
-    roles["preset"] = "off"
-    role_path.write_text(json.dumps(roles))
-    restored = list_members(frozenset(), host)
-    assert not restored.orchestration.enabled
-    assert any(
-        member.model == "task-only" and member.default == ["task"] for member in restored.members
-    )
-    assert apply_task_defaults("pi", None, {}, [], frozenset(), host)[0]["model"] == "task-only"
-    assert (
-        apply_task_defaults("pi", None, {"model": "shared"}, [], frozenset(), host)[0]["effort"]
-        == "low"
-    )
+    # Turning orchestration off or to meetings-only restores ordinary candidates and scenario overrides.
+    for preset in ("off", "meetings"):
+        roles["preset"] = preset
+        role_path.write_text(json.dumps(roles))
+        restored = list_members(frozenset(), host)
+        assert not restored.orchestration.enabled
+        assert any(
+            member.model == "task-only" and member.default == ["task"]
+            for member in restored.members
+        )
+        assert apply_task_defaults("pi", None, {}, [], frozenset(), host)[0]["model"] == "task-only"
+        assert (
+            apply_task_defaults("pi", None, {"model": "shared"}, [], frozenset(), host)[0]["effort"]
+            == "low"
+        )
+        with pytest.raises(MemberFileError, match="not enabled"):
+            validate_task_seat("worker-easy", host)
     # A seat uses CLI shared settings even when all its options were explicit.
     (tmp_path / "review.json").write_text(
         json.dumps({"version": 1, "seats": {"correctness-reviewer": roles["explorer"]["easy"]}})
