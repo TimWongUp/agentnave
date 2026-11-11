@@ -585,6 +585,8 @@
     // Asking to listen is asking to speak again after playback stopped on errors.
     halted = false; failures = 0;
     unlisten(false);
+    // An office poll from before this session fed nobody; `heed` reads until the office feeds it again.
+    fed.delete(target.group);
     if (!current && !queue.length) started = [];
     const session = follow = { group: target.group, room: target.room || null, desk: target.desk || null, shown: target.desk ? target.shown : null, title: "", expires_at: Date.now() + (config.listen_minutes ?? 60) * 60000, loaded: false, seen: new Map(), controller: new AbortController(), timer: null, expiryTimer: null, backlogTimer: null, overloaded: false };
     batch = null; lastAlbum = null;
