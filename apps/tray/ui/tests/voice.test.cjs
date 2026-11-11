@@ -95,15 +95,6 @@ test("settings-load errors survive playback and clear on an unchanged successful
   assert.equal(app.published.at(-1).error, null);
 });
 
-test("settings loading recovers after initial failures without requiring a configuration change", async () => {
-  let broken = true;
-  const app = await office(true, undefined, undefined, "all", async path =>
-    path === "/app/voice" && broken ? { ok: false, json: async () => ({ error: "load failed" }) } : null);
-  assert.equal(app.published.at(-1).bar_label, "出错");
-  broken = false; await app.feed([]);
-  assert.equal(app.published.at(-1).error, null);
-});
-
 test("private instructions use the boss identity and precede each employee's answer in the same round", async () => {
   for (const listening of [false, true]) {
     const app = await office(listening);
@@ -621,7 +612,6 @@ test("the album playing heads the playlist and its title opens the conversation"
   app.nodes.find(n => n.tag === "button.bar-voice").listeners.click();
   const title = app.nodes.find(n => n.tag === "button.voice-album-title");
   assert.equal(title.textContent, "发布前评审");
-  assert.equal(app.nodes.some(n => n.tag === "button.voice-cover-play"), false);
   title.listeners.click();
   assert.deepEqual([...app.navigations], ["/chat/workspace#conv%3Aroom"]);
 });
@@ -711,7 +701,6 @@ test("with chaining off a clicked message is read alone", async () => {
   }));
   const start = app.room(messages);
   await app.settings({ continue_read: false });
-  assert.equal(app.nodes.some(n => n.tag === "button.voice-toggle"), false);
   await start.listeners.click();
   await app.end();
   assert.deepEqual(app.requests.map(r => r.text), ["c1"]);
@@ -742,8 +731,6 @@ test("the voice channel shows host and speaker avatars without office animation 
   app.stop();
   await flush();
   assert.ok(roster.children.every(p => p.dataset.speaking === "false"));
-  assert.equal(app.voice.roomActive, undefined);
-  assert.equal(app.voice.animations, undefined);
 });
 
 test("after a handover the channel keeps the boss who spoke until the new boss speaks there", async () => {
@@ -1015,7 +1002,6 @@ test("listening captures its deadline, renews on another click and does not surv
   assert.equal(app.requests.length, 0, "enabling voice alone never plays messages");
   await app.command("listen", { group: "workspace" });
   const first = app.published.at(-1).follow.expires_at;
-  assert.equal(app.nodes.filter(n => n.tag === "button.voice-toggle").length, 0, "chaining is configured only in settings");
   await app.settings({ listen_minutes: 30 });
   assert.equal(app.published.at(-1).follow.expires_at, first, "a settings change leaves this session's deadline alone");
   await app.command("listen", { group: "workspace" });

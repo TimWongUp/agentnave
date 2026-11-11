@@ -46,7 +46,7 @@ function chip(skill, host) {
     if (pending) S.want.delete(key);
     else S.want.set(key, { host, skill: skill.name, enabled: !saved });
     render();
-    advancedEdited();
+    AN.settings.advancedEdited();
   });
   return b;
 }
@@ -84,7 +84,7 @@ function render() {
   if (!S.catalog || !S.hosts) return;
   const focusKey = document.activeElement?.dataset?.focusKey;
   box.replaceChildren(h("div.skill-rows", {}, S.catalog.skills.map(row)));
-  if (typeof renderReviewSeats === "function") renderReviewSeats();
+  if (typeof AN.settings.renderReviewSeats === "function") AN.settings.renderReviewSeats();
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
 }
 
@@ -121,7 +121,7 @@ async function refresh() {
     S.hosts = hosts.hosts;
     dropStale();
     render();
-    renderAdvancedBar();
+    AN.settings.renderAdvancedBar();
   } catch (e) {
     $("skill-list").replaceChildren(h("p.guidance", {}, L(`读取技能失败：${e.message || "未知错误"}`, `Failed to load skills: ${e.message || "Unknown error"}`)));
   }

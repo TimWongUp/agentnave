@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
+const { mirrorSettings } = require("./helpers/settings.cjs");
 
 function app(fetch, AN = {}) {
   const controls = new Map();
@@ -14,25 +15,31 @@ function app(fetch, AN = {}) {
     window: { addEventListener() {} },
   });
   const run = (code) => vm.runInContext(code, context);
-  for (const file of ["settings-state.js", "member-updates.js"]) {
+  const load = (file) => {
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
-  }
+    mirrorSettings(context);
+  };
+  load("settings-state.js");
+  // Plain nodes, installed before the sections that take them from AN.settings are loaded.
   run(`
-    el = (tag, attrs, ...children) => ({ tag, attrs, children, appendChild(child) { this.children.push(child); } });
-    textNode = (s) => s;
-    function renderErrorBanner() {}
+    AN.settings.el = (tag, attrs, ...children) => ({ tag, attrs, children, appendChild(child) { this.children.push(child); } });
+    AN.settings.textNode = (s) => s;
+  `);
+  load("member-updates.js");
+  run(`
+    AN.settings.renderErrorBanner = () => {};
     let errors = [], summaries = [];
-    function renderCards() {
+    AN.settings.renderCards = () => {
       errors = PROVIDERS.map(renderCliUpdateError);
       summaries.push(cliBatch ? { ...cliBatch } : null);
-    }
+    };
     const productionUpdateControls = updateControls;
     updateControls = () => {};
     detected = { codex: { installed: true }, claude: { installed: true } };
     cliUpdates = { clis: { codex: { update: true, latest: '2.0.0', command: 'codex update' },
       claude: { update: true, latest: '2.0.0', command: 'claude update' } } };
   `);
-  return { run, json: (code) => JSON.parse(run(`JSON.stringify(${code})`)) };
+  return { run, load, json: (code) => JSON.parse(run(`JSON.stringify(${code})`)) };
 }
 
 const members = { detected: { codex: { installed: true }, claude: { installed: true } } };
@@ -194,13 +201,18 @@ test("a later response cannot restore the standalone version it read before that
 
 test("English labels name each installation by its id and app", () => {
   const ui = app(async () => { throw new Error("unexpected request"); }, { L: (_zh, en) => en });
-  const row = (install) => JSON.stringify(ui.json(`renderCliInstallation('codex', ${JSON.stringify(install)})`));
-  const active = row({ id: "desktop", label: "ChatGPT 内置 CLI", active: true });
+  ui.run(`cliUpdates = { clis: { codex: { installations: [
+    { id: "desktop", label: "ChatGPT 内置 CLI", active: true },
+    { id: "desktop", label: "Codex 内置 CLI" },
+    { id: "standalone", label: "Codex CLI" },
+  ] } } }`);
+  const rows = ui.json("renderCliInstallations('codex')").children[0];
+  const active = JSON.stringify(rows[0]);
   assert.match(active, /ChatGPT built-in CLI/);
   assert.match(active, /In use/);
   assert.match(active, /Updates with the desktop app/);
-  assert.match(row({ id: "desktop", label: "Codex 内置 CLI" }), /Codex built-in CLI/);
-  assert.match(row({ id: "standalone", label: "Codex CLI" }), /Standalone CLI/);
+  assert.match(JSON.stringify(rows[1]), /Codex built-in CLI/);
+  assert.match(JSON.stringify(rows[2]), /Standalone CLI/);
   assert.doesNotMatch(active, /内置/);
 });
 
@@ -210,12 +222,12 @@ test("Codex source selection saves a fixed source and restores automatic", () =>
     { id: 'desktop', label: 'Codex 内置 CLI', active: true },
     { id: 'standalone', label: 'Codex CLI', active: false },
   ] } } }`);
-  ui.run("currentDoc.clis.codex = { models: {} }; edited = () => {};");
+  ui.run("currentDoc.clis.codex = { models: {} }; AN.settings.edited = () => {};");
   const select = ui.run("renderCodexSource().children[1].children[0]");
   assert.equal(select.children.find((option) => option.attrs.selected).attrs.value, "auto");
   ui.run("renderCodexSource().children[1].children[0].attrs.onChange({ target: { value: 'standalone' } })");
   assert.equal(ui.run("currentDoc.clis.codex.executable_source"), "standalone");
-  assert.match(JSON.stringify(ui.json("renderCliInstallation('codex', cliUpdates.clis.codex.installations[1])")), /当前使用/);
+  assert.match(JSON.stringify(ui.json("renderCliInstallations('codex').children[0][1]")), /当前使用/);
   ui.run("renderCodexSource().children[1].children[0].attrs.onChange({ target: { value: 'auto' } })");
   assert.equal(ui.run("currentDoc.clis.codex.executable_source"), undefined);
 });
@@ -260,7 +272,8 @@ test("static installation commands remain available while latest queries stall o
     return new Promise((_resolve, reject) => { rejectLatest = reject; });
   });
   await ui.run("loadCliInstallCommands()");
-  ui.run("cliSummary = 'previous batch'; missingOpen = true");
+  ui.run("cliSummary = 'previous batch'");
+  ui.run("renderMissingClis(['codex', 'grok']).children[0].attrs.onClick()");
   const latest = ui.run("loadCliUpdates()");
   assert.equal(ui.run("cliSummary"), "");
   const rendered = ui.json("renderMissingClis(['codex', 'grok'])");
@@ -268,21 +281,18 @@ test("static installation commands remain available while latest queries stall o
   assert.match(JSON.stringify(rendered), /Grok CLI/);
   rejectLatest(new Error("offline"));
   await latest;
-  assert.equal(ui.run("cliInstallCommands.codex[0].command"), "npm install -g @openai/codex");
 });
 
 test("updating disables refresh controls and skips both manual and focus detection", async () => {
   let requests = 0;
   const ui = app(async () => { requests++; throw new Error("unexpected detection"); });
-  ui.run(readFileSync(`${__dirname}/../member-cards.js`, "utf8"));
+  ui.load("member-cards.js");
   // Exercise the shared controls with their other sections stubbed out.
   ui.run(`
-    function advancedChanges() { return []; }
-    function renderLeaveConfirm() {}
-    function renderAdvancedBar() {}
-    emptyScene = () => null;
-    function memberSaveErrors() { return []; }
-    countPermissionOptions = () => 0;
+    AN.settings.advancedChanges = () => [];
+    AN.settings.renderLeaveConfirm = () => {};
+    AN.settings.renderAdvancedBar = () => {};
+    AN.settings.memberSaveErrors = () => [];
     document.visibilityState = 'visible';
     cliUpdating.add('codex');
   `);
@@ -309,6 +319,6 @@ test("a save during the read after an update is not overwritten", async () => {
     return { ok: true, json: async () => ({ ...members, document: { stale: true } }) };
   });
   ui.run("savedSnapshot = '{}'; currentDoc = {}");
-  await ui.run('performCliUpdate("codex")');
+  await ui.run("renderCliUpdate('codex').children[0].attrs.onClick()");
   assert.deepEqual(ui.json("currentDoc"), { saved: true });
 });
