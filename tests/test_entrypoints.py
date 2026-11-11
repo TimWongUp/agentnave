@@ -159,13 +159,13 @@ async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_r
         path.write_text(json.dumps(document))
         for role in catalog:
             for arguments in (
-                {"seat": f"{role.seat_prefix}-hard"},
-                {"seat": f"{role.seat_prefix}-hard", "provider": "claude"},
+                {"cwd": str(tmp_path), "seat": f"{role.seat_prefix}-hard"},
+                {"cwd": str(tmp_path), "seat": f"{role.seat_prefix}-hard", "provider": "claude"},
+                {"session_id": "session-e2e", "seat": f"{role.seat_prefix}-hard"},
             ):
-                rejected = await client.call_tool(
-                    "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
-                )
+                rejected = await client.call_tool("start_agent", {"prompt": "ok", **arguments})
                 assert rejected.is_error and "not enabled" in str(rejected.content)
+                assert "inherited" not in str(rejected.content)
         for arguments in ({}, {"provider": "claude", "cwd": str(tmp_path)}):
             rejected = await client.call_tool(
                 "start_agent", {"prompt": "ok", "session_id": "session-e2e", **arguments}
@@ -173,6 +173,7 @@ async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_r
             assert rejected.is_error and "worker-documents-hard seat is not enabled" in str(
                 rejected.content
             )
+            assert "inherited seat" in str(rejected.content)
         # Existing history stays readable and a new duty keeps the existing inheritance rule.
         resumed = await _start_and_wait(client, session_id="session-e2e", role="普通续接")
         assert "access" not in resumed
@@ -257,6 +258,30 @@ async def test_resume_does_not_inherit_a_declared_access(
         )
         resumed = await _start_and_wait(client, session_id="session-e2e")
         assert "access" not in resumed
+
+
+@pytest.mark.asyncio
+async def test_resume_without_seat_keeps_the_threads_last_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    async with Client(mcp) as client:
+        await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            provider="claude",
+            provider_options={"model": "cheap", "effort": "low"},
+        )
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert (resumed["model"], resumed["effort"]) == ("cheap", "low")
+        assert {"model (session_id history)", "effort (session_id history)"} <= set(
+            cast(list[str], resumed["defaults_applied"])
+        )
+        switched = await _start_and_wait(
+            client, session_id="session-e2e", provider_options={"model": "other"}
+        )
+        assert switched["model"] == "other" and "effort" not in switched
 
 
 @pytest.mark.asyncio
@@ -375,7 +400,7 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
                         TaskRecord(
                             id=f"saved-{provider}-{owner}",
                             provider=provider,
-                            model="PRIVATE_MODEL",
+                            model="own-model" if owner == "test-chat" else "PRIVATE_MODEL",
                             cwd="/PRIVATE_CWD",
                             prompt="PRIVATE_PROMPT",
                             role="own-role" if owner == "test-chat" else "PRIVATE_ROLE",
@@ -396,7 +421,7 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
             client, provider="claude", cwd=str(tmp_path), session_id="session-e2e"
         )
         assert "PRIVATE_" not in str(selected)
-        assert cast(dict[str, object], selected["identity"])["role"] == "own-role"
+        assert str(cast(dict[str, object], selected["identity"])["handle"]).endswith("·own-role")
         for arguments in ({}, {"provider": "claude"}):
             foreign = await client.call_tool(
                 "start_agent",
@@ -1237,10 +1262,20 @@ async def test_mcp_rejects_titles_wider_than_one_short_line(tmp_path: Path, titl
             {"provider": "codex", "prompt": "x", "cwd": str(tmp_path), "title": title},
         )
         show = await client.call_tool("run_round", {"prompt": "x", "title": title})
+        one_seat = await client.call_tool(
+            "run_round",
+            {"title": "ok", "members": [{"id": "a", "provider": "claude"}]},
+        )
 
     for result in (task, show):
         assert result.is_error is True
-        assert "within 48" in str(result.content)
+        text = cast(TextContent, result.content[0]).text
+        assert "within 48" in text
+        assert all(noise not in text for noise in ("validation error", "input_value", "http", "\n"))
+    assert one_seat.is_error is True
+    seat_text = cast(TextContent, one_seat.content[0]).text
+    assert "members" in seat_text and "at least 2" in seat_text and "got 1" in seat_text
+    assert all(noise not in seat_text for noise in ("validation error", "input_value", "http"))
 
 
 @pytest.mark.asyncio
@@ -1847,7 +1882,13 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         applied = ["model", "effort", "agent", "permission_mode", "permission_fallback"]
         assert defaulted["defaults_applied"] == applied
         resumed = await start({}, "session-e2e")
-        assert resumed["defaults_applied"] == applied
+        # A resumed thread keeps its own model and effort; the App still fills the rest.
+        assert resumed["model"] == "chosen" and resumed["effort"] == "medium"
+        assert resumed["defaults_applied"] == [
+            *applied[2:],
+            "model (session_id history)",
+            "effort (session_id history)",
+        ]
         explicit = await start({"model": "chosen", "effort": "high", "agent": "explicit"})
         assert (
             explicit["defaults_applied"] == ["permission_mode", "permission_fallback"]

@@ -1,6 +1,6 @@
 # 会话与审核
 
-本文件补充会议室的审核、主持人、隔离，以及历史。
+开会议室、审核、补跑席位，或回读保存的会话时读本文。
 
 ## 保存与查看
 
@@ -9,16 +9,35 @@ AgentNave 把私聊任务和会议室都保存到数据目录（默认 `~/.agent
 - `start_agent` 的 `title` 是新任务会话名，在第一次派发时给出，最多 48 列（中文算 2 列）；本聊天的第一个会话标题同时是工作区名，见 SKILL 主文件；之后改名由用户在 App 办公室里右键进行，boss 不改。`conversation_id` 把新线程归入已有任务会话；续用原生 `session_id` 会归入对应会话。同一原生会话不可同时执行两个任务。
 - `list` 按最近活动列出会话（`kind`、`limit` 过滤，默认最近 10 个、最多 200 个，`total` 是总数）；`writable=false` 表示其他服务占用：可读不可写，回到占用它的宿主继续或等会话空闲，不另开会话拆散历史。
 - `read_conversation` 默认返回会话信息和最终消息：任务、已公开回答、缺席、转发、主持人发言和待审回答（`pending_answer`）；`include_private=true` 另含各席私密指令（`instruction`）和不公开的回答（`private_answer`）；`since_round` 只取某轮之后；`limit` 只取最近若干条，略去的条数在 `omitted`。私聊会话返回每个任务的 prompt、最终回复和原生 `session_id`。结果只给 boss。
+- 回读历史优先默认结果和 `since_round`，长会话加 `limit`。
 - 会话不需要结束，boss 也不删除会话；清理由用户在 App 中进行。
 
 ## 开会议室
 
-`run_round(title, members, cwd, prompt, seats, order?, review?, isolated?)` 一次新建会议室并启动第 1 轮，返回的 `group_id` 也是会话 ID；只准备会议室时省略 `prompt` 和 `seats`。之后用 `run_round(group_id, seats, order, prompt)` 继续，重启后仍可用同一 ID，各席续接自己的原生会话；只能继续本聊天 `manager_session_id` 建的会议室，无归属的旧会议室只读，需新建。
+`run_round(title, members, cwd, prompt, seats, manager_session_id, order?, review?, isolated?)` 一次新建会议室并启动第 1 轮，返回的 `group_id` 也是会话 ID；只准备会议室时省略 `prompt` 和 `seats`。之后用 `run_round(group_id, seats, order, prompt, manager_session_id)` 继续，重启后仍可用同一 ID，各席续接自己的原生会话；只能继续本聊天 `manager_session_id` 建的会议室，无归属的旧会议室只读，需新建。
 
-- **审核**（`review=true`）：成功回答先待审，`wait` 以 `reason=review_needed` 提前返回，席位状态为 `pending_review`。读取正文后用 `decide_answers(round_id, {seat_id: "publish"|"private"})` 决定；并联轮全部决定后一次提交，串联轮决定后才轮到下一席。`private` 的回答只在 boss 与该席之间：其他席位看不到，原文保留，App 显示为该席对 boss 的未公开回复；该席下一轮会被告知它的回答没有公开。有待审回答时不能开新轮次或发主持人发言；`cancel` 或服务退出时未决回答按不公开处理。只能公开或不公开原文，不改写答案；需要重答就不公开后再开一轮。
-- **隔离**（`isolated=true`）：仅在用户明确要求工具层面限制访问，并同时要求服务准备独立席位目录时启用。每席使用服务准备的独立空目录并启用 `restricted_tools`，只能指定 `model`、`effort`（Pi 另可 `provider`）；调用方 `cwd` 被忽略。会议室（隔离与否）都可加入宿主被排除的 CLI；排除项只约束 `start_agent`。需要读代码或改文件的协作不要隔离。
-- **补跑失败席位**：并联轮还在跑时，等 `seat_lost` 或看到席位 `failed`、`blocked`，排除原因后调用 `run_round(group_id, retry_seats=[席位])`。它沿用本轮的输入和私密指令，仍看不到其他席位本轮的答案，答案记入本轮，线程绑定在该席位上。全员结束后这一轮就不能补跑，也不能用于串联轮：在新一轮点名该席，它以新线程补读全部会议记录，包括其他席位的答案；要保持独立时用私密指令说明。
-- **主持人**：`run_round(group_id, prompt)` 不带 `seats` 时，在轮次之间发一条公开发言，所有席位下一轮作为数据收到；会议总结也复用此入口，收尾步骤见 SKILL 主文件。私密信息放 `instructions`，不要写进公开任务或主持人发言。
+- **席位**：每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`；席位只共享已提交条目，私密指令只给对应席位。席位参数只能在新建会议时给。并联写代码的席位各用独立 worktree。
+- **轮次**：同组同时一轮；`run_round` 保持默认 `wait=false`，先返回 `round_id` 再单独 `wait`；不自动重试，不设每席截止时间。串联轮只占一个运行名额，但到最后一席启动前（包括等待审核时）一直占着。会议室可跨服务重启继续，运行中的进程和句柄不恢复。
+- **委员会**：两轮 `parallel`，先各自给根因与方案，再看过上一轮公开的答案后补充或修正；boss 汇报结论、共识、保留的异议及如何收敛。用户要求最终收束时再加一轮 `serial`，后发言者在前者基础上回应、收束。
+- **boss 主动开会**（全局规则的档位允许时）：默认 3 席，从会议默认组员里挑不同厂商的模型，尽量避开方案作者的模型；两轮 `parallel` 后由 boss 综合，仍有实质分歧就在总结里列出分歧和各方理由交用户决定，不另加轮次，也不另派模型裁决。用户点名的人数、轮数优先。
+- **主持人**：`run_round(group_id, prompt, manager_session_id)` 不带 `seats` 时，在轮次之间发一条公开发言，不启动组员，也不增加轮次，所有席位下一轮作为数据收到。私密信息放 `instructions`，不要写进公开任务或主持人发言。
+- **会议总结**：收齐本场轮次终态并处理完审核后，boss 综合各轮写总结，汇报结论、共识与保留的异议，把准备发给用户的总结正文原样写入同一会议：`run_round(group_id, prompt="会议总结\n\n" + 总结正文, manager_session_id=...)`，省略 `seats`。收到保存成功的 `message_id` 后，把同一份总结回复用户；写入失败时如实说明总结未保存到会议。
+
+## 讨论范围与回复
+
+- 日常讨论保留 CLI 原生环境，用 prompt 约定范围；不因“讨论”“各自答”或“只看给定材料”自动启用 `restricted_tools`、`isolated`。
+- 派发时写清：允许查证时只读核验，要求只看给定材料时仅据此作答；只讨论和核验，不改文件、发送或部署；查证附出处，推测标注，声称执行成功时核对实际产物。
+- 仅在用户明确要求从工具层面限制访问时才设 `provider_options.restricted_tools=true`；同时要求服务准备独立席位目录时才用 `isolated=true`。
+- **隔离**（`isolated=true`）：每席使用服务准备的独立空目录并启用 `restricted_tools`，只能指定 `model`、`effort`（Pi 另可 `provider`）；调用方 `cwd` 被忽略。会议室（隔离与否）都可加入宿主被排除的 CLI；排除项只约束 `start_agent`。需要读代码或改文件的协作不要隔离。
+- 席位给结论、理由和分歧，不复述题目和他人观点，末尾写收尾两行。`restricted_tools` 的席位不能写文件，长内容分多轮。字数上限只在席位多、boss 上下文紧张或只要一句判断时作为参考给出，多席时写明是每席的上限。
+
+## 等待、审核与补跑
+
+- **等待**：普通会议中，单席成功不单独唤醒等待，未就绪快照也不交付该席完整答案；每席全文每轮只给一次，再看用 `read_conversation`。`prompt_pending` 对席位同样适用，按主文件的代答边界处理。
+- **审核**（`review=true`）：成功回答先待审，`wait` 以 `reason=review_needed` 提前返回，席位状态为 `pending_review`；不先裁决，继续 `wait` 会立即返回。读取正文后用 `decide_answers(round_id, {seat_id: "publish"|"private"})` 决定；并联轮全部决定后一次提交，串联轮决定后才轮到下一席。`private` 的回答只在 boss 与该席之间：其他席位看不到，原文保留，App 显示为该席对 boss 的未公开回复；该席下一轮会被告知它的回答没有公开。有待审回答时不能开新轮次或发主持人发言；`cancel` 或服务退出时未决回答按不公开处理。只能公开或不公开原文，不改写答案；需要重答就不公开后再开一轮。
+- **席位失败**：`seat_lost` 表示某席已失败或受阻而其他席仍在跑，只给状态和错误、不交付答案，按 `error` 决定补跑或继续等。席位刚收到 `execution_blocked` 时不急着取消，再 `wait` 一次看是否转为 `seat_lost`。不要另开私聊顶替，私聊线程接不回席位。
+- **补跑失败席位**：并联轮还在跑时，等 `seat_lost` 或看到席位 `failed`、`blocked`；若是席位参数配错（如模型名写错），`retry_seats` 沿用该席位建会时的参数会再失败一次，这种情况要新开会议；其余情况排除原因后调用 `run_round(group_id, retry_seats=[席位], manager_session_id=...)`。它沿用本轮的输入和私密指令，仍看不到其他席位本轮的答案，答案记入本轮，线程绑定在该席位上。全员结束后这一轮就不能补跑，也不能用于串联轮：参数无误时在新一轮点名该席，它以新线程补读全部会议记录，包括其他席位的答案；要保持独立时用私密指令说明。
+- **取消与插话**：可单独 `cancel` 某席的 `invocation_id`，该席本轮记缺席，串联轮继续。被取消的席位不能续接原线程，也不能用 `retry_seats`（它只补跑仍在运行的并联轮里失败或受阻的席位，被取消的会被拒绝）；要引导它，就在下一轮点名该席，把引导写进它的私密指令。
 
 回执保持简短：主持人发言返回条目的 `message_id`，审核返回已保存决定、剩余待审、实际提交的席位和轮次 `status`，失败时另含 `error`。`status=finished` 已完成提交，可直接开始下一轮；`running` 或 `review` 继续 `wait`。
 

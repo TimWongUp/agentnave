@@ -5,7 +5,7 @@ description: 转交和接手 boss 会话。用户说「转交这个会话」时�
 
 # 转交与接手
 
-`handover` 必传当前聊天的 `manager_session_id`（取法见工具参数说明或当前宿主上下文提供的会话 ID）。看不到 `handover` 工具时，直接按「接手」第 2 步读本机老会话，或请用户重连 AgentNave MCP。
+`handover` 在转交（`release=true`）和认领（传 `workspace_id`）时必传当前聊天的 `manager_session_id`（取法见工具参数说明或当前宿主上下文提供的会话 ID）；只列出待接手工作区（不传参调 `handover()`）时可以不传。看不到 `handover` 工具时，直接按「接手」第 2 步读本机老会话，或请用户重连 AgentNave MCP。
 
 ## 转交
 
