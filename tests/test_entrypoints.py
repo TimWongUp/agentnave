@@ -261,7 +261,7 @@ async def test_resume_does_not_inherit_a_declared_access(
 
 
 @pytest.mark.asyncio
-async def test_resume_without_seat_keeps_the_threads_last_model(
+async def test_resume_keeps_the_threads_last_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
@@ -278,6 +278,39 @@ async def test_resume_without_seat_keeps_the_threads_last_model(
         assert {"model (session_id history)", "effort (session_id history)"} <= set(
             cast(list[str], resumed["defaults_applied"])
         )
+        # A role-named seat that supplies no model for this CLI must still keep the thread's.
+        root = tmp_path / "data"
+        (root / "review.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "seats": {"correctness-reviewer": {"provider": "codex", "model": "elsewhere"}},
+                }
+            )
+        )
+        seated = await _start_and_wait(
+            client, session_id="session-e2e", role="correctness-reviewer"
+        )
+        assert (seated["model"], seated["effort"]) == ("cheap", "low")
+        assert {"model (session_id history)", "effort (session_id history)"} <= set(
+            cast(list[str], seated["defaults_applied"])
+        )
+        # A seat that does supply the model still wins over the thread's history.
+        (root / "review.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "seats": {
+                        "correctness-reviewer": {"provider": "claude", "model": "seat-model"}
+                    },
+                }
+            )
+        )
+        chosen = await _start_and_wait(
+            client, session_id="session-e2e", role="correctness-reviewer"
+        )
+        assert chosen["model"] == "seat-model"
+        assert "model (session_id history)" not in cast(list[str], chosen["defaults_applied"])
         switched = await _start_and_wait(
             client, session_id="session-e2e", provider_options={"model": "other"}
         )
@@ -328,9 +361,14 @@ async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_va
             seat="explorer-hard",
             access="read",
         )
-        assert not any(
-            "session_id history" in key for key in cast(list[str], explicit["defaults_applied"])
-        )
+        # Explicit identity wins; the unconfigured seat supplies no model, so the thread's stays.
+        assert (explicit["model"], explicit["effort"]) == ("chosen", "high")
+        assert {
+            "provider (session_id history)",
+            "cwd (session_id history)",
+            "role (session_id history)",
+            "seat (session_id history)",
+        }.isdisjoint(cast(list[str], explicit["defaults_applied"]))
         latest = await _start_and_wait(client, session_id="session-e2e")
         assert latest["access"] == "read"
         renamed = await _start_and_wait(client, session_id="session-e2e", role="实现参数推断")
@@ -344,8 +382,8 @@ async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_va
         saved = Record.read(Database(root), root / "locks", str(started["conversation_id"]))
         assert saved.state.tasks[1].cwd == str(tmp_path)
         assert saved.state.tasks[-1].cwd == str(alternate)
-        # Inherited seat metadata does not accidentally inherit the previous model or effort.
-        assert latest.get("model") != "chosen"
+        # An inherited seat that supplies no model keeps the thread's model and effort.
+        assert (latest["model"], latest["effort"]) == ("chosen", "high")
         changed_provider = await client.call_tool(
             "start_agent",
             {"prompt": "ok", "session_id": "session-e2e", "provider": "grok", "cwd": str(tmp_path)},

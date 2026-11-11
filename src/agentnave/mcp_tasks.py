@@ -191,8 +191,7 @@ async def start_agent(
         options, seat_applied = apply_seat(
             role_seat(seat_name, runtime.HOST), provider, provider_options or {}
         )
-        if not seat_name:
-            options = arguments.apply_history(options)
+        options = arguments.apply_history(options)
         options, defaults_applied = apply_task_defaults(
             provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS, runtime.HOST
         )
