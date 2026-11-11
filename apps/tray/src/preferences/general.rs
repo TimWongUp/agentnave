@@ -16,8 +16,12 @@ pub fn validate(field: &str, value: &Value) -> Result<(), String> {
         ),
         "scale" if matches!(value.as_u64(), Some(90 | 100 | 115)) => Ok(()),
         "scale" => Err(format!("{name} 必须为 90、100 或 115")),
-        "autostart" | "open_on_start" | "tray_count" | "keep_awake" if value.is_boolean() => Ok(()),
-        "autostart" | "open_on_start" | "tray_count" | "keep_awake" => {
+        "autostart" | "open_on_start" | "tray_count" | "keep_awake" | "battery_still"
+            if value.is_boolean() =>
+        {
+            Ok(())
+        }
+        "autostart" | "open_on_start" | "tray_count" | "keep_awake" | "battery_still" => {
             Err(format!("{name} 必须为布尔值"))
         }
         _ => Err(format!("未知的设置项：{name}")),
@@ -28,7 +32,7 @@ pub fn effective(document: &Value, autostart: bool) -> Value {
     let mut result = json!({
         "language": "system", "theme": "system", "motion": "system", "scale": 100,
         "autostart": autostart, "open_on_start": true, "tray_click": "panel",
-        "tray_count": true, "tray_font": "baskerville", "keep_awake": false, "character_style": "static",
+        "tray_count": true, "tray_font": "baskerville", "keep_awake": false, "battery_still": true, "character_style": "static",
     });
     if let Some(saved) = document["general"].as_object() {
         for (field, value) in saved {

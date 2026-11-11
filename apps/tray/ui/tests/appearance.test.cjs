@@ -60,6 +60,17 @@ test("all motion choices override or follow the system and native broadcasts rea
   assert.equal(animated.api.reducedMotion.matches, true);
 });
 
+test("on battery characters stand still unless the switch is turned off", () => {
+  const app = appearance({ saved: { motion: "full" } });
+  app.root.dataset.onBattery = "true";
+  assert.equal(app.api.reducedMotion.matches, true);
+  app.api.applyPreferences({ battery_still: false });
+  assert.equal(app.api.reducedMotion.matches, false);
+  app.api.applyPreferences({ battery_still: true });
+  delete app.root.dataset.onBattery;
+  assert.equal(app.api.reducedMotion.matches, false);
+});
+
 test("the panel and header switches persist preferences and keep the choice on failure", async () => {
   const app = appearance();
   app.api.themeSwitch(app.h, (zh, en) => en);

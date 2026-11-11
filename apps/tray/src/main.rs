@@ -13,6 +13,7 @@ mod manage;
 mod members;
 mod navigation;
 mod orchestration_roles;
+mod power;
 mod preferences;
 mod process;
 mod proxy;
@@ -149,9 +150,9 @@ struct Tray {
 fn main() {
     proxy::apply();
     let reader = Arc::new(Reader::new(data::data_root()));
-    let builder = tauri::Builder::default()
     #[cfg(target_os = "macos")]
     video_packs::http::start(data::data_root());
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| restore(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
@@ -723,6 +724,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Regular);
     let handle = app.handle();
+    power::watch(handle.clone());
     if let Err(error) = preferences::autostart::repair(handle) {
         eprintln!("无法修复开机启动路径：{error}");
     }

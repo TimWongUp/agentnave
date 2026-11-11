@@ -359,6 +359,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @keyframes fig-sway { 50% { transform: rotate(2deg); } }
 @keyframes fig-hop { 50% { transform: translateY(-8px); } }
 html:is(.paused, .blurred) *, html:is(.paused, .blurred) *::before, html:is(.paused, .blurred) *::after { animation-play-state: paused !important; }
+html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *, .fig *::before, .fig *::after) { animation-play-state: paused !important; }
 
 /* ---- boss office ---- */
 /* the boss before a takeover: a framed head on the wall */
