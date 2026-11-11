@@ -19,7 +19,7 @@ fn idle_host_uses_install_history_and_remembers_new_connection() {
     let history = |names: Value| {
         json!([
             {"version":"0.21.0","switched_at_ms":(now-100)*1000,"tool_names":["old"]},
-            {"version":"0.22.0","switched_at_ms":(now-10)*1000,"tool_names":names}
+            {"version":"0.22.0","switched_at_ms":(now-20)*1000,"tool_names":names}
         ])
     };
     let running = |at| {
@@ -40,14 +40,14 @@ fn idle_host_uses_install_history_and_remembers_new_connection() {
     assert_eq!(hosts.reload_state(&h, &token)["state"], "idle");
     hosts.processes = running(now - 5);
     assert_eq!(hosts.reload_state(&h, &token)["state"], "idle");
-    hosts.processes = running(now - 10);
+    hosts.processes = running(now - 20);
     assert_eq!(hosts.reload_state(&h, &token)["state"], "idle");
     hosts.processes = running(now - 50);
     save(&path, "[]");
     assert_eq!(hosts.reload_state(&h, &token)["state"], "idle");
     save(&path, &history(json!(["new"])).to_string());
-    let receipt = json!({"version":1,"host":"workbuddy","started_ms":(now-5)*1000,
-        "ended_ms":now*1000,"runtime_version":"0.22.0",
+    let receipt = json!({"version":1,"host":"workbuddy","started_ms":(now-15)*1000,
+        "ended_ms":(now-14)*1000,"runtime_version":"0.22.0",
         "runtime_tools_hash":"a".repeat(64),"host_tools_hash":"a".repeat(64)});
     let receipt_path = hosts.context.home.join(".agentnave/connections/test.json");
     save(&receipt_path, &receipt.to_string());
@@ -55,4 +55,29 @@ fn idle_host_uses_install_history_and_remembers_new_connection() {
     hosts.remember_reloads();
     fs::remove_file(receipt_path).unwrap();
     assert_eq!(hosts.reload_state(&h, &token)["state"], "idle");
+
+    let site = hosts
+        .context
+        .home
+        .join(".local/share/uv/tools/agentnave/lib/python3.12/site-packages");
+    let mut entries = history(json!(["new"])).as_array().unwrap().clone();
+    fs::rename(
+        site.join("agentnave-0.22.0.dist-info"),
+        site.join("agentnave-0.23.0.dist-info"),
+    )
+    .unwrap();
+    entries.push(json!({"version":"0.23.0","switched_at_ms":(now-10)*1000,"tool_names":["new"]}));
+    save(&path, &Value::Array(entries.clone()).to_string());
+    assert_eq!(hosts.reload_state(&h, &token)["state"], "idle");
+
+    fs::rename(
+        site.join("agentnave-0.23.0.dist-info"),
+        site.join("agentnave-0.24.0.dist-info"),
+    )
+    .unwrap();
+    entries.push(
+        json!({"version":"0.24.0","switched_at_ms":(now-5)*1000,"tool_names":["new","newer"]}),
+    );
+    save(&path, &Value::Array(entries).to_string());
+    assert_eq!(hosts.reload_state(&h, &token)["reason"], "tools_upgrade");
 }

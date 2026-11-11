@@ -65,15 +65,12 @@ impl Hosts {
             .filter(|_| changed["token"] == token);
         let install = self.install();
         let upgrade_at = self.tools_upgrade(host, &install);
-        let upgrade_confirmed = upgrade_at.is_some_and(|at| {
-            self.settings[host.id]["reload_tools_confirmed"].as_u64() == Some(at)
-        });
         let proof_at = if pending && changed_at.is_none() {
             None
         } else {
             (if pending { changed_at } else { None })
                 .into_iter()
-                .chain(upgrade_at.filter(|_| !upgrade_confirmed))
+                .chain(upgrade_at)
                 .max()
         };
         let receipts = self.receipts(host, now, proof_at.or(changed_at));
@@ -98,12 +95,7 @@ impl Hosts {
         } else if receipts.lingering {
             base
         } else {
-            self.idle_state(
-                host,
-                pending,
-                changed,
-                upgrade_at.filter(|_| !upgrade_confirmed),
-            )
+            self.idle_state(host, pending, changed, upgrade_at)
         };
         let copies: Vec<_> = self
             // The last recorded change, as idle_state judges an old process by it too.
@@ -262,9 +254,7 @@ impl Hosts {
         let mut proved = false;
         for host in self.registry() {
             let install = self.install();
-            let upgrade_at = self.tools_upgrade(&host, &install);
-            if let Some(at) = upgrade_at
-                && self.settings[host.id]["reload_tools_confirmed"].as_u64() != Some(at)
+            if let Some(at) = self.tools_upgrade(&host, &install)
                 && {
                     let receipts = self.receipts(&host, SystemTime::now(), Some(at));
                     receipts.live.is_empty()
@@ -312,7 +302,12 @@ impl Hosts {
         else {
             return None;
         };
-        crate::update::tool_change(&self.context.app, install.version.as_deref(), started)
+        crate::update::tool_change(
+            &self.context.app,
+            install.version.as_deref(),
+            started,
+            self.settings[host.id]["reload_tools_confirmed"].as_u64(),
+        )
     }
     fn connection_root(&self, host: &Host) -> Option<PathBuf> {
         let entry = host.read().ok()?.entry?;

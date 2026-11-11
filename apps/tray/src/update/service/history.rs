@@ -67,13 +67,23 @@ pub(super) fn record(
     }
 }
 
-/// Return the latest switch if the names active at process start differ from the current ones.
-pub(crate) fn tool_change(app: &Path, version: Option<&str>, started: u64) -> Option<u64> {
+/// Return the latest switch if the names active since process start (or a later confirmed switch)
+/// differ from the current ones.
+pub(crate) fn tool_change(
+    app: &Path,
+    version: Option<&str>,
+    started: u64,
+    confirmed: Option<u64>,
+) -> Option<u64> {
     let version = version?;
     let history = read(&app.join("service"))?;
     let current = history.last()?;
     let switched = current["switched_at_ms"].as_u64()?;
-    if current["version"].as_str() != Some(version) || started == 0 || started >= switched / 1000 {
+    if current["version"].as_str() != Some(version)
+        || started == 0
+        || started >= switched / 1000
+        || confirmed.is_some_and(|at| at / 1000 == started)
+    {
         return None;
     }
     if history.iter().any(|entry| {
@@ -86,11 +96,16 @@ pub(crate) fn tool_change(app: &Path, version: Option<&str>, started: u64) -> Op
     {
         return None;
     }
-    let old = history.iter().rev().find(|entry| {
-        entry["switched_at_ms"]
-            .as_u64()
-            .is_some_and(|at| at / 1000 < started)
-    })?;
+    let old = match confirmed.filter(|at| at / 1000 > started) {
+        Some(at) => history
+            .iter()
+            .find(|entry| entry["switched_at_ms"].as_u64() == Some(at))?,
+        None => history.iter().rev().find(|entry| {
+            entry["switched_at_ms"]
+                .as_u64()
+                .is_some_and(|at| at / 1000 < started)
+        })?,
+    };
     let before = &old["tool_names"];
     let after = &current["tool_names"];
     (valid_names(before) && valid_names(after) && before != after).then_some(switched)
