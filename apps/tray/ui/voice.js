@@ -535,8 +535,12 @@
     group = chat.group;
     expire();
     if (whole) {
-      fed.set(chat.group, Date.now());
-      if (follow && follow.loaded && follow.group === chat.group && !follow.room) takeFollowed(chat, follow);
+      // Before the first read a poll's messages are dropped, so they cannot stand in for `heed` yet.
+      if (!follow || follow.loaded || follow.group !== chat.group) fed.set(chat.group, Date.now());
+      // After the office has drawn this poll: taking it redraws through `agentnave:voice`.
+      queueMicrotask(() => {
+        if (follow && follow.loaded && follow.group === chat.group && !follow.room) takeFollowed(chat, follow);
+      });
     }
     queueMicrotask(drain);
     if (current || queue.length || follow || Date.now() - loadedAt >= IDLE_RELOAD_MS)
