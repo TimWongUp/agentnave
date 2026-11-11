@@ -502,6 +502,19 @@ def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None
             )
 
 
+def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:
+    with pytest.raises(
+        ValueError, match="dangerously_bypass_approvals_and_sandbox must be a boolean"
+    ):
+        CodexAdapter().prepare(
+            request(
+                tmp_path,
+                "codex",
+                provider_options={"dangerously_bypass_approvals_and_sandbox": "true"},
+            )
+        )
+
+
 def test_codex_adapter_preserves_final_message_and_session() -> None:
     payload = b"\n".join(
         (

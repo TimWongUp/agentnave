@@ -242,6 +242,24 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
 
 
 @pytest.mark.asyncio
+async def test_resume_does_not_inherit_a_declared_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    root.mkdir()
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(root))
+    from agentnave.mcp_server import mcp
+
+    async with Client(mcp) as client:
+        await _start_and_wait(
+            client, provider="claude", cwd=str(tmp_path), role="出计划", access="read"
+        )
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert "access" not in resumed
+
+
+@pytest.mark.asyncio
 async def test_start_agent_resume_inherits_persisted_latest_task_and_explicit_values_win(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

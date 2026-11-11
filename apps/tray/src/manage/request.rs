@@ -42,7 +42,8 @@ pub(crate) fn request(
             delete_conversations(root, &payload)
         });
     }
-    unreachable!("management route checked by caller")
+    // The entry dispatches by the same paths; a mismatch answers 404 instead of panicking.
+    Response::not_found()
 }
 
 fn delete_conversations(root: &Path, payload: &Value) -> Response {

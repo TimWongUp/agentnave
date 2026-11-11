@@ -613,6 +613,47 @@ def test_relay_recovers_after_long_capped_backoff(
         relay.child.process.wait(timeout=5)
 
 
+def test_relay_tells_hosts_without_handshake_that_the_tools_changed(tmp_path: Path) -> None:
+    host = Host(tmp_path)
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "modern", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+    def whoami() -> dict[str, Any]:
+        return host.call("tools/call", {"name": "whoami", "_meta": meta})["structuredContent"]
+
+    try:
+        host.call("server/discover", {"_meta": meta})
+        host.call("tools/list", {"_meta": meta})
+        first = whoami()
+        # The new install publishes the same tools, so the host has nothing to reload.
+        host.install("1.1")
+        deadline = time.monotonic() + 10
+        while (second := whoami())["pid"] == first["pid"] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert second["pid"] != first["pid"]
+        assert host.notifications == []
+        # A changed interface makes the host's cached tools stale: it must hear about it, even
+        # though this protocol version has no initialize handshake to advertise listChanged.
+        host.busy.with_suffix(".tools").write_text(
+            '{"type":"object","properties":{"new":{"type":"string"}}}'
+        )
+        host.install("1.2")
+        deadline = time.monotonic() + 10
+        while (third := whoami())["pid"] == second["pid"] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert third["pid"] != second["pid"]
+        assert host.notifications == [
+            {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+        ]
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert host.code == [0]
+
+
 def test_timed_out_probe_reply_never_reaches_the_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

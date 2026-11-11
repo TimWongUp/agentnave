@@ -265,6 +265,8 @@ test("general and specialist roles are grouped, and no role borrows another role
   toggle("网页调研", true);
   assert.equal(app.run("seatConflicts().length"), 1);
   assert.match(app.run("seatConflictText(seatConflicts()[0])"), /网页调研 · 困难 用的 gone/);
+  app.run("renderAdvancedBar()");
+  assert.equal(app.run('$("advanced-save").disabled'), true, "and blocks saving until rebound, without repairing it");
   assert.deepEqual(JSON.parse(app.run("JSON.stringify(orchestrationWanted().explorer_web)")), { hard: outside });
 });
 

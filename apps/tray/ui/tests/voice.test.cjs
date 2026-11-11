@@ -95,6 +95,15 @@ test("settings-load errors survive playback and clear on an unchanged successful
   assert.equal(app.published.at(-1).error, null);
 });
 
+test("settings loading recovers after initial failures without requiring a configuration change", async () => {
+  let broken = true;
+  const app = await office(true, undefined, undefined, "all", async path =>
+    path === "/app/voice" && broken ? { ok: false, json: async () => ({ error: "load failed" }) } : null);
+  assert.equal(app.published.at(-1).bar_label, "出错");
+  broken = false; await app.feed([]);
+  assert.equal(app.published.at(-1).error, null);
+});
+
 test("private instructions use the boss identity and precede each employee's answer in the same round", async () => {
   for (const listening of [false, true]) {
     const app = await office(listening);

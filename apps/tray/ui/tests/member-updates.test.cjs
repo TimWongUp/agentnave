@@ -281,6 +281,7 @@ test("static installation commands remain available while latest queries stall o
   assert.match(JSON.stringify(rendered), /Grok CLI/);
   rejectLatest(new Error("offline"));
   await latest;
+  assert.match(JSON.stringify(ui.json("renderMissingClis(['codex', 'grok'])")), /npm install -g @openai\/codex/);
 });
 
 test("updating disables refresh controls and skips both manual and focus detection", async () => {

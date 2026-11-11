@@ -35,7 +35,8 @@ pub(crate) fn orchestration_request(
             rule_files(root, host_state)
         });
     }
-    unreachable!("settings route checked by caller")
+    // The entry dispatches by the same paths; a mismatch answers 404 instead of panicking.
+    Response::not_found()
 }
 
 fn orchestration(root: &Path, host_state: &Mutex<Option<Hosts>>) -> Response {

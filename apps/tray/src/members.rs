@@ -717,5 +717,6 @@ pub(crate) fn request(
             )
         });
     }
-    unreachable!("member route checked by caller")
+    // The entry dispatches by the same paths; a mismatch answers 404 instead of panicking.
+    crate::response::Response::not_found()
 }
