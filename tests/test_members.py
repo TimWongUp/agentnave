@@ -78,6 +78,23 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
             assert document.group_seats(role.group)[difficulty].model == difficulty
             assert role_access(f"{role.seat_prefix}-{difficulty}") == role.access
 
+    from agentnave import orchestration_roles
+
+    rules = json.loads(
+        Path(orchestration_roles.__file__).with_name("orchestration_rules.json").read_text("utf-8")
+    )
+    assert set(rules["order"]) == {"meetings", "split", "parallel"}
+    known_steps = set(rules["sections"]) | {
+        "split_meetings",
+        "parallel_meetings",
+        "meeting_defaults",
+        "enabled_roles",
+    }
+    for steps in rules["order"].values():
+        assert steps and set(steps) <= known_steps
+    assert rules["switches"]["lead_only"]["when_false"] in rules["sections"]["shared"]
+    assert set(rules["meeting_defaults"]["provider_names"]) == set(get_args(ProviderName.__value__))
+
 
 @pytest.mark.parametrize("switches", [{}, {"enabled_roles": None}, {"enabled_roles": []}])
 def test_role_switch_defaults_hide_fields_and_preserve_bindings(
