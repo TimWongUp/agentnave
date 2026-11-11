@@ -333,11 +333,17 @@ fn codex_catalog(home: &Path) -> Option<PathBuf> {
     let text = std::fs::read_to_string(home.join("config.toml")).ok()?;
     let table: toml::Table = text.parse().ok()?;
     let named = table.get("model_catalog_json")?.as_str()?;
+    // Codex expands a leading `~` to the user's home before treating the rest as relative.
+    let expanded = ["~/", "~\\"]
+        .iter()
+        .find_map(|prefix| named.strip_prefix(prefix))
+        .zip(dirs::home_dir())
+        .map(|(rest, user)| user.join(rest));
     let path = Path::new(named);
-    Some(if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        home.join(path)
+    Some(match expanded {
+        Some(path) => path,
+        None if path.is_absolute() => path.to_path_buf(),
+        None => home.join(path),
     })
 }
 
