@@ -2,7 +2,9 @@
 //! orchestration preset in one marked block of them; everything outside the block stays the user's.
 //! One file often serves several apps (Grok also reads Claude's, dsh the shared `~/.agents`), so
 //! the list is by file, each naming every app that reads it.
+mod request;
 mod roles;
+pub(crate) use request::request;
 
 use serde_json::{Value, json};
 use std::io::Write;
@@ -418,8 +420,8 @@ pub type Backup<'a> = dyn Fn(&Path, &[u8]) -> Result<(), String> + 'a;
 /// Write one rules file, backing up what it held. Like the host config writes this is optimistic:
 /// a change by another app since reading makes it give up rather than overwrite.
 fn write(path: &Path, home: &Path, text: Option<&str>, backup: &Backup) -> Result<bool, String> {
-    crate::hosts::check_path(path, home)
-        .map_err(|error| crate::hosts::message(&error).to_owned())?;
+    crate::config_paths::safe_path(path, home)
+        .map_err(|error| crate::config_paths::message(&error).to_owned())?;
     let original = match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -464,8 +466,8 @@ fn write(path: &Path, home: &Path, text: Option<&str>, backup: &Backup) -> Resul
         return Err("文件刚被其他程序改动，未写入".into());
     }
     // A folder swapped for a link since the first check would send the rename elsewhere.
-    crate::hosts::check_path(path, home)
-        .map_err(|error| crate::hosts::message(&error).to_owned())?;
+    crate::config_paths::safe_path(path, home)
+        .map_err(|error| crate::config_paths::message(&error).to_owned())?;
     tmp.persist(path).map_err(|_| "无法替换文件")?;
     Ok(true)
 }
@@ -536,7 +538,7 @@ pub fn list(installed: &[App], connected: &[App], home: &Path, document: &Value)
             let current = text.is_some_and(|(_, text)| carries(&content, text));
             json!({"path": path, "readers": readers, "exists": path.is_file(),
                 "target": text.is_some(), "current": current,
-                "blocked": crate::hosts::check_path(&path, home).is_err()})
+                "blocked": crate::config_paths::safe_path(&path, home).is_err()})
         })
         .collect();
     let bosses: Vec<Value> = groups(connected, home)

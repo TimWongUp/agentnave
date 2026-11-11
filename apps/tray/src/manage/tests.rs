@@ -18,7 +18,7 @@ fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
         );
     }
     let ids = vec!["old".to_owned(), "newly-finished".to_owned()];
-    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    let cutoff = crate::time_format::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
     // A conversation created since the preview preserves the whole workspace.
     assert!(
         cleanup(root.path(), &ids[..1], cutoff)
@@ -454,7 +454,7 @@ fn retention_preview_agrees_with_workspace_cleanup_and_is_read_only() {
     );
     let lock = lock_file(root.path(), "busy").unwrap();
     take(&lock);
-    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    let cutoff = crate::time_format::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
     assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 2);
     assert!(!crate::db::lock_path(root.path(), "old-a").exists());
     assert_eq!(count(root.path(), "conversations", "old-a"), 1);
@@ -542,7 +542,7 @@ fn retention_preview_never_opens_a_recent_conversations_lock() {
     let path = crate::db::lock_path(root.path(), "recent");
     drop(lock_file(root.path(), "recent").unwrap());
     fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
-    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    let cutoff = crate::time_format::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
     let preview = retention_preview(root.path(), cutoff);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(preview.unwrap(), 0);
@@ -563,7 +563,7 @@ fn retention_preview_preserves_waiting_handovers_until_claimed() {
         "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
         "old",
     );
-    let cutoff = crate::stage::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    let cutoff = crate::time_format::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
     assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
     assert_eq!(handover(root.path(), workspace)["status"], "waiting");
     set(

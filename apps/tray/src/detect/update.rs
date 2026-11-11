@@ -27,8 +27,8 @@ struct Plan {
     environment: locks::Environment,
 }
 
-pub(crate) fn state() -> Value {
-    snapshot(&super::detected(false), cached)
+pub(crate) fn state(codex_source: &(impl Fn() -> Option<String> + Sync)) -> Value {
+    snapshot(&super::detected(false, codex_source), cached)
 }
 
 pub(crate) fn install_commands() -> Value {
@@ -37,7 +37,7 @@ pub(crate) fn install_commands() -> Value {
 
 fn snapshot(all: &Value, query: impl Fn(&Channel) -> Option<String> + Sync) -> Value {
     let clis: serde_json::Map<String, Value> = std::thread::scope(|scope| {
-        let probes: Vec<_> = crate::members::PROVIDERS
+        let probes: Vec<_> = crate::providers::PROVIDERS
             .into_iter()
             .filter(|provider| all[provider]["installed"] == true)
             .map(|provider| {
@@ -97,7 +97,11 @@ pub(crate) fn validate_target(
     }
 }
 
-pub(crate) fn update(provider: &str, target: Option<&str>) -> Result<Value, String> {
+pub(crate) fn update(
+    provider: &str,
+    target: Option<&str>,
+    codex_source: &(impl Fn() -> Option<String> + Sync),
+) -> Result<Value, String> {
     if crate::PREVIEW {
         return Err("预览版不执行 CLI 更新".into());
     }
@@ -120,7 +124,7 @@ pub(crate) fn update(provider: &str, target: Option<&str>) -> Result<Value, Stri
         cached,
         UPDATE_TIMEOUT,
     )?;
-    Ok(state())
+    Ok(state(codex_source))
 }
 
 fn read_version(path: &Path) -> Option<String> {
@@ -240,4 +244,40 @@ fn error_tail(text: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect();
     lines[lines.len().saturating_sub(3)..].join("\n")
+}
+
+pub(crate) fn request(
+    method: &str,
+    path: &str,
+    action: Option<&str>,
+    body: &[u8],
+    codex_source: &(impl Fn() -> Option<String> + Sync),
+) -> crate::response::Response {
+    use crate::response::{Response, post};
+    if path == "/app/cli-updates" || path == "/app/cli-install-commands" {
+        if method != "GET" {
+            return Response::error(405, "此路由只接受 GET");
+        }
+        return Response::json(&if path == "/app/cli-install-commands" {
+            crate::detect::update::install_commands()
+        } else {
+            crate::detect::update::state(codex_source)
+        });
+    }
+    post(method, action, body, |payload| {
+        let Some(provider) = payload["provider"]
+            .as_str()
+            .filter(|p| crate::providers::PROVIDERS.contains(p))
+        else {
+            return Response::error(400, "需要有效的 CLI 名称");
+        };
+        let target = match crate::detect::update::validate_target(provider, payload.get("target")) {
+            Ok(target) => target,
+            Err(error) => return Response::error(400, &error),
+        };
+        match crate::detect::update::update(provider, target, codex_source) {
+            Ok(state) => Response::json(&state),
+            Err(error) => Response::error(400, &error),
+        }
+    })
 }

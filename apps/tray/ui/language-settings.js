@@ -20,7 +20,7 @@
 
   async function save(language) {
     if (busy) return;
-    if (typeof confirmLeave === "function" && confirmLeave(() => {
+    if (AN.settings?.confirmLeave?.(() => {
       history.replaceState(null, "", "#general");
       void save(language);
     })) return;

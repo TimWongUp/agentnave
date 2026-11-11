@@ -13,14 +13,6 @@ use std::{
 
 const CLAUDE_DESKTOP: &str = "claude-desktop";
 
-/// The host a row's connections run as; its service knows no other names.
-pub(crate) fn boss_of(id: &str) -> &str {
-    match id {
-        CLAUDE_DESKTOP => "claude",
-        id => id.split_once('@').map_or(id, |(boss, _)| boss),
-    }
-}
-
 /// Further rows are named `<boss>@<folder>`, found while the app runs.
 fn interned(text: String) -> &'static str {
     static SEEN: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());

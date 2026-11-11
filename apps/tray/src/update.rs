@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::hosts::ToolDirs;
+use crate::tool_dirs::ToolDirs;
 use serde_json::{Map, Value, json};
 use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager, Wry};
@@ -695,7 +695,7 @@ pub(crate) fn rfc3339(at: SystemTime) -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     // The shared formatter, without its microseconds.
-    let iso = crate::stage::iso(seconds as i64 * 1_000_000);
+    let iso = crate::time_format::iso(seconds as i64 * 1_000_000);
     format!("{}Z", &iso[..19])
 }
 

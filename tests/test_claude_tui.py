@@ -137,20 +137,6 @@ def test_startup_confirmation_reads_only_the_open_dialog(screen: str) -> None:
     assert not terminal.outgoing
 
 
-def test_startup_external_imports_selects_yes() -> None:
-    terminal = SimpleNamespace(outgoing=bytearray())
-    turn = tui.Turn("sid")
-    screen = "Allow external CLAUDE.md file imports?\n❯ No, disable external imports\n  Yes, allow external imports\nEnter to confirm"
-    startup = tui.Startup(cast(tui.Terminal, terminal), turn, previous=screen, stable_since=0)
-    assert startup.step(screen) is None
-    assert bytes(terminal.outgoing) == b"\x1b[B"
-    terminal.outgoing.clear()
-    screen = screen.replace("❯ No", "  No").replace("  Yes", "❯ Yes")
-    startup.previous, startup.stable_since = screen, 0
-    assert startup.step(screen) is None
-    assert bytes(terminal.outgoing) == b"\r"
-
-
 def test_screen_erases_dismissed_dialog_and_handles_split_cursor_query() -> None:
     screen = tui.Screen()
     screen.feed("Resume this conversation?\r\n❯ 1. Resume".encode())

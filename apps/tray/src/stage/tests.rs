@@ -22,13 +22,6 @@ fn service_member_identity_contract_is_preserved() {
 }
 
 #[test]
-fn custom_titles_are_not_confused_with_provider_defaults() {
-    assert!(super::meaningful_title("review 任务"));
-    assert!(!super::meaningful_title("codex 任务"));
-    assert!(!super::meaningful_title(" "));
-}
-
-#[test]
 fn project_name_skips_agent_worktrees() {
     assert_eq!(
         super::project_name("/Users/a/Code/app/").as_deref(),
@@ -45,7 +38,7 @@ fn project_name_skips_agent_worktrees() {
     assert_eq!(super::project_name("/"), None);
 }
 
-use super::{Desk, desk_role};
+use super::Desk;
 
 #[test]
 fn a_failed_desk_settles_after_half_an_hour_unless_it_runs_again() {
@@ -56,17 +49,6 @@ fn a_failed_desk_settles_after_half_an_hour_unless_it_runs_again() {
     assert!(desk.failure_settled(minutes(31)));
     desk.observe(minutes(32), "succeeded");
     assert!(!desk.failure_settled(minutes(90)));
-}
-
-#[test]
-fn a_desk_role_keeps_the_callers_responsibility() {
-    let role = |role: &str| desk_role(&serde_json::json!({"role": role}));
-    assert_eq!(role("worker-hard").as_deref(), Some("worker-hard"));
-    assert_eq!(
-        role("correctness-reviewer").as_deref(),
-        Some("correctness-reviewer")
-    );
-    assert_eq!(role("接手方视角").as_deref(), Some("接手方视角"));
 }
 
 #[test]

@@ -1,6 +1,9 @@
 //! Tray-only cleanup and renaming in the conversation database (ADR-0012, ADR-0026). Every
 //! change happens under the conversation's OS lock, the same one its writing server holds.
 
+mod request;
+pub(crate) use request::request;
+
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io;
 use std::path::Path;
@@ -11,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::{Value, json};
 
-use crate::data::Overview;
+use crate::data::snapshot::Overview;
 
 mod retention;
 
@@ -411,13 +414,13 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
                 "SELECT created, views.body FROM conversations LEFT JOIN views ON views.conversation_id = conversations.id WHERE conversations.id = ?1",
                 [id], |row| Ok((row.get(0)?, row.get(1)?))
             ).map_err(|e| e.to_string())?;
-            let created = crate::stage::timestamp(&created);
+            let created = crate::time_format::timestamp(&created);
             let updated = body
                 .and_then(|body| serde_json::from_str::<Value>(&body).ok())
                 .and_then(|view| {
                     view["summary"]["updated"]
                         .as_str()
-                        .and_then(crate::stage::timestamp)
+                        .and_then(crate::time_format::timestamp)
                 });
             let Some((created, updated)) = created.zip(updated) else {
                 return Ok(false);
@@ -462,7 +465,7 @@ pub fn list(root: &Path, overview: Overview) -> Value {
     let mut items = Vec::new();
     let mut unavailable = Vec::new();
     for id in ids {
-        if !crate::data::valid_id(&id) {
+        if !crate::data_files::valid_id(&id) {
             continue;
         }
         let lock = lock_file(root, &id);

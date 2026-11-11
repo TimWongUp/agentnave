@@ -5,7 +5,9 @@ mod alerts;
 mod avatars;
 mod badge;
 mod characters;
+mod config_paths;
 mod data;
+mod data_files;
 mod db;
 mod detect;
 mod hosts;
@@ -17,11 +19,15 @@ mod power;
 mod preferences;
 mod process;
 mod provider_health;
+mod providers;
 mod proxy;
+mod response;
 mod rules;
 mod settings;
 mod stage;
 mod storage;
+mod time_format;
+mod tool_dirs;
 mod update;
 mod video_packs;
 mod voice;
@@ -39,7 +45,8 @@ use tauri::{
     WebviewWindowBuilder, WindowEvent,
 };
 
-use data::{CSP, Overview, Reader};
+use data::snapshot::Overview;
+use data::{CSP, Reader};
 use update::Updates;
 
 const SCHEME: &str = "agentnave";
@@ -150,9 +157,9 @@ struct Tray {
 
 fn main() {
     proxy::apply();
-    let reader = Arc::new(Reader::new(data::data_root()));
+    let reader = Arc::new(Reader::new(data_files::data_root()));
     #[cfg(target_os = "macos")]
-    video_packs::http::start(data::data_root());
+    video_packs::http::start(data_files::data_root());
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| restore(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -738,7 +745,10 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
         eprintln!("无法应用常规设置：{error}");
     }
     TrayIconBuilder::with_id(TRAY)
-        .icon(badge::initial(badge::count(&overview)))
+        .icon(badge::initial(
+            badge::count(&overview, preferences::general::current),
+            &preferences::general::current(),
+        ))
         .icon_as_template(true)
         .tooltip(headline(&overview))
         .title(if PREVIEW { "预览" } else { "" })
@@ -759,7 +769,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
                 ..
             } = event
             {
-                badge::drip(tray);
+                badge::drip(tray, &preferences::general::current());
                 if preferences::general::current()["tray_click"] == "office" {
                     hide_visible_panel(tray.app_handle());
                     open(tray.app_handle(), "main", "/chat/");
@@ -810,7 +820,7 @@ struct ProtocolRequest {
 }
 
 impl ProtocolRequest {
-    fn reply(&self) -> data::Response {
+    fn reply(&self) -> response::Response {
         let Self {
             app,
             reader,
@@ -830,7 +840,7 @@ impl ProtocolRequest {
             .and_then(|v| v.to_str().ok());
         match (method, path.as_str()) {
             _ if preview_refuses(PREVIEW, method, path) => {
-                data::Response::error(403, "预览版只读：请在正式版里保存改动")
+                response::Response::error(403, "预览版只读：请在正式版里保存改动")
             }
             ("GET", path) if path.starts_with("/art/video/") => reader.video_asset(
                 path,
@@ -842,7 +852,7 @@ impl ProtocolRequest {
             _ if path == "/app/video-packs" || path.starts_with("/app/video-packs/") => {
                 reader.video_packs_request(Some(app), method, path, action, self.request.body())
             }
-            ("GET", "/app/status") => data::Response::json(&update::status(app)),
+            ("GET", "/app/status") => response::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),
             // Whether the page's maximize button should read as maximize or restore.
             ("GET", "/app/window/state") => {
@@ -850,7 +860,7 @@ impl ProtocolRequest {
                     .get_webview_window(label)
                     .and_then(|window| window.is_maximized().ok())
                     .unwrap_or(false);
-                data::Response::json(&serde_json::json!({ "maximized": maximized }))
+                response::Response::json(&serde_json::json!({ "maximized": maximized }))
             }
             // The top bar moves, zooms, minimizes and closes its window, as a native title
             // bar would; the main window draws no title bar of its own.
@@ -864,9 +874,9 @@ impl ProtocolRequest {
                 match (WindowAction::of(path), app.get_webview_window(label)) {
                     (Some(step), Some(window)) => {
                         step.run(&window);
-                        data::Response::json(&serde_json::json!({"ok": true}))
+                        response::Response::json(&serde_json::json!({"ok": true}))
                     }
-                    _ => data::Response::error(404, "找不到窗口"),
+                    _ => response::Response::error(404, "找不到窗口"),
                 }
             }
             // Native appearance (the panel's glass, window buttons) follows the page's theme.
@@ -878,8 +888,8 @@ impl ProtocolRequest {
                     app,
                     &serde_json::json!({"general": {"theme": choice}}),
                 ) {
-                    Ok(_) => data::Response::json(&serde_json::json!({"ok": true})),
-                    Err(error) => data::Response::error(400, &error),
+                    Ok(_) => response::Response::json(&serde_json::json!({"ok": true})),
+                    Err(error) => response::Response::error(400, &error),
                 }
             }
             (_, "/app/voice/player" | "/app/voice/player/command") => {
@@ -890,20 +900,22 @@ impl ProtocolRequest {
             }
             ("GET", "/settings/members") => reader.members(refresh),
             (_, "/app/service/install") if method != "POST" => {
-                data::Response::error(405, "此操作只接受 POST")
+                response::Response::error(405, "此操作只接受 POST")
             }
             (_, "/app/service/install") if action != Some("1") => {
-                data::Response::error(403, "缺少操作请求头")
+                response::Response::error(403, "缺少操作请求头")
             }
-            (_, "/app/service/install") => data::Response::json(&update::install_service_now(app)),
+            (_, "/app/service/install") => {
+                response::Response::json(&update::install_service_now(app))
+            }
             (_, "/app/update/check" | "/app/update/apply") if method != "POST" => {
-                data::Response::error(405, "此操作只接受 POST")
+                response::Response::error(405, "此操作只接受 POST")
             }
             (_, "/app/update/check" | "/app/update/apply") if action != Some("1") => {
-                data::Response::error(403, "缺少操作请求头")
+                response::Response::error(403, "缺少操作请求头")
             }
-            (_, "/app/update/check") => data::Response::json(&update::check_now(app, !quiet)),
-            (_, "/app/update/apply") => data::Response::json(&update::apply(app, service_only)),
+            (_, "/app/update/check") => response::Response::json(&update::check_now(app, !quiet)),
+            (_, "/app/update/apply") => response::Response::json(&update::apply(app, service_only)),
             _ => reader.request(method, path, action, self.request.body()),
         }
     }

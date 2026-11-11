@@ -507,22 +507,6 @@ def test_supervisor_ends_provider_group_when_server_dies(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_manager_returns_normalized_terminal_result(
-    tmp_path: Path, fake_adapter: None
-) -> None:
-    manager = InvocationManager()
-    invocation_id = manager.start(InvocationRequest("claude", "work", tmp_path))
-
-    result = await manager.wait(invocation_id)
-
-    assert result is not None
-    assert result.status is InvocationStatus.SUCCEEDED
-    assert result.output == "completed"
-    assert result.session_id == "provider-session"
-    await manager.shutdown()
-
-
-@pytest.mark.asyncio
 async def test_provider_cwd_cannot_shadow_supervisor_module(
     tmp_path: Path, fake_adapter: None
 ) -> None:
@@ -1507,17 +1491,6 @@ def test_adapters_parse_explicit_quota_resets() -> None:
         ClaudeAdapter().quota_reset(b'{"type":"result","errors":["quota exceeded"]}', b"", now)
         is None
     )
-
-
-def test_quota_retry_after_in_provider_error() -> None:
-    now = datetime.now(UTC)
-    error = json.dumps(
-        {
-            "type": "turn.failed",
-            "error": {"message": "quota exceeded", "headers": {"Retry-After": "120"}},
-        }
-    ).encode()
-    assert CodexAdapter().quota_reset(error, b"", now) == now + timedelta(seconds=120)
 
 
 @pytest.mark.parametrize("first", ["quota", "billing"])

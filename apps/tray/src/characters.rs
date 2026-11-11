@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::data::Response;
+use crate::response::Response;
 use serde_json::{Map, Value};
 
 static WRITE: Mutex<()> = Mutex::new(());
