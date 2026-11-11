@@ -10,10 +10,26 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const PRESETS: [&str; 4] = ["off", "split", "parallel", "custom"];
+pub const PRESETS: [&str; 5] = ["off", "meetings", "split", "parallel", "custom"];
 const START: &str = "<!-- AGENTNAVE:START -->";
 const END: &str = "<!-- AGENTNAVE:END -->";
 const CUSTOM_LIMIT: usize = 8000;
+
+const MEETINGS_HEAD: &str = "## AgentNave 编排偏好
+
+- 仅在作为主对话 boss 时适用；被 AgentNave 派发时只完成任务、回报，不再派发。与本文件其他规则冲突时，以其他规则为准。
+- 本偏好只管开会，不改变任务由谁来做，也不新增推送、合并 PR、发布、发送的授权，不追加权限参数；开会前先加载 agentnave-manager Skill 并按它执行。
+- 有实质取舍或分歧时，boss 可以开 AgentNave 会议室出决定，会上不改代码；用户要求开会时照常开。";
+const MEETINGS_TAIL: &str =
+    "\n- 结果不会主动推送：开会后结束本轮前收齐全部终态，还在跑时要问用户也先收齐或取消。";
+
+const DEFAULT_MEETING_COUNT: u64 = 3;
+const MEETING_SEAT: &str = "{name}（provider=`{provider}`，model=`{model}`）";
+const MEETING_SEAT_EFFORT: &str =
+    "{name}（provider=`{provider}`，model=`{model}`，effort=`{effort}`）";
+const MEETING_ALL: &str = "\n- 开会默认 {count} 席：{seats}；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+const MEETING_SOME: &str = "\n- 开会默认 {count} 席：{seats}，其余由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+const MEETING_NONE: &str = "\n- 开会默认 {count} 席，成员由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
 
 const SHARED: &str = "## AgentNave 编排偏好
 
@@ -44,6 +60,61 @@ const SPLIT_MEETINGS_OWN: &str =
 const PARALLEL: &str = "
 - 并行写入由 boss 判断：计划确认后，互不依赖的写入步骤各用独立 worktree 并行派给多个可写工位，boss 合入当前分支，最后统一验收。";
 
+fn format_meeting_seat(seat: &Value) -> Option<String> {
+    let seat = seat.as_object()?;
+    let provider = seat.get("provider")?.as_str()?;
+    let name = crate::providers::display_name(provider)?;
+    let model = seat.get("model")?.as_str()?.trim();
+    if model.is_empty() {
+        return None;
+    }
+    let effort = seat
+        .get("effort")
+        .and_then(Value::as_str)
+        .filter(|effort| !effort.is_empty());
+    Some(match effort {
+        Some(effort) => MEETING_SEAT_EFFORT
+            .replace("{name}", name)
+            .replace("{provider}", provider)
+            .replace("{model}", model)
+            .replace("{effort}", effort),
+        None => MEETING_SEAT
+            .replace("{name}", name)
+            .replace("{provider}", provider)
+            .replace("{model}", model),
+    })
+}
+
+fn meeting_line(document: &Value) -> Option<String> {
+    let meeting = document.get("meeting")?.as_object()?;
+    let count = meeting.get("count")?.as_u64()?;
+    let seats: Vec<String> = meeting
+        .get("seats")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .take(count as usize)
+                .filter_map(format_meeting_seat)
+                .collect()
+        })
+        .unwrap_or_default();
+    let template = match seats.len() {
+        0 => MEETING_NONE,
+        len if len == count as usize => MEETING_ALL,
+        _ => MEETING_SOME,
+    };
+    Some(
+        template
+            .replace("{count}", &count.to_string())
+            .replace("{seats}", &seats.join("、")),
+    )
+}
+
+fn meetings_text(document: &Value) -> String {
+    let default = meeting_line(document).unwrap_or_default();
+    format!("{MEETINGS_HEAD}{default}{MEETINGS_TAIL}")
+}
+
 /// The split preset's own lines: parallel writing waits for the user, and the boss calls meetings
 /// on its own only when `split_options.meetings` is on.
 fn split_text(document: &Value) -> String {
@@ -52,7 +123,8 @@ fn split_text(document: &Value) -> String {
     } else {
         SPLIT_MEETINGS_ASKED
     };
-    format!("{SHARED}{SPLIT}{meetings}")
+    let default = meeting_line(document).unwrap_or_default();
+    format!("{SHARED}{SPLIT}{meetings}{default}")
 }
 
 /// The parallel preset's own lines: the boss calls meetings on its own unless
@@ -63,12 +135,19 @@ fn parallel_text(document: &Value) -> String {
     } else {
         SPLIT_MEETINGS_OWN
     };
-    format!("{SHARED}{PARALLEL}{meetings}")
+    let default = meeting_line(document).unwrap_or_default();
+    format!("{SHARED}{PARALLEL}{meetings}{default}")
 }
 
 /// Each preset's rules text, for the settings page and the custom editor's starting text.
 pub fn presets(document: &Value) -> Value {
-    json!({"split": text_of(document, "split"), "parallel": text_of(document, "parallel"),
+    json!({"meetings": text_of(document, "meetings"),
+        "split": text_of(document, "split"), "parallel": text_of(document, "parallel"),
+        "meeting": meeting_line(document),
+        "meetings_parts": {"head": MEETINGS_HEAD, "tail": MEETINGS_TAIL},
+        "meeting_parts": {"default_count": DEFAULT_MEETING_COUNT, "separator": "、",
+            "seat": MEETING_SEAT, "seat_effort": MEETING_SEAT_EFFORT,
+            "all": MEETING_ALL, "some": MEETING_SOME, "none": MEETING_NONE},
         "image_generation": IMAGE_GENERATION, "role_sections": roles::sections(),
         "role_base": {"parallel": parallel_text(document)},
         "parallel_base": format!("{SHARED}{PARALLEL}"),
@@ -99,6 +178,7 @@ pub fn migrate_custom(document: &mut Value) {
 /// The text a mode puts in the rules files, if any.
 fn text_of(document: &Value, mode: &str) -> Option<String> {
     let mut text = match mode {
+        "meetings" => return Some(meetings_text(document)),
         "split" => split_text(document),
         "parallel" => parallel_text(document),
         "custom" => document["custom"].as_str()?.trim().to_owned(),

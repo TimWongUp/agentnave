@@ -18,6 +18,8 @@
 .segment-btn { background: transparent; border: 0; color: var(--muted); padding: 5px 16px; font-weight: 550; font-size: 12.5px; border-radius: 6px; }
 .segment-btn:hover:enabled { color: var(--ink); background: var(--hover); }
 .segment-btn.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+#orchestration-presets { max-width: 100%; flex-wrap: wrap; }
+#orchestration-presets > .segment-btn { white-space: nowrap; }
 .guidance { color: var(--muted); font-size: 12px; margin-bottom: 22px; max-width: 860px; line-height: 1.5; }
 .pane-readonly { opacity: 0.65; pointer-events: none; user-select: none; }
 
@@ -195,6 +197,8 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
 .rule-state.failed { color: var(--warn); }
 .orchestration-effect { margin: 10px 0 12px; font-size: 12.5px; color: var(--muted); }
 .orchestration-split { margin: 0 0 12px; }
+.orchestration-meeting { display: grid; gap: 8px; margin: 0 0 14px; }
+.orchestration-meeting > .review-row > .segment-control { grid-column: 2 / -1; justify-self: start; }
 .orchestration-custom textarea { width: 100%; min-height: 220px; box-sizing: border-box; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical; }
 .orchestration-apply { margin: 0 0 8px; font-size: 13px; }
 .orchestration-bosses { margin-bottom: 16px; }
@@ -304,6 +308,8 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
 @media (max-width: 700px) {
   .review-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(80px, 112px); }
   .review-role { grid-column: 1 / -1; }
+  .orchestration-meeting > .review-row { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.2fr) 76px; }
+  .orchestration-meeting > .review-row > .segment-control { grid-column: 1 / -1; }
   .orchestration-group .review-role { padding-left: 0; }
 }
 .skill-rows { display: grid; gap: 10px; max-width: 1100px; }

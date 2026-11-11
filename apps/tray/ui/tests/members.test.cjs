@@ -186,7 +186,12 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
 function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_roles.json`, "utf8"))) {
   const state = { saved: document, members: null };
   const presets = {
-    split: "whole", parallel: "whole+", image_generation: "\nimage",
+    split: "whole", parallel: "whole+", image_generation: "\nimage", meetings: "H\nT",
+    meetings_parts: { head: "H", tail: "\nT" },
+    meeting_parts: {
+      default_count: 3, separator: "、", seat: "{name}<{provider}/{model}>", seat_effort: "{name}<{provider}/{model}/{effort}>",
+      all: "\nA{count}:{seats}", some: "\nS{count}:{seats}", none: "\nN{count}",
+    },
     role_base: { parallel: "base+" }, parallel_base: "base+",
     split_parts: { base: "base", meetings_asked: "\nasked", meetings_own: "\nown" },
     role_sections: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}`])),
@@ -284,6 +289,78 @@ test("a global off shows only the image seat, and no catalog means no role is gu
   await older.app.run("loadOrchestration()");
   assert.equal(older.app.run('$("orchestration-roles").children.length'), 1);
   assert.equal(older.app.run("orchestrationChanged()"), false);
+});
+
+test("meetings only shows its preset text as is, no seat cards, and never counts as using seats", async () => {
+  const { app } = rolesEditor({ version: 1, preset: "meetings", enabled_roles: ["worker"], image_generation: { provider: "codex", model: "gone" } });
+  await app.run("loadOrchestration()");
+  assert.equal(app.run('orchestrationPresetText("meetings")'), "H\nT");
+  assert.equal(app.run('$("orchestration-text").textContent'), "H\nT");
+  assert.equal(app.run('$("orchestration-roles").children.length'), 0);
+  assert.equal(app.run('$("orchestration-split").hidden'), true);
+});
+
+test("meeting seats are picked one by one, shown in the three meeting presets, kept to the count, and clear to nothing", async () => {
+  const { app } = rolesEditor({ version: 1, preset: "meetings", enabled_roles: [] });
+  await app.run("loadOrchestration()");
+  const rows = () => app.run('$("orchestration-meeting").children');
+  const size = (n) => rows()[0].children[1].children[n - 2].listeners.click();
+  const pick = (seat, value) => rows()[1 + seat].children[1].listeners.change({ target: { value } });
+  const wanted = () => JSON.stringify(app.run("orchestrationWanted().meeting"));
+  const preview = (mode) => app.run(`orchestrationPresetText("${mode}")`);
+  const name = app.run("PROVIDER_NAMES.codex");
+  const one = `${name}<codex/chat-model>`;
+
+  assert.equal(app.run('$("orchestration-meeting").hidden'), false);
+  assert.equal(rows().length, 4);
+  assert.equal(rows()[1].children[0].children[0], "席位 1");
+  assert.equal(rows()[1].children[1].children[0].children[0], "由 boss 选");
+  assert.equal(preview("meetings"), "H\nT");
+
+  pick(0, "codex");
+  assert.equal(wanted(), JSON.stringify({ count: 3, seats: [{ provider: "codex", model: "chat-model" }] }));
+  assert.equal(preview("meetings"), `H\nS3:${one}\nT`);
+  app.run('viewMode("split")');
+  assert.equal(app.run('$("orchestration-meeting").hidden'), false);
+  assert.equal(preview("split"), `base\nasked\nS3:${one}`);
+  app.run('viewMode("parallel")');
+  assert.equal(preview("parallel"), `base+\nown\nS3:${one}`);
+  app.run('viewMode("custom")');
+  assert.equal(app.run('$("orchestration-meeting").hidden'), true);
+  app.run('viewMode("meetings")');
+
+  pick(1, "codex");
+  size(2);
+  assert.equal(rows().length, 3);
+  assert.equal(preview("meetings"), `H\nA2:${one}、${one}\nT`);
+  size(5);
+  assert.equal(rows().length, 6);
+  assert.equal(preview("meetings"), `H\nS5:${one}、${one}\nT`);
+  pick(3, "codex");
+  size(3);
+  size(5);
+  assert.equal(app.run("orchestrationWanted().meeting.seats.length"), 2, "seats past a smaller count are dropped and come back empty");
+
+  pick(0, "");
+  pick(1, "");
+  size(4);
+  assert.equal(wanted(), '{"count":4}');
+  assert.equal(preview("meetings"), "H\nN4\nT");
+  size(3);
+  assert.equal(app.run("Object.hasOwn(orchestrationWanted(), 'meeting')"), false);
+  assert.equal(app.run("orchestrationChanged()"), false);
+});
+
+test("meeting seats are checked like orchestration seats while a boss runs a meeting mode", () => {
+  const app = poolEditor();
+  app.run(`
+    currentDoc.clis.codex.allowed_models = ["a"];
+    orchestration = { document: { version: 1, preset: "meetings", meeting: { count: 3, seats: [null, { provider: "codex", model: "b" }] } } };
+  `);
+  assert.equal(app.run("seatConflicts().length"), 1);
+  assert.equal(app.run("seatConflicts()[0].blocking"), true);
+  app.run('orchestration.document.preset = "off"');
+  assert.equal(app.run("seatConflicts().length"), 0);
 });
 
 test("general and specialist roles are grouped, and no role borrows another role's seat", async () => {
@@ -689,6 +766,8 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   assert.equal(app.run("seatConflicts().length"), 0, "inactive image bindings do not block model-pool edits");
   app.run('orchestration.document.preset = "split"');
   assert.equal(app.run("seatConflicts().length"), 1, "enabling orchestration restores the binding conflict");
+  app.run('orchestration.document.preset = "meetings"');
+  assert.equal(app.run("seatConflicts().length"), 0, "meetings only uses no seats");
 });
 
 test("a model the CLI no longer lists is marked but blocks no save, and nothing is marked without a listing", () => {
