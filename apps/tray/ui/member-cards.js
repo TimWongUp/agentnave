@@ -2,7 +2,7 @@
 {
   const S = AN.settings ||= {};
   const {
-    $, L, MAX_SELECTED_MODELS, OFF, PROVIDERS, PROVIDER_NAMES, SCENES, SCENE_IDS, apiGetMembers,
+    $, L, OFF, PROVIDERS, PROVIDER_NAMES, SCENES, SCENE_IDS, apiGetMembers,
     apiPostMembers, changeSlot, cliBusy, cliEffort, confirmScenes, effortLevels, el, emptyScene,
     getAllModelIds, hasPool, isSplit, known, limitChanged, loadCliInstallCommands, loadCliUpdates, markSaved,
     nativeDefault, outOfPool, renderCliInstallations, renderCliUpdate, renderCliUpdateError,
@@ -107,31 +107,19 @@
     if (open) {
       const toggle = (m, on) => {
         const list = chosen || [];
-        const allowed = on ? [...list, m] : list.filter((x) => x !== m);
-        // Only adding is refused, so an older list above the limit can still shrink.
-        if (on && allowed.length > MAX_SELECTED_MODELS) {
-          showNotice(L(`最多选 ${MAX_SELECTED_MODELS} 个模型`, `Select at most ${MAX_SELECTED_MODELS} models`), true);
-          S.renderCards();
-          return;
-        }
-        writePool(provider, allowed);
+        writePool(provider, on ? [...list, m] : list.filter((x) => x !== m));
       };
       const defaults = SCENE_IDS.map((s) => slot(s, provider).model);
       rows.push(el("div", { className: "member-picker" },
         el("div", { className: "member-picker-actions" },
           el("button", { type: "button", dataset: { focusKey: `${key}/all` }, disabled: !all.length,
-            onClick: () => {
-              if (all.length > MAX_SELECTED_MODELS) {
-                showNotice(L(`共有 ${all.length} 个模型，最多选 ${MAX_SELECTED_MODELS} 个`, `${all.length} models available; select at most ${MAX_SELECTED_MODELS}`), true);
-                return;
-              }
-              writePool(provider, all);
-            },
+            onClick: () => writePool(provider, all),
           }, L("全选", "Select all")),
           el("button", { type: "button", dataset: { focusKey: `${key}/none` },
             onClick: () => writePool(provider, []),
           }, L("全不选", "Clear all")),
-          el("span", {}, L(`已选 ${chosen?.length || 0}/${MAX_SELECTED_MODELS}`, `Selected ${chosen?.length || 0}/${MAX_SELECTED_MODELS}`))),
+          el("span", {}, L(`已选 ${chosen?.length || 0}`, `Selected ${chosen?.length || 0}`)),
+          el("span", { className: "member-muted" }, L("建议每个 CLI 不超过 10 个模型", "Up to 10 models per CLI recommended"))),
         ...all.map((m) => el("label", { className: "member-option" },
           el("input", {
             type: "checkbox",

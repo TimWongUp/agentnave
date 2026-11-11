@@ -56,22 +56,10 @@ fn available(root: &Path, ids: &[String]) -> Result<bool, String> {
         if !crate::data_files::valid_id(id) {
             return Ok(false);
         }
-        let path = crate::db::lock_path(root, id);
-        match fs::symlink_metadata(&path) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.to_string()),
-            Ok(meta) if !meta.is_file() => return Ok(false),
-            _ => {}
-        }
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
-        match lock.try_lock() {
-            Ok(()) => drop(lock),
-            Err(TryLockError::WouldBlock) => return Ok(false),
-            Err(error) => return Err(error.to_string()),
+        match crate::db::probe_lock(root, id)? {
+            crate::db::LockProbe::Missing => continue,
+            crate::db::LockProbe::Unlocked(lock) => drop(lock),
+            crate::db::LockProbe::BusyOrUnsafe => return Ok(false),
         }
     }
     Ok(true)

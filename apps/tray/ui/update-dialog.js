@@ -10,6 +10,8 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let dialog = null;
   let running = false;
+  // The check whose dialog is up; closing the dialog cancels it, and its late answer only syncs the App's status.
+  let checking = null;
 
   // A small subset of the release notes' Markdown: "## " headings, "- " bullets, paragraphs and
   // `code`.
@@ -41,6 +43,7 @@
     if (!dialog) {
       dialog = h("dialog.upd");
       dialog.addEventListener("cancel", (e) => { if (running) e.preventDefault(); });
+      dialog.addEventListener("close", () => { if (checking) { checking.cancelled = true; checking = null; } });
       document.body.append(dialog);
     }
     const row = h("div.upd-row", {}, ...buttons.map(([label, run, primary]) => {
@@ -156,7 +159,12 @@
     || (status.update?.state === "none" && ["outdated", "failed"].includes(status.service?.state)));
 
   async function run(recheck = false) {
-    if (running) return;
+    if (running || checking) return;
+    const check = checking = { cancelled: false };
+    try { await runCheck(recheck, check); } finally { if (checking === check) checking = null; }
+  }
+
+  async function runCheck(recheck, check) {
     let status = null;
     if (!recheck) {
       try { status = await load("/app/status"); } catch { /* A check below reports the trouble. */ }
@@ -171,14 +179,16 @@
       const reason = found
         ? L("上次检查已超过一天，先确认有没有更新的版本…", "Last checked over a day ago; checking for a newer version first…")
         : L("正在检查最新版本…", "Checking for the latest version…");
-      show(L("检查更新", "Check for updates"), [h("p.upd-p", {}, reason)], [[L("取消", "Cancel"), close]]);
+      show(L("检查更新", "Check for updates"), [h("p.upd-p", {}, reason)], [[L("取消", "Cancel"), () => { check.cancelled = true; close(); }]]);
       try {
         status = await post(found ? "/app/update/check?quiet=1" : "/app/update/check");
       } catch (error) {
+        if (check.cancelled) return void load("/app/status").then(done, () => {});
         return show(L("检查更新失败", "Update check failed"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重试", "Retry"), () => run(true), true]]);
       }
     }
     done(status);
+    if (check.cancelled) return;
     const update = status.update;
     const service = status.service;
     if (update?.state === "installing") return follow(status, false);

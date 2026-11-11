@@ -44,6 +44,22 @@ test("private listening loads complete history once and polls the recent workspa
   assert.deepEqual(app.playbacks.map(sound => sound.text), list.map(m => m.text), "history beyond the recent 300 is read without truncation");
 });
 
+test("a listened workspace the office keeps feeding is not fetched again by listening", async () => {
+  const paths = [];
+  const app = await office(false, undefined, undefined, "all", async path => { paths.push(path); return null; });
+  const pending = message("pending", "2026-11-01T00:00:02Z", { status: "running" });
+  await app.feed([pending]);
+  await app.command("listen", { group: "workspace" });
+  paths.length = 0;
+  await app.tick();
+  assert.deepEqual(paths.filter(path => path.startsWith("/app/chats/")), ["/app/chats/workspace"], "without the office, listening polls itself");
+  paths.length = 0;
+  app.voice.ingest({ group: "workspace", messages: [{ ...pending, status: "succeeded" }] }, { whole: true });
+  await app.tick();
+  assert.deepEqual(paths.filter(path => path.startsWith("/app/chats/")), []);
+  assert.deepEqual(app.playbacks.map(sound => sound.text), ["pending"], "what the office brought in is still heard");
+});
+
 test("workspace listening ignores existing readable messages and follows transitions to readability", async () => {
   const app = await office(false);
   const old = message("old", "2026-11-01T00:00:01Z");
@@ -382,4 +398,27 @@ test("a late chain response does not repeat messages completed while it was load
   await app.tick();
   assert.equal(app.playbacks.length, played);
   assert.deepEqual(app.playbacks.map(sound => sound.text), ["m1", "m2", "m1", "m3", "m4"]);
+});
+
+test("an office poll before the first read finishes does not queue the history it brings", async () => {
+  const list = [1, 2, 3].map(n => message(`old-${n}`, `2026-11-01T00:00:0${n}Z`));
+  let release, held = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  const app = await office(false, undefined, undefined, "all", async path => {
+    if (held || path !== "/app/chats/workspace") return null;
+    held = true;
+    await gate;
+    return { ok: true, json: async () => ({ group: "workspace", host: "codex", messages: list, desks: [], rooms: [] }) };
+  });
+  const listening = app.command("listen", { group: "workspace" });
+  await flush();
+  app.voice.ingest({ group: "workspace", messages: list }, { whole: true });
+  await flush();
+  release(); await listening;
+  await app.tick();
+  assert.deepEqual(app.playbacks.map(sound => sound.text), [], "history that predates the first read is not read on an office poll");
+  list.push(message("new", "2026-11-01T00:00:04Z"));
+  app.voice.ingest({ group: "workspace", messages: list }, { whole: true });
+  await app.tick();
+  assert.deepEqual(app.playbacks.map(sound => sound.text), ["new"], "what arrives afterwards is still heard");
 });

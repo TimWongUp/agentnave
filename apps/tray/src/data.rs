@@ -40,11 +40,11 @@ type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 /// (view revision, parsed view) of one conversation.
 type CachedView = (i64, Arc<Value>);
 
-/// What identifies a route answer: each snapshot's view, whether the data root exists, and
-/// the reuse window.
-// Snapshots, whether the data root exists, the reuse window and the running limit.
+/// What identifies a route answer: snapshots, stage top-5 IDs (for single-group routes),
+/// whether the data root exists, the reuse window, running limit, handovers and boss apps.
 type RouteKey = (
     Vec<crate::stage::SourceKey>,
+    Vec<String>,
     bool,
     u64,
     usize,
@@ -105,9 +105,16 @@ impl Reader {
 
     /// Share parsed saved views across all polling routes; live files are always reread.
     fn scan(&self) -> (Overview, Vec<Snapshot>) {
-        let mut overview = Overview::default();
         let database = crate::db::read(&self.root);
-        let rows = match &database {
+        self.scan_with(&database)
+    }
+
+    pub(super) fn scan_with(
+        &self,
+        database: &Result<Option<rusqlite::Connection>, String>,
+    ) -> (Overview, Vec<Snapshot>) {
+        let mut overview = Overview::default();
+        let rows = match database {
             Ok(Some(connection)) => view_rows(connection),
             Ok(None) => {
                 overview.missing = true;
@@ -212,29 +219,56 @@ impl Reader {
         (overview, snapshots)
     }
 
-    /// Stage and chat answers, reused while every snapshot and the reuse window are unchanged.
+    /// Stage and chat answers, reused while relevant snapshots and the reuse window are unchanged.
     fn route(&self, path: &str) -> Response {
-        let snapshots = self.scan().1;
+        let database = crate::db::read(&self.root);
+        let snapshots = self.scan_with(&database).1;
         let window = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
             / ROUTE_REUSE.as_secs();
         let limit = crate::settings::max_running(&self.root) as usize;
-        let (handovers, apps) = match crate::db::read(&self.root) {
+        let (handovers, apps) = match &database {
             Ok(Some(connection)) => (
-                handovers(&connection),
-                self.boss_apps.of(&connection, || self.boss_homes()),
+                handovers(connection),
+                self.boss_apps.of(connection, || self.boss_homes()),
             ),
             _ => (Vec::new(), Vec::new()),
         };
+        let handover_map: HashMap<_, _> = handovers.iter().cloned().collect();
+        let app_map: HashMap<_, _> = apps.iter().cloned().collect();
+        let data_exists = self.root.is_dir();
+        let (sources, stage_ids, key_handovers, key_apps, views) =
+            if let Some(group_id) = crate::stage::requested_group(path) {
+                let stage_ids = crate::stage::stage_ids_of(&snapshots, &handover_map);
+                let mut sources = Vec::new();
+                let mut views = Vec::new();
+                for s in &snapshots {
+                    if crate::stage::chat_group(&s.item).as_deref() == Some(group_id) {
+                        sources.push(crate::stage::source_key(s));
+                        views.push(s.view.clone());
+                    }
+                }
+                let h = handovers
+                    .into_iter()
+                    .filter(|(id, _)| id == group_id)
+                    .collect();
+                let a = apps.into_iter().filter(|(id, _)| id == group_id).collect();
+                (sources, stage_ids, h, a, views)
+            } else {
+                let sources = snapshots.iter().map(crate::stage::source_key).collect();
+                let views = snapshots.iter().map(|s| s.view.clone()).collect();
+                (sources, Vec::new(), handovers, apps, views)
+            };
         let key = (
-            snapshots.iter().map(crate::stage::source_key).collect(),
-            self.root.is_dir(),
+            sources,
+            stage_ids,
+            data_exists,
             window,
             limit,
-            handovers,
-            apps,
+            key_handovers,
+            key_apps,
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -242,10 +276,8 @@ impl Reader {
         {
             return response.clone();
         }
-        let views = snapshots.iter().map(|s| s.view.clone()).collect();
-        let handovers = key.4.iter().cloned().collect();
-        let apps = key.5.iter().cloned().collect();
-        let response = crate::stage::respond(path, snapshots, key.1, limit, &handovers, &apps);
+        let response =
+            crate::stage::respond(path, snapshots, data_exists, limit, &handover_map, &app_map);
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {
             routes.clear();
@@ -259,6 +291,7 @@ impl Reader {
         let mut cache = self.live_files.lock().unwrap_or_else(|p| p.into_inner());
         let mut seen = HashSet::new();
         let mut found: Vec<(SystemTime, HashMap<String, Live>)> = Vec::new();
+        let now = SystemTime::now();
         for entry in fs::read_dir(self.root.join("live"))
             .into_iter()
             .flatten()
@@ -271,12 +304,8 @@ impl Reader {
             let Some(modified) = meta.modified().ok() else {
                 continue;
             };
-            // A clock running behind the file's mtime counts as fresh.
-            if path.extension().is_none_or(|ext| ext != "json")
-                || SystemTime::now()
-                    .duration_since(modified)
-                    .is_ok_and(|age| age > LIVE_FRESH)
-            {
+            // Small clock skew counts as fresh; far-future mtimes after a backward clock jump do not.
+            if path.extension().is_none_or(|ext| ext != "json") || !live_fresh(modified, now) {
                 continue;
             }
             seen.insert(path.clone());
@@ -316,6 +345,14 @@ impl Reader {
             .flat_map(|(_, conversations)| conversations)
             .collect()
     }
+}
+
+fn live_fresh(modified: SystemTime, now: SystemTime) -> bool {
+    now.duration_since(modified)
+        .is_ok_and(|age| age <= LIVE_FRESH)
+        || modified
+            .duration_since(now)
+            .is_ok_and(|ahead| ahead <= LIVE_FRESH)
 }
 
 /// The action header and JSON body of a write, for a route that has already checked its method.

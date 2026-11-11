@@ -459,6 +459,18 @@ fn tail_live_files_lay_over_saved_running_work_only() {
         after.3.as_ref().unwrap(),
         before.3.as_ref().unwrap()
     ));
+    // A clock that jumped backward must not leave a crashed server's live file fresh forever.
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(SystemTime::now() + Duration::from_secs(60))
+        .unwrap();
+    assert!(
+        !state(&reader, &format!("/app/chats/{MANAGER}"))["live"]
+            .as_bool()
+            .unwrap()
+    );
 }
 
 #[test]
@@ -974,8 +986,15 @@ fn regression_member_activity_uses_seat_time_across_seats_and_conversations() {
         "task"
     );
     // A live running seat has current activity even when its conversation's last entry is old.
+    save(
+        dir.path(),
+        &task_snapshot("task", "succeeded", "2000-01-01T00:30:00Z"),
+    );
     show["summary"]["updated"] = json!("2000-01-01T00:00:00Z");
     show["summary"]["status"] = json!("running");
+    show["director"]["messages"] = json!([
+        {"kind": "host", "speaker": "@host", "round": 1, "text": "旧消息", "time": "2000-01-01T00:00:00Z"}
+    ]);
     show["director"]["round"]["number"] = json!(2);
     show["director"]["round"]["seats"][0]["status"] = json!("running");
     save(dir.path(), &show);
@@ -984,16 +1003,24 @@ fn regression_member_activity_uses_seat_time_across_seats_and_conversations() {
         &live,
         &json!({"version": 2, "conversations": {"show": {"seats": {}}}}),
     );
+    let live_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     fs::File::options()
         .write(true)
         .open(&live)
         .unwrap()
-        .set_modified(UNIX_EPOCH + Duration::from_secs(4070959200))
+        .set_modified(UNIX_EPOCH + Duration::from_secs(live_secs))
         .unwrap();
     let chat = state(&reader, &path);
+    assert_eq!(chat["members"][0]["conversation"], "show");
     let typing = chat["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(typing["kind"], "typing");
-    assert_eq!(typing["time"], "2099-01-01T14:00:00.000000Z");
+    assert_eq!(
+        typing["time"],
+        crate::time_format::iso((live_secs as i64) * 1_000_000)
+    );
 }
 
 #[test]

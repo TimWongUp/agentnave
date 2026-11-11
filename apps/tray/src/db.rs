@@ -20,6 +20,92 @@ pub fn lock_path(root: &Path, id: &str) -> PathBuf {
     root.join("locks").join(format!("{id}.lock"))
 }
 
+pub(crate) enum LockProbe {
+    Missing,
+    Unlocked(std::fs::File),
+    BusyOrUnsafe,
+}
+
+fn plain_entry(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            return false;
+        }
+    }
+    !meta.is_symlink()
+}
+
+/// Read-only ownership probe: never creates a lock file, never follows symlinks or reparse
+/// points, and verifies on Unix that the locked handle still names the path on disk.
+pub(crate) fn probe_lock(root: &Path, id: &str) -> Result<LockProbe, String> {
+    use std::fs::{File, TryLockError, symlink_metadata};
+    use std::io::ErrorKind;
+
+    let path = lock_path(root, id);
+    let Some(parent) = path.parent() else {
+        return Ok(LockProbe::BusyOrUnsafe);
+    };
+    match symlink_metadata(parent) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(LockProbe::Missing),
+        Err(error) => return Err(error.to_string()),
+        Ok(directory) if !directory.is_dir() || !plain_entry(&directory) => {
+            return Ok(LockProbe::BusyOrUnsafe);
+        }
+        Ok(_) => {}
+    }
+    match symlink_metadata(&path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(LockProbe::Missing),
+        Err(error) => return Err(error.to_string()),
+        Ok(meta) if !meta.is_file() || !plain_entry(&meta) => return Ok(LockProbe::BusyOrUnsafe),
+        Ok(_) => {}
+    }
+    let mut options = File::options();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Do not follow a reparse point or allow replacement while the probe is open.
+        options.custom_flags(0x00200000).share_mode(3);
+    }
+    let file = match options.open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(LockProbe::Missing),
+        Err(_) => return Ok(LockProbe::BusyOrUnsafe),
+    };
+    let Ok(opened) = file.metadata() else {
+        return Ok(LockProbe::BusyOrUnsafe);
+    };
+    if !opened.is_file() || !plain_entry(&opened) {
+        return Ok(LockProbe::BusyOrUnsafe);
+    }
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Ok(LockProbe::BusyOrUnsafe),
+        Err(TryLockError::Error(error)) => return Err(error.to_string()),
+    }
+    let Ok(current) = symlink_metadata(&path) else {
+        return Ok(LockProbe::BusyOrUnsafe);
+    };
+    if !current.is_file() || !plain_entry(&current) {
+        return Ok(LockProbe::BusyOrUnsafe);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if (opened.dev(), opened.ino()) != (current.dev(), current.ino()) {
+            return Ok(LockProbe::BusyOrUnsafe);
+        }
+    }
+    Ok(LockProbe::Unlocked(file))
+}
+
 fn open(root: &Path, flags: OpenFlags) -> Result<Option<Connection>, String> {
     let path = path(root);
     if !path.is_file() {

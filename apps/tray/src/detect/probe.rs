@@ -296,8 +296,139 @@ pub(super) fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
         .rev()
         .map(str::trim)
         .find(|line| !line.is_empty())
-        .map_or_else(|| format!("退出码 {status}"), str::to_owned);
-    Err(reason.chars().take(200).collect())
+        .map_or_else(
+            || format!("退出码 {status}"),
+            |line| redact_reason(line).chars().take(200).collect(),
+        );
+    Err(reason)
+}
+
+/// A failure reason with credentials taken out: a value the environment holds under a
+/// secret-sounding name first, then the whole line when it still spells out a credential value.
+pub(super) fn redact_reason(line: &str) -> String {
+    redact_reason_with(line, std::env::vars())
+}
+
+pub(super) fn redact_reason_with<I, K, V>(line: &str, env: I) -> String
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    const SECRET_NAMES: [&str; 7] = [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "key",
+        "credential",
+        "auth",
+    ];
+    let mut redacted = line.to_owned();
+    for (name, value) in env {
+        let (name, value) = (name.as_ref(), value.as_ref());
+        let named = SECRET_NAMES
+            .iter()
+            .any(|word| name.to_ascii_lowercase().contains(word));
+        if named && value.len() >= 8 && redacted.contains(value) {
+            redacted = redacted.replace(value, "[REDACTED]");
+        }
+    }
+    if names_credential(&redacted) {
+        "[REDACTED]".to_owned()
+    } else {
+        redacted
+    }
+}
+
+/// Whether a line assigns or embeds a credential value (leaving plain notices like
+/// "Missing credential" or "No API key configured" readable).
+fn names_credential(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    assigned_secret(&lower)
+        || auth_scheme_token(&lower)
+        || url_has_user_info(&lower)
+        || token_prefix(line, &lower)
+}
+
+fn assigned_secret(lower: &str) -> bool {
+    const KEYS: [&str; 12] = [
+        "authorization",
+        "cookie",
+        "password",
+        "passwd",
+        "secret",
+        "credential",
+        "private_key",
+        "private-key",
+        "api_key",
+        "api-key",
+        "apikey",
+        "token",
+    ];
+    let key_like = |name: &str| {
+        KEYS.iter().any(|word| name.contains(word))
+            || name == "key"
+            || name.ends_with("_key")
+            || name.ends_with("-key")
+    };
+    lower.match_indices(['=', ':']).any(|(at, _)| {
+        let left = lower[..at]
+            .trim_end()
+            .trim_end_matches(['"', '\'', '\\'])
+            .rsplit(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-')))
+            .next()
+            .unwrap_or_default();
+        let right = lower[at + 1..]
+            .trim_start()
+            .trim_start_matches(['"', '\'', '\\']);
+        key_like(left) && !right.is_empty() && !right.starts_with("[redacted]")
+    })
+}
+
+fn auth_scheme_token(lower: &str) -> bool {
+    ["bearer ", "basic "].iter().any(|scheme| {
+        lower.match_indices(scheme).any(|(at, _)| {
+            let before_ok = at == 0 || !lower.as_bytes()[at - 1].is_ascii_alphanumeric();
+            let token = lower[at + scheme.len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or_default();
+            before_ok && token.len() >= 6 && token != "[redacted]"
+        })
+    })
+}
+
+/// `scheme://user:password@host` carries a credential before the first path slash.
+fn url_has_user_info(line: &str) -> bool {
+    line.match_indices("://").any(|(at, _)| {
+        let rest = &line[at + 3..];
+        rest[..rest.find('/').unwrap_or(rest.len())].contains('@')
+    })
+}
+
+/// Common key/JWT prefixes (`sk-`, `ghp_`/`github_pat_`, `eyJ...`).
+fn token_prefix(raw: &str, lower: &str) -> bool {
+    let is_key_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.');
+    let prefixed = [("sk-", 12), ("ghp_", 20), ("github_pat_", 20)]
+        .iter()
+        .any(|(prefix, min)| {
+            lower.match_indices(prefix).any(|(at, _)| {
+                let before_ok = at == 0 || !lower.as_bytes()[at - 1].is_ascii_alphanumeric();
+                before_ok
+                    && lower[at + prefix.len()..]
+                        .chars()
+                        .take_while(|c| is_key_char(*c))
+                        .take(*min)
+                        .count()
+                        >= *min
+            })
+        });
+    let jwt = raw.match_indices("eyJ").any(|(at, _)| {
+        let token: String = raw[at..].chars().take_while(|c| is_key_char(*c)).collect();
+        token.split('.').filter(|part| part.len() >= 8).count() >= 3
+    });
+    prefixed || jwt
 }
 
 /// Codex's model list: the catalog its own config names, else the cache it keeps.

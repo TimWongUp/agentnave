@@ -433,6 +433,62 @@ sleep 30 &
     let started = Instant::now();
     assert_eq!(run(&lingering, &[]).unwrap(), "listed\n");
     assert!(started.elapsed() < Duration::from_secs(5));
+
+    // Pi naming no models is a failed probe, not an empty catalog: an empty list would leave the
+    // settings page showing the last models it saw and report nothing.
+    let pi = directory.path().join("pi");
+    let cases = [
+        "#!/bin/sh\nif [ \"$1\" = --list-models ]; then echo 'No models available'; exit 0; fi\nexit 1\n",
+        "#!/bin/sh\nread line\necho '{\"id\":\"agentnave-models\",\"data\":{\"models\":[]}}'\n",
+    ];
+    for case in cases {
+        std::fs::write(&pi, case).unwrap();
+        std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let failed = probe_path("pi", &pi);
+        assert_eq!(failed["installed"], true);
+        assert_eq!(failed["models"], json!([]));
+        assert!(
+            failed["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Pi 没有列出可用模型"),
+            "{}",
+            failed["error"]
+        );
+    }
+}
+
+#[test]
+fn a_probe_reason_keeps_plain_text_but_never_a_credential() {
+    use super::probe::redact_reason_with;
+    for plain in [
+        "boom",
+        "CLI unavailable at /opt/homebrew/bin/pi",
+        "Missing credential, please run login",
+        "No API key configured",
+    ] {
+        assert_eq!(redact_reason_with(plain, Vec::<(&str, &str)>::new()), plain);
+    }
+    assert_eq!(
+        redact_reason_with(
+            "upstream rejected secret-value-1234",
+            [("CUSTOM_API_KEY", "secret-value-1234")],
+        ),
+        "upstream rejected [REDACTED]"
+    );
+    for line in [
+        "Authorization: Bearer abc123",
+        "api_key=0123456789abcdef",
+        "\"apiKey\": \"0123456789abcdef\"",
+        "https://user:pass@host.invalid/x",
+        "failed for sk-abcdefghijkl",
+    ] {
+        assert_eq!(
+            redact_reason_with(line, Vec::<(&str, &str)>::new()),
+            "[REDACTED]",
+            "{line}"
+        );
+    }
 }
 
 #[cfg(windows)]

@@ -20,6 +20,8 @@ const PROXY_KEYS: [&str; 6] = [
     "http_proxy",
 ];
 
+const NO_PROXY_KEYS: [&str; 2] = ["NO_PROXY", "no_proxy"];
+
 static SHELL_NETWORK: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
 
 /// Cache the login shell's network variables detected by `hosts`, so background downloads can
@@ -81,6 +83,29 @@ pub fn env_proxy_url(env: &BTreeMap<String, String>) -> Option<tauri::Url> {
         }
     }
     None
+}
+
+/// The hosts that bypass the proxy, read with the same precedence as `resolve`.
+pub fn resolve_no_proxy(network: Option<&BTreeMap<String, String>>) -> Option<String> {
+    fn from(env: &BTreeMap<String, String>) -> Option<String> {
+        NO_PROXY_KEYS.iter().find_map(|key| {
+            env.get(*key)
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+    }
+    if let Some(map) = network
+        && let Some(value) = from(map)
+    {
+        return Some(value);
+    }
+    if let Some(mutex) = SHELL_NETWORK.get()
+        && let Some(value) = from(&mutex.lock().unwrap_or_else(|p| p.into_inner()))
+    {
+        return Some(value);
+    }
+    from(&std::env::vars().collect())
 }
 
 /// Expand canonical download URLs with their fallback GitHub Release mirrors (`GITHUB_MIRRORS`),
@@ -247,87 +272,4 @@ fn read(name: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{enabled, expand_urls, parse_scutil, proxy_url};
-
-    #[test]
-    fn a_plain_host_and_port_gets_a_scheme() {
-        assert_eq!(proxy_url("127.0.0.1:7897"), "http://127.0.0.1:7897");
-    }
-
-    #[test]
-    fn a_per_scheme_list_prefers_https() {
-        assert_eq!(
-            proxy_url("http=127.0.0.1:7890;https=127.0.0.1:7897"),
-            "http://127.0.0.1:7897"
-        );
-    }
-
-    #[test]
-    fn a_value_that_already_has_a_scheme_is_kept() {
-        assert_eq!(
-            proxy_url("https://127.0.0.1:7897"),
-            "https://127.0.0.1:7897"
-        );
-    }
-
-    #[test]
-    fn the_enable_flag_is_a_dword_in_the_registry() {
-        assert!(enabled("0x1"));
-        assert!(enabled("1"));
-        assert!(!enabled("0x0"));
-        assert!(!enabled("0"));
-    }
-
-    #[test]
-    fn scutil_prefers_https_then_http_then_socks_and_ignores_exceptions() {
-        let https = "\
-<dictionary> {
-  ExceptionsList : <array> {
-    0 : 127.0.0.1
-    1 : localhost
-  }
-  HTTPEnable : 1
-  HTTPPort : 7890
-  HTTPProxy : 127.0.0.1
-  HTTPSEnable : 1
-  HTTPSPort : 7897
-  HTTPSProxy : 127.0.0.1
-  SOCKSEnable : 1
-  SOCKSPort : 7891
-  SOCKSProxy : 127.0.0.1
-}";
-        assert_eq!(
-            parse_scutil(https).as_deref(),
-            Some("http://127.0.0.1:7897")
-        );
-
-        let socks_only = "\
-<dictionary> {
-  HTTPSEnable : 0
-  SOCKSEnable : 1
-  SOCKSPort : 1080
-  SOCKSProxy : 127.0.0.1
-}";
-        assert_eq!(
-            parse_scutil(socks_only).as_deref(),
-            Some("socks5://127.0.0.1:1080")
-        );
-        assert_eq!(parse_scutil("<dictionary> {\n  HTTPEnable : 0\n}"), None);
-    }
-
-    #[test]
-    fn expand_urls_puts_github_mirrors_after_direct_sources() {
-        let urls = expand_urls(&[
-            "https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz".into(),
-        ]);
-        assert_eq!(
-            urls,
-            vec![
-                "https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
-                "https://ghfast.top/https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
-                "https://gh-proxy.com/https://github.com/TimWongUp/agentnave/releases/latest/download/pack.tar.gz",
-            ]
-        );
-    }
-}
+mod tests;

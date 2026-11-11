@@ -212,16 +212,30 @@ def test_interface_seat_never_borrows_the_worker_seat(
     ids=lambda path: f"{path.parent.name}/{path.stem}",
 )
 def test_app_file_samples_agree_with_the_tray(
-    sample: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sample: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The tray checks the same samples (apps/tray/src/members/tests.rs), so a file the App
     saves is one the server reads, and one the App refuses the server refuses too."""
+    from agentnave.members import read_history_retention_days
+
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
 
     def check() -> object:
         if sample.parent.name == "settings":
             (tmp_path / "settings.json").write_bytes(sample.read_bytes())
-            return read_max_running(), read_claude_interactive()
+            caplog.clear()
+            days = read_history_retention_days(tmp_path)
+            if "History cleanup is disabled" in caplog.text:
+                raise SettingsFileError("invalid history_retention_days")
+            return (
+                read_max_running(),
+                read_claude_interactive(),
+                read_antigravity_interactive(),
+                days,
+            )
         return APP_MODELS[sample.parent.name].model_validate_json(sample.read_bytes())
 
     if sample.stem.startswith("valid-"):

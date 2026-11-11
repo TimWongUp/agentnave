@@ -593,7 +593,22 @@ pub(crate) fn codex_source() -> Option<String> {
         })
 }
 
-/// `GET /settings/members`: the document, why it cannot be edited, and the detected CLIs.
+/// Option keys governed by permission tiers, matching `PERMISSION_KEYS` in `agentnave.members`.
+fn permission_keys() -> Value {
+    json!({
+        "zcode": ["permission_mode"],
+        "claude": ["permission_mode", "permission_fallback"],
+        "codebuddy": ["permission_mode"],
+        "grok": ["permission_mode", "sandbox"],
+        "antigravity": ["mode", "sandbox", "dangerously_skip_permissions"],
+        "codex": ["approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
+        "deepseek": ["permission_mode"],
+        "devin": ["permission_mode", "sandbox"],
+        "pi": [],
+    })
+}
+
+/// `/settings/members`: the document, why it cannot be edited, and the detected CLIs.
 pub fn state(root: &Path, refresh: bool) -> Value {
     wait_prepared();
     let detected = crate::detect::detected(refresh, codex_source);
@@ -614,6 +629,7 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         "review_error": review_error,
         "permissions": permissions,
         "permissions_error": permissions_error,
+        "permission_keys": permission_keys(),
         "detected": detected,
         "provider_health": crate::provider_health::read(root),
     })
