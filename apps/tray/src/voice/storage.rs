@@ -383,12 +383,52 @@ fn write(root: &Path, name: &str, value: &Value) -> Result<(), String> {
             file.as_file()
                 .set_permissions(fs::Permissions::from_mode(0o600))?;
         }
+        #[cfg(windows)]
+        if name == "voice-keys.json" {
+            restrict_windows_acl(file.path())?;
+        }
         file.write_all(value.to_string().as_bytes())?;
         file.as_file().sync_all()?;
         file.persist(root.join(name)).map_err(|e| e.error)?;
         Ok(())
     };
     save().map_err(|_| format!("无法保存 {name}"))
+}
+
+/// Windows has no file mode to copy: remove inherited access and grant the current user alone
+/// before writing secret bytes into the temporary file.
+#[cfg(windows)]
+fn restrict_windows_acl(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    if user.trim().is_empty() {
+        return Ok(());
+    }
+    let icacls = std::env::var_os("SystemRoot")
+        .map(|root| std::path::PathBuf::from(root).join(r"System32\icacls.exe"))
+        .filter(|candidate| candidate.is_file())
+        .unwrap_or_else(|| std::path::PathBuf::from("icacls.exe"));
+    let run = |principal: &str| {
+        std::process::Command::new(&icacls)
+            .arg(path.as_os_str())
+            .arg("/inheritance:r")
+            .arg("/grant:r")
+            .arg(format!("{principal}:(F)"))
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .status()
+    };
+    if let Ok(domain) = std::env::var("USERDOMAIN")
+        && !domain.trim().is_empty()
+        && run(&format!("{domain}\\{user}"))?.success()
+    {
+        return Ok(());
+    }
+    if run(&user)?.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other("无法限制语音密钥文件权限"))
+    }
 }
 pub(super) fn save_settings(root: &Path, value: &Value) -> Result<(), String> {
     let value = validate(value)?;

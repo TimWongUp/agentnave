@@ -3,9 +3,10 @@
 //! Skill folder reached through a linked parent is left alone, since writing there lands elsewhere.
 use super::{VERSION, backup};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 include!(concat!(env!("OUT_DIR"), "/manager_skill.rs"));
@@ -49,6 +50,12 @@ pub fn catalog() -> Value {
 const MARKER: &str = ".agentnave-app";
 const MANIFEST: &str = ".agentnave-app-manifest.json";
 
+type FileStamp = (String, u64, SystemTime);
+type CachedFingerprint = (Vec<FileStamp>, BTreeMap<String, String>);
+
+static FINGERPRINTS: LazyLock<Mutex<HashMap<PathBuf, CachedFingerprint>>> =
+    LazyLock::new(Mutex::default);
+
 pub(super) fn hash(bytes: &[u8]) -> String {
     // A deterministic content fingerprint; ownership is not an adversarial trust boundary.
     let value = bytes.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
@@ -56,22 +63,30 @@ pub(super) fn hash(bytes: &[u8]) -> String {
     });
     format!("{value:016x}")
 }
-fn files(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) -> Result<(), String> {
+fn collect_files(
+    root: &Path,
+    dir: &Path,
+    out: &mut BTreeMap<String, (PathBuf, u64, SystemTime)>,
+) -> Result<(), String> {
     for item in fs::read_dir(dir).map_err(|_| "无法读取 Skill")? {
-        let path = item.map_err(|_| "无法读取 Skill")?.path();
-        if path.is_symlink() {
+        let entry = item.map_err(|_| "无法读取 Skill")?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|_| "无法读取 Skill")?;
+        if kind.is_symlink() {
             return Err("Skill 包含符号链接".into());
         }
-        if path.is_dir() {
-            files(root, &path, out)?;
-        } else if path.is_file() {
+        if kind.is_dir() {
+            collect_files(root, &path, out)?;
+        } else if kind.is_file() {
             let name = path
                 .strip_prefix(root)
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/");
             if name != MARKER && name != MANIFEST {
-                out.insert(name, hash(&fs::read(path).map_err(|_| "无法读取 Skill")?));
+                let meta = entry.metadata().map_err(|_| "无法读取 Skill")?;
+                let modified = meta.modified().unwrap_or(UNIX_EPOCH);
+                out.insert(name, (path, meta.len(), modified));
             }
         } else {
             return Err("Skill 包含特殊文件".into());
@@ -80,8 +95,29 @@ fn files(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) -> Result<
     Ok(())
 }
 pub(super) fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, String> {
+    let mut entries = BTreeMap::new();
+    collect_files(path, path, &mut entries)?;
+    let stamps: Vec<FileStamp> = entries
+        .iter()
+        .map(|(name, (_, len, modified))| (name.clone(), *len, *modified))
+        .collect();
+    {
+        let cache = FINGERPRINTS.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((cached_stamps, cached_hashes)) = cache.get(path)
+            && *cached_stamps == stamps
+        {
+            return Ok(cached_hashes.clone());
+        }
+    }
     let mut found = BTreeMap::new();
-    files(path, path, &mut found)?;
+    for (name, (file_path, _, _)) in entries {
+        let bytes = fs::read(file_path).map_err(|_| "无法读取 Skill")?;
+        found.insert(name, hash(&bytes));
+    }
+    FINGERPRINTS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(path.to_path_buf(), (stamps, found.clone()));
     Ok(found)
 }
 /// The folder holding a Skill: it must not be reached through a link; the Skill itself may be one.

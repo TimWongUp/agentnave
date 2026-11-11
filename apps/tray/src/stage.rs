@@ -194,9 +194,23 @@ fn model(identity: &Value) -> &str {
     }
 }
 
+fn cli_label<'a>(identity: &'a Value, provider: &'a str) -> &'a str {
+    let named = text(&identity["identity"], "cli");
+    if named.is_empty() {
+        label(Some(provider))
+    } else {
+        named
+    }
+}
+
 fn member_speaker(identity: &Value) -> Value {
     let provider = text(identity, "provider");
-    let mut who = speaker("member", provider, model(identity), label(Some(provider)));
+    let mut who = speaker(
+        "member",
+        provider,
+        model(identity),
+        cli_label(identity, provider),
+    );
     who["effort"] = identity["effort"].clone();
     who["identity"] = identity["identity"].clone();
     who["handle"] = identity["identity"]["handle"].clone();
@@ -236,7 +250,7 @@ fn recipient(desk: &str, identity: &Value) -> Value {
     let provider = text(identity, "provider");
     let model = text(identity, "model");
     json!({"key": desk, "provider": provider, "model": model,
-        "label": label(Some(provider)), "seat": text(identity, "seat"),
+        "label": cli_label(identity, provider), "seat": text(identity, "seat"),
         "effort": identity["effort"], "identity": identity["identity"],
         "handle": identity["identity"]["handle"]})
 }
@@ -391,6 +405,60 @@ fn referenced_desks(rooms: &[Value], messages: &[Value]) -> BTreeSet<String> {
         .collect()
 }
 
+/// If `path` asks for a single valid workspace chat route, return that workspace's group ID.
+pub(crate) fn requested_group(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/app/chats/")?;
+    let rest = rest.strip_suffix("/history").unwrap_or(rest);
+    let (group, focus) = match rest.split_once("/focus/") {
+        Some((group, focus)) => (group, Some(focus)),
+        None => (rest, None),
+    };
+    (valid_id(group) && focus.is_none_or(valid_id)).then_some(group)
+}
+
+/// Top five workspace IDs in stage display order, used to keep single-group cache keys exact.
+pub(crate) fn stage_ids_of(
+    snapshots: &[Snapshot],
+    handovers: &HashMap<String, Handover>,
+) -> Vec<String> {
+    let mut order: Vec<usize> = (0..snapshots.len()).collect();
+    order.sort_by(|&a, &b| {
+        (
+            timestamp(&snapshots[a].item.updated).unwrap_or_default(),
+            &snapshots[a].item.id,
+        )
+            .cmp(&(
+                timestamp(&snapshots[b].item.updated).unwrap_or_default(),
+                &snapshots[b].item.id,
+            ))
+    });
+    let mut groups = BTreeMap::new();
+    for index in order {
+        let snapshot = &snapshots[index];
+        let Some(id) = chat_group(&snapshot.item) else {
+            continue;
+        };
+        groups
+            .entry(id.clone())
+            .or_insert_with(|| Group::new(id))
+            .add(snapshot, index);
+    }
+    for (id, handover) in handovers {
+        if handover.title.is_some() && valid_id(id) && !groups.contains_key(id) {
+            groups.insert(id.clone(), Group::only_boss(id.clone(), handover));
+        }
+    }
+    let tier = |status: &str| match status {
+        "running" | "review" => 0,
+        _ => 1,
+    };
+    let mut groups: Vec<_> = groups.into_values().collect();
+    groups.sort_by(|a, b| {
+        (tier(a.status), Reverse(a.at), &a.id).cmp(&(tier(b.status), Reverse(b.at), &b.id))
+    });
+    groups.into_iter().take(5).map(|g| g.id).collect()
+}
+
 /// `limit` is the App's running limit (`settings.json`), which also caps the desks drawn.
 pub(crate) fn respond(
     path: &str,
@@ -413,7 +481,7 @@ pub(crate) fn respond(
     if requested.is_some_and(|id| !valid_id(id)) || focus.is_some_and(|id| !valid_id(id)) {
         return Response::error(404, "not found");
     }
-    let (mut groups, stage_ids) = projected_groups(&mut snapshots, handovers, apps);
+    let (mut groups, stage_ids) = unprojected_groups(&mut snapshots, handovers, apps);
     if let Some(id) = requested {
         let Some(group) = groups.iter_mut().find(|g| g.id == id) else {
             return Response::error(404, "not found");
@@ -429,6 +497,7 @@ pub(crate) fn respond(
         value["members"] = json!(group.members());
         let rooms = group.rooms();
         let messages = group.timeline(focus, complete);
+        let omitted = (group.messages.len() + group.typing.len()).saturating_sub(messages.len());
         let referenced = referenced_desks(&rooms, &messages);
         let (desks, optimized) = group.desks(host.as_deref(), limit, OPTIMIZED_LISTED, &referenced);
         value["desks"] = json!(desks);
@@ -436,7 +505,7 @@ pub(crate) fn respond(
         value["rooms"] = json!(rooms);
         value["messages"] = json!(messages);
         value["boss_messages"] = json!(group.boss_messages());
-        value["omitted"] = json!(group.omitted(focus, complete));
+        value["omitted"] = json!(omitted);
         value["threads"] = json!(group.threads());
         return Response::json(&value);
     }
@@ -480,7 +549,7 @@ fn project_name(cwd: &str) -> Option<String> {
 #[cfg(test)]
 mod tests;
 
-fn projected_groups(
+fn unprojected_groups(
     snapshots: &mut [Snapshot],
     handovers: &HashMap<String, Handover>,
     apps: &HashMap<String, &'static str>,
@@ -508,7 +577,6 @@ fn projected_groups(
     }
     let mut groups: Vec<_> = groups.into_values().collect();
     for group in &mut groups {
-        group.project(snapshots, false);
         if let Some(handover) = handovers.get(&group.id) {
             group.handover = handover.clone();
             if group.first_title.is_none()
@@ -604,10 +672,12 @@ fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
                     .collect(),
                 g.handover.clone(),
             );
+            let mut projected_messages = false;
             let preview = match previews.remove(&g.id) {
                 Some(preview) if preview.0 == key => preview,
                 _ => {
                     g.project(snapshots, true);
+                    projected_messages = true;
                     let text = g
                         .timeline(None, false)
                         .last()
@@ -621,6 +691,9 @@ fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
                     (key, views, text)
                 }
             };
+            if !projected_messages {
+                g.project(snapshots, false);
+            }
             let mut value = g.header();
             value["title"] = json!(g.title);
             value["conversations"] = json!(g.conversations.len());

@@ -95,6 +95,38 @@ test("cooldown clear removes only the chosen CLI from the displayed list", async
   assert.equal(app.run('$("provider-health").children.length'), 1);
 });
 
+test("only a tier-governed option whose default loosens permissions is counted", () => {
+  const app = editor();
+  app.run(`currentDoc.clis = {
+    claude: { models: { a: { options: { permission_mode: "default" } }, b: { options: { permission_mode: "plan" } } } },
+    codex: { models: { a: { options: { sandbox: "read-only", approve_for_me: false, dangerously_bypass_approvals_and_sandbox: false } } } },
+    antigravity: { models: { a: { options: { dangerously_skip_permissions: false, sandbox: true, mode: "ask" } } } },
+    zcode: { models: { a: { options: { permission_mode: "guarded" } } } },
+  }`);
+  assert.equal(app.run("countPermissionOptions()"), 0);
+  app.run(`currentDoc.clis.claude.models.a.options.permission_mode = "bypassPermissions";
+    currentDoc.clis.codex.models.a.options.sandbox = "danger-full-access";
+    currentDoc.clis.antigravity.models.a.options.dangerously_skip_permissions = true;
+    currentDoc.clis.pi = { models: { a: { options: { permission_mode: "auto" } } } };
+    currentDoc.modes.task.codex.overrides = { x: { options: { approve_for_me: true, unrelated_permission: true } } }`);
+  assert.equal(app.run("countPermissionOptions()"), 4);
+  assert.equal(app.run('grantsPermission("claude", "permission_mode", "auto")'), true);
+});
+
+test("the service's permission key table replaces the built-in one, and a refresh is a POST action", async () => {
+  const calls = [];
+  const app = editor(async (url, options = {}) => {
+    calls.push([url, options.method || "GET", options.headers?.["X-AgentNave-Action"]]);
+    return { ok: true, json: async () => ({ permission_keys: { pi: ["tier"], claude: [] } }) };
+  });
+  await app.run("apiGetMembers()");
+  await app.run("apiGetMembers(true)");
+  assert.deepEqual(calls, [["/settings/members", "GET", undefined], ["/settings/members", "POST", "1"]]);
+  assert.equal(app.run('grantsPermission("pi", "tier", "auto")'), true);
+  assert.equal(app.run('grantsPermission("claude", "permission_mode", "auto")'), false);
+  assert.equal(app.run('grantsPermission("codex", "sandbox", "danger-full-access")'), true);
+});
+
 test("the optional image seat picks, clears, discards, saves and reloads as one flat seat", async () => {
   let saved = { version: 1, preset: "split" }, members;
   const app = advancedEditor(async (url, options) => {
@@ -192,6 +224,19 @@ test("custom editor tracks generated role and image lines without changing user 
   assert.equal(state.saved.custom, "用户正文\nimage");
   await app.run("loadOrchestration()");
   assert.equal(app.run("orchestrationChanged()"), false);
+});
+
+test("a failed reload keeps the loaded baseline, so an unsaved draft survives the next good reload", async () => {
+  const { app, toggle } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
+  await app.run("loadOrchestration()");
+  toggle("写作", true);
+  assert.equal(app.run("orchestrationChanged()"), true);
+  app.run("globalThis.goodFetch = fetch; fetch = async () => ({ ok: false, status: 500 })");
+  await app.run("loadOrchestration()");
+  assert.equal(app.run("orchestrationChanged()"), true);
+  app.run("fetch = goodFetch");
+  await app.run("loadOrchestration()");
+  assert.equal(app.run("orchestrationChanged()"), true);
 });
 
 test("role switches default like old files, round-trip through save, and keep bindings when off", async () => {

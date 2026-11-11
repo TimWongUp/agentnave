@@ -234,32 +234,28 @@ fn send(app: &AppHandle, notice: &Notice, request: bool, english: bool) -> Resul
 
 /// Test delivery uses the same notification switch and native permission checks.
 pub(crate) fn test(app: &AppHandle, method: &str, action: Option<&str>) -> Response {
-    if method != "POST" {
-        return Response::error(405, "此操作只接受 POST");
-    }
-    if action != Some("1") {
-        return Response::error(403, "缺少操作请求头");
-    }
-    let document = crate::preferences::read(&crate::preferences::dir()).unwrap_or_default();
-    let options = Options::from(&document);
-    let english = options.english;
-    if !options.enabled {
-        return Response::json(&json!({"sent": false, "reason": if english {
-            "Notifications are turned off"
-        } else { "提醒已关闭" }}));
-    }
-    let notice = Notice {
-        title: "AgentNave".into(),
-        body: if english {
-            "Test notification"
-        } else {
-            "测试通知"
+    crate::response::action(method, action, || {
+        let document = crate::preferences::read(&crate::preferences::dir()).unwrap_or_default();
+        let options = Options::from(&document);
+        let english = options.english;
+        if !options.enabled {
+            return Response::json(&json!({"sent": false, "reason": if english {
+                "Notifications are turned off"
+            } else { "提醒已关闭" }}));
         }
-        .into(),
-    };
-    let result = match send(app, &notice, true, english) {
-        Ok(()) => json!({"sent": true}),
-        Err(reason) => json!({"sent": false, "reason": reason}),
-    };
-    Response::json(&result)
+        let notice = Notice {
+            title: "AgentNave".into(),
+            body: if english {
+                "Test notification"
+            } else {
+                "测试通知"
+            }
+            .into(),
+        };
+        let result = match send(app, &notice, true, english) {
+            Ok(()) => json!({"sent": true}),
+            Err(reason) => json!({"sent": false, "reason": reason}),
+        };
+        Response::json(&result)
+    })
 }

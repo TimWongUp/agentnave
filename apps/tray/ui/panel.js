@@ -53,6 +53,8 @@ function listenButton() {
   });
   return button;
 }
+// A model-name choice changes the names shown; draw them again now.
+addEventListener("agentnave:model-names", () => { if (state.lastData) render(state.lastData); });
 function redrawListen() {
   for (const button of document.querySelectorAll("button.voice-listen")) if (button.target) drawListen(button);
   drawVoice();

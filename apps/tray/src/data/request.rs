@@ -20,8 +20,9 @@ impl Reader {
 
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
+        // Live protocol requests pass `Some(app)` for the native picker; headless callers reach here.
         if path == "/app/video-packs" || path.starts_with("/app/video-packs/") {
-            return crate::video_packs::request(&self.root, None, method, path, action, body);
+            return self.video_packs_request(None, method, path, action, body);
         }
         if path == "/app/voice" || path.starts_with("/app/voice/") {
             return crate::voice::request(&self.root, path, method, action, body);

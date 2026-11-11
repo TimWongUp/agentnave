@@ -54,6 +54,18 @@ fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
     );
     let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     assert_eq!(handover(root.path(), workspace)["status"], "waiting");
+    // A workspace released for another boss keeps its history until someone claims it.
+    assert!(
+        cleanup(root.path(), &ids[..1], cutoff)
+            .iter()
+            .all(|r| r["status"] == "changed")
+    );
+    assert_eq!(count(root.path(), "conversations", "old"), 1);
+    set(
+        root.path(),
+        "UPDATE workspaces SET pending = 0, released = NULL WHERE id = ?1",
+        workspace,
+    );
     assert!(
         cleanup(root.path(), &ids[..1], cutoff)
             .iter()
@@ -69,6 +81,44 @@ fn cleanup_rechecks_recent_siblings_before_deleting_old_history() {
         .unwrap();
     assert_eq!(handovers, 0);
     assert_eq!(delete(root.path(), "newly-finished")["status"], "deleted");
+}
+
+#[test]
+fn a_workspace_waiting_for_handover_is_not_cleaned() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "held");
+    set(
+        root.path(),
+        "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+        "held",
+    );
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+        "held",
+    );
+    let workspace: String = crate::db::read(root.path())
+        .unwrap()
+        .unwrap()
+        .query_row(
+            "SELECT manager_session FROM conversations WHERE id = 'held'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    // Released for another boss after the list was loaded, before the cleanup ran.
+    set(
+        root.path(),
+        "INSERT INTO workspaces (id, owner, pending, released) \
+         VALUES (?1, ?1, 1, '2020-01-01T00:00:00Z')",
+        &workspace,
+    );
+    let cutoff = crate::time_format::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    assert_eq!(
+        cleanup(root.path(), &["held".to_owned()], cutoff)[0]["status"],
+        "changed"
+    );
+    assert_eq!(count(root.path(), "conversations", "held"), 1);
 }
 
 #[test]
@@ -546,6 +596,25 @@ fn retention_preview_never_opens_a_recent_conversations_lock() {
     let preview = retention_preview(root.path(), cutoff);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(preview.unwrap(), 0);
+
+    // An old conversation whose lock path is a symlink is refused rather than followed.
+    fixture(root.path(), "symlinked");
+    set(
+        root.path(),
+        "UPDATE conversations SET created = '2020-01-01T00:00:00Z' WHERE id = ?1",
+        "symlinked",
+    );
+    set(
+        root.path(),
+        "UPDATE views SET body = json_set(body, '$.summary.updated', '2020-01-01T00:00:00Z') WHERE conversation_id = ?1",
+        "symlinked",
+    );
+    let target = root.path().join("elsewhere");
+    fs::write(&target, b"").unwrap();
+    let link = crate::db::lock_path(root.path(), "symlinked");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
 }
 
 #[test]

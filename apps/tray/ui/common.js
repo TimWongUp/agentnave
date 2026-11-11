@@ -207,20 +207,28 @@
       .sort((a, b) => a.rank - b.rank) // Array.prototype.sort is stable
       .map((x) => x.id);
   }
-  // 1.5 s polling that pauses while hidden and never overlaps itself.
+  // A window the App hid (data-window-hidden) is as good as a hidden page; the App also announces the change
+  // with an "agentnave:visibility" event, and the attribute is watched as well.
+  const isHidden = () => document.hidden || root.dataset?.windowHidden === "true";
+  const onVisibility = (fn) => {
+    document.addEventListener("visibilitychange", fn);
+    window.addEventListener("agentnave:visibility", fn);
+    if (typeof MutationObserver === "function") new MutationObserver(fn).observe(root, { attributes: true, attributeFilter: ["data-window-hidden"] });
+  };
+  // 1.5 s polling that pauses while hidden, resumes with one poll when shown, and never overlaps itself.
   // An unfocused window (see syncBlurred) polls less often.
   function poll(tick, every = 1500) {
     let timer = null, busy = false;
     async function run() {
       clearTimeout(timer);
-      if (document.hidden || busy) return;
+      if (isHidden() || busy) return;
       busy = true;
       try { await tick(); } finally {
         busy = false;
-        if (!document.hidden) timer = setTimeout(run, blurred ? Math.max(every, BLURRED_POLL) : every);
+        if (!isHidden()) timer = setTimeout(run, blurred ? Math.max(every, BLURRED_POLL) : every);
       }
     }
-    document.addEventListener("visibilitychange", run);
+    onVisibility(run);
     window.addEventListener("focus", run);
     window.addEventListener("agentnave:focus", run);
     run();
@@ -302,8 +310,8 @@
     if (shell === "windows") captionButtons(bar, act);
   }
   // Painted art pauses with the window: a hidden window runs no animation at all.
-  const syncPaused = () => root.classList?.toggle("paused", document.hidden || root.dataset?.windowHidden === "true");
-  document.addEventListener("visibilitychange", syncPaused);
+  const syncPaused = () => root.classList?.toggle("paused", isHidden());
+  onVisibility(syncPaused);
   syncPaused();
   // A page that sets data-idle-blur on <html> goes quiet while its window is behind others: figures
   // and decorations stand still (html.blurred) and polling slows down. The App also reports the
@@ -369,9 +377,20 @@
   const EMIT_EVERY = { idle: 2600, working: 700, speaking: 1000, review: 1800, done: 350 };
   const emitters = new Set();
   const still = window.ANAppearance.reducedMotion;
-  setInterval(() => {
-    if (document.hidden || blurred || still.matches) return;
-    if (typeof root !== "undefined" && root.dataset?.windowHidden === "true") return;
+  // The 120 ms tick runs only while something can come out of it: an emitter exists and the window is shown,
+  // in front and moving.
+  let emitTimer = null;
+  function syncEmitTimer() {
+    const wanted = emitters.size > 0 && !isHidden() && !blurred && !still.matches;
+    if (wanted && !emitTimer) emitTimer = setInterval(emitTick, 120);
+    else if (!wanted && emitTimer) { clearInterval(emitTimer); emitTimer = null; }
+  }
+  onVisibility(syncEmitTimer);
+  window.addEventListener("agentnave:blur", syncEmitTimer);
+  window.addEventListener("agentnave:focus", syncEmitTimer);
+  still.addEventListener?.("change", syncEmitTimer);
+  function emitTick() {
+    if (isHidden() || blurred || still.matches) return syncEmitTimer();
     const now = performance.now();
     for (const e of emitters) {
       if (!e.fx.isConnected) { if (now - e.born > 5000) emitters.delete(e); continue; }
@@ -390,7 +409,8 @@
       img.addEventListener("animationend", () => img.remove(), { once: true });
       e.fx.append(img);
     }
-  }, 120);
+    syncEmitTimer();
+  }
   const frameUrl = (name, size, state, staticOnly = false) => {
     if (!name.startsWith("@") || (!staticOnly && activeVideoPack())) return artUrl(`${size}/${videoChar(name)}/${state}.webp`);
     const [, family, version] = name.split("@");
@@ -516,6 +536,7 @@
       const fx = h("span.fx");
       fig.append(fx);
       emitters.add({ name, fig, fx, spec: all[name], born: performance.now(), next: 0 });
+      syncEmitTimer();
     });
     // A video character shows none of them; they are built when it falls back to CSS.
     if (!useVideo) addParts(fig, body, name, size);
@@ -942,9 +963,13 @@
   const fullModelNames = () => {
     try { return localStorage.getItem(MODEL_NAMES_KEY) === "full"; } catch { return false; }
   };
+  // Names already drawn follow the choice at once: here by this event, in other windows by the storage event.
+  const announceModelNames = (full) => window.dispatchEvent(new CustomEvent("agentnave:model-names", { detail: { full: Boolean(full) } }));
   const setFullModelNames = (full) => {
     try { localStorage.setItem(MODEL_NAMES_KEY, full ? "full" : "short"); } catch { /* storage may be unavailable */ }
+    announceModelNames(full);
   };
+  window.addEventListener("storage", (event) => { if (event.key === MODEL_NAMES_KEY) announceModelNames(event.newValue === "full"); });
   const modelName = (model) => (model && !fullModelNames() ? model.split("/").pop() || model : model);
   // Member names come from the service, as `identity` on a desk, seat, speaker or addressee; a view
   // it has not rebuilt yet has none and reads as unknown. These only pick from what it produced.
@@ -994,5 +1019,5 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, handleOf, fullHandle, cliOf, chatName, shownName, chatPlace, activities, dozing, SLEEP_AFTER, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, isHidden, onVisibility, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, handleOf, fullHandle, cliOf, chatName, shownName, chatPlace, activities, dozing, SLEEP_AFTER, ongoing, clip, modelName, fullModelNames, setFullModelNames };
 }

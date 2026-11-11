@@ -98,5 +98,11 @@
     for (const [key, button] of Object.entries(buttons))
       button.addEventListener("click", () => { AN.setFullModelNames(key === "full"); show(); });
     show();
+    // Another window (or the embedded frame's parent) may change it; the cards in view are drawn again.
+    window.addEventListener("agentnave:model-names", () => {
+      show();
+      if (!$("pane-members").hidden) S.renderCards();
+      if (!$("pane-advanced").hidden) { S.renderReviewSeats(); S.renderOrchestration(); }
+    });
   })();
 }

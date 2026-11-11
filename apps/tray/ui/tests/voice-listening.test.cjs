@@ -44,6 +44,22 @@ test("private listening loads complete history once and polls the recent workspa
   assert.deepEqual(app.playbacks.map(sound => sound.text), list.map(m => m.text), "history beyond the recent 300 is read without truncation");
 });
 
+test("a listened workspace the office keeps feeding is not fetched again by listening", async () => {
+  const paths = [];
+  const app = await office(false, undefined, undefined, "all", async path => { paths.push(path); return null; });
+  const pending = message("pending", "2026-11-01T00:00:02Z", { status: "running" });
+  await app.feed([pending]);
+  await app.command("listen", { group: "workspace" });
+  paths.length = 0;
+  await app.tick();
+  assert.deepEqual(paths.filter(path => path.startsWith("/app/chats/")), ["/app/chats/workspace"], "without the office, listening polls itself");
+  paths.length = 0;
+  app.voice.ingest({ group: "workspace", messages: [{ ...pending, status: "succeeded" }] }, { whole: true });
+  await app.tick();
+  assert.deepEqual(paths.filter(path => path.startsWith("/app/chats/")), []);
+  assert.deepEqual(app.playbacks.map(sound => sound.text), ["pending"], "what the office brought in is still heard");
+});
+
 test("workspace listening ignores existing readable messages and follows transitions to readability", async () => {
   const app = await office(false);
   const old = message("old", "2026-11-01T00:00:01Z");

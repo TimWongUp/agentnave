@@ -13,8 +13,9 @@ pub(super) type Cache = HashMap<String, (Arc<Value>, Vec<Observation>)>;
 impl Reader {
     pub(crate) fn alert_observations(&self) -> Result<Readings, String> {
         // A failed database read must not establish an empty startup baseline.
-        let database = crate::db::read(&self.root)?;
-        let (overview, snapshots) = self.scan();
+        let database = crate::db::read(&self.root);
+        let (overview, snapshots) = self.scan_with(&database);
+        let database = database?;
         if let Some(error) = overview.scan_error {
             return Err(error);
         }

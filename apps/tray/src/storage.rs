@@ -38,16 +38,10 @@ fn bytes(root: &Path) -> io::Result<u64> {
 
 pub fn request(root: &Path, method: &str, path: &str, action: Option<&str>) -> Response {
     if path == "/app/storage/open" {
-        if method != "POST" {
-            return Response::error(405, "此路由只接受 POST");
-        }
-        if action != Some("1") {
-            return Response::error(403, "缺少操作请求头");
-        }
-        return match open(root) {
+        return crate::response::action(method, action, || match open(root) {
             Ok(()) => Response::json(&json!({"opened": true})),
             Err(error) => Response::error(500, &error.to_string()),
-        };
+        });
     }
     if method != "GET" {
         return Response::error(405, "此路由只接受 GET");

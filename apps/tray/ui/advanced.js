@@ -85,8 +85,9 @@
       const loaded = await response.json();
       // Asked once the answer is in: an edit made while it was on its way stays.
       const keep = orchestrationChanged();
-      orchestration = loaded;
-      if (orchestration.error) showNotice(AN.L(`${orchestration.error}；请先修复或删除这个文件`, `${orchestration.error}; fix or delete this file first`), true);
+      // A file error while an unsaved draft stands keeps the last good baseline, so the draft survives the next good load.
+      if (!(loaded.error && keep)) orchestration = loaded;
+      if (loaded.error) showNotice(AN.L(`${loaded.error}；请先修复或删除这个文件`, `${loaded.error}; fix or delete this file first`), true);
       if (!keep) {
         orchestrationDraft = null;
         customTouched = false;
@@ -96,7 +97,7 @@
         orchestrationView = savedView();
       }
     } catch (error) {
-      orchestration = null;
+      // Only a page that never loaded has no baseline; otherwise the last good one keeps tracking the draft.
       showNotice(AN.L(`无法读取编排设置：${error.message}`, `Failed to load orchestration settings: ${error.message}`), true);
     }
     renderOrchestration();

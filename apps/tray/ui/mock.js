@@ -954,6 +954,7 @@ All checks passed!
   async function post(path, body = {}) {
     if (path === "/app/voice/player") { mockPlayer = structuredClone(body); window.dispatchEvent(new CustomEvent("agentnave:voice-player", { detail: mockPlayer })); return { ok: true }; }
     if (path === "/app/voice/player/command") { window.dispatchEvent(new CustomEvent("agentnave:voice-command", { detail: body })); return { ok: true, opening: false }; }
+    if (path.split("?")[0] === "/settings/members") return p3Fetch(path);
     if (path === "/app/members") { mockMembersData.document = structuredClone(body); return { saved: true }; }
     if (path === "/app/review") { mockMembersData.review = structuredClone(body); return { saved: true }; }
     if (path === "/app/permissions") { mockMembersData.permissions = structuredClone(body); return { saved: true }; }

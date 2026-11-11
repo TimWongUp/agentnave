@@ -71,25 +71,34 @@
     zcode: "ZCode",
   };
 
-  // Permission-related keywords for sensitive options
-  const PERMISSION_KEYWORDS = [
-    "dangerously",
-    "permission",
-    "sandbox",
-    "yolo",
-    "skip_permissions",
-    "bypass",
-  ];
+  // The options each CLI's permission tier governs. The service sends its own table as `permission_keys`;
+  // this one answers until it does.
+  const PERMISSION_KEYS = {
+    zcode: ["permission_mode"],
+    claude: ["permission_mode", "permission_fallback"],
+    codebuddy: ["permission_mode"],
+    grok: ["permission_mode", "sandbox"],
+    antigravity: ["mode", "sandbox", "dangerously_skip_permissions"],
+    codex: ["approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
+    deepseek: ["permission_mode"],
+    devin: ["permission_mode", "sandbox"],
+    pi: [],
+  };
+  let permissionKeys = null;
+  // Values of a permission option that ask before acting or only read; any other string loosens it.
+  const CAUTIOUS_VALUES = new Set(["", "default", "plan", "read-only", "normal", "suggest", "ask", "guarded"]);
 
-  function isPermissionOptionKey(key) {
-    if (!key) return false;
-    const lower = String(key).toLowerCase();
-    return PERMISSION_KEYWORDS.some((kw) => lower.includes(kw));
+  function isPermissionOptionKey(cli, key) {
+    return Boolean(key) && (permissionKeys?.[cli] ?? PERMISSION_KEYS[cli] ?? []).includes(key);
   }
 
-  // `false` switches a permission flag off, so it grants nothing.
-  function grantsPermission(key, value) {
-    return isPermissionOptionKey(key) && value !== false;
+  // A permission option only counts when its default loosens the tier: `true` (except boolean `sandbox`,
+  // which turns sandboxing on), or a mode string that acts unasked.
+  function grantsPermission(cli, key, value) {
+    if (!isPermissionOptionKey(cli, key)) return false;
+    if (key === "sandbox" && typeof value === "boolean") return false;
+    if (typeof value === "string") return !CAUTIOUS_VALUES.has(value.toLowerCase());
+    return value === true;
   }
 
   // Application state
@@ -121,10 +130,12 @@
 
   // API Helpers
   async function apiGetMembers(refresh = false) {
-    const url = refresh ? "/settings/members?refresh=1" : "/settings/members";
-    const res = await fetch(url, { cache: "no-store" });
+    // Re-probing the CLIs changes state, so it is an action; a plain read stays a GET.
+    const res = await fetch("/settings/members", refresh
+      ? { method: "POST", headers: { "X-AgentNave-Action": "1" }, cache: "no-store" } : { cache: "no-store" });
     if (!res.ok) throw new Error(L(`获取成员配置失败（${res.status}）`, `Failed to load employee settings (${res.status})`));
     const data = await res.json();
+    permissionKeys = data.permission_keys && typeof data.permission_keys === "object" ? data.permission_keys : null;
     renderProviderHealth(data.provider_health || {});
     return data;
   }
@@ -384,21 +395,21 @@
   // Count permission-related options across entire document
   function countPermissionOptions() {
     let count = 0;
-    for (const cli of Object.values(currentDoc.clis || {})) {
+    for (const [name, cli] of Object.entries(currentDoc.clis || {})) {
       for (const m of Object.values(cli.models || {})) {
         if (m.options && typeof m.options === "object") {
           for (const [k, v] of Object.entries(m.options)) {
-            if (grantsPermission(k, v)) count++;
+            if (grantsPermission(name, k, v)) count++;
           }
         }
       }
     }
     for (const modeObj of Object.values(currentDoc.modes || {})) {
-      for (const provObj of Object.values(modeObj || {})) {
+      for (const [name, provObj] of Object.entries(modeObj || {})) {
         for (const override of Object.values(provObj.overrides || {})) {
           if (override.options && typeof override.options === "object") {
             for (const [k, v] of Object.entries(override.options)) {
-              if (grantsPermission(k, v)) count++;
+              if (grantsPermission(name, k, v)) count++;
             }
           }
         }
@@ -686,7 +697,7 @@
     $, L, el, textNode, settingTip, PROVIDERS, MAX_SELECTED_MODELS, PROVIDER_NAMES, apiGetMembers,
     apiPostReview, takeReview, renderPermission, apiPostMembers, apiGetStatus, apiCheckUpdate, SCENES,
     showNotice, markSaved, sameJson, refreshDirty, incDocVersion, emptyScene, configurationErrors,
-    updateControls, limitChanged, loadLimit, saveLimit, setInteractive, unsaved, setTab, SCENE_IDS, OFF
+    updateControls, countPermissionOptions, grantsPermission, limitChanged, loadLimit, saveLimit, setInteractive, unsaved, setTab, SCENE_IDS, OFF
   });
   S.share({
     currentDoc: [() => currentDoc, (v) => { currentDoc = v; }],

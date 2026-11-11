@@ -817,8 +817,9 @@ function renderAll() {
 
 $("refresh-hosts").addEventListener("click", refreshAll);
 setInterval(() => {
-  if (!document.hidden && !$("pane-hosts").hidden && !S.refreshing) reload();
-}, 2000);
+  const hidden = AN.isHidden ? AN.isHidden() : document.hidden;
+  if (!hidden && !$("pane-hosts").hidden && !S.refreshing) reload();
+}, 10000);
 window.addEventListener("agentnave:status", ({ detail }) => {
   if (!S.data) return;
   const state = detail.service;
