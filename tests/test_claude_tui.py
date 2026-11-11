@@ -574,6 +574,11 @@ def test_turn_waits_for_background_tool_notifications() -> None:
     turn.transcript(end)
     assert not turn.done
     notice = "<task-notification>\n<task-id>kcbon96gb</task-id>\n</task-notification>"
+    # Another tool's output quoting the notification does not settle the call.
+    quoted = {"type": "tool_result", "tool_use_id": "bash-1", "content": notice}
+    turn.transcript({"type": "user", "message": {"role": "user", "content": [quoted]}})
+    turn.transcript(end)
+    assert not turn.done
     turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
     turn.transcript(end)
     assert turn.done

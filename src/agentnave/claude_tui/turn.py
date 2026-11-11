@@ -99,7 +99,17 @@ class Turn:
     def track_background(self, event: dict[str, object]) -> None:
         content = cast(dict[str, object], event["message"]).get("content")
         if event["type"] == "user":
-            self.settle(content if isinstance(content, str) else json.dumps(content))
+            # Notifications arrive as the message itself or its text blocks; a tool's output
+            # may quote one and must not settle anything.
+            self.settle(
+                _result_text(content)
+                if isinstance(content, str)
+                else "".join(
+                    str(block.get("text", ""))
+                    for raw in (cast(list[object], content) if isinstance(content, list) else [])
+                    if (block := object_dict(raw)).get("type") == "text"
+                )
+            )
             for raw in cast(list[object], content) if isinstance(content, list) else []:
                 block = object_dict(raw)
                 if block.get("type") != "tool_result":
