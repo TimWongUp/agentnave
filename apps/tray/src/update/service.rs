@@ -1,6 +1,8 @@
 use super::*;
+mod history;
 #[cfg(unix)]
 mod launcher;
+pub(crate) use history::{has_tool_history, tool_change};
 
 #[allow(dead_code)]
 pub(crate) fn install_service(uv: &Path, dirs: &ToolDirs) -> Result<(), String> {
@@ -283,7 +285,18 @@ pub(crate) fn write_active(app: &AppHandle, version: &str, dirs: &ToolDirs) -> R
     };
     let launcher = dirs.bin.join(name);
     let value = json!({"version": version, "bin": launcher.to_string_lossy()});
-    write_active_manifest(&base, &value)
+    let previous = active_version(base.parent().ok_or("无法定位应用数据目录")?);
+    // The lower bound avoids calling a process started during the switch an old one.
+    let switched_at = std::time::SystemTime::now();
+    write_active_manifest(&base, &value)?;
+    history::record(
+        &base,
+        version,
+        previous.as_deref(),
+        &dirs.tools.join("agentnave"),
+        switched_at,
+    );
+    Ok(())
 }
 
 pub(crate) fn write_active_manifest(base: &Path, value: &Value) -> Result<(), String> {

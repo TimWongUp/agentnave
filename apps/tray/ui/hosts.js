@@ -687,6 +687,7 @@ function buildCard(host) {
 const RELOAD_REASONS = {
   config: [L("接入配置已更新", "Connection config updated"), L("检测到新连接后自动消除提示。", "This notice clears automatically once a new connection is detected.")],
   host_running: [L("接入配置已更新", "Connection config updated"), L("应用仍在运行旧配置。", "The app is still running with the old config.")],
+  tools_upgrade: [L("服务工具已更新", "Service tools updated"), L("重新连接后自动消除提示。", "This notice clears after reconnecting.")],
   unverified: [L("接入配置已更新", "Connection config updated"), L("尚未确认应用已加载新配置。", "Not yet verified that the app loaded the new config.")],
   tools: [L("有连接仍在用旧工具接口", "A connection is still using the old tool interface"), L("在宿主里重新连接 AgentNave MCP 也可以；完成后提示自动消除。", "Reconnecting AgentNave MCP in the host also works; this notice clears automatically once done.")],
   stale: [L("需要重连", "Reconnect required"), L("在宿主里重新连接 AgentNave MCP 也可以让新版服务生效。", "Reconnecting AgentNave MCP in the host also loads the new service.")],

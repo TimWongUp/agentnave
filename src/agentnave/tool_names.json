@@ -1,0 +1,13 @@
+[
+  "answer_prompt",
+  "cancel",
+  "clear_provider_cooldown",
+  "decide_answers",
+  "handover",
+  "list",
+  "list_members",
+  "read_conversation",
+  "run_round",
+  "start_agent",
+  "wait"
+]

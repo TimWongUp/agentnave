@@ -654,6 +654,8 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
         result = await client.list_tools()
 
     assert [tool.name for tool in result.tools] == EXPECTED_TOOLS
+    names = json.loads(Path(mcp_runtime.__file__).with_name("tool_names.json").read_text())
+    assert names == sorted(tool.name for tool in result.tools)
     assert all(tool.output_schema is not None for tool in result.tools)
     tools = {tool.name: tool for tool in result.tools}
     start = tools["start_agent"].annotations
