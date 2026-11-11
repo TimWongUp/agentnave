@@ -141,7 +141,9 @@ async def test_codex_boss_model_reaches_saved_app_views_or_returns_a_diagnostic(
                 **arguments,
             },
         )
-    for receipt in (task, meeting, remark):
+    # The diagnostic is said once per boss chat, on the first receipt that needs it.
+    assert "warnings" not in meeting and "warnings" not in remark
+    for receipt in (task,):
         if identity == "invented":
             warnings = cast(list[str], receipt["warnings"])
             assert len(warnings) == 1 and "CODEX_THREAD_ID" in warnings[0]

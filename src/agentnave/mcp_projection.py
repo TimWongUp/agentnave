@@ -19,6 +19,7 @@ _OPAQUE_FIELDS = frozenset(
     }
 )
 _BODY_FIELDS = frozenset({"output", "text", "prompt", "tool_input"})
+_IDENTITY_FIELDS = ("handle", "model_source")
 
 # Required reply containers, including the relay's invocations list. Keep the same
 # rule for nested rounds/modes and the untyped history/handover reply containers.
@@ -53,8 +54,10 @@ def without_empty_fields(value: object) -> object:
                     projected[key] = item
                 continue
             if key == "identity" and isinstance(item, dict):
-                # Keep required empty model facts, but omit absent optional labels.
-                item = {k: v for k, v in cast(dict[str, object], item).items() if v is not None}
+                # The boss only cites members by handle; the App reads the full identity from
+                # saved views, so replies drop the parts the handle already spells out.
+                identity = cast(dict[str, object], item)
+                item = {k: identity[k] for k in _IDENTITY_FIELDS if identity.get(k) is not None}
             if key not in _OPAQUE_FIELDS:
                 item = without_empty_fields(item)
             if (key in _REQUIRED_CONTAINERS and isinstance(item, (dict, list))) or (

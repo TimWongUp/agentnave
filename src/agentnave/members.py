@@ -522,7 +522,7 @@ def visible_role_groups(host: Host) -> frozenset[OrchestrationGroup]:
     return frozenset(role.group for role in role_catalog() if roles.group_enabled(role.group))
 
 
-def validate_task_seat(name: str, host: Host) -> None:
+def validate_task_seat(name: str, host: Host, *, inherited: bool = False) -> None:
     """Recheck new dispatches after history inheritance, including explicit replacements.
 
     Image replacement behavior is independent of ordinary role switches.
@@ -536,9 +536,14 @@ def validate_task_seat(name: str, host: Host) -> None:
     roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     enabled = roles is not None and roles.enabled(host) and roles.group_enabled(definition.group)
     if not enabled:
+        remedy = (
+            "choose a visible seat or set a new role to continue without the inherited seat"
+            if inherited
+            else "choose a visible seat or omit seat"
+        )
         raise MemberFileError(
-            f"{name} seat is not enabled in orchestration.json; choose a visible seat or set a new role "
-            "to continue without the inherited seat. Enable this seat in the App only if intended."
+            f"{name} seat is not enabled in orchestration.json; {remedy}. "
+            "Enable this seat in the App only if intended."
         )
 
 

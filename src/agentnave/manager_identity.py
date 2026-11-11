@@ -42,9 +42,22 @@ def session_id_hint(host: Host) -> str:
     )
 
 
-def model_warnings(host: Host, message: Entry | EntryRecord | TaskRecord) -> list[str]:
+def model_warnings(
+    host: Host,
+    message: Entry | EntryRecord | TaskRecord,
+    chat: str | None = None,
+    warned: set[str] | None = None,
+) -> list[str]:
+    """Say once per boss chat that its model is unknown; repeating it on every reply is noise.
+
+    `warned` is the server's record of chats already told; without it every call warns.
+    """
     if message.manager_reported_model or message.manager_model:
         return []
+    if chat is not None and warned is not None:
+        if chat in warned:
+            return []
+        warned.add(chat)
     variable = _SESSION_ID_SHELL_ENV.get(host.name or "")
     hint = (
         f"read {variable} in the shell"
