@@ -67,19 +67,6 @@ jobs:
       - name: Test
         if: ${{ !cancelled() }}
         run: cargo test --locked
-      - name: Build Windows preview
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        env:
-          AGENTNAVE_PREVIEW: "1"
-          TAURI_CONFIG: '{"identifier":"io.github.timwongup.agentnave.preview","productName":"AgentNave 预览"}'
-        run: cargo rustc --locked --bin agentnave-tray -- -C link-arg=/SUBSYSTEM:WINDOWS -C link-arg=/ENTRY:mainCRTStartup
-      - name: Upload Windows preview
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: agentnave-windows-preview
-          path: apps/tray/target/debug/agentnave-tray.exe
-          if-no-files-found: error
       # Pull requests stop at tests; main still proves the installer builds.
       - name: Build installer
         if: ${{ !cancelled() && github.event_name == 'push' }}
