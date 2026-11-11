@@ -35,7 +35,7 @@
 
 ## 隔离席位
 
-普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与工具](../skills/agentnave-manager/SKILL.md#讨论范围与工具)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求AgentNave准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
+普通讨论默认保留原生环境，通过 prompt 约定资料范围和只读操作，具体见 [Skill 的讨论范围与回复](../skills/agentnave-manager/references/studio.md#讨论范围与回复)。仅在用户明确要求工具层面限制访问时使用 `restricted_tools`；用户同时明确要求AgentNave准备独立席位目录时，才使用 `isolated`。不因“各自答”或“只看给定材料”自动隔离。
 
 `isolated=true` 时，AgentNave在会话目录下为每席创建独立空目录，为 Antigravity 写入受限角色定义，并给每席加上 `restricted_tools`；调用方的 `cwd` 被忽略；仅套用 model／effort 默认值（Pi 另可套用 provider），跳过其他默认 options，回执不列出被跳过的键；调用方显式非法选项仍拒绝。席位选项只接受 `model`、`effort`（Pi 另可选 `provider`）。会议（隔离与否）都可包含被 `AGENTNAVE_EXCLUDED_PROVIDERS` 排除的 CLI，包括宿主自己的 CLI；排除项只约束 `start_agent`。
 

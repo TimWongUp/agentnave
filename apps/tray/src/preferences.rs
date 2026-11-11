@@ -111,7 +111,7 @@ pub fn update(dir: &Path, changes: &Value) -> Result<Value, String> {
     }
     fs::create_dir_all(dir).map_err(|error| format!("无法创建设置目录：{error}"))?;
     let document = Value::Object(document);
-    crate::members::write_atomic(dir, FILE, &document)?;
+    crate::data_files::write_atomic(dir, FILE, &document)?;
     Ok(document)
 }
 

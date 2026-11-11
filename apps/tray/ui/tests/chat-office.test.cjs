@@ -201,6 +201,7 @@ function auditUI(english = false) {
   const h = (tag, attributes = {}, ...children) => ({
     tag, attributes, children, dataset: {}, textContent: "",
     replaceChildren(...items) { this.children = items; },
+    addEventListener() {},
     set innerHTML(_) { throw new Error("Audit data must never become HTML"); },
   });
   const context = vm.createContext({
@@ -274,6 +275,23 @@ test("forward sources localize only their final timestamp and preserve the year 
   assert.equal(context.localizeSourceTime(invalid), invalid);
   const previousYear = `${new Date().getFullYear() - 1}-01-02T03:04:05Z`;
   assert.equal(context.localizeSourceTime(`${title} · ${previousYear}`), `${title} · ${context.AN.fullTime(previousYear)}`);
+});
+
+test("a private task shows one forward tag per quoted message, dead when the original is out of view", () => {
+  const { context } = auditUI();
+  const rec = { fwd: context.h("div.fwds", { hidden: true }), fwdBtns: [] };
+  const ctx = { sources: new Set(["c:t:a"]) };
+  const task = { forwards: [{ message_id: "c:t:a", source: "@a #1" }, { message_id: "c:e:9", source: "" }] };
+  context.showForwards(rec, task, ctx);
+  assert.equal(rec.fwd.hidden, false);
+  assert.equal(rec.fwd.children.length, 2);
+  assert.deepEqual(rec.fwd.children.map(btn => btn.textContent), ["↪ 转发自 @a #1", "↪ 转发自 其他消息"]);
+  assert.deepEqual(rec.fwd.children.map(btn => btn.className), ["fwd", "fwd dead"]);
+  assert.deepEqual(rec.fwd.children.map(btn => btn.fwdId), ["c:t:a", null]);
+  context.showForwards(rec, { forward: { message_id: "c:t:a", source: "room · 转发" } }, ctx);
+  assert.equal(rec.fwd.children.length, 1, "a meeting forward still shows a single tag");
+  context.showForwards(rec, {}, ctx);
+  assert.equal(rec.fwd.hidden, true);
 });
 
 test("native prompt event rows state every outcome in both languages and update in place", () => {

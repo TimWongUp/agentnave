@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "max_running": 8,
+  "history_retention_days": 90,
+  "claude_interactive": true,
+  "antigravity_interactive": false
+}

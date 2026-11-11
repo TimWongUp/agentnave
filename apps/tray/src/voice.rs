@@ -11,7 +11,7 @@ mod summary;
 mod tests;
 pub mod text;
 
-use crate::data::Response;
+use crate::response::Response;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -46,13 +46,18 @@ fn initialize_tls() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
-fn client() -> Result<reqwest::blocking::Client, String> {
+static HTTP_CLIENT: LazyLock<Result<reqwest::blocking::Client, String>> = LazyLock::new(|| {
     initialize_tls();
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "无法创建语音网络连接".into())
+});
+
+/// One shared client, so repeated speech keeps reusing the same connections.
+fn client() -> Result<reqwest::blocking::Client, String> {
+    HTTP_CLIENT.clone()
 }
 
 fn http(request: reqwest::blocking::RequestBuilder, key: &str) -> Result<Vec<u8>, String> {
@@ -202,6 +207,9 @@ pub fn request(
     action: Option<&str>,
     body: &[u8],
 ) -> Response {
+    if method == "GET" {
+        return get(shared, path);
+    }
     if method != "POST" {
         return Response::error(405, "此操作只接受 POST");
     }
@@ -283,7 +291,6 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         .filter(|key| !key.is_empty())
         .ok_or("请先保存所选引擎的 API 密钥")?;
     let scene = scene::Scene::of(payload, boss);
-    let mut notice = None;
     let text = match to_summarize {
         Some(full_text) => {
             let summary_key = summary::key_of(&keys, &settings["summary"]);
@@ -291,11 +298,10 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
             options["persona"] = json!(persona_for(&settings, family, boss));
             options["identity"] = json!(scene.identity());
             options["code"] = settings["code"].clone();
-            // A failed summary still speaks: the opening, as without summaries.
-            summary::summarize(root, &full_text, &options, summary_key).unwrap_or_else(|error| {
-                notice = Some(format!("摘要失败，已改读开头：{error}"));
-                text::excerpt(&full_text)
-            })
+            // A failed summary stops the speech: speaking the opening instead would be a
+            // different message from the one the user asked to hear.
+            summary::summarize(root, &full_text, &options, summary_key)
+                .map_err(|error| format!("摘要失败：{error}"))?
         }
         None => text,
     };
@@ -303,7 +309,7 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
     let model = model(&settings, engine);
     let cache_key = audio_key(&settings, engine, &voice, &text);
     if let Some(audio) = storage::cached(root, &cache_key, "mp3") {
-        return Ok(Response::ok("audio/mpeg", audio).with_notice(notice));
+        return Ok(Response::ok("audio/mpeg", audio).with_notice(None));
     }
     let audio = match engine {
         "elevenlabs" => elevenlabs::synthesize(key, model, &voice, &text),
@@ -320,7 +326,7 @@ fn speak(root: &Path, payload: &Value) -> Result<Response, String> {
         return Err("语音服务未返回音频".into());
     }
     storage::cache(root, &cache_key, &audio, "mp3")?;
-    Ok(Response::ok("audio/mpeg", audio).with_notice(notice))
+    Ok(Response::ok("audio/mpeg", audio).with_notice(None))
 }
 
 fn persona_for(settings: &Value, family: &str, boss: bool) -> String {

@@ -32,6 +32,17 @@ def transcript_event(row: dict[str, object], session_id: str) -> dict[str, objec
     }
 
 
+# Claude Code's three wordings (timed, a message arrived, server-side task) all open this way.
+_MCP_MOVED = re.compile(r'MCP tool "[^"]*" [^\n]*?was moved to the background as task (\w+)')
+
+
+def _result_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    blocks = cast(list[object], content) if isinstance(content, list) else []
+    return str(object_dict(blocks[0]).get("text", "")) if blocks else ""
+
+
 def is_user_prompt(event: dict[str, object]) -> bool:
     if event.get("type") != "user":
         return False
@@ -57,6 +68,8 @@ class Turn:
     pending_prompts: set[str] = field(default_factory=set[str])
     # Background tool calls still running: like --print, the turn waits for their notifications.
     background: set[str] = field(default_factory=set[str])
+    # MCP tool calls seen, whose results alone may announce a move to the background.
+    mcp_calls: set[str] = field(default_factory=set[str])
     # The permission mode Claude Code reported for the prompt, and whether the mode check
     # held the prompt back to restart in the fallback mode.
     mode: str = ""
@@ -71,6 +84,11 @@ class Turn:
                 self.assistant = cast(dict[str, object], event["message"])
             self.track_background(event)
             self.track_async_launch(row)
+        # A notification arriving while Claude is busy is attached to the running turn
+        # instead of starting one; it still settles that background call.
+        attachment = object_dict(row.get("attachment"))
+        if not row.get("isSidechain") and attachment.get("type") == "queued_command":
+            self.settle(str(attachment.get("prompt", "")))
         if (
             not row.get("isSidechain")
             and row.get("type") == "system"
@@ -81,21 +99,48 @@ class Turn:
     def track_background(self, event: dict[str, object]) -> None:
         content = cast(dict[str, object], event["message"]).get("content")
         if event["type"] == "user":
-            text = content if isinstance(content, str) else json.dumps(content)
-            for tool_use in re.findall(r"<tool-use-id>([^<]+)</tool-use-id>", text):
-                self.background.discard(tool_use)
-            # A denied or failed call never started, so no notification will follow.
+            # Notifications arrive as the message itself or its text blocks; a tool's output
+            # may quote one and must not settle anything.
+            self.settle(
+                _result_text(content)
+                if isinstance(content, str)
+                else "".join(
+                    str(block.get("text", ""))
+                    for raw in (cast(list[object], content) if isinstance(content, list) else [])
+                    if (block := object_dict(raw)).get("type") == "text"
+                )
+            )
             for raw in cast(list[object], content) if isinstance(content, list) else []:
                 block = object_dict(raw)
-                if block.get("type") == "tool_result" and block.get("is_error"):
+                if block.get("type") != "tool_result":
+                    continue
+                # A denied or failed call never started, so no notification will follow.
+                if block.get("is_error"):
                     self.background.discard(str(block.get("tool_use_id")))
+                    continue
+                # Claude may move a long MCP call to the background itself; only that call's
+                # own result opens with the notice, and the notification carries just the task
+                # id. Other tools' output may quote the notice and must not count.
+                if block.get("tool_use_id") in self.mcp_calls and (
+                    moved := _MCP_MOVED.match(_result_text(block.get("content")))
+                ):
+                    self.background.add(moved.group(1))
             return
         for raw in cast(list[object], content) if isinstance(content, list) else []:
             block = object_dict(raw)
-            if block.get("type") == "tool_use" and object_dict(block.get("input")).get(
-                "run_in_background"
-            ):
+            if block.get("type") != "tool_use":
+                continue
+            if str(block.get("name", "")).startswith("mcp__"):
+                self.mcp_calls.add(str(block.get("id")))
+            if object_dict(block.get("input")).get("run_in_background"):
                 self.background.add(str(block.get("id")))
+
+    def settle(self, text: str) -> None:
+        """Forget the background calls a task notification names."""
+        for tool_use in re.findall(r"<tool-use-id>([^<]+)</tool-use-id>", text):
+            self.background.discard(tool_use)
+        for task in re.findall(r"<task-id>([^<]+)</task-id>", text):
+            self.background.discard(task)
 
     def track_async_launch(self, row: dict[str, object]) -> None:
         """Claude may run an Agent call in the background without `run_in_background`; its

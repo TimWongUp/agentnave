@@ -97,6 +97,8 @@ class StartArguments:
     seat: OrchestrationRole | None
     access: Literal["read", "write"] | None
     defaults: list[str] = field(default_factory=lambda: [])
+    # Model and effort the resumed thread last ran with; see apply_history.
+    history: dict[str, str] = field(default_factory=lambda: {})
 
     def inherit(self, task: TaskRecord) -> None:
         self.provider = self._inherited(
@@ -108,6 +110,25 @@ class StartArguments:
         # A new role is a new duty: the old seat would otherwise outrank it. Blank only clears the label.
         if self.seat is not None or role in ("", task.role):
             self.seat = self._inherited(self.seat, task.seat, "seat")
+        if task.model:
+            self.history["model"] = task.model
+            if task.effort:
+                self.history["effort"] = task.effort
+
+    def apply_history(self, options: dict[str, ProviderOption]) -> dict[str, ProviderOption]:
+        """Keep a resumed thread on its last model unless the caller or a seat chose one.
+
+        Otherwise a resume without options falls back to the App or CLI default model, which
+        may be a different and costlier one than the thread was started with.
+        """
+        if "model" in options or "model" not in self.history:
+            return options
+        result = {**options, "model": self.history["model"]}
+        self.defaults.append("model (session_id history)")
+        if "effort" in self.history and "effort" not in result:
+            result["effort"] = self.history["effort"]
+            self.defaults.append("effort (session_id history)")
+        return result
 
     def _inherited[T](self, explicit: T | None, saved: T | None, key: str) -> T | None:
         if explicit is not None or saved is None:
@@ -117,7 +138,9 @@ class StartArguments:
 
     def resolve_seat(self, host: Host) -> None:
         if self.seat is not None:
-            validate_task_seat(self.seat, host)
+            validate_task_seat(
+                self.seat, host, inherited="seat (session_id history)" in self.defaults
+            )
         name = self.seat or review_role(self.role)
         if self.provider is None:
             if not name:

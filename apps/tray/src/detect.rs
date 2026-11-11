@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value, json};
 
-use crate::members::PROVIDERS;
+use crate::providers::PROVIDERS;
 
 /// `agy models` waits on the network and takes about 20 seconds.
 const TIMEOUT: Duration = Duration::from_secs(45);
@@ -143,10 +143,15 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// Probe results for all providers, kept until `refresh` asks for a new probe. Probes run
 /// outside the lock; successful updates made during a probe keep their verified versions.
 /// A later probe can still observe external version changes.
-pub fn detected(refresh: bool) -> Value {
-    detected_with(refresh, &CACHE, probe, |all| {
-        publish_native(&crate::data::data_root(), all);
-    })
+pub fn detected(refresh: bool, codex_source: impl Fn() -> Option<String> + Sync) -> Value {
+    detected_with(
+        refresh,
+        &CACHE,
+        |provider| probe(provider, &codex_source),
+        |all| {
+            publish_native(&crate::data_files::data_root(), all);
+        },
+    )
 }
 
 fn detected_with(
@@ -233,7 +238,7 @@ fn publish_native(root: &Path, all: &Value) {
         .unwrap_or(Value::Null);
     let document = native_document(all, &previous);
     if document != previous {
-        let _ = crate::members::write_atomic(root, NATIVE_FILE, &document);
+        let _ = crate::data_files::write_atomic(root, NATIVE_FILE, &document);
     }
 }
 
@@ -288,6 +293,16 @@ fn native_model(models: &[Value], configured: Option<&str>) -> Option<String> {
                         ["id", "resolved"]
                             .iter()
                             .any(|key| model[*key].as_str().is_some_and(|v| bare(v) == bare(name)))
+                    })
+                })
+                // A gateway may namespace the id it writes into the CLI's config
+                // (`codex/gpt-6.1-terra`) while the catalog it supplies lists the bare id.
+                .or_else(|| {
+                    let tail = bare(name.rsplit_once('/')?.1);
+                    models.iter().find(|model| {
+                        ["id", "resolved"]
+                            .iter()
+                            .any(|key| model[*key].as_str().is_some_and(|v| bare(v) == tail))
                     })
                 })
                 .and_then(id)
@@ -690,7 +705,7 @@ fn probe_zcode() -> Value {
         "native":{"model":null,"effort":null},"models":models,"efforts":[]})
 }
 
-fn probe(provider: &str) -> Value {
+fn probe(provider: &str, codex_source: &impl Fn() -> Option<String>) -> Value {
     if provider == "zcode" {
         return probe_zcode();
     }
@@ -700,14 +715,7 @@ fn probe(provider: &str) -> Value {
         other => other,
     };
     let selected = if provider == "codex" {
-        crate::members::read(&crate::data::data_root())
-            .ok()
-            .flatten()
-            .and_then(|doc| {
-                doc["clis"]["codex"]["executable_source"]
-                    .as_str()
-                    .map(str::to_owned)
-            })
+        codex_source()
     } else {
         None
     };
@@ -866,7 +874,14 @@ fn listed_models(
         // Pi answers over RPC with each model's thinking levels; the listing has no levels.
         "pi" => pi_rpc_models(path)
             .map(|models| ("rpc", models))
-            .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out)))),
+            .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out))))
+            .and_then(|(source, models)| {
+                if models.is_empty() {
+                    Err("Pi 没有列出可用模型，请先运行 pi /login 或配置 auth.json".to_owned())
+                } else {
+                    Ok((source, models))
+                }
+            }),
         "codebuddy" => run(path, &["--help"]).map(|out| {
             let mut models = codebuddy_models(&out);
             let reasoning = codebuddy_reasoning();

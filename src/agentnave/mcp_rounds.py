@@ -63,6 +63,7 @@ def _add_started(
     conversations: Conversations,
     round_: Round,
 ) -> None:
+    manager_session_id = conversations.records[round_.group.id].state.manager_session
     payload["round"] = round_payload(
         round_,
         conversations.manager,
@@ -78,7 +79,9 @@ def _add_started(
         for entry in reversed(round_.group.entries)
         if entry.kind == "task" and entry.round == round_.number
     )
-    warnings = model_warnings(conversations.host, message)
+    warnings = model_warnings(
+        conversations.host, message, manager_session_id, conversations.model_warned
+    )
     if warnings:
         payload["warnings"] = warnings
 
@@ -323,7 +326,12 @@ async def run_round(
             )
             index = len(conversations.records[group_id].state.entries) - 1
             entry = conversations.records[group_id].state.entries[index]
-            warnings = model_warnings(conversations.host, entry)
+            warnings = model_warnings(
+                conversations.host,
+                entry,
+                conversations.records[group_id].state.manager_session,
+                conversations.model_warned,
+            )
             if warnings:
                 payload["warnings"] = warnings
             payload["entries"] = [

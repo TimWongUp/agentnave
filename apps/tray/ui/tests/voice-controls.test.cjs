@@ -40,6 +40,18 @@ test("previous goes back one message and what it interrupted comes back after it
   assert.equal(interrupted.paused, false, "the interrupted message carries on where it was");
 });
 
+test("a chain switch that fails to save keeps the setting and reports why", async () => {
+  let refuse = true;
+  const app = await office(false, undefined, undefined, "all", async (path, options) =>
+    refuse && path === "/app/voice" && options?.method === "POST" ? { ok: false, json: async () => ({ error: "没保存" }) } : null);
+  await app.command("flip", "continue_read");
+  assert.equal(app.published.at(-1).continue_read, true);
+  assert.equal(app.published.at(-1).error, "没保存");
+  refuse = false;
+  await app.command("flip", "continue_read");
+  assert.equal(app.published.at(-1).continue_read, false);
+});
+
 test("a new read replaces what previous set aside when chaining is off", async () => {
   const app = await office(false);
   await app.settings({ continue_read: false });

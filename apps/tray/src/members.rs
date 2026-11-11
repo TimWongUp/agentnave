@@ -2,25 +2,16 @@
 //! defaults. The tray is its only writer; Python servers read it on every call. Checks here are
 //! structural and referential only; Python Adapters validate option semantics.
 
+use crate::data_files::write_atomic;
+use crate::providers::PROVIDERS;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-pub const PROVIDERS: [&str; 9] = [
-    "zcode",
-    "antigravity",
-    "claude",
-    "codebuddy",
-    "codex",
-    "deepseek",
-    "devin",
-    "grok",
-    "pi",
-];
 const MODES: [&str; 2] = ["task", "discussion"];
 /// The agentnave-review roles whose CLI and model the user may pick.
 pub const REVIEW_ROLES: [&str; 9] = [
@@ -227,21 +218,6 @@ pub fn read(root: &Path) -> Result<Option<Value>, String> {
         serde_json::from_slice(&content).map_err(|error| format!("{FILE} 损坏：{error}"))?;
     validate(&document).map_err(|error| format!("{FILE} 格式错误：{error}"))?;
     Ok(Some(document))
-}
-
-/// Replace `name` under `root` atomically: a unique sibling file, synced, then renamed.
-pub(crate) fn write_atomic(root: &Path, name: &str, document: &Value) -> Result<(), String> {
-    let write = || -> Result<(), Box<dyn std::error::Error>> {
-        fs::create_dir_all(root)?;
-        // Dropping the temporary file cleans it up on failure, leaving the old file intact.
-        let mut temporary = tempfile::NamedTempFile::new_in(root)?;
-        temporary.write_all(&serde_json::to_vec_pretty(document)?)?;
-        temporary.write_all(b"\n")?;
-        temporary.as_file().sync_all()?;
-        temporary.persist(root.join(name))?;
-        Ok(())
-    };
-    write().map_err(|error| format!("无法保存 {name}：{error}"))
 }
 
 pub fn save(root: &Path, document: &Value) -> Result<(), String> {
@@ -555,7 +531,7 @@ pub fn confirm_host(root: &Path, id: &str, used: bool) -> Result<(), String> {
     if crate::PREVIEW {
         return Ok(());
     }
-    let boss = crate::hosts::boss_of(id);
+    let boss = crate::providers::boss_of(id);
     let provider = if boss == "workbuddy" {
         "codebuddy"
     } else {
@@ -570,7 +546,7 @@ pub fn confirm_host(root: &Path, id: &str, used: bool) -> Result<(), String> {
             .any(|mode| document["modes"].get(mode).is_none()),
     };
     if open {
-        migrate(root, &crate::detect::detected(false), used)?;
+        migrate(root, &crate::detect::detected(false, codex_source), used)?;
     }
     let mut document = read(root)?.unwrap_or_else(empty);
     // Even a boss that is no employee (Hermes) writes the lists, so a later start-up does not
@@ -606,10 +582,36 @@ fn document_state(root: &Path) -> (Value, Value) {
     }
 }
 
-/// `GET /settings/members`: the document, why it cannot be edited, and the detected CLIs.
+pub(crate) fn codex_source() -> Option<String> {
+    read(&crate::data_files::data_root())
+        .ok()
+        .flatten()
+        .and_then(|doc| {
+            doc["clis"]["codex"]["executable_source"]
+                .as_str()
+                .map(str::to_owned)
+        })
+}
+
+/// Option keys governed by permission tiers, matching `PERMISSION_KEYS` in `agentnave.members`.
+fn permission_keys() -> Value {
+    json!({
+        "zcode": ["permission_mode"],
+        "claude": ["permission_mode", "permission_fallback"],
+        "codebuddy": ["permission_mode"],
+        "grok": ["permission_mode", "sandbox"],
+        "antigravity": ["mode", "sandbox", "dangerously_skip_permissions"],
+        "codex": ["approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
+        "deepseek": ["permission_mode"],
+        "devin": ["permission_mode", "sandbox"],
+        "pi": [],
+    })
+}
+
+/// `/settings/members`: the document, why it cannot be edited, and the detected CLIs.
 pub fn state(root: &Path, refresh: bool) -> Value {
     wait_prepared();
-    let detected = crate::detect::detected(refresh);
+    let detected = crate::detect::detected(refresh, codex_source);
     let (document, error) = document_state(root);
     let (review, review_error) = match read_review(root) {
         Ok(review) => (review, Value::Null),
@@ -627,6 +629,7 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         "review_error": review_error,
         "permissions": permissions,
         "permissions_error": permissions_error,
+        "permission_keys": permission_keys(),
         "detected": detected,
         "provider_health": crate::provider_health::read(root),
     })
@@ -691,3 +694,45 @@ fn validate_pool(pool: &Value, models: &Map<String, Value>, provider: &str) -> R
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn request(
+    root: &Path,
+    method: &str,
+    path: &str,
+    action: Option<&str>,
+    body: &[u8],
+) -> crate::response::Response {
+    use crate::response::{post, save};
+    if path == "/app/review" {
+        return post(method, action, body, |payload| {
+            save(
+                root,
+                &payload,
+                crate::members::validate_review,
+                crate::members::save_review,
+            )
+        });
+    }
+    if path == "/app/permissions" {
+        return post(method, action, body, |payload| {
+            save(
+                root,
+                &payload,
+                crate::members::validate_permissions,
+                crate::members::save_permissions,
+            )
+        });
+    }
+    if path == "/app/members" {
+        return post(method, action, body, |payload| {
+            save(
+                root,
+                &payload,
+                crate::members::validate,
+                crate::members::save,
+            )
+        });
+    }
+    // The entry dispatches by the same paths; a mismatch answers 404 instead of panicking.
+    crate::response::Response::not_found()
+}

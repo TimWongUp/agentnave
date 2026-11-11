@@ -1,6 +1,9 @@
 //! Tray-only cleanup and renaming in the conversation database (ADR-0012, ADR-0026). Every
 //! change happens under the conversation's OS lock, the same one its writing server holds.
 
+mod request;
+pub(crate) use request::request;
+
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io;
 use std::path::Path;
@@ -11,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::{Value, json};
 
-use crate::data::Overview;
+use crate::data::snapshot::Overview;
 
 mod retention;
 
@@ -406,18 +409,33 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
         if workspace_ids(&transaction, anchor)? != expected {
             return Ok(false);
         }
+        // A workspace released for another boss keeps its history until someone takes it over.
+        let handover_pending: bool = transaction
+            .query_row(
+                "SELECT EXISTS (
+                    SELECT 1 FROM workspaces
+                    JOIN conversations ON manager_session = workspaces.id
+                    WHERE conversations.id = ?1 AND pending = 1
+                )",
+                [anchor],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if handover_pending {
+            return Ok(false);
+        }
         for id in &expected {
             let (created, body): (String, Option<String>) = transaction.query_row(
                 "SELECT created, views.body FROM conversations LEFT JOIN views ON views.conversation_id = conversations.id WHERE conversations.id = ?1",
                 [id], |row| Ok((row.get(0)?, row.get(1)?))
             ).map_err(|e| e.to_string())?;
-            let created = crate::stage::timestamp(&created);
+            let created = crate::time_format::timestamp(&created);
             let updated = body
                 .and_then(|body| serde_json::from_str::<Value>(&body).ok())
                 .and_then(|view| {
                     view["summary"]["updated"]
                         .as_str()
-                        .and_then(crate::stage::timestamp)
+                        .and_then(crate::time_format::timestamp)
                 });
             let Some((created, updated)) = created.zip(updated) else {
                 return Ok(false);
@@ -437,10 +455,18 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
         Ok(true)
     })();
     match removed {
-        Ok(true) if expected.iter().all(|id| remove_seats(root, id)) => {
-            report("deleted", "已清理工作区历史")
+        Ok(true) => {
+            // Try every seat directory: one failure must not leave the rest behind.
+            let mut seats_removed = true;
+            for id in &expected {
+                seats_removed = remove_seats(root, id) && seats_removed;
+            }
+            if seats_removed {
+                report("deleted", "已清理工作区历史")
+            } else {
+                report("deleted", "已清理工作区历史；部分席位文件未能删除")
+            }
         }
-        Ok(true) => report("deleted", "已清理工作区历史；部分席位文件未能删除"),
         Ok(false) => report("changed", "工作区已有新活动或时间无法确认，已整组保留"),
         Err(e) => report("error", &format!("清理失败：{e}")),
     }
@@ -462,7 +488,7 @@ pub fn list(root: &Path, overview: Overview) -> Value {
     let mut items = Vec::new();
     let mut unavailable = Vec::new();
     for id in ids {
-        if !crate::data::valid_id(&id) {
+        if !crate::data_files::valid_id(&id) {
             continue;
         }
         let lock = lock_file(root, &id);

@@ -459,6 +459,18 @@ fn tail_live_files_lay_over_saved_running_work_only() {
         after.3.as_ref().unwrap(),
         before.3.as_ref().unwrap()
     ));
+    // A clock that jumped backward must not leave a crashed server's live file fresh forever.
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(SystemTime::now() + Duration::from_secs(60))
+        .unwrap();
+    assert!(
+        !state(&reader, &format!("/app/chats/{MANAGER}"))["live"]
+            .as_bool()
+            .unwrap()
+    );
 }
 
 #[test]
@@ -974,8 +986,15 @@ fn regression_member_activity_uses_seat_time_across_seats_and_conversations() {
         "task"
     );
     // A live running seat has current activity even when its conversation's last entry is old.
+    save(
+        dir.path(),
+        &task_snapshot("task", "succeeded", "2000-01-01T00:30:00Z"),
+    );
     show["summary"]["updated"] = json!("2000-01-01T00:00:00Z");
     show["summary"]["status"] = json!("running");
+    show["director"]["messages"] = json!([
+        {"kind": "host", "speaker": "@host", "round": 1, "text": "旧消息", "time": "2000-01-01T00:00:00Z"}
+    ]);
     show["director"]["round"]["number"] = json!(2);
     show["director"]["round"]["seats"][0]["status"] = json!("running");
     save(dir.path(), &show);
@@ -984,16 +1003,24 @@ fn regression_member_activity_uses_seat_time_across_seats_and_conversations() {
         &live,
         &json!({"version": 2, "conversations": {"show": {"seats": {}}}}),
     );
+    let live_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     fs::File::options()
         .write(true)
         .open(&live)
         .unwrap()
-        .set_modified(UNIX_EPOCH + Duration::from_secs(4070959200))
+        .set_modified(UNIX_EPOCH + Duration::from_secs(live_secs))
         .unwrap();
     let chat = state(&reader, &path);
+    assert_eq!(chat["members"][0]["conversation"], "show");
     let typing = chat["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(typing["kind"], "typing");
-    assert_eq!(typing["time"], "2099-01-01T14:00:00.000000Z");
+    assert_eq!(
+        typing["time"],
+        crate::time_format::iso((live_secs as i64) * 1_000_000)
+    );
 }
 
 #[test]
@@ -1203,43 +1230,6 @@ fn revision_one_old_failure_clears_after_a_newer_terminal_member() {
     latest["director"]["tasks"][0]["status"] = json!("cancelled");
     save(dir.path(), &latest);
     assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
-}
-
-#[test]
-fn typing_uses_live_heartbeat_time_and_stops_when_stale() {
-    let dir = tempfile::tempdir().unwrap();
-    let task = task_snapshot("task", "running", "2020-01-01T00:00:00Z");
-    save(dir.path(), &task);
-    let live = dir.path().join("live/1-time.json");
-    write(
-        &live,
-        &json!({"version": 2, "conversations": {"task": {"tasks": {}}}}),
-    );
-    fs::File::options()
-        .write(true)
-        .open(&live)
-        .unwrap()
-        .set_modified(UNIX_EPOCH + Duration::from_secs(4070908800) + Duration::from_micros(123456))
-        .unwrap();
-    let reader = Reader::new(dir.path().to_path_buf());
-    let path = format!("/app/chats/{MANAGER}");
-    let chat = state(&reader, &path);
-    assert_eq!(
-        chat["messages"].as_array().unwrap().last().unwrap()["time"],
-        "2099-01-01T00:00:00.123456Z"
-    );
-    fs::File::options()
-        .write(true)
-        .open(&live)
-        .unwrap()
-        .set_modified(SystemTime::now() - LIVE_FRESH - Duration::from_secs(1))
-        .unwrap();
-    let chat = state(&reader, &path);
-    assert_eq!(chat["live"], false);
-    assert_eq!(
-        chat["messages"].as_array().unwrap().last().unwrap()["time"],
-        "2020-01-01T00:00:00Z"
-    );
 }
 
 fn office_show(id: &str, updated: &str, created: &str) -> Value {
@@ -1528,6 +1518,7 @@ fn messages_carry_message_id_visibility_thread_desk_and_forward() {
     task["director"]["tasks"][0]["role"] = json!("reviewer");
     task["director"]["tasks"][0]["thread"] = json!("native-1");
     task["director"]["tasks"][0]["message_id"] = json!("task:t:t-task");
+    task["director"]["tasks"][0]["forward"] = json!(["show:e:0", "gone:t:x"]);
     save(root, &task);
     let mut show = office_show("show", "2026-10-15T02:00:00Z", "2026-10-15T00:00:00Z");
     show["summary"]["status"] = json!("finished");
@@ -1557,6 +1548,15 @@ fn messages_carry_message_id_visibility_thread_desk_and_forward() {
     );
     assert_eq!(prompt["desk"], "thread:native-1");
     assert_eq!(prompt["forward"], Value::Null);
+    // A private task's forwards keep their order; a quoted message in view names its speaker.
+    assert_eq!(
+        prompt["forwards"],
+        json!([
+            {"message_id": "show:e:0", "source": "@boss · 2026-10-15T01:00:00Z"},
+            {"message_id": "gone:t:x", "source": ""}
+        ])
+    );
+    assert!(by_id("show:entry:0").get("forwards").is_none());
     let entry = by_id("show:entry:0");
     assert_eq!(entry["visibility"], "public");
     assert_eq!(entry["message_id"], "show:e:0");

@@ -240,8 +240,12 @@ fn build_client() -> Result<reqwest::blocking::Client, String> {
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30 * 60));
     if let Some(proxy_url) = crate::proxy::resolve(None)
-        && let Ok(proxy) = reqwest::Proxy::all(proxy_url.as_str())
+        && let Ok(mut proxy) = reqwest::Proxy::all(proxy_url.as_str())
     {
+        // A proxy usually cannot reach the mirrors meant to be direct.
+        if let Some(raw) = crate::proxy::resolve_no_proxy(None) {
+            proxy = proxy.no_proxy(reqwest::NoProxy::from_string(&raw));
+        }
         builder = builder.proxy(proxy);
     }
     builder.build().map_err(|e| e.to_string())

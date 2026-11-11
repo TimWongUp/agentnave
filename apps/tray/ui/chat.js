@@ -270,6 +270,7 @@ function renderConversationMessages(shown, ctx, reset) {
   // Geometry is the truth: a reader who is at the bottom follows new content, anyone else is left alone.
   const follow = reset || nearBottom();
   const order = [];
+  const ordered = new Set();
   let day = null,
     round = null,
     stamped = null;
@@ -277,6 +278,7 @@ function renderConversationMessages(shown, ctx, reset) {
     let rec = state.nodes.get(id);
     if (!rec) state.nodes.set(id, (rec = make()));
     order.push(id);
+    ordered.add(id);
     return rec;
   };
   const separator = (id, text) => {
@@ -287,7 +289,7 @@ function renderConversationMessages(shown, ctx, reset) {
   for (const m of shown) {
     const date = new Date(AN.at(m.time)).toDateString();
     // a thread stays together: only messages that start one open a new day
-    const inThread = m.reply_to && order.includes(m.reply_to);
+    const inThread = m.reply_to && ordered.has(m.reply_to);
     if (date !== day && !inThread) {
       day = date;
       round = null;
@@ -611,7 +613,7 @@ async function refresh() {
       && !(state.hashKey && !state.focused) && !timeDriven();
     // The voice player keeps following the workspace and reloads its own settings sparingly.
     if (unchanged) {
-      AN.voice?.ingest(chat);
+      AN.voice?.ingest(chat, { whole: !focus });
       return;
     }
     if (newGroup) {
@@ -624,7 +626,7 @@ async function refresh() {
     state.chat = chat;
     showBlank(null);
     // Office polls also refresh voice settings.
-    AN.voice?.ingest(chat);
+    AN.voice?.ingest(chat, { whole: !focus });
     renderAll(chat, newGroup);
     ingest(chat, state.ctx, newGroup);
     applyHash(state.ctx);
@@ -642,6 +644,12 @@ async function refresh() {
 
 for (const link of document.querySelectorAll("a[href]"))
   setAttr(link, "href", href(link.getAttribute("href")));
+// A model-name choice changes names in every list and message; redraw them now instead of at the next change.
+addEventListener("agentnave:model-names", () => {
+  state.listKey = null;
+  state.chatKey = null;
+  refresh();
+});
 addEventListener("agentnave:voice", () => {
   if (state.chat) renderConv(state.chat, state.ctx);
 });

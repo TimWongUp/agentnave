@@ -1,7 +1,7 @@
 //! The office alone plays voice. The menu bar panel shows what it plays and what it listens to:
 //! the office publishes that, the panel draws it and sends its clicks back to the office.
 
-use crate::data::Response;
+use crate::response::Response;
 use serde_json::{Value, json};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
@@ -116,8 +116,8 @@ fn command(app: &AppHandle, body: &[u8]) -> Response {
         return Response::error(400, "未知的语音操作");
     }
     if kind == "settings" {
-        crate::hide_panel(app);
-        crate::open(app, OFFICE, "/settings/#voice-settings");
+        crate::window::hide_panel(app);
+        crate::window::open(app, OFFICE, "/settings/#voice-settings");
         return Response::json(&json!({"ok": true}));
     }
     // Until the office has published, its page cannot take a click yet.
@@ -127,7 +127,7 @@ fn command(app: &AppHandle, body: &[u8]) -> Response {
         match kind {
             "listen" => {
                 PLAYER.lock().unwrap().waiting = Some(click);
-                let opening = crate::open_office_hidden(app);
+                let opening = crate::window::open_office_hidden(app);
                 return Response::json(&json!({"ok": true, "opening": opening}));
             }
             // Stopping before the office opened just forgets the click.
@@ -141,8 +141,8 @@ fn command(app: &AppHandle, body: &[u8]) -> Response {
     };
     // Opening a conversation shows it in the office, which goes there in place and keeps playing.
     if matches!(kind, "open" | "locate") {
-        crate::hide_panel(app);
-        crate::restore(app);
+        crate::window::hide_panel(app);
+        crate::window::restore(app);
     }
     let _ = office.eval(event("agentnave:voice-command", &click));
     Response::json(&json!({"ok": true}))

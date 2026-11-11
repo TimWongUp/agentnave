@@ -104,7 +104,31 @@ pub fn save(root: &Path, document: &Value) -> Result<(), String> {
     merged.extend(given.clone());
     let known = validate(&Value::Object(merged.clone()))?;
     merged.extend(known.as_object().cloned().unwrap_or_default());
-    crate::members::write_atomic(root, FILE, &Value::Object(merged))
+    crate::data_files::write_atomic(root, FILE, &Value::Object(merged))
+}
+
+pub(crate) fn request(
+    root: &std::path::Path,
+    method: &str,
+    action: Option<&str>,
+    body: &[u8],
+) -> crate::response::Response {
+    use crate::response::{Response, save, with_payload};
+
+    if method == "GET" {
+        return Response::json(&crate::settings::state(root));
+    }
+    if method != "POST" {
+        return Response::error(405, "此路由只接受 GET 或 POST");
+    }
+    with_payload(action, body, |payload| {
+        save(
+            root,
+            &payload,
+            crate::settings::validate,
+            crate::settings::save,
+        )
+    })
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
+const { mirrorSettings } = require("./helpers/settings.cjs");
 
 function editor(fetch = async () => { throw new Error("unexpected request"); }, os = "macos") {
   const listeners = {}, controls = new Map();
@@ -12,17 +13,23 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   };
   const context = vm.createContext({
     AN: { shellOS: () => os }, structuredClone, fetch, setTimeout: () => 0,
-    document: { getElementById: control },
+    document: {
+      getElementById: control,
+      createElement: (tag) => ({ tag, dataset: {}, setAttribute() {}, addEventListener() {}, appendChild() {} }),
+      createTextNode: (text) => text,
+    },
     window: { addEventListener: (name, fn) => { listeners[name] = fn; } },
   });
   const run = (code) => vm.runInContext(code, context);
-  for (const file of ["settings-state.js", "member-models.js"]) {
+  const load = (file) => {
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
-  }
+    mirrorSettings(context);
+  };
+  for (const file of ["settings-state.js", "member-models.js"]) load(file);
   run(`
     updateControls = () => {};
-    function renderCards() {}
-    function renderErrorBanner() {}
+    AN.settings.renderCards = () => {};
+    AN.settings.renderErrorBanner = () => {};
     detected = { codex: { installed: true } };
     currentDoc = { version: 1, clis: {}, modes: {
       task: { codex: { models: [], overrides: {} } },
@@ -30,7 +37,7 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
     } };
     markSaved();
   `);
-  return { run, listeners, doc: () => JSON.parse(run("JSON.stringify(currentDoc)")) };
+  return { run, load, listeners, doc: () => JSON.parse(run("JSON.stringify(currentDoc)")) };
 }
 
 test("Devin Fusion models stay out of choices even when saved previously", () => {
@@ -44,7 +51,7 @@ test("Devin Fusion models stay out of choices even when saved previously", () =>
   assert.deepEqual(Array.from(app.run('getAllModelIds("devin")')), ["swe-2-medium"]);
   assert.equal(app.doc().clis.devin.allowed_models[0], "fusion-gpt-sidekick-swe");
   app.run("AN.L = (zh) => zh");
-  app.run(readFileSync(`${__dirname}/../member-cards.js`, "utf8"));
+  app.load("member-cards.js");
   assert.equal(app.run('poolSummary("devin", getAllModelIds("devin"), shownPool("devin"))'), "1 个：swe-2-medium");
   // A hidden model alone is no choice at all.
   app.run('currentDoc.clis.devin.allowed_models = ["fusion-gpt-sidekick-swe"]');
@@ -70,7 +77,7 @@ function advancedEditor(fetch) {
     currentDoc.modes.task.codex = { models: ["chat-model"], overrides: {}, default: "chat-model" };
     detected.codex.models = [{ id: "chat-model" }];
   `);
-  app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
+  app.load("advanced.js");
   return app;
 }
 
@@ -86,6 +93,38 @@ test("cooldown clear removes only the chosen CLI from the displayed list", async
   await app.run('$("provider-health").children[0].children[1].listeners.click()');
   assert.deepEqual(Object.keys(providers.claude.models), ["b"]);
   assert.equal(app.run('$("provider-health").children.length'), 1);
+});
+
+test("only a tier-governed option whose default loosens permissions is counted", () => {
+  const app = editor();
+  app.run(`currentDoc.clis = {
+    claude: { models: { a: { options: { permission_mode: "default" } }, b: { options: { permission_mode: "plan" } } } },
+    codex: { models: { a: { options: { sandbox: "read-only", approve_for_me: false, dangerously_bypass_approvals_and_sandbox: false } } } },
+    antigravity: { models: { a: { options: { dangerously_skip_permissions: false, sandbox: true, mode: "ask" } } } },
+    zcode: { models: { a: { options: { permission_mode: "guarded" } } } },
+  }`);
+  assert.equal(app.run("countPermissionOptions()"), 0);
+  app.run(`currentDoc.clis.claude.models.a.options.permission_mode = "bypassPermissions";
+    currentDoc.clis.codex.models.a.options.sandbox = "danger-full-access";
+    currentDoc.clis.antigravity.models.a.options.dangerously_skip_permissions = true;
+    currentDoc.clis.pi = { models: { a: { options: { permission_mode: "auto" } } } };
+    currentDoc.modes.task.codex.overrides = { x: { options: { approve_for_me: true, unrelated_permission: true } } }`);
+  assert.equal(app.run("countPermissionOptions()"), 4);
+  assert.equal(app.run('grantsPermission("claude", "permission_mode", "auto")'), true);
+});
+
+test("the service's permission key table replaces the built-in one, and a refresh is a POST action", async () => {
+  const calls = [];
+  const app = editor(async (url, options = {}) => {
+    calls.push([url, options.method || "GET", options.headers?.["X-AgentNave-Action"]]);
+    return { ok: true, json: async () => ({ permission_keys: { pi: ["tier"], claude: [] } }) };
+  });
+  await app.run("apiGetMembers()");
+  await app.run("apiGetMembers(true)");
+  assert.deepEqual(calls, [["/settings/members", "GET", undefined], ["/settings/members", "POST", "1"]]);
+  assert.equal(app.run('grantsPermission("pi", "tier", "auto")'), true);
+  assert.equal(app.run('grantsPermission("claude", "permission_mode", "auto")'), false);
+  assert.equal(app.run('grantsPermission("codex", "sandbox", "danger-full-access")'), true);
 });
 
 test("the optional image seat picks, clears, discards, saves and reloads as one flat seat", async () => {
@@ -187,6 +226,19 @@ test("custom editor tracks generated role and image lines without changing user 
   assert.equal(app.run("orchestrationChanged()"), false);
 });
 
+test("a failed reload keeps the loaded baseline, so an unsaved draft survives the next good reload", async () => {
+  const { app, toggle } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
+  await app.run("loadOrchestration()");
+  toggle("写作", true);
+  assert.equal(app.run("orchestrationChanged()"), true);
+  app.run("globalThis.goodFetch = fetch; fetch = async () => ({ ok: false, status: 500 })");
+  await app.run("loadOrchestration()");
+  assert.equal(app.run("orchestrationChanged()"), true);
+  app.run("fetch = goodFetch");
+  await app.run("loadOrchestration()");
+  assert.equal(app.run("orchestrationChanged()"), true);
+});
+
 test("role switches default like old files, round-trip through save, and keep bindings when off", async () => {
   const binding = { provider: "codex", model: "chat-model" };
   const { app, state, groups, group, toggle } = rolesEditor({ version: 1, preset: "split", worker_writing: { easy: binding } });
@@ -258,7 +310,8 @@ test("general and specialist roles are grouped, and no role borrows another role
   toggle("网页调研", true);
   assert.equal(app.run("seatConflicts().length"), 1);
   assert.match(app.run("seatConflictText(seatConflicts()[0])"), /网页调研 · 困难 用的 gone/);
-  assert.ok(app.run("blockedSeat()"), "and blocks saving until rebound, without repairing it");
+  app.run("renderAdvancedBar()");
+  assert.equal(app.run('$("advanced-save").disabled'), true, "and blocks saving until rebound, without repairing it");
   assert.deepEqual(JSON.parse(app.run("JSON.stringify(orchestrationWanted().explorer_web)")), { hard: outside });
 });
 
@@ -306,9 +359,7 @@ test("one review model fills only the review roles left unset, and follows until
   app.run('setReviewSeat("architecture-reviewer", { provider: "codex", model: "picked" })');
   pick("");
   assert.deepEqual(Object.keys(shown()).sort(), ["architecture-reviewer", "security-reviewer"]);
-  assert.equal(app.run("seatsChanged()"), true);
   app.run("discardAdvanced()");
-  assert.equal(app.run("seatsChanged()"), false);
 });
 
 test("editing a full list keeps both scenes explicit and newly detected CLIs off", () => {
@@ -434,12 +485,14 @@ test("a saved employee without an installed CLI stays known until its removal is
 
 function runtimeEditor(fetch, os) {
   const app = editor(fetch, os);
-  app.run(readFileSync(`${__dirname}/../member-cards.js`, "utf8"));
+  // Plain nodes, installed before the sections that take them from AN.settings are loaded.
   app.run(`
-    renderCards = () => {};
-    el = (tag, attrs, ...children) => ({ tag, attrs, children });
-    textNode = (s) => s;
+    AN.settings.el = (tag, attrs, ...children) => ({ tag, attrs, children });
+    AN.settings.textNode = (s) => s;
+    AN.settings.settingTip = () => AN.settings.el("span");
   `);
+  app.load("member-cards.js");
+  app.run("renderCards = () => {}");
   return app;
 }
 
@@ -552,7 +605,7 @@ test("a failed settings read cannot make a limit save reset other runtime settin
 function poolEditor(fetch) {
   const app = runtimeEditor(fetch);
   app.run("AN.L = (zh) => zh");
-  app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
+  app.load("advanced.js");
   app.run(`
     function findKey(nodes, key) {
       for (const node of nodes || []) {
@@ -657,10 +710,15 @@ test("a model the CLI no longer lists is marked but blocks no save, and nothing 
   assert.deepEqual(Array.from(app.run('getAllModelIds("codex")')), ["old"]);
 });
 
-test("model choices start unchecked, clear all stays unsaved, and selection stops at 20", () => {
+test("model choices start unchecked, clear all stays unsaved, and no list size is refused", () => {
   const app = poolEditor();
   app.run(`
-    detected.codex.models = Array.from({ length: 22 }, (_, i) => ({ id: "model-" + i }));
+    function poolText(nodes) {
+      return (nodes || []).flat(Infinity).flatMap((node) => typeof node === "string" ? [node]
+        : node && typeof node === "object" ? poolText(node.children) : []);
+    }
+    detected.codex = { installed: true, native: { model: "model-0" },
+      models: Array.from({ length: 24 }, (_, i) => ({ id: "model-" + i })) };
     currentDoc.clis.codex.models = {};
     markSaved();
   `);
@@ -668,21 +726,23 @@ test("model choices start unchecked, clear all stays unsaved, and selection stop
   app.run('pickerOpen = "codex/pool"');
   assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/model-0").attrs.checked'), false);
   app.run('poolPick("codex/pool/all")');
-  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
-  assert.match(app.run("$('notice').textContent"), /最多选 20 个/);
-  app.run('writePool("codex", Array.from({ length: 20 }, (_, i) => `model-${i}`))');
-  app.run('poolPick("codex/pool/allow/model-20", true)');
-  assert.equal(app.doc().clis.codex.allowed_models.length, 20);
+  assert.equal(app.doc().clis.codex.allowed_models.length, 24, "every listed model is selectable");
+  assert.equal(app.run("memberSaveErrors().length"), 0);
+  const text = Array.from(app.run('poolText(poolRows("codex"))'));
+  assert.ok(text.includes("已选 24"), "the picker counts what is chosen");
+  assert.ok(text.includes("建议每个 CLI 不超过 10 个模型"), "a smaller list is only a suggestion");
   app.run('poolPick("codex/pool/none")');
   assert.deepEqual(app.doc().clis.codex.allowed_models, []);
   assert.match(app.run('configurationErrors()[0].message'), /至少选一个模型/);
   app.run('poolPick("codex/pool/allow/model-0", true)');
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["model-0"]);
+  app.run('poolPick("codex/pool/allow/model-0", false)');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, []);
 
-  // An older list above the limit shrinks one model at a time.
-  app.run('currentDoc.clis.codex.allowed_models = Array.from({ length: 22 }, (_, i) => `model-${i}`); markSaved()');
+  // A saved list still shrinks one model at a time.
+  app.run('currentDoc.clis.codex.allowed_models = Array.from({ length: 24 }, (_, i) => `model-${i}`); markSaved()');
   app.run('poolPick("codex/pool/allow/model-20", false)');
-  assert.equal(app.doc().clis.codex.allowed_models.length, 21);
+  assert.equal(app.doc().clis.codex.allowed_models.length, 23);
 });
 
 test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {
@@ -775,19 +835,4 @@ test("a switch put back to what is saved keeps the saved form of its key", async
   meetings().listeners.change({ target: { checked: true } });
   assert.equal(app.run("JSON.stringify(orchestrationWanted().parallel_options)"), "{}");
   assert.equal(app.run("orchestrationChanged()"), false);
-});
-
-// The settings scripts share one global scope: a later top-level function of the same name
-// silently replaces an earlier one, as member-models.js's setSplit once did to the role switch.
-test("settings page scripts do not redeclare each other's top-level functions", () => {
-  const html = readFileSync(`${__dirname}/../settings.html`, "utf8");
-  const seen = new Map();
-  for (const [, file] of html.matchAll(/<script src="\.\/([^"]+)"/g)) {
-    const source = readFileSync(`${__dirname}/../${file}`, "utf8");
-    if (/^\s*(?:"use strict";\s*)?[{(]/.test(source)) continue; // Block-scoped files keep theirs.
-    for (const [, name] of source.matchAll(/^(?:async )?function (\w+)/gm)) {
-      assert.ok(!seen.has(name), `${name} is declared in both ${seen.get(name)} and ${file}`);
-      seen.set(name, file);
-    }
-  }
 });

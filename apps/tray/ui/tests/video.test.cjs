@@ -438,15 +438,15 @@ test("a playback error releases media and leaves a static poster", async () => {
 
 test("video characters clear hidden particles instead of continuing to emit", () => {
   const source = readFileSync(`${__dirname}/../common.js`, "utf8").replace(/\r\n/g, "\n");
-  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
+  const start = source.indexOf("  let emitTimer = null;");
   let emitted = 0;
   const fx = { isConnected: true, childElementCount: 1, replaceChildren() { this.childElementCount = 0; }, append() { emitted++; } };
   const fig = { classList: { contains: name => name === "video" }, closest: () => ({ dataset: { mood: "idle" } }) };
-  vm.runInNewContext(source.slice(start, source.indexOf("  const frameUrl", start)), {
-    document: { hidden: false }, blurred: false, still: { matches: false }, performance: { now: () => 10000 },
+  vm.runInNewContext(`${source.slice(start, source.indexOf("  const frameUrl", start))};emitTick();`, {
+    isHidden: () => false, onVisibility() {}, window: { addEventListener() {} }, blurred: false, still: { matches: false }, performance: { now: () => 10000 },
     emitters: new Set([{ fig, fx, name: "muse", born: 0, next: 0, spec: { origin: { idle: [50, 50] }, sprites: ["note-1.webp"] } }]),
     EMIT_EVERY: { idle: 2600 }, h: () => ({ addEventListener() {} }), artUrl: s => s,
-    setInterval: fn => fn(),
+    setInterval: () => 1, clearInterval() {},
   });
   assert.equal(emitted, 0);
   assert.equal(fx.childElementCount, 0);
@@ -454,21 +454,24 @@ test("video characters clear hidden particles instead of continuing to emit", ()
 
 test("an unfocused window emits no particles", () => {
   const source = readFileSync(`${__dirname}/../common.js`, "utf8").replace(/\r\n/g, "\n");
-  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
+  const start = source.indexOf("  let emitTimer = null;");
   const emitted = blurred => {
     let count = 0;
     const fx = { isConnected: true, childElementCount: 0, replaceChildren() {}, append() { count++; } };
     const fig = { classList: { contains: () => false }, closest: () => ({ dataset: { mood: "idle" } }) };
-    vm.runInNewContext(source.slice(start, source.indexOf("  const frameUrl", start)), {
-      document: { hidden: false }, blurred, still: { matches: false }, performance: { now: () => 10000 },
+    let timers = 0;
+    const context = {
+      isHidden: () => false, onVisibility() {}, window: { addEventListener() {} }, blurred, still: { matches: false }, performance: { now: () => 10000 },
       emitters: new Set([{ fig, fx, name: "muse", born: 0, next: 0, spec: { origin: { idle: [50, 50] }, sprites: ["note-1.webp"] } }]),
       EMIT_EVERY: { idle: 2600 }, h: () => ({ addEventListener() {} }), artUrl: s => s, Math,
-      setInterval: fn => fn(),
-    });
-    return count;
+      setInterval: () => ++timers, clearInterval() {},
+    };
+    vm.runInNewContext(`${source.slice(start, source.indexOf("  const frameUrl", start))};syncEmitTimer();emitTick();`, context);
+    return [count, timers];
   };
-  assert.equal(emitted(false), 1);
-  assert.equal(emitted(true), 0);
+  // The tick also stays off: no timer is started for a window behind others.
+  assert.deepEqual(emitted(false), [1, 1]);
+  assert.deepEqual(emitted(true), [0, 0]);
 });
 
 test("video packs stay off in static mode and switch figures in place across 272p, 544p and static", async () => {
@@ -525,7 +528,7 @@ test("video packs stay off in static mode and switch figures in place across 272
   };
   const ctx = vm.createContext({
     root, h, href: s => s, still: { matches: false }, Math, performance: { now: () => 0 },
-    setInterval: () => 1, setTimeout: () => 1,
+    isHidden: () => false, onVisibility() {}, blurred: false, setInterval: () => 1, clearInterval() {}, setTimeout: () => 1,
     requestAnimationFrame: fn => { queueMicrotask(fn); return 1; }, cancelAnimationFrame() {},
     MutationObserver: class { observe() {} }, IntersectionObserver: undefined,
     localStorage: { setItem() {}, getItem: () => null },

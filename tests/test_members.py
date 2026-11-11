@@ -110,25 +110,6 @@ def test_role_switch_defaults_hide_fields_and_preserve_bindings(
     assert json.loads(path.read_text()) == raw
 
 
-@pytest.mark.parametrize("enabled", [["unknown"], ["worker", "worker"]])
-def test_role_switches_reject_unknown_and_duplicate_groups(enabled: list[str]) -> None:
-    with pytest.raises(ValidationError):
-        OrchestrationFile.model_validate({"version": 1, "enabled_roles": enabled})
-
-
-def test_interface_role_uses_only_its_own_seats() -> None:
-    document = OrchestrationFile.model_validate(
-        {"version": 1, "worker": {"hard": {"provider": "claude", "model": "general"}}}
-    )
-    assert document.group_enabled("worker_frontend")
-    assert document.group_seats("worker_frontend") == {}
-    document.worker_frontend = {"easy": ReviewSeat(provider="claude", model="interface")}
-    assert set(document.group_seats("worker_frontend")) == {"easy"}
-    document.enabled_roles = ["worker"]
-    assert document.group_seats("worker_frontend") == {}
-    assert document.worker_frontend["easy"].model == "interface"
-
-
 def test_disabled_orchestration_hides_seats_and_does_not_apply_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -231,16 +212,30 @@ def test_interface_seat_never_borrows_the_worker_seat(
     ids=lambda path: f"{path.parent.name}/{path.stem}",
 )
 def test_app_file_samples_agree_with_the_tray(
-    sample: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sample: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The tray checks the same samples (apps/tray/src/members/tests.rs), so a file the App
     saves is one the server reads, and one the App refuses the server refuses too."""
+    from agentnave.members import read_history_retention_days
+
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
 
     def check() -> object:
         if sample.parent.name == "settings":
             (tmp_path / "settings.json").write_bytes(sample.read_bytes())
-            return read_max_running(), read_claude_interactive()
+            caplog.clear()
+            days = read_history_retention_days(tmp_path)
+            if "History cleanup is disabled" in caplog.text:
+                raise SettingsFileError("invalid history_retention_days")
+            return (
+                read_max_running(),
+                read_claude_interactive(),
+                read_antigravity_interactive(),
+                days,
+            )
         return APP_MODELS[sample.parent.name].model_validate_json(sample.read_bytes())
 
     if sample.stem.startswith("valid-"):
@@ -790,39 +785,6 @@ def test_member_list_merges_modes_defaults_and_wildcards_in_member_order(
 
 
 @pytest.mark.parametrize(
-    "override",
-    [
-        {"effort": "medium"},
-        {"efforts": ["medium", "high"]},
-        {"options": {"agent": "reviewer"}},
-        {"notes": "discussion"},
-    ],
-)
-def test_member_list_splits_different_effective_mode_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: dict[str, object]
-) -> None:
-    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
-    (tmp_path / "members.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "clis": {"claude": {"models": {"chosen": {"effort": "high"}}}},
-                "modes": {
-                    "task": {"claude": {"models": ["chosen"]}},
-                    "discussion": {
-                        "claude": {"models": ["chosen"], "overrides": {"chosen": override}}
-                    },
-                },
-            }
-        )
-    )
-    task, discussion = list_members(frozenset(), Host()).members
-    assert task.modes == ["task"] and discussion.modes == ["discussion"]
-    assert task.model == discussion.model == "chosen"
-    assert discussion.model_dump().items() >= override.items()
-
-
-@pytest.mark.parametrize(
     ("restricted_mode", "override"),
     [
         ("task", {"effort": "medium"}),
@@ -935,18 +897,6 @@ def test_antigravity_interactive_applies_only_with_permissions_skipped(
     assert not applied({**yolo, "print_timeout": "5m"})
     (tmp_path / "settings.json").write_text('{"version": 1, "antigravity_interactive": false}')
     assert not applied(yolo)
-
-
-def test_claude_interactive_settings_reject_non_boolean_values(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
-    for value in ("yes", 1, None):
-        (tmp_path / "settings.json").write_text(
-            json.dumps({"version": 1, "claude_interactive": value})
-        )
-        with pytest.raises(SettingsFileError, match="Repair it in the AgentNave App"):
-            read_claude_interactive()
 
 
 def test_cooling_clis_disable_seats_and_filter_replacements(

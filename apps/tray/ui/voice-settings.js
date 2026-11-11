@@ -3,7 +3,7 @@
   const { h, art, L } = AN;
   const root = document.getElementById("voice-settings");
   let config = null, voices = [], models = [], summaryModels = [], cacheBytes = 0, busy = false, clearingCache = false, loaded = false, audio = null, audioUrl = null, controller = null;
-  const drafts = { base: null, model: null, prompts: new Map() };
+  const drafts = { base: null, model: null, prompts: new Map(), keys: new Map() };
   const status = (message) => { document.getElementById("notice").textContent = message; };
   function normalizeConfig(raw) {
     if (!raw) return raw;
@@ -77,10 +77,18 @@
     voices = listed;
     models = loadedModels;
   }
+  // A list for a platform, URL or switch that has since changed belongs to the old choice and is dropped.
+  let summaryModelsSeq = 0;
+  const summaryModelsScope = () => JSON.stringify([config.enabled, config.summary?.enabled, config.summary?.provider, config.summary?.base_url]);
   async function loadSummaryModels() {
+    const seq = ++summaryModelsSeq, scope = summaryModelsScope();
+    const current = () => seq === summaryModelsSeq && scope === summaryModelsScope();
     summaryModels = [];
     if (!config.enabled || !config.summary.enabled || !summaryUsable()) return;
-    summaryModels = await request("/app/voice/summary/models", {});
+    let listed;
+    try { listed = await request("/app/voice/summary/models", {}); }
+    catch (failure) { if (current()) throw failure; return; }
+    if (current()) summaryModels = listed;
   }
   async function loadCache() {
     const res = await request("/app/voice/cache").catch(() => null);
@@ -125,13 +133,18 @@
   function keyRow(engine = config.engine, label = engine === "minimax" ? "MiniMax" : "ElevenLabs") {
     const input = h("input", { type: "password", autocomplete: "off", spellcheck: "false", maxlength: "4096", "aria-label": L(`${engine} API 密钥`, `${engine} API key`), disabled: busy,
       placeholder: config.keys[engine] ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key") });
+    input.value = drafts.keys.get(engine) ?? "";
+    input.addEventListener("input", () => drafts.keys.set(engine, input.value));
     const put = h("button", { type: "button", disabled: busy }, L("保存", "Save"));
     const remove = h("button", { type: "button", disabled: busy || !config.keys[engine] }, L("删除", "Delete"));
     async function store(key) {
       if (busy) return;
-      busy = true; input.value = ""; stop(); render();
+      busy = true; stop(); render();
       try {
-        config = normalizeConfig(await request("/app/voice/key", { engine, key }));
+        const next = await request("/app/voice/key", { engine, key });
+        if (next.error) throw new Error(next.error);
+        config = normalizeConfig(next);
+        drafts.keys.delete(engine);
         const saved = key ? L("密钥已保存", "API key saved") : L("密钥已删除", "API key deleted");
         let detail = "";
         try {
@@ -308,7 +321,7 @@
     const summaryOff = !config.summary.enabled;
     const parts = [
       row(L("使用摘要模型", "Use summary model"), enabled),
-      row(h("span", {}, levelLabel, settingTip(L("朗读前让摘要模型把回答缩短：简短约一句话，标准三句以内，详细六句以内；短消息不扩写。", "Before reading aloud, the summary model shortens the answer: Short is about one sentence, Standard up to three, Detailed up to six; short messages are not padded."))), choiceButtons(levelLabel, config.summary.level, [
+      row(h("span", {}, levelLabel, AN.settings.settingTip(L("朗读前让摘要模型把回答缩短：简短约一句话，标准三句以内，详细六句以内；短消息不扩写。", "Before reading aloud, the summary model shortens the answer: Short is about one sentence, Standard up to three, Detailed up to six; short messages are not padded."))), choiceButtons(levelLabel, config.summary.level, [
         ["short", L("简短", "Short")],
         ["standard", L("标准", "Standard")],
         ["detailed", L("详细", "Detailed")],
@@ -385,6 +398,7 @@
   }
   function render() {
     if (!config) return;
+    pendingRender = false;
     const enabled = h("input.switch-input", { type: "checkbox", checked: config.enabled, disabled: busy, "aria-label": L("语音播报", "Voice playback") });
     enabled.addEventListener("change", () => save({ enabled: enabled.checked }));
     const chained = h("input.switch-input", { type: "checkbox", checked: config.continue_read, disabled: busy, "aria-label": L("点读后连播", "Continue reading after click") });
@@ -420,6 +434,21 @@
       : L("回答内容会发送给所选语音引擎。", "Replies are sent to the selected voice engine.")));
     root.replaceChildren(...parts, h("h2.voice-group", {}, L("角色", "Characters")), familySettings(), advancedSettings());
   }
+  // A redraw would take the caret from a field being typed in and swallow a click between its press and release,
+  // so one asked for then waits until the pointer is up and no text field holds the focus.
+  let pointerDown = false, pendingRender = false;
+  const typingInRoot = () => {
+    const field = document.activeElement;
+    return root.contains(field) && (field.tagName === "TEXTAREA" || (field.tagName === "INPUT" && !["checkbox", "radio", "button"].includes(field.type)));
+  };
+  function renderWhenIdle() {
+    if (pointerDown || typingInRoot()) pendingRender = true;
+    else render();
+  }
+  const flushRender = () => setTimeout(() => { if (pendingRender && !busy && !pointerDown && !typingInRoot()) render(); }, 0);
+  root.addEventListener("pointerdown", () => { pointerDown = true; });
+  root.addEventListener("focusout", flushRender);
+  for (const type of ["pointerup", "pointercancel"]) addEventListener(type, () => { pointerDown = false; flushRender(); });
   // The settings work as soon as they are read; catalogs fill their pickers when they arrive.
   async function load() {
     if (busy) return;
@@ -434,10 +463,7 @@
     const loadedMsg = L("语音设置已加载", "Voice settings loaded");
     const result = await loadCatalogs(loadedMsg);
     if (result !== loadedMsg) status(result);
-    // Redrawing would take the caret from a field being typed in; wait until it is left.
-    const field = root.contains(document.activeElement) && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName) ? document.activeElement : null;
-    if (field) field.addEventListener("blur", render, { once: true });
-    else render();
+    renderWhenIdle();
   }
   addEventListener("agentnave:settings-hidden", stop);
   addEventListener("hashchange", () => { if (location.hash !== "#voice") stop(); });

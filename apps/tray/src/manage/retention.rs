@@ -31,13 +31,13 @@ fn eligible(connection: &Connection, ids: &[String], cutoff: i64) -> Result<bool
         if blocked {
             return Ok(false);
         }
-        let created = crate::stage::timestamp(&created);
+        let created = crate::time_format::timestamp(&created);
         let updated = body
             .and_then(|body| serde_json::from_str::<Value>(&body).ok())
             .and_then(|view| {
                 view["summary"]["updated"]
                     .as_str()
-                    .and_then(crate::stage::timestamp)
+                    .and_then(crate::time_format::timestamp)
             });
         let Some((created, updated)) = created.zip(updated) else {
             return Ok(false);
@@ -53,25 +53,13 @@ fn eligible(connection: &Connection, ids: &[String], cutoff: i64) -> Result<bool
 /// database reads or opening another lock: the preview is advisory and never reserves work.
 fn available(root: &Path, ids: &[String]) -> Result<bool, String> {
     for id in ids {
-        if !crate::data::valid_id(id) {
+        if !crate::data_files::valid_id(id) {
             return Ok(false);
         }
-        let path = crate::db::lock_path(root, id);
-        match fs::symlink_metadata(&path) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.to_string()),
-            Ok(meta) if !meta.is_file() => return Ok(false),
-            _ => {}
-        }
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
-        match lock.try_lock() {
-            Ok(()) => drop(lock),
-            Err(TryLockError::WouldBlock) => return Ok(false),
-            Err(error) => return Err(error.to_string()),
+        match crate::db::probe_lock(root, id)? {
+            crate::db::LockProbe::Missing => continue,
+            crate::db::LockProbe::Unlocked(lock) => drop(lock),
+            crate::db::LockProbe::BusyOrUnsafe => return Ok(false),
         }
     }
     Ok(true)
