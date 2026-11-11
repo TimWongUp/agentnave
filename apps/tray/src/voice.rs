@@ -11,7 +11,7 @@ mod summary;
 mod tests;
 pub mod text;
 
-use crate::data::Response;
+use crate::response::Response;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -202,6 +202,9 @@ pub fn request(
     action: Option<&str>,
     body: &[u8],
 ) -> Response {
+    if method == "GET" {
+        return get(shared, path);
+    }
     if method != "POST" {
         return Response::error(405, "此操作只接受 POST");
     }

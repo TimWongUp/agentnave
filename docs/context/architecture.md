@@ -23,6 +23,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - Antigravity 在 macOS／Linux 且权限放开时默认以交互模式运行，形状与 Claude 相同；helper 为此在用户的全局 `~/.gemini/config/hooks.json` 维护一条只在它启动的 agy 里起作用的门控条目（[ADR-0072](../adr/0072-antigravity-interactive-runtime.md)）。
 - 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。运行记录失去活跃运行证据时，可在服务使用的同一会话锁下确认无人持有，重读视图并仅在展示中标记中断，不回写历史；不能确认时保留服务状态（[ADR-0060](../adr/0060-tray-detects-orphaned-running-work.md)）。
 - 服务向托盘提供运行活动及其当前状态的起始时间，供界面展示持续时间；活动变化和终态仍由服务决定。
+- 托盘 App 内的依赖方向：协议入口只按路径分发，各业务模块处理自己的路由；宿主层协调探测、规则与更新，反向不引用；响应、数据根文件读写、CLI 名单、时间格式、配置路径和快照类型放在不依赖业务模块的底层。
 
 ## MCP 合同
 

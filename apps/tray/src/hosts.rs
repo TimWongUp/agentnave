@@ -1,5 +1,7 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod actions;
+mod request;
+pub(crate) use request::{orchestration_request, request, skill_request, sync_orchestration};
 mod config;
 mod installed;
 #[cfg(all(test, windows, feature = "windows-live-tests"))]
@@ -21,30 +23,22 @@ mod timeouts;
 mod transaction;
 
 use crate::detect::executable;
+use crate::tool_dirs::ToolDirs;
 use config::{Document, Format};
 use orchestration::{host_env, set_host_env};
 use roots::Root;
 pub(crate) use roots::Shell;
 use serde_json::{Value, json};
-pub(crate) use split::boss_of;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use transaction::safe_path;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Format of stored reload records; v4 could confirm another row's connection.
 const RELOAD_FORMAT: u64 = 5;
-pub(crate) use transaction::safe_path as check_path;
-#[derive(Clone)]
-pub(crate) struct ToolDirs {
-    pub home: PathBuf,
-    pub tools: PathBuf,
-    pub bin: PathBuf,
-    pub network: BTreeMap<String, String>,
-}
+use crate::config_paths::{error_parts, message, safe_path};
 fn effective_env<'a>(
     context: &'a Context,
     shell: Option<&'a Shell>,
@@ -552,30 +546,9 @@ fn managed_entry(host: &Host, entry: &Value) -> bool {
     host.command(entry)
         .is_some_and(|command| entry_kind(command) == "agentnave")
 }
-pub(crate) fn message(error: &str) -> &str {
-    error_parts(error, "takeover_failed").1
-}
 fn error_attention(error: &str, fallback: &str) -> Value {
     let (code, text) = error_parts(error, fallback);
     attention(code, text)
-}
-fn error_parts<'a>(error: &'a str, fallback: &'a str) -> (&'a str, &'a str) {
-    error
-        .split_once(':')
-        .filter(|(c, _)| {
-            [
-                "parse_failed",
-                "command_missing",
-                "symlink_path",
-                "root_unconfirmed",
-                "conflict",
-                "write_failed",
-                "rolled_back",
-                "takeover_failed",
-            ]
-            .contains(c)
-        })
-        .unwrap_or((fallback, error))
 }
 /// Apply only the requested delta to a freshly read entry, preserving concurrent unknown fields.
 fn patch(latest: &mut Value, before: Option<&Value>, desired: &Value) {

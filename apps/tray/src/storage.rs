@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 
-use crate::data::Response;
+use crate::response::Response;
 
 fn bytes(root: &Path) -> io::Result<u64> {
     let mut directories = vec![root.to_owned()];

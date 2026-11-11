@@ -86,7 +86,7 @@ pub(super) fn fingerprint(path: &Path) -> Result<BTreeMap<String, String>, Strin
 }
 /// The folder holding a Skill: it must not be reached through a link; the Skill itself may be one.
 fn safe_parent(path: &Path, home: &Path) -> Result<(), String> {
-    super::transaction::safe_path(path.parent().ok_or("Skill 路径无效")?, home)
+    crate::config_paths::safe_path(path.parent().ok_or("Skill 路径无效")?, home)
 }
 /// `missing`, `app` (an intact App copy), `external` (anything else, replaced by the next
 /// install) or `blocked` (reached through a linked folder; never written).
@@ -98,7 +98,7 @@ pub(super) fn state(path: &Path, home: &Path, embedded: Files) -> Value {
         return json!({"state":"external", "path":path, "version":null});
     }
     let marker = path.join(MARKER);
-    let version = super::transaction::safe_path(&marker, home)
+    let version = crate::config_paths::safe_path(&marker, home)
         .ok()
         .and_then(|_| fs::read_to_string(marker).ok());
     let state = if !path.exists() {
@@ -159,7 +159,7 @@ fn backup_tree(path: &Path, app: &Path, id: &str, home: &Path) -> Result<(), Str
 /// where it went.
 fn move_to_backups(path: &Path, app: &Path, id: &str, home: &Path) -> Result<PathBuf, String> {
     let dir = app.join("backups");
-    super::transaction::safe_path(&dir, home)?;
+    crate::config_paths::safe_path(&dir, home)?;
     fs::create_dir_all(&dir).map_err(|_| "无法创建备份目录")?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -195,7 +195,7 @@ pub(super) fn install(
         return Ok(());
     }
     safe_parent(path, home)?;
-    super::transaction::safe_path(&app.join("backups"), home)?;
+    crate::config_paths::safe_path(&app.join("backups"), home)?;
     let parent = path.parent().ok_or("Skill 路径无效")?;
     fs::create_dir_all(parent).map_err(|_| "无法创建 Skill 目录")?;
     let stage = tempfile::tempdir_in(parent).map_err(|_| "无法暂存 Skill")?;
@@ -250,7 +250,7 @@ pub(super) fn remove(
     if current["state"] != "app" {
         return move_to_backups(path, app, id, home).map(|_| ());
     }
-    super::transaction::safe_path(&app.join("backups"), home)?;
+    crate::config_paths::safe_path(&app.join("backups"), home)?;
     backup_tree(path, app, id, home)?;
     safe_parent(path, home)?;
     if state(path, home, embedded) != current {

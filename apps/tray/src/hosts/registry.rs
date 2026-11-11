@@ -163,7 +163,7 @@ impl Hosts {
             ),
         ];
         let build = |(id, label, binary, var, default, file, format, key): Spec| {
-            let boss = split::boss_of(id);
+            let boss = crate::providers::boss_of(id);
             let mut root = roots::resolve(
                 &self.context,
                 &self.settings,

@@ -8,7 +8,8 @@ use std::thread;
 use serde_json::{Map, Value, json};
 use tauri::AppHandle;
 
-use crate::data::{Reader, Response};
+use crate::data::Reader;
+use crate::response::Response;
 
 mod permission;
 mod projection;
