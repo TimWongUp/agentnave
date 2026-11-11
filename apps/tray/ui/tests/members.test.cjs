@@ -710,10 +710,15 @@ test("a model the CLI no longer lists is marked but blocks no save, and nothing 
   assert.deepEqual(Array.from(app.run('getAllModelIds("codex")')), ["old"]);
 });
 
-test("model choices start unchecked, clear all stays unsaved, and selection stops at 20", () => {
+test("model choices start unchecked, clear all stays unsaved, and no list size is refused", () => {
   const app = poolEditor();
   app.run(`
-    detected.codex.models = Array.from({ length: 22 }, (_, i) => ({ id: "model-" + i }));
+    function poolText(nodes) {
+      return (nodes || []).flat(Infinity).flatMap((node) => typeof node === "string" ? [node]
+        : node && typeof node === "object" ? poolText(node.children) : []);
+    }
+    detected.codex = { installed: true, native: { model: "model-0" },
+      models: Array.from({ length: 24 }, (_, i) => ({ id: "model-" + i })) };
     currentDoc.clis.codex.models = {};
     markSaved();
   `);
@@ -721,21 +726,23 @@ test("model choices start unchecked, clear all stays unsaved, and selection stop
   app.run('pickerOpen = "codex/pool"');
   assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/model-0").attrs.checked'), false);
   app.run('poolPick("codex/pool/all")');
-  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
-  assert.match(app.run("$('notice').textContent"), /最多选 20 个/);
-  app.run('writePool("codex", Array.from({ length: 20 }, (_, i) => `model-${i}`))');
-  app.run('poolPick("codex/pool/allow/model-20", true)');
-  assert.equal(app.doc().clis.codex.allowed_models.length, 20);
+  assert.equal(app.doc().clis.codex.allowed_models.length, 24, "every listed model is selectable");
+  assert.equal(app.run("memberSaveErrors().length"), 0);
+  const text = Array.from(app.run('poolText(poolRows("codex"))'));
+  assert.ok(text.includes("已选 24"), "the picker counts what is chosen");
+  assert.ok(text.includes("建议每个 CLI 不超过 10 个模型"), "a smaller list is only a suggestion");
   app.run('poolPick("codex/pool/none")');
   assert.deepEqual(app.doc().clis.codex.allowed_models, []);
   assert.match(app.run('configurationErrors()[0].message'), /至少选一个模型/);
   app.run('poolPick("codex/pool/allow/model-0", true)');
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["model-0"]);
+  app.run('poolPick("codex/pool/allow/model-0", false)');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, []);
 
-  // An older list above the limit shrinks one model at a time.
-  app.run('currentDoc.clis.codex.allowed_models = Array.from({ length: 22 }, (_, i) => `model-${i}`); markSaved()');
+  // A saved list still shrinks one model at a time.
+  app.run('currentDoc.clis.codex.allowed_models = Array.from({ length: 24 }, (_, i) => `model-${i}`); markSaved()');
   app.run('poolPick("codex/pool/allow/model-20", false)');
-  assert.equal(app.doc().clis.codex.allowed_models.length, 21);
+  assert.equal(app.doc().clis.codex.allowed_models.length, 23);
 });
 
 test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {

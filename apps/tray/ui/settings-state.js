@@ -58,7 +58,6 @@
 
   // Supported CLI providers
   const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "devin", "zcode"];
-  const MAX_SELECTED_MODELS = 20;
   const PROVIDER_NAMES = {
     codex: "Codex CLI",
     claude: "Claude Code",
@@ -475,11 +474,8 @@
     for (const [provider, cli] of Object.entries(currentDoc.clis || {})) {
       for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, L("共享", "Shared"));
       const pool = cli.allowed_models;
-      const savedPool = JSON.parse(savedSnapshot || "null")?.clis?.[provider]?.allowed_models;
       if (Array.isArray(pool) && !pool.some((id) => !S.hiddenModel(provider, id))) {
         add(provider, L("可用模型", "Available models"), L("共享", "Shared"), L("至少选一个模型", "Select at least one model"));
-      } else if (Array.isArray(pool) && pool.length > MAX_SELECTED_MODELS && !sameJson(pool, savedPool)) {
-        add(provider, L("可用模型", "Available models"), L("共享", "Shared"), L(`最多选 ${MAX_SELECTED_MODELS} 个模型`, `Select at most ${MAX_SELECTED_MODELS} models`));
       }
     }
     for (const [mode, providers] of Object.entries(currentDoc.modes || {})) {
@@ -694,7 +690,7 @@
     }
   };
   Object.assign(S, {
-    $, L, el, textNode, settingTip, PROVIDERS, MAX_SELECTED_MODELS, PROVIDER_NAMES, apiGetMembers,
+    $, L, el, textNode, settingTip, PROVIDERS, PROVIDER_NAMES, apiGetMembers,
     apiPostReview, takeReview, renderPermission, apiPostMembers, apiGetStatus, apiCheckUpdate, SCENES,
     showNotice, markSaved, sameJson, refreshDirty, incDocVersion, emptyScene, configurationErrors,
     updateControls, countPermissionOptions, grantsPermission, limitChanged, loadLimit, saveLimit, setInteractive, unsaved, setTab, SCENE_IDS, OFF
