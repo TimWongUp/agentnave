@@ -409,6 +409,41 @@ impl Group {
         {
             finish_message(msg, &prompts);
         }
+        self.name_forward_sources();
+    }
+    /// A private task's forwards carry no source text; name each from the message it quotes, as
+    /// a meeting's forward does. A task prompt and its reply share one id: the reply wins.
+    fn name_forward_sources(&mut self) {
+        let mut sources = HashMap::new();
+        for m in &self.messages {
+            let Some(id) = m["message_id"].as_str() else {
+                continue;
+            };
+            if m["kind"] == "prompt" && sources.contains_key(id) {
+                continue;
+            }
+            let who = &m["speaker"];
+            let name = [text(who, "handle"), text(who, "label")]
+                .into_iter()
+                .find(|name| !name.is_empty())
+                .unwrap_or_default();
+            sources.insert(id.to_owned(), format!("{name} · {}", text(m, "time")));
+        }
+        for m in &mut self.messages {
+            for forward in m
+                .get_mut("forwards")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(source) = forward["message_id"]
+                    .as_str()
+                    .and_then(|id| sources.get(id))
+                {
+                    forward["source"] = json!(source);
+                }
+            }
+        }
     }
     pub(super) fn omitted(&self, focus: Option<&str>, complete: bool) -> usize {
         (self.messages.len() + self.typing.len())
@@ -502,6 +537,13 @@ impl Group {
                     message_id.as_deref(),
                     None,
                 );
+                let forwards: Vec<_> = array(task, "forward")
+                    .filter_map(Value::as_str)
+                    .map(|id| json!({"message_id": id, "source": ""}))
+                    .collect();
+                if !forwards.is_empty() {
+                    msg["forwards"] = json!(forwards);
+                }
                 self.messages.push(msg);
             }
             self.member(

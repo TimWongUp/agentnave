@@ -1491,6 +1491,7 @@ fn messages_carry_message_id_visibility_thread_desk_and_forward() {
     task["director"]["tasks"][0]["role"] = json!("reviewer");
     task["director"]["tasks"][0]["thread"] = json!("native-1");
     task["director"]["tasks"][0]["message_id"] = json!("task:t:t-task");
+    task["director"]["tasks"][0]["forward"] = json!(["show:e:0", "gone:t:x"]);
     save(root, &task);
     let mut show = office_show("show", "2026-10-15T02:00:00Z", "2026-10-15T00:00:00Z");
     show["summary"]["status"] = json!("finished");
@@ -1520,6 +1521,15 @@ fn messages_carry_message_id_visibility_thread_desk_and_forward() {
     );
     assert_eq!(prompt["desk"], "thread:native-1");
     assert_eq!(prompt["forward"], Value::Null);
+    // A private task's forwards keep their order; a quoted message in view names its speaker.
+    assert_eq!(
+        prompt["forwards"],
+        json!([
+            {"message_id": "show:e:0", "source": "@boss · 2026-10-15T01:00:00Z"},
+            {"message_id": "gone:t:x", "source": ""}
+        ])
+    );
+    assert!(by_id("show:entry:0").get("forwards").is_none());
     let entry = by_id("show:entry:0");
     assert_eq!(entry["visibility"], "public");
     assert_eq!(entry["message_id"], "show:e:0");

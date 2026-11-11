@@ -364,6 +364,8 @@ All checks passed!
       forwards: [{ at: -400, text: "（转发的评审结论）三点建议：安装文档补上升级后需重启宿主一次的说明；Release 说明把托盘与服务端改动分开写；更新包签名密钥说明放进内部文档而不是公开 README。", source: gem.deskLabel, from: room1, spec: gem }],
       specs: [reviewer, grokSeat, gemSeat, pm, dsSeat],
     };
+    // The implementer's private task carries two replies in view and one gone from the list.
+    codex.forwards = [{ from: room1, spec: gem }, { from: room2, spec: pm }, { id: "20261016-0000-000000:t:gone" }];
     const c1 = { id: "20261017-0912-a1b2c3", title: "relay 空闲换进程：保留活跃子进程树", mode: "task", specs: [codex] };
     const c4 = { id: "20261017-0915-b2c3d4", title: "审查 relay 换进程流程", mode: "task", specs: [grok] };
     const c3 = { id: "20261017-0958-c3d4e5", title: "补 relay 文档", mode: "task", specs: [buddy] };
@@ -624,6 +626,8 @@ All checks passed!
             { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null },
             { visibility: "private", thread, desk, message_id: mid },
           ));
+        if (!show && sp.prompt && sp.forwards)
+          out.at(-1).forwards = sp.forwards.map((f) => ({ message_id: f.id || midOf(f.from, f.spec), source: f.spec ? f.spec.deskLabel : "" }));
         if (q.has("prompts") && conv === g.convs[0] && sp === conv.specs[0]) {
           const samples = [
             { kind: "permission", tool_name: "Write", status: "pending" },
