@@ -123,7 +123,7 @@ fn routes_reject_unsafe_paths_and_require_write_authorization() {
         "272/unknown/idle.mov",
         "272/codex/slack-1.webp",
     ] {
-        assert!(asset(root.path(), rest).is_none());
+        assert!(asset(root.path(), rest, None).is_none());
     }
     for operation in ["import", "download", "cancel", "delete"] {
         let path = format!("/app/video-packs/272/{operation}");
@@ -204,8 +204,10 @@ fn import_request_serves_installed_assets_and_delete_removes_the_pack() {
     let reader = crate::data::Reader::new(root.path().to_owned());
     let response = reader.respond("/art/video/272/codex/idle.mov");
     assert_eq!(response.content_type, "video/quicktime");
-    assert_eq!(response.cache_control, "public, max-age=31536000");
+    assert_eq!(response.cache_control, "no-store");
     assert_eq!(response.body, movie(272, 0));
+    let poster = reader.respond("/art/video/272/codex/idle.webp");
+    assert_eq!(poster.cache_control, "public, max-age=31536000");
     assert_eq!(
         request(
             root.path(),
@@ -242,4 +244,71 @@ fn wrong_poster_dimensions_and_oversized_files_are_rejected() {
             .contains("大小限制")
     );
     assert!(!base.join("272").exists());
+}
+
+#[test]
+fn clips_are_served_in_ranges_and_never_cached() {
+    if crate::PREVIEW {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("video-packs/272");
+    pack(&dir, "272");
+    fs::write(dir.join("stamp"), "1").unwrap();
+    let bytes: Vec<u8> = (0..100).collect();
+    fs::write(dir.join("codex/idle.mov"), &bytes).unwrap();
+    let get = |range: Option<&str>| asset(root.path(), "272/codex/idle.mov", range).unwrap();
+    let header = |r: &Response, name: &str| {
+        r.headers
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.clone())
+    };
+
+    let whole = get(None);
+    assert_eq!((whole.status, whole.body.len()), (200, 100));
+    assert_eq!(whole.cache_control, "no-store");
+    assert_eq!(header(&whole, "Accept-Ranges").as_deref(), Some("bytes"));
+    assert_eq!(header(&whole, "Content-Range"), None);
+
+    for (range, from, to) in [
+        ("bytes=10-19", 10, 19),
+        ("bytes=90-", 90, 99),
+        ("bytes=-5", 95, 99),
+        ("bytes=95-500", 95, 99),
+        ("bytes=0-0", 0, 0),
+        ("bytes=-500", 0, 99),
+    ] {
+        let part = get(Some(range));
+        assert_eq!(part.status, 206, "{range}");
+        assert_eq!(part.body, bytes[from..=to], "{range}");
+        assert_eq!(
+            header(&part, "Content-Range"),
+            Some(format!("bytes {from}-{to}/100")),
+            "{range}"
+        );
+        assert_eq!(part.cache_control, "no-store");
+    }
+
+    for range in ["bytes=100-", "bytes=500-600", "bytes=-0"] {
+        let refused = get(Some(range));
+        assert_eq!(refused.status, 416, "{range}");
+        assert!(refused.body.is_empty());
+        assert_eq!(
+            header(&refused, "Content-Range").as_deref(),
+            Some("bytes */100")
+        );
+    }
+
+    // Ranges this server does not understand are answered with the whole clip.
+    for range in [
+        "bytes=0-1,5-6",
+        "items=0-1",
+        "bytes=9-3",
+        "bytes=a-b",
+        "bytes=",
+    ] {
+        let whole = get(Some(range));
+        assert_eq!((whole.status, whole.body.len()), (200, 100), "{range}");
+    }
 }

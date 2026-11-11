@@ -13,6 +13,7 @@ mod manage;
 mod members;
 mod navigation;
 mod orchestration_roles;
+mod power;
 mod preferences;
 mod process;
 mod provider_health;
@@ -150,6 +151,8 @@ struct Tray {
 fn main() {
     proxy::apply();
     let reader = Arc::new(Reader::new(data::data_root()));
+    #[cfg(target_os = "macos")]
+    video_packs::http::start(data::data_root());
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| restore(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -444,6 +447,16 @@ fn set_window_hidden(window: &WebviewWindow, hidden: bool) {
     let _ = window.eval(script);
 }
 
+/// Tell the page its window is behind others (or back in front), for pages that quiet down then.
+fn set_window_blurred(window: &WebviewWindow, blurred: bool) {
+    let script = if blurred {
+        "document.documentElement.dataset.windowBlurred = 'true';"
+    } else {
+        "delete document.documentElement.dataset.windowBlurred;"
+    };
+    let _ = window.eval(script);
+}
+
 /// Bring the main window back on the page it was left on, or open the office if there is none.
 fn restore(app: &AppHandle) {
     match app.get_webview_window("main") {
@@ -608,6 +621,9 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
             if let WindowEvent::Destroyed = event {
                 voice::player::clear(closing.app_handle());
             }
+            if let WindowEvent::Focused(focused) = event {
+                set_window_blurred(&closing, !focused);
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 save_size(&closing);
                 // Like other Mac apps, closing only hides the window; the Dock icon brings it back
@@ -687,6 +703,9 @@ fn register_protocol(
             if let Some(notice) = &reply.notice {
                 response = response.header("X-AgentNave-Notice", percent_encode(notice));
             }
+            for (name, value) in &reply.headers {
+                response = response.header(*name, value);
+            }
             let response = response
                 .status(reply.status)
                 .header(header::CONTENT_TYPE, reply.content_type)
@@ -706,6 +725,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Regular);
     let handle = app.handle();
+    power::watch(handle.clone());
     if let Err(error) = preferences::autostart::repair(handle) {
         eprintln!("无法修复开机启动路径：{error}");
     }
@@ -812,6 +832,13 @@ impl ProtocolRequest {
             _ if preview_refuses(PREVIEW, method, path) => {
                 data::Response::error(403, "预览版只读：请在正式版里保存改动")
             }
+            ("GET", path) if path.starts_with("/art/video/") => reader.video_asset(
+                path,
+                self.request
+                    .headers()
+                    .get(header::RANGE)
+                    .and_then(|v| v.to_str().ok()),
+            ),
             _ if path == "/app/video-packs" || path.starts_with("/app/video-packs/") => {
                 reader.video_packs_request(Some(app), method, path, action, self.request.body())
             }

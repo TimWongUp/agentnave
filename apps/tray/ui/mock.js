@@ -877,6 +877,7 @@ All checks passed!
       tray_count: true,
       tray_font: "baskerville",
       keep_awake: false,
+      battery_still: true,
     },
     alerts: {
       notify: "off",

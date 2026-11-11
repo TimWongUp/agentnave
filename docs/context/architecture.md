@@ -26,7 +26,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## MCP 合同
 
-- 10 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)、[ADR-0057](../adr/0057-boss-answers-native-prompts.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
+- 11 个工具（[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)、[ADR-0057](../adr/0057-boss-answers-native-prompts.md)，`handover` 见 [ADR-0033](../adr/0033-boss-workspace-handover.md)，`clear_provider_cooldown` 见 [ADR-0081](../adr/0081-account-cooldown-duration.md)），另有供中继空闲探测、不列出的 `list_invocations`。入参 schema 禁止未列出的参数，整批拒绝而不静默丢弃。
 - 可由 Manager 修正的请求错误走 Tool error 并给出重试指引；Provider 执行终态走结构化 Invocation Result，业务失败也尽量保全输出与原生 `session_id`。
 - 每次派发的 prompt 都附加单向编排指令：完成任务后回报 Manager，不再调用 AgentNave，需要决定时写进最终回答；声明 `read` 时再加只读说明（[ADR-0043](../adr/0043-service-prompt-instructions.md)）。服务不检测嵌套、不据此禁用工具；这依赖模型遵守，不是安全边界（[ADR-0031](../adr/0031-prompt-only-orchestration.md)）。
 - Invocation 只在进程内存中，终态保留七天；`wait` 返回就绪子集（[ADR-0007](../adr/0007-wait-any-ready-subset.md)）。没有总运行时限，停止靠显式 `cancel`；服务只在两种故障下主动终止进程树：保留的 stdout、stderr 超限（不静默截断为成功），或 Provider 持续重试满五分钟仍无输出（[ADR-0049](../adr/0049-service-initiated-termination.md)）。
@@ -72,7 +72,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖）。会话历史存于 SQLite（[ADR-0026](../adr/0026-sqlite-conversation-store.md)），每个会话一把 OS 文件锁：持锁的服务才能写，其他服务只读，空闲后可接手。服务回收孤儿会话锁与席位目录，删除会话后回收其席位目录；原生会话锁由持有者用完即删（[ADR-0046](../adr/0046-service-history-retention.md)）。schema 每次变化都提升 `user_version`，迁移只由服务执行（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。写入时在同一事务内更新托盘读取的视图快照（[ADR-0026](../adr/0026-sqlite-conversation-store.md)）；运行中的输出尾部只写进程级运行文件，内容不变时只刷新修改时间。中继在 `connections/` 写连接观测（宿主、连接时间、服务版本与工具定义摘要），不存原始工具定义、提示词、环境或凭据；正常结束后保留有期限的加载证据，由中继清理，App 将它与在线连接分开读取，用于确认短连接已加载配置。App 只读新鲜、大小受限、非符号链接的观测（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。
 
-服务与托盘共用数据根的 `provider-health.json`：服务记录近期 CLI 和模型的硬阻断冷却（模型未知时退回 CLI 级），托盘可解除指定记录；两端写入使用同一把锁。冷却期间拒绝向对应模型派发并将对应非原生工位标为不可用，认证冷却持续到解除；配额仅在 Adapter 能识别重置时间时冷却，计费冷却按固定时长。用户可解除冷却，任一成功调用也会清除（兼容性取舍见 ADR-0080）。
+服务与托盘共用数据根的 `provider-health.json`：服务记录近期 CLI 和模型的硬阻断冷却（模型未知时退回 CLI 级），托盘可解除指定记录；两端写入使用同一把锁。冷却期间拒绝向对应模型派发并将对应非原生工位标为不可用，认证冷却持续到解除；配额仅在 Adapter 能识别重置时间时冷却，计费冷却按固定时长。用户可解除冷却，任一成功调用也会清除（兼容性取舍见 [ADR-0081](../adr/0081-account-cooldown-duration.md)）。
 
 App 设置文件按写入方和损坏时的影响范围分开：
 
@@ -97,7 +97,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 
 ## 托盘 App
 
-- 界面只经 `agentnave` 自定义协议提供：不开放 IPC、导航限于自身协议；除 ChatGPT 订阅登录期间仅在回环地址临时监听登录回调端口外，不监听端口。界面写操作都要求 `X-AgentNave-Action: 1`，可能刷新并保存令牌的目录请求也属于写操作。
+- 界面只经 `agentnave` 自定义协议提供：不开放 IPC、导航限于自身协议；除 ChatGPT 订阅登录期间仅在回环地址临时监听登录回调端口，以及 macOS 上只读提供视频包片段、带启动令牌的回环端口外，不监听端口（[ADR-0080](../adr/0080-tray-video-loopback-http.md)）。界面写操作都要求 `X-AgentNave-Action: 1`，可能刷新并保存令牌的目录请求也属于写操作。
 - 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、工作区交接标记、清空工作区时删去交接记录和删除只有 boss 的工作区（不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)）、数据根的设置文件、小人视频选装包 `video-packs/`、语音设置 `voice.json`、语音密钥与登录令牌 `voice-keys.json`、语音缓存 `voice-cache/`、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。托盘不迁移会话库的 schema：遇到旧版本的库只读展示，写操作提示先重连宿主（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。
 - 设置界面面向非技术用户，只提供开关、单选、下拉与档位条，不让手填（[ADR-0029](../adr/0029-settings-without-free-text.md)）；语音 API 密钥、自定义口语摘要连接信息、摘要要求及语音人设为例外（[ADR-0044](../adr/0044-meeting-voice-cloud-and-key-input.md)）。
 - 模型与档位以各 CLI 自己给出的为准，App 只探测、不猜测（[ADR-0034](../adr/0034-models-and-efforts-from-each-cli.md)）。

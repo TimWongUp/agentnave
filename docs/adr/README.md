@@ -83,4 +83,5 @@
 | 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 已接受 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限 |
 | 0078 | [启动确认屏由服务自动处理](0078-startup-confirmations.md) | 已接受 | 修订 ADR-0056、ADR-0057、ADR-0072 |
 | 0079 | [Antigravity 交互活动从屏幕状态行补充](0079-agy-screen-activity.md) | 已接受 | 修订 ADR-0072 的活动来源 |
-| 0080 | [按 CLI 和模型冷却账户阻断](0080-account-cooldown-duration.md) | 已接受 | — |
+| 0080 | [macOS 视频小人经回环 HTTP 加载](0080-tray-video-loopback-http.md) | 已接受 | — |
+| 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | — |

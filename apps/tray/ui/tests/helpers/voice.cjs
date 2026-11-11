@@ -103,6 +103,8 @@ async function office(listening = true, synthesize = async () => ({}), loadRoom 
   const feed = async messages => {
     ctx.c.messages = messages;
     rooms.set("/app/chats/workspace", { ...ctx.c, messages, desks: [...ctx.desks.values()], rooms: [...ctx.rooms.values()] });
+    // Each feed is a poll after the window came back, which reads the settings again.
+    windowListeners["agentnave:focus"]?.();
     AN.voice.ingest({ group: "workspace", messages }); await flush();
     await tick();
   };

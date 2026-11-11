@@ -12,6 +12,12 @@ impl Reader {
         crate::video_packs::request(&self.root, app, method, path, action, body)
     }
 
+    pub(crate) fn video_asset(&self, path: &str, range: Option<&str>) -> Response {
+        path.strip_prefix("/art/video/")
+            .and_then(|rest| crate::video_packs::asset(&self.root, rest, range))
+            .unwrap_or_else(Response::not_found)
+    }
+
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
         if path == "/app/video-packs" || path.starts_with("/app/video-packs/") {

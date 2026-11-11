@@ -26,6 +26,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 | `list` | 本服务的句柄和保存的会话（最近在前） |
 | `read_conversation` | 按 App 的样子读回一个会话的最终消息 |
 | `list_members` | App 组员与默认值；传 `provider` 时附该 CLI 的允许状态和可用选项 |
+| `clear_provider_cooldown` | 用户明确要求时解除某个 CLI（可指定模型）的冷却 |
 | `handover` | 把本聊天的整个工作区交给另一个 boss 聊天，或列出、认领待接手的工作区 |
 
 ## boss 会话归属

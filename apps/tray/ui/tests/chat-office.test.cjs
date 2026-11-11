@@ -89,6 +89,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
     renderHead() {}, renderConv() { drawer.hidden = false; }, renderTicker() {},
     renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
     showBlank: kind => blanks.push(kind), renderList() {}, ingest() {},
+    ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => 1, timeDriven: () => false,
     load: async path => path === "/app/chats" ? { groups: [{ group: "ws-b" }] } : { group: "ws-b", rooms: [], desks: [], messages: [] },
   });
   vm.runInContext(chatSource.slice(start, end), chatContext);
@@ -363,4 +364,117 @@ test("only meeting messages name their recipients", () => {
   assert.equal(context.verbOf({ ...boss, thread: { kind: "desk", key: "a" } }, ctx)[1].length, 0);
   assert.equal(context.verbOf({ ...boss, kind: "forward", thread: { kind: "desk", key: "a" } }, ctx)[1].length, 0);
   assert.equal(context.verbOf({ ...boss, round: 1, thread: { kind: "room", id: "r" } }, ctx)[1].length, 1);
+});
+
+// The poll's refresh() with its drawing hooks counted.
+function refreshing() {
+  const source = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const start = source.indexOf("function renderAll(");
+  const calls = { list: 0, all: 0, voice: 0 };
+  let groups = [{ group: "ws", updated: "2026-11-10T00:00:00Z" }], chat = { group: "ws", rooms: [], desks: [], messages: [] }, tick = 1, busy = false;
+  const context = vm.createContext({
+    AN: { voice: { ingest() { calls.voice++; } } }, state: { loaded: null, selected: "ws", groupsData: [], auto: false },
+    narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
+    contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderTicker() {},
+    renderOffice() { calls.all++; }, showBlank() {}, renderList() { calls.list++; }, ingest() {},
+    ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => tick, timeDriven: () => busy,
+    load: async path => structuredClone(path === "/app/chats" ? { groups } : chat),
+  });
+  vm.runInContext(source.slice(start, source.indexOf("for (const link of", start)), context);
+  return {
+    calls, refresh: () => context.refresh(),
+    change: patch => { chat = { ...chat, ...patch }; }, rename: () => { groups = [{ ...groups[0], preview: "new" }]; },
+    tick: () => { tick++; }, busy: on => { busy = on; },
+  };
+}
+
+test("a poll draws the workspace list once, and an unchanged poll draws nothing until the next tick", async () => {
+  const app = refreshing();
+  await app.refresh();
+  assert.deepEqual([app.calls.list, app.calls.all], [1, 1], "one refresh draws the list once");
+  await app.refresh();
+  assert.deepEqual([app.calls.list, app.calls.all], [1, 1], "the same payload in the same tick is not drawn again");
+  assert.equal(app.calls.voice, 2, "the voice player still sees every poll");
+  app.rename();
+  await app.refresh();
+  assert.deepEqual([app.calls.list, app.calls.all], [2, 1], "a changed list redraws only the list");
+  app.change({ messages: [{ id: "m1" }] });
+  await app.refresh();
+  assert.deepEqual([app.calls.list, app.calls.all], [2, 2], "a changed workspace redraws only the office");
+  app.tick();
+  await app.refresh();
+  assert.deepEqual([app.calls.list, app.calls.all], [3, 3], "relative times and sleepers move with the clock");
+  app.busy(true);
+  await app.refresh();
+  assert.equal(app.calls.all, 4, "a desk holding its done frame is drawn every poll");
+});
+
+test("an unfocused window polls every five seconds and refreshes the moment it returns", async () => {
+  const timers = [], windowListeners = {}, classes = {};
+  let focused = true, ticks = 0;
+  const context = vm.createContext({
+    document: {
+      hidden: false, hasFocus: () => focused, querySelectorAll: () => [], querySelector: () => null, addEventListener() {},
+      documentElement: { lang: "zh", dataset: { idleBlur: "" }, classList: { toggle: (name, on) => { classes[name] = on; } } },
+    },
+    window: {
+      ANAppearance: { applyTheme() {}, reducedMotion: { matches: false } },
+      addEventListener: (name, fn) => { (windowListeners[name] ||= []).push(fn); },
+      dispatchEvent: event => (windowListeners[event.type] || []).forEach(fn => fn(event)),
+    },
+    localStorage: { getItem: () => null, setItem() {} }, fetch: async () => ({ ok: false, json: async () => ({}) }),
+    setInterval() {}, setTimeout: (fn, delay) => timers.push({ fn, delay }), clearTimeout() {}, Event,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../common.js`, "utf8"), context);
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const emit = name => (windowListeners[name] || []).forEach(fn => fn({}));
+  context.window.AN.poll(async () => { ticks++; });
+  await flush();
+  assert.equal(ticks, 1);
+  assert.equal(timers.at(-1).delay, 1500);
+
+  focused = false;
+  emit("blur");
+  timers.splice(0).forEach(timer => timer.fn()); // the settled check, then the poll timer
+  await flush();
+  assert.equal(classes.blurred, true, "the page stands still");
+  assert.equal(ticks, 2);
+  assert.equal(timers.at(-1).delay, 5000, "polling slows down");
+
+  focused = true;
+  emit("focus");
+  await flush();
+  assert.equal(ticks, 3, "coming back refreshes at once");
+  timers.splice(0).forEach(timer => timer.fn());
+  await flush();
+  assert.equal(classes.blurred, false);
+  assert.equal(timers.at(-1).delay, 1500, "and polls at the usual pace again");
+});
+
+test("a side list patches its relative times in place and lays out only when desks or seats change", () => {
+  const read = [];
+  const context = vm.createContext({
+    AN: { at: Date.parse }, window: {}, ResizeObserver: class { observe() {} },
+    ART: { head: d => d, version: () => 1 }, deskChar: d => d.key, setText: (node, text) => { node.textContent = text; },
+    h: (tag, _attrs, ...kids) => ({ tag, kids: kids.flat(), textContent: kids.find(k => typeof k === "string"), addEventListener() {} }),
+    el: { desks: { querySelector: () => { read.push("desk"); return null; } } }, state: { bossRec: null, roomRecs: new Map() }, FIG: 100,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  let built = 0;
+  const node = { dataset: {}, querySelector: () => null, replaceChildren() { built++; } };
+  const item = time => ({ scope: { kind: "desk", key: "a" }, heads: [{ key: "a" }], name: "a", sub: "s", tone: "", time });
+  context.sideList(node, "t", [item("刚刚")], "none");
+  context.sideList(node, "t", [item("1 分钟前")], "none");
+  assert.equal(built, 1, "a new relative time is not a new list");
+  assert.equal(node.times[0].textContent, "1 分钟前");
+  context.sideList(node, "t", [item("")], "none");
+  assert.equal(built, 2, "a row losing its time is");
+
+  context.layoutIfChanged("1 desk");
+  const once = read.length;
+  assert.ok(once > 0);
+  context.layoutIfChanged("1 desk");
+  assert.equal(read.length, once, "the same desks and seats are not measured again");
+  context.layoutIfChanged("2 desks");
+  assert.equal(read.length, 2 * once);
 });
