@@ -156,9 +156,7 @@ fn urls(tier: &str) -> Vec<String> {
     }
     // The packs live on one fixed release so app releases do not have to carry them again.
     let name = archive_name(tier);
-    let url = format!(
-        "https://github.com/TimWongUp/agentnave/releases/download/v1.4.0/{name}"
-    );
+    let url = format!("https://github.com/TimWongUp/agentnave/releases/download/v1.4.0/{name}");
     crate::proxy::expand_urls(&[url])
 }
 
