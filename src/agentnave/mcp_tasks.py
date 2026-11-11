@@ -34,6 +34,7 @@ from agentnave.mcp_payloads import (
 from agentnave.mcp_runtime import (
     ACCESS,
     DISPATCH_WAIT,
+    LONG_WAIT_SENTENCE,
     ManagerModel,
     ManagerSessionId,
     Runtime,
@@ -351,8 +352,8 @@ async def wait(
         Field(
             description=(
                 "Omit to wait up to 270s; 270 explicitly selects the same window. "
-                "1500 waits up to 25 minutes and is available only to the Claude Code host. "
-                "0 checks progress immediately and includes running tails; ready results are still received; no value stops work."
+                + LONG_WAIT_SENTENCE
+                + "0 checks progress immediately and includes running tails; ready results are still received; no value stops work."
             ),
         ),
     ] = None,
@@ -395,9 +396,10 @@ async def wait(
     Unknown/expired/duplicate ids reject the whole call. Ends are never pushed: wait after
     dispatch or independent work; receive every terminal result before ending your turn.
     """
-    if wait_seconds == 1500 and runtime.HOST.name != "claude":
+    if wait_seconds == 1500 and not runtime.long_wait_enabled():
         raise ToolError(
-            "wait_seconds=1500 is only available to the Claude Code host; use 0 or 270."
+            "wait_seconds=1500 is only available in the Claude Code terminal interactive "
+            "session; use 0 or 270."
         )
     payload = await _receive(ids, include_output, wait_seconds, manager_session_id, ctx)
     if seq is not None:

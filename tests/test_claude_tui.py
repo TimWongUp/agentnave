@@ -527,6 +527,66 @@ def test_turn_waits_for_background_tool_notifications() -> None:
     turn.transcript({"type": "user", "message": {"role": "user", "content": [refused]}})
     turn.transcript(end)
     assert turn.done
+    # An MCP call Claude moved to the background by itself names only a task id, and the
+    # completion notification carries only that id back. The same words in a prompt or in
+    # another tool's output (a grep, a file read) do not.
+    moved = (
+        'MCP tool "agentnave/wait" is still running after 120s. It was moved to the '
+        "background as task kcbon96gb and keeps running; you'll receive a notification "
+        "with the result when it completes."
+    )
+    turn.transcript({"type": "user", "message": {"role": "user", "content": moved}})
+    calls: list[dict[str, object]] = [
+        {"type": "tool_use", "id": "bash-1", "name": "Bash", "input": {}},
+        {"type": "tool_use", "id": "mcp-1", "name": "mcp__agentnave__wait", "input": {}},
+    ]
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": calls}})
+    quoted = {"type": "tool_result", "tool_use_id": "bash-1", "content": moved}
+    turn.transcript({"type": "user", "message": {"role": "user", "content": [quoted]}})
+    turn.transcript(end)
+    assert turn.done
+    receipt = {
+        "type": "tool_result",
+        "tool_use_id": "mcp-1",
+        "content": [{"type": "text", "text": moved}],
+    }
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {"role": "user", "content": [receipt]},
+            "toolUseResult": [{"type": "text", "text": moved}],
+        }
+    )
+    turn.transcript(end)
+    assert not turn.done
+    notice = "<task-notification>\n<task-id>kcbon96gb</task-id>\n</task-notification>"
+    # Another tool's output quoting the notification does not settle the call.
+    quoted = {"type": "tool_result", "tool_use_id": "bash-1", "content": notice}
+    turn.transcript({"type": "user", "message": {"role": "user", "content": [quoted]}})
+    turn.transcript(end)
+    assert not turn.done
+    turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
+    turn.transcript(end)
+    assert turn.done
+    # A notification arriving while Claude is busy is attached to the running turn instead.
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [start]}})
+    queued = {"type": "queued_command", "prompt": notice.replace("kcbon96gb", "x")}
+    turn.transcript({"type": "attachment", "attachment": queued})
+    turn.transcript(end)
+    assert not turn.done
+    turn.transcript(
+        {
+            "type": "attachment",
+            "attachment": {
+                **queued,
+                "prompt": notice.replace(
+                    "<task-id>kcbon96gb</task-id>", "<tool-use-id>tool-1</tool-use-id>"
+                ),
+            },
+        }
+    )
+    turn.transcript(end)
+    assert turn.done
 
 
 @pytest.mark.parametrize(

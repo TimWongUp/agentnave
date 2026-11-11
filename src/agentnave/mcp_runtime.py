@@ -118,6 +118,19 @@ def _read_excluded_providers() -> frozenset[str]:
 
 
 WAIT_SECONDS = 270
+LONG_WAIT_SENTENCE = (
+    "1500 waits up to 25 minutes and is available only in the Claude Code terminal "
+    "interactive session. "
+)
+
+
+def long_wait_enabled() -> bool:
+    """1500s waits only where Claude Code backgrounds long calls: its terminal session.
+
+    Desktop app, VS Code, -p/SDK and an unreadable entrypoint keep 0 and 270 (ADR-0082).
+    """
+    return HOST.name == "claude" and os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli"
+
 
 # Ends are never pushed (ADR-0007), so receipts say what to call before the turn ends (ADR-0064).
 WAIT_NEXT = (
@@ -125,7 +138,8 @@ WAIT_NEXT = (
     "manager_session_id) until all_finished."
 )
 WAIT_AGAIN = (
-    "Still pending: handle any prompt_pending or review_needed first, then call wait again "
+    "Still pending: reply to any new user message first, and handle any prompt_pending or "
+    "review_needed, then call wait again "
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
 
@@ -270,6 +284,17 @@ def _filter_role_schema(schema: Any, groups: frozenset[str], image_enabled: bool
         _filter_role_schema(value, groups, image_enabled)
 
 
+def _restrict_wait_windows(schema: dict[str, Any]) -> None:
+    """Publish only the windows this host honors: no 1500, and no sentence offering it."""
+    wait_seconds = cast(dict[str, Any], schema["properties"]["wait_seconds"])
+    for branch in cast(list[dict[str, Any]], wait_seconds.get("anyOf", [])):
+        values = branch.get("enum")
+        if isinstance(values, list):
+            branch["enum"] = [value for value in cast(list[Any], values) if value != 1500]
+    description = cast(str, wait_seconds["description"])
+    wait_seconds["description"] = description.replace(LONG_WAIT_SENTENCE, "")
+
+
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         image_enabled = role_seat("image-generator", HOST) is not None
@@ -282,6 +307,8 @@ class _Server(MCPServer[Runtime]):
             schema["additionalProperties"] = False
             output = json.loads(json.dumps(tool.output_schema))
             _filter_role_schema(schema, groups, image_enabled)
+            if tool.name == "wait" and not long_wait_enabled():
+                _restrict_wait_windows(schema)
             if not groups and not image_enabled:
                 schema.get("properties", {}).pop("seat", None)
             if output:
@@ -709,6 +736,9 @@ __all__ = [
     "TITLE_WIDTH",
     "_TITLE_WIDE_RANGES",
     "HOST",
+    "LONG_WAIT_SENTENCE",
+    "long_wait_enabled",
+    "_restrict_wait_windows",
     "WAIT_AGAIN",
     "WAIT_NEXT",
     "WAIT_SECONDS",
