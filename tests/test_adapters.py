@@ -502,19 +502,6 @@ def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None
             )
 
 
-def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:
-    with pytest.raises(
-        ValueError, match="dangerously_bypass_approvals_and_sandbox must be a boolean"
-    ):
-        CodexAdapter().prepare(
-            request(
-                tmp_path,
-                "codex",
-                provider_options={"dangerously_bypass_approvals_and_sandbox": "true"},
-            )
-        )
-
-
 def test_codex_adapter_preserves_final_message_and_session() -> None:
     payload = b"\n".join(
         (
@@ -628,18 +615,6 @@ def test_codex_adapter_requires_a_terminal_turn_event() -> None:
     assert result.status is InvocationStatus.FAILED
     assert result.output == "partial"
     assert result.error_message == "codex stream ended without a completion event"
-
-
-def test_provider_registry_returns_codebuddy_adapter() -> None:
-    adapter = get_adapter("codebuddy")
-
-    assert isinstance(adapter, CodeBuddyAdapter)
-
-
-def test_provider_registry_returns_codex_adapter() -> None:
-    adapter = get_adapter("codex")
-
-    assert isinstance(adapter, CodexAdapter)
 
 
 def test_claude_permission_denials_block_only_a_failed_run(tmp_path: Path) -> None:

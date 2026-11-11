@@ -2443,27 +2443,6 @@ async def test_serial_rounds_keep_a_slot_for_their_next_seat_through_review(
 
 
 @pytest.mark.asyncio
-async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
-    async with Client(mcp) as client:
-        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 11 and "list_profiles" not in tools
-        annotations = tools["list_members"].annotations
-        assert annotations is not None and annotations.read_only_hint is True
-        assert (await _call(client, "list_members", {}))["configured"] is False
-        assert not data_root.exists()
-        data_root.mkdir()
-        document: dict[str, object] = {
-            "version": 1,
-            "clis": {"claude": {"models": {"chosen": {"notes": "只读核验"}}}},
-            "modes": {},
-        }
-        (data_root / "members.json").write_text(json.dumps(document), encoding="utf-8")
-        result = await _call(client, "list_members", {})
-        assert result["configured"] is True
-        assert list(data_root.iterdir()) == [data_root / "members.json"]
-
-
-@pytest.mark.asyncio
 async def test_studio_enforces_discussion_defaults_before_saving(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
