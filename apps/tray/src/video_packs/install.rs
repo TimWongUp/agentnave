@@ -2,7 +2,7 @@ use super::*;
 use std::io::{Read, Write};
 
 const WEBP_LIMIT: u64 = 2 * 1024 * 1024;
-pub(super) const MOV_LIMIT: u64 = 25 * 1024 * 1024;
+pub(super) const CLIP_LIMIT: u64 = 25 * 1024 * 1024;
 
 /// One atom, with checked lengths for ordinary, extended and remainder sizes.
 fn atom(bytes: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
@@ -71,8 +71,9 @@ fn content_root(chosen: &Path) -> Result<PathBuf, String> {
 }
 
 fn checked_file(path: &Path, tier: &str) -> Result<Vec<u8>, String> {
-    let poster = path.extension().is_some_and(|e| e == "webp");
-    let limit = if poster { WEBP_LIMIT } else { MOV_LIMIT };
+    let ext = path.extension().and_then(|e| e.to_str());
+    let poster = ext == Some("webp");
+    let limit = if poster { WEBP_LIMIT } else { CLIP_LIMIT };
     let mut file = fs::File::open(path).map_err(|e| format!("{}：{e}", path.display()))?;
     if !file.metadata().map_err(|e| e.to_string())?.is_file() {
         return Err("视频包只允许普通文件".into());
@@ -85,10 +86,11 @@ fn checked_file(path: &Path, tier: &str) -> Result<Vec<u8>, String> {
     if bytes.len() as u64 > limit {
         return Err(format!("{} 超过文件大小限制", path.display()));
     }
-    let size = if poster {
-        crate::characters::webp_size(&bytes)
-    } else {
-        mov_size(&bytes)
+    let size = match ext {
+        Some("webp") => crate::characters::webp_size(&bytes),
+        Some("mov") => mov_size(&bytes),
+        Some("webm") => webm::webm_size(&bytes),
+        _ => None,
     };
     let expected = if poster || tier == "544" { 544 } else { 272 };
     if size != Some((expected, expected)) {
@@ -173,7 +175,7 @@ pub(super) fn extract(
             continue;
         }
         count += 1;
-        if count > 221 || !entry.header().entry_type().is_file() || entry.size() > MOV_LIMIT {
+        if count > 221 || !entry.header().entry_type().is_file() || entry.size() > CLIP_LIMIT {
             return Err("压缩包包含过多文件、超大文件或非普通文件".into());
         }
         let output = destination.join(path);

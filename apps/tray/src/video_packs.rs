@@ -6,6 +6,7 @@ mod install;
 mod picker;
 #[cfg(test)]
 mod tests;
+mod webm;
 
 use crate::data::Response;
 use serde_json::{Value, json};
@@ -24,6 +25,14 @@ const CLIPS: [&str; 10] = [
     "idle", "working", "speaking", "review", "done", "sleep", "sad", "slack-1", "slack-2",
     "sleep-1",
 ];
+#[cfg(target_os = "macos")]
+pub(crate) const CLIP_EXT: &str = "mov";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const CLIP_EXT: &str = "webm";
+#[cfg(target_os = "macos")]
+const CLIP_MIME: &str = "video/quicktime";
+#[cfg(not(target_os = "macos"))]
+const CLIP_MIME: &str = "video/webm";
 
 fn valid_tier(tier: &str) -> bool {
     matches!(tier, "272" | "544")
@@ -37,9 +46,17 @@ fn files() -> impl Iterator<Item = PathBuf> {
             .chain(
                 CLIPS
                     .into_iter()
-                    .map(move |clip| format!("{character}/{clip}.mov").into()),
+                    .map(move |clip| format!("{character}/{clip}.{CLIP_EXT}").into()),
             )
     })
+}
+
+fn is_installed(dir: &Path) -> bool {
+    dir.join("stamp").is_file()
+        && dir
+            .join(CHARACTERS[0])
+            .join(format!("{}.{CLIP_EXT}", CLIPS[0]))
+            .is_file()
 }
 
 fn preview_root() -> PathBuf {
@@ -67,12 +84,12 @@ fn resolve_with_preview(
 ) -> Option<(PathBuf, &'static str)> {
     if let Some(preview) = preview {
         let dir = preview.join("video-packs").join(tier);
-        if dir.join("stamp").is_file() {
+        if is_installed(&dir) {
             return Some((dir, "preview"));
         }
     }
     let dir = shared.join("video-packs").join(tier);
-    dir.join("stamp").is_file().then_some((dir, "shared"))
+    is_installed(&dir).then_some((dir, "shared"))
 }
 
 pub fn status(shared: &Path) -> Value {
@@ -96,7 +113,7 @@ pub fn status(shared: &Path) -> Value {
     let http = http::base();
     #[cfg(not(target_os = "macos"))]
     let http: Option<&str> = None;
-    json!({"packs": packs, "http": http})
+    json!({"packs": packs, "http": http, "ext": CLIP_EXT})
 }
 
 /// What a `Range` header asks for, against a file of `len` bytes.
@@ -148,14 +165,14 @@ pub fn asset(shared: &Path, rest: &str, range: Option<&str>) -> Option<Response>
         return Some(response);
     }
     if !file
-        .strip_suffix(".mov")
+        .strip_suffix(&format!(".{CLIP_EXT}"))
         .is_some_and(|s| CLIPS.contains(&s))
     {
         return None;
     }
     let mut clip = fs::File::open(path).ok()?;
     let len = clip.metadata().ok()?.len();
-    let mut response = Response::ok("video/quicktime", Vec::new());
+    let mut response = Response::ok(CLIP_MIME, Vec::new());
     response.headers.push(("Accept-Ranges", "bytes".to_owned()));
     let (start, end) = match span(range, len) {
         Span::Whole => (0, len.checked_sub(1)),
@@ -214,11 +231,7 @@ pub fn request(
     }
     if *operation == "delete"
         && crate::PREVIEW
-        && !write_root(shared)
-            .join("video-packs")
-            .join(tier)
-            .join("stamp")
-            .is_file()
+        && !is_installed(&write_root(shared).join("video-packs").join(tier))
         && resolve(shared, tier).is_some()
     {
         return Response::error(403, "预览版不可删除正式版已装的视频包");

@@ -54,10 +54,14 @@ for state in STATES_10:
         im.crop(box).resize((96, 96), Image.Resampling.LANCZOS).save(out_dir / "h" / f"{state}.webp", "WEBP", quality=92, method=6)
 print("Done ->", out_dir)`;
 
-  const PACK_BYTES = { "272": 189160043, "544": 551420875 };
+  const PACK_BYTES = {
+    mov: { "272": 189160043, "544": 551420875 },
+    webm: { "272": 111017072, "544": 323381398 },
+  };
+  let packExt = "mov";
 
   function packStatusText(pack, tier) {
-    const dl = pack?.download, size = megabytes(pack?.bytes || PACK_BYTES[tier]);
+    const dl = pack?.download, size = megabytes(pack?.bytes || (PACK_BYTES[packExt] || PACK_BYTES.mov)[tier]);
     if (dl?.state === "downloading") {
       const done = megabytes(dl.downloaded);
       const total = dl.total ? megabytes(dl.total) : size;
@@ -79,6 +83,7 @@ print("Done ->", out_dir)`;
   }
 
   async function applyPacks(data, announce) {
+    if (data?.ext === "webm" || data?.ext === "mov") packExt = data.ext;
     const next = { ...(data?.packs || {}) };
     const stampKey = (obj) => ["272", "544"].map((t) => `${obj[t]?.installed}:${obj[t]?.stamp || ""}`).join("|");
     const changed = stampKey(next) !== stampKey(packs);

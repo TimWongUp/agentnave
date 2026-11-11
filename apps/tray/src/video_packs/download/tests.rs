@@ -116,3 +116,13 @@ fn transfer_resumes_with_range_when_server_returns_partial_content() {
     assert_eq!(jobs()[&key].state["total"], 1500);
     cancel_locked(&mut jobs(), &key);
 }
+
+#[test]
+fn archive_names_follow_platform_clip_format() {
+    let expected = if CLIP_EXT == "mov" {
+        "agentnave-video-272.tar.gz"
+    } else {
+        "agentnave-video-webm-272.tar.gz"
+    };
+    assert_eq!(archive_name("272"), expected);
+}

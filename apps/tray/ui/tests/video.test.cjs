@@ -437,7 +437,7 @@ test("a playback error releases media and leaves a static poster", async () => {
 });
 
 test("video characters clear hidden particles instead of continuing to emit", () => {
-  const source = readFileSync(`${__dirname}/../common.js`, "utf8");
+  const source = readFileSync(`${__dirname}/../common.js`, "utf8").replace(/\r\n/g, "\n");
   const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
   let emitted = 0;
   const fx = { isConnected: true, childElementCount: 1, replaceChildren() { this.childElementCount = 0; }, append() { emitted++; } };
@@ -453,7 +453,7 @@ test("video characters clear hidden particles instead of continuing to emit", ()
 });
 
 test("an unfocused window emits no particles", () => {
-  const source = readFileSync(`${__dirname}/../common.js`, "utf8");
+  const source = readFileSync(`${__dirname}/../common.js`, "utf8").replace(/\r\n/g, "\n");
   const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
   const emitted = blurred => {
     let count = 0;
@@ -476,6 +476,7 @@ test("video packs stay off in static mode and switch figures in place across 272
   const start = source.indexOf("  const FAMILY_ART =");
   const end = source.indexOf("  const head =");
   const fetches = [], made = [], listeners = {};
+  let ext = "mov";
   let packs = {
     "272": { installed: true, stamp: "s272", bytes: 1000, download: null },
     "544": { installed: true, stamp: "s544", bytes: 2000, download: null },
@@ -545,7 +546,7 @@ test("video packs stay off in static mode and switch figures in place across 272
     fetch: async url => {
       const path = String(url);
       fetches.push(path);
-      if (path.startsWith("/app/video-packs")) return { ok: true, json: async () => ({ packs }) };
+      if (path.startsWith("/app/video-packs")) return { ok: true, json: async () => ({ packs, ext }) };
       if (path.includes("parts.json")) return { ok: true, json: async () => ({ gemini: { "ear-l": { idle: [10, 20] } } }) };
       if (path.startsWith("/app/characters") || path.includes(".json")) return { ok: true, json: async () => ({}) };
       return { ok: true };
@@ -592,6 +593,12 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.ok(fetches.includes("/art/video/544/codex/idle.mov?v=s544"));
   assert.equal(made.filter(v => v.src).length, 2);
   assert.ok(made.filter(v => v.src).every(v => v.src.includes("/544/")));
+
+  ext = "webm";
+  await ctx.api.loadVideoPacks();
+  await new Promise(r => setImmediate(r));
+  assert.ok(fetches.includes("/art/video/544/gemini/idle.webm?v=s544"));
+  assert.ok(fetches.includes("/art/video/544/codex/idle.webm?v=s544"));
 
   root.dataset.characterStyle = "static";
   listeners["agentnave:preferences"].forEach(fn => fn());
@@ -671,7 +678,7 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
         }
         if (path === "/app/video-packs/544/delete") {
           packs["544"] = { installed: false, stamp: null, bytes: 0, download: null };
-          return { packs };
+          return { packs, ext: "webm" };
         }
         return {};
       },
@@ -733,6 +740,7 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
   await new Promise(r => setImmediate(r));
   assert.equal(radios()[0].attrs["aria-checked"], "true");
   assert.equal(radios()[2].disabled, true);
+  assert.deepEqual(badges(), ["未安装 · 105.9 MB", "未安装 · 308.4 MB"]);
   assert.ok(posts.some(p => p.path === "/app/preferences" && p.body?.general?.character_style === "static"));
 
   // Late preferences broadcast for an uninstalled tier stays on CSS ("static").

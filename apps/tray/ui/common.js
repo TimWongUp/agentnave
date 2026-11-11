@@ -396,7 +396,7 @@
     const [, family, version] = name.split("@");
     return href(`/character/${family}/${size}/${state}.webp?v=${version}`);
   };
-  let videoPacks = {}, videoPackKey = "", videoHttp = "";
+  let videoPacks = {}, videoPackKey = "", videoHttp = "", videoExt = "mov";
   const VIDEO_PACKS_KEY = "agentnave.video-packs";
   function activeVideoPack() {
     const style = root.dataset.characterStyle || window.ANAppearance?.preferences?.().character_style || "static";
@@ -409,11 +409,11 @@
     const pack = activeVideoPack();
     if (!pack) return artUrl(`video/${path}`);
     const query = `${pack.tier}/${path}?v=${encodeURIComponent(pack.stamp)}`;
-    return videoHttp && path.endsWith(".mov") ? `${videoHttp}/${query}` : href(`/art/video/${query}`);
+    return videoHttp && path.endsWith(`.${videoExt}`) ? `${videoHttp}/${query}` : href(`/art/video/${query}`);
   };
   function syncVideoPackFigures() {
     const pack = activeVideoPack();
-    const nextKey = pack ? `${pack.tier}:${pack.stamp}` : "";
+    const nextKey = pack ? `${pack.tier}:${pack.stamp}:${videoExt}` : "";
     if (nextKey === videoPackKey) return;
     videoPackKey = nextKey;
     version++;
@@ -449,7 +449,7 @@
   const loadVideoPacks = () => fetch(href("/app/video-packs"), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : {})).then((data) => {
       videoPacks = data?.packs || {};
-      videoHttp = typeof data?.http === "string" ? data.http : "";
+      videoHttp = typeof data?.http === "string" ? data.http : ""; videoExt = data?.ext === "webm" ? "webm" : "mov";
       syncVideoPackFigures();
     }).catch(() => {});
   loadVideoPacks();
@@ -680,7 +680,7 @@
       if (!valid()) return;
       failVideo(rec, seq);
     };
-    slot.video.src = videoAssetUrl(`${videoChar(rec.fig.dataset.char)}/${clip}.mov`);
+    slot.video.src = videoAssetUrl(`${videoChar(rec.fig.dataset.char)}/${clip}.${typeof videoExt === "string" ? videoExt : "mov"}`);
     if (rec.active) rec.active.video.before(slot.video);
     else rec.fig.querySelector(".fig-b").append(slot.video);
     return slot;

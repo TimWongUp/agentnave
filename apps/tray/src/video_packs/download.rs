@@ -140,6 +140,14 @@ pub(super) fn start(shared: &Path, tier: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn archive_name(tier: &str) -> String {
+    if CLIP_EXT == "mov" {
+        format!("agentnave-video-{tier}.tar.gz")
+    } else {
+        format!("agentnave-video-webm-{tier}.tar.gz")
+    }
+}
+
 fn urls(tier: &str) -> Vec<String> {
     if let Ok(url) = std::env::var(format!("AGENTNAVE_VIDEO_PACK_URL_{tier}"))
         && !url.trim().is_empty()
@@ -147,8 +155,9 @@ fn urls(tier: &str) -> Vec<String> {
         return crate::proxy::expand_urls(&[url]);
     }
     // The packs live on one fixed release so app releases do not have to carry them again.
+    let name = archive_name(tier);
     let url = format!(
-        "https://github.com/TimWongUp/agentnave/releases/download/v1.4.0/agentnave-video-{tier}.tar.gz"
+        "https://github.com/TimWongUp/agentnave/releases/download/v1.4.0/{name}"
     );
     crate::proxy::expand_urls(&[url])
 }
@@ -162,7 +171,7 @@ fn open_response(
     use std::io::{Seek, SeekFrom};
     check_cancel(cancel)?;
     let mut have = output.metadata().map_or(0, |m| m.len());
-    let limit = 221 * install::MOV_LIMIT;
+    let limit = 221 * install::CLIP_LIMIT;
     if have > limit {
         output.set_len(0).map_err(|e| e.to_string())?;
         have = 0;
@@ -202,7 +211,7 @@ fn transfer(
 ) -> Result<(), String> {
     let (mut response, mut downloaded) = open_response(client, url, output, cancel)?;
     let total = response.content_length().map(|len| downloaded + len);
-    let limit = 221 * install::MOV_LIMIT;
+    let limit = 221 * install::CLIP_LIMIT;
     if total.is_some_and(|total| total > limit) {
         return Err("视频包下载超过大小限制".into());
     }
