@@ -49,6 +49,52 @@ fn codex_cache_lists_visible_models_by_priority_with_their_efforts() {
 }
 
 #[test]
+fn codex_reads_the_catalog_its_config_names_before_its_own_cache() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        "model = \"codex/gpt-6.1-terra\"\nmodel_catalog_json = \"magpie-desktop-models.json\"\n",
+    )
+    .unwrap();
+    // A gateway rewrites its catalog as providers come and go; Codex's cache lags behind it.
+    std::fs::write(
+        home.path().join("magpie-desktop-models.json"),
+        json!({"models": [
+            {"slug": "gpt-6.1-terra", "visibility": "list", "priority": 3},
+            {"slug": "deepseek/deepseek-flash", "visibility": "list", "priority": 9}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        home.path().join("models_cache.json"),
+        json!({"models": [
+            {"slug": "opencode-go/glm-5.3-flash", "visibility": "list", "priority": 1}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    let (models, _) = codex_models_in(home.path()).unwrap();
+    assert_eq!(ids(&models), ["gpt-6.1-terra", "deepseek/deepseek-flash"]);
+
+    // Without a named catalog, or when the named file is gone, the cache answers.
+    std::fs::write(
+        home.path().join("config.toml"),
+        "model = \"gpt-6.1-terra\"\n",
+    )
+    .unwrap();
+    let (models, _) = codex_models_in(home.path()).unwrap();
+    assert_eq!(ids(&models), ["opencode-go/glm-5.3-flash"]);
+    std::fs::write(
+        home.path().join("config.toml"),
+        "model_catalog_json = \"gone.json\"\n",
+    )
+    .unwrap();
+    let (models, _) = codex_models_in(home.path()).unwrap();
+    assert_eq!(ids(&models), ["opencode-go/glm-5.3-flash"]);
+}
+
+#[test]
 fn each_model_runs_at_the_clis_setting_where_offered_else_its_own_level() {
     let levels = ["low".to_owned(), "high".to_owned()];
     let mut models = vec![
@@ -182,6 +228,11 @@ fn command_listings_are_parsed_from_their_fixed_formats() {
     assert_eq!(
         native_model(&codex, Some("gpt-6-luna")).as_deref(),
         Some("gpt-6-luna")
+    );
+    // A gateway namespaces the id it writes into the CLI's config; its catalog lists the bare id.
+    assert_eq!(
+        native_model(&codex, Some("codex/gpt-6.1-sol")).as_deref(),
+        Some("gpt-6.1-sol")
     );
     assert_eq!(native_model(&listed(&CLAUDE_ALIASES), None), None);
     // A setting names the picker's entry, never a second spelling beside it.

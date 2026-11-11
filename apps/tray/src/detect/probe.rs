@@ -300,15 +300,45 @@ pub(super) fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
     Err(reason.chars().take(200).collect())
 }
 
-/// Codex's own model cache: listed models by priority, and the effort levels they support.
+/// Codex's model list: the catalog its own config names, else the cache it keeps.
+///
+/// A gateway such as magpie rewrites `model_catalog_json` whenever its providers change, but
+/// Codex refreshes `models_cache.json` on its own schedule, so the cache can keep models a
+/// provider no longer offers and miss the ones it just added. The catalog wins when both exist.
 pub(super) fn codex_models() -> Result<(Vec<Value>, Vec<String>), String> {
-    let home = match std::env::var_os("CODEX_HOME") {
+    codex_models_in(&codex_home())
+}
+
+fn codex_home() -> PathBuf {
+    match std::env::var_os("CODEX_HOME") {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => dirs::home_dir().unwrap_or_default().join(".codex"),
-    };
+    }
+}
+
+pub(super) fn codex_models_in(home: &Path) -> Result<(Vec<Value>, Vec<String>), String> {
+    if let Some(catalog) = codex_catalog(home)
+        && let Ok(text) = std::fs::read_to_string(catalog)
+    {
+        return parse_codex_cache(&text);
+    }
     let text = std::fs::read_to_string(home.join("models_cache.json"))
         .map_err(|error| format!("无法读取 Codex 模型缓存：{error}"))?;
     parse_codex_cache(&text)
+}
+
+/// The `model_catalog_json` file Codex's `config.toml` points at, resolved against its home the
+/// way Codex does; a relative name is relative to `CODEX_HOME`, not the working directory.
+fn codex_catalog(home: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(home.join("config.toml")).ok()?;
+    let table: toml::Table = text.parse().ok()?;
+    let named = table.get("model_catalog_json")?.as_str()?;
+    let path = Path::new(named);
+    Some(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        home.join(path)
+    })
 }
 
 pub(super) fn parse_codex_cache(text: &str) -> Result<(Vec<Value>, Vec<String>), String> {

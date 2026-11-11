@@ -290,6 +290,16 @@ fn native_model(models: &[Value], configured: Option<&str>) -> Option<String> {
                             .any(|key| model[*key].as_str().is_some_and(|v| bare(v) == bare(name)))
                     })
                 })
+                // A gateway may namespace the id it writes into the CLI's config
+                // (`codex/gpt-6.1-terra`) while the catalog it supplies lists the bare id.
+                .or_else(|| {
+                    let tail = bare(name.rsplit_once('/')?.1);
+                    models.iter().find(|model| {
+                        ["id", "resolved"]
+                            .iter()
+                            .any(|key| model[*key].as_str().is_some_and(|v| bare(v) == tail))
+                    })
+                })
                 .and_then(id)
                 .unwrap_or_else(|| name.to_owned()),
         ),
