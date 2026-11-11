@@ -284,9 +284,14 @@ function sideItems(c, ctx) {
   return { chats, meets };
 }
 function sideList(node, title, items, empty) {
-  const key = JSON.stringify([title, items, ART.version()]);
-  if (node.dataset.key === key) return;
+  // A relative time is patched in place; it never rebuilds the list.
+  const key = JSON.stringify([title, items.map((item) => ({ ...item, time: Boolean(item.time) })), ART.version()]);
+  if (node.dataset.key === key) {
+    items.forEach((item, i) => node.times[i] && setText(node.times[i], item.time));
+    return;
+  }
   node.dataset.key = key;
+  node.times = [];
   const rows = [];
   for (const item of items) {
     const row = h(
@@ -294,7 +299,7 @@ function sideList(node, title, items, empty) {
       { type: "button", title: `${item.name}\n${item.sub}` },
       h("span.td-heads", {}, item.heads.slice(0, 3).map((d) => ART.head(deskChar(d)))),
       h("span.td-main", {}, h("span.td-name", {}, item.name), h("span.td-sub", {}, item.sub)),
-      item.time && h("span.td-time", {}, item.time),
+      item.time && (node.times[rows.length] = h("span.td-time", {}, item.time)),
     );
     row.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -516,6 +521,7 @@ function updateRoom(rec, r, ctx) {
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
 // The boss's scene takes a desk's size too, so it grows and shrinks with the row.
 function layoutRooms() {
+  let complete = true;
   const deskScene = el.desks.querySelector(".desk > .scene");
   const bossWidth = deskScene ? `${Math.round(deskScene.offsetWidth * 1.3)}px` : "";
   if (state.bossRec && state.bossRec.scene.style.width !== bossWidth)
@@ -527,6 +533,7 @@ function layoutRooms() {
     if (!m.isConnected) continue;
     const avail = rec.el.clientWidth - 26;
     const slots = m.children.length;
+    if (avail <= 0) complete = false;
     if (avail <= 0 || !slots) continue;
     const size = Math.min(fig, avail);
     const perRow = Math.min(slots, Math.max(1, Math.floor(avail / size)));
@@ -536,7 +543,17 @@ function layoutRooms() {
     for (const seat of m.querySelectorAll(".seat"))
       seat.style.setProperty("--x", `${-seat.offsetLeft}px`);
   }
+  return complete;
 }
+// Layout reads sizes, so it runs when the number of desks or seats changes (the floor's own width
+// is watched below), not on every poll.
+let laidOutFor = "";
+function layoutIfChanged(key) {
+  if (key === laidOutFor) return;
+  laidOutFor = layoutRooms() ? key : "";
+}
+// A desk holds its done frame for a while without any new data, and needs one more pass once it ends.
+const timeDriven = () => [...state.deskRecs.values()].some((rec) => rec.doneUntil > (state.drawnAt || 0));
 // Scene sizes depend on the floor's width. Their height changes must not feed back into
 // this observer, and writes belong outside resize delivery to avoid a ResizeObserver loop.
 let observedFloorWidth = null;
@@ -568,6 +585,7 @@ function renderOffice(c, ctx, n, newGroup) {
     el.desks.replaceChildren();
     el.rooms.replaceChildren();
     el.office.scrollTop = 0;
+    laidOutFor = "";
   }
   if (!state.bossRec) state.bossRec = createBoss();
   updateBoss(state.bossRec, c, n);
@@ -631,7 +649,7 @@ function renderOffice(c, ctx, n, newGroup) {
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
   renderSides(state.bossRec, c, ctx);
-  layoutRooms();
+  layoutIfChanged(JSON.stringify([c.desks.length, rooms.map((r) => [r.id, r.seats.length])]));
   walk(!newGroup && state.ready, sat);
 }
 

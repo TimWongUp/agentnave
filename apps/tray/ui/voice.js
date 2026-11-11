@@ -4,7 +4,7 @@
   const { h, L = (zh) => zh } = AN;
   let config = null, group = null;
   let started = [], queue = [], current = null, generation = 0, failures = 0, halted = false, picks = 0;
-  let running = false, loading = null, batch = null, lastAlbum = null;
+  let running = false, loading = null, batch = null, lastAlbum = null, loadedAt = -Infinity;
   const completed = new Map();
   let roomView = null, playlistScope = null, playlistFetch = null;
   let privateView = null, deskShown = null, deskListenShown = null, channelVisible = false, paused = false;
@@ -68,6 +68,7 @@
     if (loading) return loading;
     loading = (async () => {
       const next = await state();
+      loadedAt = Date.now();
       if (shownError?.source === "load") clearError();
       const previous = config;
       const different = !previous || JSON.stringify(previous) !== JSON.stringify(next);
@@ -518,12 +519,18 @@
       if (!queue.length && !playlistFetch && playlistScope) { playlistScope = null; changed(); }
     }
   }
-  // Office polls refresh settings; only an explicit listen follows new messages.
+  // Office polls refresh settings; only an explicit listen follows new messages. Settings seldom
+  // change and announce it (refresh()); the settings are read again while something is playing or
+  // followed, when the window comes back, and otherwise every IDLE_RELOAD_MS.
+  const IDLE_RELOAD_MS = 15000;
+  window.addEventListener("focus", () => { loadedAt = -Infinity; });
+  window.addEventListener("agentnave:focus", () => { loadedAt = -Infinity; });
   function ingest(chat) {
     group = chat.group;
     expire();
     queueMicrotask(drain);
-    void reload().catch(failure => error(failure.message, "load"));
+    if (current || queue.length || follow || Date.now() - loadedAt >= IDLE_RELOAD_MS)
+      void reload().catch(failure => error(failure.message, "load"));
   }
   // Hands each message to `take` once, when it first becomes readable in scope: a briefing only
   // with its answer. `seen` remembers what was readable already.

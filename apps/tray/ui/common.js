@@ -167,8 +167,15 @@
     const d = new Date(at(iso));
     return `${d.getMonth() + 1}/${d.getDate()}`;
   }
-  const clock = (iso) => new Date(at(iso)).toLocaleTimeString(L("zh-CN", "en-US"), { hour: "2-digit", minute: "2-digit", hour12: false });
-  const fullTime = (iso) => new Date(at(iso)).toLocaleString(L("zh-CN", "en-US"), { hour12: false });
+  // Formatters are built once per interface language; a language switch picks another one.
+  const formatters = new Map();
+  const formatter = (kind, options) => {
+    const locale = L("zh-CN", "en-US"), key = `${kind}|${locale}`;
+    if (!formatters.has(key)) formatters.set(key, new Intl.DateTimeFormat(locale, options));
+    return formatters.get(key);
+  };
+  const clock = (iso) => formatter("clock", { hour: "2-digit", minute: "2-digit", hour12: false }).format(at(iso));
+  const fullTime = (iso) => formatter("full", { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", hour12: false }).format(at(iso));
   function dayLabel(iso) {
     const d = new Date(at(iso));
     const today = new Date();
@@ -201,6 +208,7 @@
       .map((x) => x.id);
   }
   // 1.5 s polling that pauses while hidden and never overlaps itself.
+  // An unfocused window (see syncBlurred) polls less often.
   function poll(tick, every = 1500) {
     let timer = null, busy = false;
     async function run() {
@@ -209,11 +217,12 @@
       busy = true;
       try { await tick(); } finally {
         busy = false;
-        if (!document.hidden) timer = setTimeout(run, every);
+        if (!document.hidden) timer = setTimeout(run, blurred ? Math.max(every, BLURRED_POLL) : every);
       }
     }
     document.addEventListener("visibilitychange", run);
     window.addEventListener("focus", run);
+    window.addEventListener("agentnave:focus", run);
     run();
     return run;
   }
@@ -296,6 +305,27 @@
   const syncPaused = () => root.classList?.toggle("paused", document.hidden || root.dataset?.windowHidden === "true");
   document.addEventListener("visibilitychange", syncPaused);
   syncPaused();
+  // A page that sets data-idle-blur on <html> goes quiet while its window is behind others: figures
+  // and decorations stand still (html.blurred) and polling slows down. The App also reports the
+  // window's focus as data-window-blurred, for when the page gets no blur events. Coming back
+  // refreshes at once.
+  const BLURRED_POLL = 5000;
+  let blurred = false;
+  function syncBlurred() {
+    const next = root.dataset?.idleBlur !== undefined && (root.dataset.windowBlurred === "true" || !document.hasFocus());
+    if (next === blurred) return;
+    blurred = next;
+    root.classList?.toggle("blurred", next);
+    window.dispatchEvent(new Event(next ? "agentnave:blur" : "agentnave:focus"));
+  }
+  // Focus moving into an embedded frame blurs this window too; ask again once it has settled.
+  const checkBlurred = () => setTimeout(syncBlurred, 0);
+  window.addEventListener("blur", checkBlurred);
+  window.addEventListener("focus", checkBlurred);
+  if (typeof MutationObserver === "function") {
+    new MutationObserver(syncBlurred).observe(root, { attributes: true, attributeFilter: ["data-window-blurred"] });
+  }
+  syncBlurred();
 
   // ---- painted office art (ui/art, served at /art/) -----------------------------------------
   // Characters follow the model family, like the avatars; a model without a character of its own is
@@ -340,7 +370,7 @@
   const emitters = new Set();
   const still = window.ANAppearance.reducedMotion;
   setInterval(() => {
-    if (document.hidden || still.matches) return;
+    if (document.hidden || blurred || still.matches) return;
     if (typeof root !== "undefined" && root.dataset?.windowHidden === "true") return;
     const now = performance.now();
     for (const e of emitters) {
@@ -366,7 +396,7 @@
     const [, family, version] = name.split("@");
     return href(`/character/${family}/${size}/${state}.webp?v=${version}`);
   };
-  let videoPacks = {}, videoPackKey = "";
+  let videoPacks = {}, videoPackKey = "", videoHttp = "";
   const VIDEO_PACKS_KEY = "agentnave.video-packs";
   function activeVideoPack() {
     const style = root.dataset.characterStyle || window.ANAppearance?.preferences?.().character_style || "static";
@@ -377,7 +407,9 @@
   const videoEnabled = (name) => Boolean(VIDEO[videoChar(name)] && activeVideoPack());
   const videoPackUrl = (path) => {
     const pack = activeVideoPack();
-    return pack ? href(`/art/video/${pack.tier}/${path}?v=${encodeURIComponent(pack.stamp)}`) : artUrl(`video/${path}`);
+    if (!pack) return artUrl(`video/${path}`);
+    const query = `${pack.tier}/${path}?v=${encodeURIComponent(pack.stamp)}`;
+    return videoHttp && path.endsWith(".mov") ? `${videoHttp}/${query}` : href(`/art/video/${query}`);
   };
   function syncVideoPackFigures() {
     const pack = activeVideoPack();
@@ -407,15 +439,17 @@
         } else poster.src = videoPackUrl(`${vchar}/${state}.webp`);
         fig.classList.add("video");
         scheduleVideo(fig);
+        removeParts(fig);
       } else {
         fig.classList.remove("video", "video-on");
+        addParts(fig);
       }
     }
-    pruneVideos();
   }
   const loadVideoPacks = () => fetch(href("/app/video-packs"), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : {})).then((data) => {
       videoPacks = data?.packs || {};
+      videoHttp = typeof data?.http === "string" ? data.http : "";
       syncVideoPackFigures();
     }).catch(() => {});
   loadVideoPacks();
@@ -426,6 +460,32 @@
     window.AgentNaveSettingsFrame?.changed?.();
     return loadVideoPacks();
   };
+  // Each part carries its frame's s-<state> class, so it shows with that frame. A figure remembers its
+  // part nodes (fig.partNodes) so a switch to video can drop them and a switch back can build them again.
+  function addParts(fig, body = fig.querySelector(".fig-b"), name = fig.dataset.char, size = fig.dataset.size || "s") {
+    if (name.startsWith("@") || !body || fig.partNodes) return;
+    const nodes = fig.partNodes = [];
+    parts.then((all) => {
+      if (fig.partNodes !== nodes) return;
+      for (const [part, frames] of Object.entries(all[name] || {})) {
+        // A "<part>-tip" bends about its own pivot inside a box that swings about its "<part>"'s pivot.
+        const root = part.endsWith("-tip") ? all[name][part.slice(0, -4)] : null;
+        for (const [state, [x, y]] of Object.entries(frames)) {
+          const img = h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
+            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` });
+          const pivot = root?.[state];
+          const node = pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img)
+            : part === "halo" ? h("span.halo-fan", { style: `--ox:${x}%;--oy:${y}%` }, img) : img;
+          nodes.push(node);
+          body.append(node);
+        }
+      }
+    });
+  }
+  function removeParts(fig) {
+    for (const node of fig.partNodes || []) node.remove();
+    fig.partNodes = null;
+  }
   // One <img> per state; CSS shows the one matching the nearest mood class (.working, .review ...).
   // A missing optional frame marks the figure .no-<state> so CSS falls back.
   function figure(name, size = "s", staticOnly = false) {
@@ -457,19 +517,8 @@
       fig.append(fx);
       emitters.add({ name, fig, fx, spec: all[name], born: performance.now(), next: 0 });
     });
-    // Each part carries its frame's s-<state> class, so it shows with that frame.
-    if (!name.startsWith("@")) parts.then((all) => {
-      for (const [part, frames] of Object.entries(all[name] || {})) {
-        // A "<part>-tip" bends about its own pivot inside a box that swings about its "<part>"'s pivot.
-        const root = part.endsWith("-tip") ? all[name][part.slice(0, -4)] : null;
-        for (const [state, [x, y]] of Object.entries(frames)) {
-          const img = h(`img.part.${part}.s-${state}`, { src: artUrl(`${size}/${name}/${part}-${state}.webp`), alt: "",
-            decoding: "async", draggable: "false", style: `transform-origin:${x}% ${y}%;--ox:${x}%;--oy:${y}%` });
-          const pivot = root?.[state];
-          body.append(pivot ? h(`span.chain.${part.slice(0, -4)}-chain`, { style: `transform-origin:${pivot[0]}% ${pivot[1]}%` }, img) : img);
-        }
-      }
-    });
+    // A video character shows none of them; they are built when it falls back to CSS.
+    if (!useVideo) addParts(fig, body, name, size);
     return fig;
   }
   // A character with video loops plays one <video> for its nearest mood; its images stay as the
@@ -488,28 +537,6 @@
     grok: [1.017, 153], qwen: [0.975, 90], kimi: [1.041, 75.1], minimax: [0.942, 76.8], hunyuan: [1.058, 110.5], doubao: [0.95, 84.5],
     muse: [0.946, 82], default: [0.964, 79] };
   const videoAssetUrl = (path) => (typeof videoPackUrl === "function" ? videoPackUrl(path) : artUrl(`video/${path}`));
-  const videoUrls = new Map();
-  const videoUrl = (name, state) => {
-    const url = videoAssetUrl(`${name}/${state}.mov`);
-    if (!videoUrls.has(url)) {
-      const entry = { refs: 0, promise: fetch(url).then((r) => {
-        if (!r.ok) throw new Error(`Video: ${r.status}`);
-        return r.blob();
-      }).then((b) => URL.createObjectURL(b)) };
-      videoUrls.set(url, entry);
-    }
-    videoUrls.get(url).refs++;
-    return videoUrls.get(url);
-  };
-  // A slot owns a reference before its fetch completes. A cancelled fetch may finish later,
-  // but its URL is revoked only after every consumer, including pending slots, has let it go.
-  function pruneVideos() {
-    for (const [key, entry] of videoUrls) {
-      if (entry.refs) continue;
-      videoUrls.delete(key);
-      entry.promise.then((url) => URL.revokeObjectURL(url), () => {});
-    }
-  }
   // These moods loop their main clip and now and then slip in another one from the same pose.
   const EXTRAS = { idle: ["slack-1", "slack-2"], sleep: ["sleep-1"] };
   // Chance per finished loop of slipping one in; idle splits it evenly between its two clips.
@@ -521,7 +548,10 @@
   const videoPlayers = new Map();
   const pageMediaHidden = (fig) => document.hidden || root.dataset.artPaused === "true"
     || root.dataset.windowHidden === "true" || Boolean(fig.closest("[hidden], [inert]"));
-  const videoVisible = (fig) => fig.isConnected && !pageMediaHidden(fig)
+  // A window behind others (html.blurred) freezes its players on the current frame; they are let go if it stays so.
+  const windowBlurred = () => Boolean(root.classList?.contains("blurred"));
+  const BLUR_RELEASE_MS = 45000, OFFSCREEN_RELEASE_MS = 10000;
+  const videoVisible = (fig) => fig.isConnected && !pageMediaHidden(fig) && !windowBlurred()
     && !still.matches && !fig.classList.contains("offscreen") && !fig.classList.contains("walk");
   const currentPlayback = (rec, seq) => rec.seq === seq && rec.running && videoVisible(rec.fig);
   function cancelVideoCallbacks(slot) {
@@ -529,7 +559,7 @@
     if (slot.frame != null) video.cancelVideoFrameCallback(slot.frame);
     if (slot.raf != null) cancelAnimationFrame(slot.raf);
     slot.frame = slot.raf = null;
-    video.onloadeddata = video.onerror = video.onended = video.onplaying = null;
+    video.onloadeddata = video.onerror = video.onended = video.onplaying = video.onseeked = null;
     slot.ready = null;
   }
   function unloadVideo(slot, remove = false) {
@@ -538,15 +568,57 @@
     slot.video.pause();
     slot.video.removeAttribute("src");
     slot.video.load();
-    if (slot.entry) slot.entry.refs--;
-    slot.entry = null;
+    slot.requested = false;
     slot.clip = null;
     slot.loaded = false;
     slot.video.classList.add("next");
     if (remove) slot.video.remove();
   }
+  // A spare is dropped with its element, so a long-lived player never accumulates source changes.
+  function dropSlot(rec, slot) {
+    unloadVideo(slot, true);
+    rec.slots = rec.slots.filter((s) => s !== slot);
+  }
+  const dropSpares = (rec) => { for (const s of [...rec.slots]) if (s !== rec.active) dropSlot(rec, s); };
+  // A released player leaves the frame it showed as a small canvas, so the figure does not jump to its
+  // poster. A canvas that lost its transparency or came out blank is not used; the poster stays instead.
+  function clearHold(rec) {
+    if (!rec.hold) return;
+    rec.hold.remove();
+    rec.hold = null;
+    rec.fig.classList.remove("held");
+  }
+  function captureFrame(rec) {
+    const video = rec.active?.video;
+    if (!video || !rec.fig.classList.contains("video-on") || video.readyState < 2 || !video.videoWidth) return null;
+    try {
+      const scale = Math.min(1, Math.max(64, Math.ceil(video.clientWidth * (window.devicePixelRatio || 1))) / video.videoWidth);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      const g = canvas.getContext("2d");
+      g.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const { data } = g.getImageData(0, 0, canvas.width, canvas.height);
+      const alpha = (x, y) => data[(y * canvas.width + x) * 4 + 3];
+      const corners = [alpha(0, 0), alpha(canvas.width - 1, 0), alpha(0, canvas.height - 1), alpha(canvas.width - 1, canvas.height - 1)];
+      let drawn = false;
+      for (let i = 3; i < data.length && !drawn; i += 4 * 16) drawn = data[i] > 0;
+      if (!drawn || corners.some(Boolean)) return null;
+      canvas.className = "hold";
+      return canvas;
+    } catch { return null; }
+  }
+  function releaseBlurred(rec) {
+    const canvas = rec.fig.classList.contains("offscreen") || pageMediaHidden(rec.fig) ? null : captureFrame(rec);
+    pauseVideos(rec, true);
+    if (!canvas) return;
+    rec.hold = canvas;
+    rec.fig.classList.add("held");
+    rec.fig.querySelector(".fig-b").append(canvas);
+  }
   function pauseVideos(rec, release = false) {
     if (rec.offscreenTimer) { clearTimeout(rec.offscreenTimer); rec.offscreenTimer = null; }
+    cancelSettle(rec);
     rec.seq++;
     rec.running = false;
     rec.incoming = rec.next = null;
@@ -556,8 +628,7 @@
       else unloadVideo(slot, true);
     }
     rec.slots = release || !rec.active ? [] : [rec.active];
-    if (release) { rec.active = null; rec.failed = false; rec.fig.classList.remove("video-on"); }
-    pruneVideos();
+    if (release) { rec.active = null; rec.failed = false; rec.fig.classList.remove("video-on"); clearHold(rec); }
   }
   function releaseFigure(fig) {
     dirtyVideos.delete(fig);
@@ -575,17 +646,17 @@
   function videoSlot(rec, clip) {
     let slot = rec.slots.find((s) => s.clip === clip);
     if (slot) return slot;
-    slot = rec.slots.find((s) => s !== rec.active);
-    if (slot) unloadVideo(slot);
-    else {
-      const video = document.createElement("video");
-      video.className = "next";
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "auto";
-      slot = { video, token: 0, frame: null, raf: null };
-      rec.slots.push(slot);
-    }
+    dropSpares(rec);
+    const video = document.createElement("video");
+    video.className = "next";
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    // No cast or picture-in-picture, so the page does not watch for playback targets.
+    video.disableRemotePlayback = true;
+    video.disablePictureInPicture = true;
+    slot = { video, token: 0, frame: null, raf: null };
+    rec.slots.push(slot);
     slot.clip = clip;
     slot.state = rec.state;
     slot.video.dataset.state = rec.state;
@@ -596,27 +667,22 @@
     const slot = videoSlot(rec, clip), seq = rec.seq, token = slot.token;
     slot.ready = ready;
     if (slot.loaded) { ready(slot); return slot; }
-    if (slot.entry) return slot;
-    slot.entry = videoUrl(videoChar(rec.fig.dataset.char), clip);
+    if (slot.requested) return slot;
+    slot.requested = true;
     const valid = () => currentPlayback(rec, seq) && slot.token === token;
-    slot.entry.promise.then((url) => {
+    slot.video.onloadeddata = () => {
       if (!valid()) return;
-      slot.video.onloadeddata = () => {
-        if (!valid()) return;
-        slot.loaded = true;
-        slot.video.onloadeddata = null;
-        slot.ready?.(slot);
-      };
-      slot.video.onerror = () => {
-        if (!valid()) return;
-        failVideo(rec, seq);
-      };
-      slot.video.src = url;
-      if (rec.active) rec.active.video.before(slot.video);
-      else rec.fig.querySelector(".fig-b").append(slot.video);
-    }).catch(() => {
-      if (valid()) failVideo(rec, seq);
-    });
+      slot.loaded = true;
+      slot.video.onloadeddata = null;
+      slot.ready?.(slot);
+    };
+    slot.video.onerror = () => {
+      if (!valid()) return;
+      failVideo(rec, seq);
+    };
+    slot.video.src = videoAssetUrl(`${videoChar(rec.fig.dataset.char)}/${clip}.mov`);
+    if (rec.active) rec.active.video.before(slot.video);
+    else rec.fig.querySelector(".fig-b").append(slot.video);
     return slot;
   }
   // Main loops reuse the player. Only an actual clip change needs the second slot;
@@ -625,7 +691,7 @@
     rec.next = null;
     const clip = nextClip(rec.state);
     if (clip === rec.active.clip) {
-      if (clip === rec.state) for (const s of rec.slots) if (s !== rec.active && s.clip) unloadVideo(s);
+      if (clip === rec.state) dropSpares(rec);
       rec.next = rec.active;
       return;
     }
@@ -634,6 +700,31 @@
       if (rec.waiting) runClip(rec, slot);
     });
   }
+  // After a swap, the next clip is prepared and the old player is torn down only once the new player has
+  // presented a frame of its own while visible. Doing it in the swap's own task blanks that frame on screen,
+  // and every desk that swaps in the same moment goes blank together.
+  function cancelSettle(rec) {
+    const job = rec.settle;
+    if (!job) return;
+    rec.settle = null;
+    if (job.frame != null) job.slot.video.cancelVideoFrameCallback(job.frame);
+    if (job.raf != null) cancelAnimationFrame(job.raf);
+  }
+  function settleVideo(rec) {
+    const job = rec.settle;
+    if (!job) return;
+    cancelSettle(rec);
+    if (rec.active !== job.slot) return;
+    if (!job.slot.video.loop) prepareNext(rec);
+    else dropSpares(rec);
+  }
+  function settleAfterFrame(rec, slot) {
+    const job = { slot, frame: null, raf: null };
+    rec.settle = job;
+    const run = () => settleVideo(rec);
+    if (slot.video.requestVideoFrameCallback) job.frame = slot.video.requestVideoFrameCallback(run);
+    else job.raf = requestAnimationFrame(() => { job.raf = requestAnimationFrame(run); });
+  }
   function finishVideoFrame(rec, slot, seq) {
     if (!currentPlayback(rec, seq) || rec.incoming !== slot) return;
     if (rec.active && rec.active !== slot) {
@@ -641,13 +732,14 @@
       rec.active.video.pause();
       rec.active.video.classList.add("next");
     }
+    // The old player hides and the new one shows in this one task, so both are never on screen together.
+    slot.video.classList.remove("next");
+    clearHold(rec);
     rec.active = slot;
     rec.incoming = null;
     rec.fig.classList.add("video-on");
     rec.fig.querySelector(".fx")?.replaceChildren();
-    if (!slot.video.loop) prepareNext(rec);
-    else for (const s of rec.slots) if (s !== rec.active && s.clip) unloadVideo(s);
-    pruneVideos();
+    settleAfterFrame(rec, slot);
   }
   function runClip(rec, slot) {
     const seq = rec.seq;
@@ -658,6 +750,7 @@
     video.onerror = () => failVideo(rec, seq);
     video.onended = () => {
       if (!currentPlayback(rec, seq)) return;
+      settleVideo(rec);
       if (rec.next === slot) {
         video.currentTime = 0;
         video.play().catch(() => {});
@@ -665,21 +758,31 @@
       } else if (rec.next) runClip(rec, rec.next);
       else rec.waiting = true;
     };
-    if (rec.active !== slot) {
-      rec.incoming = slot;
-      slot.video.classList.remove("next");
-      const painted = () => {
-        slot.frame = null;
-        slot.raf = requestAnimationFrame(() => {
-          slot.raf = null;
-          finishVideoFrame(rec, slot, seq);
-        });
-      };
+    if (rec.active === slot) {
+      if (!video.loop) prepareNext(rec);
+      if (video.ended) video.currentTime = 0;
+      video.play().catch(() => {});
+      return;
+    }
+    // A clip change starts hidden: the new player first returns to its first frame if it was played before,
+    // then plays until that frame is presented, and only then does finishVideoFrame swap the two.
+    rec.incoming = slot;
+    const painted = () => {
+      slot.frame = null;
+      slot.raf = requestAnimationFrame(() => {
+        slot.raf = null;
+        finishVideoFrame(rec, slot, seq);
+      });
+    };
+    const start = () => {
       if (video.requestVideoFrameCallback) slot.frame = video.requestVideoFrameCallback(painted);
       else video.onplaying = () => { video.onplaying = null; slot.raf = requestAnimationFrame(painted); };
-    } else if (!video.loop) prepareNext(rec);
-    if (video.ended) video.currentTime = 0;
-    video.play().catch(() => {});
+      video.play().catch(() => {});
+    };
+    if (video.ended || video.currentTime > 0) {
+      video.onseeked = () => { video.onseeked = null; start(); };
+      video.currentTime = 0;
+    } else start();
   }
   // Geometry is one gate; hidden documents, covered offices, and retained settings
   // documents also stop media explicitly rather than relying on CSS animations.
@@ -699,7 +802,7 @@
       if (onScreen) { fig.classList.add("offscreen"); onScreen.observe(fig); }
     }
     const hiddenMedia = still.matches || pageMediaHidden(fig);
-    if (hiddenMedia) rec.failed = false;
+    if (hiddenMedia) { rec.failed = false; clearHold(rec); }
     if (hiddenMedia && rec.slots.length) pauseVideos(rec, true);
     if (fig.classList.contains("warping")) {
       if (!videoVisible(fig) && rec.running) pauseVideos(rec);
@@ -709,7 +812,8 @@
     const wanted = mood === "failed" ? "sad" : mood;
     const state = VIDEO[name].includes(wanted) ? wanted : "idle";
     if (rec.state !== state) {
-      pauseVideos(rec);
+      // Only a player that keeps running may hold its old frame while the new clip loads.
+      pauseVideos(rec, !videoVisible(fig));
       rec.state = state;
       rec.failed = false;
       fig.dataset.video = state;
@@ -719,11 +823,18 @@
     if (hiddenMedia) { if (rec.slots.length) pauseVideos(rec, true); return; }
     if (!videoVisible(fig)) {
       if (rec.running) pauseVideos(rec);
-      if (fig.classList.contains("offscreen") && rec.slots.length && !rec.offscreenTimer) {
-        rec.offscreenTimer = setTimeout(() => {
-          rec.offscreenTimer = null;
-          if (!fig.isConnected || pageMediaHidden(fig) || fig.classList.contains("offscreen")) pauseVideos(rec, true);
-        }, 10000);
+      const offscreen = fig.classList.contains("offscreen");
+      if ((offscreen || windowBlurred()) && rec.slots.length) {
+        const delay = offscreen ? OFFSCREEN_RELEASE_MS : BLUR_RELEASE_MS;
+        if (rec.offscreenTimer && delay < rec.releaseDelay) { clearTimeout(rec.offscreenTimer); rec.offscreenTimer = null; }
+        if (!rec.offscreenTimer) {
+          rec.releaseDelay = delay;
+          rec.offscreenTimer = setTimeout(() => {
+            rec.offscreenTimer = null;
+            if (!fig.isConnected || pageMediaHidden(fig) || fig.classList.contains("offscreen")) pauseVideos(rec, true);
+            else if (windowBlurred()) releaseBlurred(rec);
+          }, delay);
+        }
       }
       return;
     }
@@ -771,7 +882,6 @@
       const figures = [...dirtyVideos];
       dirtyVideos.clear();
       for (const node of figures) syncVideo(node);
-      pruneVideos();
     });
   }
   function scheduleVideoTree(node) {
@@ -795,8 +905,10 @@
       }
     }
   }).observe(root, { subtree: true, childList: true, attributes: true, attributeOldValue: true,
-    attributeFilter: ["data-mood", "hidden", "inert", "class", "data-motion", "data-art-paused", "data-window-hidden"] });
+    attributeFilter: ["data-mood", "hidden", "inert", "class", "data-motion", "data-art-paused", "data-window-hidden", "data-on-battery", "data-battery-still"] });
   document.addEventListener("visibilitychange", syncAllVideos);
+  window.addEventListener("agentnave:blur", syncAllVideos);
+  window.addEventListener("agentnave:focus", syncAllVideos);
   window.addEventListener("pagehide", () => { for (const fig of [...videoPlayers.keys()]) releaseFigure(fig); });
   window.addEventListener("pageshow", () => scheduleVideoTree(root));
   window.matchMedia?.("(prefers-reduced-motion: reduce)")?.addEventListener?.("change", syncAllVideos);

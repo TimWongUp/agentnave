@@ -61,8 +61,10 @@ button { font: inherit; color: inherit; cursor: default; }
 .state-row { display: inline-flex; gap: 6px; }
 .state { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 550; padding: 2px 9px 2px 8px; border-radius: 99px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--idle)) 15%, transparent); }
 .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--tone, var(--idle)); display: inline-block; }
-.state.tone-run > .dot { animation: pulse 1.6s ease-out infinite; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 70%, transparent); } 100% { box-shadow: 0 0 0 6px transparent; } }
+.state.tone-run > .dot { position: relative; }
+.state.tone-run > .dot::after, .blk.run .bs.run::after { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 50%; background: color-mix(in srgb, var(--run) 70%, transparent); animation: pulse 1.6s ease-out infinite; }
+.state.tone-run > .dot::after { inset: 0; }
+@keyframes pulse { from { transform: scale(1); opacity: 1; } to { transform: scale(3); opacity: 0; } }
 
 /* ---- notices (update / service / offline), one compact line each ---- */
 .notices { flex: none; display: grid; gap: 6px; padding: 0 10px; }
@@ -122,7 +124,9 @@ button { font: inherit; color: inherit; cursor: default; }
 .when time { font-size: 11px; color: var(--faint); }
 .bs { font-size: 11px; font-weight: 600; color: var(--muted); }
 .bs.run { color: var(--run); } .bs.bad { color: var(--bad); }
-.blk.run .bs.run::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--run); vertical-align: 1px; animation: pulse 1.6s ease-out infinite; }
+.blk.run .bs.run::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--run); vertical-align: 1px; }
+.blk.run .bs.run { position: relative; }
+.blk.run .bs.run::after { left: 0; top: calc(50% - 3px); }
 .desks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 6px; padding: 6px 8px; }
 
 /* desk cell: a squircle face like a macOS icon, the model with its CLI as a text tag, what it is doing */
@@ -139,8 +143,9 @@ button { font: inherit; color: inherit; cursor: default; }
 .nm-sub { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nm em { font-style: normal; color: var(--faint); }
 .cell.working { --ring: var(--run); } .cell.working .w { color: var(--run); }
-.cell.working .face .head { animation: ring-soft 1.8s ease-in-out infinite; }
-@keyframes ring-soft { 50% { box-shadow: 0 0 0 2px var(--solid), 0 0 0 5px color-mix(in srgb, var(--run) 40%, transparent); } }
+.cell.working .face { position: relative; }
+.cell.working .face::after { content: ""; position: absolute; inset: -5px; border: 1.5px solid var(--run); border-radius: 14px; opacity: 0; pointer-events: none; animation: ring-soft 1.8s ease-in-out infinite; }
+@keyframes ring-soft { 50% { opacity: 0.4; } }
 .cell.failed { --ring: var(--bad); } .cell.failed .w { color: var(--bad); }
 .cell.meeting .w { color: color-mix(in srgb, var(--mc) 75%, var(--ink)); }
 .cell.sleep .face .head { filter: grayscale(0.55); opacity: 0.75; }

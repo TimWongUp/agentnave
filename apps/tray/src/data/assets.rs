@@ -34,7 +34,8 @@ impl Reader {
             return Response::json(&crate::video_packs::status(&self.root));
         }
         if let Some(rest) = path.strip_prefix("/art/video/") {
-            return crate::video_packs::asset(&self.root, rest).unwrap_or_else(Response::not_found);
+            return crate::video_packs::asset(&self.root, rest, None)
+                .unwrap_or_else(Response::not_found);
         }
         if let Some(name) = path.strip_prefix("/art/") {
             if name.contains("..") {

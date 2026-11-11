@@ -57,6 +57,10 @@ function store(key, value) {
     if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value);
   } catch { /* storage may be unavailable */ }
 }
+// Relative times ("just now", "3m ago") and desks that fall asleep move with the clock, not with the
+// data: an unchanged poll is drawn again only once per tick.
+const TICK_MS = 10e3;
+const tickOf = () => Math.floor(Date.now() / TICK_MS);
 const FIG = 100; // character size at meeting seats before any desk is drawn, in px (matches --fig in chat.css)
 const DONE_FOR = 8e3; // a desk that just finished shows its done frame this long
 const WALK_MS = 1600; // a figure's walk between its desk and a meeting seat

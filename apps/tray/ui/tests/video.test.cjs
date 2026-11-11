@@ -4,8 +4,10 @@ const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
 // Exercise the browser-facing player with controllable media readiness and frame delivery.
-function player({ delayed = false } = {}) {
-  const videos = [], frames = new Map(), paints = new Map(), timers = new Map(), observers = [], observed = new Set(), revoked = [], fetches = [];
+function player({ delayed = false, noFrameCallback = false } = {}) {
+  const reveals = [], violations = [], seekWaiters = [], delays = new Map(), canvas = { pixels: "ok" };
+  let manualSeek = false;
+  const videos = [], frames = new Map(), paints = new Map(), timers = new Map(), observers = [], observed = new Set(), srcs = [], loadWaiters = [];
   let counter = 0;
   class Node {
     constructor(tag = "span", classes = "") {
@@ -35,22 +37,69 @@ function player({ delayed = false } = {}) {
     }
     querySelectorAll(selector) { return this.children.flatMap(c => [c, ...c.querySelectorAll(selector)]).filter(c => c.matches(selector)); }
     querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
-    append(child) { child.remove(); child.parent = this; this.children.push(child); }
-    before(child) { child.remove(); child.parent = this.parent; this.parent.children.splice(this.parent.children.indexOf(this), 0, child); }
-    remove() { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
+    detach() { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
+    append(child) { child.detach(); child.parent = this; this.children.push(child); }
+    before(child) { child.detach(); child.parent = this.parent; this.parent.children.splice(this.parent.children.indexOf(this), 0, child); }
+    remove() { this.detach(); }
     replaceChildren() { for (const c of [...this.children]) c.remove(); }
   }
+  // Playing media is only fresh once a frame of the current position was presented; a seek makes it stale again.
   class Video extends Node {
-    constructor() { super("video"); this.paused = true; this.ended = false; this.plays = 0; this.loads = 0; videos.push(this); }
-    set src(value) { this.source = value; queueMicrotask(() => this.onloadeddata?.()); }
+    constructor() {
+      super("video"); this.clientWidth = 170; this.videoWidth = this.videoHeight = 544; this.readyState = 4; this.paused = true; this.ended = false; this.plays = 0; this.loads = 0; this.seeking = false; this.fresh = false; this.removed = false; videos.push(this);
+      if (noFrameCallback) this.requestVideoFrameCallback = undefined;
+      const { add, remove } = this.classList;
+      this.classList.add = name => { add(name); audit(this, name, false); };
+      this.classList.remove = name => { const was = this.classList.contains(name); remove(name); if (was) audit(this, name, true); };
+    }
+    set src(value) {
+      this.source = value; srcs.push(value);
+      const loaded = () => { if (this.source === value) this.onloadeddata?.(); };
+      if (delayed) loadWaiters.push(loaded); else queueMicrotask(loaded);
+    }
     get src() { return this.source; }
-    play() { this.paused = false; this.ended = false; this.plays++; this.onplaying?.(); return Promise.resolve(); }
+    set currentTime(value) {
+      this.time = value; this.ended = false; this.seeking = true; this.fresh = false;
+      const done = () => { this.seeking = false; this.onseeked?.(); };
+      if (manualSeek) seekWaiters.push(done); else queueMicrotask(done);
+    }
+    get currentTime() { return this.time || 0; }
+    play() { this.paused = false; this.ended = false; this.plays++; if (noFrameCallback && !this.seeking) this.fresh = true; this.onplaying?.(); return Promise.resolve(); }
     pause() { this.paused = true; }
     load() { this.loads++; }
     removeAttribute(name) { if (name === "src") this.source = ""; }
-    requestVideoFrameCallback(cb) { const id = ++counter; paints.set(id, cb); return id; }
+    remove() { this.removed = true; this.detach(); }
+    requestVideoFrameCallback(cb) { const id = ++counter; paints.set(id, () => { if (!this.seeking) this.fresh = true; cb(); }); return id; }
     cancelVideoFrameCallback(id) { paints.delete(id); }
     end() { this.ended = true; this.paused = true; this.onended?.(); }
+  }
+  // At no point may two players be on screen, and a player may only appear once it shows its first frame.
+  function audit(video, name, removed) {
+    if (name !== "next") return;
+    const shown = videos.filter(v => v.isConnected && !v.classList.contains("next"));
+    if (shown.length > 1) violations.push(`${shown.length} players visible`);
+    if (removed) {
+      reveals.push({ seeking: video.seeking, fresh: video.fresh });
+      if (video.seeking || !video.fresh) violations.push(`player shown ${video.seeking ? "while seeking" : "before its first frame"}`);
+      // The frame that swaps players must stay light: tearing a player down or starting the next clip's
+      // fetch in that same task blanks the new frame on screen, on every desk that swaps at once.
+      const before = [videos.reduce((n, v) => n + v.loads, 0), srcs.length];
+      queueMicrotask(() => {
+        if (videos.reduce((n, v) => n + v.loads, 0) !== before[0] || srcs.length !== before[1]) violations.push("teardown or clip preparation in the swap task");
+      });
+    }
+  }
+  // A canvas whose pixels are transparent at the corners ("ok"), fully opaque, or empty.
+  class Canvas extends Node {
+    constructor() { super("canvas"); this.width = this.height = 0; }
+    getContext() {
+      return { drawImage() {}, getImageData: (x, y, w, h) => {
+        const data = new Uint8ClampedArray(w * h * 4);
+        if (canvas.pixels !== "blank") for (let i = 3; i < data.length; i += 4) data[i] = 255;
+        if (canvas.pixels === "ok") for (const [cx, cy] of [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]) data[(cy * w + cx) * 4 + 3] = 0;
+        return { data };
+      } };
+    }
   }
   const root = new Node("html"), host = new Node("div"), fig = new Node("span", "fig video"), body = new Node("span", "fig-b");
   const poster = new Node("img", "poster");
@@ -58,20 +107,18 @@ function player({ delayed = false } = {}) {
   host.dataset.mood = "idle"; fig.dataset.char = "codex";
   const events = {}, still = { matches: false }, math = Object.create(Math);
   math.random = () => 0.99;
-  const document = { hidden: false, createElement: () => new Video(), addEventListener: (n, f) => { events[n] = f; } };
+  const document = { hidden: false, createElement: tag => (tag === "canvas" ? new Canvas() : new Video()), addEventListener: (n, f) => { events[n] = f; } };
   const ctx = vm.createContext({
     root, document, still, Math: math, artUrl: s => s,
-    URL: { createObjectURL: () => `blob:${++counter}`, revokeObjectURL: url => revoked.push(url) },
-    fetch: url => new Promise(resolve => { fetches.push({ url, resolve }); if (!delayed) resolve({ ok: true, blob: async () => ({}) }); }),
     requestAnimationFrame: fn => { const id = ++counter; frames.set(id, fn); return id; }, cancelAnimationFrame: id => frames.delete(id),
-    setTimeout: fn => { const id = ++counter; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
+    setTimeout: (fn, ms) => { const id = ++counter; timers.set(id, fn); delays.set(id, ms); return id; }, clearTimeout: id => timers.delete(id),
     MutationObserver: class { constructor(fn) { observers.push(fn); } observe() {} },
     IntersectionObserver: class {
       constructor(fn) { events.intersect = fn; }
       observe(node) { observed.add(node); }
       unobserve(node) { observed.delete(node); }
     },
-    window: { addEventListener: (n, f) => { events[n] = f; }, matchMedia: () => ({ addEventListener() {} }) },
+    window: { devicePixelRatio: 2, addEventListener: (n, f) => { events[n] = f; }, matchMedia: () => ({ addEventListener() {} }) },
   });
   const source = readFileSync(`${__dirname}/../common.js`, "utf8");
   vm.runInContext(source.slice(source.indexOf("  const VIDEO_STATES"), source.indexOf("  // Every character teleports"))
@@ -86,8 +133,10 @@ function player({ delayed = false } = {}) {
   }
   const sync = () => ctx.api.syncVideo(fig);
   const visible = async () => { sync(); events.intersect([{ target: fig, isIntersecting: true }]); await flush(); };
-  const resolve = () => fetches.forEach(f => f.resolve({ ok: true, blob: async () => ({}) }));
-  return { root, host, fig, body, poster, document, still, math, videos, frames, timers, observed, revoked, fetches, events, observers,
+  const resolve = () => loadWaiters.splice(0).forEach(f => f());
+  return { root, host, fig, body, poster, document, still, math, videos, frames, timers, observed, srcs, events, observers,
+    delays, canvas, reveals, violations, blur: on => { root.classList.toggle("blurred", on); events[on ? "agentnave:blur" : "agentnave:focus"](); },
+    reveals_: 0, violations_: 0, completeSeeks: () => seekWaiters.splice(0).forEach(f => f()), holdSeeks: () => { manualSeek = true; },
     sync, syncFigure: ctx.api.syncVideo, visible, resolve, flush, rec: () => ctx.api.videoPlayers.get(fig) };
 }
 
@@ -96,7 +145,8 @@ test("same idle clip repeats without creating or reloading a player", async () =
   assert.equal(app.videos.length, 1);
   for (let n = 0; n < 20; n++) { app.rec().active.video.end(); await app.flush(); }
   assert.equal(app.videos.length, 1);
-  assert.equal(app.fetches.length, 1);
+  assert.equal(app.srcs.length, 1);
+  assert.match(app.srcs[0], /codex\/idle\.mov$/);
   assert.equal(app.videos[0].loads, 0);
   assert.equal(app.videos[0].plays, 21);
 });
@@ -114,12 +164,189 @@ test("extra clips use a bounded spare and retain the old image until the first f
   app.rec().active.video.end(); await app.flush();
   assert.equal(app.rec().active.clip, "idle");
   assert.equal(app.videos.length, 2);
-  assert.equal(app.fetches.length, 2);
-  assert.equal(app.rec().slots.filter(s => s.clip).length, 1);
-  assert.equal(app.revoked.length, 1);
+  assert.equal(app.srcs.length, 2);
+  assert.equal(app.rec().slots.length, 1);
+  assert.equal(app.videos.filter(v => v.removed).length, 1);
 });
 
-test("late ABA fetches cannot attach or start superseded players", async () => {
+// idle -> slack-1, slack-1 played twice, then back to idle (a reused, ended player) and out to slack-1 again.
+async function roundTrips(app) {
+  const clip = () => app.rec().active.clip, end = async () => { app.rec().active.video.end(); await app.flush(); };
+  app.math.random = () => 0; await app.visible();
+  await end(); assert.equal(clip(), "slack-1");
+  app.math.random = () => 0.99; await end(); assert.equal(clip(), "slack-1");
+  app.math.random = () => 0; await end(); assert.equal(clip(), "idle");
+  await end(); assert.equal(clip(), "slack-1");
+  assert.equal(app.videos.length, 2);
+  assert.ok(app.reveals.length >= 4);
+  assert.deepEqual(app.violations, []);
+}
+
+test("clip changes never show two players or an old frame, across round trips and repeats", async () => {
+  await roundTrips(player());
+});
+
+test("clip changes stay clean when the browser has no frame callback", async () => {
+  const app = player({ noFrameCallback: true });
+  await roundTrips(app);
+  assert.equal(app.videos.every(v => !v.requestVideoFrameCallback), true);
+});
+
+test("a mood change swaps to its looping clip without tearing the old player down in the same task", async () => {
+  const app = player(); await app.visible();
+  const old = app.rec().active.video;
+  app.host.dataset.mood = "working"; app.sync(); await app.flush();
+  assert.equal(app.rec().active.state, "working");
+  assert.equal(old.classList.contains("next"), true);
+  assert.equal(old.loads > 0, true);
+  assert.deepEqual(app.violations, []);
+});
+
+test("a reused player stays hidden until it is back at its first frame", async () => {
+  const app = player(); app.math.random = () => 0; await app.visible();
+  app.rec().active.video.end(); await app.flush();
+  app.math.random = () => 0.99; app.rec().active.video.end(); await app.flush();
+  const old = app.rec().active.video, spare = app.rec().slots.find(s => s !== app.rec().active).video;
+  app.holdSeeks(); old.end(); await app.flush();
+  assert.equal(old.classList.contains("next"), false);
+  assert.equal(spare.classList.contains("next"), true);
+  assert.equal(spare.seeking, true);
+  app.completeSeeks(); await app.flush();
+  assert.equal(spare.classList.contains("next"), false);
+  assert.equal(old.classList.contains("next"), true);
+  assert.deepEqual(app.violations, []);
+});
+
+test("a seek finishing after a state change or hiding cannot start or show the old clip", async () => {
+  const app = player(); app.math.random = () => 0; await app.visible();
+  app.rec().active.video.end(); await app.flush();
+  app.math.random = () => 0.99; app.rec().active.video.end(); await app.flush();
+  const spare = app.rec().slots.find(s => s !== app.rec().active).video;
+  app.holdSeeks(); app.rec().active.video.end(); await app.flush();
+  const plays = spare.plays;
+  app.host.dataset.mood = "working"; app.sync();
+  app.completeSeeks(); await app.flush();
+  assert.equal(spare.plays, plays);
+  assert.equal(spare.classList.contains("next"), true);
+  assert.equal(app.rec().active.state, "working");
+  assert.equal(app.videos.filter(v => v.isConnected && !v.classList.contains("next")).length, 1);
+  app.host.inert = true; app.sync();
+  app.host.inert = false; app.sync(); await app.flush(); app.completeSeeks(); await app.flush();
+  assert.equal(app.videos.filter(v => v.isConnected && !v.classList.contains("next")).length, 1);
+  assert.equal(app.rec().active.video.paused, false);
+  assert.deepEqual(app.violations, []);
+});
+
+test("players read their clip by URL, never through a blob, and cannot cast or pop out", async () => {
+  const app = player(); app.math.random = () => 0; await app.visible();
+  app.rec().active.video.end(); await app.flush();
+  assert.equal(app.srcs.length, 2);
+  for (const src of app.srcs) assert.match(src, /^video\/codex\/[a-z0-9-]+\.mov$/);
+  for (const video of app.videos) {
+    assert.equal(video.disableRemotePlayback, true);
+    assert.equal(video.disablePictureInPicture, true);
+  }
+});
+
+test("a long run of extra clips keeps at most two live players, and every dropped one lets go of its source", async () => {
+  const app = player(); await app.visible();
+  const end = async () => { app.rec().active.video.end(); await app.flush(); };
+  for (let n = 0; n < 40; n++) {
+    app.math.random = () => (n % 3 === 0 ? 0 : 0.99);
+    await end();
+    assert.ok(app.rec().slots.length <= 2);
+    assert.ok(app.body.querySelectorAll("video").length <= 2);
+  }
+  const dropped = app.videos.filter(v => v.removed);
+  assert.ok(dropped.length > 5);
+  assert.ok(dropped.every(v => v.src === "" && v.paused));
+  assert.equal(app.videos.length - dropped.length, app.rec().slots.length);
+  assert.deepEqual(app.violations, []);
+});
+
+const heldCanvas = app => app.body.querySelectorAll("canvas")[0];
+
+test("an unfocused window freezes players on the current frame and resumes them from it", async () => {
+  const app = player(); await app.visible();
+  const player0 = app.rec().active, srcs = app.srcs.length;
+  app.blur(true);
+  assert.equal(player0.video.paused, true);
+  assert.equal(app.rec().active, player0);
+  assert.equal(app.fig.classList.contains("video-on"), true);
+  assert.equal(app.body.querySelectorAll("video").length, 1);
+  assert.equal(player0.video.src.endsWith("idle.mov"), true);
+  assert.equal(app.rec().running, false);
+  app.blur(false); await app.flush();
+  assert.equal(app.rec().active, player0);
+  assert.equal(player0.video.paused, false);
+  assert.equal(player0.video.loads, 0);
+  assert.equal(player0.video.currentTime, 0);
+  assert.equal(app.srcs.length, srcs);
+  assert.deepEqual(app.violations, []);
+});
+
+test("a window that stays unfocused lets the decoder go but keeps the frame, until the clip shows again", async () => {
+  const app = player(); await app.visible();
+  const first = app.videos[0];
+  app.blur(true);
+  assert.equal([...app.timers.keys()].length, 1);
+  assert.equal([...app.delays.values()].pop(), 45000);
+  [...app.timers.values()][0](); await app.flush();
+  assert.equal(app.rec().active, null);
+  assert.equal(first.removed, true);
+  assert.equal(first.src, "");
+  assert.equal(first.loads > 0, true);
+  assert.equal(app.fig.classList.contains("video-on"), false);
+  assert.equal(app.fig.classList.contains("held"), true);
+  assert.equal(heldCanvas(app).className, "hold");
+  assert.equal(heldCanvas(app).width, 340);
+  app.blur(false);
+  assert.equal(heldCanvas(app) !== undefined, true);
+  await app.flush();
+  assert.equal(heldCanvas(app), undefined);
+  assert.equal(app.fig.classList.contains("held"), false);
+  assert.equal(app.fig.classList.contains("video-on"), true);
+  assert.equal(app.rec().active.video.paused, false);
+  assert.equal(app.body.querySelectorAll("video").length, 1);
+});
+
+test("a frame that cannot be kept faithfully falls back to the poster, and refocusing in time keeps the decoder", async () => {
+  for (const pixels of ["opaque", "blank"]) {
+    const app = player(); await app.visible();
+    app.canvas.pixels = pixels;
+    app.blur(true); [...app.timers.values()][0](); await app.flush();
+    assert.equal(app.rec().active, null);
+    assert.equal(heldCanvas(app), undefined);
+    assert.equal(app.fig.classList.contains("held"), false);
+  }
+  const app = player(); await app.visible();
+  const kept = app.rec().active;
+  app.blur(true); app.blur(false); await app.flush();
+  assert.equal(app.timers.size, 0);
+  assert.equal(app.rec().active, kept);
+  assert.equal(kept.video.paused, false);
+});
+
+test("while unfocused, a mood change shows the new poster, and hiding the window drops the held frame", async () => {
+  const app = player(); await app.visible();
+  app.blur(true);
+  app.host.dataset.mood = "working"; app.sync();
+  assert.equal(app.rec().active, null);
+  assert.equal(app.body.querySelectorAll("video").length, 0);
+  assert.equal(app.fig.classList.contains("video-on"), false);
+  assert.match(app.poster.src, /working.webp/);
+  app.blur(false); await app.flush();
+  assert.equal(app.rec().active.state, "working");
+
+  const held = player(); await held.visible();
+  held.blur(true); [...held.timers.values()][0](); await held.flush();
+  assert.equal(heldCanvas(held) !== undefined, true);
+  held.root.dataset.windowHidden = "true"; held.sync();
+  assert.equal(heldCanvas(held), undefined);
+  assert.equal(held.fig.classList.contains("held"), false);
+});
+
+test("late loads of superseded clips cannot attach or start players", async () => {
   const app = player({ delayed: true }); await app.visible();
   app.host.dataset.mood = "working"; app.sync();
   app.host.dataset.mood = "idle"; app.sync();
@@ -127,7 +354,7 @@ test("late ABA fetches cannot attach or start superseded players", async () => {
   assert.equal(app.videos.filter(v => v.plays).length, 1);
   assert.equal(app.body.querySelectorAll("video").length, 1);
   assert.equal(app.rec().active.state, "idle");
-  assert.equal(app.revoked.length, 2);
+  assert.equal(app.videos.filter(v => v.removed).length, 2);
 });
 
 test("a pending load cannot start while hidden, and resumes when visible", async () => {
@@ -152,20 +379,22 @@ test("hiding releases active players immediately without waiting for a backgroun
   assert.equal(app.body.querySelectorAll("video").length, 0);
   assert.equal(app.frames.size, 0);
   await app.flush();
-  assert.equal(app.revoked.length, 1);
+  assert.equal(app.videos[0].removed, true);
+  assert.equal(app.videos[0].src, "");
 });
 
-test("shared clip URLs survive until the last figure releases them", async () => {
+test("figures of the same character play from their own players and release independently", async () => {
   const app = player(); await app.visible();
   const Node = app.fig.constructor, second = new Node("span", "fig video"), body = new Node("span", "fig-b");
   second.dataset.char = "codex"; second.append(body); app.host.append(second);
   app.syncFigure(second); app.events.intersect([{ target: second, isIntersecting: true }]); await app.flush();
-  assert.equal(app.fetches.length, 1);
+  assert.equal(app.videos.length, 2);
+  assert.equal(app.srcs.length, 2);
   app.fig.remove(); app.sync(); await app.flush();
-  assert.equal(app.revoked.length, 0);
+  assert.equal(app.videos[0].src, "");
   assert.equal(body.querySelector("video").paused, false);
   second.remove(); app.syncFigure(second); await app.flush();
-  assert.equal(app.revoked.length, 1);
+  assert.equal(app.videos[1].src, "");
 });
 
 test("covered offices and reduced motion stop media, then restore the current mood", async () => {
@@ -194,7 +423,7 @@ test("removing a figure releases sources and observers without reacting to unrel
   assert.equal(app.observed.has(app.fig), false);
   assert.equal(app.rec(), undefined);
   assert.equal(app.videos[0].src, "");
-  assert.equal(app.revoked.length, 1);
+  assert.equal(app.videos[0].removed, true);
 });
 
 test("a playback error releases media and leaves a static poster", async () => {
@@ -202,19 +431,19 @@ test("a playback error releases media and leaves a static poster", async () => {
   app.rec().active.video.onerror(); await app.flush();
   assert.equal(app.body.querySelectorAll("video").length, 0);
   assert.equal(app.fig.classList.contains("video-on"), false);
-  assert.equal(app.revoked.length, 1);
+  assert.equal(app.videos[0].removed, true);
   app.sync(); await app.flush();
-  assert.equal(app.fetches.length, 1);
+  assert.equal(app.srcs.length, 1);
 });
 
 test("video characters clear hidden particles instead of continuing to emit", () => {
   const source = readFileSync(`${__dirname}/../common.js`, "utf8");
-  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || still.matches) return;");
+  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
   let emitted = 0;
   const fx = { isConnected: true, childElementCount: 1, replaceChildren() { this.childElementCount = 0; }, append() { emitted++; } };
   const fig = { classList: { contains: name => name === "video" }, closest: () => ({ dataset: { mood: "idle" } }) };
   vm.runInNewContext(source.slice(start, source.indexOf("  const frameUrl", start)), {
-    document: { hidden: false }, still: { matches: false }, performance: { now: () => 10000 },
+    document: { hidden: false }, blurred: false, still: { matches: false }, performance: { now: () => 10000 },
     emitters: new Set([{ fig, fx, name: "muse", born: 0, next: 0, spec: { origin: { idle: [50, 50] }, sprites: ["note-1.webp"] } }]),
     EMIT_EVERY: { idle: 2600 }, h: () => ({ addEventListener() {} }), artUrl: s => s,
     setInterval: fn => fn(),
@@ -223,11 +452,30 @@ test("video characters clear hidden particles instead of continuing to emit", ()
   assert.equal(fx.childElementCount, 0);
 });
 
+test("an unfocused window emits no particles", () => {
+  const source = readFileSync(`${__dirname}/../common.js`, "utf8");
+  const start = source.indexOf("  setInterval(() => {\n    if (document.hidden || blurred || still.matches) return;");
+  const emitted = blurred => {
+    let count = 0;
+    const fx = { isConnected: true, childElementCount: 0, replaceChildren() {}, append() { count++; } };
+    const fig = { classList: { contains: () => false }, closest: () => ({ dataset: { mood: "idle" } }) };
+    vm.runInNewContext(source.slice(start, source.indexOf("  const frameUrl", start)), {
+      document: { hidden: false }, blurred, still: { matches: false }, performance: { now: () => 10000 },
+      emitters: new Set([{ fig, fx, name: "muse", born: 0, next: 0, spec: { origin: { idle: [50, 50] }, sprites: ["note-1.webp"] } }]),
+      EMIT_EVERY: { idle: 2600 }, h: () => ({ addEventListener() {} }), artUrl: s => s, Math,
+      setInterval: fn => fn(),
+    });
+    return count;
+  };
+  assert.equal(emitted(false), 1);
+  assert.equal(emitted(true), 0);
+});
+
 test("video packs stay off in static mode and switch figures in place across 272p, 544p and static", async () => {
   const source = readFileSync(`${__dirname}/../common.js`, "utf8");
   const start = source.indexOf("  const FAMILY_ART =");
   const end = source.indexOf("  const head =");
-  const fetches = [], revoked = [], listeners = {};
+  const fetches = [], made = [], listeners = {};
   let packs = {
     "272": { installed: true, stamp: "s272", bytes: 1000, download: null },
     "544": { installed: true, stamp: "s544", bytes: 2000, download: null },
@@ -257,6 +505,8 @@ test("video packs stay off in static mode and switch figures in place across 272
     before(child) { child.parent = this.parent; this.parent.children.unshift(child); }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(c => c !== this); }
     addEventListener() {}
+    set src(v) { this.source = v; if (this.tagName === "VIDEO" && v) fetches.push(v); }
+    get src() { return this.source; }
     removeAttribute(n) { if (n === "src") this.src = ""; }
     play() { this.paused = false; this.onplaying?.(); return Promise.resolve(); }
     pause() { this.paused = true; }
@@ -276,12 +526,11 @@ test("video packs stay off in static mode and switch figures in place across 272
     root, h, href: s => s, still: { matches: false }, Math, performance: { now: () => 0 },
     setInterval: () => 1, setTimeout: () => 1,
     requestAnimationFrame: fn => { queueMicrotask(fn); return 1; }, cancelAnimationFrame() {},
-    URL: { createObjectURL: () => `blob:${fetches.length}`, revokeObjectURL: u => revoked.push(u) },
     MutationObserver: class { observe() {} }, IntersectionObserver: undefined,
     localStorage: { setItem() {}, getItem: () => null },
     document: {
       hidden: false,
-      createElement: tag => new Elem(tag),
+      createElement: tag => { const e = new Elem(tag); made.push(e); return e; },
       querySelectorAll: sel => sel === ".fig[data-char]" ? figs : [],
       addEventListener() {},
     },
@@ -297,8 +546,9 @@ test("video packs stay off in static mode and switch figures in place across 272
       const path = String(url);
       fetches.push(path);
       if (path.startsWith("/app/video-packs")) return { ok: true, json: async () => ({ packs }) };
+      if (path.includes("parts.json")) return { ok: true, json: async () => ({ gemini: { "ear-l": { idle: [10, 20] } } }) };
       if (path.startsWith("/app/characters") || path.includes(".json")) return { ok: true, json: async () => ({}) };
-      return { ok: true, blob: async () => ({}) };
+      return { ok: true };
     },
   });
   vm.runInContext(`${source.slice(start, end)}\nglobalThis.api = { figure, canWarp, loadVideoPacks };`, ctx);
@@ -315,6 +565,9 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.equal(ctx.api.canWarp("gemini"), false);
   assert.equal(ctx.api.canWarp("@gpt@c1"), false);
   assert.equal(fetches.some(u => u.includes("/art/video/")), false);
+  await new Promise(r => setImmediate(r));
+  const partsOf = fig => fig.querySelector(".fig-b").children.filter(c => c.classList.contains("part"));
+  assert.equal(partsOf(gemini).length, 1);
 
   root.dataset.characterStyle = "video-272";
   listeners["agentnave:preferences"].forEach(fn => fn());
@@ -322,6 +575,7 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.equal(gemini.classList.contains("video"), true);
   assert.equal(customGpt.classList.contains("video"), true);
   assert.equal(previewGpt.classList.contains("video"), false);
+  assert.equal(partsOf(gemini).length, 0);
   assert.equal(ctx.api.canWarp("gemini"), true);
   assert.equal(ctx.api.canWarp("@gpt@c1"), true);
   assert.equal(gemini.querySelector("img.poster").src, "/art/video/272/gemini/idle.webp?v=s272");
@@ -336,7 +590,8 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.equal(customGpt.querySelector("img.poster").src, "/art/video/544/codex/idle.webp?v=s544");
   assert.ok(fetches.includes("/art/video/544/gemini/idle.mov?v=s544"));
   assert.ok(fetches.includes("/art/video/544/codex/idle.mov?v=s544"));
-  assert.equal(revoked.length, 2);
+  assert.equal(made.filter(v => v.src).length, 2);
+  assert.ok(made.filter(v => v.src).every(v => v.src.includes("/544/")));
 
   root.dataset.characterStyle = "static";
   listeners["agentnave:preferences"].forEach(fn => fn());
@@ -345,7 +600,10 @@ test("video packs stay off in static mode and switch figures in place across 272
   assert.equal(customGpt.classList.contains("video"), false);
   assert.equal(ctx.api.canWarp("gemini"), false);
   assert.equal(ctx.api.canWarp("@gpt@c1"), false);
-  assert.equal(revoked.length, 4);
+  assert.equal(made.filter(v => v.src).length, 0);
+  assert.equal(partsOf(gemini).length, 1);
+  assert.equal(partsOf(ctx.api.figure("gemini", "s", true)).length, 0);
+  await new Promise(r => setImmediate(r));
 });
 
 test("avatar settings disables uninstalled video tiers, falls back to CSS on delete, and embeds the DIY CSS guide", async () => {
