@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.8.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.9.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.8.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.9.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -611,37 +611,48 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.8.0
+### Upgrading to v1.9.0
 
-Update the App; it installs the paired service at startup, raises Claude Code's `agentnave` entry
-`timeout` to at least `1620000` ms (27 minutes) for the new `wait_seconds=1500` window, and updates
-the parallel-write wording in orchestration rules (custom text that contains the previous generated
-sentence verbatim is migrated too; your own edits stay). Reconnect or reopen host copies as the
-boss card asks so existing sessions pick up the 11th tool (`clear_provider_cooldown`), Claude
-Code's 1500-second wait window, automatic handling of Claude Code and Antigravity startup
-confirmation screens, and live Antigravity activity status. For a manual installation, reinstall
-the runtime and Skills from `@v1.8.0`, set `timeout: 1620000` on manually managed Claude Code
-entries, and reconnect MCP.
+Update the App; it installs the paired service and refreshed Skills at startup, and begins recording
+installed tool-name manifests so future upgrades that add or rename tools can prompt short-lived
+hosts (such as WorkBuddy) to restart. Reconnect or reopen host copies as the boss card asks so
+existing sessions pick up thread-model continuation, Claude Code's narrowed long-wait scope,
+background MCP call tracking for Claude Code members, and the new `meetings` orchestration preset
+(older service processes ignore the new optional `meeting` default-seats field, but do not recognize
+`preset: "meetings"` and treat `orchestration.json` as invalid until reconnected). For a manual
+installation, reinstall the runtime and Skills from `@v1.9.0`—replacing the full
+`agentnave-manager` directory so `references/headless.md` and `references/models.md` are included—and
+reconnect MCP. On headless hosts without the App, follow [linux-headless.md](linux-headless.md) and
+bundled `orchestration_rules.json` when writing `orchestration.json` (`"version": 1` is required;
+omit `apps` and `effective_apps`) or host instructions.
 
-The permission tier now defaults to full access (`full`) when `permissions.json` or a CLI's entry
-is missing. Existing setups that had not saved an explicit tier for Claude Code, Codex, Devin, or
-Grok move from automatic approval to full access; explicitly saved `auto` entries stay unchanged.
-To use automatic approval instead, set Permissions back to Auto on that CLI's card under Settings →
-Employees.
+Continuing a task by `session_id` without a seat model or explicit `model` now reuses the model and
+effort from that thread's previous task in the same boss's history (`model (session_id history)`)
+instead of the current App or CLI default; changing default models in the App affects new tasks
+only unless `model` is passed explicitly. `wait_seconds=1500` is now exposed and accepted only in
+Claude Code terminal interactive sessions (`CLAUDE_CODE_ENTRYPOINT=cli`); Claude Desktop, VS Code,
+and `-p`/SDK sessions use `0` and `270` so foreground turns do not block silently for 25 minutes
+(existing `timeout: 1620000` host entries need no change).
 
-Account blocks now cool down per CLI and requested model instead of locking the entire CLI:
-authentication errors stay until cleared or a call on that model succeeds, quota errors cool down
-only when the CLI reports a reset time, and billing errors cool down for 30 minutes. Clear active
-cooldowns from the Employees page in the App, or ask the boss in the current chat to call
-`clear_provider_cooldown`.
+Settings → Advanced → Orchestration adds a "Meetings only" (`meetings`) preset between Off and Split
+that authorizes the boss to call meetings on real trade-offs without enabling task seats or changing
+who performs tasks, plus shared optional default meeting seats (2–6 seats, default 3) for Meetings
+only, Split, and Parallel. Settings → Employees removes the 20-model cap per CLI and reads Codex
+models from `model_catalog_json` in `config.toml` before falling back to `models_cache.json`.
+Clearing inactive workspaces in the App now skips unclaimed (`pending`) handovers.
 
-In Settings → General, "Still characters on battery" (`battery_still`) is on by default: on
-battery power, video characters switch to static posters and release their players while CSS
-characters and particles pause. Turn it off in General settings to keep character animations running
-on battery.
+On Windows, video character packs now use VP9-with-alpha `.webm` clips
+(`agentnave-video-webm-{272,544}.tar.gz`, about `105.9 MB` / `308.4 MB`). Previously downloaded
+`.mov` directories on Windows are no longer treated as installed and the display mode falls back
+to CSS characters; re-download the WebM pack under Settings → Appearance, then select the video
+display mode again on the same page (the download replaces the old `.mov` files). If you do not
+re-download, the old `.mov` files stay under `video-packs` in the data directory and the App offers
+no delete for them; remove them by hand to reclaim space. macOS keeps existing `.mov` packs
+unchanged, though any unfinished partial download from an older release will restart once under the
+format-specific `.part` filename.
 
-See [v1.8.0 release notes](releases/v1.8.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.7.0.md).
+See [v1.9.0 release notes](releases/v1.9.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.8.0.md).
 
 ## Uninstall
 
