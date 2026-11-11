@@ -279,11 +279,8 @@ function createMessage(m) {
   rec.to = h("div.m-to");
   rec.verb2 = h("span.m-verb");
   rec.lock = h("span.m-lock");
-  rec.fwd = h("button.fwd", { type: "button", hidden: true });
-  rec.fwd.addEventListener(
-    "click",
-    () => rec.fwdId && jumpToMessage(rec.fwdId),
-  );
+  rec.fwd = h("div.fwds", { hidden: true });
+  rec.fwdBtns = [];
   rec.md = h("div.md");
   rec.dots = h("span.typing", {}, h("i"), h("i"), h("i"));
   rec.tail = h("div.tail");
@@ -381,6 +378,33 @@ function localizeSourceTime(text) {
     return ` · ${shown}`;
   });
 }
+// A forwarded entry quotes a message by id, and a private task lists the ones it carries; each
+// card jumps to its message while that message is still listed.
+function showForwards(rec, m, ctx) {
+  const fwds = m.forward ? [m.forward] : m.forwards || [];
+  rec.fwd.hidden = !fwds.length;
+  if (rec.fwdBtns.length !== fwds.length) {
+    rec.fwdBtns = fwds.map(() => {
+      const btn = h("button.fwd", { type: "button" });
+      btn.addEventListener("click", () => btn.fwdId && jumpToMessage(btn.fwdId));
+      return btn;
+    });
+    rec.fwd.replaceChildren(...rec.fwdBtns);
+  }
+  fwds.forEach((f, i) => {
+    const btn = rec.fwdBtns[i];
+    btn.fwdId = ctx.sources.has(f.message_id) ? f.message_id : null;
+    const source = f.source && localizeSourceTime(f.source);
+    setText(btn, L(`↪ 转发自 ${source || "其他消息"}`, `↪ Forwarded from ${source || "another message"}`));
+    setClass(btn, btn.fwdId ? "fwd" : "fwd dead");
+    setAttr(btn, "aria-disabled", btn.fwdId ? null : "true");
+    setAttr(
+      btn,
+      "title",
+      btn.fwdId ? L("跳到原消息", "Jump to original message") : L("原消息不在当前列表中", "Original message not in current view"),
+    );
+  });
+}
 function updateMessage(rec, m, ctx, id) {
   rec.id = id;
   const flashing = state.flashId === id ? " flash" : "";
@@ -434,21 +458,7 @@ function updateMessage(rec, m, ctx, id) {
     rec.metaFaces.replaceChildren(...faces.map((d) => ART.head(deskChar(d))));
   }
   if (m.kind !== "typing") {
-    // A forwarded entry quotes a message by id; the card jumps to it while that message is still listed.
-    const f = m.forward;
-    rec.fwd.hidden = !f;
-    if (f) {
-      rec.fwdId = ctx.sources.has(f.message_id) ? f.message_id : null;
-      const source = f.source && localizeSourceTime(f.source);
-      setText(rec.fwd, L(`↪ 转发自 ${source || "其他消息"}`, `↪ Forwarded from ${source || "another message"}`));
-      setClass(rec.fwd, rec.fwdId ? "fwd" : "fwd dead");
-      setAttr(rec.fwd, "aria-disabled", rec.fwdId ? null : "true");
-      setAttr(
-        rec.fwd,
-        "title",
-        rec.fwdId ? L("跳到原消息", "Jump to original message") : L("原消息不在当前列表中", "Original message not in current view"),
-      );
-    }
+    showForwards(rec, m, ctx);
   }
   if (m.kind === "typing") {
     rec.statusMessage = m;
