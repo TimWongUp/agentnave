@@ -49,6 +49,7 @@ impl Reader {
                         Some("png") => "image/png",
                         Some("json") => "application/json",
                         Some("mov") => "video/quicktime",
+                        Some("webm") => "video/webm",
                         _ => "application/octet-stream",
                     };
                     let mut response = Response::ok(mime, bytes.to_vec());

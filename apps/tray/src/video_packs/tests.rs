@@ -17,6 +17,53 @@ fn movie(edge: u32, version: u8) -> Vec<u8> {
     atom(b"moov", &atom(b"trak", &atom(b"tkhd", &header)))
 }
 
+fn ebml_el(id: &[u8], payload: &[u8]) -> Vec<u8> {
+    let mut out = id.to_vec();
+    let len = payload.len();
+    assert!(len < 0x3FFF);
+    if len < 0x7F {
+        out.push(0x80 | len as u8);
+    } else {
+        out.extend(((0x4000 | len) as u16).to_be_bytes());
+    }
+    out.extend(payload);
+    out
+}
+
+fn ebml_u16(id: &[u8], value: u16) -> Vec<u8> {
+    ebml_el(id, &value.to_be_bytes())
+}
+
+fn webm_header(doctype: &[u8]) -> Vec<u8> {
+    let doc = ebml_el(&[0x42, 0x82], doctype);
+    ebml_el(&[0x1A, 0x45, 0xDF, 0xA3], &doc)
+}
+
+fn webm_with_doctype(doctype: &[u8], tracks: &[u8]) -> Vec<u8> {
+    let header = webm_header(doctype);
+    let segment = ebml_el(
+        &[0x18, 0x53, 0x80, 0x67],
+        &ebml_el(&[0x16, 0x54, 0xAE, 0x6B], tracks),
+    );
+    [header, segment].concat()
+}
+
+fn webm_clip(edge: u32) -> Vec<u8> {
+    let mut video = ebml_u16(&[0xB0], edge as u16);
+    video.extend(ebml_u16(&[0xBA], edge as u16));
+    let mut entry = ebml_el(&[0x83], &[1]);
+    entry.extend(ebml_el(&[0xE0], &video));
+    webm_with_doctype(b"webm", &ebml_el(&[0xAE], &entry))
+}
+
+fn clip_bytes(edge: u32) -> Vec<u8> {
+    if CLIP_EXT == "mov" {
+        movie(edge, 0)
+    } else {
+        webm_clip(edge)
+    }
+}
+
 fn poster() -> Vec<u8> {
     let mut bytes = vec![0; 30];
     bytes[..4].copy_from_slice(b"RIFF");
@@ -35,7 +82,7 @@ fn pack(root: &Path, tier: &str) {
         let bytes = if output.extension().unwrap() == "webp" {
             poster()
         } else {
-            movie(edge, 0)
+            clip_bytes(edge)
         };
         fs::write(output, bytes).unwrap();
     }
@@ -65,6 +112,62 @@ fn quicktime_dimensions_handle_versions_atom_sizes_and_truncation() {
 }
 
 #[test]
+fn webm_dimensions_handle_vint_sizes_doctype_and_truncation() {
+    let bytes = webm_clip(272);
+    assert_eq!(webm::webm_size(&bytes), Some((272, 272)));
+    for length in 0..bytes.len() {
+        assert_eq!(webm::webm_size(&bytes[..length]), None);
+    }
+    let header = webm_header(b"webm");
+    let seg_payload = &bytes[header.len() + 5..];
+    let mut wide = header.clone();
+    wide.extend([0x18, 0x53, 0x80, 0x67, 0x01]);
+    wide.extend(&(seg_payload.len() as u64).to_be_bytes()[1..]);
+    wide.extend(seg_payload);
+    assert_eq!(webm::webm_size(&wide), Some((272, 272)));
+    let mut unknown = bytes.clone();
+    unknown[header.len() + 4] = 0xFF;
+    assert_eq!(webm::webm_size(&unknown), Some((272, 272)));
+    for length in 0..unknown.len() {
+        assert_eq!(webm::webm_size(&unknown[..length]), None);
+    }
+    let mut streamed = header.clone();
+    streamed.extend([
+        0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    ]);
+    streamed.extend(seg_payload);
+    let tracks_end = streamed.len();
+    streamed.extend([
+        0x1F, 0x43, 0xB6, 0x75, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xE7, 0x81, 0x00,
+    ]);
+    assert_eq!(webm::webm_size(&streamed), Some((272, 272)));
+    for length in (0..tracks_end).chain(tracks_end + 1..tracks_end + 12) {
+        assert_eq!(webm::webm_size(&streamed[..length]), None);
+    }
+    let mut truncated_cluster = unknown.clone();
+    truncated_cluster.extend([0x1F, 0x43, 0xB6, 0x75, 0x84, 0, 0]);
+    assert_eq!(webm::webm_size(&truncated_cluster), None);
+    let mut cluster_before_tracks = header.clone();
+    cluster_before_tracks.extend([0x18, 0x53, 0x80, 0x67, 0xFF, 0x1F, 0x43, 0xB6, 0x75, 0xFF]);
+    cluster_before_tracks.extend(seg_payload);
+    assert_eq!(webm::webm_size(&cluster_before_tracks), None);
+    let mut bad_tracks = bytes.clone();
+    bad_tracks[header.len() + 9] = 0xFF;
+    assert_eq!(webm::webm_size(&bad_tracks), None);
+    let mut multi = ebml_el(&[0xAE], &ebml_el(&[0x83], &[2]));
+    multi.extend(&bytes[header.len() + 10..]);
+    assert_eq!(
+        webm::webm_size(&webm_with_doctype(b"webm", &multi)),
+        Some((272, 272))
+    );
+    assert_eq!(
+        webm::webm_size(&webm_with_doctype(b"matroska", &multi)),
+        None
+    );
+    assert_eq!(webm::webm_size(&webm_clip(0)), None);
+}
+
+#[test]
 fn clips_stream_only_the_requested_range_from_the_file() {
     use std::io::Read;
 
@@ -76,11 +179,16 @@ fn clips_stream_only_the_requested_range_from_the_file() {
     pack(&dir, "272");
     fs::write(dir.join("stamp"), "1").unwrap();
     let bytes: Vec<u8> = (0..100).collect();
-    fs::write(dir.join("codex/idle.mov"), &bytes).unwrap();
+    fs::write(dir.join(format!("codex/idle.{CLIP_EXT}")), &bytes).unwrap();
 
-    let part = stream_asset(root.path(), "272/codex/idle.mov", Some("bytes=10-19")).unwrap();
+    let part = stream_asset(
+        root.path(),
+        &format!("272/codex/idle.{CLIP_EXT}"),
+        Some("bytes=10-19"),
+    )
+    .unwrap();
     assert_eq!((part.status, part.content_length), (206, 10));
-    assert_eq!(part.content_type, "video/quicktime");
+    assert_eq!(part.content_type, CLIP_MIME);
     assert_eq!(part.cache_control, "no-store");
     assert_eq!(
         part.headers
@@ -94,11 +202,16 @@ fn clips_stream_only_the_requested_range_from_the_file() {
     file.take(length).read_to_end(&mut body).unwrap();
     assert_eq!(body, bytes[10..=19]);
 
-    let refused = stream_asset(root.path(), "272/codex/idle.mov", Some("bytes=100-")).unwrap();
+    let refused = stream_asset(
+        root.path(),
+        &format!("272/codex/idle.{CLIP_EXT}"),
+        Some("bytes=100-"),
+    )
+    .unwrap();
     assert_eq!((refused.status, refused.content_length), (416, 0));
     assert!(refused.file.is_none());
     assert!(
-        stream_asset(root.path(), "272/codex/unknown.mov", None).is_none(),
+        stream_asset(root.path(), &format!("272/codex/unknown.{CLIP_EXT}"), None).is_none(),
         "unlisted clips are not served"
     );
 }
@@ -123,7 +236,8 @@ fn import_validates_all_files_before_replacing_pack() {
             .unwrap_err()
             .contains("272×272")
     );
-    fs::remove_file(source.join("default/sleep-1.mov")).unwrap();
+    let missing = source.join(format!("default/sleep-1.{CLIP_EXT}"));
+    fs::remove_file(missing).unwrap();
     assert!(install::stage(&base, "272", &source).is_err());
     assert_eq!(fs::read(target.join("stamp")).unwrap(), before);
     pack(&source, "544");
@@ -138,14 +252,24 @@ fn preview_resolution_never_mixes_pack_files() {
     let preview = tempfile::tempdir().unwrap();
     let real = shared.path().join("video-packs/272");
     let local = preview.path().join("video-packs/272");
-    fs::create_dir_all(&real).unwrap();
-    fs::create_dir_all(&local).unwrap();
+    fs::create_dir_all(real.join("claude")).unwrap();
+    fs::create_dir_all(local.join("claude")).unwrap();
     fs::write(real.join("stamp"), "real").unwrap();
+    let other_ext = if CLIP_EXT == "mov" { "webm" } else { "mov" };
+    let wrong = real.join(format!("claude/idle.{other_ext}"));
+    fs::write(wrong, b"wrong").unwrap();
+    assert_eq!(
+        resolve_with_preview(shared.path(), "272", Some(preview.path())),
+        None
+    );
+    let sentinel = format!("claude/idle.{CLIP_EXT}");
+    fs::write(real.join(&sentinel), b"ok").unwrap();
     assert_eq!(
         resolve_with_preview(shared.path(), "272", Some(preview.path())),
         Some((real, "shared"))
     );
     fs::write(local.join("stamp"), "preview").unwrap();
+    fs::write(local.join(&sentinel), b"ok").unwrap();
     assert_eq!(
         resolve_with_preview(shared.path(), "272", Some(preview.path())),
         Some((local, "preview"))
@@ -156,13 +280,13 @@ fn preview_resolution_never_mixes_pack_files() {
 fn routes_reject_unsafe_paths_and_require_write_authorization() {
     let root = tempfile::tempdir().unwrap();
     for rest in [
-        "../codex/idle.mov",
-        "272/../stamp",
-        "272/codex/../../stamp",
-        "272/unknown/idle.mov",
-        "272/codex/slack-1.webp",
+        format!("../codex/idle.{CLIP_EXT}"),
+        "272/../stamp".to_owned(),
+        "272/codex/../../stamp".to_owned(),
+        format!("272/unknown/idle.{CLIP_EXT}"),
+        "272/codex/slack-1.webp".to_owned(),
     ] {
-        assert!(asset(root.path(), rest, None).is_none());
+        assert!(asset(root.path(), &rest, None).is_none());
     }
     for operation in ["import", "download", "cancel", "delete"] {
         let path = format!("/app/video-packs/272/{operation}");
@@ -177,7 +301,12 @@ fn routes_reject_unsafe_paths_and_require_write_authorization() {
     }
     let reader = crate::data::Reader::new(root.path().to_owned());
     assert_eq!(reader.respond("/app/video-packs").status, 200);
-    assert_eq!(reader.respond("/art/video/272/codex/idle.mov").status, 404);
+    assert_eq!(
+        reader
+            .respond(&format!("/art/video/272/codex/idle.{CLIP_EXT}"))
+            .status,
+        404
+    );
 }
 
 #[test]
@@ -237,14 +366,16 @@ fn import_request_serves_installed_assets_and_delete_removes_the_pack() {
         String::from_utf8_lossy(&response.body)
     );
     let state: Value = serde_json::from_slice(&response.body).unwrap();
+    assert_eq!(state["ext"], CLIP_EXT);
     assert_eq!(state["packs"]["272"]["installed"], true);
     assert_eq!(state["packs"]["272"]["source"], "shared");
     assert!(state["packs"]["272"]["bytes"].as_u64().unwrap() > 0);
     let reader = crate::data::Reader::new(root.path().to_owned());
-    let response = reader.respond("/art/video/272/codex/idle.mov");
-    assert_eq!(response.content_type, "video/quicktime");
+    let clip_url = format!("/art/video/272/codex/idle.{CLIP_EXT}");
+    let response = reader.respond(&clip_url);
+    assert_eq!(response.content_type, CLIP_MIME);
     assert_eq!(response.cache_control, "no-store");
-    assert_eq!(response.body, movie(272, 0));
+    assert_eq!(response.body, clip_bytes(272));
     let poster = reader.respond("/art/video/272/codex/idle.webp");
     assert_eq!(poster.cache_control, "public, max-age=31536000");
     assert_eq!(
@@ -295,8 +426,10 @@ fn clips_are_served_in_ranges_and_never_cached() {
     pack(&dir, "272");
     fs::write(dir.join("stamp"), "1").unwrap();
     let bytes: Vec<u8> = (0..100).collect();
-    fs::write(dir.join("codex/idle.mov"), &bytes).unwrap();
-    let get = |range: Option<&str>| asset(root.path(), "272/codex/idle.mov", range).unwrap();
+    let clip_rel = format!("codex/idle.{CLIP_EXT}");
+    let route = format!("272/{clip_rel}");
+    fs::write(dir.join(&clip_rel), &bytes).unwrap();
+    let get = |range: Option<&str>| asset(root.path(), &route, range).unwrap();
     let header = |r: &Response, name: &str| {
         r.headers
             .iter()

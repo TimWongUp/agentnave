@@ -176,11 +176,17 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
     }
 }
 
+const APP_NAME: &str = if PREVIEW {
+    "AgentNave 预览"
+} else {
+    "AgentNave"
+};
+
 fn headline(overview: &Overview) -> String {
     if overview.missing {
-        return "AgentNave · 尚未找到工作室数据".to_owned();
+        return format!("{APP_NAME} · 尚未找到工作室数据");
     }
-    format!("AgentNave · 运行中 {}", overview.count("running"))
+    format!("{APP_NAME} · 运行中 {}", overview.count("running"))
 }
 
 pub(crate) fn browse_address(address: &str) {
