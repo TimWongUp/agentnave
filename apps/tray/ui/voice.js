@@ -536,7 +536,7 @@
     expire();
     if (whole) {
       fed.set(chat.group, Date.now());
-      if (follow && follow.group === chat.group && !follow.room) takeFollowed(chat, follow);
+      if (follow && follow.loaded && follow.group === chat.group && !follow.room) takeFollowed(chat, follow);
     }
     queueMicrotask(drain);
     if (current || queue.length || follow || Date.now() - loadedAt >= IDLE_RELOAD_MS)
@@ -582,7 +582,7 @@
     halted = false; failures = 0;
     unlisten(false);
     if (!current && !queue.length) started = [];
-    const session = follow = { group: target.group, room: target.room || null, desk: target.desk || null, shown: target.desk ? target.shown : null, title: "", expires_at: Date.now() + (config.listen_minutes ?? 60) * 60000, seen: new Map(), controller: new AbortController(), timer: null, expiryTimer: null, backlogTimer: null, overloaded: false };
+    const session = follow = { group: target.group, room: target.room || null, desk: target.desk || null, shown: target.desk ? target.shown : null, title: "", expires_at: Date.now() + (config.listen_minutes ?? 60) * 60000, loaded: false, seen: new Map(), controller: new AbortController(), timer: null, expiryTimer: null, backlogTimer: null, overloaded: false };
     batch = null; lastAlbum = null;
     session.expiryTimer = setTimeout(expire, session.expires_at - Date.now());
     changed();
@@ -592,6 +592,7 @@
     if (follow !== session) return;
     session.title = followTitle(chat, session);
     collectFollowed(chat, session, true);
+    session.loaded = true;
     arrange(); changed(); void drain();
     session.timer = setTimeout(() => void heed(session), FOLLOW_EVERY);
   }

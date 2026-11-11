@@ -403,7 +403,7 @@ fn restrict_windows_acl(path: &Path) -> std::io::Result<()> {
 
     let user = std::env::var("USERNAME").unwrap_or_default();
     if user.trim().is_empty() {
-        return Ok(());
+        return Err(std::io::Error::other("无法限制语音密钥文件权限"));
     }
     let icacls = std::env::var_os("SystemRoot")
         .map(|root| std::path::PathBuf::from(root).join(r"System32\icacls.exe"))
