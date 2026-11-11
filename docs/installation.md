@@ -639,12 +639,14 @@ that authorizes the boss to call meetings on real trade-offs without enabling ta
 who performs tasks, plus shared optional default meeting seats (2–6 seats, default 3) for Meetings
 only, Split, and Parallel. Settings → Employees removes the 20-model cap per CLI and reads Codex
 models from `model_catalog_json` in `config.toml` before falling back to `models_cache.json`.
-Automatic history retention now skips unclaimed (`pending`) handovers.
+Clearing inactive workspaces in the App now skips unclaimed (`pending`) handovers.
 
 On Windows, video character packs now use VP9-with-alpha `.webm` clips
 (`agentnave-video-webm-{272,544}.tar.gz`, about `105.9 MB` / `308.4 MB`). Previously downloaded
-`.mov` directories on Windows are no longer treated as installed; re-download the WebM pack
-under Settings → Appearance to play animated video characters. macOS keeps existing `.mov` packs
+`.mov` directories on Windows are no longer treated as installed and the display mode falls back
+to CSS characters; re-download the WebM pack under Settings → Appearance, then select the video
+display mode again on the same page. Old `.mov` files stay under `video-packs` in the data
+directory and the App offers no delete for them; remove them by hand to reclaim space. macOS keeps existing `.mov` packs
 unchanged, though any unfinished partial download from an older release will restart once under the
 format-specific `.part` filename.
 
