@@ -658,7 +658,7 @@ function buildCard(host) {
   if (local) main.push(h("div.hc-note.error", { role: "alert" }, local));
   else if (last && !last.ok)
     main.push(h("div.hc-note.error", { role: "alert" }, last.message,
-      h("small", {}, `${relTime(last.at)}${host.status === "needs_attention" ? L(" · 修好后点“重试接入”，或在“详情”里换个入口", " · Click “Retry” after fixing, or change the entry in “Details”") : ""}`)));
+      h("small", {}, `${relTime(last.at)}${host.status === "needs_attention" ? L(" · 修好后点“重试接入”", " · Click “Retry” after fixing") : ""}`)));
   else if (host.attention) main.push(h("div.hc-note.error", { role: "alert" }, host.attention.message));
   else if (last && open)
     main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));

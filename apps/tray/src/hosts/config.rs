@@ -71,15 +71,21 @@ impl Document {
                         return Err("Hermes mcp_servers 需使用普通 YAML 映射块".into());
                     }
                     let block = &raw[parent.body.clone()];
-                    let fields = yaml_fields(block, yaml_indent(block, parent.indent + 2))?;
+                    let block_indent = yaml_indent(block, parent.indent + 2);
+                    if block_indent <= parent.indent {
+                        return Err("Hermes mcp_servers 需使用普通 YAML 映射块".into());
+                    }
+                    let fields = yaml_fields(block, block_indent)?;
                     if let Some(field) = fields.iter().find(|f| f.key == "agentnave") {
                         if !field.value.is_empty() {
                             return Err("Hermes agentnave 需使用普通 YAML 映射块".into());
                         }
-                        let entry = yaml_entry(
-                            &block[field.body.clone()],
-                            yaml_indent(&block[field.body.clone()], field.indent + 2),
-                        )?;
+                        let entry_body = &block[field.body.clone()];
+                        let entry_indent = yaml_indent(entry_body, field.indent + 2);
+                        if entry_indent <= field.indent {
+                            return Err("Hermes agentnave 需使用普通 YAML 映射块".into());
+                        }
+                        let entry = yaml_entry(entry_body, entry_indent)?;
                         let mut rest = raw.to_owned();
                         let start = parent.body.start + field.full.start;
                         let end = parent.body.start + field.full.end;
