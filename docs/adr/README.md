@@ -22,7 +22,7 @@
 | 0016 | [统一核心与 MCP 入口](0016-single-core-and-mcp-entrypoint.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0031](0031-prompt-only-orchestration.md)、[ADR-0033](0033-boss-workspace-handover.md)、[ADR-0045](0045-remove-browser-dashboard.md) |
 | 0017 | [按主控聊天归集 App 群聊](0017-manager-chat-session-identity.md) | 部分取代 | [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md)、[ADR-0033](0033-boss-workspace-handover.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
 | 0018 | [主控工作区、工位与会议室](0018-office-workspace-desks-and-meeting-rooms.md) | 部分取代 | [ADR-0023](0023-explicit-desk-continuation.md)、[ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
-| 0019 | [不提供运行中消息](0019-no-running-messages.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0056](0056-claude-interactive-runtime.md)、[ADR-0057](0057-boss-answers-native-prompts.md) |
+| 0019 | [不提供运行中消息](0019-no-running-messages.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0056](0056-claude-interactive-runtime.md)、[ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0081](0081-account-cooldown-duration.md) |
 | 0020 | [首次预填各 CLI 的主力模型](0020-prefill-main-model-defaults.md) | 已被 ADR-0028 取代 | [ADR-0028](0028-follow-cli-default-model.md) |
 | 0021 | [关闭自选时保留各 CLI 的默认模型](0021-keep-default-models-when-unrestricted.md) | 部分取代 | [ADR-0028](0028-follow-cli-default-model.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0054](0054-members-need-confirmation.md) |
 | 0022 | [新会话自动消除宿主重新加载提醒](0022-auto-clear-host-reload.md) | 已接受 | — |

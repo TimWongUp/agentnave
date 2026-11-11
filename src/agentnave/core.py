@@ -138,24 +138,16 @@ class _InvocationRecord:
             code = activity.blocking_error
             if code is not None and code not in self.reported_errors:
                 self.reported_errors.add(code)
-                if (
-                    self.health_root is not None
-                    and (
-                        provider_health.model_option(self.request.provider_options)
-                        or self.reported_model
-                    )
-                    and (
-                        category := provider_health.classify(
-                            InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
-                        )
+                if self.health_root is not None and (
+                    category := provider_health.classify(
+                        InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
                     )
                 ):
                     provider_health.record(
                         self.health_root,
                         self.request.provider,
                         category,
-                        provider_health.model_option(self.request.provider_options)
-                        or self.reported_model,
+                        provider_health.model_option(self.request.provider_options),
                         adapter.quota_reset(line, b"", datetime.now(UTC)),
                     )
                 self.pending_attention.append(
@@ -829,9 +821,7 @@ class InvocationManager:
                     result,
                     parsed.error_message,
                     record.reported_errors,
-                    provider_health.model_option(record.request.provider_options)
-                    or record.reported_model
-                    or adapter.session_model(result.session_id, since=record.started_wall_at),
+                    provider_health.model_option(record.request.provider_options),
                     adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
                 )
 
@@ -855,9 +845,7 @@ class InvocationManager:
                 result,
                 parsed.error_message,
                 record.reported_errors,
-                provider_health.model_option(record.request.provider_options)
-                or record.reported_model
-                or adapter.session_model(result.session_id, since=record.started_wall_at),
+                provider_health.model_option(record.request.provider_options),
                 adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
             )
         except (OSError, ValueError) as exc:

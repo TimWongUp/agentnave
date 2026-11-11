@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
 _EPOCH = re.compile(
-    r'(?i)(?:usage limit reached\s*\||["\']?resets_at["\']?\s*[:=]\s*["\']?)(\d{10})(?!\d)'
+    r'(?i)(?:usage limit reached\s*\||["\']?resets_at["\']?\s*[:=]\s*["\']?)(\d{10})(?![\d.])'
 )
 _ABSOLUTE = re.compile(
     r'(?i)(?:resets?\s+at|try again at|["\']?resets_at["\']?\s*[:=])\s*["\']?(\d{4}-\d\d-\d\d[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d))'
@@ -15,7 +15,9 @@ _ABSOLUTE = re.compile(
 _RELATIVE = re.compile(
     r"(?i)(?:try again in|resets? in)\s+(\d+(?:\.\d+)?)\s*(seconds?|minutes?|hours?|days?)\b"
 )
-_RETRY = re.compile(r"""(?i)\bretry-after["']?\s*[:=]\s*([^\r\n]+)""")
+_RETRY = re.compile(
+    r"""(?i)\bretry-after["']?\s*[:=]\s*["']?((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s*\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s+GMT|\d+)(?![\d.])"""
+)
 
 
 def parse_reset(text: str, now: datetime) -> datetime | None:

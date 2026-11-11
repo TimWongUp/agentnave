@@ -245,9 +245,10 @@ def _update_locked(
         previous = _entry(models.get(model) if model else item.get("default"), datetime.now(UTC))
         if code is None:
             if model:
-                if model not in models:
+                removed = models.pop(model, None) is not None
+                removed_default = item.pop("default", None) is not None
+                if not removed and not removed_default:
                     return True
-                del models[model]
             else:
                 if "default" not in item:
                     return True
@@ -260,28 +261,9 @@ def _update_locked(
                 until = min(reset.astimezone(UTC), now + _MAX_TTL)
             else:
                 until = now + timedelta(minutes=30) if code == "billing" else None
-            if previous:
-                old_code = previous["code"]
-                if _PRIORITY[code] < _PRIORITY[old_code]:
-                    return True
-                if (
-                    code == old_code
-                    and not (code == "auth" and previous["until"] is not None)
-                    and (
-                        code != "quota"
-                        or until is None
-                        or previous["until"] is None
-                        or reset is None
-                        or reset <= datetime.fromisoformat(previous.get("reset", previous["until"]))
-                    )
-                ):
-                    return True
-            entry: Health = {
-                "code": code,
-                "until": until.isoformat().replace("+00:00", "Z") if until else None,
-            }
-            if code == "quota" and reset is not None:
-                entry["reset"] = reset.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            entry = _merged_health(previous, code, until, reset)
+            if entry == previous:
+                return True
             if model:
                 models[model] = dict(entry)
             else:
@@ -296,6 +278,37 @@ def _update_locked(
             providers.pop(provider, None)
     write_file(path, json.dumps(document).encode())
     return True
+
+
+def _merged_health(
+    previous: Health | None, code: Code, until: datetime | None, reset: datetime | None
+) -> Health:
+    if previous:
+        old_code = previous["code"]
+        if _PRIORITY[old_code] > _PRIORITY[code]:
+            code = old_code
+        old_until = previous["until"]
+        if old_until is None:
+            until = None
+        elif until is not None:
+            # A repeated quota reset beyond the cap must not extend it each time.
+            if (
+                code == "quota"
+                and reset is not None
+                and (previous_reset := previous.get("reset")) is not None
+                and reset <= datetime.fromisoformat(previous_reset)
+            ):
+                return previous
+            until = max(until, datetime.fromisoformat(old_until))
+    if code == "auth":
+        until = None
+    entry: Health = {
+        "code": code,
+        "until": until.isoformat().replace("+00:00", "Z") if until else None,
+    }
+    if code == "quota" and reset is not None:
+        entry["reset"] = reset.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return entry
 
 
 def classify(

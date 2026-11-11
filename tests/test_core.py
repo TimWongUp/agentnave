@@ -26,6 +26,7 @@ from agentnave.core import (
     READ_ONLY_INSTRUCTIONS,
     SUBAGENT_INSTRUCTIONS,
     InvocationManager,
+    _InvocationRecord,  # pyright: ignore[reportPrivateUsage]
     _read_limited,  # pyright: ignore[reportPrivateUsage]
     _retry_streak_start,  # pyright: ignore[reportPrivateUsage]
     _stall_guard,  # pyright: ignore[reportPrivateUsage]
@@ -45,7 +46,9 @@ from agentnave.processes import (
 
 
 def test_doing_since_changes_only_with_displayed_state(tmp_path: Path) -> None:
-    record = core._InvocationRecord(InvocationRequest("antigravity", "work", tmp_path))  # pyright: ignore[reportPrivateUsage]
+    record = _InvocationRecord(  # pyright: ignore[reportPrivateUsage]
+        InvocationRequest("antigravity", "work", tmp_path)
+    )  # pyright: ignore[reportPrivateUsage]
     record.last_activity = ProviderActivity("lifecycle", "thinking", "reasoning")
     record.update_doing(10)
     assert (record.doing, record.doing_since) == ("thinking", 10)
@@ -1515,6 +1518,76 @@ def test_quota_retry_after_in_provider_error() -> None:
         }
     ).encode()
     assert CodexAdapter().quota_reset(error, b"", now) == now + timedelta(seconds=120)
+
+
+@pytest.mark.parametrize("first", ["quota", "billing"])
+def test_billing_quota_merge_preserves_longer_deadline(tmp_path: Path, first: str) -> None:
+    reset = datetime.now(UTC) + timedelta(days=5)
+    order = ("quota", "billing") if first == "quota" else ("billing", "quota")
+    for category in order:
+        provider_health.record(tmp_path, "codex", cast(provider_health.Code, category), "x", reset)
+    entry = provider_health.active(tmp_path)[("codex", "x")]
+    assert entry["code"] == "billing" and entry["until"] is not None
+    assert datetime.fromisoformat(entry["until"]) == reset
+    assert "reset" not in entry
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_clear_model_also_clears_cli_default(tmp_path: Path, legacy: bool) -> None:
+    path = tmp_path / "provider-health.json"
+    default = {"code": "auth", "until": None}
+    item = default if legacy else {"default": default, "models": {"other": default}}
+    path.write_text(json.dumps({"version": 1, "providers": {"claude": item}}))
+    assert provider_health.clear(tmp_path, "claude", "chosen")
+    health = provider_health.active(tmp_path)
+    assert ("claude", None) not in health
+    assert (("claude", "other") in health) is not legacy
+
+
+def test_success_clears_cli_default_and_matching_model(tmp_path: Path) -> None:
+    provider_health.record(tmp_path, "claude", "auth")
+    provider_health.record(tmp_path, "claude", "auth", "chosen")
+    provider_health.record(tmp_path, "claude", "auth", "other")
+    result = core.InvocationResult(InvocationStatus.SUCCEEDED, "claude", "ok", None, 0)
+    provider_health.observe_result(tmp_path, result, None, [], "chosen")
+    assert set(provider_health.active(tmp_path)) == {("claude", "other")}
+
+
+def test_stream_blocker_without_model_records_cli_cooldown(tmp_path: Path) -> None:
+    record = _InvocationRecord(InvocationRequest("claude", "work", tmp_path), health_root=tmp_path)
+    adapter = ClaudeAdapter()
+    model_event: dict[str, object] = {
+        "type": "assistant",
+        "message": {"model": "reported", "content": []},
+    }
+    record.observe_event(json.dumps(model_event).encode(), adapter)
+    assert record.reported_model == "reported"
+    event = {"type": "system", "subtype": "api_retry", "error": "authentication_failed"}
+    record.observe_event(json.dumps(event).encode(), adapter)
+    assert provider_health.active(tmp_path)[("claude", None)]["code"] == "auth"
+
+
+def test_retry_after_in_json_array_and_before_other_fields() -> None:
+    now = datetime.now(UTC)
+    claude = {"type": "result", "is_error": True, "errors": ["quota exceeded; Retry-After: 120"]}
+    codex = {
+        "type": "turn.failed",
+        "error": {
+            "headers": {"Retry-After": "120", "x-request-id": "1"},
+            "message": "quota exceeded",
+        },
+    }
+    for adapter, event in ((ClaudeAdapter(), claude), (CodexAdapter(), codex)):
+        assert adapter.quota_reset(json.dumps(event).encode(), b"", now) == now + timedelta(
+            seconds=120
+        )
+    date = "Wed, 21 Oct 2037 07:28:00 GMT"
+    codex["error"] = {"headers": {"Retry-After": date, "next": "value"}}
+    assert CodexAdapter().quota_reset(json.dumps(codex).encode(), b"", now) == datetime(
+        2037, 10, 21, 7, 28, tzinfo=UTC
+    )
+    codex["error"] = {"headers": {"Retry-After": "120.5"}}
+    assert CodexAdapter().quota_reset(json.dumps(codex).encode(), b"", now) is None
 
 
 def test_provider_health_bad_data_and_busy_lock_fail_open(
