@@ -4,12 +4,20 @@ use windows_registry::CURRENT_USER;
 const RUN: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
 const APPROVED: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
+/// `HRESULT_FROM_WIN32` of `ERROR_FILE_NOT_FOUND` and `ERROR_PATH_NOT_FOUND`: windows-registry
+/// reports a missing key or value this way, and its `io::Error` keeps the raw code, so the kind
+/// is never `NotFound`.
+const MISSING: [i32; 2] = [0x8007_0002u32 as i32, 0x8007_0003u32 as i32];
+
 fn optional<T>(result: windows_registry::Result<T>) -> Result<Option<T>, String> {
     match result {
         Ok(value) => Ok(Some(value)),
         Err(error) => {
             let error = std::io::Error::from(error);
-            if error.kind() == std::io::ErrorKind::NotFound {
+            let missing = error
+                .raw_os_error()
+                .is_some_and(|code| MISSING.contains(&code));
+            if missing || error.kind() == std::io::ErrorKind::NotFound {
                 Ok(None)
             } else {
                 Err(error.to_string())
@@ -54,4 +62,16 @@ pub(super) fn set(name: &str, enabled: bool) -> Result<(), String> {
         optional(key.remove_value(name))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_key_that_does_not_exist_reads_as_absent() {
+        // windows-registry reports a missing key as HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND),
+        // whose raw code std::io::Error keeps; a settings save must not fail over it.
+        let path = r"SOFTWARE\AgentNave\autostart-tests\definitely-missing";
+        let found = super::optional(windows_registry::CURRENT_USER.open(path));
+        assert!(matches!(found, Ok(None)));
+    }
 }
