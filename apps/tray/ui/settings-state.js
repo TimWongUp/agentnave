@@ -133,6 +133,7 @@ async function apiGetMembers(refresh = false) {
 
 function renderProviderHealth(providers) {
   const box = $("provider-health");
+  if (!box?.replaceChildren) return;
   const rows = [];
   for (const [provider, group] of Object.entries(providers)) {
     if (group?.code) rows.push([provider, null, group]); // old version 1 record
