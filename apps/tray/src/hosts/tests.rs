@@ -1870,7 +1870,7 @@ fn toml_takeover_preserves_table_positions_key_order_and_comments() {
 
 #[test]
 fn yaml_takeover_preserves_block_env_indentation_and_comments() {
-    let raw = "model: keep\nmcp_servers: # registrations\n  other:\n    command: keep\n  agentnave: # managed entry\n    command: \"/old\" # launcher\n    args: []\n    env: # preserve block\n      Z_LAST: 'keep'\n      A_FIRST: \"keep too\"\n    enabled: true\ntail: 'keep'\n";
+    let raw = "model: keep\ntoolsets:\n- all\n- D:\\hermes\n  nested: true\nmcp_servers: # registrations\n  other:\n    command: keep\n  agentnave: # managed entry\n    command: \"/old\" # launcher\n    args:\n    - --flag=http://127.0.0.1:8080\n    env: # preserve block\n      Z_LAST: 'keep'\n      A_FIRST: \"keep too\"\n    enabled: true\ncommand_allowlist:\n- git status\ntail: 'keep'\n";
     let expected = raw.replace(
         "      A_FIRST: \"keep too\"\n",
         "      A_FIRST: \"keep too\"\n      AGENTNAVE_HOST: \"hermes\"\n",
@@ -1884,7 +1884,7 @@ fn yaml_takeover_preserves_block_env_indentation_and_comments() {
         "hermes",
     );
     let doc = Document::parse(
-        "mcp_servers:\n  other:\n    command: keep\n",
+        "dots:\n- all\nmcp_servers:\n  other:\n    command: keep\nallow:\n- D:\\x\n",
         Format::Yaml,
         "mcp_servers",
     )
@@ -1896,6 +1896,7 @@ fn yaml_takeover_preserves_block_env_indentation_and_comments() {
         written.contains("    env:\n      AGENTNAVE_HOST: \"hermes\"\n"),
         "{written}"
     );
+    assert!(written.contains("\nallow:\n- D:\\x\n"), "{written}");
 }
 
 fn assert_scoped_takeover(raw: &str, expected: &str, format: Format, key: &'static str, id: &str) {
@@ -2017,6 +2018,12 @@ fn jsonc_and_quoted_yaml_values_survive_and_ambiguous_yaml_is_rejected() {
         "mcp_servers: {agentnave: {command: x}}",
         "mcp_servers:\n  agentnave: &shared\n    command: x\n",
         "mcp_servers:\n  agentnave:\n    env: *shared\n",
+        "- top_level_list_item\n",
+        "scalar: value\n- stray_item\n",
+        "nested:\n  child: 1\n- mixed_item\n",
+        "mcp_servers:\n- agentnave\n",
+        "mcp_servers:\n  agentnave:\n  - item\n",
+        "mcp_servers:\n  agentnave:\n    command: x\n    env:\n    - KEY=1\n",
     ] {
         assert!(Document::parse(raw, Format::Yaml, "mcp_servers").is_err());
     }

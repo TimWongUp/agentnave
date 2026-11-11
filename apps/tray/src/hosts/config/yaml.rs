@@ -107,10 +107,19 @@ pub(super) struct YamlField {
     pub(super) body: Range<usize>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BodyState {
+    None,
+    Empty,
+    Sequence,
+    Indented,
+}
+
 /// Only ordinary block mappings at the traversed levels. Unknown field bodies stay opaque.
 /// Anchors, aliases, directives and duplicate mapping keys are rejected rather than rewritten.
 pub(super) fn yaml_fields(raw: &str, indent: usize) -> Result<Vec<YamlField>, String> {
     let mut fields: Vec<YamlField> = Vec::new();
+    let mut body = BodyState::None;
     let mut offset = 0;
     for line in raw.split_inclusive('\n') {
         let text = line.trim();
@@ -135,6 +144,14 @@ pub(super) fn yaml_fields(raw: &str, indent: usize) -> Result<Vec<YamlField>, St
             return Err("YAML 缩进无效".into());
         }
         if leading == indent {
+            if text == "-" || text.starts_with("- ") {
+                if !matches!(body, BodyState::Empty | BodyState::Sequence) {
+                    return Err("YAML 映射无效".into());
+                }
+                body = BodyState::Sequence;
+                offset += line.len();
+                continue;
+            }
             let (key, value) = text.split_once(':').ok_or("YAML 映射无效")?;
             let key = key.trim_matches(['\'', '"']);
             if key.is_empty()
@@ -147,15 +164,23 @@ pub(super) fn yaml_fields(raw: &str, indent: usize) -> Result<Vec<YamlField>, St
                 previous.full.end = offset;
                 previous.body.end = offset;
             }
+            let value = yaml_value_text(value)?.to_owned();
+            body = if value.is_empty() {
+                BodyState::Empty
+            } else {
+                BodyState::None
+            };
             fields.push(YamlField {
                 key: key.into(),
-                value: yaml_value_text(value)?.to_owned(),
+                value,
                 indent,
                 full: offset..raw.len(),
                 body: offset + line.len()..raw.len(),
             });
         } else if fields.is_empty() {
             return Err("YAML 缩进无效".into());
+        } else if body == BodyState::Empty {
+            body = BodyState::Indented;
         }
         offset += line.len();
     }
