@@ -18,8 +18,13 @@ fn element_id(bytes: &[u8]) -> Option<(u32, &[u8])> {
     Some((bytes_u32(head), bytes.get(count..)?))
 }
 
-/// One EBML data size (1..=8 octets); indeterminate stream sizes are rejected.
-fn data_size(bytes: &[u8]) -> Option<(usize, &[u8])> {
+enum Size {
+    Known(usize),
+    Unknown,
+}
+
+/// One EBML data size (1..=8 octets), distinguishing unknown stream sizes.
+fn data_size(bytes: &[u8]) -> Option<(Size, &[u8])> {
     let first = *bytes.first()?;
     if first == 0 {
         return None;
@@ -32,15 +37,23 @@ fn data_size(bytes: &[u8]) -> Option<(usize, &[u8])> {
     for &byte in &head[1..] {
         raw = (raw << 8) | u64::from(byte);
     }
+    let rest = bytes.get(count..)?;
     if raw == (1u64 << (7 * len)) - 1 {
-        return None;
+        return Some((Size::Unknown, rest));
     }
-    Some((usize::try_from(raw).ok()?, bytes.get(count..)?))
+    Some((Size::Known(usize::try_from(raw).ok()?), rest))
+}
+
+fn element_head(bytes: &[u8]) -> Option<(u32, Size, &[u8])> {
+    let (id, rest) = element_id(bytes)?;
+    let (size, rest) = data_size(rest)?;
+    Some((id, size, rest))
 }
 
 fn element(bytes: &[u8]) -> Option<(u32, &[u8], &[u8])> {
-    let (id, rest) = element_id(bytes)?;
-    let (size, rest) = data_size(rest)?;
+    let (id, Size::Known(size), rest) = element_head(bytes)? else {
+        return None;
+    };
     Some((id, rest.get(..size)?, rest.get(size..)?))
 }
 
@@ -112,14 +125,19 @@ fn tracks_size(mut bytes: &[u8]) -> Option<Option<(u32, u32)>> {
 fn segment_size(mut bytes: &[u8]) -> Option<Option<(u32, u32)>> {
     let mut found = None;
     while !bytes.is_empty() {
-        let (id, payload, rest) = element(bytes)?;
+        let (id, size, rest) = element_head(bytes)?;
+        let (payload, next) = match size {
+            Size::Known(n) => (rest.get(..n)?, rest.get(n..)?),
+            Size::Unknown if id == 0x1F43_B675 && found.is_some() => break,
+            Size::Unknown => return None,
+        };
         if id == 0x1654_AE6B
             && let Some(size) = tracks_size(payload)?
             && found.is_none()
         {
             found = Some(size);
         }
-        bytes = rest;
+        bytes = next;
     }
     Some(found)
 }
@@ -132,14 +150,19 @@ pub(crate) fn webm_size(mut bytes: &[u8]) -> Option<(u32, u32)> {
     bytes = rest;
     let mut found = None;
     while !bytes.is_empty() {
-        let (id, payload, rest) = element(bytes)?;
+        let (id, size, rest) = element_head(bytes)?;
+        let (payload, next) = match size {
+            Size::Known(n) => (rest.get(..n)?, rest.get(n..)?),
+            Size::Unknown if id == 0x1853_8067 => (rest, &[][..]),
+            Size::Unknown => return None,
+        };
         if id == 0x1853_8067
             && let Some(size) = segment_size(payload)?
             && found.is_none()
         {
             found = Some(size);
         }
-        bytes = rest;
+        bytes = next;
     }
     found
 }

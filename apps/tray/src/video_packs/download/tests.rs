@@ -118,11 +118,25 @@ fn transfer_resumes_with_range_when_server_returns_partial_content() {
 }
 
 #[test]
-fn archive_names_follow_platform_clip_format() {
-    let expected = if CLIP_EXT == "mov" {
-        "agentnave-video-272.tar.gz"
-    } else {
+fn archive_and_partial_names_isolate_formats() {
+    assert_eq!(archive_name("272", "mov"), "agentnave-video-272.tar.gz");
+    assert_eq!(
+        archive_name("272", "webm"),
         "agentnave-video-webm-272.tar.gz"
-    };
-    assert_eq!(archive_name("272"), expected);
+    );
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path().join("video-packs");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(base.join(".272.tar.gz.part"), b"legacy-mov").unwrap();
+    let mov_part = part_path(&base, "272", "mov");
+    fs::write(&mov_part, b"mov-partial").unwrap();
+    let webm_file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(part_path(&base, "272", "webm"))
+        .unwrap();
+    assert_eq!(webm_file.metadata().unwrap().len(), 0);
+    assert_eq!(fs::read(&mov_part).unwrap(), b"mov-partial");
 }

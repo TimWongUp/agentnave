@@ -127,7 +127,33 @@ fn webm_dimensions_handle_vint_sizes_doctype_and_truncation() {
     assert_eq!(webm::webm_size(&wide), Some((272, 272)));
     let mut unknown = bytes.clone();
     unknown[header.len() + 4] = 0xFF;
-    assert_eq!(webm::webm_size(&unknown), None);
+    assert_eq!(webm::webm_size(&unknown), Some((272, 272)));
+    for length in 0..unknown.len() {
+        assert_eq!(webm::webm_size(&unknown[..length]), None);
+    }
+    let mut streamed = header.clone();
+    streamed.extend([
+        0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    ]);
+    streamed.extend(seg_payload);
+    let tracks_end = streamed.len();
+    streamed.extend([
+        0x1F, 0x43, 0xB6, 0x75, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xE7, 0x81, 0x00,
+    ]);
+    assert_eq!(webm::webm_size(&streamed), Some((272, 272)));
+    for length in (0..tracks_end).chain(tracks_end + 1..tracks_end + 12) {
+        assert_eq!(webm::webm_size(&streamed[..length]), None);
+    }
+    let mut truncated_cluster = unknown.clone();
+    truncated_cluster.extend([0x1F, 0x43, 0xB6, 0x75, 0x84, 0, 0]);
+    assert_eq!(webm::webm_size(&truncated_cluster), None);
+    let mut cluster_before_tracks = header.clone();
+    cluster_before_tracks.extend([0x18, 0x53, 0x80, 0x67, 0xFF, 0x1F, 0x43, 0xB6, 0x75, 0xFF]);
+    cluster_before_tracks.extend(seg_payload);
+    assert_eq!(webm::webm_size(&cluster_before_tracks), None);
+    let mut bad_tracks = bytes.clone();
+    bad_tracks[header.len() + 9] = 0xFF;
+    assert_eq!(webm::webm_size(&bad_tracks), None);
     let mut multi = ebml_el(&[0xAE], &ebml_el(&[0x83], &[2]));
     multi.extend(&bytes[header.len() + 10..]);
     assert_eq!(

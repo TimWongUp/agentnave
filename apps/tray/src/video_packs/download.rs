@@ -64,7 +64,7 @@ pub(super) fn delete(shared: &Path, tier: &str) -> Result<(), String> {
     let mut guard = jobs();
     cancel_locked(&mut guard, &key);
     let base = key.0.join("video-packs");
-    let _ = fs::remove_file(part_path(&base, tier));
+    let _ = fs::remove_file(part_path(&base, tier, CLIP_EXT));
     let target = base.join(tier);
     if target.exists() {
         let old = tempfile::tempdir_in(base).map_err(|e| e.to_string())?;
@@ -78,12 +78,12 @@ pub(super) fn import_dir(shared: &Path, tier: &str, chosen: &Path) -> Result<(),
     let staged = install::stage(&base, tier, chosen)?;
     let mut guard = jobs();
     cancel_locked(&mut guard, &key(shared, tier));
-    let _ = fs::remove_file(part_path(&base, tier));
+    let _ = fs::remove_file(part_path(&base, tier, CLIP_EXT));
     install::swap(&base, tier, staged)
 }
 
-fn part_path(base: &Path, tier: &str) -> PathBuf {
-    base.join(format!(".{tier}.tar.gz.part"))
+fn part_path(base: &Path, tier: &str, ext: &str) -> PathBuf {
+    base.join(format!(".{}.part", archive_name(tier, ext)))
 }
 
 pub(super) fn start(shared: &Path, tier: &str) -> Result<(), String> {
@@ -140,8 +140,8 @@ pub(super) fn start(shared: &Path, tier: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn archive_name(tier: &str) -> String {
-    if CLIP_EXT == "mov" {
+fn archive_name(tier: &str, ext: &str) -> String {
+    if ext == "mov" {
         format!("agentnave-video-{tier}.tar.gz")
     } else {
         format!("agentnave-video-webm-{tier}.tar.gz")
@@ -155,7 +155,7 @@ fn urls(tier: &str) -> Vec<String> {
         return crate::proxy::expand_urls(&[url]);
     }
     // The packs live on one fixed release so app releases do not have to carry them again.
-    let name = archive_name(tier);
+    let name = archive_name(tier, CLIP_EXT);
     let url = format!("https://github.com/TimWongUp/agentnave/releases/download/v1.4.0/{name}");
     crate::proxy::expand_urls(&[url])
 }
@@ -250,7 +250,7 @@ fn build_client() -> Result<reqwest::blocking::Client, String> {
 fn run(key: &Key, cancel: &Arc<AtomicBool>) -> Result<(), String> {
     let base = key.0.join("video-packs");
     fs::create_dir_all(&base).map_err(|e| e.to_string())?;
-    let part = part_path(&base, &key.1);
+    let part = part_path(&base, &key.1, CLIP_EXT);
     let mut archive = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
