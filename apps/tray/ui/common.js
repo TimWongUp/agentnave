@@ -396,7 +396,7 @@
     const [, family, version] = name.split("@");
     return href(`/character/${family}/${size}/${state}.webp?v=${version}`);
   };
-  let videoPacks = {}, videoPackKey = "";
+  let videoPacks = {}, videoPackKey = "", videoHttp = "";
   const VIDEO_PACKS_KEY = "agentnave.video-packs";
   function activeVideoPack() {
     const style = root.dataset.characterStyle || window.ANAppearance?.preferences?.().character_style || "static";
@@ -407,7 +407,9 @@
   const videoEnabled = (name) => Boolean(VIDEO[videoChar(name)] && activeVideoPack());
   const videoPackUrl = (path) => {
     const pack = activeVideoPack();
-    return pack ? href(`/art/video/${pack.tier}/${path}?v=${encodeURIComponent(pack.stamp)}`) : artUrl(`video/${path}`);
+    if (!pack) return artUrl(`video/${path}`);
+    const query = `${pack.tier}/${path}?v=${encodeURIComponent(pack.stamp)}`;
+    return videoHttp && path.endsWith(".mov") ? `${videoHttp}/${query}` : href(`/art/video/${query}`);
   };
   function syncVideoPackFigures() {
     const pack = activeVideoPack();
@@ -447,6 +449,7 @@
   const loadVideoPacks = () => fetch(href("/app/video-packs"), { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : {})).then((data) => {
       videoPacks = data?.packs || {};
+      videoHttp = typeof data?.http === "string" ? data.http : "";
       syncVideoPackFigures();
     }).catch(() => {});
   loadVideoPacks();
@@ -902,7 +905,7 @@
       }
     }
   }).observe(root, { subtree: true, childList: true, attributes: true, attributeOldValue: true,
-    attributeFilter: ["data-mood", "hidden", "inert", "class", "data-motion", "data-art-paused", "data-window-hidden"] });
+    attributeFilter: ["data-mood", "hidden", "inert", "class", "data-motion", "data-art-paused", "data-window-hidden", "data-on-battery", "data-battery-still"] });
   document.addEventListener("visibilitychange", syncAllVideos);
   window.addEventListener("agentnave:blur", syncAllVideos);
   window.addEventListener("agentnave:focus", syncAllVideos);

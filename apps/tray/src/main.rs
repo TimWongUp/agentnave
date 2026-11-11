@@ -150,6 +150,8 @@ fn main() {
     proxy::apply();
     let reader = Arc::new(Reader::new(data::data_root()));
     let builder = tauri::Builder::default()
+    #[cfg(target_os = "macos")]
+    video_packs::http::start(data::data_root());
         .plugin(tauri_plugin_single_instance::init(|app, _, _| restore(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(

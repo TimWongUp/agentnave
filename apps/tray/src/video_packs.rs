@@ -1,5 +1,7 @@
 //! Optional, validated character videos; preview writes stay outside production storage.
 mod download;
+#[cfg(target_os = "macos")]
+pub mod http;
 mod install;
 mod picker;
 #[cfg(test)]
@@ -90,7 +92,11 @@ pub fn status(shared: &Path) -> Value {
             "bytes": bytes, "source": pack.map(|(_, source)| source),
             "download": download::status(shared, tier)});
     }
-    json!({"packs": packs})
+    #[cfg(target_os = "macos")]
+    let http = http::base();
+    #[cfg(not(target_os = "macos"))]
+    let http: Option<&str> = None;
+    json!({"packs": packs, "http": http})
 }
 
 /// What a `Range` header asks for, against a file of `len` bytes.
