@@ -10,7 +10,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from agentnave import mcp_runtime as runtime
-from agentnave import views
+from agentnave import provider_health, views
 from agentnave.conversations import (
     Conversations,
 )
@@ -106,7 +106,8 @@ async def list_members(
     Missing members leave modes unrestricted; disabled orchestration supplies no defaults.
     With orchestration on, members lists discussion rows only and names no task default.
     Omitted available means usable; recent quota/auth/billing blockers also mark seats
-    unavailable during a short CLI cooldown. Unavailable seats may offer replacement parameters:
+    unavailable during a CLI and model cooldown; clear it in App or, on explicit user request,
+    with clear_provider_cooldown. Unavailable seats may offer replacement parameters:
     pass with original seat/role; switching is never automatic. Native seats/exclusions:
     see MCP instructions.
     """
@@ -128,6 +129,26 @@ async def list_members(
             supported_options="model, effort, " + runtime.PROVIDER_OPTIONS[provider],
         )
     return payload
+
+
+async def clear_provider_cooldown(
+    provider: Annotated[ProviderName, Field(description="CLI whose cooldown should be cleared.")],
+    model: Annotated[
+        str | None,
+        Field(min_length=1, description="Model to clear; omit to clear all records for this CLI."),
+    ] = None,
+    *,
+    ctx: Context[Runtime],
+) -> dict[str, bool]:
+    """Clear CLI and model cooldown only when the user explicitly requests it in this conversation,
+    for example after signing in again or adding credits.
+    """
+    root = _conversations(ctx).root
+    if not provider_health.clear(root, provider, model):
+        raise ToolError(
+            "Could not clear cooldown; check the health file or retry when it is not busy."
+        )
+    return {"cleared": True}
 
 
 def _workspace_label(item: Workspace, records: list[Record]) -> dict[str, Any]:
@@ -319,6 +340,7 @@ async def read_conversation(
 
 
 __all__ = [
+    "clear_provider_cooldown",
     "list_all",
     "list_members",
     "_workspace_label",

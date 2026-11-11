@@ -1720,6 +1720,7 @@ async def test_write_receipts_are_small_and_list_reads_old_history(
             "cancel",
             "list",
             "list_members",
+            "clear_provider_cooldown",
             "decide_answers",
             "answer_prompt",
             "handover",
@@ -2445,7 +2446,7 @@ async def test_serial_rounds_keep_a_slot_for_their_next_seat_through_review(
 async def test_readonly_members_does_not_initialize_history(data_root: Path) -> None:
     async with Client(mcp) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert len(tools) == 10 and "list_profiles" not in tools
+        assert len(tools) == 11 and "list_profiles" not in tools
         annotations = tools["list_members"].annotations
         assert annotations is not None and annotations.read_only_hint is True
         assert (await _call(client, "list_members", {}))["configured"] is False
@@ -2906,13 +2907,16 @@ async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
         assert _state(data_root, group_id)["rounds"][0]["seats"][1]["status"] == "succeeded"
         from agentnave import provider_health
 
-        provider_health.record(data_root, "claude", "quota")
+        provider_health.record(data_root, "claude", "billing")
         before = _state(data_root, group_id)
         rejected = await client.call_tool("run_round", {"group_id": group_id, "retry_seats": ["a"]})
-        assert rejected.is_error and "quota" in str(rejected.content)
+        assert rejected.is_error and "billing" in str(rejected.content)
         assert "replacement" in str(rejected.content)
         assert _state(data_root, group_id) == before
-        provider_health.clear(data_root, "claude")
+        provider_health.record(data_root, "grok", "auth")
+        cleared = await client.call_tool("clear_provider_cooldown", {"provider": "claude"})
+        assert not cleared.is_error
+        assert set(provider_health.active(data_root)) == {("grok", None)}
         retried = await _run(client, {"group_id": group_id, "retry_seats": ["a"]})
         assert retried["round_id"] == round_id and retried["round"] == 1
         assert all("output" not in run for run in _seats(retried))

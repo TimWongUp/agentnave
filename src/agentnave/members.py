@@ -953,7 +953,7 @@ def _review_status[Role: str](
     host: Host,
     installed: Callable[[str], bool],
     document: MemberFile | None,
-    active_health: dict[str, provider_health.Health],
+    active_health: dict[tuple[str, str | None], provider_health.Health],
 ) -> dict[Role, ReviewSeatStatus]:
     task = mode.members
     seats: dict[Role, ReviewSeatStatus] = {}
@@ -975,8 +975,8 @@ def _review_status[Role: str](
             reason = pool_error
         elif native:
             reason = None
-        elif seat.provider in active_health:
-            reason = provider_health.reason(seat.provider, active_health[seat.provider])
+        elif match := provider_health.matching(active_health, seat.provider, seat.model):
+            reason = provider_health.reason(seat.provider, match[1], match[0])
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
         elif mode.restricted and all(m.provider != seat.provider for m in task):
@@ -991,7 +991,7 @@ def _review_status[Role: str](
             m.provider
             for m in task
             if m.provider != seat.provider
-            and m.provider not in active_health
+            and provider_health.matching(active_health, m.provider, m.model) is None
             and m.model == seat.model
             and m.permitted
             and m.error is None
@@ -1011,7 +1011,7 @@ def _review_status[Role: str](
                     seat,
                     alternatives,
                     task,
-                    unhealthy=set(active_health),
+                    unhealthy=active_health,
                     image=role == "image-generator",
                 )
             ),
@@ -1024,11 +1024,15 @@ def _seat_replacement(
     alternatives: list[ProviderName],
     task: list[MemberStatus],
     *,
-    unhealthy: set[str],
+    unhealthy: dict[tuple[str, str | None], provider_health.Health],
     image: bool = False,
 ) -> SeatReplacement | None:
     """The same model on another CLI, else another CLI's App default model."""
-    alternatives = [provider for provider in alternatives if provider not in unhealthy]
+    alternatives = [
+        provider
+        for provider in alternatives
+        if provider_health.matching(unhealthy, provider, seat.model) is None
+    ]
     if alternatives:
         return SeatReplacement(
             provider=alternatives[0],
@@ -1045,7 +1049,7 @@ def _seat_replacement(
             and m.permitted
             and m.error is None
             and m.provider != seat.provider
-            and m.provider not in unhealthy
+            and provider_health.matching(unhealthy, m.provider, m.model) is None
         ),
         None,
     )

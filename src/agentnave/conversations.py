@@ -222,7 +222,12 @@ class Conversations(ConversationStore):
             if state.pending_review():
                 raise ValueError("answers are waiting for review; call decide_answers first")
             provider_health.check(
-                self.root, (seat.provider for seat in state.seats if seat.id in seat_ids)
+                self.root,
+                (
+                    (seat.provider, provider_health.model_option(seat.provider_options))
+                    for seat in state.seats
+                    if seat.id in seat_ids
+                ),
             )
             # A parallel round starts every seat at once; a serial one runs a seat at a time.
             self._check_capacity(len(seat_ids) if order == "parallel" else 1)
@@ -270,7 +275,12 @@ class Conversations(ConversationStore):
                 raise ValueError(self._not_yours("Group", state.manager_session))
             self._validate_retry(group_id, seat_ids)
             provider_health.check(
-                self.root, (seat.provider for seat in state.seats if seat.id in seat_ids)
+                self.root,
+                (
+                    (seat.provider, provider_health.model_option(seat.provider_options))
+                    for seat in state.seats
+                    if seat.id in seat_ids
+                ),
             )
             self._check_capacity(len(seat_ids))
             return super().retry(group_id, seat_ids)

@@ -7,7 +7,7 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   const listeners = {}, controls = new Map();
   const control = (id) => {
     if (!controls.has(id)) controls.set(id, { options: [], value: "8", classList: { toggle() {} },
-      append(node) { this.options.push(node); } });
+      append(node) { this.options.push(node); }, replaceChildren() {} });
     return controls.get(id);
   };
   const context = vm.createContext({
@@ -73,6 +73,20 @@ function advancedEditor(fetch) {
   app.run(readFileSync(`${__dirname}/../advanced.js`, "utf8"));
   return app;
 }
+
+test("cooldown clear removes only the chosen CLI from the displayed list", async () => {
+  const until = new Date(Date.now() + 60000).toISOString();
+  let providers = { claude: { models: { a: { code: "auth", until: null }, b: { code: "quota", until } } } };
+  const app = advancedEditor(async (url, options) => {
+    if (url === "/app/provider-health/clear") { const { provider, model } = JSON.parse(options.body); delete providers[provider].models[model]; }
+    return { ok: true, json: async () => ({ provider_health: providers }) };
+  });
+  await app.run("apiGetMembers()");
+  assert.equal(app.run('$("provider-health").children.length'), 2);
+  await app.run('$("provider-health").children[0].children[1].listeners.click()');
+  assert.deepEqual(Object.keys(providers.claude.models), ["b"]);
+  assert.equal(app.run('$("provider-health").children.length'), 1);
+});
 
 test("the optional image seat picks, clears, discards, saves and reloads as one flat seat", async () => {
   let saved = { version: 1, preset: "split" }, members;

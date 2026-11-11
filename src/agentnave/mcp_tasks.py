@@ -184,10 +184,6 @@ async def start_agent(
         raise ToolError(str(exc)) from exc
     provider, cwd = arguments.provider, arguments.cwd
     assert provider is not None and cwd is not None
-    try:
-        provider_health.check(_conversations(ctx).root, [provider])
-    except ValueError as exc:
-        raise ToolError(str(exc)) from exc
     role, seat, access = arguments.role, arguments.seat, arguments.access
     seat_name = seat or review_role(role)
     try:
@@ -196,6 +192,9 @@ async def start_agent(
         )
         options, defaults_applied = apply_task_defaults(
             provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS, runtime.HOST
+        )
+        provider_health.check(
+            _conversations(ctx).root, [(provider, provider_health.model_option(options))]
         )
         request = InvocationRequest(
             provider=provider,

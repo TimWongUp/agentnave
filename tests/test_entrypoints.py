@@ -29,6 +29,7 @@ EXPECTED_TOOLS = [
     "cancel",
     "list",
     "list_members",
+    "clear_provider_cooldown",
     "run_round",
     "decide_answers",
     "handover",
@@ -2159,3 +2160,31 @@ async def test_cooldown_rejects_task_and_new_meeting_before_saving(
         assert settled_retry.is_error and "only a running parallel round" in str(
             settled_retry.content
         )
+
+
+@pytest.mark.asyncio
+async def test_cooldown_only_blocks_selected_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    provider_health.record(root, "claude", "auth", "a")
+    async with Client(mcp) as client:
+        args = {
+            "provider": "claude",
+            "prompt": "finish",
+            "cwd": str(tmp_path),
+            "provider_options": {"model": "a"},
+        }
+        blocked = await client.call_tool("start_agent", args)
+        assert blocked.is_error and "model a" in str(blocked.content)
+        args["provider_options"] = {"model": "b"}
+        started = await client.call_tool("start_agent", args)
+        assert not started.is_error
+        assert ("claude", "a") in provider_health.active(root)
+        cleared = await client.call_tool(
+            "clear_provider_cooldown", {"provider": "claude", "model": "a"}
+        )
+        assert not cleared.is_error and provider_health.active(root) == {}

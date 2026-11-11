@@ -981,13 +981,18 @@ def test_cooling_clis_disable_seats_and_filter_replacements(
             }
         )
     )
+    from datetime import UTC, datetime, timedelta
+
     for provider in ("grok", "pi", "claude"):
-        provider_health.record(tmp_path, provider, "quota")
+        provider_health.record(
+            tmp_path, provider, "quota", "shared", datetime.now(UTC) + timedelta(hours=1)
+        )
     host = Host("claude")
     result = list_members(frozenset(), host)
     cooled = result.review["correctness-reviewer"]
     assert cooled.available is False and "quota" in (cooled.reason or "")
-    assert provider_health.active(tmp_path)["grok"]["until"] in (cooled.reason or "")
+    until = provider_health.active(tmp_path)[("grok", "shared")]["until"]
+    assert until is not None and until in (cooled.reason or "")
     assert cooled.alternatives == []
     assert cooled.replacement is not None and cooled.replacement.provider == "codebuddy"
     assert result.review["simplicity-reviewer"].native is True
@@ -998,13 +1003,21 @@ def test_cooling_clis_disable_seats_and_filter_replacements(
             {
                 "version": 1,
                 "preset": "split",
-                "worker": {"easy": {"provider": "grok", "model": "shared"}},
+                "worker": {
+                    "easy": {"provider": "grok", "model": "shared"},
+                    "hard": {"provider": "grok", "model": "other"},
+                },
                 "image_generation": {"provider": "grok", "model": "shared"},
             }
         )
     )
+    document = json.loads((tmp_path / "members.json").read_text())
+    document["clis"]["grok"]["models"]["other"] = {}
+    document["modes"]["task"]["grok"]["models"].append("other")
+    (tmp_path / "members.json").write_text(json.dumps(document))
     result = list_members(frozenset(), host)
     assert result.orchestration.worker["easy"].available is False
+    assert result.orchestration.worker["hard"].available is None
     image = result.orchestration.image_generation
     assert image is not None and image.available is False and image.replacement is None
     assert all(m.modes == ["discussion"] for m in result.members)

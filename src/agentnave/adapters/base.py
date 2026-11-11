@@ -105,6 +105,8 @@ class ProviderAdapter(Protocol):
         self, prepared: PreparedCommand, returncode: int, stdout: bytes, stderr: bytes
     ) -> ParsedProviderResult: ...
 
+    def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None: ...
+
     def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
 
     def event_model(self, event: dict[str, object]) -> str | None: ...
@@ -129,6 +131,9 @@ class AdapterHooks:
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         raise NotImplementedError
+
+    def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None:
+        return None
 
     def parse_prepared(
         self, prepared: PreparedCommand, returncode: int, stdout: bytes, stderr: bytes

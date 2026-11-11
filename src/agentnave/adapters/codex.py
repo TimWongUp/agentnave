@@ -24,6 +24,7 @@ from agentnave.adapters.base import (
     resolve_executable,
     restricted_options,
 )
+from agentnave.adapters.quota_reset import parse_reset
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 _DESKTOP_CODEX_PATHS = (
@@ -288,6 +289,14 @@ class CodexAdapter(AdapterHooks):
         if item_type == "reasoning":
             return ProviderActivity("lifecycle", str(event_type), "reasoning")
         return None
+
+    def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None:
+        events = parse_json_lines(stdout.decode(errors="replace"))
+        errors = [event for event in events if event.get("type") in ("turn.failed", "error")]
+        for event in reversed(errors):
+            if reset := parse_reset(json.dumps(event, ensure_ascii=False), now):
+                return reset
+        return parse_reset(stderr.decode(errors="replace"), now)
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         events = parse_json_lines(stdout.decode(errors="replace").strip())
