@@ -4,6 +4,7 @@ use tempfile::TempDir;
 
 mod reload_guidance;
 mod timeouts;
+mod tools_upgrade;
 mod versioned;
 
 fn fixture() -> (TempDir, Hosts) {

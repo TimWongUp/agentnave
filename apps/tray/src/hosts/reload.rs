@@ -63,8 +63,20 @@ impl Hosts {
         let changed_at = changed["at_ms"]
             .as_u64()
             .filter(|_| changed["token"] == token);
-        let receipts = self.receipts(host, now, changed["at_ms"].as_u64());
         let install = self.install();
+        let upgrade_at = self.tools_upgrade(host, &install);
+        let upgrade_confirmed = upgrade_at.is_some_and(|at| {
+            self.settings[host.id]["reload_tools_confirmed"].as_u64() == Some(at)
+        });
+        let proof_at = if pending && changed_at.is_none() {
+            None
+        } else {
+            (if pending { changed_at } else { None })
+                .into_iter()
+                .chain(upgrade_at.filter(|_| !upgrade_confirmed))
+                .max()
+        };
+        let receipts = self.receipts(host, now, proof_at.or(changed_at));
         let base = if pending {
             ("required", "config")
         } else if manual {
@@ -81,16 +93,31 @@ impl Hosts {
                         .all(|c| c["started_ms"].as_u64().is_some_and(|start| start > at))
                 });
             live_state(&receipts.live, &install, !pending || newly_connected, base)
-        } else if receipts.proves_reload(changed_at, &install, now) {
+        } else if receipts.proves_reload(proof_at.or(changed_at), &install, now) {
             ("current", "connection")
         } else if receipts.lingering {
             base
         } else {
-            self.idle_state(host, pending, changed)
+            self.idle_state(
+                host,
+                pending,
+                changed,
+                upgrade_at.filter(|_| !upgrade_confirmed),
+            )
         };
         let copies: Vec<_> = self
             // The last recorded change, as idle_state judges an old process by it too.
-            .reload_copies(host, reason, &receipts, &install, changed["at_ms"].as_u64())
+            .reload_copies(
+                host,
+                reason,
+                &receipts,
+                &install,
+                if reason == "tools_upgrade" {
+                    upgrade_at
+                } else {
+                    changed["at_ms"].as_u64()
+                },
+            )
             .into_iter()
             .map(processes::Copy::into_json)
             .collect();
@@ -105,7 +132,7 @@ impl Hosts {
         changed_at: Option<u64>,
     ) -> Vec<processes::Copy> {
         let mut probe = self.processes.lock().unwrap_or_else(|p| p.into_inner());
-        if reason == "host_running" {
+        if matches!(reason, "host_running" | "tools_upgrade") {
             return probe.old_copies(&self.context, host.boss, changed_at.unwrap_or(0));
         }
         let mut copies: BTreeMap<&str, processes::Copy> = BTreeMap::new();
@@ -201,6 +228,7 @@ impl Hosts {
         host: &Host,
         pending: bool,
         changed: &Value,
+        upgrade_at: Option<u64>,
     ) -> (&'static str, &'static str) {
         let process = if pending {
             self.processes
@@ -222,6 +250,8 @@ impl Hosts {
             ("required", "host_running")
         } else if pending && !matches!(process, processes::State::Stopped) {
             ("unverified", "unverified")
+        } else if !pending && upgrade_at.is_some() {
+            ("required", "tools_upgrade")
         } else {
             ("idle", "no_connection")
         }
@@ -231,6 +261,19 @@ impl Hosts {
         let mut settings = self.settings.clone();
         let mut proved = false;
         for host in self.registry() {
+            let install = self.install();
+            let upgrade_at = self.tools_upgrade(&host, &install);
+            if let Some(at) = upgrade_at
+                && self.settings[host.id]["reload_tools_confirmed"].as_u64() != Some(at)
+                && {
+                    let receipts = self.receipts(&host, SystemTime::now(), Some(at));
+                    receipts.live.is_empty()
+                        && receipts.proves_reload(Some(at), &install, SystemTime::now())
+                }
+            {
+                settings[host.id]["reload_tools_confirmed"] = json!(at);
+                proved = true;
+            }
             let Some(token) = self.reload_token(&host) else {
                 continue;
             };
@@ -249,6 +292,27 @@ impl Hosts {
         if proved && roots::save(&self.context, &settings).is_ok() {
             self.settings = settings;
         }
+    }
+    fn tools_upgrade(&self, host: &Host, install: &Install) -> Option<u64> {
+        if !crate::update::has_tool_history(&self.context.app)
+            || self
+                .registry()
+                .iter()
+                .filter(|row| row.boss == host.boss)
+                .count()
+                != 1
+        {
+            return None;
+        }
+        let processes::State::Running(started) = self
+            .processes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .state(&self.context, host.boss)
+        else {
+            return None;
+        };
+        crate::update::tool_change(&self.context.app, install.version.as_deref(), started)
     }
     fn connection_root(&self, host: &Host) -> Option<PathBuf> {
         let entry = host.read().ok()?.entry?;
