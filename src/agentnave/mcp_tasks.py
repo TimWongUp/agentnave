@@ -102,7 +102,7 @@ async def start_agent(
         Field(
             min_length=1,
             description=(
-                "Native session_id from a finished task, never invocation_id; omit for a new thread. Resume inherits provider/cwd/role/seat; explicit values win. Unknown or ambiguous history needs provider and cwd; a new role without seat drops the old seat."
+                "Native session_id from a finished task, never invocation_id; omit for a new thread. Resume inherits provider/cwd/role/seat and, without a seat model, the thread's last model/effort; explicit values win. Unknown or ambiguous history needs provider and cwd; a new role without seat drops the old seat."
             ),
         ),
     ] = None,
@@ -191,6 +191,7 @@ async def start_agent(
         options, seat_applied = apply_seat(
             role_seat(seat_name, runtime.HOST), provider, provider_options or {}
         )
+        options = arguments.apply_history(options)
         options, defaults_applied = apply_task_defaults(
             provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS, runtime.HOST
         )
@@ -238,7 +239,12 @@ async def start_agent(
     if identity := conversations.task_identity(started.invocation_id):
         payload["identity"] = identity
     message = conversations.records[started.conversation_id].state.tasks[-1]
-    warnings = model_warnings(conversations.host, message)
+    warnings = model_warnings(
+        conversations.host,
+        message,
+        conversations.records[started.conversation_id].state.manager_session,
+        conversations.model_warned,
+    )
     add_write_warning(warnings, manager, request, started.invocation_id, access)
     if warnings:
         payload["warnings"] = warnings

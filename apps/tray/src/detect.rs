@@ -295,6 +295,16 @@ fn native_model(models: &[Value], configured: Option<&str>) -> Option<String> {
                             .any(|key| model[*key].as_str().is_some_and(|v| bare(v) == bare(name)))
                     })
                 })
+                // A gateway may namespace the id it writes into the CLI's config
+                // (`codex/gpt-6.1-terra`) while the catalog it supplies lists the bare id.
+                .or_else(|| {
+                    let tail = bare(name.rsplit_once('/')?.1);
+                    models.iter().find(|model| {
+                        ["id", "resolved"]
+                            .iter()
+                            .any(|key| model[*key].as_str().is_some_and(|v| bare(v) == tail))
+                    })
+                })
                 .and_then(id)
                 .unwrap_or_else(|| name.to_owned()),
         ),
@@ -864,7 +874,14 @@ fn listed_models(
         // Pi answers over RPC with each model's thinking levels; the listing has no levels.
         "pi" => pi_rpc_models(path)
             .map(|models| ("rpc", models))
-            .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out)))),
+            .or_else(|_| run(path, &["--list-models"]).map(|out| ("command", pi_models(&out))))
+            .and_then(|(source, models)| {
+                if models.is_empty() {
+                    Err("Pi 没有列出可用模型，请先运行 pi /login 或配置 auth.json".to_owned())
+                } else {
+                    Ok((source, models))
+                }
+            }),
         "codebuddy" => run(path, &["--help"]).map(|out| {
             let mut models = codebuddy_models(&out);
             let reasoning = codebuddy_reasoning();

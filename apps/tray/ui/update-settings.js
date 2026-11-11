@@ -3,6 +3,9 @@
   const S = AN.settings ||= {};
   const { $, L, apiCheckUpdate, apiGetStatus, bindAdvanced, showNotice } = S;
   let appStatus = null;
+  // Every status that lands takes the next number; a read that started before it and ends after is stale and dropped.
+  let statusSeq = 0;
+  const applyStatus = (status) => { appStatus = status; statusSeq++; };
   let installedService = null;
   let statusPollTimer = null;
   function isVersionOlder(a, b) {
@@ -144,15 +147,21 @@
   // The update dialog reports each status it reads; skip the ones this page sent itself.
   window.addEventListener("agentnave:status", ({ detail }) => {
     if (detail === appStatus) return;
-    appStatus = detail;
+    applyStatus(detail);
     renderUpdates();
   });
   // A hidden window skips the update poll; catch up as soon as it is shown again.
-  document.addEventListener("visibilitychange", () => document.hidden || !statusPollTimer || loadStatus());
+  const isHidden = () => (AN.isHidden ? AN.isHidden() : document.hidden);
+  (AN.onVisibility || ((fn) => document.addEventListener("visibilitychange", fn)))(
+    () => isHidden() || !statusPollTimer || loadStatus(),
+  );
 
   async function loadStatus() {
     try {
-      appStatus = await apiGetStatus();
+      const seq = statusSeq;
+      const status = await apiGetStatus();
+      if (seq !== statusSeq) return;
+      applyStatus(status);
       renderUpdates();
       window.dispatchEvent(new CustomEvent("agentnave:status", { detail: appStatus }));
     } catch (err) {
@@ -178,17 +187,17 @@
     const previous = appStatus;
     try {
       // The server refuses updates while it checks; show that instead of a live button.
-      appStatus = { ...appStatus, update: { state: "checking", version: null, error: null } };
+      applyStatus({ ...appStatus, update: { state: "checking", version: null, error: null } });
       renderUpdates();
       if (!quiet) showNotice(L("正在检查更新…", "Checking for updates…"));
-      appStatus = await apiCheckUpdate(quiet);
+      applyStatus(await apiCheckUpdate(quiet));
       const state = appStatus?.update?.state;
       if (!quiet || state === "available") showNotice(
         state === "failed" ? L("检查更新失败", "Update check failed") : state === "available" ? L(`发现新版 v${appStatus.update.version}`, `New version v${appStatus.update.version}`) : state === "none" ? L("已是最新版本", "Up to date") : L("检查更新完成", "Update check complete"),
         state === "failed",
       );
     } catch (err) {
-      appStatus = previous;
+      applyStatus(previous);
       if (quiet) await loadStatus();
       else showNotice(L(`检查更新失败: ${err.message}`, `Update check failed: ${err.message}`), true);
     } finally {
@@ -253,7 +262,7 @@
   function updateStatusPolling(isUpdating) {
     // Manage polling
     if (isUpdating && !statusPollTimer) {
-      statusPollTimer = setInterval(() => document.hidden || loadStatus(), 2000);
+      statusPollTimer = setInterval(() => isHidden() || loadStatus(), 2000);
     } else if (!isUpdating && statusPollTimer) {
       clearInterval(statusPollTimer);
       statusPollTimer = null;

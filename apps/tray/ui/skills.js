@@ -5,7 +5,9 @@
 // /app/hosts/skill when 保存设置 is pressed; until then a picked switch only sits in S.want.
 // The review gate's seats are drawn by advanced.js (renderReviewSeats) into the card built here.
 const { h, $, load, post, L } = AN;
-const S = { catalog: null, hosts: null, open: new Set(), want: new Map() };
+const S = { catalog: null, hosts: null, open: new Set(), want: new Map(), saving: false };
+// A save starts and ends a new generation, so a refresh that began before either never overwrites what the save returned.
+let generation = 0;
 
 // Settings each Skill adds under its own row; the review gate's seats are drawn by advanced.js.
 const SETTINGS = {
@@ -100,6 +102,19 @@ function dropStale() {
 // Returns what failed; a failed switch stays picked for another try.
 async function save() {
   const failures = [];
+  generation++;
+  S.saving = true;
+  try {
+    await saveWanted(failures);
+  } finally {
+    S.saving = false;
+    generation++;
+  }
+  render();
+  return failures;
+}
+
+async function saveWanted(failures) {
   for (const [key, want] of [...S.want]) {
     try {
       const result = await post("/app/hosts/skill", { id: want.host.id, skill: want.skill, enabled: want.enabled });
@@ -110,13 +125,13 @@ async function save() {
       failures.push(L(`${want.host.label}：${e.message || "操作没有完成，请刷新核对"}`, `${want.host.label}: ${e.message || "Operation did not complete; refresh to check"}`));
     }
   }
-  render();
-  return failures;
 }
 
 async function refresh() {
+  const started = generation;
   try {
     const [catalog, hosts] = await Promise.all([load("/app/skills"), load("/app/hosts")]);
+    if (started !== generation || S.saving) return;
     S.catalog = catalog;
     S.hosts = hosts.hosts;
     dropStale();

@@ -525,9 +525,23 @@
   const IDLE_RELOAD_MS = 15000;
   window.addEventListener("focus", () => { loadedAt = -Infinity; });
   window.addEventListener("agentnave:focus", () => { loadedAt = -Infinity; });
-  function ingest(chat) {
+  // The office polls the whole workspace for its own view; a message it brought in is not fetched again by `heed`
+  // while the office stays visible and keeps bringing them (its blurred polling is the slowest, 5 s).
+  const OFFICE_FEEDS_FOR_MS = 8000;
+  const fed = new Map();
+  const officeVisible = () => !document.hidden && document.documentElement.dataset?.windowHidden !== "true";
+  const officeFeeds = session => !session.room && officeVisible() && Date.now() - (fed.get(session.group) ?? -Infinity) < OFFICE_FEEDS_FOR_MS;
+  function ingest(chat, { whole = false } = {}) {
     group = chat.group;
     expire();
+    if (whole) {
+      // Before the first read a poll's messages are dropped, so they cannot stand in for `heed` yet.
+      if (!follow || follow.loaded || follow.group !== chat.group) fed.set(chat.group, Date.now());
+      // After the office has drawn this poll: taking it redraws through `agentnave:voice`.
+      queueMicrotask(() => {
+        if (follow && follow.loaded && follow.group === chat.group && !follow.room) takeFollowed(chat, follow);
+      });
+    }
     queueMicrotask(drain);
     if (current || queue.length || follow || Date.now() - loadedAt >= IDLE_RELOAD_MS)
       void reload().catch(failure => error(failure.message, "load"));
@@ -571,8 +585,10 @@
     // Asking to listen is asking to speak again after playback stopped on errors.
     halted = false; failures = 0;
     unlisten(false);
+    // An office poll from before this session fed nobody; `heed` reads until the office feeds it again.
+    fed.delete(target.group);
     if (!current && !queue.length) started = [];
-    const session = follow = { group: target.group, room: target.room || null, desk: target.desk || null, shown: target.desk ? target.shown : null, title: "", expires_at: Date.now() + (config.listen_minutes ?? 60) * 60000, seen: new Map(), controller: new AbortController(), timer: null, expiryTimer: null, backlogTimer: null, overloaded: false };
+    const session = follow = { group: target.group, room: target.room || null, desk: target.desk || null, shown: target.desk ? target.shown : null, title: "", expires_at: Date.now() + (config.listen_minutes ?? 60) * 60000, loaded: false, seen: new Map(), controller: new AbortController(), timer: null, expiryTimer: null, backlogTimer: null, overloaded: false };
     batch = null; lastAlbum = null;
     session.expiryTimer = setTimeout(expire, session.expires_at - Date.now());
     changed();
@@ -582,6 +598,7 @@
     if (follow !== session) return;
     session.title = followTitle(chat, session);
     collectFollowed(chat, session, true);
+    session.loaded = true;
     arrange(); changed(); void drain();
     session.timer = setTimeout(() => void heed(session), FOLLOW_EVERY);
   }
@@ -602,20 +619,21 @@
     expire();
     if (follow !== session) return;
     let chat = null;
-    try { chat = await loadFollowed(session); } catch (failure) {
+    try { chat = officeFeeds(session) ? null : await loadFollowed(session); } catch (failure) {
       // The workspace or meeting is gone: nothing more will be said there.
       if (follow === session && failure.status === 404) { unlisten(); return; }
     }
     expire();
     if (follow !== session) return;
-    if (chat) {
-      collectFollowed(chat, session);
-      arrange();
-      if (current) prefetch();
-      changed();
-      void drain();
-    }
+    if (chat) takeFollowed(chat, session);
     session.timer = setTimeout(() => void heed(session), FOLLOW_EVERY);
+  }
+  function takeFollowed(chat, session) {
+    collectFollowed(chat, session);
+    arrange();
+    if (current) prefetch();
+    changed();
+    void drain();
   }
   // Expiry leaves only the clip already speaking; sleeping past the deadline cannot extend it.
   function expire() {
@@ -820,13 +838,13 @@
   async function flip(field) {
     if (!config) return;
     const on = config[field] === true;
-    publish();
-    if (on) dropPlaylist(true);
     try {
       const response = await fetch("/app/voice", { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body: JSON.stringify({ ...config, [field]: !on }) });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || L("无法保存语音播报设置", "Failed to save voice settings"));
+      if (!response.ok || !data || data.error) throw new Error(data?.error || L("无法保存语音播报设置", "Failed to save voice settings"));
+      // Only a saved switch changes what is playing; a failed one leaves the queue and the setting as they were.
       config = data;
+      if (on) dropPlaylist(true);
     } catch (failure) { error(failure.message, "save"); }
     finally { changed(); }
   }

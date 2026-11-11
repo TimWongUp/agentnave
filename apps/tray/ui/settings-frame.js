@@ -31,6 +31,8 @@ if (window.parent !== window && new URLSearchParams(location.search).get("embedd
     if (data.action === "section") section(data.hash);
     else if (data.action === "visible") {
       document.documentElement.dataset.artPaused = String(!data.visible);
+      document.documentElement.dataset.windowHidden = String(!data.visible);
+      window.dispatchEvent(new Event("agentnave:visibility"));
       window.dispatchEvent(new Event(data.visible ? "focus" : "agentnave:settings-hidden"));
     }
     else if (data.action === "preferences") {
@@ -38,9 +40,18 @@ if (window.parent !== window && new URLSearchParams(location.search).get("embedd
       window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail: data.general }));
       receiving = false;
     }
+    else if (data.action === "model-names") {
+      receiving = true;
+      AN.setFullModelNames(data.full === true);
+      receiving = false;
+    }
   });
   window.addEventListener("agentnave:preferences", event => {
     if (!receiving) send({ action: "preferences", general: event.detail });
+  });
+  // The choice also travels by message, so the office needs no working storage event to follow it.
+  window.addEventListener("agentnave:model-names", event => {
+    if (!receiving) send({ action: "model-names", full: event.detail.full });
   });
   window.addEventListener("pagehide", () => send({ action: "loading" }));
   window.addEventListener("DOMContentLoaded", () => {

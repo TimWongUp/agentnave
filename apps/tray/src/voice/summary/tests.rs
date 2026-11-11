@@ -585,11 +585,6 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
             "我已经把这部分整理好了，请大家看看。".repeat(10),
         ),
     ] {
-        cache_opening_for(
-            directory.path(),
-            &text,
-            voice.as_str().unwrap_or("voice-default"),
-        );
         let mut payload = json!({
             "family":family,
             "text":text,
@@ -600,8 +595,8 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
         if let Some(voice) = voice.as_str() {
             payload["voice"] = json!(voice);
         }
-        let response = speak(directory.path(), &payload).unwrap();
-        assert!(response.notice.unwrap().contains("500"));
+        let failed = error(speak(directory.path(), &payload));
+        assert!(failed.contains("摘要失败") && failed.contains("500"));
     }
     let requests = server.finish();
     // Both speakers' summaries are one conversation, so the endpoint can reuse its prompt cache.
@@ -653,20 +648,8 @@ fn boss_and_member_prompts_only_change_summary_speech_style() {
     }
 }
 
-/// The audio a failed summary falls back to, so a test never reaches a real voice service.
-fn cache_opening(root: &Path, raw: &str) {
-    cache_opening_for(root, raw, "voice-a");
-}
-
-fn cache_opening_for(root: &Path, raw: &str, voice: &str) {
-    let settings = storage::read_settings(root).unwrap();
-    let opening = text::excerpt(&text::clean(raw, true));
-    let key = super::super::audio_key(&settings, "elevenlabs", voice, &opening);
-    storage::cache(root, &key, b"opening", "mp3").unwrap();
-}
-
 #[test]
-fn every_message_is_summarized_and_a_failed_summary_reads_the_opening() {
+fn every_message_is_summarized_and_a_failed_summary_stops_with_error() {
     let directory = tempfile::tempdir().unwrap();
     let mut settings = json!({
         "enabled":true,
@@ -700,16 +683,20 @@ fn every_message_is_summarized_and_a_failed_summary_reads_the_opening() {
         &json!({"engine":"elevenlabs","key":"fake-tts-key"}),
     )
     .unwrap();
-    // Even a short message goes to the summary model.
+    // Even a short message goes to the summary model, and a failed summary speaks nothing.
     let raw = "这是一句短话。";
-    cache_opening(directory.path(), raw);
-    let failed = speak(
+    let failed = super::super::request(
         directory.path(),
-        &json!({"family":null,"text":raw,"full":false,"voice":"voice-a"}),
-    )
-    .unwrap();
-    assert_eq!(failed.body, b"opening");
-    assert!(failed.notice.unwrap().contains("500"));
+        "/app/voice/speak",
+        "POST",
+        Some("1"),
+        &serde_json::to_vec(&json!({"family":null,"text":raw,"full":false,"voice":"voice-a"}))
+            .unwrap(),
+    );
+    assert_eq!(failed.status, 400);
+    let body: Value = serde_json::from_slice(&failed.body).unwrap();
+    let message = body["error"].as_str().unwrap();
+    assert!(message.contains("摘要失败") && message.contains("500"));
     let requests = server.finish();
     assert_eq!(requests.len(), 2);
     assert!(requests[0].path.ends_with("/models"));

@@ -252,7 +252,7 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
 .member-option { display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
 .member-option:has(input:disabled) { cursor: default; }
 .member-option-id { overflow-wrap: anywhere; }
-.member-picker-actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.member-picker-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .member-picker-actions button { font: inherit; }
 .member-card > .disable-confirm { margin: 0 -18px; border-top: 1px solid var(--line); }
 @media (max-width: 1000px) {

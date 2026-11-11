@@ -395,6 +395,16 @@ fn a_missing_document_stays_missing_and_confirms_no_cli() {
     assert_eq!(document["modes"], json!({"task": {}, "discussion": {}}));
     assert_eq!(error, Value::Null);
     assert!(!root.join(FILE).exists());
+    let keys = permission_keys();
+    assert_eq!(
+        keys["codex"],
+        json!([
+            "approve_for_me",
+            "dangerously_bypass_approvals_and_sandbox",
+            "sandbox"
+        ])
+    );
+    assert_eq!(keys["pi"], json!([]));
 }
 
 /// The samples the server checks too (tests/test_members.py): what the App saves, the server

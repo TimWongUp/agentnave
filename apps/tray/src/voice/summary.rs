@@ -131,13 +131,18 @@ pub(super) struct SummaryModel {
     pub reasoning_levels: Vec<String>,
 }
 
-fn summary_client() -> Result<reqwest::blocking::Client, String> {
+static SUMMARY_CLIENT: LazyLock<Result<reqwest::blocking::Client, String>> = LazyLock::new(|| {
     initialize_tls();
     reqwest::blocking::Client::builder()
         .timeout(TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "无法创建摘要网络连接".into())
+});
+
+/// One shared client, so a conversation's summaries reuse the same connections.
+fn summary_client() -> Result<reqwest::blocking::Client, String> {
+    SUMMARY_CLIENT.clone()
 }
 
 fn request(mut request: RequestBuilder, key: &str, base: &str) -> RequestBuilder {

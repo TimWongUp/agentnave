@@ -65,6 +65,45 @@ fn quicktime_dimensions_handle_versions_atom_sizes_and_truncation() {
 }
 
 #[test]
+fn clips_stream_only_the_requested_range_from_the_file() {
+    use std::io::Read;
+
+    if crate::PREVIEW {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("video-packs/272");
+    pack(&dir, "272");
+    fs::write(dir.join("stamp"), "1").unwrap();
+    let bytes: Vec<u8> = (0..100).collect();
+    fs::write(dir.join("codex/idle.mov"), &bytes).unwrap();
+
+    let part = stream_asset(root.path(), "272/codex/idle.mov", Some("bytes=10-19")).unwrap();
+    assert_eq!((part.status, part.content_length), (206, 10));
+    assert_eq!(part.content_type, "video/quicktime");
+    assert_eq!(part.cache_control, "no-store");
+    assert_eq!(
+        part.headers
+            .iter()
+            .find(|(name, _)| *name == "Content-Range")
+            .map(|(_, value)| value.as_str()),
+        Some("bytes 10-19/100")
+    );
+    let (file, length) = part.file.unwrap();
+    let mut body = Vec::new();
+    file.take(length).read_to_end(&mut body).unwrap();
+    assert_eq!(body, bytes[10..=19]);
+
+    let refused = stream_asset(root.path(), "272/codex/idle.mov", Some("bytes=100-")).unwrap();
+    assert_eq!((refused.status, refused.content_length), (416, 0));
+    assert!(refused.file.is_none());
+    assert!(
+        stream_asset(root.path(), "272/codex/unknown.mov", None).is_none(),
+        "unlisted clips are not served"
+    );
+}
+
+#[test]
 fn import_validates_all_files_before_replacing_pack() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("chosen/wrapper");

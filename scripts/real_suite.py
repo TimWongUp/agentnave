@@ -39,7 +39,7 @@ MODELS: dict[str, str] = {
     "codebuddy": "glm-5.3-flash",
     "grok": "grok-4.7-build-fast",
     "antigravity": "gemini-3.8-flash-low",
-    "pi": "opencode-go/deepseek-v4-flash",
+    "pi": "opencode-go/deepseek-v4.1-flash",
     "deepseek": "deepseek-flash",
 }
 # Headless dsh ignores the app's saved sign-in unless asked; this restores auth, not permissions.
@@ -531,12 +531,13 @@ class Suite:
                 )
                 for provider in self.task_providers
             ]
-            if cycle % 2 == 0 and len(self.providers) >= 2:
-                steps.append(self.guarded("soak_round", "group", self._parallel_round()))
-            else:
+            run_round = cycle % 2 == 0 and len(self.providers) >= 2
+            if not run_round:
                 provider = random.choice(self.task_providers)
                 steps.append(self.guarded("soak_cancel", provider, self.cancel(provider)))
             await asyncio.gather(*steps)
+            if run_round:
+                await self.guarded("soak_round", "group", self._parallel_round())
             self.sample_tree()
             await self.guarded("soak_idle", "-", self.idle())
 

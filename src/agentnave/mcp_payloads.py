@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel
 
 from agentnave.members import MemberList, ProviderName
-from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import PromptPayload
 from agentnave.store import Unavailable
 
@@ -28,6 +28,10 @@ class InvocationErrorPayload(TypedDict):
     message: str
 
 
+# Replies carry the projected identity: handle and model_source only (see mcp_projection).
+type ReplyIdentity = Mapping[str, object]
+
+
 class ActivityPayload(TypedDict):
     kind: str
     state: NotRequired[str]
@@ -36,7 +40,7 @@ class ActivityPayload(TypedDict):
 
 
 class InvocationPayload(TypedDict):
-    identity: NotRequired[MemberIdentity]
+    identity: NotRequired[ReplyIdentity]
     invocation_id: str
     status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
     reason: Literal["started", "wait_elapsed", "execution_blocked", "prompt_pending", "finished"]
@@ -93,7 +97,7 @@ class InvocationListPayload(TypedDict):
 
 
 class GroupSeatPayload(TypedDict):
-    identity: NotRequired[MemberIdentity]
+    identity: NotRequired[ReplyIdentity]
     id: str
     provider: str
     cwd: str
@@ -105,7 +109,7 @@ class GroupSeatPayload(TypedDict):
 
 
 class SeatRunPayload(TypedDict):
-    identity: NotRequired[MemberIdentity]
+    identity: NotRequired[ReplyIdentity]
     seat_id: str
     status: Literal[
         "pending",
@@ -130,7 +134,7 @@ class SeatRunPayload(TypedDict):
 
 
 class CommittedEntryPayload(TypedDict):
-    identity: NotRequired[MemberIdentity]
+    identity: NotRequired[ReplyIdentity]
     message_id: str
     kind: Literal["task", "answer", "absent", "forward", "host"]
     round: int

@@ -840,7 +840,8 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
         assert [task["status"] for task in tasks] == ["succeeded", "succeeded"]
         assert [task["manager_model"] for task in tasks] == ["gpt-6", "claude-opus-5"]
         assert tasks[0]["model"] == "test-model"
-        assert [task["effort"] for task in tasks] == ["high", None]
+        # The resumed thread keeps the model and effort it was started with.
+        assert [task["effort"] for task in tasks] == ["high", "high"]
         sleeping = await _call(
             client,
             "start_agent",
@@ -3514,25 +3515,23 @@ async def test_private_identity_receipts_live_history_and_native_alias_agree(
                 "manager_session_id": "names",
             },
         )
-        start_name = _data(started["identity"])
-        assert str(start_name["key"]).startswith(f"task:{started['conversation_id']}:")
-        assert start_name["model_source"] == "requested"
+        # Replies carry only what the boss cites: the handle and where its model came from.
+        assert _data(started["identity"]) == {
+            "handle": "@declared/model·Claude Code·实现",
+            "model_source": "requested",
+        }
         ended = await _wait_task(client, started["invocation_id"])
         end_name = _data(ended["identity"])
-        assert (
-            str(end_name["key"]).startswith("thread:")
-            and end_name["ordinal"] == start_name["ordinal"]
-        )
-        assert end_name["model"] == "claude-reported-model" and end_name["model_source"] == "native"
+        assert end_name == {
+            "handle": "@claude-reported-model·Claude Code·实现",
+            "model_source": "native",
+        }
         history = await _call(
             client, "read_conversation", {"conversation_id": started["conversation_id"]}
         )
         saved = _views(data_root, started["conversation_id"])["director"]["tasks"][0]
-        assert (
-            _data(cast(list[object], history["tasks"])[0])["identity"]
-            == end_name
-            == saved["identity"]
-        )
+        assert _data(cast(list[object], history["tasks"])[0])["identity"] == end_name
+        assert end_name.items() <= saved["identity"].items()
         second = await _call(
             client,
             "start_agent",
@@ -3562,13 +3561,17 @@ async def test_private_identity_receipts_live_history_and_native_alias_agree(
         assert live_identity["model"] == "claude-reported-model"
         assert live_identity["handle"] == "@claude-reported-model·Claude Code·实现 #2"
         polled = await _call(client, "wait", {"ids": [second["invocation_id"]], "wait_seconds": 0})
-        assert cast(list[dict[str, Any]], polled["updates"])[0]["identity"] == live_identity
+        assert (
+            cast(list[dict[str, Any]], polled["updates"])[0]["identity"].items()
+            <= live_identity.items()
+        )
         first_now = _views(data_root, started["conversation_id"])["director"]["tasks"][0][
             "identity"
         ]
         assert first_now["handle"] == "@claude-reported-model·Claude Code·实现 #1"
         second_ended = await _wait_task(client, second["invocation_id"])
-        assert _data(second_ended["identity"])["ordinal"] == live_identity["ordinal"] == 2
+        assert _data(second_ended["identity"])["handle"] == live_identity["handle"]
+        assert live_identity["ordinal"] == 2
         target = await _call(
             client,
             "start_agent",

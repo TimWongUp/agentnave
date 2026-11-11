@@ -7,7 +7,7 @@
 - `cwd` 为候选所在仓库根目录；head、base 的完整 SHA 和 diff 命令 `git diff <base>...<head>`。
 - 本工位的失败假设和证据边界；超出边界只在影响这些假设时提及，`correctness-reviewer` 不受此限。
 - 可用的规格、验收标准、ADR、Issue 或 PR 绝对路径／URL；CLI 原生加载项目规则，需要补读局部规则时点名。
-- 按下方格式返回，并按 `agentnave-manager` 的「回复内容」写明内容边界。
+- 按下方格式返回，并按 `agentnave-manager`「目录与交接」里「返回」的写法写明内容边界。
 
 复核时续接同一工位，只补原 finding、新 head 和整改证据。
 

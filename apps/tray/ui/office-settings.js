@@ -89,6 +89,10 @@
       receiving = true;
       window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail: data.general }));
       receiving = false;
+    } else if (data.action === "model-names") {
+      receiving = true;
+      AN.setFullModelNames(data.full === true);
+      receiving = false;
     }
   });
   document.addEventListener("visibilitychange", syncVisible);
@@ -97,6 +101,9 @@
   }
   window.addEventListener("agentnave:preferences", event => {
     if (!receiving) send({ action: "preferences", general: event.detail });
+  });
+  window.addEventListener("agentnave:model-names", event => {
+    if (!receiving) send({ action: "model-names", full: event.detail.full });
   });
   AN.officeSettings = { open, close };
   AN.navigate = navigate;

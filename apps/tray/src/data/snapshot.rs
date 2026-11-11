@@ -39,6 +39,11 @@ impl Overview {
                 .count(),
         }
     }
+
+    /// Whether a zero running count may simply reflect an unreadable database or view row.
+    pub fn running_uncertain(&self) -> bool {
+        self.scan_error.is_some() || !self.unreadable.is_empty()
+    }
 }
 
 pub(crate) struct Snapshot {
