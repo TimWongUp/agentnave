@@ -132,7 +132,14 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         meetings.contains("boss 可以开 AgentNave 会议室")
             && !meetings.contains("只在用户要求时开会")
     );
-    assert!(text.contains(LEAD_ASKED) && !text.contains(LEAD_ALWAYS));
+    let lead = &catalog::catalog()["switches"]["lead_only"];
+    let lead_asked = lead["when_false"].as_str().unwrap();
+    let lead_always = lead["when_true"].as_str().unwrap();
+    let meetings_head = catalog::section("meetings_only_head");
+    let meetings_tail = catalog::section("meetings_only_tail");
+    let split_meetings_asked = catalog::section("meetings_when_asked");
+    let split_meetings_own = catalog::section("meetings_on_tradeoffs");
+    assert!(text.contains(lead_asked) && !text.contains(lead_always));
     let parallel = text_of(&json!({"preset": "parallel"}), "parallel").unwrap();
     assert!(parallel.contains("boss 可以开 AgentNave 会议室"));
     let quiet = json!({"preset": "parallel", "parallel_options": {"meetings": false}});
@@ -143,7 +150,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     );
     for mode in ["split", "parallel"] {
         let lead = text_of(&json!({"preset": mode, "lead_only": true}), mode).unwrap();
-        assert!(lead.contains(LEAD_ALWAYS) && !lead.contains(LEAD_ASKED));
+        assert!(lead.contains(lead_always) && !lead.contains(lead_asked));
     }
     let meetings_only_doc = json!({
         "preset": "meetings",
@@ -151,7 +158,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         "enabled_roles": ["explorer", "worker", "worker_writing"],
         "image_generation": {"provider": "codex", "model": "chat"}
     });
-    let plain_meetings = format!("{MEETINGS_HEAD}{MEETINGS_TAIL}");
+    let plain_meetings = format!("{meetings_head}{meetings_tail}");
     let meetings_only = text_of(&meetings_only_doc, "meetings").unwrap();
     assert_eq!(meetings_only, plain_meetings);
     assert_eq!(
@@ -162,7 +169,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     assert!(!meetings_only.contains("explorer-easy"));
     assert!(!meetings_only.contains("worker-writing-easy"));
     assert!(!meetings_only.contains("image-generator"));
-    assert!(!meetings_only.contains(LEAD_ASKED) && !meetings_only.contains(LEAD_ALWAYS));
+    assert!(!meetings_only.contains(lead_asked) && !meetings_only.contains(lead_always));
     for mode in ["meetings", "split", "parallel"] {
         assert!(
             !text_of(&json!({"preset": mode}), mode)
@@ -186,15 +193,15 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     });
     assert_eq!(
         text_of(&doc_partial, "meetings").unwrap(),
-        format!("{MEETINGS_HEAD}{partial_seats}{MEETINGS_TAIL}")
+        format!("{meetings_head}{partial_seats}{meetings_tail}")
     );
     assert!(text_of(&doc_partial, "split").unwrap().contains(&format!(
-        "{SPLIT_MEETINGS_ASKED}{partial_seats}\n- 通用探索"
+        "{split_meetings_asked}{partial_seats}\n- 通用探索"
     )));
     assert!(
         text_of(&doc_partial, "parallel")
             .unwrap()
-            .contains(&format!("{SPLIT_MEETINGS_OWN}{partial_seats}\n- 通用探索"))
+            .contains(&format!("{split_meetings_own}{partial_seats}\n- 通用探索"))
     );
     assert!(
         !text_of(&doc_partial, "custom")
@@ -347,11 +354,13 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
 
     // Grok reads Claude's file, so it runs on the first app's mode rather than a second block.
+    let shared = catalog::section("shared");
+    let parallel = catalog::section("parallel_writes");
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
-    assert!(claude.contains(SHARED) && !claude.contains(PARALLEL));
+    assert!(claude.contains(shared) && !claude.contains(parallel));
     assert!(!h.join(".grok/AGENTS.md").exists());
     let codex = std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap();
-    assert!(codex.contains("我的规则") && !codex.contains(SHARED));
+    assert!(codex.contains("我的规则") && !codex.contains(shared));
     // ZCode has no mode of its own and follows the default.
     assert!(!h.join(".zcode/AGENTS.md").exists());
 
@@ -419,7 +428,7 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     let document = json!({"preset": "off", "apps": {"grok": "split"}});
     assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
-    assert!(claude.contains(SHARED));
+    assert!(claude.contains(shared));
 }
 
 #[test]
@@ -576,11 +585,60 @@ fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
 
 #[test]
 fn custom_copies_learn_that_no_worktree_means_serial_writes() {
+    let shared = catalog::section("shared");
+    let parallel = catalog::section("parallel_writes");
     let old = "前提是各单元互不依赖、各用独立 worktree，做不到就串行。\n计划确认后，互不依赖的写入步骤并行派给多个可写工位，boss 合入当前分支。";
     let migrated = roles::migrate_legacy(old);
     assert!(migrated.contains("项目规定不建 worktree（如要求直接在 main 修改）时也算做不到"));
     assert!(migrated.contains("各用独立 worktree 并行派给多个可写工位"));
     assert_eq!(roles::migrate_legacy(&migrated), migrated);
-    assert_eq!(roles::migrate_legacy(SHARED), SHARED);
-    assert_eq!(roles::migrate_legacy(PARALLEL), PARALLEL);
+    assert_eq!(roles::migrate_legacy(shared), shared);
+    assert_eq!(roles::migrate_legacy(parallel), parallel);
+
+    let rules = catalog::catalog();
+    assert_eq!(
+        rules
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "enabled_roles",
+            "meeting_defaults",
+            "order",
+            "sections",
+            "switches"
+        ]
+    );
+    assert_eq!(
+        rules["order"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["meetings", "parallel", "split"]
+    );
+    let lead = &rules["switches"]["lead_only"];
+    assert!(
+        catalog::section(lead["replaces_in"].as_str().unwrap())
+            .contains(lead["when_false"].as_str().unwrap())
+    );
+    // The settings page keeps its own copy in `PROVIDER_NAMES`; the two must not drift.
+    let page = include_str!("../../ui/settings-state.js");
+    let (_, rest) = page.split_once("const PROVIDER_NAMES = {").expect("table");
+    let (body, _) = rest.split_once("};").expect("end of table");
+    let shown: Vec<(&str, &str)> = body
+        .lines()
+        .filter_map(|line| line.trim().trim_end_matches(',').split_once(':'))
+        .map(|(id, name)| (id.trim(), name.trim().trim_matches('"')))
+        .collect();
+    assert_eq!(shown.len(), crate::providers::PROVIDERS.len());
+    for (provider, name) in shown {
+        assert_eq!(
+            rules["meeting_defaults"]["provider_names"][provider].as_str(),
+            Some(name)
+        );
+    }
 }

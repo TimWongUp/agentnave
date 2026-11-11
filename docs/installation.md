@@ -230,7 +230,7 @@ format; register it with the official CLI command below instead of copying this 
 
 一份 MCP 配置只占一张接入卡；CLI 与桌面端都被发现时，卡片列出两个客户端，配置目录不同才分卡。安装发现不证明客户端已读取配置；“已接入”表示配置中有 AgentNave 条目，实际加载另看连接状态。连接回执按配置行归属；旧回执没有行 ID 时，只有该 boss 仅有一行才采信。Windows 的 Store 包和常见安装目录、Linux 的已知软件包路径用于补足桌面端发现，未识别的安装可用宿主原生 MCP 设置核对。WSL 是独立的运行与配置环境，应在对应环境接入。
 
-更新后宿主卡片只在需要操作时提示“需要重新加载”，没有提示就无需操作：界面更新无需重启宿主。App 每次启动都把服务对齐到配套版本，新版本装进独立目录，宿主重连 AgentNave MCP 或新开会话后才使用它；连接仍在用旧版本时卡片立即提示重连（重连会结束该连接上运行中的任务），必要时才完整退出并重新打开宿主。不装 App、用 `uv tool install --force` 原地升级时，中继会在空闲时自动换用新服务。Skill 更新不提示重新加载，Agent 使用时会读取最新文件；接入配置变化后，只有变化之前就已在运行的连接会提示，重新打开宿主或新开会话后自动消除；当前没有活跃连接时不提示，下次连接自然使用新配置。不报告接口的旧中继无法自动检测，可在操作后手动确认；手动确认不会覆盖仍未同步的真实连接。
+更新后宿主卡片只在需要操作时提示“需要重新加载”，没有提示就无需操作：界面更新无需重启宿主。App 每次启动都把服务对齐到配套版本，新版本装进独立目录，宿主重连 AgentNave MCP 或新开会话后才使用它；连接仍在用旧版本时卡片立即提示重连（重连会结束该连接上运行中的任务），必要时才完整退出并重新打开宿主。Skill 更新不提示重新加载，Agent 使用时会读取最新文件；接入配置变化后，只有变化之前就已在运行的连接会提示，重新打开宿主或新开会话后自动消除；当前没有活跃连接时不提示，下次连接自然使用新配置。不报告接口的旧中继无法自动检测，可在操作后手动确认；手动确认不会覆盖仍未同步的真实连接。
 
 登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析（同时读取代理与 uv 镜像环境变量），绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录及探测到的代理／uv 镜像变量一起显式传给 uv；更新检查与下载同样优先使用探测到的代理。App 内置同版本预构建 wheel，安装或升级本机服务（含从已下载的更新包中提取目标版本 wheel）直接由本地 wheel 安装，在已有旧版服务且联网解析失败时自动尝试 `--offline` 复用本机缓存。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测。
 
@@ -580,7 +580,9 @@ cleanup deletes whole workspaces whose last activity is older than the limit and
 Invalid `version` or `max_running` makes calls fail with the file's path and disables history
 cleanup until fixed. Invalid `history_retention_days` only disables history cleanup and logs a
 service warning; calls still work. Orphan resource cleanup and expiration of empty pending
-handovers after 90 days run independently of the history retention setting.
+handovers after 90 days run independently of the history retention setting. For hand-written
+`members.json`, `orchestration.json`, `review.json` and `permissions.json` on a headless host
+without the App, see [linux-headless.md](linux-headless.md).
 
 ## Upgrade, repair, and rollback
 

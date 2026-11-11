@@ -10,17 +10,32 @@ const LEGACY_REVIEW: &str = "- 本偏好不决定何时评审，用户要求或�
 /// What replaced the old one-line "small tasks" rule: from the named-CLI sentence through the
 /// orchestration-only line.
 fn small_tasks() -> String {
-    let start = super::SHARED
+    let shared = super::catalog::section("shared");
+    let start = shared
         .find("用户点名 CLI 时也通过 AgentNave 派发")
         .expect("named CLI sentence");
-    let rest = &super::SHARED[start..];
+    let rest = &shared[start..];
     let end = rest.find("自己只拆分").expect("orchestration-only line");
     let end = end + rest[end..].find('\n').unwrap_or(rest.len() - end);
     rest[..end].to_owned()
 }
 
-fn directory_line(name: &str, access: &str, scope: &str, prefix: &str) -> String {
-    format!("- {name}（{access}）：{scope}简单用 `{prefix}-easy`，困难用 `{prefix}-hard`。")
+fn directory_line(role: &Value) -> String {
+    let template = &super::catalog::catalog()["enabled_roles"];
+    let prefix = role["seat_prefix"].as_str().expect("seat prefix");
+    let name = role["name_zh"].as_str().expect("role name");
+    let scope = role["scope_zh"].as_str().expect("role scope");
+    let access_key = role["access"].as_str().expect("role access");
+    let access = template["access_zh"][access_key]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing access label {access_key}"));
+    template["line"]
+        .as_str()
+        .expect("enabled_roles line template")
+        .replace("{name_zh}", name)
+        .replace("{access_zh}", access)
+        .replace("{scope_zh}", scope)
+        .replace("{seat_prefix}", prefix)
 }
 
 pub(super) fn sections() -> Value {
@@ -28,30 +43,41 @@ pub(super) fn sections() -> Value {
     if let Some(catalog) = crate::orchestration_roles::catalog().as_array() {
         for role in catalog {
             let group = role["group"].as_str().expect("role group");
-            let prefix = role["seat_prefix"].as_str().expect("seat prefix");
-            let name = role["name_zh"].as_str().expect("role name");
-            let scope = role["scope_zh"].as_str().expect("role scope");
-            let access = if role["access"] == "read" {
-                "只读"
-            } else {
-                "可写"
-            };
-            sections.insert(
-                group.into(),
-                json!(format!("\n{}", directory_line(name, access, scope, prefix))),
-            );
+            sections.insert(group.into(), json!(directory_line(role)));
         }
     }
     Value::Object(sections)
 }
 
+pub(super) fn enabled_lines(document: &Value) -> String {
+    let sections = sections();
+    let sections = sections.as_object().expect("role sections");
+    // Use catalogue order rather than JSON map sorting for a stable, readable directory.
+    let enabled = crate::orchestration_roles::enabled_groups(document).unwrap_or_default();
+    let mut out = String::new();
+    if let Some(catalog) = crate::orchestration_roles::catalog().as_array() {
+        for role in catalog {
+            let group = role["group"].as_str().expect("role group");
+            if enabled.contains(&group) {
+                out.push_str(sections[group].as_str().expect("role section"));
+            }
+        }
+    }
+    out
+}
+
 /// The exact sentences of our older generated presets, including copies in Custom, replaced by
 /// their current wording; anything else the user wrote stays as it is.
 pub(super) fn migrate_legacy(text: &str) -> String {
-    let dispatch = super::SHARED
+    let shared = super::catalog::section("shared");
+    let dispatch = shared
         .lines()
         .find(|line| line.contains("同难度专项优先"))
         .expect("shared dispatch instruction");
+    let review = shared
+        .lines()
+        .find(|line| line.starts_with("- 本偏好不决定何时评审"))
+        .expect("shared review instruction");
     text.replace(LEGACY_DISPATCH, dispatch)
         .replace(LEGACY_ASSIGNMENT, "")
         .replace(LEGACY_SMALL_TASKS, &small_tasks())
@@ -59,8 +85,8 @@ pub(super) fn migrate_legacy(text: &str) -> String {
             LEGACY_PARALLEL,
             &format!(
                 "{}{}",
-                super::PARALLEL.trim_start(),
-                super::SPLIT_MEETINGS_OWN
+                super::catalog::section("parallel_writes").trim_start(),
+                super::catalog::section("meetings_on_tradeoffs")
             ),
         )
         .replace("互不依赖的写入步骤并行派给多个 Worker", "互不依赖的写入步骤并行派给多个可写工位")
@@ -74,7 +100,7 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         )
         .replace("同一组文件同一时间只有一个 Worker 在写", "同一组文件同一时间只有一个执行者在写")
         .replace("每次最多等十分钟", "每次最多等 270 秒")
-        .replace(LEGACY_REVIEW, "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位；没有时选择当前可见的只读工位，不可用时由 boss 自行评审。不交给实现者，尽量换模型。")
+        .replace(LEGACY_REVIEW, review)
 }
 
 pub(super) fn apply(document: &Value, text: String) -> String {
@@ -95,16 +121,7 @@ pub(super) fn apply(document: &Value, text: String) -> String {
         })
         .collect();
     text.truncate(text.trim_end().len());
-    // Use catalogue order rather than JSON map sorting for a stable, readable directory.
-    let enabled = crate::orchestration_roles::enabled_groups(document).unwrap_or_default();
-    if let Some(catalog) = crate::orchestration_roles::catalog().as_array() {
-        for role in catalog {
-            let group = role["group"].as_str().expect("role group");
-            if enabled.contains(&group) {
-                text.push_str(sections[group].as_str().expect("role section"));
-            }
-        }
-    }
+    text.push_str(&enabled_lines(document));
     text
 }
 

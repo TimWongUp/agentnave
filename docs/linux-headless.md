@@ -143,7 +143,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 - **无头宿主不要写 `apps` 和 `effective_apps`**：`enabled()` 用 `host.app_id or host.name` 作 key。bot 两者都为空，`apps` 里找不到就回落到 `preset`；但只要文件里有 `effective_apps`，没有 `app_id` 的连接就一律视为关闭（ADR-0041）。
 - 角色键：通用组 `explorer`、`worker`；专项组 `worker_frontend`（界面制作）、`worker_writing`（写作）、`explorer_web`（网页调研）、`explorer_social`（社交平台调研）、`worker_documents`（办公文件制作）。每个角色管什么写在 `src/agentnave/orchestration_roles.json` 的 `scope_zh`，`list_members.orchestration.scopes` 会列出开启角色的范围。`worker_code`、`worker_data` 已删除，写了会被 App 拒绝。
 - 专项只提供自己绑定的档，不沿用通用工位；App 里「区分难度」关闭时，两档存的是同一个模型。
-- `preset` 的规则正文（`apps/tray/src/rules.rs`）由 App 写进 CLI 宿主的全局规则文件：「只开会」（`meetings`）写入独立的 `MEETINGS` 段（只授权 boss 在有实质取舍或分歧时开会，不追加工位目录行和生图行）；分工协作与并行分工写入基础段 `SHARED`，加 `SPLIT` 或 `PARALLEL`，再加一行开会规则——分工协作默认 `SPLIT_MEETINGS_ASKED`（只在用户要求时开会），并行分工默认 `SPLIT_MEETINGS_OWN`（有实质取舍或分歧时 boss 自己开会），`split_options.meetings`、`parallel_options.meetings` 分别改这两处默认；若设了 `meeting`（`count` 必填为 2–6，`seats` 可选且长度不超过 `count`，每席为工位对象或 `null`），三档都会在开会规则行之后追加一行「开会默认 … 席」；`lead_only` 打开时把 `LEAD_ASKED` 换成 `LEAD_ALWAYS`；分工协作与并行分工最后按开启的角色补 `apps/tray/src/rules/roles.rs` `sections()` 生成的目录行。bot 宿主没有这一步：装好 skill（§4）后，`agentnave-manager` 会在 `orchestration.enabled` 为真且看不到规则块时按分工协作执行，即已确认的任务内可以主动派发，并行写入和开会须用户本人指明，工位范围从 `orchestration.scopes` 读。想让 bot 按只开会或并行分工执行，把 `MEETINGS` 或 `SHARED`＋`PARALLEL`＋`SPLIT_MEETINGS_OWN`（及开启角色的目录行）贴进 bot 的指令入口；只在你要求时开会就换成 `SPLIT_MEETINGS_ASKED`。这些开关只改变 App 写出的规则正文，bot 不读字段，按贴进去的正文执行。
+- 各档规则文字与拼装顺序随 Python 包发在 `agentnave/orchestration_rules.json`（用 `"$(uv tool dir)/agentnave/bin/python" -c 'from pathlib import Path; import agentnave; print(Path(agentnave.__file__).with_name("orchestration_rules.json"))'` 查看路径；角色目录数据在同目录 `orchestration_roles.json`）。有 App 时由 App 按其中的 `order.<档位>` 把正文写进宿主的全局规则文件；bot 宿主没有这一步：装好 `agentnave-manager` skill（§4）后，没有规则块时的默认行为及使用其他档位的做法见该 skill 的 [`references/headless.md`](../skills/agentnave-manager/references/headless.md)。要用并行分工、boss 可主动开会、`lead_only`（boss 只负责编排）、「只开会」（`meetings`，对服务算 `orchestration.enabled=false`）或 `meeting`（`count` 为 2–6，`seats` 可选且长度不超过 `count`，每席为工位对象或 `null`）默认席位时，须经用户确认后，按 `orchestration_rules.json` 的 `order.<档位>` 从 `sections`、`switches`、`meeting_defaults`、`enabled_roles` 拼出对应文字放进 bot 的指令入口；`orchestration.json` 里的开关字段和 `meeting` 只供 App 生成规则块，bot 不读这些字段，只按指令入口里的文字执行。
 - 派发：`start_agent(seat="explorer-easy", role="具体职责", cwd=..., prompt=...)`，不传 `provider`、`access` 和模型，由服务补齐（Explorer 自动 `access=read`）。
 
 ### 3.3 review.json：agentnave-review 评审工位（`members.py` `ReviewFile`/`ReviewRole`）
@@ -312,7 +312,7 @@ rm -rf "$TMP"
 （已经有本地仓库的话，也可以用 `git -C <repo> archive v1.0.0 skills/ | tar -x -C "$TMP"` 导出，或者直接从 §4 的 uv 安装目录复制。）
 
 ### 6.6 编排
-不需要另写宿主规则。只要按 §3.2 写好 `orchestration.json`（`preset` 设为 `split`／`parallel`／`custom`，且不写 `effective_apps`），再装上 `agentnave-manager`，bot 就会按分工协作、从 `list_members.orchestration` 选工位传 `seat`。要按只开会或并行分工，见 §3.2 最后一条。
+只用默认的分工协作时，不需要另写宿主规则：按 §3.2 写好 `orchestration.json`（`preset` 设为 `split`，且不写 `apps` 和 `effective_apps`），再装上 `agentnave-manager`（§6.5），bot 在看不到规则块时会按 `agentnave-manager` 的 [`references/headless.md`](../skills/agentnave-manager/references/headless.md) 执行，从 `list_members.orchestration` 选工位传 `seat`。要用只开会、并行分工、主动开会、`lead_only` 或开会默认席位时，在用户确认后按 `orchestration_rules.json` 的 `order` 拼出规则文字放进 bot 的指令入口（§3.2）。
 
 ### 6.7 一个连接里完成 start 和 wait
 - 派出的 CLI 只在它所属的 MCP 连接里存活（§0、§8.6）。
@@ -358,7 +358,7 @@ mv members.json.tmp members.json                             # 3) 原子替换
 | 员工、各模式白名单、默认模型 | `members.json`：`clis.<cli>.models`、`modes.{task,discussion}.<cli>.{models,default,overrides}`、`defaults` | `members.py` 的 `MemberFile`；`apps/tray/src/members.rs` | `list_members.members`/`restricted` | 不需要 |
 | 某个模型的默认档位和参数 | `members.json`：`clis.<cli>.models.<m>.{efforts,effort,options,notes}` | `MemberConfig`（`options` 里不能放 model/effort） | `list_members` 的组员 `options`/`effort` | 不需要 |
 | 每个 CLI 的权限档位 | `permissions.json`：`clis.<cli>` = `auto`/`full` | `PermissionFile`、`PERMISSION_TIERS` | `list_members.permissions`（auto 本身就是全权限的 CLI 会显示为 full） | 不需要 |
-| 编排档位（关闭/只开会/分工协作/并行分工/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`split_options.meetings`（分工协作下 boss 可主动开会，默认关）、`parallel_options.meetings`（并行分工下 boss 可主动开会，默认开）、`lead_only`（分工协作与并行分工共用，默认关；打开后小事也派出）、`apps`/`effective_apps` | `OrchestrationFile`；`members.rs` 的 `validate_orchestration`；ADR-0041/0073/0083 | `list_members.orchestration.enabled`（`off` 与 `meetings` 为 `false`） | 不需要；**不要写 `effective_apps`**（§3.2）；三个开关和 `meetings` 正文只影响 App 写出的规则块，无头宿主按 §3.2 自己写指令 |
+| 编排档位（关闭/只开会/分工协作/并行分工/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`split_options.meetings`（分工协作下 boss 可主动开会，默认关）、`parallel_options.meetings`（并行分工下 boss 可主动开会，默认开）、`lead_only`（分工协作与并行分工共用，默认关；打开后小事也派出）、`meeting`（开会默认人数与席位）、`apps`/`effective_apps` | `OrchestrationFile`；`orchestration_rules.json`；`members.rs` 的 `validate_orchestration`；ADR-0041/0073/0083 | `list_members.orchestration.enabled`（`off` 与 `meetings` 为 `false`） | 不需要；**不要写 `apps` 和 `effective_apps`**（§3.2）；开关、`meeting` 和 `meetings` 正文只影响 App 写出的规则块，无头宿主按 `orchestration_rules.json` 与 `references/headless.md`（§3.2）写指令入口 |
 | 通用与专项工位、角色开关 | `orchestration.json`：`explorer`、`worker` 与五个专项键的 `.{easy,hard}` → `{provider,model,effort?}`；`enabled_roles` | `ReviewSeat`；`orchestration_roles.json` | `list_members.orchestration`（含 `scopes`） | 不需要 |
 | 评审工位（技能 → agentnave-review） | `review.json`：`seats.<role>` | `ReviewFile`；`ui/skills.js`、`ui/advanced.js` | `list_members.review`/`review_error` | 不需要 |
 | 评审门（是否启用 agentnave-review） | **没有对应的服务配置文件**。App 会把这个 skill 按宿主开关（`ui/skills.js`，`/app/hosts/skill`），bot 这边就是装或卸 skill 目录（§6.5） | `apps/tray/src/hosts.rs` | 看 bot 的 skill 列表 | bot 下次读 skill 时生效 |
@@ -366,7 +366,7 @@ mv members.json.tmp members.json                             # 3) 原子替换
 | 历史自动清理 | `settings.json`：`history_retention_days`，取 `null`/30/90/180 | `settings.rs`；`retention.py`（服务启动时执行一次，之后每 24 小时一次） | `version` 或 `max_running` 非法会阻止派发并关闭清理；仅保留天数非法时关闭清理、记录 warning，派发仍可用 | 下一轮清理时生效，最长要等 24 小时；想立刻生效就重启服务 |
 | 手动清理或重命名对话 | 没有对应文件。App 直接改 `agentnave.db`，同时持有对话锁（`manage.rs`，ADR-0012/0026） | — | — | ⚠️ 不建议手改数据库 |
 | CLI 默认模型检测 | `cli-defaults.json`（App 检测到后写入，可以不写） | `detect.rs` 的 `NATIVE_FILE`；`members.py` 的 `cli_default_model` | `defaults_applied` | 不需要 |
-| boss 全局规则文件 | App 会写进各宿主的规则文件（`rules.rs`）。bot 不需要（§6.6） | — | — | — |
+| boss 全局规则文件 | 有 App 时按 `orchestration_rules.json` 写进各宿主的规则文件；无头宿主默认见 `agentnave-manager` 的 `references/headless.md`，其他档位按 `orchestration_rules.json` 写进 bot 指令入口（§3.2、§6.6） | `orchestration_rules.json` | — | — |
 | 宿主接入（MCP 配置、skill 开关） | App 会改各宿主自己的配置文件（`hosts.rs`）。bot 这边就是 §6.2 和 §6.5 | — | — | 重新添加连接器 |
 | 语言、外观、模型名称显示（简短/完整）、头像、提醒、语音、开机自启 | 只给 App 自己用：`preferences.json`、`avatars.json` 放在 App 的配置目录（`preferences.rs`、`avatars.rs`、`ui/*-settings.js`），**服务不读** | — | — | 无头环境下没有效果 |
 | 版本与更新 | App 自带的更新器（`update.rs`）。bot 这边就是 §1.1 的 `uv tool install --force` | — | `list_members` 能正常调用 | App 安装需重连；uv 原地升级空闲切换；跨 1.0 升级先断开旧服务（§2.2） |
