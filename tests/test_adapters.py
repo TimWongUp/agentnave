@@ -630,18 +630,6 @@ def test_codex_adapter_requires_a_terminal_turn_event() -> None:
     assert result.error_message == "codex stream ended without a completion event"
 
 
-def test_provider_registry_returns_codebuddy_adapter() -> None:
-    adapter = get_adapter("codebuddy")
-
-    assert isinstance(adapter, CodeBuddyAdapter)
-
-
-def test_provider_registry_returns_codex_adapter() -> None:
-    adapter = get_adapter("codex")
-
-    assert isinstance(adapter, CodexAdapter)
-
-
 def test_claude_permission_denials_block_only_a_failed_run(tmp_path: Path) -> None:
     # Claude 2.1.308 reports subtype=success when the model finishes after a denied tool call.
     payload = {

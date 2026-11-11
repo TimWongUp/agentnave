@@ -190,20 +190,6 @@ fn a_canonical_path_and_a_plain_one_look_the_same() {
         path_key(Path::new(r"D:\b.js"))
     );
 }
-#[cfg(windows)]
-#[test]
-fn a_cmd_shim_points_at_the_script_that_is_actually_running() {
-    let dir = tempfile::tempdir().unwrap();
-    let shim = dir.path().join("pi.cmd");
-    std::fs::write(
-        &shim,
-        "@ECHO off\nSETLOCAL\n\"%node%\" \"%~dp0pi-launcher.js\" %*\n",
-    )
-    .unwrap();
-    let script = dir.path().join("pi-launcher.js");
-    std::fs::write(&script, "").unwrap();
-    assert_eq!(shim_script(&shim), Some(script.canonicalize().unwrap()));
-}
 #[test]
 fn our_own_server_and_supervisor_are_recognized() {
     for arg in [

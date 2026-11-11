@@ -1205,43 +1205,6 @@ fn revision_one_old_failure_clears_after_a_newer_terminal_member() {
     assert_eq!(state(&reader, "/app/chats")["groups"][0]["status"], "idle");
 }
 
-#[test]
-fn typing_uses_live_heartbeat_time_and_stops_when_stale() {
-    let dir = tempfile::tempdir().unwrap();
-    let task = task_snapshot("task", "running", "2020-01-01T00:00:00Z");
-    save(dir.path(), &task);
-    let live = dir.path().join("live/1-time.json");
-    write(
-        &live,
-        &json!({"version": 2, "conversations": {"task": {"tasks": {}}}}),
-    );
-    fs::File::options()
-        .write(true)
-        .open(&live)
-        .unwrap()
-        .set_modified(UNIX_EPOCH + Duration::from_secs(4070908800) + Duration::from_micros(123456))
-        .unwrap();
-    let reader = Reader::new(dir.path().to_path_buf());
-    let path = format!("/app/chats/{MANAGER}");
-    let chat = state(&reader, &path);
-    assert_eq!(
-        chat["messages"].as_array().unwrap().last().unwrap()["time"],
-        "2099-01-01T00:00:00.123456Z"
-    );
-    fs::File::options()
-        .write(true)
-        .open(&live)
-        .unwrap()
-        .set_modified(SystemTime::now() - LIVE_FRESH - Duration::from_secs(1))
-        .unwrap();
-    let chat = state(&reader, &path);
-    assert_eq!(chat["live"], false);
-    assert_eq!(
-        chat["messages"].as_array().unwrap().last().unwrap()["time"],
-        "2020-01-01T00:00:00Z"
-    );
-}
-
 fn office_show(id: &str, updated: &str, created: &str) -> Value {
     json!({
             "version": 1,

@@ -359,7 +359,7 @@ pub(super) fn commands(os: &str) -> Value {
     let windows = os == "windows";
     let npm = if windows { "npm.cmd" } else { "npm" };
     let mut all = serde_json::Map::new();
-    for provider in crate::members::PROVIDERS {
+    for provider in crate::providers::PROVIDERS {
         let mut entries = Vec::new();
         match (provider, windows) {
             ("claude", false) => entries.push(json!({"label": "安装脚本", "command": "curl -fsSL https://claude.ai/install.sh | bash"})),

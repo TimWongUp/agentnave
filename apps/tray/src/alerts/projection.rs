@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use super::{Observation, Outcome};
-use crate::data::Snapshot;
-use crate::stage::timestamp;
+use crate::data::snapshot::Snapshot;
+use crate::time_format::timestamp;
 
 fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or_default()

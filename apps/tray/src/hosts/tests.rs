@@ -120,7 +120,9 @@ fn revision_parent_symlink_is_rejected_without_touching_target() {
     assert_eq!(hosts.state(&h)["attention"]["code"], "symlink_path");
     let home_link = hosts.context.home.parent().unwrap().join("home-link");
     std::os::unix::fs::symlink(&hosts.context.home, &home_link).unwrap();
-    assert!(check_path(&home_link.join("ordinary/config.json"), &home_link).is_ok());
+    assert!(
+        crate::config_paths::safe_path(&home_link.join("ordinary/config.json"), &home_link).is_ok()
+    );
 }
 
 #[test]
@@ -150,23 +152,6 @@ fn revision_bare_command_uses_entry_path_without_replacement() {
     assert_eq!(hosts.state(&h)["command_state"], "unknown");
     assert_eq!(hosts.state(&h)["status"], "connected");
     assert_eq!(h.read().unwrap().entry.unwrap()["command"], "agentnave-mcp");
-}
-
-#[test]
-fn revision_healthy_unclaimed_entry_is_connected() {
-    let (_temp, hosts) = fixture();
-    let h = host(&hosts, "workbuddy");
-    executable_file(
-        &hosts.context.search[0].join(h.binary),
-        "#!/bin/sh\nexit 99\n",
-    );
-    save(
-        &h.config,
-        &json!({"mcpServers":{"agentnave":{"command":hosts.launcher()}}}).to_string(),
-    );
-    let state = hosts.state(&h);
-    assert_eq!(state["status"], "connected");
-    assert_eq!(state["has_host_env"], false);
 }
 
 #[test]

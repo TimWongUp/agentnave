@@ -6,7 +6,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::{AppHandle, Manager, Wry};
 
 use super::{autostart, general, keep_awake};
-use crate::data::{Overview, Response};
+use crate::data::snapshot::Overview;
+use crate::response::Response;
 
 #[derive(Default)]
 pub struct Runtime {
@@ -140,7 +141,11 @@ pub fn zoom(window: &tauri::WebviewWindow) -> Result<(), String> {
 
 pub fn refresh_working(app: &AppHandle, overview: &Overview) -> Result<(), String> {
     if let Some(tray) = app.tray_by_id(crate::TRAY) {
-        crate::badge::show(&tray, crate::badge::count(overview));
+        crate::badge::show(
+            &tray,
+            crate::badge::count(overview, general::current),
+            general::current,
+        );
     }
     app.state::<Runtime>()
         .awake
