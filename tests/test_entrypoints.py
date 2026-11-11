@@ -664,7 +664,11 @@ async def test_mcp_blocker_interrupts_default_wait_with_bounded_public_output(
 
 
 @pytest.mark.asyncio
-async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts() -> None:
+async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
     async with Client(mcp) as client:
         result = await client.list_tools()
 
@@ -687,9 +691,9 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     assert mcp_server.WAIT_SECONDS == 270
     wait_modes = cast(list[dict[str, object]], _payload(wait_properties["wait_seconds"])["anyOf"])
     assert wait_modes[0]["enum"] == [0, 270, 1500]
-    assert "only" in str(wait_properties["wait_seconds"]) and "Claude Code" in str(
-        wait_properties["wait_seconds"]
-    )
+    description = str(wait_properties["wait_seconds"])
+    assert "only" in description and "Claude Code" in description
+    assert "terminal interactive session" in description
     assert tools["answer_prompt"].input_schema["required"] == [
         "invocation_id",
         "prompt_id",
@@ -1080,6 +1084,7 @@ async def test_mcp_rejects_arbitrary_wait_windows() -> None:
 
 @pytest.mark.asyncio
 async def test_long_wait_is_restricted_to_claude_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
     async with Client(mcp) as client:
         for host in (Host(), Host("codex", "env"), Host("claude", "env")):
             monkeypatch.setattr(mcp_runtime, "HOST", host)
@@ -1088,7 +1093,22 @@ async def test_long_wait_is_restricted_to_claude_host(monkeypatch: pytest.Monkey
             if host.name == "claude":
                 assert "Unknown or expired id" in str(result.content)
             else:
-                assert "only available to the Claude Code host" in str(result.content)
+                assert "only available in the Claude Code terminal interactive session" in str(
+                    result.content
+                )
+        # The desktop app inherits the Claude host name but cannot background long calls.
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+        monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        wait_seconds = _payload(tools["wait"].input_schema["properties"])["wait_seconds"]
+        modes = cast(list[dict[str, object]], _payload(wait_seconds)["anyOf"])
+        assert modes[0]["enum"] == [0, 270]
+        assert "1500" not in str(wait_seconds)
+        rejected = await client.call_tool("wait", {"ids": ["missing"], "wait_seconds": 1500})
+        assert rejected.is_error is True
+        assert "only available in the Claude Code terminal interactive session" in str(
+            rejected.content
+        )
 
 
 @pytest.mark.asyncio
@@ -1113,6 +1133,7 @@ async def test_wait_window_and_sequences_preserve_inbox_delivery(
         with monkeypatch.context() as patch:
             patch.setattr("agentnave.mcp_tasks._ready_handles", elapsed)
             patch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+            patch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
             for arguments in (
                 {"seq": 1},
                 {"seq": 2, "wait_seconds": 270},
