@@ -159,6 +159,17 @@ fn chats_do_not_wait_for_host_refresh() {
     assert_eq!(response.status, 200);
     let body: Value = serde_json::from_slice(&response.body).unwrap();
     assert!(!body["groups"].as_array().unwrap().is_empty());
+
+    let moved = dir.path().join("moved-codex");
+    let body = json!({"id": "codex", "path": moved});
+    let response = reader.request(
+        "POST",
+        "/app/hosts/root",
+        Some("1"),
+        body.to_string().as_bytes(),
+    );
+    assert_eq!(response.status, 200);
+    assert!(reader.boss_homes().codex.contains(&moved));
 }
 
 fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
