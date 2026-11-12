@@ -131,17 +131,34 @@ fn chats_do_not_wait_for_host_refresh() {
         .unwrap();
     drop(connection);
     let reader = Arc::new(Reader::new(dir.path().to_path_buf()));
+    let custom = dir.path().join("custom-codex");
+    let context = crate::hosts::Context {
+        home: dir.path().to_path_buf(),
+        app: dir.path().join("app"),
+        project: dir.path().to_path_buf(),
+        env: std::collections::BTreeMap::from([(
+            "CODEX_HOME".into(),
+            custom.display().to_string(),
+        )]),
+        search: Vec::new(),
+        applications: Vec::new(),
+    };
+    reader.configure_hosts(context, Ok(std::collections::BTreeMap::new()));
+    assert!(reader.boss_homes().codex.contains(&custom));
     let guard = reader.hosts.lock().unwrap();
     let (send, receive) = std::sync::mpsc::channel();
     let worker = Arc::clone(&reader);
     let thread = std::thread::spawn(move || {
         let response = worker.request("GET", "/app/chats", None, b"");
-        send.send(response.status).unwrap();
+        send.send(response).unwrap();
     });
     let result = receive.recv_timeout(Duration::from_secs(3));
     drop(guard);
     thread.join().unwrap();
-    assert_eq!(result.unwrap(), 200);
+    let response = result.unwrap();
+    assert_eq!(response.status, 200);
+    let body: Value = serde_json::from_slice(&response.body).unwrap();
+    assert!(!body["groups"].as_array().unwrap().is_empty());
 }
 
 fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
