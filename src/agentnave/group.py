@@ -267,7 +267,11 @@ class Groups:
     @staticmethod
     def _discard_claim(claim: ClaimedIsolation | Exception | None) -> None:
         if isinstance(claim, ClaimedIsolation):
-            claim.lease.release()
+            try:
+                claim.lease.release()
+            except OSError:
+                # One lease that cannot be removed must not keep the others held.
+                logging.getLogger(__name__).exception("Could not release a seat lease")
 
     def adopt(self, group: Group) -> Group:
         """Register a group, including one restored from saved state."""
@@ -536,10 +540,26 @@ class Groups:
 
     def _launch(self, round_: Round, run: SeatRun, snapshot: int) -> None:
         prepared = self._seat_claims.pop((round_.group.id, run.seat_id), None)
+        try:
+            notify = self._launch_seat(round_, run, snapshot, prepared)
+        except BaseException:
+            self._discard_claim(prepared)  # whatever went wrong, no lease stays behind
+            raise
+        if notify:
+            round_.notify()
+
+    def _launch_seat(
+        self,
+        round_: Round,
+        run: SeatRun,
+        snapshot: int,
+        prepared: ClaimedIsolation | Exception | None,
+    ) -> bool:
+        """Start one seat; True when waiters should be woken."""
         if round_.cancelling:
             self._discard_claim(prepared)
             run.status = "not_started"
-            return
+            return False
         seat = round_.group.seats[run.seat_id]
         state = round_.group.states[run.seat_id]
         run.snapshot = snapshot
@@ -555,7 +575,7 @@ class Groups:
             )
             run.launch_error = InvocationError(code, round_.error)
             self._discard_claim(prepared)
-            return
+            return False
         claimed = None
         try:
             # A seat whose cwd lies in an isolated directory only holds its lease while it runs;
@@ -586,13 +606,15 @@ class Groups:
                 if on_settled is not None
                 else self.manager.start(req)
             )
-        except (OSError, ValueError, RuntimeError) as exc:
+        except BaseException as exc:
             if claimed is not None:
                 self.active_lease_paths.discard(claimed.lease.path)
                 claimed.lease.release()
+            if not isinstance(exc, (OSError, ValueError, RuntimeError)):
+                raise
             run.status = "failed"
             run.launch_error = InvocationError("launch_error", str(exc))
-        round_.notify()
+        return True
 
     def _prompt(self, group: Group, run: SeatRun, snapshot: int) -> str:
         state = group.states[run.seat_id]

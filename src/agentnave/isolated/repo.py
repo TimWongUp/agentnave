@@ -205,6 +205,13 @@ def run_git(
     configuration.
     """
     cmd = ["git", "-C", str(cwd), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true"]
+    # Never recurse into submodules or nested repositories, whose own config would run there.
+    for item in (
+        "diff.ignoreSubmodules=all",
+        "status.submoduleSummary=false",
+        "submodule.recurse=false",
+    ):
+        cmd.extend(["-c", item])
     if disable_hooks:
         cmd.extend(["-c", f"core.hooksPath={empty_hooks_dir()}"])
     for item in config_overrides:
@@ -557,7 +564,7 @@ def collect_creation_warnings(ctx: RepoContext, *, lfs_detected: bool) -> tuple[
     elif lfs_detected:
         warnings.append("Git LFS downloads were skipped; LFS files may contain pointers.")
     dirty = run_git(
-        ["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignore-submodules=all"],
         cwd=ctx.source_root,
     ).stdout
     if dirty:
@@ -643,7 +650,11 @@ def isolated_worktree_root(path: Path) -> Path | None:
     """Return the <main_root>/.agentnave-worktrees/<id> ancestor if path lies inside one."""
     resolved = path.resolve()
     for candidate in (resolved, *resolved.parents):
-        if ID_PATTERN.fullmatch(candidate.name) and candidate.parent.name == WORKTREES_DIR_NAME:
+        # Case-insensitive, like the cheap pre-check on the path parts (APFS, NTFS).
+        if (
+            ID_PATTERN.fullmatch(candidate.name.lower())
+            and candidate.parent.name.lower() == WORKTREES_DIR_NAME
+        ):
             return candidate
     return None
 

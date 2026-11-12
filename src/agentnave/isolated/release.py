@@ -30,9 +30,31 @@ from agentnave.isolated.store import (
     IsolatedRecord,
     WorktreeStore,
 )
+from agentnave.isolated.worktree_state import (
+    foreign_link_valid,
+    nested_repositories,
+    remove_tree,
+    tree_fingerprint,
+    worktree_link_valid,
+)
 from agentnave.store import now
 
 MAX_SUMMARY_FILES = 200
+
+# Never look inside submodules or nested repositories: that would start Git there, with the
+# nested repository's own configuration.
+_STATUS_ARGS = [
+    "status",
+    "--porcelain=v2",
+    "-z",
+    "--untracked-files=all",
+    "--ignore-submodules=all",
+]
+NESTED_NOTE = "Contains nested repositories; their contents were not checked"
+ORPHAN_NOTE = (
+    "The directory is no longer a git worktree; the remaining files will be deleted "
+    "without inspection"
+)
 
 _IN_PROGRESS_MARKERS = (
     "MERGE_HEAD",
@@ -64,6 +86,7 @@ class ReleaseResult:
     unique_commits: bool = False
     confirmation: str | None = None
     reason: str | None = None
+    nested_repos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +100,7 @@ class ChangeSummary:
     changed_files_from_base: tuple[str, ...] = ()
     truncated: bool = False
     uncommitted: bool | None = None
+    nested_repos: tuple[str, ...] = ()
     error: str | None = None
 
 
@@ -95,6 +119,8 @@ class _InspectionSnapshot:
     uncommitted: bool
     unique_commits: bool
     digest: str
+    nested: tuple[str, ...] = ()
+    orphan: bool = False
 
 
 def porcelain_v2_paths(status_z: bytes) -> tuple[list[str], list[str]]:
@@ -158,6 +184,7 @@ def _compute_digest(
     usage_generation: int,
     status_raw: bytes,
     stat_bytes: bytes,
+    nested: tuple[str, ...] = (),
 ) -> str:
     hasher = hashlib.sha256()
     for part in (
@@ -168,6 +195,7 @@ def _compute_digest(
         str(usage_generation).encode("ascii"),
         status_raw,
         stat_bytes,
+        "\n".join(nested).encode("utf-8", errors="surrogateescape"),
     ):
         hasher.update(f"{len(part)}:".encode("ascii"))
         hasher.update(part)
@@ -278,6 +306,8 @@ def _inspect_ready_locked(
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Isolated directory is currently in use by an active lease")
     wt_path = _verify_worktree_identity(store, record, main_root, common_dir)
+    if not worktree_link_valid(wt_path, record.worktree_git_dir, common_dir):
+        raise IsolationError("Isolated directory is no longer a valid git worktree of this record")
     sym_res = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path, allowed_exit_codes=(0, 1))
     actual_ref = decode_git_path(sym_res.stdout.rstrip(b"\r\n")) if sym_res.returncode == 0 else ""
     if actual_ref != record.branch_ref:
@@ -300,10 +330,8 @@ def _inspect_ready_locked(
     if head_oid != branch_oid:
         raise IsolationError("Managed branch tip does not match worktree HEAD")
     _check_hidden_index_flags(wt_path)
-    status_raw = run_git(
-        ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignore-submodules=none"],
-        cwd=wt_path,
-    ).stdout
+    status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
+    nested = tuple(nested_repositories(wt_path, status_raw))
     containing = (
         run_git(
             [
@@ -331,6 +359,7 @@ def _inspect_ready_locked(
         record.usage_generation,
         status_raw,
         stat_bytes,
+        nested,
     )
     snapshot = _InspectionSnapshot(
         head_oid=head_oid,
@@ -338,6 +367,7 @@ def _inspect_ready_locked(
         uncommitted=bool(status_raw),
         unique_commits=not durable_refs,
         digest=digest,
+        nested=nested,
     )
     return main_root, common_dir, wt_path, snapshot
 
@@ -348,14 +378,23 @@ def _complete_deletion_locked(
     main_root: Path,
     common_dir: Path,
     expected_oid: str,
+    *,
+    remove_orphan: bool = False,
 ) -> str | None:
     """Remove worktree, managed branch, and DB row; raises IsolationError on partial failure.
 
     Returns a note when the managed branch was kept because it moved after the release check.
+    remove_orphan deletes a directory that is no longer a git worktree (after confirmation).
     """
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Active lease prevents completing deletion")
     wt_path = Path(record.worktree_path)
+    if remove_orphan and (wt_path.exists() or is_link(wt_path)):
+        remove_tree(wt_path, main_root / WORKTREES_DIR_NAME)
+        run_git(["worktree", "prune"], cwd=main_root)
+        return _finish_deletion(store, record, main_root, common_dir, expected_oid)
+    if not wt_path.exists() and not is_link(wt_path):
+        run_git(["worktree", "prune"], cwd=main_root)
     worktrees = parse_worktrees(
         run_git(["worktree", "list", "--porcelain", "-z"], cwd=main_root).stdout
     )
@@ -375,6 +414,16 @@ def _complete_deletion_locked(
     elif wt_path.exists() or is_link(wt_path):
         raise IsolationError(f"Unregistered path remains at {wt_path}; refusing recursive removal")
 
+    return _finish_deletion(store, record, main_root, common_dir, expected_oid)
+
+
+def _finish_deletion(
+    store: WorktreeStore,
+    record: IsolatedRecord,
+    main_root: Path,
+    common_dir: Path,
+    expected_oid: str,
+) -> str | None:
     store.update_phase(record.id, phase="removing_branch", updated_at=now())
     note = _remove_managed_branch(record, main_root, expected_oid)
     store.delete(record.id, expected_state="deleting")
@@ -474,10 +523,21 @@ def _inspect_and_delete(
     confirmation: str | None,
 ) -> ReleaseResult:
     """The one release path for a directory that still exists: inspect, confirm, delete."""
+    orphan = False
     try:
-        main_root, verified_common, _wt_path, snap = _inspect_ready_locked(
-            store, record, workspace_id
+        main_root, verified_common = _verify_repo_identity(record)
+        wt_path = Path(record.worktree_path)
+        orphan = (
+            wt_path.is_dir()
+            and not is_link(wt_path)
+            and not worktree_link_valid(wt_path, record.worktree_git_dir, verified_common)
         )
+        if orphan:
+            snap = _inspect_orphan_locked(record, workspace_id, main_root, verified_common)
+        else:
+            main_root, verified_common, _wt_path, snap = _inspect_ready_locked(
+                store, record, workspace_id
+            )
     except (IsolationError, OSError, ValueError) as exc:
         return ReleaseResult(id=record.id, status="blocked", reason=str(exc))
 
@@ -485,10 +545,14 @@ def _inspect_and_delete(
     if failure := _verify_confirmation(store, record, snap, confirmation, foreign=foreign):
         return failure
 
+    # A directory that is no longer a worktree keeps the oid its deletion was first confirmed at.
+    delete_oid = (
+        (record.delete_oid or snap.branch_oid or record.base_oid) if orphan else snap.branch_oid
+    )
     if not store.mark_deleting(
         record.id,
         phase="removing_worktree",
-        delete_oid=snap.branch_oid,
+        delete_oid=delete_oid,
         updated_at=now(),
         expected_state=record.state,
     ):
@@ -500,10 +564,49 @@ def _inspect_and_delete(
         record,
         main_root,
         verified_common,
-        snap.branch_oid,
-        head_oid=snap.head_oid,
+        delete_oid,
+        head_oid=snap.head_oid or None,
         uncommitted=snap.uncommitted,
         unique_commits=snap.unique_commits,
+        remove_orphan=orphan,
+    )
+
+
+def _inspect_orphan_locked(
+    record: IsolatedRecord, workspace_id: str, main_root: Path, common_dir: Path
+) -> _InspectionSnapshot:
+    """Snapshot a leftover directory that is no longer a git worktree (no Git runs inside it)."""
+    if has_active_leases(common_dir, record.id, cleanup_stale=True):
+        raise IsolationError("Isolated directory is currently in use by an active lease")
+    wt_path = Path(record.worktree_path)
+    if wt_path.name != record.id or not same_dir(wt_path.parent, main_root / WORKTREES_DIR_NAME):
+        raise IsolationError("Isolated worktree is not directly under .agentnave-worktrees")
+    tip = ""
+    if ref_exists(main_root, record.branch_ref):
+        tip = (
+            run_git(
+                ["rev-parse", "--verify", "--end-of-options", f"{record.branch_ref}^{{commit}}"],
+                cwd=main_root,
+            )
+            .stdout.strip()
+            .decode("ascii", errors="replace")
+        )
+    digest = _compute_digest(
+        record.id,
+        workspace_id,
+        "orphan",
+        tip or "none",
+        record.usage_generation,
+        b"orphan",
+        tree_fingerprint(wt_path),
+    )
+    return _InspectionSnapshot(
+        head_oid="",
+        branch_oid=tip,
+        uncommitted=True,
+        unique_commits=False,
+        digest=digest,
+        orphan=True,
     )
 
 
@@ -517,9 +620,12 @@ def _run_deletion(
     head_oid: str | None = None,
     uncommitted: bool = False,
     unique_commits: bool = False,
+    remove_orphan: bool = False,
 ) -> ReleaseResult:
     try:
-        note = _complete_deletion_locked(store, record, main_root, common_dir, expected_oid)
+        note = _complete_deletion_locked(
+            store, record, main_root, common_dir, expected_oid, remove_orphan=remove_orphan
+        )
     except (IsolationError, OSError, ValueError) as exc:
         detail = str(exc)
         store.mark_attention(
@@ -600,7 +706,7 @@ def _verify_confirmation(
     foreign: bool,
 ) -> ReleaseResult | None:
     """Pass only with a token this service issued earlier for exactly the current state."""
-    if not (snap.uncommitted or snap.unique_commits or foreign):
+    if not (snap.uncommitted or snap.unique_commits or foreign or snap.nested or snap.orphan):
         return None
     issued = record.confirmation_digest
     if (
@@ -611,20 +717,26 @@ def _verify_confirmation(
     ):
         return None
     store.save_confirmation(record.id, snap.digest, updated_at=now())
+    reasons: list[str] = []
+    if snap.orphan:
+        reasons.append(ORPHAN_NOTE)
+    if snap.nested:
+        reasons.append(NESTED_NOTE)
     if confirmation is not None:
-        reason = "Confirmation token expired or does not match current worktree state"
+        reasons.append("Confirmation token expired or does not match current worktree state")
     elif foreign:
-        reason = "Directory belongs to another workspace; confirm to release it"
-    else:
-        reason = "Confirmation required for uncommitted files or unmerged commits"
+        reasons.append("Directory belongs to another workspace; confirm to release it")
+    elif snap.uncommitted or snap.unique_commits:
+        reasons.append("Confirmation required for uncommitted files or unmerged commits")
     return ReleaseResult(
         id=record.id,
         status="confirmation_required",
-        head_oid=snap.head_oid,
+        head_oid=snap.head_oid or None,
         uncommitted=snap.uncommitted,
         unique_commits=snap.unique_commits,
         confirmation=snap.digest,
-        reason=reason,
+        reason="; ".join(reasons),
+        nested_repos=snap.nested,
     )
 
 
@@ -651,16 +763,14 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
             if entry.branch_ref != record.branch_ref or entry.head_oid != record.base_oid:
                 raise IsolationError("Unfinished worktree HEAD or branch moved from base")
             if wt_path.is_dir():
-                dirty = run_git(
-                    [
-                        "status",
-                        "--porcelain=v2",
-                        "-z",
-                        "--untracked-files=all",
-                        "--ignore-submodules=none",
-                    ],
-                    cwd=wt_path,
-                ).stdout
+                linked = (
+                    worktree_link_valid(wt_path, record.worktree_git_dir, common_dir)
+                    if record.worktree_git_dir is not None
+                    else foreign_link_valid(wt_path)
+                )
+                if not linked:
+                    raise IsolationError("Unfinished directory is not a valid git worktree")
+                dirty = run_git(_STATUS_ARGS, cwd=wt_path).stdout
                 if dirty:
                     raise IsolationError("Unfinished worktree contains uncommitted source changes")
             run_git(["worktree", "remove", "--force", "--", str(wt_path)], cwd=main_root)
@@ -744,6 +854,11 @@ def _recover_deleting_locked(store: WorktreeStore, latest: IsolatedRecord) -> Re
         )
         return RecoveryOutcome(latest.id, "deleting", "needs_attention", reason)
 
+    wt_path = Path(latest.worktree_path)
+    if wt_path.exists() or is_link(wt_path):
+        # The directory may have changed since the deletion was confirmed: never delete it
+        # here. A release call checks it again like any other.
+        return fail("Directory still exists after an interrupted release; release it again")
     if not latest.delete_oid:
         return fail("Deleting record is missing expected branch OID")
     try:
@@ -760,7 +875,14 @@ def _changed_paths(wt_path: Path, base_oid: str, status_raw: bytes) -> list[str]
     """Files changed from base_oid: committed, staged, working tree, and untracked."""
     paths, _ = porcelain_v2_paths(status_raw)
     found = set(paths)
-    diff_head = ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z"]
+    diff_head = [
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--ignore-submodules=all",
+        "--name-only",
+        "-z",
+    ]
     for revisions in ([base_oid, "HEAD"], ["--cached", base_oid], [base_oid]):
         raw = run_git([*diff_head, *revisions, "--"], cwd=wt_path).stdout
         found.update(decode_git_path(item) for item in raw.split(b"\x00") if item)
@@ -781,24 +903,18 @@ def _read_head_and_branch(wt_path: Path) -> tuple[str, str | None]:
     return head_oid, actual_branch
 
 
-_STATUS_ARGS = [
-    "status",
-    "--porcelain=v2",
-    "-z",
-    "--untracked-files=all",
-    "--ignore-submodules=none",
-]
-
-
 def summarize_record_changes(record: IsolatedRecord) -> ChangeSummary:
     """Collect cumulative changes from base_oid without raising to the caller."""
     wt_path = Path(record.worktree_path)
     try:
         if is_link(wt_path) or not wt_path.is_dir():
             raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
+        if not worktree_link_valid(wt_path, record.worktree_git_dir, Path(record.repo_common_dir)):
+            raise IsolationError("Isolated directory is no longer a valid git worktree")
         head_oid, actual_branch = _read_head_and_branch(wt_path)
         status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
         combined = _changed_paths(wt_path, record.base_oid, status_raw)
+        nested = tuple(nested_repositories(wt_path, status_raw))
         return ChangeSummary(
             id=record.id,
             path=record.worktree_path,
@@ -809,6 +925,7 @@ def summarize_record_changes(record: IsolatedRecord) -> ChangeSummary:
             changed_files_from_base=tuple(combined[:MAX_SUMMARY_FILES]),
             truncated=len(combined) > MAX_SUMMARY_FILES,
             uncommitted=bool(status_raw),
+            nested_repos=nested,
         )
     except (IsolationError, OSError, ValueError) as exc:
         return ChangeSummary(
@@ -825,8 +942,11 @@ def summarize_unregistered(isolation_id: str, wt_path: Path, branch: str) -> Cha
     try:
         if is_link(wt_path) or not wt_path.is_dir():
             raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
+        if not foreign_link_valid(wt_path):
+            raise IsolationError("Isolated directory is no longer a valid git worktree")
         head_oid, actual_branch = _read_head_and_branch(wt_path)
         status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
+        nested = tuple(nested_repositories(wt_path, status_raw))
         return ChangeSummary(
             id=isolation_id,
             path=str(wt_path),
@@ -835,6 +955,7 @@ def summarize_unregistered(isolation_id: str, wt_path: Path, branch: str) -> Cha
             head_oid=head_oid,
             actual_branch=actual_branch,
             uncommitted=bool(status_raw),
+            nested_repos=nested,
         )
     except (IsolationError, OSError, ValueError) as exc:
         return ChangeSummary(

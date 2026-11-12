@@ -116,6 +116,8 @@ def _release_payload(released: ReleaseResult) -> IsolatedDirsPayload:
         payload["uncommitted"] = True
     if released.unique_commits and "unique_commits" not in payload:
         payload["unique_commits"] = True
+    if released.nested_repos:
+        payload["nested_repos"] = list(released.nested_repos)
     if released.reason is not None:
         payload["reason"] = released.reason
     return payload

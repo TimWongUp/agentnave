@@ -520,6 +520,8 @@ def _isolation_summary_payload(summary: ChangeSummary) -> TaskIsolationSummaryPa
             payload["truncated"] = True
         if summary.uncommitted is not None:
             payload["uncommitted"] = summary.uncommitted
+        if summary.nested_repos:
+            payload["nested_repos"] = list(summary.nested_repos)
     elif summary.error is not None:
         payload["error"] = summary.error
     return payload

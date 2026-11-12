@@ -22,6 +22,7 @@ from agentnave.isolated import (
     repo_lock,
 )
 from agentnave.isolated import release as release_mod
+from agentnave.isolated.release import _STATUS_ARGS  # pyright: ignore[reportPrivateUsage]
 from agentnave.isolated.repo import run_git
 from agentnave.store import now
 
@@ -418,8 +419,11 @@ def test_recovery_and_change_summary_edge_cases(tmp_path: Path) -> None:
     dirs.store.mark_deleting(
         wt.id, phase="removing_worktree", delete_oid=wt.base_oid, updated_at=now()
     )
+    # A directory that still exists is never deleted by recovery; release checks it again.
     outcomes = dirs.recover()
-    assert len(outcomes) == 1 and outcomes[0].status == "deleted"
+    assert len(outcomes) == 1 and outcomes[0].status == "needs_attention"
+    assert wt.worktree_path.is_dir()
+    assert dirs.release(wt.id, workspace_id="ws-1").status == "deleted"
     assert not wt.worktree_path.exists()
     assert f"agentnave/{wt.id}" not in _git(
         repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/"
@@ -965,4 +969,125 @@ def test_claim_is_refused_when_the_use_cannot_be_recorded(
     assert after is not None
     assert after.confirmation_digest == token
     assert after.usage_generation == before.usage_generation
+    dirs.close()
+
+
+def _nested_repo(wt: Path, marker: Path, script: str) -> None:
+    """Commit a nested repository into wt as a gitlink whose own config has a clean filter."""
+    nested = wt / "nested"
+    nested.mkdir()
+    _git(nested, "init", "-b", "main")
+    (nested / ".gitattributes").write_text("* filter=evil\n", encoding="utf-8")
+    (nested / "f").write_text("aaaa\n", encoding="utf-8")
+    _git(nested, "add", ".")
+    _git(nested, "commit", "-m", "nested")
+    _git(nested, "config", "filter.evil.clean", script)
+    _git(wt, "add", "nested")
+    _git(wt, "commit", "-m", "gitlink")
+    (nested / "f").write_text("bbbb\n", encoding="utf-8")
+
+
+def test_nested_repositories_are_never_entered_and_force_confirmation(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    marker = tmp_path / "evil-ran"
+    script = _script(tmp_path / "evil.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    _nested_repo(created.worktree_path, marker, script)
+    _git(repo, "branch", "saved-work", _git(created.worktree_path, "rev-parse", "HEAD"))
+    run_git(_STATUS_ARGS, cwd=created.worktree_path)
+    summary = dirs.summarize_changes(created.id)
+    assert summary.summary_status == "complete"
+    assert summary.nested_repos == ("nested",)
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required"
+    assert first.uncommitted is False and first.unique_commits is False
+    assert first.nested_repos == ("nested",)
+    assert first.reason is not None and "nested repositories" in first.reason
+
+    (created.worktree_path / "loose").mkdir()
+    _git(created.worktree_path / "loose", "init", "-b", "main")  # an untracked nested repo
+    assert dirs.summarize_changes(created.id).nested_repos == ("loose", "nested")
+    second = dirs.release(created.id, workspace_id="ws-1", confirmation=first.confirmation)
+    assert second.status == "confirmation_required"  # the state changed since the first token
+    assert second.nested_repos == ("loose", "nested")
+    done = dirs.release(created.id, workspace_id="ws-1", confirmation=second.confirmation)
+    assert done.status == "deleted"
+    assert not marker.exists()
+    dirs.close()
+
+
+def test_a_rewritten_git_link_stops_git_from_running_in_the_directory(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    elsewhere = _init_repo(tmp_path / "elsewhere")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / ".git").write_text(
+        f"gitdir: {(elsewhere / '.git').as_posix()}\n", encoding="utf-8"
+    )
+
+    summary = dirs.summarize_changes(created.id)
+    assert summary.summary_status == "error" and "valid git worktree" in (summary.error or "")
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required"
+    assert first.reason is not None and "no longer a git worktree" in first.reason
+    dirs.close()
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs permission bits that bind the current user",
+)
+def test_a_failed_removal_leaves_a_directory_release_can_still_clean_up(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    locked = created.worktree_path / "locked"
+    locked.mkdir()
+    (locked / "f").write_text("x\n", encoding="utf-8")
+    locked.chmod(0o555)
+    try:
+        first = dirs.release(created.id, workspace_id="ws-1")
+        failed = dirs.release(created.id, workspace_id="ws-1", confirmation=first.confirmation)
+        assert failed.status == "needs_attention"  # git removed its admin entry, then failed
+        assert created.worktree_path.is_dir()
+
+        again = dirs.release(created.id, workspace_id="ws-1")
+        assert again.status == "confirmation_required"
+        assert again.reason is not None and "no longer a git worktree" in again.reason
+        assert (locked / "f").is_file()  # nothing is touched before the token comes back
+        done = dirs.release(created.id, workspace_id="ws-1", confirmation=again.confirmation)
+        assert done.status == "deleted"
+    finally:
+        if locked.exists():
+            locked.chmod(0o755)
+    assert not created.worktree_path.exists()
+    assert f"agentnave/{created.id}" not in _git(
+        repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/"
+    )
+    assert dirs.store.get(created.id) is None
+    dirs.close()
+
+
+def test_registry_failure_fallback_matches_isolated_paths_in_any_letter_case(
+    tmp_path: Path,
+) -> None:
+    probe = tmp_path / "caseprobe"
+    probe.mkdir()
+    if not (tmp_path / "CASEPROBE").exists():
+        pytest.skip("case-sensitive file system")
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    dirs.store.path.write_bytes(b"this is not a sqlite database" * 100)
+    shouted = Path(
+        str(created.worktree_path).replace(".agentnave-worktrees", ".AGENTNAVE-WORKTREES")
+    )
+    claimed = dirs.claim_for_cwd(shouted)
+    assert claimed is not None  # leased by path; not started without one
+    claimed.lease.release()
     dirs.close()

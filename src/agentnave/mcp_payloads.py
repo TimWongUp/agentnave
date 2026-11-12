@@ -52,6 +52,7 @@ class TaskIsolationSummaryPayload(TypedDict):
     path: str
     branch: str
     summary_status: Literal["complete", "no_baseline", "error"]
+    nested_repos: NotRequired[list[str]]  # their contents were not checked
     head_oid: NotRequired[str]
     actual_branch: NotRequired[str]
     changed_files_from_base: NotRequired[list[str]]
@@ -242,4 +243,5 @@ class IsolatedDirsPayload(TypedDict):
     uncommitted: NotRequired[bool]
     unique_commits: NotRequired[bool]
     confirmation: NotRequired[str]
+    nested_repos: NotRequired[list[str]]  # their contents were not checked
     reason: NotRequired[str]

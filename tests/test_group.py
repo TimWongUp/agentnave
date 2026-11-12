@@ -824,3 +824,21 @@ async def test_seat_cwd_reaching_an_isolated_directory_by_symlink_is_leased_ahea
     groups.drop_seat_claims(group.id, ["a"])
     assert isolated.release(ids[0], workspace_id="ws-1").status == "deleted"
     isolated.close()
+
+
+@pytest.mark.asyncio
+async def test_any_error_while_launching_a_seat_gives_its_lease_back(tmp_path: Path) -> None:
+    repo, isolated, cwds, ids = _two_isolated_dirs(tmp_path)
+
+    class ExplodingManager(FakeManager):
+        def start(self, request: InvocationRequest, **_kwargs: object) -> str:
+            raise KeyError("unexpected")
+
+    groups = Groups(cast(InvocationManager, ExplodingManager()), isolated)
+    group = groups.open(repo, [GroupSeat("a", "claude", {}, cwds[0])])
+    await groups.claim_seats(group.id, ["a"])
+    with pytest.raises(KeyError):
+        groups.run(group.id, ["a"], "parallel", "hello", {})
+    assert groups._seat_claims == {}  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "deleted"
+    isolated.close()
