@@ -608,11 +608,7 @@ impl Group {
                 who,
                 &tail,
             );
-            for key in ["doing", "doing_since", "output_at"] {
-                if let Some(value) = identity[key].as_str() {
-                    message[key] = json!(value);
-                }
-            }
+            crate::data::copy_progress(&mut message, identity);
             if !text(identity, "seat").is_empty() {
                 message["focus"] = json!(format!(
                     "seat:{}:{}",

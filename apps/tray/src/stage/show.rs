@@ -97,11 +97,7 @@ pub(super) fn identity_of(seat: &Value, id: &str, source: &Value) -> Value {
     if source["identity"].is_object() {
         identity["identity"] = source["identity"].clone();
     }
-    for key in ["doing", "doing_since", "output_at"] {
-        if let Some(value) = source[key].as_str() {
-            identity[key] = json!(value);
-        }
-    }
+    crate::data::copy_progress(&mut identity, source);
     identity
 }
 

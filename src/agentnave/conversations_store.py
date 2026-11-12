@@ -867,6 +867,7 @@ class ConversationStore(Groups):
                 "doing": doing,
                 "doing_since": self.manager.progress_since(invocations[key]),
                 "output_at": output_at,
+                "tools": self.manager.recent_tools(invocations[key]),
             }
 
         return {

@@ -551,6 +551,10 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
 .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
 .typing-status { margin-top: 4px; font-size: 12px; color: var(--muted); }
 .typing-status[hidden] { display: none; }
+.tool-trail { font-size: 12px; line-height: 1.55; color: var(--muted); }
+.tool-trail[hidden] { display: none; }
+.tool-trail > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool-trail > div:last-child { color: var(--soft); }
 .typing[hidden] { display: none; }
 .typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--run); animation: dot 1.2s infinite ease-in-out; }
 .typing i:nth-child(2) { animation-delay: 0.15s; }

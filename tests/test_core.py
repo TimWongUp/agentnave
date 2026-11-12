@@ -19,6 +19,7 @@ from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
+from agentnave.adapters.zcode import ZcodeAdapter
 from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
     _RETRY_STALL_QUIET_SECONDS,  # pyright: ignore[reportPrivateUsage]
@@ -1524,6 +1525,45 @@ def test_success_clears_cli_default_and_matching_model(tmp_path: Path) -> None:
     result = core.InvocationResult(InvocationStatus.SUCCEEDED, "claude", "ok", None, 0)
     provider_health.observe_result(tmp_path, result, None, [], "chosen")
     assert set(provider_health.active(tmp_path)) == {("claude", "other")}
+
+
+def test_recent_tools_count_each_call_once_and_keep_five(tmp_path: Path) -> None:
+    def feed(record: _InvocationRecord, adapter: Any, *events: dict[str, Any]) -> None:
+        for event in events:
+            record.observe_event(json.dumps(event).encode(), adapter)
+
+    # With a call id: start, update and end of one call are one entry.
+    record = _InvocationRecord(InvocationRequest("claude", "work", tmp_path))
+    started = {"type": "stream_event", "event": {"type": "content_block_start"}}
+    nested = cast(dict[str, Any], started["event"])
+    for number in range(7):
+        nested["content_block"] = {"type": "tool_use", "id": f"t{number}", "name": f"Tool{number}"}
+        feed(record, ClaudeAdapter(), started)
+        if number == 6:
+            feed(record, ClaudeAdapter(), started)
+        result = {"type": "tool_result", "tool_use_id": f"t{number}"}
+        feed(
+            record,
+            ClaudeAdapter(),
+            {"type": "user", "message": {"content": [result]}},
+            {"type": "assistant", "message": {"content": [{**nested["content_block"]}]}},
+        )
+    assert list(record.recent_tools) == [f"Tool{number}" for number in range(2, 7)]
+
+    # Without one: repeated updates merge, an ended event never counts, a new call does.
+    record = _InvocationRecord(InvocationRequest("zcode", "work", tmp_path))
+    running = {"type": "tool", "name": "Read", "status": "running"}
+    feed(
+        record,
+        ZcodeAdapter(),
+        running,
+        running,
+        {"type": "tool", "name": "Read", "status": "result"},
+        running,
+        {"type": "tool", "name": "Bash", "status": "running"},
+        {"type": "tool", "name": "", "status": "running"},
+    )
+    assert list(record.recent_tools) == ["Read", "Read", "Bash"]
 
 
 def test_stream_blocker_without_model_records_cli_cooldown(tmp_path: Path) -> None:

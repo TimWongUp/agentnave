@@ -486,6 +486,19 @@ fn version(value: &Value) -> Option<u64> {
     value.get("version").and_then(Value::as_u64)
 }
 
+/// What the CLI is doing now, when its reply last grew and its latest tool names; each is
+/// absent from older servers.
+pub(crate) fn copy_progress(target: &mut Value, source: &Value) {
+    for key in ["doing", "doing_since", "output_at"] {
+        if let Some(value) = source[key].as_str() {
+            target[key] = json!(value);
+        }
+    }
+    if source["tools"].is_array() {
+        target["tools"] = source["tools"].clone();
+    }
+}
+
 /// The saved views with running work's reply tails, reported models and elapsed time laid
 /// over them. Only work the saved views still show as running takes a tail.
 fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
@@ -498,12 +511,7 @@ fn lay_tails(saved: &Value, tails: &Value, updated_at: Option<&str>) -> Value {
         if tail["identity"].is_object() {
             target["identity"] = tail["identity"].clone();
         }
-        // What the CLI is doing now and when its reply last grew; absent from older servers.
-        for key in ["doing", "doing_since", "output_at"] {
-            if let Some(value) = tail[key].as_str() {
-                target[key] = json!(value);
-            }
-        }
+        copy_progress(target, tail);
     }
     let now = updated_at.and_then(crate::time_format::timestamp);
     let mut view = saved.clone();
