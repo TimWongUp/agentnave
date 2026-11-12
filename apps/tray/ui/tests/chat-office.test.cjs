@@ -11,9 +11,9 @@ test("typing status measures the current activity and formats minutes", () => {
   const context = vm.createContext({ L: zh => zh, relTime: () => "", Date });
   vm.runInContext(source.slice(start, end), context);
   const now = Date.now();
-  assert.equal(context.typingStatus({ doing: "thinking", doing_since: new Date(now - 23000).toISOString() }), "Thinking · 23s");
+  assert.equal(context.typingStatus({ doing: "thinking", doing_since: new Date(now - 23000).toISOString() }), "思考中 · 23s");
   assert.equal(context.typingStatus({ doing: "tool:read_file", doing_since: new Date(now - 65000).toISOString() }), "read_file · 1m05s");
-  assert.equal(context.typingStatus({ doing: "thinking", doing_since: "bad" }), "Thinking");
+  assert.equal(context.typingStatus({ doing: "thinking", doing_since: "bad" }), "思考中");
 });
 
 function office(character = (_host, model) => model || "default") {

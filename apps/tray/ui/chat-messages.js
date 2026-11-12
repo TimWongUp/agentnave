@@ -342,9 +342,15 @@ function activityDuration(start) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 function typingStatus(m) {
-  // The state and tool names stay as the CLI reports them, in every interface language.
+  // Tool names stay as the CLI reports them; only the app's own words follow the language.
   const d = m.doing || "";
-  const doing = d === "thinking" ? "Thinking" : d === "retrying" ? "Retrying" : d.startsWith("tool:") ? d.slice(5) : "";
+  const doing = d === "thinking"
+    ? L("思考中", "Thinking")
+    : d === "retrying"
+      ? L("重试中", "Retrying")
+      : d.startsWith("tool:")
+        ? d.slice(5)
+        : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   const duration = doing && m.doing_since ? activityDuration(m.doing_since) : "";
   return [doing, duration, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
