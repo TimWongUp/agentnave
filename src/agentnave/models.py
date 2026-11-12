@@ -60,6 +60,16 @@ class InvocationPhase(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class IsolationContext:
+    """Service-managed isolated worktree metadata attached to an execution request."""
+
+    id: str
+    worktree_path: Path
+    branch: str
+    main_root: Path
+
+
+@dataclass(frozen=True, slots=True)
 class InvocationRequest:
     provider: str
     prompt: str
@@ -67,6 +77,7 @@ class InvocationRequest:
     session_id: str | None = None
     provider_options: Mapping[str, ProviderOption] = field(default_factory=lambda: {})
     read_only: bool = False  # Adds the read-only instruction; native permissions stay as they are.
+    isolation: IsolationContext | None = None
 
     def __post_init__(self) -> None:
         provider = self.provider.strip().lower()
@@ -136,6 +147,7 @@ class InvocationListing:
     session_id: str | None = None
     result_read: bool = False
     error: InvocationError | None = None
+    read_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)

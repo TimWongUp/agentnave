@@ -41,6 +41,9 @@ _REQUIRED_CONTAINERS = frozenset(
         "messages",
         "tasks",
         "waiting",
+        "items",
+        "isolated_dirs",
+        "changed_files_from_base",
     }
 )
 

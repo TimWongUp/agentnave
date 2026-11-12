@@ -1819,3 +1819,48 @@ for line in sys.stdin:
         assert "available: swe-2-flash-medium, swe-1-6-slow" in unavailable.error.message
     finally:
         await manager.shutdown()
+
+
+def test_prepare_merges_isolated_and_read_only_instructions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.models import IsolationContext
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / ("claude.cmd" if os.name == "nt" else "claude")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    wt = tmp_path / ".agentnave-worktrees" / "wt-abc123def456"
+    sub = wt / "packages" / "app"
+    sub.mkdir(parents=True)
+    iso = IsolationContext(
+        id="wt-abc123def456",
+        worktree_path=wt,
+        branch="agentnave/wt-abc123def456",
+        main_root=tmp_path,
+    )
+    manager = InvocationManager()
+    writable = manager.prepare(InvocationRequest("claude", "edit file", sub, isolation=iso))
+    assert writable.stdin is not None
+    prefix, body = writable.stdin.decode("utf-8").split("\n\nAssigned task:\n", 1)
+    assert body == "edit file"
+    assert (
+        "When the task asks you to change a file under the main worktree, change the "
+        "corresponding path under this isolated worktree instead."
+    ) in prefix
+    assert "Do not modify the main worktree, push, or switch branches." in prefix
+    assert "Read-only:" not in prefix
+
+    readonly = manager.prepare(
+        InvocationRequest("claude", "inspect file", sub, read_only=True, isolation=iso)
+    )
+    assert readonly.stdin is not None
+    ro_prefix, ro_body = readonly.stdin.decode("utf-8").split("\n\nAssigned task:\n", 1)
+    assert ro_body == "inspect file"
+    assert "Read-only: do not modify files" in ro_prefix
+    assert "change the corresponding path" not in ro_prefix
+    assert "use the corresponding path under this isolated worktree" in ro_prefix
+    assert ro_prefix.count("Do not switch branches.") == 1

@@ -1,0 +1,508 @@
+"""Git discovery, preflight validation, and worktree primitives for isolated directories."""
+
+from __future__ import annotations
+
+import os
+import re
+import stat
+import subprocess
+import tempfile
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+
+from agentnave.isolated.store import ID_PATTERN
+from agentnave.store import write_file
+
+WORKTREES_DIR_NAME = ".agentnave-worktrees"
+EXCLUDE_RULE = b"/.agentnave-worktrees/"
+DEFAULT_GIT_TIMEOUT = 30.0
+MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024
+
+_OID_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+_FILTER_ATTR_RE = re.compile(r"(?:^|\s)filter=([^\s#]+)")
+
+
+class IsolationError(ValueError):
+    """Repository state or request prevents safe isolated directory handling."""
+
+
+class IsolationOwnershipError(IsolationError):
+    """Caller's workspace does not own the target isolated directory."""
+
+
+@dataclass(frozen=True, slots=True)
+class GitResult:
+    returncode: int
+    stdout: bytes
+    stderr: str
+
+
+@dataclass(frozen=True, slots=True)
+class WorktreeEntry:
+    path: Path
+    head_oid: str | None
+    branch_ref: str | None
+    bare: bool = False
+    detached: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RepoContext:
+    cwd: Path
+    source_root: Path
+    main_root: Path
+    repo_common_dir: Path
+    repo_identity: str
+    subdir_prefix: PurePosixPath
+
+
+def is_link(path: Path) -> bool:
+    return path.is_symlink() or os.path.isjunction(path)
+
+
+def same_dir(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def is_same_or_subpath(child: Path, parent: Path) -> bool:
+    """True when child resolves to parent or inside parent, respecting APFS/NTFS casing."""
+    parent_resolved = parent.resolve()
+    child_resolved = child.resolve()
+    if os.name == "nt":
+        norm_parent = Path(os.path.normcase(str(parent_resolved)))
+        norm_child = Path(os.path.normcase(str(child_resolved)))
+        if norm_child.is_relative_to(norm_parent):
+            return True
+    elif child_resolved.is_relative_to(parent_resolved):
+        return True
+    if not parent_resolved.exists():
+        return False
+    parent_depth = len(parent_resolved.parts)
+    for candidate in (child_resolved, *child_resolved.parents):
+        if len(candidate.parts) < parent_depth:
+            break
+        if candidate.name.lower() == parent_resolved.name.lower() and same_dir(
+            candidate, parent_resolved
+        ):
+            return True
+    return False
+
+
+def has_link_in_relpath(base: Path, rel: PurePosixPath) -> bool:
+    """True if any existing component of rel under base is a symlink or Windows junction."""
+    current = base
+    for part in rel.parts:
+        if part in ("", "."):
+            continue
+        current = current / part
+        if is_link(current):
+            return True
+    return False
+
+
+def repo_identity_key(repo_common_dir: Path) -> str:
+    return os.path.normcase(str(repo_common_dir.resolve()))
+
+
+def decode_git_path(raw: bytes) -> str:
+    if os.name == "nt":
+        return raw.decode("utf-8")
+    return os.fsdecode(raw)
+
+
+def run_git(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    allowed_exit_codes: Sequence[int] = (0,),
+    extra_env: Mapping[str, str] | None = None,
+    config_overrides: Sequence[str] = (),
+    stdin: bytes | None = None,
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+    max_output_bytes: int = MAX_GIT_OUTPUT_BYTES,
+) -> GitResult:
+    """Run git as an argument array without a shell, bounded in time and output size."""
+    cmd = ["git", "-C", str(cwd)]
+    for item in config_overrides:
+        cmd.extend(["-c", item])
+    cmd.extend(args)
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    if extra_env:
+        env.update(extra_env)
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+    except OSError as exc:
+        raise IsolationError(f"Failed to execute git: {exc}") from exc
+    try:
+        stdout, stderr_bytes = proc.communicate(input=stdin, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        proc.communicate()
+        raise IsolationError(f"git {args[0] if args else ''} timed out after {timeout}s") from exc
+    if len(stdout) > max_output_bytes:
+        raise IsolationError(f"git {args[0] if args else ''} output exceeded {max_output_bytes}B")
+    stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+    if proc.returncode not in allowed_exit_codes:
+        detail = stderr or f"exit status {proc.returncode}"
+        raise IsolationError(f"git {' '.join(args[:2])} failed: {detail}")
+    return GitResult(returncode=proc.returncode, stdout=stdout, stderr=stderr)
+
+
+def parse_worktrees(porcelain_z: bytes) -> list[WorktreeEntry]:
+    """Parse `git worktree list --porcelain -z` into structured entries."""
+    entries: list[WorktreeEntry] = []
+    path: Path | None = None
+    head_oid: str | None = None
+    branch_ref: str | None = None
+    bare = False
+    detached = False
+
+    def flush() -> None:
+        nonlocal path, head_oid, branch_ref, bare, detached
+        if path is not None:
+            entries.append(WorktreeEntry(path, head_oid, branch_ref, bare=bare, detached=detached))
+        path = None
+        head_oid = None
+        branch_ref = None
+        bare = False
+        detached = False
+
+    for token in porcelain_z.split(b"\x00"):
+        if not token:
+            flush()
+            continue
+        if token.startswith(b"worktree "):
+            flush()
+            path = Path(decode_git_path(token[len(b"worktree ") :]))
+        elif token.startswith(b"HEAD "):
+            head_oid = token[len(b"HEAD ") :].decode("ascii", errors="replace")
+        elif token.startswith(b"branch "):
+            branch_ref = decode_git_path(token[len(b"branch ") :])
+        elif token == b"bare":
+            bare = True
+        elif token == b"detached":
+            detached = True
+    flush()
+    return entries
+
+
+def validate_cwd(cwd: Path | str) -> Path:
+    raw = Path(cwd)
+    if not raw.is_absolute():
+        raise IsolationError("cwd must be an absolute path")
+    resolved = raw.resolve()
+    if not resolved.is_dir():
+        raise IsolationError(f"cwd is not an existing directory: {cwd}")
+    return resolved
+
+
+def discover_repo(cwd: Path | str) -> RepoContext:
+    """Resolve the enclosing Git repository and validate its main worktree."""
+    resolved_cwd = validate_cwd(cwd)
+    bare_out = run_git(["rev-parse", "--is-bare-repository"], cwd=resolved_cwd).stdout.strip()
+    if bare_out == b"true":
+        raise IsolationError("Bare Git repositories cannot use isolated directories")
+    source_root = Path(
+        decode_git_path(
+            run_git(
+                ["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd=resolved_cwd
+            ).stdout.rstrip(b"\r\n")
+        )
+    ).resolve()
+    common_dir = Path(
+        decode_git_path(
+            run_git(
+                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=resolved_cwd
+            ).stdout.rstrip(b"\r\n")
+        )
+    ).resolve()
+    prefix_raw = decode_git_path(
+        run_git(["rev-parse", "--show-prefix"], cwd=resolved_cwd).stdout.rstrip(b"\r\n")
+    )
+    prefix = PurePosixPath(prefix_raw.rstrip("/")) if prefix_raw.rstrip("/") else PurePosixPath()
+    worktrees = parse_worktrees(
+        run_git(["worktree", "list", "--porcelain", "-z"], cwd=resolved_cwd).stdout
+    )
+    if not worktrees or worktrees[0].bare:
+        raise IsolationError("Bare or worktree-less Git repositories are not supported")
+    main_root = worktrees[0].path.resolve()
+    if not main_root.is_dir():
+        raise IsolationError(f"Main worktree is missing: {main_root}")
+    main_common = Path(
+        decode_git_path(
+            run_git(
+                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root
+            ).stdout.rstrip(b"\r\n")
+        )
+    ).resolve()
+    if not same_dir(common_dir, main_common):
+        raise IsolationError("Main worktree common-dir does not match repository common-dir")
+    container = main_root / WORKTREES_DIR_NAME
+    if is_link(container) or (container.exists() and not container.is_dir()):
+        raise IsolationError(f"Unsafe {WORKTREES_DIR_NAME} container under {main_root}")
+    return RepoContext(
+        cwd=resolved_cwd,
+        source_root=source_root,
+        main_root=main_root,
+        repo_common_dir=common_dir,
+        repo_identity=repo_identity_key(common_dir),
+        subdir_prefix=prefix,
+    )
+
+
+def resolve_target_commit(ctx: RepoContext, ref: str | None) -> str:
+    """Resolve optional ref (default HEAD) to a full commit OID without option injection."""
+    if ref is None:
+        target = "HEAD"
+    else:
+        if not ref.strip():
+            raise IsolationError("isolation ref must be a non-empty string")
+        cleaned = ref.strip()
+        if cleaned.startswith("-") or "\x00" in cleaned or "\n" in cleaned or "\r" in cleaned:
+            raise IsolationError(f"Invalid isolation ref: {ref!r}")
+        target = cleaned
+    out = run_git(
+        ["rev-parse", "--verify", "--end-of-options", f"{target}^{{commit}}"],
+        cwd=ctx.source_root,
+        extra_env={"GIT_NO_LAZY_FETCH": "1"},
+    ).stdout.strip()
+    oid = out.decode("ascii", errors="replace")
+    if not _OID_RE.fullmatch(oid):
+        raise IsolationError(f"Resolved ref {target!r} did not yield a valid commit OID")
+    return oid
+
+
+def check_tree_and_filters(ctx: RepoContext, base_oid: str) -> bool:
+    """Reject submodules (160000) and custom non-LFS filter drivers; report LFS presence."""
+    no_fetch = {"GIT_NO_LAZY_FETCH": "1"}
+    tree = run_git(
+        ["ls-tree", "-r", "-z", "--full-tree", base_oid],
+        cwd=ctx.main_root,
+        extra_env=no_fetch,
+    ).stdout
+    for entry in tree.split(b"\x00"):
+        if entry.startswith(b"160000 "):
+            raise IsolationError(
+                "Target commit contains Git submodules (160000); isolated directories reject them"
+            )
+    grep_res = run_git(
+        ["grep", "-h", "-e", "filter=", base_oid, "--", ".gitattributes", "**/.gitattributes"],
+        cwd=ctx.source_root,
+        allowed_exit_codes=(0, 1),
+        extra_env=no_fetch,
+    )
+    referenced = _referenced_filters(grep_res.stdout.decode("utf-8", errors="replace"))
+    custom_drivers = _configured_custom_filters(ctx.source_root)
+    unsupported = sorted(referenced & custom_drivers)
+    if unsupported:
+        raise IsolationError(
+            "Repository configures unsupported custom Git filter driver(s) referenced in "
+            f".gitattributes: {', '.join(unsupported)}"
+        )
+    return "lfs" in referenced
+
+
+def _referenced_filters(attributes_text: str) -> set[str]:
+    names: set[str] = set()
+    for line in attributes_text.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        names.update(_FILTER_ATTR_RE.findall(stripped))
+    return names
+
+
+def _configured_custom_filters(source_root: Path) -> set[str]:
+    res = run_git(
+        ["config", "--null", "--get-regexp", r"^filter\."],
+        cwd=source_root,
+        allowed_exit_codes=(0, 1),
+    )
+    if res.returncode == 1 or not res.stdout:
+        return set()
+    drivers: set[str] = set()
+    for raw in res.stdout.split(b"\x00"):
+        if not raw:
+            continue
+        text = raw.decode("utf-8", errors="replace")
+        if "\n" not in text:
+            continue
+        key, value = text.split("\n", 1)
+        if not key.startswith("filter.") or not value.strip():
+            continue
+        rest = key[len("filter.") :]
+        parts = rest.rsplit(".", 1)
+        if len(parts) != 2:
+            continue
+        driver, prop = parts
+        if prop in ("smudge", "process") and driver != "lfs":
+            drivers.add(driver)
+    return drivers
+
+
+def _has_active_hooks(source_root: Path) -> bool:
+    cfg = run_git(
+        ["config", "--get", "core.hooksPath"],
+        cwd=source_root,
+        allowed_exit_codes=(0, 1),
+    )
+    if cfg.returncode == 0 and cfg.stdout.strip():
+        raw_hooks = Path(decode_git_path(cfg.stdout.rstrip(b"\r\n"))).expanduser()
+        hooks_dir = raw_hooks if raw_hooks.is_absolute() else (source_root / raw_hooks)
+    else:
+        hooks_out = run_git(
+            ["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+            cwd=source_root,
+        ).stdout.rstrip(b"\r\n")
+        hooks_dir = Path(decode_git_path(hooks_out))
+    if not hooks_dir.is_dir():
+        return False
+    try:
+        entries = list(hooks_dir.iterdir())
+    except OSError:
+        return True
+    for entry in entries:
+        if entry.name.endswith(".sample") or entry.name.startswith("."):
+            continue
+        try:
+            mode = entry.stat().st_mode
+        except OSError:
+            continue
+        if not stat.S_ISREG(mode):
+            continue
+        if os.name == "nt" or os.access(entry, os.X_OK):
+            return True
+    return False
+
+
+def collect_creation_warnings(ctx: RepoContext, *, lfs_detected: bool) -> tuple[str, ...]:
+    """Build user-facing warnings for skipped hooks/LFS and uncopied dirty worktree state."""
+    warnings: list[str] = []
+    hooks_skipped = _has_active_hooks(ctx.source_root)
+    if hooks_skipped and lfs_detected:
+        warnings.append("Git hooks and LFS downloads were skipped; LFS files may contain pointers.")
+    elif hooks_skipped:
+        warnings.append("Git hooks were skipped when creating the isolated directory.")
+    elif lfs_detected:
+        warnings.append("Git LFS downloads were skipped; LFS files may contain pointers.")
+    dirty = run_git(
+        ["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        cwd=ctx.source_root,
+    ).stdout
+    if dirty:
+        warnings.append("Uncommitted changes in the source worktree were not copied.")
+    return tuple(warnings)
+
+
+def ensure_info_exclude_locked(main_root: Path) -> None:
+    """Idempotently append /.agentnave-worktrees/ to the repository's info/exclude."""
+    exclude_out = run_git(
+        ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+        cwd=main_root,
+    ).stdout.rstrip(b"\r\n")
+    exclude_path = Path(decode_git_path(exclude_out))
+    if is_link(exclude_path) or is_link(exclude_path.parent):
+        raise IsolationError(f"Unsafe symlink or junction on info/exclude: {exclude_path}")
+    exclude_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = b""
+    if exclude_path.exists():
+        info = exclude_path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            raise IsolationError(f"info/exclude is not a regular file: {exclude_path}")
+        existing = exclude_path.read_bytes()
+    if EXCLUDE_RULE in existing.splitlines():
+        return
+    prefix = existing if (not existing or existing.endswith(b"\n")) else existing + b"\n"
+    write_file(exclude_path, prefix + EXCLUDE_RULE + b"\n")
+
+
+def ref_exists(repo_dir: Path, full_ref: str) -> bool:
+    res = run_git(
+        ["show-ref", "--verify", "--quiet", full_ref],
+        cwd=repo_dir,
+        allowed_exit_codes=(0, 1),
+    )
+    return res.returncode == 0
+
+
+def add_worktree_locked(
+    main_root: Path,
+    branch_name: str,
+    worktree_path: Path,
+    base_oid: str,
+) -> Path:
+    """Create the linked worktree on a brand-new managed branch with hooks and LFS disabled."""
+    container = main_root / WORKTREES_DIR_NAME
+    if is_link(container):
+        raise IsolationError(f"Unsafe {WORKTREES_DIR_NAME} link: {container}")
+    container.mkdir(parents=True, exist_ok=True)
+    if is_link(container) or not container.is_dir():
+        raise IsolationError(f"Invalid {WORKTREES_DIR_NAME} container: {container}")
+    with tempfile.TemporaryDirectory(prefix="agentnave-empty-hooks-") as hooks_tmp:
+        hooks_path = Path(hooks_tmp)
+        if is_link(hooks_path) or any(hooks_path.iterdir()):
+            raise IsolationError("Could not prepare an empty hooks directory")
+        run_git(
+            ["worktree", "add", "-b", branch_name, "--", str(worktree_path), base_oid],
+            cwd=main_root,
+            config_overrides=(
+                f"core.hooksPath={hooks_path}",
+                "core.longpaths=true",
+                "filter.lfs.smudge=",
+                "filter.lfs.process=",
+                "filter.lfs.required=false",
+            ),
+            extra_env={
+                "GIT_LFS_SKIP_SMUDGE": "1",
+                "GIT_NO_LAZY_FETCH": "1",
+            },
+        )
+    if is_link(worktree_path) or not worktree_path.is_dir():
+        raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
+    actual_head = (
+        run_git(["rev-parse", "--verify", "HEAD^{commit}"], cwd=worktree_path)
+        .stdout.strip()
+        .decode("ascii", errors="replace")
+    )
+    actual_ref = decode_git_path(
+        run_git(["symbolic-ref", "-q", "HEAD"], cwd=worktree_path).stdout.rstrip(b"\r\n")
+    )
+    if actual_head != base_oid or actual_ref != f"refs/heads/{branch_name}":
+        raise IsolationError("Created worktree HEAD or branch does not match target")
+    git_dir = Path(
+        decode_git_path(
+            run_git(
+                ["rev-parse", "--path-format=absolute", "--git-dir"], cwd=worktree_path
+            ).stdout.rstrip(b"\r\n")
+        )
+    ).resolve()
+    return git_dir
+
+
+def isolated_worktree_root(path: Path) -> Path | None:
+    """Return the <main_root>/.agentnave-worktrees/<id> ancestor if path lies inside one."""
+    resolved = path.resolve()
+    for candidate in (resolved, *resolved.parents):
+        if ID_PATTERN.fullmatch(candidate.name) and candidate.parent.name == WORKTREES_DIR_NAME:
+            return candidate
+    return None
+
+
+def shares_cwd_tree(first: Path, second: Path) -> bool:
+    """True if two execution cwds lie in the same isolated worktree or same ordinary dir tree."""
+    iso_first = isolated_worktree_root(first)
+    iso_second = isolated_worktree_root(second)
+    if iso_first is not None or iso_second is not None:
+        return iso_first is not None and iso_first == iso_second
+    return is_same_or_subpath(first, second) or is_same_or_subpath(second, first)

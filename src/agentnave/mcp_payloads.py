@@ -39,6 +39,27 @@ class ActivityPayload(TypedDict):
     age_ms: NotRequired[int]
 
 
+class TaskIsolationPayload(TypedDict):
+    id: str
+    path: str
+    cwd: str
+    branch: str
+    base_oid: NotRequired[str]
+
+
+class TaskIsolationSummaryPayload(TypedDict):
+    id: str
+    path: str
+    branch: str
+    summary_status: Literal["complete", "error"]
+    head_oid: NotRequired[str]
+    actual_branch: NotRequired[str]
+    changed_files_from_base: NotRequired[list[str]]
+    truncated: NotRequired[bool]
+    uncommitted: NotRequired[bool]
+    error: NotRequired[str]
+
+
 class InvocationPayload(TypedDict):
     identity: NotRequired[ReplyIdentity]
     invocation_id: str
@@ -49,6 +70,7 @@ class InvocationPayload(TypedDict):
     model: NotRequired[str]
     effort: NotRequired[str]
     defaults_applied: NotRequired[list[str]]
+    isolation: NotRequired[TaskIsolationPayload | TaskIsolationSummaryPayload]
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
@@ -73,6 +95,7 @@ class UnreceivedPayload(TypedDict):
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
     access: NotRequired[str | None]  # the declared tier; recorded only, never enforced
+    unreleased_isolation_count: NotRequired[int]
     unreceived: NotRequired[list[UnreceivedPayload]]
     next: NotRequired[str]  # what to call before ending the turn while ends wait (ADR-0064)
     wait: NotRequired[WaitPayload]  # the wait this dispatch ran when asked to
@@ -194,3 +217,28 @@ class ListPayload(TypedDict):
     conversations: list[ConversationSummary]
     total: int
     unavailable: list[Unavailable]
+
+
+class IsolatedDirItemPayload(TypedDict):
+    id: str
+    path: str
+    cwd: str
+    branch: str
+    base_oid: str
+    state: Literal["creating", "ready", "deleting", "needs_attention"]
+    in_use: bool
+    created_at: str
+    attention: NotRequired[str]
+
+
+class IsolatedDirsPayload(TypedDict):
+    items: NotRequired[list[IsolatedDirItemPayload]]
+    id: NotRequired[str]
+    status: NotRequired[
+        Literal["deleted", "confirmation_required", "blocked", "needs_attention", "not_found"]
+    ]
+    head_oid: NotRequired[str]
+    uncommitted: NotRequired[bool]
+    unique_commits: NotRequired[bool]
+    confirmation: NotRequired[str]
+    reason: NotRequired[str]

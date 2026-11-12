@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO
@@ -11,6 +12,7 @@ from uuid import uuid4
 
 from agentnave import provider_health
 from agentnave.adapters import get_adapter
+from agentnave.adapters.base import PreparedCommand
 from agentnave.conversations_store import (
     _CONNECTION_ID,
     _LIVE_SECONDS,
@@ -47,10 +49,12 @@ from agentnave.group import (
     Round,
     SeatState,
 )
+from agentnave.isolated import ClaimedIsolation, CreatedIsolation, IsolationLease
+from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.locks import release_and_remove
 from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
-from agentnave.models import InvocationRequest, RoundOrder
+from agentnave.models import InvocationRequest, IsolationContext, RoundOrder
 from agentnave.orchestration_roles import OrchestrationRole
 from agentnave.store import (
     Conversation,
@@ -74,6 +78,10 @@ def _missing_forward(message_id: str) -> ForwardError:
 class _TaskStartup:
     record: Record | None = None
     native_lock: IO[bytes] | None = None
+    created: CreatedIsolation | None = None
+    claimed: ClaimedIsolation | None = None
+    info: TaskIsolationInfo | None = None
+    cleanup_paths: tuple[Path, ...] = ()
     started: bool = False
 
 
@@ -391,6 +399,9 @@ class Conversations(ConversationStore):
             assert result is not None
             return result
 
+    def workspace_id(self, manager_session_id: str | None) -> str | None:
+        return self._manager_session(manager_session_id)
+
     def inbox(self, manager_session_id: str | None) -> tuple[list[str], list[str]]:
         """This server's task invocations and rounds whose end no caller has received yet.
 
@@ -578,56 +589,64 @@ class Conversations(ConversationStore):
         seat: OrchestrationRole | None = None,
         forward: list[str] | None = None,
         access: str | None = None,
+        isolation_requested: bool = False,
+        isolation_ref: str | None = None,
     ) -> TaskStart:
         role = normalize_role(role)
         declared = normalize_access(access)
+        if isolation_requested and request.session_id is not None:
+            raise ValueError("isolation cannot be combined with session_id")
         manager_session = self._manager_session(manager_session_id)
+        if isolation_requested and manager_session is None:
+            raise ValueError(
+                "isolation needs a known manager session; pass manager_session_id or "
+                "configure AGENTNAVE_HOST_SESSION_ID"
+            )
         forwarded = self._resolve_forwards(forward, manager_session)
         prompt = request.prompt  # Keep the manager's own text as the saved task prompt.
         self.manager.check_start(request)
         self._check_capacity(1)
-        if conversation_id:
-            self.record(conversation_id)  # Reject missing history before creating startup metadata.
-        if forwarded:
-            request = replace(request, prompt=forwarded_prompt(forwarded, prompt))
-        prepared = self.manager.prepare(request)
         startup = _TaskStartup()
         try:
+            if conversation_id:
+                startup.record = self.writable(conversation_id)
+                if startup.record.state.manager_session != manager_session:
+                    raise ValueError(
+                        self._not_yours("Task conversation", startup.record.state.manager_session)
+                    )
+                if startup.record.state.kind != "task":
+                    raise ValueError("Tasks need a task conversation")
+            request = self._acquire_task_isolation(
+                startup,
+                request,
+                manager_session,
+                isolation_requested=isolation_requested,
+                isolation_ref=isolation_ref,
+            )
+            if forwarded:
+                request = replace(request, prompt=forwarded_prompt(forwarded, prompt))
+            prepared = self.manager.prepare(request)
+            startup.cleanup_paths = tuple(Path(path) for path in prepared.cleanup_paths)
             # Held by the run until it ends: no other server can resume this session meanwhile.
             startup.native_lock = self.manager.reserve(request)
             record = self._bind_task_record(
                 startup, request, conversation_id, manager_session, title
             )
-            task = TaskRecord(
-                id=uuid4().hex,
-                provider=request.provider,
-                model=str(request.provider_options.get("model", "")),
-                effort=str(request.provider_options["effort"])
-                if "effort" in request.provider_options
-                else None,
-                cwd=str(request.cwd),
-                prompt=prompt,
-                manager_host=self.host.name,
-                manager_model=manager_model,
-                manager_reported_model=self._manager_model(manager_session),
-                session_id=request.session_id,
-                time=now(),
-                role=role,
-                seat=seat,
-                access=declared,
-                forward=[item.message_id for item in forwarded],
+            info = startup.info
+            task = self._new_task_record(
+                request,
+                prompt,
+                manager_model,
+                manager_session,
+                role,
+                seat,
+                declared,
+                info,
+                forwarded,
             )
             record.state.tasks.append(task)
             self._persist(record)
-            try:
-                invocation_id = self.manager.start(
-                    request, prepared=prepared, claim=startup.native_lock
-                )
-            except Exception:
-                task.status = "failed"
-                task.error = "start_failed"
-                self._persist(record)
-                raise
+            invocation_id = self._launch_prepared_task(startup, record, task, request, prepared)
             startup.native_lock = None  # the run releases it when it ends
             startup.started = True
             self.running_tasks[task.id] = invocation_id
@@ -636,19 +655,175 @@ class Conversations(ConversationStore):
             collector = asyncio.create_task(self._collect(record, task.id, invocation_id))
             self.collectors.add(collector)
             collector.add_done_callback(self.collectors.discard)
-            return TaskStart(invocation_id, record.state.id, declared)
+            return TaskStart(invocation_id, record.state.id, declared, info)
+        finally:
+            self._cleanup_task_startup(startup)
+
+    def _new_task_record(
+        self,
+        request: InvocationRequest,
+        prompt: str,
+        manager_model: str | None,
+        manager_session: str | None,
+        role: str | None,
+        seat: OrchestrationRole | None,
+        declared: Access | None,
+        info: TaskIsolationInfo | None,
+        forwarded: list[Forwarded],
+    ) -> TaskRecord:
+        return TaskRecord(
+            id=uuid4().hex,
+            provider=request.provider,
+            model=str(request.provider_options.get("model", "")),
+            effort=str(request.provider_options["effort"])
+            if "effort" in request.provider_options
+            else None,
+            cwd=str(request.cwd),
+            prompt=prompt,
+            manager_host=self.host.name,
+            manager_model=manager_model,
+            manager_reported_model=self._manager_model(manager_session),
+            session_id=request.session_id,
+            time=now(),
+            role=role,
+            seat=seat,
+            access=declared,
+            isolation_id=info.id if info is not None else None,
+            isolation_path=info.path if info is not None else None,
+            isolation_branch=info.branch if info is not None else None,
+            forward=[item.message_id for item in forwarded],
+        )
+
+    def _launch_prepared_task(
+        self,
+        startup: _TaskStartup,
+        record: Record,
+        task: TaskRecord,
+        request: InvocationRequest,
+        prepared: PreparedCommand,
+    ) -> str:
+        on_settled = self._task_settlement(startup)
+        try:
+            if on_settled is not None:
+                return self.manager.start(
+                    request,
+                    prepared=prepared,
+                    claim=startup.native_lock,
+                    on_settled=on_settled,
+                )
+            return self.manager.start(
+                request,
+                prepared=prepared,
+                claim=startup.native_lock,
+            )
+        except Exception:
+            if startup.created is not None:
+                task.isolation_id = None
+                task.isolation_path = None
+                task.isolation_branch = None
+            task.status = "failed"
+            task.error = "start_failed"
+            self._persist(record)
+            raise
+
+    def _acquire_task_isolation(
+        self,
+        startup: _TaskStartup,
+        request: InvocationRequest,
+        manager_session: str | None,
+        *,
+        isolation_requested: bool,
+        isolation_ref: str | None,
+    ) -> InvocationRequest:
+        if isolation_requested:
+            assert manager_session is not None
+            created = self.isolated.create(
+                request.cwd, workspace_id=manager_session, ref=isolation_ref
+            )
+            startup.created = created
+            self.active_lease_paths.add(created.lease.path)
+            startup.info = TaskIsolationInfo(
+                id=created.id,
+                path=str(created.worktree_path),
+                cwd=str(created.execution_cwd),
+                branch=created.branch,
+                repo_common_dir=created.repo_common_dir,
+                base_oid=created.base_oid,
+                warnings=created.warnings,
+            )
+            return replace(
+                request,
+                cwd=created.execution_cwd,
+                isolation=IsolationContext(
+                    id=created.id,
+                    worktree_path=created.worktree_path,
+                    branch=created.branch,
+                    main_root=created.main_root,
+                ),
+            )
+        claimed = self.isolated.claim_for_cwd(request.cwd)
+        if claimed is None:
+            return request
+        startup.claimed = claimed
+        self.active_lease_paths.add(claimed.lease.path)
+        startup.info = TaskIsolationInfo(
+            id=claimed.id,
+            path=str(claimed.worktree_path),
+            cwd=str(claimed.execution_cwd),
+            branch=claimed.branch,
+            repo_common_dir=claimed.repo_common_dir,
+            base_oid=claimed.base_oid,
+        )
+        return replace(
+            request,
+            cwd=claimed.execution_cwd,
+            isolation=IsolationContext(
+                id=claimed.id,
+                worktree_path=claimed.worktree_path,
+                branch=claimed.branch,
+                main_root=claimed.main_root,
+            ),
+        )
+
+    def _task_settlement(self, startup: _TaskStartup) -> Callable[[str], None] | None:
+        info = startup.info
+        if info is None:
+            return None
+        lease: IsolationLease = (
+            startup.created.lease if startup.created is not None else startup.claimed.lease  # type: ignore[union-attr]
+        )
+
+        def settle(invocation_id: str) -> None:
+            try:
+                self.isolation_summaries[invocation_id] = self.isolated.summarize_changes(
+                    info.id,
+                    fallback_path=info.path,
+                    fallback_branch=info.branch,
+                )
+            finally:
+                self.active_lease_paths.discard(lease.path)
+                lease.release()
+
+        return settle
+
+    def _cleanup_task_startup(self, startup: _TaskStartup) -> None:
+        try:
+            if not startup.started:
+                for path in startup.cleanup_paths:
+                    path.unlink(missing_ok=True)
+                if startup.created is not None:
+                    self.active_lease_paths.discard(startup.created.lease.path)
+                    self.isolated.abort_created(startup.created)
+                elif startup.claimed is not None:
+                    self.active_lease_paths.discard(startup.claimed.lease.path)
+                    startup.claimed.lease.release()
         finally:
             try:
-                if not startup.started:
-                    for path in prepared.cleanup_paths:
-                        Path(path).unlink(missing_ok=True)
+                if startup.record is not None:
+                    self._release_idle(startup.record)
             finally:
-                try:
-                    if startup.record is not None:
-                        self._release_idle(startup.record)
-                finally:
-                    if startup.native_lock is not None:
-                        release_and_remove(startup.native_lock, Path(startup.native_lock.name))
+                if startup.native_lock is not None:
+                    release_and_remove(startup.native_lock, Path(startup.native_lock.name))
 
     def _bind_task_record(
         self,
@@ -658,7 +833,8 @@ class Conversations(ConversationStore):
         manager_session: str | None,
         title: str | None,
     ) -> Record:
-        startup.record = self.writable(conversation_id) if conversation_id else None
+        if startup.record is None and conversation_id:
+            startup.record = self.writable(conversation_id)
         if startup.record is not None and startup.record.state.manager_session != manager_session:
             raise ValueError(
                 self._not_yours("Task conversation", startup.record.state.manager_session)

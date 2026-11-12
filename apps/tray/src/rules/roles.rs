@@ -99,6 +99,11 @@ pub(super) fn migrate_legacy(text: &str) -> String {
             "各用独立 worktree，做不到就串行；项目规定不建 worktree（如要求直接在 main 修改）时也算做不到。",
         )
         .replace("同一组文件同一时间只有一个 Worker 在写", "同一组文件同一时间只有一个执行者在写")
+        .replace("各用独立 worktree，做不到就串行；", "各用独立的隔离目录，做不到就串行；")
+        .replace(
+            "互不依赖的写入步骤各用独立 worktree 并行派给多个可写工位",
+            "互不依赖的写入步骤各用独立的隔离目录并行派给多个可写工位",
+        )
         .replace("每次最多等十分钟", "每次最多等 270 秒")
         .replace(LEGACY_REVIEW, review)
 }

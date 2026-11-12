@@ -572,3 +572,72 @@ def test_spoken_model_families_match_app(model: str, family: str) -> None:
 
     members = [MemberName(str(i), "pi", model, ordinal=i) for i in (1, 2)]
     assert [m.identity(members)["spoken_name"] for m in members] == [f"{family} #1", f"{family} #2"]
+
+
+@pytest.mark.asyncio
+async def test_group_seat_claims_and_releases_isolated_directory_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import subprocess
+    import sys
+
+    from agentnave.isolated import IsolatedDirs
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "README.md").write_text("hi\n", encoding="utf-8")
+    subprocess.run([*git, "add", "README.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(data_dir))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gate = tmp_path / "gate"
+    script = bin_dir / ("claude.py" if os.name == "nt" else "claude")
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, pathlib, sys, time\n"
+        "prompt = sys.stdin.read()\n"
+        f"gate = pathlib.Path({str(gate)!r})\n"
+        "while not gate.exists():\n"
+        "    time.sleep(0.02)\n"
+        "print(json.dumps({'type': 'result', 'result': prompt.split('Assigned task:\\n', 1)[1], "
+        "'session_id': 's1', 'num_turns': 1, 'is_error': False}))\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    isolated = IsolatedDirs(data_dir)
+    created = isolated.create(repo, workspace_id="ws-group")
+    created.lease.release()
+    inv_manager = InvocationManager()
+    groups = Groups(inv_manager)
+    groups.isolated = isolated
+    try:
+        group = groups.open(
+            repo,
+            [GroupSeat("a", "claude", {}, created.execution_cwd, access="read")],
+        )
+        round_ = groups.run(group.id, ["a"], "parallel", "review isolated", {})
+        blocked = isolated.release(created.id, workspace_id="ws-group")
+        assert blocked.status == "blocked"
+        gate.write_text("go", encoding="utf-8")
+        await groups.wait(round_.id, 10)
+        deleted = isolated.release(created.id, workspace_id="ws-group")
+        assert deleted.status == "deleted"
+    finally:
+        await inv_manager.shutdown()
+        isolated.close()

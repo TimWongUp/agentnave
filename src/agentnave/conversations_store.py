@@ -30,6 +30,8 @@ from agentnave.host import (
     detect_host,
     host_session_id,
 )
+from agentnave.isolated import ChangeSummary, IsolatedDirs
+from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.member_names import meeting_members, seat_identity, task_identity
 from agentnave.models import InvocationResult
 from agentnave.naming import MemberIdentity, MemberName
@@ -84,6 +86,7 @@ class TaskStart(NamedTuple):
     invocation_id: str
     conversation_id: str
     access: str | None = None  # the tier this call declared
+    isolation: TaskIsolationInfo | None = None
 
 
 _MAX_FORWARD = 20
@@ -183,6 +186,8 @@ class ConversationStore(Groups):
         self.root = root.resolve()  # created only by the first saved conversation
         manager.health_root = self.root
         self.db = Database(self.root)
+        self.isolated: IsolatedDirs = IsolatedDirs(self.root)
+        self.isolation_summaries: dict[str, ChangeSummary] = {}
         self.locks = self.root / "locks"
         # Runs hold their native session's lock here, so servers on one data root exclude
         # each other's tasks and seats alike.
@@ -462,6 +467,7 @@ class ConversationStore(Groups):
     def _forget_invocation(self, invocation_id: str) -> None:
         self.task_invocations.pop(invocation_id, None)
         self.delivered_tasks.discard(invocation_id)
+        self.isolation_summaries.pop(invocation_id, None)
 
     def _round(self, round_id: str) -> Round:
         if round_id in self._completed_rounds:
@@ -957,6 +963,7 @@ class ConversationStore(Groups):
             for record in self.records.values():
                 record.release()
             self.manager.on_forget = None
+            self.isolated.close()
             self.db.close()
 
 

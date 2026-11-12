@@ -5,7 +5,7 @@
 | 编号 | 标题（链接） | 状态 | 被谁修订/取代 |
 | --- | --- | --- | --- |
 | 0001 | [执行运行时边界](0001-execution-runtime-boundary.md) | 已被 ADR-0002 取代 | [ADR-0002](0002-lightweight-cli-subagent-adapter.md) |
-| 0002 | [AgentNave 收敛为轻量 CLI 子代理适配器](0002-lightweight-cli-subagent-adapter.md) | 部分取代 | [ADR-0003](0003-agent-only-stdio-mcp-server.md)、[ADR-0008](0008-tray-app-reads-studio-snapshots.md)、[ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0027](0027-deepseek-official-route-stored-credentials.md)、[ADR-0049](0049-service-initiated-termination.md) |
+| 0002 | [AgentNave 收敛为轻量 CLI 子代理适配器](0002-lightweight-cli-subagent-adapter.md) | 部分取代 | [ADR-0003](0003-agent-only-stdio-mcp-server.md)、[ADR-0008](0008-tray-app-reads-studio-snapshots.md)、[ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0027](0027-deepseek-official-route-stored-credentials.md)、[ADR-0049](0049-service-initiated-termination.md)、[ADR-0085](0085-service-managed-isolated-dirs.md) |
 | 0003 | [只提供面向 Agent 的 STDIO MCP 接口](0003-agent-only-stdio-mcp-server.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md) |
 | 0004 | [Windows 使用 Job Object 监督 Provider 进程树](0004-windows-job-object-supervision.md) | 已接受 | — |
 | 0005 | [由主控 Agent 导演的公共发言区与独立工作台](0005-director-controlled-discussion-rooms.md) | 已被 ADR-0006 取代 | [ADR-0006](0006-core-rounds-and-studio-split.md)、[ADR-0008](0008-tray-app-reads-studio-snapshots.md) |
@@ -87,3 +87,4 @@
 | 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合 |
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
 | 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 已接受 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063 |
+| 0085 | [隔离目录由服务创建、登记和回收，是否隔离仍由 boss 决定](0085-service-managed-isolated-dirs.md) | 已接受 | 修订 ADR-0002 的 worktree 归属；扩展 ADR-0043 |

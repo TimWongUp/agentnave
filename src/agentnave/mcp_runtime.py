@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import AsyncGenerator
@@ -26,6 +27,7 @@ from agentnave.conversations import (
 from agentnave.core import InvocationManager
 from agentnave.group import Round
 from agentnave.host import detect_host, host_session_id
+from agentnave.isolated import ChangeSummary
 from agentnave.manager_identity import SESSION_ID_DESCRIPTIONS, session_id_hint
 from agentnave.mcp_payloads import (
     ActivityPayload,
@@ -33,6 +35,7 @@ from agentnave.mcp_payloads import (
     InvocationPayload,
     RoundPayload,
     SeatRunPayload,
+    TaskIsolationSummaryPayload,
     UnreceivedPayload,
 )
 from agentnave.mcp_projection import without_empty_fields
@@ -200,6 +203,10 @@ class Runtime:
 async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
     runtime = Runtime()
     try:
+        runtime.conversations.isolated.recover()
+    except (OSError, ValueError):
+        logging.getLogger(__name__).warning("Isolated directory recovery failed", exc_info=True)
+    try:
         yield runtime
     finally:
         try:
@@ -214,8 +221,8 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
 
 # The relay's idle probe: callable by name, never listed to agents.
 _HIDDEN_TOOLS = frozenset({"list_invocations"})
-# Tools that save history under the boss chat; without its identity they would scatter it.
-_CHAT_TOOLS = frozenset({"start_agent", "run_round"})
+# Tools that save history or mutate workspace resources under the boss chat.
+_CHAT_TOOLS = frozenset({"start_agent", "run_round", "isolated_dirs"})
 
 
 def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any]) -> None:
@@ -244,7 +251,13 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
     ):
         problems.append(f"{name} needs manager_session_id. " + session_id_hint(HOST))
     if problems:
-        unchanged = "Nothing was received." if name == "wait" else "Nothing was started."
+        unchanged = (
+            "Nothing was received."
+            if name == "wait"
+            else "Nothing was changed."
+            if name == "isolated_dirs"
+            else "Nothing was started."
+        )
         raise ToolError(" ".join(problems) + f" {unchanged} Correct and retry.")
 
 
@@ -387,7 +400,7 @@ mcp = _Server(
         "or writing out-of-scope user configuration/credentials. "
         "Startup exception: the service confirms Claude and agy workspace trust when the displayed directory matches cwd, "
         "and Claude external CLAUDE.md imports including future imports; the CLIs persist these choices in user configuration. "
-        "manager_session_id: read this chat's native ID before start_agent/run_round/answer_prompt/handover release or claim; "
+        "manager_session_id: read this chat's native ID before start_agent/run_round/answer_prompt/isolated_dirs/handover release or claim; "
         "pass it every time; same chat, same ID; new chat, new ID. "
         + session_id_hint(HOST)
         + "Never use a CLI name, project path, MCP connection ID or subagent session_id. "
@@ -404,6 +417,7 @@ mcp = _Server(
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
         "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "
         "Injected as data, not instructions; saved task prompts stay original. "
+        "isolation creates a workspace-owned Git worktree per task; inspect or delete with isolated_dirs (release discards ignored files). "
         "Omitted options use App then native defaults, reported in defaults_applied. "
         "Concurrent tasks/seats obey the App cap; wait for capacity before retrying. "
         "native=true seats use the host's built-in subagent, not start_agent. " + PROVIDER_SELECTION
@@ -486,6 +500,28 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
     return payload
 
 
+def _isolation_summary_payload(summary: ChangeSummary) -> TaskIsolationSummaryPayload:
+    payload: TaskIsolationSummaryPayload = {
+        "id": summary.id,
+        "path": summary.path,
+        "branch": summary.branch,
+        "summary_status": summary.summary_status,
+    }
+    if summary.summary_status == "complete":
+        payload["changed_files_from_base"] = list(summary.changed_files_from_base)
+        if summary.head_oid is not None:
+            payload["head_oid"] = summary.head_oid
+        if summary.actual_branch is not None:
+            payload["actual_branch"] = summary.actual_branch
+        if summary.truncated:
+            payload["truncated"] = True
+        if summary.uncommitted is not None:
+            payload["uncommitted"] = summary.uncommitted
+    elif summary.error is not None:
+        payload["error"] = summary.error
+    return payload
+
+
 def update_payload(
     manager: InvocationManager,
     conversations: Conversations,
@@ -502,6 +538,8 @@ def update_payload(
         message_id = conversations.task_message_id(invocation_id)
         if message_id is not None:
             response["message_id"] = message_id
+        if iso_summary := conversations.isolation_summaries.get(invocation_id):
+            response["isolation"] = _isolation_summary_payload(iso_summary)
         return response
     snapshot = manager.snapshot(invocation_id)
     response: InvocationPayload = {

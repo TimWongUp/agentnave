@@ -16,7 +16,7 @@ AgentNave 把私聊任务和会议室都保存到数据目录（默认 `~/.agent
 
 `run_round(title, members, cwd, prompt, seats, manager_session_id, order?, review?, isolated?)` 一次新建会议室并启动第 1 轮，返回的 `group_id` 也是会话 ID；只准备会议室时省略 `prompt` 和 `seats`。之后用 `run_round(group_id, seats, order, prompt, manager_session_id)` 继续，重启后仍可用同一 ID，各席续接自己的原生会话；只能继续本聊天 `manager_session_id` 建的会议室，无归属的旧会议室只读，需新建。
 
-- **席位**：每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`；席位只共享已提交条目，私密指令只给对应席位。席位参数只能在新建会议时给。并联写代码的席位各用独立 worktree。
+- **席位**：每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`；席位只共享已提交条目，私密指令只给对应席位。席位参数只能在新建会议时给。并联写代码的席位各用 boss 事先准备好的独立 worktree（席位不能用 `isolation` 新建）。
 - **轮次**：同组同时一轮；`run_round` 保持默认 `wait=false`，先返回 `round_id` 再单独 `wait`；不自动重试，不设每席截止时间。串联轮只占一个运行名额，但到最后一席启动前（包括等待审核时）一直占着。会议室可跨服务重启继续，运行中的进程和句柄不恢复。
 - **委员会**：两轮 `parallel`，先各自给根因与方案，再看过上一轮公开的答案后补充或修正；boss 汇报结论、共识、保留的异议及如何收敛。用户要求最终收束时再加一轮 `serial`，后发言者在前者基础上回应、收束。
 - **boss 主动开会**（全局规则的档位允许时）：人数和成员按规则块里的「开会默认」一行，指定了席位的照传 `provider` 与 `provider_options.model`（及 `effort`），其余由 boss 从会议默认组员里选；规则块没写时默认 3 席，从会议默认组员里选，不要求不同 CLI 或不同模型；两轮 `parallel` 后由 boss 综合，仍有实质分歧就在总结里列出分歧和各方理由交用户决定，不另加轮次，也不另派模型裁决。用户点名的人数、成员、轮数优先。

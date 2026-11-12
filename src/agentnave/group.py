@@ -13,11 +13,13 @@ from typing import Literal
 
 from agentnave.adapters import get_adapter
 from agentnave.core import InvocationManager
+from agentnave.isolated.manager import IsolatedDirs
 from agentnave.models import (
     InvocationError,
     InvocationRequest,
     InvocationResult,
     InvocationStatus,
+    IsolationContext,
     ProviderOption,
     RoundOrder,
 )
@@ -187,6 +189,8 @@ class Groups:
 
     def __init__(self, manager: InvocationManager) -> None:
         self.manager = manager
+        self.isolated = IsolatedDirs()
+        self.active_lease_paths: set[Path] = set()
         self._groups: dict[str, Group] = {}
         self._rounds: dict[str, Round] = {}
 
@@ -495,18 +499,45 @@ class Groups:
             )
             run.launch_error = InvocationError(code, round_.error)
             return
+        claimed = None
         try:
-            run.invocation_id = self.manager.start(
-                InvocationRequest(
-                    seat.provider,
-                    self._prompt(round_.group, run, snapshot),
-                    seat.cwd,
-                    state.session_id,
-                    seat.provider_options,
-                    read_only=seat.access == "read",
+            claimed = self.isolated.claim_for_cwd(seat.cwd)
+            exec_cwd = claimed.execution_cwd if claimed is not None else seat.cwd
+            iso_ctx: IsolationContext | None = None
+            on_settled = None
+            if claimed is not None:
+                held = claimed
+                self.active_lease_paths.add(held.lease.path)
+                iso_ctx = IsolationContext(
+                    id=held.id,
+                    worktree_path=held.worktree_path,
+                    branch=held.branch,
+                    main_root=held.main_root,
                 )
+
+                def release_seat(_inv_id: str) -> None:
+                    self.active_lease_paths.discard(held.lease.path)
+                    held.lease.release()
+
+                on_settled = release_seat
+            req = InvocationRequest(
+                seat.provider,
+                self._prompt(round_.group, run, snapshot),
+                exec_cwd,
+                state.session_id,
+                seat.provider_options,
+                read_only=seat.access == "read",
+                isolation=iso_ctx,
+            )
+            run.invocation_id = (
+                self.manager.start(req, on_settled=on_settled)
+                if on_settled is not None
+                else self.manager.start(req)
             )
         except (OSError, ValueError, RuntimeError) as exc:
+            if claimed is not None:
+                self.active_lease_paths.discard(claimed.lease.path)
+                claimed.lease.release()
             run.status = "failed"
             run.launch_error = InvocationError("launch_error", str(exc))
         round_.notify()
