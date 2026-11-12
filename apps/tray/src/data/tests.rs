@@ -115,6 +115,31 @@ fn routes_serve_views_and_reject_everything_else() {
 
 const MANAGER: &str = "s-0123456789abcdef0123456789abcdef";
 
+#[test]
+fn chats_do_not_wait_for_host_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, owner_host, title) VALUES (?1, ?1, 'claude', 'test')",
+            [MANAGER],
+        )
+        .unwrap();
+    drop(connection);
+    let reader = Arc::new(Reader::new(dir.path().to_path_buf()));
+    let guard = reader.hosts.lock().unwrap();
+    let (send, receive) = std::sync::mpsc::channel();
+    let worker = Arc::clone(&reader);
+    let thread = std::thread::spawn(move || {
+        let response = worker.request("GET", "/app/chats", None, b"");
+        send.send(response.status).unwrap();
+    });
+    let result = receive.recv_timeout(Duration::from_secs(3));
+    drop(guard);
+    thread.join().unwrap();
+    assert_eq!(result.unwrap(), 200);
+}
+
 fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
     json!({"version": 1, "summary": {"id": id, "title": format!("任务 {id}"),
             "mode": "task", "status": status, "updated": updated, "host": "claude", "manager_session": MANAGER},
