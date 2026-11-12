@@ -409,6 +409,28 @@ class Conversations(ConversationStore):
     def workspace_id(self, manager_session_id: str | None) -> str | None:
         return self._manager_session(manager_session_id)
 
+    def reading_workspace(self, manager_session_id: str | None) -> str | None:
+        """The calling boss's workspace for reading history; one it handed over still reads as
+        its own. None without a boss identity."""
+        return self._manager_session(manager_session_id, strict=False)
+
+    def invocation_workspaces(self) -> dict[str, str | None]:
+        """The workspace each private task or meeting seat run of this server works for."""
+
+        def owner(conversation_id: str) -> str | None:
+            record = self.records.get(conversation_id)
+            return record.state.manager_session if record is not None else None
+
+        found = {
+            invocation_id: owner(conversation_id)
+            for invocation_id, (conversation_id, _) in self.task_invocations.items()
+        }
+        for round_ in (*self._completed_rounds.values(), *self._rounds.values()):
+            for run in round_.runs:
+                if run.invocation_id is not None:
+                    found[run.invocation_id] = owner(round_.group.id)
+        return found
+
     def inbox(self, manager_session_id: str | None) -> tuple[list[str], list[str]]:
         """This server's task invocations and rounds whose end no caller has received yet.
 

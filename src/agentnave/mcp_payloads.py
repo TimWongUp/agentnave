@@ -213,9 +213,22 @@ class ConversationSummary(TypedDict):
     updated: str
 
 
+class WorkspaceSummary(TypedDict):
+    workspace_id: NotRequired[str]  # absent for conversations saved without a boss
+    title: str
+    host: NotRequired[str]
+    mine: bool
+    updated: str
+    conversation_count: int
+    conversations: list[ConversationSummary]  # the most recent few
+
+
 class ListPayload(TypedDict):
+    scope: Literal["mine", "all"]
     invocations: list[InvocationListItem]
-    conversations: list[ConversationSummary]
+    invocations_omitted: NotRequired[int]
+    conversations: NotRequired[list[ConversationSummary]]  # scope="mine"
+    workspaces: NotRequired[list[WorkspaceSummary]]  # scope="all"
     total: int
     unavailable: list[Unavailable]
 

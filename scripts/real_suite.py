@@ -469,7 +469,7 @@ class Suite:
         return None
 
     async def history(self) -> str | None:
-        listed = await self.call("list", {"limit": 200})
+        listed = await self.call("list", {"limit": 200, "manager_session_id": MANAGER})
         conversations = [
             item
             for item in listed["conversations"]
@@ -510,7 +510,7 @@ class Suite:
         await self.guarded("list", "-", self.idle())
 
     async def idle(self) -> str | None:
-        listed = await self.call("list", {})
+        listed = await self.call("list", {"manager_session_id": MANAGER})
         running = [item for item in listed["invocations"] if item["status"] == "running"]
         if running:
             raise ToolFailure(f"{len(running)} invocations still running")

@@ -18,9 +18,12 @@ from agentnave.conversations_store import naming_peers
 from agentnave.db import Workspace
 from agentnave.mcp_isolated import attach_handover_isolated_dirs
 from agentnave.mcp_payloads import (
+    ConversationSummary,
+    InvocationListItem,
     ListPayload,
     MemberListPayload,
     ProviderDetails,
+    WorkspaceSummary,
 )
 from agentnave.mcp_rounds import (
     _WORKSPACE_ID,
@@ -42,7 +45,12 @@ from agentnave.members import (
 )
 from agentnave.members import list_members as read_member_list
 from agentnave.native_sessions import shared_session_id
-from agentnave.store import Record
+from agentnave.store import Conversation, Record
+
+# Finished runs a list shows; running ones are always shown.
+_FINISHED_SHOWN = 10
+# Conversations shown under each workspace when listing every workspace.
+_WORKSPACE_SAMPLE = 3
 
 
 async def list_all(
@@ -52,45 +60,124 @@ async def list_all(
     ] = None,
     limit: Annotated[
         int,
-        Field(ge=1, le=200, description="Most recent conversations; defaults to 10, at most 200."),
+        Field(
+            ge=1,
+            le=200,
+            description="Most recent conversations (scope=mine) or workspaces (scope=all); "
+            "defaults to 10, at most 200.",
+        ),
     ] = 10,
+    scope: Annotated[
+        Literal["mine", "all"],
+        Field(
+            description="mine: this chat's workspace. all: every workspace on this machine, "
+            "newest first, each with its latest conversations."
+        ),
+    ] = "mine",
+    manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> ListPayload:
-    """List invocation metadata and saved conversations, newest first.
+    """List this boss's runs and saved conversations, newest first.
     writable=false: continue at the owning server or when idle. Private: never send to seats.
     """
     conversations = _conversations(ctx)
     try:
         writable = conversations.scan()
-    except OSError as exc:
+        workspace = conversations.reading_workspace(manager_session_id)
+    except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    matching = sorted(
-        (
-            record.state
-            for record in conversations.records.values()
-            if kind is None or record.state.kind == kind
-        ),
+    if scope == "mine" and workspace is None:
+        raise ToolError(
+            "list needs manager_session_id for this boss chat, or scope='all'. Correct the "
+            "request and retry."
+        )
+    states = sorted(
+        (record.state for record in conversations.records.values()),
         key=lambda state: (views.updated(state), state.created),
         reverse=True,
     )
+    invocations, omitted = _boss_invocations(ctx, conversations, workspace)
     result: ListPayload = {
-        "invocations": _invocation_items(_manager(ctx)),
-        "conversations": [
-            {
-                "conversation_id": state.id,
-                "title": state.title,
-                "kind": state.kind,
-                "writable": writable.get(state.id, True),
-                "created": state.created,
-                "updated": views.updated(state),
-            }
-            for state in matching[:limit]
-        ],
-        "total": len(matching),
+        "scope": scope,
+        "invocations": invocations,
+        "total": 0,
         "unavailable": conversations.unavailable,
     }
+    if omitted:
+        result["invocations_omitted"] = omitted
+    if scope == "mine":
+        mine = [
+            state
+            for state in states
+            if state.manager_session == workspace and (kind is None or state.kind == kind)
+        ]
+        result["conversations"] = [_summary(state, writable) for state in mine[:limit]]
+        result["total"] = len(mine)
+    else:
+        workspaces = _workspaces(states, kind, workspace, writable)
+        result["workspaces"] = workspaces[:limit]
+        result["total"] = len(workspaces)
     return result
+
+
+def _summary(state: Conversation, writable: dict[str, bool]) -> ConversationSummary:
+    return {
+        "conversation_id": state.id,
+        "title": state.title,
+        "kind": state.kind,
+        "writable": writable.get(state.id, True),
+        "created": state.created,
+        "updated": views.updated(state),
+    }
+
+
+def _workspaces(
+    states: list[Conversation],
+    kind: Literal["show", "task"] | None,
+    workspace: str | None,
+    writable: dict[str, bool],
+) -> list[WorkspaceSummary]:
+    """Conversations by workspace, newest first. A workspace is named by its first
+    conversation, and only workspaces holding conversations of the asked kind are listed."""
+    groups: dict[str | None, list[Conversation]] = {}
+    for state in states:
+        groups.setdefault(state.manager_session, []).append(state)
+    found: list[WorkspaceSummary] = []
+    for key, members in groups.items():
+        shown = [state for state in members if kind is None or state.kind == kind]
+        if not shown:
+            continue
+        first = min(members, key=lambda state: (state.created, state.id))
+        item: WorkspaceSummary = {
+            "title": first.title,
+            "mine": key is not None and key == workspace,
+            "updated": views.updated(members[0]),
+            "conversation_count": len(shown),
+            "conversations": [_summary(state, writable) for state in shown[:_WORKSPACE_SAMPLE]],
+        }
+        if key is not None:
+            item["workspace_id"] = key
+        if members[0].host is not None:
+            item["host"] = members[0].host
+        found.append(item)
+    return found
+
+
+def _boss_invocations(
+    ctx: Context[Runtime], conversations: Conversations, workspace: str | None
+) -> tuple[list[InvocationListItem], int]:
+    """This boss's runs on this server (every run without a boss identity): all running ones
+    and the latest finished ones, with how many finished ones were left out."""
+    items = _invocation_items(_manager(ctx))
+    if workspace is not None:
+        owners = conversations.invocation_workspaces()
+        items = [item for item in items if owners.get(item["invocation_id"]) == workspace]
+    finished = [item for item in items if item["status"] != "running"]
+    dropped = {
+        item["invocation_id"] for item in finished[: max(0, len(finished) - _FINISHED_SHOWN)]
+    }
+    return [item for item in items if item["invocation_id"] not in dropped], len(dropped)
 
 
 async def list_members(
