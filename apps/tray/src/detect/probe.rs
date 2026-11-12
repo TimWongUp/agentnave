@@ -21,7 +21,27 @@ pub(crate) fn search_path(executable: &Path) -> Option<std::ffi::OsString> {
 
 /// Run a listing command with empty stdin; give up after the timeout.
 pub(super) fn command(executable: &Path, args: &[&str]) -> Command {
-    let mut command = Command::new(executable);
+    configure(Command::new(executable), executable, args)
+}
+
+/// The same command started through the user's login shell, so a CLI that reads provider keys
+/// from the environment sees the ones set in shell startup files, which an app started from the
+/// Dock lacks. The values reach only the CLI; AgentNave never reads them.
+pub(super) fn login_command(executable: &Path, args: &[&str]) -> Command {
+    let shell = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|shell| cfg!(unix) && shell.is_absolute());
+    let Some(shell) = shell else {
+        return command(executable, args);
+    };
+    let mut login = Command::new(shell);
+    login
+        .args(["-l", "-c", r#"exec "$0" "$@""#])
+        .arg(executable);
+    configure(login, executable, args)
+}
+
+fn configure(mut command: Command, executable: &Path, args: &[&str]) -> Command {
     command
         .args(args)
         .current_dir(std::env::temp_dir())
@@ -44,12 +64,11 @@ pub(super) fn command(executable: &Path, args: &[&str]) -> Command {
 /// `answers` accepts, then stop the CLI with its group. stdin stays open until then, since these
 /// CLIs exit when it closes.
 pub(super) fn ask(
-    executable: &Path,
-    args: &[&str],
+    mut command: Command,
     request: &Value,
     answers: impl Fn(&Value) -> bool,
 ) -> Result<Value, String> {
-    let mut child = command(executable, args)
+    let mut child = command
         .stdin(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -105,7 +124,7 @@ pub(super) fn claude_models(path: &Path) -> Result<Vec<Value>, String> {
         "stream-json",
         "--verbose",
     ];
-    let response = ask(path, &args, &request, |line| {
+    let response = ask(command(path, &args), &request, |line| {
         line["type"] == "control_response"
     })?;
     let models = claude_picker(&response);
@@ -139,9 +158,8 @@ pub(super) fn claude_picker(response: &Value) -> Vec<Value> {
 /// Pi's available models over RPC, as `provider/model` with the thinking levels Pi offers.
 pub(super) fn pi_rpc_models(path: &Path) -> Result<Vec<Value>, String> {
     let request = json!({"id": "agentnave-models", "type": "get_available_models"});
-    let response = ask(path, &["--mode", "rpc", "--no-session"], &request, |line| {
-        line["id"] == "agentnave-models"
-    })?;
+    let rpc = login_command(path, &["--mode", "rpc", "--no-session"]);
+    let response = ask(rpc, &request, |line| line["id"] == "agentnave-models")?;
     let models = response["data"]["models"]
         .as_array()
         .ok_or("Pi 没有列出模型")?;
@@ -226,7 +244,11 @@ pub(super) fn codebuddy_product_config(encoded: &str) -> Option<Value> {
 }
 
 pub(super) fn run(executable: &Path, args: &[&str]) -> Result<String, String> {
-    let mut child = command(executable, args)
+    run_command(command(executable, args))
+}
+
+pub(super) fn run_command(mut command: Command) -> Result<String, String> {
+    let mut child = command
         .stdin(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
