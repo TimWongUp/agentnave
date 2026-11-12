@@ -128,6 +128,9 @@ def remove_tree(path: Path, container: Path) -> None:
         function: Callable[[str], object], target: str, _exc: object
     ) -> None:
         for item in (os.path.dirname(target), target):
+            # chmod follows links: never touch one, or its target outside the tree changes.
+            if os.path.islink(item) or os.path.isjunction(item):
+                continue
             with suppress(OSError):
                 os.chmod(item, os.stat(item, follow_symlinks=False).st_mode | stat.S_IRWXU)
         function(target)

@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import sqlite3
+import stat
 import subprocess
 from contextlib import AbstractContextManager, closing
 from dataclasses import replace
@@ -1048,6 +1049,16 @@ def test_a_failed_removal_leaves_a_directory_release_can_still_clean_up(tmp_path
     locked = created.worktree_path / "locked"
     locked.mkdir()
     (locked / "f").write_text("x\n", encoding="utf-8")
+    outside = tmp_path / "outside-secret"
+    outside.write_text("keep\n", encoding="utf-8")
+    outside.chmod(0o400)
+    linked = created.worktree_path / "linked"
+    linked.mkdir()
+    (linked / "link").symlink_to(outside)
+    linked.chmod(0o555)
+    (created.worktree_path / "work.txt").write_text("work\n", encoding="utf-8")
+    _git(created.worktree_path, "add", "work.txt")
+    _git(created.worktree_path, "commit", "-m", "unmerged work")
     locked.chmod(0o555)
     try:
         first = dirs.release(created.id, workspace_id="ws-1")
@@ -1058,13 +1069,17 @@ def test_a_failed_removal_leaves_a_directory_release_can_still_clean_up(tmp_path
         again = dirs.release(created.id, workspace_id="ws-1")
         assert again.status == "confirmation_required"
         assert again.reason is not None and "no longer a git worktree" in again.reason
+        assert again.unique_commits is True  # the branch still holds unmerged commits
         assert (locked / "f").is_file()  # nothing is touched before the token comes back
         done = dirs.release(created.id, workspace_id="ws-1", confirmation=again.confirmation)
         assert done.status == "deleted"
     finally:
-        if locked.exists():
-            locked.chmod(0o755)
+        for folder in (locked, linked):
+            if folder.exists():
+                folder.chmod(0o755)
     assert not created.worktree_path.exists()
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o400  # a link's target is never chmod-ed
+    assert outside.read_text(encoding="utf-8") == "keep\n"
     assert f"agentnave/{created.id}" not in _git(
         repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/"
     )

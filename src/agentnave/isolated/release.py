@@ -591,6 +591,23 @@ def _inspect_orphan_locked(
             .stdout.strip()
             .decode("ascii", errors="replace")
         )
+    unique = False
+    if tip:
+        containing = (
+            run_git(
+                [
+                    "for-each-ref",
+                    f"--contains={tip}",
+                    "--format=%(refname)",
+                    "refs/heads/",
+                    "refs/remotes/",
+                ],
+                cwd=main_root,
+            )
+            .stdout.decode("utf-8", errors="replace")
+            .splitlines()
+        )
+        unique = not any(ref and not ref.startswith(MANAGED_BRANCH_PREFIX) for ref in containing)
     digest = _compute_digest(
         record.id,
         workspace_id,
@@ -604,7 +621,7 @@ def _inspect_orphan_locked(
         head_oid="",
         branch_oid=tip,
         uncommitted=True,
-        unique_commits=False,
+        unique_commits=unique,
         digest=digest,
         orphan=True,
     )
