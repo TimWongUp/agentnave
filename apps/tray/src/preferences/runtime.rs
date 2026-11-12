@@ -140,13 +140,11 @@ pub fn zoom(window: &tauri::WebviewWindow) -> Result<(), String> {
 }
 
 pub fn refresh_working(app: &AppHandle, overview: &Overview) -> Result<(), String> {
-    if let Some(tray) = app.tray_by_id(crate::TRAY) {
-        crate::badge::show(
-            &tray,
-            crate::badge::count(overview, general::current),
-            general::current,
-        );
-    }
+    crate::badge::show(
+        app,
+        crate::badge::count(overview, general::current),
+        general::current,
+    );
     let keep = general::current()["keep_awake"] == true;
     // A transient SQLite/view read failure reports zero running calls; keep the current
     // assertion until a clean scan confirms work ended, unless the user turned keep_awake off.
