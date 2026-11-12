@@ -75,7 +75,8 @@
     } catch (error) { failure = error.message || ""; }
     checking = false;
     if (failure !== null) note = { kind: "failed", title: L(`检查更新失败${failure ? `：${failure}` : ""}`, `Update check failed${failure ? `: ${failure}` : ""}`) };
-    else if (!actionable()) note = { kind: "updated", title: L(`已是最新版本 v${status.version}`, `Up to date: v${status.version}`) };
+    // A check still running after the wait has told nothing yet; the regular refresh picks up its result.
+    else if (!actionable() && status.update?.state !== "checking") note = { kind: "updated", title: L(`已是最新版本 v${status.version}`, `Up to date: v${status.version}`) };
     render();
     const shown = note;
     if (shown) setTimeout(() => { if (note === shown) { note = null; render(); } }, 6000);
