@@ -372,11 +372,22 @@ fn validate_meeting(meeting: &Value) -> Result<(), String> {
         }
         for (index, seat) in list.iter().enumerate() {
             if !seat.is_null() {
-                validate_seat(seat, &format!("meeting.seats[{index}]"))?;
+                validate_meeting_seat(seat, &format!("meeting.seats[{index}]"))?;
             }
         }
     }
     Ok(())
+}
+
+/// A meeting seat names its CLI; the model and effort come from 员工 when the meeting runs, so a
+/// model or effort an older file still keeps is accepted and ignored.
+fn validate_meeting_seat(seat: &Value, what: &str) -> Result<(), String> {
+    let fields = object(seat, what)?;
+    only(fields, &["provider", "model", "effort"], what)?;
+    match fields.get("provider").and_then(Value::as_str) {
+        Some(provider) if PROVIDERS.contains(&provider) => Ok(()),
+        _ => Err(format!("{what} 的 CLI 不受支持")),
+    }
 }
 
 /// The saved orchestration settings, or "off" with no seats when none was written yet.

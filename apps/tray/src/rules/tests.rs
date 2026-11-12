@@ -177,7 +177,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
                 .contains("开会默认")
         );
     }
-    let partial_seats = "\n- 开会默认 4 席：Codex CLI（provider=`codex`，model=`gpt-6.1-sol`，effort=`high`）、Antigravity CLI（provider=`antigravity`，model=`gemini-3.8-flash`），其余由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+    let partial_seats = "\n- 开会默认 4 席：Codex CLI（provider=`codex`）、Antigravity CLI（provider=`antigravity`），其余由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
     let doc_partial = json!({
         "preset": "meetings",
         "custom": "用户自写规则",
@@ -208,7 +208,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             .unwrap()
             .contains("开会默认")
     );
-    let all_seats = "\n- 开会默认 2 席：Codex CLI（provider=`codex`，model=`gpt-6.1-sol`，effort=`high`）、Codex CLI（provider=`codex`，model=`gpt-6.1-sol`）；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+    let all_seats = "\n- 开会默认 2 席：Codex CLI（provider=`codex`）、Codex CLI（provider=`codex`）；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
     let doc_all = json!({
         "meeting": {
             "count": 2,
