@@ -469,8 +469,9 @@ function updateMessage(rec, m, ctx, id) {
     const status = typingStatus(m);
     setText(rec.status, status);
     rec.status.hidden = !status;
-    // Before any reply text the latest tool calls show what the CLI is doing, newest last.
-    const trail = m.text ? [] : (Array.isArray(m.tools) ? m.tools : []).slice(-5).map(toolWord);
+    // Before any reply text the latest tool calls show what the CLI is doing, newest last,
+    // under the names the CLI itself reports.
+    const trail = m.text ? [] : (Array.isArray(m.tools) ? m.tools : []).slice(-5).map(String);
     const trailKey = JSON.stringify(trail);
     if (rec.trailKey !== trailKey) {
       rec.trailKey = trailKey;
