@@ -349,7 +349,7 @@ function typingStatus(m) {
     : d === "retrying"
       ? L("重试中", "Retrying")
       : d.startsWith("tool:")
-        ? d.slice(5)
+        ? d.slice(5) || L("使用工具中", "Using a tool")
         : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   const duration = doing && m.doing_since ? activityDuration(m.doing_since) : "";
