@@ -4,7 +4,7 @@ const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
 // Exercise the browser-facing player with controllable media readiness and frame delivery.
-function player({ delayed = false, noFrameCallback = false, ext } = {}) {
+function player({ delayed = false, noFrameCallback = false, ext, jitter = 0 } = {}) {
   const reveals = [], overlaps = [], violations = [], seekWaiters = [], delays = new Map(), canvas = { pixels: "ok" };
   let manualSeek = false;
   const videos = [], frames = new Map(), paints = new Map(), timers = new Map(), observers = [], observed = new Set(), srcs = [], loadWaiters = [];
@@ -111,7 +111,7 @@ function player({ delayed = false, noFrameCallback = false, ext } = {}) {
   math.random = () => 0.99;
   const document = { hidden: false, createElement: tag => (tag === "canvas" ? new Canvas() : new Video()), addEventListener: (n, f) => { events[n] = f; } };
   const ctx = vm.createContext({
-    root, document, still, Math: math, artUrl: s => s, ...(ext && { videoExt: ext }),
+    root, document, still, Math: math, artUrl: s => s, ...(ext && { videoExt: ext }), videoStartJitter: jitter,
     requestAnimationFrame: fn => { const id = ++counter; frames.set(id, fn); return id; }, cancelAnimationFrame: id => frames.delete(id),
     setTimeout: (fn, ms) => { const id = ++counter; timers.set(id, fn); delays.set(id, ms); return id; }, clearTimeout: id => timers.delete(id),
     MutationObserver: class { constructor(fn) { observers.push(fn); } observe() {} },
@@ -203,6 +203,15 @@ test("WebM clip changes show the new player above the old one before hiding it",
   assert.equal(shown.length, 1);
   assert.equal(shown[0].classList.contains("over"), false);
   assert.deepEqual(app.violations, []);
+});
+
+test("a clip starts after a random wait, so figures of one character do not move in lockstep", async () => {
+  const app = player({ jitter: 1 }); app.math.random = () => 0.5; await app.visible();
+  assert.equal(app.rec().active, null);
+  const wait = [...app.timers.keys()].find(id => app.delays.get(id) === 1000);
+  assert.ok(wait);
+  app.timers.get(wait)(); await app.flush();
+  assert.equal(app.rec().active.video.paused, false);
 });
 
 test("a mood change swaps to its looping clip without tearing the old player down in the same task", async () => {

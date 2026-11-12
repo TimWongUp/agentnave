@@ -772,6 +772,16 @@
     rec.fig.querySelector(".fx")?.replaceChildren();
     settleAfterFrame(rec, slot);
   }
+  // Figures of one character play the same clips, so starting them together keeps them in lockstep for good
+  // (a mood change restarts every desk at once too). A random wait before a clip starts spreads them out;
+  // a resume after hiding or blur is not delayed, since the players keep the phase they stopped at.
+  const FIRST_START_MS = 2000, CHANGE_START_MS = 300;
+  function startStaggered(rec, slot) {
+    const seq = rec.seq, scale = typeof videoStartJitter === "number" ? videoStartJitter : 1;
+    const wait = Math.random() * scale * (rec.active ? CHANGE_START_MS : FIRST_START_MS);
+    if (wait < 1) { runClip(rec, slot); return; }
+    setTimeout(() => { if (rec.seq === seq) runClip(rec, slot); }, wait);
+  }
   function runClip(rec, slot) {
     const seq = rec.seq;
     if (!currentPlayback(rec, seq)) return;
@@ -873,7 +883,7 @@
     if (rec.running || rec.failed) return;
     rec.running = true;
     if (rec.active?.state === state) runClip(rec, rec.active);
-    else prepareClip(rec, state, (slot) => runClip(rec, slot));
+    else prepareClip(rec, state, (slot) => startStaggered(rec, slot));
   }
   // Every character teleports the same way: a small crouch and a springy hop that shrinks her away, or a
   // drop that grows and settles her. It moves the figure's body, so the desk in front still covers it.
