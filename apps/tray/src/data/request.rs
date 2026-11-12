@@ -28,7 +28,8 @@ impl Reader {
             return crate::voice::request(&self.root, path, method, action, body);
         }
         if path == "/app/hosts" || path.starts_with("/app/hosts/") {
-            let response = crate::hosts::request(&self.root, &self.hosts, method, path, action, body);
+            let response =
+                crate::hosts::request(&self.root, &self.hosts, method, path, action, body);
             if method == "POST" && matches!(path, "/app/hosts/root" | "/app/hosts/refresh") {
                 let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
                 if let Some(hosts) = hosts.as_ref() {
@@ -108,11 +109,7 @@ impl Reader {
     }
     pub fn configure_hosts(&self, context: crate::hosts::Context, shell: crate::hosts::Shell) {
         let mut guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
-        let hosts = crate::hosts::Hosts::from_probe(
-            context,
-            Some(shell),
-            self.tools.clone(),
-        );
+        let hosts = crate::hosts::Hosts::from_probe(context, Some(shell), self.tools.clone());
         self.update_boss_homes(&hosts);
         *guard = Some(hosts);
     }
