@@ -4,8 +4,8 @@ const { readFileSync } = require("node:fs");
 const vm = require("node:vm");
 
 // Exercise the browser-facing player with controllable media readiness and frame delivery.
-function player({ delayed = false, noFrameCallback = false } = {}) {
-  const reveals = [], violations = [], seekWaiters = [], delays = new Map(), canvas = { pixels: "ok" };
+function player({ delayed = false, noFrameCallback = false, ext } = {}) {
+  const reveals = [], overlaps = [], violations = [], seekWaiters = [], delays = new Map(), canvas = { pixels: "ok" };
   let manualSeek = false;
   const videos = [], frames = new Map(), paints = new Map(), timers = new Map(), observers = [], observed = new Set(), srcs = [], loadWaiters = [];
   let counter = 0;
@@ -75,9 +75,11 @@ function player({ delayed = false, noFrameCallback = false } = {}) {
   }
   // At no point may two players be on screen, and a player may only appear once it shows its first frame.
   function audit(video, name, removed) {
+    // WebM clip changes overlap on purpose: how many others are still shown when a player appears above them.
+    if (name === "over" && !removed) overlaps.push(videos.filter(v => v !== video && v.isConnected && !v.classList.contains("next")).length);
     if (name !== "next") return;
     const shown = videos.filter(v => v.isConnected && !v.classList.contains("next"));
-    if (shown.length > 1) violations.push(`${shown.length} players visible`);
+    if (shown.length > (ext === "webm" ? 2 : 1)) violations.push(`${shown.length} players visible`);
     if (removed) {
       reveals.push({ seeking: video.seeking, fresh: video.fresh });
       if (video.seeking || !video.fresh) violations.push(`player shown ${video.seeking ? "while seeking" : "before its first frame"}`);
@@ -109,7 +111,7 @@ function player({ delayed = false, noFrameCallback = false } = {}) {
   math.random = () => 0.99;
   const document = { hidden: false, createElement: tag => (tag === "canvas" ? new Canvas() : new Video()), addEventListener: (n, f) => { events[n] = f; } };
   const ctx = vm.createContext({
-    root, document, still, Math: math, artUrl: s => s,
+    root, document, still, Math: math, artUrl: s => s, ...(ext && { videoExt: ext }),
     requestAnimationFrame: fn => { const id = ++counter; frames.set(id, fn); return id; }, cancelAnimationFrame: id => frames.delete(id),
     setTimeout: (fn, ms) => { const id = ++counter; timers.set(id, fn); delays.set(id, ms); return id; }, clearTimeout: id => timers.delete(id),
     MutationObserver: class { constructor(fn) { observers.push(fn); } observe() {} },
@@ -135,7 +137,7 @@ function player({ delayed = false, noFrameCallback = false } = {}) {
   const visible = async () => { sync(); events.intersect([{ target: fig, isIntersecting: true }]); await flush(); };
   const resolve = () => loadWaiters.splice(0).forEach(f => f());
   return { root, host, fig, body, poster, document, still, math, videos, frames, timers, observed, srcs, events, observers,
-    delays, canvas, reveals, violations, blur: on => { root.classList.toggle("blurred", on); events[on ? "agentnave:blur" : "agentnave:focus"](); },
+    delays, canvas, reveals, overlaps, violations, blur: on => { root.classList.toggle("blurred", on); events[on ? "agentnave:blur" : "agentnave:focus"](); },
     reveals_: 0, violations_: 0, completeSeeks: () => seekWaiters.splice(0).forEach(f => f()), holdSeeks: () => { manualSeek = true; },
     sync, syncFigure: ctx.api.syncVideo, visible, resolve, flush, rec: () => ctx.api.videoPlayers.get(fig) };
 }
@@ -190,6 +192,17 @@ test("clip changes stay clean when the browser has no frame callback", async () 
   const app = player({ noFrameCallback: true });
   await roundTrips(app);
   assert.equal(app.videos.every(v => !v.requestVideoFrameCallback), true);
+});
+
+test("WebM clip changes show the new player above the old one before hiding it", async () => {
+  const app = player({ ext: "webm" }); app.math.random = () => 0; await app.visible();
+  app.rec().active.video.end(); await app.flush();
+  assert.equal(app.rec().active.clip, "slack-1");
+  assert.deepEqual(app.overlaps, [0, 1]);
+  const shown = app.videos.filter(v => v.isConnected && !v.classList.contains("next"));
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0].classList.contains("over"), false);
+  assert.deepEqual(app.violations, []);
 });
 
 test("a mood change swaps to its looping clip without tearing the old player down in the same task", async () => {

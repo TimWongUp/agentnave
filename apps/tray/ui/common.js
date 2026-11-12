@@ -736,6 +736,10 @@
     if (!job) return;
     cancelSettle(rec);
     if (rec.active !== job.slot) return;
+    if (job.slot.video.classList.contains("over")) {
+      job.slot.video.classList.remove("over");
+      for (const s of rec.slots) if (s !== rec.active) s.video.classList.add("next");
+    }
     if (!job.slot.video.loop) prepareNext(rec);
     else dropSpares(rec);
   }
@@ -746,15 +750,21 @@
     if (slot.video.requestVideoFrameCallback) job.frame = slot.video.requestVideoFrameCallback(run);
     else job.raf = requestAnimationFrame(() => { job.raf = requestAnimationFrame(run); });
   }
+  const overlapSwap = () => typeof videoExt === "string" && videoExt === "webm";
   function finishVideoFrame(rec, slot, seq) {
     if (!currentPlayback(rec, seq) || rec.incoming !== slot) return;
+    // WebM (Chromium) blanks the frame in which a hidden player appears and the old one hides at once. There the
+    // new player shows above the old one, which stays until the new one has presented a frame of its own; the
+    // clips meet on the same pose, so the overlap is not visible. Elsewhere the old player hides and the new one
+    // shows in this one task, so both are never on screen together.
+    const overlap = overlapSwap();
     if (rec.active && rec.active !== slot) {
       cancelVideoCallbacks(rec.active);
       rec.active.video.pause();
-      rec.active.video.classList.add("next");
+      if (!overlap) rec.active.video.classList.add("next");
     }
-    // The old player hides and the new one shows in this one task, so both are never on screen together.
     slot.video.classList.remove("next");
+    if (overlap) slot.video.classList.add("over");
     clearHold(rec);
     rec.active = slot;
     rec.incoming = null;

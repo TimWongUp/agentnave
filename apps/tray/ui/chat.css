@@ -154,6 +154,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .fig.video.held img.poster { display: none !important; }
 .fig :is(video, img.poster, canvas.hold) { scale: var(--vs, 1); transform-origin: var(--vx, 50%) var(--vo, 100%); }
 .fig video.next { opacity: 0; }
+/* A WebM clip change shows the new player above the old one for a frame, so the figure never blanks. */
+.fig video.over { z-index: 1; }
 .fig.walk :is(video, img.poster, canvas.hold) { display: none; }
 .fig.warping { opacity: 1 !important; filter: none; }
 .fig.warping :is(.fig-a, .fig-b) { animation: none; }
