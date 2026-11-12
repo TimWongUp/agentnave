@@ -205,6 +205,7 @@ async function refreshAll() {
     S.data = {
       service: next.service,
       hosts: next.hosts,
+      absent: next.absent,
       backups: next.backups,
     };
     const added = next.hosts
