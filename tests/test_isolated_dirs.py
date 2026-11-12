@@ -937,9 +937,10 @@ def test_release_rechecks_a_deleting_record_whose_head_moved_on(tmp_path: Path) 
     dirs.close()
 
 
-def test_claim_survives_a_registry_write_failure_and_still_blocks_release(
+def test_claim_is_refused_when_the_use_cannot_be_recorded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from agentnave.isolated.leases import has_active_leases
     from agentnave.isolated.store import WorktreeStore
 
     repo = _init_repo(tmp_path / "repo")
@@ -948,17 +949,20 @@ def test_claim_survives_a_registry_write_failure_and_still_blocks_release(
     created.lease.release()
     (created.worktree_path / "README.md").write_text("draft\n", encoding="utf-8")
     token = dirs.release(created.id, workspace_id="ws-1").confirmation
+    before = dirs.store.get(created.id)
+    assert before is not None and before.confirmation_digest == token
 
     def locked(*_args: object, **_kwargs: object) -> None:
         raise OSError("database is locked")
 
-    monkeypatch.setattr(WorktreeStore, "bump_usage", locked)
-    notes: list[str] = []
-    claimed = dirs.claim_for_cwd(created.worktree_path, notes)
-    assert claimed is not None and notes and "locked" in notes[0]
-    # The held lease keeps the earlier token from deleting anything.
-    held = dirs.release(created.id, workspace_id="ws-1", confirmation=token)
-    assert held.status == "blocked"
-    assert created.worktree_path.is_dir()
-    claimed.lease.release()
+    with monkeypatch.context() as patch:
+        patch.setattr(WorktreeStore, "bump_usage", locked)
+        with pytest.raises(IsolationError, match="Retry shortly"):
+            dirs.claim_for_cwd(created.worktree_path)
+    # Refused cleanly: no lease is left and the issued token is exactly as it was.
+    assert not has_active_leases(created.repo_common_dir, created.id)
+    after = dirs.store.get(created.id)
+    assert after is not None
+    assert after.confirmation_digest == token
+    assert after.usage_generation == before.usage_generation
     dirs.close()

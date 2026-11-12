@@ -180,6 +180,13 @@ class Round:
         return [run for run in self.runs if run.status in _LOST and not run.reported_lost]
 
 
+def _claim_if_isolated(isolated: IsolatedDirs, cwd: Path) -> ClaimedIsolation | None:
+    """Lease cwd when it resolves (symbolic links followed) into an isolated directory."""
+    if not any(part.lower() == WORKTREES_DIR_NAME for part in cwd.resolve().parts):
+        return None
+    return isolated.claim_for_cwd(cwd)
+
+
 class Groups:
     """Own collaboration groups only for this Python process lifetime.
 
@@ -227,23 +234,30 @@ class Groups:
         this falls back to leasing in the launch itself.
         """
         group = self._group(group_id)
-        for seat_id in seat_ids:
-            seat = group.seats.get(seat_id)
-            if seat is None or not any(
-                part.lower() == WORKTREES_DIR_NAME for part in seat.cwd.parts
-            ):
-                continue
-            key = (group_id, seat_id)
-            self._discard_claim(self._seat_claims.pop(key, None))
-            try:
-                claimed = await to_thread_keeping(
-                    self._discard_claim, self.isolated.claim_for_cwd, seat.cwd
-                )
-            except (OSError, ValueError) as exc:
-                self._seat_claims[key] = exc
-                continue
-            if claimed is not None:
-                self._seat_claims[key] = claimed
+        taken: list[tuple[str, str]] = []
+        try:
+            for seat_id in seat_ids:
+                seat = group.seats.get(seat_id)
+                if seat is None:
+                    continue
+                key = (group_id, seat_id)
+                self._discard_claim(self._seat_claims.pop(key, None))
+                try:
+                    claimed = await to_thread_keeping(
+                        self._discard_claim, _claim_if_isolated, self.isolated, seat.cwd
+                    )
+                except (OSError, ValueError) as exc:
+                    self._seat_claims[key] = exc
+                    taken.append(key)
+                    continue
+                if claimed is not None:
+                    self._seat_claims[key] = claimed
+                    taken.append(key)
+        except BaseException:
+            # All or nothing: a cancelled or failed claim leaves no lease behind.
+            for key in taken:
+                self._discard_claim(self._seat_claims.pop(key, None))
+            raise
 
     def drop_seat_claims(self, group_id: str, seat_ids: list[str]) -> None:
         """Give back leases taken by claim_seats for a round that did not start."""

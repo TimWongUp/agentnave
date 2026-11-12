@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import cast
 
@@ -740,4 +741,86 @@ async def test_seat_in_an_isolated_directory_without_a_lease_is_not_launched(
     assert run.launch_error is not None and "cannot be leased" in run.launch_error.message
     assert manager.requests == {}
     await settle(groups, round_.id)
+    isolated.close()
+
+
+def _two_isolated_dirs(tmp_path: Path) -> tuple[Path, IsolatedDirs, list[Path], list[str]]:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    isolated = IsolatedDirs(tmp_path / "data")
+    cwds: list[Path] = []
+    ids: list[str] = []
+    for _ in range(2):
+        created = isolated.create(repo, workspace_id="ws-1")
+        created.lease.release()
+        cwds.append(created.execution_cwd)
+        ids.append(created.id)
+    return repo, isolated, cwds, ids
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_seat_claim_releases_every_lease_it_took(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    repo, isolated, cwds, ids = _two_isolated_dirs(tmp_path)
+    groups = Groups(cast(InvocationManager, FakeManager()), isolated)
+    group = groups.open(
+        repo,
+        [GroupSeat("a", "claude", {}, cwds[0]), GroupSeat("b", "claude", {}, cwds[1])],
+    )
+    entered = threading.Event()
+    gate = threading.Event()
+    original = IsolatedDirs.claim_for_cwd
+
+    def gated_claim(self: IsolatedDirs, cwd: Path | str, *args: object):  # noqa: ANN202
+        if Path(cwd) == cwds[1]:
+            entered.set()
+            gate.wait(10)
+        return original(self, cwd, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "claim_for_cwd", gated_claim)
+    waiting = asyncio.create_task(groups.claim_seats(group.id, ["a", "b"]))
+    while not entered.is_set():  # seat a holds its lease; seat b is still being leased
+        await asyncio.sleep(0.01)
+    waiting.cancel()
+    asyncio.get_running_loop().call_later(0.1, gate.set)
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert groups._seat_claims == {}  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "deleted"
+    assert isolated.release(ids[1], workspace_id="ws-1").status == "deleted"
+    isolated.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+async def test_seat_cwd_reaching_an_isolated_directory_by_symlink_is_leased_ahead(
+    tmp_path: Path,
+) -> None:
+    repo, isolated, cwds, ids = _two_isolated_dirs(tmp_path)
+    link = tmp_path / "shortcut"
+    link.symlink_to(cwds[0])
+    groups = Groups(cast(InvocationManager, FakeManager()), isolated)
+    group = groups.open(repo, [GroupSeat("a", "claude", {}, link)])
+
+    await groups.claim_seats(group.id, ["a"])
+    assert list(groups._seat_claims) == [(group.id, "a")]  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "blocked"
+    groups.drop_seat_claims(group.id, ["a"])
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "deleted"
     isolated.close()

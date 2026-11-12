@@ -288,7 +288,7 @@ class IsolatedDirs:
         except (OSError, ValueError) as exc:
             return self._claim_without_registry(resolved, exc, warnings)
         if record is not None:
-            return self._claim_registered(record, resolved, warnings)
+            return self._claim_registered(record, resolved)
         return self._claim_cross_data_root(resolved)
 
     def _claim_without_registry(
@@ -318,9 +318,7 @@ class IsolatedDirs:
             )
         return claimed
 
-    def _claim_registered(
-        self, record: IsolatedRecord, resolved_cwd: Path, warnings: list[str] | None = None
-    ) -> ClaimedIsolation:
+    def _claim_registered(self, record: IsolatedRecord, resolved_cwd: Path) -> ClaimedIsolation:
         common_dir = Path(record.repo_common_dir)
         with repo_lock(common_dir):
             latest = self.store.get(record.id)
@@ -337,10 +335,12 @@ class IsolatedDirs:
             try:
                 updated = self.store.bump_usage(latest.id, updated_at=now())
             except OSError as exc:
-                # The lease below still blocks any release for as long as the task runs.
-                updated = latest
-                if warnings is not None:
-                    warnings.append(f"Could not record the use of isolated directory ({exc}).")
+                # Recording the use is what voids confirmation tokens already handed out, so a
+                # claim that cannot record it must not succeed.
+                raise IsolationError(
+                    f"Isolated directory {record.id} cannot be used right now: the registry "
+                    f"is not writable ({exc}). Retry shortly."
+                ) from exc
             lease = acquire_lease_locked(common_dir, updated.id)
             return ClaimedIsolation(
                 id=updated.id,
