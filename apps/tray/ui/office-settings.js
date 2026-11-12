@@ -53,9 +53,10 @@
     const target = targetOf(path);
     if (!target) return false;
     if (target.pathname.startsWith("/settings/")) return open(path);
+    // The update dialog opens over whichever page is showing; settings stays where it is.
+    if (target.pathname.startsWith("/chat/") && target.searchParams.has("check-update")) { AN.updateFlow?.(); return true; }
     close();
     if (target.pathname.startsWith("/chat/")) {
-      if (target.searchParams.has("check-update")) { AN.updateFlow?.(); return true; }
       if (target.pathname === "/chat/" && !target.hash && !target.search) return true;
       if (typeof go === "function") go(target.pathname + target.search + target.hash);
       return true;

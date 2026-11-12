@@ -321,7 +321,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             thread::spawn(move || {
                 loop {
                     update::auto_check(&checker);
-                    thread::sleep(update::EVERY);
+                    thread::sleep(update::POLL);
                 }
             });
         }

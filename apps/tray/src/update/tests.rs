@@ -38,22 +38,59 @@ fn a_found_update_is_used_for_a_day() {
 }
 
 #[test]
-fn automatic_checks_are_on_unless_the_app_setting_is_off() {
-    let preferences = |value: Value| value.as_object().unwrap().clone();
-    assert!(automatic_check_enabled(&preferences(json!({}))));
-    assert!(automatic_check_enabled(&preferences(
-        json!({"updates": {}})
-    )));
-    assert!(automatic_check_enabled(&preferences(
-        json!({"updates": {"auto_check": true}})
-    )));
-    assert!(!automatic_check_enabled(&preferences(
-        json!({"updates": {"auto_check": false}})
-    )));
-    // A value this build cannot read must not turn the checks off.
-    assert!(automatic_check_enabled(&preferences(
-        json!({"updates": {"auto_check": "off"}})
-    )));
+fn an_automatic_check_is_due_after_its_interval_or_an_hour_after_no_answer() {
+    let now = SystemTime::now();
+    let ago = |seconds| Some(now - Duration::from_secs(seconds));
+    let day = EVERY.as_secs();
+    assert!(check_due(None, None, EVERY, now));
+    assert!(!check_due(ago(60), ago(60), EVERY, now));
+    assert!(check_due(ago(day), ago(day), EVERY, now));
+    // A shorter interval comes due sooner.
+    let four = Duration::from_secs(4 * 60 * 60);
+    assert!(check_due(
+        ago(four.as_secs()),
+        ago(four.as_secs()),
+        four,
+        now
+    ));
+    assert!(!check_due(
+        ago(four.as_secs()),
+        ago(four.as_secs()),
+        EVERY,
+        now
+    ));
+    // No answer yet: again after an hour, not after the interval.
+    assert!(!check_due(ago(60), None, EVERY, now));
+    assert!(check_due(ago(RETRY.as_secs()), None, EVERY, now));
+    // An old answer and a recent failed attempt wait for the retry.
+    assert!(!check_due(ago(60), ago(day), EVERY, now));
+}
+
+#[test]
+fn automatic_checks_run_daily_unless_the_app_setting_says_otherwise() {
+    let interval = |value: Value| automatic_check_interval(value.as_object().unwrap());
+    let hours = |hours: u64| Some(Duration::from_secs(hours * 60 * 60));
+    assert_eq!(interval(json!({})), hours(24));
+    assert_eq!(interval(json!({"updates": {}})), hours(24));
+    assert_eq!(
+        interval(json!({"updates": {"auto_check": true}})),
+        hours(24)
+    );
+    assert_eq!(interval(json!({"updates": {"check_hours": 4}})), hours(4));
+    assert_eq!(
+        interval(json!({"updates": {"auto_check": true, "check_hours": 12}})),
+        hours(12)
+    );
+    assert_eq!(
+        interval(json!({"updates": {"auto_check": false, "check_hours": 4}})),
+        None
+    );
+    // Values this build cannot read must not turn the checks off or change their pace.
+    assert_eq!(
+        interval(json!({"updates": {"auto_check": "off"}})),
+        hours(24)
+    );
+    assert_eq!(interval(json!({"updates": {"check_hours": 6}})), hours(24));
 }
 
 // `sleep` and `sh` come from Git for Windows on a CI runner, not from the OS; a plain Windows
