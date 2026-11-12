@@ -362,7 +362,7 @@ async def wait(
         Literal[0, 270, 1500] | None,
         Field(
             description=(
-                "Omit to wait up to 270s; 270 explicitly selects the same window. "
+                "Omit to wait up to 270s. "
                 + LONG_WAIT_SENTENCE
                 + "0 checks progress immediately and includes running tails; ready results are still received; no value stops work."
             ),

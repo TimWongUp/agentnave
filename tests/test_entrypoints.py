@@ -738,7 +738,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     wait_modes = cast(list[dict[str, object]], _payload(wait_properties["wait_seconds"])["anyOf"])
     assert wait_modes[0]["enum"] == [0, 270, 1500]
     description = str(wait_properties["wait_seconds"])
-    assert "only" in description and "Claude Code" in description
+    assert "1500s" in description and "Claude Code" in description
     assert "terminal interactive session" in description
     assert tools["answer_prompt"].input_schema["required"] == [
         "invocation_id",
