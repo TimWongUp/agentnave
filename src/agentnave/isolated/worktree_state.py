@@ -78,7 +78,27 @@ def nested_repositories(wt_path: Path, status_raw: bytes) -> list[str]:
     for token in status_raw.split(b"\x00"):
         if token.startswith(b"? ") and token.endswith(b"/"):
             nested.add(decode_git_path(token[2:]).rstrip("/"))
+    nested.update(_ignored_nested_repositories(wt_path))
     return sorted(nested)
+
+
+def _ignored_nested_repositories(wt_path: Path) -> set[str]:
+    """Repositories inside ignored directories, which `status` never lists."""
+    found: set[str] = set()
+    listing = run_git(
+        ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+        cwd=wt_path,
+    ).stdout
+    for item in listing.split(b"\x00"):
+        if not item.endswith(b"/"):
+            continue
+        for top, dirs, names in os.walk(wt_path / decode_git_path(item)):
+            if ".git" in names or ".git" in dirs:
+                found.add(Path(top).relative_to(wt_path).as_posix())
+                dirs.clear()
+            else:
+                dirs[:] = [d for d in dirs if not (Path(top) / d).is_symlink()]
+    return found
 
 
 def tree_fingerprint(root: Path) -> bytes:

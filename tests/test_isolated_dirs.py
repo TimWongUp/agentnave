@@ -1108,3 +1108,49 @@ def test_registry_failure_fallback_matches_isolated_paths_in_any_letter_case(
     assert claimed is not None  # leased by path; not started without one
     claimed.lease.release()
     dirs.close()
+
+
+def test_filters_added_by_a_conditional_include_on_the_new_branch_never_run(
+    tmp_path: Path,
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.enc", "*.enc filter=cond\n")
+    marker = tmp_path / "cond-ran"
+    script = _script(tmp_path / "filter.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    extra = tmp_path / "extra.config"
+    extra.write_text(
+        f'[filter "cond"]\n\tsmudge = {script}\n\tprocess = {script}\n\trequired = true\n',
+        encoding="utf-8",
+    )
+    _git(repo, "config", "includeIf.onbranch:agentnave/*.path", extra.as_posix())
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    assert (created.worktree_path / "a.enc").read_text(encoding="utf-8") == "aaaa\n"
+    assert not marker.exists()
+    dirs.close()
+
+
+def test_filters_inherited_through_git_config_parameters_do_not_override_neutralizing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.enc", "*.enc filter=lfs\n")
+    marker = tmp_path / "env-ran"
+    script = _script(tmp_path / "filter.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", f"'filter.lfs.process={script}'")
+    run_git(["worktree", "add", "-b", "other", "--", str(tmp_path / "wt"), "HEAD"], cwd=repo)
+    assert not marker.exists()
+
+
+def test_nested_repository_in_an_ignored_directory_forces_confirmation(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    hidden = created.worktree_path / "ignored_dir" / "inner"
+    hidden.mkdir(parents=True)
+    _git(hidden, "init", "-b", "main")
+    assert dirs.summarize_changes(created.id).nested_repos == ("ignored_dir/inner",)
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required"
+    assert first.nested_repos == ("ignored_dir/inner",)
+    dirs.close()
