@@ -118,9 +118,10 @@ def _read_excluded_providers() -> frozenset[str]:
 
 
 WAIT_SECONDS = 270
+LONG_WAIT_SECONDS = 1500
 LONG_WAIT_SENTENCE = (
-    "1500 waits up to 25 minutes and is available only in the Claude Code terminal "
-    "interactive session. "
+    "Omitting instead waits up to 1500s (25 minutes) only in the Claude Code terminal "
+    "interactive session, where 1500 selects it explicitly. "
 )
 
 
@@ -772,6 +773,7 @@ __all__ = [
     "WAIT_AGAIN",
     "WAIT_NEXT",
     "WAIT_SECONDS",
+    "LONG_WAIT_SECONDS",
     "EXCLUDED_PROVIDERS",
     "PROVIDER_SELECTION",
     "ACCESS",

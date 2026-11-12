@@ -265,7 +265,12 @@ async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
             payload["unreceived"] = unreceived
         payload["next"] = runtime.WAIT_NEXT
         return payload
-    waited = await receive(ids=[handle], manager_session_id=manager_session_id, ctx=ctx)
+    waited = await receive(
+        ids=[handle],
+        wait_seconds=runtime.WAIT_SECONDS,
+        manager_session_id=manager_session_id,
+        ctx=ctx,
+    )
     payload["wait"] = waited
     if unreceived := _unreceived(conversations, manager_session_id):
         payload["unreceived"] = unreceived
@@ -453,7 +458,11 @@ async def _receive(
             except KeyError as exc:
                 raise _unknown_handle(handle) from exc
             round_ids.append(handle)
-    window = runtime.WAIT_SECONDS if wait_seconds is None else wait_seconds
+    if wait_seconds is None:
+        # A long-wait session already decided this call runs in the background (ADR-0084).
+        window = runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
+    else:
+        window = wait_seconds
     deadline = time.monotonic() + window
     while True:
         ready_invocations, ready_rounds = await _ready_handles(

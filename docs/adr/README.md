@@ -80,10 +80,11 @@
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
 | 0076 | [权限档位缺省为完全放开](0076-full-permission-default.md) | 已接受 | 修订 ADR-0032 |
-| 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 部分修订 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限；[ADR-0082](0082-claude-long-wait-terminal-only.md) |
+| 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 部分修订 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限；[ADR-0082](0082-claude-long-wait-terminal-only.md)、[ADR-0084](0084-claude-terminal-default-long-wait.md) |
 | 0078 | [启动确认屏由服务自动处理](0078-startup-confirmations.md) | 已接受 | 修订 ADR-0056、ADR-0057、ADR-0072 |
 | 0079 | [Antigravity 交互活动从屏幕状态行补充](0079-agy-screen-activity.md) | 已接受 | 修订 ADR-0072 的活动来源 |
 | 0080 | [macOS 视频小人经回环 HTTP 加载](0080-tray-video-loopback-http.md) | 已接受 | — |
 | 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合 |
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
 | 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 已接受 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063 |
+| 0084 | [Claude Code 终端交互会话省略等待窗口时用 1500 秒](0084-claude-terminal-default-long-wait.md) | 已接受 | 修订 ADR-0077 的默认窗口 |
