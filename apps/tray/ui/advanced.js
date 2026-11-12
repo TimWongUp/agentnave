@@ -292,7 +292,7 @@
       ? orchestration.bosses.filter((boss) => usesSeats(bossMode(orchestration.document, boss))) : [];
     const names = on.flatMap((boss) => boss.labels).join(AN.L("、", ", "));
     $("task-scope").hidden = !on.length;
-    $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“高级”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Advanced; solo tasks are offered only to bosses without orchestration.`) : "";
+    $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“编排”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Orchestration; solo tasks are offered only to bosses without orchestration.`) : "";
   }
 
   // One seat for both difficulties of a specialist that is not split.
@@ -731,7 +731,8 @@
     const blocked = blockedSeat();
     const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked);
     $("advanced-dirty").textContent = changes.length ? AN.L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
-    $("advanced-badge").hidden = !changes.length;
+    $("advanced-badge").hidden = !orchestrationChanged();
+    $("skills-badge").hidden = !(window.AgentNaveSkills?.changed() || seatsChanged());
     $("advanced-save").disabled = S.busy || !changes.length || invalid;
     $("advanced-discard").disabled = S.busy || !changes.length;
     const feedback = $("advanced-feedback");
@@ -773,7 +774,7 @@
   async function saveAdvanced() {
     if (S.busy || !advancedChanges().length || (orchestrationChanged() && customEmpty()) || blockedSeat()) return;
     S.busy = true;
-    $("pane-advanced").inert = true;
+    $("pane-advanced").inert = $("pane-orchestration").inert = true;
     S.updateControls();
     const feedback = $("advanced-feedback");
     feedback.textContent = AN.L("正在保存…", "Saving…");
@@ -791,7 +792,7 @@
     await attempt(orchestrationChanged, AN.L("编排", "Orchestration"), saveOrchestration);
     failures.push(...await window.AgentNaveSkills.save());
     S.busy = false;
-    $("pane-advanced").inert = false;
+    $("pane-advanced").inert = $("pane-orchestration").inert = false;
     feedback.textContent = failures.length ? failures.join(AN.L("；", "; ")) : AN.L("设置已保存", "Settings saved");
     feedback.className = `save-feedback ${failures.length ? "error" : "success"}`;
     renderOrchestration();

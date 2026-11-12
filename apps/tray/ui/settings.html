@@ -21,6 +21,7 @@
 <script src="./general-settings.js" defer></script>
 <script src="./voice-settings.js" defer></script>
 <script src="./alerts-settings.js" defer></script>
+<script src="./pane-loader.js" defer></script>
 <script src="./settings-state.js" defer></script>
 <script src="./member-models.js" defer></script>
 <script src="./member-updates.js" defer></script>
@@ -41,17 +42,19 @@
       <a draggable="false" href="/settings/" aria-current="page" data-en="Settings">设置</a>
     </nav>
 </header>
+<div class="settings-shell">
+<nav class="nav subnav" aria-label="设置分区" data-en-label="Settings sections">
+  <a draggable="false" id="nav-general" href="#general" data-en="General">常规</a>
+  <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
+  <a draggable="false" id="nav-members" href="#members" data-en="Employees">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+  <a draggable="false" id="nav-orchestration" href="#orchestration" data-en="Orchestration">编排<span id="advanced-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+  <a draggable="false" id="nav-avatars" href="#avatars" data-en="Appearance">外观</a>
+  <a draggable="false" id="nav-voice" href="#voice" data-en="Voice">语音</a>
+  <a draggable="false" id="nav-storage" href="#storage" data-en="Data & Storage">数据与存储</a>
+  <a draggable="false" id="nav-advanced" href="#advanced" data-en="Advanced">高级<span id="skills-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+  <a draggable="false" id="nav-about" href="#about" data-en="About">关于<span id="update-badge" class="badge-dot" hidden></span></a>
+</nav>
 <main>
-  <nav class="nav subnav" aria-label="设置分区" data-en-label="Settings sections">
-    <a draggable="false" id="nav-general" href="#general" data-en="General">常规</a>
-    <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
-    <a draggable="false" id="nav-members" href="#members" data-en="Employees">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
-    <a draggable="false" id="nav-avatars" href="#avatars" data-en="Appearance">外观</a>
-    <a draggable="false" id="nav-voice" href="#voice" data-en="Voice">语音</a>
-    <a draggable="false" id="nav-advanced" href="#advanced" data-en="Advanced">高级<span id="advanced-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
-    <a draggable="false" id="nav-storage" href="#storage" data-en="Data & Storage">数据与存储</a>
-    <a draggable="false" id="nav-about" href="#about" data-en="About">关于<span id="update-badge" class="badge-dot" hidden></span></a>
-  </nav>
 
   <div id="notice" role="status" aria-live="polite" data-en="Loading settings…">正在读取设置…</div>
 
@@ -72,7 +75,6 @@
       <select id="max-running"></select>
     </div>
 
-    <div id="alerts-settings"></div>
     <div id="provider-health" aria-live="polite"></div>
 
     <p id="task-scope" class="member-muted member-scope" hidden></p>
@@ -105,6 +107,7 @@
   <section id="pane-general" class="tab-pane" hidden aria-labelledby="nav-general">
     <div id="general-language"></div>
     <div id="general-prefs"></div>
+    <div id="alerts-settings"></div>
     <div class="model-names setting-row">
       <div class="setting-copy">
         <h2 data-en="Model names">模型名称</h2>
@@ -125,13 +128,7 @@
     <div id="voice-settings"></div>
   </section>
 
-  <section id="pane-advanced" class="tab-pane" hidden aria-labelledby="nav-advanced">
-    <div class="updates-panel">
-      <div class="updates-card">
-        <h2 data-en="Skills">技能</h2>
-        <div id="skill-list" class="skill-list" aria-live="polite"></div>
-      </div>
-    </div>
+  <section id="pane-orchestration" class="tab-pane" hidden aria-labelledby="nav-orchestration">
     <div class="updates-panel">
       <div class="updates-card">
         <h2 data-en="Orchestration">编排</h2>
@@ -154,26 +151,22 @@
         </div>
       </div>
     </div>
+
+  </section>
+
+  <section id="pane-advanced" class="tab-pane" hidden aria-labelledby="nav-advanced">
+    <div class="updates-panel">
+      <div class="updates-card">
+        <h2 data-en="Skills">技能</h2>
+        <div id="skill-list" class="skill-list" aria-live="polite"></div>
+      </div>
+    </div>
     <div class="updates-panel">
       <div class="updates-card">
         <h2 data-en="boss global rules files">boss 全局规则文件<span class="setting-tip" tabindex="0" role="note" aria-label="App 只改这些文件里 AgentNave 标记之间的一段，其他内容原样保留，改写前先备份。" data-en-label="The App only edits the section between the AgentNave markers in these files, leaves everything else as it is, and backs up before rewriting.">?</span></h2>
         <ul id="rule-files" class="rule-files"></ul>
       </div>
     </div>
-
-    <aside class="sticky-save-bar">
-      <div id="advanced-leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" data-en-label="Leave settings" hidden></div>
-      <div class="save-bar-inner">
-        <div class="save-bar-info">
-          <span id="advanced-dirty" class="dirty-label"></span>
-          <span id="advanced-feedback" class="save-feedback"></span>
-        </div>
-        <div class="save-bar-actions">
-          <button id="advanced-discard" type="button" disabled data-en="Discard changes">放弃修改</button>
-          <button id="advanced-save" class="primary" type="button" disabled data-en="Save settings">保存设置</button>
-        </div>
-      </div>
-    </aside>
   </section>
 
   <section id="pane-hosts" class="tab-pane" hidden aria-labelledby="nav-hosts">
@@ -195,6 +188,7 @@
     </div>
     <div id="backups-line" class="backups-line"></div>
     <div id="host-cards" class="host-cards"></div>
+    <div id="host-others" class="host-others"></div>
   </section>
 
   <section id="pane-about" class="tab-pane" hidden aria-labelledby="nav-about">
@@ -243,6 +237,22 @@
       </div>
     </div>
   </section>
+
+  <!-- One save bar for the orchestration and advanced sections: their edits save together. -->
+  <aside id="advanced-bar" class="sticky-save-bar" hidden>
+    <div id="advanced-leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" data-en-label="Leave settings" hidden></div>
+    <div class="save-bar-inner">
+      <div class="save-bar-info">
+        <span id="advanced-dirty" class="dirty-label"></span>
+        <span id="advanced-feedback" class="save-feedback"></span>
+      </div>
+      <div class="save-bar-actions">
+        <button id="advanced-discard" type="button" disabled data-en="Discard changes">放弃修改</button>
+        <button id="advanced-save" class="primary" type="button" disabled data-en="Save settings">保存设置</button>
+      </div>
+    </div>
+  </aside>
 </main>
+</div>
 </body>
 </html>

@@ -30,7 +30,7 @@ button { font: inherit; color: inherit; cursor: default; }
 .tone-done { --tone: var(--done); } .tone-idle { --tone: var(--idle); }
 
 /* ---- header ---- */
-.top { display: flex; align-items: center; justify-content: space-between; padding: 13px 14px 8px; flex: none; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 14px 8px; flex: none; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 14px; letter-spacing: -0.01em; }
 .mark { display: inline-grid; place-items: center; width: 22px; height: 22px; color: var(--ink); }
 /* The N mark: its dot drips like the menu bar icon's when the pointer comes over (common.js). */
@@ -93,6 +93,7 @@ button { font: inherit; color: inherit; cursor: default; }
 .bar-update[data-state="available"] { color: var(--accent); font-weight: 700; }
 .bar-update[data-state="available"]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .bar-update[data-state="busy"] { color: var(--accent); }
+.bar-update[data-state="failed"] { color: var(--bad); font-weight: 700; }
 .bar-update[data-state="busy"] span { display: block; animation: bar-update-spin 1s linear infinite; }
 .bar-update[data-state="updated"] { color: var(--run, var(--accent)); }
 @keyframes bar-update-spin { to { transform: rotate(360deg); } }

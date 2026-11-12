@@ -65,6 +65,10 @@ fn updates(field: &str, value: &Value) -> Result<(), String> {
             Some(_) => Ok(()),
             None => Err("updates.auto_check 必须为 true 或 false".into()),
         },
+        "check_hours" => match value.as_u64() {
+            Some(4 | 12 | 24) => Ok(()),
+            _ => Err("updates.check_hours 必须为 4、12 或 24".into()),
+        },
         _ => Err(format!("未知的设置项：updates.{field}")),
     }
 }

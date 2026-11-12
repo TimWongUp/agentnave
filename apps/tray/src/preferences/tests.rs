@@ -195,6 +195,17 @@ fn get_response_backfills_autostart_and_exposes_effective_values_without_writing
 }
 
 #[test]
+fn updates_check_hours_is_one_of_the_offered_intervals() {
+    let temp = tempfile::tempdir().unwrap();
+    let folder = temp.path().join("config");
+    update(&folder, &json!({"updates": {"check_hours": 4}})).unwrap();
+    assert_eq!(read(&folder).unwrap()["updates"]["check_hours"], json!(4));
+    for bad in [json!(6), json!("4"), json!(null)] {
+        assert!(update(&folder, &json!({"updates": {"check_hours": bad}})).is_err());
+    }
+}
+
+#[test]
 fn updates_auto_check_is_a_boolean() {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("config");

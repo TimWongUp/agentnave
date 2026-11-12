@@ -205,6 +205,7 @@ async function refreshAll() {
     S.data = {
       service: next.service,
       hosts: next.hosts,
+      absent: next.absent,
       backups: next.backups,
     };
     const added = next.hosts
@@ -789,7 +790,7 @@ function renderCards() {
         "div.cards-empty",
         {},
         h("strong", {}, L("没有检测到可以当 boss 的应用", "No boss apps detected")),
-        L("支持 Codex、Claude Code、CodeBuddy Code、WorkBuddy 桌面、Grok CLI、Antigravity、Pi、DeepSeek Harness、Hermes。安装其中任意一个后点“刷新检测”。", "Supports Codex, Claude Code, CodeBuddy Code, WorkBuddy Desktop, Grok CLI, Antigravity, Pi, DeepSeek Harness, and Hermes. Install any of them and click “Refresh detection”."),
+        L("安装下面任意一个后点“刷新检测”。", "Install any of the apps below and click “Refresh detection”."),
       ),
     );
     return;
@@ -797,6 +798,34 @@ function renderCards() {
   // Connected bosses first; the rest keep their order below them.
   const chosen = (host) => (host.layers || []).some((l) => l.has_entry && l.scope !== "project");
   box.replaceChildren(...[...S.data.hosts].sort((a, b) => chosen(b) - chosen(a)).map(buildCard));
+}
+
+// Below the cards: supported bosses not installed here, and a prompt any other MCP agent can follow.
+function renderOthers() {
+  const absent = S.data.absent || [];
+  const { launcher, skills } = S.data.service;
+  // A service too old to carry the Skills leaves that step out.
+  const skillStep = skills ? L(
+    `然后把 ${skills} 里的 agentnave-manager 文件夹（有 agentnave-handover 的话也带上）整个复制到你的用户级 Skill 目录；你不支持 Skill 的话，改为每次用 AgentNave 前先读 ${skills}/agentnave-manager/SKILL.md。`,
+    ` Then copy the agentnave-manager folder (and agentnave-handover, if present) from ${skills} into your user-level Skill directory; if you do not support Skills, read ${skills}/agentnave-manager/SKILL.md before each use of AgentNave instead.`,
+  ) : "";
+  const prompt = L(
+    `请把 AgentNave 接入你自己：在你的用户级（全局）MCP 配置里加一个名为 agentnave 的本机 STDIO 服务，command 为 ${launcher}，不带参数和环境变量。${skillStep}写入前备份原文件，其他内容原样保留；完成后告诉我改了哪些文件，以及要不要重开会话才能生效。`,
+    `Connect AgentNave to yourself: add a local STDIO server named agentnave to your user-level (global) MCP configuration, with command ${launcher} and no arguments or environment variables.${skillStep} Back up each file before writing and leave everything else as it is; then tell me which files you changed and whether I need to restart the session for it to take effect.`,
+  );
+  const copy = copyButton(prompt, L("复制接入提示词", "Copy setup prompt"));
+  copy.setAttribute("aria-label", L("复制接入提示词", "Copy setup prompt")); // not the whole prompt
+  copy.disabled = !launcher;
+  $("host-others").replaceChildren(
+    absent.length && h("div.others-row", {},
+      h("span.others-name", {}, L(`未安装（${absent.length}）`, `Not installed (${absent.length})`)),
+      h("span.others-list", {}, ...absent.map((x) => h("span.others-item", {}, h("span.others-icon", {}, AN.hostTile(x.mark, x.label)), x.label)))),
+    h("div.others-row", {},
+      h("span.others-name", {}, L("其他支持 MCP 的 Agent", "Other MCP agents")),
+      h("span.others-acts", {},
+        !launcher && h("span.fine", {}, S.install.busy ? L("正在安装本机服务…", "Installing local service…") : L("需先安装本机服务", "Install local service first")),
+        copy)),
+  );
 }
 
 function renderAll() {
@@ -807,6 +836,7 @@ function renderAll() {
   renderSummary();
   renderBackups();
   renderCards();
+  renderOthers();
   if (S.focus) {
     const { id, act } = S.focus;
     S.focus = null;
