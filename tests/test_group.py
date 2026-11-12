@@ -644,3 +644,100 @@ async def test_group_seat_claims_and_releases_isolated_directory_lease(
     finally:
         await inv_manager.shutdown()
         isolated.close()
+
+
+@pytest.mark.asyncio
+async def test_seat_leases_are_taken_off_the_event_loop_and_refused_when_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    import time
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    isolated = IsolatedDirs(tmp_path / "data")
+    created = isolated.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    groups = Groups(cast(InvocationManager, FakeManager()), isolated)
+    group = groups.open(
+        repo,
+        [
+            GroupSeat("a", "claude", {}, created.execution_cwd),
+            GroupSeat("b", "claude", {}, repo),
+        ],
+    )
+
+    original = IsolatedDirs.claim_for_cwd
+
+    def slow_claim(self: IsolatedDirs, *args: object, **kwargs: object):  # noqa: ANN202
+        time.sleep(0.5)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "claim_for_cwd", slow_claim)
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    tick_task = asyncio.create_task(ticker())
+    await groups.claim_seats(group.id, ["a", "b"])
+    stop.set()
+    await tick_task
+    assert ticks >= 10
+    # Only the seat inside an isolated directory holds a lease, and it blocks a release.
+    assert list(groups._seat_claims) == [(group.id, "a")]  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(created.id, workspace_id="ws-1").status == "blocked"
+    groups.drop_seat_claims(group.id, ["a", "b"])
+    assert isolated.release(created.id, workspace_id="ws-1").status == "deleted"
+    isolated.close()
+
+
+@pytest.mark.asyncio
+async def test_seat_in_an_isolated_directory_without_a_lease_is_not_launched(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    isolated = IsolatedDirs(tmp_path / "data")
+    created = isolated.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    isolated.store.path.write_bytes(b"this is not a sqlite database" * 100)
+    (created.worktree_path / ".git").unlink()  # no lease by path either
+    manager = FakeManager()
+    groups = Groups(cast(InvocationManager, manager), isolated)
+    group = groups.open(repo, [GroupSeat("a", "claude", {}, created.execution_cwd)])
+
+    await groups.claim_seats(group.id, ["a"])
+    round_ = groups.run(group.id, ["a"], "parallel", "hello", {})
+    run = round_.runs[0]
+    assert run.status == "failed"
+    assert run.launch_error is not None and "cannot be leased" in run.launch_error.message
+    assert manager.requests == {}
+    await settle(groups, round_.id)
+    isolated.close()

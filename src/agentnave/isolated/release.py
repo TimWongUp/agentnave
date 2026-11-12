@@ -152,6 +152,7 @@ def _stat_fingerprint(worktree_path: Path, paths: list[str]) -> bytes:
 
 def _compute_digest(
     isolation_id: str,
+    workspace_id: str,
     head_oid: str,
     branch_oid: str,
     usage_generation: int,
@@ -161,6 +162,7 @@ def _compute_digest(
     hasher = hashlib.sha256()
     for part in (
         isolation_id.encode("ascii"),
+        workspace_id.encode("utf-8"),
         head_oid.encode("ascii"),
         branch_oid.encode("ascii"),
         str(usage_generation).encode("ascii"),
@@ -270,6 +272,7 @@ def _check_hidden_index_flags(wt_path: Path) -> None:
 def _inspect_ready_locked(
     store: WorktreeStore,
     record: IsolatedRecord,
+    workspace_id: str,
 ) -> tuple[Path, Path, Path, _InspectionSnapshot]:
     main_root, common_dir = _verify_repo_identity(record)
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
@@ -318,8 +321,11 @@ def _inspect_ready_locked(
     durable_refs = [ref for ref in containing if ref and not ref.startswith(MANAGED_BRANCH_PREFIX)]
     paths, _ = porcelain_v2_paths(status_raw)
     stat_bytes = _stat_fingerprint(wt_path, paths)
+    # The token is bound to the workspace asking, so one workspace's token never confirms
+    # another's release.
     digest = _compute_digest(
         record.id,
+        workspace_id,
         head_oid,
         branch_oid,
         record.usage_generation,
@@ -449,18 +455,31 @@ def _release_locked(
             status="not_found",
             reason="Isolated directory is not registered",
         )
-    if record.state == "needs_attention":
-        return _retry_attention_locked(store, record)
+    if record.state in ("needs_attention", "deleting"):
+        # Under the repository lock a deleting record is a leftover, not a deletion in progress.
+        return _retry_attention_locked(store, record, workspace_id, confirmation)
     if record.state != "ready":
         return ReleaseResult(
             id=isolation_id,
             status="blocked",
             reason=f"Isolated directory is in state {record.state}",
         )
+    return _inspect_and_delete(store, record, workspace_id, confirmation)
+
+
+def _inspect_and_delete(
+    store: WorktreeStore,
+    record: IsolatedRecord,
+    workspace_id: str,
+    confirmation: str | None,
+) -> ReleaseResult:
+    """The one release path for a directory that still exists: inspect, confirm, delete."""
     try:
-        main_root, verified_common, _wt_path, snap = _inspect_ready_locked(store, record)
+        main_root, verified_common, _wt_path, snap = _inspect_ready_locked(
+            store, record, workspace_id
+        )
     except (IsolationError, OSError, ValueError) as exc:
-        return ReleaseResult(id=isolation_id, status="blocked", reason=str(exc))
+        return ReleaseResult(id=record.id, status="blocked", reason=str(exc))
 
     foreign = record.workspace_id != workspace_id
     if failure := _verify_confirmation(store, record, snap, confirmation, foreign=foreign):
@@ -471,6 +490,7 @@ def _release_locked(
         phase="removing_worktree",
         delete_oid=snap.branch_oid,
         updated_at=now(),
+        expected_state=record.state,
     ):
         return ReleaseResult(
             id=record.id, status="blocked", reason="Isolated directory changed state; retry"
@@ -527,8 +547,17 @@ def _run_deletion(
     )
 
 
-def _retry_attention_locked(store: WorktreeStore, record: IsolatedRecord) -> ReleaseResult:
-    """Re-check a record left in needs_attention and finish its interrupted deletion or rollback."""
+def _retry_attention_locked(
+    store: WorktreeStore,
+    record: IsolatedRecord,
+    workspace_id: str,
+    confirmation: str | None,
+) -> ReleaseResult:
+    """Re-check a record left in needs_attention and finish its interrupted deletion or rollback.
+
+    While the directory still exists it goes through the same inspection and confirmation as a
+    normal release; only an already removed directory is finished without asking.
+    """
     stuck = ReleaseResult(
         id=record.id,
         status="needs_attention",
@@ -544,6 +573,9 @@ def _retry_attention_locked(store: WorktreeStore, record: IsolatedRecord) -> Rel
         if after is None:
             return ReleaseResult(id=record.id, status="deleted")
         return ReleaseResult(id=record.id, status="needs_attention", reason=after.attention)
+    wt_path = Path(record.worktree_path)
+    if wt_path.exists() or is_link(wt_path):
+        return _inspect_and_delete(store, record, workspace_id, confirmation)
     try:
         main_root, common_dir = _verify_repo_identity(record)
     except (IsolationError, OSError, ValueError) as exc:
@@ -553,7 +585,7 @@ def _retry_attention_locked(store: WorktreeStore, record: IsolatedRecord) -> Rel
         phase="removing_worktree",
         delete_oid=record.delete_oid,
         updated_at=now(),
-        expected_state="needs_attention",
+        expected_state=record.state,
     ):
         return stuck
     return _run_deletion(store, record, main_root, common_dir, record.delete_oid)

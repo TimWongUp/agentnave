@@ -307,7 +307,7 @@ class WorktreeStore:
     def save_confirmation(self, isolation_id: str, digest: str, *, updated_at: str) -> bool:
         return self._update(
             "UPDATE isolated_dirs SET confirmation_digest = ?, updated_at = ? "
-            "WHERE id = ? AND state = 'ready'",
+            "WHERE id = ? AND state IN ('ready', 'needs_attention', 'deleting')",
             (digest, updated_at, isolation_id),
         )
 
@@ -324,6 +324,14 @@ class WorktreeStore:
             "UPDATE isolated_dirs SET state = 'deleting', phase = ?, delete_oid = ?, "
             "attention = NULL, updated_at = ? WHERE id = ? AND state = ?",
             (phase, delete_oid, updated_at, isolation_id, expected_state),
+        )
+
+    def revert_to_creating(self, isolation_id: str, *, updated_at: str) -> bool:
+        """Hand a ready record back to recovery as an unfinished creation."""
+        return self._update(
+            "UPDATE isolated_dirs SET state = 'creating', phase = 'abort_pending', "
+            "confirmation_digest = NULL, updated_at = ? WHERE id = ? AND state = 'ready'",
+            (updated_at, isolation_id),
         )
 
     def resume_creating(self, isolation_id: str, *, phase: str, updated_at: str) -> bool:

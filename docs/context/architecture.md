@@ -12,7 +12,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI；隔离目录只应 boss 的要求创建，只在 boss 释放后删除（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI；隔离目录只应 boss 的要求创建，可用的目录只在 boss 释放后删除，服务自己只回滚没建成的半成品、续完已开始的删除（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）。
 
 ## 进程与模块
 
@@ -60,7 +60,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
 - macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
-- 服务只在 boss 要求隔离时写用户仓库：主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude`、`agentnave/` 前缀的受管分支，以及 git 公共目录下 `agentnave/` 里的仓库锁和目录使用租约；删除只发生在 boss 释放之后。建目录和检查时不执行仓库配置的 hooks、filter 与文件监视程序（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）。
+- 服务只为隔离目录写用户仓库：boss 要求隔离时写主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude` 和 `agentnave/` 前缀的受管分支；任务或席位在隔离目录里运行时，在 git 公共目录下的 `agentnave/` 写仓库锁和目录使用租约。可用的目录只在 boss 释放后删除，服务自己只回滚没建成的半成品、续完已开始的删除。建目录和检查时不执行仓库配置的 hooks、filter 与文件监视程序（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）。
 - AgentNave 不是沙箱。主动杀 supervisor、创建新 OS session 或其他同用户逃逸不在隔离范围内；Provider 原生权限才是安全边界。
 
 ## 会议
@@ -68,7 +68,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - 会议就是保存的协作组，2–7 个席位，按并联或串联运行轮次；同组同时只有一个轮次（[ADR-0006](../adr/0006-core-rounds-and-studio-split.md)）。
 - 各席续接自己的原生会话，只收到上次之后、非自己的已提交条目；其他席位的回答以数据身份送达。
 - 可选审核在提交前决定公开或不公开，不回滚工具副作用，也不清除作者会话的记忆。并联轮内可补跑失败席位（[ADR-0039](../adr/0039-retry-lost-seat-within-round.md)）。
-- 信息共享规则不提供文件隔离；写代码的并联席位由 Manager 分配独立 worktree，会议席位不使用隔离目录。隔离会议为每席建独立目录并启用受限工具。
+- 信息共享规则不提供文件隔离；写代码的并联席位由 Manager 分配独立 worktree，会议席位不能新建隔离目录，在已有隔离目录里运行时只占用它的租约。隔离会议为每席建独立目录并启用受限工具。
 
 ## 历史与数据根
 
@@ -85,7 +85,7 @@ App 设置文件按写入方和损坏时的影响范围分开：
 | `permissions.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
 | `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数；派发 Claude、Antigravity 时读取各自的交互模式开关，缺省打开 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |
-| `worktrees.db` | 服务 | 隔离目录的登记，独立于会话库，不随工作区历史清理；App 只读；损坏时只影响隔离目录功能，不影响普通派发 |
+| `worktrees.db` | 服务 | 隔离目录的登记，独立于会话库，不随工作区历史清理；损坏时只影响隔离目录功能，不影响普通派发 |
 
 App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样例由两侧测试共同断言接受或拒绝，保证 App 能保存的服务就能读取。
 

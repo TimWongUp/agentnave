@@ -313,7 +313,8 @@ async def _task_start_payload(
         started.invocation_id,
         access,
         isolation=started.isolation,
-        own_lease_paths=conversations.active_lease_paths,
+        # A snapshot: worker threads add and drop leases while this reads.
+        own_lease_paths=tuple(conversations.active_lease_paths),
     )
     await attach_unreleased_count(payload, warnings, conversations, record_state.manager_session)
     if warnings:

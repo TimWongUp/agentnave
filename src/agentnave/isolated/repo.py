@@ -115,6 +115,22 @@ def decode_git_path(raw: bytes) -> str:
     return os.fsdecode(raw)
 
 
+# Commands that never read file contents through attribute filters.
+_NO_FILTER_COMMANDS = frozenset(
+    {
+        "config",
+        "var",
+        "rev-parse",
+        "symbolic-ref",
+        "show-ref",
+        "for-each-ref",
+        "ls-tree",
+        "cat-file",
+        "update-ref",
+    }
+)
+_FILTER_PROPS_EMPTY = ("clean", "smudge", "process")
+
 _hooks_dir_lock = threading.Lock()
 _empty_hooks_dir: Path | None = None
 
@@ -128,6 +144,40 @@ def empty_hooks_dir() -> Path:
             atexit.register(shutil.rmtree, created, ignore_errors=True)
             _empty_hooks_dir = created
         return _empty_hooks_dir
+
+
+def filter_driver_names(cwd: Path) -> list[str]:
+    """Names of all filter drivers in the effective config (reading config runs nothing)."""
+    res = run_git(
+        ["config", "--null", "--get-regexp", r"^filter\."],
+        cwd=cwd,
+        allowed_exit_codes=(0, 1),
+    )
+    names: set[str] = set()
+    for item in res.stdout.split(b"\x00"):
+        key = os.fsdecode(item.split(b"\n", 1)[0])
+        if key.startswith("filter.") and key.count(".") >= 2:
+            names.add(key[len("filter.") :].rsplit(".", 1)[0])
+    return sorted(names)
+
+
+def _disable_filter_drivers(env: dict[str, str], names: Sequence[str]) -> None:
+    """Add GIT_CONFIG_* entries that empty each driver's commands and clear its required flag.
+
+    An empty command means no filtering; required=false keeps git from failing on that.
+    """
+    if not names:
+        return
+    try:
+        count = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
+    except ValueError:
+        count = 0
+    for name in names:
+        for prop, value in (*((p, "") for p in _FILTER_PROPS_EMPTY), ("required", "false")):
+            env[f"GIT_CONFIG_KEY_{count}"] = f"filter.{name}.{prop}"
+            env[f"GIT_CONFIG_VALUE_{count}"] = value
+            count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
 
 
 def control_char_in(text: str) -> bool:
@@ -149,8 +199,10 @@ def run_git(
 ) -> GitResult:
     """Run git as an argument array without a shell, bounded in time and output size.
 
-    Every call neutralizes repository-configured executables (fsmonitor, hooks) and external
-    diff programs; pass disable_hooks=False only for commands that read hook configuration.
+    Every call neutralizes repository-configured executables: fsmonitor, hooks, external diff
+    programs and every filter driver (clean, smudge, process) in the effective configuration,
+    whatever the attribute files say. Pass disable_hooks=False only for commands that read hook
+    configuration.
     """
     cmd = ["git", "-C", str(cwd), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true"]
     if disable_hooks:
@@ -164,6 +216,8 @@ def run_git(
     env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
         env.update(extra_env)
+    if args and args[0] not in _NO_FILTER_COMMANDS:
+        _disable_filter_drivers(env, filter_driver_names(cwd))
     try:
         proc = subprocess.Popen(
             cmd,
@@ -393,7 +447,12 @@ def _attribute_files(ctx: RepoContext) -> list[Path]:
         allowed_exit_codes=(0, 1),
     )
     if configured.returncode == 0 and configured.stdout.strip():
-        found.append(Path(decode_git_path(configured.stdout.rstrip(b"\r\n"))))
+        path = Path(decode_git_path(configured.stdout.rstrip(b"\r\n")))
+        if path.is_absolute():
+            found.append(path)
+        else:
+            # Git resolves a relative path against the worktree it runs in.
+            found.extend([ctx.source_root / path, ctx.main_root / path])
     for variable, fallback in (
         ("GIT_ATTR_GLOBAL", _default_global_attributes()),
         ("GIT_ATTR_SYSTEM", None),
@@ -553,11 +612,6 @@ def add_worktree_locked(
     run_git(
         ["worktree", "add", "-b", branch_name, "--", str(worktree_path), base_oid],
         cwd=main_root,
-        config_overrides=(
-            "filter.lfs.smudge=",
-            "filter.lfs.process=",
-            "filter.lfs.required=false",
-        ),
         extra_env={
             "GIT_LFS_SKIP_SMUDGE": "1",
             "GIT_NO_LAZY_FETCH": "1",

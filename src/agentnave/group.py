@@ -13,7 +13,8 @@ from typing import Literal
 
 from agentnave.adapters import get_adapter
 from agentnave.core import InvocationManager
-from agentnave.isolated.manager import IsolatedDirs
+from agentnave.isolated.manager import ClaimedIsolation, IsolatedDirs
+from agentnave.isolated.repo import WORKTREES_DIR_NAME
 from agentnave.models import (
     InvocationError,
     InvocationRequest,
@@ -24,6 +25,7 @@ from agentnave.models import (
 )
 from agentnave.naming import MemberIdentity, MemberName
 from agentnave.native_prompts import NativePrompt
+from agentnave.threaded import to_thread_keeping
 
 type SeatRunStatus = Literal[
     "pending", "running", "succeeded", "failed", "blocked", "cancelled", "not_started"
@@ -190,6 +192,8 @@ class Groups:
         self.manager = manager
         self.isolated = isolated
         self.active_lease_paths: set[Path] = set()
+        # Leases taken ahead of a seat's synchronous launch (see claim_seats), or why not.
+        self._seat_claims: dict[tuple[str, str], ClaimedIsolation | Exception] = {}
         self._groups: dict[str, Group] = {}
         self._rounds: dict[str, Round] = {}
 
@@ -214,6 +218,42 @@ class Groups:
         group = Group(group_id or uuid.uuid4().hex, cwd, {seat.id: seat for seat in seats})
         group.states = {seat.id: SeatState() for seat in seats}
         return self.adopt(group)
+
+    async def claim_seats(self, group_id: str, seat_ids: list[str]) -> None:
+        """Lease the isolated directories seats are about to run in, on worker threads.
+
+        Launching a seat is synchronous so its invocation id is cancellable at once; leasing
+        takes repository locks and runs git, so it happens here first. A seat launched without
+        this falls back to leasing in the launch itself.
+        """
+        group = self._group(group_id)
+        for seat_id in seat_ids:
+            seat = group.seats.get(seat_id)
+            if seat is None or not any(
+                part.lower() == WORKTREES_DIR_NAME for part in seat.cwd.parts
+            ):
+                continue
+            key = (group_id, seat_id)
+            self._discard_claim(self._seat_claims.pop(key, None))
+            try:
+                claimed = await to_thread_keeping(
+                    self._discard_claim, self.isolated.claim_for_cwd, seat.cwd
+                )
+            except (OSError, ValueError) as exc:
+                self._seat_claims[key] = exc
+                continue
+            if claimed is not None:
+                self._seat_claims[key] = claimed
+
+    def drop_seat_claims(self, group_id: str, seat_ids: list[str]) -> None:
+        """Give back leases taken by claim_seats for a round that did not start."""
+        for seat_id in seat_ids:
+            self._discard_claim(self._seat_claims.pop((group_id, seat_id), None))
+
+    @staticmethod
+    def _discard_claim(claim: ClaimedIsolation | Exception | None) -> None:
+        if isinstance(claim, ClaimedIsolation):
+            claim.lease.release()
 
     def adopt(self, group: Group) -> Group:
         """Register a group, including one restored from saved state."""
@@ -422,6 +462,7 @@ class Groups:
             else:
                 for run in round_.runs:
                     if run.status == "pending":
+                        await self.claim_seats(group.id, [run.seat_id])
                         self._launch(round_, run, len(group.entries))
                     await self._finish(round_, run)
                     approved = (
@@ -480,7 +521,9 @@ class Groups:
             round_.notify()
 
     def _launch(self, round_: Round, run: SeatRun, snapshot: int) -> None:
+        prepared = self._seat_claims.pop((round_.group.id, run.seat_id), None)
         if round_.cancelling:
+            self._discard_claim(prepared)
             run.status = "not_started"
             return
         seat = round_.group.seats[run.seat_id]
@@ -497,12 +540,15 @@ class Groups:
                 else "state_update_failed"
             )
             run.launch_error = InvocationError(code, round_.error)
+            self._discard_claim(prepared)
             return
         claimed = None
         try:
             # A seat whose cwd lies in an isolated directory only holds its lease while it runs;
-            # the service adds no isolation instructions for seats.
-            claimed = self.isolated.claim_for_cwd(seat.cwd)
+            # the service adds no isolation instructions for seats. Failing to lease refuses it.
+            if isinstance(prepared, Exception):
+                raise prepared
+            claimed = prepared if prepared is not None else self.isolated.claim_for_cwd(seat.cwd)
             on_settled = None
             if claimed is not None:
                 held = claimed

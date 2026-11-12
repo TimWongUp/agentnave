@@ -75,6 +75,7 @@ from agentnave.task_isolation import (
     release_hold,
 )
 from agentnave.task_start import latest_session_task
+from agentnave.threaded import to_thread_keeping, to_thread_uninterrupted
 
 
 def _missing_forward(message_id: str) -> ForwardError:
@@ -784,7 +785,8 @@ class Conversations(ConversationStore):
             return IsolationHold(request)
         self.manager.check_start(request)
         self._check_capacity(1)
-        hold = await asyncio.to_thread(
+        hold = await to_thread_keeping(
+            lambda held: release_hold(self.isolated, held),
             acquire_isolation,
             self.isolated,
             request,
@@ -800,7 +802,7 @@ class Conversations(ConversationStore):
         """Release a hold whose task never started, off the event loop."""
         if (lease := hold.lease) is not None:
             self.active_lease_paths.discard(lease.path)
-        await asyncio.to_thread(release_hold, self.isolated, hold)
+        await to_thread_uninterrupted(release_hold, self.isolated, hold)
 
     def _task_settlement(self, startup: _TaskStartup) -> Callable[[str], None] | None:
         hold = startup.hold

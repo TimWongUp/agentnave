@@ -4072,6 +4072,68 @@ async def test_task_startup_cleanup_steps_run_independently_and_keep_the_origina
 
 
 @pytest.mark.asyncio
+async def test_cancelling_the_wait_for_a_new_isolated_directory_rolls_it_back(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.isolated import IsolatedDirs
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    gate = threading.Event()
+    entered = threading.Event()
+    original = IsolatedDirs.create
+
+    def slow_create(self: IsolatedDirs, *args: object, **kwargs: object):  # noqa: ANN202
+        entered.set()
+        gate.wait(10)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "create", slow_create)
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        waiting = asyncio.create_task(
+            studio.acquire_task_isolation(
+                InvocationRequest("claude", "work", repo),
+                "ws-1",
+                isolation_requested=True,
+                isolation_ref=None,
+            )
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        waiting.cancel()
+        asyncio.get_running_loop().call_later(0.1, gate.set)
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        # The directory the thread finished building was rolled back before cancelling.
+        assert studio.isolated.store.all_records() == []
+        container = repo / ".agentnave-worktrees"
+        assert not container.exists() or list(container.glob("wt-*")) == []
+        refs = subprocess.run(
+            ["git", "for-each-ref", "refs/heads/agentnave"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert refs == ""
+        assert studio.active_lease_paths == set()
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
 async def test_isolated_task_rollbacks_resume_summary_errors_and_warnings(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

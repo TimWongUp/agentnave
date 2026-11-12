@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from agentnave.isolated.copy import copy_worktreeinclude
 from agentnave.isolated.leases import (
     IsolationLease,
+    RepoLockUnavailable,
     acquire_lease_locked,
     has_active_leases,
     repo_lock,
@@ -40,6 +41,7 @@ from agentnave.isolated.repo import (
     has_link_in_relpath,
     is_link,
     is_same_or_subpath,
+    isolated_worktree_root,
     parse_worktrees,
     ref_exists,
     resolve_target_commit,
@@ -284,20 +286,41 @@ class IsolatedDirs:
         try:
             record = self.find_by_path(resolved)
         except (OSError, ValueError) as exc:
-            if warnings is not None:
-                warnings.append(
-                    f"Isolated directory registry is unreadable ({exc}); "
-                    "the directory was used without its registration."
-                )
-            try:
-                return self._claim_cross_data_root(resolved)
-            except (IsolationError, OSError, ValueError):
-                return None
+            return self._claim_without_registry(resolved, exc, warnings)
         if record is not None:
-            return self._claim_registered(record, resolved)
+            return self._claim_registered(record, resolved, warnings)
         return self._claim_cross_data_root(resolved)
 
-    def _claim_registered(self, record: IsolatedRecord, resolved_cwd: Path) -> ClaimedIsolation:
+    def _claim_without_registry(
+        self, resolved: Path, cause: Exception, warnings: list[str] | None
+    ) -> ClaimedIsolation | None:
+        """Lease an isolated directory by path alone because the registry cannot be read.
+
+        A directory laid out like an isolated one must be leased: without a lease another
+        service could release it while a task runs in it, so failing to lease refuses the start.
+        """
+        if isolated_worktree_root(resolved) is None:
+            return None
+        try:
+            claimed = self._claim_cross_data_root(resolved)
+        except (IsolationError, OSError, ValueError) as exc:
+            claimed = None
+            cause = exc
+        if claimed is None:
+            raise IsolationError(
+                f"Isolated directory {resolved} cannot be leased ({cause}); "
+                "the registry is unreadable. Fix worktrees.db or choose another cwd."
+            ) from cause
+        if warnings is not None:
+            warnings.append(
+                f"Isolated directory registry is unreadable ({cause}); "
+                "the directory was used without its registration."
+            )
+        return claimed
+
+    def _claim_registered(
+        self, record: IsolatedRecord, resolved_cwd: Path, warnings: list[str] | None = None
+    ) -> ClaimedIsolation:
         common_dir = Path(record.repo_common_dir)
         with repo_lock(common_dir):
             latest = self.store.get(record.id)
@@ -311,7 +334,13 @@ class IsolatedDirs:
                 raise IsolationError(f"Isolated directory is missing or unsafe: {wt_path}")
             if not is_same_or_subpath(resolved_cwd, wt_path):
                 raise IsolationError("cwd resolves outside the isolated worktree")
-            updated = self.store.bump_usage(latest.id, updated_at=now())
+            try:
+                updated = self.store.bump_usage(latest.id, updated_at=now())
+            except OSError as exc:
+                # The lease below still blocks any release for as long as the task runs.
+                updated = latest
+                if warnings is not None:
+                    warnings.append(f"Could not record the use of isolated directory ({exc}).")
             lease = acquire_lease_locked(common_dir, updated.id)
             return ClaimedIsolation(
                 id=updated.id,
@@ -436,6 +465,10 @@ class IsolatedDirs:
                 latest = self.store.get(created.id)
                 if latest is not None:
                     rollback_creating_locked(self.store, latest)
+        except RepoLockUnavailable:
+            # Without the lock nothing can be removed safely. Hand the record to recovery as an
+            # unfinished creation instead of leaving a ready directory nobody knows about.
+            self.store.revert_to_creating(created.id, updated_at=now())
         finally:
             if not created.lease.closed:
                 created.lease.release()
