@@ -450,6 +450,8 @@ class InvocationManager:
         instructions = SUBAGENT_INSTRUCTIONS
         if request.read_only:
             instructions += f" {READ_ONLY_INSTRUCTIONS}"
+        if request.extra_instructions:
+            instructions += f" {request.extra_instructions}"
         return get_adapter(request.provider).prepare(
             replace(request, prompt=f"{instructions}\n\nAssigned task:\n{request.prompt}")
         )
@@ -460,6 +462,7 @@ class InvocationManager:
         *,
         prepared: PreparedCommand | None = None,
         claim: IO[bytes] | None = None,
+        on_settled: Callable[[str], None] | None = None,
     ) -> str:
         """Start one run; it owns claim (a reserve() result, taken here when omitted) from this
         call on and releases it once its process tree has ended."""
@@ -474,7 +477,9 @@ class InvocationManager:
                 record.prompts.encode = adapter.encode_prompt_answer
                 record.prompts.changed = lambda: self._prompts_changed(invocation_id)
             self._records[invocation_id] = record
-            record.task = asyncio.create_task(self._execute(record, adapter, prepared))
+            record.task = asyncio.create_task(
+                self._execute(record, adapter, prepared, invocation_id, on_settled)
+            )
         except BaseException:
             if claim is not None:
                 release_and_remove(claim, Path(claim.name))
@@ -610,6 +615,7 @@ class InvocationManager:
                     session_id=None if result is None else result.session_id,
                     result_read=record.result_read,
                     error=None if result is None else result.error,
+                    read_only=record.request.read_only,
                 )
             )
         return listings
@@ -747,7 +753,12 @@ class InvocationManager:
             raise KeyError(f"unknown invocation_id: {invocation_id}") from exc
 
     async def _execute(
-        self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
+        self,
+        record: _InvocationRecord,
+        adapter: ProviderAdapter,
+        prepared: PreparedCommand,
+        invocation_id: str,
+        on_settled: Callable[[str], None] | None = None,
     ) -> InvocationResult:
         try:
             result = await self._run(record, adapter, prepared)
@@ -768,6 +779,13 @@ class InvocationManager:
                     "internal_error", "Unexpected invocation failure; inspect server logs."
                 ),
             )
+        finally:
+            if on_settled is not None:
+                try:
+                    # Off the event loop: settlement runs git and takes repository locks.
+                    await asyncio.shield(asyncio.to_thread(on_settled, invocation_id))
+                except Exception:
+                    logging.getLogger(__name__).exception("Post-invocation settlement failed")
 
     async def _run(
         self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand

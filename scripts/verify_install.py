@@ -26,6 +26,7 @@ TOOLS = [
     "decide_answers",
     "handover",
     "read_conversation",
+    "isolated_dirs",
 ]
 
 

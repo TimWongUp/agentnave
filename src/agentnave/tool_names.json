@@ -4,6 +4,7 @@
   "clear_provider_cooldown",
   "decide_answers",
   "handover",
+  "isolated_dirs",
   "list",
   "list_members",
   "read_conversation",

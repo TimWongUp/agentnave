@@ -1819,3 +1819,33 @@ for line in sys.stdin:
         assert "available: swe-2-flash-medium, swe-1-6-slow" in unavailable.error.message
     finally:
         await manager.shutdown()
+
+
+def test_prepare_appends_extra_instructions_after_read_only_rules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / ("claude.cmd" if os.name == "nt" else "claude")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    manager = InvocationManager()
+    writable = manager.prepare(
+        InvocationRequest("claude", "edit file", tmp_path, extra_instructions="Extra rule.")
+    )
+    assert writable.stdin is not None
+    prefix, body = writable.stdin.decode("utf-8").split("\n\nAssigned task:\n", 1)
+    assert body == "edit file"
+    assert prefix.endswith("Extra rule.")
+    assert "Read-only:" not in prefix
+
+    readonly = manager.prepare(
+        InvocationRequest(
+            "claude", "inspect file", tmp_path, read_only=True, extra_instructions="Extra rule."
+        )
+    )
+    assert readonly.stdin is not None
+    ro_prefix = readonly.stdin.decode("utf-8").split("\n\nAssigned task:\n", 1)[0]
+    assert ro_prefix.index("Read-only: do not modify files") < ro_prefix.index("Extra rule.")

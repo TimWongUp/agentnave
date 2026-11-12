@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from fake_cli import write_fake_cli
 from jsonschema import Draft202012Validator
 from mcp import Client, StdioServerParameters
 from mcp.server import MCPServer
@@ -34,6 +35,7 @@ EXPECTED_TOOLS = [
     "decide_answers",
     "handover",
     "read_conversation",
+    "isolated_dirs",
 ]
 
 
@@ -892,13 +894,14 @@ async def test_mcp_projection_leaves_error_replies_unchanged(
 @pytest.mark.asyncio
 async def test_mcp_empty_replies_keep_required_containers() -> None:
     async with Client(mcp) as client:
-        for name, containers in (
-            ("list", ("invocations", "conversations", "unavailable")),
-            ("list_invocations", ("invocations",)),
-            ("wait", ("pending_ids", "updates", "rounds")),
-            ("handover", ("waiting",)),
+        for name, args, containers in (
+            ("list", {}, ("invocations", "conversations", "unavailable")),
+            ("list_invocations", {}, ("invocations",)),
+            ("wait", {}, ("pending_ids", "updates", "rounds")),
+            ("handover", {}, ("waiting",)),
+            ("isolated_dirs", {"action": "list", "manager_session_id": "empty-chat"}, ("items",)),
         ):
-            result = await client.call_tool(name, {})
+            result = await client.call_tool(name, args)
             assert not result.is_error, result.content
             payload = _payload(result.structured_content)
             assert all(payload[key] == [] for key in containers)
@@ -2326,3 +2329,365 @@ async def test_unmodelled_failure_blocks_followup_even_when_cli_reports_model(
             "clear_provider_cooldown", {"provider": "claude", "model": "reported"}
         )
         assert not cleared.is_error and provider_health.active(root) == {}
+
+
+def _init_git_repo(repo: Path) -> str:
+    repo.mkdir(parents=True, exist_ok=True)
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    hook = repo / ".git" / "hooks" / "post-checkout"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    (repo / ".gitignore").write_text("*.ignored\n", encoding="utf-8")
+    (repo / ".gitattributes").write_text(
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8"
+    )
+    sub = repo / "packages" / "app"
+    sub.mkdir(parents=True)
+    (sub / "index.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "initial"], cwd=repo, check=True, capture_output=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.mark.asyncio
+async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    base_oid = _init_git_repo(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    subdir = repo / "packages" / "app"
+    (subdir / "dirty.txt").write_text("local draft\n", encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, os, pathlib, sys, time\n"
+        "prompt = sys.stdin.read()\n"
+        "if 'HOLD_OPEN' in prompt:\n"
+        "    time.sleep(30)\n"
+        "if 'WRITE_FILES' in prompt:\n"
+        "    pathlib.Path('created.py').write_text('y = 2\\n', encoding='utf-8')\n"
+        "    pathlib.Path('cache.ignored').write_text('tmp\\n', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': json.dumps({'cwd': os.getcwd(), "
+        "'prompt': prompt}), 'session_id': 'iso-sess', 'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    async with Client(mcp) as client:
+        plain = await _start_and_wait(
+            client, provider="claude", cwd=str(subdir), manager_session_id="chat-1"
+        )
+        assert "isolation" not in plain and "unreleased_isolation_count" not in plain
+
+        both = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "reject",
+                "cwd": str(subdir),
+                "session_id": "iso-sess",
+                "isolation": {},
+                "manager_session_id": "chat-1",
+            },
+        )
+        assert both.is_error and "cannot be combined" in str(both.content)
+        assert not (repo / ".agentnave-worktrees").exists()
+
+        running = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "HOLD_OPEN",
+                        "cwd": str(subdir),
+                        "isolation": {"ref": "main"},
+                        "manager_session_id": "chat-1",
+                    },
+                )
+            ).structured_content
+        )
+        iso = _payload(running["isolation"])
+        wt_id = str(iso["id"])
+        wt_path = Path(str(iso["path"]))
+        assert iso["cwd"] == str((wt_path / "packages" / "app").resolve())
+        assert iso["branch"] == f"agentnave/{wt_id}" and iso["base_oid"] == base_oid
+        assert running["unreleased_isolation_count"] == 1
+        assert "isolated directory instructions" in cast(list[str], running["defaults_applied"])
+        warnings_text = " ".join(cast(list[str], running["warnings"]))
+        assert "Git hooks and LFS" in warnings_text and "Uncommitted changes" in warnings_text
+
+        listed_busy = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "chat-1"}
+                )
+            ).structured_content
+        )
+        items = cast(list[dict[str, object]], listed_busy["items"])
+        assert len(items) == 1 and items[0]["id"] == wt_id and items[0]["in_use"] is True
+        blocked = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "chat-1"},
+                )
+            ).structured_content
+        )
+        assert blocked["status"] == "blocked"
+
+        cancelled = _payload(
+            _payload(
+                (
+                    await client.call_tool("cancel", {"id": running["invocation_id"]})
+                ).structured_content
+            )["invocation"]
+        )
+        cancel_iso = _payload(cancelled["isolation"])
+        assert (
+            cancel_iso["summary_status"] == "complete"
+            and cancel_iso["changed_files_from_base"] == []
+            and cancel_iso["uncommitted"] is False
+        )
+
+        # Claim existing isolated cwd without passing isolation; write dirty + ignored files.
+        second = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "WRITE_FILES original body",
+                        "cwd": str(iso["cwd"]),
+                        "manager_session_id": "chat-1",
+                    },
+                )
+            ).structured_content
+        )
+        assert _payload(second["isolation"])["id"] == wt_id
+        assert second["unreleased_isolation_count"] == 1
+        done = _first(await client.call_tool("wait", {"ids": [second["invocation_id"]]}))
+        seen = json.loads(str(done["output"]))
+        assert Path(seen["cwd"]).resolve() == Path(str(iso["cwd"])).resolve()
+        assert (
+            "When the task asks you to change a file under the main worktree, change the "
+            "corresponding path under this isolated worktree instead."
+        ) in seen["prompt"]
+        done_iso = _payload(done["isolation"])
+        assert done_iso["summary_status"] == "complete" and done_iso["uncommitted"] is True
+
+        saved = _payload(
+            (
+                await client.call_tool(
+                    "read_conversation", {"conversation_id": second["conversation_id"]}
+                )
+            ).structured_content
+        )
+        saved_task = cast(list[dict[str, object]], saved["tasks"])[-1]
+        assert saved_task["prompt"] == "WRITE_FILES original body"
+        assert saved_task["isolation_id"] == wt_id
+        assert saved_task["isolation_path"] == str(wt_path)
+        assert saved_task["isolation_branch"] == f"agentnave/{wt_id}"
+
+        rel = _payload(
+            (
+                await client.call_tool(
+                    "handover",
+                    {"release": True, "note": "check wt", "manager_session_id": "chat-1"},
+                )
+            ).structured_content
+        )
+        claimed = _payload(
+            (
+                await client.call_tool(
+                    "handover",
+                    {"workspace_id": rel["workspace_id"], "manager_session_id": "chat-2"},
+                )
+            ).structured_content
+        )
+        claimed_dirs = cast(list[dict[str, object]], claimed["isolated_dirs"])
+        assert [d["id"] for d in claimed_dirs] == [wt_id]
+
+        bad_list = await client.call_tool(
+            "isolated_dirs", {"action": "list", "id": wt_id, "manager_session_id": "chat-2"}
+        )
+        assert bad_list.is_error
+        bad_rel = await client.call_tool(
+            "isolated_dirs", {"action": "release", "manager_session_id": "chat-2"}
+        )
+        assert bad_rel.is_error
+
+        confirm_req = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "chat-2"},
+                )
+            ).structured_content
+        )
+        assert confirm_req["status"] == "confirmation_required"
+        assert confirm_req["uncommitted"] is True and confirm_req["confirmation"]
+        assert (wt_path / "packages" / "app" / "cache.ignored").is_file()
+
+        deleted = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": confirm_req["confirmation"],
+                        "manager_session_id": "chat-2",
+                    },
+                )
+            ).structured_content
+        )
+        assert deleted["status"] == "deleted" and not wt_path.exists()
+        after = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "chat-2"}
+                )
+            ).structured_content
+        )
+        assert after["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with_a_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    async with Client(mcp) as client:
+        started = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "ok",
+                        "cwd": str(repo),
+                        "isolation": {},
+                        "manager_session_id": "chat-old",
+                    },
+                )
+            ).structured_content
+        )
+        wt_id = str(_payload(started["isolation"])["id"])
+        await client.call_tool("wait", {"ids": [started["invocation_id"]]})
+
+        own = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "chat-new"}
+                )
+            ).structured_content
+        )
+        assert own["items"] == []
+        everywhere = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "list", "cwd": str(repo), "manager_session_id": "chat-new"},
+                )
+            ).structured_content
+        )
+        items = cast(list[dict[str, object]], everywhere["items"])
+        assert [(item["id"], item["own_workspace"]) for item in items] == [(wt_id, False)]
+
+        relative = await client.call_tool(
+            "isolated_dirs",
+            {"action": "list", "cwd": "repo", "manager_session_id": "chat-new"},
+        )
+        assert relative.is_error
+        release_with_cwd = await client.call_tool(
+            "isolated_dirs",
+            {"action": "release", "id": wt_id, "cwd": str(repo), "manager_session_id": "chat-new"},
+        )
+        assert release_with_cwd.is_error
+
+        first = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "chat-new"},
+                )
+            ).structured_content
+        )
+        assert first["status"] == "confirmation_required" and first["confirmation"]
+        assert first["uncommitted"] is False
+        done = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": first["confirmation"],
+                        "manager_session_id": "chat-new",
+                    },
+                )
+            ).structured_content
+        )
+        assert done["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_creating_an_isolated_directory_does_not_block_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from agentnave.isolated import IsolatedDirs
+
+    _init_git_repo(tmp_path / "repo")
+    _install_fake_claude(tmp_path, monkeypatch)
+    original = IsolatedDirs.create
+
+    def slow_create(self: IsolatedDirs, *args: object, **kwargs: object):  # noqa: ANN202
+        time.sleep(0.5)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "create", slow_create)
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    async with Client(mcp) as client:
+        tick_task = asyncio.create_task(ticker())
+        result = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "ok",
+                "cwd": str(tmp_path / "repo"),
+                "isolation": {},
+                "manager_session_id": "chat-1",
+            },
+        )
+        stop.set()
+        await tick_task
+        assert not result.is_error
+    assert ticks >= 10
