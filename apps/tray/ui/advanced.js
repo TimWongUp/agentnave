@@ -6,7 +6,7 @@
 
   const S = AN.settings ||= {};
   const {
-    $, PROVIDERS, PROVIDER_NAMES, SCENE_IDS, apiPostMembers, apiPostReview, configurationErrors,
+    $, PROVIDERS, PROVIDER_NAMES, SCENE_IDS, apiPostMembers, apiPostReview, cliEffort, configurationErrors,
     confirmScenes, effortLevels, el, getAllModelIds, isRestricted, known, listedPool, nativeDefault,
     outOfPool, sameJson, savedEffort, sceneEffort, settingTip, showNotice, slot, unlisted
   } = S;
@@ -39,7 +39,8 @@
   // Whether a mode sends work to the orchestration seats; off and meetings-only never do.
   const usesSeats = (mode) => Boolean(mode) && mode !== "off" && mode !== "meetings";
   // The default meeting line from `meeting: { count, seats? }`, built from the same parts the rules file
-  // uses; a seat left empty is one the boss picks.
+  // uses; a seat left empty is one the boss picks. A seat is its CLI alone: the model and effort come
+  // from 员工 when the meeting runs, so an older seat's saved ones are ignored.
   const MEETING_COUNTS = [2, 3, 4, 5, 6];
   const MEETING_MODES = ["meetings", "split", "parallel"];
   const meetingDefaultCount = () => orchestration?.presets?.meeting_parts?.default_count ?? 3;
@@ -48,15 +49,17 @@
     while (list.length && !list.at(-1)) list.pop();
     return list;
   };
-  const meetingOf = (doc) => ({ count: doc?.meeting?.count ?? meetingDefaultCount(), seats: trimSeats(doc?.meeting?.seats || []) });
+  const meetingOf = (doc) => ({
+    count: doc?.meeting?.count ?? meetingDefaultCount(),
+    seats: trimSeats(doc?.meeting?.seats || []).map((seat) => (seat?.provider ? { provider: seat.provider } : null)),
+  });
   const meetingLive = (doc) => Boolean(doc) && [doc.preset, ...Object.values(doc.apps || {})].some((mode) => MEETING_MODES.includes(mode));
   function meetingLine(doc) {
     const parts = orchestration?.presets?.meeting_parts;
     if (!parts || !doc?.meeting) return "";
     const { count, seats } = meetingOf(doc);
-    const named = seats.slice(0, count).filter((seat) => seat?.model && PROVIDER_NAMES[seat.provider]).map((seat) => (seat.effort ? parts.seat_effort : parts.seat)
-      .replace("{name}", PROVIDER_NAMES[seat.provider]).replace("{provider}", seat.provider)
-      .replace("{model}", seat.model).replace("{effort}", seat.effort || ""));
+    const named = seats.slice(0, count).filter((seat) => seat && PROVIDER_NAMES[seat.provider])
+      .map((seat) => parts.seat_provider.replace("{name}", PROVIDER_NAMES[seat.provider]).replace("{provider}", seat.provider));
     const template = !named.length ? parts.none : named.length === count ? parts.all : parts.some;
     return template.replace("{count}", String(count)).replace("{seats}", named.join(parts.separator));
   }
@@ -141,13 +144,6 @@
     for (const { role, difficulty } of liveSeats(wanted)) {
       const seat = orchestrationSeat(wanted, role, difficulty);
       if (seat && (!wasLive.includes(`${role}/${difficulty}`) || !sameJson(seat, orchestrationSeat(saved, role, difficulty)))) await listSeatModel(seat);
-    }
-    if (meetingLive(wanted)) {
-      const before = meetingOf(saved).seats;
-      const now = meetingOf(wanted);
-      for (const [i, seat] of now.seats.slice(0, now.count).entries()) {
-        if (seat && !(meetingLive(saved) && sameJson(seat, before[i] ?? null))) await listSeatModel(seat);
-      }
     }
     const response = await fetch("/app/orchestration", {
       method: "POST",
@@ -551,9 +547,7 @@
     const live = Boolean(doc) && [doc.preset, ...Object.values(doc.apps || {})].some(usesSeats);
     const roles = !live ? [] : liveSeats(doc)
       .map(({ role, difficulty, name }) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
-    const meeting = !meetingLive(doc) ? [] : (doc.meeting?.seats || []).slice(0, meetingOf(doc).count)
-      .map((seat, i) => ({ section: "orchestration", name: AN.L(`开会席位 ${i + 1}`, `Meeting seat ${i + 1}`), seat }));
-    return [...review, ...roles, ...meeting]
+    return [...review, ...roles]
       .filter(({ seat }) => seat && (outOfPool(seat.provider, seat.model) || unlisted(seat.provider, seat.model)))
       .map((conflict) => ({ ...conflict, blocking: outOfPool(conflict.seat.provider, conflict.seat.model) }));
   }
@@ -664,6 +658,19 @@
       : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
     const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
       .map((p) => [p, PROVIDER_NAMES[p] + note(p), Boolean(note(p)) && p !== provider]);
+    // A meeting seat stores only its CLI and shows what Employees sets for it in that scene.
+    if (scene === "discussion") {
+      // As the server runs it: nothing while 开会 has the CLI off, and a model list needs a default.
+      const current = provider ? slot(scene, provider) : { enabled: false };
+      const model = current.enabled ? current.model || (current.allowed ? "" : nativeDefault(provider).model) || "" : "";
+      const effort = model ? current.effort || cliEffort(provider, model) || "" : "";
+      const shown = (value) => [[value, value || "—"]];
+      return [
+        reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", unset], ...clis], (next) => onSet(next ? { provider: next } : null)),
+        reviewSelect(`${key}/model`, modelLabel, model, shown(model), () => {}, true),
+        reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), effort, shown(effort), () => {}, true),
+      ];
+    }
     const models = provider ? seatModels(provider) : [];
     const excluded = seat?.model && (outOfPool(provider, seat.model) || unlisted(provider, seat.model));
     if (seat?.model && !excluded && !models.includes(seat.model)) models.unshift(seat.model);
