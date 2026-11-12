@@ -220,7 +220,7 @@ class WorkspaceSummary(TypedDict):
     mine: bool
     updated: str
     conversation_count: int
-    conversations: list[ConversationSummary]  # the most recent few
+    latest: ConversationSummary  # its most recent conversation of the asked kind
 
 
 class ListPayload(TypedDict):

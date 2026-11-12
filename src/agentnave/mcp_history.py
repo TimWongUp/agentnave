@@ -50,7 +50,6 @@ from agentnave.store import Conversation, Record
 # Finished runs a list shows; running ones are always shown.
 _FINISHED_SHOWN = 10
 # Conversations shown under each workspace when listing every workspace.
-_WORKSPACE_SAMPLE = 3
 
 
 async def list_all(
@@ -62,18 +61,26 @@ async def list_all(
         int,
         Field(
             ge=1,
-            le=200,
-            description="Most recent conversations (scope=mine) or workspaces (scope=all); "
-            "defaults to 10, at most 200.",
+            le=50,
+            description="Most recent conversations, or workspaces with scope=all; "
+            "defaults to 10, at most 50.",
         ),
     ] = 10,
     scope: Annotated[
         Literal["mine", "all"],
         Field(
-            description="mine: this chat's workspace. all: every workspace on this machine, "
-            "newest first, each with its latest conversations."
+            description="mine: this chat's workspace. all: workspaces on this machine, "
+            "newest first, each with its latest conversation."
         ),
     ] = "mine",
+    workspace_id: Annotated[
+        str | None,
+        Field(
+            pattern=_WORKSPACE_ID,
+            description="List this workspace's conversations instead of this chat's; "
+            "ids come from scope=all.",
+        ),
+    ] = None,
     manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
@@ -87,7 +94,11 @@ async def list_all(
         workspace = conversations.reading_workspace(manager_session_id)
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    if scope == "mine" and workspace is None:
+    if scope == "all" and workspace_id is not None:
+        raise ToolError(
+            "Pass workspace_id or scope='all', not both. Correct the request and retry."
+        )
+    if scope == "mine" and workspace_id is None and workspace is None:
         raise ToolError(
             "list needs manager_session_id for this boss chat, or scope='all'. Correct the "
             "request and retry."
@@ -107,10 +118,11 @@ async def list_all(
     if omitted:
         result["invocations_omitted"] = omitted
     if scope == "mine":
+        shown = workspace_id or workspace
         mine = [
             state
             for state in states
-            if state.manager_session == workspace and (kind is None or state.kind == kind)
+            if state.manager_session == shown and (kind is None or state.kind == kind)
         ]
         result["conversations"] = [_summary(state, writable) for state in mine[:limit]]
         result["total"] = len(mine)
@@ -154,7 +166,7 @@ def _workspaces(
             "mine": key is not None and key == workspace,
             "updated": views.updated(members[0]),
             "conversation_count": len(shown),
-            "conversations": [_summary(state, writable) for state in shown[:_WORKSPACE_SAMPLE]],
+            "latest": _summary(shown[0], writable),
         }
         if key is not None:
             item["workspace_id"] = key

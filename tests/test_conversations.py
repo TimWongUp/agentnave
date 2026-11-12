@@ -541,6 +541,9 @@ async def test_list_shows_this_chat_and_groups_every_workspace(
         assert every["total"] == len(workspaces) == 2
         assert [(w["title"], w["mine"]) for w in workspaces] == [("Alpha", True), ("Beta", False)]
         assert workspaces[0]["conversation_count"] == 2
+        assert workspaces[1]["latest"]["title"] == "Beta"
+        other = await _call(client, "list", {"workspace_id": workspaces[1]["workspace_id"]})
+        assert [c["title"] for c in cast(list[dict[str, Any]], other["conversations"])] == ["Beta"]
 
 
 @pytest.mark.asyncio
@@ -1741,7 +1744,7 @@ async def test_write_receipts_are_small_and_list_reads_old_history(
         listed = await _call(client, "list", {"scope": "all"})
         assert scans == 1
         workspaces = cast(list[dict[str, Any]], listed["workspaces"])
-        assert workspaces[0]["conversations"][0]["title"] == "History"
+        assert workspaces[0]["latest"]["title"] == "History"
         assert "dashboard_url" not in listed and "dashboard_error" not in listed
         assert "director_url" not in listed and "public_url" not in listed
         names = {tool.name for tool in (await client.list_tools()).tools}

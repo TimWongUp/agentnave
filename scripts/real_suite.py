@@ -469,7 +469,7 @@ class Suite:
         return None
 
     async def history(self) -> str | None:
-        listed = await self.call("list", {"limit": 200, "manager_session_id": MANAGER})
+        listed = await self.call("list", {"limit": 50, "manager_session_id": MANAGER})
         conversations = [
             item
             for item in listed["conversations"]
