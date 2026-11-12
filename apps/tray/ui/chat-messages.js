@@ -284,11 +284,12 @@ function createMessage(m) {
   rec.md = h("div.md");
   rec.dots = h("span.typing", {}, h("i"), h("i"), h("i"));
   rec.tail = h("div.tail");
+  rec.trail = h("div.tool-trail", { hidden: true });
   rec.status = h("div.typing-status", { hidden: true });
   rec.bub = h(
     "div.bub",
     {},
-    m.kind === "typing" ? [rec.tail, rec.status, rec.dots] : [rec.fwd, rec.to, rec.md],
+    m.kind === "typing" ? [rec.tail, rec.trail, rec.status, rec.dots] : [rec.fwd, rec.to, rec.md],
   );
   rec.metaFaces = h("span.tp-faces");
   rec.metaText = h("span");
@@ -354,6 +355,9 @@ function activityDuration(start) {
   const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
+function toolWord(tool) {
+  return TOOL_WORDS[tool] || L(`正在使用 ${tool || "工具"}`, `Using ${tool || "tool"}`);
+}
 function typingStatus(m) {
   const d = m.doing || "";
   const tool = d.slice(5);
@@ -362,7 +366,7 @@ function typingStatus(m) {
     : d === "retrying"
       ? L("重试中", "Retrying")
       : d.startsWith("tool:")
-        ? TOOL_WORDS[tool] || L(`正在使用 ${tool || "工具"}`, `Using ${tool || "tool"}`)
+        ? toolWord(tool)
         : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   const duration = doing && m.doing_since ? activityDuration(m.doing_since) : "";
@@ -465,6 +469,15 @@ function updateMessage(rec, m, ctx, id) {
     const status = typingStatus(m);
     setText(rec.status, status);
     rec.status.hidden = !status;
+    // Before any reply text the latest tool calls show what the CLI is doing, newest last.
+    const trail = m.text ? [] : (Array.isArray(m.tools) ? m.tools : []).slice(-5).map(toolWord);
+    const trailKey = JSON.stringify(trail);
+    if (rec.trailKey !== trailKey) {
+      rec.trailKey = trailKey;
+      rec.trail.replaceChildren(...trail.map((line) => h("div", {}, line)));
+      rec.trail.hidden = !trail.length;
+    }
+    rec.dots.hidden = !!m.text || !!trail.length;
   }
   const summary = peer && m.kind !== "typing" && !state.expanded.has(id);
   // A handover note is long: it opens on request, below the one line saying who took over.
@@ -476,7 +489,6 @@ function updateMessage(rec, m, ctx, id) {
     rec.text = body;
     if (m.kind === "typing") {
       setText(rec.tail, m.text);
-      rec.dots.hidden = !!m.text;
       rec.tail.hidden = !m.text;
     } else if (m.kind === "handover") {
       setClass(rec.md, "md handover-text");

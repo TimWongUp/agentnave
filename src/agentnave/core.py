@@ -68,6 +68,7 @@ _RETRY_STALL_ERROR = InvocationError(
 _PIPE_DRAIN_SECONDS = 1.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "done", "failed", "error", "errored"})
+_RECENT_TOOLS = 5
 
 
 def _doing(activity: ProviderActivity | None) -> str | None:
@@ -109,6 +110,8 @@ class _InvocationRecord:
     retry_since: float | None = None
     retry_at: float | None = None
     tool_names: dict[str, str] = field(default_factory=lambda: {})
+    # Names of the latest tool calls, oldest first, one entry per call.
+    recent_tools: deque[str] = field(default_factory=lambda: deque[str](maxlen=_RECENT_TOOLS))
     attention_event: asyncio.Event = field(default_factory=asyncio.Event)
     pending_attention: deque[InvocationError] = field(
         default_factory=lambda: deque[InvocationError]()
@@ -165,6 +168,7 @@ class _InvocationRecord:
                 self.output_at = self.last_event_at
                 self.output_event_type = activity.event_type
             previous = self.last_activity
+            self._note_tool(activity, previous)
             if activity.kind == "tool" and activity.tool_call_id is not None:
                 if activity.tool_name is not None:
                     self.tool_names[activity.tool_call_id] = activity.tool_name
@@ -192,6 +196,24 @@ class _InvocationRecord:
             else:
                 self.retry_since = None
                 self.retry_at = None
+
+    def _note_tool(self, activity: ProviderActivity, previous: ProviderActivity | None) -> None:
+        """Remember the name of each tool call once, however many events report it."""
+        if activity.kind != "tool" or not activity.tool_name:
+            return
+        if activity.tool_call_id is not None:
+            if activity.tool_call_id in self.tool_names:
+                return
+        elif (activity.state or "").lower() in _ENDED_TOOL_STATES or (
+            # Without an id, repeated updates of one call arrive back to back.
+            previous is not None
+            and previous.kind == "tool"
+            and previous.tool_call_id is None
+            and previous.tool_name == activity.tool_name
+            and (previous.state or "").lower() not in _ENDED_TOOL_STATES
+        ):
+            return
+        self.recent_tools.append(activity.tool_name)
 
     def update_doing(self, now: float) -> None:
         doing = None if self.prompts.pending() else _doing(self.last_activity)
@@ -652,6 +674,9 @@ class InvocationManager:
             wall = record.started_wall_at + timedelta(seconds=record.output_at - record.started_at)
             output_at = wall.replace(microsecond=0).isoformat()
         return record.doing, output_at
+
+    def recent_tools(self, invocation_id: str) -> list[str]:
+        return list(self._record(invocation_id).recent_tools)
 
     def progress_since(self, invocation_id: str) -> str | None:
         record = self._record(invocation_id)

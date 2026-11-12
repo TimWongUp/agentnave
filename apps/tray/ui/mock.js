@@ -653,7 +653,9 @@ All checks passed!
         const base = { time: stamp(w, e.at), conversation: conv.id, speaker: speakerOf(e), to: [] };
         if (e.status === "running")
           typing.push(office(
-            { ...base, id: `ty:${conv.id}:${e.key}`, time: nowIso(), kind: "typing", text: e.lines.join("\n"), status: "running", detail: null, _s: sp.start },
+            { ...base, id: `ty:${conv.id}:${e.key}`, time: nowIso(), kind: "typing", ...(g.host === "codex"
+              ? { text: "", doing: "tool:Read", doing_since: nowIso(), tools: ["Grep", "Bash", "Edit", "web_search", "command_execution"] }
+              : { text: e.lines.join("\n") }), status: "running", detail: null, _s: sp.start },
             { visibility: "private", thread, desk, message_id: show ? null : mid },
           ));
         else if (e.status === "succeeded")
