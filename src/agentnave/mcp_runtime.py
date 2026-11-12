@@ -121,9 +121,10 @@ def _read_excluded_providers() -> frozenset[str]:
 
 
 WAIT_SECONDS = 270
+LONG_WAIT_SECONDS = 1500
 LONG_WAIT_SENTENCE = (
-    "1500 waits up to 25 minutes and is available only in the Claude Code terminal "
-    "interactive session. "
+    "In the Claude Code terminal interactive session, omitting waits up to 1500s (25 minutes) "
+    "instead; pass 270 for the short window. "
 )
 
 
@@ -161,7 +162,7 @@ PROVIDER_SELECTION = (
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 DISPATCH_WAIT = (
-    f"true waits up to {WAIT_SECONDS}s like wait(ids=[this handle]) and returns it in wait; only for a single "
+    f"true waits up to {WAIT_SECONDS}s like wait(ids=[this handle], wait_seconds={WAIT_SECONDS}) and returns it in wait; only for a single "
     "dispatch whose result this turn needs, not parallel dispatches."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
@@ -810,6 +811,7 @@ __all__ = [
     "WAIT_AGAIN",
     "WAIT_NEXT",
     "WAIT_SECONDS",
+    "LONG_WAIT_SECONDS",
     "EXCLUDED_PROVIDERS",
     "PROVIDER_SELECTION",
     "ACCESS",

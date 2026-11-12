@@ -739,7 +739,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     wait_modes = cast(list[dict[str, object]], _payload(wait_properties["wait_seconds"])["anyOf"])
     assert wait_modes[0]["enum"] == [0, 270, 1500]
     description = str(wait_properties["wait_seconds"])
-    assert "only" in description and "Claude Code" in description
+    assert "1500s" in description and "Claude Code" in description
     assert "terminal interactive session" in description
     assert tools["answer_prompt"].input_schema["required"] == [
         "invocation_id",
@@ -1196,8 +1196,26 @@ async def test_wait_window_and_sequences_preserve_inbox_delivery(
                 assert reply["reason"] == "wait_elapsed" and reply["seq"] == arguments["seq"]
                 assert reply["pending_ids"] == [started["invocation_id"]]
                 assert f"seq={int(arguments['seq']) + 1}" in str(reply["next"])
-        assert len(windows) == 3 and all(269 < window <= 270 for window in windows[:2])
+            # Omitting keeps 270 elsewhere, including the Claude desktop app.
+            for seq, host, entrypoint in (
+                (4, Host("codex", "env"), "cli"),
+                (5, Host("claude", "env"), "claude-desktop"),
+            ):
+                patch.setattr(mcp_runtime, "HOST", host)
+                patch.setenv("CLAUDE_CODE_ENTRYPOINT", entrypoint)
+                reply = _payload(
+                    (
+                        await client.call_tool(
+                            "wait", {"ids": [started["invocation_id"]], "seq": seq}
+                        )
+                    ).structured_content
+                )
+                assert reply["reason"] == "wait_elapsed" and reply["seq"] == seq
+        assert len(windows) == 5
+        assert 1499 < windows[0] <= 1500
+        assert 269 < windows[1] <= 270
         assert 1499 < windows[2] <= 1500
+        assert all(269 < window <= 270 for window in windows[3:])
         # Reusing seq never replays a response: a later terminal result is still received once.
         await client.call_tool("cancel", {"id": started["invocation_id"]})
         ended = _payload(
@@ -1215,6 +1233,40 @@ async def test_wait_window_and_sequences_preserve_inbox_delivery(
         )
         empty = _payload((await client.call_tool("wait", {"seq": 3})).structured_content)
         assert empty["reason"] == "nothing_pending" and empty["seq"] == 3
+
+
+@pytest.mark.asyncio
+async def test_dispatch_wait_keeps_short_window_in_long_wait_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    windows: list[float] = []
+
+    async def elapsed(*args: object) -> tuple[dict[str, object], dict[str, object]]:
+        windows.append(cast(float, args[-1]))
+        return {}, {}
+
+    async with Client(mcp) as client:
+        with monkeypatch.context() as patch:
+            patch.setattr("agentnave.mcp_tasks._ready_handles", elapsed)
+            patch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+            patch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+            started = _payload(
+                (
+                    await client.call_tool(
+                        "start_agent",
+                        {
+                            "provider": "claude",
+                            "prompt": "sleep",
+                            "cwd": str(tmp_path),
+                            "wait": True,
+                        },
+                    )
+                ).structured_content
+            )
+        assert len(windows) == 1 and 269 < windows[0] <= 270
+        assert _payload(started["wait"])["reason"] == "wait_elapsed"
+        await client.call_tool("cancel", {"id": started["invocation_id"]})
 
 
 @pytest.mark.asyncio
