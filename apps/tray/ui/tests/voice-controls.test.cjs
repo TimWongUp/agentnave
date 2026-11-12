@@ -529,13 +529,13 @@ test("embedded settings routes office links outward and keeps its own section na
   assert.equal(settingsFrame(false).api, undefined, "standalone settings keeps normal navigation");
 });
 
-test("update navigation closes settings without replacing the office or its player", async () => {
+test("update navigation opens the update flow over settings without replacing the office or its player", async () => {
   const app = await office();
   await app.feed(roomMessages());
   const clip = app.sounds[0];
   app.navigate("/settings/#about");
   app.navigate("/chat/?check-update");
-  assert.equal(node(app, "iframe.office-settings").hidden, true);
+  assert.equal(node(app, "iframe.office-settings").hidden, false);
   assert.deepEqual(app.navigations, ["check-update"]);
   assert.equal(clip.paused, false);
   assert.equal(app.published.at(-1).follow.group, "workspace");

@@ -80,6 +80,7 @@ p { margin: 0; }
 .bar-update[data-state="available"] { color: var(--accent); font-weight: 700; }
 .bar-update[data-state="available"]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .bar-update[data-state="busy"] { color: var(--accent); }
+.bar-update[data-state="failed"] { color: var(--bad); font-weight: 700; }
 .bar-update[data-state="busy"] span { display: block; animation: bar-update-spin 1s linear infinite; }
 .bar-update[data-state="updated"] { color: var(--run, var(--accent)); }
 @keyframes bar-update-spin { to { transform: rotate(360deg); } }
