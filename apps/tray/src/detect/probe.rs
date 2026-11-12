@@ -31,14 +31,23 @@ pub(super) fn login_command(executable: &Path, args: &[&str]) -> Command {
     let shell = std::env::var_os("SHELL")
         .map(PathBuf::from)
         .filter(|shell| cfg!(unix) && shell.is_absolute());
-    let Some(shell) = shell else {
+    let Some((shell, script)) = shell.and_then(|shell| login_exec(&shell).map(|s| (shell, s)))
+    else {
         return command(executable, args);
     };
     let mut login = Command::new(shell);
-    login
-        .args(["-l", "-c", r#"exec "$0" "$@""#])
-        .arg(executable);
+    login.args(["-l", "-c", script]).arg(executable);
     configure(login, executable, args)
+}
+
+/// How a login shell hands its arguments to `exec`: fish keeps them in `$argv`, POSIX shells put
+/// the first in `$0`. Any other shell starts the CLI directly.
+pub(super) fn login_exec(shell: &Path) -> Option<&'static str> {
+    match shell.file_name()?.to_str()? {
+        "fish" => Some("exec $argv"),
+        "sh" | "bash" | "zsh" | "dash" | "ksh" => Some(r#"exec "$0" "$@""#),
+        _ => None,
+    }
 }
 
 fn configure(mut command: Command, executable: &Path, args: &[&str]) -> Command {
