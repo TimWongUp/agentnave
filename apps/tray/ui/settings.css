@@ -174,20 +174,28 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
   .settings-page .subnav .badge-dot { right: 3px; top: 4px; }
   .settings-page main { padding: 10px 16px 30px; }
 }
-/* A section still loading shows only its walking character (pane-loader.js). */
+/* A section still loading shows only its walking character (pane-loader.js); it fades out and the
+   section's content fades in after it. */
 .tab-pane.is-loading > :not(.pane-loader) { display: none !important; }
-.pane-loader { display: grid; place-items: center; min-height: 56vh; opacity: 0; }
+.tab-pane.is-loading:not([hidden]) ~ .sticky-save-bar { display: none; }
+.tab-pane.is-entering > * { animation: pane-enter .36s ease-out both; }
+.pane-loader { display: grid; place-items: center; min-height: 56vh; opacity: 0; transition: opacity .26s ease; }
 .pane-loader.shown { opacity: 1; }
-.loader-walk { display: grid; justify-items: center; }
-.loader-fig { position: relative; width: 136px; height: 136px; animation: loader-hop .3s ease-in-out infinite alternate; }
-.loader-fig img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; }
-.loader-fig img:first-child { animation: loader-frame-a .6s steps(1) infinite; }
-.loader-fig img:last-child { opacity: 0; animation: loader-frame-b .6s steps(1) infinite; }
-.loader-shadow { width: 66px; height: 9px; margin-top: -3px; border-radius: 50%; background: color-mix(in srgb, var(--ink) 12%, transparent); animation: loader-shadow .3s ease-in-out infinite alternate; }
+/* She comes down from the upper middle, a little smaller at first as if from further away, in the time she always stays. */
+.loader-walk { display: grid; justify-items: center; animation: loader-approach 2s ease-out both; }
+.loader-fig { position: relative; width: 148px; height: 148px; isolation: isolate; animation: loader-hop .3s ease-in-out infinite alternate; }
+.loader-frame, .loader-frame img { position: absolute; inset: 0; width: 100%; height: 100%; }
+.loader-frame img { object-fit: contain; object-position: 50% 100%; }
+.loader-frame img:first-child { z-index: -1; }
+.loader-frame.f1 { animation: loader-frame-a .6s steps(1) infinite; }
+.loader-frame.f2 { opacity: 0; animation: loader-frame-b .6s steps(1) infinite; }
+.loader-shadow { width: 70px; height: 9px; margin-top: -3px; border-radius: 50%; background: color-mix(in srgb, var(--ink) 12%, transparent); animation: loader-shadow .3s ease-in-out infinite alternate; }
 .loader-dots { display: flex; gap: 6px; margin-top: 16px; }
 .loader-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: loader-dot 1.2s ease-in-out infinite; }
 .loader-dots i:nth-child(2) { animation-delay: .15s; }
 .loader-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes pane-enter { from { opacity: 0; transform: translateY(8px); } }
+@keyframes loader-approach { from { transform: translateY(-20vh) scale(.82); } }
 @keyframes loader-hop { to { transform: translateY(-5px); } }
 @keyframes loader-shadow { to { transform: scaleX(.82); opacity: .7; } }
 @keyframes loader-frame-a { 0% { opacity: 1; } 50% { opacity: 0; } }
