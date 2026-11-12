@@ -118,6 +118,10 @@ const MANAGER: &str = "s-0123456789abcdef0123456789abcdef";
 #[test]
 fn chats_do_not_wait_for_host_refresh() {
     let dir = tempfile::tempdir().unwrap();
+    save(
+        dir.path(),
+        &task_snapshot("a1", "succeeded", "2026-10-15T00:00:00Z"),
+    );
     let connection = crate::db::write(dir.path()).unwrap().unwrap();
     connection
         .execute(
