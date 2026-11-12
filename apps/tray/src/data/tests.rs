@@ -131,11 +131,12 @@ fn chats_do_not_wait_for_host_refresh() {
         .unwrap();
     drop(connection);
     let reader = Arc::new(Reader::new(dir.path().to_path_buf()));
-    let custom = dir.path().join("custom-codex");
+    let home = dir.path().canonicalize().unwrap();
+    let custom = home.join("custom-codex");
     let context = crate::hosts::Context {
-        home: dir.path().to_path_buf(),
-        app: dir.path().join("app"),
-        project: dir.path().to_path_buf(),
+        home: home.clone(),
+        app: home.join("app"),
+        project: home.clone(),
         env: std::collections::BTreeMap::from([(
             "CODEX_HOME".into(),
             custom.display().to_string(),
@@ -160,7 +161,7 @@ fn chats_do_not_wait_for_host_refresh() {
     let body: Value = serde_json::from_slice(&response.body).unwrap();
     assert!(!body["groups"].as_array().unwrap().is_empty());
 
-    let moved = dir.path().join("moved-codex");
+    let moved = home.join("moved-codex");
     let body = json!({"id": "codex", "path": moved});
     let response = reader.request(
         "POST",
@@ -168,7 +169,12 @@ fn chats_do_not_wait_for_host_refresh() {
         Some("1"),
         body.to_string().as_bytes(),
     );
-    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&response.body)
+    );
     assert!(reader.boss_homes().codex.contains(&moved));
 }
 
