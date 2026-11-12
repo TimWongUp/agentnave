@@ -20,6 +20,7 @@
 <script src="/chat/voice-menu.js" defer></script>
 <script src="/chat/voice.js" defer></script>
 <script src="/chat/chat-topics.js" defer></script>
+<script src="/chat/chat-groups.js" defer></script>
 <script src="/chat/chat-state.js" defer></script>
 <script src="/chat/laptop.js" defer></script>
 <script src="/chat/chat-office.js" defer></script>
@@ -37,7 +38,7 @@
 <div id="banner" class="banner" role="status" hidden data-en="Connection interrupted, retrying…">读取中断，正在重试…</div>
 <div id="app" class="app" data-view="list">
   <aside class="side" aria-label="工作区列表" data-en-label="Workspaces">
-    <div class="side-head"><h1 data-en="Workspaces">工作区</h1><span id="side-count" class="side-count"></span><button id="cleanup" class="side-act" type="button" title="删除很久没有动静的工作区" data-en="Clean up…" data-en-title="Delete inactive workspaces">清理…</button></div>
+    <div class="side-head"><h1 data-en="Workspaces">工作区</h1><span id="side-count" class="side-count"></span><select id="group-by" class="side-group" aria-label="工作区分组" data-en-label="Group workspaces by"><option value="project" data-en="Project">项目</option><option value="boss" data-en="Boss">boss</option><option value="none" data-en="Ungrouped">不分组</option></select><button id="cleanup" class="side-act" type="button" title="删除很久没有动静的工作区" data-en="Clean up…" data-en-title="Delete inactive workspaces">清理…</button></div>
     <div class="gl-wrap"><div id="list" class="gl"></div></div>
     <div class="split split-side" data-split="side" role="separator" aria-orientation="vertical" aria-label="调整工作区列表宽度" data-en-label="Resize workspace list" tabindex="0"></div>
   </aside>

@@ -24,6 +24,24 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .side-count { color: var(--faint); font-size: 12px; }
 .gl { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
 .gl-sec { padding: 12px 10px 5px; font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em; color: var(--faint); }
+.side-group { appearance: none; -webkit-appearance: none; margin-left: auto; max-width: 96px; height: 24px; padding: 0 22px 0 8px; border: 1px solid var(--line); border-radius: 7px; background-color: transparent; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: right 11px center, right 7px center; background-size: 4px 4px; background-repeat: no-repeat; font-size: 11.5px; color: var(--muted); }
+.side-group:hover { color: var(--ink); background-color: var(--hover); }
+.side-group + .side-act { margin-left: 0; }
+.gl-grp { display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 8px 4px; border: 0; background: transparent; text-align: left; font-size: 12px; font-weight: 650; color: var(--ink); cursor: pointer; }
+.gl-grp:hover .gl-grp-name { color: var(--accent); }
+.gl-grp:focus-visible { outline-offset: -2px; border-radius: 7px; }
+.gl-grp-caret { flex: none; width: 5px; height: 5px; margin: 0 3px 2px 1px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); transition: transform 0.15s; }
+.gl-grp[aria-expanded="false"] .gl-grp-caret { transform: rotate(-45deg); margin-bottom: 0; }
+.gl-grp-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gl-grp-hint { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; font-size: 11px; color: var(--faint); }
+.gl-grp-hint:empty { display: none; }
+.gl-grp-n { margin-left: auto; flex: none; font-weight: 500; font-size: 11px; color: var(--faint); }
+/* The way out of a capped list: a quiet text button, aligned with what it follows. */
+.gl-more { display: block; width: 100%; margin: 2px 0 4px; padding: 5px 8px; border: 0; background: transparent; text-align: left; font-size: 11.5px; font-weight: 500; color: var(--faint); cursor: pointer; }
+.gl-more:hover { color: var(--accent); }
+.gl-more:focus-visible { outline-offset: -2px; border-radius: 7px; }
+.gl-more[data-folded="true"] { display: none; }
+.gi[data-folded="true"] { display: none; }
 .gl-empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 12.5px; }
 .gi { position: relative; display: flex; gap: 11px; padding: 10px 10px 10px 16px; margin-bottom: 2px; border-radius: 11px; color: var(--ink); content-visibility: auto; contain-intrinsic-size: auto 66px; }
 .gi::before { content: ""; position: absolute; left: 5px; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: var(--mc); opacity: 0.55; }
@@ -70,7 +88,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @media (max-width: 1100px) and (min-width: 761px) {
   .app { grid-template-columns: 64px minmax(0, 1fr) var(--conv-w, clamp(300px, 34vw, 400px)); }
   .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
-  .side-head, .gl-sec, .gi-body, .split-side { display: none; }
+  .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split-side { display: none; }
+  .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   .gi::before { left: 2px; }
 }
@@ -591,7 +610,8 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
 /* ---- narrow: the conversation slides over the floor; very narrow: one column ---- */
 @media (max-width: 860px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
-  .side-head, .gl-sec, .gi-body, .split { display: none; }
+  .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split { display: none; }
+  .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   .conv { position: fixed; z-index: 30; top: 48px; right: 0; bottom: 0; width: min(400px, 92vw); box-shadow: 0 22px 60px #0009; animation: slide-in 0.25s ease-out; }
   .dr-close { display: grid; place-items: center; }
@@ -600,6 +620,9 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
 @media (max-width: 760px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 1fr; }
   .side-head, .gl-sec, .gi-body { display: revert; }
+  .gl-grp { display: flex; }
+  .gl-more { display: block; }
+  .gi[data-folded="true"] { display: none; }
   .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }

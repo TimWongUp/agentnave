@@ -23,6 +23,10 @@ _Avoid_: 群聊（App 层面）、项目
 把整个工作区从一个 boss 聊天交给另一个：老 boss 或用户（App 中）把工作区标为「待接手」，另一个 boss 聊天在用户要求时认领，之后由它续用会议室和工位，老 boss 的写入调用被拒绝。没派发过的聊天也能交出，这时工作区只有 boss 和交接文档。AgentNave 不启动新 boss；交接时仍在运行的工作留在老 boss 的服务里跑完并落进历史。老 boss 写不了文档时，新 boss 也可以直接读它在本机的会话记录接着做，这不改变工作区归属。写法和读法见 `agentnave-handover` Skill。
 _Avoid_: 迁移、合并工作区
 
+## 项目（Project）
+
+App 为方便查找给工作区排的归类，由托盘从会话记录和本机目录得出，不是服务的概念。工作区按现存最早一次派发的工作目录归入项目：目录所在的 git 仓库（链接的 worktree 归主仓库）是一个项目，不在仓库里的目录自己是一个项目，目录还在时托盘会记下它所属的仓库，删除后仍归原仓库；从未记下的照路径归类。后续派发改到别处、交接新 boss 都不改变工作区的项目；只有 boss 的交接工作区取交接时记下的目录。没有目录、系统临时目录、AgentNave 数据根、宿主为一次性对话自动建的目录，以及用户主目录、桌面、下载文件夹本身都归入「其他」。
+
 ## Provider
 
 AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent、DeepSeek Harness、Devin CLI 与 ZCode。Codex CLI 可独立安装，也可由 ChatGPT 桌面应用附带；安装来源不产生新的 Provider 身份。
