@@ -56,8 +56,7 @@
   "meeting_defaults": {
     "default_count": 3,
     "separator": "、",
-    "seat": "{name}（provider=`{provider}`，model=`{model}`）",
-    "seat_with_effort": "{name}（provider=`{provider}`，model=`{model}`，effort=`{effort}`）",
+    "seat_provider": "{name}（provider=`{provider}`）",
     "all_named": "\n- 开会默认 {count} 席：{seats}；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。",
     "some_named": "\n- 开会默认 {count} 席：{seats}，其余由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。",
     "none_named": "\n- 开会默认 {count} 席，成员由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。",
