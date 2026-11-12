@@ -40,7 +40,7 @@ Click Listen and the App reads a meeting, a private chat or a whole workspace al
 
 ### 🙋 The boss answers prompts
 
-On macOS and Linux, Claude runs interactively by default, which saves subscription quota. Permission prompts, questions and plan confirmations go to the boss, so you don't have to sit and watch. So do the actions Devin's automatic approval cannot judge. CLI permission tiers default to full access; the App can switch them to automatic approval.
+Claude runs interactively by default, so its sessions can be resumed in Claude Code; you can turn this off on its App employee card. Permission prompts, questions and plan confirmations go to the boss, so you don't have to sit and watch. So do the actions Devin's automatic approval cannot judge. CLI permission tiers default to full access; the App can switch them to automatic approval.
 
 ### 🧭 Seats and review
 

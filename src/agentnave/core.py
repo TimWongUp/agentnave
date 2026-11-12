@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -775,9 +776,17 @@ class InvocationManager:
         started = record.started_at
         supervised = None
         tasks: list[asyncio.Task[object]] = []
+        scratch = None
         try:
+            if prepared.temp_dir_env:
+                scratch = tempfile.TemporaryDirectory(prefix="agentnave-invocation-")
             supervised = await spawn_process(
-                prepared.argv, prepared.cwd, unset_env=prepared.unset_env
+                prepared.argv,
+                prepared.cwd,
+                unset_env=prepared.unset_env,
+                extra_env={prepared.temp_dir_env: scratch.name}
+                if prepared.temp_dir_env and scratch
+                else None,
             )
             process = supervised.process
             record.process = process
@@ -873,9 +882,13 @@ class InvocationManager:
                         for path in prepared.cleanup_paths:
                             Path(path).unlink(missing_ok=True)
             finally:
-                record.process = None
-                record.tool_names.clear()
-                record.prompts.close()
+                try:
+                    if scratch is not None:
+                        scratch.cleanup()
+                finally:
+                    record.process = None
+                    record.tool_names.clear()
+                    record.prompts.close()
 
 
 def _drained_limit(

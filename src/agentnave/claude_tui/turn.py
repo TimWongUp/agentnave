@@ -16,7 +16,7 @@ def object_dict(value: object) -> dict[str, object]:
 
 
 def emit(event: dict[str, object]) -> None:
-    print(json.dumps(event, ensure_ascii=False), flush=True)
+    print(json.dumps(event), flush=True)
 
 
 def transcript_event(row: dict[str, object], session_id: str) -> dict[str, object] | None:

@@ -87,3 +87,4 @@
 | 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合 |
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
 | 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 已接受 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063 |
+| 0084 | [Windows Claude Code 使用交互模式](0084-windows-claude-interactive.md) | 已接受 | 修订 ADR-0056 的 Windows 运行方式 |

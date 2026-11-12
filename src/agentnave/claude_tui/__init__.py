@@ -327,11 +327,18 @@ def run_attempt(
 ) -> None:
     terminal: Terminal | None = None
     turn.mode_blocked = False
-    with tempfile.TemporaryDirectory(prefix="agentnave-claude-") as tmp:
+    with tempfile.TemporaryDirectory(
+        prefix="agentnave-claude-", dir=os.environ.get("AGENTNAVE_CLAUDE_TMP")
+    ) as tmp:
         directory = Path(tmp)
         args = [*args, "--settings", str(write_settings(directory, args, check_mode))]
         try:
-            terminal = Terminal(executable, args)
+            if sys.platform == "win32":
+                from agentnave.claude_tui.windows_terminal import WindowsTerminal
+
+                terminal = cast(Terminal, WindowsTerminal(executable, args))
+            else:
+                terminal = Terminal(executable, args)
             if await_ready(terminal, turn):
                 await_turn(terminal, turn, transcript, directory, prompt)
             read_hooks(directory, turn)

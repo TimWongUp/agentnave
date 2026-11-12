@@ -13,6 +13,59 @@ from pathlib import Path
 from agentnave.claude_tui.turn import Turn, emit, object_dict
 from agentnave.native_prompts import mask_secrets
 
+
+def _input_ready() -> bool:
+    if os.name != "nt":
+        return bool(select.select([0], [], [], 0)[0])
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek = kernel.PeekNamedPipe
+    peek.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    peek.restype = wintypes.BOOL
+    available = wintypes.DWORD()
+    if not peek(msvcrt.get_osfhandle(0), None, 0, None, ctypes.byref(available), None):
+        if ctypes.get_last_error() == 109:
+            return True  # Broken pipe: os.read observes EOF.
+        raise OSError(ctypes.get_last_error(), "cannot read native answer pipe")
+    return bool(available.value)
+
+
+def _process_alive(pid: int) -> bool:
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    process = kernel.OpenProcess(0x00100000, False, pid)
+    if not process:
+        # Access denied is not evidence that a hook exited.
+        return ctypes.get_last_error() != 87
+    try:
+        return kernel.WaitForSingleObject(process, 0) != 0
+    finally:
+        kernel.CloseHandle(process)
+
+
 # The helper's interpreter arguments: isolated mode keeps the working directory off sys.path.
 HELPER = ("-I", "-m", "agentnave.claude_tui")
 
@@ -204,7 +257,7 @@ class Answers:
         self.open = True
 
     def poll(self, directory: Path, turn: Turn) -> None:
-        if not self.open or not select.select([0], [], [], 0)[0]:
+        if not self.open or not _input_ready():
             return
         chunk = os.read(0, 65536)
         if not chunk:
@@ -248,15 +301,12 @@ def read_hooks(directory: Path, turn: Turn) -> None:
             event = None  # Answered: the hook removed its prompt before replying.
         if event is not None:
             pid = event.get("hook_pid")
-            try:
-                if isinstance(pid, int):
-                    os.kill(pid, 0)
+            if not isinstance(pid, int) or _process_alive(pid):
                 continue
-            except ProcessLookupError:
-                # Gone unanswered (timeout or killed): Claude's onFailure=block refused the call.
-                turn.denials.append(
-                    {"tool_name": event.get("tool_name"), "tool_input": event.get("tool_input")}
-                )
+            # Gone unanswered (timeout or killed): Claude's onFailure=block refused the call.
+            turn.denials.append(
+                {"tool_name": event.get("tool_name"), "tool_input": event.get("tool_input")}
+            )
         turn.pending_prompts.remove(prompt_id)
         emit({"type": "agentnave_prompt_closed", "prompt_id": prompt_id})
         path.unlink(missing_ok=True)
