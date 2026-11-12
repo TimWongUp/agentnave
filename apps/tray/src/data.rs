@@ -50,6 +50,7 @@ type RouteKey = (
     usize,
     Vec<(String, crate::stage::Handover)>,
     Vec<(String, &'static str)>,
+    Vec<crate::isolated::Dir>,
 );
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
@@ -239,8 +240,10 @@ impl Reader {
         let handover_map: HashMap<_, _> = handovers.iter().cloned().collect();
         let app_map: HashMap<_, _> = apps.iter().cloned().collect();
         let data_exists = self.root.is_dir();
+        let mut dirs = crate::isolated::read(&self.root);
         let (sources, stage_ids, key_handovers, key_apps, views) =
             if let Some(group_id) = crate::stage::requested_group(path) {
+                dirs.retain(|dir| dir.workspace == group_id);
                 let stage_ids = crate::stage::stage_ids_of(&snapshots, &handover_map);
                 let mut sources = Vec::new();
                 let mut views = Vec::new();
@@ -269,6 +272,7 @@ impl Reader {
             limit,
             key_handovers,
             key_apps,
+            dirs.clone(),
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -276,8 +280,15 @@ impl Reader {
         {
             return response.clone();
         }
-        let response =
-            crate::stage::respond(path, snapshots, data_exists, limit, &handover_map, &app_map);
+        let response = crate::stage::respond(
+            path,
+            snapshots,
+            data_exists,
+            limit,
+            &handover_map,
+            &app_map,
+            &dirs,
+        );
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {
             routes.clear();

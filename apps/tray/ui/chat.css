@@ -746,3 +746,10 @@ dialog.act::backdrop { background: #0006; }
 
 .office-settings { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
 .office-settings[hidden] { display: none; }
+button.pill { border: 0; font-family: inherit; cursor: pointer; }
+.pill.act { cursor: pointer; }
+.iso-card { display: grid; gap: 4px; margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; color: var(--soft); user-select: text; }
+.iso-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.iso-branch { min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+.iso-line { color: var(--muted); overflow-wrap: anywhere; }
+.iso-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; user-select: text; }

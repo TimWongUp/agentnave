@@ -11,6 +11,7 @@ mod data_files;
 mod db;
 mod detect;
 mod hosts;
+mod isolated;
 mod manage;
 mod members;
 mod navigation;

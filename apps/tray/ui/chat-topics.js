@@ -174,3 +174,42 @@ function renderDirectory(c, ctx) {
   el.inner.replaceChildren(...tpDirectory(c, ctx));
   el.tl.scrollTop = top;
 }
+
+// ---------------------------------------------------------------- isolated directories
+// Built when drawn: this file loads before the language helper.
+const isolatedStatus = (status) =>
+  ({
+    using: [L("使用中", "In use"), "tone-run"],
+    unfinished: [L("删除未完成", "Deletion unfinished"), "tone-review"],
+  })[status] || [L("任务已结束", "Task ended"), "tone-idle"];
+function isolatedCard(d, ctx) {
+  const [word, tone] = isolatedStatus(d.status);
+  const desk = d.task && ctx.desks.get(d.task.desk);
+  const who = [desk && deskName(desk), d.task?.text].filter(Boolean).join(" · ");
+  return h(
+    "div.iso-card",
+    {},
+    h("div.iso-top", {}, h("b.iso-branch", {}, d.branch || d.path), h(`span.pill.${tone}`, {}, word)),
+    who ? h("div.iso-line", {}, L(`建立者：${who}`, `Created by: ${who}`)) : null,
+    d.created && Number.isFinite(AN.at(d.created)) ? h("div.iso-line", {}, L(`建立于 ${relTime(d.created)}`, `Created ${relTime(d.created)}`)) : null,
+    h("div.iso-path", {}, d.path),
+  );
+}
+function renderIsolatedDrawer(c, ctx) {
+  state.scopeKey = "";
+  state.nodes.clear();
+  const dirs = c.isolated || [];
+  if (el.drIco.dataset.key !== "isolated") {
+    el.drIco.dataset.key = "isolated";
+    el.drIco.replaceChildren(h("span", {}, L("隔", "I")));
+  }
+  setText(el.drTitle, L("隔离目录", "Isolated directories"));
+  setText(el.drSub, shownName(c));
+  el.drAll.hidden = false;
+  el.jump.hidden = true;
+  setAttr(el.drawer, "aria-label", L("隔离目录", "Isolated directories"));
+  const key = JSON.stringify(["isolated", c.group, dirs, [...ctx.desks.values()].map((d) => [d.key, deskName(d)]), Math.floor(Date.now() / 30000)]);
+  if (tp.key === key && el.inner.querySelector(".iso-card")) return;
+  tp.key = key;
+  el.inner.replaceChildren(...dirs.map((d) => isolatedCard(d, ctx)));
+}

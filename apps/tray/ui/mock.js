@@ -633,7 +633,7 @@ All checks passed!
         const mid = midOf(conv, sp);
         if (!show && sp.prompt)
           out.push(office(
-            { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null },
+            { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null, ...(q.has("isolated") && sp === conv.specs[0] && g.group === w.groups[0].group ? { isolation_branch: ISOLATED[0].branch } : {}) },
             { visibility: "private", thread, desk, message_id: mid },
           ));
         if (!show && sp.prompt && sp.forwards)
@@ -744,6 +744,19 @@ All checks passed!
       });
   }
 
+  // ?isolated previews isolated directories: in use, left over and unfinished; the first one
+  // was created by the first private task, whose card shows its branch.
+  const ISOLATED = [
+    { id: "wt-3f9a1c2b4d5e", path: "/work/app/.agentnave-worktrees/wt-3f9a1c2b4d5e", branch: "agentnave/fix-login", status: "using", created: new Date(Date.now() - 40 * 60000).toISOString() },
+    { id: "wt-7b2e9d1a0c44", path: "/work/app/.agentnave-worktrees/wt-7b2e9d1a0c44", branch: "agentnave/docs-refresh", status: "idle", created: new Date(Date.now() - 3 * 3600000).toISOString() },
+    { id: "wt-0c8d4e6f1a22", path: "/work/app/.agentnave-worktrees/wt-0c8d4e6f1a22", branch: "agentnave/old-experiment", status: "unfinished", created: new Date(Date.now() - 26 * 3600000).toISOString() },
+  ];
+  const isolatedOf = (g, w) => {
+    if (!q.has("isolated") || g.group !== w.groups[0].group) return [];
+    const first = g.convs.find((c) => c.mode === "task")?.specs[0];
+    return ISOLATED.map((d, i) => ({ ...d, task: i === 0 && first ? { desk: first.desk, text: (first.prompt || "").split("\n")[0].slice(0, 80) } : null }));
+  };
+
   function chats() {
     const w = world();
     const rows = w.groups
@@ -758,6 +771,7 @@ All checks passed!
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
           title: conv.title, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
+          isolated_count: isolatedOf(g, w).length,
         };
       })
       .sort((a, b) => (URGENCY[a.status] ?? 2) - (URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
@@ -782,6 +796,8 @@ All checks passed!
       ...limited(desksOf(g, w)),
       rooms: roomsOf(g, w),
       messages: messagesOf(g, w),
+      isolated: isolatedOf(g, w),
+      isolated_count: isolatedOf(g, w).length,
     };
   }
 

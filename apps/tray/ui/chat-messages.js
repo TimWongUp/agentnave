@@ -152,7 +152,7 @@ function verbOf(m, ctx) {
   const to = t?.kind === "room" ? targets(m, ctx) : [];
   if (m.kind === "forward") return [L("转发", "Forward"), to];
   if (isBoss(m)) {
-    if (t?.kind !== "room") return [L("任务", "Task"), to];
+    if (t?.kind !== "room") return [L("任务", "Task"), to, m.isolation_branch ? L(`隔离目录 · ${m.isolation_branch}`, `Isolated dir · ${m.isolation_branch}`) : ""];
     const round = m.round > 0 ? L(`第 ${m.round} 轮`, `Round ${m.round}`) : "";
     const where = state.drawer.kind === "room" || !room ? round : L(`「${room.title}」${round}`, `"${room.title}"${round ? ` · ${round}` : ""}`);
     return [m.round > 0 ? L("议题", "Topic") : L("发言", "Note"), to, where];

@@ -25,6 +25,7 @@ impl Group {
             typing: BTreeMap::new(),
             sources: Vec::new(),
             include_messages: false,
+            isolated: Vec::new(),
         }
     }
     /// A workspace a boss opened by handing over: only that boss, no desks or conversations yet.
@@ -74,7 +75,8 @@ impl Group {
             "previous_label": previous_host.map(|_| previous), "project": self.project_name, "title": self.title,
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
-            "color": self.color, "live": self.live, "status": self.status, "updated": self.updated})
+            "color": self.color, "live": self.live, "status": self.status, "updated": self.updated,
+            "isolated_count": self.isolated.len()})
     }
     pub(super) fn members(&self) -> Vec<Value> {
         let mut members: Vec<_> = self.members.values().collect();
@@ -566,6 +568,10 @@ impl Group {
                     .collect();
                 if !forwards.is_empty() {
                     msg["forwards"] = json!(forwards);
+                }
+                if let Some(branch) = opt_text(task, "isolation_branch") {
+                    msg["isolation_branch"] =
+                        json!(branch.strip_prefix("refs/heads/").unwrap_or(&branch));
                 }
                 self.messages.push(msg);
             }

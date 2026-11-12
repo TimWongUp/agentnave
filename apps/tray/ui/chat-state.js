@@ -212,6 +212,7 @@ function createItem(g) {
     time: h("time"),
     prev: h("span.gi-prev"),
     pill: h("span.pill"),
+    iso: h("span.pill.tone-idle.act", { role: "button", tabindex: "0" }),
     tileKey: null,
   };
   rec.el = h(
@@ -223,7 +224,7 @@ function createItem(g) {
       {},
       h("span.gi-top", {}, rec.label, rec.time),
       rec.meta,
-      h("span.gi-bottom", {}, rec.prev, rec.pill),
+      h("span.gi-bottom", {}, rec.prev, rec.iso, rec.pill),
     ),
   );
   rec.el.addEventListener("click", (e) => {
@@ -231,6 +232,15 @@ function createItem(g) {
     e.preventDefault();
     if (!Actions.pick(rec.id, e)) go(`/chat/${rec.id}`);
   });
+  const openIsolated = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (state.loaded === rec.id) return openScope({ kind: "isolated" }, rec.iso);
+    state.wantIsolated = rec.id;
+    go(`/chat/${rec.id}`);
+  };
+  rec.iso.addEventListener("click", openIsolated);
+  rec.iso.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && openIsolated(e));
   rec.el.addEventListener("contextmenu", (e) => Actions.workspaceMenu(rec.id, e));
   return rec;
 }
@@ -262,9 +272,15 @@ function updateItem(rec, g) {
   );
   setText(rec.time, relTime(g.updated));
   setText(rec.prev, g.preview);
+  rec.iso.hidden = !g.isolated_count;
+  setText(rec.iso, isolatedCount(g.isolated_count));
   rec.pill.hidden = shown === "idle";
   setClass(rec.pill, `pill tone-${tone}`);
   setText(rec.pill, word);
+}
+// Isolated directories nobody works in any more still wait for boss to release them.
+function isolatedCount(n) {
+  return L(`${n} 个隔离目录`, `${n} isolated dirs`);
 }
 // A workspace taken over by another boss (ADR-0033).
 function handoverWord(g) {
