@@ -247,13 +247,22 @@ impl Hosts {
         &self.cached
     }
     pub fn snapshot(&self) -> Value {
-        let hosts: Vec<_> = self
-            .registry()
-            .iter()
-            .map(|h| self.state(h))
+        let states: Vec<_> = self.registry().iter().map(|h| self.state(h)).collect();
+        // Supported bosses not found on this machine: the page lists them by name only.
+        let mut absent: Vec<Value> = Vec::new();
+        for state in states.iter().filter(|h| h["status"] == "absent") {
+            let shown = states
+                .iter()
+                .any(|h| h["status"] != "absent" && h["mark"] == state["mark"]);
+            if !shown && !absent.iter().any(|h| h["mark"] == state["mark"]) {
+                absent.push(json!({"mark":state["mark"],"label":state["label"]}));
+            }
+        }
+        let hosts: Vec<_> = states
+            .into_iter()
             .filter(|h| h["status"] != "absent")
             .collect();
-        json!({"service":self.service(),"hosts":hosts,"backups":{"dir":self.context.app.join("backups"),"config":backup_paths(&self.context.app, CONFIG_BACKUP).len(),"skill":backup_paths(&self.context.app, SKILL_BACKUP).len()}})
+        json!({"service":self.service(),"hosts":hosts,"absent":absent,"backups":{"dir":self.context.app.join("backups"),"config":backup_paths(&self.context.app, CONFIG_BACKUP).len(),"skill":backup_paths(&self.context.app, SKILL_BACKUP).len()}})
     }
     pub fn reveal_backups(&self) -> Result<Value, String> {
         let path = self.context.app.join("backups");
@@ -275,11 +284,17 @@ impl Hosts {
         Ok(json!({"ok":true,"message":"已打开备份目录"}))
     }
     pub fn service(&self) -> Value {
-        let version = crate::update::active_tools(&self.context.app)
-            .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")))
+        let env = crate::update::active_tools(&self.context.app)
+            .or_else(|| self.tool_dirs().map(|dirs| dirs.tools.join("agentnave")));
+        let version = env.as_deref().and_then(crate::update::installed_version);
+        // The service package carries the Skills; an agent connecting itself copies them from here.
+        let skills = env
             .as_deref()
-            .and_then(crate::update::installed_version);
-        json!({"installed":self.launcher().is_some(),"version":version,"command":crate::update::service_command()})
+            .and_then(crate::update::installed_metadata)
+            .and_then(|meta| Some(meta.parent()?.join("agentnave/skills")))
+            .filter(|dir| dir.join("agentnave-manager/SKILL.md").is_file());
+        let launcher = self.launcher();
+        json!({"installed":launcher.is_some(),"launcher":launcher,"skills":skills,"version":version,"command":crate::update::service_command()})
     }
 }
 

@@ -869,7 +869,7 @@ All checks passed!
   const confirmedReloads = new Map();
   let mockToolsSynced = q.get("activation") !== "refresh";
   if (!mockToolsSynced) setTimeout(() => { mockToolsSynced = true; }, 12000);
-  const hostView = () => ({ service: { installed: serviceReady, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
+  const hostView = () => ({ absent: [{ mark: "zcode", label: "ZCode" }, { mark: "grok", label: "Grok CLI" }, { mark: "deepseek", label: "DeepSeek Harness" }, { mark: "devin", label: "Devin" }], service: { installed: serviceReady, launcher: serviceReady ? "/Users/me/.agentnave/service/bin/agentnave-mcp" : null, skills: serviceReady ? "/Users/me/.agentnave/service/lib/python3.12/site-packages/agentnave/skills" : null, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
     const token = `${host.id}:${host.root.path}`;
     if (reloadScene) {
       const r = RELOADS[host.id];

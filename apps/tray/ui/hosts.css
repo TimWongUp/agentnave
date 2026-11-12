@@ -131,6 +131,14 @@ button.danger-solid:hover:enabled { border-color: var(--bad); filter: brightness
 .adv-actions .fine { font-size: 11.5px; color: var(--muted); }
 
 .cards-empty { padding: 44px 20px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; }
+.host-others { max-width: 980px; margin-bottom: 16px; font-size: 12.5px; color: var(--muted); }
+.others-row { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; padding: 8px 18px; }
+.others-name { flex: none; min-width: 150px; color: var(--soft); font-weight: 600; }
+.others-list { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.others-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.others-icon { display: grid; place-items: center; width: 18px; height: 18px; }
+.others-icon > * { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; }
+.others-acts { display: inline-flex; align-items: center; gap: 10px; }
 .cards-empty strong { display: block; color: var(--ink); font-size: 14px; margin-bottom: 4px; }
 
 @media (max-width: 760px) {

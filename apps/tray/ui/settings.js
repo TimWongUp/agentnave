@@ -6,8 +6,8 @@
     setTab, triggerCheckUpdate, unsaved
   } = S;
   Object.assign(S, { renderLeaveConfirm, confirmLeave });
-  const OLD_TABS = { "#voice-settings": "voice", "#updates": "about", "#skills": "advanced", "#orchestration": "advanced" }; // Preserve old links.
-  const tabFromHash = () => OLD_TABS[location.hash] || (["general", "members", "avatars", "voice", "advanced", "storage", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts");
+  const OLD_TABS = { "#voice-settings": "voice", "#updates": "about", "#skills": "advanced" }; // Preserve old links.
+  const tabFromHash = () => OLD_TABS[location.hash] || (["general", "members", "orchestration", "avatars", "voice", "storage", "advanced", "about"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "hosts");
   window.addEventListener("hashchange", () => setTab(tabFromHash()));
   setTab(tabFromHash());
 
@@ -30,8 +30,9 @@
 
   // The app's web view does not show beforeunload prompts, so hold back in-app navigation.
   function renderLeaveConfirm() {
-    const box = $(S.currentTab === "advanced" ? "advanced-leave-confirm" : "leave-confirm");
-    const other = $(S.currentTab === "advanced" ? "leave-confirm" : "advanced-leave-confirm");
+    const advanced = ["orchestration", "advanced"].includes(S.currentTab);
+    const box = $(advanced ? "advanced-leave-confirm" : "leave-confirm");
+    const other = $(advanced ? "leave-confirm" : "advanced-leave-confirm");
     other.hidden = true;
     other.replaceChildren();
     box.hidden = !S.leaveTarget;
@@ -55,7 +56,9 @@
     if (!(unsaved() || S.busy)) return false;
     S.leaveTarget = target;
     // The confirmation sits in the save bar of the page holding the edits.
-    const tab = S.dirty || !S.advancedChanges().length ? "members" : "advanced";
+    const tab = S.dirty || !S.advancedChanges().length ? "members"
+      : ["orchestration", "advanced"].includes(S.currentTab) ? S.currentTab
+      : S.orchestrationChanged() ? "orchestration" : "advanced";
     if (S.currentTab !== tab) {
       setTab(tab);
       history.replaceState(null, "", `#${tab}`);
@@ -102,7 +105,7 @@
     window.addEventListener("agentnave:model-names", () => {
       show();
       if (!$("pane-members").hidden) S.renderCards();
-      if (!$("pane-advanced").hidden) { S.renderReviewSeats(); S.renderOrchestration(); }
+      if (!$("pane-advanced").hidden || !$("pane-orchestration").hidden) { S.renderReviewSeats(); S.renderOrchestration(); }
     });
   })();
 }
