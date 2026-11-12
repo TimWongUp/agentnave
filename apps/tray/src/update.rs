@@ -316,9 +316,10 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
     let updates = app.state::<Updates>();
     // A failed silent check still counts as an attempt, so an offline cache is not
     // checked again on every click. Explicit rechecks remain available.
-    *updates.checked.lock().unwrap() = Some(SystemTime::now());
+    let now = SystemTime::now();
+    *updates.checked.lock().unwrap() = Some(now);
     if found.is_ok() {
-        *updates.answered.lock().unwrap() = Some(SystemTime::now());
+        *updates.answered.lock().unwrap() = Some(now);
     }
     match found {
         Ok(Some(update)) => {
@@ -673,6 +674,9 @@ pub fn status(app: &AppHandle) -> Value {
             )
         })
         .unwrap_or_default();
+    let answered = updates
+        .as_ref()
+        .and_then(|updates| *updates.answered.lock().unwrap());
     let checked = updates.and_then(|updates| *updates.checked.lock().unwrap());
     let running = matches!(phase, Phase::Installing(_))
         || matches!(upgrade, Upgrade::Running | Upgrade::Installing);
@@ -700,6 +704,8 @@ pub fn status(app: &AppHandle) -> Value {
         "service": service_state(service_for_app(app), upgrade),
         "last_checked": checked.map(rfc3339),
         "check_fresh": check_fresh(checked, SystemTime::now()),
+        // False when the last check, silent ones included, got no answer from any source.
+        "check_answered": checked.is_none() || checked == answered,
         "elapsed": started.filter(|_| running).map(|at| at.elapsed().as_secs()),
         "updated": updated,
     })

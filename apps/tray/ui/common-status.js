@@ -68,7 +68,9 @@
     try {
       const answer = await post("/app/update/check");
       status = answer;
+      // A silent check this one waited for restores the earlier state when it fails; only this says so.
       if (answer.update?.state === "failed") failure = answer.update.error || "";
+      else if (answer.check_answered === false) failure = L("没有连上更新源", "could not reach the update source");
       window.dispatchEvent(new CustomEvent("agentnave:status", { detail: answer }));
     } catch (error) { failure = error.message || ""; }
     checking = false;
