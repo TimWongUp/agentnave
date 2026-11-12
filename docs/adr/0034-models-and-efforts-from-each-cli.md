@@ -26,5 +26,5 @@
 
 Codex 的模型列表与档位优先读 `config.toml` 中 `model_catalog_json` 指向的目录（绝对路径直接用，`~/` 按用户主目录展开，其余相对 `CODEX_HOME`），即 Codex 自己渲染选单用的那份；未配置或读不到时才回退 `models_cache.json`。缓存可能落后于 CLI 或网关已改写的目录，只读缓存会留下已下线的模型、漏掉新上的模型。
 
-Pi 只从环境变量和 `auth.json` 取凭据，托盘从程序坞启动时拿不到 shell 启动文件里的 API key，列出的模型为空。托盘探测 Pi 时改经用户的登录 shell 启动（POSIX shell 与 fish；其他 shell 照旧直接启动），变量只交给 Pi，托盘不读取。代价是每次 Pi 探测都会执行登录 shell 的启动文件（不含只给交互 shell 的 `.zshrc` 等）；启动文件改写 `PATH` 时，Pi 找到的 `node` 可能与直接启动时不同。服务派发 Pi 时继承的是宿主进程的环境，宿主若同样拿不到这些变量，员工页能列出的 Pi 模型在派发时仍会认证失败，此时应把凭据写进 Pi 自己的 `auth.json`。
+Pi 只从环境变量和 `auth.json` 取凭据，托盘从程序坞启动时拿不到 shell 启动文件里的 API key，列出的模型为空。托盘探测 Pi 时改经用户的登录 shell 启动（POSIX shell 与 fish；其他 shell 照旧直接启动），变量只交给 Pi，托盘不读取。代价是每次 Pi 探测都会执行登录 shell 的启动文件（zsh 不读只给交互 shell 的 `.zshrc`，fish 会读 `config.fish`）；启动文件改写 `PATH` 时，Pi 找到的 `node` 可能与直接启动时不同。服务派发 Pi 时继承的是宿主进程的环境，宿主若同样拿不到这些变量，员工页能列出的 Pi 模型在派发时仍会认证失败，此时应把凭据写进 Pi 自己的 `auth.json`。
 
