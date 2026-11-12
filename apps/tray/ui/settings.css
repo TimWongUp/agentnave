@@ -159,7 +159,40 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
 .leave-confirm { pointer-events: auto; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; box-shadow: 0 3px 14px #00000014; }
 .settings-page .nav a { position: relative; }
 .settings-page .nav .badge-dot { position: absolute; right: 3px; top: 4px; margin: 0; }
-.subnav { margin: -8px 0 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+/* Sections sit in a side column that stays put while the section's content scrolls. */
+.settings-shell { display: grid; grid-template-columns: 184px minmax(0, 1fr); align-items: start; max-width: 1260px; margin: 0 auto; }
+.subnav { position: sticky; top: 48px; flex-direction: column; gap: 2px; max-height: calc(100vh - 48px); overflow-y: auto; padding: 34px 10px 18px 18px; }
+.settings-page .subnav a { padding: 7px 12px; white-space: nowrap; user-select: none; -webkit-user-select: none; }
+.settings-page .subnav .badge-dot { right: 10px; top: calc(50% - 3px); }
+.settings-page main { margin: 0; padding: 8px 40px 48px 18px; min-width: 0; }
+/* The status line sits in the top margin, so the first card lines up with the first section name. */
+.settings-page #notice { min-height: 20px; margin-bottom: 6px; font-size: 12px; line-height: 20px; }
+@media (max-width: 760px) {
+  .settings-shell { grid-template-columns: minmax(0, 1fr); }
+  .subnav { z-index: 150; flex-direction: row; max-height: none; overflow: auto hidden; padding: 8px 12px; background: var(--bg); border-bottom: 1px solid var(--line); scrollbar-width: none; }
+  .subnav::-webkit-scrollbar { display: none; }
+  .settings-page .subnav .badge-dot { right: 3px; top: 4px; }
+  .settings-page main { padding: 10px 16px 30px; }
+}
+/* A section still loading shows only its walking character (pane-loader.js). */
+.tab-pane.is-loading > :not(.pane-loader) { display: none !important; }
+.pane-loader { display: grid; place-items: center; min-height: 56vh; opacity: 0; }
+.pane-loader.shown { opacity: 1; }
+.loader-walk { display: grid; justify-items: center; }
+.loader-fig { position: relative; width: 136px; height: 136px; animation: loader-hop .3s ease-in-out infinite alternate; }
+.loader-fig img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; }
+.loader-fig img:first-child { animation: loader-frame-a .6s steps(1) infinite; }
+.loader-fig img:last-child { opacity: 0; animation: loader-frame-b .6s steps(1) infinite; }
+.loader-shadow { width: 66px; height: 9px; margin-top: -3px; border-radius: 50%; background: color-mix(in srgb, var(--ink) 12%, transparent); animation: loader-shadow .3s ease-in-out infinite alternate; }
+.loader-dots { display: flex; gap: 6px; margin-top: 16px; }
+.loader-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: loader-dot 1.2s ease-in-out infinite; }
+.loader-dots i:nth-child(2) { animation-delay: .15s; }
+.loader-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes loader-hop { to { transform: translateY(-5px); } }
+@keyframes loader-shadow { to { transform: scaleX(.82); opacity: .7; } }
+@keyframes loader-frame-a { 0% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes loader-frame-b { 0% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes loader-dot { 0%, 60%, 100% { transform: none; opacity: .35; } 30% { transform: translateY(-5px); opacity: 1; } }
 .setting-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin: 0 0 12px; }
 .setting-copy { min-width: 0; }
 .setting-example { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
@@ -274,9 +307,7 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
   .member-card > .disable-confirm { margin: 0 -14px; }
 }
 /* Every pane shares one column in the middle of the window, and its tabs start on that column's edge. */
-.settings-page main { max-width: 1060px; }
-.settings-page main > .subnav, .settings-page main > #notice, .settings-page main > .banner, .settings-page .tab-pane { max-width: 980px; }
-.settings-page .subnav > a:first-child { margin-left: -12px; }
+.settings-page main > #notice, .settings-page main > .sticky-save-bar, .settings-page main > .banner, .settings-page .tab-pane { max-width: 980px; }
 .settings-page .tab-pane :is(.host-cards, .updates-panel, .model-names, .skill-rows) { max-width: none; }
 .updates-panel { margin: 0 0 12px; }
 .updates-card { padding: 18px; }
@@ -474,4 +505,4 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
 
 :root[data-embedded="true"] { scrollbar-gutter: auto; }
 :root[data-embedded="true"] .bar { display: none; }
-:root[data-embedded="true"] .subnav { top: 0; }
+:root[data-embedded="true"] .subnav { top: 0; max-height: 100vh; }

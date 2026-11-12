@@ -87,7 +87,21 @@
   async function load(path) {
     const response = await fetch(path, { cache: "no-store" });
     if (!response.ok) throw Object.assign(new Error(String(response.status)), { status: response.status });
-    return response.json();
+    const data = await response.json();
+    return root.lang.startsWith("en") ? englishLabels(data) : data;
+  }
+  // The tray names desktop hosts in Chinese ("Claude 桌面"); the English interface shows "Claude Desktop".
+  function englishLabels(value) {
+    if (Array.isArray(value)) value.forEach(englishLabels);
+    else if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        const name = (text) => typeof text === "string" ? text.replace(/ 桌面$/, " Desktop") : text;
+        if (key === "label" || key === "previous_label") value[key] = name(item);
+        else if (key === "labels" && Array.isArray(item)) value[key] = item.map(name);
+        else englishLabels(item);
+      }
+    }
+    return value;
   }
   const href = (path) => path;
 

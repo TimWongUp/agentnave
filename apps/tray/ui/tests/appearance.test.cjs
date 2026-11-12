@@ -204,6 +204,7 @@ test("settings.html scripts load in declared order and language switch respects 
   };
   context.window = context;
   context.window.dispatchEvent = () => {};
+  context.window.scrollTo = () => {};
 
   const mapPath = src => src === "/avatars.js" ? `${__dirname}/../avatars/avatars.js`
     : src.startsWith("/chat/") ? `${__dirname}/../${src.slice(6)}`

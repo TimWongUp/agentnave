@@ -308,7 +308,8 @@ function announce(m, d, s) {
 let lastState = "";
 function renderState(data) {
   const { running } = data.counts;
-  const pills = [running ? ["run", L(`${running} 个在工作`, `${running} working`)] : ["idle", L("空闲", "Idle")]];
+  const meeting = (data.managers || []).some((m) => urgent(m.status));
+  const pills = [running ? ["run", L(`${running} 个在工作`, `${running} working`)] : meeting ? ["run", L("会议进行中", "In meeting")] : ["idle", L("空闲", "Idle")]];
   const key = JSON.stringify(pills);
   if (key === lastState) return;
   lastState = key;
