@@ -87,6 +87,7 @@ class TaskStart(NamedTuple):
     conversation_id: str
     access: str | None = None  # the tier this call declared
     isolation: TaskIsolationInfo | None = None
+    warnings: tuple[str, ...] = ()
 
 
 _MAX_FORWARD = 20
@@ -179,14 +180,13 @@ class ConversationStore(Groups):
     """Conversation storage, workspace ownership, and live view persistence."""
 
     def __init__(self, manager: InvocationManager, root: Path, *, host: Host | None = None) -> None:
-        super().__init__(manager)
+        self.root = root.resolve()  # created only by the first saved conversation
+        super().__init__(manager, IsolatedDirs(self.root))
         self.host = host if host is not None else detect_host()
         self.connection_id = _CONNECTION_ID
         self.manager_started_at = _MANAGER_STARTED_AT
-        self.root = root.resolve()  # created only by the first saved conversation
         manager.health_root = self.root
         self.db = Database(self.root)
-        self.isolated: IsolatedDirs = IsolatedDirs(self.root)
         self.isolation_summaries: dict[str, ChangeSummary] = {}
         self.locks = self.root / "locks"
         # Runs hold their native session's lock here, so servers on one data root exclude

@@ -19,6 +19,10 @@ from agentnave.locks import lock_file, release_and_remove
 _LOCK_RETRY_SECONDS = 0.025
 
 
+class RepoLockUnavailable(ValueError):
+    """The repository lock could not be taken in time; nothing was done under it."""
+
+
 def _is_link(path: Path) -> bool:
     return path.is_symlink() or os.path.isjunction(path)
 
@@ -63,6 +67,27 @@ def _leases_dir(repo_common_dir: Path, isolation_id: str) -> Path:
     return target
 
 
+def _take_repo_lock(repo_common_dir: Path, timeout_seconds: float) -> IO[bytes]:
+    busy = f"Repository isolated-directory lock is busy: {repo_common_dir}"
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    try:
+        state = _state_dir(repo_common_dir)
+        state.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _check_safe_dir(state)
+        lock_path = state / "lock"
+        _check_safe_regular(lock_path)
+    except (OSError, ValueError) as exc:
+        raise RepoLockUnavailable(str(exc)) from exc
+    while True:
+        try:
+            _check_safe_regular(lock_path)
+            return lock_file(lock_path, busy)
+        except ValueError as exc:
+            if time.monotonic() >= deadline:
+                raise RepoLockUnavailable(str(exc)) from exc
+            time.sleep(_LOCK_RETRY_SECONDS)
+
+
 @contextmanager
 def repo_lock(
     repo_common_dir: Path,
@@ -70,23 +95,7 @@ def repo_lock(
     timeout_seconds: float = 10.0,
 ) -> Generator[None]:
     """Serialize create, claim, and release operations across processes for one repository."""
-    state = _state_dir(repo_common_dir)
-    state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    _check_safe_dir(state)
-    lock_path = state / "lock"
-    _check_safe_regular(lock_path)
-    busy = f"Repository isolated-directory lock is busy: {repo_common_dir}"
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
-    handle: IO[bytes] | None = None
-    while True:
-        try:
-            _check_safe_regular(lock_path)
-            handle = lock_file(lock_path, busy)
-            break
-        except ValueError:
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(_LOCK_RETRY_SECONDS)
+    handle = _take_repo_lock(repo_common_dir, timeout_seconds)
     try:
         yield
     finally:

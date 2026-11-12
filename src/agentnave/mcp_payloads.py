@@ -51,7 +51,7 @@ class TaskIsolationSummaryPayload(TypedDict):
     id: str
     path: str
     branch: str
-    summary_status: Literal["complete", "error"]
+    summary_status: Literal["complete", "no_baseline", "error"]
     head_oid: NotRequired[str]
     actual_branch: NotRequired[str]
     changed_files_from_base: NotRequired[list[str]]
@@ -228,6 +228,7 @@ class IsolatedDirItemPayload(TypedDict):
     state: Literal["creating", "ready", "deleting", "needs_attention"]
     in_use: bool
     created_at: str
+    own_workspace: bool
     attention: NotRequired[str]
 
 

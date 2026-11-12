@@ -21,7 +21,6 @@ from typing import IO
 from agentnave import provider_health
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, parse_json_object
-from agentnave.isolated.prompts import format_isolated_instructions
 from agentnave.locks import lock_file, release_and_remove
 from agentnave.models import (
     InvocationError,
@@ -449,15 +448,10 @@ class InvocationManager:
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         """Apply the shared subagent instruction before provider-specific encoding."""
         instructions = SUBAGENT_INSTRUCTIONS
-        if request.isolation is not None:
-            instructions += " " + format_isolated_instructions(
-                request.isolation,
-                request.cwd,
-                read_only=request.read_only,
-                read_only_instructions=READ_ONLY_INSTRUCTIONS,
-            )
-        elif request.read_only:
+        if request.read_only:
             instructions += f" {READ_ONLY_INSTRUCTIONS}"
+        if request.extra_instructions:
+            instructions += f" {request.extra_instructions}"
         return get_adapter(request.provider).prepare(
             replace(request, prompt=f"{instructions}\n\nAssigned task:\n{request.prompt}")
         )
@@ -788,7 +782,8 @@ class InvocationManager:
         finally:
             if on_settled is not None:
                 try:
-                    on_settled(invocation_id)
+                    # Off the event loop: settlement runs git and takes repository locks.
+                    await asyncio.shield(asyncio.to_thread(on_settled, invocation_id))
                 except Exception:
                     logging.getLogger(__name__).exception("Post-invocation settlement failed")
 

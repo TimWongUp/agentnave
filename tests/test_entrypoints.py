@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from fake_cli import write_fake_cli
 from jsonschema import Draft202012Validator
 from mcp import Client, StdioServerParameters
 from mcp.server import MCPServer
@@ -2363,6 +2364,7 @@ def _init_git_repo(repo: Path) -> str:
 async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
     base_oid = _init_git_repo(tmp_path / "repo")
     repo = tmp_path / "repo"
     subdir = repo / "packages" / "app"
@@ -2370,9 +2372,9 @@ async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    script = bin_dir / ("claude.py" if os.name == "nt" else "claude")
-    script.write_text(
-        f"#!{sys.executable}\n"
+    write_fake_cli(
+        bin_dir,
+        "claude",
         "import json, os, pathlib, sys, time\n"
         "prompt = sys.stdin.read()\n"
         "if 'HOLD_OPEN' in prompt:\n"
@@ -2382,9 +2384,7 @@ async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
         "    pathlib.Path('cache.ignored').write_text('tmp\\n', encoding='utf-8')\n"
         "print(json.dumps({'type': 'result', 'result': json.dumps({'cwd': os.getcwd(), "
         "'prompt': prompt}), 'session_id': 'iso-sess', 'num_turns': 1, 'is_error': False}))\n",
-        encoding="utf-8",
     )
-    script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     async with Client(mcp) as client:
@@ -2565,3 +2565,129 @@ async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
             ).structured_content
         )
         assert after["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with_a_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    async with Client(mcp) as client:
+        started = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "ok",
+                        "cwd": str(repo),
+                        "isolation": {},
+                        "manager_session_id": "chat-old",
+                    },
+                )
+            ).structured_content
+        )
+        wt_id = str(_payload(started["isolation"])["id"])
+        await client.call_tool("wait", {"ids": [started["invocation_id"]]})
+
+        own = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "chat-new"}
+                )
+            ).structured_content
+        )
+        assert own["items"] == []
+        everywhere = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "list", "cwd": str(repo), "manager_session_id": "chat-new"},
+                )
+            ).structured_content
+        )
+        items = cast(list[dict[str, object]], everywhere["items"])
+        assert [(item["id"], item["own_workspace"]) for item in items] == [(wt_id, False)]
+
+        relative = await client.call_tool(
+            "isolated_dirs",
+            {"action": "list", "cwd": "repo", "manager_session_id": "chat-new"},
+        )
+        assert relative.is_error
+        release_with_cwd = await client.call_tool(
+            "isolated_dirs",
+            {"action": "release", "id": wt_id, "cwd": str(repo), "manager_session_id": "chat-new"},
+        )
+        assert release_with_cwd.is_error
+
+        first = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "chat-new"},
+                )
+            ).structured_content
+        )
+        assert first["status"] == "confirmation_required" and first["confirmation"]
+        assert first["uncommitted"] is False
+        done = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": first["confirmation"],
+                        "manager_session_id": "chat-new",
+                    },
+                )
+            ).structured_content
+        )
+        assert done["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_creating_an_isolated_directory_does_not_block_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from agentnave.isolated import IsolatedDirs
+
+    _init_git_repo(tmp_path / "repo")
+    _install_fake_claude(tmp_path, monkeypatch)
+    original = IsolatedDirs.create
+
+    def slow_create(self: IsolatedDirs, *args: object, **kwargs: object):  # noqa: ANN202
+        time.sleep(0.5)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "create", slow_create)
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    async with Client(mcp) as client:
+        tick_task = asyncio.create_task(ticker())
+        result = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "ok",
+                "cwd": str(tmp_path / "repo"),
+                "isolation": {},
+                "manager_session_id": "chat-1",
+            },
+        )
+        stop.set()
+        await tick_task
+        assert not result.is_error
+    assert ticks >= 10

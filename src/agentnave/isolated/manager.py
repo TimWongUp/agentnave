@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from agentnave.isolated.release import (
     release_isolated_dir,
     rollback_creating_locked,
     summarize_record_changes,
+    summarize_unregistered,
 )
 from agentnave.isolated.repo import (
     WORKTREES_DIR_NAME,
@@ -31,6 +33,7 @@ from agentnave.isolated.repo import (
     add_worktree_locked,
     check_tree_and_filters,
     collect_creation_warnings,
+    control_char_in,
     decode_git_path,
     discover_repo,
     ensure_info_exclude_locked,
@@ -92,6 +95,7 @@ class IsolatedListItem:
     in_use: bool
     created_at: str
     attention: str | None = None
+    own_workspace: bool = True
 
 
 def _validate_workspace_id(workspace_id: str) -> str:
@@ -141,21 +145,25 @@ class IsolatedDirs:
         self.root = (root if root is not None else data_root()).resolve()
         self.store = WorktreeStore(self.root)
         self._active_mutations = 0
+        self._mutations_lock = threading.Lock()
 
     def close(self) -> None:
         self.store.close()
 
     def restart_safe(self) -> bool:
         """False while create, explicit release, or startup recovery is mutating repository state."""
-        return self._active_mutations == 0
+        with self._mutations_lock:
+            return self._active_mutations == 0
 
     @contextmanager
     def _mutating(self) -> Generator[None]:
-        self._active_mutations += 1
+        with self._mutations_lock:
+            self._active_mutations += 1
         try:
             yield
         finally:
-            self._active_mutations -= 1
+            with self._mutations_lock:
+                self._active_mutations -= 1
 
     def create(
         self,
@@ -167,6 +175,12 @@ class IsolatedDirs:
         """Create a flat isolated worktree, copy .worktreeinclude files, and return a held lease."""
         ws_id = _validate_workspace_id(workspace_id)
         ctx = discover_repo(cwd)
+        for path in (ctx.cwd, ctx.source_root, ctx.main_root):
+            if control_char_in(str(path)):
+                raise IsolationError(
+                    "A repository path contains control characters (such as a newline); "
+                    "isolated directories cannot be created for it"
+                )
         base_oid = resolve_target_commit(ctx, ref)
         lfs_detected = check_tree_and_filters(ctx, base_oid)
         warnings = collect_creation_warnings(ctx, lfs_detected=lfs_detected)
@@ -256,15 +270,32 @@ class IsolatedDirs:
                 return record
         return None
 
-    def claim_for_cwd(self, cwd: Path | str) -> ClaimedIsolation | None:
-        """Acquire a usage lease when cwd lies inside a managed isolated worktree."""
+    def claim_for_cwd(
+        self, cwd: Path | str, warnings: list[str] | None = None
+    ) -> ClaimedIsolation | None:
+        """Acquire a usage lease when cwd lies inside a managed isolated worktree.
+
+        A cwd outside .agentnave-worktrees never reads the registry. When the registry cannot be
+        read, the lease is taken by path alone and the reason is appended to warnings.
+        """
         resolved = validate_cwd(cwd)
-        record = self.find_by_path(resolved)
+        if not any(part.lower() == WORKTREES_DIR_NAME for part in resolved.parts):
+            return None
+        try:
+            record = self.find_by_path(resolved)
+        except (OSError, ValueError) as exc:
+            if warnings is not None:
+                warnings.append(
+                    f"Isolated directory registry is unreadable ({exc}); "
+                    "the directory was used without its registration."
+                )
+            try:
+                return self._claim_cross_data_root(resolved)
+            except (IsolationError, OSError, ValueError):
+                return None
         if record is not None:
             return self._claim_registered(record, resolved)
-        if WORKTREES_DIR_NAME in resolved.parts:
-            return self._claim_cross_data_root(resolved)
-        return None
+        return self._claim_cross_data_root(resolved)
 
     def _claim_registered(self, record: IsolatedRecord, resolved_cwd: Path) -> ClaimedIsolation:
         common_dir = Path(record.repo_common_dir)
@@ -332,23 +363,33 @@ class IsolatedDirs:
     def list_for_workspace(self, workspace_id: str) -> list[IsolatedListItem]:
         """List non-transient isolated directories registered under workspace_id."""
         ws_id = _validate_workspace_id(workspace_id)
-        items: list[IsolatedListItem] = []
-        for record in self.store.list_workspace(ws_id):
-            in_use = self._probe_in_use(record)
-            items.append(
-                IsolatedListItem(
-                    id=record.id,
-                    path=record.worktree_path,
-                    cwd=record.execution_cwd,
-                    branch=record.branch,
-                    base_oid=record.base_oid,
-                    state=record.state,
-                    in_use=in_use,
-                    created_at=record.created_at,
-                    attention=record.attention,
-                )
-            )
-        return items
+        return [
+            self._list_item(record, own_workspace=True)
+            for record in self.store.list_workspace(ws_id)
+        ]
+
+    def list_for_repo(self, cwd: Path | str, workspace_id: str) -> list[IsolatedListItem]:
+        """List every non-transient isolated directory of cwd's repository, any workspace."""
+        ws_id = _validate_workspace_id(workspace_id)
+        ctx = discover_repo(cwd)
+        return [
+            self._list_item(record, own_workspace=record.workspace_id == ws_id)
+            for record in self.store.list_repo(ctx.repo_identity)
+        ]
+
+    def _list_item(self, record: IsolatedRecord, *, own_workspace: bool) -> IsolatedListItem:
+        return IsolatedListItem(
+            id=record.id,
+            path=record.worktree_path,
+            cwd=record.execution_cwd,
+            branch=record.branch,
+            base_oid=record.base_oid,
+            state=record.state,
+            in_use=self._probe_in_use(record),
+            created_at=record.created_at,
+            attention=record.attention,
+            own_workspace=own_workspace,
+        )
 
     def _probe_in_use(self, record: IsolatedRecord) -> bool:
         common_dir = Path(record.repo_common_dir)
@@ -371,7 +412,9 @@ class IsolatedDirs:
         workspace_id: str,
         confirmation: str | None = None,
     ) -> ReleaseResult:
-        """Inspect and explicitly release an isolated directory owned by workspace_id."""
+        """Inspect and explicitly release an isolated directory.
+
+        Directories of other workspaces always need a token from an earlier call first."""
         ws_id = _validate_workspace_id(workspace_id)
         if not ID_PATTERN.fullmatch(isolation_id):
             raise IsolationError(f"Invalid isolated directory id: {isolation_id!r}")
@@ -408,23 +451,19 @@ class IsolatedDirs:
         branch = fallback_branch or f"agentnave/{isolation_id}"
         try:
             record = self.store.get(isolation_id)
-        except (OSError, ValueError) as exc:
-            return ChangeSummary(
-                id=isolation_id,
-                path=fallback_path,
-                branch=branch,
-                summary_status="error",
-                error=str(exc),
-            )
-        if record is None:
-            return ChangeSummary(
-                id=isolation_id,
-                path=fallback_path,
-                branch=branch,
-                summary_status="error",
-                error=f"Unknown isolated directory: {isolation_id}",
-            )
-        return summarize_record_changes(record)
+        except (OSError, ValueError):
+            record = None
+        if record is not None:
+            return summarize_record_changes(record)
+        if fallback_path:
+            return summarize_unregistered(isolation_id, Path(fallback_path), branch)
+        return ChangeSummary(
+            id=isolation_id,
+            path=fallback_path,
+            branch=branch,
+            summary_status="error",
+            error=f"Unknown isolated directory: {isolation_id}",
+        )
 
     def recover(self) -> list[RecoveryOutcome]:
         """Roll back unfinished `creating` rows when safe and resume `deleting` rows."""

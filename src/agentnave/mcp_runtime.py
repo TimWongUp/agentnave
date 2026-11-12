@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -204,7 +205,7 @@ class Runtime:
 async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
     runtime = Runtime()
     try:
-        runtime.conversations.isolated.recover()
+        await asyncio.to_thread(runtime.conversations.isolated.recover)
     except (OSError, ValueError):
         logging.getLogger(__name__).warning("Isolated directory recovery failed", exc_info=True)
     try:
@@ -508,8 +509,9 @@ def _isolation_summary_payload(summary: ChangeSummary) -> TaskIsolationSummaryPa
         "branch": summary.branch,
         "summary_status": summary.summary_status,
     }
-    if summary.summary_status == "complete":
-        payload["changed_files_from_base"] = list(summary.changed_files_from_base)
+    if summary.summary_status != "error":
+        if summary.summary_status == "complete":
+            payload["changed_files_from_base"] = list(summary.changed_files_from_base)
         if summary.head_oid is not None:
             payload["head_oid"] = summary.head_oid
         if summary.actual_branch is not None:

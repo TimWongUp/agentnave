@@ -11,6 +11,7 @@ from agentnave.adapters import codex
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.group import Groups, GroupSeat
+from agentnave.isolated import IsolatedDirs
 from agentnave.mcp_server import round_payload
 from agentnave.models import (
     InvocationError,
@@ -105,7 +106,7 @@ def identity(prompt: str) -> dict[str, object]:
 
 def open_group(tmp_path: Path, *seat_ids: str) -> tuple[Groups, FakeManager, str]:
     manager = FakeManager()
-    groups = Groups(cast(InvocationManager, manager))
+    groups = Groups(cast(InvocationManager, manager), IsolatedDirs(tmp_path / "isolated-data"))
     group = groups.open(
         tmp_path, [GroupSeat(seat_id, "claude", {"model": "m"}, tmp_path) for seat_id in seat_ids]
     )
@@ -492,7 +493,9 @@ async def test_blockers_of_finished_seats_do_not_wake_wait(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("cwd", ["relative", "/does/not/exist"])
 def test_group_cwd_is_checked_even_when_every_seat_overrides_it(tmp_path: Path, cwd: str) -> None:
-    groups = Groups(cast(InvocationManager, FakeManager()))
+    groups = Groups(
+        cast(InvocationManager, FakeManager()), IsolatedDirs(tmp_path / "isolated-data")
+    )
     with pytest.raises(ValueError, match="group cwd"):
         groups.open(Path(cwd), [GroupSeat(s, "claude", {}, tmp_path) for s in "ab"])
 
@@ -521,7 +524,7 @@ async def test_meeting_names_keep_fixed_order_through_cancel_and_native_model(
     tmp_path: Path,
 ) -> None:
     manager = FakeManager()
-    groups = Groups(cast(InvocationManager, manager))
+    groups = Groups(cast(InvocationManager, manager), IsolatedDirs(tmp_path / "isolated-data"))
     group = groups.open(
         tmp_path,
         [
@@ -580,9 +583,8 @@ async def test_group_seat_claims_and_releases_isolated_directory_lease(
 ) -> None:
     import os
     import subprocess
-    import sys
 
-    from agentnave.isolated import IsolatedDirs
+    from fake_cli import write_fake_cli
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -605,27 +607,26 @@ async def test_group_seat_claims_and_releases_isolated_directory_lease(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gate = tmp_path / "gate"
-    script = bin_dir / ("claude.py" if os.name == "nt" else "claude")
-    script.write_text(
-        f"#!{sys.executable}\n"
+    seen = tmp_path / "seen.txt"
+    write_fake_cli(
+        bin_dir,
+        "claude",
         "import json, pathlib, sys, time\n"
         "prompt = sys.stdin.read()\n"
+        f"pathlib.Path({str(seen)!r}).write_text(prompt, encoding='utf-8')\n"
         f"gate = pathlib.Path({str(gate)!r})\n"
         "while not gate.exists():\n"
         "    time.sleep(0.02)\n"
         "print(json.dumps({'type': 'result', 'result': prompt.split('Assigned task:\\n', 1)[1], "
         "'session_id': 's1', 'num_turns': 1, 'is_error': False}))\n",
-        encoding="utf-8",
     )
-    script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
 
     isolated = IsolatedDirs(data_dir)
     created = isolated.create(repo, workspace_id="ws-group")
     created.lease.release()
     inv_manager = InvocationManager()
-    groups = Groups(inv_manager)
-    groups.isolated = isolated
+    groups = Groups(inv_manager, isolated)
     try:
         group = groups.open(
             repo,
@@ -636,6 +637,8 @@ async def test_group_seat_claims_and_releases_isolated_directory_lease(
         assert blocked.status == "blocked"
         gate.write_text("go", encoding="utf-8")
         await groups.wait(round_.id, 10)
+        # Seats only hold the lease: no isolation text is added for them.
+        assert "Isolated task environment" not in seen.read_text(encoding="utf-8")
         deleted = isolated.release(created.id, workspace_id="ws-group")
         assert deleted.status == "deleted"
     finally:

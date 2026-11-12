@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from agentnave.isolated.leases import (
+    RepoLockUnavailable,
     has_active_leases,
     remove_lease_dir_locked,
     repo_lock,
@@ -16,7 +17,6 @@ from agentnave.isolated.leases import (
 from agentnave.isolated.repo import (
     WORKTREES_DIR_NAME,
     IsolationError,
-    IsolationOwnershipError,
     decode_git_path,
     is_link,
     is_same_or_subpath,
@@ -51,8 +51,8 @@ type ReleaseStatus = Literal[
     "needs_attention",
     "not_found",
 ]
-type SummaryStatus = Literal["complete", "error"]
-type RecoveryStatus = Literal["rolled_back", "deleted", "needs_attention"]
+type SummaryStatus = Literal["complete", "no_baseline", "error"]
+type RecoveryStatus = Literal["rolled_back", "deleted", "needs_attention", "skipped"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,8 +342,11 @@ def _complete_deletion_locked(
     main_root: Path,
     common_dir: Path,
     expected_oid: str,
-) -> None:
-    """Remove worktree, managed branch, and DB row; raises IsolationError on partial failure."""
+) -> str | None:
+    """Remove worktree, managed branch, and DB row; raises IsolationError on partial failure.
+
+    Returns a note when the managed branch was kept because it moved after the release check.
+    """
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Active lease prevents completing deletion")
     wt_path = Path(record.worktree_path)
@@ -367,15 +370,37 @@ def _complete_deletion_locked(
         raise IsolationError(f"Unregistered path remains at {wt_path}; refusing recursive removal")
 
     store.update_phase(record.id, phase="removing_branch", updated_at=now())
-    if ref_exists(main_root, record.branch_ref):
-        remaining = parse_worktrees(
-            run_git(["worktree", "list", "--porcelain", "-z"], cwd=main_root).stdout
-        )
-        if any(w.branch_ref == record.branch_ref for w in remaining):
-            raise IsolationError("Managed branch is still checked out in a worktree")
-        run_git(["update-ref", "-d", record.branch_ref, expected_oid], cwd=main_root)
-    store.delete(record.id)
+    note = _remove_managed_branch(record, main_root, expected_oid)
+    store.delete(record.id, expected_state="deleting")
     remove_lease_dir_locked(common_dir, record.id)
+    return note
+
+
+def _remove_managed_branch(
+    record: IsolatedRecord, main_root: Path, expected_oid: str
+) -> str | None:
+    if not ref_exists(main_root, record.branch_ref):
+        return None
+    remaining = parse_worktrees(
+        run_git(["worktree", "list", "--porcelain", "-z"], cwd=main_root).stdout
+    )
+    if any(w.branch_ref == record.branch_ref for w in remaining):
+        raise IsolationError("Managed branch is still checked out in a worktree")
+    current = (
+        run_git(
+            ["rev-parse", "--verify", "--end-of-options", f"{record.branch_ref}^{{commit}}"],
+            cwd=main_root,
+        )
+        .stdout.strip()
+        .decode("ascii", errors="replace")
+    )
+    if current != expected_oid:
+        return (
+            f"Branch {record.branch} was kept: it moved to {current[:12]} after the release "
+            "check, so it was not deleted."
+        )
+    run_git(["update-ref", "-d", record.branch_ref, expected_oid], cwd=main_root)
+    return None
 
 
 def release_isolated_dir(
@@ -385,17 +410,17 @@ def release_isolated_dir(
     workspace_id: str,
     confirmation: str | None = None,
 ) -> ReleaseResult:
-    """Explicitly inspect and release an isolated directory under its repository lock."""
+    """Explicitly inspect and release an isolated directory under its repository lock.
+
+    A directory registered under another workspace can be released too, but only after a
+    confirmation token issued for its current state.
+    """
     initial = store.get(isolation_id)
     if initial is None:
         return ReleaseResult(
             id=isolation_id,
             status="not_found",
             reason="Isolated directory is not registered",
-        )
-    if initial.workspace_id != workspace_id:
-        raise IsolationOwnershipError(
-            f"Isolated directory {isolation_id} belongs to a different workspace"
         )
     common_dir = Path(initial.repo_common_dir)
     if is_link(common_dir) or not common_dir.is_dir():
@@ -404,8 +429,11 @@ def release_isolated_dir(
             status="blocked",
             reason=f"Repository common-dir is unavailable: {common_dir}",
         )
-    with repo_lock(common_dir):
-        return _release_locked(store, isolation_id, workspace_id, confirmation)
+    try:
+        with repo_lock(common_dir):
+            return _release_locked(store, isolation_id, workspace_id, confirmation)
+    except RepoLockUnavailable as exc:
+        return ReleaseResult(id=isolation_id, status="blocked", reason=str(exc))
 
 
 def _release_locked(
@@ -421,16 +449,8 @@ def _release_locked(
             status="not_found",
             reason="Isolated directory is not registered",
         )
-    if record.workspace_id != workspace_id:
-        raise IsolationOwnershipError(
-            f"Isolated directory {isolation_id} belongs to a different workspace"
-        )
     if record.state == "needs_attention":
-        return ReleaseResult(
-            id=isolation_id,
-            status="needs_attention",
-            reason=record.attention or "Isolated directory requires manual attention",
-        )
+        return _retry_attention_locked(store, record)
     if record.state != "ready":
         return ReleaseResult(
             id=isolation_id,
@@ -442,35 +462,101 @@ def _release_locked(
     except (IsolationError, OSError, ValueError) as exc:
         return ReleaseResult(id=isolation_id, status="blocked", reason=str(exc))
 
-    if failure := _verify_confirmation(store, record, snap, confirmation):
+    foreign = record.workspace_id != workspace_id
+    if failure := _verify_confirmation(store, record, snap, confirmation, foreign=foreign):
         return failure
 
-    store.mark_deleting(
+    if not store.mark_deleting(
         record.id,
         phase="removing_worktree",
         delete_oid=snap.branch_oid,
         updated_at=now(),
+    ):
+        return ReleaseResult(
+            id=record.id, status="blocked", reason="Isolated directory changed state; retry"
+        )
+    return _run_deletion(
+        store,
+        record,
+        main_root,
+        verified_common,
+        snap.branch_oid,
+        head_oid=snap.head_oid,
+        uncommitted=snap.uncommitted,
+        unique_commits=snap.unique_commits,
     )
+
+
+def _run_deletion(
+    store: WorktreeStore,
+    record: IsolatedRecord,
+    main_root: Path,
+    common_dir: Path,
+    expected_oid: str,
+    *,
+    head_oid: str | None = None,
+    uncommitted: bool = False,
+    unique_commits: bool = False,
+) -> ReleaseResult:
     try:
-        _complete_deletion_locked(store, record, main_root, verified_common, snap.branch_oid)
+        note = _complete_deletion_locked(store, record, main_root, common_dir, expected_oid)
     except (IsolationError, OSError, ValueError) as exc:
         detail = str(exc)
-        store.mark_attention(record.id, phase="delete_failed", reason=detail, updated_at=now())
+        store.mark_attention(
+            record.id,
+            expected_state="deleting",
+            phase="delete_failed",
+            reason=detail,
+            updated_at=now(),
+        )
         return ReleaseResult(
             id=record.id,
             status="needs_attention",
-            head_oid=snap.head_oid,
-            uncommitted=snap.uncommitted,
-            unique_commits=snap.unique_commits,
+            head_oid=head_oid,
+            uncommitted=uncommitted,
+            unique_commits=unique_commits,
             reason=detail,
         )
     return ReleaseResult(
         id=record.id,
         status="deleted",
-        head_oid=snap.head_oid,
-        uncommitted=snap.uncommitted,
-        unique_commits=snap.unique_commits,
+        head_oid=head_oid,
+        uncommitted=uncommitted,
+        unique_commits=unique_commits,
+        reason=note,
     )
+
+
+def _retry_attention_locked(store: WorktreeStore, record: IsolatedRecord) -> ReleaseResult:
+    """Re-check a record left in needs_attention and finish its interrupted deletion or rollback."""
+    stuck = ReleaseResult(
+        id=record.id,
+        status="needs_attention",
+        reason=record.attention or "Isolated directory requires manual attention",
+    )
+    if not record.delete_oid:
+        if not store.resume_creating(record.id, phase="rolling_back", updated_at=now()):
+            return stuck
+        latest = store.get(record.id)
+        if latest is not None:
+            rollback_creating_locked(store, latest)
+        after = store.get(record.id)
+        if after is None:
+            return ReleaseResult(id=record.id, status="deleted")
+        return ReleaseResult(id=record.id, status="needs_attention", reason=after.attention)
+    try:
+        main_root, common_dir = _verify_repo_identity(record)
+    except (IsolationError, OSError, ValueError) as exc:
+        return ReleaseResult(id=record.id, status="needs_attention", reason=str(exc))
+    if not store.mark_deleting(
+        record.id,
+        phase="removing_worktree",
+        delete_oid=record.delete_oid,
+        updated_at=now(),
+        expected_state="needs_attention",
+    ):
+        return stuck
+    return _run_deletion(store, record, main_root, common_dir, record.delete_oid)
 
 
 def _verify_confirmation(
@@ -478,36 +564,36 @@ def _verify_confirmation(
     record: IsolatedRecord,
     snap: _InspectionSnapshot,
     confirmation: str | None,
+    *,
+    foreign: bool,
 ) -> ReleaseResult | None:
-    token_mismatch = confirmation is not None and not hmac.compare_digest(confirmation, snap.digest)
-    if (snap.uncommitted or snap.unique_commits) and (confirmation is None or token_mismatch):
-        store.save_confirmation(record.id, snap.digest, updated_at=now())
-        reason = (
-            "Confirmation required for uncommitted files or unmerged commits"
-            if confirmation is None
-            else "Confirmation token expired or does not match current worktree state"
-        )
-        return ReleaseResult(
-            id=record.id,
-            status="confirmation_required",
-            head_oid=snap.head_oid,
-            uncommitted=snap.uncommitted,
-            unique_commits=snap.unique_commits,
-            confirmation=snap.digest,
-            reason=reason,
-        )
-    if token_mismatch:
-        store.save_confirmation(record.id, snap.digest, updated_at=now())
-        return ReleaseResult(
-            id=record.id,
-            status="confirmation_required",
-            head_oid=snap.head_oid,
-            uncommitted=snap.uncommitted,
-            unique_commits=snap.unique_commits,
-            confirmation=snap.digest,
-            reason="Confirmation token does not match current worktree state",
-        )
-    return None
+    """Pass only with a token this service issued earlier for exactly the current state."""
+    if not (snap.uncommitted or snap.unique_commits or foreign):
+        return None
+    issued = record.confirmation_digest
+    if (
+        confirmation is not None
+        and issued is not None
+        and hmac.compare_digest(confirmation.encode(), issued.encode())
+        and hmac.compare_digest(confirmation.encode(), snap.digest.encode())
+    ):
+        return None
+    store.save_confirmation(record.id, snap.digest, updated_at=now())
+    if confirmation is not None:
+        reason = "Confirmation token expired or does not match current worktree state"
+    elif foreign:
+        reason = "Directory belongs to another workspace; confirm to release it"
+    else:
+        reason = "Confirmation required for uncommitted files or unmerged commits"
+    return ReleaseResult(
+        id=record.id,
+        status="confirmation_required",
+        head_oid=snap.head_oid,
+        uncommitted=snap.uncommitted,
+        unique_commits=snap.unique_commits,
+        confirmation=snap.digest,
+        reason=reason,
+    )
 
 
 def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> None:
@@ -556,11 +642,12 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
             if any(w.branch_ref == record.branch_ref for w in remaining):
                 raise IsolationError("Managed branch is checked out in another worktree")
             run_git(["update-ref", "-d", record.branch_ref, record.base_oid], cwd=main_root)
-        store.delete(record.id)
+        store.delete(record.id, expected_state=record.state)
         remove_lease_dir_locked(common_dir, record.id)
     except (IsolationError, OSError, ValueError) as exc:
         store.mark_attention(
             record.id,
+            expected_state=record.state,
             phase="rollback_failed",
             reason=str(exc),
             updated_at=now(),
@@ -568,56 +655,107 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
 
 
 def recover_record(store: WorktreeStore, record: IsolatedRecord) -> RecoveryOutcome:
-    """Recover one interrupted `creating` or `deleting` record at server startup."""
+    """Recover one interrupted `creating` or `deleting` record at server startup.
+
+    Without the repository lock nothing is written: the record keeps its state for next time.
+    """
     common_dir = Path(record.repo_common_dir)
     if is_link(common_dir) or not common_dir.is_dir():
         reason = f"Repository common-dir is unavailable: {common_dir}"
-        store.mark_attention(record.id, phase="recovery_failed", reason=reason, updated_at=now())
+        store.mark_attention(
+            record.id,
+            expected_state=record.state,
+            phase="recovery_failed",
+            reason=reason,
+            updated_at=now(),
+        )
         return RecoveryOutcome(record.id, record.state, "needs_attention", reason)
     try:
         with repo_lock(common_dir):
-            latest = store.get(record.id)
-            if latest is None:
-                return RecoveryOutcome(
-                    record.id,
-                    record.state,
-                    "rolled_back" if record.state == "creating" else "deleted",
-                )
-            if latest.state == "creating":
-                rollback_creating_locked(store, latest)
-                after = store.get(record.id)
-                if after is None:
-                    return RecoveryOutcome(record.id, "creating", "rolled_back")
-                return RecoveryOutcome(record.id, "creating", "needs_attention", after.attention)
-            if latest.state == "deleting":
-                if not latest.delete_oid:
-                    reason = "Deleting record is missing expected branch OID"
-                    store.mark_attention(
-                        record.id, phase="recovery_failed", reason=reason, updated_at=now()
-                    )
-                    return RecoveryOutcome(record.id, "deleting", "needs_attention", reason)
-                try:
-                    main_root, verified_common = _verify_repo_identity(latest)
-                    _complete_deletion_locked(
-                        store, latest, main_root, verified_common, latest.delete_oid
-                    )
-                except (IsolationError, OSError, ValueError) as exc:
-                    reason = str(exc)
-                    store.mark_attention(
-                        record.id, phase="recovery_failed", reason=reason, updated_at=now()
-                    )
-                    return RecoveryOutcome(record.id, "deleting", "needs_attention", reason)
-                return RecoveryOutcome(record.id, "deleting", "deleted")
-            return RecoveryOutcome(
-                record.id,
-                latest.state,
-                "needs_attention",
-                latest.attention or f"Unexpected state {latest.state}",
-            )
+            return _recover_locked(store, record)
     except (IsolationError, OSError, ValueError) as exc:
-        reason = str(exc)
-        store.mark_attention(record.id, phase="recovery_failed", reason=reason, updated_at=now())
-        return RecoveryOutcome(record.id, record.state, "needs_attention", reason)
+        return RecoveryOutcome(record.id, record.state, "skipped", str(exc))
+
+
+def _recover_locked(store: WorktreeStore, record: IsolatedRecord) -> RecoveryOutcome:
+    latest = store.get(record.id)
+    if latest is None:
+        return RecoveryOutcome(
+            record.id,
+            record.state,
+            "rolled_back" if record.state == "creating" else "deleted",
+        )
+    if latest.state == "creating":
+        rollback_creating_locked(store, latest)
+        after = store.get(record.id)
+        if after is None:
+            return RecoveryOutcome(record.id, "creating", "rolled_back")
+        return RecoveryOutcome(record.id, "creating", "needs_attention", after.attention)
+    if latest.state == "deleting":
+        return _recover_deleting_locked(store, latest)
+    return RecoveryOutcome(
+        record.id,
+        latest.state,
+        "needs_attention",
+        latest.attention or f"Unexpected state {latest.state}",
+    )
+
+
+def _recover_deleting_locked(store: WorktreeStore, latest: IsolatedRecord) -> RecoveryOutcome:
+    def fail(reason: str) -> RecoveryOutcome:
+        store.mark_attention(
+            latest.id,
+            expected_state="deleting",
+            phase="recovery_failed",
+            reason=reason,
+            updated_at=now(),
+        )
+        return RecoveryOutcome(latest.id, "deleting", "needs_attention", reason)
+
+    if not latest.delete_oid:
+        return fail("Deleting record is missing expected branch OID")
+    try:
+        main_root, verified_common = _verify_repo_identity(latest)
+        note = _complete_deletion_locked(
+            store, latest, main_root, verified_common, latest.delete_oid
+        )
+    except (IsolationError, OSError, ValueError) as exc:
+        return fail(str(exc))
+    return RecoveryOutcome(latest.id, "deleting", "deleted", note)
+
+
+def _changed_paths(wt_path: Path, base_oid: str, status_raw: bytes) -> list[str]:
+    """Files changed from base_oid: committed, staged, working tree, and untracked."""
+    paths, _ = porcelain_v2_paths(status_raw)
+    found = set(paths)
+    diff_head = ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z"]
+    for revisions in ([base_oid, "HEAD"], ["--cached", base_oid], [base_oid]):
+        raw = run_git([*diff_head, *revisions, "--"], cwd=wt_path).stdout
+        found.update(decode_git_path(item) for item in raw.split(b"\x00") if item)
+    return sorted(found)
+
+
+def _read_head_and_branch(wt_path: Path) -> tuple[str, str | None]:
+    head_oid = (
+        run_git(["rev-parse", "--verify", "HEAD^{commit}"], cwd=wt_path)
+        .stdout.strip()
+        .decode("ascii", errors="replace")
+    )
+    sym_res = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path, allowed_exit_codes=(0, 1))
+    actual_branch: str | None = None
+    if sym_res.returncode == 0 and sym_res.stdout.strip():
+        raw_ref = decode_git_path(sym_res.stdout.rstrip(b"\r\n"))
+        actual_branch = raw_ref.removeprefix("refs/heads/")
+    return head_oid, actual_branch
+
+
+_STATUS_ARGS = [
+    "status",
+    "--porcelain=v2",
+    "-z",
+    "--untracked-files=all",
+    "--ignore-submodules=none",
+]
 
 
 def summarize_record_changes(record: IsolatedRecord) -> ChangeSummary:
@@ -626,42 +764,9 @@ def summarize_record_changes(record: IsolatedRecord) -> ChangeSummary:
     try:
         if is_link(wt_path) or not wt_path.is_dir():
             raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
-        head_oid = (
-            run_git(["rev-parse", "--verify", "HEAD^{commit}"], cwd=wt_path)
-            .stdout.strip()
-            .decode("ascii", errors="replace")
-        )
-        sym_res = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path, allowed_exit_codes=(0, 1))
-        actual_branch: str | None = None
-        if sym_res.returncode == 0 and sym_res.stdout.strip():
-            raw_ref = decode_git_path(sym_res.stdout.rstrip(b"\r\n"))
-            actual_branch = raw_ref.removeprefix("refs/heads/")
-        status_raw = run_git(
-            [
-                "status",
-                "--porcelain=v2",
-                "-z",
-                "--untracked-files=all",
-                "--ignore-submodules=none",
-            ],
-            cwd=wt_path,
-        ).stdout
-        diff_raw = run_git(
-            [
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--name-only",
-                "-z",
-                record.base_oid,
-                "--",
-            ],
-            cwd=wt_path,
-        ).stdout
-        _, untracked = porcelain_v2_paths(status_raw)
-        diff_paths = [decode_git_path(item) for item in diff_raw.split(b"\x00") if item]
-        combined = sorted(set(diff_paths) | set(untracked))
-        truncated = len(combined) > MAX_SUMMARY_FILES
+        head_oid, actual_branch = _read_head_and_branch(wt_path)
+        status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
+        combined = _changed_paths(wt_path, record.base_oid, status_raw)
         return ChangeSummary(
             id=record.id,
             path=record.worktree_path,
@@ -670,7 +775,7 @@ def summarize_record_changes(record: IsolatedRecord) -> ChangeSummary:
             head_oid=head_oid,
             actual_branch=actual_branch,
             changed_files_from_base=tuple(combined[:MAX_SUMMARY_FILES]),
-            truncated=truncated,
+            truncated=len(combined) > MAX_SUMMARY_FILES,
             uncommitted=bool(status_raw),
         )
     except (IsolationError, OSError, ValueError) as exc:
@@ -678,6 +783,32 @@ def summarize_record_changes(record: IsolatedRecord) -> ChangeSummary:
             id=record.id,
             path=record.worktree_path,
             branch=record.branch,
+            summary_status="error",
+            error=str(exc),
+        )
+
+
+def summarize_unregistered(isolation_id: str, wt_path: Path, branch: str) -> ChangeSummary:
+    """Summary without a start commit, for a directory this data root has no registration of."""
+    try:
+        if is_link(wt_path) or not wt_path.is_dir():
+            raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
+        head_oid, actual_branch = _read_head_and_branch(wt_path)
+        status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
+        return ChangeSummary(
+            id=isolation_id,
+            path=str(wt_path),
+            branch=branch,
+            summary_status="no_baseline",
+            head_oid=head_oid,
+            actual_branch=actual_branch,
+            uncommitted=bool(status_raw),
+        )
+    except (IsolationError, OSError, ValueError) as exc:
+        return ChangeSummary(
+            id=isolation_id,
+            path=str(wt_path),
+            branch=branch,
             summary_status="error",
             error=str(exc),
         )

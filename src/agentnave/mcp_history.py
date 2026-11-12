@@ -289,7 +289,7 @@ async def handover(
     if status == "claimed" and (session := shared_session_id(from_host, before.owner)):
         result["previous_session_id"] = session
     if status != "withdrawn":
-        attach_handover_isolated_dirs(result, conversations, workspace_id)
+        await attach_handover_isolated_dirs(result, conversations, workspace_id)
     return result
 
 

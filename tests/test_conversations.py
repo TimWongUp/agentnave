@@ -3847,7 +3847,7 @@ def test_partial_meeting_names_instructions_and_missing_seat(data_root: Path) ->
     studio.scan()
     try:
         group = studio._group("m")  # pyright: ignore[reportPrivateUsage]
-        for groups in (studio, Groups(studio.manager)):
+        for groups in (studio, Groups(studio.manager, studio.isolated)):
             prompt = groups._prompt(group, SeatRun("a", None), len(group.entries))  # pyright: ignore[reportPrivateUsage]
             assert "legacy" in prompt and "未记录模型" in prompt
     finally:
@@ -4018,6 +4018,54 @@ async def test_meeting_save_keeps_streamed_model_before_result(
         ]
         names = studio.round_identities(round_)
         assert all(name["model_source"] == "native" for name in names.values())
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_task_startup_cleanup_steps_run_independently_and_keep_the_original_error(
+    data_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import agentnave.conversations as startup_module
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    def fail_save(_self: Database, *_args: object, **_kwargs: object) -> int:
+        raise OSError("disk full")
+
+    def fail_release(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("rollback exploded")
+
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        monkeypatch.setattr(Database, "save", fail_save)
+        monkeypatch.setattr(startup_module, "release_hold", fail_release)
+        with pytest.raises(OSError, match="disk full"):
+            studio.start_task(
+                InvocationRequest("claude", "work", repo),
+                None,
+                None,
+                manager_session_id="ws-1",
+                isolation_requested=True,
+            )
+        assert studio.active_lease_paths == set()
+        # The failed rollback is logged, and the error that stopped the start is the one raised.
+        assert "Task startup cleanup step failed" in caplog.text
     finally:
         await studio.manager.shutdown()
         await studio.close()

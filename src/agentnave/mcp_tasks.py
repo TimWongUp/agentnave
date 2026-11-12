@@ -224,19 +224,31 @@ async def start_agent(
             read_only=access == "read",
         )
         validate_provider_options(request)
-        started = _conversations(ctx).start_task(
+        conversations = _conversations(ctx)
+        hold = await conversations.acquire_task_isolation(
             request,
-            title,
-            conversation_id,
-            manager_model=manager_model,
-            manager_session_id=manager_session_id,
-            role=role,
-            seat=seat,
-            forward=forward,
-            access=access,
+            manager_session_id,
             isolation_requested=isolation is not None,
             isolation_ref=isolation.ref if isolation is not None else None,
         )
+        try:
+            started = conversations.start_task(
+                request,
+                title,
+                conversation_id,
+                manager_model=manager_model,
+                manager_session_id=manager_session_id,
+                role=role,
+                seat=seat,
+                forward=forward,
+                access=access,
+                isolation_requested=isolation is not None,
+                isolation_ref=isolation.ref if isolation is not None else None,
+                hold=hold,
+            )
+        except BaseException:
+            await conversations.give_back_isolation(hold)
+            raise
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list.") from exc
     except ValueError as exc:
@@ -249,13 +261,13 @@ async def start_agent(
         raise error from exc
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
-    payload = _task_start_payload(
+    payload = await _task_start_payload(
         ctx, manager, request, started, access, [*defaults_applied, *arguments.defaults]
     )
     return await waited_dispatch(payload, started.invocation_id, wait, manager_session_id, ctx)
 
 
-def _task_start_payload(
+async def _task_start_payload(
     ctx: Context[Runtime],
     manager: InvocationManager,
     request: InvocationRequest,
@@ -264,7 +276,7 @@ def _task_start_payload(
     defaults: list[str],
 ) -> TaskStartPayload:
     conversations = _conversations(ctx)
-    if started.isolation is not None:
+    if started.isolation is not None and started.isolation.instructions_applied:
         defaults = [*defaults, ISOLATED_APPLIED]
     payload: TaskStartPayload = {
         **started_payload(started.invocation_id, request, defaults),
@@ -282,8 +294,13 @@ def _task_start_payload(
         record_state.manager_session,
         conversations.model_warned,
     )
+    warnings.extend(started.warnings)
     if started.isolation is not None:
         warnings.extend(started.isolation.warnings)
+        if not started.isolation.instructions_applied:
+            warnings.append(
+                "Isolated directory instructions were not added: a path contains control characters."
+            )
     exec_request = (
         replace(request, cwd=Path(started.isolation.cwd))
         if started.isolation is not None
@@ -298,7 +315,7 @@ def _task_start_payload(
         isolation=started.isolation,
         own_lease_paths=conversations.active_lease_paths,
     )
-    attach_unreleased_count(payload, warnings, conversations, record_state.manager_session)
+    await attach_unreleased_count(payload, warnings, conversations, record_state.manager_session)
     if warnings:
         payload["warnings"] = warnings
     return payload

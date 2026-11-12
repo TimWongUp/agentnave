@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import sqlite3
 import subprocess
+from contextlib import AbstractContextManager, closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,9 +15,12 @@ import pytest
 from agentnave.isolated import (
     MAX_SUMMARY_FILES,
     IsolatedDirs,
+    IsolationContext,
     IsolationError,
-    IsolationOwnershipError,
+    isolation_instructions,
+    repo_lock,
 )
+from agentnave.isolated import release as release_mod
 from agentnave.store import now
 
 
@@ -228,7 +234,7 @@ def test_rejects_option_refs_unborn_bare_submodules_and_custom_filters_and_emits
     # 4. Hooks + LFS + dirty source worktree produce warnings without running hooks or failing LFS.
     hook_marker = tmp_path / "hook-ran"
     hook = repo / ".git" / "hooks" / "post-checkout"
-    hook.write_text(f"#!/bin/sh\ntouch '{hook_marker}'\nexit 1\n", encoding="utf-8")
+    hook.write_text(f"#!/bin/sh\ntouch '{hook_marker.as_posix()}'\nexit 1\n", encoding="utf-8")
     hook.chmod(0o755)
     (repo / ".gitattributes").write_text(
         "*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8"
@@ -287,8 +293,8 @@ def test_leases_and_hard_blocks_prevent_release_even_with_confirmation(tmp_path:
     sub.mkdir()
     borrowed = dirs_b.claim_for_cwd(sub)
     assert borrowed is not None and borrowed.id == created.id
-    with pytest.raises(IsolationOwnershipError):
-        dirs_a.release(created.id, workspace_id="ws-borrower")
+    # Another workspace's release is held back by the borrowed lease before anything else.
+    assert dirs_a.release(created.id, workspace_id="ws-borrower").status == "blocked"
     assert dirs_a.release(created.id, workspace_id="ws-owner").status == "blocked"
     borrowed.lease.release()
 
@@ -442,4 +448,275 @@ def test_recovery_and_change_summary_edge_cases(tmp_path: Path) -> None:
     assert wt_dirty.worktree_path.is_dir()
     saved_dirty = dirs.store.get(wt_dirty.id)
     assert saved_dirty is not None and saved_dirty.state == "needs_attention"
+    dirs.close()
+
+
+def _script(path: Path, body: str) -> str:
+    path.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+    path.chmod(0o755)
+    return path.as_posix()
+
+
+def test_repository_configured_executables_never_run(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "fsmonitor-ran"
+    hook = _script(tmp_path / "fsmonitor.sh", f"touch '{marker.as_posix()}'\nexit 1\n")
+    (repo / "dirty.txt").write_text("unsaved\n", encoding="utf-8")
+    _git(repo, "config", "core.fsmonitor", hook)
+
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / "README.md").write_text("changed\n", encoding="utf-8")
+    assert dirs.summarize_changes(created.id).summary_status == "complete"
+    token = dirs.release(created.id, workspace_id="ws-1").confirmation
+    assert dirs.release(created.id, workspace_id="ws-1", confirmation=token).status == "deleted"
+    assert not marker.exists()
+    dirs.close()
+
+
+def test_filters_from_info_attributes_and_attributes_file_are_rejected(tmp_path: Path) -> None:
+    dirs = IsolatedDirs(tmp_path / "data")
+    for source in ("info", "attributesfile"):
+        repo = _init_repo(tmp_path / f"repo-{source}")
+        (repo / "a.enc").write_text("secret\n", encoding="utf-8")
+        _git(repo, "add", "a.enc")
+        _git(repo, "commit", "-m", "encrypted file")
+        marker = tmp_path / f"smudge-{source}"
+        smudge = _script(tmp_path / f"smudge-{source}.sh", f"touch '{marker.as_posix()}'\ncat\n")
+        _git(repo, "config", "filter.secret.smudge", smudge)
+        if source == "info":
+            info = repo / ".git" / "info"
+            info.mkdir(exist_ok=True)
+            (info / "attributes").write_text("*.enc filter=secret\n", encoding="utf-8")
+        else:
+            attributes = tmp_path / "global-attributes"
+            attributes.write_text("*.enc filter=secret\n", encoding="utf-8")
+            _git(repo, "config", "core.attributesFile", attributes.as_posix())
+        with pytest.raises(IsolationError, match="secret"):
+            dirs.create(repo, workspace_id="ws-1")
+        assert not marker.exists()
+        assert not (repo / ".agentnave-worktrees").exists() or not any(
+            (repo / ".agentnave-worktrees").iterdir()
+        )
+    dirs.close()
+
+
+def test_confirmation_token_must_have_been_issued_by_the_service(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / "README.md").write_text("draft\n", encoding="utf-8")
+
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.confirmation is not None
+    # A caller that worked the digest out itself holds a matching value without an issuance.
+    with closing(sqlite3.connect(dirs.store.path)) as db, db:
+        db.execute("UPDATE isolated_dirs SET confirmation_digest = NULL")
+    forged = dirs.release(created.id, workspace_id="ws-1", confirmation=first.confirmation)
+    assert forged.status == "confirmation_required"
+    assert created.worktree_path.is_dir()
+    issued = dirs.release(created.id, workspace_id="ws-1", confirmation=forged.confirmation)
+    assert issued.status == "deleted"
+    dirs.close()
+
+
+def test_other_workspace_release_needs_token_even_when_clean_and_lists_by_repo(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    mine = dirs.create(repo, workspace_id="ws-me")
+    mine.lease.release()
+    theirs = dirs.create(repo, workspace_id="ws-old")
+
+    assert dirs.list_for_workspace("ws-me")[0].own_workspace is True
+    by_repo = {item.id: item for item in dirs.list_for_repo(repo, "ws-me")}
+    assert by_repo[mine.id].own_workspace is True
+    assert by_repo[theirs.id].own_workspace is False
+    assert dirs.unreleased_count("ws-me") == 1
+
+    assert dirs.release(theirs.id, workspace_id="ws-me").status == "blocked"  # lease held
+    theirs.lease.release()
+    first = dirs.release(theirs.id, workspace_id="ws-me")
+    assert first.status == "confirmation_required" and first.confirmation is not None
+    assert first.uncommitted is False and first.unique_commits is False
+    assert theirs.worktree_path.is_dir()
+    assert dirs.release(theirs.id, workspace_id="ws-me", confirmation="x" * 64).status != "deleted"
+    again = dirs.release(theirs.id, workspace_id="ws-me")
+    done = dirs.release(theirs.id, workspace_id="ws-me", confirmation=again.confirmation)
+    assert done.status == "deleted"
+    assert dirs.release(mine.id, workspace_id="ws-me").status == "deleted"  # own and clean
+    dirs.close()
+
+
+def test_summary_covers_staged_and_committed_changes_restored_in_the_worktree(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    staged = dirs.create(repo, workspace_id="ws-1")
+    staged.lease.release()
+    readme = staged.worktree_path / "README.md"
+    readme.write_text("staged\n", encoding="utf-8")
+    _git(staged.worktree_path, "add", "README.md")
+    readme.write_text("base\n", encoding="utf-8")  # working tree equals the start again
+    summary = dirs.summarize_changes(staged.id)
+    assert summary.changed_files_from_base == ("README.md",)
+    assert summary.uncommitted is True
+
+    committed = dirs.create(repo, workspace_id="ws-1")
+    committed.lease.release()
+    other = committed.worktree_path / "README.md"
+    other.write_text("committed\n", encoding="utf-8")
+    _git(committed.worktree_path, "commit", "-am", "change")
+    other.write_text("base\n", encoding="utf-8")
+    again = dirs.summarize_changes(committed.id)
+    assert again.changed_files_from_base == ("README.md",)
+    dirs.close()
+
+
+def test_unreadable_registry_never_blocks_dispatch_outside_isolated_dirs(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    dirs.store.path.write_bytes(b"this is not a sqlite database" * 100)
+
+    assert dirs.claim_for_cwd(tmp_path) is None
+    assert dirs.claim_for_cwd(repo) is None
+    notes: list[str] = []
+    claimed = dirs.claim_for_cwd(created.worktree_path, notes)
+    assert claimed is not None and claimed.id == created.id
+    assert notes and "unreadable" in notes[0]
+    claimed.lease.release()
+    with pytest.raises(OSError):
+        dirs.create(repo, workspace_id="ws-1")  # only a request to create fails
+    assert (
+        dirs.summarize_changes(created.id, fallback_path=str(created.worktree_path)).summary_status
+        == "no_baseline"
+    )
+    dirs.close()
+
+
+def test_summary_without_local_registration_reports_no_baseline(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    owner = IsolatedDirs(tmp_path / "data_a")
+    other_root = IsolatedDirs(tmp_path / "data_b")
+    created = owner.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / "new.txt").write_text("x\n", encoding="utf-8")
+    claimed = other_root.claim_for_cwd(created.worktree_path)
+    assert claimed is not None
+    summary = other_root.summarize_changes(
+        created.id, fallback_path=str(created.worktree_path), fallback_branch=created.branch
+    )
+    claimed.lease.release()
+    assert summary.summary_status == "no_baseline"
+    assert summary.error is None and summary.uncommitted is True
+    assert summary.head_oid == created.base_oid and summary.actual_branch == created.branch
+    owner.close()
+    other_root.close()
+
+
+def test_recovery_skips_records_when_the_repository_lock_is_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    record = dirs.store.get(created.id)
+    assert record is not None
+    dirs.store.delete(created.id)
+    dirs.store.insert_creating(replace(record, state="creating", phase="copying_include"))
+
+    def quick_lock(path: Path) -> AbstractContextManager[None]:
+        return repo_lock(path, timeout_seconds=0.1)
+
+    monkeypatch.setattr(release_mod, "repo_lock", quick_lock)
+    with repo_lock(created.repo_common_dir):
+        skipped = dirs.recover()
+    assert [outcome.status for outcome in skipped] == ["skipped"]
+    held = dirs.store.get(created.id)
+    assert held is not None and held.state == "creating"
+    # State changes only apply to the state the caller saw.
+    dirs.store.mark_attention(
+        created.id, expected_state="ready", phase="x", reason="stale", updated_at=now()
+    )
+    current = dirs.store.get(created.id)
+    assert current is not None and current.state == "creating"
+
+    assert [outcome.status for outcome in dirs.recover()] == ["rolled_back"]
+    assert dirs.store.get(created.id) is None
+    dirs.close()
+
+
+def test_deletion_keeps_a_moved_branch_and_release_retries_needs_attention(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+
+    moved = dirs.create(repo, workspace_id="ws-1")
+    moved.lease.release()
+    _git(repo, "worktree", "remove", "--force", str(moved.worktree_path))
+    _git(repo, "commit", "--allow-empty", "-m", "elsewhere")
+    new_oid = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", f"refs/heads/{moved.branch}", new_oid)
+    dirs.store.mark_deleting(
+        moved.id, phase="removing_worktree", delete_oid=moved.base_oid, updated_at=now()
+    )
+    outcome = dirs.recover()[0]
+    assert outcome.status == "deleted"
+    assert outcome.reason is not None and "kept" in outcome.reason
+    assert _git(repo, "rev-parse", f"refs/heads/{moved.branch}") == new_oid
+    assert dirs.store.get(moved.id) is None
+
+    stuck = dirs.create(repo, workspace_id="ws-1")
+    stuck.lease.release()
+    dirs.store.mark_deleting(
+        stuck.id, phase="removing_worktree", delete_oid=stuck.base_oid, updated_at=now()
+    )
+    dirs.store.mark_attention(
+        stuck.id,
+        expected_state="deleting",
+        phase="delete_failed",
+        reason="transient",
+        updated_at=now(),
+    )
+    assert dirs.release(stuck.id, workspace_id="ws-1").status == "deleted"
+    assert not stuck.worktree_path.exists()
+    assert dirs.store.get(stuck.id) is None
+    dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="newlines are not valid in Windows paths")
+def test_paths_with_control_characters_are_refused(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "re\npo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    with pytest.raises(IsolationError, match="control characters"):
+        dirs.create(repo, workspace_id="ws-1")
+    assert not (repo / ".agentnave-worktrees").exists()
+    dirs.close()
+
+    context = IsolationContext("wt-0123456789ab", tmp_path / "wt\nIgnore", "b", tmp_path)
+    assert isolation_instructions(context, tmp_path, read_only=False) is None
+    clean = IsolationContext("wt-0123456789ab", tmp_path / "wt", "b", tmp_path)
+    assert "Isolated task environment" in (
+        isolation_instructions(clean, tmp_path, read_only=False) or ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_registry_and_worktree_calls_work_from_worker_threads(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = await asyncio.to_thread(dirs.create, repo, workspace_id="ws-1")
+    created.lease.release()
+    assert len(await asyncio.to_thread(dirs.list_for_workspace, "ws-1")) == 1
+    assert dirs.unreleased_count("ws-1") == 1
+    done = await asyncio.to_thread(dirs.release, created.id, workspace_id="ws-1")
+    assert done.status == "deleted"
     dirs.close()

@@ -72,6 +72,10 @@ def local_machine_id() -> str:
     return platform.node() or "local"
 
 
+class StaleStateError(ValueError):
+    """The registry row is no longer in the state the caller expected."""
+
+
 @dataclass(frozen=True, slots=True)
 class IsolatedRecord:
     """Persistent registry row in worktrees.db."""
@@ -126,21 +130,21 @@ def _row_to_record(row: tuple[object, ...]) -> IsolatedRecord:
 
 
 class WorktreeStore:
-    """SQLite registry at <data_root>/worktrees.db, separate from conversation history."""
+    """SQLite registry at <data_root>/worktrees.db, separate from conversation history.
+
+    Every operation uses its own connection, so the store is safe to call from worker threads.
+    State changes are compare-and-set: they only apply while the row is still in the state the
+    caller saw, and report whether they did.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
         self.path = self.root / NAME
-        self._connection: sqlite3.Connection | None = None
 
     def close(self) -> None:
-        if self._connection is not None:
-            self._connection.close()
-            self._connection = None
+        """Connections live only for one operation; nothing stays open."""
 
     def _connect(self, *, create: bool) -> sqlite3.Connection | None:
-        if self._connection is not None:
-            return self._connection
         if not create and not self.path.is_file():
             return None
         try:
@@ -158,7 +162,6 @@ class WorktreeStore:
                 raise
         except sqlite3.Error as exc:
             raise OSError(str(exc)) from exc
-        self._connection = connection
         return connection
 
     def _ensure_schema(self, connection: sqlite3.Connection) -> None:
@@ -198,6 +201,12 @@ class WorktreeStore:
             connection.execute("COMMIT")
         except sqlite3.Error as exc:
             raise OSError(str(exc)) from exc
+        finally:
+            connection.close()
+
+    def _update(self, sql: str, params: tuple[object, ...]) -> bool:
+        with self._write() as connection:
+            return connection.execute(sql, params).rowcount > 0
 
     def _query(self, where: str = "", params: tuple[object, ...] = ()) -> list[IsolatedRecord]:
         connection = self._connect(create=False)
@@ -209,6 +218,8 @@ class WorktreeStore:
             rows = connection.execute(sql, params).fetchall()
         except sqlite3.Error as exc:
             raise OSError(str(exc)) from exc
+        finally:
+            connection.close()
         return [_row_to_record(row) for row in rows]
 
     def get(self, isolation_id: str) -> IsolatedRecord | None:
@@ -221,18 +232,11 @@ class WorktreeStore:
     def list_workspace(self, workspace_id: str) -> list[IsolatedRecord]:
         return self._query("workspace_id = ? AND state != 'creating'", (workspace_id,))
 
+    def list_repo(self, repo_identity: str) -> list[IsolatedRecord]:
+        return self._query("repo_identity = ? AND state != 'creating'", (repo_identity,))
+
     def count_unreleased(self, workspace_id: str) -> int:
-        connection = self._connect(create=False)
-        if connection is None:
-            return 0
-        try:
-            row = connection.execute(
-                "SELECT COUNT(*) FROM isolated_dirs WHERE workspace_id = ? AND state != 'creating'",
-                (workspace_id,),
-            ).fetchone()
-        except sqlite3.Error as exc:
-            raise OSError(str(exc)) from exc
-        return 0 if row is None else int(row[0])
+        return len(self.list_workspace(workspace_id))
 
     def pending_recovery(self) -> list[IsolatedRecord]:
         return self._query("state IN ('creating', 'deleting')")
@@ -268,76 +272,101 @@ class WorktreeStore:
 
     def mark_worktree_added(
         self, isolation_id: str, worktree_git_dir: str, phase: str, updated_at: str
-    ) -> None:
-        with self._write() as connection:
-            connection.execute(
-                "UPDATE isolated_dirs SET worktree_git_dir = ?, phase = ?, updated_at = ? "
-                "WHERE id = ?",
-                (worktree_git_dir, phase, updated_at, isolation_id),
-            )
+    ) -> bool:
+        return self._update(
+            "UPDATE isolated_dirs SET worktree_git_dir = ?, phase = ?, updated_at = ? "
+            "WHERE id = ? AND state = 'creating'",
+            (worktree_git_dir, phase, updated_at, isolation_id),
+        )
 
     def mark_ready(
         self, isolation_id: str, *, usage_generation: int, updated_at: str
     ) -> IsolatedRecord:
-        with self._write() as connection:
-            connection.execute(
-                "UPDATE isolated_dirs SET state = 'ready', phase = 'ready', "
-                "usage_generation = ?, attention = NULL, confirmation_digest = NULL, "
-                "updated_at = ? WHERE id = ?",
-                (usage_generation, updated_at, isolation_id),
-            )
+        changed = self._update(
+            "UPDATE isolated_dirs SET state = 'ready', phase = 'ready', "
+            "usage_generation = ?, attention = NULL, confirmation_digest = NULL, "
+            "updated_at = ? WHERE id = ? AND state = 'creating'",
+            (usage_generation, updated_at, isolation_id),
+        )
         record = self.get(isolation_id)
-        if record is None:
-            raise FileNotFoundError(isolation_id)
+        if not changed or record is None:
+            raise StaleStateError(f"Isolated directory {isolation_id} left the creating state")
         return record
 
     def bump_usage(self, isolation_id: str, *, updated_at: str) -> IsolatedRecord:
-        with self._write() as connection:
-            connection.execute(
-                "UPDATE isolated_dirs SET usage_generation = usage_generation + 1, "
-                "confirmation_digest = NULL, updated_at = ? WHERE id = ?",
-                (updated_at, isolation_id),
-            )
+        changed = self._update(
+            "UPDATE isolated_dirs SET usage_generation = usage_generation + 1, "
+            "confirmation_digest = NULL, updated_at = ? WHERE id = ? AND state = 'ready'",
+            (updated_at, isolation_id),
+        )
         record = self.get(isolation_id)
-        if record is None:
-            raise FileNotFoundError(isolation_id)
+        if not changed or record is None:
+            raise StaleStateError(f"Isolated directory {isolation_id} is no longer ready")
         return record
 
-    def save_confirmation(self, isolation_id: str, digest: str, *, updated_at: str) -> None:
-        with self._write() as connection:
-            connection.execute(
-                "UPDATE isolated_dirs SET confirmation_digest = ?, updated_at = ? WHERE id = ?",
-                (digest, updated_at, isolation_id),
-            )
+    def save_confirmation(self, isolation_id: str, digest: str, *, updated_at: str) -> bool:
+        return self._update(
+            "UPDATE isolated_dirs SET confirmation_digest = ?, updated_at = ? "
+            "WHERE id = ? AND state = 'ready'",
+            (digest, updated_at, isolation_id),
+        )
 
     def mark_deleting(
-        self, isolation_id: str, *, phase: str, delete_oid: str, updated_at: str
-    ) -> None:
-        with self._write() as connection:
-            connection.execute(
-                "UPDATE isolated_dirs SET state = 'deleting', phase = ?, delete_oid = ?, "
-                "attention = NULL, updated_at = ? WHERE id = ?",
-                (phase, delete_oid, updated_at, isolation_id),
-            )
+        self,
+        isolation_id: str,
+        *,
+        phase: str,
+        delete_oid: str,
+        updated_at: str,
+        expected_state: IsolationState = "ready",
+    ) -> bool:
+        return self._update(
+            "UPDATE isolated_dirs SET state = 'deleting', phase = ?, delete_oid = ?, "
+            "attention = NULL, updated_at = ? WHERE id = ? AND state = ?",
+            (phase, delete_oid, updated_at, isolation_id, expected_state),
+        )
 
-    def update_phase(self, isolation_id: str, *, phase: str, updated_at: str) -> None:
-        with self._write() as connection:
-            connection.execute(
-                "UPDATE isolated_dirs SET phase = ?, updated_at = ? WHERE id = ?",
-                (phase, updated_at, isolation_id),
-            )
+    def resume_creating(self, isolation_id: str, *, phase: str, updated_at: str) -> bool:
+        """Put a needs_attention row back into creating so its rollback can be retried."""
+        return self._update(
+            "UPDATE isolated_dirs SET state = 'creating', phase = ?, attention = NULL, "
+            "updated_at = ? WHERE id = ? AND state = 'needs_attention'",
+            (phase, updated_at, isolation_id),
+        )
+
+    def update_phase(
+        self,
+        isolation_id: str,
+        *,
+        phase: str,
+        updated_at: str,
+        expected_state: IsolationState = "deleting",
+    ) -> bool:
+        return self._update(
+            "UPDATE isolated_dirs SET phase = ?, updated_at = ? WHERE id = ? AND state = ?",
+            (phase, updated_at, isolation_id, expected_state),
+        )
 
     def mark_attention(
-        self, isolation_id: str, *, phase: str, reason: str, updated_at: str
+        self,
+        isolation_id: str,
+        *,
+        expected_state: IsolationState,
+        phase: str,
+        reason: str,
+        updated_at: str,
     ) -> IsolatedRecord | None:
-        with self._write() as connection:
-            connection.execute(
-                "UPDATE isolated_dirs SET state = 'needs_attention', phase = ?, attention = ?, "
-                "confirmation_digest = NULL, updated_at = ? WHERE id = ?",
-                (phase, reason, updated_at, isolation_id),
-            )
+        self._update(
+            "UPDATE isolated_dirs SET state = 'needs_attention', phase = ?, attention = ?, "
+            "confirmation_digest = NULL, updated_at = ? WHERE id = ? AND state = ?",
+            (phase, reason, updated_at, isolation_id, expected_state),
+        )
         return self.get(isolation_id)
 
-    def delete(self, isolation_id: str) -> None:
-        with self._write() as connection:
-            connection.execute("DELETE FROM isolated_dirs WHERE id = ?", (isolation_id,))
+    def delete(self, isolation_id: str, *, expected_state: IsolationState | None = None) -> bool:
+        if expected_state is None:
+            return self._update("DELETE FROM isolated_dirs WHERE id = ?", (isolation_id,))
+        return self._update(
+            "DELETE FROM isolated_dirs WHERE id = ? AND state = ?",
+            (isolation_id, expected_state),
+        )

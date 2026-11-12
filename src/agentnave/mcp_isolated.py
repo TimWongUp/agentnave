@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver.context import Context
@@ -49,7 +51,7 @@ def start_isolation_payload(info: TaskIsolationInfo) -> TaskIsolationPayload:
     return payload
 
 
-def attach_unreleased_count(
+async def attach_unreleased_count(
     payload: TaskStartPayload,
     warnings: list[str],
     conversations: Conversations,
@@ -58,7 +60,7 @@ def attach_unreleased_count(
     if workspace_id is None:
         return
     try:
-        count = conversations.isolated.unreleased_count(workspace_id)
+        count = await asyncio.to_thread(conversations.isolated.unreleased_count, workspace_id)
     except (OSError, ValueError) as exc:
         warnings.append(f"Could not read unreleased isolated directory count: {exc}")
         return
@@ -76,19 +78,20 @@ def isolated_item_payload(item: IsolatedListItem) -> IsolatedDirItemPayload:
         "state": item.state,
         "in_use": item.in_use,
         "created_at": item.created_at,
+        "own_workspace": item.own_workspace,
     }
     if item.attention is not None:
         payload["attention"] = item.attention
     return payload
 
 
-def attach_handover_isolated_dirs(
+async def attach_handover_isolated_dirs(
     result: dict[str, Any],
     conversations: Conversations,
     workspace_id: str,
 ) -> None:
     try:
-        items = conversations.isolated.list_for_workspace(workspace_id)
+        items = await asyncio.to_thread(conversations.isolated.list_for_workspace, workspace_id)
     except (OSError, ValueError) as exc:
         result.setdefault("warnings", []).append(
             f"Could not read isolated directories for workspace {workspace_id}: {exc}"
@@ -121,7 +124,7 @@ def _release_payload(released: ReleaseResult) -> IsolatedDirsPayload:
 async def isolated_dirs(
     action: Annotated[
         Literal["list", "release"],
-        Field(description="list workspace worktrees or release one by id."),
+        Field(description="list worktrees or release one by id."),
     ],
     id: Annotated[  # noqa: A002 - public tool argument name
         str | None,
@@ -134,20 +137,32 @@ async def isolated_dirs(
             description="Snapshot token from confirmation_required; omit on first release or list.",
         ),
     ] = None,
+    cwd: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description="list only: absolute path in a repo; lists its worktrees from every "
+            "workspace, own_workspace marks yours. Omit for this workspace only.",
+        ),
+    ] = None,
     manager_session_id: ManagerSessionId = None,
     *,
     ctx: Context[Runtime],
 ) -> IsolatedDirsPayload:
-    """List or delete isolated Git worktrees owned by this manager_session_id workspace (no paths).
-    release permanently deletes the worktree, including all Git-ignored files; if uncommitted
-    source files or unmerged commits exist, it first returns inspection results and a confirmation
-    token without deleting.
+    """List or delete isolated Git worktrees (no paths accepted). release permanently deletes
+    the worktree, including all Git-ignored files; with uncommitted source files or unmerged
+    commits, or when the worktree belongs to another workspace, it first returns inspection
+    results and a confirmation token without deleting; call again with the token.
     """
     if action == "list":
         if id is not None or confirmation is not None:
             raise ToolError("list does not accept id or confirmation. Correct and retry.")
     elif id is None:
         raise ToolError("release requires id. Correct and retry.")
+    elif cwd is not None:
+        raise ToolError("release does not accept cwd. Correct and retry.")
+    if cwd is not None and not Path(cwd).is_absolute():
+        raise ToolError("cwd must be an absolute path. Correct and retry.")
     conversations = _conversations(ctx)
     try:
         workspace_id = conversations.workspace_id(manager_session_id)
@@ -157,10 +172,17 @@ async def isolated_dirs(
         raise ToolError("isolated_dirs needs manager_session_id. " + session_id_hint(runtime.HOST))
     try:
         if action == "list":
-            items = conversations.isolated.list_for_workspace(workspace_id)
+            items = (
+                await asyncio.to_thread(conversations.isolated.list_for_workspace, workspace_id)
+                if cwd is None
+                else await asyncio.to_thread(
+                    conversations.isolated.list_for_repo, Path(cwd), workspace_id
+                )
+            )
             return {"items": [isolated_item_payload(item) for item in items]}
         assert id is not None
-        released = conversations.isolated.release(
+        released = await asyncio.to_thread(
+            conversations.isolated.release,
             id,
             workspace_id=workspace_id,
             confirmation=confirmation,
