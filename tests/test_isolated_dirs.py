@@ -1025,6 +1025,8 @@ def test_a_rewritten_git_link_stops_git_from_running_in_the_directory(tmp_path: 
     dirs = IsolatedDirs(tmp_path / "data")
     created = dirs.create(repo, workspace_id="ws-1")
     created.lease.release()
+    # Git for Windows marks this file hidden, which refuses an in-place rewrite.
+    (created.worktree_path / ".git").unlink()
     (created.worktree_path / ".git").write_text(
         f"gitdir: {(elsewhere / '.git').as_posix()}\n", encoding="utf-8"
     )
