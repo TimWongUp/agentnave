@@ -335,39 +335,16 @@ function setFace(rec, m, ctx) {
 // A long run's tail can sit unchanged for minutes: say what the CLI is doing and how long the
 // reply has been quiet, so a thinking CLI does not look stuck.
 const STALE_TAIL_MS = 60_000;
-// Codex names its built-in tools by item type; other CLIs report readable tool names.
-const TOOL_WORDS = {
-  command_execution: L("正在运行命令", "Running command"),
-  file_change: L("正在修改文件", "Editing files"),
-  web_search: L("正在搜索网页", "Searching web"),
-  read_file: L("正在读取文件", "Reading file"),
-};
-// Antigravity's own tool names, as its transcript reports them.
-for (const [names, word] of [
-  [["run_command"], TOOL_WORDS.command_execution],
-  [["view_file", "list_dir", "grep_search", "find_by_name"], TOOL_WORDS.read_file],
-  [["edit_file", "write_file", "write_to_file", "replace_file_content", "multi_replace_file_content"], TOOL_WORDS.file_change],
-  [["search_web", "read_url_content"], TOOL_WORDS.web_search],
-]) for (const name of names) TOOL_WORDS[name] = word;
 function activityDuration(start) {
   const at = Date.parse(start);
   if (!Number.isFinite(at)) return "";
   const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
-function toolWord(tool) {
-  return TOOL_WORDS[tool] || L(`正在使用 ${tool || "工具"}`, `Using ${tool || "tool"}`);
-}
 function typingStatus(m) {
+  // The state and tool names stay as the CLI reports them, in every interface language.
   const d = m.doing || "";
-  const tool = d.slice(5);
-  const doing = d === "thinking"
-    ? L("思考中", "Thinking")
-    : d === "retrying"
-      ? L("重试中", "Retrying")
-      : d.startsWith("tool:")
-        ? toolWord(tool)
-        : "";
+  const doing = d === "thinking" ? "Thinking" : d === "retrying" ? "Retrying" : d.startsWith("tool:") ? d.slice(5) : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   const duration = doing && m.doing_since ? activityDuration(m.doing_since) : "";
   return [doing, duration, quiet ? L(`上次输出 ${relTime(m.output_at)}`, `Last output ${relTime(m.output_at)}`) : ""].filter(Boolean).join(" · ");
