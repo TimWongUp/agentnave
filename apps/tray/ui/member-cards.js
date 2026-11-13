@@ -155,7 +155,7 @@
   const INTERACTIVE = {
     claude: {
       key: "claude_interactive",
-      tip: () => L("用终端界面驱动 Claude Code，代替 -p 以省订阅额度。子任务会出现在 Claude 的 /resume 列表和历史记录里，不想留这些痕迹就关掉。", "Drives Claude Code through its terminal UI instead of -p to save subscription quota. Subtasks then appear in Claude’s /resume list and history; turn this off if you don’t want those traces."),
+      tip: () => L("用终端界面驱动 Claude Code，代替 -p。子任务会出现在 Claude 的 /resume 列表和历史记录里，不想留这些痕迹就关掉。", "Drives Claude Code through its terminal UI instead of -p. Subtasks then appear in Claude’s /resume list and history; turn this off if you don’t want those traces."),
     },
     antigravity: {
       key: "antigravity_interactive",
@@ -165,7 +165,7 @@
 
   function renderInteractive(provider) {
     const runtime = INTERACTIVE[provider];
-    if (!runtime || AN.shellOS?.() === "windows") return null;
+    if (!runtime || (provider === "antigravity" && AN.shellOS?.() === "windows")) return null;
     return el("div", { className: "member-row member-runtime" },
       el("label", { className: "member-interactive" },
         el("input", {

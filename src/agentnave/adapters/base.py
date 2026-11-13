@@ -76,6 +76,9 @@ class PreparedCommand:
     session_id: str | None = None
     keep_stdin_open: bool = False
     unset_env: tuple[str, ...] = ()
+    # Create this private directory only when the invocation starts; its name is exposed to the
+    # helper through this environment variable and removed after the process tree stops.
+    temp_dir_env: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

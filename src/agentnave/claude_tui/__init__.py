@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import sys
 import tempfile
@@ -327,17 +328,27 @@ def run_attempt(
 ) -> None:
     terminal: Terminal | None = None
     turn.mode_blocked = False
-    with tempfile.TemporaryDirectory(prefix="agentnave-claude-") as tmp:
-        directory = Path(tmp)
+    directory = Path(
+        tempfile.mkdtemp(prefix="agentnave-claude-", dir=os.environ.get("AGENTNAVE_CLAUDE_TMP"))
+    )
+    try:
         args = [*args, "--settings", str(write_settings(directory, args, check_mode))]
-        try:
+        if sys.platform == "win32":
+            from agentnave.claude_tui.windows_terminal import WindowsTerminal
+
+            terminal = cast(Terminal, WindowsTerminal(executable, args))
+        else:
             terminal = Terminal(executable, args)
-            if await_ready(terminal, turn):
-                await_turn(terminal, turn, transcript, directory, prompt)
-            read_hooks(directory, turn)
-        finally:
+        if await_ready(terminal, turn):
+            await_turn(terminal, turn, transcript, directory, prompt)
+        read_hooks(directory, turn)
+    finally:
+        try:
             if terminal is not None:
                 terminal.close()
+        finally:
+            # Best effort: a file still held open on Windows must not turn the turn into a failure.
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 def run_main(
