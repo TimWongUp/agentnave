@@ -166,10 +166,13 @@ def _filter_disable_args(names: Sequence[str]) -> list[str]:
 
     Command-line options are applied after GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT from the
     environment, so an inherited `filter.<name>.process` cannot override them. An empty command
-    means no filtering; required=false keeps git from failing on that.
+    means no filtering; required=false keeps git from failing on that. Git splits `-c` at the
+    first `=`, so a driver name holding one cannot be neutralized this way and is refused.
     """
     args: list[str] = []
     for name in names:
+        if "=" in name:
+            raise IsolationError(f"Unsupported filter driver name: {name!r}")
         for prop, value in (*((p, "") for p in _FILTER_PROPS_EMPTY), ("required", "false")):
             args.extend(["-c", f"filter.{name}.{prop}={value}"])
     return args
@@ -215,7 +218,18 @@ def run_git(
         cmd.extend(_filter_disable_args(filter_driver_names(cwd)))
     cmd.extend(args)
     env = os.environ.copy()
-    for name in ("GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_ASKPASS"):
+    # Also drop variables that point git at another config, repository, index or tree than
+    # cwd: GIT_CONFIG would hide the repository's filters from filter_driver_names only.
+    for name in (
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "GIT_ASKPASS",
+        "GIT_CONFIG",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+    ):
         env.pop(name, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
@@ -619,6 +633,8 @@ def add_worktree_locked(
         cwd=main_root,
         extra_env=_CHECKOUT_ENV,
     )
+    if is_link(worktree_path) or not worktree_path.is_dir():
+        raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
     check_out(worktree_path, base_oid)
     if is_link(worktree_path) or not worktree_path.is_dir():
         raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")

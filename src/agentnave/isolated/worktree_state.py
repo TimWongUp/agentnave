@@ -99,12 +99,17 @@ def _ignored_nested_repositories(wt_path: Path) -> set[str]:
         if not item.endswith(b"/"):
             continue
         for top, dirs, names in os.walk(wt_path / decode_git_path(item), onerror=unreadable):
-            if ".git" in names or ".git" in dirs:
+            if ".git" in names or ".git" in dirs or _bare_repository(names, dirs):
                 found.add(Path(top).relative_to(wt_path).as_posix())
                 dirs.clear()
             else:
                 dirs[:] = [d for d in dirs if not (Path(top) / d).is_symlink()]
     return found
+
+
+def _bare_repository(names: list[str], dirs: list[str]) -> bool:
+    """A bare repository has no .git entry, only its own HEAD, objects and refs."""
+    return "HEAD" in names and "objects" in dirs and "refs" in dirs
 
 
 def tree_fingerprint(root: Path) -> bytes:

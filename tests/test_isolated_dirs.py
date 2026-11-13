@@ -1155,6 +1155,42 @@ def test_filters_inherited_through_git_config_parameters_do_not_override_neutral
     assert not marker.exists()
 
 
+def test_a_filter_name_that_would_rewrite_its_own_neutralizing_option_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.txt", "*.txt filter=pwn\n")
+    marker = tmp_path / "ran"
+    script = _script(tmp_path / "evil.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    # `-c filter.pwn.smudge=<script>.required=false` would set pwn's smudge command.
+    _git(repo, "config", f"filter.pwn.smudge={script}.clean", "")
+    with pytest.raises(IsolationError, match="filter driver name"):
+        run_git(["worktree", "add", "-b", "other", "--", str(tmp_path / "wt"), "HEAD"], cwd=repo)
+    assert not marker.exists()
+
+
+def test_git_config_from_the_environment_cannot_hide_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.enc", "*.enc filter=lfs\n")
+    marker = tmp_path / "ran"
+    script = _script(tmp_path / "filter.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    _git(repo, "config", "filter.lfs.smudge", script)
+    monkeypatch.setenv("GIT_CONFIG", os.devnull)
+    run_git(["worktree", "add", "-b", "other", "--", str(tmp_path / "wt"), "HEAD"], cwd=repo)
+    assert not marker.exists()
+
+
+def test_bare_repository_in_an_ignored_directory_forces_confirmation(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / "ignored_dir").mkdir()
+    _git(created.worktree_path / "ignored_dir", "init", "--bare", "bare.git")
+    assert dirs.summarize_changes(created.id).nested_repos == ("ignored_dir/bare.git",)
+    dirs.close()
+
+
 def test_nested_repository_in_an_ignored_directory_forces_confirmation(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     dirs = IsolatedDirs(tmp_path / "data")
