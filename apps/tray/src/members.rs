@@ -313,7 +313,8 @@ pub(crate) fn validate_fallbacks(fields: &Map<String, Value>, what: &str) -> Res
 }
 
 /// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "decision" | "custom",
-/// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "enabled_roles": [group],
+/// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode},
+/// "host_cli": {row: "subagent" | "launch" | "skip"} (a row left out is "subagent"), "enabled_roles": [group],
 /// group: {"easy" | "hard": seat}, "image_generation": seat,
 /// "meeting": {"count": 2..=6, "seats"?: [seat | null]}}`, with one group per catalog entry.
 /// A turned-off group keeps its seats. Interface Workers, the image seat and meeting defaults have
@@ -329,6 +330,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "custom",
         "apps",
         "effective_apps",
+        "host_cli",
         "enabled_roles",
         "image_generation",
         "meeting",
@@ -365,6 +367,13 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             .is_some_and(|text| !text.trim().is_empty())
     {
         return Err("自定义编排不能为空".into());
+    }
+    if let Some(choices) = top.get("host_cli")
+        && !object(choices, "host_cli")?
+            .values()
+            .all(|choice| matches!(choice.as_str(), Some("subagent" | "launch" | "skip")))
+    {
+        return Err("host_cli 的值必须为 subagent、launch 或 skip".into());
     }
     crate::orchestration_roles::enabled_groups(document)?;
     for role in groups {

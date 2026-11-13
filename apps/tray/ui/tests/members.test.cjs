@@ -93,6 +93,10 @@ test("cooldown clear removes only the chosen CLI from the displayed list", async
   await app.run('$("provider-health").children[0].children[1].listeners.click()');
   assert.deepEqual(Object.keys(providers.claude.models), ["b"]);
   assert.equal(app.run('$("provider-health").children.length'), 1);
+  providers.claude.groups = { "Gemini Models": { code: "quota", until, reset: until } };
+  await app.run("apiGetMembers()");
+  assert.equal(app.run('$("provider-health").children.length'), 2);
+  assert.match(app.run('$("provider-health").children[1].children[0].children[0]'), /claude · Gemini Models · quota/);
 });
 
 test("only a tier-governed option whose default loosens permissions is counted", () => {
@@ -181,6 +185,34 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   app.run('delete currentDoc.modes.discussion.codex; renderOrchestration()');
   assert.equal(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled), false,
     "removing both scenes disables the CLI despite its historical model settings");
+});
+
+test("a boss's own-CLI choice is saved by row, left out when default and hidden without seats", async () => {
+  let saved = { version: 1, preset: "split" };
+  const bosses = [{ keys: ["codex", "other"], labels: ["Codex"], ids: [], mark: "codex" }];
+  const app = advancedEditor(async (url, options) => {
+    const body = options?.body && JSON.parse(options.body);
+    if (url === "/app/orchestration" && !body) {
+      return { ok: true, json: async () => ({ document: saved, error: null, bosses, presets: { split: "rule" }, files: [] }) };
+    }
+    if (url === "/app/orchestration") saved = body;
+    return { ok: true, json: async () => ({ saved: true, files: [], bosses }) };
+  });
+  await app.run("loadOrchestration()");
+  const box = () => app.run('$("orchestration-host-cli")');
+  const row = () => box().children[1];
+  const pick = (value) => row().children[1].listeners.change({ target: { value } });
+  assert.equal(box().hidden, false);
+  assert.equal(row().children[2].children[0], "");
+  pick("launch");
+  assert.equal(JSON.stringify(app.run("orchestrationWanted().host_cli")), JSON.stringify({ codex: "launch", other: "launch" }));
+  assert.equal(row().children[2].children[0], "与 boss 共用额度");
+  await app.run("saveOrchestration()");
+  assert.equal(JSON.stringify(saved.host_cli), JSON.stringify({ codex: "launch", other: "launch" }));
+  pick("subagent");
+  assert.equal(app.run('"host_cli" in orchestrationWanted()'), false);
+  app.run('setBossMode(orchestration.bosses[0], "meetings")');
+  assert.equal(box().hidden, true);
 });
 
 function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_roles.json`, "utf8"))) {

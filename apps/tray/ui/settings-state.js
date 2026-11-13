@@ -147,17 +147,18 @@
       if (group?.code) rows.push([provider, null, group]); // old version 1 record
       if (group?.default) rows.push([provider, null, group.default]);
       for (const [model, item] of Object.entries(group?.models || {})) rows.push([provider, model, item]);
+      for (const [quotaGroup, item] of Object.entries(group?.groups || {})) rows.push([provider, null, item, quotaGroup]);
     }
     const active = rows.filter(([, , item]) => {
       if (item?.code === "auth" && item.until == null) return true;
       const end = Date.parse(item?.until);
       return ["auth", "billing", "quota"].includes(item?.code) && end > Date.now() && end <= Date.now() + 8 * 86400000;
     });
-    box.replaceChildren(...active.map(([provider, model, item]) => el("div", { className: "setting-row" },
-      el("span", {}, [provider, model, item.code, item.until ? new Date(item.until).toLocaleString() : L("直到解除", "Until cleared")].filter(Boolean).join(" · ")),
+    box.replaceChildren(...active.map(([provider, model, item, quotaGroup]) => el("div", { className: "setting-row" },
+      el("span", {}, [provider, model || quotaGroup, item.code, item.until ? new Date(item.until).toLocaleString() : L("直到解除", "Until cleared")].filter(Boolean).join(" · ")),
       el("button", { type: "button", onClick: async () => {
         try {
-          const res = await fetch("/app/provider-health/clear", { method: "POST", headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" }, body: JSON.stringify({ provider, model }) });
+          const res = await fetch("/app/provider-health/clear", { method: "POST", headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" }, body: JSON.stringify({ provider, model, group: quotaGroup }) });
           const data = await res.json();
           if (!res.ok || data.error) throw new Error(data.error || res.status);
           await apiGetMembers();

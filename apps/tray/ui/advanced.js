@@ -263,6 +263,49 @@
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
+  // What a boss does with a task for its own kind of CLI; "subagent" is the default and stays out of the file.
+  const HOST_CLI_CHOICES = [
+    ["subagent", AN.L("交给 boss 的子代理", "Boss's own subagent")],
+    ["launch", AN.L("由 AgentNave 启动", "Started by AgentNave")],
+    ["skip", AN.L("跳过，用其他 CLI", "Skip, use other CLIs")],
+  ];
+  const hostCliOf = (doc, boss) => boss.keys.map((key) => doc.host_cli?.[key]).find(Boolean) ?? "subagent";
+
+  function setHostCli(boss, choice) {
+    const shown = orchestrationShown();
+    const hostCli = { ...shown.host_cli };
+    for (const key of boss.keys) {
+      if (choice === "subagent") delete hostCli[key];
+      else hostCli[key] = choice;
+    }
+    const { host_cli: _, ...rest } = shown;
+    orchestrationDraft = Object.keys(hostCli).length ? { ...rest, host_cli: hostCli } : rest;
+    renderOrchestration();
+    advancedEdited();
+  }
+
+  // One row per boss that dispatches through the seats; off and meetings-only never start a CLI.
+  function renderHostCli() {
+    const box = $("orchestration-host-cli");
+    const shown = orchestrationShown();
+    const bosses = orchestration && !orchestration.error
+      ? orchestration.bosses.filter((boss) => usesSeats(bossMode(shown, boss))) : [];
+    box.hidden = !bosses.length;
+    if (box.hidden) return box.replaceChildren();
+    const focusKey = document.activeElement?.dataset?.focusKey;
+    const title = AN.L("自己的 CLI", "Its own CLI");
+    box.replaceChildren(el("h3", { className: "orchestration-apply" }, title),
+      ...bosses.map((boss) => {
+        const name = boss.labels.join(AN.L("、", ", "));
+        const choice = hostCliOf(shown, boss);
+        return el("div", { className: "host-cli-row" },
+          el("div", { className: "review-role" }, name),
+          reviewSelect(`host-cli/${boss.keys[0]}`, `${name} · ${title}`, choice, HOST_CLI_CHOICES, (value) => setHostCli(boss, value)),
+          el("small", { className: "host-cli-note" }, choice === "launch" ? AN.L("与 boss 共用额度", "Shares the boss's quota") : ""));
+      }));
+    if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+  }
+
   function setOrchestrationSeat(role, difficulty, seat) {
     const shown = orchestrationShown();
     let value = seat;
@@ -485,6 +528,7 @@
     }
     $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
     renderBossChips();
+    renderHostCli();
     const text = orchestrationPresetText(preset);
     $("orchestration-text").hidden = !text;
     $("orchestration-text").textContent = text || "";

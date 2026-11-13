@@ -508,6 +508,32 @@ fn the_decision_mode_and_its_options_are_checked_like_the_other_modes() {
 }
 
 #[test]
+fn host_cli_choices_round_trip_and_refuse_unknown_values() {
+    let root = tempfile::tempdir().unwrap();
+    let document =
+        json!({"version": 1, "preset": "split", "host_cli": {"codex": "launch", "grok": "skip"}});
+    save_orchestration(root.path(), &document).unwrap();
+    assert_eq!(read_orchestration(root.path()).unwrap(), document);
+    // Without the key the file keeps its old shape.
+    let plain = json!({"version": 1, "preset": "split"});
+    save_orchestration(root.path(), &plain).unwrap();
+    assert!(
+        read_orchestration(root.path())
+            .unwrap()
+            .get("host_cli")
+            .is_none()
+    );
+    for bad in [
+        json!({"codex": "other"}),
+        json!({"codex": true}),
+        json!(["skip"]),
+    ] {
+        let document = json!({"version": 1, "preset": "split", "host_cli": bad});
+        assert!(validate_orchestration(&document).is_err(), "{document}");
+    }
+}
+
+#[test]
 fn app_file_samples_agree_with_the_server() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/app-files");
     let mut checked = 0;

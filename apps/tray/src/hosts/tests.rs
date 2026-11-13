@@ -2406,6 +2406,7 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
     assert!(!directory.path().join("orchestration.json").exists());
     // Grok reads Claude's rules, so both run on Grok's mode; Codex follows the default.
     let document = json!({"version": 1, "preset": "off", "apps": {"grok": "split"},
+        "host_cli": {"grok": "launch"},
         "effective_apps": {"codex": "parallel", "gone": "custom"}});
     let body = serde_json::to_vec(&document).unwrap();
     let saved = reader.request("POST", "/app/orchestration", Some("1"), &body);
@@ -2416,6 +2417,7 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
         read["document"]["effective_apps"],
         json!({"claude": "split", "grok": "split", "codex": "off"})
     );
+    assert_eq!(read["document"]["host_cli"], json!({"grok": "launch"}));
     // A row that leaves takes its mode with it.
     let removed = reader.request("POST", "/app/hosts/remove", Some("1"), br#"{"id":"codex"}"#);
     assert_eq!(removed.status, 200);
