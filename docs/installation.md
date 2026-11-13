@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.9.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.10.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.9.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.10.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -611,48 +611,44 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.9.0
+### Upgrading to v1.10.0
 
-Update the App; it installs the paired service and refreshed Skills at startup, and begins recording
-installed tool-name manifests so future upgrades that add or rename tools can prompt short-lived
-hosts (such as WorkBuddy) to restart. Reconnect or reopen host copies as the boss card asks so
-existing sessions pick up thread-model continuation, Claude Code's narrowed long-wait scope,
-background MCP call tracking for Claude Code members, and the new `meetings` orchestration preset
-(older service processes ignore the new optional `meeting` default-seats field, but do not recognize
-`preset: "meetings"` and treat `orchestration.json` as invalid until reconnected). For a manual
-installation, reinstall the runtime and Skills from `@v1.9.0`—replacing the full
-`agentnave-manager` directory so `references/headless.md` and `references/models.md` are included—and
-reconnect MCP. On headless hosts without the App, follow [linux-headless.md](linux-headless.md) and
-bundled `orchestration_rules.json` when writing `orchestration.json` (`"version": 1` is required;
-omit `apps` and `effective_apps`) or host instructions.
+Update the App; it installs the paired service and refreshed Skills at startup. Reconnect or reopen
+host copies as the boss card asks so existing sessions pick up the narrower default `list` scope,
+service-managed isolated directories, the `decision` orchestration preset and the revised quota
+cooldown. For a manual installation, reinstall the runtime and Skills from `@v1.10.0`—replacing
+the full `agentnave-manager` directory so the new `references/decision.md` is included—and
+reconnect MCP.
 
-Continuing a task by `session_id` without a seat model or explicit `model` now reuses the model and
-effort from that thread's previous task in the same boss's history (`model (session_id history)`)
-instead of the current App or CLI default; changing default models in the App affects new tasks
-only unless `model` is passed explicitly. `wait_seconds=1500` is now exposed and accepted only in
-Claude Code terminal interactive sessions (`CLAUDE_CODE_ENTRYPOINT=cli`); Claude Desktop, VS Code,
-and `-p`/SDK sessions use `0` and `270` so foreground turns do not block silently for 25 minutes
-(existing `timeout: 1620000` host entries need no change).
+`list` now returns only this chat's workspace unless `scope="all"` is passed; a call without
+`manager_session_id` and without a host-injected identity is rejected. `scope="all"` groups by
+workspace newest first, counts `limit` in workspaces (default 10, at most 50) and takes `offset` to
+page; pass a `workspace_id` from that list to read one workspace's conversations in the usual
+format. Isolation is now created and registered by the service under `.agentnave-worktrees/` in the
+dispatching repository and recorded in `worktrees.db` in the data root; worktrees created by hand
+before this release stay outside that registry, are not shown in the App, and are not cleaned by
+the service. Releasing an isolated directory discards Git-ignored files and requires a confirmation
+token when it holds uncommitted source or unmerged commits.
 
-Settings → Advanced → Orchestration adds a "Meetings only" (`meetings`) preset between Off and Split
-that authorizes the boss to call meetings on real trade-offs without enabling task seats or changing
-who performs tasks, plus shared optional default meeting seats (2–6 seats, default 3) for Meetings
-only, Split, and Parallel. Settings → Employees removes the 20-model cap per CLI and reads Codex
-models from `model_catalog_json` in `config.toml` before falling back to `models_cache.json`.
-Clearing inactive workspaces in the App now skips unclaimed (`pending`) handovers.
+The `decision` preset needs a Gemini key (`decision-keys.json` in the data root) and sends the
+dispatch prompt to Gemini; free-tier input may be used to improve the product, and Google's
+supported regions exclude mainland China and Hong Kong. A host connection still served by the
+previous service does not recognize `preset: "decision"` and treats `orchestration.json` as
+invalid, so reconnect it before or after switching. The menu bar panel's "⋯" menu is gone—Open,
+Settings and Quit now sit in the bottom bar—and Settings has a left sidebar, with orchestration
+under Settings → Orchestration instead of Settings → Advanced → Orchestration. The new "Pause
+characters when unfocused" switch in Settings → General is on by default, matching the previous
+behavior; minimizing always pauses. On Windows, Claude Code now runs interactively by default; turn
+off "Run interactively" on the member card to keep using `-p`.
 
-On Windows, video character packs now use VP9-with-alpha `.webm` clips
-(`agentnave-video-webm-{272,544}.tar.gz`, about `105.9 MB` / `308.4 MB`). Previously downloaded
-`.mov` directories on Windows are no longer treated as installed and the display mode falls back
-to CSS characters; re-download the WebM pack under Settings → Appearance, then select the video
-display mode again on the same page (the download replaces the old `.mov` files). If you do not
-re-download, the old `.mov` files stay under `video-packs` in the data directory and the App offers
-no delete for them; remove them by hand to reclaim space. macOS keeps existing `.mov` packs
-unchanged, though any unfinished partial download from an older release will restart once under the
-format-specific `.part` filename.
+Quota failures without a reset time now cool the model for one hour instead of not cooling at all
+(the CLI when no model was requested), after asking the CLI's own usage query for a reset time when
+one is available; clear a record from the tray. In a Claude Code terminal interactive session,
+`wait` without `wait_seconds` now waits 1500 seconds; an explicit 270 still applies, and other
+entrypoints are unchanged.
 
-See [v1.9.0 release notes](releases/v1.9.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.8.0.md).
+See [v1.10.0 release notes](releases/v1.10.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.9.0.md).
 
 ## Uninstall
 
