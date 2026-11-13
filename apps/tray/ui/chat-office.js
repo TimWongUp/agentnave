@@ -105,17 +105,23 @@ function renderHead(c, n) {
       title: h("h1"),
       sub: h("span.fh-sub"),
       run: h("span.pill.tone-run"),
+      iso: h("button.pill.act", { type: "button" }),
     };
+    state.head.iso.addEventListener("click", () => openScope({ kind: "isolated" }, state.head.iso));
     el.head.replaceChildren(
       back,
       state.head.title,
       state.head.sub,
-      h("span.fh-sum", {}, state.head.run),
+      h("span.fh-sum", {}, state.head.iso, state.head.run),
     );
   }
   const t = state.head;
   setText(t.title, shownName(c));
   setText(t.sub, `${L(`boss 在 ${c.label} 里`, `boss in ${c.label}`)}${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
+  const dirs = c.isolated?.length || 0;
+  t.iso.hidden = !dirs;
+  setClass(t.iso, "pill act tone-idle");
+  setText(t.iso, isolatedCount(dirs));
   t.run.hidden = !n.running && !n.review;
   setText(t.run, n.running ? L(`${n.running} 个在工作`, `${n.running} working`) : L("会议进行中", "In meeting"));
 }

@@ -11,6 +11,7 @@ from agentnave.mcp_history import (
     list_members,
     read_conversation,
 )
+from agentnave.mcp_isolated import isolated_dirs
 from agentnave.mcp_prompts import answer_prompt
 from agentnave.mcp_rounds import (
     _WORKSPACE_ID,
@@ -71,6 +72,7 @@ __all__ = [
     "_workspace_label",
     "clear_provider_cooldown",
     "handover",
+    "isolated_dirs",
     "list_all",
     "list_members",
     "read_conversation",
@@ -211,6 +213,13 @@ mcp.tool(
         read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )(read_conversation)
+
+mcp.tool(
+    title="List or release isolated worktrees",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+    ),
+)(isolated_dirs)
 
 
 def main() -> None:

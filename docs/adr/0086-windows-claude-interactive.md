@@ -1,4 +1,4 @@
-# ADR-0084：Windows Claude Code 使用交互模式
+# ADR-0086：Windows Claude Code 使用交互模式
 
 - 状态：已接受
 - 日期：2026-11-12

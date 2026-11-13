@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-04
 - 启动信任与外部导入确认修订见 [ADR-0078](0078-startup-confirmations.md)。
-- Windows 交互运行的修订见 [ADR-0084](0084-windows-claude-interactive.md)。
+- Windows 交互运行的修订见 [ADR-0086](0086-windows-claude-interactive.md)。
 - 修订 [ADR-0019](0019-no-running-messages.md)：Claude 不再只有一次性 print 调用；交互模式会让会话出现在 Claude Code 自带的历史与 `/resume` 列表里。
 - 运行中的原生弹框由 boss 代答，见 [ADR-0057](0057-boss-answers-native-prompts.md)。
 

@@ -67,6 +67,7 @@ class InvocationRequest:
     session_id: str | None = None
     provider_options: Mapping[str, ProviderOption] = field(default_factory=lambda: {})
     read_only: bool = False  # Adds the read-only instruction; native permissions stay as they are.
+    extra_instructions: str | None = None  # Appended after the shared instructions.
 
     def __post_init__(self) -> None:
         provider = self.provider.strip().lower()
@@ -136,6 +137,7 @@ class InvocationListing:
     session_id: str | None = None
     result_read: bool = False
     error: InvocationError | None = None
+    read_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)

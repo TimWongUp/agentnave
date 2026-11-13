@@ -152,7 +152,7 @@ function verbOf(m, ctx) {
   const to = t?.kind === "room" ? targets(m, ctx) : [];
   if (m.kind === "forward") return [L("转发", "Forward"), to];
   if (isBoss(m)) {
-    if (t?.kind !== "room") return [L("任务", "Task"), to];
+    if (t?.kind !== "room") return [L("任务", "Task"), to, m.isolation_branch ? L(`隔离目录 · ${m.isolation_branch}`, `Isolated dir · ${m.isolation_branch}`) : ""];
     const round = m.round > 0 ? L(`第 ${m.round} 轮`, `Round ${m.round}`) : "";
     const where = state.drawer.kind === "room" || !room ? round : L(`「${room.title}」${round}`, `"${room.title}"${round ? ` · ${round}` : ""}`);
     return [m.round > 0 ? L("议题", "Topic") : L("发言", "Note"), to, where];
@@ -284,11 +284,12 @@ function createMessage(m) {
   rec.md = h("div.md");
   rec.dots = h("span.typing", {}, h("i"), h("i"), h("i"));
   rec.tail = h("div.tail");
+  rec.trail = h("div.tool-trail", { hidden: true });
   rec.status = h("div.typing-status", { hidden: true });
   rec.bub = h(
     "div.bub",
     {},
-    m.kind === "typing" ? [rec.tail, rec.status, rec.dots] : [rec.fwd, rec.to, rec.md],
+    m.kind === "typing" ? [rec.tail, rec.trail, rec.status, rec.dots] : [rec.fwd, rec.to, rec.md],
   );
   rec.metaFaces = h("span.tp-faces");
   rec.metaText = h("span");
@@ -334,20 +335,6 @@ function setFace(rec, m, ctx) {
 // A long run's tail can sit unchanged for minutes: say what the CLI is doing and how long the
 // reply has been quiet, so a thinking CLI does not look stuck.
 const STALE_TAIL_MS = 60_000;
-// Codex names its built-in tools by item type; other CLIs report readable tool names.
-const TOOL_WORDS = {
-  command_execution: L("正在运行命令", "Running command"),
-  file_change: L("正在修改文件", "Editing files"),
-  web_search: L("正在搜索网页", "Searching web"),
-  read_file: L("正在读取文件", "Reading file"),
-};
-// Antigravity's own tool names, as its transcript reports them.
-for (const [names, word] of [
-  [["run_command"], TOOL_WORDS.command_execution],
-  [["view_file", "list_dir", "grep_search", "find_by_name"], TOOL_WORDS.read_file],
-  [["edit_file", "write_file", "write_to_file", "replace_file_content", "multi_replace_file_content"], TOOL_WORDS.file_change],
-  [["search_web", "read_url_content"], TOOL_WORDS.web_search],
-]) for (const name of names) TOOL_WORDS[name] = word;
 function activityDuration(start) {
   const at = Date.parse(start);
   if (!Number.isFinite(at)) return "";
@@ -355,14 +342,14 @@ function activityDuration(start) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
 }
 function typingStatus(m) {
+  // Tool names stay as the CLI reports them; only the app's own words follow the language.
   const d = m.doing || "";
-  const tool = d.slice(5);
   const doing = d === "thinking"
     ? L("思考中", "Thinking")
     : d === "retrying"
       ? L("重试中", "Retrying")
       : d.startsWith("tool:")
-        ? TOOL_WORDS[tool] || L(`正在使用 ${tool || "工具"}`, `Using ${tool || "tool"}`)
+        ? d.slice(5) || L("使用工具中", "Using a tool")
         : "";
   const quiet = m.text && m.output_at && Date.now() - Date.parse(m.output_at) >= STALE_TAIL_MS;
   const duration = doing && m.doing_since ? activityDuration(m.doing_since) : "";
@@ -465,6 +452,16 @@ function updateMessage(rec, m, ctx, id) {
     const status = typingStatus(m);
     setText(rec.status, status);
     rec.status.hidden = !status;
+    // Before any reply text the latest tool calls show what the CLI is doing, newest last,
+    // under the names the CLI itself reports.
+    const trail = m.text ? [] : (Array.isArray(m.tools) ? m.tools : []).slice(-5).map(String);
+    const trailKey = JSON.stringify(trail);
+    if (rec.trailKey !== trailKey) {
+      rec.trailKey = trailKey;
+      rec.trail.replaceChildren(...trail.map((line) => h("div", {}, line)));
+      rec.trail.hidden = !trail.length;
+    }
+    rec.dots.hidden = !!m.text || !!trail.length;
   }
   const summary = peer && m.kind !== "typing" && !state.expanded.has(id);
   // A handover note is long: it opens on request, below the one line saying who took over.
@@ -476,7 +473,6 @@ function updateMessage(rec, m, ctx, id) {
     rec.text = body;
     if (m.kind === "typing") {
       setText(rec.tail, m.text);
-      rec.dots.hidden = !!m.text;
       rec.tail.hidden = !m.text;
     } else if (m.kind === "handover") {
       setClass(rec.md, "md handover-text");

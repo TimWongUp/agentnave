@@ -46,28 +46,13 @@ fn switched_section(document: &Value, switch_name: &str) -> &'static str {
 
 fn format_meeting_seat(seat: &Value) -> Option<String> {
     let md = &catalog()["meeting_defaults"];
-    let seat = seat.as_object()?;
     let provider = seat.get("provider")?.as_str()?;
     let name = md["provider_names"][provider].as_str()?;
-    let model = seat.get("model")?.as_str()?.trim();
-    if model.is_empty() {
-        return None;
-    }
-    let effort = seat
-        .get("effort")
-        .and_then(Value::as_str)
-        .filter(|effort| !effort.is_empty());
-    Some(match effort {
-        Some(effort) => str_at(md, "seat_with_effort")
+    Some(
+        str_at(md, "seat_provider")
             .replace("{name}", name)
-            .replace("{provider}", provider)
-            .replace("{model}", model)
-            .replace("{effort}", effort),
-        None => str_at(md, "seat")
-            .replace("{name}", name)
-            .replace("{provider}", provider)
-            .replace("{model}", model),
-    })
+            .replace("{provider}", provider),
+    )
 }
 
 pub(super) fn meeting_line(document: &Value) -> Option<String> {
@@ -167,7 +152,7 @@ pub(super) fn presets_payload(document: &Value) -> Value {
         "meeting": meeting_line(document),
         "meetings_parts": {"head": section("meetings_only_head"), "tail": section("meetings_only_tail")},
         "meeting_parts": {"default_count": default_count, "separator": str_at(md, "separator"),
-            "seat": str_at(md, "seat"), "seat_effort": str_at(md, "seat_with_effort"),
+            "seat_provider": str_at(md, "seat_provider"),
             "all": str_at(md, "all_named"), "some": str_at(md, "some_named"), "none": str_at(md, "none_named")},
         "image_generation": section("image_generation"),
         "role_sections": super::roles::sections(),

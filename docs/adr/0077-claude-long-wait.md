@@ -3,6 +3,7 @@
 - 状态：部分修订
 - 日期：2026-11-10
 - 适用范围由 [ADR-0082](0082-claude-long-wait-terminal-only.md) 收窄为 Claude Code 终端交互会话。
+- 省略 `wait_seconds` 时的窗口由 [ADR-0084](0084-claude-terminal-default-long-wait.md) 修订：长等待会话里省略即 1500 秒。
 - 修订 [ADR-0067](0067-wait-270s-window-and-host-background-limits.md) 的 Claude Code 等待窗口与条目级超时下限。
 
 Claude Code 在约两分钟后将 MCP 调用转入后台，完成通知可唤醒模型；270 秒窗口使长任务反复唤醒并重新经过后台阈值。因此保留默认 270 秒与即时收取 0 秒，仅对识别为 Claude Code 的宿主增加显式 1500 秒窗口，其他宿主拒绝该值，保留其插话和后台边界。

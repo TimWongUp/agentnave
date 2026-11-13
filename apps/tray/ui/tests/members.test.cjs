@@ -189,7 +189,7 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
     split: "whole", parallel: "whole+", image_generation: "\nimage", meetings: "H\nT",
     meetings_parts: { head: "H", tail: "\nT" },
     meeting_parts: {
-      default_count: 3, separator: "、", seat: "{name}<{provider}/{model}>", seat_effort: "{name}<{provider}/{model}/{effort}>",
+      default_count: 3, separator: "、", seat_provider: "{name}<{provider}>",
       all: "\nA{count}:{seats}", some: "\nS{count}:{seats}", none: "\nN{count}",
     },
     role_base: { parallel: "base+" }, parallel_base: "base+",
@@ -309,7 +309,7 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   const wanted = () => JSON.stringify(app.run("orchestrationWanted().meeting"));
   const preview = (mode) => app.run(`orchestrationPresetText("${mode}")`);
   const name = app.run("PROVIDER_NAMES.codex");
-  const one = `${name}<codex/chat-model>`;
+  const one = `${name}<codex>`;
 
   assert.equal(app.run('$("orchestration-meeting").hidden'), false);
   assert.equal(rows().length, 4);
@@ -318,7 +318,9 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   assert.equal(preview("meetings"), "H\nT");
 
   pick(0, "codex");
-  assert.equal(wanted(), JSON.stringify({ count: 3, seats: [{ provider: "codex", model: "chat-model" }] }));
+  assert.equal(wanted(), JSON.stringify({ count: 3, seats: [{ provider: "codex" }] }));
+  assert.equal(rows()[1].children[2].attrs.disabled, "", "the model follows Employees and is read-only");
+  assert.equal(rows()[1].children[3].attrs.disabled, "", "so does the effort");
   assert.equal(preview("meetings"), `H\nS3:${one}\nT`);
   app.run('viewMode("split")');
   assert.equal(app.run('$("orchestration-meeting").hidden'), false);
@@ -351,15 +353,10 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   assert.equal(app.run("orchestrationChanged()"), false);
 });
 
-test("meeting seats are checked like orchestration seats while a boss runs a meeting mode", () => {
-  const app = poolEditor();
-  app.run(`
-    currentDoc.clis.codex.allowed_models = ["a"];
-    orchestration = { document: { version: 1, preset: "meetings", meeting: { count: 3, seats: [null, { provider: "codex", model: "b" }] } } };
-  `);
-  assert.equal(app.run("seatConflicts().length"), 1);
-  assert.equal(app.run("seatConflicts()[0].blocking"), true);
-  app.run('orchestration.document.preset = "off"');
+test("an older meeting seat with a model is read and previewed as its CLI alone", async () => {
+  const { app } = rolesEditor({ version: 1, preset: "meetings", enabled_roles: [], meeting: { count: 2, seats: [{ provider: "codex", model: "gone", effort: "high" }, null] } });
+  await app.run("loadOrchestration()");
+  assert.equal(app.run('orchestrationPresetText("meetings")'), `H\nS2:${app.run("PROVIDER_NAMES.codex")}<codex>\nT`);
   assert.equal(app.run("seatConflicts().length"), 0);
 });
 
