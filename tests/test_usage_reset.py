@@ -186,6 +186,44 @@ async def test_failed_flooding_or_unreadable_queries_give_no_reset(
 
 
 @pytest.mark.asyncio
+async def test_a_judge_that_raises_does_not_stop_the_draining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(usage_probe, "QUERY_SECONDS", 1.0)
+
+    def judge(_out: bytes) -> bool:
+        raise RecursionError("too deep")
+
+    flood = "import sys\nwhile True: sys.stdout.write('x' * 65536)"
+    query = UsageQuery(_script(flood), lambda _out, _now: None, complete=judge)
+    done = await asyncio.wait_for(usage_probe.run_usage_query(query, datetime.now(UTC)), 15)
+    assert done is None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_query_still_stops_its_process(tmp_path: Path) -> None:
+    marker = tmp_path / "pid"
+    code = f"import os, time; open({str(marker)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+    query = UsageQuery(_script(code), lambda _out, _now: None)
+    task = asyncio.create_task(usage_probe.run_usage_query(query, datetime.now(UTC)))
+    for _ in range(100):
+        if marker.exists() and marker.read_text():
+            break
+        await asyncio.sleep(0.05)
+    pid = int(marker.read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(100):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError("the query process was left running")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("known", [True, False])
 async def test_quota_failure_without_reset_asks_the_usage_query(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, known: bool

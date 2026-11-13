@@ -41,7 +41,8 @@ async def run_usage_query(query: UsageQuery, now: datetime) -> datetime | None:
         except Exception:  # a timeout, a broken pipe, a supervisor that failed to report
             ok = False
         finally:
-            await _stop(supervised, readers)
+            # Shielded: being cancelled must not leave the tree half stopped.
+            await asyncio.shield(_stop(supervised, readers))
     if not ok:
         return None
     try:
@@ -75,10 +76,14 @@ async def _read(
 ) -> None:
     # Keeps consuming past the cap: a command that floods its pipe must not block being stopped.
     while chunk := await stream.read(65536):
-        if len(output) <= _MAX_OUTPUT:
-            output += chunk
-        if query.complete is not None and query.complete(bytes(output)):
-            answered.set()
+        if len(output) > _MAX_OUTPUT:
+            continue
+        output += chunk
+        try:
+            if query.complete is not None and query.complete(bytes(output)):
+                answered.set()
+        except Exception:  # an output it cannot judge is not yet an answer; keep draining
+            pass
 
 
 async def _discard(stream: asyncio.StreamReader) -> None:
