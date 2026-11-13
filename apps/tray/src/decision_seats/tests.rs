@@ -231,3 +231,24 @@ fn the_page_copy_is_made_ready_and_a_saved_file_reads_back() {
         "{broken"
     );
 }
+
+#[test]
+fn fallbacks_are_ordered_picks_without_repeats_and_at_most_three() {
+    let with = |fallbacks: Value| {
+        let mut changed = seat();
+        changed["fallbacks"] = fallbacks;
+        validate(&document(vec![changed]))
+    };
+    let pick = |model: &str| json!({"provider": "grok", "model": model, "effort": "high"});
+    assert!(with(json!([])).is_ok());
+    assert!(with(json!([pick("a"), pick("b"), pick("c")])).is_ok());
+    for bad in [
+        json!([pick("a"), pick("b"), pick("c"), pick("d")]),
+        json!([{"provider": "codex", "model": "gpt-6.1-sol"}]),
+        json!([pick("a"), pick("a")]),
+        json!([{"provider": "grok"}]),
+        json!([{"provider": "grok", "model": "a", "role": "x"}]),
+    ] {
+        assert!(with(bad.clone()).is_err(), "{bad}");
+    }
+}

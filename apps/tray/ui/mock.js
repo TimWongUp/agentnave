@@ -17,7 +17,7 @@
   if (!enabled()) return;
 
   const mockMembersData = {
-    review: { version: 1, seats: {} },
+    review: { version: 1, seats: { "security-reviewer": { provider: "codex", model: "gpt-6.1-sol", effort: "high", fallbacks: [{ provider: "claude", model: "claude-3-7-sonnet" }, { provider: "codex", model: "gpt-5.4-turbo", effort: "low" }] } } },
     permissions: { version: 1, clis: { codex: "auto", claude: "full" } },
     document: {
       version: 1,

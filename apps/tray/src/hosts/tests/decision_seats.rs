@@ -78,6 +78,14 @@ fn the_catalog_saves_on_its_own_and_a_page_switch_is_not_kept() {
     let saved = decision_file(&root);
     assert_eq!(saved["decision_model"], "gemini-decision-1");
     assert_eq!(saved["seats"], json!([seat()]));
+    // Fallbacks come back as saved.
+    let mut with_fallbacks = seat();
+    with_fallbacks["fallbacks"] = json!([{"provider": "grok", "model": "m", "effort": "high"}]);
+    let document = json!({"version": 1, "seats": [with_fallbacks]});
+    assert_eq!(post(&reader, "/app/decision-seats", &document), 200);
+    assert_eq!(decision_file(&root)["seats"], json!([with_fallbacks]));
+    let document = json!({"version": 1, "seats": [seat()]});
+    assert_eq!(post(&reader, "/app/decision-seats", &document), 200);
     // Saving the catalog neither needs nor touches the modes.
     assert!(!root.join("orchestration.json").exists());
     // A boss's mode `decision` is saved like any other and leaves the catalog alone.

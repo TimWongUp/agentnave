@@ -1284,3 +1284,61 @@ test("the key goes out once and the page afterwards only knows that one is set",
   await keyRow().children[1].children[2].listeners.click();
   assert.deepEqual(calls.filter((call) => call.url === "/app/decision-key").at(-1).body, { key: "" });
 });
+
+test("a seat gains up to three ordered fallbacks that never repeat it, and keeps them when its own pick changes", () => {
+  const app = advancedEditor();
+  app.run(`
+    detected.codex.models = [{ id: "chat-model" }, { id: "m2" }, { id: "m3" }, { id: "m4" }];
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "chat-model" } };
+    renderReviewSeats();
+    function findKey(nodes, key) {
+      for (const node of [nodes].flat(Infinity)) {
+        if (!node || typeof node !== "object") continue;
+        if (node.dataset?.focusKey === key) return node;
+        const found = findKey(node.children, key);
+        if (found) return found;
+      }
+      return null;
+    }
+    const review = () => $("review-seats").children;
+    const seat = () => seatsShown()["security-reviewer"];
+  `);
+  const seat = () => JSON.parse(app.run("JSON.stringify(seat())"));
+  const find = (key) => app.run(`findKey(review(), ${JSON.stringify(key)})`);
+  const offered = (key) => Array.from(find(key).children.flat().filter((option) => !option.disabled).map((option) => option.attrs.value));
+
+  find("security-reviewer/fb-add").listeners.click();
+  assert.deepEqual(seat().fallbacks, [{ provider: "codex", model: "m2" }], "the first free pick, at its default level");
+  assert.deepEqual(offered("security-reviewer/fb0/model"), ["m2", "m3", "m4"], "never the seat's own model");
+  assert.deepEqual(offered("security-reviewer/model"), ["chat-model", "m3", "m4"], "nor a model a fallback took");
+  find("security-reviewer/fb0/model").listeners.change({ target: { value: "m4" } });
+  find("security-reviewer/fb-add").listeners.click();
+  find("security-reviewer/fb-add").listeners.click();
+  assert.deepEqual(seat().fallbacks.map((pick) => pick.model), ["m4", "m2", "m3"]);
+  assert.equal(find("security-reviewer/fb-add"), null, "no fourth fallback to add");
+
+  find("security-reviewer/model").listeners.change({ target: { value: "chat-model" } });
+  find("security-reviewer/cli").listeners.change({ target: { value: "codex" } });
+  assert.equal(seat().fallbacks.length, 3, "changing the seat's CLI or model keeps its fallbacks");
+  find("security-reviewer/fb1/remove").listeners.click();
+  assert.deepEqual(seat().fallbacks.map((pick) => pick.model), ["m4", "m3"]);
+  find("security-reviewer/fb0/remove").listeners.click();
+  find("security-reviewer/fb0/remove").listeners.click();
+  assert.deepEqual(seat(), { provider: "codex", model: "chat-model" }, "no fallback left, no field");
+  app.run("discardAdvanced()");
+});
+
+test("a catalog seat's fallbacks come back as saved, and the add button sits in the row's last column", async () => {
+  const fallbacks = [{ provider: "codex", model: "m2", effort: "low" }];
+  const seat = { id: "w-1", kind: "worker", role: "通用执行", description: "改代码", provider: "codex", model: "chat-model", access: "write", difficulty: "easy", fallbacks };
+  const saved = { document: { version: 1, seats: [seat] }, error: null, key_set: false, key_error: null };
+  const { app, decision } = decisionEditor("decision", saved);
+  await decision((d) => d.load());
+  assert.equal(decision((d) => d.changed()), false);
+  assert.deepEqual(JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)")), [seat]);
+  const card = cardsOf(app)[0];
+  const rows = card.children.filter((child) => child.className === "seat-block");
+  assert.equal(rows.length, 1, "only the easy level has a fallback line");
+  assert.equal(rows[0].children[1].className, "fallback-row");
+  assert.equal(rows[0].children[0].children.at(-1).tagName, "button");
+});

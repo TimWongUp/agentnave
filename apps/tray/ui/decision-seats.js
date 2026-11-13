@@ -34,7 +34,7 @@
   const catalogEntry = (kind) => S.roleCatalog().find((entry) => entry.group === kind);
   const levelsOf = () => DIFFICULTIES.map(([difficulty]) => difficulty);
   const seatsOfCard = (card) => (card.kind === IMAGE ? card.rows.map((row) => row.seat).filter(Boolean) : Object.values(card.seats));
-  const bareSeat = ({ id, provider, model, effort, description }) => ({ id, provider, model, ...(effort ? { effort } : {}), ...(description ? { description } : {}) });
+  const bareSeat = ({ id, provider, model, effort, fallbacks, description }) => ({ id, provider, model, ...(effort ? { effort } : {}), ...(fallbacks?.length ? { fallbacks } : {}), ...(description ? { description } : {}) });
   const accessOf = (card) => catalogEntry(card.kind)?.access || (card.kind === IMAGE ? "write" : card.access);
 
   function toCards(seats) {
@@ -63,18 +63,18 @@
       if (card.kind === IMAGE) {
         return card.rows.filter((row) => row.seat).map(({ role, loadedRole, description, seat }) => ({
           id: seat.id, kind: IMAGE, role: role.trim(), description: role.trim() === loadedRole ? description : role.trim(), provider: seat.provider, model: seat.model,
-          ...(seat.effort ? { effort: seat.effort } : {}), access: "write",
+          ...(seat.effort ? { effort: seat.effort } : {}), ...(seat.fallbacks?.length ? { fallbacks: seat.fallbacks } : {}), access: "write",
         }));
       }
       return levelsOf().filter((level) => card.seats[level]).map((level) => {
-        const { id, provider, model, effort, description } = card.seats[level];
+        const { id, provider, model, effort, fallbacks, description } = card.seats[level];
         const role = card.role.trim();
         const group = catalogEntry(card.kind);
         // A custom seat's own description goes back as it was while its specialty is the one it was read with.
         const kept = card.kind === CUSTOM && role === card.loadedRole ? description || card.description : "";
         return {
           id, kind: card.kind, role, description: group?.scope_zh || (card.kind === CUSTOM ? kept || role : card.description || role),
-          provider, model, ...(effort ? { effort } : {}), access: accessOf(card), difficulty: level,
+          provider, model, ...(effort ? { effort } : {}), ...(fallbacks?.length ? { fallbacks } : {}), access: accessOf(card), difficulty: level,
         };
       });
     });
@@ -83,7 +83,7 @@
   // The saved file in the order and shape the page writes, to compare with the cards.
   const canon = (seats) => [...seats].sort((a, b) => (a.id < b.id ? -1 : 1)).map((seat) => ({
     id: seat.id, kind: seat.kind, role: seat.role, description: seat.description, provider: seat.provider, model: seat.model,
-    ...(seat.effort ? { effort: seat.effort } : {}), access: seat.access, ...(seat.difficulty ? { difficulty: seat.difficulty } : {}),
+    ...(seat.effort ? { effort: seat.effort } : {}), ...(seat.fallbacks?.length ? { fallbacks: seat.fallbacks } : {}), access: seat.access, ...(seat.difficulty ? { difficulty: seat.difficulty } : {}),
   }));
   // The saved cards are made once per loaded file, so a card keeps its handle between draws.
   let base = { of: null, cards: [] };
@@ -256,7 +256,7 @@
     const before = new Map((saved?.document?.seats || []).map((seat) => [seat.id, seat]));
     for (const seat of doc.seats) {
       const old = before.get(seat.id);
-      if (!old || old.provider !== seat.provider || old.model !== seat.model) await S.listSeatModel(seat);
+      if (!old || old.provider !== seat.provider || old.model !== seat.model || !sameJson(old.fallbacks || [], seat.fallbacks || [])) await S.listSeatModel(seat);
     }
     await post("/app/decision-seats", doc);
     saved = { ...saved, document: doc, error: null };
@@ -312,9 +312,10 @@
   // One row of a card: the level's name and its CLI, model and effort.
   function levelRow(card, level, label, title) {
     const key = `decision/${card.cid}/${level}`;
-    const row = S.seatSelects(key, `${title} · ${label}`, card.seats[level] || null,
-      (next) => setSeat(card.cid, level, next), L("未设置", "Not set"));
-    return el("div", { className: "review-row" }, el("div", { className: "review-role" }, label), ...row);
+    const seat = card.seats[level] || null;
+    const set = (next) => setSeat(card.cid, level, next);
+    const row = S.seatSelects(key, `${title} · ${label}`, seat, set, L("未设置", "Not set"));
+    return S.seatBlock(el("div", { className: "review-row" }, el("div", { className: "review-role" }, label), ...row), key, `${title} · ${label}`, seat, set);
   }
 
   // The tiers a three-tier card has set; no tier means no seat to choose from.

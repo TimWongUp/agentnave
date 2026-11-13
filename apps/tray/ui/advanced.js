@@ -326,9 +326,9 @@
   }
 
   function seatRow(group, label, name, seat, onSet, unset = SEAT_UNSET, scene = "task") {
-    return el("div", { className: "review-row" },
+    return seatBlock(el("div", { className: "review-row" },
       el("div", { className: "review-role" }, label),
-      ...seatSelects(group, name, seat, onSet, unset, undefined, scene));
+      ...seatSelects(group, name, seat, onSet, unset, undefined, scene)), group, name, seat, onSet, scene);
   }
 
   // A switch put back to what is saved restores the saved form of its key, so an explicit default is no edit.
@@ -498,15 +498,17 @@
     if (!roles.hidden) {
       const focusKey = document.activeElement?.dataset?.focusKey;
       const { role, difficulty, name } = IMAGE_SEAT;
+      const setImage = (next) => setOrchestrationSeat(role, difficulty, next);
       // In the decision mode the user's own seat catalog stands in for the fixed seats.
       const catalog = preset === "decision" ? window.AgentNaveDecisionSeats?.panel() : null;
       const fixed = !usesSeats(preset) || preset === "decision" || !roleCatalog().length ? [] : roleSections(shown);
       roles.replaceChildren(...(catalog ? [catalog] : fixed),
         // The decision mode's image seats are cards of its catalog, not the fixed one.
-        ...(preset === "meetings" || preset === "decision" ? [] : [el("div", { className: "review-row" },
+        ...(preset === "meetings" || preset === "decision" ? [] : [seatBlock(el("div", { className: "review-row" },
           el("div", { className: "review-role" }, el("strong", {}, name,
             settingTip(AN.L("这里选的是和 CLI 对话的模型；图片由那个 CLI 调用它自己能用的生图服务来出。", "This picks the model you talk to in the CLI; the image itself comes from whatever image service that CLI can call.")))),
-          ...seatSelects(`${role}/${difficulty}`, name, shown[role], (next) => setOrchestrationSeat(role, difficulty, next), SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation")))]));
+          ...seatSelects(`${role}/${difficulty}`, name, shown[role], setImage, SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation"))),
+        `${role}/${difficulty}`, name, shown[role], setImage)]));
       if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
     }
     renderRuleFiles();
@@ -577,6 +579,7 @@
     const roles = !live ? [] : liveSeats(doc)
       .map(({ role, difficulty, name }) => ({ section: "orchestration", name, seat: orchestrationSeat(doc, role, difficulty) }));
     return [...review, ...roles]
+      .flatMap((one) => [one, ...(one.seat?.fallbacks || []).map((seat, i) => ({ ...one, name: AN.L(`${one.name} · 备选 ${i + 1}`, `${one.name} · fallback ${i + 1}`), seat }))])
       .filter(({ seat }) => seat && (outOfPool(seat.provider, seat.model) || unlisted(seat.provider, seat.model)))
       .map((conflict) => ({ ...conflict, blocking: outOfPool(conflict.seat.provider, conflict.seat.model) }));
   }
@@ -587,6 +590,9 @@
   // members.json, where the server looks for it; unsaved 员工 edits stay unsaved. A CLI with a pool
   // already configures all it may run, so a model it left out is refused instead.
   async function listSeatModel(seat) {
+    for (const pick of [seat, ...(seat.fallbacks || [])]) await listPickModel(pick);
+  }
+  async function listPickModel(seat) {
     const add = (doc) => {
       doc.clis ||= {};
       doc.clis[seat.provider] ||= { models: {} };
@@ -667,9 +673,9 @@
   const seatModels = (provider) => listedPool(provider)
     ? listedPool(provider).filter((id) => getAllModelIds(provider).includes(id)) : getAllModelIds(provider);
 
-  // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
-  function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`), scene = "task") {
-    const provider = seat?.provider || "";
+  // The CLIs a seat may pick: a meeting seat follows the 开会 scene as Employees sets it and may use any
+  // CLI, the boss's own too.
+  function cliUsable(scene) {
     // Orchestrated bosses use confirmed CLI configurations, not the hidden solo-task switches.
     const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
     const doc = orchestrationShown();
@@ -680,13 +686,72 @@
       if (isRestricted("task")) return inScene(p, "task");
       return Object.hasOwn(S.currentDoc.clis || {}, p) || SCENE_IDS.some((scene) => inScene(p, scene));
     };
-    // A meeting seat follows the 开会 scene as Employees sets it, and may use any CLI, the boss's own too.
     const usable = (p) => scene !== "task" ? known(p) && slot(scene, p).enabled
       : (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
+    return usable;
+  }
+
+  // A seat saves the level it runs at, as a member does.
+  function seatPick(next, model, scene) {
+    const effort = savedEffort(next, model, sceneEffort(scene, next, model));
+    return effort ? { provider: next, model, effort } : { provider: next, model };
+  }
+  const withFallbacks = (pick, list) => (list?.length ? { ...pick, fallbacks: list } : pick);
+  const pairKey = (provider, model) => `${provider}\u0000${model}`;
+  const MAX_FALLBACKS = 3;
+
+  // The first CLI and model no pick of the seat has taken, a CLI other than the seat's own first.
+  function freshPick(scene, taken, own) {
+    const usable = cliUsable(scene);
+    for (const provider of PROVIDERS.filter(usable).sort((a, b) => (a === own) - (b === own))) {
+      const free = seatModels(provider).filter((model) => !taken.has(pairKey(provider, model)));
+      if (!free.length) continue;
+      const preferred = slot(scene, provider).model || nativeDefault(provider).model;
+      return seatPick(provider, free.includes(preferred) ? preferred : free[0], scene);
+    }
+    return null;
+  }
+
+  // A task seat's row gets a button in its last column that adds a fallback while there are fewer than
+  // three; with fallbacks, the row comes with one line under it for each, in order: the same three
+  // selects as the seat and a button to remove it.
+  function seatBlock(row, key, name, seat, onSet, scene = "task") {
+    if (!seat?.provider || !seat?.model || scene !== "task") return row;
+    const list = seat.fallbacks || [];
+    const store = (next) => {
+      const { fallbacks, ...rest } = seat;
+      onSet(next.length ? { ...rest, fallbacks: next } : rest);
+    };
+    const takenBy = (skip) => new Set([seat, ...list.filter((_, i) => i !== skip)].map((pick) => pairKey(pick.provider, pick.model)));
+    if (list.length < MAX_FALLBACKS) {
+      const fresh = freshPick(scene, takenBy(-1), seat.provider);
+      row.appendChild(el("button", {
+        type: "button", disabled: !fresh, dataset: { focusKey: `${key}/fb-add` }, onClick: () => store([...list, fresh]),
+      }, AN.L("添加备选", "Add fallback")));
+    }
+    if (!list.length) return row;
+    return el("div", { className: "seat-block" }, row, ...list.map((pick, index) => {
+      const label = AN.L(`备选 ${index + 1}`, `Fallback ${index + 1}`);
+      const set = (next) => store(list.map((one, i) => (i === index ? next : one)));
+      return el("div", { className: "fallback-row" },
+        el("span", { className: "fallback-label" }, label),
+        ...seatSelects(`${key}/fb${index}`, `${name} · ${label}`, pick, set, null, undefined, scene, takenBy(index)),
+        el("button", {
+          type: "button", dataset: { focusKey: `${key}/fb${index}/remove` }, "aria-label": AN.L(`移除${name}的${label}`, `Remove ${label} of ${name}`),
+          onClick: () => store(list.filter((_, i) => i !== index)),
+        }, AN.L("移除", "Remove")));
+    }));
+  }
+
+  // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
+  function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`), scene = "task", taken = new Set((seat?.fallbacks || []).map((pick) => pairKey(pick.provider, pick.model)))) {
+    const provider = seat?.provider || "";
+    const usable = cliUsable(scene);
     const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
       : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
+    const free = (p) => seatModels(p).filter((m) => !taken.has(pairKey(p, m)));
     const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
-      .map((p) => [p, PROVIDER_NAMES[p] + note(p), Boolean(note(p)) && p !== provider]);
+      .map((p) => [p, PROVIDER_NAMES[p] + note(p), (Boolean(note(p)) || !free(p).length) && p !== provider]);
     // A meeting seat stores only its CLI and shows what Employees sets for it in that scene.
     if (scene === "discussion") {
       // As the server runs it: nothing while 开会 has the CLI off, and a model list needs a default.
@@ -705,14 +770,10 @@
     if (seat?.model && !excluded && !models.includes(seat.model)) models.unshift(seat.model);
     const levels = seat?.model ? effortLevels(provider, seat.model) : [];
     if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
-    // A seat saves the level it runs at, as a member does.
-    const seatModel = (next, model) => {
-      const effort = savedEffort(next, model, sceneEffort(scene, next, model));
-      return effort ? { provider: next, model, effort } : { provider: next, model };
-    };
+    const seatModel = (next, model) => withFallbacks(seatPick(next, model, scene), seat?.fallbacks);
     const pickCli = (next) => {
       if (!next) return onSet(null);
-      const ids = seatModels(next);
+      const ids = free(next);
       const preferred = slot(scene, next).model || nativeDefault(next).model;
       onSet(seatModel(next, ids.includes(preferred) ? preferred : ids[0]));
     };
@@ -721,9 +782,9 @@
     const efforts = !seat || !levels.length ? [["", "—"]]
       : [...(seat.effort ? [] : [["", AN.L("选一个档位", "Choose effort"), true]]), ...levels.map((l) => [l, l])];
     return [
-      reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [["", unset], ...clis], pickCli),
+      reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [...(unset === null ? [] : [["", unset]]), ...clis], pickCli),
       reviewSelect(`${key}/model`, modelLabel, seat?.model || "",
-        seat ? [...(excluded ? [[seat.model, AN.L(`${seat.model}（不在可用模型里）`, `${seat.model} (not available)`), true]] : []), ...models.map((m) => [m, m])] : [["", "—"]], pickModel, !seat),
+        seat ? [...(excluded ? [[seat.model, AN.L(`${seat.model}（不在可用模型里）`, `${seat.model} (not available)`), true]] : []), ...models.map((m) => [m, m, taken.has(pairKey(provider, m)) && m !== seat.model])] : [["", "—"]], pickModel, !seat),
       reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
     ];
   }
@@ -741,9 +802,11 @@
       ...seatSelects("review/uniform", uniformName, uniformReview, setUniformReview, AN.L("未选择", "Not chosen")));
     const rows = REVIEW_ROLES.map(([role, name, hint, unset]) => {
       const seat = shown[role];
-      return el("div", { className: "review-row" },
+      const label = AN.L(`${name}评审`, `${name} review`);
+      const set = (next) => setReviewSeat(role, next);
+      return seatBlock(el("div", { className: "review-row" },
         el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-        ...seatSelects(role, AN.L(`${name}评审`, `${name} review`), seat, (next) => setReviewSeat(role, next), unset));
+        ...seatSelects(role, label, seat, set, unset)), role, label, seat, set);
     });
     box.replaceChildren(uniform, ...rows);
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
@@ -865,7 +928,7 @@
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
     viewMode, setOrchestrationSeat, renderTaskScope, renderOrchestration, seatsShown, seatConflicts,
-    seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, renderReviewSeats,
+    seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced,
     orchestrationShown, bossMode, setBossMode, liveSeats, roleCatalog, roleName, orchestrationSeat, seatModels
   });
