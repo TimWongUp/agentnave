@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-13
 - 「决策模型」档下修订：[ADR-0037](0037-app-writes-orchestration-rules.md) 与 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 中「服务不调度」「选工位的方法放 Skill」；[ADR-0038](0038-role-applies-app-seat.md) 与 [ADR-0052](0052-orchestration-specialty-seats.md) 中工位是固定分组乘简单、困难两档；[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) 中工位不可用时「按同难度规则兜底」。扩展 [ADR-0041](0041-orchestration-mode-per-boss.md)：这一档与其他档一样按 boss 选、读同一规则文件的 boss 共用。其他档下上述各篇不变。
+- 「候选只含真正能派的工位」的可用判断由 [ADR-0089](0089-seat-fallback-order.md) 扩展：自定义工位有任一备选顺位可用即算可派。
 - 不改变：[ADR-0028](0028-follow-cli-default-model.md)、[ADR-0032](0032-cli-permission-tiers.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) 的参数来源、权限档位和模型池；[ADR-0031](0031-prompt-only-orchestration.md) 的单向编排；授权规则仍只在规则块里。
 
 ## 背景

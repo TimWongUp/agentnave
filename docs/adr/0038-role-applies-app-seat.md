@@ -9,6 +9,7 @@
 - 工位不受 CLI 名单约束的条款由 [ADR-0053](0053-disabled-cli-runs-for-no-seat.md) 修订：员工里停用的 CLI 不能当工位。
 - 工位名由 [ADR-0052](0052-orchestration-specialty-seats.md) 补充 `worker-frontend-easy`、`worker-frontend-hard`。
 - 「决策模型」档下工位目录改为用户自定义，由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订。
+- 评审、Explorer／Worker 与专项工位套用单一 App 设置的条款由 [ADR-0089](0089-seat-fallback-order.md) 扩展为可按顺序配备选。
 
 ## 背景
 
