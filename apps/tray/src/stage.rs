@@ -394,8 +394,9 @@ static PREVIEWS: LazyLock<Mutex<HashMap<String, Preview>>> = LazyLock::new(Mutex
 
 /// At most this many undrawn desks are listed; the count still covers all of them.
 const OPTIMIZED_LISTED: usize = 200;
-/// How many desks besides the running ones the panel's cards draw.
-const PANEL_IDLE_DESKS: usize = 4;
+/// How many desks besides the running ones the panel receives: its cards show four, the idle
+/// rows pick up to eight faces from them.
+const PANEL_IDLE_DESKS: usize = 8;
 
 /// Desks the returned seats and messages name, as speaker, thread or recipient.
 fn referenced_desks(rooms: &[Value], messages: &[Value]) -> BTreeSet<String> {

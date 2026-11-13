@@ -214,13 +214,14 @@ function running(m) {
 function updateBlock(rec, m) {
   rec.data = m;
   const desks = m.desks || [], rooms = m.rooms || [];
+  const total = desks.length + (m.optimized?.count || 0);
   const n = running(m);
   const name = shownName(m);
   setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
   tile(rec, m, n ? "working" : "idle");
   setAttr(rec.boss, "href", href(`/chat/${m.group}`));
   setAttr(rec.boss, "title", `${L(`${m.label} 里的 boss`, `boss in ${m.label}`)}${m.project ? ` · ${m.project}` : ""}`);
-  setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${desks.length} desks, ${rooms.length} meeting rooms, open office`));
+  setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${total} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${total} desks, ${rooms.length} meeting rooms, open office`));
   setText(rec.project, name);
   const [bsTone, bsText] = n ? ["run", L(`${n} 个在工作`, `${n} working`)] : urgent(m.status) ? ["run", L("会议进行中", "In meeting")] : ["", L("空闲", "Idle")];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
@@ -240,9 +241,8 @@ function updateBlock(rec, m) {
     updateCell(cell, m.group, d);
     return cell.el;
   }));
-  for (const d of desks) announce(m, d, brief(d));
+  for (const d of [...desks, ...(m.optimized?.desks || [])]) announce(m, d, brief(d));
   // The payload carries the running desks and the latest others; the rest are counted with them.
-  const total = desks.length + (m.optimized?.count || 0);
   const meta = [name === m.label ? "" : chatPlace(m), L(`${total} 工位`, `${total} desks`), rooms.length && L(`${rooms.length} 会议室`, `${rooms.length} rooms`)].filter(Boolean).join(" · ");
   setText(rec.meta, meta);
   rec.cells.hidden = !ordered.length;
@@ -394,7 +394,7 @@ function render(data) {
       let rec = state.quiet.get(id);
       if (!rec) state.quiet.set(id, (rec = createQuiet()));
       updateQuiet(rec, m);
-      for (const d of m.desks || []) announce(m, d, brief(d));
+      for (const d of [...(m.desks || []), ...(m.optimized?.desks || [])]) announce(m, d, brief(d));
       folded.push(rec.el);
     }
   }
