@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "preset": "off",
+  "apps": {
+    "claude": "decision",
+    "codex": "split"
+  },
+  "effective_apps": {
+    "claude": "decision",
+    "grok": "decision",
+    "codex": "split"
+  },
+  "decision_options": {
+    "parallel_writes": true,
+    "meetings": false
+  }
+}

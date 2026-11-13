@@ -6,11 +6,11 @@ import asyncio
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import AfterValidator, Field
+from pydantic import AfterValidator, Field, ValidatorFunctionWrapHandler, WrapValidator
 
 from agentnave import mcp_runtime as runtime
 from agentnave import provider_health
@@ -38,6 +38,7 @@ from agentnave.mcp_payloads import (
     TaskStartPayload,
     WaitPayload,
 )
+from agentnave.mcp_recommend import choose_auto_seat, recommendation_payload
 from agentnave.mcp_runtime import (
     ACCESS,
     DISPATCH_WAIT,
@@ -60,6 +61,7 @@ from agentnave.members import (
     OrchestrationRole,
     ProviderName,
     apply_seat,
+    orchestration_decision,
     role_seat,
     validate_provider_options,
 )
@@ -70,6 +72,8 @@ from agentnave.models import (
     ProviderOption,
 )
 from agentnave.native_prompts import NativePrompt
+from agentnave.orchestration_roles import AUTO_SEAT
+from agentnave.seat_recommendation import Recommendation
 from agentnave.task_start import (
     StartArguments,
     add_write_warning,
@@ -77,6 +81,19 @@ from agentnave.task_start import (
     resolve_start,
     review_role,
 )
+
+
+def _own_seat(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+    """While the user's own seats are effective, any identifier reaches the seat checks of
+    start_agent, which name unknown ones; otherwise the published enum decides alone.
+
+    The published schema is untouched: list_tools lists the effective seats in its enum.
+    """
+    if isinstance(value, str) and orchestration_decision(runtime.HOST):
+        if not 1 <= len(value) <= 128:
+            raise ValueError("seat must be a seat identifier from list_members")
+        return value
+    return handler(value)
 
 
 async def start_agent(
@@ -147,6 +164,7 @@ async def start_agent(
     ] = None,
     seat: Annotated[
         OrchestrationRole | None,
+        WrapValidator(_own_seat),
         Field(
             description=(
                 "App task seat from the visible list_members catalog: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; also pass role as the desk label."
@@ -189,10 +207,84 @@ async def start_agent(
             "session_id is an AgentNave handle, not a native session. Use the session_id from "
             "the finished wait result or read_conversation."
         )
+    # Any identifier may arrive while the catalog is effective, see _own_seat.
+    requested = cast(str | None, seat)
+    recommendation: Recommendation | None = None
+    if requested == AUTO_SEAT:
+        recommendation = await choose_auto_seat(prompt, access, provider, cwd, session_id)
+        requested = recommendation.seat
+    payload = await launch_task(
+        ctx,
+        TaskLaunch(
+            prompt=prompt,
+            provider=provider,
+            cwd=cwd,
+            session_id=session_id,
+            provider_options=provider_options,
+            conversation_id=conversation_id,
+            title=title,
+            role=role,
+            seat=requested,
+            forward=forward,
+            access=access,
+            isolation=isolation,
+            manager_model=manager_model,
+            manager_session_id=manager_session_id,
+        ),
+    )
+    if recommendation is not None:
+        payload["recommendation"] = recommendation_payload(recommendation)
+    return await waited_dispatch(payload, payload["invocation_id"], wait, manager_session_id, ctx)
+
+
+@dataclass
+class TaskLaunch:
+    """What starts one new or resumed private task, as start_agent and start_agents give it."""
+
+    prompt: str
+    provider: ProviderName | None
+    cwd: str | None
+    session_id: str | None
+    provider_options: dict[str, ProviderOption] | None
+    conversation_id: str | None
+    title: str | None
+    role: str | None
+    seat: str | None  # the seat to apply, already chosen (never "auto")
+    forward: list[str] | None
+    access: Literal["read", "write"] | None
+    isolation: IsolationInput | None
+    manager_model: str | None
+    manager_session_id: str | None
+    isolation_auto: bool = False  # isolation the service added itself, not the boss's request
+
+
+# defaults_applied entry of a task whose isolated directory the service asked for.
+AUTO_ISOLATION_APPLIED = "isolation (automatic: several write tasks)"
+
+
+async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPayload:
+    """Resolve the seat and defaults, acquire isolation, start the task and describe it.
+
+    The shared start path of start_agent and start_agents; failures are ToolErrors."""
+    manager = _manager(ctx)
+    prompt, provider, cwd, session_id = (
+        launch.prompt,
+        launch.provider,
+        launch.cwd,
+        launch.session_id,
+    )
+    provider_options, conversation_id, title = (
+        launch.provider_options,
+        launch.conversation_id,
+        launch.title,
+    )
+    role, requested, forward, access = launch.role, launch.seat, launch.forward, launch.access
+    isolation, manager_model = launch.isolation, launch.manager_model
+    manager_session_id = launch.manager_session_id
     seat_applied: list[str] = []
     try:
         arguments = resolve_start(
-            StartArguments(provider, cwd, role, seat, access),
+            StartArguments(provider, cwd, role, requested, access),
             _conversations(ctx),
             runtime.HOST,
             session_id,
@@ -202,8 +294,8 @@ async def start_agent(
         raise ToolError(str(exc)) from exc
     provider, cwd = arguments.provider, arguments.cwd
     assert provider is not None and cwd is not None
-    role, seat, access = arguments.role, arguments.seat, arguments.access
-    seat_name = seat or review_role(role)
+    role, chosen_seat, access = arguments.role, arguments.seat, arguments.access
+    seat_name = chosen_seat or review_role(role)
     try:
         options, seat_applied = apply_seat(
             role_seat(seat_name, runtime.HOST), provider, provider_options or {}
@@ -225,12 +317,20 @@ async def start_agent(
         )
         validate_provider_options(request)
         conversations = _conversations(ctx)
-        hold = await conversations.acquire_task_isolation(
-            request,
-            manager_session_id,
-            isolation_requested=isolation is not None,
-            isolation_ref=isolation.ref if isolation is not None else None,
-        )
+        try:
+            hold = await conversations.acquire_task_isolation(
+                request,
+                manager_session_id,
+                isolation_requested=isolation is not None,
+                isolation_ref=isolation.ref if isolation is not None else None,
+            )
+        except (ValueError, OSError) as exc:
+            if not launch.isolation_auto:
+                raise
+            # Never fall back to an unisolated start: the directory was meant to be separate.
+            raise ToolError(
+                f"automatic isolation failed (several write tasks in one call): {exc}"
+            ) from exc
         try:
             started = conversations.start_task(
                 request,
@@ -239,7 +339,7 @@ async def start_agent(
                 manager_model=manager_model,
                 manager_session_id=manager_session_id,
                 role=role,
-                seat=seat,
+                seat=chosen_seat,
                 forward=forward,
                 access=access,
                 isolation_requested=isolation is not None,
@@ -264,7 +364,9 @@ async def start_agent(
     payload = await _task_start_payload(
         ctx, manager, request, started, access, [*defaults_applied, *arguments.defaults]
     )
-    return await waited_dispatch(payload, started.invocation_id, wait, manager_session_id, ctx)
+    if launch.isolation_auto:
+        payload["defaults_applied"] = [*payload.get("defaults_applied", []), AUTO_ISOLATION_APPLIED]
+    return payload
 
 
 async def _task_start_payload(

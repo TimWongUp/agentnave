@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
 
+from agentnave.decision_seats import custom_seat
 from agentnave.host import Host
 from agentnave.isolated import other_active_leases, shares_cwd_tree
 from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.members import (
-    OrchestrationRole,
     ProviderName,
     ReviewRole,
     apply_member,
@@ -97,7 +97,7 @@ class StartArguments:
     provider: ProviderName | None
     cwd: str | None
     role: str | None
-    seat: OrchestrationRole | None
+    seat: str | None  # a catalog seat, or one of the user's own seats
     access: Literal["read", "write"] | None
     defaults: list[str] = field(default_factory=lambda: [])
     # Model and effort the resumed thread last ran with; see apply_history.
@@ -156,7 +156,8 @@ class StartArguments:
                 )
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
-        implied = role_access(name)
+        custom = custom_seat(name, host)
+        implied = custom.access if custom is not None else role_access(name)
         if implied is None:
             return
         if self.access is None:

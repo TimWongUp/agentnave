@@ -20,6 +20,7 @@
     meetings: AN.L("写入所选 boss 的全局规则：遇到要取舍的事 boss 可以自己开会，会用到参会模型的额度；活由谁做不受影响。", "Writes to selected bosses' global rules: for choices with trade-offs the boss may call a meeting, using the attending models' quota; who does the work is unchanged."),
     split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把活派给已开启的角色，会用到它们的额度；同时改多处文件要你同意。", "Writes to selected bosses' global rules: even when not named, the boss delegates to the roles turned on, using their quota; changing several things at once needs your consent."),
     parallel: AN.L("在分工协作之外，boss 自己决定同时改多处文件，额度用得更多。", "Beyond split work, the boss decides on its own to change several things at once, using more quota."),
+    decision: AN.L("写入所选 boss 的全局规则：选工位交给决策模型，从你自建的工位里挑；boss 未被点名也会把活派出去，会用到这些工位的额度。", "Writes to selected bosses' global rules: choosing a seat is left to the decision model, which picks from the seats you built; even when not named, the boss delegates, using those seats' quota."),
     custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
   };
   const DIFFICULTIES = [["easy", AN.L("简单", "Easy")], ["hard", AN.L("困难", "Hard")]];
@@ -28,7 +29,7 @@
   // One seat with no difficulty and no switch, its model the one the CLI talks to, which calls the image service.
   const IMAGE_SEAT = { role: "image_generation", difficulty: null, name: AN.L("生图（可选）", "Image generation (optional)") };
   const orchestrationSeat = (doc, role, difficulty) => difficulty ? doc[role]?.[difficulty] : doc[role];
-  const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), meetings: AN.L("只开会", "Meetings only"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), custom: AN.L("自定义", "Custom") };
+  const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), meetings: AN.L("只开会", "Meetings only"), split: AN.L("分工协作", "Split"), parallel: AN.L("并行分工", "Parallel"), decision: AN.L("决策模型", "Decision model"), custom: AN.L("自定义", "Custom") };
   let orchestration = null; // { document, error, presets, roles, files, bosses } from GET /app/orchestration: what is saved.
   let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
   let orchestrationView = "off"; // The mode being looked at; looking changes nothing.
@@ -42,7 +43,7 @@
   // uses; a seat left empty is one the boss picks. A seat is its CLI alone: the model and effort come
   // from 员工 when the meeting runs, so an older seat's saved ones are ignored.
   const MEETING_COUNTS = [2, 3, 4, 5, 6];
-  const MEETING_MODES = ["meetings", "split", "parallel"];
+  const MEETING_MODES = ["meetings", "split", "parallel", "decision"];
   const meetingDefaultCount = () => orchestration?.presets?.meeting_parts?.default_count ?? 3;
   const trimSeats = (seats) => {
     const list = [...seats];
@@ -129,6 +130,7 @@
       showNotice(AN.L(`无法读取编排设置：${error.message}`, `Failed to load orchestration settings: ${error.message}`), true);
     }
     renderOrchestration();
+    window.AgentNaveDecisionSeats?.load();
     // Review seats list the connected bosses' CLIs too.
     renderReviewSeats();
     renderAdvancedBar();
@@ -175,6 +177,13 @@
     }
     const image = presets.image_generation || "";
     const shown = orchestrationShown();
+    if (mode === "decision" && presets.decision_parts) {
+      const parts = presets.decision_parts;
+      const options = shown?.decision_options;
+      const base = parts.base + (options?.parallel_writes ? parts.parallel_writes_own : parts.parallel_writes_asked)
+        + (options?.meetings ? parts.meetings_own : parts.meetings_asked) + meetingLine(shown);
+      return shown?.lead_only && presets.lead ? base.replace(presets.lead.asked, presets.lead.always) : base;
+    }
     const enabled = enabledGroups(shown);
     const sections = roleCatalog().filter((role) => enabled.includes(role.group))
       .map((role) => presets.role_sections?.[role.group] || "");
@@ -211,6 +220,7 @@
   function setBossMode(boss, mode) {
     const shown = orchestrationShown();
     orchestrationDraft = withModes(shown, shown.preset, Object.fromEntries(boss.keys.map((key) => [key, mode])));
+    if (mode === "decision") window.AgentNaveDecisionSeats?.entered();
     renderOrchestration();
     advancedEdited();
   }
@@ -220,6 +230,7 @@
     const shown = orchestrationShown();
     const modes = Object.fromEntries(orchestration.bosses.flatMap((boss) => boss.keys.map((key) => [key, bossMode(shown, boss)])));
     orchestrationDraft = withModes(shown, mode, modes);
+    if (mode === "decision") window.AgentNaveDecisionSeats?.entered();
     renderOrchestration();
     advancedEdited();
   }
@@ -335,30 +346,44 @@
   const setMeetings = (preset, on) => setOption(`${preset}_options`, on === meetingsOn(orchestration.document, preset),
     on === (preset === "parallel") ? undefined : { meetings: on });
 
-  // Both presets' switch: the boss hands out all the work, small tasks too, and keeps only planning and checking.
+  // The split, parallel and decision modes' switch: the boss hands out all the work, small tasks too, and keeps only planning and checking.
   const setLeadOnly = (on) => setOption("lead_only", on === (orchestration.document.lead_only === true), on ? true : undefined);
+
+  // The decision mode's own two switches, both off by default, saved as the ones that are on.
+  const decisionOn = (doc, field) => doc.decision_options?.[field] === true;
+  function setDecisionOption(field, on) {
+    const onlyOn = (options) => Object.fromEntries(Object.entries(options || {}).filter(([, value]) => value === true));
+    const next = onlyOn({ ...orchestrationShown().decision_options, [field]: on });
+    setOption("decision_options", sameJson(next, onlyOn(orchestration.document.decision_options)), Object.keys(next).length ? next : undefined);
+  }
+
+  function switchRow(focusKey, checked, onChange, label, tip) {
+    return el("label", { className: "orchestration-switch" },
+      el("input", { type: "checkbox", className: "switch-input", dataset: { focusKey }, checked, onChange: (e) => onChange(e.target.checked) }),
+      el("span", {}, label), settingTip(tip, true));
+  }
 
   function renderSplitOptions(preset, editable) {
     const box = $("orchestration-split");
-    box.hidden = (preset !== "split" && preset !== "parallel") || !editable;
+    box.hidden = !["split", "parallel", "decision"].includes(preset) || !editable;
     if (box.hidden) return box.replaceChildren();
-    const meetings = el("label", { className: "orchestration-switch" },
-      el("input", {
-        type: "checkbox", className: "switch-input", dataset: { focusKey: `${preset}/meetings` },
-        checked: meetingsOn(orchestrationShown(), preset),
-        onChange: (e) => setMeetings(preset, e.target.checked),
-      }),
-      el("span", {}, AN.L("boss 可主动开会", "Boss may call meetings")),
-      settingTip(AN.L("打开后遇到有实质取舍或分歧的问题，boss 会自己召集几个员工开会讨论再定，会用到他们的额度；关闭时只在你要求时开会。", "On: when a choice has real trade-offs or disagreement, the boss calls a few employees into a meeting before deciding, using their quota. Off: meetings happen only when you ask."), true));
-    const lead = el("label", { className: "orchestration-switch" },
-      el("input", {
-        type: "checkbox", className: "switch-input", dataset: { focusKey: "lead-only" },
-        checked: orchestrationShown().lead_only === true,
-        onChange: (e) => setLeadOnly(e.target.checked),
-      }),
-      el("span", {}, AN.L("boss 只负责编排", "Boss only orchestrates")),
-      settingTip(AN.L("打开后小事也交给员工，boss 只拆分、写简报和验收；更慢，也更费员工额度。关闭时 boss 自己做小事，你也可以对某个任务说「这次只负责编排」。", "On: even small tasks go to employees, and the boss only splits work, writes briefs and checks results; slower and uses more employee quota. Off: the boss does small tasks itself, and you can still say \"only orchestrate this time\" for one task."), true));
-    box.replaceChildren(meetings, lead);
+    const shown = orchestrationShown();
+    const meetingsTip = AN.L("打开后遇到有实质取舍或分歧的问题，boss 会自己召集几个员工开会讨论再定，会用到他们的额度；关闭时只在你要求时开会。", "On: when a choice has real trade-offs or disagreement, the boss calls a few employees into a meeting before deciding, using their quota. Off: meetings happen only when you ask.");
+    const lead = switchRow("lead-only", shown.lead_only === true, setLeadOnly, AN.L("boss 只负责编排", "Boss only orchestrates"),
+      AN.L("打开后小事也交给员工，boss 只拆分、写简报和验收；更慢，也更费员工额度。关闭时 boss 自己做小事，你也可以对某个任务说「这次只负责编排」。", "On: even small tasks go to employees, and the boss only splits work, writes briefs and checks results; slower and uses more employee quota. Off: the boss does small tasks itself, and you can still say \"only orchestrate this time\" for one task."));
+    if (preset === "decision") {
+      box.replaceChildren(
+        switchRow("decision/parallel-writes", decisionOn(shown, "parallel_writes"), (on) => setDecisionOption("parallel_writes", on),
+          AN.L("并行写入由 boss 判断", "Boss decides on parallel writes"),
+          AN.L("打开后，计划确认后互不依赖的写入步骤由 boss 并行派给多个可写工位；关闭时并行写入须你对当前任务指明。", "On: once the plan is confirmed, the boss sends independent write steps to several writable seats at once. Off: parallel writes need you to say so for the task.")),
+        switchRow("decision/meetings", decisionOn(shown, "meetings"), (on) => setDecisionOption("meetings", on),
+          AN.L("有分歧时主动开会", "Hold meetings on trade-offs"), meetingsTip),
+        lead);
+      return;
+    }
+    box.replaceChildren(
+      switchRow(`${preset}/meetings`, meetingsOn(shown, preset), (on) => setMeetings(preset, on), AN.L("boss 可主动开会", "Boss may call meetings"), meetingsTip),
+      lead);
   }
 
   // Count and seats are saved together; no seat picked at the default count leaves the key out, and
@@ -473,8 +498,12 @@
     if (!roles.hidden) {
       const focusKey = document.activeElement?.dataset?.focusKey;
       const { role, difficulty, name } = IMAGE_SEAT;
-      roles.replaceChildren(...(!usesSeats(preset) || !roleCatalog().length ? [] : roleSections(shown)),
-        ...(preset === "meetings" ? [] : [el("div", { className: "review-row" },
+      // In the decision mode the user's own seat catalog stands in for the fixed seats.
+      const catalog = preset === "decision" ? window.AgentNaveDecisionSeats?.panel() : null;
+      const fixed = !usesSeats(preset) || preset === "decision" || !roleCatalog().length ? [] : roleSections(shown);
+      roles.replaceChildren(...(catalog ? [catalog] : fixed),
+        // The decision mode's image seats are cards of its catalog, not the fixed one.
+        ...(preset === "meetings" || preset === "decision" ? [] : [el("div", { className: "review-row" },
           el("div", { className: "review-role" }, el("strong", {}, name,
             settingTip(AN.L("这里选的是和 CLI 对话的模型；图片由那个 CLI 调用它自己能用的生图服务来出。", "This picks the model you talk to in the CLI; the image itself comes from whatever image service that CLI can call.")))),
           ...seatSelects(`${role}/${difficulty}`, name, shown[role], (next) => setOrchestrationSeat(role, difficulty, next), SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation")))]));
@@ -726,6 +755,7 @@
       window.AgentNaveSkills?.changed() && AN.L("技能安装", "Skills"),
       seatsChanged() && AN.L("评审工位", "Review seats"),
       orchestrationChanged() && AN.L("编排", "Orchestration"),
+      window.AgentNaveDecisionSeats?.changed() && AN.L("决策模型推荐工位", "Decision-model seats"),
     ].filter(Boolean);
   }
 
@@ -736,15 +766,17 @@
   function renderAdvancedBar() {
     const changes = advancedChanges();
     const blocked = blockedSeat();
-    const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked);
+    const decisionProblem = window.AgentNaveDecisionSeats?.changed() ? window.AgentNaveDecisionSeats.problem() : null;
+    const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked) || Boolean(decisionProblem);
     $("advanced-dirty").textContent = changes.length ? AN.L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
-    $("advanced-badge").hidden = !orchestrationChanged();
+    $("advanced-badge").hidden = !(orchestrationChanged() || window.AgentNaveDecisionSeats?.changed());
     $("skills-badge").hidden = !(window.AgentNaveSkills?.changed() || seatsChanged());
     $("advanced-save").disabled = S.busy || !changes.length || invalid;
     $("advanced-discard").disabled = S.busy || !changes.length;
     const feedback = $("advanced-feedback");
     if (invalid) {
-      feedback.textContent = blocked ? seatConflictText(blocked) : AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
+      feedback.textContent = blocked ? seatConflictText(blocked) : decisionProblem && !(orchestrationChanged() && customEmpty()) ? decisionProblem
+        : AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
       feedback.className = "save-feedback error";
       feedback.dataset.validation = "true";
     } else if (feedback.dataset.validation === "true") {
@@ -773,6 +805,7 @@
     $("custom-text").value = orchestration?.document.custom ?? "";
     if (orchestration) orchestrationView = savedView();
     window.AgentNaveSkills?.discard();
+    window.AgentNaveDecisionSeats?.discard();
     renderOrchestration();
     renderReviewSeats();
     advancedEdited();
@@ -780,6 +813,7 @@
 
   async function saveAdvanced() {
     if (S.busy || !advancedChanges().length || (orchestrationChanged() && customEmpty()) || blockedSeat()) return;
+    if (window.AgentNaveDecisionSeats?.changed() && window.AgentNaveDecisionSeats.problem()) return;
     S.busy = true;
     $("pane-advanced").inert = $("pane-orchestration").inert = true;
     S.updateControls();
@@ -787,16 +821,23 @@
     feedback.textContent = AN.L("正在保存…", "Saving…");
     feedback.className = "save-feedback";
     const failures = [];
+    // True when there was nothing to save or it was saved.
     const attempt = async (changed, name, save) => {
-      if (!changed()) return;
+      if (!changed()) return true;
       try {
         await save();
+        return true;
       } catch (error) {
         failures.push(AN.L(`${name}：${error.message}`, `${name}: ${error.message}`));
+        return false;
       }
     };
     await attempt(seatsChanged, AN.L("评审工位", "Review seats"), saveSeats);
-    await attempt(orchestrationChanged, AN.L("编排", "Orchestration"), saveOrchestration);
+    // The seat catalog first: a boss in the decision mode must not find it empty, so the modes are
+    // saved only once the catalog is, or when it had no change to save.
+    const catalogSaved = await attempt(() => window.AgentNaveDecisionSeats?.changed(), AN.L("决策模型推荐工位", "Decision-model seats"), window.AgentNaveDecisionSeats?.save);
+    if (catalogSaved) await attempt(orchestrationChanged, AN.L("编排", "Orchestration"), saveOrchestration);
+    else if (orchestrationChanged()) failures.push(AN.L("编排：档位未保存，因为决策模型推荐工位没有保存成功", "Orchestration: modes not saved, because the decision-model seats were not saved"));
     failures.push(...await window.AgentNaveSkills.save());
     S.busy = false;
     $("pane-advanced").inert = $("pane-orchestration").inert = false;
@@ -825,7 +866,8 @@
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
     viewMode, setOrchestrationSeat, renderTaskScope, renderOrchestration, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, renderReviewSeats,
-    advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced
+    advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced,
+    orchestrationShown, bossMode, setBossMode, liveSeats, roleCatalog, roleName, orchestrationSeat, seatModels
   });
   S.share({
     orchestration: [() => orchestration, (v) => { orchestration = v; }],

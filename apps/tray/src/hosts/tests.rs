@@ -2,6 +2,7 @@ use super::*;
 use crate::data::Reader;
 use tempfile::TempDir;
 
+mod decision_seats;
 mod reload_guidance;
 mod timeouts;
 mod tools_upgrade;

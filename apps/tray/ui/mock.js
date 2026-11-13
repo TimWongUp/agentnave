@@ -158,6 +158,11 @@
       },
       split_parts: { base: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。" },
       parallel_base: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则",
+      decision: "## AgentNave 编排偏好\n\n- （示例）决策模型的规则",
+      decision_parts: {
+        base: "## AgentNave 编排偏好\n\n- （示例）决策模型的规则", parallel_writes_asked: "\n- 并行写入须用户本人指明。", parallel_writes_own: "\n- 并行写入由 boss 判断。",
+        meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。",
+      },
       meetings: "## AgentNave 编排偏好\n\n- （示例）只开会的规则", split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则" },
     roles: [
       ["explorer", "通用探索", "General exploration", "read", true],
@@ -969,9 +974,11 @@ All checks passed!
       prompt: "",
     },
   };
+  const mockDecision = { document: null, error: null, key_set: false, key_error: null };
   async function p3Fetch(path) {
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
+    if (path === "/app/decision-seats") return structuredClone(mockDecision);
     if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true, antigravity_interactive: true } };
     if (path === "/app/preferences") return preferencesView();
     if (path === "/app/characters" || path === "/avatars/avatar-settings") return {};
@@ -998,6 +1005,8 @@ All checks passed!
     if (path === "/app/members") { mockMembersData.document = structuredClone(body); return { saved: true }; }
     if (path === "/app/review") { mockMembersData.review = structuredClone(body); return { saved: true }; }
     if (path === "/app/permissions") { mockMembersData.permissions = structuredClone(body); return { saved: true }; }
+    if (path === "/app/decision-seats") { mockDecision.document = structuredClone(body); return { saved: true }; }
+    if (path === "/app/decision-key") { mockDecision.key_set = Boolean(body.key); return { key_set: mockDecision.key_set }; }
     if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
     if (path.split("?")[0] === "/app/update/check") return p3Fetch("/app/status");
     if (path === "/app/update/apply?service=1") {

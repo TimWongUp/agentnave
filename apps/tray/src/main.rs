@@ -9,6 +9,7 @@ mod config_paths;
 mod data;
 mod data_files;
 mod db;
+mod decision_seats;
 mod detect;
 mod hosts;
 mod isolated;
@@ -457,6 +458,8 @@ mod tests {
     fn a_preview_build_refuses_every_write_but_moving_its_window() {
         for (method, path) in [
             ("POST", "/app/members"),
+            ("POST", "/app/decision-seats"),
+            ("POST", "/app/decision-key"),
             ("POST", "/app/provider-health/clear"),
             ("POST", "/app/settings"),
             ("POST", "/app/characters/gpt"),

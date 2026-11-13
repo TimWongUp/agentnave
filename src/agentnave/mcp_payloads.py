@@ -23,6 +23,25 @@ class MemberListPayload(MemberList):
     provider_details: ProviderDetails | None = None
 
 
+class SeatCandidatePayload(TypedDict):
+    seat: str
+    role: str
+    probability: NotRequired[float]
+    native: NotRequired[bool]
+
+
+class SeatRecommendationPayload(TypedDict):
+    seat: str
+    role: str
+    confidence: NotRequired[float]
+    native: NotRequired[bool]  # the host's own CLI: dispatch with its built-in subagent
+    model: NotRequired[str]  # a native seat's saved model, for that subagent
+    effort: NotRequired[str]  # a native seat's saved effort, when set
+    decision_model_called: bool
+    candidates: list[SeatCandidatePayload]  # the choice first, at most three
+    note: NotRequired[str]
+
+
 class InvocationErrorPayload(TypedDict):
     code: str
     message: str
@@ -100,6 +119,22 @@ class TaskStartPayload(InvocationPayload):
     unreceived: NotRequired[list[UnreceivedPayload]]
     next: NotRequired[str]  # what to call before ending the turn while ends wait (ADR-0064)
     wait: NotRequired[WaitPayload]  # the wait this dispatch ran when asked to
+    # seat="auto": which seat the decision model chose, with its confidence and candidates
+    recommendation: NotRequired[SeatRecommendationPayload]
+
+
+class NotStartedPayload(TypedDict):
+    """A start_agents item that started nothing: why, and the seat chosen for it when one was."""
+
+    status: Literal["not_started"]
+    error: InvocationErrorPayload
+    recommendation: NotRequired[SeatRecommendationPayload]
+
+
+class StartAgentsPayload(TypedDict):
+    results: list[TaskStartPayload | NotStartedPayload]  # in the order of the tasks given
+    unreceived: NotRequired[list[UnreceivedPayload]]
+    next: NotRequired[str]  # only when something started
 
 
 class InvocationListItem(TypedDict):

@@ -350,6 +350,37 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
   .orchestration-meeting > .review-row > .segment-control { grid-column: 1 / -1; }
   .orchestration-group .review-role { padding-left: 0; }
 }
+.segment-btn .mode-tag { margin-left: 6px; padding: 0 5px; font-size: 10px; font-weight: 600; border-radius: 99px; background: var(--line); color: var(--muted); vertical-align: 1px; }
+.segment-btn.active .mode-tag { background: color-mix(in srgb, var(--accent-ink) 22%, transparent); color: var(--accent-ink); }
+.decision-seats { display: grid; gap: 14px; }
+.decision-flow { margin: 0; display: grid; gap: 6px; }
+.decision-flow img { width: 100%; height: auto; display: block; user-select: none; }
+.decision-flow figcaption { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; text-align: center; font-size: 12.5px; color: var(--muted); }
+.decision-flow figcaption > span { display: grid; gap: 2px; align-content: start; }
+.decision-flow figcaption strong { color: var(--ink); font-weight: 600; }
+.decision-note { margin: 0; font-size: 12.5px; color: var(--muted); }
+.decision-note.error { color: var(--bad); }
+.decision-key-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 500px); gap: 6px 10px; align-items: center; }
+.decision-key-row > .decision-note { grid-column: 1 / -1; }
+.decision-key-row .voice-key { width: 100%; }
+.decision-catalog { display: grid; gap: 10px; }
+.decision-seat { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.ds-head { display: grid; grid-template-columns: minmax(0, 1fr) 120px 96px 64px; gap: 10px; align-items: center; }
+.ds-tiers { font-size: 12.5px; color: var(--muted); }
+.ds-tiers.unset { color: var(--warn); }
+.ds-image-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 180px) minmax(0, 260px) minmax(0, 112px) 64px; gap: 10px; align-items: center; }
+.ds-image-row > :is(input, select) { width: 100%; min-width: 0; box-sizing: border-box; text-overflow: ellipsis; }
+.ds-add-row { justify-self: start; }
+.ds-head > :is(input, select) { width: 100%; min-width: 0; box-sizing: border-box; text-overflow: ellipsis; }
+.ds-access { font-size: 12.5px; color: var(--muted); }
+select.decision-add { justify-self: start; width: 200px; }
+@media (max-width: 700px) {
+  .decision-key-row { grid-template-columns: minmax(0, 1fr); }
+  .ds-head { grid-template-columns: minmax(0, 1fr) 120px 64px; }
+  .ds-head > :first-child { grid-column: 1 / -1; }
+  .ds-image-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(80px, 112px) 64px; }
+  .ds-image-row > :first-child { grid-column: 1 / -1; }
+}
 .skill-rows { display: grid; gap: 10px; max-width: 1100px; }
 .skill-row { border: 1px solid var(--line); border-radius: 12px; background: var(--panel, var(--bg)); }
 .skill-head { display: grid; grid-template-columns: 1fr auto 16px; align-items: center; gap: 16px; width: 100%; padding: 14px 18px; border: 0; background: none; text-align: left; cursor: pointer; color: inherit; }

@@ -622,13 +622,12 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["meetings", "parallel", "split"]
+        ["decision", "meetings", "parallel", "split"]
     );
     let lead = &rules["switches"]["lead_only"];
-    assert!(
-        catalog::section(lead["replaces_in"].as_str().unwrap())
-            .contains(lead["when_false"].as_str().unwrap())
-    );
+    assert!(lead["replaces_in"].as_array().unwrap().iter().all(|name| {
+        catalog::section(name.as_str().unwrap()).contains(lead["when_false"].as_str().unwrap())
+    }));
     // The settings page keeps its own copy in `PROVIDER_NAMES`; the two must not drift.
     let page = include_str!("../../ui/settings-state.js");
     let (_, rest) = page.split_once("const PROVIDER_NAMES = {").expect("table");
@@ -645,4 +644,130 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
             Some(name)
         );
     }
+}
+
+#[test]
+fn the_decision_mode_has_its_own_text_and_leaves_the_others_as_they_were() {
+    let section = catalog::section;
+    let lead = &catalog::catalog()["switches"]["lead_only"];
+    let (asked, always) = (
+        lead["when_false"].as_str().unwrap(),
+        lead["when_true"].as_str().unwrap(),
+    );
+    // The other modes are their sections in order, as before the mode existed.
+    let image = json!({"provider": "claude", "model": "m"});
+    let doc = |mode: &str| {
+        json!({"preset": mode, "enabled_roles": [], "image_generation": image,
+        "decision_options": {"parallel_writes": true, "meetings": true}})
+    };
+    let image_line = section("image_generation");
+    assert_eq!(
+        text_of(&doc("split"), "split").unwrap(),
+        format!(
+            "{}{}{}{image_line}",
+            section("shared"),
+            section("split_parallel_writes"),
+            section("meetings_when_asked")
+        )
+    );
+    assert_eq!(
+        text_of(&doc("parallel"), "parallel").unwrap(),
+        format!(
+            "{}{}{}{image_line}",
+            section("shared"),
+            section("parallel_writes"),
+            section("meetings_on_tradeoffs")
+        )
+    );
+    assert_eq!(
+        text_of(&doc("meetings"), "meetings").unwrap(),
+        format!(
+            "{}{}",
+            section("meetings_only_head"),
+            section("meetings_only_tail")
+        )
+    );
+    for mode in ["off", "decision"] {
+        assert!(PRESETS.contains(&mode));
+    }
+    assert_eq!(text_of(&json!({"preset": "off"}), "off"), None);
+
+    // The decision text: its own base, the two options and the meeting line; no seat lines of the
+    // fixed groups, and no fixed image line even with an image seat bound (image seats are the
+    // catalog's).
+    let with = |options: Value| {
+        json!({"preset": "decision", "enabled_roles": ["explorer", "worker"],
+            "image_generation": image, "decision_options": options})
+    };
+    let base = |parallel: &str, meetings: &str| {
+        format!(
+            "{}{}{}",
+            section("decision_shared"),
+            section(parallel),
+            section(meetings)
+        )
+    };
+    let default = text_of(&with(json!({})), "decision").unwrap();
+    assert_eq!(
+        default,
+        base("split_parallel_writes", "meetings_when_asked")
+    );
+    assert!(!default.contains("explorer-easy") && !default.contains(image_line));
+    assert!(!default.contains("`seat` 用 `image-generator`"));
+    assert_eq!(
+        text_of(&with(json!({"parallel_writes": true})), "decision").unwrap(),
+        base("parallel_writes", "meetings_when_asked")
+    );
+    assert_eq!(
+        text_of(&with(json!({"meetings": true})), "decision").unwrap(),
+        base("split_parallel_writes", "meetings_on_tradeoffs")
+    );
+    // Boss-only-orchestrates replaces the same line here as in the other modes.
+    assert!(default.contains(asked) && !default.contains(always));
+    let mut lead_only = with(json!({}));
+    lead_only["lead_only"] = json!(true);
+    let lead_only = text_of(&lead_only, "decision").unwrap();
+    assert!(lead_only.contains(always) && !lead_only.contains(asked));
+    // The meeting line comes after the options, as in Split.
+    let mut meeting = with(json!({}));
+    meeting["meeting"] = json!({"count": 4});
+    assert!(text_of(&meeting, "decision").unwrap().contains(&format!(
+        "{}{}",
+        section("meetings_when_asked"),
+        "\n- 开会默认 4 席"
+    )));
+    // The page shows the same pieces.
+    let parts = &presets(&json!({"preset": "decision"}))["decision_parts"];
+    assert_eq!(parts["base"], section("decision_shared"));
+    assert_eq!(parts["parallel_writes_own"], section("parallel_writes"));
+}
+
+#[test]
+fn the_decision_mode_is_per_boss_and_shared_by_readers_of_one_file() {
+    let home = tempfile::tempdir().unwrap();
+    let h = &home.path().canonicalize().unwrap();
+    let app = |id, label, root: &str| App {
+        key: id,
+        id,
+        label,
+        root: h.join(root),
+    };
+    // Grok reads Claude's file, so the two share one mode.
+    let apps = [
+        app("claude", "Claude Code", ".claude"),
+        app("grok", "Grok", ".grok"),
+        app("codex", "Codex", ".codex"),
+    ];
+    let document =
+        json!({"version": 1, "preset": "off", "apps": {"grok": "decision", "codex": "split"}});
+    assert_eq!(
+        effective(&apps, h, &document),
+        json!({"claude": "decision", "grok": "decision", "codex": "split"})
+    );
+    let backup = |_: &Path, _: &[u8]| Ok(());
+    assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
+    let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
+    let codex = std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap();
+    assert!(claude.contains(catalog::section("decision_shared")));
+    assert!(!codex.contains("决策模型") && codex.contains(catalog::section("shared")));
 }
