@@ -17,7 +17,6 @@ from agentnave.isolated.leases import (
 from agentnave.isolated.repo import (
     WORKTREES_DIR_NAME,
     IsolationError,
-    check_out,
     decode_git_path,
     is_link,
     is_same_or_subpath,
@@ -790,11 +789,14 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
                 if not linked:
                     raise IsolationError("Unfinished directory is not a valid git worktree")
                 if never_checked_out(wt_path):
-                    # Interrupted between adding and checking out: finish the checkout so the
-                    # status below compares files, not an empty index.
-                    check_out(wt_path, record.base_oid)
-                dirty = run_git(_STATUS_ARGS, cwd=wt_path).stdout
-                if dirty:
+                    # Interrupted between adding and checking out. Without an index git reports
+                    # every file as deleted, so only a directory holding nothing but its .git
+                    # link is proven untouched; anything else may be someone's work.
+                    if any(entry.name != ".git" for entry in wt_path.iterdir()):
+                        raise IsolationError(
+                            "Unfinished worktree was never checked out but holds files"
+                        )
+                elif run_git(_STATUS_ARGS, cwd=wt_path).stdout:
                     raise IsolationError("Unfinished worktree contains uncommitted source changes")
             run_git(["worktree", "remove", "--force", "--", str(wt_path)], cwd=main_root)
         elif wt_path.exists():

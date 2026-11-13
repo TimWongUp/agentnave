@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -443,19 +444,29 @@ def test_recovery_and_change_summary_edge_cases(tmp_path: Path) -> None:
     assert not wt_clean.worktree_path.exists()
     assert dirs.store.get(wt_clean.id) is None
 
-    # Interrupted between `worktree add --no-checkout` and the checkout: no index yet.
-    wt_bare = dirs.create(repo, workspace_id="ws-1")
-    wt_bare.lease.release()
-    rec_bare = dirs.store.get(wt_bare.id)
-    assert rec_bare is not None
-    Path(
-        _git(wt_bare.worktree_path, "rev-parse", "--path-format=absolute", "--git-path", "index")
-    ).unlink()
-    dirs.store.delete(wt_bare.id)
-    dirs.store.insert_creating(replace(rec_bare, state="creating", phase="copying_include"))
-    out_bare = dirs.recover()
-    assert len(out_bare) == 1 and out_bare[0].status == "rolled_back"
-    assert not wt_bare.worktree_path.exists()
+    # Interrupted between `worktree add --no-checkout` and the checkout: no index yet, maybe a
+    # lock left by a checkout that died. Only the .git link proves nothing was written.
+    for files_left, outcome in ((False, "rolled_back"), (True, "needs_attention")):
+        wt_bare = dirs.create(repo, workspace_id="ws-1")
+        wt_bare.lease.release()
+        rec_bare = dirs.store.get(wt_bare.id)
+        assert rec_bare is not None
+        index = Path(
+            _git(
+                wt_bare.worktree_path, "rev-parse", "--path-format=absolute", "--git-path", "index"
+            )
+        )
+        index.unlink()
+        index.with_name("index.lock").touch()
+        if not files_left:
+            for entry in wt_bare.worktree_path.iterdir():
+                if entry.name != ".git":
+                    shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+        dirs.store.delete(wt_bare.id)
+        dirs.store.insert_creating(replace(rec_bare, state="creating", phase="copying_include"))
+        out_bare = dirs.recover()
+        assert len(out_bare) == 1 and out_bare[0].status == outcome
+        assert wt_bare.worktree_path.exists() == files_left
 
     wt_dirty = dirs.create(repo, workspace_id="ws-1")
     wt_dirty.lease.release()
