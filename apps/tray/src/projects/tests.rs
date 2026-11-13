@@ -471,3 +471,16 @@ fn a_repository_at_the_home_folder_does_not_swallow_what_is_below() {
         "home/Code/app"
     );
 }
+
+#[test]
+fn a_record_that_could_not_be_saved_is_written_on_the_next_try() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    std::fs::write(&config, b"a file where the folder should be").unwrap();
+    let mut memory = Memory::at(config.join(super::memory::FILE));
+    let (cwd, root) = (dir.path().join("wt"), dir.path().join("repo"));
+    memory.remember(&cwd, &root);
+    std::fs::remove_file(&config).unwrap();
+    memory.remember(&cwd, &root);
+    assert!(config.join(super::memory::FILE).is_file());
+}

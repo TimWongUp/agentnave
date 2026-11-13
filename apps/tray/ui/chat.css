@@ -91,6 +91,9 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
   .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split-side { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
+  /* the rail shows every group's entries, so the way to the rest stays, as a dot row */
+  .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
+  .gl-more::after { content: "⋯"; font-size: 16px; line-height: 1; }
   .gi::before { left: 2px; }
 }
 
@@ -613,6 +616,8 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
   .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
+  .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
+  .gl-more::after { content: "⋯"; font-size: 16px; line-height: 1; }
   .conv { position: fixed; z-index: 30; top: 48px; right: 0; bottom: 0; width: min(400px, 92vw); box-shadow: 0 22px 60px #0009; animation: slide-in 0.25s ease-out; }
   .dr-close { display: grid; place-items: center; }
 }
@@ -621,8 +626,9 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 1fr; }
   .side-head, .gl-sec, .gi-body { display: revert; }
   .gl-grp { display: flex; }
-  .gl-more { display: block; }
-  .gi[data-folded="true"] { display: none; }
+  .gl-more { display: block; padding: 5px 8px; text-align: left; font-size: 11.5px; }
+  .gl-more::after { content: none; }
+  .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }
   .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }

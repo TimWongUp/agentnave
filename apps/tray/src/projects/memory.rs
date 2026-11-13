@@ -75,7 +75,10 @@ impl Memory {
             .iter()
             .map(|(cwd, root)| (cwd.clone(), Value::String(root.clone())))
             .collect();
-        let _ = crate::data_files::write_atomic(parent, name, &Value::Object(document));
+        if crate::data_files::write_atomic(parent, name, &Value::Object(document)).is_err() {
+            // Read the file again next time, so the change that failed is written once more.
+            self.entries = None;
+        }
     }
 }
 

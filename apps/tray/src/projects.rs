@@ -84,8 +84,12 @@ fn records() -> MutexGuard<'static, Memory> {
 
 /// The projects of workspaces by their earliest working directory. Answers come from the cache;
 /// directories not resolved yet are queued and count as "other" for now. Records of directories
-/// that are no workspace's origin any more are dropped on the background thread.
-pub(crate) fn lookup(origins: &BTreeMap<String, String>) -> BTreeMap<String, Project> {
+/// that are no workspace's origin any more are dropped on the background thread, but only when
+/// `complete` says every workspace was read: one that failed may still need its record.
+pub(crate) fn lookup(
+    origins: &BTreeMap<String, String>,
+    complete: bool,
+) -> BTreeMap<String, Project> {
     let mut state = shared();
     let generation = state.generation;
     let mut wanted = Vec::new();
@@ -111,8 +115,8 @@ pub(crate) fn lookup(origins: &BTreeMap<String, String>) -> BTreeMap<String, Pro
         enqueue(&mut state, cwd);
     }
     // An empty list means it could not be read: nothing is forgotten then.
-    let current: Option<BTreeSet<String>> =
-        (!origins.is_empty()).then(|| origins.values().cloned().collect::<BTreeSet<_>>());
+    let current: Option<BTreeSet<String>> = (complete && !origins.is_empty())
+        .then(|| origins.values().cloned().collect::<BTreeSet<_>>());
     if let Some(origins) = current.filter(|origins| state.origins.as_ref() != Some(origins))
         && send(&mut state, Job::Retain(origins.clone()))
     {

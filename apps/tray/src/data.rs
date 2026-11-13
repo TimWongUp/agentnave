@@ -224,7 +224,10 @@ impl Reader {
     /// Stage and chat answers, reused while relevant snapshots and the reuse window are unchanged.
     fn route(&self, path: &str) -> Response {
         let database = crate::db::read(&self.root);
-        let snapshots = self.scan_with(&database).1;
+        let (overview, snapshots) = self.scan_with(&database);
+        // Records of directories are only forgotten when every workspace was read.
+        let complete =
+            !overview.missing && overview.scan_error.is_none() && overview.unreadable.is_empty();
         let window = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -242,8 +245,10 @@ impl Reader {
         let app_map: HashMap<_, _> = apps.iter().cloned().collect();
         let data_exists = self.root.is_dir();
         let mut dirs = crate::isolated::read(&self.root);
-        let mut projects =
-            crate::projects::lookup(&crate::stage::origin_cwds(&snapshots, &handover_map));
+        let mut projects = crate::projects::lookup(
+            &crate::stage::origin_cwds(&snapshots, &handover_map),
+            complete,
+        );
         let (sources, stage_ids, key_handovers, key_apps, views) =
             if let Some(group_id) = crate::stage::requested_group(path) {
                 dirs.retain(|dir| dir.workspace == group_id);
