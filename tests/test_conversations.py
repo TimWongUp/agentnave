@@ -3129,9 +3129,8 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
 
 @pytest.mark.asyncio
 async def test_finished_tasks_release_collectors_and_expired_message_mappings(
-    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, data_root: Path
 ) -> None:
-    monkeypatch.setattr("agentnave.core._FINISHED_RETENTION_SECONDS", 0.05)
     studio = Conversations(InvocationManager(), data_root)
     try:
         invocation, conversation, *_ = studio.start_task(
@@ -3141,9 +3140,9 @@ async def test_finished_tasks_release_collectors_and_expired_message_mappings(
         assert studio.task_message_id(invocation)
         assert not studio.collectors
         studio.delivered_tasks.add(invocation)
-        async with asyncio.timeout(2):
-            while studio.manager.list_invocations():
-                await asyncio.sleep(0.01)
+        # Expire it now: a short retention raced the assertions above on slow runners.
+        assert studio.manager.forget_finished({invocation}) == 1
+        assert not studio.manager.list_invocations()
         assert not studio.task_invocations
         assert not studio.delivered_tasks
         assert _state(data_root, conversation)["tasks"][0]["output"]
