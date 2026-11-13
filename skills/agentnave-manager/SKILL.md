@@ -39,7 +39,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 
 每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是显示给用户看的职责，不影响身份，写这位员工这次具体做什么，如「接手方视角」。
 
-用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 选 `list_members` 公布的工位时，可省略 `provider`，由服务按 App 工位选 CLI 并套用工位的模型和档位；显式传的 `model`、`effort` 优先。工位缺失、未启用、文件损坏或属于宿主自带子代理时会报错。继承与推断的参数来源都列在回执 `defaults_applied` 中，派发后核对。
+用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 选 `list_members` 公布的工位时，可省略 `provider`，由服务按 App 工位选 CLI 并套用工位的模型和档位；显式传的 `model`、`effort` 优先。工位缺失、未启用、文件损坏或属于宿主自带子代理时会报错。继承与推断的参数来源都列在回执 `defaults_applied` 中，派发后核对。回执有 `seat_fallback` 时（`position` 为第几顺位，`skipped` 列出跳过的顺位和原因）表示服务已按用户顺位换用备选，属于用户选择，不算静默替换，不需改派。
 
 - **续接**：接着同一线程干活时传上次结果返回的 `session_id`（不是 `invocation_id`，上下文里找不到时用 `read_conversation` 读回），不能换 `provider`。省略的 `provider`、`cwd`、`role`、`seat` 继承本 boss 历史中该原生会话最近一次任务；无工位供模型时还继承上次的 `model` 和 `effort`，要换模型就显式传。只换 `role` 不传 `seat` 时不再沿用旧工位。找不到历史或跨 `provider` 重名时补传 `provider` 和 `cwd`；其他 boss 的历史不提供默认值。
 - **何时开新线程**：任务已换阶段、旧细节不再需要时，写简报开新线程或新会议，暂停较久后尤其如此（缓存过期后续接要整段重建）；仍需原始证据时继续续接。
@@ -54,7 +54,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 
 - **定档**：范围已限定的定位、取证和按明确步骤的改动用简单档；方案取舍、根因判断和边界不明的工作用困难档，或由 boss 自己做。难度不明时，boss 查到足够写出简报为止，或派困难档只读工位查清，再定档；不替组员把活干完。
 - **选组**：各工位管什么见 `orchestration.scopes`。同时符合多个专项时，能拆就按步骤拆开分别派；拆不开就按本次主要交付物选，调研按主要信息来源选；附带的小改动随主任务处理，拿不准就用读写类型相同的通用工位。同难度专项优先；专项某档未绑定时不继承通用身份，专项未设或不可用时明确选同难度的通用探索／执行；通用也不可用时由 boss 自己完成或说明缺少能力。兜底不跨难度、不静默换模型，不回用隐藏的普通任务池，关闭的角色不因兜底重新出现。保存工位绑定不代表 CLI 具备相应的搜索或制作工具，能力另行判断。
-- **升档**：简单档因能力不足失败，或整改一次仍不合格，核对现状后开困难档新工位重新交接（续接不能换 CLI），上次成功时用 `forward` 带上结果，失败或取消时在简报里写明进展，或由 boss 接手；专项两档是同一模型时，改选通用困难档或由 boss 接手。同一条主线只升一次，不在工位之间来回切换。额度、登录、未安装等阻断不算能力不足，按 `reason` 和 `replacement` 处理。
+- **升档**：简单档因能力不足失败，或整改一次仍不合格，核对现状后开困难档新工位重新交接（续接不能换 CLI），上次成功时用 `forward` 带上结果，失败或取消时在简报里写明进展，或由 boss 接手；专项两档是同一模型时，改选通用困难档或由 boss 接手。同一条主线只升一次，不在工位之间来回切换。额度、登录、未安装等阻断不算能力不足：服务会按用户配置的备选顺位换用，只有全部顺位都不可用时才按 `reason` 和 `replacement` 处理。
 - **派发**：`seat` 用可见分组的前缀加 `-easy` 或 `-hard`，省略 `provider`、`access` 和模型；`role` 仍写具体职责。
 - **生图**：`list_members` 返回 `orchestration.image_generation` 时才有，`seat="image-generator"`，不分档；没配置时不拿 Worker 顶替。prompt 写清图像需求和产物路径，不传生图模型或接口参数；保存工位不代表这个 CLI 真能生图。
 
@@ -77,7 +77,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 ## CLI 与模型
 
 - 用户没点名模型或档位时不传 `model`、`effort`，不自己挑档次；由服务按工位或 App 设置补上。
-- 模型不可用、派发被拒绝或工位 `available=false` 时报告原错误，不静默替换；工位绑定的模型失效时先报告并修复配置，不自动扩大允许名单或换模型。`list_members` 里该工位的 `reason` 和 `replacement` 给出可直接传的参数，连同原来的 `seat` 或 `role` 一起传，访问等级才不会丢，用不用由 boss 决定。
+- 服务按用户在 App 为工位配置的备选顺位取第一个可用，`available=false` 只在全部顺位都不可用时出现。模型不可用、派发被拒绝或工位 `available=false` 时报告原错误，不静默替换；`list_members` 里该工位的 `reason` 和 `replacement` 给出可直接传的参数，连同原来的 `seat` 或 `role` 一起传，访问等级才不会丢，用不用由 boss 决定。工位绑定的模型失效时先报告并修复配置，不自动扩大允许名单或换模型。
 - 权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`、`approve_for_me`）只能来自用户在 App 中设定的默认 `options`、服务按 CLI 套用的权限档位（缺省「完全放开」，用户可在 App 改为「自动」；见 `list_members` 的 `permissions`）或用户本轮明确要求，boss 不得自行追加；显式传任一权限参数会让该 CLI 的档位整档不套用。App 默认值和档位续接时也会套用。
 - 讨论、顾问和只看给定材料的任务用 prompt 约定范围，不因此自动启用 `restricted_tools`；仅在用户明确要求从工具层面限制访问时才设 `provider_options.restricted_tools=true`。
 - 终态回执的 `warnings` 报告 CLI 报成功但有工具调用被拒时，按未完成处理，并告知用户可在 App 调整档位。

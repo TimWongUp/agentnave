@@ -51,7 +51,7 @@ description: 代码评审流程：按失败风险定 R0–R3 级，通过 AgentN
 按顺序取第一个适用的来源：
 
 1. **本次点名**：用户在当前对话里指定的 CLI、模型或档位。指明角色时只对该角色生效，否则对全部工位生效；只给 CLI 时用其 App 组员默认模型。本次评审的复核和反证沿用。点名的工位用不了时报告原因并询问用户，不擅自替换。
-2. **App 评审工位**：`list_members` 回执的 `review`。派发传 `role`，服务按工位选 CLI 并套用模型和档位；续接只传 `session_id`；核对回执 `defaults_applied` 以该角色的 seat 开头。`native`、`available` 和 `replacement` 按 `agentnave-manager`，服务不会自动换，没有 `replacement` 或不合适时按第 3 项。
+2. **App 评审工位**：`list_members` 回执的 `review`。派发传 `role`，服务按工位选 CLI 并套用模型和档位；续接只传 `session_id`；核对回执 `defaults_applied` 以该角色的 seat 开头。服务按用户在 App 配置的备选顺位取第一个可用，回执 `seat_fallback` 表示用了备选，同属 App 评审工位来源，记录里注明所用模型即可，不算替换。`available=false` 表示全部顺位都不可用；`native`、`available` 和 `replacement` 按 `agentnave-manager`，服务不会采用 `replacement`，没有或不合适时按第 3 项。
 3. **自动**：按 `agentnave-manager` 从 `members` 选，优先与改动作者不同的模型，高推理角色（见评审角色表）用最强可用组员。
 
 来源不是 App 评审工位时（点名、替换及原因、自动）写入记录。

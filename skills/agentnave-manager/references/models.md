@@ -21,6 +21,6 @@
 
 ## 工位不可用与冷却
 
-- 工位 `available` 省略即可用。派发被拒绝、因 CLI 未安装启动失败或工位 `available=false` 时，按主文件「CLI 与模型」用 `reason` 和 `replacement` 处理。
-- `available=false` 也可能表示 CLI 和模型近期遇到 quota／auth／billing 硬阻断：认证冷却持续到解除，配额仅在重置时间明确时冷却（最长 8 天），计费冷却 30 分钟。
+- 工位 `available` 省略即可用。新派发由服务按主选和备选顺位取第一个可用，只在启动前切换，任务启动后才失败的不重试；`available=false` 只在全部顺位都不可用时出现。派发被拒绝、因 CLI 未安装启动失败或全部顺位不可用时，按主文件「CLI 与模型」用 `reason` 和 `replacement` 处理。生效的是备选时工位带 `fallback_position`，`fallbacks` 列出用户配置的全部备选及各自的 `available` 和 `reason`。
+- CLI 或模型在冷却时该顺位不可用：认证冷却持续到解除，配额仅在重置时间明确时冷却（最长 8 天），计费冷却 30 分钟。
 - 用户可在 App 解除冷却；仅当用户在当前对话明确要求解除时，调 `clear_provider_cooldown(provider=..., model=...)`，省略 `model` 解除该 CLI 全部冷却。
