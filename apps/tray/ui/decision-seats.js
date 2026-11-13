@@ -43,13 +43,13 @@
       if (seat.kind === IMAGE) {
         let card = cards.find((one) => one.kind === IMAGE);
         if (!card) cards.push(card = { cid: `c${++cardCount}`, kind: IMAGE, role: "", access: "write", seats: {}, rows: [] });
-        card.rows.push({ rid: `r${++rowCount}`, role: seat.role, loadedRole: seat.role, description: seat.description, seat: bareSeat({ ...seat, description: "" }) });
+        card.rows.push({ rid: `r${++rowCount}`, role: seat.role, loadedRole: seat.role.trim(), description: seat.description, seat: bareSeat({ ...seat, description: "" }) });
         continue;
       }
       const fixed = seat.kind !== CUSTOM;
       let card = cards.find((one) => one.kind === seat.kind && (fixed || one.role === seat.role));
       if (!card) {
-        card = { cid: `c${++cardCount}`, kind: seat.kind, role: seat.role, loadedRole: seat.role, access: seat.access, description: seat.description, seats: {} };
+        card = { cid: `c${++cardCount}`, kind: seat.kind, role: seat.role, loadedRole: seat.role.trim(), access: seat.access, description: seat.description, seats: {} };
         cards.push(card);
       }
       // A custom seat keeps the description the file gave it, for as long as its specialty stays.

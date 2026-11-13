@@ -74,7 +74,7 @@ def read_decision_key(name: str) -> str | None:
         ) from None
     try:
         document: object = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         document = None
     fields = cast(dict[str, object], document) if isinstance(document, dict) else {}
     keys = fields.get("version") == 1 and type(fields["version"]) is int and fields.get("keys")

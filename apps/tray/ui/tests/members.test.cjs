@@ -1217,6 +1217,14 @@ test("a card read from the file goes back unchanged, and a changed specialty tak
   assert.equal(seatsOf(app).find((one) => one.role === "写作").description, "写作");
 });
 
+test("a specialty written with spaces around it still keeps its description", async () => {
+  const seat = (id, kind, role, description, extra) => ({ id, kind, role, description, provider: "codex", model: "chat-model", access: "write", ...extra });
+  const file = [seat("c-1", "custom", " 美术 ", "专长水彩", { difficulty: "easy" }), seat("i-1", "image", " 漫画 ", "日式线稿")];
+  const { app, decision } = decisionEditor("decision", { document: { version: 1, seats: file }, error: null, key_set: false, key_error: null });
+  await decision((d) => d.load());
+  assert.deepEqual(Array.from(seatsOf(app).map((one) => [one.role, one.description])), [["美术", "专长水彩"], ["漫画", "日式线稿"]]);
+});
+
 test("saving sends the flat catalog on its own, without any boss switch", async () => {
   const { app, calls, decision } = decisionEditor("split", NO_FILE);
   await decision((d) => d.load());
