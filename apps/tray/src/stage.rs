@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::data::snapshot::{Item, Snapshot};
 use crate::data_files::valid_id;
+use crate::isolated::{self, Dir};
 use crate::response::Response;
 use crate::time_format::{iso, timestamp};
 
@@ -341,6 +342,8 @@ struct Group {
     typing: BTreeMap<String, (i64, Value)>,
     sources: Vec<usize>,
     include_messages: bool,
+    /// The isolated directories of this workspace.
+    isolated: Vec<Value>,
 }
 
 /// The mark and name of a Claude or Codex boss, by the app its session records name (see
@@ -467,6 +470,7 @@ pub(crate) fn respond(
     limit: usize,
     handovers: &HashMap<String, Handover>,
     apps: &HashMap<String, &'static str>,
+    dirs: &[Dir],
 ) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let complete = requested.is_some_and(|path| path.ends_with("/history"));
@@ -481,7 +485,7 @@ pub(crate) fn respond(
     if requested.is_some_and(|id| !valid_id(id)) || focus.is_some_and(|id| !valid_id(id)) {
         return Response::error(404, "not found");
     }
-    let (mut groups, stage_ids) = unprojected_groups(&mut snapshots, handovers, apps);
+    let (mut groups, stage_ids) = unprojected_groups(&mut snapshots, handovers, apps, dirs);
     if let Some(id) = requested {
         let Some(group) = groups.iter_mut().find(|g| g.id == id) else {
             return Response::error(404, "not found");
@@ -495,6 +499,7 @@ pub(crate) fn respond(
         value.as_object_mut().unwrap().remove("updated");
         value["conversations"] = json!(group.conversations);
         value["members"] = json!(group.members());
+        value["isolated"] = json!(group.isolated);
         let rooms = group.rooms();
         let messages = group.timeline(focus, complete);
         let omitted = (group.messages.len() + group.typing.len()).saturating_sub(messages.len());
@@ -535,6 +540,52 @@ fn meaningful_title(title: &str) -> bool {
         )
 }
 
+/// Where a workspace's running calls work: a task's own directory, or a meeting's while a seat runs.
+fn running_cwds(snapshots: &[Snapshot], sources: &[usize]) -> Vec<String> {
+    let mut found = Vec::new();
+    for &index in sources {
+        let director = &snapshots[index].view["director"];
+        let seat_running =
+            array(&director["round"], "seats").any(|seat| seat["status"] == "running");
+        if seat_running || director["round"]["status"] == "running" {
+            found.extend(opt_text(director, "cwd"));
+        }
+        found.extend(
+            array(director, "tasks")
+                .filter(|task| task["status"] == "running")
+                .filter_map(|task| opt_text(task, "cwd")),
+        );
+    }
+    found
+}
+
+/// The task calls of a workspace that created an isolated directory, with their desk and the
+/// first line of their prompt.
+fn isolated_builders(snapshots: &[Snapshot], sources: &[usize]) -> Vec<isolated::Builder> {
+    let mut found = Vec::new();
+    for &index in sources {
+        let snapshot = &snapshots[index];
+        for (number, task) in array(&snapshot.view["director"], "tasks").enumerate() {
+            let (id, path) = (text(task, "isolation_id"), text(task, "isolation_path"));
+            if id.is_empty() && path.is_empty() {
+                continue;
+            }
+            let task_id = opt_text(task, "id").unwrap_or_else(|| number.to_string());
+            let first = text(task, "prompt")
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty());
+            found.push(isolated::Builder {
+                id: id.to_owned(),
+                path: path.to_owned(),
+                desk: task_desk(&snapshot.item.id, task, &task_id),
+                text: first.unwrap_or_default().chars().take(80).collect(),
+            });
+        }
+    }
+    found
+}
+
 /// The project a working directory belongs to: its folder name, or the repository's name for an
 /// agent worktree such as `<repo>/.claude/worktrees/<name>`.
 fn project_name(cwd: &str) -> Option<String> {
@@ -553,6 +604,7 @@ fn unprojected_groups(
     snapshots: &mut [Snapshot],
     handovers: &HashMap<String, Handover>,
     apps: &HashMap<String, &'static str>,
+    dirs: &[Dir],
 ) -> (Vec<Group>, Vec<String>) {
     snapshots.sort_by_key(|s| {
         (
@@ -586,6 +638,9 @@ fn unprojected_groups(
             }
         }
         group.app = apps.get(&group.id).copied();
+        let running = running_cwds(snapshots, &group.sources);
+        let builders = isolated_builders(snapshots, &group.sources);
+        group.isolated = isolated::classify(dirs, &group.id, &running, &builders);
     }
     // Work going on first, then the most recent; never empty while history exists. A failure is
     // no reason to come first: the boss handles it, the user has nothing to do.

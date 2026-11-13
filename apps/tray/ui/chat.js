@@ -227,7 +227,8 @@ function renderConv(c, ctx) {
   const d = state.drawer;
   if (
     (d.kind === "desk" && !ctx.desks.has(d.key)) ||
-    (d.kind === "room" && !ctx.rooms.has(d.id))
+    (d.kind === "room" && !ctx.rooms.has(d.id)) ||
+    (d.kind === "isolated" && !c.isolated?.length)
   )
     state.drawer = { kind: "all" };
   el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");
@@ -238,6 +239,10 @@ function renderConv(c, ctx) {
     desk ? chat => { const next = contextOf(chat); return chat.messages.filter(m => inDesk(m, desk, next)); } : null);
   if (state.drawer.kind === "all") {
     renderDirectory(c, ctx);
+    return;
+  }
+  if (state.drawer.kind === "isolated") {
+    renderIsolatedDrawer(c, ctx);
     return;
   }
   const scopeKey = c.group + JSON.stringify(state.drawer);
@@ -622,7 +627,13 @@ async function refresh() {
       state.opener = null;
       state.scopeKey = "";
       state.tickId = null;
+      if (state.wantIsolated === chat.group) {
+        state.drawer = { kind: "isolated" };
+        state.convOpen = true;
+        setCollapsed(false);
+      }
     }
+    state.wantIsolated = null;
     state.chat = chat;
     showBlank(null);
     // Office polls also refresh voice settings.
