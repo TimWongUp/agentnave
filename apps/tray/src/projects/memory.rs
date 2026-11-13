@@ -31,6 +31,9 @@ impl Memory {
 
     /// The repository recorded while `dir` still existed.
     pub(super) fn root(&mut self, dir: &Path) -> Option<PathBuf> {
+        if self.unsaved {
+            self.save();
+        }
         let root = PathBuf::from(self.load().get(&key(dir))?);
         root.is_absolute().then_some(root)
     }
