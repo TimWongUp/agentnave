@@ -210,7 +210,10 @@ def test_terminal_can_run_windows_command_wrapper(tmp_path: Path) -> None:
     wrapper = tmp_path / "claude.cmd"
     wrapper.write_text("@echo %*\r\n@echo READY\r\n@set /p ANSWER=\r\n@echo GOT:%ANSWER%\r\n")
     injected = tmp_path / "injected"
-    terminal = WindowsTerminal(str(wrapper), [f"value&echo injected>{injected}"])
+    unspaced = tmp_path / "unspaced"
+    terminal = WindowsTerminal(
+        str(wrapper), [f"value&echo injected>{injected}", f"x&whoami>{unspaced}", "%PATH%"]
+    )
     try:
         deadline = time.monotonic() + 10
         while "READY" not in terminal.poll() and time.monotonic() < deadline:
@@ -220,9 +223,11 @@ def test_terminal_can_run_windows_command_wrapper(tmp_path: Path) -> None:
         while "GOT:hello" not in text and time.monotonic() < deadline:
             text = terminal.poll()
         assert "GOT:hello" in text
+        assert "%PATH%" in text
         while terminal.process.poll() is None and time.monotonic() < deadline:
             terminal.poll()
         assert terminal.process.poll() is not None
         assert not injected.exists()
+        assert not unspaced.exists()
     finally:
         terminal.close()

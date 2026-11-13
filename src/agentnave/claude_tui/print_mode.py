@@ -18,6 +18,7 @@ from agentnave.claude_tui.hooks import (
     with_mode,
 )
 from agentnave.claude_tui.turn import Transcript, drop_empty_session, object_dict
+from agentnave.windows_supervisor import popen_args
 
 
 def write_line(event: dict[str, object]) -> None:
@@ -36,8 +37,10 @@ def print_attempt(
         directory = Path(tmp)
         settings = directory / "settings.json"
         settings.write_text(json.dumps({"hooks": mode_hook(directory)}), encoding="utf-8")
+        command, application = popen_args([executable, *args, "--settings", str(settings)])
         process = subprocess.Popen(
-            [executable, *args, "--settings", str(settings)],
+            command,
+            executable=application,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )

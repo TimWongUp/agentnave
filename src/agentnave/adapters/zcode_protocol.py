@@ -14,6 +14,7 @@ from typing import Any, cast
 from agentnave.adapters.base import resolve_executable
 from agentnave.models import Host
 from agentnave.native_sessions import session_model
+from agentnave.windows_supervisor import popen_args
 
 LINE_LIMIT = 64 * 1024 * 1024
 
@@ -217,8 +218,10 @@ def _configure_session(connection: Connection, request: dict[str, Any]) -> None:
 def run(request: dict[str, Any]) -> int:
     started = datetime.now(UTC)
     argv, env = command()
+    args, application = popen_args(argv)
     with subprocess.Popen(
-        argv,
+        args,
+        executable=application,
         cwd=request["cwd"],
         env=env,
         stdin=subprocess.PIPE,
