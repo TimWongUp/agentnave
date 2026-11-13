@@ -66,6 +66,10 @@ async def list_all(
             "defaults to 10, at most 50.",
         ),
     ] = 10,
+    offset: Annotated[
+        int,
+        Field(ge=0, description="Skip this many before listing, to page past limit."),
+    ] = 0,
     scope: Annotated[
         Literal["mine", "all"],
         Field(
@@ -124,11 +128,13 @@ async def list_all(
             for state in states
             if state.manager_session == shown and (kind is None or state.kind == kind)
         ]
-        result["conversations"] = [_summary(state, writable) for state in mine[:limit]]
+        result["conversations"] = [
+            _summary(state, writable) for state in mine[offset : offset + limit]
+        ]
         result["total"] = len(mine)
     else:
         workspaces = _workspaces(states, kind, workspace, writable)
-        result["workspaces"] = workspaces[:limit]
+        result["workspaces"] = workspaces[offset : offset + limit]
         result["total"] = len(workspaces)
     return result
 
@@ -179,12 +185,16 @@ def _workspaces(
 def _boss_invocations(
     ctx: Context[Runtime], conversations: Conversations, workspace: str | None
 ) -> tuple[list[InvocationListItem], int]:
-    """This boss's runs on this server (every run without a boss identity): all running ones
-    and the latest finished ones, with how many finished ones were left out."""
-    items = _invocation_items(_manager(ctx))
-    if workspace is not None:
-        owners = conversations.invocation_workspaces()
-        items = [item for item in items if owners.get(item["invocation_id"]) == workspace]
+    """This boss's runs on this server, none without a boss identity: all running ones and
+    the finished ones started last, with how many finished ones were left out."""
+    if workspace is None:
+        return [], 0
+    owners = conversations.invocation_workspaces()
+    items = [
+        item
+        for item in _invocation_items(_manager(ctx))
+        if owners.get(item["invocation_id"]) == workspace
+    ]
     finished = [item for item in items if item["status"] != "running"]
     dropped = {
         item["invocation_id"] for item in finished[: max(0, len(finished) - _FINISHED_SHOWN)]

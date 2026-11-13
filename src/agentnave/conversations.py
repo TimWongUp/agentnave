@@ -411,8 +411,12 @@ class Conversations(ConversationStore):
 
     def reading_workspace(self, manager_session_id: str | None) -> str | None:
         """The calling boss's workspace for reading history; one it handed over still reads as
-        its own. None without a boss identity."""
-        return self._manager_session(manager_session_id, strict=False)
+        its own, also after it passed one it had claimed. None without a boss identity."""
+        boss = self._boss(manager_session_id)
+        if boss is None:
+            return None
+        workspace, away = self.db.resolve(boss[0])
+        return away.id if away is not None else workspace
 
     def invocation_workspaces(self) -> dict[str, str | None]:
         """The workspace each private task or meeting seat run of this server works for."""

@@ -541,6 +541,9 @@ async def test_list_shows_this_chat_and_groups_every_workspace(
         assert every["total"] == len(workspaces) == 2
         assert [(w["title"], w["mine"]) for w in workspaces] == [("Alpha", True), ("Beta", False)]
         assert workspaces[0]["conversation_count"] == 2
+        paged = await _call(client, "list", {"scope": "all", "offset": 1})
+        assert [w["title"] for w in cast(list[dict[str, Any]], paged["workspaces"])] == ["Beta"]
+        assert paged["invocations"] == []  # no boss identity, no runs
         assert workspaces[1]["latest"]["title"] == "Beta"
         other = await _call(client, "list", {"workspace_id": workspaces[1]["workspace_id"]})
         assert [c["title"] for c in cast(list[dict[str, Any]], other["conversations"])] == ["Beta"]
@@ -2254,6 +2257,9 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
             {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
         )  # fmt: skip
         assert passed.is_error and f"handed its workspace {workspace}" in str(passed.content)
+        # It still reads the workspace it passed on as its own.
+        listed = await _call(client, "list", {"manager_session_id": "chat-b"})
+        assert cast(int, listed["total"]) > 0
 
 
 @pytest.mark.asyncio
