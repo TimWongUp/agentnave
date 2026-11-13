@@ -31,7 +31,10 @@ async def run_usage_query(query: UsageQuery, now: datetime) -> datetime | None:
             return None
         finally:
             await _stop(supervised)
-    return query.parse(output, now)
+    try:
+        return query.parse(output, now)
+    except Exception:  # an output nobody foresaw must not turn a quota failure into another one
+        return None
 
 
 async def _collect(supervised: SupervisedProcess, query: UsageQuery) -> bytes:

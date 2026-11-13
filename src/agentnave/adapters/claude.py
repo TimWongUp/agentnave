@@ -349,7 +349,7 @@ class ClaudeAdapter(AdapterHooks):
 
     def usage_query(self, model: str | None) -> UsageQuery | None:
         return UsageQuery(
-            (self.executable_path(), "-p", "/usage"),
+            (self.executable_path(), "-p", "/usage", "--no-session-persistence"),
             lambda output, now: claude_reset(output.decode(errors="replace"), model, now),
         )
 
