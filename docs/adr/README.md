@@ -84,7 +84,7 @@
 | 0078 | [启动确认屏由服务自动处理](0078-startup-confirmations.md) | 已接受 | 修订 ADR-0056、ADR-0057、ADR-0072 |
 | 0079 | [Antigravity 交互活动从屏幕状态行补充](0079-agy-screen-activity.md) | 已接受 | 修订 ADR-0072 的活动来源 |
 | 0080 | [macOS 视频小人经回环 HTTP 加载](0080-tray-video-loopback-http.md) | 已接受 | — |
-| 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合 |
+| 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合；自身的配额冷却规则于 2026-11-13 改为用量查询加一小时兜底 |
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
 | 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 部分修订 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063；2026-11-12 修订（开会席位只存 CLI，模型与档位随员工「开会」设置） |
 | 0084 | [Claude Code 终端交互会话省略等待窗口时用 1500 秒](0084-claude-terminal-default-long-wait.md) | 已接受 | 修订 ADR-0077 的默认窗口 |

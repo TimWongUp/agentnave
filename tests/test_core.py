@@ -1433,8 +1433,17 @@ def test_prompt_content_hides_credentials_before_cutting_it(
 
 def test_provider_health_cooldown_keeps_deadline_and_clears_success(tmp_path: Path) -> None:
     now = datetime.now(UTC)
+    # A quota failure that names no reset time cools the model for an hour; a repeat keeps it.
     provider_health.record(tmp_path, "claude", "quota", "a")
-    assert provider_health.active(tmp_path) == {}
+    guess = provider_health.active(tmp_path)[("claude", "a")]
+    assert guess["until"] is not None
+    assert (
+        timedelta(minutes=59)
+        < datetime.fromisoformat(guess["until"]) - now
+        <= timedelta(hours=1, seconds=1)
+    )
+    provider_health.record(tmp_path, "claude", "quota", "a")
+    assert provider_health.active(tmp_path)[("claude", "a")] == guess
     provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(days=20))
     health = provider_health.active(tmp_path)[("claude", "a")]
     assert health["until"] is not None

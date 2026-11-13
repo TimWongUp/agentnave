@@ -120,4 +120,7 @@ async def test_quota_failure_without_reset_asks_the_usage_query(
             seconds=1
         )
     else:
-        assert health == {}
+        # No reset time from the query either: the model rests for an hour.
+        until = health[("claude", "test")]["until"]
+        assert until is not None
+        assert timedelta(minutes=59) < datetime.fromisoformat(until) - datetime.now(UTC)

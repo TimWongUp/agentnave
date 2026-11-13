@@ -23,6 +23,8 @@ class Health(TypedDict):
 
 
 _MAX_TTL = timedelta(days=8)
+# A quota failure that names no reset time cools its model down for this long.
+_QUOTA_GUESS = timedelta(hours=1)
 _PRIORITY = {"quota": 0, "billing": 1, "auth": 2}
 _CODES: dict[str, Code] = {
     "authentication_failed": "auth",
@@ -256,9 +258,14 @@ def _update_locked(
         else:
             now = datetime.now(UTC)
             if code == "quota":
-                if reset is None or reset.tzinfo is None or reset <= now:
+                if reset is None:
+                    if previous is not None:
+                        return True  # an active record stands; a repeat does not extend it
+                    until = now + _QUOTA_GUESS
+                elif reset.tzinfo is None or reset <= now:
                     return True
-                until = min(reset.astimezone(UTC), now + _MAX_TTL)
+                else:
+                    until = min(reset.astimezone(UTC), now + _MAX_TTL)
             else:
                 until = now + timedelta(minutes=30) if code == "billing" else None
             entry = _merged_health(previous, code, until, reset)
