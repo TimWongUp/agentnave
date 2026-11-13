@@ -3142,7 +3142,7 @@ async def test_finished_tasks_release_collectors_and_expired_message_mappings(
         studio.delivered_tasks.add(invocation)
         # Expire it now: a short retention raced the assertions above on slow runners.
         assert studio.manager.forget_finished({invocation}) == 1
-        assert not studio.manager.list_invocations()
+        assert studio.task_message_id(invocation) is None
         assert not studio.task_invocations
         assert not studio.delivered_tasks
         assert _state(data_root, conversation)["tasks"][0]["output"]
