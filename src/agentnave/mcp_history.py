@@ -218,7 +218,7 @@ async def list_members(
     Omitted available means usable; recent quota/auth/billing blockers also mark seats
     unavailable during a CLI and model cooldown; clear it in App or, on explicit user request,
     with clear_provider_cooldown. Unavailable seats may offer replacement parameters:
-    pass with original seat/role; switching is never automatic. Native seats/exclusions:
+    pass with original seat/role; configured fallbacks are selected automatically for new threads. Native seats/exclusions:
     see MCP instructions.
     """
     try:

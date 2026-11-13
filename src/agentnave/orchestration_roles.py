@@ -97,12 +97,25 @@ def seat_role(name: str) -> CatalogRole | None:
     return next((role for role in role_catalog() if role.seat_prefix == prefix), None)
 
 
-class ReviewSeat(StrictModel):
-    """The CLI and conversational model the user picked in the App for one seat."""
-
+class SeatChoice(StrictModel):
     provider: ProviderName
     model: str = Field(pattern=r"\S")
     effort: str = ""
+
+
+class ReviewSeat(SeatChoice):
+    """The CLI and conversational model the user picked in the App for one seat."""
+
+    fallbacks: list[SeatChoice] = Field(
+        default_factory=list[SeatChoice], max_length=3, exclude_if=lambda value: not value
+    )
+
+    @model_validator(mode="after")
+    def unique_choices(self) -> ReviewSeat:
+        choices = [(choice.provider, choice.model) for choice in [self, *self.fallbacks]]
+        if len(choices) != len(set(choices)):
+            raise ValueError("seat choices must have unique provider and model pairs")
+        return self
 
 
 _CUSTOM_ROLE_MAX_LENGTH = 40
@@ -161,6 +174,9 @@ class CustomSeat(StrictModel):
     provider: ProviderName
     model: str = Field(pattern=r"\S")
     effort: str = ""
+    fallbacks: list[SeatChoice] = Field(
+        default_factory=list[SeatChoice], max_length=3, exclude_if=lambda value: not value
+    )
     access: Literal["read", "write"]
     # Image seats have none; every other kind has one.
     difficulty: CustomSeatDifficulty | None = None
@@ -187,6 +203,7 @@ class CustomSeat(StrictModel):
 
     @model_validator(mode="after")
     def group_access(self) -> CustomSeat:
+        self.review_seat()  # Validate uniqueness of the configured choices.
         group = next((role for role in role_catalog() if role.group == self.kind), None)
         if group is not None and group.access != self.access:
             raise ValueError(f"a {self.kind} seat is {group.access}-only by its group")
@@ -198,7 +215,9 @@ class CustomSeat(StrictModel):
         return self
 
     def review_seat(self) -> ReviewSeat:
-        return ReviewSeat(provider=self.provider, model=self.model, effort=self.effort)
+        return ReviewSeat(
+            provider=self.provider, model=self.model, effort=self.effort, fallbacks=self.fallbacks
+        )
 
 
 class DecisionSeatsFile(BaseModel):
@@ -270,7 +289,12 @@ class OrchestrationFile(BaseModel):
     def image_seat(self, host: Host) -> ReviewSeat | None:
         """The optional image CLI is only advertised to a different provider's host."""
         seat = self.image_generation
-        return seat if seat is not None and seat.provider != host.provider else None
+        return (
+            seat
+            if seat is not None
+            and any(choice.provider != host.provider for choice in [seat, *seat.fallbacks])
+            else None
+        )
 
     def group_enabled(self, group: OrchestrationGroup) -> bool:
         if self.enabled_roles is not None:
@@ -307,12 +331,19 @@ class SeatReplacement(StrictModel):
     reason: str
 
 
+class FallbackStatus(SeatChoice):
+    available: bool
+    reason: str | None = None
+
+
 class ReviewSeatStatus(StrictModel):
     provider: ProviderName
     model: str
     effort: str | None = None
     available: Literal[False] | None = None
     reason: str | None = None
+    fallback_position: int | None = None
+    fallbacks: list[FallbackStatus] = Field(default_factory=list[FallbackStatus])
     # The host's own CLI: dispatch to the host's built-in subagent, with this model if it can.
     native: Literal[True] | None = None
     # Other permitted task CLIs listing the same model ID.

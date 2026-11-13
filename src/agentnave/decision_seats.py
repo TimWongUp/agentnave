@@ -23,6 +23,7 @@ from agentnave.members import (
     orchestration_decision,
 )
 from agentnave.orchestration_roles import (
+    IMAGE_KIND,
     CustomSeat,
     CustomSeatStatus,
     DecisionSeatsFile,
@@ -60,7 +61,16 @@ def effective_decision_seats(host: Host) -> DecisionSeatsFile | None:
 def decision_seats_for(host: Host) -> dict[str, CustomSeat] | None:
     """The user's own seats by id while the catalog is effective for this boss, else None."""
     document = effective_decision_seats(host)
-    return None if document is None else {seat.id: seat for seat in document.seats}
+    return (
+        None
+        if document is None
+        else {
+            seat.id: seat
+            for seat in document.seats
+            if seat.kind != IMAGE_KIND
+            or any(choice.provider != host.provider for choice in [seat, *seat.fallbacks])
+        }
+    )
 
 
 def custom_seats(host: Host) -> dict[str, CustomSeat] | None:
@@ -93,6 +103,7 @@ def custom_orchestration_status(
         installed,
         document,
         active_health,
+        image_roles=frozenset(seat.id for seat in custom.values() if seat.kind == IMAGE_KIND),
     )
     return OrchestrationStatus(
         enabled=True,

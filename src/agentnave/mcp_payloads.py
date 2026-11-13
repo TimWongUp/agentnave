@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from agentnave.members import MemberList, ProviderName
 from agentnave.native_prompts import PromptPayload
+from agentnave.seat_fallbacks import SeatFallback
 from agentnave.store import Unavailable
 
 
@@ -113,6 +114,7 @@ class UnreceivedPayload(TypedDict):
 
 
 class TaskStartPayload(InvocationPayload):
+    seat_fallback: NotRequired[SeatFallback]
     conversation_id: str
     access: NotRequired[str | None]  # the declared tier; recorded only, never enforced
     unreleased_isolation_count: NotRequired[int]

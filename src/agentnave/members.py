@@ -54,6 +54,7 @@ from agentnave.orchestration_roles import (
 from agentnave.orchestration_roles import (
     SeatReplacement as SeatReplacement,
 )
+from agentnave.seat_fallbacks import statuses as _review_status
 
 type Mode = Literal["task", "discussion"]
 type ReviewRole = Literal[
@@ -991,7 +992,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     )
 
 
-def _review_status[Role: str](
+def single_review_status[Role: str](
     review: dict[Role, ReviewSeat],
     mode: ModeStatus,
     excluded: frozenset[str],

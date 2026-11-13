@@ -22,7 +22,7 @@ from agentnave.members import (
     validate_task_seat,
 )
 from agentnave.models import InvocationRequest, ProviderOption
-from agentnave.orchestration_roles import seat_role
+from agentnave.orchestration_roles import ReviewSeat, seat_role
 from agentnave.store import Record, TaskRecord
 
 if TYPE_CHECKING:
@@ -92,6 +92,14 @@ def role_access(role: str | None) -> Literal["read", "write"] | None:
     return "read" if name in get_args(ReviewRole.__value__) else None
 
 
+def native_seat_error(name: str, seat: ReviewSeat) -> ValueError:
+    settings = f"model {seat.model}" + (f", effort {seat.effort}" if seat.effort else "")
+    return ValueError(
+        f"{name} seat is native to this host. Dispatch it with the host's built-in "
+        f"subagent using {settings}."
+    )
+
+
 @dataclass
 class StartArguments:
     provider: ProviderName | None
@@ -102,6 +110,7 @@ class StartArguments:
     defaults: list[str] = field(default_factory=lambda: [])
     # Model and effort the resumed thread last ran with; see apply_history.
     history: dict[str, str] = field(default_factory=lambda: {})
+    selected: ReviewSeat | None = None
 
     def inherit(self, task: TaskRecord) -> None:
         self.provider = self._inherited(
@@ -145,15 +154,15 @@ class StartArguments:
                 self.seat, host, inherited="seat (session_id history)" in self.defaults
             )
         name = self.seat or review_role(self.role)
+        if self.selected is not None and self.selected.provider == host.provider:
+            raise native_seat_error(name, self.selected)
         if self.provider is None:
             if not name:
                 raise ValueError("Pass provider, or seat / a review role to select an App seat")
-            seat = role_seat(name, host, required=True)
+            seat = self.selected or role_seat(name, host, required=True)
             assert seat is not None
             if seat.provider == host.provider:
-                raise ValueError(
-                    f"{name} seat is native to this host; use the host's built-in subagent"
-                )
+                raise native_seat_error(name, seat)
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
         custom = custom_seat(name, host)
@@ -202,8 +211,9 @@ def apply_task_defaults(
     seat_applied: list[str],
     excluded: frozenset[str],
     host: Host,
+    selected: ReviewSeat | None = None,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
-    selected = role_seat(seat_name, host)
+    selected = selected or role_seat(seat_name, host)
     options, applied = apply_member(
         read_members(),
         "task",

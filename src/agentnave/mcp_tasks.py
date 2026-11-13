@@ -167,7 +167,7 @@ async def start_agent(
         WrapValidator(_own_seat),
         Field(
             description=(
-                "App task seat from the visible list_members catalog: selects CLI if omitted, defaults if CLI matches and orchestration enabled; explicit options win; inherits on resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; also pass role as the desk label."
+                "App task seat from the visible list_members catalog: selects CLI if omitted, ordered available choices for new threads; explicit model wins, explicit CLI restricts choices; inherits on resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; also pass role as the desk label."
             )
         ),
     ] = None,
@@ -283,8 +283,28 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     manager_session_id = launch.manager_session_id
     seat_applied: list[str] = []
     try:
+        arguments = StartArguments(provider, cwd, role, requested, access)
+        fallback = None
+        if session_id is None and "model" not in (provider_options or {}):
+            from agentnave.seat_fallbacks import select
+
+            if (
+                configured := role_seat(requested or review_role(role), runtime.HOST)
+            ) and configured.fallbacks:
+                from agentnave.decision_seats import custom_seat
+
+                name = requested or review_role(role)
+                custom = custom_seat(name, runtime.HOST)
+                arguments.selected, fallback = select(
+                    configured,
+                    runtime.HOST,
+                    runtime.EXCLUDED_PROVIDERS,
+                    provider,
+                    image=name == "image-generator"
+                    or (custom is not None and custom.kind == "image"),
+                )
         arguments = resolve_start(
-            StartArguments(provider, cwd, role, requested, access),
+            arguments,
             _conversations(ctx),
             runtime.HOST,
             session_id,
@@ -298,11 +318,19 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     seat_name = chosen_seat or review_role(role)
     try:
         options, seat_applied = apply_seat(
-            role_seat(seat_name, runtime.HOST), provider, provider_options or {}
+            arguments.selected or role_seat(seat_name, runtime.HOST),
+            provider,
+            provider_options or {},
         )
         options = arguments.apply_history(options)
         options, defaults_applied = apply_task_defaults(
-            provider, seat_name, options, seat_applied, runtime.EXCLUDED_PROVIDERS, runtime.HOST
+            provider,
+            seat_name,
+            options,
+            seat_applied,
+            runtime.EXCLUDED_PROVIDERS,
+            runtime.HOST,
+            arguments.selected,
         )
         provider_health.check(
             _conversations(ctx).root, [(provider, provider_health.model_option(options))]
@@ -364,6 +392,8 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     payload = await _task_start_payload(
         ctx, manager, request, started, access, [*defaults_applied, *arguments.defaults]
     )
+    if fallback is not None:
+        payload["seat_fallback"] = fallback
     if launch.isolation_auto:
         payload["defaults_applied"] = [*payload.get("defaults_applied", []), AUTO_ISOLATION_APPLIED]
     return payload

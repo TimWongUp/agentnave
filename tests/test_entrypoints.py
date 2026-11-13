@@ -564,7 +564,7 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
         document["image_generation"] = seat
         path.write_text(json.dumps(document))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
-        assert _payload(listed["orchestration"])["image_generation"] == seat
+        assert _payload(listed["orchestration"])["image_generation"] == {**seat, "fallbacks": []}
         assert "worker" not in _payload(listed["orchestration"])
         assert "worker-easy" not in str(await client.list_tools())
         assert "image-generator" in str(await client.list_tools())
@@ -3737,3 +3737,199 @@ async def test_start_agents_exists_only_in_the_decision_mode(
         _write_own_seats([_own_seat("a", "claude", "write")])
         tools = await client.list_tools(cache_mode="refresh")
         assert "start_agents" in [tool.name for tool in tools.tools]
+
+
+@pytest.mark.asyncio
+async def test_review_seat_fallback_dispatch_and_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    provider_health.record(root, "claude", "auth", "first")
+    (root / "review.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seats": {
+                    "correctness-reviewer": {
+                        "provider": "claude",
+                        "model": "first",
+                        "fallbacks": [{"provider": "claude", "model": "second", "effort": "low"}],
+                    }
+                },
+            }
+        )
+    )
+    async with Client(mcp) as client:
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        seat = _payload(_payload(listed["review"])["correctness-reviewer"])
+        assert seat["model"] == "second" and seat["fallback_position"] == 1
+        assert _payload(cast(list[object], seat["fallbacks"])[0])["available"] is True
+        started = await _start_and_wait(client, cwd=str(tmp_path), role="correctness-reviewer")
+        assert started["model"] == "second"
+        receipt = _payload(started["seat_fallback"])
+        assert receipt["position"] == 1 and "auth" in str(receipt["skipped"])
+        explicit = await _start_and_wait(
+            client, cwd=str(tmp_path), role="correctness-reviewer", provider="claude"
+        )
+        assert explicit["model"] == "second" and "seat_fallback" in explicit
+        resumed = await client.call_tool(
+            "start_agent",
+            {"session_id": "session-e2e", "role": "correctness-reviewer", "prompt": "ok"},
+        )
+        assert resumed.is_error and "auth" in str(resumed.content)
+        provider_health.record(root, "claude", "auth", "second")
+        failed = await client.call_tool(
+            "start_agent", {"cwd": str(tmp_path), "role": "correctness-reviewer", "prompt": "ok"}
+        )
+        assert failed.is_error and "first" in str(failed.content)
+        (root / "review.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "seats": {
+                        "correctness-reviewer": {
+                            "provider": "grok",
+                            "model": "primary",
+                            "fallbacks": [{"provider": "claude", "model": "third"}],
+                        }
+                    },
+                }
+            )
+        )
+        restricted = await _start_and_wait(
+            client, cwd=str(tmp_path), role="correctness-reviewer", provider="claude"
+        )
+        assert restricted["model"] == "third"
+        assert _payload(restricted["seat_fallback"])["skipped"] == []
+        explicit_model = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            role="correctness-reviewer",
+            provider="claude",
+            provider_options={"model": "third"},
+        )
+        assert "seat_fallback" not in explicit_model
+
+
+@pytest.mark.asyncio
+async def test_decision_candidate_and_batch_use_available_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats(
+        [_own_seat("mine", "grok", "read", fallbacks=[{"provider": "claude", "model": "backup"}])]
+    )
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    provider_health.record(root, "grok", "auth")
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    {"prompt": "one", "access": "read", "cwd": str(tmp_path)},
+                    {"prompt": "two", "access": "read", "cwd": str(tmp_path)},
+                ]
+            },
+        )
+        assert not result.is_error, result.content
+        started = cast(list[dict[str, object]], _payload(result.structured_content)["results"])
+        assert all(item.get("model") == "backup" and "seat_fallback" in item for item in started)
+        await _finish(client, started)
+
+
+@pytest.mark.asyncio
+async def test_image_fallback_skips_host_cli_and_hides_all_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    root = tmp_path / "data"
+    root.mkdir()
+    path = root / "orchestration.json"
+    image = {
+        "provider": "codex",
+        "model": "host-image",
+        "fallbacks": [
+            {"provider": "claude", "model": "other-image"},
+            {"provider": "codex", "model": "another-host-image"},
+        ],
+    }
+    path.write_text(json.dumps({"version": 1, "preset": "split", "image_generation": image}))
+    async with Client(mcp) as client:
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        status = _payload(_payload(listing["orchestration"])["image_generation"])
+        assert status["provider"] == "claude" and status["fallback_position"] == 1
+        fallback_status = cast(list[dict[str, object]], status["fallbacks"])
+        assert fallback_status[1]["available"] is False
+        assert "host's own CLI" in str(fallback_status[1]["reason"])
+        assert "effort" not in fallback_status[0]
+        started = await _start_and_wait(client, cwd=str(tmp_path), seat="image-generator")
+        assert started["model"] == "other-image"
+        receipt = _payload(started["seat_fallback"])
+        assert receipt["position"] == 1 and "host's own CLI" in str(receipt["skipped"])
+        image["fallbacks"] = [{"provider": "codex", "model": "another-host-image"}]
+        path.write_text(json.dumps({"version": 1, "preset": "split", "image_generation": image}))
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert "image_generation" not in _payload(listing["orchestration"])
+
+
+@pytest.mark.asyncio
+async def test_native_seat_error_describes_selected_model_and_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    root = tmp_path / "data"
+    provider_health.record(root, "grok", "auth")
+    path = root / "review.json"
+    seat: dict[str, object] = {"provider": "codex", "model": "native-model", "effort": "high"}
+    async with Client(mcp) as client:
+        path.write_text(json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}}))
+        args = {"prompt": "ok", "cwd": str(tmp_path), "role": "correctness-reviewer"}
+        result = await client.call_tool("start_agent", args)
+        assert result.is_error and "using model native-model, effort high" in str(result.content)
+        seat = {
+            "provider": "grok",
+            "model": "blocked",
+            "fallbacks": [{"provider": "codex", "model": "native-backup"}],
+        }
+        path.write_text(json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}}))
+        result = await client.call_tool("start_agent", args)
+        assert result.is_error and "using model native-backup." in str(result.content)
+
+
+@pytest.mark.asyncio
+async def test_decision_image_fallback_skips_host_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    image = _own_seat(
+        "draw",
+        "codex",
+        "write",
+        kind="image",
+        fallbacks=[{"provider": "claude", "model": "draw-model"}],
+    )
+    del image["difficulty"]
+    _write_own_seats([image])
+    async with Client(mcp) as client:
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        seat = _payload(_payload(_payload(listing["orchestration"])["custom_seats"])["draw"])
+        assert seat["provider"] == "claude" and seat["fallback_position"] == 1
+        started = await _start_and_wait(client, cwd=str(tmp_path), seat="draw")
+        assert started["model"] == "draw-model" and "host's own CLI" in str(
+            started["seat_fallback"]
+        )
+        image["fallbacks"] = [{"provider": "codex", "model": "another-model"}]
+        _write_own_seats([image])
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert _payload(listing["orchestration"]).get("custom_seats", {}) == {}
