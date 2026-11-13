@@ -225,9 +225,6 @@ impl Reader {
     fn route(&self, path: &str) -> Response {
         let database = crate::db::read(&self.root);
         let (overview, snapshots) = self.scan_with(&database);
-        // Records of directories are only forgotten when every workspace was read.
-        let complete =
-            !overview.missing && overview.scan_error.is_none() && overview.unreadable.is_empty();
         let window = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -239,8 +236,14 @@ impl Reader {
                 handovers(connection),
                 self.boss_apps.of(connection, || self.boss_homes()),
             ),
-            _ => (Vec::new(), Vec::new()),
+            _ => (None, Vec::new()),
         };
+        // Records of directories are only forgotten when every workspace was read.
+        let complete = !overview.missing
+            && overview.scan_error.is_none()
+            && overview.unreadable.is_empty()
+            && handovers.is_some();
+        let handovers = handovers.unwrap_or_default();
         let handover_map: HashMap<_, _> = handovers.iter().cloned().collect();
         let app_map: HashMap<_, _> = apps.iter().cloned().collect();
         let data_exists = self.root.is_dir();
@@ -466,7 +469,8 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
 
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
 /// its creator.
-fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Handover)> {
+/// Handed-over workspaces; None when they could not be read.
+fn handovers(connection: &rusqlite::Connection) -> Option<Vec<(String, crate::stage::Handover)>> {
     let rows = connection
         .prepare(
             "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending, \
@@ -493,7 +497,7 @@ fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Ha
                 })?
                 .collect()
         });
-    rows.unwrap_or_default()
+    rows.ok()
 }
 
 fn view_body(connection: &rusqlite::Connection, id: &str) -> Option<String> {

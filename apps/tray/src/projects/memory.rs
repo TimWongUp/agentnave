@@ -16,6 +16,8 @@ pub(super) const FILE: &str = "projects.json";
 pub(super) struct Memory {
     file: PathBuf,
     entries: Option<BTreeMap<String, String>>,
+    /// The last write failed: the next call writes again, even without a change.
+    unsaved: bool,
 }
 
 impl Memory {
@@ -23,6 +25,7 @@ impl Memory {
         Self {
             file,
             entries: None,
+            unsaved: false,
         }
     }
 
@@ -37,6 +40,9 @@ impl Memory {
         let cwd = key(dir);
         let text = root.to_string_lossy().into_owned();
         if self.load().get(&cwd) == Some(&text) {
+            if self.unsaved {
+                self.save();
+            }
             return;
         }
         self.load().insert(cwd, text);
@@ -55,7 +61,7 @@ impl Memory {
             .collect();
         let before = self.load().len();
         self.load().retain(|cwd, _| present.contains(cwd));
-        if self.load().len() != before {
+        if self.load().len() != before || self.unsaved {
             self.save();
         }
     }
@@ -75,10 +81,8 @@ impl Memory {
             .iter()
             .map(|(cwd, root)| (cwd.clone(), Value::String(root.clone())))
             .collect();
-        if crate::data_files::write_atomic(parent, name, &Value::Object(document)).is_err() {
-            // Read the file again next time, so the change that failed is written once more.
-            self.entries = None;
-        }
+        self.unsaved =
+            crate::data_files::write_atomic(parent, name, &Value::Object(document)).is_err();
     }
 }
 

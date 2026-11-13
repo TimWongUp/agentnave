@@ -421,8 +421,9 @@ function groupedNodes(groups) {
     nodes.push(headNode(section));
     for (const g of section.shown) {
       // A folded group still shows what needs the reader or is open.
-      nodes.push(itemNode(g, folded && !mustShow(g)));
-      if (!folded) order.push(g.group);
+      const hidden = folded && !mustShow(g);
+      nodes.push(itemNode(g, hidden));
+      if (!hidden) order.push(g.group);
     }
     if (section.hidden)
       nodes.push(
