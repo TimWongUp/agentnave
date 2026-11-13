@@ -1981,10 +1981,11 @@ fn office_timeline_reports_omitted_and_counts_full_threads() {
     assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
     assert_eq!(limited["optimized"]["count"], 208);
     let stage = state(&reader, "/app/stage");
-    assert_eq!(stage["managers"][0]["desks"].as_array().unwrap().len(), 3);
+    // The panel ignores the running limit: running desks and the eight most recent others.
+    assert_eq!(stage["managers"][0]["desks"].as_array().unwrap().len(), 8);
     assert_eq!(
         stage["managers"][0]["optimized"],
-        json!({"count": 208, "desks": []})
+        json!({"count": 203, "desks": []})
     );
     assert_eq!(chat["messages"][1]["reply_to"], chat["messages"][0]["id"]);
     let focused = state(&reader, &format!("{path}/focus/many"));

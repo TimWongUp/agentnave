@@ -5,11 +5,11 @@
 // Links are real routes (/chat/<group>); the tray app intercepts them and opens the main window.
 const {
   h, $, L, load, href, MEMBER, GROUP, pick, urgent, colorClass, relTime, fullTime,
-  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliOf, fullHandle, hostTile, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip,
+  setText, setAttr, setClass, reconcile, stickyOrder, poll, art: ART, cliOf, fullHandle, deskName, chatName, shownName, chatPlace, activities, dozing, ongoing, clip,
 } = AN;
 
-const FOLD_AT = 8; // an office with this many desks or more folds its extra cells ...
-const SHOWN = 6; //   ... down to this many
+const ACTIVE_SHOWN = 8; // most working desks one office card shows
+const IDLE_SHOWN = 4; // most recently finished desks it shows besides
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
@@ -96,7 +96,6 @@ const state = {
   blocks: new Map(), // group id -> office block
   quiet: new Map(), // group id -> folded row
   order: [],
-  expanded: new Set(), // offices whose folded desks are shown
   seen: new Map(), // `${group}|${desk key}` -> was running (for announcements)
   ready: false,
   appStatus: null,
@@ -187,25 +186,25 @@ function updateRoom(rec, group, r, desks) {
 // One card: the boss heads it, its desks and meeting rooms sit below.
 function createBlock(m) {
   const rec = {
-    id: m.group, data: m, tile: h("span.tile"), presence: h("i.presence"), project: h("b"), meta: h("small"), bs: h("span.bs"),
+    id: m.group, data: m, tile: h("span.tile"), project: h("b"), meta: h("small"), bs: h("span.bs"),
     time: h("time"), cells: h("div.desks"), rooms: h("div.rooms"),
-    foldText: h("span"), cellRecs: new Map(), roomRecs: new Map(), tileKey: "",
+    cellRecs: new Map(), roomRecs: new Map(), tileKey: "",
   };
-  rec.boss = h("a.boss", {}, h("span.host", {}, rec.tile, rec.presence), h("span.who", {}, rec.project, rec.meta), h("span.when", {}, rec.bs, rec.time));
-  rec.fold = h("button.fold", { type: "button" }, h("i.chev"), rec.foldText);
-  rec.el = h("section.blk", {}, h("div.boss-row", {}, rec.boss), rec.cells, rec.fold, rec.rooms);
-  rec.fold.addEventListener("click", () => {
-    if (state.expanded.has(rec.id)) state.expanded.delete(rec.id);
-    else state.expanded.add(rec.id);
-    updateBlock(rec, rec.data);
-  });
+  rec.boss = h("a.boss", {}, h("span.host", {}, rec.tile), h("span.who", {}, rec.project, rec.meta), h("span.when", {}, rec.bs, rec.time));
+  rec.el = h("section.blk", {}, h("div.boss-row", {}, rec.boss), rec.cells, rec.rooms);
   return rec;
 }
-function tile(rec, m) {
-  const key = `${m.host}|${m.label}`;
+// The boss shows as the character of the model it last spoke with, else its CLI's.
+function bossChar(m) {
+  const spoken = (m.boss_messages || []).filter((x) => x.kind === "prompt" && x.speaker?.model)
+    .sort((a, b) => (b.speaker.provider === m.host) - (a.speaker.provider === m.host) || AN.at(b.time) - AN.at(a.time))[0];
+  return ART.character(spoken?.speaker.provider || m.host, spoken?.speaker.model || "");
+}
+function tile(rec, m, mood) {
+  const key = `${bossChar(m)}|${mood}`;
   if (rec.tileKey === key) return;
   rec.tileKey = key;
-  rec.tile.replaceChildren(hostTile(m.app || m.host, m.label));
+  rec.tile.replaceChildren(ART.head(bossChar(m), mood));
 }
 function running(m) {
   let n = 0;
@@ -215,15 +214,14 @@ function running(m) {
 function updateBlock(rec, m) {
   rec.data = m;
   const desks = m.desks || [], rooms = m.rooms || [];
+  const total = desks.length + (m.optimized?.count || 0);
   const n = running(m);
   const name = shownName(m);
   setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
-  tile(rec, m);
-  setClass(rec.presence, m.live ? "presence on" : "presence");
-  setAttr(rec.presence, "title", m.live ? L("有任务在运行", "Tasks running") : L("没有运行中的任务", "No running tasks"));
+  tile(rec, m, n ? "working" : "idle");
   setAttr(rec.boss, "href", href(`/chat/${m.group}`));
   setAttr(rec.boss, "title", `${L(`${m.label} 里的 boss`, `boss in ${m.label}`)}${m.project ? ` · ${m.project}` : ""}`);
-  setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${desks.length} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${desks.length} desks, ${rooms.length} meeting rooms, open office`));
+  setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${total} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${total} desks, ${rooms.length} meeting rooms, open office`));
   setText(rec.project, name);
   const [bsTone, bsText] = n ? ["run", L(`${n} 个在工作`, `${n} working`)] : urgent(m.status) ? ["run", L("会议进行中", "In meeting")] : ["", L("空闲", "Idle")];
   setClass(rec.bs, `bs${bsTone ? ` ${bsTone}` : ""}`);
@@ -232,40 +230,30 @@ function updateBlock(rec, m) {
   setAttr(rec.time, "title", fullTime(m.updated));
 
   const byKey = new Map(desks.map((d) => [d.key, d]));
-  const awake = desks.filter((d) => brief(d).mood !== "sleep");
   const working = d => brief(d).mood === "working";
-  const shownDesks = desks.filter(d => d.kind !== "seat" && (working(d) || lingering(d)));
-  const ordered = [...shownDesks.filter(working), ...shownDesks.filter(d => !working(d))];
+  const shownDesks = desks.filter(d => d.kind !== "seat");
+  const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
+  const ordered = [...shownDesks.filter(working).sort(recent).slice(0, ACTIVE_SHOWN), ...shownDesks.filter(d => !working(d)).sort(recent).slice(0, IDLE_SHOWN)];
   for (const key of rec.cellRecs.keys()) if (!ordered.some(d => d.key === key)) rec.cellRecs.delete(key);
-  const folded = ordered.length >= FOLD_AT && !state.expanded.has(m.group);
-  let hiddenCount = 0;
-  reconcile(rec.cells, ordered.map((d, i) => {
+  reconcile(rec.cells, ordered.map((d) => {
     let cell = rec.cellRecs.get(d.key);
     if (!cell) rec.cellRecs.set(d.key, (cell = createCell()));
     updateCell(cell, m.group, d);
-    cell.el.hidden = folded && i >= SHOWN;
-    if (cell.el.hidden) hiddenCount++;
     return cell.el;
   }));
-  for (const d of desks) announce(m, d, brief(d));
-  const optimized = m.optimized?.count || 0;
-  const resting = desks.length - awake.length;
-  const meta = [name === m.label ? "" : chatPlace(m), L(`${desks.length} 工位`, `${desks.length} desks`), resting && L(`${resting} 个休息中`, `${resting} resting`), optimized && L(`已优化 ${optimized}`, `${optimized} folded`), rooms.length && L(`${rooms.length} 会议室`, `${rooms.length} rooms`)].filter(Boolean).join(" · ");
+  for (const d of [...desks, ...(m.optimized?.desks || [])]) announce(m, d, brief(d));
+  // The payload carries the running desks and the latest others; the rest are counted with them.
+  const meta = [name === m.label ? "" : chatPlace(m), L(`${total} 工位`, `${total} desks`), rooms.length && L(`${rooms.length} 会议室`, `${rooms.length} rooms`)].filter(Boolean).join(" · ");
   setText(rec.meta, meta);
   rec.cells.hidden = !ordered.length;
-  rec.fold.hidden = ordered.length < FOLD_AT;
-  if (!rec.fold.hidden) {
-    setText(rec.foldText, folded ? L(`另外 ${hiddenCount} 个工位`, `${hiddenCount} more desks`) : L("收起", "Collapse"));
-    setAttr(rec.fold, "aria-expanded", folded ? "false" : "true");
-    setClass(rec.fold, folded && hiddenCount ? "fold busy" : "fold");
-  }
   const roomById = new Map(rooms.map((r) => [r.id, r]));
   // a seat's desk may be folded into "已优化"; the payload still lists it for the seat
   const seatDesks = new Map([...byKey, ...(m.optimized?.desks || []).map((d) => [d.key, d])]);
   for (const id of rec.roomRecs.keys()) if (!roomById.has(id)) rec.roomRecs.delete(id);
-  // rooms in session, plus the most recently finished one; older ones are in the office
-  const ended = rooms.filter((r) => !urgent(r.status)).sort((a, b) => AN.at(b.last_active) - AN.at(a.last_active));
-  const shown = rooms.filter(r => urgent(r.status) || r === ended[0] || listening({ group: m.group, room: r.id }) || asked({ group: m.group, room: r.id }));
+  // The meeting in session (else the most recent one); older ones are in the office. Listened-to rooms stay.
+  const byRecent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
+  const latest = [...rooms].sort((a, b) => urgent(b.status) - urgent(a.status) || byRecent(a, b))[0];
+  const shown = rooms.filter(r => r === latest || listening({ group: m.group, room: r.id }) || asked({ group: m.group, room: r.id })).sort(byRecent);
   reconcile(rec.rooms, shown.map((r) => {
     let row = rec.roomRecs.get(r.id);
     if (!row) rec.roomRecs.set(r.id, (row = createRoom()));
@@ -277,8 +265,8 @@ function updateBlock(rec, m) {
 // ---------------------------------------------------------------- folded office
 function createQuiet() {
   // Only the title and who sat there; where and when stay in the tooltip.
-  const rec = { name: h("span.t"), faces: h("span.faces"), facesKey: "" };
-  rec.el = h("a.more-row", {}, rec.name, rec.faces);
+  const rec = { boss: h("span.quiet-boss"), name: h("span.t"), faces: h("span.faces"), facesKey: "", bossKey: "" };
+  rec.el = h("a.more-row", {}, rec.boss, rec.name, rec.faces);
   return rec;
 }
 function updateQuiet(rec, m) {
@@ -287,10 +275,17 @@ function updateQuiet(rec, m) {
   const name = shownName(m);
   setAttr(rec.el, "title", `${name} · ${chatPlace(m)} · ${pick(GROUP, m.status)[0]} · ${relTime(m.updated)}`);
   setText(rec.name, name);
-  const key = desks.slice(0, 5).map(deskChar).join();
+  const boss = bossChar(m);
+  if (rec.bossKey !== boss) {
+    rec.bossKey = boss;
+    rec.boss.replaceChildren(ART.head(boss, "sleep"));
+  }
+  // One face per character, the most recently active first.
+  const chars = [...new Set([...desks].sort((a, b) => AN.at(b.last_active) - AN.at(a.last_active)).map(deskChar))].slice(0, 8);
+  const key = chars.join();
   if (rec.facesKey !== key) {
     rec.facesKey = key;
-    rec.faces.replaceChildren(...desks.slice(0, 5).map((d) => ART.head(deskChar(d), "sleep")));
+    rec.faces.replaceChildren(...chars.map((c) => ART.head(c, "sleep")));
   }
 }
 
@@ -357,31 +352,7 @@ function renderNotices(status, offline) {
   if (key === lastNotices) return;
   lastNotices = key;
   $("notices").replaceChildren(...notices(status, offline));
-  const update = status?.update;
-  const link = $("update");
-  link.replaceChildren(update?.state === "installing" ? L("正在更新…", "Updating…") : L("检查更新", "Check for updates"), update?.state === "available" ? h("small", {}, L(`v${update.version} 可用`, `v${update.version} available`)) : "");
-  $("more").querySelector(".more-dot").hidden = update?.state !== "available";
 }
-
-// ---------------------------------------------------------------- ⋯ menu
-const menu = $("menu"), more = $("more");
-function setMenu(open) {
-  menu.hidden = !open;
-  setAttr(more, "aria-expanded", open ? "true" : "false");
-  if (open) menu.querySelector("a")?.focus({ preventScroll: true });
-}
-more.addEventListener("click", (e) => { e.stopPropagation(); setMenu(menu.hidden); });
-document.addEventListener("click", (e) => { if (!menu.hidden && !menu.contains(e.target)) setMenu(false); });
-document.addEventListener("keydown", (e) => {
-  if (menu.hidden) return;
-  if (e.key === "Escape") { setMenu(false); more.focus(); }
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    const items = [...menu.querySelectorAll("a")];
-    const i = items.indexOf(document.activeElement);
-    items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
-  }
-});
 
 // ---------------------------------------------------------------- refresh
 // Running work and active listening keep an office expanded.
@@ -389,7 +360,11 @@ const busy = m => running(m) > 0 || (m.rooms || []).some(r => urgent(r.status)) 
 function render(data) {
   state.lastData = data;
   renderState(data);
-  const active = m => busy(m) || voiceNow?.follow?.group === m.group || voiceAsked?.target.group === m.group;
+  // The office that worked last stays a card until another one starts working and takes its place.
+  const working = m => running(m) > 0 || (m.rooms || []).some(r => urgent(r.status));
+  const recency = m => (working(m) ? 1e15 : 0) + (AN.at(m.updated) || 0);
+  const lead = data.managers.reduce((top, m) => (!top || recency(m) > recency(top) ? m : top), null)?.group;
+  const active = m => busy(m) || m.group === lead || voiceNow?.follow?.group === m.group || voiceAsked?.target.group === m.group;
   if (!data.managers.length) {
     showBody(data.empty === "no_data" ? "no_data" : "quiet");
     state.blocks.clear();
@@ -400,7 +375,7 @@ function render(data) {
     return;
   }
   showBody("stage");
-  state.order = stickyOrder(state.order, data.managers.map((m) => ({ id: m.group, rank: active(m) ? 0 : 1 })));
+  state.order = stickyOrder(state.order, data.managers.map((m) => ({ id: m.group, rank: m.group === lead ? 0 : active(m) ? 1 : 2 })));
   const byGroup = new Map(data.managers.map((m) => [m.group, m]));
   for (const map of [state.blocks, state.quiet]) for (const id of map.keys()) if (!byGroup.has(id)) map.delete(id);
   const full = [], folded = [];
@@ -419,7 +394,7 @@ function render(data) {
       let rec = state.quiet.get(id);
       if (!rec) state.quiet.set(id, (rec = createQuiet()));
       updateQuiet(rec, m);
-      for (const d of m.desks || []) announce(m, d, brief(d));
+      for (const d of [...(m.desks || []), ...(m.optimized?.desks || [])]) announce(m, d, brief(d));
       folded.push(rec.el);
     }
   }

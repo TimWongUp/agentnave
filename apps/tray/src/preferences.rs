@@ -148,13 +148,14 @@ pub fn localize(html: &[u8], general: &Value) -> Vec<u8> {
     let motion = general["motion"].as_str().unwrap_or("system");
     let character_style = general["character_style"].as_str().unwrap_or("static");
     let battery_still = general["battery_still"].as_bool().unwrap_or(true);
+    let pause_unfocused = general["pause_unfocused"].as_bool().unwrap_or(true);
     let on_battery = if crate::power::on_battery() {
         r#" data-on-battery="true""#
     } else {
         ""
     };
     let replacement = format!(
-        r#"<html lang="{lang}" data-lang="{language}" data-theme="{theme}" data-motion="{motion}" data-character-style="{character_style}" data-battery-still="{battery_still}"{on_battery}"#
+        r#"<html lang="{lang}" data-lang="{language}" data-theme="{theme}" data-motion="{motion}" data-character-style="{character_style}" data-battery-still="{battery_still}" data-pause-unfocused="{pause_unfocused}"{on_battery}"#
     );
     match html.windows(opening.len()).position(|w| w == opening) {
         Some(at) => [

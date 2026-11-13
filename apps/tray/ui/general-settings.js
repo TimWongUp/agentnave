@@ -17,6 +17,7 @@
     tray_font: "baskerville",
     keep_awake: false,
     battery_still: true,
+    pause_unfocused: true,
   };
 
   const ITEMS = [
@@ -41,6 +42,11 @@
     {
       key: "battery_still",
       label: () => L("用电池时小人不动", "Still characters on battery"),
+      kind: "switch",
+    },
+    {
+      key: "pause_unfocused",
+      label: () => L("窗口失焦时小人暂停", "Pause characters when unfocused"),
       kind: "switch",
     },
     {
@@ -114,7 +120,7 @@
 
   // appearance.js applies theme and motion on every page; the App zooms the window itself.
   function applyAppearance() {
-    const detail = { theme: effectiveValue("theme"), motion: effectiveValue("motion"), battery_still: effectiveValue("battery_still") };
+    const detail = { theme: effectiveValue("theme"), motion: effectiveValue("motion"), battery_still: effectiveValue("battery_still"), pause_unfocused: effectiveValue("pause_unfocused") };
     window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail }));
   }
 

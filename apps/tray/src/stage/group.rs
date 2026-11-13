@@ -161,26 +161,33 @@ impl Group {
     }
     /// The desks an office draws, at most `limit` (the App's running limit) unless more are
     /// running or under review, plus the rest as the "optimized" list, most recent first. A
-    /// desk whose failure has settled goes there whatever the limit. The
+    /// desk whose failure has settled goes there whatever the limit. With `panel`, `limit` counts
+    /// only the desks beyond the running ones, a settled failure counts like any other idle desk
+    /// and a seat that is not running goes to the list. The
     /// list holds the `listed` most recent and every one the payload refers to, so seats and
     /// messages always find their desk.
     pub(super) fn desks(
         &self,
         host: Option<&str>,
         limit: usize,
+        panel: bool,
         listed: usize,
         referenced: &BTreeSet<String>,
     ) -> (Vec<Value>, Value) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_micros() as i64);
-        let (mut rest, mut desks): (Vec<_>, Vec<_>) = self
-            .desks
-            .values()
-            .partition(|desk| desk.failure_settled(now));
+        let (mut rest, mut desks): (Vec<_>, Vec<_>) = self.desks.values().partition(|desk| {
+            if panel {
+                desk.room.is_some() && !desk.active
+            } else {
+                desk.failure_settled(now)
+            }
+        });
         desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
         let busy = desks.iter().filter(|d| d.active).count();
-        rest.extend(desks.split_off(limit.max(busy).min(desks.len())));
+        let keep = if panel { busy + limit } else { limit.max(busy) };
+        rest.extend(desks.split_off(keep.min(desks.len())));
         rest.sort_by_key(|d| (Reverse(d.last), &d.key));
         // Drawn desks put the newest first; the others keep their order as new ones arrive.
         desks.sort_by_key(|d| (Reverse(d.first.unwrap_or_default()), &d.key));
