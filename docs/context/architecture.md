@@ -75,7 +75,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖）。会话历史存于 SQLite（[ADR-0026](../adr/0026-sqlite-conversation-store.md)），每个会话一把 OS 文件锁：持锁的服务才能写，其他服务只读，空闲后可接手。服务回收孤儿会话锁与席位目录，删除会话后回收其席位目录；原生会话锁由持有者用完即删（[ADR-0046](../adr/0046-service-history-retention.md)）。schema 每次变化都提升 `user_version`，迁移只由服务执行（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。写入时在同一事务内更新托盘读取的视图快照（[ADR-0026](../adr/0026-sqlite-conversation-store.md)）；运行中的输出尾部只写进程级运行文件，内容不变时只刷新修改时间。中继在 `connections/` 写连接观测（宿主、连接时间、服务版本与工具定义摘要），不存原始工具定义、提示词、环境或凭据；正常结束后保留有期限的加载证据，由中继清理，App 将它与在线连接分开读取，用于确认短连接已加载配置。App 只读新鲜、大小受限、非符号链接的观测（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。中继在服务子进程非预期退出时另写 `connection-faults/` 下的故障记录，托盘只读并在用户确认后删除，中继清理超期记录，用于提示宿主连接中断；不覆盖中继被强杀的场景（[ADR-0088](../adr/0088-relay-records-service-exit-fault.md)）。
 
-服务与托盘共用数据根的 `provider-health.json`：服务记录近期 CLI 和模型的硬阻断冷却（模型未知时退回 CLI 级），托盘可解除指定记录；两端写入使用同一把锁。冷却期间拒绝向对应模型派发并将对应非原生工位标为不可用，认证冷却持续到解除；配额冷却到 Adapter 识别出的重置时间（错误里没有时，Adapter 可调用该 CLI 自带的用量查询取得），仍取不到则固定一小时，计费冷却固定三十分钟。用户可解除冷却，任一成功调用也会清除（兼容性取舍见 [ADR-0081](../adr/0081-account-cooldown-duration.md)）。
+服务与托盘共用数据根的 `provider-health.json` 并使用同一把锁共同写入：配额硬阻断按 Provider Adapter 声明的额度组冷却，对应不到组时按模型、未指定模型时按 CLI 冷却；派发可用性按相同范围判断，同组任一模型成功可清除组冷却，托盘可解除整组。认证冷却持续到解除或成功；配额冷却到 Adapter 识别的重置时间，取不到则固定一小时，计费冷却固定三十分钟。旧版服务或托盘可能忽略组级记录（[ADR-0081](../adr/0081-account-cooldown-duration.md)、[ADR-0090](../adr/0090-quota-group-cooldown-and-host-cli-choice.md)）。
 
 App 设置文件按写入方和损坏时的影响范围分开：
 
@@ -94,7 +94,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 
 - 成员称呼由服务的历史与投影层生成，作为保存视图、运行文件及 MCP 的共同合同；App 和前端消费服务给出的完整、短显示及消歧信息，不重拼称呼、不以称呼关联成员。稳定键保持原有作用；历史署名依据当时事实，当前工位标签不覆盖旧消息。服务重建旧视图，App 不迁移或改写历史（[ADR-0062](../adr/0062-service-owned-member-names.md)）。
 
-- 宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，否则 macOS／Linux 沿祖先进程只读匹配，Windows 只读环境变量。宿主身份决定单任务排除的同类 Provider，不约束会议席位。
+- 宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，否则 macOS／Linux 沿祖先进程只读匹配，Windows 只读环境变量。宿主身份用于会话归属与识别同类 Provider；私聊同类 CLI 由用户按 boss 选择交给宿主自带子代理（默认）、由服务启动或跳过取下一顺位，会议席位不受影响。App 写入数据根 `orchestration.json`，服务读取；同类生图顺位始终跳过（[ADR-0090](../adr/0090-quota-group-cooldown-and-host-cli-choice.md)）。
 - 派发与按聊天收件均要求可确定的 boss 聊天身份；收件箱不在身份未知时回退为全服务收件（[ADR-0007](../adr/0007-wait-any-ready-subset.md)、[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - 工作区可交给另一个 boss 聊天接手；交接不转移运行中的调用，老 boss 之后的写入被拒绝；没有会话的聊天交出时，`workspaces` 行自带名字和目录，由它承载只有 boss 的工作区（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - boss 与组员的模型优先取原生会话记录中的回报值，其次取调用声明；不从 CLI 全局默认值推测。

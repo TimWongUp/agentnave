@@ -1,6 +1,7 @@
 # ADR-0013：App 组员默认值、模式强制与宿主归属
 
 - 状态：部分取代
+- 宿主映射的 Provider 在单任务中排除的条款由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订为按 boss 选择处理方式；会议席位不变。
 - 日期：2026-10-16
 - 核心不持久化的条款由 [ADR-0016](0016-single-core-and-mcp-entrypoint.md) 取代
 - 进程级主控身份由 [ADR-0017](0017-manager-chat-session-identity.md) 修订

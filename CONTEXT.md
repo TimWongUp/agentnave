@@ -31,9 +31,14 @@ App 为方便查找给工作区排的归类，由托盘从会话记录和本机�
 
 AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent、DeepSeek Harness、Devin CLI 与 ZCode。Codex CLI 可独立安装，也可由 ChatGPT 桌面应用附带；安装来源不产生新的 Provider 身份。
 
+## 额度组（Quota Group）
+
+同一 Provider 内共享配额的模型集合；组内任一模型耗尽额度时，整组视为冷却。
+_Avoid_: 模型系列、整个 CLI
+
 ## 宿主（Host）
 
-调用 AgentNave 的 CLI 或应用，其身份与当前使用的模型无关。宿主身份用于单任务的同类 Provider 排除与会话归属。App 设置中按其中的 boss 称呼：分区名「boss」，单个宿主称「应用」。
+调用 AgentNave 的 CLI 或应用，其身份与当前使用的模型无关。宿主身份用于会话归属及识别私聊中的同类 Provider；同类 CLI 的处理由用户按 boss 选择。App 设置中按其中的 boss 称呼：分区名「boss」，单个宿主称「应用」。
 
 ## 组员（Member）
 
@@ -140,7 +145,7 @@ _Avoid_: 动态工位、智能调度
 
 ## Explorer／Worker
 
-编排中的两类通用工位：Explorer 只读，做探索和规划；Worker 可写，做实现和制作。通用工位各有简单、困难两档，专项默认一个模型两档共用、可再区分难度，都绑定 CLI、模型和可选 effort；只有已开启的组向当前启用编排的宿主提供。同类 CLI 工位标记为原生工位，由宿主自带子代理执行。
+编排中的两类通用工位：Explorer 只读，做探索和规划；Worker 可写，做实现和制作。通用工位各有简单、困难两档，专项默认一个模型两档共用、可再区分难度，都绑定 CLI、模型和可选 effort；只有已开启的组向当前启用编排的宿主提供。同类 CLI 工位按 boss 的选择交给宿主自带子代理、由 AgentNave 启动或跳过。
 
 ## 专项角色
 
