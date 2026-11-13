@@ -659,7 +659,7 @@
     rec.incoming = rec.next = null;
     rec.waiting = false;
     for (const slot of rec.slots) {
-      if (!release && slot === rec.active) { cancelVideoCallbacks(slot); slot.video.pause(); }
+      if (!release && slot === rec.active) { cancelVideoCallbacks(slot); slot.video.pause(); slot.video.classList.remove("over"); }
       else unloadVideo(slot, true);
     }
     rec.slots = release || !rec.active ? [] : [rec.active];
@@ -778,7 +778,8 @@
       if (!overlap) rec.active.video.classList.add("next");
     }
     slot.video.classList.remove("next");
-    if (overlap) slot.video.classList.add("over");
+    // Only the newest player sits on top; a swap cut short by another leaves its player below this one.
+    if (overlap) { for (const s of rec.slots) s.video.classList.remove("over"); slot.video.classList.add("over"); }
     clearHold(rec);
     rec.active = slot;
     rec.incoming = null;

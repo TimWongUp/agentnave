@@ -126,18 +126,19 @@ function player({ delayed = false, noFrameCallback = false, ext, jitter = 0 } = 
   vm.runInContext(source.slice(source.indexOf("  const VIDEO_STATES"), source.indexOf("  // Every character teleports"))
     + source.slice(source.indexOf("  let videoSync"), source.indexOf("  const head ="))
     + "\nglobalThis.api = { syncVideo, videoPlayers };", ctx);
-  async function flush() {
-    for (let i = 0; i < 12; i++) {
-      await Promise.resolve();
-      const media = [...paints]; paints.clear(); media.forEach(([, f]) => f());
-      const rafs = [...frames]; frames.clear(); rafs.forEach(([, f]) => f());
-    }
+  async function step() {
+    await Promise.resolve();
+    const media = [...paints]; paints.clear(); media.forEach(([, f]) => f());
+    const rafs = [...frames]; frames.clear(); rafs.forEach(([, f]) => f());
   }
+  async function flush() { for (let i = 0; i < 12; i++) await step(); }
+  // Runs until the figure shows a different player, stopping before that player's swap has settled.
+  async function swapped(from) { for (let i = 0; i < 12 && ctx.api.videoPlayers.get(fig).active === from; i++) await step(); }
   const sync = () => ctx.api.syncVideo(fig);
   const visible = async () => { sync(); events.intersect([{ target: fig, isIntersecting: true }]); await flush(); };
   const resolve = () => loadWaiters.splice(0).forEach(f => f());
   return { root, host, fig, body, poster, document, still, math, videos, frames, timers, observed, srcs, events, observers,
-    delays, canvas, reveals, overlaps, violations, blur: on => { root.classList.toggle("blurred", on); events[on ? "agentnave:blur" : "agentnave:focus"](); },
+    delays, canvas, reveals, overlaps, violations, swapped, blur: on => { root.classList.toggle("blurred", on); events[on ? "agentnave:blur" : "agentnave:focus"](); },
     reveals_: 0, violations_: 0, completeSeeks: () => seekWaiters.splice(0).forEach(f => f()), holdSeeks: () => { manualSeek = true; },
     sync, syncFigure: ctx.api.syncVideo, visible, resolve, flush, rec: () => ctx.api.videoPlayers.get(fig) };
 }
@@ -203,6 +204,35 @@ test("WebM clip changes show the new player above the old one before hiding it",
   assert.equal(shown.length, 1);
   assert.equal(shown[0].classList.contains("over"), false);
   assert.deepEqual(app.violations, []);
+});
+
+test("a WebM swap cut short by another leaves only the newest player on top", async () => {
+  const app = player({ ext: "webm" }); app.math.random = () => 0; await app.visible();
+  const first = app.rec().active;
+  first.video.end();
+  await app.swapped(first); // the new player shows above the old; nobody has settled yet
+  const second = app.rec().active;
+  assert.notEqual(second, first);
+  assert.equal(second.video.classList.contains("over"), true);
+  app.host.dataset.mood = "working"; app.sync(); // cuts the swap short with a clip of another mood
+  await app.swapped(second);
+  const third = app.rec().active;
+  assert.notEqual(third, second);
+  assert.deepEqual(app.videos.filter(v => v.classList.contains("over")).map(v => v === third.video), [true]);
+  await app.flush();
+  assert.equal(app.videos.some(v => v.classList.contains("over")), false);
+  assert.deepEqual(app.violations, []);
+});
+
+test("pausing a figure whose WebM swap has not settled takes the new player off the top", async () => {
+  const app = player({ ext: "webm" }); app.math.random = () => 0; await app.visible();
+  const old = app.rec().active;
+  old.video.end();
+  await app.swapped(old);
+  const active = app.rec().active;
+  assert.equal(active.video.classList.contains("over"), true);
+  app.blur(true); await app.flush();
+  assert.equal(active.video.classList.contains("over"), false);
 });
 
 test("a clip starts after a random wait, so figures of one character do not move in lockstep", async () => {
