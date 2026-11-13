@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import os
@@ -156,6 +157,32 @@ async def test_a_query_that_never_answers_is_cut_off(
         time.sleep(0.1)
     else:
         raise AssertionError("the query process was left running")
+
+
+@pytest.mark.asyncio
+async def test_failed_flooding_or_unreadable_queries_give_no_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(usage_probe, "QUERY_SECONDS", 2.0)
+    soon = datetime.now(UTC) + timedelta(hours=1)
+
+    def reset(_out: bytes, _now: datetime) -> datetime:
+        return soon
+
+    def unreadable(_out: bytes, _now: datetime) -> datetime:
+        raise TypeError("naive and aware datetimes")
+
+    async def run(code: str, parse: object = reset) -> datetime | None:
+        query = UsageQuery(_script(code), parse)  # type: ignore[arg-type]
+        return await asyncio.wait_for(usage_probe.run_usage_query(query, datetime.now(UTC)), 15)
+
+    assert await run("print('ok')") == soon
+    # A command that fails is not believed, whatever it printed.
+    assert await run("print('ok'); raise SystemExit(3)") is None
+    # A parser that raises is a failed query, not a failed run.
+    assert await run("print('ok')", unreadable) is None
+    # Output past the cap is drained, so stopping the command cannot hang on a full pipe.
+    assert await run("import sys\nwhile True: sys.stdout.write('x' * 65536)") is None
 
 
 @pytest.mark.asyncio
