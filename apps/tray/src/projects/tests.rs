@@ -392,7 +392,7 @@ fn a_removed_worktree_returns_to_the_repository_recorded_for_it() {
     machine.write("home/Code/wt/.git", "gitdir: ../app/.git/worktrees/wt\n");
     machine.make("home/Code/wt/src");
     let wt = canonical(&machine.base.join("home/Code/wt")).unwrap();
-    let app = machine.base.join("home/Code/app");
+    let app = machine.home().join("Code").join("app");
     assert_eq!(machine.place(&wt), "home/Code/app");
     assert_eq!(
         machine.recorded().get(&key(&wt)),
@@ -437,7 +437,9 @@ fn records_of_directories_no_longer_listed_are_forgotten() {
             key(&a),
             machine
                 .base
-                .join("home/Code/a")
+                .join("home")
+                .join("Code")
+                .join("a")
                 .to_string_lossy()
                 .into_owned()
         )])
