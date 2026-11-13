@@ -443,6 +443,20 @@ def test_recovery_and_change_summary_edge_cases(tmp_path: Path) -> None:
     assert not wt_clean.worktree_path.exists()
     assert dirs.store.get(wt_clean.id) is None
 
+    # Interrupted between `worktree add --no-checkout` and the checkout: no index yet.
+    wt_bare = dirs.create(repo, workspace_id="ws-1")
+    wt_bare.lease.release()
+    rec_bare = dirs.store.get(wt_bare.id)
+    assert rec_bare is not None
+    Path(
+        _git(wt_bare.worktree_path, "rev-parse", "--path-format=absolute", "--git-path", "index")
+    ).unlink()
+    dirs.store.delete(wt_bare.id)
+    dirs.store.insert_creating(replace(rec_bare, state="creating", phase="copying_include"))
+    out_bare = dirs.recover()
+    assert len(out_bare) == 1 and out_bare[0].status == "rolled_back"
+    assert not wt_bare.worktree_path.exists()
+
     wt_dirty = dirs.create(repo, workspace_id="ws-1")
     wt_dirty.lease.release()
     (wt_dirty.worktree_path / "README.md").write_text("user touched\n", encoding="utf-8")
@@ -1153,4 +1167,16 @@ def test_nested_repository_in_an_ignored_directory_forces_confirmation(tmp_path:
     first = dirs.release(created.id, workspace_id="ws-1")
     assert first.status == "confirmation_required"
     assert first.nested_repos == ("ignored_dir/inner",)
+    if os.name != "nt" and os.geteuid() != 0:
+        # A directory that cannot be searched may hold one too.
+        locked = created.worktree_path / "ignored_dir" / "locked"
+        locked.mkdir()
+        locked.chmod(0)
+        try:
+            assert dirs.summarize_changes(created.id).nested_repos == (
+                "ignored_dir/inner",
+                "ignored_dir/locked",
+            )
+        finally:
+            locked.chmod(0o755)
     dirs.close()

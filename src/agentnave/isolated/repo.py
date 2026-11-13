@@ -611,16 +611,15 @@ def add_worktree_locked(
     container.mkdir(parents=True, exist_ok=True)
     if is_link(container) or not container.is_dir():
         raise IsolationError(f"Invalid {WORKTREES_DIR_NAME} container: {container}")
-    env = {"GIT_LFS_SKIP_SMUDGE": "1", "GIT_NO_LAZY_FETCH": "1"}
     # Check out only after the branch exists: conditional includes (onbranch:) can add filter
     # drivers that are invisible while the main checkout is on another branch, so the drivers
     # to neutralize are enumerated from the new worktree itself.
     run_git(
         ["worktree", "add", "--no-checkout", "-b", branch_name, "--", str(worktree_path), base_oid],
         cwd=main_root,
-        extra_env=env,
+        extra_env=_CHECKOUT_ENV,
     )
-    run_git(["reset", "--hard", "--quiet", base_oid], cwd=worktree_path, extra_env=env)
+    check_out(worktree_path, base_oid)
     if is_link(worktree_path) or not worktree_path.is_dir():
         raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
     actual_head = (
@@ -641,6 +640,23 @@ def add_worktree_locked(
         )
     ).resolve()
     return git_dir
+
+
+_CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1", "GIT_NO_LAZY_FETCH": "1"}
+
+
+def check_out(worktree_path: Path, base_oid: str) -> None:
+    """Fill a worktree added with --no-checkout, with filter drivers seen from inside it."""
+    run_git(["reset", "--hard", "--quiet", base_oid], cwd=worktree_path, extra_env=_CHECKOUT_ENV)
+
+
+def never_checked_out(worktree_path: Path) -> bool:
+    """True while a worktree added with --no-checkout has no index yet; git then reports
+    every tracked file as a staged deletion, which is not a change anyone made."""
+    index = run_git(
+        ["rev-parse", "--path-format=absolute", "--git-path", "index"], cwd=worktree_path
+    ).stdout.rstrip(b"\r\n")
+    return not Path(decode_git_path(index)).exists()
 
 
 def isolated_worktree_root(path: Path) -> Path | None:

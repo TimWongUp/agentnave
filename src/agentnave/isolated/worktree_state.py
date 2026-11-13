@@ -89,10 +89,16 @@ def _ignored_nested_repositories(wt_path: Path) -> set[str]:
         ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
         cwd=wt_path,
     ).stdout
+
+    def unreadable(error: OSError) -> None:
+        # A directory that cannot be searched may hold a repository: ask, do not assume.
+        if error.filename is not None:
+            found.add(Path(error.filename).relative_to(wt_path).as_posix())
+
     for item in listing.split(b"\x00"):
         if not item.endswith(b"/"):
             continue
-        for top, dirs, names in os.walk(wt_path / decode_git_path(item)):
+        for top, dirs, names in os.walk(wt_path / decode_git_path(item), onerror=unreadable):
             if ".git" in names or ".git" in dirs:
                 found.add(Path(top).relative_to(wt_path).as_posix())
                 dirs.clear()

@@ -17,9 +17,11 @@ from agentnave.isolated.leases import (
 from agentnave.isolated.repo import (
     WORKTREES_DIR_NAME,
     IsolationError,
+    check_out,
     decode_git_path,
     is_link,
     is_same_or_subpath,
+    never_checked_out,
     parse_worktrees,
     ref_exists,
     run_git,
@@ -787,6 +789,10 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
                 )
                 if not linked:
                     raise IsolationError("Unfinished directory is not a valid git worktree")
+                if never_checked_out(wt_path):
+                    # Interrupted between adding and checking out: finish the checkout so the
+                    # status below compares files, not an empty index.
+                    check_out(wt_path, record.base_oid)
                 dirty = run_git(_STATUS_ARGS, cwd=wt_path).stdout
                 if dirty:
                     raise IsolationError("Unfinished worktree contains uncommitted source changes")
