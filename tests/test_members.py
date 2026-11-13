@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from agentnave.adapters.base import AdapterHooks
+from agentnave.decision_seats import DecisionSeatsFileError, custom_seats, decision_seats_for
 from agentnave.host import Host
 from agentnave.members import (
     MemberFile,
@@ -30,9 +31,11 @@ from agentnave.members import (
     read_members,
     read_permissions,
     role_seat,
+    validate_task_seat,
 )
 from agentnave.models import ProviderOption
 from agentnave.orchestration_roles import (
+    DecisionSeatsFile,
     OrchestrationGroup,
     OrchestrationRole,
     OrchestrationStatus,
@@ -41,8 +44,11 @@ from agentnave.orchestration_roles import (
 from agentnave.task_start import role_access
 
 APP_FILES = Path(__file__).parent / "fixtures" / "app-files"
-APP_MODELS: dict[str, type[MemberFile | ReviewFile | OrchestrationFile | PermissionFile]] = {
+APP_MODELS: dict[
+    str, type[MemberFile | ReviewFile | OrchestrationFile | PermissionFile | DecisionSeatsFile]
+] = {
     "members": MemberFile,
+    "decision-seats": DecisionSeatsFile,
     "review": ReviewFile,
     "orchestration": OrchestrationFile,
     "permissions": PermissionFile,
@@ -83,16 +89,20 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     rules = json.loads(
         Path(orchestration_roles.__file__).with_name("orchestration_rules.json").read_text("utf-8")
     )
-    assert set(rules["order"]) == {"meetings", "split", "parallel"}
-    known_steps = set(rules["sections"]) | {
-        "split_meetings",
-        "parallel_meetings",
-        "meeting_defaults",
-        "enabled_roles",
-    }
+    assert set(rules["order"]) == {"meetings", "split", "parallel", "decision"}
+    known_steps = (
+        set(rules["sections"])
+        | set(rules["switches"]) - {"lead_only"}
+        | {"meeting_defaults", "enabled_roles"}
+    )
     for steps in rules["order"].values():
         assert steps and set(steps) <= known_steps
-    assert rules["switches"]["lead_only"]["when_false"] in rules["sections"]["shared"]
+    lead = rules["switches"]["lead_only"]
+    assert set(lead["replaces_in"]) == {"shared", "decision_shared"}
+    for name in lead["replaces_in"]:
+        assert lead["when_false"] in rules["sections"][name]
+    # The decision text has no per-group seat lines.
+    assert "enabled_roles" not in rules["order"]["decision"]
     assert set(rules["meeting_defaults"]["provider_names"]) == set(get_args(ProviderName.__value__))
 
 
@@ -876,11 +886,11 @@ def test_claude_interactive_is_on_unless_turned_off_and_explicit_values_win(
         return None
 
     monkeypatch.setattr("agentnave.members.cli_default_effort", no_effort)
-    # Without a saved choice macOS and Linux run Claude interactively; Windows has no runtime.
+    # Without a saved choice Claude runs interactively on supported platforms.
     assert read_claude_interactive() is True
     result, applied = apply_member(None, "task", "claude", {}, frozenset())
-    assert (result.get("interactive") is True) is (os.name != "nt")
-    assert ("interactive" in applied) is (os.name != "nt")
+    assert result.get("interactive") is True
+    assert "interactive" in applied
     (tmp_path / "settings.json").write_text('{"version": 1, "claude_interactive": false}')
     assert read_claude_interactive() is False
     assert "interactive" not in apply_member(None, "task", "claude", {}, frozenset())[0]
@@ -1001,3 +1011,330 @@ def test_cooling_clis_disable_seats_and_filter_replacements(
     assert image is not None and image.replacement is not None
     assert image.replacement.provider == "pi"
     assert image.replacement.provider_options == {"model": "shared"}
+
+
+def _custom_seat(seat_id: str, provider: str, access: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "id": seat_id,
+        "kind": "custom",
+        "role": f"role {seat_id}",
+        "description": f"role {seat_id}",
+        "provider": provider,
+        "model": "shared",
+        "access": access,
+        "difficulty": "hard",
+        **extra,
+    }
+
+
+def _image_seat(seat_id: str, provider: str, specialty: str) -> dict[str, Any]:
+    seat = _custom_seat(seat_id, provider, "write", kind="image", role=specialty)
+    seat["description"] = specialty
+    del seat["difficulty"]
+    return seat
+
+
+def _write_decision_seats(root: Path, seats: list[dict[str, Any]], **extra: Any) -> None:
+    (root / "decision-seats.json").write_text(json.dumps({"version": 1, "seats": seats, **extra}))
+
+
+def test_custom_seats_replace_the_fixed_catalog_for_the_effective_boss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from agentnave import provider_health
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    seat = {"provider": "grok", "model": "shared"}
+    roles: dict[str, Any] = {
+        "version": 1,
+        "preset": "split",
+        "explorer": {"easy": seat},
+        "worker": {"hard": seat},
+        "image_generation": {"provider": "pi", "model": "shared"},
+    }
+    orchestration = tmp_path / "orchestration.json"
+    orchestration.write_text(json.dumps(roles))
+    host = Host("codex", "env", "codex")
+    before = list_members(frozenset(), host).model_dump()
+    seats = [
+        _custom_seat("write-hard", "grok", "write", effort="high"),
+        _custom_seat("write-cooling", "pi", "write"),
+        _custom_seat("read-native", "codex", "read", difficulty="easy"),
+        _image_seat("draw-comic", "grok", "漫画风格"),
+    ]
+    _write_decision_seats(tmp_path, seats)
+    # In every other mode the file changes nothing, byte for byte in the output.
+    for mode in ("split", "parallel", "off", "meetings"):
+        orchestration.write_text(json.dumps(roles | {"preset": mode}))
+        (tmp_path / "decision-seats.json").rename(tmp_path / "held.json")
+        without = list_members(frozenset(), host).model_dump()
+        (tmp_path / "held.json").rename(tmp_path / "decision-seats.json")
+        assert list_members(frozenset(), host).model_dump() == without
+    # Another boss on the mode does not give this one the catalog.
+    orchestration.write_text(json.dumps(roles | {"apps": {"grok": "decision"}}))
+    assert list_members(frozenset(), host).model_dump() == before
+    assert list_members(frozenset(), Host("grok", "env", "grok")).orchestration.custom_seats
+
+    orchestration.write_text(json.dumps(roles | {"preset": "decision"}))
+    provider_health.record(
+        tmp_path, "pi", "quota", "shared", datetime.now(UTC) + timedelta(hours=1)
+    )
+    result = list_members(frozenset(), host)
+    status = result.orchestration
+    assert status.enabled and result.orchestration_error is None
+    dumped = status.model_dump()
+    # The fixed groups, their scopes and the fixed image seat are not announced.
+    assert "explorer" not in dumped and "worker" not in dumped and not dumped["scopes"]
+    assert status.image_generation is None
+    assert list(status.custom_seats) == ["write-hard", "write-cooling", "read-native", "draw-comic"]
+    drawing = status.custom_seats["draw-comic"]
+    assert (drawing.kind, drawing.role, drawing.access, drawing.difficulty) == (
+        "image",
+        "漫画风格",
+        "write",
+        None,
+    )
+    ready = status.custom_seats["write-hard"]
+    assert (ready.kind, ready.role, ready.description, ready.access, ready.difficulty) == (
+        "custom",
+        "role write-hard",
+        "role write-hard",
+        "write",
+        "hard",
+    )
+    assert "tags" not in ready.model_dump()
+    assert ready.effort == "high" and ready.available is None and ready.native is None
+    cooling = status.custom_seats["write-cooling"]
+    assert cooling.available is False and "quota" in (cooling.reason or "")
+    assert status.custom_seats["read-native"].native is True
+    # The App's effective mode decides, row by row; an old connection has no row to read.
+    orchestration.write_text(
+        json.dumps(roles | {"preset": "split", "effective_apps": {"codex": "decision"}})
+    )
+    assert list_members(frozenset(), host).orchestration.custom_seats
+    assert not list_members(frozenset(), Host("grok", "env", "grok")).orchestration.custom_seats
+    assert not list_members(frozenset(), Host("codex", "env")).orchestration.custom_seats
+
+
+def test_decision_seats_file_is_empty_when_missing_and_reported_when_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    host = Host("codex", "env", "codex")
+    assert decision_seats_for(host) is None
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
+    # In the decision mode a missing file is an empty catalog, not an error.
+    assert decision_seats_for(host) == {}
+    listed = list_members(frozenset(), host)
+    assert listed.orchestration.enabled and listed.orchestration_error is None
+    assert listed.orchestration.custom_seats == {}
+    path = tmp_path / "decision-seats.json"
+    for content in (
+        "{broken",
+        json.dumps({"version": 2}),
+        # A review role name would be taken for the review seat.
+        json.dumps(
+            {
+                "version": 1,
+                "seats": [_custom_seat("security-reviewer", "grok", "read")],
+            }
+        ),
+    ):
+        path.write_text(content)
+        with pytest.raises(DecisionSeatsFileError, match="Invalid decision-seats.json"):
+            decision_seats_for(host)
+        assert custom_seats(host) is None
+        listed = list_members(frozenset(), host)
+        assert "Invalid decision-seats.json" in (listed.orchestration_error or "")
+        assert not listed.orchestration.enabled
+        # Fixed seats and review roles keep working while the file is reported.
+        assert role_seat("explorer-easy", host) is None
+        with pytest.raises(DecisionSeatsFileError):
+            validate_task_seat("anything", host)
+
+
+def test_custom_seat_names_resolve_only_while_effective(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    host = Host("claude", "env", "claude")
+    seat = {"provider": "grok", "model": "fixed"}
+    roles: dict[str, Any] = {
+        "version": 1,
+        "preset": "split",
+        "explorer": {"easy": seat},
+        "image_generation": {"provider": "pi", "model": "img"},
+    }
+    (tmp_path / "orchestration.json").write_text(json.dumps(roles))
+    _write_decision_seats(tmp_path, [_custom_seat("mine", "grok", "read", effort="low")])
+    with pytest.raises(MemberFileError, match="Unknown task seat: mine"):
+        validate_task_seat("mine", host)
+    validate_task_seat("explorer-easy", host)
+    (tmp_path / "orchestration.json").write_text(json.dumps(roles | {"preset": "decision"}))
+    validate_task_seat("mine", host)
+    with pytest.raises(MemberFileError, match="Unknown task seat: gone"):
+        validate_task_seat("gone", host)
+    # The fixed ordinary seats are replaced, not merely hidden.
+    with pytest.raises(MemberFileError, match="not used in the decision-model mode"):
+        validate_task_seat("explorer-easy", host)
+    assert role_seat("explorer-easy", host) is None
+    with pytest.raises(MemberFileError, match="replace the fixed catalog"):
+        role_seat("explorer-easy", host, required=True)
+    chosen = role_seat("mine", host, required=True)
+    assert chosen == ReviewSeat(provider="grok", model="shared", effort="low")
+    # The fixed image seat goes like the other fixed seats; image seats are the user's own.
+    with pytest.raises(MemberFileError, match="not used in the decision-model mode"):
+        validate_task_seat("image-generator", host)
+    assert role_seat("image-generator", host) is None
+    # Deleting the seat in the App makes the name unknown at once.
+    _write_decision_seats(tmp_path, [])
+    with pytest.raises(MemberFileError, match="Unknown task seat: mine"):
+        validate_task_seat("mine", host)
+    assert role_seat("mine", host) is None
+
+
+@pytest.mark.parametrize(
+    "orchestration",
+    [None, "off", "meetings", "split", "parallel", {"codex": "off"}, {"codex": "split"}],
+)
+def test_custom_seats_need_the_decision_mode_for_the_boss(
+    orchestration: str | dict[str, str] | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    host = Host("codex", "env", "codex")
+    fixed = {"provider": "grok", "model": "shared"}
+    roles: dict[str, Any] = {"version": 1, "worker": {"hard": fixed}}
+    if isinstance(orchestration, dict):
+        roles |= {"preset": "off", "effective_apps": orchestration}
+    elif orchestration is not None:
+        roles["preset"] = orchestration
+    if orchestration is not None:
+        (tmp_path / "orchestration.json").write_text(json.dumps(roles))
+    before = list_members(frozenset(), host).model_dump()
+    _write_decision_seats(tmp_path, [_custom_seat("mine", "grok", "write")])
+    # The file alone changes nothing, whatever the other content.
+    assert list_members(frozenset(), host).model_dump() == before
+    assert decision_seats_for(host) is None and custom_seats(host) is None
+    with pytest.raises(MemberFileError, match="Unknown task seat: mine"):
+        validate_task_seat("mine", host)
+    assert role_seat("mine", host) is None
+    # In the decision mode for the boss, the same file takes effect.
+    roles |= {"preset": "off", "effective_apps": {"codex": "decision"}}
+    (tmp_path / "orchestration.json").write_text(json.dumps(roles))
+    assert list(list_members(frozenset(), host).orchestration.custom_seats) == ["mine"]
+    validate_task_seat("mine", host)
+
+
+def test_seat_ids_of_the_fixed_catalog_and_auto_are_reserved() -> None:
+    for reserved in ("worker-easy", "image-generator", "auto"):
+        with pytest.raises(ValidationError, match="reserved"):
+            DecisionSeatsFile.model_validate(
+                {"version": 1, "seats": [_custom_seat(reserved, "grok", "read")]}
+            )
+
+
+def test_a_card_is_the_seats_of_one_kind_and_role_one_per_difficulty() -> None:
+    def seat(seat_id: str, **extra: Any) -> dict[str, Any]:
+        return _custom_seat(seat_id, "grok", "read") | extra
+
+    def file(*seats: dict[str, Any]) -> DecisionSeatsFile:
+        return DecisionSeatsFile.model_validate({"version": 1, "seats": list(seats)})
+
+    group = {"kind": "explorer", "role": "通用探索", "description": "读代码和材料"}
+    assert len(file(seat("a", **group), seat("b", **group, difficulty="easy")).seats) == 2
+    # One seat per difficulty on a card; a group has one role; a group keeps its access.
+    with pytest.raises(ValidationError, match="one seat per difficulty"):
+        file(seat("a", **group), seat("b", **group))
+    with pytest.raises(ValidationError, match="has one role"):
+        file(seat("a", **group), seat("b", **group | {"role": "探索"}, difficulty="easy"))
+    with pytest.raises(ValidationError, match="read-only by its group"):
+        file(seat("a", **group, access="write"))
+    # Custom specialties are a card each, whatever their access.
+    custom = {"kind": "custom", "description": "x"}
+    file(seat("a", **custom, role="x"), seat("b", **custom, role="y", access="write"))
+    with pytest.raises(ValidationError, match="kind must be"):
+        file(seat("a", kind="gardening"))
+    bad_fields: list[dict[str, Any]] = [
+        {"description": " "},
+        {"description": "x" * 201},
+        {"role": "x" * 41},
+        {"tags": []},
+    ]
+    for bad in bad_fields:
+        with pytest.raises(ValidationError):
+            file(seat("a", **bad))
+    assert file(seat("a", description="x" * 200)).seats[0].description == "x" * 200
+
+
+def test_image_seats_are_write_only_have_no_difficulty_and_repeat_by_specialty() -> None:
+    def file(*seats: dict[str, Any]) -> DecisionSeatsFile:
+        return DecisionSeatsFile.model_validate({"version": 1, "seats": list(seats)})
+
+    comic = _image_seat("comic", "grok", "漫画风格")
+    photo = _image_seat("photo", "grok", "写实")
+    assert [seat.difficulty for seat in file(comic, photo).seats] == [None, None]
+    with pytest.raises(ValidationError, match="one seat per difficulty"):
+        file(comic, comic | {"id": "again"})
+    with pytest.raises(ValidationError, match="no difficulty"):
+        file(comic | {"difficulty": "easy"})
+    with pytest.raises(ValidationError, match="no difficulty"):
+        file(comic | {"access": "read"})
+    # Every other kind needs one.
+    with pytest.raises(ValidationError, match="needs a difficulty"):
+        file({k: v for k, v in _custom_seat("a", "grok", "read").items() if k != "difficulty"})
+
+
+@pytest.mark.parametrize(
+    ("text", "accepted"),
+    [
+        ("写代码 and code 🚀", True),
+        ("  数据库迁移　", True),  # white space at the ends is trimmed
+        ("a b", True),  # an ordinary space inside stays
+        ("a­b", False),  # soft hyphen
+        ("ab", False),  # private use
+        ("a\U000f0000b", False),
+        ("a​b", False),  # zero width space
+        ("a⁦b", False),
+        ("a﻿b", False),
+        ("a b", False),  # white space other than the ordinary space, inside
+        ("a　b", False),
+        ("a\nb", False),
+        ("a\x1fb", False),
+        ("\x1fab", False),  # control characters are not white space to trim
+        ("a\x85b", False),
+        ("a\ud800b", False),  # a lone surrogate
+        ("a⁥b", True),  # only what the table names
+    ],
+)
+def test_decision_seat_text_follows_the_table_the_app_checks_too(text: str, accepted: bool) -> None:
+    seat = _custom_seat("s-1", "grok", "write", role=text, description=text)
+    if accepted:
+        assert DecisionSeatsFile.model_validate({"version": 1, "seats": [seat]}).seats
+    else:
+        with pytest.raises(ValueError, match="printable characters"):
+            DecisionSeatsFile.model_validate({"version": 1, "seats": [seat]})
+
+
+def test_the_seats_of_one_card_share_one_access() -> None:
+    both = [
+        _custom_seat("s-1", "grok", "read", role="迁移", difficulty="easy"),
+        _custom_seat("s-2", "grok", "write", role="迁移", difficulty="hard"),
+    ]
+    with pytest.raises(ValueError, match="one access"):
+        DecisionSeatsFile.model_validate({"version": 1, "seats": both})
+    both[1]["role"] = "另一张"
+    assert len(DecisionSeatsFile.model_validate({"version": 1, "seats": both}).seats) == 2
+
+
+def test_an_image_seat_may_say_null_for_its_difficulty_and_others_may_not() -> None:
+    image = {**_image_seat("s-1", "grok", "写实"), "difficulty": None}
+    assert DecisionSeatsFile.model_validate({"version": 1, "seats": [image]}).seats
+    with pytest.raises(ValueError, match="needs a difficulty"):
+        DecisionSeatsFile.model_validate(
+            {"version": 1, "seats": [{**_custom_seat("s-2", "grok", "write"), "difficulty": None}]}
+        )

@@ -545,3 +545,13 @@ fn uninstall_entries_name_paths_through_quotes_and_icon_indexes() {
         PathBuf::from(r"C:\A, B\x.exe")
     );
 }
+
+#[test]
+fn login_shells_hand_arguments_to_exec_their_own_way() {
+    assert_eq!(
+        login_exec(Path::new("/opt/homebrew/bin/fish")),
+        Some("exec $argv")
+    );
+    assert_eq!(login_exec(Path::new("/bin/zsh")), Some(r#"exec "$0" "$@""#));
+    assert_eq!(login_exec(Path::new("/usr/bin/nu")), None);
+}

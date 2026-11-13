@@ -8,7 +8,7 @@ import os
 from collections.abc import Callable, Mapping
 from functools import cache
 from pathlib import Path
-from typing import Literal, cast, get_args
+from typing import Any, Literal, cast, get_args
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -504,6 +504,13 @@ def read_members() -> MemberFile | None:
     return _read_app_file("members.json", MemberFile, MemberFileError)
 
 
+def _custom():
+    """The custom seat module imports this one, so it loads on first use."""
+    from agentnave import decision_seats
+
+    return decision_seats
+
+
 def orchestration_enabled(host: Host) -> bool:
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
@@ -512,7 +519,18 @@ def orchestration_enabled(host: Host) -> bool:
     return roles is not None and roles.enabled(host)
 
 
+def orchestration_decision(host: Host) -> bool:
+    """Whether the host's mode is decision, which swaps the fixed seat groups for the user's own."""
+    try:
+        roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+    except MemberFileError:
+        return False
+    return roles is not None and roles.decision(host)
+
+
 def visible_role_groups(host: Host) -> frozenset[OrchestrationGroup]:
+    if orchestration_decision(host):
+        return frozenset()  # the user's own seats replace the fixed groups
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     except MemberFileError:
@@ -528,7 +546,14 @@ def validate_task_seat(name: str, host: Host, *, inherited: bool = False) -> Non
     Image replacement behavior is independent of ordinary role switches.
     """
     if name not in get_args(OrchestrationRole.__value__):
+        if name in (_custom().decision_seats_for(host) or {}):
+            return
         raise MemberFileError(f"Unknown task seat: {name}")
+    if orchestration_decision(host):
+        raise MemberFileError(
+            f"{name} seat is not used in the decision-model mode: only the user's own seats "
+            "from list_members exist. Pass one of them, or seat='auto' with access."
+        )
     if name == "image-generator":
         return
     definition = seat_role(name)
@@ -577,12 +602,7 @@ def apply_member(
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
-        if (
-            provider == "claude"
-            and "interactive" not in result
-            and os.name != "nt"
-            and read_claude_interactive()
-        ):
+        if provider == "claude" and "interactive" not in result and read_claude_interactive():
             result["interactive"] = True
             applied.append("interactive")
         if (
@@ -633,6 +653,16 @@ def role_seat(role: str | None, host: Host, *, required: bool = False) -> Review
     list_members reports it. Provider inference requires a usable seat instead."""
     role = (role or "").strip()
     seat = None
+    custom = _custom().custom_seats(host)
+    if custom is not None and role in custom:
+        return custom[role].review_seat()
+    if orchestration_decision(host) and role in get_args(OrchestrationRole.__value__):
+        if required:
+            raise MemberFileError(
+                f"{role} seat is not enabled: your own seats replace the fixed catalog; "
+                "choose a seat from list_members"
+            )
+        return None
     try:
         if role in get_args(ReviewRole.__value__):
             review = _read_app_file("review.json", ReviewFile, MemberFileError)
@@ -868,11 +898,16 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     active_health = provider_health.active(data_root())
     document = read_members()
     roles = None
+    custom = None
     orchestration_error = None
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     except MemberFileError as exc:
         orchestration_error = str(exc)
+    try:
+        custom = _custom().decision_seats_for(host)
+    except MemberFileError as exc:
+        orchestration_error = f"{orchestration_error} {exc}" if orchestration_error else str(exc)
     enabled = roles is not None and roles.enabled(host)
     modes = _member_modes(document, excluded, installed)
     task_mode = (
@@ -890,22 +925,27 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     except MemberFileError as exc:
         review_error = str(exc)
     orchestration = OrchestrationStatus()
-    if roles is not None and enabled:
+    if custom is not None:
+        orchestration = _custom().custom_orchestration_status(
+            custom, task_mode, excluded, host, installed, document, active_health
+        )
+    elif roles is not None and enabled and not roles.decision(host):
+        groups: dict[str, Any] = {
+            definition.group: _review_status(
+                roles.group_seats(definition.group),
+                task_mode,
+                excluded,
+                host,
+                installed,
+                document,
+                active_health,
+            )
+            for definition in role_catalog()
+            if roles.group_enabled(definition.group)
+        }
         orchestration = OrchestrationStatus(
             enabled=True,
-            **{
-                definition.group: _review_status(
-                    roles.group_seats(definition.group),
-                    task_mode,
-                    excluded,
-                    host,
-                    installed,
-                    document,
-                    active_health,
-                )
-                for definition in role_catalog()
-                if roles.group_enabled(definition.group)
-            },
+            **groups,
             scopes={
                 definition.group: definition.scope_zh
                 for definition in role_catalog()

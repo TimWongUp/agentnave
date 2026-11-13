@@ -25,6 +25,11 @@ pub(crate) use cleanup::prune;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Automatic checks run at start and then once a day; the menu can check at any time.
 pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often the App looks whether an automatic check is due. A sleeping thread does not count
+/// the hours the computer is asleep, so the day is measured on the clock, a short nap at a time.
+pub const POLL: Duration = Duration::from_secs(10 * 60);
+/// An automatic check that got no answer (offline at login, say) is tried again this soon.
+const RETRY: Duration = Duration::from_secs(60 * 60);
 const REPOSITORY: &str = "https://github.com/TimWongUp/agentnave.git";
 /// Where the notes of releases older than those in the manifest are.
 const RELEASES: &str = "https://github.com/TimWongUp/agentnave/releases";
@@ -121,6 +126,8 @@ pub struct Updates {
     item: MenuItem<Wry>,
     state: Mutex<State>,
     checked: Mutex<Option<SystemTime>>,
+    /// The last check that got an answer, found update or not.
+    answered: Mutex<Option<SystemTime>>,
 }
 
 impl Updates {
@@ -129,6 +136,7 @@ impl Updates {
             item,
             state: Mutex::new(State::default()),
             checked: Mutex::new(None),
+            answered: Mutex::new(None),
         }
     }
 
@@ -308,7 +316,11 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
     let updates = app.state::<Updates>();
     // A failed silent check still counts as an attempt, so an offline cache is not
     // checked again on every click. Explicit rechecks remain available.
-    *updates.checked.lock().unwrap() = Some(SystemTime::now());
+    let now = SystemTime::now();
+    *updates.checked.lock().unwrap() = Some(now);
+    if found.is_ok() {
+        *updates.answered.lock().unwrap() = Some(now);
+    }
     match found {
         Ok(Some(update)) => {
             let current = app.package_info().version.to_string();
@@ -347,23 +359,51 @@ pub fn check(app: &AppHandle, manual: bool) {
     tauri::async_runtime::spawn(finish_check(app.clone(), manual, before));
 }
 
-/// The check the App runs by itself at start and once a day, skipped while the setting is off.
-/// The loop keeps going, so turning the setting back on resumes with the next round.
+/// The check the App runs by itself at start and then at the interval the setting names,
+/// skipped while the setting is off. The loop calls this every `POLL` and keeps going, so a
+/// changed setting applies with the next round.
 pub fn auto_check(app: &AppHandle) {
     let preferences = crate::preferences::read(&crate::preferences::dir()).unwrap_or_default();
-    if automatic_check_enabled(&preferences) {
+    let Some(every) = automatic_check_interval(&preferences) else {
+        return;
+    };
+    let updates = app.state::<Updates>();
+    let checked = *updates.checked.lock().unwrap();
+    let answered = *updates.answered.lock().unwrap();
+    if check_due(checked, answered, every, SystemTime::now()) {
         check(app, false);
     }
 }
 
-/// Automatic checks run unless the App setting is explicitly off; no file, no section or a
-/// value this build cannot read keeps the previous behaviour.
-fn automatic_check_enabled(preferences: &Map<String, Value>) -> bool {
-    preferences
-        .get("updates")
-        .and_then(|updates| updates.get("auto_check"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
+/// Whether an automatic check should run now: `every` after the last check that got an answer,
+/// and an hour after one that did not. A clock set back counts as due.
+fn check_due(
+    checked: Option<SystemTime>,
+    answered: Option<SystemTime>,
+    every: Duration,
+    now: SystemTime,
+) -> bool {
+    let over = |at: Option<SystemTime>, limit: Duration| {
+        at.is_none_or(|at| {
+            now.duration_since(at)
+                .map_or(true, |passed| passed >= limit)
+        })
+    };
+    over(answered, every) && over(checked, RETRY)
+}
+
+/// How often the automatic check runs, or `None` while the App setting is off. No file, no
+/// section or a value this build cannot read keeps the previous behaviour: on, once a day.
+fn automatic_check_interval(preferences: &Map<String, Value>) -> Option<Duration> {
+    let updates = preferences.get("updates");
+    if updates.and_then(|updates| updates.get("auto_check")) == Some(&Value::Bool(false)) {
+        return None;
+    }
+    let hours = updates
+        .and_then(|updates| updates.get("check_hours"))
+        .and_then(Value::as_u64)
+        .filter(|hours| matches!(hours, 4 | 12 | 24));
+    Some(hours.map_or(EVERY, |hours| Duration::from_secs(hours * 60 * 60)))
 }
 
 /// `POST /app/update/check`: check now and answer with the result. The service version is
@@ -634,6 +674,9 @@ pub fn status(app: &AppHandle) -> Value {
             )
         })
         .unwrap_or_default();
+    let answered = updates
+        .as_ref()
+        .and_then(|updates| *updates.answered.lock().unwrap());
     let checked = updates.and_then(|updates| *updates.checked.lock().unwrap());
     let running = matches!(phase, Phase::Installing(_))
         || matches!(upgrade, Upgrade::Running | Upgrade::Installing);
@@ -661,6 +704,8 @@ pub fn status(app: &AppHandle) -> Value {
         "service": service_state(service_for_app(app), upgrade),
         "last_checked": checked.map(rfc3339),
         "check_fresh": check_fresh(checked, SystemTime::now()),
+        // False when the last check, silent ones included, got no answer from any source.
+        "check_answered": checked.is_none() || checked == answered,
         "elapsed": started.filter(|_| running).map(|at| at.elapsed().as_secs()),
         "updated": updated,
     })

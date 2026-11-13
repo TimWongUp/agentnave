@@ -56,6 +56,7 @@ fn routes_serve_views_and_reject_everything_else() {
         "/settings/settings.js",
         "/settings/settings-frame.js",
         "/settings/advanced.js",
+        "/settings/decision-seats.js",
         "/settings/voice-settings.js",
         "/settings/about-settings.js",
         "/settings/settings.css",
@@ -64,6 +65,7 @@ fn routes_serve_views_and_reject_everything_else() {
         "/chat/chat.js",
         "/chat/office-settings.js",
         "/chat/chat-topics.js",
+        "/chat/chat-groups.js",
         "/chat/actions.js",
         "/chat/chat.css",
         "/chat/common.js",
@@ -114,6 +116,69 @@ fn routes_serve_views_and_reject_everything_else() {
 }
 
 const MANAGER: &str = "s-0123456789abcdef0123456789abcdef";
+
+#[test]
+fn chats_do_not_wait_for_host_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    save(
+        dir.path(),
+        &task_snapshot("a1", "succeeded", "2026-10-15T00:00:00Z"),
+    );
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, owner_host, title) VALUES (?1, ?1, 'claude', 'test')",
+            [MANAGER],
+        )
+        .unwrap();
+    drop(connection);
+    let reader = Arc::new(Reader::new(dir.path().to_path_buf()));
+    let home = dir.path().canonicalize().unwrap();
+    let custom = home.join("custom-codex");
+    let context = crate::hosts::Context {
+        home: home.clone(),
+        app: home.join("app"),
+        project: home.clone(),
+        env: std::collections::BTreeMap::from([(
+            "CODEX_HOME".into(),
+            custom.display().to_string(),
+        )]),
+        search: Vec::new(),
+        applications: Vec::new(),
+    };
+    reader.configure_hosts(context, Ok(std::collections::BTreeMap::new()));
+    assert!(reader.boss_homes().codex.contains(&custom));
+    let guard = reader.hosts.lock().unwrap();
+    let (send, receive) = std::sync::mpsc::channel();
+    let worker = Arc::clone(&reader);
+    let thread = std::thread::spawn(move || {
+        let response = worker.request("GET", "/app/chats", None, b"");
+        send.send(response).unwrap();
+    });
+    let result = receive.recv_timeout(Duration::from_secs(3));
+    drop(guard);
+    thread.join().unwrap();
+    let response = result.unwrap();
+    assert_eq!(response.status, 200);
+    let body: Value = serde_json::from_slice(&response.body).unwrap();
+    assert!(!body["groups"].as_array().unwrap().is_empty());
+
+    let moved = home.join("moved-codex");
+    let body = json!({"id": "codex", "path": moved});
+    let response = reader.request(
+        "POST",
+        "/app/hosts/root",
+        Some("1"),
+        body.to_string().as_bytes(),
+    );
+    assert_eq!(
+        response.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&response.body)
+    );
+    assert!(reader.boss_homes().codex.contains(&moved));
+}
 
 fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
     json!({"version": 1, "summary": {"id": id, "title": format!("任务 {id}"),
@@ -256,10 +321,11 @@ fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
     // The earliest conversation names the chat unless it kept the default task title.
     let mut first = task_snapshot("z", "succeeded", "2026-10-15T02:00:01.000001Z");
     first["summary"]["title"] = json!("codex 任务");
+    first["director"]["tasks"][0]["cwd"] = json!("/work/first-project");
     save(root, &first);
     // A different offset still denotes a newer activity than z, even within the same millisecond.
     let mut newer = task_snapshot("b", "blocked", "2026-10-15T10:00:01.000002+08:00");
-    newer["director"]["cwd"] = json!("/work/newer-project");
+    newer["director"]["tasks"][0]["cwd"] = json!("/work/newer-project");
     save(root, &newer);
     let mut unknown = task_snapshot("unknown", "succeeded", "2026-10-15T00:00:00Z");
     unknown["summary"]["manager_session"] = json!("s-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
@@ -275,7 +341,8 @@ fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
     assert_eq!(groups["groups"][0]["conversations"], 2);
     assert_eq!(groups["groups"][0]["title"], "任务 b");
     assert_eq!(groups["groups"][0]["title_id"], "b");
-    assert_eq!(groups["groups"][0]["project"], "newer-project");
+    // The project stays where the workspace began, not where its latest call worked.
+    assert_eq!(groups["groups"][0]["project"], "first-project");
     // No record says which app this boss runs in, so neither name is claimed.
     assert_eq!(groups["groups"][0]["label"], "Claude");
     let chat = state(&reader, &format!("/app/chats/{MANAGER}"));
@@ -296,7 +363,17 @@ fn chats_aggregate_sessions_merge_latest_members_and_reflect_saved_changes() {
         "2026-10-15T00:00:01.250123Z"
     );
     assert!(unknown["color"].as_u64().unwrap() < 8);
-    assert_eq!(state(&reader, &format!("/app/chats/{MANAGER}")), chat);
+    // The project arrives from a background thread, so it may differ between two reads.
+    let settled = |mut chat: Value| {
+        for key in ["project_key", "project_label", "project_path"] {
+            chat.as_object_mut().unwrap().remove(key);
+        }
+        chat
+    };
+    assert_eq!(
+        settled(state(&reader, &format!("/app/chats/{MANAGER}"))),
+        settled(chat)
+    );
     assert_eq!(
         state(&reader, "/app/chats/s-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")["color"],
         unknown["color"]
@@ -421,7 +498,8 @@ fn tail_live_files_lay_over_saved_running_work_only() {
         &root.join("live/1-tails.json"),
         &json!({"version": 2, "conversations": {
                 "a": {"tasks": {"t-a": {"output": "streamed tail", "reported_model": null,
-                    "doing": "tool:Read", "doing_since": "2026-10-15T02:00:30+00:00", "output_at": "2026-10-15T02:01:00+00:00"}}, "seats": {}},
+                    "doing": "tool:Read", "doing_since": "2026-10-15T02:00:30+00:00", "output_at": "2026-10-15T02:01:00+00:00",
+                    "tools": ["Grep", "Read"]}}, "seats": {}},
                 "c": {"tasks": {"t-c": {"output": "late tail", "reported_model": null}}, "seats": {}},
                 // Tails without saved views beneath them show nothing.
                 "gone": {"tasks": {"t-gone": {"output": "x", "reported_model": null}}, "seats": {}}}}),
@@ -436,6 +514,7 @@ fn tail_live_files_lay_over_saved_running_work_only() {
     assert_eq!(typing.len(), 1);
     assert_eq!(typing[0]["text"], "streamed tail");
     assert_eq!(typing[0]["doing_since"], "2026-10-15T02:00:30+00:00");
+    assert_eq!(typing[0]["tools"], json!(["Grep", "Read"]));
     assert_eq!(
         (&typing[0]["doing"], &typing[0]["output_at"]),
         (&json!("tool:Read"), &json!("2026-10-15T02:01:00+00:00"))

@@ -46,28 +46,13 @@ fn switched_section(document: &Value, switch_name: &str) -> &'static str {
 
 fn format_meeting_seat(seat: &Value) -> Option<String> {
     let md = &catalog()["meeting_defaults"];
-    let seat = seat.as_object()?;
     let provider = seat.get("provider")?.as_str()?;
     let name = md["provider_names"][provider].as_str()?;
-    let model = seat.get("model")?.as_str()?.trim();
-    if model.is_empty() {
-        return None;
-    }
-    let effort = seat
-        .get("effort")
-        .and_then(Value::as_str)
-        .filter(|effort| !effort.is_empty());
-    Some(match effort {
-        Some(effort) => str_at(md, "seat_with_effort")
+    Some(
+        str_at(md, "seat_provider")
             .replace("{name}", name)
-            .replace("{provider}", provider)
-            .replace("{model}", model)
-            .replace("{effort}", effort),
-        None => str_at(md, "seat")
-            .replace("{name}", name)
-            .replace("{provider}", provider)
-            .replace("{model}", model),
-    })
+            .replace("{provider}", provider),
+    )
 }
 
 pub(super) fn meeting_line(document: &Value) -> Option<String> {
@@ -96,6 +81,15 @@ pub(super) fn meeting_line(document: &Value) -> Option<String> {
     )
 }
 
+/// Whether the lead-only line is swapped in the section `name`.
+fn replaces_in(lead: &'static Value, name: &str) -> bool {
+    lead["replaces_in"]
+        .as_array()
+        .expect("lead_only replaces_in in orchestration_rules.json")
+        .iter()
+        .any(|section| section.as_str() == Some(name))
+}
+
 fn assemble_steps(document: &Value, steps: &[Value], apply_lead: bool) -> String {
     let lead = &catalog()["switches"]["lead_only"];
     let lead_default = lead["default"]
@@ -119,12 +113,15 @@ fn assemble_steps(document: &Value, steps: &[Value], apply_lead: bool) -> String
                     out.push_str(section("image_generation"));
                 }
             }
-            "split_meetings" | "parallel_meetings" => {
+            "split_meetings"
+            | "parallel_meetings"
+            | "decision_parallel_writes"
+            | "decision_meetings" => {
                 out.push_str(switched_section(document, name));
             }
             _ => {
                 let text = section(name);
-                if lead_on && name == str_at(lead, "replaces_in") {
+                if lead_on && replaces_in(lead, name) {
                     out.push_str(
                         &text.replace(str_at(lead, "when_false"), str_at(lead, "when_true")),
                     );
@@ -164,15 +161,21 @@ pub(super) fn presets_payload(document: &Value) -> Value {
     json!({"meetings": super::text_of(document, "meetings"),
         "split": super::text_of(document, "split"),
         "parallel": super::text_of(document, "parallel"),
+        "decision": super::text_of(document, "decision"),
         "meeting": meeting_line(document),
         "meetings_parts": {"head": section("meetings_only_head"), "tail": section("meetings_only_tail")},
         "meeting_parts": {"default_count": default_count, "separator": str_at(md, "separator"),
-            "seat": str_at(md, "seat"), "seat_effort": str_at(md, "seat_with_effort"),
+            "seat_provider": str_at(md, "seat_provider"),
             "all": str_at(md, "all_named"), "some": str_at(md, "some_named"), "none": str_at(md, "none_named")},
         "image_generation": section("image_generation"),
         "role_sections": super::roles::sections(),
         "role_base": {"parallel": parallel_role_base(document)},
         "parallel_base": format!("{shared}{}", section("parallel_writes")),
+        "decision_parts": {"base": section("decision_shared"),
+            "parallel_writes_asked": section("split_parallel_writes"),
+            "parallel_writes_own": section("parallel_writes"),
+            "meetings_asked": section("meetings_when_asked"),
+            "meetings_own": section("meetings_on_tradeoffs")},
         "split_parts": {"base": format!("{shared}{}", section("split_parallel_writes")),
             "meetings_asked": section("meetings_when_asked"),
             "meetings_own": section("meetings_on_tradeoffs")},

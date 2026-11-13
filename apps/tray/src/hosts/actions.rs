@@ -20,6 +20,9 @@ impl Hosts {
         if operation == "confirm-reload" {
             return self.confirm_reload(id, &host, payload);
         }
+        if operation == "dismiss-fault" {
+            return self.dismiss_faults(&host);
+        }
         if !matches!(operation, "connect" | "remove") {
             return Err("未知宿主操作".into());
         }

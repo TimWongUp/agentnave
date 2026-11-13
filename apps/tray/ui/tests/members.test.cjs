@@ -12,7 +12,7 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
     return controls.get(id);
   };
   const context = vm.createContext({
-    AN: { shellOS: () => os }, structuredClone, fetch, setTimeout: () => 0,
+    AN: { shellOS: () => os, art: { url: (name) => `/art/${name}` } }, structuredClone, fetch, setTimeout: () => 0,
     document: {
       getElementById: control,
       createElement: (tag) => ({ tag, dataset: {}, setAttribute() {}, addEventListener() {}, appendChild() {} }),
@@ -189,7 +189,7 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
     split: "whole", parallel: "whole+", image_generation: "\nimage", meetings: "H\nT",
     meetings_parts: { head: "H", tail: "\nT" },
     meeting_parts: {
-      default_count: 3, separator: "、", seat: "{name}<{provider}/{model}>", seat_effort: "{name}<{provider}/{model}/{effort}>",
+      default_count: 3, separator: "、", seat_provider: "{name}<{provider}>",
       all: "\nA{count}:{seats}", some: "\nS{count}:{seats}", none: "\nN{count}",
     },
     role_base: { parallel: "base+" }, parallel_base: "base+",
@@ -309,7 +309,7 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   const wanted = () => JSON.stringify(app.run("orchestrationWanted().meeting"));
   const preview = (mode) => app.run(`orchestrationPresetText("${mode}")`);
   const name = app.run("PROVIDER_NAMES.codex");
-  const one = `${name}<codex/chat-model>`;
+  const one = `${name}<codex>`;
 
   assert.equal(app.run('$("orchestration-meeting").hidden'), false);
   assert.equal(rows().length, 4);
@@ -318,7 +318,9 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   assert.equal(preview("meetings"), "H\nT");
 
   pick(0, "codex");
-  assert.equal(wanted(), JSON.stringify({ count: 3, seats: [{ provider: "codex", model: "chat-model" }] }));
+  assert.equal(wanted(), JSON.stringify({ count: 3, seats: [{ provider: "codex" }] }));
+  assert.equal(rows()[1].children[2].attrs.disabled, "", "the model follows Employees and is read-only");
+  assert.equal(rows()[1].children[3].attrs.disabled, "", "so does the effort");
   assert.equal(preview("meetings"), `H\nS3:${one}\nT`);
   app.run('viewMode("split")');
   assert.equal(app.run('$("orchestration-meeting").hidden'), false);
@@ -351,15 +353,10 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   assert.equal(app.run("orchestrationChanged()"), false);
 });
 
-test("meeting seats are checked like orchestration seats while a boss runs a meeting mode", () => {
-  const app = poolEditor();
-  app.run(`
-    currentDoc.clis.codex.allowed_models = ["a"];
-    orchestration = { document: { version: 1, preset: "meetings", meeting: { count: 3, seats: [null, { provider: "codex", model: "b" }] } } };
-  `);
-  assert.equal(app.run("seatConflicts().length"), 1);
-  assert.equal(app.run("seatConflicts()[0].blocking"), true);
-  app.run('orchestration.document.preset = "off"');
+test("an older meeting seat with a model is read and previewed as its CLI alone", async () => {
+  const { app } = rolesEditor({ version: 1, preset: "meetings", enabled_roles: [], meeting: { count: 2, seats: [{ provider: "codex", model: "gone", effort: "high" }, null] } });
+  await app.run("loadOrchestration()");
+  assert.equal(app.run('orchestrationPresetText("meetings")'), `H\nS2:${app.run("PROVIDER_NAMES.codex")}<codex>\nT`);
   assert.equal(app.run("seatConflicts().length"), 0);
 });
 
@@ -573,7 +570,7 @@ function runtimeEditor(fetch, os) {
   return app;
 }
 
-test("runtime switches are labelled, default off, and are hidden on Windows and other cards", async () => {
+test("runtime switches show only where each provider supports them", async () => {
   const app = runtimeEditor(async () => ({ ok: true, json: async () => ({ settings: { version: 1, max_running: 8 } }) }));
   assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
   await app.run("loadLimit()");
@@ -587,7 +584,8 @@ test("runtime switches are labelled, default off, and are hidden on Windows and 
   assert.equal(input.attrs.checked, false);
   assert.equal(input.attrs.disabled, false);
   const windows = runtimeEditor(undefined, "windows");
-  assert.equal(windows.run("renderInteractive('claude')"), null);
+  assert.equal(windows.run("renderInteractive('claude').attrs.className"), "member-row member-runtime");
+  assert.equal(windows.run("renderInteractive('antigravity')"), null);
 });
 
 test("runtime saves immediately without changing other settings or the unsaved limit", async () => {
@@ -914,4 +912,375 @@ test("a switch put back to what is saved keeps the saved form of its key", async
   meetings().listeners.change({ target: { checked: true } });
   assert.equal(app.run("JSON.stringify(orchestrationWanted().parallel_options)"), "{}");
   assert.equal(app.run("orchestrationChanged()"), false);
+});
+
+// The decision mode: its page, options, the first catalog and the key, on the same fake DOM.
+function decisionEditor(preset, loaded, catalogError = null) {
+  const calls = [];
+  const app = advancedEditor(async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    if (url === "/app/decision-seats" && options.method === "POST" && catalogError) return { ok: false, status: 500, json: async () => ({ error: catalogError }) };
+    if (url === "/app/decision-seats" && !options.method) return { ok: true, json: async () => loaded };
+    if (url === "/app/decision-key") return { ok: true, json: async () => ({ key_set: JSON.parse(options.body).key !== "" }) };
+    return { ok: true, json: async () => ({ saved: true, files: [], bosses: JSON.parse(app.run("JSON.stringify(orchestration.bosses)")) }) };
+  });
+  const seat = (provider, model, effort) => ({ provider, model, ...(effort ? { effort } : {}) });
+  app.run(`
+    orchestration = { error: null, files: [], bosses: [{ keys: ["codex"], ids: ["codex"], labels: ["Codex"], mark: "codex" }],
+      roles: [
+        { group: "explorer", name_zh: "通用探索", name_en: "General exploration", scope_zh: "读代码", access: "read", fallback_group: null, legacy_enabled: true },
+        { group: "worker", name_zh: "通用执行", name_en: "General execution", scope_zh: "改代码", access: "write", fallback_group: null, legacy_enabled: true },
+        { group: "worker_frontend", name_zh: "界面制作", name_en: "Interface work", scope_zh: "做界面", access: "write", fallback_group: "worker", legacy_enabled: true },
+        { group: "worker_writing", name_zh: "写作", name_en: "Writing", scope_zh: "写文章", access: "write", fallback_group: "worker", legacy_enabled: false },
+      ],
+      document: { version: 1, preset: "${preset}",
+        enabled_roles: ["explorer", "worker", "worker_frontend", "worker_writing"],
+        explorer: { easy: ${JSON.stringify(seat("codex", "chat-model"))}, hard: ${JSON.stringify(seat("codex", "chat-model", "high"))} },
+        worker: { easy: ${JSON.stringify(seat("codex", "chat-model"))}, hard: ${JSON.stringify(seat("codex", "chat-model"))} },
+        worker_frontend: { easy: ${JSON.stringify(seat("codex", "chat-model"))}, hard: ${JSON.stringify(seat("codex", "chat-model"))} },
+        worker_writing: { easy: ${JSON.stringify(seat("codex", "chat-model"))} },
+        image_generation: ${JSON.stringify(seat("codex", "chat-model"))} } };
+  `);
+  const decision = (code) => app.run(`(${code})(window.AgentNaveDecisionSeats)`);
+  app.load("decision-seats.js");
+  app.run(`orchestration.presets = {
+    decision: "decision", image_generation: "|image", lead: { asked: "LEAD-ASKED", always: "LEAD-ALWAYS" },
+    decision_parts: { base: "BASE|LEAD-ASKED|", parallel_writes_asked: "PW-ASKED|", parallel_writes_own: "PW-OWN|",
+      meetings_asked: "M-ASKED|", meetings_own: "M-OWN|" } };`);
+  app.run(`viewMode("${preset}")`);
+  return { app, calls, decision };
+}
+const roleChildren = (app) => app.run('$("orchestration-roles")').children;
+const NO_FILE = { document: null, error: null, key_set: false, key_error: null };
+
+const boss = (app) => app.run("AN.settings.orchestration.bosses[0]");
+
+const seatsOf = (app) => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)"));
+const cardsOf = (app) => roleChildren(app)[0].children[3].children;
+
+test("a boss put into the decision mode makes the first catalog from the fixed seats once", async () => {
+  const { app, decision } = decisionEditor("split", NO_FILE);
+  await decision((d) => d.load());
+  app.run('viewMode("decision")');
+  app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
+  const seats = seatsOf(app);
+  // One card per bound group with easy and hard filled in and medium empty, then the image seat.
+  assert.deepEqual(seats.map(({ kind, role, description, access, difficulty }) => [kind, role, description, access, difficulty]), [
+    ["explorer", "通用探索", "读代码", "read", "easy"],
+    ["explorer", "通用探索", "读代码", "read", "hard"],
+    ["worker", "通用执行", "改代码", "write", "easy"],
+    ["worker", "通用执行", "改代码", "write", "hard"],
+    ["worker_frontend", "界面制作", "做界面", "write", "easy"],
+    ["worker_frontend", "界面制作", "做界面", "write", "hard"],
+    ["worker_writing", "写作", "写文章", "write", "easy"],
+    ["image", "通用生图", "通用生图", "write", undefined],
+  ]);
+  assert.equal(seats[1].effort, "high");
+  assert.ok(!("difficulty" in seats[7]));
+  assert.equal(new Set(seats.map((seat) => seat.id)).size, 8);
+  assert.ok(seats.every((seat) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(seat.id) && !("tags" in seat)));
+  assert.equal(cardsOf(app).length, 5);
+  assert.equal(decision((d) => d.changed()), true);
+  assert.equal(decision((d) => d.problem()), null);
+  // Leaving the mode keeps the catalog, and coming back does not make another one.
+  app.run('setBossMode(AN.settings.orchestration.bosses[0], "off")');
+  app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
+  assert.equal(seatsOf(app).length, 8);
+});
+
+test("a saved file is never prefilled again, and a boss already on the mode does not prefill", async () => {
+  const saved = { document: { version: 1, seats: [] }, error: null, key_set: false, key_error: null };
+  const { app, decision } = decisionEditor("split", saved);
+  await decision((d) => d.load());
+  app.run('viewMode("decision")');
+  app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
+  assert.equal(seatsOf(app).length, 0);
+  assert.equal(decision((d) => d.changed()), false);
+
+  // Opening the page with the boss on the mode makes nothing either.
+  const open = decisionEditor("decision", NO_FILE);
+  await open.decision((d) => d.load());
+  assert.equal(seatsOf(open.app).length, 0);
+  assert.equal(open.decision((d) => d.changed()), false);
+});
+
+test("only the decision mode's page shows the catalog, its options and the key, in place of the fixed seats and the fixed image seat", async () => {
+  const { app, decision } = decisionEditor("split", NO_FILE);
+  await decision((d) => d.load());
+  const kinds = () => Array.from(roleChildren(app)).map((child) => child.className);
+  const options = () => app.run('$("orchestration-split")').children;
+  const fixed = ["orchestration-section", "orchestration-section", "review-row"];
+  app.run('$("custom-text").value = "我的规则"');
+  // Another mode's page is what it was: fixed seats, its own two switches, nothing of the catalog.
+  assert.deepEqual(kinds(), fixed);
+  assert.equal(options().length, 2);
+  assert.equal(decision((d) => d.panel() === null), false);
+  for (const mode of ["off", "meetings", "parallel", "custom"]) {
+    app.run(`viewMode("${mode}")`);
+    assert.ok(!kinds().some((kind) => /decision/.test(kind)), mode);
+  }
+  app.run('viewMode("decision")');
+  // The catalog sits where the fixed seats were, and the fixed image seat is gone; three switches.
+  assert.deepEqual(kinds(), ["orchestration-section decision-seats"]);
+  assert.equal(options().length, 3);
+  assert.equal(roleChildren(app)[0].children[0].tagName, "figure");
+  // Under the picture, four who-does-what captions and one line saying what the decision model never does.
+  const figure = roleChildren(app)[0].children[0];
+  const [image, captions, footnote] = figure.children;
+  assert.equal(captions.children.length, 4);
+  assert.ok(captions.children.every((cell) => cell.children[0].tagName === "strong" && cell.children[1].tagName === "span"));
+  const text = JSON.stringify(captions);
+  for (const part of ["boss", "写好任务，交给服务", "筛出现在能派的工位", "决策模型", "只回答选哪个工位", "启动选中的工位，把选了谁告诉 boss"]) assert.ok(text.includes(part), part);
+  assert.match(JSON.stringify(footnote), /决策模型不接触 CLI，也不改任务内容；任务跑完后，boss 照常自己去收结果。/);
+  assert.equal(image.tagName, "img");
+  assert.match(JSON.stringify(roleChildren(app)[0].children[1]), /发给 Google/);
+  assert.match(app.run('$("orchestration-effect")').textContent, /决策模型/);
+  app.run('viewMode("split")');
+  assert.deepEqual(kinds(), fixed);
+});
+
+test("cards: a group once, custom as often as wanted, one image card with a row for each specialty", async () => {
+  const { app, decision } = decisionEditor("decision", NO_FILE);
+  await decision((d) => d.load());
+  const add = (what) => app.run(`window.AgentNaveDecisionSeats.addCard(${JSON.stringify(what)})`);
+  const pick = (row, provider) => row.children[1].listeners.change({ target: { value: provider } });
+  const fill = (input, text) => input.listeners.input({ target: { value: text } });
+  add("worker_writing");
+  add("worker_writing");
+  add("custom");
+  add("image");
+  add("image");
+  add("gardening");
+  assert.equal(cardsOf(app).length, 3);
+  // The menu lists general seats, specialist seats, custom seats and image seats; a group or the image
+  // card already on the page is disabled, custom stays open.
+  const menu = roleChildren(app)[0].children[4];
+  const groups = menu.children.filter((child) => child.tagName === "optgroup");
+  assert.deepEqual(Array.from(groups.map((one) => one.attrs.label)), ["通用工位", "专业工位", "自定义工位", "生图工位"]);
+  const option = (value) => groups.flatMap((one) => one.children).find((one) => one.attrs.value === value);
+  assert.deepEqual(Array.from(groups.map((one) => Array.from(one.children.map((child) => child.attrs.value)))), [["explorer", "worker"], ["worker_frontend", "worker_writing"], ["custom"], ["image"]]);
+  assert.equal(option("worker_writing").disabled, true);
+  assert.equal(option("worker_frontend").disabled, false);
+  assert.equal(option("custom").disabled, false);
+  assert.equal(option("image").disabled, true);
+  const [group, custom, image] = Array.from(cardsOf(app));
+  const head = (card) => card.children[0].children;
+  // A group's card is named and fixed: its title and access are text; a custom card takes a specialty and
+  // an access; the image card is titled and writable. The head always has name, access, tiers and delete.
+  assert.deepEqual([group, custom, image].map((card) => head(card).length), [4, 4, 4]);
+  assert.deepEqual([group, custom, image].map((card) => head(card)[0].tagName), ["strong", "input", "strong"]);
+  assert.deepEqual([group, custom, image].map((card) => head(card)[1].tagName), ["span", "select", "span"]);
+  assert.match(JSON.stringify(head(image)[0]), /生图工位/);
+  assert.match(JSON.stringify(head(image)[1]), /可写/);
+  // A group says what it is for (the text the decision model gets); custom and image cards have none.
+  assert.match(JSON.stringify(group.children[1]), /写文章/);
+  assert.match(group.children[1].className, /fine/);
+  // Three level rows on a group or custom card, one row and an add button on the image card.
+  assert.deepEqual([group, custom, image].map((card) => card.children.length), [5, 4, 3]);
+  assert.match(JSON.stringify(image.children[2]), /添加方向/);
+  // Tiers set, beside the access: none is flagged, then the count follows the levels bound.
+  assert.match(JSON.stringify(head(group)[2]), /未设置/);
+  assert.match(head(group)[2].className, /unset/);
+  assert.match(decision((d) => d.problem()), /第 1 张卡片.*至少要绑定一档/);
+  pick(group.children[3], "codex");
+  assert.match(JSON.stringify(head(Array.from(cardsOf(app))[0])[2]), /已设 1 档/);
+  assert.doesNotMatch(Array.from(cardsOf(app))[0].children[0].children[2].className, /unset/);
+  assert.equal(decision((d) => d.problem()), "第 2 张卡片缺少专业");
+  fill(custom.children[0].children[0], "数据库迁移");
+  assert.match(decision((d) => d.problem()), /第 2 张卡片（数据库迁移）至少要绑定一档/);
+  pick(custom.children[3], "codex");
+  // The image card: its rows are checked one by one.
+  const imageRow = (n) => Array.from(cardsOf(app))[2].children[n];
+  assert.equal(imageRow(1).children.length, 5);
+  assert.equal(decision((d) => d.problem()), "生图工位第 1 行缺少专业");
+  fill(imageRow(1).children[0], "漫画风格");
+  assert.match(decision((d) => d.problem()), /生图工位第 1 行（漫画风格）还没选 CLI 和模型/);
+  pick(imageRow(1), "codex");
+  assert.equal(decision((d) => d.problem()), null);
+  const shape = ({ kind, role, description, access, difficulty }) => [kind, role, description, access, difficulty];
+  assert.deepEqual(seatsOf(app).map(shape), [
+    ["worker_writing", "写作", "写文章", "write", "medium"],
+    ["custom", "数据库迁移", "数据库迁移", "write", "hard"],
+    ["image", "漫画风格", "漫画风格", "write", undefined],
+  ]);
+  assert.ok(seatsOf(app).every((seat) => seat.provider === "codex" && seat.model === "chat-model"));
+  // A second specialty is a second row of the same card, saved as one more image seat; the same
+  // specialty twice is refused.
+  Array.from(cardsOf(app))[2].children[2].listeners.click();
+  assert.equal(cardsOf(app).length, 3);
+  assert.equal(Array.from(cardsOf(app))[2].children.length, 4);
+  assert.equal(decision((d) => d.problem()), "生图工位第 2 行缺少专业");
+  fill(imageRow(2).children[0], "漫画风格");
+  assert.match(decision((d) => d.problem()), /生图工位第 2 行（漫画风格）还没选 CLI 和模型/);
+  pick(imageRow(2), "codex");
+  assert.equal(decision((d) => d.problem()), "生图工位第 2 行的专业“漫画风格”与前面重复");
+  fill(imageRow(2).children[0], "写实");
+  assert.equal(decision((d) => d.problem()), null);
+  const images = seatsOf(app).filter((seat) => seat.kind === "image");
+  assert.deepEqual(images.map((seat) => seat.role), ["漫画风格", "写实"]);
+  assert.equal(new Set(images.map((seat) => seat.id)).size, 2);
+  assert.ok(images.every((seat) => !("difficulty" in seat)));
+  // A row goes with its own delete button; with none left the card cannot be saved.
+  imageRow(1).children[4].listeners.click();
+  assert.deepEqual(seatsOf(app).filter((seat) => seat.kind === "image").map((seat) => seat.role), ["写实"]);
+  imageRow(1).children[4].listeners.click();
+  assert.equal(decision((d) => d.problem()), "生图工位至少要有一行");
+  Array.from(cardsOf(app))[2].children[1].listeners.click();
+  fill(imageRow(1).children[0], "写实");
+  pick(imageRow(1), "codex");
+  assert.equal(decision((d) => d.problem()), null);
+  // Two custom cards may not share a specialty.
+  add("custom");
+  fill(Array.from(cardsOf(app))[3].children[0].children[0], "数据库迁移");
+  pick(Array.from(cardsOf(app))[3].children[1], "codex");
+  assert.match(decision((d) => d.problem()), /两张自定义卡片的专业都是“数据库迁移”/);
+  // A custom card's access is its own to set.
+  Array.from(cardsOf(app))[3].children[0].children[1].listeners.change({ target: { value: "read" } });
+  assert.equal(seatsOf(app).at(-1).access, "read");
+  // Taking a level off a card leaves its other levels, and a card goes with its delete button.
+  pick(Array.from(cardsOf(app))[1].children[3], "");
+  assert.equal(seatsOf(app).filter((seat) => seat.kind === "custom" && seat.role === "数据库迁移").length, 1);
+  Array.from(cardsOf(app))[3].children[0].children[3].listeners.click();
+  assert.equal(cardsOf(app).length, 3);
+  // The image card may be added again once it is gone, with its one empty row.
+  Array.from(cardsOf(app))[2].children[0].children[3].listeners.click();
+  add("image");
+  assert.equal(Array.from(cardsOf(app)).at(-1).children.length, 3);
+});
+
+test("the saved image seats come back as one card with a row for each, in the file's order", async () => {
+  const seat = (id, kind, role, extra) => ({ id, kind, role, description: role, provider: "codex", model: "chat-model", access: "write", ...extra });
+  const saved = { document: { version: 1, seats: [
+    seat("img-a", "image", "漫画风格"), seat("w-1", "worker", "通用执行", { difficulty: "easy", description: "改代码" }), seat("img-b", "image", "写实", { effort: "high" }),
+  ] }, error: null, key_set: false, key_error: null };
+  const { app, decision } = decisionEditor("decision", saved);
+  await decision((d) => d.load());
+  const cards = Array.from(cardsOf(app));
+  assert.equal(cards.length, 2);
+  const rows = cards[0].children.slice(1, -1);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(Array.from(rows.map((row) => row.children[0].attrs.value)), ["漫画风格", "写实"]);
+  assert.equal(decision((d) => d.changed()), false);
+  assert.deepEqual(Array.from(seatsOf(app).map((one) => one.id)), ["img-a", "img-b", "w-1"]);
+  assert.equal(seatsOf(app)[1].effort, "high");
+});
+
+test("the decision options are saved with the orchestration and shape its rules text", async () => {
+  const { app, decision } = decisionEditor("decision", NO_FILE);
+  await decision((d) => d.load());
+  const toggle = (index, on) => app.run('$("orchestration-split")').children[index].children[0].listeners.change({ target: { checked: on } });
+  const text = () => app.run('orchestrationPresetText("decision")');
+  assert.equal(text(), "BASE|LEAD-ASKED|PW-ASKED|M-ASKED|");
+  toggle(0, true);
+  assert.equal(text(), "BASE|LEAD-ASKED|PW-OWN|M-ASKED|");
+  assert.deepEqual(JSON.parse(app.run("JSON.stringify(orchestrationWanted().decision_options)")), { parallel_writes: true });
+  toggle(1, true);
+  assert.equal(text(), "BASE|LEAD-ASKED|PW-OWN|M-OWN|");
+  toggle(2, true);
+  assert.equal(text(), "BASE|LEAD-ALWAYS|PW-OWN|M-OWN|");
+  // Back to the defaults leaves no key, so nothing is unsaved.
+  toggle(0, false);
+  toggle(1, false);
+  toggle(2, false);
+  assert.equal(app.run("Object.hasOwn(orchestrationWanted(), 'decision_options')"), false);
+  assert.equal(app.run("orchestrationChanged()"), false);
+  toggle(1, true);
+  assert.equal(app.run("orchestrationChanged()"), true);
+  // The mode's text is the other modes' text only in the sections they share; theirs are unchanged.
+  assert.equal(app.run('orchestrationPresetText("off")'), undefined);
+});
+
+test("a card read from the file goes back unchanged, and a changed specialty takes its own description", async () => {
+  const seat = (id, kind, role, description, extra) => ({ id, kind, role, description, provider: "codex", model: "chat-model", access: "write", ...extra });
+  const file = [
+    seat("c-1", "custom", "数据库迁移", "只做 PostgreSQL 的迁移脚本", { difficulty: "easy" }),
+    seat("c-2", "custom", "数据库迁移", "只做 PostgreSQL 的迁移脚本和回滚", { difficulty: "hard" }),
+    seat("i-1", "image", "漫画风格", "日式漫画的线稿和上色"),
+  ];
+  const { app, decision } = decisionEditor("decision", { document: { version: 1, seats: file }, error: null, key_set: false, key_error: null });
+  await decision((d) => d.load());
+  const descriptions = () => Array.from(seatsOf(app).map((one) => one.description));
+  // Nothing is rewritten by reading and saving the cards, whatever the description says.
+  assert.deepEqual(descriptions(), ["只做 PostgreSQL 的迁移脚本", "只做 PostgreSQL 的迁移脚本和回滚", "日式漫画的线稿和上色"]);
+  assert.equal(decision((d) => d.changed()), false);
+  // A new specialty names its own seats; putting the old one back restores what the file said.
+  const card = () => Array.from(cardsOf(app))[0];
+  card().children[0].children[0].listeners.input({ target: { value: "数据迁移" } });
+  assert.deepEqual(Array.from(seatsOf(app).filter((one) => one.kind === "custom").map((one) => one.description)), ["数据迁移", "数据迁移"]);
+  card().children[0].children[0].listeners.input({ target: { value: "数据库迁移" } });
+  assert.equal(decision((d) => d.changed()), false);
+  // A card made now has its role for a description.
+  app.run('window.AgentNaveDecisionSeats.addCard("custom")');
+  const fresh = Array.from(cardsOf(app)).at(-1);
+  fresh.children[0].children[0].listeners.input({ target: { value: "写作" } });
+  fresh.children[1].children[1].listeners.change({ target: { value: "codex" } });
+  assert.equal(seatsOf(app).find((one) => one.role === "写作").description, "写作");
+});
+
+test("a specialty written with spaces around it still keeps its description", async () => {
+  const seat = (id, kind, role, description, extra) => ({ id, kind, role, description, provider: "codex", model: "chat-model", access: "write", ...extra });
+  const file = [seat("c-1", "custom", " 美术 ", "专长水彩", { difficulty: "easy" }), seat("i-1", "image", " 漫画 ", "日式线稿")];
+  const { app, decision } = decisionEditor("decision", { document: { version: 1, seats: file }, error: null, key_set: false, key_error: null });
+  await decision((d) => d.load());
+  assert.deepEqual(Array.from(seatsOf(app).map((one) => [one.role, one.description])), [["美术", "专长水彩"], ["漫画", "日式线稿"]]);
+});
+
+test("saving sends the flat catalog on its own, without any boss switch", async () => {
+  const { app, calls, decision } = decisionEditor("split", NO_FILE);
+  await decision((d) => d.load());
+  app.run('viewMode("decision")');
+  app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
+  assert.equal(decision((d) => d.problem()), null);
+  await decision((d) => d.save());
+  const save = calls.find((call) => call.url === "/app/decision-seats" && call.method === "POST");
+  assert.deepEqual(Object.keys(save.body).sort(), ["decision_model", "seats", "version"]);
+  assert.equal(save.body.seats.length, 8);
+  assert.deepEqual(Object.keys(save.body.seats[0]), ["id", "kind", "role", "description", "provider", "model", "access", "difficulty"]);
+  assert.equal(decision((d) => d.changed()), false);
+  // The saved file comes back as the same cards.
+  assert.equal(cardsOf(app).length, 5);
+  app.run('window.AgentNaveDecisionSeats.addCard("custom")');
+  assert.match(decision((d) => d.problem()), /缺少专业/);
+});
+
+test("the seat catalog is saved before the modes, and the modes wait when it fails", async () => {
+  const run = async (catalogError) => {
+    const { app, calls } = decisionEditor("split", NO_FILE, catalogError);
+    app.run("window.AgentNaveSkills = { save: async () => [], discard() {}, changed: () => false, problem: () => null }");
+    await app.run("window.AgentNaveDecisionSeats.load()");
+    app.run('viewMode("decision")');
+    app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
+    app.run("bindAdvanced()");
+    await app.run('$("advanced-save").listeners.click()');
+    return { app, posts: calls.filter((call) => call.method === "POST" && /^\/app\/(decision-seats|orchestration)$/.test(call.url)).map((call) => call.url), feedback: app.run('$("advanced-feedback").textContent') };
+  };
+  const ok = await run(null);
+  assert.deepEqual(Array.from(ok.posts), ["/app/decision-seats", "/app/orchestration"]);
+  assert.equal(ok.feedback, "设置已保存");
+  // A catalog that did not save leaves the modes unsaved, with the reason and the consequence said.
+  const failed = await run("磁盘已满");
+  assert.deepEqual(Array.from(failed.posts), ["/app/decision-seats"]);
+  assert.match(failed.feedback, /决策模型推荐工位：磁盘已满/);
+  assert.match(failed.feedback, /编排：档位未保存/);
+  assert.equal(failed.app.run("orchestrationChanged()"), true);
+});
+
+test("the key goes out once and the page afterwards only knows that one is set", async () => {
+  const { app, calls, decision } = decisionEditor("decision", NO_FILE);
+  await decision((d) => d.load());
+  const rows = () => roleChildren(app)[0].children;
+  const keyRow = () => rows()[2];
+  const [input, save, clear] = keyRow().children[1].children;
+  assert.match(JSON.stringify(rows()[1]), /发给 Google/);
+  assert.equal(clear.disabled, true);
+  input.listeners.input({ target: { value: "AIza-secret" } });
+  await save.listeners.click();
+  const sent = calls.filter((call) => call.url === "/app/decision-key");
+  assert.deepEqual(sent.map((call) => call.body), [{ key: "AIza-secret" }]);
+  assert.ok(!JSON.stringify(rows()).includes("AIza-secret"));
+  assert.match(JSON.stringify(keyRow()), /已保存，粘贴新密钥可替换/);
+  assert.equal(keyRow().children[1].children[2].disabled, false);
+  // Clearing sends an empty key.
+  await keyRow().children[1].children[2].listeners.click();
+  assert.deepEqual(calls.filter((call) => call.url === "/app/decision-key").at(-1).body, { key: "" });
 });

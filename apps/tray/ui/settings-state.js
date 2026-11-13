@@ -107,7 +107,7 @@
     modes: {},
   };
   let detected = {};
-  let currentTab = "members"; // "general" | "members" | "avatars" | "voice" | "advanced" | "hosts" | "storage" | "about"
+  let currentTab = "members"; // "general" | "hosts" | "members" | "orchestration" | "avatars" | "voice" | "storage" | "advanced" | "about"
   let dirty = false;
   let savedSnapshot = ""; // The document as last loaded or saved; dirty compares against it.
   let savedVersion = 0;
@@ -509,7 +509,7 @@
         if (current.model && !current.effort && S.effortLevels(provider, current.model).length > 1) {
           add(provider, current.model, SCENES[scene], L("要选一个思考档位", "Choose an effort level"));
         }
-        if (current.enabled && S.listedPool(provider) && !current.model) {
+        if (current.enabled && current.allowed && !current.model) {
           add(provider, L("默认模型", "default model"), SCENES[scene], L("要选一个默认模型", "Choose a default model"));
         }
         if (current.enabled && current.model && S.outOfPool(provider, current.model)) {
@@ -654,9 +654,13 @@
   function setTab(tab) {
     if (tab === "updates") tab = "about"; // Preserve old update links.
     // Status lines belong to the tab that produced them.
-    if (currentTab !== tab) showNotice("");
+    if (currentTab !== tab) {
+      showNotice("");
+      window.scrollTo(0, 0); // A section opens at its top, not where the last one was left.
+    }
     currentTab = tab;
-    for (const id of ["general", "hosts", "members", "avatars", "voice", "advanced", "storage", "about"]) {
+    window.AgentNavePaneLoader?.show(tab);
+    for (const id of ["general", "hosts", "members", "orchestration", "avatars", "voice", "storage", "advanced", "about"]) {
       if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
       else $("nav-" + id).removeAttribute("aria-current");
       $("pane-" + id).hidden = tab !== id;
@@ -664,16 +668,19 @@
     if (tab === "general") {
       window.AgentNaveLanguageSettings?.load();
       window.AgentNaveGeneralSettings?.load();
+      window.AgentNaveAlertsSettings?.load();
     }
     if (tab === "voice") window.AgentNaveVoiceSettings?.load();
     if (tab === "about") S.loadStatus().then(S.checkIfStale);
     if (tab === "members") {
       S.loadOrchestration();
       loadLimit();
-      window.AgentNaveAlertsSettings?.load();
     }
-    if (tab === "advanced") {
-      window.AgentNaveSkills?.load();
+    // Orchestration, Skills and review seats save together, from one bar under both sections.
+    const advanced = tab === "orchestration" || tab === "advanced";
+    $("advanced-bar").hidden = !advanced;
+    if (advanced) {
+      if (tab === "advanced") window.AgentNaveSkills?.load();
       S.loadOrchestration();
       loadLimit();
     }

@@ -4,6 +4,7 @@
 - 日期：2026-10-31
 - 修改 [ADR-0037](0037-app-writes-orchestration-rules.md) 中一档对所有已接入宿主生效的部分，写入方式与其余决定不变。
 - 工位启用边界由 [ADR-0083](0083-meetings-only-preset.md) 补充：`meetings` 档对服务按未开启任务编排处理。
+- 由 [ADR-0087](0087-decision-model-recommends-seats.md) 扩展：「决策模型」档同样按 boss 选、读同一文件的 boss 共用。
 
 ## 背景
 

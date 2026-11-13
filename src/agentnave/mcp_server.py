@@ -11,7 +11,9 @@ from agentnave.mcp_history import (
     list_members,
     read_conversation,
 )
+from agentnave.mcp_isolated import isolated_dirs
 from agentnave.mcp_prompts import answer_prompt
+from agentnave.mcp_recommend import recommend_seat
 from agentnave.mcp_rounds import (
     _WORKSPACE_ID,
     ReviewReceipt,
@@ -55,6 +57,7 @@ from agentnave.mcp_runtime import (
     started_payload,
     update_payload,
 )
+from agentnave.mcp_start_many import start_agents
 from agentnave.mcp_tasks import (
     _invocation_items,
     _known_invocation,
@@ -71,6 +74,7 @@ __all__ = [
     "_workspace_label",
     "clear_provider_cooldown",
     "handover",
+    "isolated_dirs",
     "list_all",
     "list_members",
     "read_conversation",
@@ -118,9 +122,11 @@ __all__ = [
     "_known_round",
     "_ready_handles",
     "answer_prompt",
+    "recommend_seat",
     "cancel",
     "list_invocations",
     "start_agent",
+    "start_agents",
     "wait",
 ]
 
@@ -133,6 +139,16 @@ mcp.tool(
         open_world_hint=True,
     ),
 )(start_agent)
+
+mcp.tool(
+    title="Start several tasks, the decision model choosing every seat",
+    annotations=ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=True,
+        idempotent_hint=False,
+        open_world_hint=True,
+    ),
+)(start_agents)
 
 mcp.tool(
     title="Wait for tasks or rounds",
@@ -178,6 +194,13 @@ mcp.tool(
 )(list_members)
 
 mcp.tool(
+    title="Recommend one of your own seats for a task",
+    annotations=ToolAnnotations(
+        read_only_hint=True, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
+)(recommend_seat)
+
+mcp.tool(
     title="Clear a CLI cooldown",
     annotations=ToolAnnotations(
         read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
@@ -211,6 +234,13 @@ mcp.tool(
         read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False
     ),
 )(read_conversation)
+
+mcp.tool(
+    title="List or release isolated worktrees",
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+    ),
+)(isolated_dirs)
 
 
 def main() -> None:

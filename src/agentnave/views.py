@@ -80,6 +80,7 @@ def _show(state: Conversation) -> dict[str, object]:
                 "provider": seat.provider,
                 "role": seat.role,
                 "access": seat.access,
+                "cwd": seat.cwd,
             }
             for seat in state.seats
         ],
@@ -274,6 +275,9 @@ def timeline(
                     "role": task.role,
                     "access": task.access,
                     "cwd": task.cwd,
+                    "isolation_id": task.isolation_id,
+                    "isolation_path": task.isolation_path,
+                    "isolation_branch": task.isolation_branch,
                     "prompt": task.prompt,
                     "status": task.status,
                     "output": task.output or None,

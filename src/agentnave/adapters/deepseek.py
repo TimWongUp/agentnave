@@ -24,6 +24,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.windows_supervisor import popen_args
 
 _DESKTOP_DSH_PATHS = (
     "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",
@@ -101,8 +102,10 @@ def profile_routes(executable: str) -> tuple[tuple[str, str] | None, dict[str, s
     dsh replaces that entry's config as a whole, so a model override must restate a route.
     """
     try:
+        args, application = popen_args([executable, "--profile", "headless", "--dump-config"])
         result = subprocess.run(
-            [executable, "--profile", "headless", "--dump-config"],
+            args,
+            executable=application,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             # dsh writes UTF-8; `text=True` alone would decode with the Windows locale (GBK on a

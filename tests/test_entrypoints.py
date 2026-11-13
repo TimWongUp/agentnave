@@ -5,17 +5,21 @@ import json
 import os
 import subprocess
 import sys
+import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
+from fake_cli import write_fake_cli
 from jsonschema import Draft202012Validator
 from mcp import Client, StdioServerParameters
 from mcp.server import MCPServer
 from mcp_types import CallToolResult, TextContent
 
-from agentnave import __version__, mcp_runtime, mcp_server
+from agentnave import __version__, mcp_runtime, mcp_server, seat_recommendation
 from agentnave.adapters.base import AdapterHooks
+from agentnave.decision_model import Decision, DecisionError, DecisionQuestion
 from agentnave.host import Host
 from agentnave.mcp_projection import without_empty_fields
 from agentnave.mcp_server import mcp
@@ -34,6 +38,7 @@ EXPECTED_TOOLS = [
     "decide_answers",
     "handover",
     "read_conversation",
+    "isolated_dirs",
 ]
 
 
@@ -738,7 +743,7 @@ async def test_mcp_lists_lifecycle_and_discovery_tools_with_structured_contracts
     wait_modes = cast(list[dict[str, object]], _payload(wait_properties["wait_seconds"])["anyOf"])
     assert wait_modes[0]["enum"] == [0, 270, 1500]
     description = str(wait_properties["wait_seconds"])
-    assert "only" in description and "Claude Code" in description
+    assert "1500s" in description and "Claude Code" in description
     assert "terminal interactive session" in description
     assert tools["answer_prompt"].input_schema["required"] == [
         "invocation_id",
@@ -892,13 +897,14 @@ async def test_mcp_projection_leaves_error_replies_unchanged(
 @pytest.mark.asyncio
 async def test_mcp_empty_replies_keep_required_containers() -> None:
     async with Client(mcp) as client:
-        for name, containers in (
-            ("list", ("invocations", "conversations", "unavailable")),
-            ("list_invocations", ("invocations",)),
-            ("wait", ("pending_ids", "updates", "rounds")),
-            ("handover", ("waiting",)),
+        for name, args, containers in (
+            ("list", {}, ("invocations", "conversations", "unavailable")),
+            ("list_invocations", {}, ("invocations",)),
+            ("wait", {}, ("pending_ids", "updates", "rounds")),
+            ("handover", {}, ("waiting",)),
+            ("isolated_dirs", {"action": "list", "manager_session_id": "empty-chat"}, ("items",)),
         ):
-            result = await client.call_tool(name, {})
+            result = await client.call_tool(name, args)
             assert not result.is_error, result.content
             payload = _payload(result.structured_content)
             assert all(payload[key] == [] for key in containers)
@@ -1194,8 +1200,26 @@ async def test_wait_window_and_sequences_preserve_inbox_delivery(
                 assert reply["reason"] == "wait_elapsed" and reply["seq"] == arguments["seq"]
                 assert reply["pending_ids"] == [started["invocation_id"]]
                 assert f"seq={int(arguments['seq']) + 1}" in str(reply["next"])
-        assert len(windows) == 3 and all(269 < window <= 270 for window in windows[:2])
+            # Omitting keeps 270 elsewhere, including the Claude desktop app.
+            for seq, host, entrypoint in (
+                (4, Host("codex", "env"), "cli"),
+                (5, Host("claude", "env"), "claude-desktop"),
+            ):
+                patch.setattr(mcp_runtime, "HOST", host)
+                patch.setenv("CLAUDE_CODE_ENTRYPOINT", entrypoint)
+                reply = _payload(
+                    (
+                        await client.call_tool(
+                            "wait", {"ids": [started["invocation_id"]], "seq": seq}
+                        )
+                    ).structured_content
+                )
+                assert reply["reason"] == "wait_elapsed" and reply["seq"] == seq
+        assert len(windows) == 5
+        assert 1499 < windows[0] <= 1500
+        assert 269 < windows[1] <= 270
         assert 1499 < windows[2] <= 1500
+        assert all(269 < window <= 270 for window in windows[3:])
         # Reusing seq never replays a response: a later terminal result is still received once.
         await client.call_tool("cancel", {"id": started["invocation_id"]})
         ended = _payload(
@@ -1213,6 +1237,40 @@ async def test_wait_window_and_sequences_preserve_inbox_delivery(
         )
         empty = _payload((await client.call_tool("wait", {"seq": 3})).structured_content)
         assert empty["reason"] == "nothing_pending" and empty["seq"] == 3
+
+
+@pytest.mark.asyncio
+async def test_dispatch_wait_keeps_short_window_in_long_wait_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    windows: list[float] = []
+
+    async def elapsed(*args: object) -> tuple[dict[str, object], dict[str, object]]:
+        windows.append(cast(float, args[-1]))
+        return {}, {}
+
+    async with Client(mcp) as client:
+        with monkeypatch.context() as patch:
+            patch.setattr("agentnave.mcp_tasks._ready_handles", elapsed)
+            patch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+            patch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+            started = _payload(
+                (
+                    await client.call_tool(
+                        "start_agent",
+                        {
+                            "provider": "claude",
+                            "prompt": "sleep",
+                            "cwd": str(tmp_path),
+                            "wait": True,
+                        },
+                    )
+                ).structured_content
+            )
+        assert len(windows) == 1 and 269 < windows[0] <= 270
+        assert _payload(started["wait"])["reason"] == "wait_elapsed"
+        await client.call_tool("cancel", {"id": started["invocation_id"]})
 
 
 @pytest.mark.asyncio
@@ -2274,3 +2332,1408 @@ async def test_unmodelled_failure_blocks_followup_even_when_cli_reports_model(
             "clear_provider_cooldown", {"provider": "claude", "model": "reported"}
         )
         assert not cleared.is_error and provider_health.active(root) == {}
+
+
+def _init_git_repo(repo: Path) -> str:
+    repo.mkdir(parents=True, exist_ok=True)
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    hook = repo / ".git" / "hooks" / "post-checkout"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+    (repo / ".gitignore").write_text("*.ignored\n", encoding="utf-8")
+    (repo / ".gitattributes").write_text(
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8"
+    )
+    sub = repo / "packages" / "app"
+    sub.mkdir(parents=True)
+    (sub / "index.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "initial"], cwd=repo, check=True, capture_output=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.mark.asyncio
+async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    base_oid = _init_git_repo(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    subdir = repo / "packages" / "app"
+    (subdir / "dirty.txt").write_text("local draft\n", encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, os, pathlib, sys, time\n"
+        "prompt = sys.stdin.read()\n"
+        "if 'HOLD_OPEN' in prompt:\n"
+        "    time.sleep(30)\n"
+        "if 'WRITE_FILES' in prompt:\n"
+        "    pathlib.Path('created.py').write_text('y = 2\\n', encoding='utf-8')\n"
+        "    pathlib.Path('cache.ignored').write_text('tmp\\n', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': json.dumps({'cwd': os.getcwd(), "
+        "'prompt': prompt}), 'session_id': 'iso-sess', 'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    async with Client(mcp) as client:
+        plain = await _start_and_wait(
+            client, provider="claude", cwd=str(subdir), manager_session_id="chat-1"
+        )
+        assert "isolation" not in plain and "unreleased_isolation_count" not in plain
+
+        both = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "reject",
+                "cwd": str(subdir),
+                "session_id": "iso-sess",
+                "isolation": {},
+                "manager_session_id": "chat-1",
+            },
+        )
+        assert both.is_error and "cannot be combined" in str(both.content)
+        assert not (repo / ".agentnave-worktrees").exists()
+
+        running = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "HOLD_OPEN",
+                        "cwd": str(subdir),
+                        "isolation": {"ref": "main"},
+                        "manager_session_id": "chat-1",
+                    },
+                )
+            ).structured_content
+        )
+        iso = _payload(running["isolation"])
+        wt_id = str(iso["id"])
+        wt_path = Path(str(iso["path"]))
+        assert iso["cwd"] == str((wt_path / "packages" / "app").resolve())
+        assert iso["branch"] == f"agentnave/{wt_id}" and iso["base_oid"] == base_oid
+        assert running["unreleased_isolation_count"] == 1
+        assert "isolated directory instructions" in cast(list[str], running["defaults_applied"])
+        warnings_text = " ".join(cast(list[str], running["warnings"]))
+        assert "Git hooks and LFS" in warnings_text and "Uncommitted changes" in warnings_text
+
+        listed_busy = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "chat-1"}
+                )
+            ).structured_content
+        )
+        items = cast(list[dict[str, object]], listed_busy["items"])
+        assert len(items) == 1 and items[0]["id"] == wt_id and items[0]["in_use"] is True
+        blocked = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "chat-1"},
+                )
+            ).structured_content
+        )
+        assert blocked["status"] == "blocked"
+
+        cancelled = _payload(
+            _payload(
+                (
+                    await client.call_tool("cancel", {"id": running["invocation_id"]})
+                ).structured_content
+            )["invocation"]
+        )
+        cancel_iso = _payload(cancelled["isolation"])
+        assert (
+            cancel_iso["summary_status"] == "complete"
+            and cancel_iso["changed_files_from_base"] == []
+            and cancel_iso["uncommitted"] is False
+        )
+
+        # Claim existing isolated cwd without passing isolation; write dirty + ignored files.
+        second = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "WRITE_FILES original body",
+                        "cwd": str(iso["cwd"]),
+                        "manager_session_id": "chat-1",
+                    },
+                )
+            ).structured_content
+        )
+        assert _payload(second["isolation"])["id"] == wt_id
+        assert second["unreleased_isolation_count"] == 1
+        done = _first(await client.call_tool("wait", {"ids": [second["invocation_id"]]}))
+        seen = json.loads(str(done["output"]))
+        assert Path(seen["cwd"]).resolve() == Path(str(iso["cwd"])).resolve()
+        assert (
+            "When the task asks you to change a file under the main worktree, change the "
+            "corresponding path under this isolated worktree instead."
+        ) in seen["prompt"]
+        done_iso = _payload(done["isolation"])
+        assert done_iso["summary_status"] == "complete" and done_iso["uncommitted"] is True
+
+        saved = _payload(
+            (
+                await client.call_tool(
+                    "read_conversation", {"conversation_id": second["conversation_id"]}
+                )
+            ).structured_content
+        )
+        saved_task = cast(list[dict[str, object]], saved["tasks"])[-1]
+        assert saved_task["prompt"] == "WRITE_FILES original body"
+        assert saved_task["isolation_id"] == wt_id
+        assert saved_task["isolation_path"] == str(wt_path)
+        assert saved_task["isolation_branch"] == f"agentnave/{wt_id}"
+
+        rel = _payload(
+            (
+                await client.call_tool(
+                    "handover",
+                    {"release": True, "note": "check wt", "manager_session_id": "chat-1"},
+                )
+            ).structured_content
+        )
+        claimed = _payload(
+            (
+                await client.call_tool(
+                    "handover",
+                    {"workspace_id": rel["workspace_id"], "manager_session_id": "chat-2"},
+                )
+            ).structured_content
+        )
+        claimed_dirs = cast(list[dict[str, object]], claimed["isolated_dirs"])
+        assert [d["id"] for d in claimed_dirs] == [wt_id]
+
+        bad_list = await client.call_tool(
+            "isolated_dirs", {"action": "list", "id": wt_id, "manager_session_id": "chat-2"}
+        )
+        assert bad_list.is_error
+        bad_rel = await client.call_tool(
+            "isolated_dirs", {"action": "release", "manager_session_id": "chat-2"}
+        )
+        assert bad_rel.is_error
+
+        confirm_req = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "chat-2"},
+                )
+            ).structured_content
+        )
+        assert confirm_req["status"] == "confirmation_required"
+        assert confirm_req["uncommitted"] is True and confirm_req["confirmation"]
+        assert (wt_path / "packages" / "app" / "cache.ignored").is_file()
+
+        deleted = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": confirm_req["confirmation"],
+                        "manager_session_id": "chat-2",
+                    },
+                )
+            ).structured_content
+        )
+        assert deleted["status"] == "deleted" and not wt_path.exists()
+        after = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "chat-2"}
+                )
+            ).structured_content
+        )
+        assert after["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with_a_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path / "repo")
+    repo = tmp_path / "repo"
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    async with Client(mcp) as client:
+        started = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "ok",
+                        "cwd": str(repo),
+                        "isolation": {},
+                        "manager_session_id": "chat-old",
+                    },
+                )
+            ).structured_content
+        )
+        wt_id = str(_payload(started["isolation"])["id"])
+        await client.call_tool("wait", {"ids": [started["invocation_id"]]})
+
+        own = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "chat-new"}
+                )
+            ).structured_content
+        )
+        assert own["items"] == []
+        everywhere = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "list", "cwd": str(repo), "manager_session_id": "chat-new"},
+                )
+            ).structured_content
+        )
+        items = cast(list[dict[str, object]], everywhere["items"])
+        assert [(item["id"], item["own_workspace"]) for item in items] == [(wt_id, False)]
+
+        relative = await client.call_tool(
+            "isolated_dirs",
+            {"action": "list", "cwd": "repo", "manager_session_id": "chat-new"},
+        )
+        assert relative.is_error
+        release_with_cwd = await client.call_tool(
+            "isolated_dirs",
+            {"action": "release", "id": wt_id, "cwd": str(repo), "manager_session_id": "chat-new"},
+        )
+        assert release_with_cwd.is_error
+
+        first = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "chat-new"},
+                )
+            ).structured_content
+        )
+        assert first["status"] == "confirmation_required" and first["confirmation"]
+        assert first["uncommitted"] is False
+        done = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": first["confirmation"],
+                        "manager_session_id": "chat-new",
+                    },
+                )
+            ).structured_content
+        )
+        assert done["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_creating_an_isolated_directory_does_not_block_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from agentnave.isolated import IsolatedDirs
+
+    _init_git_repo(tmp_path / "repo")
+    _install_fake_claude(tmp_path, monkeypatch)
+    original = IsolatedDirs.create
+
+    def slow_create(self: IsolatedDirs, *args: object, **kwargs: object):  # noqa: ANN202
+        time.sleep(0.5)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "create", slow_create)
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    async with Client(mcp) as client:
+        tick_task = asyncio.create_task(ticker())
+        result = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "ok",
+                "cwd": str(tmp_path / "repo"),
+                "isolation": {},
+                "manager_session_id": "chat-1",
+            },
+        )
+        stop.set()
+        await tick_task
+        assert not result.is_error
+    assert ticks >= 10
+
+
+def _own_seat(seat_id: str, provider: str, access: str, **extra: object) -> dict[str, object]:
+    return {
+        "id": seat_id,
+        "kind": "custom",
+        "role": f"role {seat_id}",
+        "description": f"role {seat_id}",
+        "provider": provider,
+        "model": f"model-{seat_id}",
+        "access": access,
+        "difficulty": "medium",
+        **extra,
+    }
+
+
+def _write_own_seats(seats: list[dict[str, object]], **extra: object) -> None:
+    """The seat file, with the boss on the decision mode unless extra sets another preset."""
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    preset = extra.pop("preset", "decision")
+    (root / "orchestration.json").write_text(json.dumps({"version": 1, "preset": preset}))
+    document = {"version": 1, "seats": seats, **extra}
+    (root / "decision-seats.json").write_text(json.dumps(document))
+
+
+def _write_decision_key(key: str = "test-key-123") -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    (root / "decision-keys.json").write_text(json.dumps({"version": 1, "keys": {"gemini": key}}))
+
+
+class _FakeDecisionClient:
+    """Stands in for the decision model; records what the service would have sent."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.result: Decision | DecisionError | None = None
+        self.delay = 0.0
+        self.created: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, dict[str, str]]] = []
+        # decide_many: the answers to give, in question order, or a failure of the whole request.
+        self.answers: Sequence[Decision | DecisionError] | DecisionError | None = None
+        self.batches: list[list[tuple[str, dict[str, str]]]] = []
+        monkeypatch.setattr(seat_recommendation, "new_client", self._create)
+
+    def _create(self, model: str, key: str) -> _FakeDecisionClient:
+        self.created.append((model, key))
+        return self
+
+    def decide(self, text: str, candidates: Mapping[str, str]) -> Decision:
+        self.calls.append((text, dict(candidates)))
+        time.sleep(self.delay)
+        assert self.result is not None, "the decision model must not be called"
+        if isinstance(self.result, DecisionError):
+            raise self.result
+        return self.result
+
+    def decide_many(self, questions: Sequence[DecisionQuestion]) -> list[Decision | DecisionError]:
+        self.batches.append([(one.text, dict(one.candidates)) for one in questions])
+        time.sleep(self.delay)
+        assert self.answers is not None, "the decision model must not be called"
+        if isinstance(self.answers, DecisionError):
+            raise self.answers
+        assert len(self.answers) == len(questions)
+        return list(self.answers)
+
+
+@pytest.fixture
+def decision(monkeypatch: pytest.MonkeyPatch) -> _FakeDecisionClient:
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env", "codex"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    return _FakeDecisionClient(monkeypatch)
+
+
+async def _recommend(client: Client, task: str = "给设置页加一个开关", access: str = "write"):
+    return await client.call_tool(
+        "recommend_seat", {"task": task, "access": access, "manager_session_id": "boss-1"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_own_seats_stay_unpublished_and_recommend_refuses_while_off(
+    decision: _FakeDecisionClient,
+) -> None:
+    _ = decision
+    async with Client(mcp) as client:
+        for inactive in (
+            None,
+            # Any mode but decision leaves the file unused.
+            {"preset": "split"},
+            {"preset": "parallel"},
+            {"preset": "off"},
+            {"preset": "meetings"},
+        ):
+            if inactive is not None:
+                _write_own_seats([_own_seat("a", "claude", "write")], **inactive)
+            tools = await client.list_tools(cache_mode="refresh")
+            assert [tool.name for tool in tools.tools] == EXPECTED_TOOLS
+            dumped = json.dumps([tool.model_dump() for tool in tools.tools])
+            assert "CustomSeat" not in dumped and "recommendation" not in dumped
+            start = next(tool for tool in tools.tools if tool.name == "start_agent")
+            assert "task" not in start.input_schema["properties"]
+            assert "auto" not in start.input_schema.get("$defs", {}).get(
+                "OrchestrationRole", {}
+            ).get("enum", [])
+            args = {"prompt": "ok", "cwd": str(Path.cwd())}
+            unknown = await client.call_tool("start_agent", {**args, "task": "x", "seat": "a"})
+            assert unknown.is_error and "Unknown argument(s) for start_agent: task" in str(
+                unknown.content
+            )
+            auto = await client.call_tool(
+                "start_agent", {**args, "seat": "auto", "access": "write"}
+            )
+            assert auto.is_error  # the seat enum still decides, as before
+            refused = await _recommend(client)
+            assert refused.is_error and str(refused.content).count("not_enabled")
+        assert decision.calls == []
+
+
+@pytest.mark.asyncio
+async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    seats = [
+        _own_seat("write-a", "claude", "write", effort="high"),
+        _own_seat("write-b", "claude", "write", difficulty="hard"),
+        # A group of the role catalog: its scope text is the description.
+        _own_seat(
+            "write-c",
+            "claude",
+            "write",
+            kind="worker_writing",
+            role="写作",
+            description="写、改、翻译给人看的文章、文案和报告。",
+            difficulty="easy",
+        ),
+        _own_seat("read-d", "claude", "read"),
+        # An image seat: write access, no difficulty, a specialty of its own.
+        {
+            k: v
+            for k, v in _own_seat(
+                "draw-comic",
+                "claude",
+                "write",
+                kind="image",
+                role="漫画风格",
+                description="漫画风格",
+            ).items()
+            if k != "difficulty"
+        },
+        # The description of an image seat is sent as well, when it says more than the role.
+        {
+            k: v
+            for k, v in _own_seat(
+                "draw-real",
+                "claude",
+                "write",
+                kind="image",
+                role="写实",
+                description="照片质感的写实人像",
+            ).items()
+            if k != "difficulty"
+        },
+    ]
+    _write_own_seats(seats, image_generation={"provider": "grok", "model": "fixed-image"})
+    _write_decision_key()
+    decision.result = Decision(
+        "write-b", {"write-b": 0.7, "write-a": 0.2, "write-c": 0.1}, confidence=0.82
+    )
+    async with Client(mcp) as client:
+        tools = await client.list_tools(cache_mode="refresh")
+        by_name = {tool.name: tool for tool in tools.tools}
+        assert "recommend_seat" in by_name
+        assert by_name["recommend_seat"].annotations is not None
+        assert by_name["recommend_seat"].annotations.read_only_hint is True
+        start = by_name["start_agent"].input_schema
+        assert start["$defs"]["OrchestrationRole"]["enum"] == [s["id"] for s in seats] + ["auto"]
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        status = _payload(listed["orchestration"])
+        assert set(_payload(status["custom_seats"])) == {s["id"] for s in seats}
+        assert not {"explorer", "worker", "scopes", "image_generation"} & set(status)
+        comic = _payload(_payload(status["custom_seats"])["draw-comic"])
+        assert comic["kind"] == "image" and comic["access"] == "write"
+        assert (
+            "difficulty" not in comic
+            and "image-generator" not in start["$defs"]["OrchestrationRole"]["enum"]
+        )
+
+        result = await _recommend(client)
+        assert not result.is_error, result.content
+        picked = _payload(result.structured_content)
+        assert picked["seat"] == "write-b" and picked["confidence"] == 0.82
+        assert picked["decision_model_called"] is True and "native" not in picked
+        assert [c["seat"] for c in cast(list[dict[str, object]], picked["candidates"])] == [
+            "write-b",
+            "write-a",
+            "write-c",
+        ]
+        assert [c["probability"] for c in cast(list[dict[str, object]], picked["candidates"])] == [
+            0.7,
+            0.2,
+            0.1,
+        ]
+        # Only the summary, the access and each candidate's specialty, difficulty and access.
+        assert decision.created == [("gemini-decision-1", "test-key-123")]
+        (text, sent), *_ = decision.calls
+        assert text == "Task:\n给设置页加一个开关\nRequired access: write"
+        assert sent == {
+            "write-a": "role write-a | difficulty: medium | access: write",
+            "write-b": "role write-b | difficulty: hard | access: write",
+            "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy | access: write",
+            "draw-comic": "漫画风格 (image generation) | access: write",
+            "draw-real": "写实: 照片质感的写实人像 (image generation) | access: write",
+        }
+
+        started = await _start_and_wait(client, cwd=str(tmp_path), seat="write-b", role="加开关")
+        assert started["provider"] == "claude" and started["model"] == "model-write-b"
+        assert started["access"] == "write"
+        assert cast(list[str], started["defaults_applied"])[:2] == ["write-b seat", "model"]
+        assert "provider (write-b seat)" in cast(list[str], started["defaults_applied"])
+        drawn = await _start_and_wait(client, cwd=str(tmp_path), seat="draw-comic")
+        assert drawn["provider"] == "claude" and drawn["model"] == "model-draw-comic"
+        assert drawn["access"] == "write"
+        effort = await _start_and_wait(client, cwd=str(tmp_path), seat="write-a")
+        assert effort["effort"] == "high"
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert resumed["model"] == "model-write-a"
+        assert "seat (session_id history)" in cast(list[str], resumed["defaults_applied"])
+
+        for arguments, expected in (
+            ({"seat": "nobody"}, "Unknown task seat: nobody"),
+            ({"seat": "worker-easy"}, "not used in the decision-model mode"),
+            ({"seat": "image-generator"}, "not used in the decision-model mode"),
+            ({"seat": "read-d", "access": "write"}, "declares access=read"),
+            ({"seat": "x" * 129}, "seat"),
+        ):
+            rejected = await client.call_tool(
+                "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
+            )
+            assert rejected.is_error and expected in str(rejected.content)
+
+        # The user deleted a seat the boss was about to use: no other seat takes its place.
+        _write_own_seats([s for s in seats if s["id"] != "write-b"])
+        gone = await client.call_tool(
+            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "write-b"}
+        )
+        assert gone.is_error and "Unknown task seat: write-b" in str(gone.content)
+        tools = await client.list_tools(cache_mode="refresh")
+        by_name = {tool.name: tool for tool in tools.tools}
+        assert (
+            "write-b"
+            not in by_name["start_agent"].input_schema["$defs"]["OrchestrationRole"]["enum"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_recommendation_candidates_are_only_what_can_be_dispatched(
+    decision: _FakeDecisionClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from agentnave import provider_health
+
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    _write_own_seats(
+        [
+            _own_seat("claude-w", "claude", "write"),
+            _own_seat("grok-w", "grok", "write"),
+            _own_seat("pi-w", "pi", "write"),
+            _own_seat("grok-r", "grok", "read"),
+            _own_seat("codex-w", "codex", "write"),
+        ]
+    )
+    _write_decision_key()
+    async with Client(mcp) as client:
+        # The host's own CLI is a candidate and marked native; a cooling CLI is not.
+        provider_health.record(
+            root, "claude", "quota", "model-claude-w", datetime.now(UTC) + timedelta(hours=1)
+        )
+        provider_health.record(root, "pi", "auth", None, None)
+        decision.result = Decision("codex-w", {"codex-w": 0.9, "grok-w": 0.1}, 0.9)
+        result = _payload((await _recommend(client)).structured_content)
+        assert [text for _, sent in decision.calls for text in sent] == ["grok-w", "codex-w"]
+        assert result["seat"] == "codex-w" and result["native"] is True
+        assert cast(list[dict[str, object]], result["candidates"])[0]["native"] is True
+
+        # Only one seat can be dispatched: it is returned and the decision model is not called.
+        decision.calls.clear()
+        result = _payload((await _recommend(client, access="read")).structured_content)
+        assert result["seat"] == "grok-r" and result["decision_model_called"] is False
+        assert "confidence" not in result and "not called" in str(result["note"])
+        assert decision.calls == []
+
+        # No seat can be dispatched: the reason comes back without a call.
+        provider_health.record(root, "grok", "billing", None, None)
+        refused = await _recommend(client, access="read")
+        assert refused.is_error and "no_candidates" in str(refused.content)
+        assert "grok-r" in str(refused.content) and "billing" in str(refused.content)
+        # The host's own CLI is never cooled by the others: its native seat stays alone.
+        direct = _payload((await _recommend(client)).structured_content)
+        assert direct["seat"] == "codex-w" and direct["native"] is True
+        assert direct["decision_model_called"] is False
+        assert decision.calls == []
+
+
+@pytest.mark.asyncio
+async def test_recommendation_errors_are_distinguishable_and_never_retried(
+    decision: _FakeDecisionClient,
+) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "grok", "write")])
+    async with Client(mcp) as client:
+        missing = await _recommend(client)
+        assert missing.is_error and str(missing.content).count("no_key")
+        for content in ("{broken", json.dumps({"version": 1, "keys": {"gemini": 12345}})):
+            (root / "decision-keys.json").write_text(content)
+            broken = await _recommend(client)
+            assert broken.is_error and "config_error" in str(broken.content)
+            assert "12345" not in str(broken.content)
+        _write_decision_key("  ")
+        assert "no_key" in str((await _recommend(client)).content)
+        _write_decision_key()
+        assert decision.calls == []
+        for code in ("network", "rate_limited", "auth", "rejected", "bad_response"):
+            decision.result = DecisionError(code, f"{code} detail")  # type: ignore[arg-type]
+            failed = await _recommend(client)
+            assert failed.is_error and f"{code}: {code} detail" in str(failed.content)
+        # One call per request, no retry and no fallback to another seat.
+        assert len(decision.calls) == 5
+        decision.result = Decision("not-offered", {}, None)
+        stray = await _recommend(client)
+        assert stray.is_error and "bad_response" in str(stray.content)
+        # A broken catalog is a configuration error, not "off".
+        (root / "decision-seats.json").write_text("{broken")
+        assert "config_error" in str((await _recommend(client)).content)
+
+
+@pytest.mark.asyncio
+async def test_a_key_with_a_line_break_is_a_config_error_that_does_not_quote_it(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "grok", "write")])
+    _write_decision_key("AIza-private-part\nX-Evil: 1")
+    async with Client(mcp) as client:
+        tasks = [
+            _batch_task("一", "write", tmp_path / "x"),
+            _batch_task("二", "write", tmp_path / "y"),
+        ]
+        for name, arguments in (
+            ("recommend_seat", {"task": "x", "access": "write"}),
+            ("start_agents", {"tasks": tasks}),
+        ):
+            result = await client.call_tool(name, arguments)
+            text = str(result.content)
+            assert result.is_error and "config_error" in text and "decision-keys.json" in text
+            assert "AIza" not in text and "Evil" not in text and "private-part" not in text
+        assert decision.calls == [] and decision.batches == []
+
+
+def _started_count(listed: object) -> int:
+    return len(cast(list[object], _payload(listed)["invocations"]))
+
+
+@pytest.mark.asyncio
+async def test_start_agent_auto_asks_the_decision_model_and_starts_in_one_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats(
+        [
+            _own_seat("write-a", "claude", "write", effort="high"),
+            _own_seat("write-b", "claude", "write"),
+            _own_seat("read-c", "claude", "read"),
+        ]
+    )
+    _write_decision_key()
+    decision.result = Decision("write-b", {"write-b": 0.8, "write-a": 0.2}, confidence=0.9)
+    async with Client(mcp) as client:
+        tools = await client.list_tools(cache_mode="refresh")
+        by_name = {tool.name: tool for tool in tools.tools}
+        start = by_name["start_agent"]
+        assert "task" not in start.input_schema["properties"]
+        assert "sent to an external decision model" in json.dumps(
+            start.input_schema["properties"]["seat"]
+        )
+        assert start.input_schema["$defs"]["OrchestrationRole"]["enum"] == [
+            "write-a",
+            "write-b",
+            "read-c",
+            "auto",
+        ]
+        assert "recommendation" in json.dumps(start.output_schema)
+
+        started = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="auto",
+            access="write",
+            prompt="给设置页加一个开关",
+        )
+        assert started["provider"] == "claude" and started["model"] == "model-write-b"
+        assert cast(list[str], started["defaults_applied"])[:2] == ["write-b seat", "model"]
+        assert started["recommendation"] == {
+            "seat": "write-b",
+            "role": "role write-b",
+            "confidence": 0.9,
+            "decision_model_called": True,
+            "candidates": [
+                {"seat": "write-b", "role": "role write-b", "probability": 0.8},
+                {"seat": "write-a", "role": "role write-a", "probability": 0.2},
+            ],
+        }
+        # Only the prompt, the access and the candidate descriptions leave the machine.
+        [(text, sent)] = decision.calls
+        assert text == "Task:\n给设置页加一个开关\nRequired access: write"
+        assert set(sent) == {"write-a", "write-b"}
+        # The history holds the real seat, so a resume keeps it.
+        resumed = await _start_and_wait(client, session_id="session-e2e")
+        assert resumed["model"] == "model-write-b"
+        assert "seat (session_id history)" in cast(list[str], resumed["defaults_applied"])
+        # Explicit options win over the seat's, as with a named seat.
+        explicit = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="auto",
+            access="write",
+            prompt="again",
+            provider_options={"model": "explicit"},
+        )
+        explicit_defaults = cast(list[str], explicit["defaults_applied"])
+        assert explicit["model"] == "explicit" and "model" not in explicit_defaults
+        # As with a named seat, nothing of the seat is applied then; the choice still shows.
+        assert "write-b seat" not in explicit_defaults
+        assert _payload(explicit["recommendation"])["seat"] == "write-b"
+        # One dispatchable seat of that access: no decision call, still started.
+        decision.calls.clear()
+        single = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="auto", access="read", prompt="look around"
+        )
+        recommendation = _payload(single["recommendation"])
+        assert recommendation["seat"] == "read-c"
+        assert recommendation["decision_model_called"] is False and decision.calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_agents_isolates_every_writer_when_there_are_several(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    from agentnave.mcp_tasks import AUTO_ISOLATION_APPLIED
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats(
+        [
+            _own_seat("write-a", "claude", "write"),
+            _own_seat("write-b", "claude", "write", difficulty="hard"),
+            _own_seat("read-c", "claude", "read"),
+            _own_seat("read-d", "claude", "read", difficulty="easy"),
+        ]
+    )
+    _write_decision_key()
+    pick = Decision("write-a", {"write-a": 1.0}, 1.0)
+    read = Decision("read-c", {"read-c": 1.0}, 1.0)
+    one, two, three = (_light_repo(tmp_path / name) for name in ("one", "two", "three"))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    async def run(answers: list[Decision], tasks: list[dict[str, object]]) -> list[dict[str, Any]]:
+        decision.answers = answers
+        result = await client.call_tool("start_agents", {"tasks": tasks})
+        assert not result.is_error, result.content
+        found = cast(list[dict[str, Any]], _payload(result.structured_content)["results"])
+        await _finish(client, found)
+        return found
+
+    async with Client(mcp) as client:
+        # Two writers: each gets its own directory; the reader does not.
+        first, second, reader = await run(
+            [pick, pick, read],
+            [
+                _batch_task("甲", "write", one),
+                _batch_task("乙", "write", two),
+                _batch_task("丙", "read", plain),
+            ],
+        )
+        assert first["isolation"]["id"] != second["isolation"]["id"]
+        assert first["isolation"]["path"] != second["isolation"]["path"]
+        assert str(one) in first["isolation"]["path"] and str(two) in second["isolation"]["path"]
+        for item in (first, second):
+            assert AUTO_ISOLATION_APPLIED in item["defaults_applied"]
+            assert "isolated directory instructions" in item["defaults_applied"]
+        assert (
+            "isolation" not in reader and AUTO_ISOLATION_APPLIED not in reader["defaults_applied"]
+        )
+
+        # One writer and one reader: nothing is isolated, as with start_agent alone.
+        writer, reader = await run(
+            [pick, read], [_batch_task("甲", "write", one), _batch_task("丙", "read", plain)]
+        )
+        assert "isolation" not in writer and "isolation" not in reader
+        assert AUTO_ISOLATION_APPLIED not in writer["defaults_applied"]
+
+        # The task's own isolation wins and is not marked as automatic.
+        own, auto = await run(
+            [pick, pick],
+            [
+                _batch_task("甲", "write", one, isolation={"ref": "main"}),
+                _batch_task("乙", "write", two),
+            ],
+        )
+        assert "isolation" in own and AUTO_ISOLATION_APPLIED not in own["defaults_applied"]
+        assert "isolation" in auto and AUTO_ISOLATION_APPLIED in auto["defaults_applied"]
+
+        # A directory that cannot be isolated fails alone and is never started without one.
+        before = _started_count((await client.call_tool("list")).structured_content)
+        good, broken = await run(
+            [pick, pick],
+            [
+                _batch_task("甲", "write", three),
+                {"access": "write", "prompt": "乙", "cwd": str(plain)},
+            ],
+        )
+        assert good["status"] == "running" and "isolation" in good
+        assert broken["status"] == "not_started" and "invocation_id" not in broken
+        assert broken["error"]["code"] == "start_failed"
+        assert broken["error"]["message"].startswith("automatic isolation failed")
+        assert "git" in broken["error"]["message"].lower()
+        assert broken["recommendation"]["seat"] == "write-a"
+        after = _started_count((await client.call_tool("list")).structured_content)
+        assert after == before + 1
+
+
+def test_the_decision_model_reads_all_of_a_short_text_and_the_ends_of_a_long_one() -> None:
+    from agentnave.seat_recommendation import MAX_DECISION_TEXT, clip_for_decision
+
+    exact = "a" * 2000 + "b" * 2000
+    assert MAX_DECISION_TEXT == 4000 and clip_for_decision(exact) == exact
+    over = "h" * 3000 + "m" * 1 + "t" * 1000
+    assert len(over) == 4001
+    assert clip_for_decision(over) == "h" * 3000 + "\n…\n" + "t" * 1000
+    long = "H" * 3000 + "M" * 50_000 + "T" * 1000
+    clipped = clip_for_decision(long)
+    assert clipped == "H" * 3000 + "\n…\n" + "T" * 1000 and "M" not in clipped
+    # Characters, not bytes.
+    assert clip_for_decision("字" * 4000) == "字" * 4000
+
+
+@pytest.mark.asyncio
+async def test_only_the_prompt_reaches_the_decision_model_clipped_when_long(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats(
+        [_own_seat("write-a", "claude", "write"), _own_seat("write-b", "claude", "write")]
+    )
+    _write_decision_key()
+    decision.result = Decision("write-a", {"write-a": 1.0}, 1.0)
+    prompt = "START" + "x" * 3000 + "MIDDLE" + "y" * 1000 + "END"
+    async with Client(mcp) as client:
+        earlier = await _start_and_wait(client, cwd=str(tmp_path), seat="write-b")
+        finished = _first(await client.call_tool("wait", {"ids": [earlier["invocation_id"]]}))
+        forwarded = str(finished["message_id"])
+        started = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="auto",
+            access="write",
+            prompt=prompt,
+            forward=[forwarded],
+        )
+        assert started["model"] == "model-write-a"
+        [(text, sent)] = decision.calls
+        assert text == f"Task:\n{prompt[:3000]}\n…\n{prompt[-1000:]}\nRequired access: write"
+        assert text.startswith("Task:\nSTART") and text.endswith("END\nRequired access: write")
+        assert "MIDDLE" not in text and "fake claude" not in text + json.dumps(sent)
+        # What the service adds to the prompt, and what is forwarded, is not sent.
+        for added in ("noninteractive", "Forwarded", forwarded, "read-only"):
+            assert added not in text + json.dumps(sent)
+        # A batch sends each prompt the same way, and nothing else of the task.
+        decision.calls.clear()
+        decision.answers = [Decision("write-a", {"write-a": 1.0}, 1.0)] * 2
+        batch = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    _batch_task(prompt, "write", tmp_path, forward=[forwarded]),
+                    _batch_task("short", "write", tmp_path),
+                ]
+            },
+        )
+        assert not batch.is_error, batch.content
+        [sent_batch] = decision.batches
+        assert [one for one, _ in sent_batch] == [
+            f"Task:\n{prompt[:3000]}\n…\n{prompt[-1000:]}\nRequired access: write",
+            "Task:\nshort\nRequired access: write",
+        ]
+        await _finish(
+            client, cast(list[dict[str, object]], _payload(batch.structured_content)["results"])
+        )
+        # recommend_seat clips a long task the same way instead of refusing it.
+        decision.calls.clear()
+        long = _payload((await _recommend(client, task=prompt)).structured_content)
+        assert long["seat"] == "write-a"
+        assert decision.calls[0][0] == text
+
+
+@pytest.mark.asyncio
+async def test_start_agent_auto_never_starts_when_the_decision_fails(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    _write_own_seats(
+        [
+            _own_seat("claude-w", "claude", "write"),
+            _own_seat("grok-w", "grok", "write"),
+            _own_seat("codex-w", "codex", "write"),
+        ]
+    )
+    arguments = {
+        "prompt": "ok",
+        "cwd": str(tmp_path),
+        "seat": "auto",
+        "access": "write",
+    }
+    async with Client(mcp) as client:
+
+        async def refused(code: str) -> None:
+            result = await client.call_tool("start_agent", arguments)
+            assert result.is_error and str(result.content).count(code), result.content
+            assert _started_count((await client.call_tool("list")).structured_content) == 0
+
+        await refused("no_key")
+        (root / "decision-keys.json").write_text("{broken")
+        await refused("config_error")
+        _write_decision_key()
+        for code in ("network", "rate_limited", "auth", "rejected", "bad_response"):
+            decision.result = DecisionError(code, "detail")  # type: ignore[arg-type]
+            await refused(f"{code}: detail")
+        assert len(decision.calls) == 5  # no retry, no fallback to another seat
+        # The decision picked the host's own CLI: its seat is named, nothing starts.
+        decision.result = Decision("codex-w", {"codex-w": 0.9}, 0.9)
+        await refused("native_seat")
+        native = await client.call_tool("start_agent", arguments)
+        assert "codex-w (role codex-w)" in str(native.content)
+        assert "subagent using model " in str(native.content)
+        # Nothing can be dispatched.
+        (root / "decision-seats.json").write_text(json.dumps({"version": 1, "seats": []}))
+        await refused("no_candidates")
+
+
+@pytest.mark.asyncio
+async def test_start_agent_auto_refuses_conflicting_arguments_before_any_decision(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "grok", "write")])
+    _write_decision_key()
+    base = {"prompt": "ok", "cwd": str(tmp_path)}
+    auto = {**base, "seat": "auto", "access": "write"}
+    async with Client(mcp) as client:
+        for arguments, expected in (
+            ({**auto, "session_id": "native-1"}, "cannot be combined with session_id"),
+            ({**auto, "provider": "claude"}, "cannot be combined with provider"),
+            ({k: v for k, v in auto.items() if k != "access"}, "needs access"),
+            ({k: v for k, v in auto.items() if k != "cwd"}, "cwd is required"),
+            ({**auto, "task": "x"}, "Unknown argument(s) for start_agent: task"),
+        ):
+            result = await client.call_tool("start_agent", arguments)
+            assert result.is_error and expected in str(result.content), (arguments, result.content)
+        assert decision.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_slow_decision_does_not_block_other_calls(decision: _FakeDecisionClient) -> None:
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "grok", "write")])
+    _write_decision_key()
+    decision.result = Decision("a", {"a": 0.6, "b": 0.4}, 0.6)
+    decision.delay = 1.0
+    order: list[str] = []
+    async with Client(mcp) as client:
+
+        async def run(name: str, tool: str, arguments: dict[str, object]) -> None:
+            await client.call_tool(tool, arguments)
+            order.append(name)
+
+        await asyncio.gather(
+            run("recommend", "recommend_seat", {"task": "x", "access": "write"}),
+            run("members", "list_members", {}),
+            run("list", "list", {}),
+        )
+    # The blocking HTTP call runs in a worker thread: the others finish while it waits.
+    assert order[-1] == "recommend" and set(order[:2]) == {"members", "list"}
+
+
+@pytest.mark.asyncio
+async def test_a_broken_catalog_is_a_config_error_in_the_decision_mode_and_nothing_elsewhere(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    _write_own_seats([_own_seat("a", "claude", "write")])
+    _write_decision_key()
+    (root / "decision-seats.json").write_text("{broken")
+    tasks = [_batch_task("一", "write", tmp_path / "x"), _batch_task("二", "write", tmp_path / "y")]
+    async with Client(mcp) as client:
+        # The mode is on, so the decision tools and seat='auto' stay published.
+        tools = {tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools}
+        assert {"recommend_seat", "start_agents"} <= set(tools)
+        assert "auto" in tools["start_agent"].input_schema["$defs"]["OrchestrationRole"]["enum"]
+        assert "seat" in tools["start_agent"].input_schema["properties"]
+        calls = {
+            "recommend_seat": {"task": "x", "access": "write"},
+            "start_agents": {"tasks": tasks},
+            "start_agent": {
+                "prompt": "ok",
+                "cwd": str(tmp_path),
+                "seat": "auto",
+                "access": "write",
+            },
+        }
+        for name, arguments in calls.items():
+            result = await client.call_tool(name, arguments)
+            assert result.is_error and "config_error" in str(result.content), (name, result.content)
+            assert "not_enabled" not in str(result.content)
+            assert "decision-seats.json" in str(result.content)
+        assert decision.calls == [] and decision.batches == []
+        assert _started_count((await client.call_tool("list")).structured_content) == 0
+        # Without the decision mode, the same file changes nothing: the tools are not there.
+        (root / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "split"}))
+        tools = {tool.name for tool in (await client.list_tools(cache_mode="refresh")).tools}
+        assert tools == set(EXPECTED_TOOLS)
+        refused = await client.call_tool("start_agents", {"tasks": tasks})
+        assert refused.is_error and "not_enabled" in str(refused.content)
+        refused = await client.call_tool("recommend_seat", calls["recommend_seat"])
+        assert refused.is_error and "not_enabled" in str(refused.content)
+
+
+def _light_repo(path: Path) -> Path:
+    """A Git repository with one empty commit, enough for an isolated directory."""
+    path.mkdir(exist_ok=True)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "init", "-q", "-b", "main"], cwd=path, check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "init"], cwd=path, check=True)
+    return path
+
+
+def _batch_task(task: str, access: str, cwd: Path, **extra: object) -> dict[str, object]:
+    # Several writers are isolated, which needs a repository; one that is not fails alone.
+    if access == "write" and not (cwd / ".git").exists():
+        _light_repo(cwd)
+    cwd.mkdir(exist_ok=True)
+    return {"access": access, "prompt": task, "cwd": str(cwd), **extra}
+
+
+async def _finish(client: Client, results: Sequence[Mapping[str, object]]) -> None:
+    ids = [str(item["invocation_id"]) for item in results if "invocation_id" in item]
+    if ids:
+        waited: dict[str, object] = {}
+        for _ in range(20):
+            waited = _payload((await client.call_tool("wait", {"ids": ids})).structured_content)
+            if waited["all_finished"]:
+                return
+            ids = cast(list[str], waited["pending_ids"])
+        raise AssertionError(f"the started tasks did not finish: {waited}")
+
+
+@pytest.mark.asyncio
+async def test_start_agents_chooses_every_seat_in_one_decision_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats(
+        [
+            _own_seat("write-a", "claude", "write"),
+            _own_seat("write-b", "claude", "write", difficulty="hard"),
+            _own_seat("read-c", "claude", "read"),
+            _own_seat("read-d", "claude", "read", difficulty="easy"),
+        ]
+    )
+    _write_decision_key()
+    decision.answers = [
+        Decision("write-a", {"write-a": 0.8, "write-b": 0.2}, 0.8),
+        Decision("read-d", {"read-c": 0.4, "read-d": 0.6}, 0.6),
+        Decision("write-b", {"write-a": 0.3, "write-b": 0.7}, 0.7),
+    ]
+    async with Client(mcp) as client:
+        tools = await client.list_tools(cache_mode="refresh")
+        published = {tool.name: tool for tool in tools.tools}
+        schema = published["start_agents"].input_schema
+        assert set(schema["properties"]) == {
+            "tasks",
+            "cwd",
+            "title",
+            "manager_model",
+            "manager_session_id",
+        }
+        assert schema["properties"]["tasks"]["minItems"] == 2
+        assert published["start_agents"].output_schema
+        result = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    _batch_task("加开关", "write", tmp_path / "one", role="开关"),
+                    _batch_task("看日志", "read", tmp_path / "two"),
+                    _batch_task("写文档", "write", tmp_path / "three"),
+                ]
+            },
+        )
+        assert not result.is_error, result.content
+        payload = _payload(result.structured_content)
+        # One decision request for all three, each with its own access's candidates.
+        assert decision.calls == [] and len(decision.batches) == 1
+        assert [(text, set(candidates)) for text, candidates in decision.batches[0]] == [
+            ("Task:\n加开关\nRequired access: write", {"write-a", "write-b"}),
+            ("Task:\n看日志\nRequired access: read", {"read-c", "read-d"}),
+            ("Task:\n写文档\nRequired access: write", {"write-a", "write-b"}),
+        ]
+        results = cast(list[dict[str, object]], payload["results"])
+        assert [(item["provider"], item["model"]) for item in results] == [
+            ("claude", "model-write-a"),
+            ("claude", "model-read-d"),
+            ("claude", "model-write-b"),
+        ]
+        picked = [_payload(item["recommendation"]) for item in results]
+        assert [one["seat"] for one in picked] == ["write-a", "read-d", "write-b"]
+        assert all(one["decision_model_called"] is True for one in picked)
+        assert [item["access"] for item in results] == ["write", "read", "write"]
+        assert "next" in payload
+        await _finish(client, results)
+
+
+@pytest.mark.asyncio
+async def test_one_task_that_cannot_start_does_not_stop_the_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats(
+        [
+            _own_seat("write-a", "claude", "write"),
+            _own_seat("write-b", "claude", "write", difficulty="hard"),
+            _own_seat("codex-w", "codex", "write", difficulty="easy"),
+            _own_seat("read-solo", "claude", "read"),
+        ]
+    )
+    _write_decision_key()
+    decision.answers = [
+        DecisionError("bad_response", "The decision model chose no listed seat."),
+        Decision("codex-w", {"codex-w": 0.9}, 0.9),
+        Decision("write-b", {"write-b": 0.8, "write-a": 0.2}, 0.8),
+    ]
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    _batch_task("一", "write", tmp_path / "one"),
+                    _batch_task("二", "read", tmp_path / "two"),  # one candidate: no question
+                    _batch_task("三", "write", tmp_path / "three"),
+                    _batch_task("四", "write", tmp_path / "four"),
+                ]
+            },
+        )
+        assert not result.is_error, result.content
+        results = cast(list[dict[str, object]], _payload(result.structured_content)["results"])
+        assert len(decision.batches) == 1 and len(decision.batches[0]) == 3
+        bad, solo, native, started = results
+        assert bad["status"] == "not_started"
+        assert _payload(bad["error"])["code"] == "bad_response" and "recommendation" not in bad
+        assert solo["model"] == "model-read-solo"
+        assert _payload(solo["recommendation"])["decision_model_called"] is False
+        assert native["status"] == "not_started"
+        assert _payload(native["error"])["code"] == "native_seat"
+        assert _payload(native["recommendation"])["native"] is True
+        assert started["model"] == "model-write-b"
+        # Only the two that started are waited for; the unstarted ones left nothing behind.
+        listed = _payload((await client.call_tool("list")).structured_content)
+        assert len(cast(list[object], listed["invocations"])) == 2
+        await _finish(client, results)
+
+
+@pytest.mark.asyncio
+async def test_a_task_without_candidates_is_left_out_of_the_decision_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats(
+        [_own_seat("write-a", "claude", "write"), _own_seat("write-b", "claude", "write")]
+    )
+    _write_decision_key()
+    decision.answers = [Decision("write-a", {"write-a": 1.0}, 1.0)] * 2
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    _batch_task("读", "read", tmp_path / "one"),
+                    _batch_task("写", "write", tmp_path / "two"),
+                    _batch_task("再写", "write", tmp_path / "three"),
+                ]
+            },
+        )
+        assert not result.is_error, result.content
+        results = cast(list[dict[str, object]], _payload(result.structured_content)["results"])
+        assert _payload(results[0]["error"])["code"] == "no_candidates"
+        assert [item["status"] for item in results[1:]] == ["running", "running"]
+        assert len(decision.batches[0]) == 2
+        await _finish(client, results)
+        # Nothing to decide at all: no key is needed, and nothing starts.
+        (Path(os.environ["AGENTNAVE_DATA_DIR"]) / "decision-keys.json").unlink()
+        decision.batches.clear()
+        none = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    _batch_task("读", "read", tmp_path / "a"),
+                    _batch_task("读", "read", tmp_path / "b"),
+                ]
+            },
+        )
+        assert not none.is_error
+        nothing = _payload(none.structured_content)
+        codes = [
+            _payload(item["error"])["code"]
+            for item in cast(list[dict[str, object]], nothing["results"])
+        ]
+        assert codes == ["no_candidates", "no_candidates"]
+        assert "next" not in nothing and decision.batches == []
+
+
+@pytest.mark.asyncio
+async def test_start_agents_never_starts_when_the_decision_fails_as_a_whole(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "grok", "write")])
+    tasks = [_batch_task("一", "write", tmp_path / "x"), _batch_task("二", "write", tmp_path / "y")]
+    async with Client(mcp) as client:
+
+        async def refused(code: str) -> None:
+            result = await client.call_tool("start_agents", {"tasks": tasks})
+            assert result.is_error and str(result.content).count(code), result.content
+            assert _started_count((await client.call_tool("list")).structured_content) == 0
+
+        await refused("no_key")
+        (root / "decision-keys.json").write_text("{broken")
+        await refused("config_error")
+        _write_decision_key()
+        for code in ("network", "rate_limited", "auth", "rejected", "bad_response"):
+            decision.answers = DecisionError(code, "detail")  # type: ignore[arg-type]
+            await refused(f"{code}: detail")
+        assert len(decision.batches) == 5  # one request each: no retry, no other seat
+        assert decision.calls == []
+
+
+@pytest.mark.asyncio
+async def test_start_agents_checks_everything_free_before_any_decision(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "grok", "write")])
+    _write_decision_key()
+    (Path(os.environ["AGENTNAVE_DATA_DIR"]) / "settings.json").write_text(
+        json.dumps({"version": 1, "max_running": 2})
+    )
+    good = _batch_task("一", "write", tmp_path / "x")
+    async with Client(mcp) as client:
+
+        async def refused(arguments: dict[str, object], expected: str) -> None:
+            result = await client.call_tool("start_agents", arguments)
+            assert result.is_error and expected in str(result.content), result.content
+            assert decision.batches == [] and decision.calls == []
+
+        # More tasks than the App's limit allows.
+        await refused({"tasks": [good, good, good]}, "too_many_tasks")
+        # A task with no directory, a missing one, a bad role.
+        await refused({"tasks": [good, {**good, "cwd": None}]}, "tasks[1]: cwd is required")
+        await refused(
+            {"tasks": [good, {**good, "cwd": str(tmp_path / "gone")}]},
+            "tasks[1]: cwd is not a directory",
+        )
+        await refused({"tasks": [good, {**good, "role": "x" * 41}]}, "tasks[1]: role must contain")
+        # What the tool does not take.
+        await refused(
+            {"tasks": [good, good], "seat": "a"}, "Unknown argument(s) for start_agents: seat"
+        )
+        for key in ("seat", "provider", "session_id", "wait", "provider_options"):
+            await refused({"tasks": [good, {**good, key: "x"}]}, key)
+        await refused({"tasks": [good, {**good, "task": "summary"}]}, "task")
+        await refused({"tasks": [good]}, "tasks")
+        # The directory a top-level cwd gives is checked the same way.
+        await refused(
+            {"tasks": [{k: v for k, v in good.items() if k != "cwd"}] * 2, "cwd": "relative"},
+            "tasks[0]: cwd must be an absolute path",
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_agents_refuses_the_whole_call_beyond_the_free_capacity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "claude", "write")])
+    _write_decision_key()
+    (Path(os.environ["AGENTNAVE_DATA_DIR"]) / "settings.json").write_text(
+        json.dumps({"version": 1, "max_running": 3})
+    )
+    async with Client(mcp) as client:
+        busy = await client.call_tool(
+            "start_agent", {"prompt": "sleep", "cwd": str(tmp_path), "seat": "a"}
+        )
+        assert not busy.is_error, busy.content
+        result = await client.call_tool(
+            "start_agents",
+            {"tasks": [_batch_task("x", "write", tmp_path / str(i)) for i in range(3)]},
+        )
+        assert result.is_error and "capacity" in str(result.content)
+        assert "Nothing was started" in str(result.content)
+        assert decision.batches == []
+        assert _started_count((await client.call_tool("list")).structured_content) == 1
+        await client.call_tool(
+            "cancel", {"ids": [_payload(busy.structured_content)["invocation_id"]]}
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_agents_exists_only_in_the_decision_mode(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    _write_own_seats([_own_seat("a", "claude", "write")], preset="split")
+    async with Client(mcp) as client:
+        tools = await client.list_tools(cache_mode="refresh")
+        assert [tool.name for tool in tools.tools] == EXPECTED_TOOLS
+        assert "StartAgentsPayload" not in json.dumps([tool.model_dump() for tool in tools.tools])
+        refused = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    _batch_task("x", "write", tmp_path / "a"),
+                    _batch_task("y", "write", tmp_path / "b"),
+                ]
+            },
+        )
+        assert refused.is_error and "not_enabled" in str(refused.content)
+        assert decision.batches == [] and decision.calls == []
+        _write_own_seats([_own_seat("a", "claude", "write")])
+        tools = await client.list_tools(cache_mode="refresh")
+        assert "start_agents" in [tool.name for tool in tools.tools]

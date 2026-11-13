@@ -137,6 +137,14 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/advanced.js").to_vec(),
         ),
+        "decision-seats.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/decision-seats.js").to_vec(),
+        ),
+        "pane-loader.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/pane-loader.js").to_vec(),
+        ),
         "settings-state.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/settings-state.js").to_vec(),
@@ -208,6 +216,10 @@ fn chat_asset(resource: &str) -> Response {
             include_bytes!("../../ui/chat-messages.js").to_vec(),
         ),
         "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
+        "chat-groups.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-groups.js").to_vec(),
+        ),
         "chat-topics.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/chat-topics.js").to_vec(),

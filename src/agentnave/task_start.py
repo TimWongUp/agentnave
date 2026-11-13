@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
 
+from agentnave.decision_seats import custom_seat
 from agentnave.host import Host
+from agentnave.isolated import other_active_leases, shares_cwd_tree
+from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.members import (
-    OrchestrationRole,
     ProviderName,
     ReviewRole,
     apply_member,
@@ -94,7 +97,7 @@ class StartArguments:
     provider: ProviderName | None
     cwd: str | None
     role: str | None
-    seat: OrchestrationRole | None
+    seat: str | None  # a catalog seat, or one of the user's own seats
     access: Literal["read", "write"] | None
     defaults: list[str] = field(default_factory=lambda: [])
     # Model and effort the resumed thread last ran with; see apply_history.
@@ -153,7 +156,8 @@ class StartArguments:
                 )
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
-        implied = role_access(name)
+        custom = custom_seat(name, host)
+        implied = custom.access if custom is not None else role_access(name)
         if implied is None:
             return
         if self.access is None:
@@ -222,6 +226,9 @@ def add_write_warning(
     request: InvocationRequest,
     invocation_id: str,
     access: Literal["read", "write"] | None,
+    *,
+    isolation: TaskIsolationInfo | None = None,
+    own_lease_paths: Collection[Path] = (),
 ) -> None:
     if access == "read":
         return
@@ -229,7 +236,8 @@ def add_write_warning(
         listing.invocation_id
         for listing in manager.list_invocations()
         if listing.status is None
-        and listing.cwd == request.cwd
+        and not listing.read_only
+        and shares_cwd_tree(listing.cwd, request.cwd)
         and listing.invocation_id != invocation_id
     ]
     if sharing:
@@ -237,3 +245,18 @@ def add_write_warning(
             f"{len(sharing)} other CLI run(s) active in this cwd ({', '.join(sharing)}); "
             "parallel writers need separate worktrees. Declare access=read for read-only work."
         )
+    if isolation is not None:
+        try:
+            external = other_active_leases(
+                isolation.repo_common_dir,
+                isolation.id,
+                exclude_paths=own_lease_paths,
+            )
+        except (OSError, ValueError):
+            external = 0
+        if external > 0:
+            warnings.append(
+                f"{external} active lease(s) held by another process in isolated directory "
+                f"{isolation.id}; parallel writers need separate worktrees. "
+                "Declare access=read for read-only work."
+            )

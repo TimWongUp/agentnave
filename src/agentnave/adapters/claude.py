@@ -15,6 +15,7 @@ from agentnave.adapters.base import (
     AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
+    UsageQuery,
     brief,
     error_summary,
     failure_status,
@@ -26,6 +27,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.adapters.quota_reset import parse_reset
+from agentnave.adapters.usage_reset import claude_reset
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 from agentnave.native_prompts import NativePrompt, encode_answer, prompt_from_event
 from agentnave.native_sessions import assistant_model
@@ -136,7 +138,6 @@ class ClaudeAdapter(AdapterHooks):
             self._supports_interactive
             and request.provider_options.get("interactive") is True
             and not discussion
-            and os.name != "nt"
         ):
             argv = [
                 sys.executable,
@@ -158,6 +159,7 @@ class ClaudeAdapter(AdapterHooks):
                 (json.dumps({"prompt": request.prompt}, ensure_ascii=False) + "\n").encode(),
                 capture_line=_result_capture(),
                 keep_stdin_open=True,
+                temp_dir_env="AGENTNAVE_CLAUDE_TMP" if os.name == "nt" else None,
             )
         argv = [
             self.executable_path(),
@@ -344,6 +346,12 @@ class ClaudeAdapter(AdapterHooks):
             if reset := parse_reset(json.dumps(event, ensure_ascii=False), now):
                 return reset
         return parse_reset(stderr.decode(errors="replace"), now)
+
+    def usage_query(self, model: str | None) -> UsageQuery | None:
+        return UsageQuery(
+            (self.executable_path(), "-p", "/usage", "--no-session-persistence"),
+            lambda output, now: claude_reset(output.decode(errors="replace"), model, now),
+        )
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()

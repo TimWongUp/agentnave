@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import IO
@@ -11,6 +13,7 @@ from uuid import uuid4
 
 from agentnave import provider_health
 from agentnave.adapters import get_adapter
+from agentnave.adapters.base import PreparedCommand
 from agentnave.conversations_store import (
     _CONNECTION_ID,
     _LIVE_SECONDS,
@@ -47,11 +50,12 @@ from agentnave.group import (
     Round,
     SeatState,
 )
+from agentnave.isolated import IsolationLease
+from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.locks import release_and_remove
 from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
-from agentnave.orchestration_roles import OrchestrationRole
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -63,7 +67,14 @@ from agentnave.store import (
     TaskRecord,
     now,
 )
+from agentnave.task_isolation import (
+    IsolationHold,
+    acquire_isolation,
+    may_touch_isolated_dirs,
+    release_hold,
+)
 from agentnave.task_start import latest_session_task
+from agentnave.threaded import to_thread_keeping, to_thread_uninterrupted
 
 
 def _missing_forward(message_id: str) -> ForwardError:
@@ -74,6 +85,9 @@ def _missing_forward(message_id: str) -> ForwardError:
 class _TaskStartup:
     record: Record | None = None
     native_lock: IO[bytes] | None = None
+    hold: IsolationHold | None = None
+    owns_hold: bool = False
+    cleanup_paths: tuple[Path, ...] = ()
     started: bool = False
 
 
@@ -391,6 +405,35 @@ class Conversations(ConversationStore):
             assert result is not None
             return result
 
+    def workspace_id(self, manager_session_id: str | None) -> str | None:
+        return self._manager_session(manager_session_id)
+
+    def reading_workspace(self, manager_session_id: str | None) -> str | None:
+        """The calling boss's workspace for reading history; one it handed over still reads as
+        its own, also after it passed one it had claimed. None without a boss identity."""
+        boss = self._boss(manager_session_id)
+        if boss is None:
+            return None
+        workspace, away = self.db.resolve(boss[0])
+        return away.id if away is not None else workspace
+
+    def invocation_workspaces(self) -> dict[str, str | None]:
+        """The workspace each private task or meeting seat run of this server works for."""
+
+        def owner(conversation_id: str) -> str | None:
+            record = self.records.get(conversation_id)
+            return record.state.manager_session if record is not None else None
+
+        found = {
+            invocation_id: owner(conversation_id)
+            for invocation_id, (conversation_id, _) in self.task_invocations.items()
+        }
+        for round_ in (*self._completed_rounds.values(), *self._rounds.values()):
+            for run in round_.runs:
+                if run.invocation_id is not None:
+                    found[run.invocation_id] = owner(round_.group.id)
+        return found
+
     def inbox(self, manager_session_id: str | None) -> tuple[list[str], list[str]]:
         """This server's task invocations and rounds whose end no caller has received yet.
 
@@ -525,9 +568,8 @@ class Conversations(ConversationStore):
 
     # Tasks
 
-    def _check_capacity(self, needed: int) -> None:
-        """Refuse work that would run more CLI processes at once than the App allows."""
-        limit = read_max_running()
+    def capacity(self) -> tuple[int, int]:
+        """CLI runs active or held for a serial round's next seat, and the App's limit."""
         active = self.manager.active_ids()
         # A serial round between seats, or waiting on a review, keeps a slot for its next seat.
         held = sum(
@@ -539,7 +581,11 @@ class Conversations(ConversationStore):
             and any(run.status == "pending" for run in round_.runs)
             and not any(run.invocation_id in active for run in round_.runs)
         )
-        running = len(active) + held
+        return len(active) + held, read_max_running()
+
+    def _check_capacity(self, needed: int) -> None:
+        """Refuse work that would run more CLI processes at once than the App allows."""
+        running, limit = self.capacity()
         if running + needed > limit:
             raise CapacityError(
                 f"{running} CLI runs are active or held by serial rounds for their next seat, and "
@@ -575,80 +621,272 @@ class Conversations(ConversationStore):
         manager_model: str | None = None,
         manager_session_id: str | None = None,
         role: str | None = None,
-        seat: OrchestrationRole | None = None,
+        seat: str | None = None,
         forward: list[str] | None = None,
         access: str | None = None,
+        isolation_requested: bool = False,
+        isolation_ref: str | None = None,
+        hold: IsolationHold | None = None,
     ) -> TaskStart:
+        """Start one private task.
+
+        hold is an isolated directory the caller acquired ahead (see acquire_task_isolation);
+        the caller then also gives it back when this raises. Without one, it is acquired here.
+        """
         role = normalize_role(role)
         declared = normalize_access(access)
+        if isolation_requested and request.session_id is not None:
+            raise ValueError("isolation cannot be combined with session_id")
         manager_session = self._manager_session(manager_session_id)
+        if isolation_requested and manager_session is None:
+            raise ValueError(
+                "isolation needs a known manager session; pass manager_session_id or "
+                "configure AGENTNAVE_HOST_SESSION_ID"
+            )
         forwarded = self._resolve_forwards(forward, manager_session)
         prompt = request.prompt  # Keep the manager's own text as the saved task prompt.
         self.manager.check_start(request)
         self._check_capacity(1)
-        if conversation_id:
-            self.record(conversation_id)  # Reject missing history before creating startup metadata.
-        if forwarded:
-            request = replace(request, prompt=forwarded_prompt(forwarded, prompt))
-        prepared = self.manager.prepare(request)
-        startup = _TaskStartup()
+        startup = _TaskStartup(hold=hold, owns_hold=hold is None)
         try:
+            if conversation_id:
+                startup.record = self.writable(conversation_id)
+                if startup.record.state.manager_session != manager_session:
+                    raise ValueError(
+                        self._not_yours("Task conversation", startup.record.state.manager_session)
+                    )
+                if startup.record.state.kind != "task":
+                    raise ValueError("Tasks need a task conversation")
+            if startup.hold is None:
+                startup.hold = self._acquire_hold(
+                    request,
+                    manager_session,
+                    isolation_requested=isolation_requested,
+                    isolation_ref=isolation_ref,
+                )
+            request = startup.hold.request
+            if forwarded:
+                request = replace(request, prompt=forwarded_prompt(forwarded, prompt))
+            prepared = self.manager.prepare(request)
+            startup.cleanup_paths = tuple(Path(path) for path in prepared.cleanup_paths)
             # Held by the run until it ends: no other server can resume this session meanwhile.
             startup.native_lock = self.manager.reserve(request)
             record = self._bind_task_record(
                 startup, request, conversation_id, manager_session, title
             )
-            task = TaskRecord(
-                id=uuid4().hex,
-                provider=request.provider,
-                model=str(request.provider_options.get("model", "")),
-                effort=str(request.provider_options["effort"])
-                if "effort" in request.provider_options
-                else None,
-                cwd=str(request.cwd),
-                prompt=prompt,
-                manager_host=self.host.name,
-                manager_model=manager_model,
-                manager_reported_model=self._manager_model(manager_session),
-                session_id=request.session_id,
-                time=now(),
-                role=role,
-                seat=seat,
-                access=declared,
-                forward=[item.message_id for item in forwarded],
+            info = startup.hold.info
+            task = self._new_task_record(
+                request,
+                prompt,
+                manager_model,
+                manager_session,
+                role,
+                seat,
+                declared,
+                info,
+                forwarded,
             )
             record.state.tasks.append(task)
             self._persist(record)
-            try:
-                invocation_id = self.manager.start(
-                    request, prepared=prepared, claim=startup.native_lock
-                )
-            except Exception:
-                task.status = "failed"
-                task.error = "start_failed"
-                self._persist(record)
-                raise
+            invocation_id = self._launch_prepared_task(startup, record, task, request, prepared)
             startup.native_lock = None  # the run releases it when it ends
             startup.started = True
+            startup.hold.consumed = True
             self.running_tasks[task.id] = invocation_id
             self.task_invocations[invocation_id] = (record.state.id, task.id)
             self._ensure_live_writer(record)
             collector = asyncio.create_task(self._collect(record, task.id, invocation_id))
             self.collectors.add(collector)
             collector.add_done_callback(self.collectors.discard)
-            return TaskStart(invocation_id, record.state.id, declared)
+            return TaskStart(invocation_id, record.state.id, declared, info, startup.hold.warnings)
         finally:
+            self._cleanup_task_startup(startup)
+
+    def _new_task_record(
+        self,
+        request: InvocationRequest,
+        prompt: str,
+        manager_model: str | None,
+        manager_session: str | None,
+        role: str | None,
+        seat: str | None,
+        declared: Access | None,
+        info: TaskIsolationInfo | None,
+        forwarded: list[Forwarded],
+    ) -> TaskRecord:
+        return TaskRecord(
+            id=uuid4().hex,
+            provider=request.provider,
+            model=str(request.provider_options.get("model", "")),
+            effort=str(request.provider_options["effort"])
+            if "effort" in request.provider_options
+            else None,
+            cwd=str(request.cwd),
+            prompt=prompt,
+            manager_host=self.host.name,
+            manager_model=manager_model,
+            manager_reported_model=self._manager_model(manager_session),
+            session_id=request.session_id,
+            time=now(),
+            role=role,
+            seat=seat,
+            access=declared,
+            isolation_id=info.id if info is not None else None,
+            isolation_path=info.path if info is not None else None,
+            isolation_branch=info.branch if info is not None else None,
+            forward=[item.message_id for item in forwarded],
+        )
+
+    def _launch_prepared_task(
+        self,
+        startup: _TaskStartup,
+        record: Record,
+        task: TaskRecord,
+        request: InvocationRequest,
+        prepared: PreparedCommand,
+    ) -> str:
+        on_settled = self._task_settlement(startup)
+        try:
+            if on_settled is not None:
+                return self.manager.start(
+                    request,
+                    prepared=prepared,
+                    claim=startup.native_lock,
+                    on_settled=on_settled,
+                )
+            return self.manager.start(
+                request,
+                prepared=prepared,
+                claim=startup.native_lock,
+            )
+        except Exception:
+            if startup.hold is not None and startup.hold.created is not None:
+                task.isolation_id = None
+                task.isolation_path = None
+                task.isolation_branch = None
+            task.status = "failed"
+            task.error = "start_failed"
+            self._persist(record)
+            raise
+
+    def _acquire_hold(
+        self,
+        request: InvocationRequest,
+        manager_session: str | None,
+        *,
+        isolation_requested: bool,
+        isolation_ref: str | None,
+    ) -> IsolationHold:
+        if not may_touch_isolated_dirs(request.cwd, requested=isolation_requested):
+            return IsolationHold(request)
+        hold = acquire_isolation(
+            self.isolated,
+            request,
+            manager_session,
+            requested=isolation_requested,
+            ref=isolation_ref,
+        )
+        if (lease := hold.lease) is not None:
+            self.active_lease_paths.add(lease.path)
+        return hold
+
+    async def acquire_task_isolation(
+        self,
+        request: InvocationRequest,
+        manager_session_id: str | None,
+        *,
+        isolation_requested: bool,
+        isolation_ref: str | None,
+    ) -> IsolationHold:
+        """Acquire the task's isolated directory on a worker thread, so waiting calls and other
+        tasks keep running; pass the result to start_task and give it back on failure."""
+        manager_session = self._manager_session(manager_session_id)
+        if isolation_requested:
+            if request.session_id is not None:
+                raise ValueError("isolation cannot be combined with session_id")
+            if manager_session is None:
+                raise ValueError(
+                    "isolation needs a known manager session; pass manager_session_id or "
+                    "configure AGENTNAVE_HOST_SESSION_ID"
+                )
+        if not may_touch_isolated_dirs(request.cwd, requested=isolation_requested):
+            return IsolationHold(request)
+        self.manager.check_start(request)
+        self._check_capacity(1)
+        hold = await to_thread_keeping(
+            lambda held: release_hold(self.isolated, held),
+            acquire_isolation,
+            self.isolated,
+            request,
+            manager_session,
+            requested=isolation_requested,
+            ref=isolation_ref,
+        )
+        if (lease := hold.lease) is not None:
+            self.active_lease_paths.add(lease.path)
+        return hold
+
+    async def give_back_isolation(self, hold: IsolationHold) -> None:
+        """Release a hold whose task never started, off the event loop."""
+        if (lease := hold.lease) is not None:
+            self.active_lease_paths.discard(lease.path)
+        await to_thread_uninterrupted(release_hold, self.isolated, hold)
+
+    def _task_settlement(self, startup: _TaskStartup) -> Callable[[str], None] | None:
+        hold = startup.hold
+        if hold is None or hold.info is None or hold.lease is None:
+            return None
+        info = hold.info
+        lease: IsolationLease = hold.lease
+
+        def settle(invocation_id: str) -> None:
+            # Runs on a worker thread after the process tree ended; the lease goes last.
             try:
-                if not startup.started:
-                    for path in prepared.cleanup_paths:
-                        Path(path).unlink(missing_ok=True)
+                self.isolation_summaries[invocation_id] = self.isolated.summarize_changes(
+                    info.id,
+                    fallback_path=info.path,
+                    fallback_branch=info.branch,
+                )
             finally:
+                self.active_lease_paths.discard(lease.path)
+                lease.release()
+
+        return settle
+
+    def _cleanup_task_startup(self, startup: _TaskStartup) -> None:
+        """Run every cleanup step even when one fails; the error already in flight stays."""
+
+        def drop_files() -> None:
+            for path in startup.cleanup_paths:
                 try:
-                    if startup.record is not None:
-                        self._release_idle(startup.record)
-                finally:
-                    if startup.native_lock is not None:
-                        release_and_remove(startup.native_lock, Path(startup.native_lock.name))
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    logging.getLogger(__name__).exception("Removing %s failed", path)
+
+        def give_back() -> None:
+            hold = startup.hold
+            if hold is None or not startup.owns_hold or startup.started:
+                return
+            if (lease := hold.lease) is not None:
+                self.active_lease_paths.discard(lease.path)
+            release_hold(self.isolated, hold)
+
+        def release_lock() -> None:
+            if startup.native_lock is not None:
+                release_and_remove(startup.native_lock, Path(startup.native_lock.name))
+
+        steps: list[Callable[[], None]] = []
+        if not startup.started:
+            steps.append(drop_files)
+        steps.append(give_back)
+        if (record := startup.record) is not None:
+            steps.append(lambda: self._release_idle(record))
+        steps.append(release_lock)
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                logging.getLogger(__name__).exception("Task startup cleanup step failed")
 
     def _bind_task_record(
         self,
@@ -658,7 +896,8 @@ class Conversations(ConversationStore):
         manager_session: str | None,
         title: str | None,
     ) -> Record:
-        startup.record = self.writable(conversation_id) if conversation_id else None
+        if startup.record is None and conversation_id:
+            startup.record = self.writable(conversation_id)
         if startup.record is not None and startup.record.state.manager_session != manager_session:
             raise ValueError(
                 self._not_yours("Task conversation", startup.record.state.manager_session)

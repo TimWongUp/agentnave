@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "decision_model": "other-model",
+  "seats": [
+    {
+      "id": "s-4f9c1a",
+      "kind": "custom",
+      "role": "写代码",
+      "description": "写代码",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "access": "write",
+      "difficulty": "hard"
+    }
+  ]
+}

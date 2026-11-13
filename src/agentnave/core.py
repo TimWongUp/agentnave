@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import tempfile
 import time
 import uuid
 from collections import deque
@@ -39,6 +41,7 @@ from agentnave.processes import (
     spawn_process,
     terminate_process_tree,
 )
+from agentnave.usage_probe import run_usage_query
 
 _MAX_STDOUT_BYTES = 1024 * 1024
 _MAX_EVENT_BYTES = 8 * 1024 * 1024
@@ -68,6 +71,7 @@ _RETRY_STALL_ERROR = InvocationError(
 _PIPE_DRAIN_SECONDS = 1.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "done", "failed", "error", "errored"})
+_RECENT_TOOLS = 5
 
 
 def _doing(activity: ProviderActivity | None) -> str | None:
@@ -109,6 +113,8 @@ class _InvocationRecord:
     retry_since: float | None = None
     retry_at: float | None = None
     tool_names: dict[str, str] = field(default_factory=lambda: {})
+    # Names of the latest tool calls, oldest first, one entry per call.
+    recent_tools: deque[str] = field(default_factory=lambda: deque[str](maxlen=_RECENT_TOOLS))
     attention_event: asyncio.Event = field(default_factory=asyncio.Event)
     pending_attention: deque[InvocationError] = field(
         default_factory=lambda: deque[InvocationError]()
@@ -165,6 +171,7 @@ class _InvocationRecord:
                 self.output_at = self.last_event_at
                 self.output_event_type = activity.event_type
             previous = self.last_activity
+            self._note_tool(activity, previous)
             if activity.kind == "tool" and activity.tool_call_id is not None:
                 if activity.tool_name is not None:
                     self.tool_names[activity.tool_call_id] = activity.tool_name
@@ -192,6 +199,24 @@ class _InvocationRecord:
             else:
                 self.retry_since = None
                 self.retry_at = None
+
+    def _note_tool(self, activity: ProviderActivity, previous: ProviderActivity | None) -> None:
+        """Remember the name of each tool call once, however many events report it."""
+        if activity.kind != "tool" or not activity.tool_name:
+            return
+        if activity.tool_call_id is not None:
+            if activity.tool_call_id in self.tool_names:
+                return
+        elif (activity.state or "").lower() in _ENDED_TOOL_STATES or (
+            # Without an id, repeated updates of one call arrive back to back.
+            previous is not None
+            and previous.kind == "tool"
+            and previous.tool_call_id is None
+            and previous.tool_name == activity.tool_name
+            and (previous.state or "").lower() not in _ENDED_TOOL_STATES
+        ):
+            return
+        self.recent_tools.append(activity.tool_name)
 
     def update_doing(self, now: float) -> None:
         doing = None if self.prompts.pending() else _doing(self.last_activity)
@@ -450,6 +475,8 @@ class InvocationManager:
         instructions = SUBAGENT_INSTRUCTIONS
         if request.read_only:
             instructions += f" {READ_ONLY_INSTRUCTIONS}"
+        if request.extra_instructions:
+            instructions += f" {request.extra_instructions}"
         return get_adapter(request.provider).prepare(
             replace(request, prompt=f"{instructions}\n\nAssigned task:\n{request.prompt}")
         )
@@ -460,6 +487,7 @@ class InvocationManager:
         *,
         prepared: PreparedCommand | None = None,
         claim: IO[bytes] | None = None,
+        on_settled: Callable[[str], None] | None = None,
     ) -> str:
         """Start one run; it owns claim (a reserve() result, taken here when omitted) from this
         call on and releases it once its process tree has ended."""
@@ -474,7 +502,9 @@ class InvocationManager:
                 record.prompts.encode = adapter.encode_prompt_answer
                 record.prompts.changed = lambda: self._prompts_changed(invocation_id)
             self._records[invocation_id] = record
-            record.task = asyncio.create_task(self._execute(record, adapter, prepared))
+            record.task = asyncio.create_task(
+                self._execute(record, adapter, prepared, invocation_id, on_settled)
+            )
         except BaseException:
             if claim is not None:
                 release_and_remove(claim, Path(claim.name))
@@ -610,6 +640,7 @@ class InvocationManager:
                     session_id=None if result is None else result.session_id,
                     result_read=record.result_read,
                     error=None if result is None else result.error,
+                    read_only=record.request.read_only,
                 )
             )
         return listings
@@ -646,6 +677,9 @@ class InvocationManager:
             wall = record.started_wall_at + timedelta(seconds=record.output_at - record.started_at)
             output_at = wall.replace(microsecond=0).isoformat()
         return record.doing, output_at
+
+    def recent_tools(self, invocation_id: str) -> list[str]:
+        return list(self._record(invocation_id).recent_tools)
 
     def progress_since(self, invocation_id: str) -> str | None:
         record = self._record(invocation_id)
@@ -747,7 +781,12 @@ class InvocationManager:
             raise KeyError(f"unknown invocation_id: {invocation_id}") from exc
 
     async def _execute(
-        self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
+        self,
+        record: _InvocationRecord,
+        adapter: ProviderAdapter,
+        prepared: PreparedCommand,
+        invocation_id: str,
+        on_settled: Callable[[str], None] | None = None,
     ) -> InvocationResult:
         try:
             result = await self._run(record, adapter, prepared)
@@ -768,6 +807,38 @@ class InvocationManager:
                     "internal_error", "Unexpected invocation failure; inspect server logs."
                 ),
             )
+        finally:
+            if on_settled is not None:
+                try:
+                    # Off the event loop: settlement runs git and takes repository locks.
+                    await asyncio.shield(asyncio.to_thread(on_settled, invocation_id))
+                except Exception:
+                    logging.getLogger(__name__).exception("Post-invocation settlement failed")
+
+    async def _observe(
+        self,
+        record: _InvocationRecord,
+        adapter: ProviderAdapter,
+        result: InvocationResult,
+        error_message: str | None,
+        stdout: bytes,
+        stderr: bytes,
+    ) -> InvocationResult:
+        """Record the result's account blocker; a quota one with no reset time asks the CLI."""
+        model = provider_health.model_option(record.request.provider_options)
+        now = datetime.now(UTC)
+        reset = adapter.quota_reset(stdout, stderr, now)
+        if (
+            reset is None
+            and self.health_root is not None
+            and provider_health.blocker(result, error_message, record.reported_errors) == "quota"
+        ):
+            query = adapter.usage_query(model)
+            if query is not None:
+                reset = await run_usage_query(query, now)
+        return provider_health.observe_result(
+            self.health_root, result, error_message, record.reported_errors, model, reset
+        )
 
     async def _run(
         self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
@@ -775,9 +846,17 @@ class InvocationManager:
         started = record.started_at
         supervised = None
         tasks: list[asyncio.Task[object]] = []
+        scratch = None
         try:
+            if prepared.temp_dir_env:
+                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
             supervised = await spawn_process(
-                prepared.argv, prepared.cwd, unset_env=prepared.unset_env
+                prepared.argv,
+                prepared.cwd,
+                unset_env=prepared.unset_env,
+                extra_env={prepared.temp_dir_env: scratch}
+                if prepared.temp_dir_env and scratch
+                else None,
             )
             process = supervised.process
             record.process = process
@@ -816,13 +895,8 @@ class InvocationManager:
                     _duration_ms(started),
                     error,
                 )
-                return provider_health.observe_result(
-                    self.health_root,
-                    result,
-                    parsed.error_message,
-                    record.reported_errors,
-                    provider_health.model_option(record.request.provider_options),
-                    adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
+                return await self._observe(
+                    record, adapter, result, parsed.error_message, stdout.data, stderr.data
                 )
 
             if provider_returncode is None:
@@ -840,13 +914,8 @@ class InvocationManager:
                 parsed_error,
                 warnings=parsed.warnings,
             )
-            return provider_health.observe_result(
-                self.health_root,
-                result,
-                parsed.error_message,
-                record.reported_errors,
-                provider_health.model_option(record.request.provider_options),
-                adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
+            return await self._observe(
+                record, adapter, result, parsed.error_message, stdout.data, stderr.data
             )
         except (OSError, ValueError) as exc:
             return InvocationResult(
@@ -873,9 +942,14 @@ class InvocationManager:
                         for path in prepared.cleanup_paths:
                             Path(path).unlink(missing_ok=True)
             finally:
-                record.process = None
-                record.tool_names.clear()
-                record.prompts.close()
+                try:
+                    if scratch is not None:
+                        # Best effort: a file still held open on Windows must not fail the call.
+                        shutil.rmtree(scratch, ignore_errors=True)
+                finally:
+                    record.process = None
+                    record.tool_names.clear()
+                    record.prompts.close()
 
 
 def _drained_limit(

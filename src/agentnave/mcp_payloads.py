@@ -23,6 +23,25 @@ class MemberListPayload(MemberList):
     provider_details: ProviderDetails | None = None
 
 
+class SeatCandidatePayload(TypedDict):
+    seat: str
+    role: str
+    probability: NotRequired[float]
+    native: NotRequired[bool]
+
+
+class SeatRecommendationPayload(TypedDict):
+    seat: str
+    role: str
+    confidence: NotRequired[float]
+    native: NotRequired[bool]  # the host's own CLI: dispatch with its built-in subagent
+    model: NotRequired[str]  # a native seat's saved model, for that subagent
+    effort: NotRequired[str]  # a native seat's saved effort, when set
+    decision_model_called: bool
+    candidates: list[SeatCandidatePayload]  # the choice first, at most three
+    note: NotRequired[str]
+
+
 class InvocationErrorPayload(TypedDict):
     code: str
     message: str
@@ -39,6 +58,28 @@ class ActivityPayload(TypedDict):
     age_ms: NotRequired[int]
 
 
+class TaskIsolationPayload(TypedDict):
+    id: str
+    path: str
+    cwd: str
+    branch: str
+    base_oid: NotRequired[str]
+
+
+class TaskIsolationSummaryPayload(TypedDict):
+    id: str
+    path: str
+    branch: str
+    summary_status: Literal["complete", "no_baseline", "error"]
+    nested_repos: NotRequired[list[str]]  # their contents were not checked
+    head_oid: NotRequired[str]
+    actual_branch: NotRequired[str]
+    changed_files_from_base: NotRequired[list[str]]
+    truncated: NotRequired[bool]
+    uncommitted: NotRequired[bool]
+    error: NotRequired[str]
+
+
 class InvocationPayload(TypedDict):
     identity: NotRequired[ReplyIdentity]
     invocation_id: str
@@ -49,6 +90,7 @@ class InvocationPayload(TypedDict):
     model: NotRequired[str]
     effort: NotRequired[str]
     defaults_applied: NotRequired[list[str]]
+    isolation: NotRequired[TaskIsolationPayload | TaskIsolationSummaryPayload]
     activity: NotRequired[ActivityPayload]
     error: NotRequired[InvocationErrorPayload]
     output: NotRequired[str]
@@ -73,9 +115,26 @@ class UnreceivedPayload(TypedDict):
 class TaskStartPayload(InvocationPayload):
     conversation_id: str
     access: NotRequired[str | None]  # the declared tier; recorded only, never enforced
+    unreleased_isolation_count: NotRequired[int]
     unreceived: NotRequired[list[UnreceivedPayload]]
     next: NotRequired[str]  # what to call before ending the turn while ends wait (ADR-0064)
     wait: NotRequired[WaitPayload]  # the wait this dispatch ran when asked to
+    # seat="auto": which seat the decision model chose, with its confidence and candidates
+    recommendation: NotRequired[SeatRecommendationPayload]
+
+
+class NotStartedPayload(TypedDict):
+    """A start_agents item that started nothing: why, and the seat chosen for it when one was."""
+
+    status: Literal["not_started"]
+    error: InvocationErrorPayload
+    recommendation: NotRequired[SeatRecommendationPayload]
+
+
+class StartAgentsPayload(TypedDict):
+    results: list[TaskStartPayload | NotStartedPayload]  # in the order of the tasks given
+    unreceived: NotRequired[list[UnreceivedPayload]]
+    next: NotRequired[str]  # only when something started
 
 
 class InvocationListItem(TypedDict):
@@ -189,8 +248,48 @@ class ConversationSummary(TypedDict):
     updated: str
 
 
+class WorkspaceSummary(TypedDict):
+    workspace_id: NotRequired[str]  # absent for conversations saved without a boss
+    title: str
+    host: NotRequired[str]
+    mine: bool
+    updated: str
+    conversation_count: int
+    latest: ConversationSummary  # its most recent conversation of the asked kind
+
+
 class ListPayload(TypedDict):
+    scope: Literal["mine", "all"]
     invocations: list[InvocationListItem]
-    conversations: list[ConversationSummary]
+    invocations_omitted: NotRequired[int]
+    conversations: NotRequired[list[ConversationSummary]]  # scope="mine"
+    workspaces: NotRequired[list[WorkspaceSummary]]  # scope="all"
     total: int
     unavailable: list[Unavailable]
+
+
+class IsolatedDirItemPayload(TypedDict):
+    id: str
+    path: str
+    cwd: str
+    branch: str
+    base_oid: str
+    state: Literal["creating", "ready", "deleting", "needs_attention"]
+    in_use: bool
+    created_at: str
+    own_workspace: bool
+    attention: NotRequired[str]
+
+
+class IsolatedDirsPayload(TypedDict):
+    items: NotRequired[list[IsolatedDirItemPayload]]
+    id: NotRequired[str]
+    status: NotRequired[
+        Literal["deleted", "confirmation_required", "blocked", "needs_attention", "not_found"]
+    ]
+    head_oid: NotRequired[str]
+    uncommitted: NotRequired[bool]
+    unique_commits: NotRequired[bool]
+    confirmation: NotRequired[str]
+    nested_repos: NotRequired[list[str]]  # their contents were not checked
+    reason: NotRequired[str]

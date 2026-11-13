@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import cast
 
@@ -11,6 +12,7 @@ from agentnave.adapters import codex
 from agentnave.adapters.antigravity import write_restricted_profile
 from agentnave.core import InvocationManager
 from agentnave.group import Groups, GroupSeat
+from agentnave.isolated import IsolatedDirs
 from agentnave.mcp_server import round_payload
 from agentnave.models import (
     InvocationError,
@@ -105,7 +107,7 @@ def identity(prompt: str) -> dict[str, object]:
 
 def open_group(tmp_path: Path, *seat_ids: str) -> tuple[Groups, FakeManager, str]:
     manager = FakeManager()
-    groups = Groups(cast(InvocationManager, manager))
+    groups = Groups(cast(InvocationManager, manager), IsolatedDirs(tmp_path / "isolated-data"))
     group = groups.open(
         tmp_path, [GroupSeat(seat_id, "claude", {"model": "m"}, tmp_path) for seat_id in seat_ids]
     )
@@ -492,7 +494,9 @@ async def test_blockers_of_finished_seats_do_not_wake_wait(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("cwd", ["relative", "/does/not/exist"])
 def test_group_cwd_is_checked_even_when_every_seat_overrides_it(tmp_path: Path, cwd: str) -> None:
-    groups = Groups(cast(InvocationManager, FakeManager()))
+    groups = Groups(
+        cast(InvocationManager, FakeManager()), IsolatedDirs(tmp_path / "isolated-data")
+    )
     with pytest.raises(ValueError, match="group cwd"):
         groups.open(Path(cwd), [GroupSeat(s, "claude", {}, tmp_path) for s in "ab"])
 
@@ -521,7 +525,7 @@ async def test_meeting_names_keep_fixed_order_through_cancel_and_native_model(
     tmp_path: Path,
 ) -> None:
     manager = FakeManager()
-    groups = Groups(cast(InvocationManager, manager))
+    groups = Groups(cast(InvocationManager, manager), IsolatedDirs(tmp_path / "isolated-data"))
     group = groups.open(
         tmp_path,
         [
@@ -572,3 +576,269 @@ def test_spoken_model_families_match_app(model: str, family: str) -> None:
 
     members = [MemberName(str(i), "pi", model, ordinal=i) for i in (1, 2)]
     assert [m.identity(members)["spoken_name"] for m in members] == [f"{family} #1", f"{family} #2"]
+
+
+@pytest.mark.asyncio
+async def test_group_seat_claims_and_releases_isolated_directory_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import subprocess
+
+    from fake_cli import write_fake_cli
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "README.md").write_text("hi\n", encoding="utf-8")
+    subprocess.run([*git, "add", "README.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(data_dir))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gate = tmp_path / "gate"
+    seen = tmp_path / "seen.txt"
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, pathlib, sys, time\n"
+        "prompt = sys.stdin.read()\n"
+        f"pathlib.Path({str(seen)!r}).write_text(prompt, encoding='utf-8')\n"
+        f"gate = pathlib.Path({str(gate)!r})\n"
+        "while not gate.exists():\n"
+        "    time.sleep(0.02)\n"
+        "print(json.dumps({'type': 'result', 'result': prompt.split('Assigned task:\\n', 1)[1], "
+        "'session_id': 's1', 'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    isolated = IsolatedDirs(data_dir)
+    created = isolated.create(repo, workspace_id="ws-group")
+    created.lease.release()
+    inv_manager = InvocationManager()
+    groups = Groups(inv_manager, isolated)
+    try:
+        group = groups.open(
+            repo,
+            [GroupSeat("a", "claude", {}, created.execution_cwd, access="read")],
+        )
+        round_ = groups.run(group.id, ["a"], "parallel", "review isolated", {})
+        blocked = isolated.release(created.id, workspace_id="ws-group")
+        assert blocked.status == "blocked"
+        gate.write_text("go", encoding="utf-8")
+        await groups.wait(round_.id, 10)
+        # Seats only hold the lease: no isolation text is added for them.
+        assert "Isolated task environment" not in seen.read_text(encoding="utf-8")
+        deleted = isolated.release(created.id, workspace_id="ws-group")
+        assert deleted.status == "deleted"
+    finally:
+        await inv_manager.shutdown()
+        isolated.close()
+
+
+@pytest.mark.asyncio
+async def test_seat_leases_are_taken_off_the_event_loop_and_refused_when_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    import time
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    isolated = IsolatedDirs(tmp_path / "data")
+    created = isolated.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    groups = Groups(cast(InvocationManager, FakeManager()), isolated)
+    group = groups.open(
+        repo,
+        [
+            GroupSeat("a", "claude", {}, created.execution_cwd),
+            GroupSeat("b", "claude", {}, repo),
+        ],
+    )
+
+    original = IsolatedDirs.claim_for_cwd
+
+    def slow_claim(self: IsolatedDirs, *args: object, **kwargs: object):  # noqa: ANN202
+        time.sleep(0.5)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "claim_for_cwd", slow_claim)
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    tick_task = asyncio.create_task(ticker())
+    await groups.claim_seats(group.id, ["a", "b"])
+    stop.set()
+    await tick_task
+    assert ticks >= 10
+    # Only the seat inside an isolated directory holds a lease, and it blocks a release.
+    assert list(groups._seat_claims) == [(group.id, "a")]  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(created.id, workspace_id="ws-1").status == "blocked"
+    groups.drop_seat_claims(group.id, ["a", "b"])
+    assert isolated.release(created.id, workspace_id="ws-1").status == "deleted"
+    isolated.close()
+
+
+@pytest.mark.asyncio
+async def test_seat_in_an_isolated_directory_without_a_lease_is_not_launched(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    isolated = IsolatedDirs(tmp_path / "data")
+    created = isolated.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    isolated.store.path.write_bytes(b"this is not a sqlite database" * 100)
+    (created.worktree_path / ".git").unlink()  # no lease by path either
+    manager = FakeManager()
+    groups = Groups(cast(InvocationManager, manager), isolated)
+    group = groups.open(repo, [GroupSeat("a", "claude", {}, created.execution_cwd)])
+
+    await groups.claim_seats(group.id, ["a"])
+    round_ = groups.run(group.id, ["a"], "parallel", "hello", {})
+    run = round_.runs[0]
+    assert run.status == "failed"
+    assert run.launch_error is not None and "cannot be leased" in run.launch_error.message
+    assert manager.requests == {}
+    await settle(groups, round_.id)
+    isolated.close()
+
+
+def _two_isolated_dirs(tmp_path: Path) -> tuple[Path, IsolatedDirs, list[Path], list[str]]:
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    isolated = IsolatedDirs(tmp_path / "data")
+    cwds: list[Path] = []
+    ids: list[str] = []
+    for _ in range(2):
+        created = isolated.create(repo, workspace_id="ws-1")
+        created.lease.release()
+        cwds.append(created.execution_cwd)
+        ids.append(created.id)
+    return repo, isolated, cwds, ids
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_seat_claim_releases_every_lease_it_took(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    repo, isolated, cwds, ids = _two_isolated_dirs(tmp_path)
+    groups = Groups(cast(InvocationManager, FakeManager()), isolated)
+    group = groups.open(
+        repo,
+        [GroupSeat("a", "claude", {}, cwds[0]), GroupSeat("b", "claude", {}, cwds[1])],
+    )
+    entered = threading.Event()
+    gate = threading.Event()
+    original = IsolatedDirs.claim_for_cwd
+
+    def gated_claim(self: IsolatedDirs, cwd: Path | str, *args: object):  # noqa: ANN202
+        if Path(cwd) == cwds[1]:
+            entered.set()
+            gate.wait(10)
+        return original(self, cwd, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "claim_for_cwd", gated_claim)
+    waiting = asyncio.create_task(groups.claim_seats(group.id, ["a", "b"]))
+    while not entered.is_set():  # seat a holds its lease; seat b is still being leased
+        await asyncio.sleep(0.01)
+    waiting.cancel()
+    asyncio.get_running_loop().call_later(0.1, gate.set)
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert groups._seat_claims == {}  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "deleted"
+    assert isolated.release(ids[1], workspace_id="ws-1").status == "deleted"
+    isolated.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+async def test_seat_cwd_reaching_an_isolated_directory_by_symlink_is_leased_ahead(
+    tmp_path: Path,
+) -> None:
+    repo, isolated, cwds, ids = _two_isolated_dirs(tmp_path)
+    link = tmp_path / "shortcut"
+    link.symlink_to(cwds[0])
+    groups = Groups(cast(InvocationManager, FakeManager()), isolated)
+    group = groups.open(repo, [GroupSeat("a", "claude", {}, link)])
+
+    await groups.claim_seats(group.id, ["a"])
+    assert list(groups._seat_claims) == [(group.id, "a")]  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "blocked"
+    groups.drop_seat_claims(group.id, ["a"])
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "deleted"
+    isolated.close()
+
+
+@pytest.mark.asyncio
+async def test_any_error_while_launching_a_seat_gives_its_lease_back(tmp_path: Path) -> None:
+    repo, isolated, cwds, ids = _two_isolated_dirs(tmp_path)
+
+    class ExplodingManager(FakeManager):
+        def start(self, request: InvocationRequest, **_kwargs: object) -> str:
+            raise KeyError("unexpected")
+
+    groups = Groups(cast(InvocationManager, ExplodingManager()), isolated)
+    group = groups.open(repo, [GroupSeat("a", "claude", {}, cwds[0])])
+    await groups.claim_seats(group.id, ["a"])
+    with pytest.raises(KeyError):
+        groups.run(group.id, ["a"], "parallel", "hello", {})
+    assert groups._seat_claims == {}  # pyright: ignore[reportPrivateUsage]
+    assert isolated.release(ids[0], workspace_id="ws-1").status == "deleted"
+    isolated.close()

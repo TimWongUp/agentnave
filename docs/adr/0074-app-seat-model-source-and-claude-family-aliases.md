@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-10
 - 修订 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 的「归属」与「退化」：区分任务编排授权和已保存工位的模型选择，仅为 App 工位模型来源及 Claude 同系列映射明确例外；任务派发、并行写入和开会的授权规则不变。
+- 「决策模型」档下工位不可用「按同难度规则兜底」由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订：由 boss 从公布的目录里自选。
 
 ## 背景
 

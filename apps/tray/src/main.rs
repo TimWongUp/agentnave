@@ -9,8 +9,10 @@ mod config_paths;
 mod data;
 mod data_files;
 mod db;
+mod decision_seats;
 mod detect;
 mod hosts;
+mod isolated;
 mod manage;
 mod members;
 mod navigation;
@@ -18,6 +20,7 @@ mod orchestration_roles;
 mod power;
 mod preferences;
 mod process;
+mod projects;
 mod provider_health;
 mod providers;
 mod proxy;
@@ -48,6 +51,17 @@ use window::{UPDATE_PAGE, WindowAction, WindowState};
 
 const SCHEME: &str = "agentnave";
 const TRAY: &str = "main";
+
+/// Runs `f` on the main thread with the tray icon. The handle is an `Rc` inside, so cloning or
+/// dropping it on another thread corrupts its count; it must be fetched and released in here.
+fn with_tray(app: &AppHandle, f: impl FnOnce(&tauri::tray::TrayIcon) + Send + 'static) {
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        if let Some(tray) = app.tray_by_id(TRAY) {
+            f(&tray);
+        }
+    });
+}
 const POLL: Duration = Duration::from_secs(2);
 /// A preview build (`scripts/preview_tray.sh`) runs beside the installed app on the same data to
 /// show UI changes: it never changes production data, host configs or Skills, and never updates
@@ -169,9 +183,10 @@ fn poll(app: AppHandle, reader: Arc<Reader>, mut shown: Overview) {
         if overview == shown {
             continue;
         }
-        if let Some(tray) = app.tray_by_id(TRAY) {
-            let _ = tray.set_tooltip(Some(headline(&overview)));
-        }
+        let tooltip = headline(&overview);
+        with_tray(&app, move |tray| {
+            let _ = tray.set_tooltip(Some(tooltip));
+        });
         shown = overview;
     }
 }
@@ -292,7 +307,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
                 ..
             } = event
             {
-                badge::drip(tray, &preferences::general::current());
+                badge::drip(tray.app_handle(), &preferences::general::current());
                 if preferences::general::current()["tray_click"] == "office" {
                     window::hide_visible_panel(tray.app_handle());
                     window::open(tray.app_handle(), TRAY, "/chat/");
@@ -321,7 +336,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             thread::spawn(move || {
                 loop {
                     update::auto_check(&checker);
-                    thread::sleep(update::EVERY);
+                    thread::sleep(update::POLL);
                 }
             });
         }
@@ -443,6 +458,8 @@ mod tests {
     fn a_preview_build_refuses_every_write_but_moving_its_window() {
         for (method, path) in [
             ("POST", "/app/members"),
+            ("POST", "/app/decision-seats"),
+            ("POST", "/app/decision-key"),
             ("POST", "/app/provider-health/clear"),
             ("POST", "/app/settings"),
             ("POST", "/app/characters/gpt"),

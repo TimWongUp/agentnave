@@ -444,6 +444,25 @@ fn orchestration_role_switches_keep_every_group_and_refuse_bad_lists() {
 }
 
 #[test]
+fn the_decision_mode_and_its_options_are_checked_like_the_other_modes() {
+    let with =
+        |options: Value| json!({"version": 1, "preset": "decision", "decision_options": options});
+    assert!(validate_orchestration(&with(json!({}))).is_ok());
+    assert!(
+        validate_orchestration(&with(json!({"parallel_writes": true, "meetings": false}))).is_ok()
+    );
+    for bad in [
+        json!({"parallel_writes": "yes"}),
+        json!({"lead_only": true}),
+        json!([true]),
+    ] {
+        assert!(validate_orchestration(&with(bad.clone())).is_err(), "{bad}");
+    }
+    let apps = json!({"version": 1, "preset": "off", "apps": {"codex": "decision"}});
+    assert!(validate_orchestration(&apps).is_ok());
+}
+
+#[test]
 fn app_file_samples_agree_with_the_server() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/app-files");
     let mut checked = 0;
@@ -455,6 +474,7 @@ fn app_file_samples_agree_with_the_server() {
             "review" => validate_review,
             "orchestration" => validate_orchestration,
             "permissions" => validate_permissions,
+            "decision-seats" => crate::decision_seats::validate,
             "settings" => |document| crate::settings::validate(document).map(drop),
             other => panic!("no check for {other} samples"),
         };

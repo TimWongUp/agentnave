@@ -13,6 +13,8 @@ from typing import Literal
 
 from agentnave.adapters import get_adapter
 from agentnave.core import InvocationManager
+from agentnave.isolated.manager import ClaimedIsolation, IsolatedDirs
+from agentnave.isolated.repo import WORKTREES_DIR_NAME
 from agentnave.models import (
     InvocationError,
     InvocationRequest,
@@ -23,6 +25,7 @@ from agentnave.models import (
 )
 from agentnave.naming import MemberIdentity, MemberName
 from agentnave.native_prompts import NativePrompt
+from agentnave.threaded import to_thread_keeping
 
 type SeatRunStatus = Literal[
     "pending", "running", "succeeded", "failed", "blocked", "cancelled", "not_started"
@@ -177,6 +180,13 @@ class Round:
         return [run for run in self.runs if run.status in _LOST and not run.reported_lost]
 
 
+def _claim_if_isolated(isolated: IsolatedDirs, cwd: Path) -> ClaimedIsolation | None:
+    """Lease cwd when it resolves (symbolic links followed) into an isolated directory."""
+    if not any(part.lower() == WORKTREES_DIR_NAME for part in cwd.resolve().parts):
+        return None
+    return isolated.claim_for_cwd(cwd)
+
+
 class Groups:
     """Own collaboration groups only for this Python process lifetime.
 
@@ -185,8 +195,12 @@ class Groups:
     in memory.
     """
 
-    def __init__(self, manager: InvocationManager) -> None:
+    def __init__(self, manager: InvocationManager, isolated: IsolatedDirs) -> None:
         self.manager = manager
+        self.isolated = isolated
+        self.active_lease_paths: set[Path] = set()
+        # Leases taken ahead of a seat's synchronous launch (see claim_seats), or why not.
+        self._seat_claims: dict[tuple[str, str], ClaimedIsolation | Exception] = {}
         self._groups: dict[str, Group] = {}
         self._rounds: dict[str, Round] = {}
 
@@ -211,6 +225,53 @@ class Groups:
         group = Group(group_id or uuid.uuid4().hex, cwd, {seat.id: seat for seat in seats})
         group.states = {seat.id: SeatState() for seat in seats}
         return self.adopt(group)
+
+    async def claim_seats(self, group_id: str, seat_ids: list[str]) -> None:
+        """Lease the isolated directories seats are about to run in, on worker threads.
+
+        Launching a seat is synchronous so its invocation id is cancellable at once; leasing
+        takes repository locks and runs git, so it happens here first. A seat launched without
+        this falls back to leasing in the launch itself.
+        """
+        group = self._group(group_id)
+        taken: list[tuple[str, str]] = []
+        try:
+            for seat_id in seat_ids:
+                seat = group.seats.get(seat_id)
+                if seat is None:
+                    continue
+                key = (group_id, seat_id)
+                self._discard_claim(self._seat_claims.pop(key, None))
+                try:
+                    claimed = await to_thread_keeping(
+                        self._discard_claim, _claim_if_isolated, self.isolated, seat.cwd
+                    )
+                except (OSError, ValueError) as exc:
+                    self._seat_claims[key] = exc
+                    taken.append(key)
+                    continue
+                if claimed is not None:
+                    self._seat_claims[key] = claimed
+                    taken.append(key)
+        except BaseException:
+            # All or nothing: a cancelled or failed claim leaves no lease behind.
+            for key in taken:
+                self._discard_claim(self._seat_claims.pop(key, None))
+            raise
+
+    def drop_seat_claims(self, group_id: str, seat_ids: list[str]) -> None:
+        """Give back leases taken by claim_seats for a round that did not start."""
+        for seat_id in seat_ids:
+            self._discard_claim(self._seat_claims.pop((group_id, seat_id), None))
+
+    @staticmethod
+    def _discard_claim(claim: ClaimedIsolation | Exception | None) -> None:
+        if isinstance(claim, ClaimedIsolation):
+            try:
+                claim.lease.release()
+            except OSError:
+                # One lease that cannot be removed must not keep the others held.
+                logging.getLogger(__name__).exception("Could not release a seat lease")
 
     def adopt(self, group: Group) -> Group:
         """Register a group, including one restored from saved state."""
@@ -419,6 +480,7 @@ class Groups:
             else:
                 for run in round_.runs:
                     if run.status == "pending":
+                        await self.claim_seats(group.id, [run.seat_id])
                         self._launch(round_, run, len(group.entries))
                     await self._finish(round_, run)
                     approved = (
@@ -477,9 +539,27 @@ class Groups:
             round_.notify()
 
     def _launch(self, round_: Round, run: SeatRun, snapshot: int) -> None:
+        prepared = self._seat_claims.pop((round_.group.id, run.seat_id), None)
+        try:
+            notify = self._launch_seat(round_, run, snapshot, prepared)
+        except BaseException:
+            self._discard_claim(prepared)  # whatever went wrong, no lease stays behind
+            raise
+        if notify:
+            round_.notify()
+
+    def _launch_seat(
+        self,
+        round_: Round,
+        run: SeatRun,
+        snapshot: int,
+        prepared: ClaimedIsolation | Exception | None,
+    ) -> bool:
+        """Start one seat; True when waiters should be woken."""
         if round_.cancelling:
+            self._discard_claim(prepared)
             run.status = "not_started"
-            return
+            return False
         seat = round_.group.seats[run.seat_id]
         state = round_.group.states[run.seat_id]
         run.snapshot = snapshot
@@ -494,22 +574,47 @@ class Groups:
                 else "state_update_failed"
             )
             run.launch_error = InvocationError(code, round_.error)
-            return
+            self._discard_claim(prepared)
+            return False
+        claimed = None
         try:
-            run.invocation_id = self.manager.start(
-                InvocationRequest(
-                    seat.provider,
-                    self._prompt(round_.group, run, snapshot),
-                    seat.cwd,
-                    state.session_id,
-                    seat.provider_options,
-                    read_only=seat.access == "read",
-                )
+            # A seat whose cwd lies in an isolated directory only holds its lease while it runs;
+            # the service adds no isolation instructions for seats. Failing to lease refuses it.
+            if isinstance(prepared, Exception):
+                raise prepared
+            claimed = prepared if prepared is not None else self.isolated.claim_for_cwd(seat.cwd)
+            on_settled = None
+            if claimed is not None:
+                held = claimed
+                self.active_lease_paths.add(held.lease.path)
+
+                def release_seat(_inv_id: str) -> None:
+                    self.active_lease_paths.discard(held.lease.path)
+                    held.lease.release()
+
+                on_settled = release_seat
+            req = InvocationRequest(
+                seat.provider,
+                self._prompt(round_.group, run, snapshot),
+                seat.cwd,
+                state.session_id,
+                seat.provider_options,
+                read_only=seat.access == "read",
             )
-        except (OSError, ValueError, RuntimeError) as exc:
+            run.invocation_id = (
+                self.manager.start(req, on_settled=on_settled)
+                if on_settled is not None
+                else self.manager.start(req)
+            )
+        except BaseException as exc:
+            if claimed is not None:
+                self.active_lease_paths.discard(claimed.lease.path)
+                claimed.lease.release()
+            if not isinstance(exc, (OSError, ValueError, RuntimeError)):
+                raise
             run.status = "failed"
             run.launch_error = InvocationError("launch_error", str(exc))
-        round_.notify()
+        return True
 
     def _prompt(self, group: Group, run: SeatRun, snapshot: int) -> str:
         state = group.states[run.seat_id]

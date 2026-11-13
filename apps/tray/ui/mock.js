@@ -142,7 +142,7 @@
 
 
   const mockOrchestration = {
-    document: { version: 1, preset: "split", apps: { codex: "off" }, meeting: { count: 4, seats: [{ provider: "codex", model: "gpt-6.1-sol", effort: "high" }] } },
+    document: { version: 1, preset: "split", apps: { codex: "off" }, meeting: { count: 4, seats: [{ provider: "codex" }] } },
     error: null,
     bosses: [
       { keys: ["claude", "grok"], labels: ["Claude Code", "Grok"], mark: "claude" },
@@ -153,11 +153,16 @@
       meetings_parts: { head: "## AgentNave 编排偏好\n\n- （示例）只开会的规则", tail: "\n- （示例）开完会再收尾。" },
       meeting_parts: {
         default_count: 3, separator: "、",
-        seat: "{name}（provider=`{provider}`，model=`{model}`）", seat_effort: "{name}（provider=`{provider}`，model=`{model}`，effort=`{effort}`）",
+        seat_provider: "{name}（provider=`{provider}`）",
         all: "\n- 开会默认 {count} 席：{seats}。", some: "\n- 开会默认 {count} 席：{seats}，其余由 boss 选。", none: "\n- 开会默认 {count} 席，成员由 boss 选。",
       },
       split_parts: { base: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。" },
       parallel_base: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则",
+      decision: "## AgentNave 编排偏好\n\n- （示例）决策模型的规则",
+      decision_parts: {
+        base: "## AgentNave 编排偏好\n\n- （示例）决策模型的规则", parallel_writes_asked: "\n- 并行写入须用户本人指明。", parallel_writes_own: "\n- 并行写入由 boss 判断。",
+        meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。",
+      },
       meetings: "## AgentNave 编排偏好\n\n- （示例）只开会的规则", split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel: "## AgentNave 编排偏好\n\n- （示例）并行分工的规则" },
     roles: [
       ["explorer", "通用探索", "General exploration", "read", true],
@@ -633,7 +638,7 @@ All checks passed!
         const mid = midOf(conv, sp);
         if (!show && sp.prompt)
           out.push(office(
-            { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null },
+            { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null, ...(q.has("isolated") && sp === conv.specs[0] && g.group === w.groups[0].group ? { isolation_branch: ISOLATED[0].branch } : {}) },
             { visibility: "private", thread, desk, message_id: mid },
           ));
         if (!show && sp.prompt && sp.forwards)
@@ -653,7 +658,9 @@ All checks passed!
         const base = { time: stamp(w, e.at), conversation: conv.id, speaker: speakerOf(e), to: [] };
         if (e.status === "running")
           typing.push(office(
-            { ...base, id: `ty:${conv.id}:${e.key}`, time: nowIso(), kind: "typing", text: e.lines.join("\n"), status: "running", detail: null, _s: sp.start },
+            { ...base, id: `ty:${conv.id}:${e.key}`, time: nowIso(), kind: "typing", ...(g.host === "codex"
+              ? { text: "", doing: "tool:Read", doing_since: nowIso(), tools: ["Grep", "Bash", "Edit", "web_search", "command_execution"] }
+              : { text: e.lines.join("\n") }), status: "running", detail: null, _s: sp.start },
             { visibility: "private", thread, desk, message_id: show ? null : mid },
           ));
         else if (e.status === "succeeded")
@@ -744,6 +751,30 @@ All checks passed!
       });
   }
 
+  // ?isolated previews isolated directories: in use, left over and unfinished; the first one
+  // was created by the first private task, whose card shows its branch.
+  const ISOLATED = [
+    { id: "wt-3f9a1c2b4d5e", path: "/work/app/.agentnave-worktrees/wt-3f9a1c2b4d5e", branch: "agentnave/fix-login", status: "using", created: new Date(Date.now() - 40 * 60000).toISOString() },
+    { id: "wt-7b2e9d1a0c44", path: "/work/app/.agentnave-worktrees/wt-7b2e9d1a0c44", branch: "agentnave/docs-refresh", status: "idle", created: new Date(Date.now() - 3 * 3600000).toISOString() },
+    { id: "wt-0c8d4e6f1a22", path: "/work/app/.agentnave-worktrees/wt-0c8d4e6f1a22", branch: "agentnave/old-experiment", status: "unfinished", created: new Date(Date.now() - 26 * 3600000).toISOString() },
+  ];
+  const isolatedOf = (g, w) => {
+    if (!q.has("isolated") || g.group !== w.groups[0].group) return [];
+    const first = g.convs.find((c) => c.mode === "task")?.specs[0];
+    return ISOLATED.map((d, i) => ({ ...d, task: i === 0 && first ? { desk: first.desk, text: (first.prompt || "").split("\n")[0].slice(0, 80) } : null }));
+  };
+
+  // Where each workspace began: two projects share the name "app" to show how they are told apart.
+  const PLACES = [
+    { project_key: "/work/app", project_label: "app", project_path: "/work/app" },
+    { project_key: "/work/app", project_label: "app", project_path: "/work/app" },
+    { project_key: "other", project_label: null, project_path: null },
+    { project_key: "/Users/me/old/app", project_label: "app", project_path: "~/old/app" },
+    { project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+    { project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+  ];
+  const placeOf = (g, w) => PLACES[w.groups.indexOf(g) % PLACES.length];
+
   function chats() {
     const w = world();
     const rows = w.groups
@@ -758,6 +789,8 @@ All checks passed!
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
           title: conv.title, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
+          isolated_count: isolatedOf(g, w).length,
+          ...placeOf(g, w), boss_key: `${g.host}|${label(g)}`,
         };
       })
       .sort((a, b) => (URGENCY[a.status] ?? 2) - (URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
@@ -782,6 +815,8 @@ All checks passed!
       ...limited(desksOf(g, w)),
       rooms: roomsOf(g, w),
       messages: messagesOf(g, w),
+      isolated: isolatedOf(g, w),
+      isolated_count: isolatedOf(g, w).length,
     };
   }
 
@@ -866,10 +901,12 @@ All checks passed!
     Object.assign(warning, { status: "needs_attention", entry: "agentnave", command: "/missing/agentnave-mcp", command_state: "missing", attention: { code: "command_missing", message: "条目的命令不存在或不可执行" } });
     warning.layers[0].has_entry = true;
   }
+  // &fault shows the connection-lost note on the first host (the one already connected).
+  if (q.has("fault")) hostRows[0].fault = { count: 1, at_ms: Date.now() - 60e3 };
   const confirmedReloads = new Map();
   let mockToolsSynced = q.get("activation") !== "refresh";
   if (!mockToolsSynced) setTimeout(() => { mockToolsSynced = true; }, 12000);
-  const hostView = () => ({ service: { installed: serviceReady, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
+  const hostView = () => ({ absent: [{ mark: "zcode", label: "ZCode" }, { mark: "grok", label: "Grok CLI" }, { mark: "deepseek", label: "DeepSeek Harness" }, { mark: "devin", label: "Devin" }], service: { installed: serviceReady, launcher: serviceReady ? "/Users/me/.agentnave/service/bin/agentnave-mcp" : null, skills: serviceReady ? "/Users/me/.agentnave/service/lib/python3.12/site-packages/agentnave/skills" : null, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
     const token = `${host.id}:${host.root.path}`;
     if (reloadScene) {
       const r = RELOADS[host.id];
@@ -939,9 +976,11 @@ All checks passed!
       prompt: "",
     },
   };
+  const mockDecision = { document: null, error: null, key_set: false, key_error: null };
   async function p3Fetch(path) {
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
+    if (path === "/app/decision-seats") return structuredClone(mockDecision);
     if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true, antigravity_interactive: true } };
     if (path === "/app/preferences") return preferencesView();
     if (path === "/app/characters" || path === "/avatars/avatar-settings") return {};
@@ -968,6 +1007,8 @@ All checks passed!
     if (path === "/app/members") { mockMembersData.document = structuredClone(body); return { saved: true }; }
     if (path === "/app/review") { mockMembersData.review = structuredClone(body); return { saved: true }; }
     if (path === "/app/permissions") { mockMembersData.permissions = structuredClone(body); return { saved: true }; }
+    if (path === "/app/decision-seats") { mockDecision.document = structuredClone(body); return { saved: true }; }
+    if (path === "/app/decision-key") { mockDecision.key_set = Boolean(body.key); return { key_set: mockDecision.key_set }; }
     if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
     if (path.split("?")[0] === "/app/update/check") return p3Fetch("/app/status");
     if (path === "/app/update/apply?service=1") {
@@ -1037,6 +1078,10 @@ All checks passed!
       const r = RELOADS[host.id];
       if (r) r.copies = r.copies.filter((copy) => copy.kind !== body.kind);
       return { ok: true, message: body.kind === "daemon" && host.id === "claude" ? "已停止 Claude 后台服务" : `预览：已重启 ${host.label} 的${body.kind === "gateway" ? "网关" : "后台服务"}`, host: structuredClone(host) };
+    }
+    if (path.endsWith("/dismiss-fault")) {
+      host.fault = null;
+      return { ok: true, message: "预览：已清除连接中断提示" };
     }
     if (path.endsWith("/confirm-reload")) {
       if (body.token !== `${host.id}:${host.root.path}` || host.status !== "connected") throw new Error("接入配置已变化，请刷新后再确认");

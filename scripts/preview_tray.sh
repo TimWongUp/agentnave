@@ -1,5 +1,6 @@
 #!/bin/sh
-# Build the current checkout's tray as "AgentNave 预览" and open it beside the installed app.
+# Build the current checkout's tray as "AgentNave 预览" (a linked worktree: "AgentNave 预览 <目录名>")
+# and open it beside the installed app.
 # The preview reads the same data but never changes it, host configs or Skills, and never
 # updates or installs (PREVIEW); only its own display settings are kept.
 set -eu
@@ -8,8 +9,14 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TRAY="$ROOT/apps/tray"
-ID=${AGENTNAVE_PREVIEW_ID:-io.github.timwongup.agentnave.preview}
-NAME=${AGENTNAVE_PREVIEW_NAME:-AgentNave 预览}
+# One preview per worktree: a linked worktree gets its own app, named after its directory, so
+# parallel sessions never replace each other's preview. The main checkout keeps the plain name.
+SLOT=
+if [ "$(git -C "$ROOT" rev-parse --git-dir)" != "$(git -C "$ROOT" rev-parse --git-common-dir)" ]; then
+  SLOT=$(basename "$ROOT")
+fi
+ID=${AGENTNAVE_PREVIEW_ID:-io.github.timwongup.agentnave.preview${SLOT:+.$(printf %s "$SLOT" | tr -c 'A-Za-z0-9-' '-')}}
+NAME=${AGENTNAVE_PREVIEW_NAME:-AgentNave 预览${SLOT:+ $SLOT}}
 APP="$HOME/Applications/$NAME.app"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$TRAY/Cargo.toml" | head -n 1)
 

@@ -76,7 +76,7 @@ tasks, group rounds, optional review and viewing. History lives in `~/.agentnave
 
 高级编排的工位选择保存在同一数据根的 `orchestration.json`（默认
 `~/.agentnave/orchestration.json`）；CLI 可用模型与员工确认保存在 `members.json`，评审工位
-保存在 `review.json`。App 的「设置 → 高级 → 编排」负责保存编排配置，并按已接入的 boss
+保存在 `review.json`。App 的「设置 → 编排」负责保存编排配置，并按已接入的 boss
 更新其全局规则中的 AgentNave 块。修改后用 `list_members.orchestration` 核对当前宿主的
 有效档位和工位；直接改 JSON 不会替 App 更新宿主规则。
 
@@ -260,7 +260,7 @@ layers 返回用户、覆盖和已知项目层。移除删除所有用户级定�
 
 Pi 的 `agentDir/skills` 已从安装包代码核实；Hermes 新条目 `enabled: true` 且省略工具过滤表示启用全部工具，接管保留原 `include/exclude`，尤其 `include: []`。DeepSeek Harness 的家目录级补丁层对桌面 App 与 `dsh` 各 profile 都生效（桌面 App 自己的设置写在 `profiles/desktop/cordis.patch.yml`，App 不碰）；新条目带 `toolCallTimeoutMs: 360000`，否则 dsh 默认 60 秒就截断 `wait`；接入与刷新已有 AgentNave 条目时补足六分钟，已有更长值保留。补丁文件必须是 YAML 列表，移除最后一项时留下 `[]`，空文件会让 dsh 启动失败；dsh 会热重载这一层，改动后自动换新 MCP 连接。其他列表项（含 `!!js` 表达式）不解析、原样保留；以下情况交回手动处理：`agentnave` 行与其他条目合在同一个 `insert` 里；`id: agentnave` 的 `name` 不是 `@deepseek-ai/dsh-mcp-client`；文件不是顶格书写的块式列表，比如整表缩进、带 BOM、以 `---` 开头，或写成 `[{...}]` 流式列表。要恢复自动接入，去掉 BOM 和 `---`，把每个列表项改成从行首 `- ` 开始的块式写法即可。Hermes 流式 MCP 映射、锚点/别名、文档指令等结构仍拒绝自动写入并提示手动处理。真正的 MCP/Skill 发现须按第 5 节验证。
 
-所有 boss 的 `wait` 默认最多等待 270 秒，任务结束、阻塞、弹框或待审时提前返回；这不是子任务的总运行时限。`wait_seconds` 接受 `0`、`270`；Claude Code 终端交互会话还可用 `1500`（25 分钟），桌面 App 与 VS Code 使用 270，其他宿主传入会被拒绝。升级后停止传旧值 `240`、`600`；连续等待使用递增的 `seq`（1、2、3……），它只区分调用，不保证所有宿主都停止重复调用警告。
+`wait` 省略 `wait_seconds` 时最多等待 270 秒（Claude Code 终端交互会话为 1500 秒），任务结束、阻塞、弹框或待审时提前返回；这不是子任务的总运行时限。`wait_seconds` 接受 `0`、`270`；Claude Code 终端交互会话还接受 `1500`（25 分钟，即省略时的窗口），桌面 App 与 VS Code 省略仍是 270，其他宿主传入 `1500` 会被拒绝。升级后停止传旧值 `240`、`600`；连续等待使用递增的 `seq`（1、2、3……），它只区分调用，不保证所有宿主都停止重复调用警告。
 
 App 在接入与刷新已有用户级 AgentNave 条目时，将工具超时补到下列下限；已有更长值保留，Claude Code 和 Antigravity 的 `-1` 无上限也保留。只改 `agentnave` 服务，项目配置和其他服务不动。手动接入时设置相同字段，并在升级后重连宿主：
 

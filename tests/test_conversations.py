@@ -16,7 +16,7 @@ import pytest
 from mcp import Client
 
 import agentnave.conversations_store as conversations_module
-from agentnave import mcp_runtime, mcp_server, views
+from agentnave import mcp_history, mcp_runtime, mcp_server, views
 from agentnave.adapters.base import PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.conversations import Conversations
@@ -514,12 +514,48 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_list_shows_this_chat_and_groups_every_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_history, "_FINISHED_SHOWN", 1)
+    async with Client(mcp) as client:
+        ids: dict[str, list[str]] = {"a": [], "b": []}
+        for boss, title in (("a", "Alpha"), ("b", "Beta"), ("a", None)):
+            args = {"provider": "claude", "cwd": str(tmp_path), "manager_session_id": boss}
+            started = await _call(
+                client,
+                "start_agent",
+                {**args, "prompt": "hi", **({"title": title} if title else {})},
+            )
+            await _wait_task(client, started["invocation_id"])
+            ids[boss].append(cast(str, started["invocation_id"]))
+        mine = await _call(client, "list", {"manager_session_id": "a"})
+        assert mine["scope"] == "mine" and mine["total"] == 2
+        titles = [c["title"] for c in cast(list[dict[str, Any]], mine["conversations"])]
+        assert "Alpha" in titles and "Beta" not in titles
+        # Only the latest finished run of this boss is shown; the other is counted.
+        shown = [i["invocation_id"] for i in cast(list[dict[str, Any]], mine["invocations"])]
+        assert shown == ids["a"][-1:] and mine["invocations_omitted"] == 1
+        every = await _call(client, "list", {"scope": "all", "manager_session_id": "a"})
+        workspaces = cast(list[dict[str, Any]], every["workspaces"])
+        assert every["total"] == len(workspaces) == 2
+        assert [(w["title"], w["mine"]) for w in workspaces] == [("Alpha", True), ("Beta", False)]
+        assert workspaces[0]["conversation_count"] == 2
+        paged = await _call(client, "list", {"scope": "all", "offset": 1})
+        assert [w["title"] for w in cast(list[dict[str, Any]], paged["workspaces"])] == ["Beta"]
+        assert paged["invocations"] == []  # no boss identity, no runs
+        assert workspaces[1]["latest"]["title"] == "Beta"
+        other = await _call(client, "list", {"workspace_id": workspaces[1]["workspace_id"]})
+        assert [c["title"] for c in cast(list[dict[str, Any]], other["conversations"])] == ["Beta"]
+
+
+@pytest.mark.asyncio
 async def test_dispatch_reply_lists_ends_no_wait_has_received(tmp_path: Path) -> None:
     async with Client(mcp) as client:
         start = {"provider": "claude", "cwd": str(tmp_path), "manager_session_id": "u"}
         quick = await _call(client, "start_agent", {**start, "prompt": "hi"})
         while True:  # let it end without receiving it
-            listed = await _call(client, "list", {})
+            listed = await _call(client, "list", {"manager_session_id": "u"})
             items = cast(list[dict[str, object]], listed["invocations"])
             if any(
                 item["invocation_id"] == quick["invocation_id"] and item["status"] != "running"
@@ -753,6 +789,11 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         )
         seen = _seen(_seats(await _wait(client, started["round_id"]))[0])
         assert Path(str(seen["cwd"])).resolve() == seat_dirs["a"].resolve()
+        # The tray reads each seat's directory from the saved view.
+        viewed = {
+            seat["id"]: seat["cwd"] for seat in _views(data_root, group_id)["director"]["seats"]
+        }
+        assert viewed == {seat_id: str(path) for seat_id, path in seat_dirs.items()}
         argv = cast(list[str], seen["argv"])
         assert "--permission-mode" not in argv and "--agent" not in argv
         assert argv[argv.index("--model") + 1] == "chosen"
@@ -883,6 +924,7 @@ async def test_tasks_are_saved_and_grouped_without_starting_the_viewer(
                     "doing": None,
                     "doing_since": None,
                     "output_at": None,
+                    "tools": [],
                 }
             },
             "seats": {},
@@ -1707,9 +1749,10 @@ async def test_write_receipts_are_small_and_list_reads_old_history(
 
     monkeypatch.setattr(Conversations, "scan", count_scan)
     async with Client(mcp) as client:
-        listed = await _call(client, "list", {})
+        listed = await _call(client, "list", {"scope": "all"})
         assert scans == 1
-        assert cast(list[dict[str, object]], listed["conversations"])[0]["title"] == "History"
+        workspaces = cast(list[dict[str, Any]], listed["workspaces"])
+        assert workspaces[0]["latest"]["title"] == "History"
         assert "dashboard_url" not in listed and "dashboard_error" not in listed
         assert "director_url" not in listed and "public_url" not in listed
         names = {tool.name for tool in (await client.list_tools()).tools}
@@ -1726,6 +1769,7 @@ async def test_write_receipts_are_small_and_list_reads_old_history(
             "answer_prompt",
             "handover",
             "read_conversation",
+            "isolated_dirs",
         }
 
 
@@ -2218,6 +2262,9 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
             {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
         )  # fmt: skip
         assert passed.is_error and f"handed its workspace {workspace}" in str(passed.content)
+        # It still reads the workspace it passed on as its own.
+        listed = await _call(client, "list", {"manager_session_id": "chat-b"})
+        assert cast(int, listed["total"]) > 0
 
 
 @pytest.mark.asyncio
@@ -3082,9 +3129,8 @@ async def test_forward_ids_resolve_after_restart(tmp_path: Path, data_root: Path
 
 @pytest.mark.asyncio
 async def test_finished_tasks_release_collectors_and_expired_message_mappings(
-    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, data_root: Path
 ) -> None:
-    monkeypatch.setattr("agentnave.core._FINISHED_RETENTION_SECONDS", 0.05)
     studio = Conversations(InvocationManager(), data_root)
     try:
         invocation, conversation, *_ = studio.start_task(
@@ -3094,9 +3140,9 @@ async def test_finished_tasks_release_collectors_and_expired_message_mappings(
         assert studio.task_message_id(invocation)
         assert not studio.collectors
         studio.delivered_tasks.add(invocation)
-        async with asyncio.timeout(2):
-            while studio.manager.list_invocations():
-                await asyncio.sleep(0.01)
+        # Expire it now: a short retention raced the assertions above on slow runners.
+        assert studio.manager.forget_finished({invocation}) == 1
+        assert studio.task_message_id(invocation) is None
         assert not studio.task_invocations
         assert not studio.delivered_tasks
         assert _state(data_root, conversation)["tasks"][0]["output"]
@@ -3846,7 +3892,7 @@ def test_partial_meeting_names_instructions_and_missing_seat(data_root: Path) ->
     studio.scan()
     try:
         group = studio._group("m")  # pyright: ignore[reportPrivateUsage]
-        for groups in (studio, Groups(studio.manager)):
+        for groups in (studio, Groups(studio.manager, studio.isolated)):
             prompt = groups._prompt(group, SeatRun("a", None), len(group.entries))  # pyright: ignore[reportPrivateUsage]
             assert "legacy" in prompt and "未记录模型" in prompt
     finally:
@@ -3895,10 +3941,14 @@ async def test_live_model_save_failure_recovers_without_losing_heartbeat(
     def progress_since(_id: str) -> None:
         return None
 
+    def recent_tools(_id: str) -> list[str]:
+        return []
+
     monkeypatch.setattr(manager, "recent_output", recent_output)
     monkeypatch.setattr(manager, "reported_model", reported_model)
     monkeypatch.setattr(manager, "progress", progress)
     monkeypatch.setattr(manager, "progress_since", progress_since)
+    monkeypatch.setattr(manager, "recent_tools", recent_tools)
     monkeypatch.setattr(conversations_module, "_LIVE_SECONDS", 0.01)
     original = Database.save
     failed = False
@@ -4020,3 +4070,320 @@ async def test_meeting_save_keeps_streamed_model_before_result(
     finally:
         await studio.manager.shutdown()
         await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_task_startup_cleanup_steps_run_independently_and_keep_the_original_error(
+    data_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import agentnave.conversations as startup_module
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    def fail_save(_self: Database, *_args: object, **_kwargs: object) -> int:
+        raise OSError("disk full")
+
+    def fail_release(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("rollback exploded")
+
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        monkeypatch.setattr(Database, "save", fail_save)
+        monkeypatch.setattr(startup_module, "release_hold", fail_release)
+        with pytest.raises(OSError, match="disk full"):
+            studio.start_task(
+                InvocationRequest("claude", "work", repo),
+                None,
+                None,
+                manager_session_id="ws-1",
+                isolation_requested=True,
+            )
+        assert studio.active_lease_paths == set()
+        # The failed rollback is logged, and the error that stopped the start is the one raised.
+        assert "Task startup cleanup step failed" in caplog.text
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_wait_for_a_new_isolated_directory_rolls_it_back(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.isolated import IsolatedDirs
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    gate = threading.Event()
+    entered = threading.Event()
+    original = IsolatedDirs.create
+
+    def slow_create(self: IsolatedDirs, *args: object, **kwargs: object):  # noqa: ANN202
+        entered.set()
+        gate.wait(10)
+        return original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(IsolatedDirs, "create", slow_create)
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        waiting = asyncio.create_task(
+            studio.acquire_task_isolation(
+                InvocationRequest("claude", "work", repo),
+                "ws-1",
+                isolation_requested=True,
+                isolation_ref=None,
+            )
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        waiting.cancel()
+        asyncio.get_running_loop().call_later(0.1, gate.set)
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        # The directory the thread finished building was rolled back before cancelling.
+        assert studio.isolated.store.all_records() == []
+        container = repo / ".agentnave-worktrees"
+        assert not container.exists() or list(container.glob("wt-*")) == []
+        refs = subprocess.run(
+            ["git", "for-each-ref", "refs/heads/agentnave"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert refs == ""
+        assert studio.active_lease_paths == set()
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_isolated_task_rollbacks_resume_summary_errors_and_warnings(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.isolated import IsolatedDirs
+    from agentnave.isolated.leases import acquire_lease_locked, repo_lock
+    from agentnave.isolated.prompts import TaskIsolationInfo
+    from agentnave.isolated.release import ChangeSummary
+    from agentnave.models import InvocationListing
+    from agentnave.task_start import add_write_warning
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    sub = repo / "packages" / "app"
+    sub.mkdir(parents=True)
+    (sub / "app.py").write_text("v = 1\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        with pytest.raises(ValueError, match="forward"):
+            studio.start_task(
+                InvocationRequest("claude", "work", sub),
+                None,
+                None,
+                manager_session_id="ws-1",
+                forward=["not-a-message-id"],
+                isolation_requested=True,
+            )
+        assert not (repo / ".agentnave-worktrees").exists()
+        assert studio.isolated.store.all_records() == []
+
+        original_save = Database.save
+
+        def fail_save(_self: Database, *_args: object, **_kwargs: object) -> int:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Database, "save", fail_save)
+        with pytest.raises(OSError, match="disk full"):
+            studio.start_task(
+                InvocationRequest("claude", "work", sub),
+                None,
+                None,
+                manager_session_id="ws-1",
+                isolation_requested=True,
+            )
+        monkeypatch.setattr(Database, "save", original_save)
+        wt_container = repo / ".agentnave-worktrees"
+        assert not wt_container.exists() or list(wt_container.glob("wt-*")) == []
+        refs = subprocess.run(
+            ["git", "for-each-ref", "refs/heads/agentnave"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert refs == ""
+        assert studio.isolated.store.all_records() == []
+        assert studio.active_lease_paths == set()
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+    async with Client(mcp) as client:
+        started = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "first turn",
+                "cwd": str(sub),
+                "isolation": {},
+                "manager_session_id": "boss-1",
+            },
+        )
+        first_end = await _wait_task(client, started["invocation_id"])
+        session_id = str(first_end["session_id"])
+        wt_id = str(_data(started["isolation"])["id"])
+
+        def broken_summary(
+            _self: IsolatedDirs,
+            isolation_id: str,
+            *,
+            fallback_path: str = "",
+            fallback_branch: str | None = None,
+        ) -> ChangeSummary:
+            return ChangeSummary(
+                id=isolation_id,
+                path=fallback_path,
+                branch=fallback_branch or f"agentnave/{isolation_id}",
+                summary_status="error",
+                error="simulated git inspection failure",
+            )
+
+        monkeypatch.setattr(IsolatedDirs, "summarize_changes", broken_summary)
+        resumed = await _call(
+            client,
+            "start_agent",
+            {
+                "prompt": "resumed turn",
+                "session_id": session_id,
+                "manager_session_id": "boss-1",
+            },
+        )
+        assert _data(resumed["isolation"])["id"] == wt_id
+        resumed_end = await _wait_task(client, resumed["invocation_id"])
+        assert resumed_end["status"] == "succeeded"
+        assert resumed_end["session_id"]
+        seen = json.loads(str(resumed_end["output"]))
+        assert ["--resume", session_id] == [
+            seen["argv"][seen["argv"].index("--resume")],
+            seen["argv"][seen["argv"].index("--resume") + 1],
+        ]
+        assert "Isolated task environment:" in seen["prompt"]
+        summary_err = _data(resumed_end["isolation"])
+        assert summary_err["summary_status"] == "error"
+        assert "simulated git inspection failure" in str(summary_err["error"])
+
+        def broken_count(_self: IsolatedDirs, _ws: str) -> int:
+            raise OSError("worktrees.db locked")
+
+        monkeypatch.setattr(IsolatedDirs, "unreleased_count", broken_count)
+        non_iso = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "plain",
+                "cwd": str(repo),
+                "manager_session_id": "boss-1",
+            },
+        )
+        assert "unreleased_isolation_count" not in non_iso
+        assert any(
+            "unreleased isolated directory count" in w for w in cast(list[str], non_iso["warnings"])
+        )
+        await _wait_task(client, non_iso["invocation_id"])
+
+        def mutating_now(_self: IsolatedDirs) -> bool:
+            return False
+
+        assert (await _call(client, "list_invocations", {}))["restart_safe"] is True
+        monkeypatch.setattr(IsolatedDirs, "restart_safe", mutating_now)
+        assert (await _call(client, "list_invocations", {}))["restart_safe"] is False
+
+    wt_root = repo / ".agentnave-worktrees" / wt_id
+    common_dir = (repo / ".git").resolve()
+
+    class _ListingMgr:
+        def __init__(self, listings: list[InvocationListing]) -> None:
+            self._listings = listings
+
+        def list_invocations(self) -> list[InvocationListing]:
+            return self._listings
+
+    mgr = cast(
+        InvocationManager,
+        _ListingMgr([InvocationListing("run-root", "claude", repo, 10, False)]),
+    )
+    subdir_warnings: list[str] = []
+    add_write_warning(
+        subdir_warnings, mgr, InvocationRequest("claude", "p", sub), "run-sub", "write"
+    )
+    assert len(subdir_warnings) == 1 and "run-root" in subdir_warnings[0]
+
+    iso_warnings: list[str] = []
+    add_write_warning(
+        iso_warnings, mgr, InvocationRequest("claude", "p", wt_root), "run-iso", "write"
+    )
+    assert iso_warnings == []
+
+    with repo_lock(common_dir):
+        ext_lease = acquire_lease_locked(common_dir, wt_id)
+    try:
+        cross_warnings: list[str] = []
+        info = TaskIsolationInfo(
+            id=wt_id,
+            path=str(wt_root),
+            cwd=str(wt_root),
+            branch=f"agentnave/{wt_id}",
+            repo_common_dir=common_dir,
+        )
+        add_write_warning(
+            cross_warnings,
+            cast(InvocationManager, _ListingMgr([])),
+            InvocationRequest("claude", "p", wt_root),
+            "run-iso",
+            "write",
+            isolation=info,
+            own_lease_paths=set(),
+        )
+        assert any("another process" in w for w in cross_warnings)
+    finally:
+        ext_lease.release()

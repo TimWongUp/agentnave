@@ -173,6 +173,7 @@ async function run(id, kind, request) {
   }
   S.busy.delete(id);
   if (result) say(result.message, !result.ok);
+  else renderAll();
   await reload();
   return result;
 }
@@ -205,6 +206,7 @@ async function refreshAll() {
     S.data = {
       service: next.service,
       hosts: next.hosts,
+      absent: next.absent,
       backups: next.backups,
     };
     const added = next.hosts
@@ -376,7 +378,16 @@ function renderSummary() {
   if (reloads) {
     const b = h("button.sum-chip", { type: "button" }, L(`${reloads} 待生效 ↓`, `${reloads} pending reload ↓`));
     b.addEventListener("click", () => {
-      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload"));
+      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload:not([data-fault])"));
+      card?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    kids.push(b);
+  }
+  const faults = hosts.filter((x) => x.fault).length;
+  if (faults) {
+    const b = h("button.sum-chip", { type: "button" }, L(`${faults} 连接中断 ↓`, `${faults} connection lost ↓`));
+    b.addEventListener("click", () => {
+      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector("[data-fault]"));
       card?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
     kids.push(b);
@@ -401,7 +412,7 @@ function renderSummary() {
   );
   refresh.classList.toggle("pending", S.refreshing);
   $("refresh-result").textContent = S.refreshing ? "" : S.refreshResult;
-  $("hosts-badge").hidden = !attention && !reloads;
+  $("hosts-badge").hidden = !attention && !reloads && !faults;
   // The general reload note only matters while some host still needs a reload.
   $("reload-notice").hidden = !reloads;
 }
@@ -618,6 +629,7 @@ function buildCard(host) {
   const badges = [
     host.reload?.state === "required" && h("span.badge.badge-warning", {}, L("需要重新加载", "Reload required")),
     host.reload?.state === "unverified" && h("span.badge", {}, L("待确认生效", "Pending verification")),
+    host.fault && h("span.badge.badge-warning", {}, L("连接已中断", "Connection lost")),
     !host.tested && host.status === "available" &&
       h("span.badge.badge-muted", { title: L("还没有经过真实接入验证：写入逻辑按官方文档实现，遇到问题请反馈。", "Not verified with a live connection yet: implemented per official docs; please report any issues.") }, L("未实测", "Untested")),
     isNew && h("span.badge.badge-accent", {}, L("新检测到", "New")),
@@ -662,6 +674,7 @@ function buildCard(host) {
   else if (host.attention) main.push(h("div.hc-note.error", { role: "alert" }, host.attention.message));
   else if (last && open)
     main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));
+  if (host.fault) main.push(faultNote(host));
   // Configuration changes remain visible until the host stops or a new connection is observed.
   if (["required", "unverified"].includes(host.reload?.state)) {
     main.push(reloadNote(host));
@@ -738,6 +751,21 @@ function copyRow(host, copy) {
     h("div.hc-copy-act", {}, control));
 }
 
+// The service died while the host was still connected; only the user's confirmation clears it.
+function faultNote(host) {
+  const id = host.id;
+  return h("div.hc-reload.hc-note.info", { "data-fault": "" },
+    h("div.hc-reload-head", {},
+      h("div", {},
+        h("strong", {}, L(`与 ${host.label} 的连接已中断`, `Connection to ${host.label} lost`)),
+        h("p", {}, L(`AgentNave 服务在 ${host.label} 仍打开时退出了。请检查 ${host.label}，重新连接 AgentNave MCP 或重启它。`, `The AgentNave service exited while ${host.label} was still open. Check ${host.label}, then reconnect AgentNave MCP or restart it.`))),
+      button(L("知道了", "Dismiss"), "", "dismiss-fault", () =>
+        run(id, "dismiss-fault", () => post("/app/hosts/dismiss-fault", { id })),
+        Boolean(S.busy.get(id)) || S.updating),
+    ),
+  );
+}
+
 function reloadNote(host) {
   const id = host.id;
   const busy = S.busy.get(id);
@@ -789,7 +817,7 @@ function renderCards() {
         "div.cards-empty",
         {},
         h("strong", {}, L("没有检测到可以当 boss 的应用", "No boss apps detected")),
-        L("支持 Codex、Claude Code、CodeBuddy Code、WorkBuddy 桌面、Grok CLI、Antigravity、Pi、DeepSeek Harness、Hermes。安装其中任意一个后点“刷新检测”。", "Supports Codex, Claude Code, CodeBuddy Code, WorkBuddy Desktop, Grok CLI, Antigravity, Pi, DeepSeek Harness, and Hermes. Install any of them and click “Refresh detection”."),
+        L("安装下面任意一个后点“刷新检测”。", "Install any of the apps below and click “Refresh detection”."),
       ),
     );
     return;
@@ -797,6 +825,34 @@ function renderCards() {
   // Connected bosses first; the rest keep their order below them.
   const chosen = (host) => (host.layers || []).some((l) => l.has_entry && l.scope !== "project");
   box.replaceChildren(...[...S.data.hosts].sort((a, b) => chosen(b) - chosen(a)).map(buildCard));
+}
+
+// Below the cards: supported bosses not installed here, and a prompt any other MCP agent can follow.
+function renderOthers() {
+  const absent = S.data.absent || [];
+  const { launcher, skills } = S.data.service;
+  // A service too old to carry the Skills leaves that step out.
+  const skillStep = skills ? L(
+    `然后把 ${skills} 里的 agentnave-manager 文件夹（有 agentnave-handover 的话也带上）整个复制到你的用户级 Skill 目录；你不支持 Skill 的话，改为每次用 AgentNave 前先读 ${skills}/agentnave-manager/SKILL.md。`,
+    ` Then copy the agentnave-manager folder (and agentnave-handover, if present) from ${skills} into your user-level Skill directory; if you do not support Skills, read ${skills}/agentnave-manager/SKILL.md before each use of AgentNave instead.`,
+  ) : "";
+  const prompt = L(
+    `请把 AgentNave 接入你自己：在你的用户级（全局）MCP 配置里加一个名为 agentnave 的本机 STDIO 服务，command 为 ${launcher}，不带参数和环境变量。${skillStep}写入前备份原文件，其他内容原样保留；完成后告诉我改了哪些文件，以及要不要重开会话才能生效。`,
+    `Connect AgentNave to yourself: add a local STDIO server named agentnave to your user-level (global) MCP configuration, with command ${launcher} and no arguments or environment variables.${skillStep} Back up each file before writing and leave everything else as it is; then tell me which files you changed and whether I need to restart the session for it to take effect.`,
+  );
+  const copy = copyButton(prompt, L("复制接入提示词", "Copy setup prompt"));
+  copy.setAttribute("aria-label", L("复制接入提示词", "Copy setup prompt")); // not the whole prompt
+  copy.disabled = !launcher;
+  $("host-others").replaceChildren(
+    absent.length && h("div.others-row", {},
+      h("span.others-name", {}, L(`未安装（${absent.length}）`, `Not installed (${absent.length})`)),
+      h("span.others-list", {}, ...absent.map((x) => h("span.others-item", {}, h("span.others-icon", {}, AN.hostTile(x.mark, x.label)), x.label)))),
+    h("div.others-row", {},
+      h("span.others-name", {}, L("其他支持 MCP 的 Agent", "Other MCP agents")),
+      h("span.others-acts", {},
+        !launcher && h("span.fine", {}, S.install.busy ? L("正在安装本机服务…", "Installing local service…") : L("需先安装本机服务", "Install local service first")),
+        copy)),
+  );
 }
 
 function renderAll() {
@@ -807,6 +863,7 @@ function renderAll() {
   renderSummary();
   renderBackups();
   renderCards();
+  renderOthers();
   if (S.focus) {
     const { id, act } = S.focus;
     S.focus = null;

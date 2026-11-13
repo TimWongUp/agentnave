@@ -5,7 +5,7 @@
 | 编号 | 标题（链接） | 状态 | 被谁修订/取代 |
 | --- | --- | --- | --- |
 | 0001 | [执行运行时边界](0001-execution-runtime-boundary.md) | 已被 ADR-0002 取代 | [ADR-0002](0002-lightweight-cli-subagent-adapter.md) |
-| 0002 | [AgentNave 收敛为轻量 CLI 子代理适配器](0002-lightweight-cli-subagent-adapter.md) | 部分取代 | [ADR-0003](0003-agent-only-stdio-mcp-server.md)、[ADR-0008](0008-tray-app-reads-studio-snapshots.md)、[ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0027](0027-deepseek-official-route-stored-credentials.md)、[ADR-0049](0049-service-initiated-termination.md) |
+| 0002 | [AgentNave 收敛为轻量 CLI 子代理适配器](0002-lightweight-cli-subagent-adapter.md) | 部分取代 | [ADR-0003](0003-agent-only-stdio-mcp-server.md)、[ADR-0008](0008-tray-app-reads-studio-snapshots.md)、[ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0027](0027-deepseek-official-route-stored-credentials.md)、[ADR-0049](0049-service-initiated-termination.md)、[ADR-0085](0085-service-managed-isolated-dirs.md) |
 | 0003 | [只提供面向 Agent 的 STDIO MCP 接口](0003-agent-only-stdio-mcp-server.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md) |
 | 0004 | [Windows 使用 Job Object 监督 Provider 进程树](0004-windows-job-object-supervision.md) | 已接受 | — |
 | 0005 | [由主控 Agent 导演的公共发言区与独立工作台](0005-director-controlled-discussion-rooms.md) | 已被 ADR-0006 取代 | [ADR-0006](0006-core-rounds-and-studio-split.md)、[ADR-0008](0008-tray-app-reads-studio-snapshots.md) |
@@ -15,7 +15,7 @@
 | 0009 | [核心与工作室合为一个发行包，保留两个入口](0009-single-package-two-entry-points.md) | 已被 ADR-0016 取代 | [ADR-0016](0016-single-core-and-mcp-entrypoint.md) |
 | 0010 | [入口经中继启动，升级后在空闲时自动换用新服务](0010-launcher-relay-swaps-upgraded-server.md) | 部分取代 | [ADR-0014](0014-tray-members-and-one-click-update.md)、[ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0047](0047-versioned-service-install.md) |
 | 0011 | [被派出的 CLI 只能使用零工具 AgentNave 服务](0011-disable-nested-orchestration.md) | 已被 ADR-0031 取代 | [ADR-0031](0031-prompt-only-orchestration.md) |
-| 0012 | [托盘在原生会话锁下清理记录](0012-tray-conversation-cleanup.md) | 部分取代 | [ADR-0013](0013-members-defaults-and-host-identity.md)、[ADR-0014](0014-tray-members-and-one-click-update.md)、[ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0046](0046-service-history-retention.md) |
+| 0012 | [托盘在原生会话锁下清理记录](0012-tray-conversation-cleanup.md) | 部分取代 | [ADR-0013](0013-members-defaults-and-host-identity.md)、[ADR-0014](0014-tray-members-and-one-click-update.md)、[ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0026](0026-sqlite-conversation-store.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0046](0046-service-history-retention.md)、[ADR-0088](0088-relay-records-service-exit-fault.md) |
 | 0013 | [App 组员默认值、模式强制与宿主归属](0013-members-defaults-and-host-identity.md) | 部分取代 | [ADR-0016](0016-single-core-and-mcp-entrypoint.md)、[ADR-0017](0017-manager-chat-session-identity.md)、[ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md)、[ADR-0020](0020-prefill-main-model-defaults.md)、[ADR-0021](0021-keep-default-models-when-unrestricted.md)、[ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0028](0028-follow-cli-default-model.md)、[ADR-0032](0032-cli-permission-tiers.md)、[ADR-0038](0038-role-applies-app-seat.md) |
 | 0014 | [托盘维护组员配置、探测 CLI 模型，并一键全部更新](0014-tray-members-and-one-click-update.md) | 部分取代 | [ADR-0029](0029-settings-without-free-text.md)、[ADR-0034](0034-models-and-efforts-from-each-cli.md)、[ADR-0047](0047-versioned-service-install.md)、[ADR-0050](0050-v1-compatibility-baseline.md)；2026-11-12 修订（Codex 优先读配置指向的 `model_catalog_json`，缓存兜底） |
 | 0015 | [App 定点编辑宿主配置，保留外部 Skill 所有权](0015-app-host-integration.md) | 部分取代 | [ADR-0029](0029-settings-without-free-text.md)、[ADR-0036](0036-app-owns-service-skills.md)、[ADR-0040](0040-boss-app-from-session-records.md)、[ADR-0066](0066-unified-wait-window-and-call-sequence.md)、[ADR-0067](0067-wait-270s-window-and-host-background-limits.md) |
@@ -37,14 +37,14 @@
 | 0031 | [单向编排使用派发指令约束](0031-prompt-only-orchestration.md) | 已接受 | [ADR-0043](0043-service-prompt-instructions.md) |
 | 0032 | [App 按 CLI 设权限档位](0032-cli-permission-tiers.md) | 部分取代 | [ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0059](0059-claude-tier-fallback.md)、[ADR-0076](0076-full-permission-default.md) |
 | 0033 | [boss 工作区交接](0033-boss-workspace-handover.md) | 部分取代 | [ADR-0048](0048-sqlite-schema-evolution.md) |
-| 0034 | [模型与档位以 CLI 自己给出的为准](0034-models-and-efforts-from-each-cli.md) | 部分修订 | [ADR-0075](0075-model-lists-only-what-the-cli-lists.md)；2026-11-12 修订（Codex 档位随 `model_catalog_json` 目录） |
+| 0034 | [模型与档位以 CLI 自己给出的为准](0034-models-and-efforts-from-each-cli.md) | 部分修订 | [ADR-0075](0075-model-lists-only-what-the-cli-lists.md)；2026-11-12 修订（Codex 档位随 `model_catalog_json` 目录；Pi 经登录 shell 探测） |
 | 0035 | [员工卡片一行设好一个 CLI，需要时再分开两个场景](0035-member-cards-one-row-per-cli.md) | 部分取代 | [ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
 | 0036 | [本服务的 Skill 只由 App 管理](0036-app-owns-service-skills.md) | 已接受 | — |
-| 0037 | [App 写入编排规则，Explorer 与 Worker 分简单、困难两档](0037-app-writes-orchestration-rules.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0051](0051-parallel-preset-without-recheck.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0083](0083-meetings-only-preset.md) |
-| 0038 | [私聊的 role 指明工位时，服务套用 App 里的工位设置](0038-role-applies-app-seat.md) | 部分取代 | [ADR-0043](0043-service-prompt-instructions.md)、[ADR-0050](0050-v1-compatibility-baseline.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0053](0053-disabled-cli-runs-for-no-seat.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) |
+| 0037 | [App 写入编排规则，Explorer 与 Worker 分简单、困难两档](0037-app-writes-orchestration-rules.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0051](0051-parallel-preset-without-recheck.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
+| 0038 | [私聊的 role 指明工位时，服务套用 App 里的工位设置](0038-role-applies-app-seat.md) | 部分取代 | [ADR-0043](0043-service-prompt-instructions.md)、[ADR-0050](0050-v1-compatibility-baseline.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0053](0053-disabled-cli-runs-for-no-seat.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0039 | [单席失败提醒一次，并联轮内可补跑](0039-retry-lost-seat-within-round.md) | 已接受 | — |
 | 0040 | [工作区按会话记录显示 boss 的入口，接入按配置文件划分](0040-boss-app-from-session-records.md) | 部分修订 | [ADR-0071](0071-cross-platform-host-readers-and-receipts.md) |
-| 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | [ADR-0083](0083-meetings-only-preset.md) |
+| 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | [ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0042 | [组员模型带档位，服务每次传模型与档位](0042-pass-cli-default-effort.md) | 已接受 | — |
 | 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分取代 | [ADR-0062](0062-service-owned-member-names.md) |
 | 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 已接受 | — |
@@ -55,7 +55,7 @@
 | 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | — |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
 | 0051 | [并行档不再逐次复核，评审时机交给用户](0051-parallel-preset-without-recheck.md) | 已接受 | [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) |
-| 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 部分取代 | [ADR-0065](0065-predefined-specialist-roles.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md) |
+| 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 部分取代 | [ADR-0065](0065-predefined-specialist-roles.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 部分取代 | [ADR-0054](0054-members-need-confirmation.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) |
 | 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
@@ -71,19 +71,24 @@
 | 0065 | [预置专项角色、独立开关与同难度兜底](0065-predefined-specialist-roles.md) | 已接受 | 扩展 ADR-0037、ADR-0038、ADR-0052；[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md) |
 | 0066 | [统一十分钟等待窗口，用序号区分连续等待](0066-unified-wait-window-and-call-sequence.md) | 部分取代 | 修订 ADR-0007、ADR-0015；[ADR-0067](0067-wait-270s-window-and-host-background-limits.md) |
 | 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 部分修订 | 修订 ADR-0007、ADR-0015、ADR-0066；[ADR-0077](0077-claude-long-wait.md) |
-| 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 部分修订 | 修订 ADR-0037、ADR-0051、ADR-0065；[ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)、[ADR-0083](0083-meetings-only-preset.md) |
+| 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 部分修订 | 修订 ADR-0037、ADR-0051、ADR-0065；[ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)、[ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
 | 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md) |
 | 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 已接受 | 扩展并修订 ADR-0068 |
-| 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射 |
+| 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
 | 0076 | [权限档位缺省为完全放开](0076-full-permission-default.md) | 已接受 | 修订 ADR-0032 |
-| 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 部分修订 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限；[ADR-0082](0082-claude-long-wait-terminal-only.md) |
+| 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 部分修订 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限；[ADR-0082](0082-claude-long-wait-terminal-only.md)、[ADR-0084](0084-claude-terminal-default-long-wait.md) |
 | 0078 | [启动确认屏由服务自动处理](0078-startup-confirmations.md) | 已接受 | 修订 ADR-0056、ADR-0057、ADR-0072 |
 | 0079 | [Antigravity 交互活动从屏幕状态行补充](0079-agy-screen-activity.md) | 已接受 | 修订 ADR-0072 的活动来源 |
 | 0080 | [macOS 视频小人经回环 HTTP 加载](0080-tray-video-loopback-http.md) | 已接受 | — |
-| 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合 |
+| 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合；自身的配额冷却规则于 2026-11-13 改为用量查询加一小时兜底 |
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
-| 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 已接受 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063 |
+| 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 部分修订 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063；2026-11-12 修订（开会席位只存 CLI，模型与档位随员工「开会」设置） |
+| 0084 | [Claude Code 终端交互会话省略等待窗口时用 1500 秒](0084-claude-terminal-default-long-wait.md) | 已接受 | 修订 ADR-0077 的默认窗口 |
+| 0085 | [隔离目录由服务创建、登记和回收，是否隔离仍由 boss 决定](0085-service-managed-isolated-dirs.md) | 已接受 | 修订 ADR-0002 的 worktree 归属；扩展 ADR-0043 |
+| 0086 | [Windows Claude Code 使用交互模式](0086-windows-claude-interactive.md) | 已接受 | 修订 ADR-0056 的 Windows 运行方式 |
+| 0087 | [新增「决策模型」档：服务请决策模型在用户自定义的工位里选，派发仍由 boss 发起](0087-decision-model-recommends-seats.md) | 已接受 | 修订 ADR-0037、ADR-0038、ADR-0052、ADR-0068、ADR-0074 在「决策模型」档下的适用范围；扩展 ADR-0041 |
+| 0088 | [中继记录服务子进程的非预期退出，托盘据此提示宿主连接中断](0088-relay-records-service-exit-fault.md) | 已接受 | 扩展 ADR-0012 的托盘写入范围；沿用 ADR-0022 的观测读取约束 |

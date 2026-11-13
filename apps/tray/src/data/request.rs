@@ -28,7 +28,15 @@ impl Reader {
             return crate::voice::request(&self.root, path, method, action, body);
         }
         if path == "/app/hosts" || path.starts_with("/app/hosts/") {
-            return crate::hosts::request(&self.root, &self.hosts, method, path, action, body);
+            let response =
+                crate::hosts::request(&self.root, &self.hosts, method, path, action, body);
+            if method == "POST" && matches!(path, "/app/hosts/root" | "/app/hosts/refresh") {
+                let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(hosts) = hosts.as_ref() {
+                    self.update_boss_homes(hosts);
+                }
+            }
+            return response;
         }
         if path == "/app/skills" {
             return crate::hosts::skill_request(method);
@@ -73,6 +81,9 @@ impl Reader {
                 body,
             );
         }
+        if matches!(path, "/app/decision-seats" | "/app/decision-key") {
+            return crate::hosts::decision_request(&self.root, method, path, action, body);
+        }
         if matches!(
             path,
             "/app/conversations/rename"
@@ -96,15 +107,14 @@ impl Reader {
     }
     #[cfg(test)]
     pub(crate) fn use_hosts(&self, hosts: crate::hosts::Hosts) {
+        self.update_boss_homes(&hosts);
         *self.hosts.lock().unwrap() = Some(hosts);
     }
     pub fn configure_hosts(&self, context: crate::hosts::Context, shell: crate::hosts::Shell) {
         let mut guard = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = Some(crate::hosts::Hosts::from_probe(
-            context,
-            Some(shell),
-            self.tools.clone(),
-        ));
+        let hosts = crate::hosts::Hosts::from_probe(context, Some(shell), self.tools.clone());
+        self.update_boss_homes(&hosts);
+        *guard = Some(hosts);
     }
     pub fn prepare_members(&self) {
         // Probe before taking the lock: probing runs every CLI and would hold up the host page.
@@ -116,10 +126,24 @@ impl Reader {
         crate::members::mark_prepared();
     }
     pub(super) fn boss_homes(&self) -> boss_app::Homes {
-        let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
-        hosts
-            .as_ref()
-            .map_or_else(boss_app::Homes::here, crate::hosts::Hosts::boss_homes)
+        // A host refresh holds the lock for seconds; only then does the last snapshot stand in
+        // for the registry, which can change on its own (Claude Desktop installed or removed).
+        let free = match self.hosts.try_lock() {
+            Ok(hosts) => Some(hosts),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        };
+        if let Some(hosts) = free.as_ref().and_then(|hosts| hosts.as_ref()) {
+            self.update_boss_homes(hosts);
+        }
+        self.boss_homes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+    fn update_boss_homes(&self, hosts: &crate::hosts::Hosts) {
+        let homes = hosts.boss_homes();
+        *self.boss_homes.lock().unwrap_or_else(|p| p.into_inner()) = homes;
     }
     pub fn refresh_hosts(&self) {
         if let Some(hosts) = self
@@ -130,6 +154,7 @@ impl Reader {
         {
             hosts.refresh_probed();
             crate::hosts::sync_orchestration(&self.root, hosts, &[]);
+            self.update_boss_homes(hosts);
         }
     }
     pub(crate) fn tool_dirs(&self) -> Option<crate::tool_dirs::ToolDirs> {

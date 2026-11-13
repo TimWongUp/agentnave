@@ -19,7 +19,7 @@ Provider，不是安装现有 CLI 的用户操作说明。
    宿主启动后用 `list_members` 核对 `host`、`host_source` 和员工可用性。
 4. **补编排与展示。** 高级编排配置在数据根 `orchestration.json`，默认
    `~/.agentnave/orchestration.json`，自定义数据根由 `AGENTNAVE_DATA_DIR` 指定；
-   员工模型池在同目录 `members.json`，评审工位在 `review.json`。App 的「设置 → 高级 → 编排」
+   员工模型池在同目录 `members.json`，评审工位在 `review.json`。App 的「设置 → 编排」
    保存工位并更新宿主全局规则；`list_members.orchestration` 应显示当前 boss 的有效工位。
    若新增宿主标志或办公室素材，按 `apps/tray/ART-SOURCES.md` 记录来源、透明底与锚点，
    检查 `apps/tray/ui/common.js`、`chat-office.js` 和 `laptop.js` 的标志与模型参数。

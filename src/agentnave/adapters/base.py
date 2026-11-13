@@ -76,6 +76,22 @@ class PreparedCommand:
     session_id: str | None = None
     keep_stdin_open: bool = False
     unset_env: tuple[str, ...] = ()
+    # Create this private directory only when the invocation starts; its name is exposed to the
+    # helper through this environment variable and removed after the process tree stops.
+    temp_dir_env: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UsageQuery:
+    """A CLI's own command that reports its quota windows, run by the service (ADR-0081)."""
+
+    argv: tuple[str, ...]
+    # Reads the command's output into the time the quota that ran out resets, if it can.
+    parse: Callable[[bytes, datetime], datetime | None]
+    # Written to the command's stdin; with none, stdin is closed at once.
+    stdin: bytes | None = None
+    # With a command that keeps running, whether the output so far holds the answer.
+    complete: Callable[[bytes], bool] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +123,8 @@ class ProviderAdapter(Protocol):
 
     def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None: ...
 
+    def usage_query(self, model: str | None) -> UsageQuery | None: ...
+
     def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
 
     def event_model(self, event: dict[str, object]) -> str | None: ...
@@ -133,6 +151,10 @@ class AdapterHooks:
         raise NotImplementedError
 
     def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None:
+        return None
+
+    def usage_query(self, model: str | None) -> UsageQuery | None:
+        """The CLI's own usage command for the quota this model ran out of, if it has one."""
         return None
 
     def parse_prepared(

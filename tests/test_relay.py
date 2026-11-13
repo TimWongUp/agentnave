@@ -435,6 +435,51 @@ def test_zero_tool_relay_never_creates_connection_observations(tmp_path: Path) -
     assert not data.exists()
 
 
+@pytest.mark.parametrize("marker", ["", "session"], ids=["boss", "dispatched"])
+def test_server_dying_under_an_open_host_leaves_a_fault_record(tmp_path: Path, marker: str) -> None:
+    data = tmp_path / "data"
+    host = Host(
+        tmp_path,
+        env={
+            **os.environ,
+            "AGENTNAVE_HOST": "codex",
+            "AGENTNAVE_HOST_APP": "codex@work",
+            "AGENTNAVE_DATA_DIR": str(data),
+            "AGENTNAVE_DISPATCHED": _marker(marker),
+        },
+    )
+    old = data / "connection-faults" / "old.json"
+    old.parent.mkdir(parents=True)
+    old.write_text("{}")
+    os.utime(old, (time.time() - 90000, time.time() - 90000))
+    try:
+        host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        host.call("tools/list")
+        host.relay.child.process.kill()  # the host keeps its end of the pipe open
+        host.thread.join(10)
+        assert not host.thread.is_alive()
+    finally:
+        host.writer.close()
+    assert host.code != [0]
+    assert not list(data.glob("connections/*.json"))
+    if marker:
+        assert old.exists()  # a dispatched provider's relay records nothing
+        return
+    assert not old.exists()  # pruned when the new record is written
+    (path,) = data.glob("connection-faults/*.json")
+    assert path.name == host.relay.connection_path.name
+    record = json.loads(path.read_bytes())
+    assert record.pop("fault_ms") >= record["started_ms"]
+    assert record == {
+        "version": 1,
+        "host": "codex",
+        "host_app": "codex@work",
+        "started_ms": host.relay.started_ms,
+        "reason": "service_exited",
+    }
+
+
 def _saved(data: Path, conversation_id: object) -> dict[str, Any]:
     database = Database(data)
     try:

@@ -7,7 +7,7 @@
 AgentNave 把私聊任务和会议室都保存到数据目录（默认 `~/.agentnave/`，由服务启动环境 `AGENTNAVE_DATA_DIR` 指定），只保存任务元信息、原生会话绑定、条目和最终回复，不保存思考或原始工具事件。记录跨重启保留，进程和句柄不恢复；中断后由 boss 检查再决定，不自动重试。
 
 - `start_agent` 的 `title` 是新任务会话名，在第一次派发时给出，最多 48 列（中文算 2 列）；本聊天的第一个会话标题同时是工作区名，见 SKILL 主文件；之后改名由用户在 App 办公室里右键进行，boss 不改。`conversation_id` 把新线程归入已有任务会话；续用原生 `session_id` 会归入对应会话。同一原生会话不可同时执行两个任务。
-- `list` 按最近活动列出会话（`kind`、`limit` 过滤，默认最近 10 个、最多 200 个，`total` 是总数）；`writable=false` 表示其他服务占用：可读不可写，回到占用它的宿主继续或等会话空闲，不另开会话拆散历史。
+- `list` 默认只列本聊天工作区的会话，按最近活动排序（`kind`、`limit` 过滤，默认 10 个、最多 50 个，`offset` 翻页，`total` 是总数），另附本 boss 运行中的调用和最后启动的 10 条已结束调用；`scope=all` 改为按工作区列出本机工作区（`limit` 计工作区数），每个附名称、`mine`、会话数和最近一个会话，用来找其他聊天的历史；再传 `workspace_id` 按同样格式分批列出该工作区的会话；`writable=false` 表示其他服务占用：可读不可写，回到占用它的宿主继续或等会话空闲，不另开会话拆散历史。
 - `read_conversation` 默认返回会话信息和最终消息：任务、已公开回答、缺席、转发、主持人发言和待审回答（`pending_answer`）；`include_private=true` 另含各席私密指令（`instruction`）和不公开的回答（`private_answer`）；`since_round` 只取某轮之后；`limit` 只取最近若干条，略去的条数在 `omitted`。私聊会话返回每个任务的 prompt、最终回复和原生 `session_id`。结果只给 boss。
 - 回读历史优先默认结果和 `since_round`，长会话加 `limit`。
 - 会话不需要结束，boss 也不删除会话；清理由用户在 App 中进行。
@@ -16,10 +16,10 @@ AgentNave 把私聊任务和会议室都保存到数据目录（默认 `~/.agent
 
 `run_round(title, members, cwd, prompt, seats, manager_session_id, order?, review?, isolated?)` 一次新建会议室并启动第 1 轮，返回的 `group_id` 也是会话 ID；只准备会议室时省略 `prompt` 和 `seats`。之后用 `run_round(group_id, seats, order, prompt, manager_session_id)` 继续，重启后仍可用同一 ID，各席续接自己的原生会话；只能继续本聊天 `manager_session_id` 建的会议室，无归属的旧会议室只读，需新建。
 
-- **席位**：每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`；席位只共享已提交条目，私密指令只给对应席位。席位参数只能在新建会议时给。并联写代码的席位各用独立 worktree。
+- **席位**：每席沿用原生权限和工具、各自 `cwd` 与显式 `provider_options`；席位只共享已提交条目，私密指令只给对应席位。席位参数只能在新建会议时给。并联写代码的席位各用 boss 事先准备好的独立 worktree（席位不能用 `isolation` 新建）。
 - **轮次**：同组同时一轮；`run_round` 保持默认 `wait=false`，先返回 `round_id` 再单独 `wait`；不自动重试，不设每席截止时间。串联轮只占一个运行名额，但到最后一席启动前（包括等待审核时）一直占着。会议室可跨服务重启继续，运行中的进程和句柄不恢复。
 - **委员会**：两轮 `parallel`，先各自给根因与方案，再看过上一轮公开的答案后补充或修正；boss 汇报结论、共识、保留的异议及如何收敛。用户要求最终收束时再加一轮 `serial`，后发言者在前者基础上回应、收束。
-- **boss 主动开会**（全局规则的档位允许时）：人数和成员按规则块里的「开会默认」一行，指定了席位的照传 `provider` 与 `provider_options.model`（及 `effort`），其余由 boss 从会议默认组员里选；规则块没写时默认 3 席，从会议默认组员里选，不要求不同 CLI 或不同模型；两轮 `parallel` 后由 boss 综合，仍有实质分歧就在总结里列出分歧和各方理由交用户决定，不另加轮次，也不另派模型裁决。用户点名的人数、成员、轮数优先。
+- **boss 主动开会**（全局规则的档位允许时）：人数和成员按规则块里的「开会默认」一行，指定了席位的只传 `provider`，省略模型和档位，由服务按员工「开会」的设置补上，派发后核对 `defaults_applied`；其余由 boss 从会议默认组员里选；规则块没写时默认 3 席，从会议默认组员里选，不要求不同 CLI 或不同模型；两轮 `parallel` 后由 boss 综合，仍有实质分歧就在总结里列出分歧和各方理由交用户决定，不另加轮次，也不另派模型裁决。用户点名的人数、成员、轮数优先。
 - **主持人**：`run_round(group_id, prompt, manager_session_id)` 不带 `seats` 时，在轮次之间发一条公开发言，不启动组员，也不增加轮次，所有席位下一轮作为数据收到。私密信息放 `instructions`，不要写进公开任务或主持人发言。
 - **会议总结**：收齐本场轮次终态并处理完审核后，boss 综合各轮写总结，汇报结论、共识与保留的异议，把准备发给用户的总结正文原样写入同一会议：`run_round(group_id, prompt="会议总结\n\n" + 总结正文, manager_session_id=...)`，省略 `seats`。收到保存成功的 `message_id` 后，把同一份总结回复用户；写入失败时如实说明总结未保存到会议。
 

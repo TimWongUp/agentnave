@@ -168,10 +168,10 @@
     }
   }
 
-  const visible = () => !$("pane-members")?.hidden && !document.hidden;
+  const visible = () => !$("pane-general")?.hidden && !document.hidden;
   document.addEventListener("visibilitychange", () => visible() && refresh());
   addEventListener("focus", () => visible() && refresh());
   addEventListener("hashchange", () => visible() && refresh());
   window.AgentNaveAlertsSettings = { load: refresh };
-  if (!$("pane-members")?.hidden) void refresh();
+  if (!$("pane-general")?.hidden) void refresh();
 }

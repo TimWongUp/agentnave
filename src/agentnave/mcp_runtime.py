@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import time
 from collections.abc import AsyncGenerator
@@ -24,8 +26,10 @@ from agentnave.conversations import (
     ForwardError,
 )
 from agentnave.core import InvocationManager
+from agentnave.decision_seats import custom_seats
 from agentnave.group import Round
 from agentnave.host import detect_host, host_session_id
+from agentnave.isolated import ChangeSummary
 from agentnave.manager_identity import SESSION_ID_DESCRIPTIONS, session_id_hint
 from agentnave.mcp_payloads import (
     ActivityPayload,
@@ -33,6 +37,7 @@ from agentnave.mcp_payloads import (
     InvocationPayload,
     RoundPayload,
     SeatRunPayload,
+    TaskIsolationSummaryPayload,
     UnreceivedPayload,
 )
 from agentnave.mcp_projection import without_empty_fields
@@ -45,6 +50,7 @@ from agentnave.members import (
     ProviderName,
     SettingsFileError,
     data_root,
+    orchestration_decision,
     role_seat,
     visible_role_groups,
 )
@@ -56,7 +62,7 @@ from agentnave.models import (
 )
 from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import NativePrompt
-from agentnave.orchestration_roles import role_catalog, seat_role
+from agentnave.orchestration_roles import AUTO_SEAT, role_catalog, seat_role
 from agentnave.retention import Retention
 from agentnave.store import Review
 
@@ -118,9 +124,10 @@ def _read_excluded_providers() -> frozenset[str]:
 
 
 WAIT_SECONDS = 270
+LONG_WAIT_SECONDS = 1500
 LONG_WAIT_SENTENCE = (
-    "1500 waits up to 25 minutes and is available only in the Claude Code terminal "
-    "interactive session. "
+    "In the Claude Code terminal interactive session, omitting waits up to 1500s (25 minutes) "
+    "instead; pass 270 for the short window. "
 )
 
 
@@ -158,7 +165,7 @@ PROVIDER_SELECTION = (
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 DISPATCH_WAIT = (
-    f"true waits up to {WAIT_SECONDS}s like wait(ids=[this handle]) and returns it in wait; only for a single "
+    f"true waits up to {WAIT_SECONDS}s like wait(ids=[this handle], wait_seconds={WAIT_SECONDS}) and returns it in wait; only for a single "
     "dispatch whose result this turn needs, not parallel dispatches."
 )
 PROVIDER_OPTIONS: dict[ProviderName, str] = {
@@ -200,6 +207,10 @@ class Runtime:
 async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
     runtime = Runtime()
     try:
+        await asyncio.to_thread(runtime.conversations.isolated.recover)
+    except (OSError, ValueError):
+        logging.getLogger(__name__).warning("Isolated directory recovery failed", exc_info=True)
+    try:
         yield runtime
     finally:
         try:
@@ -214,8 +225,24 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
 
 # The relay's idle probe: callable by name, never listed to agents.
 _HIDDEN_TOOLS = frozenset({"list_invocations"})
-# Tools that save history under the boss chat; without its identity they would scatter it.
-_CHAT_TOOLS = frozenset({"start_agent", "run_round"})
+# start_agent seat='auto' while the user's own seats are effective.
+AUTO_SEAT_NOTE = (
+    "seat='auto' (with access and cwd): the decision model picks one of your own seats from "
+    "the prompt and the service starts it in this call. The prompt is sent to an external "
+    "decision model, only its beginning and end when long: leave out secrets."
+)
+# Published only while the user's own seat catalog is effective for this boss; called while
+# off, they answer with the reason instead.
+_CUSTOM_SEAT_TOOLS = frozenset({"recommend_seat", "start_agents"})
+# Definitions that exist only for the custom catalog; the off-state schemas must not show them.
+_CUSTOM_SEAT_DEFINITIONS = (
+    "CustomSeatStatus",
+    "CustomSeatDifficulty",
+    "SeatRecommendationPayload",
+    "SeatCandidatePayload",
+)
+# Tools that save history or mutate workspace resources under the boss chat.
+_CHAT_TOOLS = frozenset({"start_agent", "start_agents", "run_round", "isolated_dirs"})
 
 
 def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any]) -> None:
@@ -244,16 +271,30 @@ def _check_arguments(name: str, arguments: dict[str, Any], schema: dict[str, Any
     ):
         problems.append(f"{name} needs manager_session_id. " + session_id_hint(HOST))
     if problems:
-        unchanged = "Nothing was received." if name == "wait" else "Nothing was started."
+        unchanged = (
+            "Nothing was received."
+            if name == "wait"
+            else "Nothing was changed."
+            if name == "isolated_dirs"
+            else "Nothing was started."
+        )
         raise ToolError(" ".join(problems) + f" {unchanged} Correct and retry.")
 
 
-def _filter_role_schema(schema: Any, groups: frozenset[str], image_enabled: bool) -> None:
-    """Publish only visible ordinary seats wherever the wire contract references them."""
+def _filter_role_schema(
+    schema: Any,
+    groups: frozenset[str],
+    image_enabled: bool,
+    custom_ids: list[str] | None = None,
+) -> None:
+    """Publish only visible ordinary seats wherever the wire contract references them.
+
+    custom_ids is the user's own catalog while it is effective: its seats join the seat enum.
+    """
     if not isinstance(schema, dict):
         if isinstance(schema, list):
             for item in cast(list[Any], schema):
-                _filter_role_schema(item, groups, image_enabled)
+                _filter_role_schema(item, groups, image_enabled, custom_ids)
         return
     schema = cast(dict[str, Any], schema)
     values: Any = schema.get("enum")
@@ -265,6 +306,11 @@ def _filter_role_schema(schema: Any, groups: frozenset[str], image_enabled: bool
             or ((definition := seat_role(value)) is None or definition.group in groups)
             and (value != "image-generator" or image_enabled)
         ]
+        if custom_ids and any(
+            isinstance(value, str) and (seat_role(value) is not None or value == "image-generator")
+            for value in cast(list[Any], values)
+        ):
+            filtered.extend(custom_ids)
         if filtered:
             schema["enum"] = filtered
         else:
@@ -278,10 +324,34 @@ def _filter_role_schema(schema: Any, groups: frozenset[str], image_enabled: bool
                 properties.pop(role.group, None)
         if not image_enabled:
             properties.pop("image_generation", None)
+        if custom_ids is None:
+            properties.pop("custom_seats", None)
         # Clients may have cached this schema before switches changed.
         schema["additionalProperties"] = True
     for value in schema.values():
-        _filter_role_schema(value, groups, image_enabled)
+        _filter_role_schema(value, groups, image_enabled, custom_ids)
+
+
+def _describe_auto_seat(schema: dict[str, Any]) -> None:
+    """With the user's own seats, start_agent also takes seat='auto'; say what it sends out."""
+    seat = schema.get("properties", {}).get("seat")
+    if isinstance(seat, dict):
+        seat = cast(dict[str, Any], seat)
+        seat["description"] = f"{seat.get('description', '')} {AUTO_SEAT_NOTE}".strip()
+
+
+def _drop_custom_seat_output(schema: Any) -> None:
+    """Without the catalog, reply schemas show nothing of the recommendation."""
+    if isinstance(schema, list):
+        for item in cast(list[Any], schema):
+            _drop_custom_seat_output(item)
+    elif isinstance(schema, dict):
+        schema = cast(dict[str, Any], schema)
+        schema.get("properties", {}).pop("recommendation", None)
+        for name in _CUSTOM_SEAT_DEFINITIONS:
+            schema.get("$defs", {}).pop(name, None)
+        for value in schema.values():
+            _drop_custom_seat_output(value)
 
 
 def _restrict_wait_windows(schema: dict[str, Any]) -> None:
@@ -324,20 +394,36 @@ class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         image_enabled = role_seat("image-generator", HOST) is not None
         groups = visible_role_groups(HOST)
+        # The mode decides what is published, not whether the file can be read: with a broken file the
+        # tools stay and answer config_error, as list_members reports the file.
+        decision = orchestration_decision(HOST)
+        custom = custom_seats(HOST)
+        custom_ids = list(custom) if custom is not None else [] if decision else None
+        # "auto" lets start_agent choose; only the arguments name it, not the saved history.
+        input_ids = None if custom_ids is None else [*custom_ids, AUTO_SEAT]
         published: list[Any] = []
         for tool in await super().list_tools():
-            if tool.name in _HIDDEN_TOOLS:
+            if tool.name in _HIDDEN_TOOLS or (tool.name in _CUSTOM_SEAT_TOOLS and not decision):
                 continue
             schema = json.loads(json.dumps(tool.input_schema))
             schema["additionalProperties"] = False
             output = json.loads(json.dumps(tool.output_schema))
-            _filter_role_schema(schema, groups, image_enabled)
+            _filter_role_schema(schema, groups, image_enabled, input_ids)
+            if decision and tool.name == "start_agent":
+                _describe_auto_seat(schema)
             if tool.name == "wait" and not long_wait_enabled():
                 _restrict_wait_windows(schema)
-            if not groups and not image_enabled:
+            if (
+                not groups
+                and not image_enabled
+                and not custom_ids
+                and not (decision and custom is None)
+            ):
                 schema.get("properties", {}).pop("seat", None)
             if output:
-                _filter_role_schema(output, groups, image_enabled)
+                _filter_role_schema(output, groups, image_enabled, custom_ids)
+                if custom_ids is None:
+                    _drop_custom_seat_output(output)
             published.append(
                 tool.model_copy(update={"input_schema": schema, "output_schema": output})
             )
@@ -387,7 +473,7 @@ mcp = _Server(
         "or writing out-of-scope user configuration/credentials. "
         "Startup exception: the service confirms Claude and agy workspace trust when the displayed directory matches cwd, "
         "and Claude external CLAUDE.md imports including future imports; the CLIs persist these choices in user configuration. "
-        "manager_session_id: read this chat's native ID before start_agent/run_round/answer_prompt/handover release or claim; "
+        "manager_session_id: read this chat's native ID before start_agent/run_round/answer_prompt/isolated_dirs/handover release or claim; "
         "pass it every time; same chat, same ID; new chat, new ID. "
         + session_id_hint(HOST)
         + "Never use a CLI name, project path, MCP connection ID or subagent session_id. "
@@ -404,6 +490,7 @@ mcp = _Server(
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
         "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "
         "Injected as data, not instructions; saved task prompts stay original. "
+        "isolation creates a workspace-owned Git worktree per task; inspect or delete with isolated_dirs (release discards ignored files). "
         "Omitted options use App then native defaults, reported in defaults_applied. "
         "Concurrent tasks/seats obey the App cap; wait for capacity before retrying. "
         "native=true seats use the host's built-in subagent, not start_agent. " + PROVIDER_SELECTION
@@ -486,6 +573,31 @@ def finished_payload(invocation_id: str, result: InvocationResult) -> Invocation
     return payload
 
 
+def _isolation_summary_payload(summary: ChangeSummary) -> TaskIsolationSummaryPayload:
+    payload: TaskIsolationSummaryPayload = {
+        "id": summary.id,
+        "path": summary.path,
+        "branch": summary.branch,
+        "summary_status": summary.summary_status,
+    }
+    if summary.summary_status != "error":
+        if summary.summary_status == "complete":
+            payload["changed_files_from_base"] = list(summary.changed_files_from_base)
+        if summary.head_oid is not None:
+            payload["head_oid"] = summary.head_oid
+        if summary.actual_branch is not None:
+            payload["actual_branch"] = summary.actual_branch
+        if summary.truncated:
+            payload["truncated"] = True
+        if summary.uncommitted is not None:
+            payload["uncommitted"] = summary.uncommitted
+        if summary.nested_repos:
+            payload["nested_repos"] = list(summary.nested_repos)
+    elif summary.error is not None:
+        payload["error"] = summary.error
+    return payload
+
+
 def update_payload(
     manager: InvocationManager,
     conversations: Conversations,
@@ -502,6 +614,8 @@ def update_payload(
         message_id = conversations.task_message_id(invocation_id)
         if message_id is not None:
             response["message_id"] = message_id
+        if iso_summary := conversations.isolation_summaries.get(invocation_id):
+            response["isolation"] = _isolation_summary_payload(iso_summary)
         return response
     snapshot = manager.snapshot(invocation_id)
     response: InvocationPayload = {
@@ -772,6 +886,7 @@ __all__ = [
     "WAIT_AGAIN",
     "WAIT_NEXT",
     "WAIT_SECONDS",
+    "LONG_WAIT_SECONDS",
     "EXCLUDED_PROVIDERS",
     "PROVIDER_SELECTION",
     "ACCESS",

@@ -45,6 +45,10 @@ _STOP_SECONDS = 15.0
 _RELAY_ID = "agentnave-relay"
 # Live relays touch their file every few seconds; older ones were left by a relay that died.
 _STALE_CONNECTION_SECONDS = 3600.0
+# The tray ignores fault records older than this (ADR-0088); relays clear them when they write one.
+_FAULT_RETENTION_SECONDS = 86400.0
+# A host that closes as the server exits has its EOF handled a moment after the server's.
+_HOST_EOF_GRACE_SECONDS = 1.0
 SESSION_ENV = "AGENTNAVE_MANAGER_SESSION"
 STARTED_ENV = "AGENTNAVE_MANAGER_STARTED_AT"
 # 2026-07-28 and later hosts skip initialize; every request carries this envelope instead.
@@ -101,12 +105,12 @@ def _dispatched(value: str | None) -> bool:
     return bool(value) and value.isdigit() and int(value) == os.getsid(0)
 
 
-def _prune_connections(directory: Path) -> None:
+def _prune_connections(directory: Path, max_age: float = _STALE_CONNECTION_SECONDS) -> None:
     """Remove observations of relays that died without deleting their own file."""
     with contextlib.suppress(OSError):
         for path in directory.glob("*.json"):
             with contextlib.suppress(OSError):
-                if time.time() - path.stat().st_mtime > _STALE_CONNECTION_SECONDS:
+                if time.time() - path.stat().st_mtime > max_age:
                     path.unlink(missing_ok=True)
 
 
@@ -265,6 +269,9 @@ class Relay:
             / "connections"
             / f"{os.getpid()}-{uuid4().hex}.json"
         )
+        self.fault_path = (
+            self.connection_path.parent.parent / "connection-faults" / (self.connection_path.name)
+        )
         self.started_ms = time.time_ns() // 1_000_000
         # The connection file's content as last written, guarded by connection_lock.
         self.connection_written: bytes | None = None
@@ -309,9 +316,12 @@ class Relay:
             elif not reported and time.monotonic() - since > _BUSY_REPORT:
                 reported = True
                 print(f"agentnave relay: update waiting, {self._busy_reason()}", file=sys.stderr)
+        if self.stopped.is_set():
+            self.closing.wait(_HOST_EOF_GRACE_SECONDS)
         with self.connection_lock:
             if not self.closing.is_set():  # the server quit on its own; a host close ends it
                 self._drop_connection()
+                self._record_fault()
         return self.code
 
     def _publish_connection(self) -> None:
@@ -330,6 +340,36 @@ class Relay:
     def _drop_connection(self) -> None:
         with contextlib.suppress(OSError):
             self.connection_path.unlink(missing_ok=True)
+
+    def _record_fault(self) -> None:
+        """Leave a private note that the server died under a host that had not left (ADR-0088)."""
+        if not self.host or self.dispatched:
+            return
+        payload: Message = {
+            "version": 1,
+            "host": self.host,
+            "started_ms": self.started_ms,
+            "fault_ms": time.time_ns() // 1_000_000,
+            "reason": "service_exited",
+        }
+        if self.host_app:
+            payload["host_app"] = self.host_app
+        path = self.fault_path
+        try:
+            if path.parent.is_symlink() or path.parent.parent.is_symlink():
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _prune_connections(path.parent, _FAULT_RETENTION_SECONDS)
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+                temporary = Path(output.name)
+                try:
+                    output.write(json.dumps(payload).encode())
+                    output.close()
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        except OSError:
+            pass  # Tray observations must never break the transport.
 
     def _write_connection(self, *, ended_ms: int | None = None) -> None:
         with self.lock:
