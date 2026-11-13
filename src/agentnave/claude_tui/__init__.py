@@ -328,7 +328,9 @@ def run_attempt(
     terminal: Terminal | None = None
     turn.mode_blocked = False
     with tempfile.TemporaryDirectory(
-        prefix="agentnave-claude-", dir=os.environ.get("AGENTNAVE_CLAUDE_TMP")
+        prefix="agentnave-claude-",
+        dir=os.environ.get("AGENTNAVE_CLAUDE_TMP"),
+        ignore_cleanup_errors=True,
     ) as tmp:
         directory = Path(tmp)
         args = [*args, "--settings", str(write_settings(directory, args, check_mode))]

@@ -822,7 +822,9 @@ class InvocationManager:
         scratch = None
         try:
             if prepared.temp_dir_env:
-                scratch = tempfile.TemporaryDirectory(prefix="agentnave-invocation-")
+                scratch = tempfile.TemporaryDirectory(
+                    prefix="agentnave-invocation-", ignore_cleanup_errors=True
+                )
             supervised = await spawn_process(
                 prepared.argv,
                 prepared.cwd,

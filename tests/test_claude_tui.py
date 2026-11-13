@@ -835,3 +835,10 @@ def test_prompt_scan_closes_dead_hook_and_preserves_parallel_requests(
     tui.read_hooks(tmp_path, turn)
     assert json.loads(capsys.readouterr().out)["type"] == "agentnave_prompt_closed"
     assert turn.denials == [{"tool_name": "Bash", "tool_input": {}}] and not turn.pending_prompts
+
+
+def test_events_are_utf8_without_escapes(capsysbinary: pytest.CaptureFixture[bytes]) -> None:
+    from agentnave.claude_tui.turn import emit
+
+    emit({"type": "result", "result": "中文"})
+    assert capsysbinary.readouterr().out == '{"type": "result", "result": "中文"}\n'.encode()

@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -16,7 +17,9 @@ def object_dict(value: object) -> dict[str, object]:
 
 
 def emit(event: dict[str, object]) -> None:
-    print(json.dumps(event), flush=True)
+    # UTF-8 bytes whatever the console code page, without escaping, which would double CJK output.
+    sys.stdout.buffer.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+    sys.stdout.buffer.flush()
 
 
 def transcript_event(row: dict[str, object], session_id: str) -> dict[str, object] | None:
