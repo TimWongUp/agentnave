@@ -142,7 +142,7 @@
 
 
   const mockOrchestration = {
-    document: { version: 1, preset: "split", apps: { codex: "off" }, meeting: { count: 4, seats: [{ provider: "codex", model: "gpt-6.1-sol", effort: "high" }] } },
+    document: { version: 1, preset: "split", apps: { codex: "off" }, meeting: { count: 4, seats: [{ provider: "codex" }] } },
     error: null,
     bosses: [
       { keys: ["claude", "grok"], labels: ["Claude Code", "Grok"], mark: "claude" },
@@ -153,7 +153,7 @@
       meetings_parts: { head: "## AgentNave 编排偏好\n\n- （示例）只开会的规则", tail: "\n- （示例）开完会再收尾。" },
       meeting_parts: {
         default_count: 3, separator: "、",
-        seat: "{name}（provider=`{provider}`，model=`{model}`）", seat_effort: "{name}（provider=`{provider}`，model=`{model}`，effort=`{effort}`）",
+        seat_provider: "{name}（provider=`{provider}`）",
         all: "\n- 开会默认 {count} 席：{seats}。", some: "\n- 开会默认 {count} 席：{seats}，其余由 boss 选。", none: "\n- 开会默认 {count} 席，成员由 boss 选。",
       },
       split_parts: { base: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。" },
@@ -633,7 +633,7 @@ All checks passed!
         const mid = midOf(conv, sp);
         if (!show && sp.prompt)
           out.push(office(
-            { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null },
+            { id: `p:${conv.id}:${e.key}`, time: stamp(w, sp.start), conversation: conv.id, kind: "prompt", speaker: manager, to: [e.key], recipients: [recipientOf(conv, sp)], text: sp.prompt, status: "succeeded", detail: null, ...(q.has("isolated") && sp === conv.specs[0] && g.group === w.groups[0].group ? { isolation_branch: ISOLATED[0].branch } : {}) },
             { visibility: "private", thread, desk, message_id: mid },
           ));
         if (!show && sp.prompt && sp.forwards)
@@ -653,7 +653,9 @@ All checks passed!
         const base = { time: stamp(w, e.at), conversation: conv.id, speaker: speakerOf(e), to: [] };
         if (e.status === "running")
           typing.push(office(
-            { ...base, id: `ty:${conv.id}:${e.key}`, time: nowIso(), kind: "typing", text: e.lines.join("\n"), status: "running", detail: null, _s: sp.start },
+            { ...base, id: `ty:${conv.id}:${e.key}`, time: nowIso(), kind: "typing", ...(g.host === "codex"
+              ? { text: "", doing: "tool:Read", doing_since: nowIso(), tools: ["Grep", "Bash", "Edit", "web_search", "command_execution"] }
+              : { text: e.lines.join("\n") }), status: "running", detail: null, _s: sp.start },
             { visibility: "private", thread, desk, message_id: show ? null : mid },
           ));
         else if (e.status === "succeeded")
@@ -744,6 +746,30 @@ All checks passed!
       });
   }
 
+  // ?isolated previews isolated directories: in use, left over and unfinished; the first one
+  // was created by the first private task, whose card shows its branch.
+  const ISOLATED = [
+    { id: "wt-3f9a1c2b4d5e", path: "/work/app/.agentnave-worktrees/wt-3f9a1c2b4d5e", branch: "agentnave/fix-login", status: "using", created: new Date(Date.now() - 40 * 60000).toISOString() },
+    { id: "wt-7b2e9d1a0c44", path: "/work/app/.agentnave-worktrees/wt-7b2e9d1a0c44", branch: "agentnave/docs-refresh", status: "idle", created: new Date(Date.now() - 3 * 3600000).toISOString() },
+    { id: "wt-0c8d4e6f1a22", path: "/work/app/.agentnave-worktrees/wt-0c8d4e6f1a22", branch: "agentnave/old-experiment", status: "unfinished", created: new Date(Date.now() - 26 * 3600000).toISOString() },
+  ];
+  const isolatedOf = (g, w) => {
+    if (!q.has("isolated") || g.group !== w.groups[0].group) return [];
+    const first = g.convs.find((c) => c.mode === "task")?.specs[0];
+    return ISOLATED.map((d, i) => ({ ...d, task: i === 0 && first ? { desk: first.desk, text: (first.prompt || "").split("\n")[0].slice(0, 80) } : null }));
+  };
+
+  // Where each workspace began: two projects share the name "app" to show how they are told apart.
+  const PLACES = [
+    { project_key: "/work/app", project_label: "app", project_path: "/work/app" },
+    { project_key: "/work/app", project_label: "app", project_path: "/work/app" },
+    { project_key: "other", project_label: null, project_path: null },
+    { project_key: "/Users/me/old/app", project_label: "app", project_path: "~/old/app" },
+    { project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+    { project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+  ];
+  const placeOf = (g, w) => PLACES[w.groups.indexOf(g) % PLACES.length];
+
   function chats() {
     const w = world();
     const rows = w.groups
@@ -758,6 +784,8 @@ All checks passed!
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
           title: conv.title, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
+          isolated_count: isolatedOf(g, w).length,
+          ...placeOf(g, w), boss_key: `${g.host}|${label(g)}`,
         };
       })
       .sort((a, b) => (URGENCY[a.status] ?? 2) - (URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
@@ -782,6 +810,8 @@ All checks passed!
       ...limited(desksOf(g, w)),
       rooms: roomsOf(g, w),
       messages: messagesOf(g, w),
+      isolated: isolatedOf(g, w),
+      isolated_count: isolatedOf(g, w).length,
     };
   }
 

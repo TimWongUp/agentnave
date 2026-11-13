@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -16,10 +16,17 @@ from agentnave import mcp_runtime as runtime
 from agentnave import provider_health
 from agentnave.conversations import (
     Conversations,
+    TaskStart,
 )
 from agentnave.core import InvocationManager
 from agentnave.group import Round
+from agentnave.isolated import ISOLATED_APPLIED
 from agentnave.manager_identity import model_warnings
+from agentnave.mcp_isolated import (
+    IsolationInput,
+    attach_unreleased_count,
+    start_isolation_payload,
+)
 from agentnave.mcp_payloads import (
     CancelPayload,
     InvocationErrorPayload,
@@ -154,6 +161,12 @@ async def start_agent(
         Literal["read", "write"] | None,
         Field(description=ACCESS),
     ] = None,
+    isolation: Annotated[
+        IsolationInput | None,
+        Field(
+            description="New isolated Git worktree (optional ref); omit on session_id resume.",
+        ),
+    ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
     wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,
@@ -164,6 +177,10 @@ async def start_agent(
     No deadline; only native prompts accept running replies via answer_prompt. Cancel to stop. Reply settings are requested,
     not effective; unreceived flags undelivered ends/blockers/reviews for wait.
     """
+    if isolation is not None and session_id is not None:
+        raise ToolError(
+            "isolation cannot be combined with session_id; omit isolation when resuming a thread."
+        )
     manager = _manager(ctx)
     if session_id is not None and (
         _known_invocation(manager, session_id) or _known_round(ctx, session_id)
@@ -207,17 +224,31 @@ async def start_agent(
             read_only=access == "read",
         )
         validate_provider_options(request)
-        started = _conversations(ctx).start_task(
+        conversations = _conversations(ctx)
+        hold = await conversations.acquire_task_isolation(
             request,
-            title,
-            conversation_id,
-            manager_model=manager_model,
-            manager_session_id=manager_session_id,
-            role=role,
-            seat=seat,
-            forward=forward,
-            access=access,
+            manager_session_id,
+            isolation_requested=isolation is not None,
+            isolation_ref=isolation.ref if isolation is not None else None,
         )
+        try:
+            started = conversations.start_task(
+                request,
+                title,
+                conversation_id,
+                manager_model=manager_model,
+                manager_session_id=manager_session_id,
+                role=role,
+                seat=seat,
+                forward=forward,
+                access=access,
+                isolation_requested=isolation is not None,
+                isolation_ref=isolation.ref if isolation is not None else None,
+                hold=hold,
+            )
+        except BaseException:
+            await conversations.give_back_isolation(hold)
+            raise
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list.") from exc
     except ValueError as exc:
@@ -230,25 +261,65 @@ async def start_agent(
         raise error from exc
     except OSError as exc:
         raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
+    payload = await _task_start_payload(
+        ctx, manager, request, started, access, [*defaults_applied, *arguments.defaults]
+    )
+    return await waited_dispatch(payload, started.invocation_id, wait, manager_session_id, ctx)
+
+
+async def _task_start_payload(
+    ctx: Context[Runtime],
+    manager: InvocationManager,
+    request: InvocationRequest,
+    started: TaskStart,
+    access: Literal["read", "write"] | None,
+    defaults: list[str],
+) -> TaskStartPayload:
+    conversations = _conversations(ctx)
+    if started.isolation is not None and started.isolation.instructions_applied:
+        defaults = [*defaults, ISOLATED_APPLIED]
     payload: TaskStartPayload = {
-        **started_payload(started.invocation_id, request, [*defaults_applied, *arguments.defaults]),
+        **started_payload(started.invocation_id, request, defaults),
         "conversation_id": started.conversation_id,
         "access": started.access,
     }
-    conversations = _conversations(ctx)
+    if started.isolation is not None:
+        payload["isolation"] = start_isolation_payload(started.isolation)
     if identity := conversations.task_identity(started.invocation_id):
         payload["identity"] = identity
-    message = conversations.records[started.conversation_id].state.tasks[-1]
+    record_state = conversations.records[started.conversation_id].state
     warnings = model_warnings(
         conversations.host,
-        message,
-        conversations.records[started.conversation_id].state.manager_session,
+        record_state.tasks[-1],
+        record_state.manager_session,
         conversations.model_warned,
     )
-    add_write_warning(warnings, manager, request, started.invocation_id, access)
+    warnings.extend(started.warnings)
+    if started.isolation is not None:
+        warnings.extend(started.isolation.warnings)
+        if not started.isolation.instructions_applied:
+            warnings.append(
+                "Isolated directory instructions were not added: a path contains control characters."
+            )
+    exec_request = (
+        replace(request, cwd=Path(started.isolation.cwd))
+        if started.isolation is not None
+        else request
+    )
+    add_write_warning(
+        warnings,
+        manager,
+        exec_request,
+        started.invocation_id,
+        access,
+        isolation=started.isolation,
+        # A snapshot: worker threads add and drop leases while this reads.
+        own_lease_paths=tuple(conversations.active_lease_paths),
+    )
+    await attach_unreleased_count(payload, warnings, conversations, record_state.manager_session)
     if warnings:
         payload["warnings"] = warnings
-    return await waited_dispatch(payload, started.invocation_id, wait, manager_session_id, ctx)
+    return payload
 
 
 async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
@@ -265,7 +336,12 @@ async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
             payload["unreceived"] = unreceived
         payload["next"] = runtime.WAIT_NEXT
         return payload
-    waited = await receive(ids=[handle], manager_session_id=manager_session_id, ctx=ctx)
+    waited = await receive(
+        ids=[handle],
+        wait_seconds=runtime.WAIT_SECONDS,
+        manager_session_id=manager_session_id,
+        ctx=ctx,
+    )
     payload["wait"] = waited
     if unreceived := _unreceived(conversations, manager_session_id):
         payload["unreceived"] = unreceived
@@ -357,7 +433,7 @@ async def wait(
         Literal[0, 270, 1500] | None,
         Field(
             description=(
-                "Omit to wait up to 270s; 270 explicitly selects the same window. "
+                "Omit to wait up to 270s. "
                 + LONG_WAIT_SENTENCE
                 + "0 checks progress immediately and includes running tails; ready results are still received; no value stops work."
             ),
@@ -453,7 +529,11 @@ async def _receive(
             except KeyError as exc:
                 raise _unknown_handle(handle) from exc
             round_ids.append(handle)
-    window = runtime.WAIT_SECONDS if wait_seconds is None else wait_seconds
+    if wait_seconds is None:
+        # A long-wait session already decided this call runs in the background (ADR-0084).
+        window = runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
+    else:
+        window = wait_seconds
     deadline = time.monotonic() + window
     while True:
         ready_invocations, ready_rounds = await _ready_handles(
@@ -648,10 +728,12 @@ def _invocation_items(manager: InvocationManager) -> list[InvocationListItem]:
 
 async def list_invocations(*, ctx: Context[Runtime]) -> InvocationListPayload:
     """Unlisted: the relay asks this before swapping servers; agents use list."""
+    conversations = _conversations(ctx)
     return {
         "invocations": _invocation_items(_manager(ctx)),
         "restart_safe": (
-            _conversations(ctx).restart_safe()
+            conversations.restart_safe()
+            and conversations.isolated.restart_safe()
             and ctx.request_context.lifespan_context.retention.restart_safe()
         ),
     }

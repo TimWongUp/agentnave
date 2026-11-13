@@ -127,6 +127,9 @@ class TaskRecord(BaseModel):
     role: str | None = None
     seat: OrchestrationRole | None = None
     access: Literal["read", "write"] | None = None  # declared, never enforced
+    isolation_id: str | None = None
+    isolation_path: str | None = None
+    isolation_branch: str | None = None
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
     prompts: list[dict[str, object]] = Field(default_factory=list[dict[str, object]])

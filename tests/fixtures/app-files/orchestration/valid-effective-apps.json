@@ -17,7 +17,8 @@
     "count": 3,
     "seats": [
       {"provider": "codex", "model": "gpt-6.1-sol", "effort": "high"},
-      null
+      null,
+      {"provider": "claude"}
     ]
   },
   "image_generation": null

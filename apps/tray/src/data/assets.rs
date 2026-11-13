@@ -212,6 +212,10 @@ fn chat_asset(resource: &str) -> Response {
             include_bytes!("../../ui/chat-messages.js").to_vec(),
         ),
         "chat.js" => Response::ok("text/javascript; charset=utf-8", CHAT_JS.to_vec()),
+        "chat-groups.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-groups.js").to_vec(),
+        ),
         "chat-topics.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/chat-topics.js").to_vec(),

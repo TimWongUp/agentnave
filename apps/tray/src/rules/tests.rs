@@ -177,7 +177,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
                 .contains("开会默认")
         );
     }
-    let partial_seats = "\n- 开会默认 4 席：Codex CLI（provider=`codex`，model=`gpt-6.1-sol`，effort=`high`）、Antigravity CLI（provider=`antigravity`，model=`gemini-3.8-flash`），其余由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+    let partial_seats = "\n- 开会默认 4 席：Codex CLI（provider=`codex`）、Antigravity CLI（provider=`antigravity`），其余由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
     let doc_partial = json!({
         "preset": "meetings",
         "custom": "用户自写规则",
@@ -208,7 +208,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             .unwrap()
             .contains("开会默认")
     );
-    let all_seats = "\n- 开会默认 2 席：Codex CLI（provider=`codex`，model=`gpt-6.1-sol`，effort=`high`）、Codex CLI（provider=`codex`，model=`gpt-6.1-sol`）；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
+    let all_seats = "\n- 开会默认 2 席：Codex CLI（provider=`codex`）、Codex CLI（provider=`codex`）；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。";
     let doc_all = json!({
         "meeting": {
             "count": 2,
@@ -590,7 +590,11 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
     let old = "前提是各单元互不依赖、各用独立 worktree，做不到就串行。\n计划确认后，互不依赖的写入步骤并行派给多个可写工位，boss 合入当前分支。";
     let migrated = roles::migrate_legacy(old);
     assert!(migrated.contains("项目规定不建 worktree（如要求直接在 main 修改）时也算做不到"));
-    assert!(migrated.contains("各用独立 worktree 并行派给多个可写工位"));
+    assert!(migrated.contains("各用独立的隔离目录，做不到就串行；项目规定不建 worktree"));
+    assert!(migrated.contains("各用独立的隔离目录并行派给多个可写工位"));
+    assert!(!migrated.contains("独立 worktree"));
+    let user_text = "我自己写：各用独立 worktree 并行。";
+    assert_eq!(roles::migrate_legacy(user_text), user_text);
     assert_eq!(roles::migrate_legacy(&migrated), migrated);
     assert_eq!(roles::migrate_legacy(shared), shared);
     assert_eq!(roles::migrate_legacy(parallel), parallel);

@@ -86,14 +86,19 @@ def _add_started(
         payload["warnings"] = warnings
 
 
-def _retry_seats(
+async def _retry_seats(
     conversations: Conversations,
     group_id: str,
     seat_ids: list[str],
     manager_session_id: str | None,
 ) -> tuple[ShowRunPayload, str]:
     try:
-        round_ = conversations.retry(group_id, seat_ids, manager_session_id=manager_session_id)
+        await conversations.claim_seats(group_id, seat_ids)
+        try:
+            round_ = conversations.retry(group_id, seat_ids, manager_session_id=manager_session_id)
+        except BaseException:
+            conversations.drop_seat_claims(group_id, seat_ids)
+            raise
     except KeyError as exc:
         raise ToolError("Unknown group_id; use list.") from exc
     except (OSError, ValueError) as exc:
@@ -278,7 +283,9 @@ async def run_round(
         extras = (prompt, seats, instructions, forward, title, members, cwd, review, isolated)
         if group_id is None or any(extras):
             raise ToolError("retry_seats takes only group_id. Correct the arguments and retry.")
-        payload, round_id = _retry_seats(conversations, group_id, retry_seats, manager_session_id)
+        payload, round_id = await _retry_seats(
+            conversations, group_id, retry_seats, manager_session_id
+        )
         return await waited_dispatch(payload, round_id, wait, manager_session_id, ctx)
     new = group_id is None
     if new:
@@ -342,16 +349,23 @@ async def run_round(
                 }
             ]
             return payload
-        round_ = conversations.run(
-            group_id,
-            seats,
-            order,
-            prompt,
-            instructions or {},
-            manager_model=manager_model,
-            manager_session_id=manager_session_id,
-            forward=forward,
-        )
+        # A serial round launches its first seat now and leases the others as it reaches them.
+        launching = seats if order == "parallel" else seats[:1]
+        await conversations.claim_seats(group_id, launching)
+        try:
+            round_ = conversations.run(
+                group_id,
+                seats,
+                order,
+                prompt,
+                instructions or {},
+                manager_model=manager_model,
+                manager_session_id=manager_session_id,
+                forward=forward,
+            )
+        except BaseException:
+            conversations.drop_seat_claims(group_id, launching)
+            raise
     except KeyError as exc:
         raise ToolError("Unknown group_id; use list.") from exc
     except (OSError, ValueError) as exc:

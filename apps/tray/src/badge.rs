@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use tauri::AppHandle;
 use tauri::image::Image;
-use tauri::tray::TrayIcon;
 
 use crate::data::snapshot::Overview;
 use serde_json::Value;
@@ -74,36 +74,43 @@ pub fn initial(count: usize, general: &Value) -> Image<'static> {
 }
 
 /// Redraws the icon for a new count or font; a new count also lets the dot drip.
-pub fn show(tray: &TrayIcon, count: usize, current: impl Fn() -> Value) {
+pub fn show(app: &AppHandle, count: usize, current: impl Fn() -> Value) {
     let next = (count, font(&current()));
     let previous = std::mem::replace(&mut *SHOWN.lock().unwrap(), next);
     if previous.0 != count {
-        drip(tray, &current());
+        drip(app, &current());
     } else if previous.1 != next.1 && !DRIPPING.load(Ordering::Acquire) {
-        let _ = tray.set_icon_with_as_template(Some(rest()), true);
+        set_icon(app, rest());
     }
 }
 
 /// Plays the drip once with the current count; a still icon takes the count when motion is reduced.
-pub fn drip(tray: &TrayIcon, general: &Value) {
+pub fn drip(app: &AppHandle, general: &Value) {
     if general["motion"] == "reduce" {
         if !DRIPPING.load(Ordering::Acquire) {
-            let _ = tray.set_icon_with_as_template(Some(rest()), true);
+            set_icon(app, rest());
         }
         return;
     }
     if DRIPPING.swap(true, Ordering::AcqRel) {
         return;
     }
-    let tray = tray.clone();
+    let app = app.clone();
     thread::spawn(move || {
         for png in DRIP {
-            let _ = tray.set_icon_with_as_template(Some(frame(png)), true);
+            set_icon(&app, frame(png));
             thread::sleep(DRIP_FRAME);
         }
         DRIPPING.store(false, Ordering::Release);
         // A count that changed while the last frame was drawn still reaches the icon.
-        let _ = tray.set_icon_with_as_template(Some(rest()), true);
+        set_icon(&app, rest());
+    });
+}
+
+/// Hands the image over to the main thread, which sets it on the tray icon.
+fn set_icon(app: &AppHandle, image: Image<'static>) {
+    crate::with_tray(app, move |tray| {
+        let _ = tray.set_icon_with_as_template(Some(image), true);
     });
 }
 

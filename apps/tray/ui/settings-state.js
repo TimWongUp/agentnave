@@ -509,7 +509,7 @@
         if (current.model && !current.effort && S.effortLevels(provider, current.model).length > 1) {
           add(provider, current.model, SCENES[scene], L("要选一个思考档位", "Choose an effort level"));
         }
-        if (current.enabled && S.listedPool(provider) && !current.model) {
+        if (current.enabled && current.allowed && !current.model) {
           add(provider, L("默认模型", "default model"), SCENES[scene], L("要选一个默认模型", "Choose a default model"));
         }
         if (current.enabled && current.model && S.outOfPool(provider, current.model)) {
