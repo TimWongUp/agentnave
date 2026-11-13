@@ -789,6 +789,11 @@ async def test_isolated_show_runs_restricted_seats_in_own_directories(
         )
         seen = _seen(_seats(await _wait(client, started["round_id"]))[0])
         assert Path(str(seen["cwd"])).resolve() == seat_dirs["a"].resolve()
+        # The tray reads each seat's directory from the saved view.
+        viewed = {
+            seat["id"]: seat["cwd"] for seat in _views(data_root, group_id)["director"]["seats"]
+        }
+        assert viewed == {seat_id: str(path) for seat_id, path in seat_dirs.items()}
         argv = cast(list[str], seen["argv"])
         assert "--permission-mode" not in argv and "--agent" not in argv
         assert argv[argv.index("--model") + 1] == "chosen"
