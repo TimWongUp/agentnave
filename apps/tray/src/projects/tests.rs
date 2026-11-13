@@ -7,7 +7,7 @@ use super::auto::HostDirs;
 use super::classify::classify;
 use super::env::Env;
 use super::memory::Memory;
-use super::path::{align_with, canonical, key, plain_windows, too_broad, within};
+use super::path::{align_with, canonical, comparable, key, plain_windows, too_broad, within};
 use super::{OTHER, Project};
 
 /// A machine laid out under one directory: the platform places are injected so the fixture
@@ -96,12 +96,28 @@ impl Machine {
     }
 
     /// The key as a path below the fixture, or `OTHER`.
-    fn place(&self, cwd: impl AsRef<Path>) -> String {
+    fn place(&self, cwd: impl AsRef<Path>) -> Place {
         let key = self.project(cwd).key;
-        match Path::new(&key).strip_prefix(&self.base) {
-            Ok(rest) => rest.to_string_lossy().into_owned(),
-            Err(_) => key,
+        match Path::new(&key).strip_prefix(comparable(&self.base)) {
+            Ok(rest) => Place(rest.to_string_lossy().replace('\\', "/")),
+            Err(_) => Place(key),
         }
+    }
+}
+
+/// A key below the fixture, compared the way the platform compares paths.
+#[derive(Debug)]
+struct Place(String);
+
+impl PartialEq<&str> for Place {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == key(Path::new(other))
+    }
+}
+
+impl PartialEq<String> for Place {
+    fn eq(&self, other: &String) -> bool {
+        *self == other.as_str()
     }
 }
 
