@@ -19,6 +19,7 @@ mod orchestration_roles;
 mod power;
 mod preferences;
 mod process;
+mod projects;
 mod provider_health;
 mod providers;
 mod proxy;

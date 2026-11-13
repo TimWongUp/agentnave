@@ -14,7 +14,9 @@ impl Group {
             title: String::new(),
             first_title: None,
             first_id: None,
+            origin: None,
             project_name: None,
+            project: None,
             live: false,
             status: "idle",
             conversations: Vec::new(),
@@ -34,6 +36,10 @@ impl Group {
         group.host.clone_from(&handover.host);
         group.title = handover.title.clone().unwrap_or_default();
         group.project_name = handover.cwd.as_deref().and_then(project_name);
+        group.origin = handover
+            .cwd
+            .clone()
+            .map(|cwd| (i64::MIN, String::new(), 0, cwd));
         if let Some(released) = &handover.released {
             group.updated.clone_from(released);
             group.at = timestamp(released).unwrap_or_default();
@@ -70,13 +76,20 @@ impl Group {
             .previous_host
             .as_deref()
             .filter(|_| self.handover.changed);
+        let project = self
+            .project
+            .as_ref()
+            .filter(|p| p.key != crate::projects::OTHER);
         json!({"group": self.id, "host": host, "app": app, "label": label, "handover": handover,
             "took_over": took_over, "previous_host": previous_host,
             "previous_label": previous_host.map(|_| previous), "project": self.project_name, "title": self.title,
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated,
-            "isolated_count": self.isolated.len()})
+            "isolated_count": self.isolated.len(),
+            "project_key": project.map_or(crate::projects::OTHER, |p| p.key.as_str()),
+            "project_label": project.map(|p| &p.label), "project_path": project.map(|p| &p.path),
+            "boss_key": format!("{}|{}", host.unwrap_or_default(), label)})
     }
     pub(super) fn members(&self) -> Vec<Value> {
         let mut members: Vec<_> = self.members.values().collect();
@@ -285,15 +298,13 @@ impl Group {
             self.at = at;
             self.updated.clone_from(&item.updated);
             self.host.clone_from(&item.host);
-            let director = &snapshot.view["director"];
-            let cwd = opt_text(director, "cwd").or_else(|| {
-                array(director, "tasks")
-                    .filter_map(|t| opt_text(t, "cwd"))
-                    .next_back()
-            });
-            if let Some(name) = cwd.as_deref().and_then(project_name) {
-                self.project_name = Some(name);
-            }
+        }
+        // Later calls may work elsewhere; the workspace stays with where it began.
+        if let Some(origin) = origin::snapshot_origin(snapshot)
+            && self.origin.as_ref().is_none_or(|known| origin < *known)
+        {
+            self.project_name = project_name(&origin.3);
+            self.origin = Some(origin);
         }
         // The first dispatch names the whole chat and never changes; later titles name only
         // their own chat or meeting.

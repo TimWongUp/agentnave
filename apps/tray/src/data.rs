@@ -51,6 +51,7 @@ type RouteKey = (
     Vec<(String, crate::stage::Handover)>,
     Vec<(String, &'static str)>,
     Vec<crate::isolated::Dir>,
+    Vec<(String, crate::projects::Project)>,
 );
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
@@ -223,7 +224,7 @@ impl Reader {
     /// Stage and chat answers, reused while relevant snapshots and the reuse window are unchanged.
     fn route(&self, path: &str) -> Response {
         let database = crate::db::read(&self.root);
-        let snapshots = self.scan_with(&database).1;
+        let (overview, snapshots) = self.scan_with(&database);
         let window = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -235,15 +236,26 @@ impl Reader {
                 handovers(connection),
                 self.boss_apps.of(connection, || self.boss_homes()),
             ),
-            _ => (Vec::new(), Vec::new()),
+            _ => (None, Vec::new()),
         };
+        // Records of directories are only forgotten when every workspace was read.
+        let complete = !overview.missing
+            && overview.scan_error.is_none()
+            && overview.unreadable.is_empty()
+            && handovers.is_some();
+        let handovers = handovers.unwrap_or_default();
         let handover_map: HashMap<_, _> = handovers.iter().cloned().collect();
         let app_map: HashMap<_, _> = apps.iter().cloned().collect();
         let data_exists = self.root.is_dir();
         let mut dirs = crate::isolated::read(&self.root);
+        let mut projects = crate::projects::lookup(
+            &crate::stage::origin_cwds(&snapshots, &handover_map),
+            complete,
+        );
         let (sources, stage_ids, key_handovers, key_apps, views) =
             if let Some(group_id) = crate::stage::requested_group(path) {
                 dirs.retain(|dir| dir.workspace == group_id);
+                projects.retain(|id, _| id == group_id);
                 let stage_ids = crate::stage::stage_ids_of(&snapshots, &handover_map);
                 let mut sources = Vec::new();
                 let mut views = Vec::new();
@@ -273,6 +285,7 @@ impl Reader {
             key_handovers,
             key_apps,
             dirs.clone(),
+            projects.clone().into_iter().collect(),
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -287,7 +300,10 @@ impl Reader {
             limit,
             &handover_map,
             &app_map,
-            &dirs,
+            &crate::stage::Places {
+                dirs: &dirs,
+                projects: &projects,
+            },
         );
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {
@@ -453,7 +469,8 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
 
 /// Workspaces waiting for, or led by, another boss (ADR-0033), including one handed back to
 /// its creator.
-fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Handover)> {
+/// Handed-over workspaces; None when they could not be read.
+fn handovers(connection: &rusqlite::Connection) -> Option<Vec<(String, crate::stage::Handover)>> {
     let rows = connection
         .prepare(
             "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending, \
@@ -480,7 +497,7 @@ fn handovers(connection: &rusqlite::Connection) -> Vec<(String, crate::stage::Ha
                 })?
                 .collect()
         });
-    rows.unwrap_or_default()
+    rows.ok()
 }
 
 fn view_body(connection: &rusqlite::Connection, id: &str) -> Option<String> {

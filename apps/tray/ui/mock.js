@@ -759,6 +759,17 @@ All checks passed!
     return ISOLATED.map((d, i) => ({ ...d, task: i === 0 && first ? { desk: first.desk, text: (first.prompt || "").split("\n")[0].slice(0, 80) } : null }));
   };
 
+  // Where each workspace began: two projects share the name "app" to show how they are told apart.
+  const PLACES = [
+    { project_key: "/work/app", project_label: "app", project_path: "/work/app" },
+    { project_key: "/work/app", project_label: "app", project_path: "/work/app" },
+    { project_key: "other", project_label: null, project_path: null },
+    { project_key: "/Users/me/old/app", project_label: "app", project_path: "~/old/app" },
+    { project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+    { project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+  ];
+  const placeOf = (g, w) => PLACES[w.groups.indexOf(g) % PLACES.length];
+
   function chats() {
     const w = world();
     const rows = w.groups
@@ -774,6 +785,7 @@ All checks passed!
           title: conv.title, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
           isolated_count: isolatedOf(g, w).length,
+          ...placeOf(g, w), boss_key: `${g.host}|${label(g)}`,
         };
       })
       .sort((a, b) => (URGENCY[a.status] ?? 2) - (URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));

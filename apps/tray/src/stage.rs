@@ -1,5 +1,6 @@
 //! Read-only projections of Studio snapshots for the stage and manager chats.
 mod group;
+mod origin;
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use crate::data::snapshot::{Item, Snapshot};
 use crate::data_files::valid_id;
 use crate::isolated::{self, Dir};
+use crate::projects::Project;
 use crate::response::Response;
 use crate::time_format::{iso, timestamp};
 
@@ -329,7 +331,11 @@ struct Group {
     first_title: Option<(i64, String, String)>,
     /// The earliest conversation of all, renamed when no title names the workspace yet.
     first_id: Option<(i64, String)>,
+    /// The earliest dispatch's directory; its folder names the workspace when nothing else does.
+    origin: Option<origin::Origin>,
     project_name: Option<String>,
+    /// The project of that directory, once known.
+    project: Option<Project>,
     live: bool,
     status: &'static str,
     latest_end: Option<(i64, String)>,
@@ -462,6 +468,14 @@ pub(crate) fn stage_ids_of(
     groups.into_iter().take(5).map(|g| g.id).collect()
 }
 
+/// What the answer shows besides sessions: the isolated directories and each workspace's project.
+pub(crate) struct Places<'a> {
+    pub dirs: &'a [Dir],
+    pub projects: &'a BTreeMap<String, Project>,
+}
+
+pub(crate) use origin::origin_cwds;
+
 /// `limit` is the App's running limit (`settings.json`), which also caps the desks drawn.
 pub(crate) fn respond(
     path: &str,
@@ -470,7 +484,7 @@ pub(crate) fn respond(
     limit: usize,
     handovers: &HashMap<String, Handover>,
     apps: &HashMap<String, &'static str>,
-    dirs: &[Dir],
+    places: &Places,
 ) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let complete = requested.is_some_and(|path| path.ends_with("/history"));
@@ -485,7 +499,7 @@ pub(crate) fn respond(
     if requested.is_some_and(|id| !valid_id(id)) || focus.is_some_and(|id| !valid_id(id)) {
         return Response::error(404, "not found");
     }
-    let (mut groups, stage_ids) = unprojected_groups(&mut snapshots, handovers, apps, dirs);
+    let (mut groups, stage_ids) = unprojected_groups(&mut snapshots, handovers, apps, places);
     if let Some(id) = requested {
         let Some(group) = groups.iter_mut().find(|g| g.id == id) else {
             return Response::error(404, "not found");
@@ -586,8 +600,8 @@ fn isolated_builders(snapshots: &[Snapshot], sources: &[usize]) -> Vec<isolated:
     found
 }
 
-/// The project a working directory belongs to: its folder name, or the repository's name for an
-/// agent worktree such as `<repo>/.claude/worktrees/<name>`.
+/// The name a working directory gives a workspace before its project is known: its folder name,
+/// or the repository's name for an agent worktree such as `<repo>/.claude/worktrees/<name>`.
 fn project_name(cwd: &str) -> Option<String> {
     let parts: Vec<&str> = cwd.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
     match parts.as_slice() {
@@ -604,7 +618,7 @@ fn unprojected_groups(
     snapshots: &mut [Snapshot],
     handovers: &HashMap<String, Handover>,
     apps: &HashMap<String, &'static str>,
-    dirs: &[Dir],
+    places: &Places,
 ) -> (Vec<Group>, Vec<String>) {
     snapshots.sort_by_key(|s| {
         (
@@ -638,9 +652,10 @@ fn unprojected_groups(
             }
         }
         group.app = apps.get(&group.id).copied();
+        group.project = places.projects.get(&group.id).cloned();
         let running = running_cwds(snapshots, &group.sources);
         let builders = isolated_builders(snapshots, &group.sources);
-        group.isolated = isolated::classify(dirs, &group.id, &running, &builders);
+        group.isolated = isolated::classify(places.dirs, &group.id, &running, &builders);
     }
     // Work going on first, then the most recent; never empty while history exists. A failure is
     // no reason to come first: the boss handles it, the user has nothing to do.
