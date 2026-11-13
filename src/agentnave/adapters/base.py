@@ -110,6 +110,8 @@ class ProviderAdapter(Protocol):
 
     def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None: ...
 
+    def usage_reset(self, model: str | None, cwd: Path, now: datetime) -> datetime | None: ...
+
     def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
 
     def event_model(self, event: dict[str, object]) -> str | None: ...
@@ -136,6 +138,10 @@ class AdapterHooks:
         raise NotImplementedError
 
     def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None:
+        return None
+
+    def usage_reset(self, model: str | None, cwd: Path, now: datetime) -> datetime | None:
+        """When the quota this model ran out of resets, from the CLI's own usage query (blocking)."""
         return None
 
     def parse_prepared(

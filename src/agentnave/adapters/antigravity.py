@@ -23,6 +23,7 @@ from agentnave.adapters.base import (
     parse_json_object,
     restricted_options,
 )
+from agentnave.adapters.usage_reset import antigravity_reset, run_text
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 _LABEL = re.compile(rb'Propagating selected model override to backend: label="([^"\n]{1,80})"')
@@ -207,6 +208,10 @@ class AntigravityAdapter(AdapterHooks):
 
     def prepare_seat(self, directory: Path) -> None:
         write_restricted_profile(directory)
+
+    def usage_reset(self, model: str | None, cwd: Path, now: datetime) -> datetime | None:
+        text = run_text([self.executable_path(), "-p", "/usage"], cwd)
+        return None if text is None else antigravity_reset(text, model, now)
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("event")

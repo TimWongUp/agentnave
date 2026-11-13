@@ -352,6 +352,20 @@ def classify(
     return None
 
 
+def blocker(
+    result: InvocationResult, error_message: str | None, reported_errors: Iterable[str]
+) -> Code | None:
+    """The account blocker a failed result reports, if any."""
+    if result.status is InvocationStatus.SUCCEEDED:
+        return None
+    return classify(
+        result.status,
+        result.error.code if result.error else None,
+        error_message or (result.error.message if result.error else None),
+        reported_errors,
+    )
+
+
 def observe_result(
     root: Path | None,
     result: InvocationResult,
@@ -363,11 +377,6 @@ def observe_result(
     if root is not None:
         if result.status is InvocationStatus.SUCCEEDED:
             clear(root, result.provider, model, all_models=False)
-        elif category := classify(
-            result.status,
-            result.error.code if result.error else None,
-            error_message or (result.error.message if result.error else None),
-            reported_errors,
-        ):
+        elif category := blocker(result, error_message, reported_errors):
             record(root, result.provider, category, model, reset)
     return result

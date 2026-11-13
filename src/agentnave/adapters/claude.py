@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 
 from agentnave.adapters.base import (
@@ -26,6 +27,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.adapters.quota_reset import parse_reset
+from agentnave.adapters.usage_reset import claude_reset, run_text
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 from agentnave.native_prompts import NativePrompt, encode_answer, prompt_from_event
 from agentnave.native_sessions import assistant_model
@@ -344,6 +346,10 @@ class ClaudeAdapter(AdapterHooks):
             if reset := parse_reset(json.dumps(event, ensure_ascii=False), now):
                 return reset
         return parse_reset(stderr.decode(errors="replace"), now)
+
+    def usage_reset(self, model: str | None, cwd: Path, now: datetime) -> datetime | None:
+        text = run_text([self.executable_path(), "-p", "/usage"], cwd)
+        return None if text is None else claude_reset(text, model, now)
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()
