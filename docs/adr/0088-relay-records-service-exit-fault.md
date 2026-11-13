@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-13
-- 补充 [ADR-0022](0022-auto-clear-host-reload.md) 对中继连接观测的用途：回执只证明工具加载，不表达故障；本决定另设故障记录。不改变 [ADR-0060](0060-tray-detects-orphaned-running-work.md) 的历史所有权边界。
+- 扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘写入范围：另可在用户确认后删除 `connection-faults/` 下的故障记录。沿用 [ADR-0022](0022-auto-clear-host-reload.md) 对连接观测的读取约束；回执只证明工具加载，不表达故障，故障记录另设。不改变 [ADR-0060](0060-tray-detects-orphaned-running-work.md) 的历史所有权边界。
 
 ## 背景
 

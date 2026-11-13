@@ -47,6 +47,8 @@ _RELAY_ID = "agentnave-relay"
 _STALE_CONNECTION_SECONDS = 3600.0
 # The tray ignores fault records older than this (ADR-0088); relays clear them when they write one.
 _FAULT_RETENTION_SECONDS = 86400.0
+# A host that closes as the server exits has its EOF handled a moment after the server's.
+_HOST_EOF_GRACE_SECONDS = 1.0
 SESSION_ENV = "AGENTNAVE_MANAGER_SESSION"
 STARTED_ENV = "AGENTNAVE_MANAGER_STARTED_AT"
 # 2026-07-28 and later hosts skip initialize; every request carries this envelope instead.
@@ -314,6 +316,8 @@ class Relay:
             elif not reported and time.monotonic() - since > _BUSY_REPORT:
                 reported = True
                 print(f"agentnave relay: update waiting, {self._busy_reason()}", file=sys.stderr)
+        if self.stopped.is_set():
+            self.closing.wait(_HOST_EOF_GRACE_SECONDS)
         with self.connection_lock:
             if not self.closing.is_set():  # the server quit on its own; a host close ends it
                 self._drop_connection()

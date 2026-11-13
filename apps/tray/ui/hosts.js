@@ -173,6 +173,7 @@ async function run(id, kind, request) {
   }
   S.busy.delete(id);
   if (result) say(result.message, !result.ok);
+  else renderAll();
   await reload();
   return result;
 }
@@ -377,7 +378,7 @@ function renderSummary() {
   if (reloads) {
     const b = h("button.sum-chip", { type: "button" }, L(`${reloads} 待生效 ↓`, `${reloads} pending reload ↓`));
     b.addEventListener("click", () => {
-      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload"));
+      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload:not([data-fault])"));
       card?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
     kids.push(b);
