@@ -173,6 +173,7 @@ async function run(id, kind, request) {
   }
   S.busy.delete(id);
   if (result) say(result.message, !result.ok);
+  else renderAll();
   await reload();
   return result;
 }
@@ -377,7 +378,16 @@ function renderSummary() {
   if (reloads) {
     const b = h("button.sum-chip", { type: "button" }, L(`${reloads} 待生效 ↓`, `${reloads} pending reload ↓`));
     b.addEventListener("click", () => {
-      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload"));
+      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload:not([data-fault])"));
+      card?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    kids.push(b);
+  }
+  const faults = hosts.filter((x) => x.fault).length;
+  if (faults) {
+    const b = h("button.sum-chip", { type: "button" }, L(`${faults} 连接中断 ↓`, `${faults} connection lost ↓`));
+    b.addEventListener("click", () => {
+      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector("[data-fault]"));
       card?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
     kids.push(b);
@@ -402,7 +412,7 @@ function renderSummary() {
   );
   refresh.classList.toggle("pending", S.refreshing);
   $("refresh-result").textContent = S.refreshing ? "" : S.refreshResult;
-  $("hosts-badge").hidden = !attention && !reloads;
+  $("hosts-badge").hidden = !attention && !reloads && !faults;
   // The general reload note only matters while some host still needs a reload.
   $("reload-notice").hidden = !reloads;
 }
@@ -619,6 +629,7 @@ function buildCard(host) {
   const badges = [
     host.reload?.state === "required" && h("span.badge.badge-warning", {}, L("需要重新加载", "Reload required")),
     host.reload?.state === "unverified" && h("span.badge", {}, L("待确认生效", "Pending verification")),
+    host.fault && h("span.badge.badge-warning", {}, L("连接已中断", "Connection lost")),
     !host.tested && host.status === "available" &&
       h("span.badge.badge-muted", { title: L("还没有经过真实接入验证：写入逻辑按官方文档实现，遇到问题请反馈。", "Not verified with a live connection yet: implemented per official docs; please report any issues.") }, L("未实测", "Untested")),
     isNew && h("span.badge.badge-accent", {}, L("新检测到", "New")),
@@ -663,6 +674,7 @@ function buildCard(host) {
   else if (host.attention) main.push(h("div.hc-note.error", { role: "alert" }, host.attention.message));
   else if (last && open)
     main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));
+  if (host.fault) main.push(faultNote(host));
   // Configuration changes remain visible until the host stops or a new connection is observed.
   if (["required", "unverified"].includes(host.reload?.state)) {
     main.push(reloadNote(host));
@@ -737,6 +749,21 @@ function copyRow(host, copy) {
       since && h("span.hc-since", {}, L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`)),
       host.reopen?.[copy.kind] && h("p", {}, host.reopen[copy.kind])),
     h("div.hc-copy-act", {}, control));
+}
+
+// The service died while the host was still connected; only the user's confirmation clears it.
+function faultNote(host) {
+  const id = host.id;
+  return h("div.hc-reload.hc-note.info", { "data-fault": "" },
+    h("div.hc-reload-head", {},
+      h("div", {},
+        h("strong", {}, L(`与 ${host.label} 的连接已中断`, `Connection to ${host.label} lost`)),
+        h("p", {}, L(`AgentNave 服务在 ${host.label} 仍打开时退出了。请检查 ${host.label}，重新连接 AgentNave MCP 或重启它。`, `The AgentNave service exited while ${host.label} was still open. Check ${host.label}, then reconnect AgentNave MCP or restart it.`))),
+      button(L("知道了", "Dismiss"), "", "dismiss-fault", () =>
+        run(id, "dismiss-fault", () => post("/app/hosts/dismiss-fault", { id })),
+        Boolean(S.busy.get(id)) || S.updating),
+    ),
+  );
 }
 
 function reloadNote(host) {

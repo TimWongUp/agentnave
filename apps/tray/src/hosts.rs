@@ -4,6 +4,7 @@ mod request;
 pub(crate) use request::{orchestration_request, request, skill_request, sync_orchestration};
 mod config;
 mod decision;
+mod faults;
 pub(crate) use decision::decision_request;
 mod installed;
 #[cfg(all(test, windows, feature = "windows-live-tests"))]

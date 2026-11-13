@@ -901,6 +901,8 @@ All checks passed!
     Object.assign(warning, { status: "needs_attention", entry: "agentnave", command: "/missing/agentnave-mcp", command_state: "missing", attention: { code: "command_missing", message: "条目的命令不存在或不可执行" } });
     warning.layers[0].has_entry = true;
   }
+  // &fault shows the connection-lost note on the first host (the one already connected).
+  if (q.has("fault")) hostRows[0].fault = { count: 1, at_ms: Date.now() - 60e3 };
   const confirmedReloads = new Map();
   let mockToolsSynced = q.get("activation") !== "refresh";
   if (!mockToolsSynced) setTimeout(() => { mockToolsSynced = true; }, 12000);
@@ -1076,6 +1078,10 @@ All checks passed!
       const r = RELOADS[host.id];
       if (r) r.copies = r.copies.filter((copy) => copy.kind !== body.kind);
       return { ok: true, message: body.kind === "daemon" && host.id === "claude" ? "已停止 Claude 后台服务" : `预览：已重启 ${host.label} 的${body.kind === "gateway" ? "网关" : "后台服务"}`, host: structuredClone(host) };
+    }
+    if (path.endsWith("/dismiss-fault")) {
+      host.fault = null;
+      return { ok: true, message: "预览：已清除连接中断提示" };
     }
     if (path.endsWith("/confirm-reload")) {
       if (body.token !== `${host.id}:${host.root.path}` || host.status !== "connected") throw new Error("接入配置已变化，请刷新后再确认");
