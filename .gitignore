@@ -10,3 +10,4 @@ dist/
 *.egg-info/
 *.xcresult/
 /apps/tray/ui/art/video/
+/.worktrees/
