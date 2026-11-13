@@ -41,6 +41,7 @@ from agentnave.processes import (
     spawn_process,
     terminate_process_tree,
 )
+from agentnave.usage_probe import run_usage_query
 
 _MAX_STDOUT_BYTES = 1024 * 1024
 _MAX_EVENT_BYTES = 8 * 1024 * 1024
@@ -832,9 +833,9 @@ class InvocationManager:
             and self.health_root is not None
             and provider_health.blocker(result, error_message, record.reported_errors) == "quota"
         ):
-            # Off the event loop: the query starts the CLI and waits for it.
-            with suppress(Exception):
-                reset = await asyncio.to_thread(adapter.usage_reset, model, record.request.cwd, now)
+            query = adapter.usage_query(model)
+            if query is not None:
+                reset = await run_usage_query(query, now)
         return provider_health.observe_result(
             self.health_root, result, error_message, record.reported_errors, model, reset
         )

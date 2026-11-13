@@ -297,6 +297,8 @@ def _merged_health(
         old_until = previous["until"]
         if old_until is None:
             until = None
+        elif code == "quota" and reset is not None and "reset" not in previous:
+            pass  # a reset time replaces the guess recorded before it, even when that is earlier
         elif until is not None:
             # A repeated quota reset beyond the cap must not extend it each time.
             if (

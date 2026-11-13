@@ -9,12 +9,12 @@ import re
 import shutil
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from agentnave.adapters.base import (
     AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
+    UsageQuery,
     brief,
     error_summary,
     failure_status,
@@ -26,7 +26,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.adapters.quota_reset import parse_reset
-from agentnave.adapters.usage_reset import codex_reset, query_codex
+from agentnave.adapters.usage_reset import CODEX_REQUESTS, codex_answered, codex_output_reset
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 _DESKTOP_CODEX_PATHS = (
@@ -300,9 +300,13 @@ class CodexAdapter(AdapterHooks):
                 return reset
         return parse_reset(stderr.decode(errors="replace"), now)
 
-    def usage_reset(self, model: str | None, cwd: Path, now: datetime) -> datetime | None:
-        result = query_codex(self.executable_path(), cwd)
-        return None if result is None else codex_reset(result, now)
+    def usage_query(self, model: str | None) -> UsageQuery | None:
+        return UsageQuery(
+            (self.executable_path(), "app-server"),
+            codex_output_reset,
+            stdin=CODEX_REQUESTS,
+            complete=codex_answered,
+        )
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         events = parse_json_lines(stdout.decode(errors="replace").strip())

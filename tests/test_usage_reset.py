@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import os
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from agentnave import provider_health
+from agentnave import provider_health, usage_probe
 from agentnave.adapters import usage_reset as usage
-from agentnave.adapters.base import PreparedCommand
+from agentnave.adapters.base import PreparedCommand, UsageQuery
 from agentnave.adapters.claude import ClaudeAdapter
+from agentnave.adapters.codex import CodexAdapter
 from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationStatus
 
@@ -85,6 +89,75 @@ def test_claude_reset_reads_local_times_and_per_model_weeks() -> None:
     assert usage.claude_reset("Current session: 100% used · resets soon", None, now) is None
 
 
+@pytest.mark.skipif(os.name == "nt", reason="needs tzset")
+def test_claude_reset_without_a_date_follows_daylight_saving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    try:
+        # 01:30 EST on the night the clocks jump: 4am the same day is already EDT (08:00 UTC).
+        now = datetime(2026, 3, 8, 6, 30, tzinfo=UTC)
+        got = usage.claude_reset("Current session: 100% used · resets 4am", None, now)
+        assert got == datetime(2026, 3, 8, 8, 0, tzinfo=UTC)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+
+def test_a_reset_time_replaces_the_earlier_one_hour_guess(tmp_path: Path) -> None:
+    provider_health.record(tmp_path, "claude", "quota", "m")
+    soon = datetime.now(UTC) + timedelta(minutes=5)
+    provider_health.record(tmp_path, "claude", "quota", "m", soon)
+    until = provider_health.active(tmp_path)[("claude", "m")]["until"]
+    assert until is not None and abs(datetime.fromisoformat(until) - soon) < timedelta(seconds=1)
+
+
+def _script(code: str) -> tuple[str, ...]:
+    return (sys.executable, "-c", code)
+
+
+@pytest.mark.asyncio
+async def test_codex_query_stops_once_the_answer_arrives(tmp_path: Path) -> None:
+    at = int((datetime.now(UTC) + timedelta(days=2)).timestamp())
+    server = (
+        "import json, sys, time\n"
+        "for line in sys.stdin:\n"
+        "    m = json.loads(line)\n"
+        "    if m.get('id') == 2:\n"
+        f"        result = {{'rateLimits': {{'primary': {{'usedPercent': 100, 'resetsAt': {at}}}}}}}\n"
+        "        print(json.dumps({'id': 2, 'result': result}), flush=True)\n"
+        "        time.sleep(60)\n"
+    )
+    base = CodexAdapter().usage_query(None)
+    assert base is not None
+    query = dataclasses.replace(base, argv=_script(server))
+    started = time.monotonic()
+    reset = await usage_probe.run_usage_query(query, datetime.now(UTC))
+    assert reset == datetime.fromtimestamp(at, UTC)
+    assert time.monotonic() - started < 15  # it did not wait for the server to exit
+
+
+@pytest.mark.asyncio
+async def test_a_query_that_never_answers_is_cut_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(usage_probe, "QUERY_SECONDS", 0.5)
+    marker = tmp_path / "pid"
+    code = f"import os, time; open({str(marker)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+    query = UsageQuery(_script(code), lambda _out, _now: datetime.now(UTC) + timedelta(days=1))
+    assert await usage_probe.run_usage_query(query, datetime.now(UTC)) is None
+    pid = int(marker.read_text())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("the query process was left running")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("known", [True, False])
 async def test_quota_failure_without_reset_asks_the_usage_query(
@@ -93,34 +166,28 @@ async def test_quota_failure_without_reset_asks_the_usage_query(
     reset = datetime.now(UTC) + timedelta(hours=3)
     asked: list[str | None] = []
 
-    def query(_adapter: ClaudeAdapter, model: str | None, _cwd: Path, _now: datetime) -> object:
+    def query(_adapter: ClaudeAdapter, model: str | None) -> UsageQuery:
         asked.append(model)
-        return reset if known else None
+        return UsageQuery(_script("print('usage')"), lambda _out, _now: reset if known else None)
 
-    monkeypatch.setattr(ClaudeAdapter, "usage_reset", query)
+    monkeypatch.setattr(ClaudeAdapter, "usage_query", query)
     event = {"type": "result", "is_error": True, "errors": ["weekly limit reached"]}
     manager = InvocationManager()
     manager.health_root = tmp_path
     try:
         invocation = manager.start(
             InvocationRequest("claude", "work", tmp_path, provider_options={"model": "test"}),
-            prepared=PreparedCommand(
-                (sys.executable, "-c", f"print({json.dumps(event)!r})"), tmp_path
-            ),
+            prepared=PreparedCommand(_script(f"print({json.dumps(event)!r})"), tmp_path),
         )
         result = await manager.wait(invocation)
     finally:
         await manager.shutdown()
     assert result is not None and result.status is InvocationStatus.FAILED
     assert asked == ["test"]
-    health = provider_health.active(tmp_path)
+    until = provider_health.active(tmp_path)[("claude", "test")]["until"]
+    assert until is not None
     if known:
-        until = health[("claude", "test")]["until"]
-        assert until is not None and abs(datetime.fromisoformat(until) - reset) < timedelta(
-            seconds=1
-        )
+        assert abs(datetime.fromisoformat(until) - reset) < timedelta(seconds=1)
     else:
         # No reset time from the query either: the model rests for an hour.
-        until = health[("claude", "test")]["until"]
-        assert until is not None
         assert timedelta(minutes=59) < datetime.fromisoformat(until) - datetime.now(UTC)

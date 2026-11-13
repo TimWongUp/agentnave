@@ -1,43 +1,18 @@
-"""Reset times from a CLI's own usage query, for quota failures that name none (ADR-0081).
+"""Reset times read from the output of a CLI's own usage query (ADR-0081).
 
-Each query runs only the CLI's own command, never reads its credentials, and gives up quietly: a
-timeout, an error or an output this module cannot read all mean no reset time.
+The service runs the query under its process supervisor (`usage_probe`); this module only knows
+the commands' output. An output it cannot read means no reset time.
 """
 
 from __future__ import annotations
 
 import json
-import queue
 import re
-import subprocess
-import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from agentnave.native_sessions import object_dict
-
-QUERY_SECONDS = 30.0
-_MAX_OUTPUT = 1 << 20
-
-
-def run_text(argv: list[str], cwd: Path) -> str | None:
-    """Stdout of a usage command that exits cleanly, or None."""
-    try:
-        done = subprocess.run(
-            argv,
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=QUERY_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if done.returncode != 0 or len(done.stdout) > _MAX_OUTPUT:
-        return None
-    return done.stdout.decode(errors="replace")
 
 
 def _instant(moment: datetime | None, now: datetime) -> datetime | None:
@@ -79,60 +54,39 @@ def antigravity_reset(text: str, model: str | None, now: datetime) -> datetime |
 # reset times for its primary and secondary windows.
 
 
-def query_codex(executable: str, cwd: Path) -> Mapping[str, Any] | None:
-    try:
-        process = subprocess.Popen(
-            [executable, "app-server"],
-            cwd=cwd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-    except OSError:
-        return None
-    lines: queue.Queue[bytes] = queue.Queue()
+# The handshake and the question go out together; the answer is the line replying to id 2.
+CODEX_REQUESTS = b"".join(
+    json.dumps(message).encode() + b"\n"
+    for message in (
+        {
+            "method": "initialize",
+            "id": 1,
+            "params": {"clientInfo": {"name": "agentnave", "title": "AgentNave", "version": "0"}},
+        },
+        {"method": "initialized"},
+        {"method": "account/rateLimits/read", "id": 2},
+    )
+)
 
-    def read() -> None:
-        assert process.stdout is not None
-        for line in process.stdout:
-            lines.put(line)
-        lines.put(b"")
 
-    threading.Thread(target=read, daemon=True).start()
+def _codex_answer(stdout: bytes) -> dict[str, object] | None:
+    for line in stdout.splitlines():
+        try:
+            fields = object_dict(json.loads(line))
+        except ValueError:
+            continue
+        if fields.get("id") == 2:
+            return object_dict(fields.get("result"))
+    return None
 
-    def call(ident: int, method: str, params: dict[str, Any] | None = None) -> Any:
-        assert process.stdin is not None
-        message: dict[str, Any] = {"method": method, "id": ident}
-        if params is not None:
-            message["params"] = params
-        process.stdin.write(json.dumps(message).encode() + b"\n")
-        process.stdin.flush()
-        while True:
-            line = lines.get(timeout=QUERY_SECONDS)
-            if not line:
-                return None
-            try:
-                reply = json.loads(line)
-            except ValueError:
-                continue
-            fields = object_dict(reply)
-            if fields.get("id") == ident:
-                return fields.get("result")
 
-    try:
-        client = {"clientInfo": {"name": "agentnave", "title": "AgentNave", "version": "0"}}
-        if call(1, "initialize", client) is None:
-            return None
-        assert process.stdin is not None
-        process.stdin.write(b'{"method":"initialized"}\n')
-        process.stdin.flush()
-        result = call(2, "account/rateLimits/read")
-    except (OSError, queue.Empty, ValueError):
-        return None
-    finally:
-        process.kill()
-        process.wait()
-    return object_dict(result) or None
+def codex_answered(stdout: bytes) -> bool:
+    return _codex_answer(stdout) is not None
+
+
+def codex_output_reset(stdout: bytes, now: datetime) -> datetime | None:
+    answer = _codex_answer(stdout)
+    return None if answer is None else codex_reset(answer, now)
 
 
 def codex_reset(result: Mapping[str, Any], now: datetime) -> datetime | None:
@@ -176,9 +130,11 @@ def _claude_time(text: str, now: datetime) -> datetime | None:
     local = now.astimezone()
     try:
         if match["month"] is None:
-            moment = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            # Naive local time again: a fixed offset would be wrong across a daylight saving change.
+            today = datetime(local.year, local.month, local.day, hour, minute)
+            moment = today.astimezone()
             if moment <= local:
-                moment += timedelta(days=1)
+                moment = (today + timedelta(days=1)).astimezone()
             return moment.astimezone(UTC)
         month = _MONTHS.index(match["month"].lower()) + 1
         year = int(match["year"] or local.year)
