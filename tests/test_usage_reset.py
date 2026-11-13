@@ -95,7 +95,7 @@ def test_claude_reset_without_a_date_follows_daylight_saving(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TZ", "America/New_York")
-    time.tzset()
+    time.tzset()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
     try:
         # 01:30 EST on the night the clocks jump: 4am the same day is already EDT (08:00 UTC).
         now = datetime(2026, 3, 8, 6, 30, tzinfo=UTC)
@@ -103,7 +103,7 @@ def test_claude_reset_without_a_date_follows_daylight_saving(
         assert got == datetime(2026, 3, 8, 8, 0, tzinfo=UTC)
     finally:
         monkeypatch.undo()
-        time.tzset()
+        time.tzset()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
 
 
 def test_a_reset_time_replaces_the_earlier_one_hour_guess(tmp_path: Path) -> None:
@@ -139,6 +139,7 @@ async def test_codex_query_stops_once_the_answer_arrives(tmp_path: Path) -> None
     assert time.monotonic() - started < 15  # it did not wait for the server to exit
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.kill(pid, 0) ends a Windows process")
 @pytest.mark.asyncio
 async def test_a_query_that_never_answers_is_cut_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -200,6 +201,7 @@ async def test_a_judge_that_raises_does_not_stop_the_draining(
     assert done is None
 
 
+@pytest.mark.skipif(os.name == "nt", reason="os.kill(pid, 0) ends a Windows process")
 @pytest.mark.asyncio
 async def test_cancelling_a_query_still_stops_its_process(tmp_path: Path) -> None:
     marker = tmp_path / "pid"
