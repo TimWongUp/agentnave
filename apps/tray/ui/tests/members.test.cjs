@@ -1121,9 +1121,9 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.equal(new Set(images.map((seat) => seat.id)).size, 2);
   assert.ok(images.every((seat) => !("difficulty" in seat)));
   // A row goes with its own delete button; with none left the card cannot be saved.
-  imageRow(1).children[4].listeners.click();
+  imageRow(1).children.at(-1).listeners.click();
   assert.deepEqual(seatsOf(app).filter((seat) => seat.kind === "image").map((seat) => seat.role), ["写实"]);
-  imageRow(1).children[4].listeners.click();
+  imageRow(1).children.at(-1).listeners.click();
   assert.equal(decision((d) => d.problem()), "生图工位至少要有一行");
   Array.from(cardsOf(app))[2].children[1].listeners.click();
   fill(imageRow(1).children[0], "写实");
@@ -1341,4 +1341,24 @@ test("a catalog seat's fallbacks come back as saved, and the add button sits in 
   assert.equal(rows.length, 1, "only the easy level has a fallback line");
   assert.equal(rows[0].children[1].className, "fallback-row");
   assert.equal(rows[0].children[0].children.at(-1).tagName, "button");
+});
+
+test("an image seat row adds and removes fallbacks, with the delete button kept last", async () => {
+  const img = { id: "img-a", kind: "image", role: "漫画风格", description: "漫画风格", provider: "codex", model: "chat-model", access: "write" };
+  const saved = { document: { version: 1, seats: [img] }, error: null, key_set: false, key_error: null };
+  const { app, decision } = decisionEditor("decision", saved);
+  app.run('detected.codex.models = [{ id: "chat-model" }, { id: "m2" }]');
+  await decision((d) => d.load());
+  const imageRow = () => cardsOf(app)[0].children[1];
+  const fallbacks = () => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats[0].fallbacks || null)"));
+  const [add, remove] = [imageRow().children.at(-2), imageRow().children.at(-1)];
+  assert.equal(add.children[0], "添加备选");
+  assert.equal(remove.children[0], "删除");
+  add.listeners.click();
+  assert.deepEqual(fallbacks(), [{ provider: "codex", model: "m2" }]);
+  const block = cardsOf(app)[0].children[1];
+  assert.equal(block.className, "seat-block");
+  assert.equal(block.children[0].children.at(-1).children[0], "删除");
+  block.children[1].children.at(-1).listeners.click();
+  assert.equal(fallbacks(), null, "no fallback left, no field");
 });

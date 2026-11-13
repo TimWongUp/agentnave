@@ -334,9 +334,14 @@
       "aria-label": L("专业", "Specialty"), placeholder: L("专业", "Specialty"), dataset: { focusKey: `${key}/role` },
       onInput: (e) => editRow(card.cid, row.rid, { role: e.target.value }, false),
     });
-    const selects = S.seatSelects(key, name, row.seat, (next) => setRowSeat(card.cid, row.rid, next), L("未设置", "Not set"));
+    const set = (next) => setRowSeat(card.cid, row.rid, next);
+    const selects = S.seatSelects(key, name, row.seat, set, L("未设置", "Not set"));
     const remove = el("button", { type: "button", className: "ds-remove", "aria-label": L(`删除${name}`, `Delete ${name}`), onClick: () => removeRow(card.cid, row.rid) }, L("删除", "Delete"));
-    return el("div", { className: "ds-image-row" }, specialty, ...selects, remove);
+    // The add-fallback button goes in before the delete button, which stays in the last column.
+    const main = el("div", { className: "ds-image-row" }, specialty, ...selects);
+    const block = S.seatBlock(main, key, name, row.seat, set);
+    main.appendChild(remove);
+    return block;
   }
 
   // A group of the role catalog is named and fixed and says what it is for; a custom card asks for its
