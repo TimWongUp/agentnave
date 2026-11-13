@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "decision_model": "gemini-decision-1",
+  "seats": [
+    {
+      "id": "s-4f9c1a",
+      "kind": "explorer",
+      "role": "通用探索",
+      "description": "读代码和材料，查问题、找原因、出计划；没有对应专项的只读任务都归它。",
+      "provider": "claude",
+      "model": "sonnet",
+      "access": "write",
+      "difficulty": "easy"
+    },
+    {
+      "id": "s-7d02be",
+      "kind": "explorer",
+      "role": "通用探索",
+      "description": "读代码和材料，查问题、找原因、出计划；没有对应专项的只读任务都归它。",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "access": "read",
+      "difficulty": "hard"
+    },
+    {
+      "id": "s-1a2b3c",
+      "kind": "custom",
+      "role": "数据库迁移",
+      "description": "数据库迁移",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "access": "write",
+      "difficulty": "medium"
+    },
+    {
+      "id": "s-9f8e7d",
+      "kind": "custom",
+      "role": "数据库迁移",
+      "description": "数据库迁移",
+      "provider": "claude",
+      "model": "sonnet",
+      "access": "write",
+      "difficulty": "hard"
+    }
+  ]
+}

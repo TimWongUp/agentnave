@@ -295,3 +295,48 @@ async def test_seats_and_meetings_reject_the_cli_pool_without_rebinding(
     with pytest.raises(ValueError, match="Model is required") as missing:
         apply_task_defaults("pi", None, {}, [], frozenset(), Host("claude", "env"))
     assert "old" not in str(missing.value)
+
+
+@pytest.mark.asyncio
+async def test_custom_seats_follow_the_cli_pool_without_rebinding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env", "claude"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset[str]())
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {"pi": {"models": {"old": {}, "new": {}}, "allowed_models": ["new"]}},
+                "modes": {"task": {}, "discussion": {"pi": {"models": ["new"], "default": "new"}}},
+            }
+        )
+    )
+    seats = [
+        {
+            "id": id_,
+            "kind": "custom",
+            "role": id_,
+            "description": id_,
+            "provider": "pi",
+            "model": model,
+            "access": "write",
+            "difficulty": "easy",
+        }
+        for id_, model in (("outside", "old"), ("inside", "new"))
+    ]
+    document = {"version": 1, "seats": seats}
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
+    (tmp_path / "decision-seats.json").write_text(json.dumps(document))
+    listed = list_members(frozenset(), Host("claude", "env", "claude")).orchestration.custom_seats
+    assert listed["inside"].available is None
+    assert listed["outside"].available is False
+    assert "not allowed in CLI" in (listed["outside"].reason or "")
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agent", {"prompt": "test", "cwd": str(tmp_path), "seat": "outside"}
+        )
+        assert result.is_error and "not allowed in CLI" in str(result.content)
+    assert json.loads((tmp_path / "decision-seats.json").read_text()) == document

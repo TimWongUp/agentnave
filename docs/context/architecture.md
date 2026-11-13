@@ -12,7 +12,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI；隔离目录只应 boss 的要求创建，可用的目录只在 boss 释放后删除，服务自己只回滚没建成的半成品、续完目录已删掉的收尾（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI（「决策模型」档下，服务应 boss 的调用请决策模型在用户自定义的工位里选一个，启动仍由 boss 的调用发起，[ADR-0087](../adr/0087-decision-model-recommends-seats.md)）；隔离目录只应 boss 的要求创建，可用的目录只在 boss 释放后删除，服务自己只回滚没建成的半成品、续完目录已删掉的收尾（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）。
 
 ## 进程与模块
 
@@ -115,6 +115,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 - 口语摘要通过 ChatGPT 订阅登录、各平台 API Key、Magpie 本机网关或用户配置的 OpenAI 兼容接口生成。ChatGPT 登录与令牌由托盘 Rust 端拥有，直接请求 OpenAI API；各平台分别保存 API 密钥。Magpie 拥有供应商认证和模型路由，托盘只读其本机端口配置、核验网关身份并获取模型目录，不修改 Magpie 配置，也不把摘要模型接入为 Provider CLI。语音关闭时不联网读取摘要模型目录；启用语音和摘要后，长发言先发送给摘要模型，合成引擎只收到短口语；摘要失败时停止该条播报并报错。
 - 语音直接复用右侧消息列表中已有的 boss 发言与员工回答正文，按消息时间共用摘要与播放队列。自动播报只来自用户主动开启的限时收听，页面拥有当前收听状态，重启不恢复；收听到期不打断正在播的消息，撤下后续收听内容并停止后续收听合成，手动点读与连播独立保留；固定规则约束原意、归属与篇幅，可编辑的说话要求控制日常用词与详略；小人家族人设决定性格与口吻，boss 人设仅叠加带队定位。输出保留发言者本人的第一人称视角；以上设置仅供语音使用，不修改 CLI 任务或 Provider 参数。
 - 托盘 App 独占写入数据根的 `voice.json`、`voice-keys.json`（含摘要平台密钥与 ChatGPT 登录令牌）和 `voice-cache/`；服务不读取这些文件。预览版的语音设置、密钥、缓存与小人视频包写入其独立的应用数据目录，不写正式版数据根（视频包读取时优先预览版目录，再回退正式版数据根）。
+- 托盘 App 写入数据根的 `decision-seats.json`（用户自定义的工位目录和所选决策模型）和 `decision-keys.json`（决策模型密钥，仅当前用户可读），服务只读；预览版只读不写。「决策模型」档对该 boss 生效且 boss 要求选工位时，服务向决策模型的 API 发送这次的派发内容（过长时截断）和候选工位的描述，这是服务唯一对外的模型调用（[ADR-0087](../adr/0087-decision-model-recommends-seats.md)）。
 
 CLI 级可用模型名单是任务、编排工位及会议共同的模型边界；当前宿主启用编排时不披露普通任务目录或套用其场景默认值，既有普通任务配置保留供关闭编排后恢复（[ADR-0063](../adr/0063-cli-model-pool-and-orchestration-precedence.md)）。
 

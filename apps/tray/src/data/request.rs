@@ -81,6 +81,9 @@ impl Reader {
                 body,
             );
         }
+        if matches!(path, "/app/decision-seats" | "/app/decision-key") {
+            return crate::hosts::decision_request(&self.root, method, path, action, body);
+        }
         if matches!(
             path,
             "/app/conversations/rename"

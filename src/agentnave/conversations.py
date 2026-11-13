@@ -56,7 +56,6 @@ from agentnave.locks import release_and_remove
 from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, RoundOrder
-from agentnave.orchestration_roles import OrchestrationRole
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -569,9 +568,8 @@ class Conversations(ConversationStore):
 
     # Tasks
 
-    def _check_capacity(self, needed: int) -> None:
-        """Refuse work that would run more CLI processes at once than the App allows."""
-        limit = read_max_running()
+    def capacity(self) -> tuple[int, int]:
+        """CLI runs active or held for a serial round's next seat, and the App's limit."""
         active = self.manager.active_ids()
         # A serial round between seats, or waiting on a review, keeps a slot for its next seat.
         held = sum(
@@ -583,7 +581,11 @@ class Conversations(ConversationStore):
             and any(run.status == "pending" for run in round_.runs)
             and not any(run.invocation_id in active for run in round_.runs)
         )
-        running = len(active) + held
+        return len(active) + held, read_max_running()
+
+    def _check_capacity(self, needed: int) -> None:
+        """Refuse work that would run more CLI processes at once than the App allows."""
+        running, limit = self.capacity()
         if running + needed > limit:
             raise CapacityError(
                 f"{running} CLI runs are active or held by serial rounds for their next seat, and "
@@ -619,7 +621,7 @@ class Conversations(ConversationStore):
         manager_model: str | None = None,
         manager_session_id: str | None = None,
         role: str | None = None,
-        seat: OrchestrationRole | None = None,
+        seat: str | None = None,
         forward: list[str] | None = None,
         access: str | None = None,
         isolation_requested: bool = False,
@@ -707,7 +709,7 @@ class Conversations(ConversationStore):
         manager_model: str | None,
         manager_session: str | None,
         role: str | None,
-        seat: OrchestrationRole | None,
+        seat: str | None,
         declared: Access | None,
         info: TaskIsolationInfo | None,
         forwarded: list[Forwarded],

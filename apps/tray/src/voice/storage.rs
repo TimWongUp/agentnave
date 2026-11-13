@@ -373,7 +373,9 @@ fn persona_settings(value: Option<&Value>) -> Result<Value, String> {
 fn valid_model_id(id: &str) -> bool {
     id.is_empty() || (id.len() <= 300 && !id.trim().is_empty() && !id.chars().any(char::is_control))
 }
-fn write(root: &Path, name: &str, value: &Value) -> Result<(), String> {
+/// Replaces a file under `root` that only the current user may read; `*-keys.json` names also get
+/// a restricted ACL on Windows.
+pub(crate) fn write(root: &Path, name: &str, value: &Value) -> Result<(), String> {
     let save = || -> std::io::Result<()> {
         fs::create_dir_all(root)?;
         let mut file = tempfile::NamedTempFile::new_in(root)?;
@@ -384,7 +386,7 @@ fn write(root: &Path, name: &str, value: &Value) -> Result<(), String> {
                 .set_permissions(fs::Permissions::from_mode(0o600))?;
         }
         #[cfg(windows)]
-        if name == "voice-keys.json" {
+        if name.ends_with("-keys.json") {
             restrict_windows_acl(file.path())?;
         }
         file.write_all(value.to_string().as_bytes())?;

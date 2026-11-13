@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const PRESETS: [&str; 5] = ["off", "meetings", "split", "parallel", "custom"];
+pub const PRESETS: [&str; 6] = ["off", "meetings", "split", "parallel", "decision", "custom"];
 const START: &str = "<!-- AGENTNAVE:START -->";
 const END: &str = "<!-- AGENTNAVE:END -->";
 const CUSTOM_LIMIT: usize = 8000;

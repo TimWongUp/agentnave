@@ -271,7 +271,7 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "custom",
+/// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "decision" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "enabled_roles": [group],
 /// group: {"easy" | "hard": seat}, "image_generation": seat,
 /// "meeting": {"count": 2..=6, "seats"?: [seat | null]}}`, with one group per catalog entry.
@@ -293,6 +293,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "meeting",
         "split_options",
         "parallel_options",
+        "decision_options",
         "lead_only",
     ];
     fields.extend(&groups);
@@ -340,12 +341,16 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     if let Some(meeting) = top.get("meeting") {
         validate_meeting(meeting)?;
     }
-    for key in ["split_options", "parallel_options"] {
+    for (key, allowed) in [
+        ("split_options", &["meetings"][..]),
+        ("parallel_options", &["meetings"]),
+        ("decision_options", &["parallel_writes", "meetings"]),
+    ] {
         if let Some(options) = top.get(key) {
             let options = object(options, key)?;
-            only(options, &["meetings"], key)?;
+            only(options, allowed, key)?;
             if !options.values().all(Value::is_boolean) {
-                return Err(format!("{key}.meetings 必须为 true 或 false"));
+                return Err(format!("{key} 的值必须为 true 或 false"));
             }
         }
     }

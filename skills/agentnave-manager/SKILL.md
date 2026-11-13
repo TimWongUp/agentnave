@@ -22,6 +22,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 | 什么时候 | 读 |
 | --- | --- |
 | 开会议室、审核、补跑席位、回读保存的会话 | [会话与审核](references/studio.md) |
+| 规则块写明工位交给决策模型选（「决策模型」档） | [决策模型档](references/decision.md) |
 | 同时派出多个任务，或做流水线、择优、反证 | [多任务编排](references/workflows.md) |
 | 用户点名 CLI、模型或参数；工位不可用或在冷却 | [点名与冷却](references/models.md) |
 | 用到某个 CLI，含 `native=true` 交给宿主自带子代理的工位 | 「CLI 与模型」表里该 CLI 的参考 |
@@ -49,7 +50,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 
 ## 选择调用方式
 
-选谁执行：用户点名优先。否则看 `list_members` 的 `orchestration.enabled`，每个聊天第一次选执行者前查一次，之后复用；规则块和 `seat` 的 schema 只用来提醒，不作判断依据。未开启编排时按[点名与冷却](references/models.md)从 `members` 选。开启时只从 `orchestration` 当前可见工位中选：
+选谁执行：用户点名优先。规则块写明工位交给决策模型选时（「决策模型」档），改按[决策模型档](references/decision.md)派发，本节其余选工位的做法不适用。否则看 `list_members` 的 `orchestration.enabled`，每个聊天第一次选执行者前查一次，之后复用；规则块和 `seat` 的 schema 只用来提醒，不作判断依据。未开启编排时按[点名与冷却](references/models.md)从 `members` 选。开启时只从 `orchestration` 当前可见工位中选：
 
 - **定档**：范围已限定的定位、取证和按明确步骤的改动用简单档；方案取舍、根因判断和边界不明的工作用困难档，或由 boss 自己做。难度不明时，boss 查到足够写出简报为止，或派困难档只读工位查清，再定档；不替组员把活干完。
 - **选组**：各工位管什么见 `orchestration.scopes`。同时符合多个专项时，能拆就按步骤拆开分别派；拆不开就按本次主要交付物选，调研按主要信息来源选；附带的小改动随主任务处理，拿不准就用读写类型相同的通用工位。同难度专项优先；专项某档未绑定时不继承通用身份，专项未设或不可用时明确选同难度的通用探索／执行；通用也不可用时由 boss 自己完成或说明缺少能力。兜底不跨难度、不静默换模型，不回用隐藏的普通任务池，关闭的角色不因兜底重新出现。保存工位绑定不代表 CLI 具备相应的搜索或制作工具，能力另行判断。

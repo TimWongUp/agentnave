@@ -56,6 +56,7 @@ fn routes_serve_views_and_reject_everything_else() {
         "/settings/settings.js",
         "/settings/settings-frame.js",
         "/settings/advanced.js",
+        "/settings/decision-seats.js",
         "/settings/voice-settings.js",
         "/settings/about-settings.js",
         "/settings/settings.css",

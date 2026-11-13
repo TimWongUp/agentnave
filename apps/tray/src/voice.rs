@@ -6,6 +6,7 @@ mod minimax;
 pub mod player;
 mod scene;
 mod storage;
+pub(crate) use storage::write as write_private_json;
 mod summary;
 #[cfg(test)]
 mod tests;
