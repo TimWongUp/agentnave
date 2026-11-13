@@ -80,6 +80,7 @@ def _show(state: Conversation) -> dict[str, object]:
                 "provider": seat.provider,
                 "role": seat.role,
                 "access": seat.access,
+                "cwd": seat.cwd,
             }
             for seat in state.seats
         ],

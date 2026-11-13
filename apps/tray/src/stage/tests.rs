@@ -137,3 +137,30 @@ fn a_handed_over_workspace_without_sessions_uses_the_handover_directory() {
     let cwds = super::origin_cwds(&[], &handovers);
     assert_eq!(cwds["s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], "/work/handed");
 }
+
+#[test]
+fn a_running_seat_works_in_its_own_directory() {
+    use serde_json::json;
+
+    let director = json!({
+        "cwd": "/r",
+        "seats": [{"id": "a", "cwd": "/r/.agentnave-worktrees/a"}, {"id": "b"}, {"id": "c", "cwd": "/x"}],
+        "round": {"status": "running", "seats": [
+            {"seat_id": "a", "status": "running"},
+            {"seat_id": "b", "status": "running"},
+            {"seat_id": "c", "status": "succeeded"},
+        ]},
+    });
+    let running = super::running_in(&director);
+    assert_eq!(running, ["/r/.agentnave-worktrees/a", "/r"]);
+    let dirs = [crate::isolated::Dir {
+        workspace: "w".into(),
+        path: "/r/.agentnave-worktrees/a".into(),
+        branch: "agentnave/a".into(),
+        ready: true,
+        id: "a".into(),
+        created: String::new(),
+    }];
+    let shown = crate::isolated::classify(&dirs, "w", &running, &[]);
+    assert_eq!(shown[0]["status"], "using");
+}
