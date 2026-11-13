@@ -124,11 +124,9 @@ def test_batch_command_line_rejects_unrepresentable_input(argv: list[str]) -> No
 
 
 def test_popen_gets_the_batch_safe_line_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agentnave import windows_cmdline
-
     argv = [r"C:\npm\claude.cmd", "--resume", "x&calc"]
-    assert windows_cmdline.popen_args(argv) == (argv, None) or sys.platform == "win32"
-    monkeypatch.setattr(windows_cmdline.sys, "platform", "win32")
-    line, application = windows_cmdline.popen_args(argv)
+    assert windows_supervisor.popen_args(argv) == (argv, None) or sys.platform == "win32"
+    monkeypatch.setattr(windows_supervisor.sys, "platform", "win32")
+    line, application = windows_supervisor.popen_args(argv)
     assert application is not None and application.lower().endswith(r"\system32\cmd.exe")
-    assert line == windows_cmdline.windows_command_line(argv)[1] and '"x&calc"' in str(line)
+    assert line == windows_supervisor.windows_command_line(argv)[1] and '"x&calc"' in str(line)

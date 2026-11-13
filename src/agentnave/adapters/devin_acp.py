@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from agentnave.adapters.base import resolve_executable
 from agentnave.native_prompts import mask_secrets
-from agentnave.windows_cmdline import popen_args
+from agentnave.windows_supervisor import popen_args
 
 LINE_LIMIT = 64 * 1024 * 1024
 # Devin's own reason for leaving is on stderr, which the adapter reads instead.

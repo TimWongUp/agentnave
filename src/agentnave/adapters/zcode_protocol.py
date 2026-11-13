@@ -14,7 +14,7 @@ from typing import Any, cast
 from agentnave.adapters.base import resolve_executable
 from agentnave.models import Host
 from agentnave.native_sessions import session_model
-from agentnave.windows_cmdline import popen_args
+from agentnave.windows_supervisor import popen_args
 
 LINE_LIMIT = 64 * 1024 * 1024
 

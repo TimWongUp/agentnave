@@ -11,10 +11,10 @@ from ctypes import wintypes
 
 from agentnave.claude_tui.screen import Screen
 from agentnave.claude_tui.terminal import child_environment
-from agentnave.windows_cmdline import windows_command_line
 from agentnave.windows_supervisor import (
     _ProcessInformation,  # pyright: ignore[reportPrivateUsage]
     _StartupInfo,  # pyright: ignore[reportPrivateUsage]
+    windows_command_line,
 )
 
 

@@ -24,7 +24,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
-from agentnave.windows_cmdline import popen_args
+from agentnave.windows_supervisor import popen_args
 
 _DESKTOP_DSH_PATHS = (
     "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh",

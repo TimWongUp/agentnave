@@ -18,7 +18,7 @@ from agentnave.claude_tui.hooks import (
     with_mode,
 )
 from agentnave.claude_tui.turn import Transcript, drop_empty_session, object_dict
-from agentnave.windows_cmdline import popen_args
+from agentnave.windows_supervisor import popen_args
 
 
 def write_line(event: dict[str, object]) -> None:
