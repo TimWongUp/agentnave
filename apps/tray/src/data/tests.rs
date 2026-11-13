@@ -116,6 +116,69 @@ fn routes_serve_views_and_reject_everything_else() {
 
 const MANAGER: &str = "s-0123456789abcdef0123456789abcdef";
 
+#[test]
+fn chats_do_not_wait_for_host_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    save(
+        dir.path(),
+        &task_snapshot("a1", "succeeded", "2026-10-15T00:00:00Z"),
+    );
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, owner_host, title) VALUES (?1, ?1, 'claude', 'test')",
+            [MANAGER],
+        )
+        .unwrap();
+    drop(connection);
+    let reader = Arc::new(Reader::new(dir.path().to_path_buf()));
+    let home = dir.path().canonicalize().unwrap();
+    let custom = home.join("custom-codex");
+    let context = crate::hosts::Context {
+        home: home.clone(),
+        app: home.join("app"),
+        project: home.clone(),
+        env: std::collections::BTreeMap::from([(
+            "CODEX_HOME".into(),
+            custom.display().to_string(),
+        )]),
+        search: Vec::new(),
+        applications: Vec::new(),
+    };
+    reader.configure_hosts(context, Ok(std::collections::BTreeMap::new()));
+    assert!(reader.boss_homes().codex.contains(&custom));
+    let guard = reader.hosts.lock().unwrap();
+    let (send, receive) = std::sync::mpsc::channel();
+    let worker = Arc::clone(&reader);
+    let thread = std::thread::spawn(move || {
+        let response = worker.request("GET", "/app/chats", None, b"");
+        send.send(response).unwrap();
+    });
+    let result = receive.recv_timeout(Duration::from_secs(3));
+    drop(guard);
+    thread.join().unwrap();
+    let response = result.unwrap();
+    assert_eq!(response.status, 200);
+    let body: Value = serde_json::from_slice(&response.body).unwrap();
+    assert!(!body["groups"].as_array().unwrap().is_empty());
+
+    let moved = home.join("moved-codex");
+    let body = json!({"id": "codex", "path": moved});
+    let response = reader.request(
+        "POST",
+        "/app/hosts/root",
+        Some("1"),
+        body.to_string().as_bytes(),
+    );
+    assert_eq!(
+        response.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&response.body)
+    );
+    assert!(reader.boss_homes().codex.contains(&moved));
+}
+
 fn task_snapshot(id: &str, status: &str, updated: &str) -> Value {
     json!({"version": 1, "summary": {"id": id, "title": format!("任务 {id}"),
             "mode": "task", "status": status, "updated": updated, "host": "claude", "manager_session": MANAGER},
