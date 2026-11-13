@@ -41,6 +41,7 @@ from agentnave.processes import (
     spawn_process,
     terminate_process_tree,
 )
+from agentnave.usage_probe import run_usage_query
 
 _MAX_STDOUT_BYTES = 1024 * 1024
 _MAX_EVENT_BYTES = 8 * 1024 * 1024
@@ -814,6 +815,31 @@ class InvocationManager:
                 except Exception:
                     logging.getLogger(__name__).exception("Post-invocation settlement failed")
 
+    async def _observe(
+        self,
+        record: _InvocationRecord,
+        adapter: ProviderAdapter,
+        result: InvocationResult,
+        error_message: str | None,
+        stdout: bytes,
+        stderr: bytes,
+    ) -> InvocationResult:
+        """Record the result's account blocker; a quota one with no reset time asks the CLI."""
+        model = provider_health.model_option(record.request.provider_options)
+        now = datetime.now(UTC)
+        reset = adapter.quota_reset(stdout, stderr, now)
+        if (
+            reset is None
+            and self.health_root is not None
+            and provider_health.blocker(result, error_message, record.reported_errors) == "quota"
+        ):
+            query = adapter.usage_query(model)
+            if query is not None:
+                reset = await run_usage_query(query, now)
+        return provider_health.observe_result(
+            self.health_root, result, error_message, record.reported_errors, model, reset
+        )
+
     async def _run(
         self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
     ) -> InvocationResult:
@@ -869,13 +895,8 @@ class InvocationManager:
                     _duration_ms(started),
                     error,
                 )
-                return provider_health.observe_result(
-                    self.health_root,
-                    result,
-                    parsed.error_message,
-                    record.reported_errors,
-                    provider_health.model_option(record.request.provider_options),
-                    adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
+                return await self._observe(
+                    record, adapter, result, parsed.error_message, stdout.data, stderr.data
                 )
 
             if provider_returncode is None:
@@ -893,13 +914,8 @@ class InvocationManager:
                 parsed_error,
                 warnings=parsed.warnings,
             )
-            return provider_health.observe_result(
-                self.health_root,
-                result,
-                parsed.error_message,
-                record.reported_errors,
-                provider_health.model_option(record.request.provider_options),
-                adapter.quota_reset(stdout.data, stderr.data, datetime.now(UTC)),
+            return await self._observe(
+                record, adapter, result, parsed.error_message, stdout.data, stderr.data
             )
         except (OSError, ValueError) as exc:
             return InvocationResult(

@@ -15,6 +15,7 @@ from agentnave.adapters.base import (
     AdapterHooks,
     ParsedProviderResult,
     PreparedCommand,
+    UsageQuery,
     brief,
     error_summary,
     failure_status,
@@ -23,6 +24,7 @@ from agentnave.adapters.base import (
     parse_json_object,
     restricted_options,
 )
+from agentnave.adapters.usage_reset import antigravity_reset
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 _LABEL = re.compile(rb'Propagating selected model override to backend: label="([^"\n]{1,80})"')
@@ -207,6 +209,12 @@ class AntigravityAdapter(AdapterHooks):
 
     def prepare_seat(self, directory: Path) -> None:
         write_restricted_profile(directory)
+
+    def usage_query(self, model: str | None) -> UsageQuery | None:
+        return UsageQuery(
+            (self.executable_path(), "-p", "/usage"),
+            lambda output, now: antigravity_reset(output.decode(errors="replace"), model, now),
+        )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("event")
