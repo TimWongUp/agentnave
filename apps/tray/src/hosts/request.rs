@@ -141,6 +141,7 @@ pub(crate) fn request(
                 | "/app/hosts/remove"
                 | "/app/hosts/root"
                 | "/app/hosts/confirm-reload"
+                | "/app/hosts/dismiss-fault"
                 | "/app/hosts/skill"
                 | "/app/hosts/reveal-backups"
         );

@@ -157,12 +157,7 @@ impl Hosts {
     /// A relay whose host closed normally marks its receipt ended and keeps it as proof.
     fn receipts(&self, host: &Host, now: SystemTime, changed_at: Option<u64>) -> Receipts {
         let mut receipts = Receipts::default();
-        let legacy_unambiguous = self
-            .registry()
-            .iter()
-            .filter(|row| row.boss == host.boss)
-            .count()
-            == 1;
+        let legacy_unambiguous = self.sole_row(host);
         let dir = self
             .connection_root(host)
             .map(|root| root.join("connections"));
@@ -170,7 +165,8 @@ impl Hosts {
             .into_iter()
             .flat_map(|dir| fs::read_dir(dir).into_iter().flatten().flatten())
         {
-            let Some((age, modified, value)) = read_receipt(&entry, now, host, legacy_unambiguous)
+            let Some((age, modified, value)) =
+                read_receipt(&entry, now, host, legacy_unambiguous, ENDED_SECONDS)
             else {
                 continue;
             };
@@ -230,12 +226,7 @@ impl Hosts {
         } else {
             processes::State::Unknown
         };
-        let old_process = self
-            .registry()
-            .iter()
-            .filter(|row| row.boss == host.boss)
-            .count()
-            == 1
+        let old_process = self.sole_row(host)
             && matches!(process, processes::State::Running(started)
             if started > 0 && changed["at_ms"].as_u64().is_some_and(|at| started.saturating_mul(1000) <= at));
         if old_process {
@@ -284,14 +275,7 @@ impl Hosts {
         }
     }
     fn tools_upgrade(&self, host: &Host, install: &Install) -> Option<u64> {
-        if !crate::update::has_tool_history(&self.context.app)
-            || self
-                .registry()
-                .iter()
-                .filter(|row| row.boss == host.boss)
-                .count()
-                != 1
-        {
+        if !crate::update::has_tool_history(&self.context.app) || !self.sole_row(host) {
             return None;
         }
         let processes::State::Running(started) = self
@@ -309,7 +293,15 @@ impl Hosts {
             self.settings[host.id]["reload_tools_confirmed"].as_u64(),
         )
     }
-    fn connection_root(&self, host: &Host) -> Option<PathBuf> {
+    /// Whether no other row runs as this host's boss, so an unlabelled receipt can only be its own.
+    pub(super) fn sole_row(&self, host: &Host) -> bool {
+        self.registry()
+            .iter()
+            .filter(|row| row.boss == host.boss)
+            .count()
+            == 1
+    }
+    pub(super) fn connection_root(&self, host: &Host) -> Option<PathBuf> {
         let entry = host.read().ok()?.entry?;
         let explicit = entry["env"]["AGENTNAVE_DATA_DIR"]
             .as_str()
@@ -379,12 +371,14 @@ impl Receipts {
     }
 }
 
-/// A private, size-limited receipt of this host's relays, with its age in seconds.
-fn read_receipt(
+/// A private, size-limited record of this host's relays no older than `max_age` seconds, with
+/// its age in seconds.
+pub(super) fn read_receipt(
     entry: &fs::DirEntry,
     now: SystemTime,
     host: &Host,
     legacy_unambiguous: bool,
+    max_age: u64,
 ) -> Option<(u64, SystemTime, Value)> {
     let path = entry.path();
     if path.is_symlink() || path.extension().is_none_or(|ext| ext != "json") {
@@ -393,7 +387,7 @@ fn read_receipt(
     let meta = entry.metadata().ok()?;
     let modified = meta.modified().ok()?;
     let age = now.duration_since(modified).ok()?.as_secs();
-    if meta.len() > 16_384 || age > ENDED_SECONDS {
+    if meta.len() > 16_384 || age > max_age {
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;

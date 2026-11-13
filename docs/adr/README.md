@@ -91,3 +91,4 @@
 | 0085 | [隔离目录由服务创建、登记和回收，是否隔离仍由 boss 决定](0085-service-managed-isolated-dirs.md) | 已接受 | 修订 ADR-0002 的 worktree 归属；扩展 ADR-0043 |
 | 0086 | [Windows Claude Code 使用交互模式](0086-windows-claude-interactive.md) | 已接受 | 修订 ADR-0056 的 Windows 运行方式 |
 | 0087 | [新增「决策模型」档：服务请决策模型在用户自定义的工位里选，派发仍由 boss 发起](0087-decision-model-recommends-seats.md) | 已接受 | 修订 ADR-0037、ADR-0038、ADR-0052、ADR-0068、ADR-0074 在「决策模型」档下的适用范围；扩展 ADR-0041 |
+| 0088 | [中继记录服务子进程的非预期退出，托盘据此提示宿主连接中断](0088-relay-records-service-exit-fault.md) | 已接受 | 补充 ADR-0022 的连接观测用途 |
