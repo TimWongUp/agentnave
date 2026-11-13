@@ -93,9 +93,9 @@ def new_client(model: str, key: str) -> DecisionClient:
 
 def describe(seat: CustomSeatStatus) -> str:
     """All the decision model learns about a seat: its specialty, difficulty and access."""
-    if seat.kind == IMAGE_KIND:
-        return f"{seat.role} (image generation) | access: {seat.access}"
     named = seat.role if seat.description == seat.role else f"{seat.role}: {seat.description}"
+    if seat.kind == IMAGE_KIND:
+        return f"{named} (image generation) | access: {seat.access}"
     return f"{named} | difficulty: {seat.difficulty} | access: {seat.access}"
 
 

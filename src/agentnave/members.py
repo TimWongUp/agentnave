@@ -552,7 +552,7 @@ def validate_task_seat(name: str, host: Host, *, inherited: bool = False) -> Non
     if orchestration_decision(host):
         raise MemberFileError(
             f"{name} seat is not used in the decision-model mode: only the user's own seats "
-            "from list_members exist. Pass one of them, or seat='auto' with task and access."
+            "from list_members exist. Pass one of them, or seat='auto' with access."
         )
     if name == "image-generator":
         return

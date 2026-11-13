@@ -1287,3 +1287,54 @@ def test_image_seats_are_write_only_have_no_difficulty_and_repeat_by_specialty()
     # Every other kind needs one.
     with pytest.raises(ValidationError, match="needs a difficulty"):
         file({k: v for k, v in _custom_seat("a", "grok", "read").items() if k != "difficulty"})
+
+
+@pytest.mark.parametrize(
+    ("text", "accepted"),
+    [
+        ("写代码 and code 🚀", True),
+        ("  数据库迁移　", True),  # white space at the ends is trimmed
+        ("a b", True),  # an ordinary space inside stays
+        ("a­b", False),  # soft hyphen
+        ("ab", False),  # private use
+        ("a\U000f0000b", False),
+        ("a​b", False),  # zero width space
+        ("a⁦b", False),
+        ("a﻿b", False),
+        ("a b", False),  # white space other than the ordinary space, inside
+        ("a　b", False),
+        ("a\nb", False),
+        ("a\x1fb", False),
+        ("\x1fab", False),  # control characters are not white space to trim
+        ("a\x85b", False),
+        ("a\ud800b", False),  # a lone surrogate
+        ("a⁥b", True),  # only what the table names
+    ],
+)
+def test_decision_seat_text_follows_the_table_the_app_checks_too(text: str, accepted: bool) -> None:
+    seat = _custom_seat("s-1", "grok", "write", role=text, description=text)
+    if accepted:
+        assert DecisionSeatsFile.model_validate({"version": 1, "seats": [seat]}).seats
+    else:
+        with pytest.raises(ValueError, match="printable characters"):
+            DecisionSeatsFile.model_validate({"version": 1, "seats": [seat]})
+
+
+def test_the_seats_of_one_card_share_one_access() -> None:
+    both = [
+        _custom_seat("s-1", "grok", "read", role="迁移", difficulty="easy"),
+        _custom_seat("s-2", "grok", "write", role="迁移", difficulty="hard"),
+    ]
+    with pytest.raises(ValueError, match="one access"):
+        DecisionSeatsFile.model_validate({"version": 1, "seats": both})
+    both[1]["role"] = "另一张"
+    assert len(DecisionSeatsFile.model_validate({"version": 1, "seats": both}).seats) == 2
+
+
+def test_an_image_seat_may_say_null_for_its_difficulty_and_others_may_not() -> None:
+    image = {**_image_seat("s-1", "grok", "写实"), "difficulty": None}
+    assert DecisionSeatsFile.model_validate({"version": 1, "seats": [image]}).seats
+    with pytest.raises(ValueError, match="needs a difficulty"):
+        DecisionSeatsFile.model_validate(
+            {"version": 1, "seats": [{**_custom_seat("s-2", "grok", "write"), "difficulty": None}]}
+        )

@@ -115,9 +115,31 @@ CUSTOM_KIND = "custom"
 IMAGE_KIND = "image"
 
 
+# What decision-seats.json text may not hold, by code point, listed one by one so that the App
+# (decision_seats.rs) checks the very same table and no Unicode category table decides: control
+# characters, white space but the ordinary space, invisible format characters, private use and
+# surrogates.
+_REFUSED_CODES = (
+    (0x0000, 0x001F), (0x007F, 0x009F), (0x00A0, 0x00A0), (0x00AD, 0x00AD), (0x061C, 0x061C),
+    (0x1680, 0x1680), (0x180E, 0x180E), (0x2000, 0x200F), (0x2028, 0x202F), (0x205F, 0x205F),
+    (0x2060, 0x2064), (0x2066, 0x206F), (0x3000, 0x3000), (0xD800, 0xDFFF), (0xE000, 0xF8FF),
+    (0xFEFF, 0xFEFF), (0xFFF9, 0xFFFB), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD),
+)  # fmt: skip
+# The white space trimmed from both ends first; inside the text only the ordinary space is kept.
+_TRIMMED_CODES = (
+    (0x09, 0x0D), (0x20, 0x20), (0x85, 0x85), (0xA0, 0xA0), (0x1680, 0x1680), (0x2000, 0x200A),
+    (0x2028, 0x2029), (0x202F, 0x202F), (0x205F, 0x205F), (0x3000, 0x3000),
+)  # fmt: skip
+_TRIMMED = "".join(chr(code) for low, high in _TRIMMED_CODES for code in range(low, high + 1))
+
+
 def _printable_text(text: str, limit: int, what: str) -> str:
-    cleaned = text.strip()
-    if not cleaned or len(cleaned) > limit or not cleaned.isprintable():
+    cleaned = text.strip(_TRIMMED)
+    if (
+        not cleaned
+        or len(cleaned) > limit
+        or any(low <= ord(char) <= high for char in cleaned for low, high in _REFUSED_CODES)
+    ):
         raise ValueError(
             f"{what} must contain 1–{limit} printable characters and no newlines or "
             "control characters"
@@ -201,6 +223,11 @@ class DecisionSeatsFile(BaseModel):
         cards = [(seat.kind, seat.role, seat.difficulty) for seat in seats]
         if len(cards) != len(set(cards)):
             raise ValueError("a card has one seat per difficulty")
+        # A card shows one access, so the seats of one card must agree on it.
+        accesses: dict[tuple[str, str], str] = {}
+        for seat in seats:
+            if accesses.setdefault((seat.kind, seat.role), seat.access) != seat.access:
+                raise ValueError(f"the {seat.role!r} card must have one access")
         roles: dict[str, str] = {}
         for seat in seats:
             if (

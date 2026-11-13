@@ -50,6 +50,7 @@ from agentnave.members import (
     ProviderName,
     SettingsFileError,
     data_root,
+    orchestration_decision,
     role_seat,
     visible_role_groups,
 )
@@ -393,27 +394,35 @@ class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         image_enabled = role_seat("image-generator", HOST) is not None
         groups = visible_role_groups(HOST)
+        # The mode decides what is published, not whether the file can be read: with a broken file the
+        # tools stay and answer config_error, as list_members reports the file.
+        decision = orchestration_decision(HOST)
         custom = custom_seats(HOST)
-        custom_ids = None if custom is None else list(custom)
+        custom_ids = list(custom) if custom is not None else [] if decision else None
         # "auto" lets start_agent choose; only the arguments name it, not the saved history.
         input_ids = None if custom_ids is None else [*custom_ids, AUTO_SEAT]
         published: list[Any] = []
         for tool in await super().list_tools():
-            if tool.name in _HIDDEN_TOOLS or (tool.name in _CUSTOM_SEAT_TOOLS and custom is None):
+            if tool.name in _HIDDEN_TOOLS or (tool.name in _CUSTOM_SEAT_TOOLS and not decision):
                 continue
             schema = json.loads(json.dumps(tool.input_schema))
             schema["additionalProperties"] = False
             output = json.loads(json.dumps(tool.output_schema))
             _filter_role_schema(schema, groups, image_enabled, input_ids)
-            if custom is not None and tool.name == "start_agent":
+            if decision and tool.name == "start_agent":
                 _describe_auto_seat(schema)
             if tool.name == "wait" and not long_wait_enabled():
                 _restrict_wait_windows(schema)
-            if not groups and not image_enabled and not custom_ids:
+            if (
+                not groups
+                and not image_enabled
+                and not custom_ids
+                and not (decision and custom is None)
+            ):
                 schema.get("properties", {}).pop("seat", None)
             if output:
                 _filter_role_schema(output, groups, image_enabled, custom_ids)
-                if custom is None:
+                if custom_ids is None:
                     _drop_custom_seat_output(output)
             published.append(
                 tool.model_copy(update={"input_schema": schema, "output_schema": output})

@@ -2844,6 +2844,19 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
             ).items()
             if k != "difficulty"
         },
+        # The description of an image seat is sent as well, when it says more than the role.
+        {
+            k: v
+            for k, v in _own_seat(
+                "draw-real",
+                "claude",
+                "write",
+                kind="image",
+                role="写实",
+                description="照片质感的写实人像",
+            ).items()
+            if k != "difficulty"
+        },
     ]
     _write_own_seats(seats, image_generation={"provider": "grok", "model": "fixed-image"})
     _write_decision_key()
@@ -2893,6 +2906,7 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
             "write-b": "role write-b | difficulty: hard | access: write",
             "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy | access: write",
             "draw-comic": "漫画风格 (image generation) | access: write",
+            "draw-real": "写实: 照片质感的写实人像 (image generation) | access: write",
         }
 
         started = await _start_and_wait(client, cwd=str(tmp_path), seat="write-b", role="加开关")
@@ -3015,6 +3029,28 @@ async def test_recommendation_errors_are_distinguishable_and_never_retried(
         # A broken catalog is a configuration error, not "off".
         (root / "decision-seats.json").write_text("{broken")
         assert "config_error" in str((await _recommend(client)).content)
+
+
+@pytest.mark.asyncio
+async def test_a_key_with_a_line_break_is_a_config_error_that_does_not_quote_it(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    _write_own_seats([_own_seat("a", "claude", "write"), _own_seat("b", "grok", "write")])
+    _write_decision_key("AIza-private-part\nX-Evil: 1")
+    async with Client(mcp) as client:
+        tasks = [
+            _batch_task("一", "write", tmp_path / "x"),
+            _batch_task("二", "write", tmp_path / "y"),
+        ]
+        for name, arguments in (
+            ("recommend_seat", {"task": "x", "access": "write"}),
+            ("start_agents", {"tasks": tasks}),
+        ):
+            result = await client.call_tool(name, arguments)
+            text = str(result.content)
+            assert result.is_error and "config_error" in text and "decision-keys.json" in text
+            assert "AIza" not in text and "Evil" not in text and "private-part" not in text
+        assert decision.calls == [] and decision.batches == []
 
 
 def _started_count(listed: object) -> int:
@@ -3348,6 +3384,48 @@ async def test_a_slow_decision_does_not_block_other_calls(decision: _FakeDecisio
         )
     # The blocking HTTP call runs in a worker thread: the others finish while it waits.
     assert order[-1] == "recommend" and set(order[:2]) == {"members", "list"}
+
+
+@pytest.mark.asyncio
+async def test_a_broken_catalog_is_a_config_error_in_the_decision_mode_and_nothing_elsewhere(
+    tmp_path: Path, decision: _FakeDecisionClient
+) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    _write_own_seats([_own_seat("a", "claude", "write")])
+    _write_decision_key()
+    (root / "decision-seats.json").write_text("{broken")
+    tasks = [_batch_task("一", "write", tmp_path / "x"), _batch_task("二", "write", tmp_path / "y")]
+    async with Client(mcp) as client:
+        # The mode is on, so the decision tools and seat='auto' stay published.
+        tools = {tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools}
+        assert {"recommend_seat", "start_agents"} <= set(tools)
+        assert "auto" in tools["start_agent"].input_schema["$defs"]["OrchestrationRole"]["enum"]
+        assert "seat" in tools["start_agent"].input_schema["properties"]
+        calls = {
+            "recommend_seat": {"task": "x", "access": "write"},
+            "start_agents": {"tasks": tasks},
+            "start_agent": {
+                "prompt": "ok",
+                "cwd": str(tmp_path),
+                "seat": "auto",
+                "access": "write",
+            },
+        }
+        for name, arguments in calls.items():
+            result = await client.call_tool(name, arguments)
+            assert result.is_error and "config_error" in str(result.content), (name, result.content)
+            assert "not_enabled" not in str(result.content)
+            assert "decision-seats.json" in str(result.content)
+        assert decision.calls == [] and decision.batches == []
+        assert _started_count((await client.call_tool("list")).structured_content) == 0
+        # Without the decision mode, the same file changes nothing: the tools are not there.
+        (root / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "split"}))
+        tools = {tool.name for tool in (await client.list_tools(cache_mode="refresh")).tools}
+        assert tools == set(EXPECTED_TOOLS)
+        refused = await client.call_tool("start_agents", {"tasks": tasks})
+        assert refused.is_error and "not_enabled" in str(refused.content)
+        refused = await client.call_tool("recommend_seat", calls["recommend_seat"])
+        assert refused.is_error and "not_enabled" in str(refused.content)
 
 
 def _light_repo(path: Path) -> Path:

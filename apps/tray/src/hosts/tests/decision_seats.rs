@@ -44,6 +44,31 @@ fn decision_file(root: &Path) -> Value {
 }
 
 #[test]
+fn a_body_that_is_not_an_object_is_refused_like_any_invalid_catalog() {
+    let (reader, _directory, root) = connected_reader();
+    for body in [
+        json!([]),
+        json!([seat()]),
+        json!("seats"),
+        json!(3),
+        json!(true),
+        json!(null),
+    ] {
+        assert_eq!(post(&reader, "/app/decision-seats", &body), 400, "{body}");
+    }
+    assert!(!root.join("decision-seats.json").exists());
+    // A body that is not JSON at all is refused the same way, and an object still saves.
+    assert_eq!(
+        reader
+            .request("POST", "/app/decision-seats", Some("1"), b"not json")
+            .status,
+        400
+    );
+    let document = json!({"version": 1, "seats": [seat()]});
+    assert_eq!(post(&reader, "/app/decision-seats", &document), 200);
+}
+
+#[test]
 fn the_catalog_saves_on_its_own_and_a_page_switch_is_not_kept() {
     let (reader, _directory, root) = connected_reader();
     // Nothing is written until the page saves the file.
@@ -124,6 +149,13 @@ fn the_key_is_stored_privately_and_never_answered() {
         post(&reader, "/app/decision-key", &json!({"key": "a\nb"})),
         400
     );
+    // Neither is one the service would refuse: a space inside, or anything but visible ASCII.
+    for key in ["a b", "密钥", "a\u{a0}b"] {
+        assert_eq!(
+            post(&reader, "/app/decision-key", &json!({"key": key})),
+            400
+        );
+    }
     fs::write(root.join("decision-keys.json"), "{broken").unwrap();
     let refused = reader.request("POST", "/app/decision-key", Some("1"), br#"{"key":"x"}"#);
     assert_eq!(refused.status, 400);

@@ -19,7 +19,6 @@ from agentnave.conversations import (
     TaskStart,
 )
 from agentnave.core import InvocationManager
-from agentnave.decision_seats import custom_seats
 from agentnave.group import Round
 from agentnave.isolated import ISOLATED_APPLIED
 from agentnave.manager_identity import model_warnings
@@ -62,6 +61,7 @@ from agentnave.members import (
     OrchestrationRole,
     ProviderName,
     apply_seat,
+    orchestration_decision,
     role_seat,
     validate_provider_options,
 )
@@ -89,7 +89,7 @@ def _own_seat(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
 
     The published schema is untouched: list_tools lists the effective seats in its enum.
     """
-    if isinstance(value, str) and custom_seats(runtime.HOST) is not None:
+    if isinstance(value, str) and orchestration_decision(runtime.HOST):
         if not 1 <= len(value) <= 128:
             raise ValueError("seat must be a seat identifier from list_members")
         return value

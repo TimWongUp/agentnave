@@ -279,3 +279,77 @@ def test_decision_keys_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         with pytest.raises(DecisionKeysFileError) as raised:
             read_decision_key("gemini")
         assert KEY not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "key", [f"{KEY}\nX-Evil: 1", f"{KEY}\r\nmore", "AIza secret", "AIza\tsecret", "密钥AIza"]
+)
+def test_a_key_that_is_not_visible_ascii_is_a_config_error_that_never_quotes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    (tmp_path / "decision-keys.json").write_text(
+        json.dumps({"version": 1, "keys": {"gemini": key}})
+    )
+    with pytest.raises(DecisionKeysFileError) as raised:
+        read_decision_key("gemini")
+    text = str(raised.value)
+    assert "decision-keys.json" in text and "not allowed" in text
+    assert not any(part in text for part in ("AIza", "secret", "Evil", "more", "密钥"))
+
+
+def test_a_key_with_a_line_break_given_to_the_client_fails_without_quoting_it(
+    endpoint: _Endpoint,
+) -> None:
+    client = GeminiDecisionClient(f"{KEY}\nX-Evil: 1", endpoint.url, 5)
+    for call in (
+        lambda: client.decide("task", CANDIDATES),
+        lambda: client.decide_many([DecisionQuestion("task", CANDIDATES)]),
+    ):
+        with pytest.raises(DecisionError) as raised:
+            call()
+        assert raised.value.code == "network"
+        assert not any(part in raised.value.message for part in ("AIza", "Evil", "secret"))
+        assert raised.value.__cause__ is None and raised.value.__suppress_context__
+    assert endpoint.requests == []
+
+
+@pytest.mark.parametrize(
+    "confidence", ["1" + "0" * 400, "NaN", "Infinity", "-Infinity", "true", '"high"']
+)
+def test_a_confidence_or_probability_that_is_not_a_finite_number_is_a_bad_response(
+    endpoint: _Endpoint, confidence: str
+) -> None:
+    def reply(answer: str) -> Callable[[], Reply]:
+        return lambda: (200, {}, f'{{"answers": {{"seat": {answer}, "seat1": {answer}}}}}'.encode())
+
+    for answer in (
+        f'{{"choice": "a", "confidence": {confidence}}}',
+        f'{{"choice": "a", "probabilities": {{"a": {confidence}}}}}',
+    ):
+        endpoint.reply = reply(answer)
+        with pytest.raises(DecisionError) as raised:
+            endpoint.client().decide("task", CANDIDATES)
+        assert raised.value.code == "bad_response"
+        # In a batch it fails the one question that answered so.
+        [only] = endpoint.client().decide_many([DecisionQuestion("task", CANDIDATES)])
+        assert isinstance(only, DecisionError) and only.code == "bad_response"
+    # A number as large as a float allows is still a number.
+    endpoint.reply = reply('{"choice": "a", "confidence": 1e300}')
+    assert endpoint.client().decide("task", CANDIDATES).confidence == 1e300
+
+
+def test_a_deeply_nested_reply_is_a_bad_response(endpoint: _Endpoint) -> None:
+    nested = "[" * 100_000
+    endpoint.reply = lambda: (200, {}, nested.encode())
+    with pytest.raises(DecisionError) as raised:
+        endpoint.client().decide("task", CANDIDATES)
+    assert raised.value.code == "bad_response"
+    with pytest.raises(DecisionError) as raised:
+        endpoint.client().decide_many([DecisionQuestion("task", CANDIDATES)])
+    assert raised.value.code == "bad_response"
+    # The same inside an error body only changes what the message says.
+    endpoint.reply = lambda: (429, {}, nested.encode())
+    with pytest.raises(DecisionError) as raised:
+        endpoint.client().decide("task", CANDIDATES)
+    assert raised.value.code == "rate_limited"

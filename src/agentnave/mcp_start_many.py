@@ -11,7 +11,6 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from agentnave import mcp_runtime as runtime
 from agentnave.conversations_store import normalize_role
-from agentnave.decision_seats import custom_seats
 from agentnave.mcp_isolated import IsolationInput
 from agentnave.mcp_payloads import NotStartedPayload, StartAgentsPayload, TaskStartPayload
 from agentnave.mcp_recommend import native_seat_message, recommendation_payload
@@ -24,7 +23,7 @@ from agentnave.mcp_runtime import (
     _unreceived,
 )
 from agentnave.mcp_tasks import TaskLaunch, launch_task
-from agentnave.members import SettingsFileError
+from agentnave.members import SettingsFileError, orchestration_decision
 from agentnave.models import InvocationRequest
 from agentnave.seat_recommendation import (
     Recommendation,
@@ -172,7 +171,7 @@ async def start_agents(
     (start_failed), never started unisolated. Whether to run writes in parallel is your
     decision, not the tool's.
     """
-    if custom_seats(runtime.HOST) is None:
+    if not orchestration_decision(runtime.HOST):
         raise ToolError(
             "not_enabled: Seat recommendation is not enabled for this boss; start tasks one "
             "at a time with start_agent."

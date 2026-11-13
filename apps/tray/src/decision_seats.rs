@@ -73,18 +73,59 @@ fn valid_id(id: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Trimmed text of 1 to `limit` printable characters.
-fn printable_text(text: Option<&str>, limit: usize) -> bool {
-    let text = text.map(str::trim).unwrap_or_default();
-    !text.is_empty() && text.chars().count() <= limit && text.chars().all(printable)
+/// What the text of a seat may not hold, by code point, listed one by one: the service
+/// (`_REFUSED_CODES` in orchestration_roles.py) checks the very same table, so no Unicode category
+/// table decides. Control characters, white space but the ordinary space, invisible format
+/// characters and private use (surrogates cannot occur in a Rust string).
+const REFUSED: [(u32, u32); 19] = [
+    (0x0000, 0x001F),
+    (0x007F, 0x009F),
+    (0x00A0, 0x00A0),
+    (0x00AD, 0x00AD),
+    (0x061C, 0x061C),
+    (0x1680, 0x1680),
+    (0x180E, 0x180E),
+    (0x2000, 0x200F),
+    (0x2028, 0x202F),
+    (0x205F, 0x205F),
+    (0x2060, 0x2064),
+    (0x2066, 0x206F),
+    (0x3000, 0x3000),
+    (0xD800, 0xDFFF),
+    (0xE000, 0xF8FF),
+    (0xFEFF, 0xFEFF),
+    (0xFFF9, 0xFFFB),
+    (0xF0000, 0xFFFFD),
+    (0x100000, 0x10FFFD),
+];
+/// The white space trimmed from both ends first; inside the text only the ordinary space is kept.
+const TRIMMED: [(u32, u32); 10] = [
+    (0x09, 0x0D),
+    (0x20, 0x20),
+    (0x85, 0x85),
+    (0xA0, 0xA0),
+    (0x1680, 0x1680),
+    (0x2000, 0x200A),
+    (0x2028, 0x2029),
+    (0x202F, 0x202F),
+    (0x205F, 0x205F),
+    (0x3000, 0x3000),
+];
+
+fn listed(table: &[(u32, u32)], c: char) -> bool {
+    table
+        .iter()
+        .any(|&(low, high)| (low..=high).contains(&u32::from(c)))
 }
 
-/// Python's `str.isprintable` for what a role label may hold: no control, format or separator
-/// characters other than an ordinary space.
-fn printable(c: char) -> bool {
-    !c.is_control()
-        && (c == ' ' || !c.is_whitespace())
-        && !matches!(c, '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{feff}')
+fn trim_text(text: &str) -> &str {
+    text.trim_matches(|c| listed(&TRIMMED, c))
+}
+
+/// Trimmed text of 1 to `limit` characters the table allows.
+fn printable_text(text: Option<&str>, limit: usize) -> bool {
+    let text = text.map(trim_text).unwrap_or_default();
+    !text.is_empty() && text.chars().count() <= limit && !text.chars().any(|c| listed(&REFUSED, c))
 }
 
 fn object<'a>(value: &'a Value, what: &str) -> Result<&'a Map<String, Value>, String> {
@@ -140,7 +181,12 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
         return Err(format!("{what} 的读写类型与所属工位分组不符"));
     }
     if kind == IMAGE_KIND {
-        if text("access") != Some("write") || fields.contains_key("difficulty") {
+        // A null difficulty is as good as none, as the service reads it.
+        if text("access") != Some("write")
+            || fields
+                .get("difficulty")
+                .is_some_and(|value| !value.is_null())
+        {
             return Err(format!("{what} 是生图工位，只能可写且没有难度"));
         }
     } else if !text("difficulty").is_some_and(|difficulty| DIFFICULTIES.contains(&difficulty)) {
@@ -178,14 +224,23 @@ pub fn validate(document: &Value) -> Result<(), String> {
     let mut ids = HashSet::new();
     let mut levels = HashSet::new();
     let mut group_roles = std::collections::HashMap::new();
+    let mut card_access = std::collections::HashMap::new();
     for (index, seat) in seats.iter().enumerate() {
         validate_seat(seat, &format!("seats[{index}]"))?;
         if !ids.insert(seat["id"].as_str().unwrap_or_default()) {
             return Err(format!("工位标识重复：{}", seat["id"]));
         }
-        let (kind, role) = (seat["kind"].as_str(), seat["role"].as_str().map(str::trim));
+        let (kind, role) = (seat["kind"].as_str(), seat["role"].as_str().map(trim_text));
         if !levels.insert((kind, role, seat["difficulty"].as_str())) {
             return Err(format!("seats[{index}] 与同一张卡片的另一档重复"));
+        }
+        // A card shows one access, so its seats must agree on it.
+        if *card_access
+            .entry((kind, role))
+            .or_insert(seat["access"].as_str())
+            != seat["access"].as_str()
+        {
+            return Err(format!("seats[{index}] 与同一张卡片的读写类型不一致"));
         }
         if ![Some(CUSTOM_KIND), Some(IMAGE_KIND)].contains(&kind)
             && *group_roles.entry(kind).or_insert(role) != role
@@ -199,13 +254,18 @@ pub fn validate(document: &Value) -> Result<(), String> {
 /// The document as the page sends it, made ready to save: roles trimmed, as the service does,
 /// and the decision model named.
 pub fn normalize(document: &mut Value) {
-    if document.get("decision_model").is_none()
-        && let Some(top) = document.as_object_mut()
+    // Anything but an object is left as it is, for `validate` to refuse.
+    let Some(top) = document.as_object_mut() else {
+        return;
+    };
+    top.entry("decision_model").or_insert(json!(DECISION_MODEL));
+    for seat in top
+        .get_mut("seats")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
     {
-        top.insert("decision_model".into(), json!(DECISION_MODEL));
-    }
-    for seat in document["seats"].as_array_mut().into_iter().flatten() {
-        if let Some(role) = seat["role"].as_str().map(|role| role.trim().to_owned()) {
+        if let Some(role) = seat["role"].as_str().map(|role| trim_text(role).to_owned()) {
             seat["role"] = json!(role);
         }
     }

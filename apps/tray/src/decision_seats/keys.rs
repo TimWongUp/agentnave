@@ -38,7 +38,8 @@ pub(crate) fn key_state(root: &Path) -> Result<bool, String> {
 /// Saves the decision model's key, or clears it when `key` is empty.
 pub(crate) fn save_key(root: &Path, payload: &Value) -> Result<bool, String> {
     let key = payload["key"].as_str().ok_or("密钥必须为字符串")?.trim();
-    if key.len() > KEY_MAX_BYTES || key.chars().any(char::is_control) {
+    // Visible ASCII only, as the service requires of a key that goes into an HTTP header.
+    if key.len() > KEY_MAX_BYTES || !key.chars().all(|c| c.is_ascii_graphic()) {
         return Err("密钥过长或包含无效字符".into());
     }
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());

@@ -821,18 +821,23 @@
     feedback.textContent = AN.L("正在保存…", "Saving…");
     feedback.className = "save-feedback";
     const failures = [];
+    // True when there was nothing to save or it was saved.
     const attempt = async (changed, name, save) => {
-      if (!changed()) return;
+      if (!changed()) return true;
       try {
         await save();
+        return true;
       } catch (error) {
         failures.push(AN.L(`${name}：${error.message}`, `${name}: ${error.message}`));
+        return false;
       }
     };
     await attempt(seatsChanged, AN.L("评审工位", "Review seats"), saveSeats);
-    await attempt(orchestrationChanged, AN.L("编排", "Orchestration"), saveOrchestration);
-    // After the modes: the switch takes effect only in the mode the boss then has.
-    await attempt(() => window.AgentNaveDecisionSeats?.changed(), AN.L("决策模型推荐工位", "Decision-model seats"), window.AgentNaveDecisionSeats.save);
+    // The seat catalog first: a boss in the decision mode must not find it empty, so the modes are
+    // saved only once the catalog is, or when it had no change to save.
+    const catalogSaved = await attempt(() => window.AgentNaveDecisionSeats?.changed(), AN.L("决策模型推荐工位", "Decision-model seats"), window.AgentNaveDecisionSeats?.save);
+    if (catalogSaved) await attempt(orchestrationChanged, AN.L("编排", "Orchestration"), saveOrchestration);
+    else if (orchestrationChanged()) failures.push(AN.L("编排：档位未保存，因为决策模型推荐工位没有保存成功", "Orchestration: modes not saved, because the decision-model seats were not saved"));
     failures.push(...await window.AgentNaveSkills.save());
     S.busy = false;
     $("pane-advanced").inert = $("pane-orchestration").inert = false;

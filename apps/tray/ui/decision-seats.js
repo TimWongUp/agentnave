@@ -34,7 +34,7 @@
   const catalogEntry = (kind) => S.roleCatalog().find((entry) => entry.group === kind);
   const levelsOf = () => DIFFICULTIES.map(([difficulty]) => difficulty);
   const seatsOfCard = (card) => (card.kind === IMAGE ? card.rows.map((row) => row.seat).filter(Boolean) : Object.values(card.seats));
-  const bareSeat = ({ id, provider, model, effort }) => ({ id, provider, model, ...(effort ? { effort } : {}) });
+  const bareSeat = ({ id, provider, model, effort, description }) => ({ id, provider, model, ...(effort ? { effort } : {}), ...(description ? { description } : {}) });
   const accessOf = (card) => catalogEntry(card.kind)?.access || (card.kind === IMAGE ? "write" : card.access);
 
   function toCards(seats) {
@@ -43,16 +43,17 @@
       if (seat.kind === IMAGE) {
         let card = cards.find((one) => one.kind === IMAGE);
         if (!card) cards.push(card = { cid: `c${++cardCount}`, kind: IMAGE, role: "", access: "write", seats: {}, rows: [] });
-        card.rows.push({ rid: `r${++rowCount}`, role: seat.role, seat: bareSeat(seat) });
+        card.rows.push({ rid: `r${++rowCount}`, role: seat.role, loadedRole: seat.role, description: seat.description, seat: bareSeat({ ...seat, description: "" }) });
         continue;
       }
       const fixed = seat.kind !== CUSTOM;
       let card = cards.find((one) => one.kind === seat.kind && (fixed || one.role === seat.role));
       if (!card) {
-        card = { cid: `c${++cardCount}`, kind: seat.kind, role: seat.role, access: seat.access, description: seat.description, seats: {} };
+        card = { cid: `c${++cardCount}`, kind: seat.kind, role: seat.role, loadedRole: seat.role, access: seat.access, description: seat.description, seats: {} };
         cards.push(card);
       }
-      card.seats[seat.difficulty] = bareSeat(seat);
+      // A custom seat keeps the description the file gave it, for as long as its specialty stays.
+      card.seats[seat.difficulty] = bareSeat(seat.kind === CUSTOM ? seat : { ...seat, description: "" });
     }
     return cards;
   }
@@ -60,17 +61,19 @@
   function toSeats(cards) {
     return cards.flatMap((card) => {
       if (card.kind === IMAGE) {
-        return card.rows.filter((row) => row.seat).map(({ role, seat }) => ({
-          id: seat.id, kind: IMAGE, role: role.trim(), description: role.trim(), provider: seat.provider, model: seat.model,
+        return card.rows.filter((row) => row.seat).map(({ role, loadedRole, description, seat }) => ({
+          id: seat.id, kind: IMAGE, role: role.trim(), description: role.trim() === loadedRole ? description : role.trim(), provider: seat.provider, model: seat.model,
           ...(seat.effort ? { effort: seat.effort } : {}), access: "write",
         }));
       }
       return levelsOf().filter((level) => card.seats[level]).map((level) => {
-        const { id, provider, model, effort } = card.seats[level];
+        const { id, provider, model, effort, description } = card.seats[level];
         const role = card.role.trim();
         const group = catalogEntry(card.kind);
+        // A custom seat's own description goes back as it was while its specialty is the one it was read with.
+        const kept = card.kind === CUSTOM && role === card.loadedRole ? description || card.description : "";
         return {
-          id, kind: card.kind, role, description: group?.scope_zh || (card.kind === CUSTOM ? role : card.description || role),
+          id, kind: card.kind, role, description: group?.scope_zh || (card.kind === CUSTOM ? kept || role : card.description || role),
           provider, model, ...(effort ? { effort } : {}), access: accessOf(card), difficulty: level,
         };
       });
@@ -158,7 +161,7 @@
     const card = cards().find((one) => one.cid === cid);
     const seats = { ...card.seats };
     if (!next?.provider || !next?.model) delete seats[level];
-    else seats[level] = { id: seats[level]?.id || freshId(takenIds()), provider: next.provider, model: next.model, ...(next.effort ? { effort: next.effort } : {}) };
+    else seats[level] = { ...bareSeat({ id: seats[level]?.id || freshId(takenIds()), ...next }), ...(seats[level]?.description ? { description: seats[level].description } : {}) };
     editCard(cid, { seats });
   }
   // `what` is a group of the role catalog, "custom" or "image".

@@ -915,10 +915,11 @@ test("a switch put back to what is saved keeps the saved form of its key", async
 });
 
 // The decision mode: its page, options, the first catalog and the key, on the same fake DOM.
-function decisionEditor(preset, loaded) {
+function decisionEditor(preset, loaded, catalogError = null) {
   const calls = [];
   const app = advancedEditor(async (url, options = {}) => {
     calls.push({ url, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+    if (url === "/app/decision-seats" && options.method === "POST" && catalogError) return { ok: false, status: 500, json: async () => ({ error: catalogError }) };
     if (url === "/app/decision-seats" && !options.method) return { ok: true, json: async () => loaded };
     if (url === "/app/decision-key") return { ok: true, json: async () => ({ key_set: JSON.parse(options.body).key !== "" }) };
     return { ok: true, json: async () => ({ saved: true, files: [], bosses: JSON.parse(app.run("JSON.stringify(orchestration.bosses)")) }) };
@@ -1189,6 +1190,33 @@ test("the decision options are saved with the orchestration and shape its rules 
   assert.equal(app.run('orchestrationPresetText("off")'), undefined);
 });
 
+test("a card read from the file goes back unchanged, and a changed specialty takes its own description", async () => {
+  const seat = (id, kind, role, description, extra) => ({ id, kind, role, description, provider: "codex", model: "chat-model", access: "write", ...extra });
+  const file = [
+    seat("c-1", "custom", "数据库迁移", "只做 PostgreSQL 的迁移脚本", { difficulty: "easy" }),
+    seat("c-2", "custom", "数据库迁移", "只做 PostgreSQL 的迁移脚本和回滚", { difficulty: "hard" }),
+    seat("i-1", "image", "漫画风格", "日式漫画的线稿和上色"),
+  ];
+  const { app, decision } = decisionEditor("decision", { document: { version: 1, seats: file }, error: null, key_set: false, key_error: null });
+  await decision((d) => d.load());
+  const descriptions = () => Array.from(seatsOf(app).map((one) => one.description));
+  // Nothing is rewritten by reading and saving the cards, whatever the description says.
+  assert.deepEqual(descriptions(), ["只做 PostgreSQL 的迁移脚本", "只做 PostgreSQL 的迁移脚本和回滚", "日式漫画的线稿和上色"]);
+  assert.equal(decision((d) => d.changed()), false);
+  // A new specialty names its own seats; putting the old one back restores what the file said.
+  const card = () => Array.from(cardsOf(app))[0];
+  card().children[0].children[0].listeners.input({ target: { value: "数据迁移" } });
+  assert.deepEqual(Array.from(seatsOf(app).filter((one) => one.kind === "custom").map((one) => one.description)), ["数据迁移", "数据迁移"]);
+  card().children[0].children[0].listeners.input({ target: { value: "数据库迁移" } });
+  assert.equal(decision((d) => d.changed()), false);
+  // A card made now has its role for a description.
+  app.run('window.AgentNaveDecisionSeats.addCard("custom")');
+  const fresh = Array.from(cardsOf(app)).at(-1);
+  fresh.children[0].children[0].listeners.input({ target: { value: "写作" } });
+  fresh.children[1].children[1].listeners.change({ target: { value: "codex" } });
+  assert.equal(seatsOf(app).find((one) => one.role === "写作").description, "写作");
+});
+
 test("saving sends the flat catalog on its own, without any boss switch", async () => {
   const { app, calls, decision } = decisionEditor("split", NO_FILE);
   await decision((d) => d.load());
@@ -1205,6 +1233,28 @@ test("saving sends the flat catalog on its own, without any boss switch", async 
   assert.equal(cardsOf(app).length, 5);
   app.run('window.AgentNaveDecisionSeats.addCard("custom")');
   assert.match(decision((d) => d.problem()), /缺少专业/);
+});
+
+test("the seat catalog is saved before the modes, and the modes wait when it fails", async () => {
+  const run = async (catalogError) => {
+    const { app, calls } = decisionEditor("split", NO_FILE, catalogError);
+    app.run("window.AgentNaveSkills = { save: async () => [], discard() {}, changed: () => false, problem: () => null }");
+    await app.run("window.AgentNaveDecisionSeats.load()");
+    app.run('viewMode("decision")');
+    app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
+    app.run("bindAdvanced()");
+    await app.run('$("advanced-save").listeners.click()');
+    return { app, posts: calls.filter((call) => call.method === "POST" && /^\/app\/(decision-seats|orchestration)$/.test(call.url)).map((call) => call.url), feedback: app.run('$("advanced-feedback").textContent') };
+  };
+  const ok = await run(null);
+  assert.deepEqual(Array.from(ok.posts), ["/app/decision-seats", "/app/orchestration"]);
+  assert.equal(ok.feedback, "设置已保存");
+  // A catalog that did not save leaves the modes unsaved, with the reason and the consequence said.
+  const failed = await run("磁盘已满");
+  assert.deepEqual(Array.from(failed.posts), ["/app/decision-seats"]);
+  assert.match(failed.feedback, /决策模型推荐工位：磁盘已满/);
+  assert.match(failed.feedback, /编排：档位未保存/);
+  assert.equal(failed.app.run("orchestrationChanged()"), true);
 });
 
 test("the key goes out once and the page afterwards only knows that one is set", async () => {

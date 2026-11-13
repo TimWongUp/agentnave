@@ -85,4 +85,12 @@ def read_decision_key(name: str) -> str | None:
             f"Invalid {KEYS_FILE}: needs version 1 and keys as an object of strings. "
             + _repair(KEYS_FILE)
         )
-    return cast(dict[str, str], keys).get(name, "").strip() or None
+    key = cast(dict[str, str], keys).get(name, "").strip()
+    # The key becomes an HTTP header: visible ASCII only, so a stray line break never reaches the
+    # HTTP library, whose errors would quote it.
+    if not all("!" <= char <= "~" for char in key):
+        raise DecisionKeysFileError(
+            f"Invalid {KEYS_FILE}: the key contains characters that are not allowed. "
+            + _repair(KEYS_FILE)
+        )
+    return key or None

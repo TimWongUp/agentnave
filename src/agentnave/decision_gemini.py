@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
@@ -89,22 +90,26 @@ def _decision(answer: dict[str, Any], candidates: Mapping[str, str]) -> Decision
     if not isinstance(choice, str) or choice not in candidates:
         raise DecisionError("bad_response", "The decision model chose no listed seat.")
     probabilities = answer.get("probabilities", {})
-    if not isinstance(probabilities, dict) or not all(
-        isinstance(key, str) and _is_number(value)
-        for key, value in cast(dict[object, object], probabilities).items()
+    numbers = (
+        {key: _finite(value) for key, value in cast(dict[object, object], probabilities).items()}
+        if isinstance(probabilities, dict)
+        else None
+    )
+    if numbers is None or not all(
+        isinstance(key, str) and value is not None for key, value in numbers.items()
     ):
         raise DecisionError("bad_response", "The decision model returned unreadable probabilities.")
     confidence = answer.get("confidence")
-    if confidence is not None and not _is_number(confidence):
+    if confidence is not None and _finite(confidence) is None:
         raise DecisionError("bad_response", "The decision model returned an unreadable confidence.")
     return Decision(
         choice,
         {
-            key: float(value)
-            for key, value in cast(dict[str, float], probabilities).items()
+            key: cast(float, value)
+            for key, value in cast(dict[str, float | None], numbers).items()
             if key in candidates
         },
-        None if confidence is None else float(cast(float, confidence)),
+        None if confidence is None else _finite(confidence),
     )
 
 
@@ -115,8 +120,16 @@ def _object(value: object, key: str) -> dict[str, Any]:
     return cast(dict[str, Any], found)
 
 
-def _is_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+def _finite(value: object) -> float | None:
+    """The number as a float; None for anything else: a bool, a string, NaN, an infinity or an
+    integer too large for a float."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -144,13 +157,13 @@ class GeminiDecisionClient:
         return parse_batch_response(self._post(build_batch_request(questions)), questions)
 
     def _post(self, document: dict[str, Any]) -> object:
-        request = urllib.request.Request(
-            self._endpoint,
-            data=json.dumps(document).encode(),
-            headers={"content-type": "application/json", "x-goog-api-key": self._key},
-            method="POST",
-        )
         try:
+            request = urllib.request.Request(
+                self._endpoint,
+                data=json.dumps(document).encode(),
+                headers={"content-type": "application/json", "x-goog-api-key": self._key},
+                method="POST",
+            )
             with urllib.request.build_opener(_NoRedirect).open(
                 request, timeout=self._timeout
             ) as response:
@@ -162,9 +175,14 @@ class GeminiDecisionClient:
             raise DecisionError(
                 "network", f"The decision model is unreachable: {self._safe(str(reason))}"
             ) from None
+        except ValueError:
+            # What the HTTP library quotes of a bad header value would be the key itself.
+            raise DecisionError(
+                "network", "The decision model request could not be sent."
+            ) from None
         try:
             body: object = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             raise DecisionError("bad_response", "The decision model reply is not JSON.") from None
         return body
 
@@ -192,7 +210,7 @@ def _error_message(detail: str) -> str:
     """Google's error.message when the body has one, else the raw text."""
     try:
         document: object = json.loads(detail)
-    except ValueError:
+    except (ValueError, RecursionError):
         return detail.strip()
     error = cast(dict[str, object], document).get("error") if isinstance(document, dict) else None
     message = cast(dict[str, object], error).get("message") if isinstance(error, dict) else None

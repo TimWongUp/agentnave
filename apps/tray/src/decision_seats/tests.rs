@@ -122,6 +122,94 @@ fn what_the_fixtures_do_not_cover_is_refused_like_the_service_does() {
 }
 
 #[test]
+fn text_is_held_to_the_table_the_service_checks_too() {
+    let with_role = |role: &str| {
+        let mut changed = seat();
+        changed["role"] = json!(role);
+        changed["description"] = json!(role);
+        validate(&document(vec![changed])).is_ok()
+    };
+    // Ordinary Chinese, English, emoji and an inner space are fine; white space at the ends is trimmed.
+    for role in [
+        "写代码 and code 🚀",
+        "  数据库迁移\u{3000}",
+        "a b",
+        "a\u{2065}b",
+    ] {
+        assert!(with_role(role), "{role:?}");
+    }
+    // Soft hyphen, private use, zero width and bidi controls, white space inside and controls are not.
+    for role in [
+        "a\u{00ad}b",
+        "a\u{e000}b",
+        "a\u{f0000}b",
+        "a\u{200b}b",
+        "a\u{2066}b",
+        "a\u{feff}b",
+        "a\u{00a0}b",
+        "a\u{3000}b",
+        "a\nb",
+        "a\u{1f}b",
+        "\u{1f}ab",
+        "a\u{85}b",
+    ] {
+        assert!(!with_role(role), "{role:?}");
+    }
+    // The role is trimmed by the same table before it is saved.
+    let mut file = document(vec![{
+        let mut padded = seat();
+        padded["role"] = json!("\u{3000} 写代码\u{a0}");
+        padded
+    }]);
+    normalize(&mut file);
+    assert_eq!(file["seats"][0]["role"], "写代码");
+}
+
+#[test]
+fn an_image_seat_may_carry_a_null_difficulty_and_a_card_one_access() {
+    let mut image = seat();
+    image["kind"] = json!("image");
+    image["difficulty"] = Value::Null;
+    assert!(validate(&document(vec![image.clone()])).is_ok());
+    image["difficulty"] = json!("easy");
+    assert!(validate(&document(vec![image])).is_err());
+    // Any other kind still needs a real difficulty.
+    let mut custom = seat();
+    custom["difficulty"] = Value::Null;
+    assert!(validate(&document(vec![custom])).is_err());
+    // The seats of one card agree on their access.
+    let (mut read, mut write) = (seat(), seat());
+    read["difficulty"] = json!("easy");
+    read["access"] = json!("read");
+    write["id"] = json!("s-other");
+    assert!(validate(&document(vec![read.clone(), write.clone()])).is_err());
+    write["role"] = json!("另一张");
+    write["description"] = json!("另一张");
+    assert!(validate(&document(vec![read, write])).is_ok());
+}
+
+#[test]
+fn a_document_that_is_not_an_object_is_left_alone_and_refused() {
+    for original in [
+        json!([1, 2]),
+        json!("text"),
+        json!(7),
+        json!(false),
+        json!(null),
+    ] {
+        let mut document = original.clone();
+        normalize(&mut document);
+        assert_eq!(document, original);
+        assert!(validate(&document).is_err(), "{original}");
+    }
+    // Seats that are not objects are left for validate too.
+    let mut odd = json!({"version": 1, "seats": [3, "a", [1]]});
+    normalize(&mut odd);
+    assert_eq!(odd["decision_model"], "gemini-decision-1");
+    assert!(validate(&odd).is_err());
+}
+
+#[test]
 fn the_page_copy_is_made_ready_and_a_saved_file_reads_back() {
     let dir = tempfile::tempdir().unwrap();
     let mut file = document(vec![{
