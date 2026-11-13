@@ -224,7 +224,7 @@ async def list_members(
     Exclusions: see MCP instructions.
     """
     try:
-        members = read_member_list(runtime.EXCLUDED_PROVIDERS, runtime.HOST)
+        members = read_member_list(runtime.task_excluded_providers(), runtime.HOST)
     except (OSError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
     payload = MemberListPayload.model_validate(members.model_dump())
@@ -236,7 +236,7 @@ async def list_members(
         discussion = document.modes.get("discussion") if document is not None else None
         payload.provider_details = ProviderDetails(
             provider=provider,
-            permitted=provider not in runtime.EXCLUDED_PROVIDERS,
+            permitted=provider not in runtime.task_excluded_providers(),
             show_permitted=discussion is None or provider in discussion,
             supported_options="model, effort, " + runtime.PROVIDER_OPTIONS[provider],
         )

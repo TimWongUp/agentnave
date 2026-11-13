@@ -60,7 +60,7 @@ async def recommend_seat(
 async def recommend_or_raise(task: str, access: Literal["read", "write"]) -> Recommendation:
     """The recommendation for the running host; failures become coded tool errors."""
     try:
-        return await recommend(task, access, runtime.HOST, runtime.EXCLUDED_PROVIDERS)
+        return await recommend(task, access, runtime.HOST, runtime.task_excluded_providers())
     except RecommendationError as exc:
         raise ToolError(f"{exc.code}: {exc.message}") from None
 

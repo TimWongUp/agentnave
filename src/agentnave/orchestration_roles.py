@@ -266,6 +266,7 @@ class OrchestrationFile(BaseModel):
     preset: OrchestrationPreset = "off"
     apps: dict[str, OrchestrationPreset] = {}
     effective_apps: dict[str, OrchestrationPreset] | None = None
+    host_cli: dict[str, Literal["subagent", "launch", "skip"]] = {}
     explorer: dict[Difficulty, ReviewSeat] = {}
     worker: dict[Difficulty, ReviewSeat] = {}
     # A key of its own, which servers that predate it ignore instead of rejecting the file.
@@ -319,6 +320,11 @@ class OrchestrationFile(BaseModel):
 
     def enabled(self, host: Host) -> bool:
         return self.mode(host) not in (None, "off", "meetings")
+
+    def host_cli_mode(self, host: Host) -> Literal["subagent", "launch", "skip"]:
+        if self.effective_apps is not None and not host.app_id:
+            return "subagent"
+        return self.host_cli.get(host.app_id or host.name or "", "subagent")
 
     def decision(self, host: Host) -> bool:
         """Whether the host takes the user's own seat catalog instead of the fixed groups."""

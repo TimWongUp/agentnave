@@ -3993,3 +3993,67 @@ async def test_decision_image_fallback_skips_host_cli(
         _write_own_seats([image])
         listing = _payload((await client.call_tool("list_members", {})).structured_content)
         assert _payload(listing["orchestration"]).get("custom_seats", {}) == {}
+
+
+@pytest.mark.asyncio
+async def test_host_cli_modes_and_group_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    root.mkdir(exist_ok=True)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    seat: dict[str, Any] = {"provider": "claude", "model": "first"}
+    (root / "review.json").write_text(
+        json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+    )
+    async with Client(mcp) as client:
+        args = {"cwd": str(tmp_path), "role": "correctness-reviewer", "prompt": "ok"}
+        native = _payload((await client.call_tool("start_agent", args)).structured_content)
+        assert native["reason"] == "native_seat"
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "host_cli": {"claude": "launch"}})
+        )
+        started = await _start_and_wait(client, **args)
+        assert started["provider"] == "claude"
+        monkeypatch.setenv("AGENTNAVE_EXCLUDED_PROVIDERS", "claude")
+        blocked = await client.call_tool("start_agent", args)
+        assert blocked.is_error and "excluded" in str(blocked.content).lower()
+        monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS")
+        seat["provider"] = "antigravity"
+        seat["model"] = "gemini-first"
+        seat["fallbacks"] = [
+            {"provider": "antigravity", "model": "gemini-second"},
+            {"provider": "claude", "model": "next"},
+        ]
+        (root / "review.json").write_text(
+            json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+        )
+        provider_health.record(root, "antigravity", "quota", "gemini-first")
+        started = await _start_and_wait(client, **args)
+        assert started["model"] == "next"
+        assert _payload(started["seat_fallback"])["position"] == 2
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "host_cli": {"claude": "skip"}})
+        )
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        status = _payload(_payload(listed["review"])["correctness-reviewer"])
+        assert status["available"] is False
+        assert "host's own CLI" in str(status["fallbacks"])
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "host_cli": {"codex": "skip"}})
+        )
+        seat.update(
+            provider="codex", model="first", fallbacks=[{"provider": "claude", "model": "next"}]
+        )
+        (root / "review.json").write_text(
+            json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+        )
+        started = await _start_and_wait(client, **args)
+        assert started["provider"] == "claude"
+        assert "host's own CLI" in str(started["seat_fallback"])

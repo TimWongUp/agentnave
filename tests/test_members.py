@@ -981,7 +981,7 @@ def test_cooling_clis_disable_seats_and_filter_replacements(
     assert cooled.alternatives == []
     assert cooled.replacement is not None and cooled.replacement.provider == "codebuddy"
     assert result.review["simplicity-reviewer"].native is True
-    assert result.review["simplicity-reviewer"].available is None
+    assert result.review["simplicity-reviewer"].available is False
 
     (tmp_path / "orchestration.json").write_text(
         json.dumps(

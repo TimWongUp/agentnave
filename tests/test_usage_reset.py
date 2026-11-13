@@ -19,7 +19,7 @@ from agentnave.adapters.base import PreparedCommand, UsageQuery
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codex import CodexAdapter
 from agentnave.core import InvocationManager
-from agentnave.models import InvocationRequest, InvocationStatus
+from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus
 
 NOW = datetime(2026, 11, 13, 4, 0, tzinfo=UTC)
 AGY = (
@@ -258,3 +258,19 @@ async def test_quota_failure_without_reset_asks_the_usage_query(
     else:
         # No reset time from the query either: the model rests for an hour.
         assert timedelta(minutes=59) < datetime.fromisoformat(until) - datetime.now(UTC)
+
+
+def test_quota_groups_record_match_and_clear(tmp_path: Path) -> None:
+    provider_health.record(tmp_path, "antigravity", "quota", "gemini-first")
+    health = provider_health.active(tmp_path)
+    assert provider_health.matching(health, "antigravity", "gemini-other") is not None
+    assert provider_health.matching(health, "antigravity", "claude-other") is None
+    document = json.loads((tmp_path / "provider-health.json").read_text())
+    assert "Gemini Models" in document["providers"]["antigravity"]["groups"]
+    result = InvocationResult(InvocationStatus.SUCCEEDED, "antigravity", "ok", None, 0)
+    provider_health.observe_result(tmp_path, result, None, [], "gemini-other")
+    assert provider_health.active(tmp_path) == {}
+    provider_health.record(tmp_path, "codex", "quota", "one")
+    assert provider_health.matching(provider_health.active(tmp_path), "codex", "two") is not None
+    assert provider_health.clear(tmp_path, "codex", "two")
+    assert provider_health.active(tmp_path) == {}

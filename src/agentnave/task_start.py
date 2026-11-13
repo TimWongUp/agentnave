@@ -7,14 +7,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
 
+from agentnave import provider_health
 from agentnave.decision_seats import custom_seat
 from agentnave.host import Host
+from agentnave.host_choice import host_cli_mode
 from agentnave.isolated import other_active_leases, shares_cwd_tree
 from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.members import (
     ProviderName,
     ReviewRole,
     apply_member,
+    data_root,
     orchestration_enabled,
     read_members,
     read_permissions,
@@ -165,17 +168,26 @@ class StartArguments:
                 self.seat, host, inherited="seat (session_id history)" in self.defaults
             )
         name = self.seat or review_role(self.role)
-        if self.selected is not None and self.selected.provider == host.provider:
+        choice = host_cli_mode(host)
+        if (
+            self.selected is not None
+            and self.selected.provider == host.provider
+            and choice == "subagent"
+        ):
+            provider_health.check(data_root(), [(self.selected.provider, self.selected.model)])
             raise NativeSeat(name, self.selected)
         if self.provider is None:
             if not name:
                 raise ValueError("Pass provider, or seat / a review role to select an App seat")
             seat = self.selected or role_seat(name, host, required=True)
             assert seat is not None
-            if seat.provider == host.provider:
+            if seat.provider == host.provider and choice == "subagent":
+                provider_health.check(data_root(), [(seat.provider, seat.model)])
                 raise NativeSeat(name, seat)
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
+        if self.provider == host.provider and choice == "skip":
+            raise ValueError("CLI is the host's own CLI")
         custom = custom_seat(name, host)
         implied = custom.access if custom is not None else role_access(name)
         if implied is None:

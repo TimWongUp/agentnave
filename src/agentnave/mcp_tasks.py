@@ -343,7 +343,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
                 arguments.selected, fallback = select(
                     configured,
                     runtime.HOST,
-                    runtime.EXCLUDED_PROVIDERS,
+                    runtime.task_excluded_providers(),
                     provider,
                     image=name == "image-generator"
                     or (custom is not None and custom.kind == "image"),
@@ -377,7 +377,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
             seat_name,
             options,
             seat_applied,
-            runtime.EXCLUDED_PROVIDERS,
+            runtime.task_excluded_providers(),
             runtime.HOST,
             arguments.selected,
         )

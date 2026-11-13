@@ -183,7 +183,9 @@ async def start_agents(
     directories = _directories(tasks, cwd)
     try:
         found = await recommend_many(
-            [(one.prompt, one.access) for one in tasks], runtime.HOST, runtime.EXCLUDED_PROVIDERS
+            [(one.prompt, one.access) for one in tasks],
+            runtime.HOST,
+            runtime.task_excluded_providers(),
         )
     except RecommendationError as exc:
         raise ToolError(f"{exc.code}: {exc.message}") from None

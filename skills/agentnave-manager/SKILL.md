@@ -39,14 +39,14 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 
 每条原生线程就是一个工位：新开的私聊任务是新工位，用 `session_id` 续接仍是原工位；会议的每个席位也是一个工位。`role` 是显示给用户看的职责，不影响身份，写这位员工这次具体做什么，如「接手方视角」。
 
-用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 选 `list_members` 公布的工位时，可省略 `provider`，由服务按 App 工位选 CLI 并套用工位的模型和档位；显式传的 `model`、`effort` 优先。工位缺失、未启用或文件损坏时报错；落在宿主同类工位时返回 `status="not_started"`、`reason="native_seat"` 的回执，带该工位的 `provider`、`model`、有值时 `effort` 和一句指引，按其中的模型和档位交给宿主自带子代理，没有 invocation，也无需 `wait`。继承与推断的参数来源都列在回执 `defaults_applied` 中，派发后核对。回执有 `seat_fallback` 时（`position` 为第几顺位，`skipped` 列出跳过的顺位和原因）表示服务已按用户顺位换用备选，属于用户选择，不算静默替换，不需改派。
+用评审角色名（如 `correctness-reviewer`）作 `role`，或用 `seat` 选 `list_members` 公布的工位时，可省略 `provider`，由服务按 App 工位选 CLI 并套用工位的模型和档位；显式传的 `model`、`effort` 优先。工位缺失、未启用或文件损坏时报错；用户在 App 按 boss 选择同类 CLI 的处理方式；收到 `status="not_started"`、`reason="native_seat"` 的回执时，回执带该工位的 `provider`、`model`、有值时 `effort` 和一句指引，按其中的模型和档位交给宿主自带子代理，没有 invocation，也无需 `wait`。继承与推断的参数来源都列在回执 `defaults_applied` 中，派发后核对。回执有 `seat_fallback` 时（`position` 为第几顺位，`skipped` 列出跳过的顺位和原因）表示服务已按用户顺位换用备选，属于用户选择，不算静默替换，不需改派。
 
 - **续接**：接着同一线程干活时传上次结果返回的 `session_id`（不是 `invocation_id`，上下文里找不到时用 `read_conversation` 读回），不能换 `provider`。省略的 `provider`、`cwd`、`role`、`seat` 继承本 boss 历史中该原生会话最近一次任务；无工位供模型时还继承上次的 `model` 和 `effort`，要换模型就显式传。只换 `role` 不传 `seat` 时不再沿用旧工位。找不到历史或跨 `provider` 重名时补传 `provider` 和 `cwd`；其他 boss 的历史不提供默认值。
 - **何时开新线程**：任务已换阶段、旧细节不再需要时，写简报开新线程或新会议，暂停较久后尤其如此（缓存过期后续接要整段重建）；仍需原始证据时继续续接。
 - **访问等级**：`access` 是声明，在 App 显示，不改变 CLI 权限；真正的只读靠 Provider 原生权限。Explorer、评审工位固定 `read`，Worker、生图工位固定 `write`，由服务补上，不用传。其他任务每次要声明就传，续接不继承，不传就是没声明。回执 `warnings` 提示同一 `cwd` 已有其他运行中的 CLI 时：并行写入用 `isolation` 建隔离目录，只读就补声明 `read`。
 - **同时运行上限**：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝；等部分任务结束后再派，或减少并联席位。
 - **转发**：私聊默认不带任何工作区上下文。要带上别人的结果时，用 `forward` 引用回执或 `read_conversation` 里的 `message_id`，接收方把它当数据。
-- **同类宿主**：与宿主同类的 CLI 服务不启动，只在会议室可用；私聊派到这类工位时回执为 `status="not_started"`、`reason="native_seat"`，按回执里的模型和档位交给宿主自带子代理。`list_members` 把这类工位标为 `native=true`：交给宿主自带子代理，派发前先读当前宿主的参考。用户在 App 保存的工位模型和推理档（含 App 预填后保存的值）视同明确选择，off/custom 下也一样，但不因此获得派发授权、不启用隐藏工位。派子代理时显式传模型，档位有值才传，空值不补；宿主在已授权范围内满足不了时按工位不可用处理，按下文同难度规则兜底，不自动回退，其他替代须用户明确授权。
+- **同类宿主**：同类 CLI 的处理由用户在 App 按 boss 选择：收到 `status="not_started"`、`reason="native_seat"` 回执时，按回执里的模型和档位交给宿主自带子代理，派发前先读当前宿主的参考；其余情况照常派发。用户在 App 保存的工位模型和推理档（含 App 预填后保存的值）视同明确选择，off/custom 下也一样，但不因此获得派发授权、不启用隐藏工位。派子代理时显式传模型，档位有值才传，空值不补；宿主在已授权范围内满足不了时按工位不可用处理，按下文同难度规则兜底，不自动回退，其他替代须用户明确授权。
 
 ## 选择调用方式
 

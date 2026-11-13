@@ -156,6 +156,20 @@ NATIVE_SEAT_NEXT = (
 )
 
 EXCLUDED_PROVIDERS = _read_excluded_providers()
+
+
+def task_excluded_providers() -> frozenset[str]:
+    from agentnave.host_choice import host_cli_mode
+
+    explicit = {
+        name.strip().lower()
+        for name in os.environ.get("AGENTNAVE_EXCLUDED_PROVIDERS", "").split(",")
+    }
+    if HOST.provider and HOST.provider not in explicit and host_cli_mode(HOST) == "launch":
+        return EXCLUDED_PROVIDERS - {HOST.provider}
+    return EXCLUDED_PROVIDERS
+
+
 PROVIDER_SELECTION = (
     "Providers permitted by this host configuration: "
     + (
@@ -166,7 +180,7 @@ PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
-    + ". start_agent rejects excluded providers; meetings follow discussion member limits without host exclusions."
+    + ". App settings may allow launching the host's own CLI for private tasks; environment exclusions still apply. Meetings follow discussion member limits without host exclusions."
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 DISPATCH_WAIT = (

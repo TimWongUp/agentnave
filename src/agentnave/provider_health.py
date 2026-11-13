@@ -125,6 +125,11 @@ def _active(document: dict[str, Any] | None, now: datetime) -> dict[tuple[str, s
             for model, value in cast(dict[str, object], models).items():
                 if model and (health := _entry(value, now)):
                     result[provider, model] = health
+        groups = item.get("groups")
+        if isinstance(groups, dict):
+            for group, value in cast(dict[str, object], groups).items():
+                if group and (health := _entry(value, now)):
+                    result[provider, "\0group:" + group] = health
     return result
 
 
@@ -137,9 +142,24 @@ def matching(
 ) -> tuple[str | None, Health] | None:
     if (entry := health.get((provider, None))) is not None:
         return None, entry
+    if (
+        model
+        and (group := quota_group(provider, model))
+        and (entry := health.get((provider, "\0group:" + group))) is not None
+    ):
+        return group, entry
     if model and (entry := health.get((provider, model))) is not None:
         return model, entry
     return None
+
+
+def quota_group(provider: str, model: str) -> str | None:
+    from agentnave.adapters import get_adapter
+
+    try:
+        return get_adapter(provider).quota_group(model)
+    except ValueError:
+        return None
 
 
 def reason(provider: str, health: Health, model: str | None = None) -> str:
@@ -244,12 +264,20 @@ def _update_locked(
         if not isinstance(models, dict):
             models = {}
         models = cast(dict[str, Any], models)
-        previous = _entry(models.get(model) if model else item.get("default"), datetime.now(UTC))
+        groups = item.get("groups")
+        if not isinstance(groups, dict):
+            groups = {}
+        groups = cast(dict[str, Any], groups)
+        group = quota_group(provider, model) if model else None
+        target = groups if code == "quota" and group else models
+        key = group if code == "quota" and group else model
+        previous = _entry(target.get(key) if key else item.get("default"), datetime.now(UTC))
         if code is None:
             if model:
                 removed = models.pop(model, None) is not None
+                removed_group = group is not None and groups.pop(group, None) is not None
                 removed_default = item.pop("default", None) is not None
-                if not removed and not removed_default:
+                if not removed and not removed_group and not removed_default:
                     return True
             else:
                 if "default" not in item:
@@ -271,14 +299,18 @@ def _update_locked(
             entry = _merged_health(previous, code, until, reset)
             if entry == previous:
                 return True
-            if model:
-                models[model] = dict(entry)
+            if key:
+                target[key] = dict(entry)
             else:
                 item["default"] = dict(entry)
         if models:
             item["models"] = models
         else:
             item.pop("models", None)
+        if groups:
+            item["groups"] = groups
+        else:
+            item.pop("groups", None)
         if item:
             providers[provider] = item
         else:
