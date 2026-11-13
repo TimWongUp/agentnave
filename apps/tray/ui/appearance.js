@@ -26,6 +26,7 @@ window.ANAppearance = (() => {
     if (["system", "light", "dark"].includes(general.theme)) theme = general.theme;
     if (["system", "reduce", "full"].includes(general.motion)) root.dataset.motion = general.motion;
     if (typeof general.battery_still === "boolean") root.dataset.batteryStill = String(general.battery_still);
+    if (typeof general.pause_unfocused === "boolean") root.dataset.pauseUnfocused = String(general.pause_unfocused);
     if (["static", "video-272", "video-544"].includes(general.character_style)) {
       characterStyle = general.character_style;
       root.dataset.characterStyle = characterStyle;
@@ -90,5 +91,5 @@ window.ANAppearance = (() => {
   applyTheme();
   return { applyTheme, applyPreferences, themeSwitch, reducedMotion,
     preferences: () => ({ theme, motion: root.dataset.motion, character_style: characterStyle,
-      battery_still: root.dataset.batteryStill !== "false" }) };
+      battery_still: root.dataset.batteryStill !== "false", pause_unfocused: root.dataset.pauseUnfocused !== "false" }) };
 })();

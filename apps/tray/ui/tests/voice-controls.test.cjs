@@ -277,17 +277,16 @@ const desk = (key, running = false, kind = "task") => ({ key, kind, provider: "c
 const room = (id, status = "finished") => ({ id, title: id, status, last_active: id === "old" ? "2026-11-01T00:00:01Z" : "2026-11-01T00:00:02Z", seats: [] });
 const manager = (group, desks = [], rooms = [], extra = {}) => ({ group, label: group, host: "codex", updated: "2026-11-01T00:00:01Z", desks, rooms, status: "idle", ...extra });
 
-test("the panel folds every idle office and displays only running non-seat desks in a working card", async () => {
-  const app = await panel([manager("idle", [desk("old")], [], { live: true, status: "failed" })]);
-  assert.equal(app.elements.get("groups").children.length, 0, "live presence and failure do not count as running work");
-  assert.equal(app.elements.get("quiet").children.length, 1);
+test("the panel keeps only the latest idle office as a card and shows at most eight working and four other desks", async () => {
+  const app = await panel([manager("older", [desk("old")], [], { updated: "2026-11-01T00:00:00Z" }), manager("idle", [desk("old")], [], { live: true, status: "failed" })]);
+  assert.equal(app.elements.get("groups").children.length, 1, "the office that worked last stays a card");
+  assert.equal(app.elements.get("quiet").children.length, 1, "live presence and failure do not count as running work");
   const desks = [desk("running", true), desk("idle"), desk("seat", true, "seat"), ...Array.from({ length: 8 }, (_, n) => desk(`sleep-${n}`))];
   app.render([manager("busy", desks, [room("meeting", "running")])]);
   const card = app.elements.get("groups").children[0];
   const cells = card.children.find(child => child.tag === "div.desks");
-  assert.equal(cells.children.length, 1);
+  assert.equal(cells.children.length, 5, "one working desk, then the four most recent others; seats are not desks");
   assert.equal(cells.children[0].attributes.href, "/chat/busy#desk:running");
-  assert.equal(card.children.find(child => child.tag === "button.fold").hidden, true, "folding counts filtered desks");
   assert.equal(card.children[0].children.length, 1, "workspace cards have no listening button");
   assert.equal(app.elements.get("quiet").children.length, 0);
 });
@@ -305,14 +304,14 @@ test("a panel listening snapshot pins its office and ended meeting, then returns
   app.show(snap);
   const card = app.elements.get("groups").children[0];
   const rooms = card.children.find(child => child.tag === "div.rooms");
-  assert.equal(rooms.children.length, 2);
-  assert.equal(rooms.children[0].children[1].textContent, "停止收听");
+  assert.equal(rooms.children.length, 2, "the latest meeting and the one being listened to");
+  assert.equal(rooms.children[1].children[1].textContent, "停止收听");
   assert.equal(node(app, "div.voice-now").hidden, false);
   assert.equal(node(app, "p.voice-status").textContent, snap.status);
   assert.equal(node(app, "button.voice-primary").disabled, false);
   app.show(app.snapshot({}));
-  assert.equal(app.elements.get("groups").children.length, 0);
-  assert.equal(app.elements.get("quiet").children.length, 1);
+  assert.equal(app.elements.get("groups").children.length, 1, "the only office stays the latest");
+  assert.equal(app.elements.get("groups").children[0].children.find(child => child.tag === "div.rooms").children.length, 1);
   assert.equal(node(app, "div.voice-now").hidden, true);
 });
 
@@ -366,20 +365,15 @@ test("the panel uses the office snapshot for backlog, controls and retry instead
   assert.equal(app.nodes.some(item => item.tag === "ol.voice-queue"), false);
 });
 
-test("the panel folds eight visible running desks and still announces a seat that disappears on completion", async () => {
+test("the panel shows eight running desks and still announces a seat that disappears on completion", async () => {
   const desks = Array.from({ length: 8 }, (_, n) => desk(`worker-${n}`, true));
   desks.push({ ...desk("seat", true, "seat"), model: "gpt-x", identity: { ...identities.review, key: "seat" } }, desk("idle"));
   const app = await panel([manager("workspace", desks)]);
   const card = app.elements.get("groups").children[0];
   const cells = card.children.find(child => child.tag === "div.desks");
-  assert.equal(cells.children.length, 8);
-  assert.equal(cells.children.filter(child => child.hidden).length, 2);
-  const fold = card.children.find(child => child.tag === "button.fold");
-  assert.equal(fold.hidden, false);
-  fold.listeners.click();
-  assert.equal(cells.children.filter(child => child.hidden).length, 0);
+  assert.equal(cells.children.length, 9, "eight working desks and the idle one");
   await app.feed([manager("workspace", desks.map(item => ({ ...item, activities: [], status: "succeeded" })))]);
-  assert.equal(app.elements.get("groups").children.length, 0);
+  assert.equal(app.elements.get("groups").children.length, 1, "the office that worked last stays a card");
   assert.match(app.elements.get("announce").textContent, /gpt-x succeeded/,
     "the completed seat is announced by its service identity even though it was never a visible cell");
   assert.match(app.elements.get("announce").textContent, /未记录身份 succeeded/,

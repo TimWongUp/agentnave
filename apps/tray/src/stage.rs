@@ -518,7 +518,8 @@ pub(crate) fn respond(
         let messages = group.timeline(focus, complete);
         let omitted = (group.messages.len() + group.typing.len()).saturating_sub(messages.len());
         let referenced = referenced_desks(&rooms, &messages);
-        let (desks, optimized) = group.desks(host.as_deref(), limit, OPTIMIZED_LISTED, &referenced);
+        let (desks, optimized) =
+            group.desks(host.as_deref(), limit, false, OPTIMIZED_LISTED, &referenced);
         value["desks"] = json!(desks);
         value["optimized"] = optimized;
         value["rooms"] = json!(rooms);
@@ -529,7 +530,7 @@ pub(crate) fn respond(
         return Response::json(&value);
     }
     if path == "/app/stage" {
-        panel_response(groups, &snapshots, &stage_ids, data_exists, limit)
+        panel_response(groups, &snapshots, &stage_ids, data_exists)
     } else {
         list_response(groups, &snapshots)
     }
@@ -699,7 +700,6 @@ fn panel_response(
     snapshots: &[Snapshot],
     stage_ids: &[String],
     data_exists: bool,
-    limit: usize,
 ) -> Response {
     let managers: Vec<_> = groups
         .into_iter()
@@ -710,10 +710,11 @@ fn panel_response(
             value["threads"] = json!(g.threads());
             value["omitted"] = json!(g.omitted(None, false));
             value["members"] = json!(g.members());
+            value["boss_messages"] = json!(g.boss_messages());
             let rooms = g.rooms();
-            // The panel only shows how many; the office lists them. Seats still need theirs.
+            // The panel draws every desk, as its cards pick which to show; the office lists the optimized ones.
             let referenced = referenced_desks(&rooms, &[]);
-            let (desks, optimized) = g.desks(g.host.as_deref(), limit, 0, &referenced);
+            let (desks, optimized) = g.desks(g.host.as_deref(), usize::MAX, true, 0, &referenced);
             value["desks"] = json!(desks);
             value["optimized"] = optimized;
             value["rooms"] = json!(rooms);

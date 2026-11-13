@@ -161,13 +161,15 @@ impl Group {
     }
     /// The desks an office draws, at most `limit` (the App's running limit) unless more are
     /// running or under review, plus the rest as the "optimized" list, most recent first. A
-    /// desk whose failure has settled goes there whatever the limit. The
+    /// desk whose failure has settled goes there whatever the limit, unless `settled_drawn`
+    /// says the caller draws every desk it is given. The
     /// list holds the `listed` most recent and every one the payload refers to, so seats and
     /// messages always find their desk.
     pub(super) fn desks(
         &self,
         host: Option<&str>,
         limit: usize,
+        settled_drawn: bool,
         listed: usize,
         referenced: &BTreeSet<String>,
     ) -> (Vec<Value>, Value) {
@@ -177,7 +179,7 @@ impl Group {
         let (mut rest, mut desks): (Vec<_>, Vec<_>) = self
             .desks
             .values()
-            .partition(|desk| desk.failure_settled(now));
+            .partition(|desk| !settled_drawn && desk.failure_settled(now));
         desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
         let busy = desks.iter().filter(|d| d.active).count();
         rest.extend(desks.split_off(limit.max(busy).min(desks.len())));

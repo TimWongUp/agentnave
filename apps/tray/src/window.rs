@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -333,6 +334,15 @@ fn set_window_blurred(window: &WebviewWindow, blurred: bool) {
     let _ = window.eval(script);
 }
 
+/// A minimized window is as good as a hidden one: the page stays paused whatever the focus
+/// setting says. `last` is what the page was told, so only a change is sent.
+fn sync_minimized(window: &WebviewWindow, last: &AtomicBool) {
+    let hidden = window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
+    if last.swap(hidden, Ordering::Relaxed) != hidden {
+        set_window_hidden(window, hidden);
+    }
+}
+
 /// Bring the main window back on the page it was left on, or open the office if there is none.
 pub(crate) fn restore(app: &AppHandle) {
     match app.get_webview_window(TRAY) {
@@ -509,10 +519,17 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
             eprintln!("无法设置窗口缩放：{error}");
         }
         let tracked = window.clone();
+        let hidden = AtomicBool::new(false);
         window.on_window_event(move |event| match event {
-            WindowEvent::Resized(_) => remember_normal_size(&tracked),
+            WindowEvent::Resized(_) => {
+                remember_normal_size(&tracked);
+                sync_minimized(&tracked, &hidden);
+            }
             WindowEvent::Destroyed => voice::player::clear(tracked.app_handle()),
-            WindowEvent::Focused(focused) => set_window_blurred(&tracked, !focused),
+            WindowEvent::Focused(focused) => {
+                set_window_blurred(&tracked, !focused);
+                sync_minimized(&tracked, &hidden);
+            }
             WindowEvent::CloseRequested { api, .. } => {
                 save_size(&tracked);
                 // Like other Mac apps, closing only hides the window; the Dock icon brings it back
