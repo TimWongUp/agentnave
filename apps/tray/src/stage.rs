@@ -394,6 +394,8 @@ static PREVIEWS: LazyLock<Mutex<HashMap<String, Preview>>> = LazyLock::new(Mutex
 
 /// At most this many undrawn desks are listed; the count still covers all of them.
 const OPTIMIZED_LISTED: usize = 200;
+/// How many desks besides the running ones the panel's cards draw.
+const PANEL_IDLE_DESKS: usize = 4;
 
 /// Desks the returned seats and messages name, as speaker, thread or recipient.
 fn referenced_desks(rooms: &[Value], messages: &[Value]) -> BTreeSet<String> {
@@ -712,9 +714,10 @@ fn panel_response(
             value["members"] = json!(g.members());
             value["boss_messages"] = json!(g.boss_messages());
             let rooms = g.rooms();
-            // The panel draws every desk, as its cards pick which to show; the office lists the optimized ones.
+            // Running desks and the most recent others; the panel's cards show at most that many.
             let referenced = referenced_desks(&rooms, &[]);
-            let (desks, optimized) = g.desks(g.host.as_deref(), usize::MAX, true, 0, &referenced);
+            let (desks, optimized) =
+                g.desks(g.host.as_deref(), PANEL_IDLE_DESKS, true, 0, &referenced);
             value["desks"] = json!(desks);
             value["optimized"] = optimized;
             value["rooms"] = json!(rooms);

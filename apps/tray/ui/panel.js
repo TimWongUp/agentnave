@@ -229,7 +229,6 @@ function updateBlock(rec, m) {
   setAttr(rec.time, "title", fullTime(m.updated));
 
   const byKey = new Map(desks.map((d) => [d.key, d]));
-  const awake = desks.filter((d) => brief(d).mood !== "sleep");
   const working = d => brief(d).mood === "working";
   const shownDesks = desks.filter(d => d.kind !== "seat");
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
@@ -242,9 +241,9 @@ function updateBlock(rec, m) {
     return cell.el;
   }));
   for (const d of desks) announce(m, d, brief(d));
-  const optimized = m.optimized?.count || 0;
-  const resting = desks.length - awake.length;
-  const meta = [name === m.label ? "" : chatPlace(m), L(`${desks.length} 工位`, `${desks.length} desks`), resting && L(`${resting} 个休息中`, `${resting} resting`), optimized && L(`已优化 ${optimized}`, `${optimized} folded`), rooms.length && L(`${rooms.length} 会议室`, `${rooms.length} rooms`)].filter(Boolean).join(" · ");
+  // The payload carries the running desks and the latest others; the rest are counted with them.
+  const total = desks.length + (m.optimized?.count || 0);
+  const meta = [name === m.label ? "" : chatPlace(m), L(`${total} 工位`, `${total} desks`), rooms.length && L(`${rooms.length} 会议室`, `${rooms.length} rooms`)].filter(Boolean).join(" · ");
   setText(rec.meta, meta);
   rec.cells.hidden = !ordered.length;
   const roomById = new Map(rooms.map((r) => [r.id, r]));

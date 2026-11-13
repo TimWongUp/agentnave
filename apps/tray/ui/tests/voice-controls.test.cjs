@@ -299,10 +299,12 @@ test("a meeting waiting for the boss's review keeps its office expanded", async 
 });
 
 test("a panel listening snapshot pins its office and ended meeting, then returns them to idle", async () => {
-  const app = await panel([manager("workspace", [], [room("old"), room("latest")])]);
+  const app = await panel([manager("workspace", [], [room("old"), room("latest")]), manager("newer", [], [], { updated: "2026-11-02T00:00:00Z" })]);
+  assert.equal(app.elements.get("quiet").children.length, 1, "only the latest office is kept as a card");
   const snap = app.snapshot({ follow: { group: "workspace", room: "old", title: "old", expires_at: Date.now() + 3600000 } });
   app.show(snap);
-  const card = app.elements.get("groups").children[0];
+  assert.equal(app.elements.get("groups").children.length, 2, "listening pins its office beside the latest one");
+  const card = app.elements.get("groups").children[1];
   const rooms = card.children.find(child => child.tag === "div.rooms");
   assert.equal(rooms.children.length, 2, "the latest meeting and the one being listened to");
   assert.equal(rooms.children[1].children[1].textContent, "停止收听");
@@ -310,8 +312,8 @@ test("a panel listening snapshot pins its office and ended meeting, then returns
   assert.equal(node(app, "p.voice-status").textContent, snap.status);
   assert.equal(node(app, "button.voice-primary").disabled, false);
   app.show(app.snapshot({}));
-  assert.equal(app.elements.get("groups").children.length, 1, "the only office stays the latest");
-  assert.equal(app.elements.get("groups").children[0].children.find(child => child.tag === "div.rooms").children.length, 1);
+  assert.equal(app.elements.get("groups").children.length, 1, "the office goes back to idle once listening stops");
+  assert.equal(app.elements.get("quiet").children.length, 1);
   assert.equal(node(app, "div.voice-now").hidden, true);
 });
 

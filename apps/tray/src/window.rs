@@ -315,7 +315,13 @@ fn place(panel: &WebviewWindow, icon: Rect) {
     let _ = panel.set_position(position.to_physical::<f64>(scale));
 }
 
+/// What the main window's page was last told, by whoever told it.
+static MAIN_HIDDEN: AtomicBool = AtomicBool::new(false);
+
 pub(crate) fn set_window_hidden(window: &WebviewWindow, hidden: bool) {
+    if window.label() == TRAY {
+        MAIN_HIDDEN.store(hidden, Ordering::Relaxed);
+    }
     let script = if hidden {
         "document.documentElement.dataset.windowHidden = 'true'; window.dispatchEvent(new Event('agentnave:visibility'));"
     } else {
@@ -335,12 +341,16 @@ fn set_window_blurred(window: &WebviewWindow, blurred: bool) {
 }
 
 /// A minimized window is as good as a hidden one: the page stays paused whatever the focus
-/// setting says. `last` is what the page was told, so only a change is sent.
-fn sync_minimized(window: &WebviewWindow, last: &AtomicBool) {
-    let hidden = window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true);
-    if last.swap(hidden, Ordering::Relaxed) != hidden {
+/// setting says. Only a change from what the page was last told is sent.
+fn sync_minimized(window: &WebviewWindow) {
+    let hidden = hidden_now(window);
+    if MAIN_HIDDEN.load(Ordering::Relaxed) != hidden {
         set_window_hidden(window, hidden);
     }
+}
+
+fn hidden_now(window: &WebviewWindow) -> bool {
+    window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true)
 }
 
 /// Bring the main window back on the page it was left on, or open the office if there is none.
@@ -501,7 +511,7 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
                 match payload.event() {
                     PageLoadEvent::Started => voice::player::clear(window.app_handle()),
                     PageLoadEvent::Finished => {
-                        set_window_hidden(&window, !window.is_visible().unwrap_or(true));
+                        set_window_hidden(&window, hidden_now(&window));
                     }
                 }
             }
@@ -519,16 +529,15 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
             eprintln!("无法设置窗口缩放：{error}");
         }
         let tracked = window.clone();
-        let hidden = AtomicBool::new(false);
         window.on_window_event(move |event| match event {
             WindowEvent::Resized(_) => {
                 remember_normal_size(&tracked);
-                sync_minimized(&tracked, &hidden);
+                sync_minimized(&tracked);
             }
             WindowEvent::Destroyed => voice::player::clear(tracked.app_handle()),
             WindowEvent::Focused(focused) => {
                 set_window_blurred(&tracked, !focused);
-                sync_minimized(&tracked, &hidden);
+                sync_minimized(&tracked);
             }
             WindowEvent::CloseRequested { api, .. } => {
                 save_size(&tracked);
