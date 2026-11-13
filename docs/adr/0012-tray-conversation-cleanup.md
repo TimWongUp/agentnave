@@ -4,6 +4,7 @@
 - 日期：2026-10-16
 - 按天数的自动清理归属由 [ADR-0046](0046-service-history-retention.md) 取代：由服务执行，托盘保留手动清理。
 - 托盘写入范围由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订：另可在同一把锁下改名。
+- 托盘写入范围由 [ADR-0088](0088-relay-records-service-exit-fault.md) 扩展：另可删除用户已确认的连接故障记录（`connection-faults/`，不取会话锁）。
 - 锁位置与删除对象由 [ADR-0026](0026-sqlite-conversation-store.md) 取代：使用 `locks/<会话ID>.lock`，级联删除数据库会话行。
 - 独立的管理页面已并入办公室：右键工作区或会议室改名、删除，可多选；路由与锁不变。
 - `profiles.json` 增补由 [ADR-0013](0013-members-defaults-and-host-identity.md) 取代
