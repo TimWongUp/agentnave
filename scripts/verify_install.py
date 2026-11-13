@@ -76,7 +76,7 @@ async def _check(launcher: str, home: Path) -> None:
         assert names == TOOLS, names
         assert not any(home.iterdir()), f"{launcher} wrote files before any request"
         assert not _listening(), f"{launcher} listens before a request"
-        opened = await client.call_tool("list", {})
+        opened = await client.call_tool("list", {"scope": "all"})
         assert not opened.is_error, opened.content
         assert not _listening(), "history listing started a TCP listener"
 

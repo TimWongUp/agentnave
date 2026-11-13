@@ -16,7 +16,7 @@ import pytest
 from mcp import Client
 
 import agentnave.conversations_store as conversations_module
-from agentnave import mcp_runtime, mcp_server, views
+from agentnave import mcp_history, mcp_runtime, mcp_server, views
 from agentnave.adapters.base import PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.conversations import Conversations
@@ -514,12 +514,48 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_list_shows_this_chat_and_groups_every_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_history, "_FINISHED_SHOWN", 1)
+    async with Client(mcp) as client:
+        ids: dict[str, list[str]] = {"a": [], "b": []}
+        for boss, title in (("a", "Alpha"), ("b", "Beta"), ("a", None)):
+            args = {"provider": "claude", "cwd": str(tmp_path), "manager_session_id": boss}
+            started = await _call(
+                client,
+                "start_agent",
+                {**args, "prompt": "hi", **({"title": title} if title else {})},
+            )
+            await _wait_task(client, started["invocation_id"])
+            ids[boss].append(cast(str, started["invocation_id"]))
+        mine = await _call(client, "list", {"manager_session_id": "a"})
+        assert mine["scope"] == "mine" and mine["total"] == 2
+        titles = [c["title"] for c in cast(list[dict[str, Any]], mine["conversations"])]
+        assert "Alpha" in titles and "Beta" not in titles
+        # Only the latest finished run of this boss is shown; the other is counted.
+        shown = [i["invocation_id"] for i in cast(list[dict[str, Any]], mine["invocations"])]
+        assert shown == ids["a"][-1:] and mine["invocations_omitted"] == 1
+        every = await _call(client, "list", {"scope": "all", "manager_session_id": "a"})
+        workspaces = cast(list[dict[str, Any]], every["workspaces"])
+        assert every["total"] == len(workspaces) == 2
+        assert [(w["title"], w["mine"]) for w in workspaces] == [("Alpha", True), ("Beta", False)]
+        assert workspaces[0]["conversation_count"] == 2
+        paged = await _call(client, "list", {"scope": "all", "offset": 1})
+        assert [w["title"] for w in cast(list[dict[str, Any]], paged["workspaces"])] == ["Beta"]
+        assert paged["invocations"] == []  # no boss identity, no runs
+        assert workspaces[1]["latest"]["title"] == "Beta"
+        other = await _call(client, "list", {"workspace_id": workspaces[1]["workspace_id"]})
+        assert [c["title"] for c in cast(list[dict[str, Any]], other["conversations"])] == ["Beta"]
+
+
+@pytest.mark.asyncio
 async def test_dispatch_reply_lists_ends_no_wait_has_received(tmp_path: Path) -> None:
     async with Client(mcp) as client:
         start = {"provider": "claude", "cwd": str(tmp_path), "manager_session_id": "u"}
         quick = await _call(client, "start_agent", {**start, "prompt": "hi"})
         while True:  # let it end without receiving it
-            listed = await _call(client, "list", {})
+            listed = await _call(client, "list", {"manager_session_id": "u"})
             items = cast(list[dict[str, object]], listed["invocations"])
             if any(
                 item["invocation_id"] == quick["invocation_id"] and item["status"] != "running"
@@ -1708,9 +1744,10 @@ async def test_write_receipts_are_small_and_list_reads_old_history(
 
     monkeypatch.setattr(Conversations, "scan", count_scan)
     async with Client(mcp) as client:
-        listed = await _call(client, "list", {})
+        listed = await _call(client, "list", {"scope": "all"})
         assert scans == 1
-        assert cast(list[dict[str, object]], listed["conversations"])[0]["title"] == "History"
+        workspaces = cast(list[dict[str, Any]], listed["workspaces"])
+        assert workspaces[0]["latest"]["title"] == "History"
         assert "dashboard_url" not in listed and "dashboard_error" not in listed
         assert "director_url" not in listed and "public_url" not in listed
         names = {tool.name for tool in (await client.list_tools()).tools}
@@ -2220,6 +2257,9 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
             {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
         )  # fmt: skip
         assert passed.is_error and f"handed its workspace {workspace}" in str(passed.content)
+        # It still reads the workspace it passed on as its own.
+        listed = await _call(client, "list", {"manager_session_id": "chat-b"})
+        assert cast(int, listed["total"]) > 0
 
 
 @pytest.mark.asyncio

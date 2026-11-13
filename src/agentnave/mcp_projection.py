@@ -44,6 +44,8 @@ _REQUIRED_CONTAINERS = frozenset(
         "items",
         "isolated_dirs",
         "changed_files_from_base",
+        "latest",
+        "workspaces",
     }
 )
 
