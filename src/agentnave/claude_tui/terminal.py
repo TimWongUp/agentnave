@@ -25,6 +25,7 @@ STRIP_ENV = (
     "CLAUDE_CODE_SSE_PORT",
     "CLAUDE_AGENT_SDK_VERSION",
     "CLAUDE_PROJECT_DIR",
+    "AGENTNAVE_CLAUDE_TMP",
 )
 
 
@@ -54,7 +55,7 @@ class Terminal:
         extra_env: dict[str, str] | None = None,
         screen: type[Screen] = Screen,
     ) -> None:
-        assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
+        assert sys.platform != "win32"  # POSIX PTY runtime.
         import fcntl
         import struct
         import termios
@@ -109,7 +110,7 @@ class Terminal:
     def close(self) -> None:
         """Stop Claude and the commands it started in their own process groups, within the
         supervisor's two-second grace: those groups would outlive the supervisor's cleanup."""
-        assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
+        assert sys.platform != "win32"  # POSIX PTY runtime.
         try:
             groups = self.groups | spawned_groups(self.process.pid)
             signal_groups(groups, signal.SIGTERM)
@@ -127,7 +128,7 @@ class Terminal:
 
 def spawned_groups(root: int) -> set[int]:
     """Process groups led by descendants of root, other than this helper's own group."""
-    assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
+    assert sys.platform != "win32"  # POSIX PTY runtime.
     listing = subprocess.run(
         ["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, check=False
     ).stdout
@@ -150,7 +151,7 @@ def spawned_groups(root: int) -> set[int]:
 
 
 def signal_groups(groups: set[int], signum: int) -> None:
-    assert sys.platform != "win32"  # POSIX PTY runtime; Windows runs Claude with -p.
+    assert sys.platform != "win32"  # POSIX PTY runtime.
     for group in groups:
         with contextlib.suppress(OSError):
             os.killpg(group, signum)

@@ -36,10 +36,14 @@ class SupervisedProcess:
 
 
 async def spawn_process(
-    argv: tuple[str, ...], cwd: Path, *, unset_env: tuple[str, ...] = ()
+    argv: tuple[str, ...],
+    cwd: Path,
+    *,
+    unset_env: tuple[str, ...] = (),
+    extra_env: dict[str, str] | None = None,
 ) -> SupervisedProcess:
     if os.name == "nt":
-        return await _spawn_windows_process(argv, cwd, unset_env=unset_env)
+        return await _spawn_windows_process(argv, cwd, unset_env=unset_env, extra_env=extra_env)
     if os.name != "posix":
         raise OSError(f"AgentNave does not support process supervision on {os.name}")
     status_read, status_write = os.pipe()
@@ -56,7 +60,7 @@ async def spawn_process(
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
             pass_fds=(status_write,),
-            env=provider_environment(argv, unset_env=unset_env),
+            env={**provider_environment(argv, unset_env=unset_env), **(extra_env or {})},
         )
     except BaseException:
         os.close(status_read)
@@ -161,7 +165,11 @@ async def terminate_process_tree(
 
 
 async def _spawn_windows_process(
-    argv: tuple[str, ...], cwd: Path, *, unset_env: tuple[str, ...] = ()
+    argv: tuple[str, ...],
+    cwd: Path,
+    *,
+    unset_env: tuple[str, ...] = (),
+    extra_env: dict[str, str] | None = None,
 ) -> SupervisedProcess:
     status_fd, status_name = tempfile.mkstemp(prefix="agentnave-", suffix=".json")
     os.close(status_fd)
@@ -187,7 +195,7 @@ async def _spawn_windows_process(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            env=provider_environment(argv, unset_env=unset_env),
+            env={**provider_environment(argv, unset_env=unset_env), **(extra_env or {})},
         )
     except BaseException:
         status_path.unlink(missing_ok=True)

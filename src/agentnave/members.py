@@ -577,12 +577,7 @@ def apply_member(
     # Restricted runs take no tools, so no permission tier either.
     if not restricted and result.get("restricted_tools") is not True:
         apply_permission(permissions, provider, options, result, applied)
-        if (
-            provider == "claude"
-            and "interactive" not in result
-            and os.name != "nt"
-            and read_claude_interactive()
-        ):
+        if provider == "claude" and "interactive" not in result and read_claude_interactive():
             result["interactive"] = True
             applied.append("interactive")
         if (

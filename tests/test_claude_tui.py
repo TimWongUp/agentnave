@@ -241,7 +241,7 @@ def test_interactive_adapter_arguments_and_fallbacks(
     assert command.keep_stdin_open
     with monkeypatch.context() as platform:
         platform.setattr("agentnave.adapters.claude.os.name", "nt")
-        assert "--print" in adapter.prepare(request).argv
+        assert adapter.prepare(request).argv[4] == "run"
     restricted = InvocationRequest(
         "claude", "work", tmp_path, provider_options={"interactive": True, "restricted_tools": True}
     )
@@ -804,8 +804,6 @@ def test_hook_timeout_settings_and_bounded_event(tmp_path: Path) -> None:
     assert len(str(event["tool_input"])) == 8000
 
 
-# Windows has no interactive runtime, and os.kill(pid, 0) there sends Ctrl+C to the console.
-@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY runtime")
 def test_prompt_scan_closes_dead_hook_and_preserves_parallel_requests(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -837,3 +835,10 @@ def test_prompt_scan_closes_dead_hook_and_preserves_parallel_requests(
     tui.read_hooks(tmp_path, turn)
     assert json.loads(capsys.readouterr().out)["type"] == "agentnave_prompt_closed"
     assert turn.denials == [{"tool_name": "Bash", "tool_input": {}}] and not turn.pending_prompts
+
+
+def test_events_are_utf8_without_escapes(capsysbinary: pytest.CaptureFixture[bytes]) -> None:
+    from agentnave.claude_tui.turn import emit
+
+    emit({"type": "result", "result": "中文"})
+    assert capsysbinary.readouterr().out == '{"type": "result", "result": "中文"}\n'.encode()

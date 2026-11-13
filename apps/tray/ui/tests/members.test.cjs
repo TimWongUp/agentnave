@@ -570,7 +570,7 @@ function runtimeEditor(fetch, os) {
   return app;
 }
 
-test("runtime switches are labelled, default off, and are hidden on Windows and other cards", async () => {
+test("runtime switches show only where each provider supports them", async () => {
   const app = runtimeEditor(async () => ({ ok: true, json: async () => ({ settings: { version: 1, max_running: 8 } }) }));
   assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
   await app.run("loadLimit()");
@@ -584,7 +584,8 @@ test("runtime switches are labelled, default off, and are hidden on Windows and 
   assert.equal(input.attrs.checked, false);
   assert.equal(input.attrs.disabled, false);
   const windows = runtimeEditor(undefined, "windows");
-  assert.equal(windows.run("renderInteractive('claude')"), null);
+  assert.equal(windows.run("renderInteractive('claude').attrs.className"), "member-row member-runtime");
+  assert.equal(windows.run("renderInteractive('antigravity')"), null);
 });
 
 test("runtime saves immediately without changing other settings or the unsaved limit", async () => {

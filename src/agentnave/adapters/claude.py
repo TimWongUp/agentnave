@@ -136,7 +136,6 @@ class ClaudeAdapter(AdapterHooks):
             self._supports_interactive
             and request.provider_options.get("interactive") is True
             and not discussion
-            and os.name != "nt"
         ):
             argv = [
                 sys.executable,
@@ -158,6 +157,7 @@ class ClaudeAdapter(AdapterHooks):
                 (json.dumps({"prompt": request.prompt}, ensure_ascii=False) + "\n").encode(),
                 capture_line=_result_capture(),
                 keep_stdin_open=True,
+                temp_dir_env="AGENTNAVE_CLAUDE_TMP" if os.name == "nt" else None,
             )
         argv = [
             self.executable_path(),

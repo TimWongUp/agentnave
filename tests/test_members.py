@@ -876,11 +876,11 @@ def test_claude_interactive_is_on_unless_turned_off_and_explicit_values_win(
         return None
 
     monkeypatch.setattr("agentnave.members.cli_default_effort", no_effort)
-    # Without a saved choice macOS and Linux run Claude interactively; Windows has no runtime.
+    # Without a saved choice Claude runs interactively on supported platforms.
     assert read_claude_interactive() is True
     result, applied = apply_member(None, "task", "claude", {}, frozenset())
-    assert (result.get("interactive") is True) is (os.name != "nt")
-    assert ("interactive" in applied) is (os.name != "nt")
+    assert result.get("interactive") is True
+    assert "interactive" in applied
     (tmp_path / "settings.json").write_text('{"version": 1, "claude_interactive": false}')
     assert read_claude_interactive() is False
     assert "interactive" not in apply_member(None, "task", "claude", {}, frozenset())[0]
