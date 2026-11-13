@@ -91,3 +91,31 @@ def test_reused_server_pid_does_not_launch_provider(tmp_path: Path) -> None:
     assert kind == "launch_error" and code is None
     assert message and "PID was reused" in message
     assert not marker.exists()
+
+
+def test_exe_command_line_keeps_msvcrt_quoting() -> None:
+    argv = [r"C:\Tools\codex.exe", "a&b", "x y"]
+    assert windows_supervisor.windows_command_line(argv) == (
+        None,
+        subprocess.list2cmdline(argv),
+    )
+
+
+def test_batch_command_line_quotes_cmd_metacharacters() -> None:
+    application, line = windows_supervisor.windows_command_line(
+        [r"C:\Users\A&B\dsh.CMD", "a&b", "x|y^z<>", "%PATH%", 'say "hi"', "dir\\", "", "plain-1.0"]
+    )
+    assert application is not None and application.lower().endswith(r"\system32\cmd.exe")
+    assert line == (
+        'cmd.exe /e:ON /v:OFF /d /c ""C:\\Users\\A&B\\dsh.CMD" "a&b" "x|y^z<>" '
+        '"%%cd:~,%PATH%%cd:~,%" "say ""hi""" "dir\\\\" "" plain-1.0"'
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [[r"C:\bin\x.bat", "a\nb"], [r"C:\bin\x.bat", "a\rb"], ['C:\\bin\\"x.bat']],
+)
+def test_batch_command_line_rejects_unrepresentable_input(argv: list[str]) -> None:
+    with pytest.raises(ValueError):
+        windows_supervisor.windows_command_line(argv)

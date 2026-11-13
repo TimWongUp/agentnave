@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import ntpath
 import os
 import shutil
 import subprocess
@@ -220,13 +221,69 @@ def server_identity() -> int:
         kernel32.CloseHandle(process)
 
 
+# Rust std's BatBadBut fix (GHSA-q455-m56c-85mh): any other ASCII symbol is quoted.
+_BATCH_UNQUOTED = frozenset("#$*+-./:?@\\_")
+
+
+def windows_command_line(argv: list[str]) -> tuple[str | None, str]:
+    """Application name and command line for ``CreateProcessW``.
+
+    Windows runs ``.cmd``/``.bat`` through cmd.exe, which ignores MSVCRT quoting and
+    acts on ``&``, ``|``, ``%`` and the like; build that line as Rust std does, and
+    reject arguments cmd.exe cannot carry intact.
+    """
+    script = argv[0]
+    if ntpath.splitext(script)[1].lower() not in (".bat", ".cmd"):
+        return None, subprocess.list2cmdline(argv)
+    if '"' in script or script.endswith("\\"):
+        raise ValueError(f"batch file path cannot be passed to cmd.exe: {script}")
+    parts = [f'"{script}"']
+    for arg in argv[1:]:
+        if any(c in arg for c in "\r\n\0"):
+            raise ValueError("batch file arguments cannot contain CR, LF or NUL")
+        parts.append(_batch_argument(arg))
+    system_root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+    command = f'cmd.exe /e:ON /v:OFF /d /c "{" ".join(parts)}"'
+    return ntpath.join(system_root, "System32", "cmd.exe"), command
+
+
+def _batch_argument(arg: str) -> str:
+    quote = (
+        not arg
+        or arg.endswith("\\")
+        or any(
+            (c.isascii() and not c.isalnum() and c not in _BATCH_UNQUOTED) or not c.isprintable()
+            for c in arg
+        )
+    )
+    out: list[str] = []
+    backslashes = 0
+    for c in arg:
+        if c == "\\":
+            backslashes += 1
+        else:
+            if c == '"':
+                out.append("\\" * backslashes + '"')
+            elif c == "%":
+                # `%cd:~,%` expands to nothing, so cmd.exe cannot expand `%VAR%`.
+                out.append("%%cd:~,")
+            backslashes = 0
+        out.append(c)
+    if quote:
+        return '"' + "".join(out) + "\\" * backslashes + '"'
+    return "".join(out)
+
+
 def _run_provider(
     argv: list[str], ready_path: Path, server_pid: int, server_created: int
 ) -> tuple[str, int | None, str | None]:
     executable = shutil.which(argv[0])
     if executable is None:
         return "launch_error", None, f"provider executable not found: {argv[0]}"
-    argv = [executable, *argv[1:]]
+    try:
+        command = windows_command_line([executable, *argv[1:]])
+    except ValueError as error:
+        return "launch_error", None, str(error)
     kernel32 = _configure_api()
     parent = cast(wintypes.HANDLE, kernel32.OpenProcess(_SYNCHRONIZE | 0x1000, False, server_pid))
     if not parent:
@@ -234,13 +291,16 @@ def _run_provider(
     try:
         if _creation_time(kernel32, parent) != server_created:
             return "launch_error", None, "server PID was reused before provider startup"
-        return _run_with_parent(kernel32, parent, argv, ready_path)
+        return _run_with_parent(kernel32, parent, command, ready_path)
     finally:
         kernel32.CloseHandle(parent)
 
 
 def _run_with_parent(
-    kernel32: _Kernel32, parent: wintypes.HANDLE, argv: list[str], ready_path: Path
+    kernel32: _Kernel32,
+    parent: wintypes.HANDLE,
+    command: tuple[str | None, str],
+    ready_path: Path,
 ) -> tuple[str, int | None, str | None]:
     if kernel32.WaitForSingleObject(parent, 0) != _WAIT_TIMEOUT:
         return "launch_error", None, "server exited before provider startup"
@@ -265,9 +325,10 @@ def _run_with_parent(
         startup.stdin = cast(wintypes.HANDLE, kernel32.GetStdHandle(_STD_INPUT_HANDLE))
         startup.stdout = cast(wintypes.HANDLE, kernel32.GetStdHandle(_STD_OUTPUT_HANDLE))
         startup.stderr = cast(wintypes.HANDLE, kernel32.GetStdHandle(_STD_ERROR_HANDLE))
-        command_line = ctypes.create_unicode_buffer(subprocess.list2cmdline(argv))
+        application, line = command
+        command_line = ctypes.create_unicode_buffer(line)
         if not kernel32.CreateProcessW(
-            None,
+            application,
             command_line,
             None,
             None,

@@ -6,7 +6,6 @@ from __future__ import annotations
 import ctypes
 import os
 import queue
-import subprocess
 import threading
 from ctypes import wintypes
 
@@ -15,6 +14,7 @@ from agentnave.claude_tui.terminal import child_environment
 from agentnave.windows_supervisor import (
     _ProcessInformation,  # pyright: ignore[reportPrivateUsage]
     _StartupInfo,  # pyright: ignore[reportPrivateUsage]
+    windows_command_line,
 )
 
 
@@ -138,7 +138,8 @@ def _spawn(
         startup.startup.flags = 0x00000100
         startup.attributes = attributes
         info = _ProcessInformation()
-        command = ctypes.create_unicode_buffer(subprocess.list2cmdline(argv))
+        application, line = windows_command_line(argv)
+        command = ctypes.create_unicode_buffer(line)
         block = ctypes.create_unicode_buffer(
             "\0".join(
                 f"{key}={value}"
@@ -147,7 +148,7 @@ def _spawn(
             + "\0\0"
         )
         if not kernel.CreateProcessW(
-            None,
+            application,
             command,
             None,
             None,
