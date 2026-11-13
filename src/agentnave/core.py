@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
 import time
 import uuid
@@ -822,14 +823,12 @@ class InvocationManager:
         scratch = None
         try:
             if prepared.temp_dir_env:
-                scratch = tempfile.TemporaryDirectory(
-                    prefix="agentnave-invocation-", ignore_cleanup_errors=True
-                )
+                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
             supervised = await spawn_process(
                 prepared.argv,
                 prepared.cwd,
                 unset_env=prepared.unset_env,
-                extra_env={prepared.temp_dir_env: scratch.name}
+                extra_env={prepared.temp_dir_env: scratch}
                 if prepared.temp_dir_env and scratch
                 else None,
             )
@@ -929,7 +928,8 @@ class InvocationManager:
             finally:
                 try:
                     if scratch is not None:
-                        scratch.cleanup()
+                        # Best effort: a file still held open on Windows must not fail the call.
+                        shutil.rmtree(scratch, ignore_errors=True)
                 finally:
                     record.process = None
                     record.tool_names.clear()
