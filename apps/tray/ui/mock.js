@@ -1011,6 +1011,12 @@ All checks passed!
     if (path === "/app/decision-seats") { mockDecision.document = structuredClone(body); return { saved: true }; }
     if (path === "/app/decision-key") { mockDecision.key_set = Boolean(body.key); return { key_set: mockDecision.key_set }; }
     if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
+    if (path === "/app/orchestration/host-cli") {
+      const choices = { ...mockOrchestration.document.host_cli };
+      for (const key of body.keys) { if (body.choice === "subagent") delete choices[key]; else choices[key] = body.choice; }
+      mockOrchestration.document.host_cli = choices;
+      return { saved: true, host_cli: choices };
+    }
     if (path.split("?")[0] === "/app/update/check") return p3Fetch("/app/status");
     if (path === "/app/update/apply?service=1") {
       installedState = { state: "upgrading" };

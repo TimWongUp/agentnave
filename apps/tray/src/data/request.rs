@@ -70,7 +70,7 @@ impl Reader {
         }
         if matches!(
             path,
-            "/app/orchestration" | "/app/rules" | "/app/rules/open"
+            "/app/orchestration" | "/app/orchestration/host-cli" | "/app/rules" | "/app/rules/open"
         ) {
             return crate::hosts::orchestration_request(
                 &self.root,

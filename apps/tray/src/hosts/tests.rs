@@ -2418,6 +2418,22 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
         json!({"claude": "split", "grok": "split", "codex": "off"})
     );
     assert_eq!(read["document"]["host_cli"], json!({"grok": "launch"}));
+    // The boss page saves one boss's choice alone; "subagent" is the default and leaves the file.
+    let choose =
+        |body: &[u8]| reader.request("POST", "/app/orchestration/host-cli", Some("1"), body);
+    assert_eq!(choose(br#"{"keys":["codex"],"choice":"skip"}"#).status, 200);
+    assert_eq!(
+        choose(br#"{"keys":["grok"],"choice":"subagent"}"#).status,
+        200
+    );
+    assert_eq!(
+        choose(br#"{"keys":["codex"],"choice":"later"}"#).status,
+        400
+    );
+    let read = reader.request("GET", "/app/orchestration", None, b"");
+    let read: Value = serde_json::from_slice(&read.body).unwrap();
+    assert_eq!(read["document"]["host_cli"], json!({"codex": "skip"}));
+    assert_eq!(read["document"]["apps"], json!({"grok": "split"}));
     // A row that leaves takes its mode with it.
     let removed = reader.request("POST", "/app/hosts/remove", Some("1"), br#"{"id":"codex"}"#);
     assert_eq!(removed.status, 200);

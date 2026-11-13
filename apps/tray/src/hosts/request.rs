@@ -23,6 +23,14 @@ pub(crate) fn orchestration_request(
             save_orchestration(root, host_state, &payload)
         });
     }
+    if path == "/app/orchestration/host-cli" {
+        if method != "POST" {
+            return Response::error(405, "此路由只接受 POST");
+        }
+        return with_payload(action, body, |payload| {
+            save_host_cli(root, host_state, &payload)
+        });
+    }
     if path == "/app/rules" || path == "/app/rules/open" {
         let home = dirs::home_dir().unwrap_or_default();
         let apps = host_state
@@ -52,6 +60,51 @@ fn orchestration(root: &Path, host_state: &Mutex<Option<Hosts>>) -> Response {
         "presets": crate::rules::presets(&document), "roles": crate::orchestration_roles::catalog(),
         "files": rules["files"], "bosses": rules["bosses"]}))
 }
+/// One boss's choice for its own kind of CLI, set apart from the rest of the file so the boss page
+/// can save it alone: {"keys": [row], "choice": "subagent" | "launch" | "skip"}.
+fn save_host_cli(root: &Path, host_state: &Mutex<Option<Hosts>>, payload: &Value) -> Response {
+    let keys: Vec<&str> = payload["keys"]
+        .as_array()
+        .map(|keys| keys.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let Some(choice) = payload["choice"].as_str() else {
+        return Response::error(400, "缺少 choice");
+    };
+    if keys.is_empty() {
+        return Response::error(400, "缺少 keys");
+    }
+    // Saves to the file are serialized by the host state, as the whole-file save is.
+    let _guard = host_state.lock().unwrap_or_else(|p| p.into_inner());
+    let mut document = match crate::members::read_orchestration(root) {
+        Ok(document) => document,
+        Err(error) => return Response::error(409, &error),
+    };
+    let mut choices = document["host_cli"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    for key in keys {
+        if choice == "subagent" {
+            choices.remove(key);
+        } else {
+            choices.insert(key.to_owned(), json!(choice));
+        }
+    }
+    let fields = document.as_object_mut().expect("validated as an object");
+    if choices.is_empty() {
+        fields.remove("host_cli");
+    } else {
+        fields.insert("host_cli".into(), Value::Object(choices.clone()));
+    }
+    if let Err(error) = crate::members::validate_orchestration(&document) {
+        return Response::error(400, &error);
+    }
+    if let Err(error) = crate::members::save_orchestration(root, &document) {
+        return Response::error(500, &error);
+    }
+    Response::json(&json!({"saved": true, "host_cli": choices}))
+}
+
 fn save_orchestration(root: &Path, host_state: &Mutex<Option<Hosts>>, payload: &Value) -> Response {
     // The modes each row runs on are worked out here, never taken from the page.
     let mut document = payload.clone();

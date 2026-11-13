@@ -187,9 +187,9 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
     "removing both scenes disables the CLI despite its historical model settings");
 });
 
-test("a boss's own-CLI choice is saved by row, left out when default and hidden without seats", async () => {
+test("a boss's own-CLI choice saved from the boss page is kept by this page's later save", async () => {
   let saved = { version: 1, preset: "split" };
-  const bosses = [{ keys: ["codex", "other"], labels: ["Codex"], ids: [], mark: "codex" }];
+  const bosses = [{ keys: ["codex"], labels: ["Codex"], ids: [], mark: "codex" }];
   const app = advancedEditor(async (url, options) => {
     const body = options?.body && JSON.parse(options.body);
     if (url === "/app/orchestration" && !body) {
@@ -199,20 +199,13 @@ test("a boss's own-CLI choice is saved by row, left out when default and hidden 
     return { ok: true, json: async () => ({ saved: true, files: [], bosses }) };
   });
   await app.run("loadOrchestration()");
-  const box = () => app.run('$("orchestration-host-cli")');
-  const row = () => box().children[1];
-  const pick = (value) => row().children[1].listeners.change({ target: { value } });
-  assert.equal(box().hidden, false);
-  assert.equal(row().children[2].children[0], "");
-  pick("launch");
-  assert.equal(JSON.stringify(app.run("orchestrationWanted().host_cli")), JSON.stringify({ codex: "launch", other: "launch" }));
-  assert.equal(row().children[2].children[0], "与 boss 共用额度");
-  await app.run("saveOrchestration()");
-  assert.equal(JSON.stringify(saved.host_cli), JSON.stringify({ codex: "launch", other: "launch" }));
-  pick("subagent");
-  assert.equal(app.run('"host_cli" in orchestrationWanted()'), false);
   app.run('setBossMode(orchestration.bosses[0], "meetings")');
-  assert.equal(box().hidden, true);
+  app.listeners["agentnave:host-cli"]({ detail: { codex: "launch" } });
+  assert.equal(app.run("orchestrationChanged()"), true);
+  await app.run("saveOrchestration()");
+  assert.equal(JSON.stringify(saved.host_cli), JSON.stringify({ codex: "launch" }));
+  app.listeners["agentnave:host-cli"]({ detail: {} });
+  assert.equal(app.run('"host_cli" in orchestration.document'), false);
 });
 
 function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_roles.json`, "utf8"))) {
