@@ -180,7 +180,7 @@ function renderDirectory(c, ctx) {
 const isolatedStatus = (status) =>
   ({
     using: [L("使用中", "In use"), "tone-run"],
-    unfinished: [L("删除未完成", "Deletion unfinished"), "tone-review"],
+    unfinished: [L("需要处理", "Needs attention"), "tone-review"],
   })[status] || [L("任务已结束", "Task ended"), "tone-idle"];
 function isolatedCard(d, ctx) {
   const [word, tone] = isolatedStatus(d.status);

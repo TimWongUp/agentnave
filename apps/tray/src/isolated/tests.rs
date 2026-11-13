@@ -6,7 +6,7 @@ fn registry(root: &Path, rows: &[(&str, &str, &str, &str)]) {
         .execute_batch(
             "CREATE TABLE isolated_dirs (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, \
              worktree_path TEXT NOT NULL, branch_ref TEXT NOT NULL, state TEXT NOT NULL, \
-             created_at TEXT NOT NULL DEFAULT '');",
+             created_at TEXT NOT NULL DEFAULT ''); PRAGMA user_version = 1;",
         )
         .unwrap();
     for (index, (workspace, path, branch, state)) in rows.iter().enumerate() {
@@ -36,6 +36,12 @@ fn reads_registered_directories_and_skips_unfinished_ones() {
     assert_eq!(dirs.len(), 2);
     assert_eq!(dirs[0].branch, "agentnave/a");
     assert!(dirs[0].ready && !dirs[1].ready);
+    // A registry of another version is not guessed at.
+    Connection::open(root.path().join(NAME))
+        .unwrap()
+        .execute_batch("PRAGMA user_version = 2;")
+        .unwrap();
+    assert!(read(root.path()).is_empty());
     std::fs::write(root.path().join(NAME), b"not a database").unwrap();
     assert!(read(root.path()).is_empty());
 }

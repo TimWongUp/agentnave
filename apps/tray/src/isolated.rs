@@ -8,6 +8,8 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
 
 const NAME: &str = "worktrees.db";
+/// The service's `SCHEMA_VERSION` this build reads; any other version shows nothing.
+const VERSION: i64 = 1;
 
 /// One registered isolated directory that is past creation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,6 +38,10 @@ fn query(root: &Path) -> rusqlite::Result<Vec<Dir>> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     connection.busy_timeout(Duration::from_secs(1))?;
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version != VERSION {
+        return Ok(Vec::new());
+    }
     let mut statement = connection.prepare(
         "SELECT workspace_id, worktree_path, branch_ref, state, id, created_at FROM isolated_dirs \
          WHERE state IN ('ready', 'deleting', 'needs_attention') ORDER BY created_at, id",
