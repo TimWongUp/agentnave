@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from agentnave.adapters.base import resolve_executable
 from agentnave.native_prompts import mask_secrets
+from agentnave.windows_cmdline import popen_args
 
 LINE_LIMIT = 64 * 1024 * 1024
 # Devin's own reason for leaving is on stderr, which the adapter reads instead.
@@ -307,8 +308,10 @@ def open_session(connection: Connection, request: dict[str, Any]) -> None:
 
 def run(request: dict[str, Any], answers: IO[bytes]) -> int:
     argv, env = command(bool(request["options"].get("sandbox")))
+    args, application = popen_args(argv)
     with subprocess.Popen(
-        argv,
+        args,
+        executable=application,
         cwd=request["cwd"],
         env=env,
         stdin=subprocess.PIPE,

@@ -110,6 +110,8 @@ def test_batch_command_line_quotes_cmd_metacharacters() -> None:
         'cmd.exe /e:ON /v:OFF /d /c ""C:\\Users\\A&B\\dsh.CMD" "a&b" "x|y^z<>" '
         '"%%cd:~,%PATH%%cd:~,%" "say ""hi""" "dir\\\\" "" plain-1.0"'
     )
+    _, line = windows_supervisor.windows_command_line([r"C:\Users\%USERNAME%\x.cmd"])
+    assert line == 'cmd.exe /e:ON /v:OFF /d /c ""C:\\Users\\%%cd:~,%USERNAME%%cd:~,%\\x.cmd""'
 
 
 @pytest.mark.parametrize(
@@ -119,3 +121,14 @@ def test_batch_command_line_quotes_cmd_metacharacters() -> None:
 def test_batch_command_line_rejects_unrepresentable_input(argv: list[str]) -> None:
     with pytest.raises(ValueError):
         windows_supervisor.windows_command_line(argv)
+
+
+def test_popen_gets_the_batch_safe_line_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentnave import windows_cmdline
+
+    argv = [r"C:\npm\claude.cmd", "--resume", "x&calc"]
+    assert windows_cmdline.popen_args(argv) == (argv, None) or sys.platform == "win32"
+    monkeypatch.setattr(windows_cmdline.sys, "platform", "win32")
+    line, application = windows_cmdline.popen_args(argv)
+    assert application is not None and application.lower().endswith(r"\system32\cmd.exe")
+    assert line == windows_cmdline.windows_command_line(argv)[1] and '"x&calc"' in str(line)

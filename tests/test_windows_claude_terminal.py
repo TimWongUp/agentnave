@@ -33,7 +33,6 @@ def test_terminal_reads_and_writes_under_conpty() -> None:
         while "GOT:hello" not in text and time.monotonic() < deadline:
             text = terminal.poll()
         assert "GOT:hello" in text
-        assert "%PATH%" in text
     finally:
         terminal.close()
 
@@ -224,6 +223,7 @@ def test_terminal_can_run_windows_command_wrapper(tmp_path: Path) -> None:
         while "GOT:hello" not in text and time.monotonic() < deadline:
             text = terminal.poll()
         assert "GOT:hello" in text
+        assert "%PATH%" in text
         while terminal.process.poll() is None and time.monotonic() < deadline:
             terminal.poll()
         assert terminal.process.poll() is not None
