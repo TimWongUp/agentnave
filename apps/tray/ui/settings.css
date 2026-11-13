@@ -146,6 +146,7 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
 /* Each character's clips are scaled so every head top (hair, not horns or ears) and every pair of shoes line up. */
 .fig :is(video, img.poster) { scale: var(--vs, 1); transform-origin: var(--vx, 50%) var(--vo, 100%); }
 .fig video.next { opacity: 0; }
+.fig video.over { z-index: 1; }
 .char-preview .fig img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; display: none; }
 .char-preview .fig .s-idle { display: block; }
 .char-preview .fig .chain, .char-preview .fig img.devil-tail { z-index: -1; }

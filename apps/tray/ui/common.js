@@ -659,7 +659,7 @@
     rec.incoming = rec.next = null;
     rec.waiting = false;
     for (const slot of rec.slots) {
-      if (!release && slot === rec.active) { cancelVideoCallbacks(slot); slot.video.pause(); }
+      if (!release && slot === rec.active) { cancelVideoCallbacks(slot); slot.video.pause(); slot.video.classList.remove("over"); }
       else unloadVideo(slot, true);
     }
     rec.slots = release || !rec.active ? [] : [rec.active];
@@ -750,6 +750,10 @@
     if (!job) return;
     cancelSettle(rec);
     if (rec.active !== job.slot) return;
+    if (job.slot.video.classList.contains("over")) {
+      job.slot.video.classList.remove("over");
+      for (const s of rec.slots) if (s !== rec.active) s.video.classList.add("next");
+    }
     if (!job.slot.video.loop) prepareNext(rec);
     else dropSpares(rec);
   }
@@ -760,21 +764,38 @@
     if (slot.video.requestVideoFrameCallback) job.frame = slot.video.requestVideoFrameCallback(run);
     else job.raf = requestAnimationFrame(() => { job.raf = requestAnimationFrame(run); });
   }
+  const overlapSwap = () => typeof videoExt === "string" && videoExt === "webm";
   function finishVideoFrame(rec, slot, seq) {
     if (!currentPlayback(rec, seq) || rec.incoming !== slot) return;
+    // WebM (Chromium) blanks the frame in which a hidden player appears and the old one hides at once. There the
+    // new player shows above the old one, which stays until the new one has presented a frame of its own; the
+    // clips meet on the same pose, so the overlap is not visible. Elsewhere the old player hides and the new one
+    // shows in this one task, so both are never on screen together.
+    const overlap = overlapSwap();
     if (rec.active && rec.active !== slot) {
       cancelVideoCallbacks(rec.active);
       rec.active.video.pause();
-      rec.active.video.classList.add("next");
+      if (!overlap) rec.active.video.classList.add("next");
     }
-    // The old player hides and the new one shows in this one task, so both are never on screen together.
     slot.video.classList.remove("next");
+    // Only the newest player sits on top; a swap cut short by another leaves its player below this one.
+    if (overlap) { for (const s of rec.slots) s.video.classList.remove("over"); slot.video.classList.add("over"); }
     clearHold(rec);
     rec.active = slot;
     rec.incoming = null;
     rec.fig.classList.add("video-on");
     rec.fig.querySelector(".fx")?.replaceChildren();
     settleAfterFrame(rec, slot);
+  }
+  // Figures of one character play the same clips, so starting them together keeps them in lockstep for good
+  // (a mood change restarts every desk at once too). A random wait before a clip starts spreads them out;
+  // a resume after hiding or blur is not delayed, since the players keep the phase they stopped at.
+  const FIRST_START_MS = 2000, CHANGE_START_MS = 300;
+  function startStaggered(rec, slot) {
+    const seq = rec.seq, scale = typeof videoStartJitter === "number" ? videoStartJitter : 1;
+    const wait = Math.random() * scale * (rec.active ? CHANGE_START_MS : FIRST_START_MS);
+    if (wait < 1) { runClip(rec, slot); return; }
+    setTimeout(() => { if (rec.seq === seq) runClip(rec, slot); }, wait);
   }
   function runClip(rec, slot) {
     const seq = rec.seq;
@@ -877,7 +898,7 @@
     if (rec.running || rec.failed) return;
     rec.running = true;
     if (rec.active?.state === state) runClip(rec, rec.active);
-    else prepareClip(rec, state, (slot) => runClip(rec, slot));
+    else prepareClip(rec, state, (slot) => startStaggered(rec, slot));
   }
   // Every character teleports the same way: a small crouch and a springy hop that shrinks her away, or a
   // drop that grows and settles her. It moves the figure's body, so the desk in front still covers it.
