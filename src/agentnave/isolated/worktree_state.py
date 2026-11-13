@@ -78,33 +78,56 @@ def nested_repositories(wt_path: Path, status_raw: bytes) -> list[str]:
     for token in status_raw.split(b"\x00"):
         if token.startswith(b"? ") and token.endswith(b"/"):
             nested.add(decode_git_path(token[2:]).rstrip("/"))
-    nested.update(_ignored_nested_repositories(wt_path))
+    ignored, found = _ignored_nested_repositories(wt_path)
+    nested.update(found)
+    nested.update(_unreadable_directories(wt_path, ignored))
     return sorted(nested)
 
 
-def _ignored_nested_repositories(wt_path: Path) -> set[str]:
-    """Repositories inside ignored directories, which `status` never lists."""
-    found: set[str] = set()
-    listing = run_git(
-        ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-        cwd=wt_path,
-    ).stdout
-
-    def unreadable(error: OSError) -> None:
+def _unreadable(wt_path: Path, found: set[str]) -> Callable[[OSError], None]:
+    def record(error: OSError) -> None:
         # A directory that cannot be searched may hold a repository: ask, do not assume.
         if error.filename is not None:
             found.add(Path(error.filename).relative_to(wt_path).as_posix())
 
+    return record
+
+
+def _unreadable_directories(wt_path: Path, ignored: set[Path]) -> set[str]:
+    """Directories outside the ignored ones that cannot be read: `status` only warns on them."""
+    found: set[str] = set()
+    for top, dirs, _ in os.walk(wt_path, onerror=_unreadable(wt_path, found)):
+        here = Path(top)
+        dirs[:] = [
+            d
+            for d in dirs
+            if d != ".git" and not (here / d).is_symlink() and here / d not in ignored
+        ]
+    return found
+
+
+def _ignored_nested_repositories(wt_path: Path) -> tuple[set[Path], set[str]]:
+    """Ignored directories, and the repositories inside them, which `status` never lists."""
+    found: set[str] = set()
+    ignored: set[Path] = set()
+    listing = run_git(
+        ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+        cwd=wt_path,
+    ).stdout
+    unreadable = _unreadable(wt_path, found)
+
     for item in listing.split(b"\x00"):
         if not item.endswith(b"/"):
             continue
-        for top, dirs, names in os.walk(wt_path / decode_git_path(item), onerror=unreadable):
+        root = wt_path / decode_git_path(item).rstrip("/")
+        ignored.add(root)
+        for top, dirs, names in os.walk(root, onerror=unreadable):
             if ".git" in names or ".git" in dirs or _bare_repository(names, dirs):
                 found.add(Path(top).relative_to(wt_path).as_posix())
                 dirs.clear()
             else:
                 dirs[:] = [d for d in dirs if not (Path(top) / d).is_symlink()]
-    return found
+    return ignored, found
 
 
 def _bare_repository(names: list[str], dirs: list[str]) -> bool:

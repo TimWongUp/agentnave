@@ -1226,4 +1226,12 @@ def test_nested_repository_in_an_ignored_directory_forces_confirmation(tmp_path:
             )
         finally:
             locked.chmod(0o755)
+        # Outside ignored directories `status` only warns about it.
+        plain = created.worktree_path / "plain_locked"
+        plain.mkdir()
+        plain.chmod(0)
+        try:
+            assert "plain_locked" in dirs.summarize_changes(created.id).nested_repos
+        finally:
+            plain.chmod(0o755)
     dirs.close()
