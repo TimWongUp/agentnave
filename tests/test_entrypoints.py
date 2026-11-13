@@ -527,11 +527,24 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
         missing_cwd = await client.call_tool("start_agent", {"prompt": "ok", "seat": "worker-easy"})
         assert missing_cwd.is_error and "cwd is required" in str(missing_cwd.content)
         monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
-        native = await client.call_tool(
-            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
+        native = _payload(
+            (
+                await client.call_tool(
+                    "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
+                )
+            ).structured_content
         )
-        assert native.is_error and "native" in str(native.content)
-        assert "built-in subagent" in str(native.content)
+        # The seat is this host's own CLI: nothing starts, and the receipt names the subagent run.
+        assert native["status"] == "not_started" and native["reason"] == "native_seat"
+        assert native["seat"] == "worker-easy" and native["provider"] == "claude"
+        assert native["model"] == "chosen" and "effort" not in native
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model chosen."
+        )
+        assert "nothing to wait for" in cast(str, native["next"])
+        assert "invocation_id" not in native and "conversation_id" not in native
+        assert "error" not in native and "recommendation" not in native
+        assert _started_count((await client.call_tool("list", {})).structured_content) == 0
 
 
 @pytest.mark.asyncio
@@ -3334,10 +3347,18 @@ async def test_start_agent_auto_never_starts_when_the_decision_fails(
         assert len(decision.calls) == 5  # no retry, no fallback to another seat
         # The decision picked the host's own CLI: its seat is named, nothing starts.
         decision.result = Decision("codex-w", {"codex-w": 0.9}, 0.9)
-        await refused("native_seat")
-        native = await client.call_tool("start_agent", arguments)
-        assert "codex-w (role codex-w)" in str(native.content)
-        assert "subagent using model " in str(native.content)
+        native = _payload((await client.call_tool("start_agent", arguments)).structured_content)
+        assert native["status"] == "not_started" and native["reason"] == "native_seat"
+        assert native["seat"] == "codex-w" and native["provider"] == "codex"
+        assert native["model"] == "model-codex-w"
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model model-codex-w."
+        )
+        picked = _payload(native["recommendation"])
+        assert picked["seat"] == "codex-w" and picked["native"] is True
+        assert "nothing to wait for" in cast(str, native["next"])
+        assert "invocation_id" not in native
+        assert _started_count((await client.call_tool("list", {})).structured_content) == 0
         # Nothing can be dispatched.
         (root / "decision-seats.json").write_text(json.dumps({"version": 1, "seats": []}))
         await refused("no_candidates")
@@ -3562,8 +3583,16 @@ async def test_one_task_that_cannot_start_does_not_stop_the_others(
         assert solo["model"] == "model-read-solo"
         assert _payload(solo["recommendation"])["decision_model_called"] is False
         assert native["status"] == "not_started"
+        assert native["reason"] == "native_seat"
         assert _payload(native["error"])["code"] == "native_seat"
         assert _payload(native["recommendation"])["native"] is True
+        # The same receipt start_agent gives: the host's subagent needs the seat and its settings.
+        assert native["seat"] == "codex-w" and native["provider"] == "codex"
+        assert native["model"] == "model-codex-w"
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model model-codex-w."
+        )
+        assert "invocation_id" not in native and "conversation_id" not in native
         assert started["model"] == "model-write-b"
         # Only the two that started are waited for; the unstarted ones left nothing behind.
         listed = _payload((await client.call_tool("list")).structured_content)
@@ -3880,7 +3909,7 @@ async def test_image_fallback_skips_host_cli_and_hides_all_native(
 
 
 @pytest.mark.asyncio
-async def test_native_seat_error_describes_selected_model_and_effort(
+async def test_native_review_role_receipt_names_the_seat_model_and_effort(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agentnave import provider_health
@@ -3890,19 +3919,50 @@ async def test_native_seat_error_describes_selected_model_and_effort(
     provider_health.record(root, "grok", "auth")
     path = root / "review.json"
     seat: dict[str, object] = {"provider": "codex", "model": "native-model", "effort": "high"}
+    args = {"prompt": "ok", "cwd": str(tmp_path), "role": "correctness-reviewer"}
     async with Client(mcp) as client:
         path.write_text(json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}}))
-        args = {"prompt": "ok", "cwd": str(tmp_path), "role": "correctness-reviewer"}
-        result = await client.call_tool("start_agent", args)
-        assert result.is_error and "using model native-model, effort high" in str(result.content)
+        native = _payload((await client.call_tool("start_agent", args)).structured_content)
+        assert native["status"] == "not_started" and native["reason"] == "native_seat"
+        assert native["seat"] == "correctness-reviewer" and native["provider"] == "codex"
+        assert native["model"] == "native-model" and native["effort"] == "high"
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model native-model, effort high."
+        )
+        assert "seat_fallback" not in native and "error" not in native
+        # Nothing behind the receipt: no invocation, no saved conversation, no isolated directory.
+        listed = _payload((await client.call_tool("list", {})).structured_content)
+        assert listed["invocations"] == [] and listed["conversations"] == []
+        dirs = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "boss-1"}
+                )
+            ).structured_content
+        )
+        assert dirs["items"] == []
+        # A fallback that is the host's own CLI still starts nothing; the receipt shows the switch.
         seat = {
             "provider": "grok",
             "model": "blocked",
             "fallbacks": [{"provider": "codex", "model": "native-backup"}],
         }
         path.write_text(json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}}))
-        result = await client.call_tool("start_agent", args)
-        assert result.is_error and "using model native-backup." in str(result.content)
+        fallback_native = _payload((await client.call_tool("start_agent", args)).structured_content)
+        assert fallback_native["status"] == "not_started"
+        assert fallback_native["reason"] == "native_seat"
+        assert fallback_native["provider"] == "codex" and "effort" not in fallback_native
+        assert fallback_native["model"] == "native-backup"
+        assert fallback_native["message"] == (
+            "Dispatch it with the host's built-in subagent using model native-backup."
+        )
+        skipped = _payload(fallback_native["seat_fallback"])
+        assert skipped["position"] == 1
+        assert [
+            (item["provider"], item["model"])
+            for item in cast(list[dict[str, object]], skipped["skipped"])
+        ] == [("grok", "blocked")]
+        assert _started_count((await client.call_tool("list", {})).structured_content) == 0
 
 
 @pytest.mark.asyncio

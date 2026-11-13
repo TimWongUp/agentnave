@@ -73,11 +73,14 @@ from agentnave.models import (
 )
 from agentnave.native_prompts import NativePrompt
 from agentnave.orchestration_roles import AUTO_SEAT
+from agentnave.seat_fallbacks import SeatFallback
 from agentnave.seat_recommendation import Recommendation
 from agentnave.task_start import (
+    NativeSeat,
     StartArguments,
     add_write_warning,
     apply_task_defaults,
+    native_seat_guidance,
     resolve_start,
     review_role,
 )
@@ -192,6 +195,9 @@ async def start_agent(
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
     """Start a private CLI task; invocation_id goes to wait, not session_id.
+    A seat native to this host starts nothing and returns status not_started with reason
+    native_seat, the seat, its provider/model/effort and a message: run it with the host's
+    built-in subagent instead, so no wait is needed.
     No deadline; only native prompts accept running replies via answer_prompt. Cancel to stop. Reply settings are requested,
     not effective; unreceived flags undelivered ends/blockers/reviews for wait.
     """
@@ -234,7 +240,11 @@ async def start_agent(
     )
     if recommendation is not None:
         payload["recommendation"] = recommendation_payload(recommendation)
-    return await waited_dispatch(payload, payload["invocation_id"], wait, manager_session_id, ctx)
+    invocation_id = payload.get("invocation_id")
+    if invocation_id is None:
+        # A seat native to this host: nothing started, so there is nothing to wait for.
+        return payload
+    return await waited_dispatch(payload, invocation_id, wait, manager_session_id, ctx)
 
 
 @dataclass
@@ -262,10 +272,45 @@ class TaskLaunch:
 AUTO_ISOLATION_APPLIED = "isolation (automatic: several write tasks)"
 
 
+def native_seat_payload(
+    seat: str,
+    provider: str | None,
+    model: str | None,
+    effort: str | None,
+    *,
+    recommendation: Recommendation | None = None,
+    fallback: SeatFallback | None = None,
+    error: str | None = None,
+) -> TaskStartPayload:
+    """Nothing started: the seat is this host's own CLI, so the boss runs it in its subagent."""
+    payload: TaskStartPayload = {
+        "status": "not_started",
+        "reason": "native_seat",
+        "seat": seat,
+        "message": native_seat_guidance(model, effort),
+        "next": runtime.NATIVE_SEAT_NEXT,
+    }
+    if provider is not None:
+        payload["provider"] = provider
+    if model:
+        payload["model"] = model
+    if effort:
+        payload["effort"] = effort
+    if recommendation is not None:
+        payload["recommendation"] = recommendation_payload(recommendation)
+    if fallback is not None:
+        payload["seat_fallback"] = fallback
+    if error is not None:
+        payload["error"] = {"code": "native_seat", "message": error}
+    return payload
+
+
 async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPayload:
     """Resolve the seat and defaults, acquire isolation, start the task and describe it.
 
-    The shared start path of start_agent and start_agents; failures are ToolErrors."""
+    The shared start path of start_agent and start_agents; failures are ToolErrors. A seat
+    native to this host starts nothing and comes back as a not_started receipt before any
+    isolated directory is made."""
     manager = _manager(ctx)
     prompt, provider, cwd, session_id = (
         launch.prompt,
@@ -282,9 +327,9 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     isolation, manager_model = launch.isolation, launch.manager_model
     manager_session_id = launch.manager_session_id
     seat_applied: list[str] = []
+    fallback = None
     try:
         arguments = StartArguments(provider, cwd, role, requested, access)
-        fallback = None
         if session_id is None and "model" not in (provider_options or {}):
             from agentnave.seat_fallbacks import select
 
@@ -309,6 +354,10 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
             runtime.HOST,
             session_id,
             manager_session_id,
+        )
+    except NativeSeat as exc:
+        return native_seat_payload(
+            exc.name, exc.seat.provider, exc.seat.model, exc.seat.effort, fallback=fallback
         )
     except (ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc

@@ -92,12 +92,23 @@ def role_access(role: str | None) -> Literal["read", "write"] | None:
     return "read" if name in get_args(ReviewRole.__value__) else None
 
 
-def native_seat_error(name: str, seat: ReviewSeat) -> ValueError:
-    settings = f"model {seat.model}" + (f", effort {seat.effort}" if seat.effort else "")
-    return ValueError(
-        f"{name} seat is native to this host. Dispatch it with the host's built-in "
-        f"subagent using {settings}."
+def native_seat_guidance(model: str | None, effort: str | None) -> str:
+    """How to run a native seat instead: the host's own subagent, at the saved settings."""
+    settings = ", ".join(
+        f"{name} {value}" for name, value in (("model", model), ("effort", effort)) if value
     )
+    return "Dispatch it with the host's built-in subagent" + (
+        f" using {settings}." if settings else "."
+    )
+
+
+class NativeSeat(Exception):
+    """The chosen seat belongs to this host's CLI, so the service can start nothing for it."""
+
+    def __init__(self, name: str, seat: ReviewSeat) -> None:
+        super().__init__(name, seat)
+        self.name = name
+        self.seat = seat
 
 
 @dataclass
@@ -155,14 +166,14 @@ class StartArguments:
             )
         name = self.seat or review_role(self.role)
         if self.selected is not None and self.selected.provider == host.provider:
-            raise native_seat_error(name, self.selected)
+            raise NativeSeat(name, self.selected)
         if self.provider is None:
             if not name:
                 raise ValueError("Pass provider, or seat / a review role to select an App seat")
             seat = self.selected or role_seat(name, host, required=True)
             assert seat is not None
             if seat.provider == host.provider:
-                raise native_seat_error(name, seat)
+                raise NativeSeat(name, seat)
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
         custom = custom_seat(name, host)

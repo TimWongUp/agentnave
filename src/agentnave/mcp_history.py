@@ -218,8 +218,10 @@ async def list_members(
     Omitted available means usable; recent quota/auth/billing blockers also mark seats
     unavailable during a CLI and model cooldown; clear it in App or, on explicit user request,
     with clear_provider_cooldown. Unavailable seats may offer replacement parameters:
-    pass with original seat/role; configured fallbacks are selected automatically for new threads. Native seats/exclusions:
-    see MCP instructions.
+    pass with original seat/role; configured fallbacks are selected automatically for new threads.
+    A native seat starts nothing: start_agent returns status not_started with its
+    provider/model/effort, and the boss runs it with the host's built-in subagent.
+    Exclusions: see MCP instructions.
     """
     try:
         members = read_member_list(runtime.EXCLUDED_PROVIDERS, runtime.HOST)

@@ -31,7 +31,7 @@
 
 | `code` | 处理 |
 | --- | --- |
-| `native_seat` | 选中的是宿主同类工位：按报错里给出的模型和推理档交给宿主自带子代理 |
+| `native_seat` | 选中的是宿主同类工位：按回执里给出的模型和推理档交给宿主自带子代理 |
 | `no_candidates` | 没有能派的工位（自定义工位有任一顺位可用即算可派，全部顺位都不可用才排除）：boss 自己完成，或说明缺少能力 |
 | `start_failed` | 这一项启动失败（如自动隔离建不成）：按报错原因修正后单独重派 |
 | 其余（`no_key`、`network`、`rate_limited`、`auth`、`rejected`、`bad_response`、`config_error`） | 查 `list_members`，从 `custom_seats` 里直接指定 `seat` 派发，并把错误转告用户一次 |

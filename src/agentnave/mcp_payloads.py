@@ -81,11 +81,10 @@ class TaskIsolationSummaryPayload(TypedDict):
     error: NotRequired[str]
 
 
-class InvocationPayload(TypedDict):
+class InvocationFields(TypedDict):
+    """What a reply says about a CLI run; each field appears only when it applies."""
+
     identity: NotRequired[ReplyIdentity]
-    invocation_id: str
-    status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
-    reason: Literal["started", "wait_elapsed", "execution_blocked", "prompt_pending", "finished"]
     elapsed_ms: NotRequired[int]
     provider: NotRequired[str]
     model: NotRequired[str]
@@ -102,6 +101,12 @@ class InvocationPayload(TypedDict):
     warnings: NotRequired[list[str]]
 
 
+class InvocationPayload(InvocationFields):
+    invocation_id: str
+    status: Literal["running", "succeeded", "failed", "blocked", "cancelled"]
+    reason: Literal["started", "wait_elapsed", "execution_blocked", "prompt_pending", "finished"]
+
+
 class UnreceivedPayload(TypedDict):
     id: str
     kind: Literal["task", "round"]
@@ -113,10 +118,19 @@ class UnreceivedPayload(TypedDict):
     ]  # the oldest unread blocker of a running task or seat, or a lost seat's error
 
 
-class TaskStartPayload(InvocationPayload):
-    seat_fallback: NotRequired[SeatFallback]
-    conversation_id: str
+class TaskStartPayload(InvocationFields):
+    """One dispatch's receipt: a started task, or a seat native to this host that started nothing."""
+
+    invocation_id: NotRequired[str]  # absent when nothing started
+    status: Literal["running", "succeeded", "failed", "blocked", "cancelled", "not_started"]
+    reason: Literal[
+        "started", "wait_elapsed", "execution_blocked", "prompt_pending", "finished", "native_seat"
+    ]
+    seat: NotRequired[str]  # the seat or review role that is native to this host
+    message: NotRequired[str]  # what to do instead of waiting, for a native seat
+    conversation_id: NotRequired[str]  # absent when nothing started
     access: NotRequired[str | None]  # the declared tier; recorded only, never enforced
+    seat_fallback: NotRequired[SeatFallback]
     unreleased_isolation_count: NotRequired[int]
     unreceived: NotRequired[list[UnreceivedPayload]]
     next: NotRequired[str]  # what to call before ending the turn while ends wait (ADR-0064)

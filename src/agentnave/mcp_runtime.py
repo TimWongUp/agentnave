@@ -149,6 +149,11 @@ WAIT_AGAIN = (
     "review_needed, then call wait again "
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
+# A seat the host's own CLI owns starts nothing, so a dispatch receipt must not send the boss to wait.
+NATIVE_SEAT_NEXT = (
+    "Nothing was started, so there is nothing to wait for: run this seat with the host's "
+    "built-in subagent."
+)
 
 EXCLUDED_PROVIDERS = _read_excluded_providers()
 PROVIDER_SELECTION = (
@@ -493,7 +498,9 @@ mcp = _Server(
         "isolation creates a workspace-owned Git worktree per task; inspect or delete with isolated_dirs (release discards ignored files). "
         "Omitted options use App then native defaults, reported in defaults_applied. "
         "Concurrent tasks/seats obey the App cap; wait for capacity before retrying. "
-        "native=true seats use the host's built-in subagent, not start_agent. " + PROVIDER_SELECTION
+        "native=true seats start nothing: start_agent returns a not_started receipt with the "
+        "seat's model and effort, and the boss runs it with the host's built-in subagent. "
+        + PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
 )
@@ -885,6 +892,7 @@ __all__ = [
     "_restrict_wait_windows",
     "WAIT_AGAIN",
     "WAIT_NEXT",
+    "NATIVE_SEAT_NEXT",
     "WAIT_SECONDS",
     "LONG_WAIT_SECONDS",
     "EXCLUDED_PROVIDERS",

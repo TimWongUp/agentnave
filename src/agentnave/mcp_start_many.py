@@ -22,7 +22,7 @@ from agentnave.mcp_runtime import (
     _short_title,
     _unreceived,
 )
-from agentnave.mcp_tasks import TaskLaunch, launch_task
+from agentnave.mcp_tasks import TaskLaunch, launch_task, native_seat_payload
 from agentnave.members import SettingsFileError, orchestration_decision
 from agentnave.models import InvocationRequest
 from agentnave.seat_recommendation import (
@@ -161,7 +161,10 @@ async def start_agents(
     nothing is checked first and a bad task rejects the whole call. results follow the order
     of tasks: a started one is start_agent's receipt (invocation_id goes to wait); one that did
     not start says why in error.code (no_candidates, bad_response, native_seat, start_failed)
-    and, when a seat was chosen, in recommendation; the others are unaffected. A decision that
+    and, when a seat was chosen, in recommendation; the others are unaffected. A task whose
+    seat is native to this host starts nothing either and answers like start_agent does
+    (status not_started, reason native_seat, the seat, provider/model/effort and a message for
+    the host's built-in subagent), with error.code native_seat kept. A decision that
     fails as a whole (not_enabled, config_error, no_key, network, rate_limited, auth, rejected,
     bad_response) starts nothing. Nothing is retried or replaced. With two or more
     access=write tasks the service gives each its own new isolated directory, as if it had
@@ -191,7 +194,16 @@ async def start_agents(
         if isinstance(chosen, RecommendationError):
             results.append(_not_started(chosen.code, chosen.message))
         elif chosen.native:
-            results.append(_not_started("native_seat", native_seat_message(chosen), chosen))
+            results.append(
+                native_seat_payload(
+                    chosen.seat,
+                    runtime.HOST.provider,
+                    chosen.model,
+                    chosen.effort,
+                    recommendation=chosen,
+                    error=native_seat_message(chosen),
+                )
+            )
         else:
             results.append(
                 await _started(
