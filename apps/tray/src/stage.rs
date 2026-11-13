@@ -554,22 +554,34 @@ fn meaningful_title(title: &str) -> bool {
         )
 }
 
-/// Where a workspace's running calls work: a task's own directory, or a meeting's while a seat runs.
+/// Where a workspace's running calls work.
 fn running_cwds(snapshots: &[Snapshot], sources: &[usize]) -> Vec<String> {
-    let mut found = Vec::new();
-    for &index in sources {
-        let director = &snapshots[index].view["director"];
-        let seat_running =
-            array(&director["round"], "seats").any(|seat| seat["status"] == "running");
-        if seat_running || director["round"]["status"] == "running" {
-            found.extend(opt_text(director, "cwd"));
-        }
-        found.extend(
-            array(director, "tasks")
-                .filter(|task| task["status"] == "running")
-                .filter_map(|task| opt_text(task, "cwd")),
-        );
+    sources
+        .iter()
+        .flat_map(|&index| running_in(&snapshots[index].view["director"]))
+        .collect()
+}
+
+/// Where one conversation's running calls work: a task's own directory, or a running seat's,
+/// falling back to the meeting's for views saved before seats carried one.
+fn running_in(director: &Value) -> Vec<String> {
+    let mut found: Vec<String> = array(&director["round"], "seats")
+        .filter(|seat| seat["status"] == "running")
+        .filter_map(|seat| {
+            array(director, "seats")
+                .find(|s| s["id"] == seat["seat_id"])
+                .and_then(|s| opt_text(s, "cwd"))
+                .or_else(|| opt_text(director, "cwd"))
+        })
+        .collect();
+    if found.is_empty() && director["round"]["status"] == "running" {
+        found.extend(opt_text(director, "cwd"));
     }
+    found.extend(
+        array(director, "tasks")
+            .filter(|task| task["status"] == "running")
+            .filter_map(|task| opt_text(task, "cwd")),
+    );
     found
 }
 
