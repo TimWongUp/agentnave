@@ -125,9 +125,12 @@ impl Reader {
     pub(super) fn boss_homes(&self) -> boss_app::Homes {
         // A host refresh holds the lock for seconds; only then does the last snapshot stand in
         // for the registry, which can change on its own (Claude Desktop installed or removed).
-        if let Ok(hosts) = self.hosts.try_lock()
-            && let Some(hosts) = hosts.as_ref()
-        {
+        let free = match self.hosts.try_lock() {
+            Ok(hosts) => Some(hosts),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        };
+        if let Some(hosts) = free.as_ref().and_then(|hosts| hosts.as_ref()) {
             self.update_boss_homes(hosts);
         }
         self.boss_homes
