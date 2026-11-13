@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-13
-- 修订 [ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) 的「不可用边界」：工位不可用时先按用户在 App 配置的备选顺位取第一个可用，全部不可用才报告不可用并按同难度规则兜底；修订 [ADR-0087](0087-decision-model-recommends-seats.md) 的「候选只含真正能派的工位」：「能派」的判断含备选顺位，任一顺位可用即算可派。扩展 [ADR-0038](0038-role-applies-app-seat.md) 的工位设置套用：单一 App 设置之外可按顺序配备选；开会席位不在范围内（[ADR-0083](0083-meetings-only-preset.md) 的 2026-11-12 修订）。
+- 修订 [ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) 的「不可用边界」：工位不可用时先按用户在 App 配置的备选顺位取第一个可用，全部不可用才报告不可用并按同难度规则兜底；扩展 [ADR-0087](0087-decision-model-recommends-seats.md) 的「候选只含真正能派的工位」：「能派」的判断含备选顺位，任一顺位可用即算可派。扩展 [ADR-0038](0038-role-applies-app-seat.md) 的工位设置套用：单一 App 设置之外可按顺序配备选；开会席位不在范围内（[ADR-0083](0083-meetings-only-preset.md) 的 2026-11-12 修订）。
 - 不改变：[ADR-0028](0028-follow-cli-default-model.md)、[ADR-0032](0032-cli-permission-tiers.md) 的参数来源与权限档位（权限仍按 CLI 套用，切到哪个 CLI 就套哪个 CLI 的档位）、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) 的模型池、[ADR-0031](0031-prompt-only-orchestration.md) 的单向编排；Invocation 仍只在进程内存中，不跨重启恢复；哪条顺位可用沿用 [ADR-0081](0081-account-cooldown-duration.md) 的冷却判断；[ADR-0087](0087-decision-model-recommends-seats.md) 的「评审工位不受影响」不变（「决策模型」档不改评审工位目录）。
 
 ## 背景
@@ -22,7 +22,7 @@
 
 ## 取舍
 
-- **不让服务直接采用替代建议。** 那样会在用户没同意时换成一个他没选过的模型，回执再清楚也已经跑了。顺位是用户预先给出的选择，服务只是按它执行。
+- **不让服务直接采用替代建议。** 那样会在用户没同意时换成一个用户没选过的模型，回执再清楚也已经跑了。顺位是用户预先给出的选择，服务只是按它执行。
 - **不只给评审工位做。** 普通工位同样会遇到额度、限流和登录失效；两套规则会让 boss 记两种行为，统一按顺位更简单。
 - **不让评审接入决策模型按难度选档。** 评审角色由 `agentnave-review` Skill 按 R 级决定，boss 只传角色、不考虑模型；再让决策模型选一次难度只是重复 R 级判断，还多一次外部调用，也不解决模型不可用的问题。
 - **配置会变长。** 每个工位多出若干备选，用户要为新工位决定是否配备选；不配就是现状，行为不变。
