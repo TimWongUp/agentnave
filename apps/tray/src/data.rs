@@ -70,6 +70,7 @@ type Merged = (Arc<Value>, Arc<Value>, Option<String>, Arc<Value>);
 pub struct Reader {
     root: PathBuf,
     hosts: Mutex<Option<crate::hosts::Hosts>>,
+    boss_homes: Mutex<boss_app::Homes>,
     tools: Arc<Mutex<Option<crate::tool_dirs::ToolDirs>>>,
     /// Parsed views by conversation, keyed on the row's revision, so polling parses only
     /// views that changed.
@@ -90,6 +91,7 @@ impl Reader {
         Self {
             root,
             hosts: Mutex::new(None),
+            boss_homes: Mutex::new(boss_app::Homes::here()),
             tools: Arc::default(),
             summaries: Mutex::new(HashMap::new()),
             orphaned: Mutex::new(HashMap::new()),

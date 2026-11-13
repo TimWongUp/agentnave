@@ -26,7 +26,7 @@ const RECORD_LIMIT: u64 = 8 << 20;
 /// Retry missing transcripts periodically so sessions created slightly after workspace creation resolve.
 const NEGATIVE_TTL: Duration = Duration::from_secs(15);
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Homes {
     pub claude: Vec<PathBuf>,
     pub codex: Vec<PathBuf>,
