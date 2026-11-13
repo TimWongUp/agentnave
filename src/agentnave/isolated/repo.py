@@ -161,23 +161,21 @@ def filter_driver_names(cwd: Path) -> list[str]:
     return sorted(names)
 
 
-def _disable_filter_drivers(env: dict[str, str], names: Sequence[str]) -> None:
-    """Add GIT_CONFIG_* entries that empty each driver's commands and clear its required flag.
+def _filter_disable_args(names: Sequence[str]) -> list[str]:
+    """`-c` options that empty each driver's commands and clear its required flag.
 
-    An empty command means no filtering; required=false keeps git from failing on that.
+    Command-line options are applied after GIT_CONFIG_PARAMETERS and GIT_CONFIG_COUNT from the
+    environment, so an inherited `filter.<name>.process` cannot override them. An empty command
+    means no filtering; required=false keeps git from failing on that. Git splits `-c` at the
+    first `=`, so a driver name holding one cannot be neutralized this way and is refused.
     """
-    if not names:
-        return
-    try:
-        count = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
-    except ValueError:
-        count = 0
+    args: list[str] = []
     for name in names:
+        if "=" in name:
+            raise IsolationError(f"Unsupported filter driver name: {name!r}")
         for prop, value in (*((p, "") for p in _FILTER_PROPS_EMPTY), ("required", "false")):
-            env[f"GIT_CONFIG_KEY_{count}"] = f"filter.{name}.{prop}"
-            env[f"GIT_CONFIG_VALUE_{count}"] = value
-            count += 1
-    env["GIT_CONFIG_COUNT"] = str(count)
+            args.extend(["-c", f"filter.{name}.{prop}={value}"])
+    return args
 
 
 def control_char_in(text: str) -> bool:
@@ -216,15 +214,26 @@ def run_git(
         cmd.extend(["-c", f"core.hooksPath={empty_hooks_dir()}"])
     for item in config_overrides:
         cmd.extend(["-c", item])
+    if args and args[0] not in _NO_FILTER_COMMANDS:
+        cmd.extend(_filter_disable_args(filter_driver_names(cwd)))
     cmd.extend(args)
     env = os.environ.copy()
-    for name in ("GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_ASKPASS"):
+    # Also drop variables that point git at another config, repository, index or tree than
+    # cwd: GIT_CONFIG would hide the repository's filters from filter_driver_names only.
+    for name in (
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "GIT_ASKPASS",
+        "GIT_CONFIG",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+    ):
         env.pop(name, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
         env.update(extra_env)
-    if args and args[0] not in _NO_FILTER_COMMANDS:
-        _disable_filter_drivers(env, filter_driver_names(cwd))
     try:
         proc = subprocess.Popen(
             cmd,
@@ -616,14 +625,17 @@ def add_worktree_locked(
     container.mkdir(parents=True, exist_ok=True)
     if is_link(container) or not container.is_dir():
         raise IsolationError(f"Invalid {WORKTREES_DIR_NAME} container: {container}")
+    # Check out only after the branch exists: conditional includes (onbranch:) can add filter
+    # drivers that are invisible while the main checkout is on another branch, so the drivers
+    # to neutralize are enumerated from the new worktree itself.
     run_git(
-        ["worktree", "add", "-b", branch_name, "--", str(worktree_path), base_oid],
+        ["worktree", "add", "--no-checkout", "-b", branch_name, "--", str(worktree_path), base_oid],
         cwd=main_root,
-        extra_env={
-            "GIT_LFS_SKIP_SMUDGE": "1",
-            "GIT_NO_LAZY_FETCH": "1",
-        },
+        extra_env=_CHECKOUT_ENV,
     )
+    if is_link(worktree_path) or not worktree_path.is_dir():
+        raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
+    check_out(worktree_path, base_oid)
     if is_link(worktree_path) or not worktree_path.is_dir():
         raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
     actual_head = (
@@ -644,6 +656,23 @@ def add_worktree_locked(
         )
     ).resolve()
     return git_dir
+
+
+_CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1", "GIT_NO_LAZY_FETCH": "1"}
+
+
+def check_out(worktree_path: Path, base_oid: str) -> None:
+    """Fill a worktree added with --no-checkout, with filter drivers seen from inside it."""
+    run_git(["reset", "--hard", "--quiet", base_oid], cwd=worktree_path, extra_env=_CHECKOUT_ENV)
+
+
+def never_checked_out(worktree_path: Path) -> bool:
+    """True while a worktree added with --no-checkout has no index yet; git then reports
+    every tracked file as a staged deletion, which is not a change anyone made."""
+    index = run_git(
+        ["rev-parse", "--path-format=absolute", "--git-path", "index"], cwd=worktree_path
+    ).stdout.rstrip(b"\r\n")
+    return not Path(decode_git_path(index)).exists()
 
 
 def isolated_worktree_root(path: Path) -> Path | None:

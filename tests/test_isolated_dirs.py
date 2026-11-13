@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import subprocess
@@ -442,6 +443,30 @@ def test_recovery_and_change_summary_edge_cases(tmp_path: Path) -> None:
     assert len(out_clean) == 1 and out_clean[0].status == "rolled_back"
     assert not wt_clean.worktree_path.exists()
     assert dirs.store.get(wt_clean.id) is None
+
+    # Interrupted between `worktree add --no-checkout` and the checkout: no index yet, maybe a
+    # lock left by a checkout that died. Only the .git link proves nothing was written.
+    for files_left, outcome in ((False, "rolled_back"), (True, "needs_attention")):
+        wt_bare = dirs.create(repo, workspace_id="ws-1")
+        wt_bare.lease.release()
+        rec_bare = dirs.store.get(wt_bare.id)
+        assert rec_bare is not None
+        index = Path(
+            _git(
+                wt_bare.worktree_path, "rev-parse", "--path-format=absolute", "--git-path", "index"
+            )
+        )
+        index.unlink()
+        index.with_name("index.lock").touch()
+        if not files_left:
+            for entry in wt_bare.worktree_path.iterdir():
+                if entry.name != ".git":
+                    shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+        dirs.store.delete(wt_bare.id)
+        dirs.store.insert_creating(replace(rec_bare, state="creating", phase="copying_include"))
+        out_bare = dirs.recover()
+        assert len(out_bare) == 1 and out_bare[0].status == outcome
+        assert wt_bare.worktree_path.exists() == files_left
 
     wt_dirty = dirs.create(repo, workspace_id="ws-1")
     wt_dirty.lease.release()
@@ -1107,4 +1132,106 @@ def test_registry_failure_fallback_matches_isolated_paths_in_any_letter_case(
     claimed = dirs.claim_for_cwd(shouted)
     assert claimed is not None  # leased by path; not started without one
     claimed.lease.release()
+    dirs.close()
+
+
+def test_filters_added_by_a_conditional_include_on_the_new_branch_never_run(
+    tmp_path: Path,
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.enc", "*.enc filter=cond\n")
+    marker = tmp_path / "cond-ran"
+    script = _script(tmp_path / "filter.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    extra = tmp_path / "extra.config"
+    extra.write_text(
+        f'[filter "cond"]\n\tsmudge = {script}\n\tprocess = {script}\n\trequired = true\n',
+        encoding="utf-8",
+    )
+    _git(repo, "config", "includeIf.onbranch:agentnave/*.path", extra.as_posix())
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    assert (created.worktree_path / "a.enc").read_text(encoding="utf-8") == "aaaa\n"
+    assert not marker.exists()
+    dirs.close()
+
+
+def test_filters_inherited_through_git_config_parameters_do_not_override_neutralizing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.enc", "*.enc filter=lfs\n")
+    marker = tmp_path / "env-ran"
+    script = _script(tmp_path / "filter.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", f"'filter.lfs.process={script}'")
+    run_git(["worktree", "add", "-b", "other", "--", str(tmp_path / "wt"), "HEAD"], cwd=repo)
+    assert not marker.exists()
+
+
+def test_a_filter_name_that_would_rewrite_its_own_neutralizing_option_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.txt", "*.txt filter=pwn\n")
+    marker = tmp_path / "ran"
+    script = _script(tmp_path / "evil.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    # `-c filter.pwn.smudge=<script>.required=false` would set pwn's smudge command.
+    _git(repo, "config", f"filter.pwn.smudge={script}.clean", "")
+    with pytest.raises(IsolationError, match="filter driver name"):
+        run_git(["worktree", "add", "-b", "other", "--", str(tmp_path / "wt"), "HEAD"], cwd=repo)
+    assert not marker.exists()
+
+
+def test_git_config_from_the_environment_cannot_hide_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _filter_repo(tmp_path / "repo", "a.enc", "*.enc filter=lfs\n")
+    marker = tmp_path / "ran"
+    script = _script(tmp_path / "filter.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    _git(repo, "config", "filter.lfs.smudge", script)
+    monkeypatch.setenv("GIT_CONFIG", os.devnull)
+    run_git(["worktree", "add", "-b", "other", "--", str(tmp_path / "wt"), "HEAD"], cwd=repo)
+    assert not marker.exists()
+
+
+def test_bare_repository_in_an_ignored_directory_forces_confirmation(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / "ignored_dir").mkdir()
+    _git(created.worktree_path / "ignored_dir", "init", "--bare", "bare.git")
+    assert dirs.summarize_changes(created.id).nested_repos == ("ignored_dir/bare.git",)
+    dirs.close()
+
+
+def test_nested_repository_in_an_ignored_directory_forces_confirmation(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    hidden = created.worktree_path / "ignored_dir" / "inner"
+    hidden.mkdir(parents=True)
+    _git(hidden, "init", "-b", "main")
+    assert dirs.summarize_changes(created.id).nested_repos == ("ignored_dir/inner",)
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required"
+    assert first.nested_repos == ("ignored_dir/inner",)
+    if os.name != "nt" and os.geteuid() != 0:
+        # A directory that cannot be searched may hold one too.
+        locked = created.worktree_path / "ignored_dir" / "locked"
+        locked.mkdir()
+        locked.chmod(0)
+        try:
+            assert dirs.summarize_changes(created.id).nested_repos == (
+                "ignored_dir/inner",
+                "ignored_dir/locked",
+            )
+        finally:
+            locked.chmod(0o755)
+        # Outside ignored directories `status` only warns about it.
+        plain = created.worktree_path / "plain_locked"
+        plain.mkdir()
+        plain.chmod(0)
+        try:
+            assert "plain_locked" in dirs.summarize_changes(created.id).nested_repos
+        finally:
+            plain.chmod(0o755)
     dirs.close()
