@@ -502,3 +502,50 @@ test("a side list patches its relative times in place and lays out only when des
   context.layoutIfChanged("2 desks");
   assert.equal(read.length, 2 * once);
 });
+
+test("a folded column peeks on its button or the window edge and leaves 300ms after pointer and focus have gone", () => {
+  const source = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const start = source.indexOf("// A folded column slides");
+  const node = () => ({ hover: false, listeners: {}, inside: false, matches() { return this.hover; }, contains() { return this.inside; },
+    addEventListener(name, fn) { this.listeners[name] = fn; } });
+  const side = node(), conv = node(), sideToggle = node(), convToggle = node(), attrs = {}, timers = [], doc = node();
+  let renders = 0;
+  const context = vm.createContext({
+    state: { sideCollapsed: true, convCollapsed: true, chat: {} }, narrow: { matches: false }, overlay: { matches: false }, innerWidth: 1200,
+    el: { app: { querySelector: () => side, toggleAttribute(name, on) { attrs[name] = on; }, getBoundingClientRect: () => ({ top: 48 }) },
+      sideToggle, convToggle, drawer: conv },
+    document: { addEventListener: (name, fn) => { doc.listeners[name] = fn; }, activeElement: {} },
+    setTimeout: fn => timers.push(fn), clearTimeout: () => {}, renderAll: () => { renders++; },
+  });
+  vm.runInContext(source.slice(start, source.indexOf("// Drag the borders", start)), context);
+  const elapse = () => timers.splice(0).forEach(fn => fn());
+
+  convToggle.listeners.pointerenter();
+  assert.equal(attrs["data-conv-peek"], true);
+  assert.equal(renders, 1, "the hidden drawer is drawn for the peek");
+  conv.hover = true;
+  convToggle.listeners.pointerleave();
+  elapse();
+  assert.equal(attrs["data-conv-peek"], true, "a pointer on the drawer keeps it");
+  conv.hover = false; conv.inside = true;
+  conv.listeners.pointerleave();
+  elapse();
+  assert.equal(attrs["data-conv-peek"], true, "so does focus inside it");
+  conv.inside = false;
+  conv.listeners.focusout();
+  elapse();
+  assert.equal(attrs["data-conv-peek"], false);
+
+  doc.listeners.pointermove({ buttons: 0, clientX: 3, clientY: 200 });
+  assert.equal(attrs["data-side-peek"], true, "the left edge opens the workspace list");
+  attrs["data-side-peek"] = undefined;
+  context.state.sideCollapsed = false;
+  context.setPeek("side", false);
+  doc.listeners.pointermove({ buttons: 0, clientX: 3, clientY: 200 });
+  assert.equal(attrs["data-side-peek"], false, "a shown list does not peek");
+  context.state.sideCollapsed = true;
+  doc.listeners.pointermove({ buttons: 0, clientX: 3, clientY: 20 });
+  doc.listeners.pointermove({ buttons: 1, clientX: 1199, clientY: 200 });
+  assert.equal(attrs["data-side-peek"], false, "the bar does not open the list");
+  assert.equal(attrs["data-conv-peek"], false, "a drag in progress does not open the drawer");
+});

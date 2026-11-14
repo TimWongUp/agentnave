@@ -142,6 +142,8 @@ const state = {
   convOpen: false, // only matters while the conversation is an overlay
   convCollapsed: stored(COLLAPSED_KEY) === "1", // the reader folded the conversation column away
   sideCollapsed: stored(SIDE_COLLAPSED_KEY) === "1", // the reader folded the workspace column away
+  sidePeek: false, // a folded column laid over the office while the pointer is on it
+  convPeek: false,
   opener: null,
   scopeKey: "",
   nodes: new Map(),
