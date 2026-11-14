@@ -257,6 +257,15 @@
     } else return;
     if (Object.keys(options).length) model.options = options;
     else delete model.options;
+    for (const scene of SCENE_IDS) {
+      const overrides = S.currentDoc.modes?.[scene]?.deepseek?.overrides;
+      const sceneOptions = overrides?.[modelId]?.options;
+      if (!sceneOptions) continue;
+      delete sceneOptions.provider;
+      delete sceneOptions.stored_credentials;
+      if (!Object.keys(sceneOptions).length) delete overrides[modelId].options;
+      if (!Object.keys(overrides[modelId]).length) delete overrides[modelId];
+    }
     edited();
   }
 

@@ -715,6 +715,12 @@ test("DeepSeek route selection is explicit, model scoped and preserves other set
       "deepseek-flash": { effort: "high", options: { extra: "keep" } },
       "deepseek-v4-pro": { options: { provider: "gateway", stored_credentials: false } },
     } };
+    currentDoc.modes.task.deepseek = {
+      models: [],
+      overrides: {
+        "deepseek-flash": { options: { permission_mode: "read-only", provider: "gateway", stored_credentials: false } },
+      },
+    };
     markSaved();
   `);
   assert.equal(app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").children[0].attrs.selected'), true);
@@ -722,6 +728,9 @@ test("DeepSeek route selection is explicit, model scoped and preserves other set
   app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "account"}})');
   assert.deepEqual(app.doc().clis.deepseek.models["deepseek-flash"], {
     effort: "high", options: { extra: "keep", provider: "deepseek-account", stored_credentials: true },
+  });
+  assert.deepEqual(app.doc().modes.task.deepseek.overrides["deepseek-flash"], {
+    options: { permission_mode: "read-only" },
   });
   assert.deepEqual(app.doc().clis.deepseek.models["deepseek-v4-pro"].options, { provider: "gateway", stored_credentials: false });
   app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "official"}})');

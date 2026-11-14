@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -23,7 +24,12 @@ from agentnave.adapters.base import (
     resolve_executable,
     restricted_options,
 )
-from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.models import (
+    InvocationRequest,
+    InvocationStatus,
+    ProviderActivity,
+    ProviderOption,
+)
 from agentnave.windows_supervisor import popen_args
 
 _DESKTOP_DSH_PATHS = (
@@ -75,6 +81,7 @@ _TOOL_ROWS = (
 )
 _BLOCKED_CODES = {"MISSING_CREDENTIAL", "INVALID_CREDENTIAL", "AUTH"}
 _OFFICIAL_ROUTE = "deepseek-official"
+_ACCOUNT_ROUTE = "deepseek-account"
 
 
 def _scalar(raw: str) -> str:
@@ -181,7 +188,20 @@ class DeepSeekAdapter(AdapterHooks):
         "restricted_tools (boolean; disables tool plugins, read-only sandbox)"
     )
     restricted_extra_options = frozenset({"provider", "stored_credentials"})
+    paired_options: Mapping[str, frozenset[str]] = {"provider": frozenset({"stored_credentials"})}
     _options = ("model", "effort", "provider", "permission_mode", "stored_credentials")
+
+    def unmodeled_options(self, options: Mapping[str, ProviderOption]) -> dict[str, ProviderOption]:
+        kept = {
+            key: value
+            for key, value in options.items()
+            if key not in ("provider", "stored_credentials")
+        }
+        # Account sign-in must not silently fall back to saved official API keys on headless's
+        # default route when no model was selected.
+        if options.get("provider") == _ACCOUNT_ROUTE and options.get("stored_credentials") is True:
+            kept["stored_credentials"] = False
+        return kept
 
     def executable(self) -> str:
         return resolve_executable("dsh", _bundled_paths())

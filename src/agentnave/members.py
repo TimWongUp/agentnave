@@ -111,8 +111,6 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
         "restricted_tools",
         "disable_slash_commands",
         "interactive",
-        "provider",
-        "stored_credentials",
     }
 )
 
@@ -240,10 +238,17 @@ class MemberFile(StrictModel):
         shared = cli.models.get(model, MemberConfig()) if cli else MemberConfig()
         selection = self.modes.get(mode, {}).get(provider) if scenario else None
         override = selection.overrides.get(model) if selection else None
-        return MemberConfig.model_validate(
-            shared.model_dump(exclude_unset=True)
-            | (override.model_dump(exclude_unset=True) if override else {})
-        )
+        merged = shared.model_dump(exclude_unset=True)
+        if override:
+            merged |= override.model_dump(exclude_unset=True)
+            if "options" in shared.model_fields_set and "options" in override.model_fields_set:
+                base = dict(shared.options)
+                for leader, followers in get_adapter(provider).paired_options.items():
+                    if leader in override.options:
+                        for key in followers:
+                            base.pop(key, None)
+                merged["options"] = base | override.options
+        return MemberConfig.model_validate(merged)
 
     @model_validator(mode="after")
     def references(self) -> MemberFile:
@@ -316,10 +321,22 @@ class MemberFile(StrictModel):
                 f"Effort {result['effort']!r} is not allowed; allowed efforts: "
                 + ", ".join(config.efforts)
             )
-        for key, value in config.options.items():
+        adapter = get_adapter(provider)
+        blocked = {
+            follower
+            for leader, followers in adapter.paired_options.items()
+            if leader in options
+            for follower in followers
+        }
+        candidate_options = (
+            adapter.unmodeled_options(config.options) if model is None else config.options
+        )
+        for key, value in candidate_options.items():
             if model is None and key in _MODEL_EXECUTION_OPTIONS:
                 continue
-            if restricted and key not in get_adapter(provider).restricted_extra_options:
+            if key in blocked:
+                continue
+            if restricted and key not in adapter.restricted_extra_options:
                 continue
             if key not in result:
                 result[key] = value

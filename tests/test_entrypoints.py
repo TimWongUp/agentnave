@@ -1960,7 +1960,7 @@ async def test_members_apply_defaults_and_enforce_each_mode(
             "default": ["task"],
             "effort": "medium",
             "efforts": ["medium", "high"],
-            "options": {"agent": "reviewer"},
+            "options": {"permission_mode": "default", "agent": "reviewer"},
             "notes": "任务",
             "modes": [],
         }

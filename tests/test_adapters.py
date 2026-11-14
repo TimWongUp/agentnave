@@ -1673,6 +1673,11 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
     finally:
         for path in bare.cleanup_paths:
             path.unlink()
+    account_unmodeled = adapter.prepare(
+        request(tmp_path, "deepseek", provider_options={"stored_credentials": False})
+    )
+    assert "--patch" not in account_unmodeled.argv and account_unmodeled.cleanup_paths == ()
+    assert "credentials" not in patch_of({"stored_credentials": False, "effort": "high"})
 
     command = adapter.prepare(
         request(
