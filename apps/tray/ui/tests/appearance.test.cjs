@@ -60,9 +60,12 @@ test("all motion choices override or follow the system and native broadcasts rea
   assert.equal(animated.api.reducedMotion.matches, true);
 });
 
-test("on battery characters stand still unless the switch is turned off", () => {
+test("on battery characters stand still only when the switch is turned on", () => {
   const app = appearance({ saved: { motion: "full" } });
   app.root.dataset.onBattery = "true";
+  assert.equal(app.api.reducedMotion.matches, false, "off by default");
+  assert.equal(app.api.preferences().battery_still, false);
+  app.api.applyPreferences({ battery_still: true });
   assert.equal(app.api.reducedMotion.matches, true);
   app.api.applyPreferences({ battery_still: false });
   assert.equal(app.api.reducedMotion.matches, false);

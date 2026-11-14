@@ -54,14 +54,14 @@ fn pages_open_with_preferences_before_first_paint() {
     );
     let page = String::from_utf8(localize(html, &general)).unwrap();
     assert!(
-        page.contains(r#"<html lang="en" data-lang="en" data-theme="dark" data-motion="reduce" data-character-style="video-272" data-battery-still="true" data-pause-unfocused="true">"#)
+        page.contains(r#"<html lang="en" data-lang="en" data-theme="dark" data-motion="reduce" data-character-style="video-272" data-battery-still="false" data-pause-unfocused="true">"#)
     );
     assert_eq!(localize(b"<html>", &general), b"<html>");
     let office = localize(br#"<html lang="zh-CN" data-idle-blur>"#, &general);
     assert!(
         String::from_utf8(office)
             .unwrap()
-            .ends_with(r#"data-battery-still="true" data-pause-unfocused="true" data-idle-blur>"#)
+            .ends_with(r#"data-battery-still="false" data-pause-unfocused="true" data-idle-blur>"#)
     );
 }
 
@@ -122,7 +122,7 @@ fn effective_fills_defaults_and_uses_the_os_autostart_value() {
         json!({
             "language": "system", "theme": "system", "motion": "system", "scale": 100,
             "autostart": true, "open_on_start": true, "tray_click": "panel",
-            "tray_count": true, "tray_font": "baskerville", "keep_awake": false, "battery_still": true,
+            "tray_count": true, "tray_font": "baskerville", "keep_awake": false, "battery_still": false,
             "pause_unfocused": true, "character_style": "static",
         })
     );

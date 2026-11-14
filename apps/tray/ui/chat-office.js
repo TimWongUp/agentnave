@@ -588,7 +588,8 @@ new ResizeObserver(([entry]) => {
 // ---------------------------------------------------------------- the office, patched in place
 const canAnimate = () =>
   !reduceMotion.matches &&
-  !document.hidden &&
+  !AN.isHidden() &&
+  !document.documentElement.classList.contains("blurred") &&
   typeof Element.prototype.animate === "function";
 
 function renderOffice(c, ctx, n, newGroup) {

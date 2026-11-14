@@ -147,7 +147,7 @@ pub fn localize(html: &[u8], general: &Value) -> Vec<u8> {
     let theme = general["theme"].as_str().unwrap_or("system");
     let motion = general["motion"].as_str().unwrap_or("system");
     let character_style = general["character_style"].as_str().unwrap_or("static");
-    let battery_still = general["battery_still"].as_bool().unwrap_or(true);
+    let battery_still = general["battery_still"].as_bool().unwrap_or(false);
     let pause_unfocused = general["pause_unfocused"].as_bool().unwrap_or(true);
     let on_battery = if crate::power::on_battery() {
         r#" data-on-battery="true""#
