@@ -4187,6 +4187,14 @@ async def test_host_cli_modes_and_group_fallback(
     from agentnave import provider_health
 
     _install_fake_claude(tmp_path, monkeypatch)
+    write_fake_cli(
+        tmp_path,
+        "agy",
+        "import json, sys\n"
+        "sys.stdin.read()\n"
+        "print(json.dumps({'event': 'result', 'result': {'status': 'SUCCESS', "
+        "'response': 'OK', 'conversation_id': 'agy-e2e'}}))\n",
+    )
     root = tmp_path / "data"
     root.mkdir(exist_ok=True)
     monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
@@ -4242,3 +4250,32 @@ async def test_host_cli_modes_and_group_fallback(
         started = await _start_and_wait(client, **args)
         assert started["provider"] == "claude"
         assert "host's own CLI" in str(started["seat_fallback"])
+
+        # Antigravity hosts default to launching agy when orchestration.json omits antigravity,
+        # while an explicit "subagent" choice turns same-CLI seats back into native seats.
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("antigravity", "parent"))
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"antigravity"}))
+        (root / "provider-health.json").unlink(missing_ok=True)
+        (root / "settings.json").write_text(
+            json.dumps({"version": 1, "antigravity_interactive": False})
+        )
+        (root / "orchestration.json").write_text(json.dumps({"version": 1}))
+        seat.clear()
+        seat.update(provider="antigravity", model="gemini-4-carbon-low")
+        (root / "review.json").write_text(
+            json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+        )
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        agy_status = _payload(_payload(listed["review"])["correctness-reviewer"])
+        assert agy_status.get("available", True) is True
+        assert "native" not in agy_status
+        started = await _start_and_wait(client, **args)
+        assert started["provider"] == "antigravity"
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "host_cli": {"antigravity": "subagent"}})
+        )
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        agy_status = _payload(_payload(listed["review"])["correctness-reviewer"])
+        assert agy_status["native"] is True
+        native = _payload((await client.call_tool("start_agent", args)).structured_content)
+        assert native["reason"] == "native_seat"

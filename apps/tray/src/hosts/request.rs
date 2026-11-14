@@ -84,7 +84,7 @@ fn save_host_cli(root: &Path, host_state: &Mutex<Option<Hosts>>, payload: &Value
         .cloned()
         .unwrap_or_default();
     for key in keys {
-        if choice == "subagent" {
+        if choice == crate::providers::default_host_cli(key) {
             choices.remove(key);
         } else {
             choices.insert(key.to_owned(), json!(choice));

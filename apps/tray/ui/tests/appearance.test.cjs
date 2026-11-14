@@ -192,11 +192,36 @@ test("settings.html scripts load in declared order and language switch respects 
       if (opts?.method === "POST") posts.push({ path, body: opts.body ? JSON.parse(opts.body) : null });
       if (path.includes("avatar-settings") || path.includes("/app/characters")) return { ok: true, json: async () => ({}) };
       if (path.startsWith("/settings/members")) return { ok: true, json: async () => ({ document: { version: 1, clis: {}, modes: {} }, detected: {}, review: { seats: {} } }) };
-      if (path === "/app/orchestration") return { ok: true, json: async () => ({ document: { version: 1, preset: "split" }, bosses: [], presets: { split: "rule" }, files: [] }) };
+      if (path === "/app/orchestration") return { ok: true, json: async () => ({
+        document: { version: 1, preset: "split" },
+        bosses: [
+          { keys: ["antigravity"], labels: ["Antigravity"], ids: ["antigravity"], mark: "antigravity" },
+          { keys: ["claude"], labels: ["Claude Code"], ids: ["claude"], mark: "claude" },
+        ],
+        presets: { split: "rule" },
+        files: [],
+      }) };
       if (path === "/app/preferences") return { ok: true, json: async () => ({ preferences: { general: { language: "system" } }, effective: { general: { language: "system" } } }) };
       if (path === "/app/settings") return { ok: true, json: async () => ({ settings: { max_running: 8 } }) };
       if (path === "/app/alerts") return { ok: true, json: async () => ({ alerts: {}, sound_choices: [] }) };
-      if (path === "/app/hosts") return { ok: true, json: async () => ({ service: { installed: true, command: "agentnave-mcp" }, hosts: [], backups: {} }) };
+      if (path === "/app/hosts") return { ok: true, json: async () => ({
+        service: { installed: true, command: "agentnave-mcp" },
+        hosts: [
+          {
+            id: "antigravity", boss: "antigravity", default_host_cli: "launch", label: "Antigravity",
+            status: "connected", skill: { state: "app", version: "" }, entry: "agentnave",
+            has_host_env: true, config_path: "/tmp/agy.json",
+            layers: [{ scope: "user", path: "/tmp/agy.json", has_entry: true }],
+          },
+          {
+            id: "claude", boss: "claude", default_host_cli: "subagent", label: "Claude Code",
+            status: "connected", skill: { state: "app", version: "" }, entry: "agentnave",
+            has_host_env: true, config_path: "/tmp/claude.json",
+            layers: [{ scope: "user", path: "/tmp/claude.json", has_entry: true }],
+          },
+        ],
+        backups: {},
+      }) };
       if (path === "/app/skills") return { ok: true, json: async () => ({ skills: [] }) };
       if (path === "/app/storage") return { ok: true, json: async () => ({ total_bytes: 0, workspaces: 0 }) };
       return { ok: true, json: async () => ({}) };
@@ -216,6 +241,14 @@ test("settings.html scripts load in declared order and language switch respects 
   // Trigger an unsaved edit in Advanced (custom text edited).
   context.AN.settings.setTab("advanced");
   await new Promise(r => setImmediate(r));
+  const selectedHostCli = (hostId) => {
+    const card = getEl("host-cards").children.find(c => c.getAttribute("data-host") === hostId);
+    const row = card.children[0].children.find(c => c.className === "hc-hostcli");
+    const select = row.children[1];
+    return select.options.find(o => o.getAttribute("selected") !== null)?.getAttribute("value");
+  };
+  assert.equal(selectedHostCli("antigravity"), "launch");
+  assert.equal(selectedHostCli("claude"), "subagent");
   const customText = getEl("custom-text");
   customText.value = "my custom rule";
   customText.listeners.input[0]();

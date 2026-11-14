@@ -893,7 +893,7 @@ All checks passed!
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
       layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
-      first_seen: "2026-10-17T00:00:00Z", reload_hint: reload, attention: null, last_action: null, boss: id,
+      first_seen: "2026-10-17T00:00:00Z", reload_hint: reload, attention: null, last_action: null, boss: id, default_host_cli: id === "antigravity" ? "launch" : "subagent",
       reopen: REOPEN[id] || { cli: reload }, copy_actions: { claude: ["daemon"], codex: ["daemon"], hermes: ["gateway"] }[id] || [], trust: id === "workbuddy" ? "WorkBuddy 会把改动后的条目停用，请到“自定义连接器 › MCP 服务管理”点“信任”" : "",
       skill: { state: connected ? "app" : "missing", path: `${root}/skills/agentnave-manager`, version: connected ? mockVersion : null },
       skills: { "agentnave-review": { state: "missing", path: `${root}/skills/agentnave-review`, version: null, enabled: false } } };
@@ -1017,7 +1017,10 @@ All checks passed!
     if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
     if (path === "/app/orchestration/host-cli") {
       const choices = { ...mockOrchestration.document.host_cli };
-      for (const key of body.keys) { if (body.choice === "subagent") delete choices[key]; else choices[key] = body.choice; }
+      for (const key of body.keys) {
+        const def = key.split("@")[0] === "antigravity" ? "launch" : "subagent";
+        if (body.choice === def) delete choices[key]; else choices[key] = body.choice;
+      }
       mockOrchestration.document.host_cli = choices;
       return { saved: true, host_cli: choices };
     }

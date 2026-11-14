@@ -322,9 +322,12 @@ class OrchestrationFile(BaseModel):
         return self.mode(host) not in (None, "off", "meetings")
 
     def host_cli_mode(self, host: Host) -> Literal["subagent", "launch", "skip"]:
+        from agentnave.host_choice import default_host_cli_mode
+
+        default = default_host_cli_mode(host)
         if self.effective_apps is not None and not host.app_id:
-            return "subagent"
-        return self.host_cli.get(host.app_id or host.name or "", "subagent")
+            return default
+        return self.host_cli.get(host.app_id or host.name or "", default)
 
     def decision(self, host: Host) -> bool:
         """Whether the host takes the user's own seat catalog instead of the fixed groups."""

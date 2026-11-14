@@ -1,6 +1,7 @@
 # ADR-0090：配额按额度组冷却，宿主同类 CLI 按 boss 选择处理
 
-- 状态：已接受
+- 状态：部分修订
+- 私聊同类 CLI 一律默认交给宿主自带子代理的条款由 [ADR-0092](0092-antigravity-host-cli-defaults-to-launch.md) 修订：默认值按宿主能力决定，Antigravity 默认由 AgentNave 启动，其他宿主仍默认交给宿主自带子代理。
 - 日期：2026-11-14
 - 修订 [ADR-0081](0081-account-cooldown-duration.md) 的「冷却仍按请求的模型记录」：配额失败优先按额度组冷却；修订 [ADR-0013](0013-members-defaults-and-host-identity.md) 的单任务排除宿主同类 Provider、[ADR-0089](0089-seat-fallback-order.md) 的同类顺位一律交还 boss 及配额冷却可用性判断。补充 [ADR-0087](0087-decision-model-recommends-seats.md) 的候选可用性和 [ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) 的执行边界。
 - 不改变：[ADR-0081](0081-account-cooldown-duration.md) 的认证、计费冷却规则；[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) 使用宿主原生子代理时的同系列别名规则；[ADR-0031](0031-prompt-only-orchestration.md)、[ADR-0043](0043-service-prompt-instructions.md) 的派发说明与单向编排约定；会议席位及生图工位的宿主同类边界。

@@ -170,17 +170,18 @@ def task_excluded_providers() -> frozenset[str]:
     return EXCLUDED_PROVIDERS
 
 
+_STARTUP_EXCLUDED = task_excluded_providers()
 PROVIDER_SELECTION = (
     "Providers permitted by this host configuration: "
     + (
         ", ".join(
-            name for name in get_args(ProviderName.__value__) if name not in EXCLUDED_PROVIDERS
+            name for name in get_args(ProviderName.__value__) if name not in _STARTUP_EXCLUDED
         )
         or "none"
     )
     + ". Excluded providers: "
-    + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
-    + ". App settings may allow launching the host's own CLI for private tasks; environment exclusions still apply. Meetings follow discussion member limits without host exclusions."
+    + (", ".join(sorted(_STARTUP_EXCLUDED)) or "none")
+    + ". Host defaults or App settings decide whether private tasks launch the host's own CLI; environment exclusions still apply. Meetings follow discussion member limits without host exclusions."
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 DISPATCH_WAIT = (
