@@ -164,3 +164,84 @@ fn a_running_seat_works_in_its_own_directory() {
     let shown = crate::isolated::classify(&dirs, "w", &running, &[]);
     assert_eq!(shown[0]["status"], "using");
 }
+
+#[test]
+fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
+    use serde_json::{Value, json};
+
+    let snapshots = || {
+        vec![
+            origin_snapshot(
+                "tasks",
+                "task",
+                json!({
+                    "mode": "task",
+                    "tasks": [
+                        {"id": "e1", "provider": "codex", "model": "m", "thread": "early", "status": "succeeded", "time": "2026-11-12T00:30:00Z"},
+                        {"id": "i1", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T02:00:00Z", "elapsed_ms": 14_400_000},
+                        {"id": "i2", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T03:00:00Z"},
+                        {"id": "i3", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T04:00:00Z"},
+                        {"id": "i4", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T05:00:00Z"},
+                        {"id": "o1", "provider": "codex", "model": "m", "thread": "other", "status": "running", "time": "2026-11-12T05:30:00Z", "elapsed_ms": 2_400_000},
+                        {"id": "e2", "provider": "codex", "model": "m", "thread": "early", "status": "running", "time": "2026-11-12T06:00:00Z"},
+                    ],
+                }),
+            ),
+            origin_snapshot(
+                "m",
+                "show",
+                json!({
+                    "mode": "show",
+                    "created": "2026-11-12T00:00:00Z",
+                    "seats": [
+                        {"id": "a", "provider": "claude", "model": "m"},
+                        {"id": "b", "provider": "codex", "model": "m"},
+                    ],
+                    "messages": [
+                        {"kind": "task", "speaker": "@host", "round": 1, "time": "2026-11-12T03:30:00Z"},
+                        {"kind": "answer", "speaker": "b", "round": 1, "text": "ok", "time": "2026-11-12T03:45:00Z"},
+                        {"kind": "task", "speaker": "@host", "round": 2, "time": "2026-11-12T05:45:00Z"},
+                    ],
+                    "round": {"number": 2, "status": "running", "seats": [{"seat_id": "a", "status": "running"}]},
+                }),
+            ),
+        ]
+    };
+    let query = |path: &str| -> Value {
+        let places = super::Places {
+            dirs: &[],
+            projects: &Default::default(),
+        };
+        let res = super::respond(
+            path,
+            snapshots(),
+            true,
+            8,
+            &Default::default(),
+            &Default::default(),
+            &places,
+        );
+        serde_json::from_slice(&res.body).unwrap()
+    };
+    let stage = query("/app/stage");
+    let desks = stage["managers"][0]["desks"].as_array().unwrap();
+    let keys: Vec<_> = desks.iter().filter_map(|d| d["key"].as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "thread:early",
+            "seat:m:a",
+            "thread:other",
+            "task:tasks:i4",
+            "task:tasks:i3",
+            "seat:m:b",
+            "task:tasks:i2",
+            "task:tasks:i1",
+        ]
+    );
+    let idle_seat = desks.iter().find(|d| d["key"] == "seat:m:b").unwrap();
+    assert_eq!(idle_seat["last_prompted"], "2026-11-12T03:30:00.000000Z");
+
+    let chat = query("/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_eq!(chat["desks"][0]["key"], "thread:other");
+}

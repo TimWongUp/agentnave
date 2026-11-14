@@ -162,8 +162,8 @@ impl Group {
     /// The desks an office draws, at most `limit` (the App's running limit) unless more are
     /// running or under review, plus the rest as the "optimized" list, most recent first. A
     /// desk whose failure has settled goes there whatever the limit. With `panel`, `limit` counts
-    /// only the desks beyond the running ones, a settled failure counts like any other idle desk
-    /// and a seat that is not running goes to the list. The
+    /// only the desks beyond the running ones, seats and settled failures count like any other
+    /// idle desk, and both selection and order follow when the boss last messaged each desk. The
     /// list holds the `listed` most recent and every one the payload refers to, so seats and
     /// messages always find their desk.
     pub(super) fn desks(
@@ -177,20 +177,20 @@ impl Group {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_micros() as i64);
-        let (mut rest, mut desks): (Vec<_>, Vec<_>) = self.desks.values().partition(|desk| {
-            if panel {
-                desk.room.is_some() && !desk.active
-            } else {
-                desk.failure_settled(now)
-            }
-        });
-        desks.sort_by_key(|d| (!d.active, Reverse(d.last), &d.key));
+        let (mut rest, mut desks): (Vec<_>, Vec<_>) = self
+            .desks
+            .values()
+            .partition(|desk| !panel && desk.failure_settled(now));
+        let recent = |d: &Desk| if panel { d.prompted() } else { d.last };
+        desks.sort_by_key(|d| (!d.active, Reverse(recent(d)), &d.key));
         let busy = desks.iter().filter(|d| d.active).count();
         let keep = if panel { busy + limit } else { limit.max(busy) };
         rest.extend(desks.split_off(keep.min(desks.len())));
-        rest.sort_by_key(|d| (Reverse(d.last), &d.key));
-        // Drawn desks put the newest first; the others keep their order as new ones arrive.
-        desks.sort_by_key(|d| (Reverse(d.first.unwrap_or_default()), &d.key));
+        rest.sort_by_key(|d| (Reverse(recent(d)), &d.key));
+        if !panel {
+            // Drawn desks put the newest first; the others keep their order as new ones arrive.
+            desks.sort_by_key(|d| (Reverse(d.first.unwrap_or_default()), &d.key));
+        }
         let shown = desks.into_iter().map(|desk| desk.value(host)).collect();
         let optimized = json!({
             "count": rest.len(),
@@ -214,8 +214,7 @@ impl Group {
         (room, seat): (&str, &str),
         identity: &Value,
         status: &str,
-        created: i64,
-        at: i64,
+        (created, prompted, at): (i64, Option<i64>, i64),
         meeting: bool,
     ) {
         let provider = text(identity, "provider");
@@ -236,6 +235,7 @@ impl Group {
             desk_role(identity),
         );
         desk.seen(created);
+        desk.prompt(prompted);
         desk.declare(created, opt_text(identity, "access"));
         desk.seat(at, status, meeting.then_some((room, seat)));
         desk.reported(at, identity);
@@ -694,18 +694,18 @@ impl Group {
                 provider: provider.to_owned(),
                 ..Desk::default()
             });
+            let started = timestamp(raw_start);
+            let started_at = started.unwrap_or_default();
             entry.label(
-                timestamp(raw_start).unwrap_or_default(),
+                started_at,
                 text(task, "model"),
                 opt_text(task, "effort"),
                 desk_role(task),
             );
-            entry.identify(timestamp(raw_start).unwrap_or_default(), &task["identity"]);
-            entry.seen(timestamp(raw_start).unwrap_or_default());
-            entry.declare(
-                timestamp(raw_start).unwrap_or_default(),
-                opt_text(task, "access"),
-            );
+            entry.identify(started_at, &task["identity"]);
+            entry.seen(started_at);
+            entry.prompt(started);
+            entry.declare(started_at, opt_text(task, "access"));
             entry.observe(timestamp(time).unwrap_or_default(), status);
             entry.reported(timestamp(time).unwrap_or_default(), task);
             if active(status) {

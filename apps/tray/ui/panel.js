@@ -9,7 +9,7 @@ const {
 } = AN;
 
 const ACTIVE_SHOWN = 8; // most working desks one office card shows
-const IDLE_SHOWN = 4; // most recently finished desks it shows besides
+const SHOWN = 4; // desks a card shows while no more than this many work; idle ones fill the rest
 
 if (new URLSearchParams(location.search).has("glass")) document.body.classList.add("glass");
 document.querySelector("header.top .top-end").append(AN.themeSwitch());
@@ -121,7 +121,8 @@ function brief(d) {
   if (lingering(d)) return { mood: "idle", word: L("已完成", "Finished") };
   return dozing(d) ? { mood: "sleep", word: L("休息中", "Resting") } : { mood: "idle", word: L("摸鱼", "Slacking off") };
 }
-const HEAD = { working: "working", sleep: "sleep" };
+// A head is either asleep or awake; every other state shows the awake face.
+const headOf = (mood) => (mood === "sleep" ? "sleep" : "idle");
 const roomRound = (r) => {
   const n = r.round;
   if (!n) return pick(GROUP, ongoing(r.status))[0];
@@ -144,10 +145,10 @@ function createCell() {
 }
 function updateCell(rec, group, d) {
   const s = brief(d);
-  const faceKey = `${deskChar(d)}|${HEAD[s.mood] || "idle"}`;
+  const faceKey = `${deskChar(d)}|${headOf(s.mood)}`;
   if (rec.faceKey !== faceKey) {
     rec.faceKey = faceKey;
-    rec.face.replaceChildren(ART.head(deskChar(d), HEAD[s.mood] || "idle"));
+    rec.face.replaceChildren(ART.head(deskChar(d), headOf(s.mood)));
   }
   setText(rec.cli, cliOf(d));
   setClass(rec.el, `cell ${s.mood}${d.private_allowed === false ? " only" : ""}`);
@@ -175,10 +176,11 @@ function updateRoom(rec, group, r, desks) {
   setText(rec.title, r.title);
   setText(rec.round, roomRound(r));
   const seated = r.seats.map((s) => desks.get(s.desk)).filter(Boolean);
-  const key = seated.map(deskChar).join();
+  const faces = seated.slice(0, 5).map((d) => [deskChar(d), headOf(brief(d).mood)]);
+  const key = faces.join();
   if (rec.seatKey !== key) {
     rec.seatKey = key;
-    rec.seats.replaceChildren(...seated.slice(0, 5).map((d) => ART.head(deskChar(d))));
+    rec.seats.replaceChildren(...faces.map(([c, s]) => ART.head(c, s)));
   }
 }
 
@@ -218,7 +220,7 @@ function updateBlock(rec, m) {
   const n = running(m);
   const name = shownName(m);
   setClass(rec.el, `blk ${colorClass(m.color)}${n ? " run" : ""}`);
-  tile(rec, m, n ? "working" : "idle");
+  tile(rec, m, !n && !urgent(m.status) && dozing({ last_active: m.updated }) ? "sleep" : "idle");
   setAttr(rec.boss, "href", href(`/chat/${m.group}`));
   setAttr(rec.boss, "title", `${L(`${m.label} 里的 boss`, `boss in ${m.label}`)}${m.project ? ` · ${m.project}` : ""}`);
   setAttr(rec.boss, "aria-label", L(`${name}，boss 在 ${m.label}，${total} 个工位，${rooms.length} 间会议室，打开办公室`, `${name}, boss in ${m.label}, ${total} desks, ${rooms.length} meeting rooms, open office`));
@@ -231,11 +233,10 @@ function updateBlock(rec, m) {
 
   const byKey = new Map(desks.map((d) => [d.key, d]));
   const working = d => brief(d).mood === "working";
-  const shownDesks = desks.filter(d => d.kind !== "seat");
-  const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
-  // Working desks keep the order they started in, newest first, so new messages never move them.
-  const started = (a, b) => AN.at(b.first_seen) - AN.at(a.first_seen) || (a.key < b.key ? -1 : 1);
-  const ordered = [...shownDesks.filter(working).sort(started).slice(0, ACTIVE_SHOWN), ...shownDesks.filter(d => !working(d)).sort(recent).slice(0, IDLE_SHOWN)];
+  // Desks follow when the boss last messaged them, newest first, so replies never reorder them.
+  const prompted = (a, b) => AN.at(b.last_prompted || b.last_active) - AN.at(a.last_prompted || a.last_active) || (a.key < b.key ? -1 : 1);
+  const busy = desks.filter(working).sort(prompted).slice(0, ACTIVE_SHOWN);
+  const ordered = [...busy, ...desks.filter(d => !working(d)).sort(prompted).slice(0, Math.max(0, SHOWN - busy.length))];
   for (const key of rec.cellRecs.keys()) if (!ordered.some(d => d.key === key)) rec.cellRecs.delete(key);
   reconcile(rec.cells, ordered.map((d) => {
     let cell = rec.cellRecs.get(d.key);
@@ -277,17 +278,21 @@ function updateQuiet(rec, m) {
   const name = shownName(m);
   setAttr(rec.el, "title", `${name} · ${chatPlace(m)} · ${pick(GROUP, m.status)[0]} · ${relTime(m.updated)}`);
   setText(rec.name, name);
-  const boss = bossChar(m);
-  if (rec.bossKey !== boss) {
-    rec.bossKey = boss;
-    rec.boss.replaceChildren(ART.head(boss, "sleep"));
+  const boss = bossChar(m), bossHead = dozing({ last_active: m.updated }) ? "sleep" : "idle";
+  if (rec.bossKey !== `${boss}|${bossHead}`) {
+    rec.bossKey = `${boss}|${bossHead}`;
+    rec.boss.replaceChildren(ART.head(boss, bossHead));
   }
   // One face per character, the most recently active first.
-  const chars = [...new Set([...desks].sort((a, b) => AN.at(b.last_active) - AN.at(a.last_active)).map(deskChar))].slice(0, 8);
-  const key = chars.join();
+  const latest = new Map();
+  for (const d of [...desks].sort((a, b) => AN.at(b.last_active) - AN.at(a.last_active))) {
+    if (!latest.has(deskChar(d))) latest.set(deskChar(d), headOf(brief(d).mood));
+  }
+  const faces = [...latest].slice(0, 8);
+  const key = faces.join();
   if (rec.facesKey !== key) {
     rec.facesKey = key;
-    rec.faces.replaceChildren(...chars.map((c) => ART.head(c, "sleep")));
+    rec.faces.replaceChildren(...faces.map(([c, s]) => ART.head(c, s)));
   }
 }
 
