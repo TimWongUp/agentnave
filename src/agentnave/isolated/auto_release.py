@@ -74,6 +74,24 @@ def _auto_release_warning(isolation_id: str, exc: object) -> str:
     )
 
 
+def _partial_release_warning(isolation_id: str, exc: object) -> str:
+    return (
+        f"Auto-releasing isolated directory {isolation_id} stopped partway: {exc}. "
+        "It needs attention; inspect it with isolated_dirs before resuming in it."
+    )
+
+
+def _worktree_intact(record: IsolatedRecord, main_root: Path) -> bool:
+    """The directory is still a checked-out worktree on its managed branch."""
+    wt_path = Path(record.worktree_path)
+    if is_link(wt_path) or not (wt_path / ".git").exists():
+        return False
+    try:
+        return ref_exists(main_root, record.branch_ref)
+    except (IsolationError, OSError):
+        return False
+
+
 def try_auto_release(
     store: WorktreeStore,
     isolation_id: str,
@@ -154,8 +172,14 @@ def _auto_release_locked(
     ):
         return summarize_record_changes(latest), []
     try:
-        note = complete_deletion_locked(store, latest, main_root, verified_common, snap.branch_oid)
+        note = complete_deletion_locked(
+            store, latest, main_root, verified_common, snap.branch_oid, force=False
+        )
     except (IsolationError, OSError, ValueError) as exc:
+        if _worktree_intact(latest, main_root) and store.revert_deleting_to_ready(
+            latest.id, updated_at=now()
+        ):
+            return summarize_record_changes(latest), [_auto_release_warning(isolation_id, exc)]
         store.mark_attention(
             latest.id,
             expected_state="deleting",
@@ -163,7 +187,7 @@ def _auto_release_locked(
             reason=str(exc),
             updated_at=now(),
         )
-        return summary, [_auto_release_warning(isolation_id, exc)]
+        return summary, [_partial_release_warning(isolation_id, exc)]
     warnings = [note] if note else []
     return replace(summary, auto_released=True), warnings
 

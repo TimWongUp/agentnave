@@ -690,6 +690,7 @@ class Conversations(ConversationStore):
                 info,
                 forwarded,
             )
+            task.isolation_owned = info is not None and startup.hold.owns_isolation
             record.state.tasks.append(task)
             self._persist(record)
             invocation_id = self._launch_prepared_task(startup, record, task, request, prepared)
@@ -781,6 +782,7 @@ class Conversations(ConversationStore):
                 task.isolation_main_root = None
                 task.isolation_source_root = None
                 task.isolation_auto_released = False
+                task.isolation_owned = False
             task.status = "failed"
             task.error = "start_failed"
             self._persist(record)
@@ -910,7 +912,10 @@ class Conversations(ConversationStore):
 
         def settle(invocation_id: str, status: InvocationStatus) -> None:
             # Runs on a worker thread after the process tree ended; the lease goes last.
-            auto_release = owns_isolation and status == InvocationStatus.SUCCEEDED
+            # Only read-only rounds: a write task's deliverable may sit in an ignored path.
+            auto_release = (
+                owns_isolation and hold.request.read_only and status == InvocationStatus.SUCCEEDED
+            )
             try:
                 summary, warnings = self.isolated.settle_task(
                     info.id,

@@ -12,6 +12,7 @@ import subprocess
 from contextlib import AbstractContextManager, closing
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,7 +27,9 @@ from agentnave.isolated import (
 from agentnave.isolated import release as release_mod
 from agentnave.isolated.release import _STATUS_ARGS  # pyright: ignore[reportPrivateUsage]
 from agentnave.isolated.repo import WORKTREES_DIR_NAME, run_git
-from agentnave.store import now
+from agentnave.models import InvocationRequest
+from agentnave.store import TaskRecord, now
+from agentnave.task_isolation import acquire_isolation, rebuild_resumed_isolation
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -1423,7 +1426,30 @@ def test_settle_task_retains_on_concurrent_lease_foreign_workspace_or_failures(
     assert any("permission denied" in w for w in warnings)
     assert broken.worktree_path.is_dir()
     rec = dirs.store.get(broken.id)
-    assert rec is not None and rec.state == "needs_attention"
+    # The worktree was never touched, so it stays usable rather than needing attention.
+    assert rec is not None and rec.state == "ready"
+
+    raced = dirs.create(repo, workspace_id="ws-1")
+    real_delete = auto_release_mod.complete_deletion_locked
+
+    def write_then_delete(*args: Any, **kwargs: Any) -> str | None:
+        # An editor saves a source file after the locked check, just before removal.
+        (raced.worktree_path / "late.txt").write_text("unsaved work\n", encoding="utf-8")
+        return real_delete(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(auto_release_mod, "complete_deletion_locked", write_then_delete)
+        summary, warnings = dirs.settle_task(
+            raced.id,
+            workspace_id="ws-1",
+            lease=raced.lease,
+            auto_release=True,
+        )
+    assert summary.auto_released is False
+    assert warnings
+    assert (raced.worktree_path / "late.txt").read_text(encoding="utf-8") == "unsaved work\n"
+    rec = dirs.store.get(raced.id)
+    assert rec is not None and rec.state == "ready"
     dirs.close()
 
 
@@ -1545,4 +1571,79 @@ def test_rebuild_auto_released_recreates_in_place_with_include_and_guards(
             source_root=repo,
             workspace_id="ws-1",
         )
+    dirs.close()
+
+
+def _resumed(created: Any, *, owned: bool) -> TaskRecord:
+    return TaskRecord(
+        id="t1",
+        provider="codex",
+        model="",
+        cwd=str(created.execution_cwd),
+        prompt="p",
+        time=now(),
+        isolation_id=created.id,
+        isolation_path=str(created.worktree_path),
+        isolation_base_oid=created.base_oid,
+        isolation_main_root=str(created.main_root),
+        isolation_auto_released=True,
+        isolation_owned=owned,
+    )
+
+
+def test_resume_takes_ownership_only_from_the_thread_and_rejects_a_replaced_path(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    request = InvocationRequest("codex", "p", created.execution_cwd)
+
+    for owned in (True, False):
+        hold = acquire_isolation(
+            dirs,
+            request,
+            "ws-1",
+            requested=False,
+            ref=None,
+            resumed_task=_resumed(created, owned=owned),
+        )
+        # A borrower ran inside the directory with the same id, yet never owns it.
+        assert hold.owns_isolation is owned
+        assert hold.lease is not None
+        hold.lease.release()
+
+    with pytest.raises(ValueError, match="belonged to another thread"):
+        rebuild_resumed_isolation(
+            dirs, created.execution_cwd, _resumed(created, owned=False), "ws-1"
+        )
+
+    dirs.release(created.id, workspace_id="ws-1")
+    created.worktree_path.mkdir()  # something else now sits at the released path
+    with pytest.raises(ValueError, match="no longer isolated directory"):
+        acquire_isolation(
+            dirs,
+            request,
+            "ws-1",
+            requested=False,
+            ref=None,
+            resumed_task=_resumed(created, owned=True),
+        )
+    dirs.close()
+
+
+def test_abort_created_keeps_a_directory_another_resume_already_claimed(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    other = dirs.claim_for_cwd(created.execution_cwd)
+    assert other is not None
+    try:
+        dirs.abort_created(created)
+        rec = dirs.store.get(created.id)
+        assert rec is not None and rec.state == "ready"
+        assert created.worktree_path.is_dir()
+    finally:
+        other.lease.release()
     dirs.close()

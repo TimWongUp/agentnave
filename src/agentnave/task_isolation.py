@@ -64,9 +64,21 @@ def acquire_isolation(
         return hold_from_created(request, created, owns_isolation=True)
     notes: list[str] = []
     claimed = isolated.claim_for_cwd(request.cwd, notes)
+    expected = resumed_isolation_id(request.cwd, resumed_task)
+    if expected is not None and (claimed is None or claimed.id != expected):
+        if claimed is not None:
+            claimed.lease.release()
+        raise ValueError(
+            f"{request.cwd} is no longer isolated directory {expected}; the path was replaced "
+            "after it was released. Start a new task with isolation instead."
+        )
     if claimed is None:
         return IsolationHold(request, warnings=tuple(notes))
-    owns = resumed_task is not None and resumed_task.isolation_id == claimed.id
+    owns = (
+        resumed_task is not None
+        and resumed_task.isolation_owned
+        and resumed_task.isolation_id == claimed.id
+    )
     source_root = (
         Path(resumed_task.isolation_source_root)
         if resumed_task is not None and resumed_task.isolation_source_root
@@ -178,6 +190,20 @@ def _hold(
     )
 
 
+def resumed_isolation_id(cwd: Path, resumed_task: TaskRecord | None) -> str | None:
+    """The isolated directory a resumed thread last ran in, when cwd still points into it."""
+    if (
+        resumed_task is None
+        or resumed_task.isolation_id is None
+        or resumed_task.isolation_path is None
+        or not cwd.is_absolute()
+    ):
+        return None
+    if not is_same_or_subpath(cwd, Path(resumed_task.isolation_path)):
+        return None
+    return resumed_task.isolation_id
+
+
 def needs_resumed_rebuild(cwd: Path, resumed_task: TaskRecord | None) -> bool:
     """True when a resumed task targets an isolated path that is currently missing on disk."""
     if (
@@ -198,6 +224,12 @@ def rebuild_resumed_isolation(
     workspace_id: str | None,
 ) -> CreatedIsolation | ClaimedIsolation:
     """Validate and rebuild a missing isolated directory for its own resumed session thread."""
+    if not resumed_task.isolation_owned:
+        raise ValueError(
+            f"Isolated directory {resumed_task.isolation_id} ({resumed_task.isolation_path}) "
+            "belonged to another thread and is gone; this thread only ran inside it. "
+            "Start a new task with isolation or another cwd instead."
+        )
     if not resumed_task.isolation_auto_released:
         raise ValueError(
             f"Isolated directory {resumed_task.isolation_id} ({resumed_task.isolation_path}) "
@@ -247,7 +279,8 @@ def hold_from_acquired(
         acquired,
         [],
         source_root=source_root,
-        owns_isolation=resumed_task.isolation_id == acquired.id,
+        # Only an owner thread rebuilds, so a concurrent rebuild's claim stays its own.
+        owns_isolation=resumed_task.isolation_owned and resumed_task.isolation_id == acquired.id,
         fallback_base_oid=resumed_task.isolation_base_oid,
     )
 

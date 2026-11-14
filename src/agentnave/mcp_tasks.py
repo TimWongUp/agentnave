@@ -190,7 +190,7 @@ async def start_agent(
         Field(
             description=(
                 "New isolated Git worktree (optional ref); omit on session_id resume "
-                "(auto-released untouched directories rebuild in place on resume)."
+                "(read-only tasks that changed nothing auto-release it; resume rebuilds it in place)."
             ),
         ),
     ] = None,

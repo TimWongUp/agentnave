@@ -133,6 +133,9 @@ class TaskRecord(BaseModel):
     isolation_main_root: str | None = None
     isolation_source_root: str | None = None
     isolation_auto_released: bool = False
+    # Set when this thread created or rebuilt the directory; inherited on resume, never from
+    # merely running inside it (ADR-0092).
+    isolation_owned: bool = False
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
     prompts: list[dict[str, object]] = Field(default_factory=list[dict[str, object]])

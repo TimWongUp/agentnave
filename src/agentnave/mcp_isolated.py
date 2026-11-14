@@ -174,11 +174,12 @@ async def isolated_dirs(
     *,
     ctx: Context[Runtime],
 ) -> IsolatedDirsPayload:
-    """List or delete isolated Git worktrees (no paths accepted). Untouched succeeded tasks are
-    auto-released and rebuilt on session_id resume; release permanently deletes any retained
-    worktree, including all Git-ignored files; with uncommitted source files or unmerged
-    commits, or when the worktree belongs to another workspace, it first returns inspection
-    results and a confirmation token without deleting; call again with the token.
+    """List or delete isolated Git worktrees (no paths accepted). Succeeded access=read tasks
+    that changed nothing are auto-released and rebuilt on session_id resume; release
+    permanently deletes any retained worktree, including all Git-ignored files; with
+    uncommitted source files or unmerged commits, or when the worktree belongs to another
+    workspace, it first returns inspection results and a confirmation token without deleting;
+    call again with the token.
     """
     if action == "list":
         if id is not None or confirmation is not None:

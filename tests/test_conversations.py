@@ -4529,7 +4529,7 @@ async def test_resumed_rebuild_rollback_preserves_metadata_and_surfaces_auto_rel
     studio = Conversations(InvocationManager(), tmp_path / "data")
     try:
         hold1 = await studio.acquire_task_isolation(
-            InvocationRequest("claude", "turn 1", repo),
+            InvocationRequest("claude", "turn 1", repo, read_only=True),
             "ws-1",
             isolation_requested=True,
             isolation_ref=None,
@@ -4538,7 +4538,7 @@ async def test_resumed_rebuild_rollback_preserves_metadata_and_surfaces_auto_rel
         wt_id = hold1.info.id
         wt_path = Path(hold1.info.path)
         started1 = studio.start_task(
-            InvocationRequest("claude", "turn 1", repo),
+            InvocationRequest("claude", "turn 1", repo, read_only=True),
             None,
             None,
             manager_session_id="ws-1",
@@ -4632,4 +4632,57 @@ async def test_resumed_rebuild_rollback_preserves_metadata_and_surfaces_auto_rel
         assert wt_path.is_dir()
     finally:
         await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_untouched_write_task_keeps_its_isolated_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A write task's deliverable may sit in an ignored path (dist/, target/): never auto-release.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "commit.gpgsign=false", "-c", "user.name=T", "-c", "user.email=t@e.x"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    claude = bin_dir / "claude"
+    claude.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "sys.stdin.read()\n"
+        "print(json.dumps({'type': 'result', 'result': 'ok', "
+        "'session_id': 'sess-w', 'num_turns': 1, 'is_error': False}))\n",
+        encoding="utf-8",
+    )
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    studio = Conversations(InvocationManager(), tmp_path / "data")
+    try:
+        request = InvocationRequest("claude", "build", repo)
+        hold = await studio.acquire_task_isolation(
+            request, "ws-1", isolation_requested=True, isolation_ref=None
+        )
+        assert hold.info is not None
+        started = studio.start_task(
+            request,
+            None,
+            None,
+            manager_session_id="ws-1",
+            isolation_requested=True,
+            hold=hold,
+        )
+        await studio.manager.wait(started.invocation_id, timeout_seconds=5)
+        await asyncio.gather(*list(studio.collectors))
+        task = studio.records[started.conversation_id].state.tasks[-1]
+        assert task.status == "succeeded"
+        assert task.isolation_owned is True
+        assert task.isolation_auto_released is False
+        assert Path(hold.info.path).is_dir()
+    finally:
         await studio.close()

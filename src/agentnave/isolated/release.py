@@ -383,11 +383,13 @@ def complete_deletion_locked(
     expected_oid: str,
     *,
     remove_orphan: bool = False,
+    force: bool = True,
 ) -> str | None:
     """Remove worktree, managed branch, and DB row; raises IsolationError on partial failure.
 
     Returns a note when the managed branch was kept because it moved after the release check.
     remove_orphan deletes a directory that is no longer a git worktree (after confirmation).
+    force=False lets git refuse a worktree that gained source changes after the last check.
     """
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Active lease prevents completing deletion")
@@ -413,7 +415,10 @@ def complete_deletion_locked(
             raise IsolationError("Worktree branch or HEAD changed during deletion")
         if is_link(wt_path) or is_link(main_root / WORKTREES_DIR_NAME):
             raise IsolationError(f"Unsafe link encountered before removing {wt_path}")
-        run_git(["worktree", "remove", "--force", "--", str(wt_path)], cwd=main_root)
+        run_git(
+            ["worktree", "remove", *(["--force"] if force else []), "--", str(wt_path)],
+            cwd=main_root,
+        )
     elif wt_path.exists() or is_link(wt_path):
         raise IsolationError(f"Unregistered path remains at {wt_path}; refusing recursive removal")
 

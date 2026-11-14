@@ -457,7 +457,10 @@ class IsolatedDirs:
             with self._mutating(), repo_lock(created.repo_common_dir):
                 created.lease.release()
                 latest = self.store.get(created.id)
-                if latest is not None:
+                # A rebuilt directory another resume already claimed stays theirs.
+                if latest is not None and not has_active_leases(
+                    created.repo_common_dir, created.id, cleanup_stale=True
+                ):
                     rollback_creating_locked(self.store, latest)
         except RepoLockUnavailable:
             # Without the lock nothing can be removed safely. Hand the record to recovery as an
