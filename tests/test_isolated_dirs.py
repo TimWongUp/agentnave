@@ -12,6 +12,7 @@ import subprocess
 from contextlib import AbstractContextManager, closing
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -25,8 +26,10 @@ from agentnave.isolated import (
 )
 from agentnave.isolated import release as release_mod
 from agentnave.isolated.release import _STATUS_ARGS  # pyright: ignore[reportPrivateUsage]
-from agentnave.isolated.repo import run_git
-from agentnave.store import now
+from agentnave.isolated.repo import WORKTREES_DIR_NAME, run_git
+from agentnave.models import InvocationRequest
+from agentnave.store import TaskRecord, now
+from agentnave.task_isolation import acquire_isolation, rebuild_resumed_isolation
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -1234,4 +1237,413 @@ def test_nested_repository_in_an_ignored_directory_forces_confirmation(tmp_path:
             assert "plain_locked" in dirs.summarize_changes(created.id).nested_repos
         finally:
             plain.chmod(0o755)
+    dirs.close()
+
+
+def test_settle_task_auto_releases_untouched_succeeded_and_discards_ignored_files(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    (created.worktree_path / "cache.ignored").write_text("temp\n", encoding="utf-8")
+    ignored_dir = created.worktree_path / "ignored_dir"
+    ignored_dir.mkdir()
+    (ignored_dir / "artifact.bin").write_text("cache\n", encoding="utf-8")
+
+    summary, warnings = dirs.settle_task(
+        created.id,
+        workspace_id="ws-1",
+        lease=created.lease,
+        auto_release=True,
+    )
+    assert warnings == []
+    assert summary.summary_status == "complete"
+    assert summary.auto_released is True
+    assert summary.head_oid == created.base_oid
+    assert created.lease.closed
+    assert not created.worktree_path.exists()
+    assert dirs.store.get(created.id) is None
+    assert dirs.unreleased_count("ws-1") == 0
+    assert f"agentnave/{created.id}" not in _git(
+        repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/"
+    )
+    dirs.close()
+
+
+def test_settle_task_retains_non_auto_release_touched_and_hidden_index_worktrees(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+
+    retained = dirs.create(repo, workspace_id="ws-1")
+    summary, warnings = dirs.settle_task(
+        retained.id, workspace_id="ws-1", lease=retained.lease, auto_release=False
+    )
+    assert warnings == []
+    assert summary.auto_released is False
+    assert retained.lease.closed
+    assert retained.worktree_path.is_dir()
+
+    empty_commit = dirs.create(repo, workspace_id="ws-1")
+    _git(empty_commit.worktree_path, "commit", "--allow-empty", "-m", "empty")
+    summary, _ = dirs.settle_task(
+        empty_commit.id,
+        workspace_id="ws-1",
+        lease=empty_commit.lease,
+        auto_release=True,
+    )
+    assert summary.auto_released is False
+    assert summary.changed_files_from_base == ()
+    assert summary.head_oid != empty_commit.base_oid
+    assert empty_commit.worktree_path.is_dir()
+
+    reverted = dirs.create(repo, workspace_id="ws-1")
+    (reverted.worktree_path / "README.md").write_text("changed\n", encoding="utf-8")
+    _git(reverted.worktree_path, "commit", "-am", "edit")
+    _git(reverted.worktree_path, "revert", "--no-edit", "HEAD")
+    summary, _ = dirs.settle_task(
+        reverted.id,
+        workspace_id="ws-1",
+        lease=reverted.lease,
+        auto_release=True,
+    )
+    assert summary.auto_released is False
+    assert summary.head_oid != reverted.base_oid
+    assert reverted.worktree_path.is_dir()
+
+    untracked = dirs.create(repo, workspace_id="ws-1")
+    (untracked.worktree_path / "notes.txt").write_text("keep\n", encoding="utf-8")
+    summary, _ = dirs.settle_task(
+        untracked.id,
+        workspace_id="ws-1",
+        lease=untracked.lease,
+        auto_release=True,
+    )
+    assert summary.auto_released is False and summary.uncommitted is True
+    assert untracked.worktree_path.is_dir()
+
+    nested = dirs.create(repo, workspace_id="ws-1")
+    sub = nested.worktree_path / "ignored_dir" / "subrepo"
+    sub.mkdir(parents=True)
+    _git(sub, "init", "-b", "main")
+    summary, _ = dirs.settle_task(
+        nested.id,
+        workspace_id="ws-1",
+        lease=nested.lease,
+        auto_release=True,
+    )
+    assert summary.auto_released is False and summary.nested_repos == ("ignored_dir/subrepo",)
+    assert nested.worktree_path.is_dir()
+
+    for flag in ("--assume-unchanged", "--skip-worktree"):
+        hidden = dirs.create(repo, workspace_id="ws-1")
+        (hidden.worktree_path / "README.md").write_text("hidden edit\n", encoding="utf-8")
+        _git(hidden.worktree_path, "update-index", flag, "README.md")
+        summary, _ = dirs.settle_task(
+            hidden.id,
+            workspace_id="ws-1",
+            lease=hidden.lease,
+            auto_release=True,
+        )
+        assert summary.auto_released is False
+        assert hidden.worktree_path.is_dir()
+
+    dirs.close()
+
+
+def test_settle_task_retains_on_concurrent_lease_foreign_workspace_or_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.isolated import auto_release as auto_release_mod
+    from agentnave.isolated.leases import RepoLockUnavailable
+
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+
+    borrowed = dirs.create(repo, workspace_id="ws-owner")
+    borrowed.lease.release()
+    claimed_foreign = dirs.claim_for_cwd(borrowed.worktree_path)
+    assert claimed_foreign is not None
+    summary, warnings = dirs.settle_task(
+        borrowed.id,
+        workspace_id="ws-borrower",
+        lease=claimed_foreign.lease,
+        auto_release=True,
+    )
+    assert summary.auto_released is False
+    assert warnings == []
+    assert borrowed.worktree_path.is_dir()
+
+    shared = dirs.create(repo, workspace_id="ws-1")
+    claimed_peer = dirs.claim_for_cwd(shared.worktree_path)
+    assert claimed_peer is not None
+    try:
+        summary, warnings = dirs.settle_task(
+            shared.id,
+            workspace_id="ws-1",
+            lease=shared.lease,
+            auto_release=True,
+        )
+        assert summary.auto_released is False
+        assert warnings == []
+        assert shared.worktree_path.is_dir()
+    finally:
+        claimed_peer.lease.release()
+
+    locked = dirs.create(repo, workspace_id="ws-1")
+
+    def busy_lock(_common_dir: Path) -> AbstractContextManager[None]:
+        raise RepoLockUnavailable("busy")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(auto_release_mod, "repo_lock", busy_lock)
+        summary, warnings = dirs.settle_task(
+            locked.id,
+            workspace_id="ws-1",
+            lease=locked.lease,
+            auto_release=True,
+        )
+    assert summary.auto_released is False
+    assert any("Could not auto-release" in w for w in warnings)
+    assert locked.worktree_path.is_dir()
+
+    broken = dirs.create(repo, workspace_id="ws-1")
+
+    def explode_delete(*_args: object, **_kwargs: object) -> str | None:
+        raise OSError("permission denied")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(auto_release_mod, "complete_deletion_locked", explode_delete)
+        summary, warnings = dirs.settle_task(
+            broken.id,
+            workspace_id="ws-1",
+            lease=broken.lease,
+            auto_release=True,
+        )
+    assert summary.auto_released is False
+    assert any("permission denied" in w for w in warnings)
+    assert broken.worktree_path.is_dir()
+    rec = dirs.store.get(broken.id)
+    # The worktree was never touched, so it stays usable rather than needing attention.
+    assert rec is not None and rec.state == "ready"
+
+    raced = dirs.create(repo, workspace_id="ws-1")
+    real_delete = auto_release_mod.complete_deletion_locked
+
+    def write_then_delete(*args: Any, **kwargs: Any) -> str | None:
+        # An editor saves a source file after the locked check, just before removal.
+        (raced.worktree_path / "late.txt").write_text("unsaved work\n", encoding="utf-8")
+        return real_delete(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(auto_release_mod, "complete_deletion_locked", write_then_delete)
+        summary, warnings = dirs.settle_task(
+            raced.id,
+            workspace_id="ws-1",
+            lease=raced.lease,
+            auto_release=True,
+        )
+    assert summary.auto_released is False
+    assert warnings
+    assert (raced.worktree_path / "late.txt").read_text(encoding="utf-8") == "unsaved work\n"
+    rec = dirs.store.get(raced.id)
+    assert rec is not None and rec.state == "ready"
+    dirs.close()
+
+
+def test_rebuild_auto_released_recreates_in_place_with_include_and_guards(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    sub = repo / "packages" / "app"
+    sub.mkdir(parents=True)
+    (sub / "app.py").write_text("v = 1\n", encoding="utf-8")
+    _git(repo, "add", "packages")
+    _git(repo, "commit", "-m", "add app")
+    (repo / ".worktreeinclude").write_text("*.ignored\n", encoding="utf-8")
+    (repo / "keep.ignored").write_text("env-config\n", encoding="utf-8")
+
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(sub, workspace_id="ws-1")
+    assert (created.worktree_path / "keep.ignored").is_file()
+    summary, warnings = dirs.settle_task(
+        created.id,
+        workspace_id="ws-1",
+        lease=created.lease,
+        auto_release=True,
+    )
+    assert summary.auto_released is True and warnings == []
+    assert not created.worktree_path.exists()
+
+    rebuilt = dirs.rebuild_auto_released(
+        isolation_id=created.id,
+        worktree_path=created.worktree_path,
+        cwd=created.execution_cwd,
+        base_oid=created.base_oid,
+        main_root=created.main_root,
+        source_root=created.source_root,
+        workspace_id="ws-1",
+    )
+    try:
+        assert rebuilt.worktree_path == created.worktree_path
+        assert rebuilt.execution_cwd == created.execution_cwd
+        assert rebuilt.branch == created.branch
+        assert rebuilt.base_oid == created.base_oid
+        assert rebuilt.worktree_path.is_dir()
+        assert rebuilt.execution_cwd.is_dir()
+        assert (rebuilt.worktree_path / "keep.ignored").read_text(
+            encoding="utf-8"
+        ) == "env-config\n"
+        assert _git(rebuilt.worktree_path, "rev-parse", "HEAD") == created.base_oid
+        assert _git(rebuilt.worktree_path, "symbolic-ref", "--short", "HEAD") == created.branch
+        rec = dirs.store.get(created.id)
+        assert rec is not None and rec.state == "ready"
+
+        # Concurrent rebuild sees existing ready state and falls back to claiming it.
+        concurrent = dirs.rebuild_auto_released(
+            isolation_id=created.id,
+            worktree_path=created.worktree_path,
+            cwd=created.execution_cwd,
+            base_oid=created.base_oid,
+            main_root=created.main_root,
+            source_root=created.source_root,
+            workspace_id="ws-1",
+        )
+        try:
+            assert concurrent.id == created.id
+            assert concurrent.worktree_path == created.worktree_path
+        finally:
+            concurrent.lease.release()
+    finally:
+        rebuilt.lease.release()
+
+    assert dirs.release(created.id, workspace_id="ws-1").status == "deleted"
+
+    # When store has no record, a leftover directory or branch blocks rebuild cleanly.
+    orphan_dir = repo / WORKTREES_DIR_NAME / "wt-aaaa00000001"
+    orphan_dir.mkdir(parents=True)
+    with pytest.raises(IsolationError, match="already exists"):
+        dirs.rebuild_auto_released(
+            isolation_id="wt-aaaa00000001",
+            worktree_path=orphan_dir,
+            cwd=orphan_dir,
+            base_oid=created.base_oid,
+            main_root=repo,
+            source_root=repo,
+            workspace_id="ws-1",
+        )
+    _git(repo, "branch", "agentnave/wt-bbbb00000002", created.base_oid)
+    with pytest.raises(IsolationError, match="already exists"):
+        dirs.rebuild_auto_released(
+            isolation_id="wt-bbbb00000002",
+            worktree_path=repo / WORKTREES_DIR_NAME / "wt-bbbb00000002",
+            cwd=repo / WORKTREES_DIR_NAME / "wt-bbbb00000002",
+            base_oid=created.base_oid,
+            main_root=repo,
+            source_root=repo,
+            workspace_id="ws-1",
+        )
+
+    orphan = dirs.create(sub, workspace_id="ws-1")
+    orphan_base = orphan.base_oid
+    _git(repo, "checkout", "--detach", orphan_base)
+    _git(repo, "commit", "--allow-empty", "-m", "ephemeral base")
+    ephemeral_oid = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+    summary, _ = dirs.settle_task(
+        orphan.id,
+        workspace_id="ws-1",
+        lease=orphan.lease,
+        auto_release=True,
+    )
+    assert summary.auto_released is True
+    _git(repo, "reflog", "expire", "--expire=all", "--all")
+    _git(repo, "prune", "--expire=now")
+    with pytest.raises(IsolationError, match="no longer available"):
+        dirs.rebuild_auto_released(
+            isolation_id="wt-cccc00000003",
+            worktree_path=repo / WORKTREES_DIR_NAME / "wt-cccc00000003",
+            cwd=repo / WORKTREES_DIR_NAME / "wt-cccc00000003",
+            base_oid=ephemeral_oid,
+            main_root=repo,
+            source_root=repo,
+            workspace_id="ws-1",
+        )
+    dirs.close()
+
+
+def _resumed(created: Any, *, owned: bool) -> TaskRecord:
+    return TaskRecord(
+        id="t1",
+        provider="codex",
+        model="",
+        cwd=str(created.execution_cwd),
+        prompt="p",
+        time=now(),
+        isolation_id=created.id,
+        isolation_path=str(created.worktree_path),
+        isolation_base_oid=created.base_oid,
+        isolation_main_root=str(created.main_root),
+        isolation_auto_released=True,
+        isolation_owned=owned,
+    )
+
+
+def test_resume_takes_ownership_only_from_the_thread_and_rejects_a_replaced_path(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    request = InvocationRequest("codex", "p", created.execution_cwd)
+
+    for owned in (True, False):
+        hold = acquire_isolation(
+            dirs,
+            request,
+            "ws-1",
+            requested=False,
+            ref=None,
+            resumed_task=_resumed(created, owned=owned),
+        )
+        # A borrower ran inside the directory with the same id, yet never owns it.
+        assert hold.owns_isolation is owned
+        assert hold.lease is not None
+        hold.lease.release()
+
+    with pytest.raises(ValueError, match="belonged to another thread"):
+        rebuild_resumed_isolation(
+            dirs, created.execution_cwd, _resumed(created, owned=False), "ws-1"
+        )
+
+    dirs.release(created.id, workspace_id="ws-1")
+    created.worktree_path.mkdir()  # something else now sits at the released path
+    with pytest.raises(ValueError, match="no longer isolated directory"):
+        acquire_isolation(
+            dirs,
+            request,
+            "ws-1",
+            requested=False,
+            ref=None,
+            resumed_task=_resumed(created, owned=True),
+        )
+    dirs.close()
+
+
+def test_abort_created_keeps_a_directory_another_resume_already_claimed(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    other = dirs.claim_for_cwd(created.execution_cwd)
+    assert other is not None
+    try:
+        dirs.abort_created(created)
+        rec = dirs.store.get(created.id)
+        assert rec is not None and rec.state == "ready"
+        assert created.worktree_path.is_dir()
+    finally:
+        other.lease.release()
     dirs.close()

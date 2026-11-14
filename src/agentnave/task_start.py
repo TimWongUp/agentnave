@@ -133,6 +133,7 @@ class StartArguments:
     # Model and effort the resumed thread last ran with; see apply_history.
     history: dict[str, str] = field(default_factory=lambda: {})
     selected: ReviewSeat | None = None
+    resumed_task: TaskRecord | None = None
 
     def inherit(self, task: TaskRecord) -> None:
         self.provider = self._inherited(
@@ -237,6 +238,7 @@ def resolve_start(
             explicit_identity=arguments.provider is not None and arguments.cwd is not None,
         )
         if task is not None:
+            arguments.resumed_task = task
             arguments.inherit(task)
         elif arguments.provider is None or arguments.cwd is None:
             raise ValueError("Unknown session_id; pass provider and cwd explicitly")

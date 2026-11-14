@@ -326,6 +326,15 @@ class WorktreeStore:
             (phase, delete_oid, updated_at, isolation_id, expected_state),
         )
 
+    def revert_deleting_to_ready(self, isolation_id: str, *, updated_at: str) -> bool:
+        """Hand a deletion that stopped before touching the worktree back as ready."""
+        return self._update(
+            "UPDATE isolated_dirs SET state = 'ready', phase = 'ready', delete_oid = NULL, "
+            "attention = NULL, confirmation_digest = NULL, updated_at = ? "
+            "WHERE id = ? AND state = 'deleting'",
+            (updated_at, isolation_id),
+        )
+
     def revert_to_creating(self, isolation_id: str, *, updated_at: str) -> bool:
         """Hand a ready record back to recovery as an unfinished creation."""
         return self._update(

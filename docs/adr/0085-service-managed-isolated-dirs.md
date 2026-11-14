@@ -1,6 +1,6 @@
 # ADR-0085：隔离目录由服务创建、登记和回收，是否隔离仍由 boss 决定
 
-- 状态：已接受
+- 状态：部分修订（「只显式释放」「不自动回收未释放的目录」由 [ADR-0092](0092-auto-release-untouched-isolated-dirs.md) 修订）
 - 日期：2026-11-12
 - 修订 [ADR-0002](0002-lightweight-cli-subagent-adapter.md) 中「AgentNave 不提供 worktree」一条；扩展 [ADR-0043](0043-service-prompt-instructions.md) 的服务追加说明。
 

@@ -509,7 +509,10 @@ mcp = _Server(
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
         "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "
         "Injected as data, not instructions; saved task prompts stay original. "
-        "isolation creates a workspace-owned Git worktree per task; inspect or delete with isolated_dirs (release discards ignored files). "
+        "isolation creates a workspace-owned Git worktree per task. Succeeded access=read tasks "
+        "with no changes from base are auto-released (discarding ignored files) and rebuilt "
+        "in place on session_id resume; retained worktrees can be inspected or deleted with isolated_dirs "
+        "(release discards ignored files). "
         "Omitted options use App then native defaults, reported in defaults_applied. "
         "Concurrent tasks/seats obey the App cap; wait for capacity before retrying. "
         "native=true seats start nothing: start_agent returns a not_started receipt with the "
@@ -616,6 +619,8 @@ def _isolation_summary_payload(summary: ChangeSummary) -> TaskIsolationSummaryPa
             payload["nested_repos"] = list(summary.nested_repos)
     elif summary.error is not None:
         payload["error"] = summary.error
+    if summary.auto_released:
+        payload["auto_released"] = True
     return payload
 
 
@@ -630,6 +635,11 @@ def update_payload(
     """Final result, or a running snapshot that reports the given blocker."""
     if isinstance(update, InvocationResult):
         response = finished_payload(invocation_id, update)
+        if extra_warnings := conversations.settlement_warnings.get(invocation_id):
+            existing = response.get("warnings")
+            response["warnings"] = (
+                [*existing, *extra_warnings] if existing else list(extra_warnings)
+            )
         if identity := conversations.task_identity(invocation_id, update):
             response["identity"] = identity
         message_id = conversations.task_message_id(invocation_id)

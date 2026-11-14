@@ -44,13 +44,14 @@ MAX_SUMMARY_FILES = 200
 
 # Never look inside submodules or nested repositories: that would start Git there, with the
 # nested repository's own configuration.
-_STATUS_ARGS = [
+STATUS_ARGS = [
     "status",
     "--porcelain=v2",
     "-z",
     "--untracked-files=all",
     "--ignore-submodules=all",
 ]
+_STATUS_ARGS = STATUS_ARGS
 NESTED_NOTE = "Contains nested repositories; their contents were not checked"
 ORPHAN_NOTE = (
     "The directory is no longer a git worktree; the remaining files will be deleted "
@@ -103,6 +104,7 @@ class ChangeSummary:
     uncommitted: bool | None = None
     nested_repos: tuple[str, ...] = ()
     error: str | None = None
+    auto_released: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +116,7 @@ class RecoveryOutcome:
 
 
 @dataclass(frozen=True, slots=True)
-class _InspectionSnapshot:
+class InspectionSnapshot:
     head_oid: str
     branch_oid: str
     uncommitted: bool
@@ -298,11 +300,11 @@ def _check_hidden_index_flags(wt_path: Path) -> None:
             raise IsolationError("Worktree has skip-worktree index entries")
 
 
-def _inspect_ready_locked(
+def inspect_ready_locked(
     store: WorktreeStore,
     record: IsolatedRecord,
     workspace_id: str,
-) -> tuple[Path, Path, Path, _InspectionSnapshot]:
+) -> tuple[Path, Path, Path, InspectionSnapshot]:
     main_root, common_dir = _verify_repo_identity(record)
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Isolated directory is currently in use by an active lease")
@@ -362,7 +364,7 @@ def _inspect_ready_locked(
         stat_bytes,
         nested,
     )
-    snapshot = _InspectionSnapshot(
+    snapshot = InspectionSnapshot(
         head_oid=head_oid,
         branch_oid=branch_oid,
         uncommitted=bool(status_raw),
@@ -373,7 +375,7 @@ def _inspect_ready_locked(
     return main_root, common_dir, wt_path, snapshot
 
 
-def _complete_deletion_locked(
+def complete_deletion_locked(
     store: WorktreeStore,
     record: IsolatedRecord,
     main_root: Path,
@@ -381,11 +383,13 @@ def _complete_deletion_locked(
     expected_oid: str,
     *,
     remove_orphan: bool = False,
+    force: bool = True,
 ) -> str | None:
     """Remove worktree, managed branch, and DB row; raises IsolationError on partial failure.
 
     Returns a note when the managed branch was kept because it moved after the release check.
     remove_orphan deletes a directory that is no longer a git worktree (after confirmation).
+    force=False lets git refuse a worktree that gained source changes after the last check.
     """
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Active lease prevents completing deletion")
@@ -411,7 +415,10 @@ def _complete_deletion_locked(
             raise IsolationError("Worktree branch or HEAD changed during deletion")
         if is_link(wt_path) or is_link(main_root / WORKTREES_DIR_NAME):
             raise IsolationError(f"Unsafe link encountered before removing {wt_path}")
-        run_git(["worktree", "remove", "--force", "--", str(wt_path)], cwd=main_root)
+        run_git(
+            ["worktree", "remove", *(["--force"] if force else []), "--", str(wt_path)],
+            cwd=main_root,
+        )
     elif wt_path.exists() or is_link(wt_path):
         raise IsolationError(f"Unregistered path remains at {wt_path}; refusing recursive removal")
 
@@ -536,7 +543,7 @@ def _inspect_and_delete(
         if orphan:
             snap = _inspect_orphan_locked(record, workspace_id, main_root, verified_common)
         else:
-            main_root, verified_common, _wt_path, snap = _inspect_ready_locked(
+            main_root, verified_common, _wt_path, snap = inspect_ready_locked(
                 store, record, workspace_id
             )
     except (IsolationError, OSError, ValueError) as exc:
@@ -575,7 +582,7 @@ def _inspect_and_delete(
 
 def _inspect_orphan_locked(
     record: IsolatedRecord, workspace_id: str, main_root: Path, common_dir: Path
-) -> _InspectionSnapshot:
+) -> InspectionSnapshot:
     """Snapshot a leftover directory that is no longer a git worktree (no Git runs inside it)."""
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Isolated directory is currently in use by an active lease")
@@ -618,7 +625,7 @@ def _inspect_orphan_locked(
         b"orphan",
         tree_fingerprint(wt_path),
     )
-    return _InspectionSnapshot(
+    return InspectionSnapshot(
         head_oid="",
         branch_oid=tip,
         uncommitted=True,
@@ -641,7 +648,7 @@ def _run_deletion(
     remove_orphan: bool = False,
 ) -> ReleaseResult:
     try:
-        note = _complete_deletion_locked(
+        note = complete_deletion_locked(
             store, record, main_root, common_dir, expected_oid, remove_orphan=remove_orphan
         )
     except (IsolationError, OSError, ValueError) as exc:
@@ -718,7 +725,7 @@ def _retry_attention_locked(
 def _verify_confirmation(
     store: WorktreeStore,
     record: IsolatedRecord,
-    snap: _InspectionSnapshot,
+    snap: InspectionSnapshot,
     confirmation: str | None,
     *,
     foreign: bool,
@@ -888,7 +895,7 @@ def _recover_deleting_locked(store: WorktreeStore, latest: IsolatedRecord) -> Re
         return fail("Deleting record is missing expected branch OID")
     try:
         main_root, verified_common = _verify_repo_identity(latest)
-        note = _complete_deletion_locked(
+        note = complete_deletion_locked(
             store, latest, main_root, verified_common, latest.delete_oid
         )
     except (IsolationError, OSError, ValueError) as exc:

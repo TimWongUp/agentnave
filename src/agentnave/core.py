@@ -487,7 +487,7 @@ class InvocationManager:
         *,
         prepared: PreparedCommand | None = None,
         claim: IO[bytes] | None = None,
-        on_settled: Callable[[str], None] | None = None,
+        on_settled: Callable[[str, InvocationStatus], None] | None = None,
     ) -> str:
         """Start one run; it owns claim (a reserve() result, taken here when omitted) from this
         call on and releases it once its process tree has ended."""
@@ -786,10 +786,12 @@ class InvocationManager:
         adapter: ProviderAdapter,
         prepared: PreparedCommand,
         invocation_id: str,
-        on_settled: Callable[[str], None] | None = None,
+        on_settled: Callable[[str, InvocationStatus], None] | None = None,
     ) -> InvocationResult:
+        outcome = InvocationStatus.FAILED
         try:
             result = await self._run(record, adapter, prepared)
+            outcome = result.status
             reported = record.reported_model or adapter.session_model(
                 result.session_id, since=record.started_wall_at
             )
@@ -797,6 +799,7 @@ class InvocationManager:
             return replace(result, reported_model=reported)
         except Exception:
             logging.getLogger(__name__).exception("Unexpected invocation failure")
+            outcome = InvocationStatus.FAILED
             return InvocationResult(
                 InvocationStatus.FAILED,
                 record.request.provider,
@@ -811,7 +814,7 @@ class InvocationManager:
             if on_settled is not None:
                 try:
                     # Off the event loop: settlement runs git and takes repository locks.
-                    await asyncio.shield(asyncio.to_thread(on_settled, invocation_id))
+                    await asyncio.shield(asyncio.to_thread(on_settled, invocation_id, outcome))
                 except Exception:
                     logging.getLogger(__name__).exception("Post-invocation settlement failed")
 

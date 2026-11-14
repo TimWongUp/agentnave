@@ -588,7 +588,7 @@ class Groups:
                 held = claimed
                 self.active_lease_paths.add(held.lease.path)
 
-                def release_seat(_inv_id: str) -> None:
+                def release_seat(_inv_id: str, _status: InvocationStatus) -> None:
                     self.active_lease_paths.discard(held.lease.path)
                     held.lease.release()
 

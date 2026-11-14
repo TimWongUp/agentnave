@@ -12,7 +12,7 @@
 | 想先看选谁再定 | `recommend_seat`，`task` 直接传打算派发的 prompt；再按返回的 `seat` 派发 |
 | 生成图片 | 先查 `list_members`，目录里有 `kind` 为 `image` 的工位才派：`seat="auto"`、`access="write"`，简报开头写明要生成图片和画风，写清产物路径；没有生图工位时告诉用户缺这个工位 |
 
-`start_agents` 里有两个及以上可写项时，服务自动给每个可写项建隔离目录（显式传了 `isolation` 的以它为准）；boss 验收后合入当前分支并释放。
+`start_agents` 里有两个及以上可写项时，服务自动给每个可写项建隔离目录（显式传了 `isolation` 的以它为准）；可能转入实现的调查也建议在 `start_agent` 首次派发就传 `isolation` 并声明 `access="read"`，之后续接同一 `session_id` 改为 `write`。只读任务成功且完全无改动时服务自动释放，见[多任务编排](workflows.md)；保留下来的目录由 boss 验收合入后用 `isolated_dirs` 释放。
 
 ## 简报就是决策依据
 

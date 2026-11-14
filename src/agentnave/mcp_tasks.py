@@ -25,6 +25,7 @@ from agentnave.manager_identity import model_warnings
 from agentnave.mcp_isolated import (
     IsolationInput,
     attach_unreleased_count,
+    refresh_unreleased_count,
     start_isolation_payload,
 )
 from agentnave.mcp_payloads import (
@@ -70,6 +71,7 @@ from agentnave.models import (
     InvocationRequest,
     InvocationResult,
     ProviderOption,
+    validate_invocation_inputs,
 )
 from agentnave.native_prompts import NativePrompt
 from agentnave.orchestration_roles import AUTO_SEAT, ReviewSeat
@@ -186,7 +188,10 @@ async def start_agent(
     isolation: Annotated[
         IsolationInput | None,
         Field(
-            description="New isolated Git worktree (optional ref); omit on session_id resume.",
+            description=(
+                "New isolated Git worktree (optional ref); omit on session_id resume "
+                "(read-only tasks that changed nothing auto-release it; resume rebuilds it in place)."
+            ),
         ),
     ] = None,
     manager_model: ManagerModel = None,
@@ -245,7 +250,10 @@ async def start_agent(
     if invocation_id is None:
         # A seat native to this host: nothing started, so there is nothing to wait for.
         return payload
-    return await waited_dispatch(payload, invocation_id, wait, manager_session_id, ctx)
+    result = await waited_dispatch(payload, invocation_id, wait, manager_session_id, ctx)
+    if wait:
+        await refresh_unreleased_count(result, _conversations(ctx), manager_session_id)
+    return result
 
 
 @dataclass
@@ -329,6 +337,81 @@ def _select_fallback(
     )
 
 
+async def _acquire_and_start_task(
+    conversations: Conversations,
+    launch: TaskLaunch,
+    arguments: StartArguments,
+    options: dict[str, Any],
+) -> tuple[InvocationRequest, TaskStart]:
+    provider, cwd = arguments.provider, arguments.cwd
+    assert provider is not None and cwd is not None
+    access = arguments.access
+    isolation = launch.isolation
+    manager_session_id = launch.manager_session_id
+    resumed_acquired = None
+    hold = None
+    if not Path(cwd).is_dir() and arguments.resumed_task is not None:
+        validate_invocation_inputs(
+            provider, launch.prompt, Path(cwd), launch.session_id, require_cwd_dir=False
+        )
+        resumed_acquired = await conversations.acquire_resumed_isolation(
+            Path(cwd), arguments.resumed_task, manager_session_id
+        )
+    try:
+        request = InvocationRequest(
+            provider=provider,
+            prompt=launch.prompt,
+            cwd=Path(cwd),
+            session_id=launch.session_id,
+            provider_options=options,
+            read_only=access == "read",
+        )
+        validate_provider_options(request)
+        if resumed_acquired is not None:
+            assert arguments.resumed_task is not None
+            hold = conversations.bind_resumed_isolation(
+                request, resumed_acquired, arguments.resumed_task
+            )
+            resumed_acquired = None
+        else:
+            try:
+                hold = await conversations.acquire_task_isolation(
+                    request,
+                    manager_session_id,
+                    isolation_requested=isolation is not None,
+                    isolation_ref=isolation.ref if isolation is not None else None,
+                    resumed_task=arguments.resumed_task,
+                )
+            except (ValueError, OSError) as exc:
+                if not launch.isolation_auto:
+                    raise
+                # Never fall back to an unisolated start: the directory was meant to be separate.
+                raise ToolError(
+                    f"automatic isolation failed (several write tasks in one call): {exc}"
+                ) from exc
+        started = conversations.start_task(
+            request,
+            launch.title,
+            launch.conversation_id,
+            manager_model=launch.manager_model,
+            manager_session_id=manager_session_id,
+            role=arguments.role,
+            seat=arguments.seat,
+            forward=launch.forward,
+            access=access,
+            isolation_requested=isolation is not None,
+            isolation_ref=isolation.ref if isolation is not None else None,
+            hold=hold,
+        )
+    except BaseException:
+        if hold is not None:
+            await conversations.give_back_isolation(hold)
+        elif resumed_acquired is not None:
+            await conversations.give_back_resumed(resumed_acquired)
+        raise
+    return request, started
+
+
 async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPayload:
     """Resolve the seat and defaults, acquire isolation, start the task and describe it.
 
@@ -336,19 +419,9 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     native to this host starts nothing and comes back as a not_started receipt before any
     isolated directory is made."""
     manager = _manager(ctx)
-    prompt, provider, cwd, session_id = (
-        launch.prompt,
-        launch.provider,
-        launch.cwd,
-        launch.session_id,
-    )
-    provider_options, conversation_id, title = (
-        launch.provider_options,
-        launch.conversation_id,
-        launch.title,
-    )
-    role, requested, forward, access = launch.role, launch.seat, launch.forward, launch.access
-    isolation, manager_model = launch.isolation, launch.manager_model
+    provider, cwd, session_id = launch.provider, launch.cwd, launch.session_id
+    provider_options = launch.provider_options
+    role, requested, access = launch.role, launch.seat, launch.access
     manager_session_id = launch.manager_session_id
     seat_applied: list[str] = []
     fallback = None
@@ -371,8 +444,8 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
         )
     except (ValueError, OSError) as exc:
         raise ToolError(str(exc)) from exc
-    provider, cwd = arguments.provider, arguments.cwd
-    assert provider is not None and cwd is not None
+    provider = arguments.provider
+    assert provider is not None
     role, chosen_seat, access = arguments.role, arguments.seat, arguments.access
     seat_name = chosen_seat or review_role(role)
     try:
@@ -394,48 +467,9 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
         provider_health.check(
             _conversations(ctx).root, [(provider, provider_health.model_option(options))]
         )
-        request = InvocationRequest(
-            provider=provider,
-            prompt=prompt,
-            cwd=Path(cwd),
-            session_id=session_id,
-            provider_options=options,
-            read_only=access == "read",
+        request, started = await _acquire_and_start_task(
+            _conversations(ctx), launch, arguments, options
         )
-        validate_provider_options(request)
-        conversations = _conversations(ctx)
-        try:
-            hold = await conversations.acquire_task_isolation(
-                request,
-                manager_session_id,
-                isolation_requested=isolation is not None,
-                isolation_ref=isolation.ref if isolation is not None else None,
-            )
-        except (ValueError, OSError) as exc:
-            if not launch.isolation_auto:
-                raise
-            # Never fall back to an unisolated start: the directory was meant to be separate.
-            raise ToolError(
-                f"automatic isolation failed (several write tasks in one call): {exc}"
-            ) from exc
-        try:
-            started = conversations.start_task(
-                request,
-                title,
-                conversation_id,
-                manager_model=manager_model,
-                manager_session_id=manager_session_id,
-                role=role,
-                seat=chosen_seat,
-                forward=forward,
-                access=access,
-                isolation_requested=isolation is not None,
-                isolation_ref=isolation.ref if isolation is not None else None,
-                hold=hold,
-            )
-        except BaseException:
-            await conversations.give_back_isolation(hold)
-            raise
     except KeyError as exc:
         raise ToolError("Unknown conversation_id; use list.") from exc
     except ValueError as exc:
