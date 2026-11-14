@@ -179,6 +179,9 @@ dialog.char-guide-dialog::backdrop { background: #0006; }
    section's content fades in after it. */
 .tab-pane.is-loading > :not(.pane-loader) { display: none !important; }
 .tab-pane.is-entering > * { animation: pane-enter .36s ease-out both; }
+/* The orchestration and Skills sections share a save bar outside them; it waits and enters with them. */
+main:has(> .tab-pane.is-loading) > #advanced-bar { display: none !important; }
+main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .36s ease-out both; }
 .pane-loader { display: grid; place-items: center; min-height: 56vh; opacity: 0; transition: opacity .26s ease; }
 .pane-loader.shown { opacity: 1; }
 /* She comes down from the upper middle, a little smaller at first as if from further away, in the time she always stays. */
