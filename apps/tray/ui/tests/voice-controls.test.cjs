@@ -277,7 +277,7 @@ const desk = (key, running = false, kind = "task") => ({ key, kind, provider: "c
 const room = (id, status = "finished") => ({ id, title: id, status, last_active: id === "old" ? "2026-11-01T00:00:01Z" : "2026-11-01T00:00:02Z", seats: [] });
 const manager = (group, desks = [], rooms = [], extra = {}) => ({ group, label: group, host: "codex", updated: "2026-11-01T00:00:01Z", desks, rooms, status: "idle", ...extra });
 
-test("the panel keeps only the latest idle office as a card and shows at most eight working and four other desks", async () => {
+test("the panel keeps only the latest idle office as a card and shows four desks unless more than four are working", async () => {
   const app = await panel([manager("older", [desk("old")], [], { updated: "2026-11-01T00:00:00Z" }), manager("idle", [desk("old")], [], { live: true, status: "failed" })]);
   assert.equal(app.elements.get("groups").children.length, 1, "the office that worked last stays a card");
   assert.equal(app.elements.get("quiet").children.length, 1, "live presence and failure do not count as running work");
@@ -285,10 +285,24 @@ test("the panel keeps only the latest idle office as a card and shows at most ei
   app.render([manager("busy", desks, [room("meeting", "running")])]);
   const card = app.elements.get("groups").children[0];
   const cells = card.children.find(child => child.tag === "div.desks");
-  assert.equal(cells.children.length, 5, "one working desk, then the four most recent others; seats are not desks");
+  assert.equal(cells.children.length, 4, "the working desk and the meeting seat, then idle desks up to four");
   assert.equal(cells.children[0].attributes.href, "/chat/busy#desk:running");
   assert.equal(card.children[0].children.length, 1, "workspace cards have no listening button");
   assert.equal(app.elements.get("quiet").children.length, 0);
+  // A resumed early desk leads both idle desks and newer-first_seen workers, and idle seats follow last_prompted too.
+  app.render([manager("busy", [
+    { ...desk("idle-1"), last_prompted: "2026-11-01T00:02:00Z", last_active: "2026-11-01T00:09:00Z" },
+    { ...desk("idle-seat", false, "seat"), last_prompted: "2026-11-01T00:05:00Z", last_active: "2026-11-01T00:05:10Z" },
+    { ...desk("idle-2"), last_prompted: "2026-11-01T00:04:00Z", last_active: "2026-11-01T00:04:10Z" },
+    { ...desk("idle-3"), last_prompted: "2026-11-01T00:03:00Z", last_active: "2026-11-01T00:03:10Z" },
+    { ...desk("idle-drop"), last_prompted: "2026-11-01T00:01:00Z", last_active: "2026-11-01T00:10:00Z" },
+    { ...desk("later-worker", true), first_seen: "2026-11-01T00:06:00Z", last_prompted: "2026-11-01T00:06:00Z", last_active: "2026-11-01T00:08:00Z" },
+    { ...desk("early-reused", true), first_seen: "2026-11-01T00:00:10Z", last_prompted: "2026-11-01T00:07:00Z", last_active: "2026-11-01T00:07:00Z" },
+  ], [room("meeting", "running")])]);
+  assert.deepEqual(
+    Array.from(cells.children, child => child.attributes.href),
+    ["early-reused", "later-worker", "idle-seat", "idle-2"].map(k => `/chat/busy#desk:${k}`),
+  );
 });
 
 test("a meeting waiting for the boss's review keeps its office expanded", async () => {
@@ -373,7 +387,7 @@ test("the panel shows eight running desks and still announces a seat that disapp
   const app = await panel([manager("workspace", desks)]);
   const card = app.elements.get("groups").children[0];
   const cells = card.children.find(child => child.tag === "div.desks");
-  assert.equal(cells.children.length, 9, "eight working desks and the idle one");
+  assert.equal(cells.children.length, 8, "past four working desks, at most eight show and no idle one");
   await app.feed([manager("workspace", desks.map(item => ({ ...item, activities: [], status: "succeeded" })))]);
   assert.equal(app.elements.get("groups").children.length, 1, "the office that worked last stays a card");
   assert.match(app.elements.get("announce").textContent, /gpt-x succeeded/,

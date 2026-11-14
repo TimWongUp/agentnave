@@ -1919,14 +1919,14 @@ fn office_counts_activities_and_threads_preserve_concurrent_calls() {
     let limited = state(&reader, &format!("/app/chats/{MANAGER}"));
     assert_eq!(limited["desks"].as_array().unwrap().len(), 3);
     assert_eq!(limited["optimized"]["count"], 2);
-    // The panel lists no folded desk except those its rooms' seats sit at.
+    // The panel draws idle seats among the desks instead of folding them away.
     let stage = state(&reader, "/app/stage");
-    let folded = stage["managers"][0]["optimized"]["desks"]
-        .as_array()
-        .unwrap();
-    assert_eq!(stage["managers"][0]["optimized"]["count"], 2);
-    assert_eq!(folded.len(), 2);
-    assert!(folded.iter().all(|desk| desk["kind"] == "seat"));
+    assert_eq!(stage["managers"][0]["optimized"]["count"], 0);
+    let drawn = stage["managers"][0]["desks"].as_array().unwrap();
+    assert_eq!(
+        drawn.iter().filter(|desk| desk["kind"] == "seat").count(),
+        4
+    );
     assert_eq!(chat["threads"].as_array().unwrap().len(), 3);
     assert_eq!(
         state(&reader, "/app/stage")["counts"],

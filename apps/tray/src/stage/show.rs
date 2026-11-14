@@ -7,10 +7,21 @@ struct Show<'a> {
     item: &'a Item,
     view: &'a Value,
     seats: BTreeMap<&'a str, &'a Value>,
+    round_times: BTreeMap<u64, i64>,
     created: i64,
 }
 
 impl<'a> Show<'a> {
+    fn round_start(&self, round: u64) -> Option<i64> {
+        self.round_times.get(&round).copied()
+    }
+
+    fn latest_round_start(&self, id: &str) -> Option<i64> {
+        array(self.view, "rounds")
+            .filter(|r| array(r, "seats").any(|s| text(s, "seat_id") == id))
+            .filter_map(|r| self.round_start(r["number"].as_u64()?))
+            .max()
+    }
     /// A private answer carries its finish time; older records only have the round's start. The
     /// answer was done before a later round began, so the later of the two counts as the desk's
     /// work, and the conversation's last update when no round followed.
@@ -132,11 +143,20 @@ impl Group {
     pub(super) fn show(&mut self, snapshot: &Snapshot) {
         let item = &snapshot.item;
         let view = &snapshot.view["director"];
+        let mut round_times = BTreeMap::new();
+        for entry in array(view, "messages").filter(|m| text(m, "kind") == "task") {
+            if let (Some(round), Some(at)) =
+                (entry["round"].as_u64(), timestamp(text(entry, "time")))
+            {
+                round_times.entry(round).or_insert(at);
+            }
+        }
         let show = Show {
             snapshot,
             item,
             view,
             seats: array(view, "seats").map(|s| (text(s, "id"), s)).collect(),
+            round_times,
             created: timestamp(text(view, "created"))
                 .or_else(|| timestamp(&item.updated))
                 .unwrap_or_default(),
@@ -168,12 +188,12 @@ impl Group {
                     (&item.id, id),
                     seat,
                     "pending",
-                    show.created,
-                    show.created,
+                    (show.created, show.latest_round_start(id), show.created),
                     false,
                 );
             }
             if let Some(desk) = self.desks.get_mut(&seat_desk(&item.id, id)) {
+                desk.prompt(show.latest_round_start(id));
                 desk.identity = show.current(id, seat).clone();
             }
         }
@@ -208,12 +228,16 @@ impl Group {
                 &time,
             );
             answered.insert(speaker);
+            let prompted = entry["round"].as_u64().and_then(|r| show.round_start(r));
             self.desk_seat(
                 (&show.item.id, speaker),
                 &identity,
                 status,
-                show.created,
-                timestamp(&time).unwrap_or(show.created),
+                (
+                    show.created,
+                    prompted,
+                    timestamp(&time).unwrap_or(show.created),
+                ),
                 false,
             );
         }
@@ -361,16 +385,16 @@ impl Group {
         );
         answered.insert(id);
         let round = entry["round"].as_u64().unwrap_or_default();
+        let last = [show.next_round_start(round), timestamp(&time)]
+            .into_iter()
+            .flatten()
+            .max()
+            .unwrap_or(show.created);
         self.desk_seat(
             (conversation, id),
             &identity,
             "succeeded",
-            show.created,
-            [show.next_round_start(round), timestamp(&time)]
-                .into_iter()
-                .flatten()
-                .max()
-                .unwrap_or(show.created),
+            (show.created, show.round_start(round), last),
             false,
         );
         if self.include_messages {
@@ -431,8 +455,11 @@ impl Group {
             (&item.id, id),
             &identity,
             status,
-            show.created,
-            timestamp(&time).unwrap_or(show.created),
+            (
+                show.created,
+                show.round_start(round),
+                timestamp(&time).unwrap_or(show.created),
+            ),
             true,
         );
         if self.include_messages
