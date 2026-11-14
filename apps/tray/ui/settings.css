@@ -282,6 +282,7 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .member-interactive { grid-column: 2 / -1; display: inline-flex; align-items: center; justify-self: start; gap: 8px; font-size: 12.5px; cursor: pointer; }
 .member-switch { display: inline-flex; align-items: center; gap: 8px; padding-left: 30px; font-size: 12.5px; cursor: pointer; }
 .member-error { margin: 0; padding-left: 30px; font-size: 12px; color: var(--bad); overflow-wrap: anywhere; }
+.member-note { margin: 0; padding-left: 30px; line-height: 1.5; }
 .member-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .member-line > select, .member-line > .member-efforts { flex: 1; min-width: 0; }
 .member-reset-slot { flex: none; width: 26px; }
@@ -312,7 +313,7 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
   .member-title { margin-left: 0; }
   .member-end > .segment-control, .member-row > :nth-child(3), .member-row > .member-list { grid-column: auto; }
   .member-row > .member-list { width: calc(100% - 34px); }
-  .member-switch, .member-error { padding-left: 0; }
+  .member-switch, .member-error, .member-note { padding-left: 0; }
   .member-interactive { grid-column: auto; }
   .member-picker { margin-left: 0; }
   .member-card > .disable-confirm { margin: 0 -14px; }

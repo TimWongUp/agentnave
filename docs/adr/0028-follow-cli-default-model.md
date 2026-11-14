@@ -24,7 +24,8 @@ ADR-0020 为了让办公室少出现“默认模型”工位，在首次启动�
   - 未设置默认档位时，档位条显示“CLI 默认 档位”或“档位由 CLI 决定”；设置后可一键“改回 CLI 默认”。
 - 办公室里，没有请求模型、CLI 也尚未回报的工位，先按 CLI 自身的默认模型显示名字和形象，标记来源为 `cli_default`；CLI 回报后以回报为准。App 启动时在后台探测一次，供这一显示使用；办公室只读探测缓存，不为显示触发探测。
 - 没有 `members.json` 时不再写出首份配置；旧档案迁移不变。
-- 用户在 CLI 默认模型那一行设的档位与参数也要生效。服务不知道 CLI 的默认模型，所以 App 每次探测后把各 CLI 的 `native` 写到数据根的 `cli-defaults.json`（版本 1，`clis.<provider>.{model, effort}`；内容不变不写，不创建数据根；探测失败的 CLI 保留上次结果，未安装或读不到默认模型的不写）。调用未指定模型、App 也没设默认模型时，服务按该文件里的模型套用它的设置，但不传 `model`，模型仍由 CLI 自己选。文件缺失或损坏时按无设置处理。缓存只提供模型身份的参考，不能证明实际执行模型：这条回退路径不继承模型的权限、仓库检查绕过、工具、agent、mode 或 project 等执行控制；需要这些默认值时，须显式指定模型或在 App 中设定默认模型。显式传入的执行控制仍保留优先级。DeepSeek 只设档位时，Adapter 从实时 headless profile 复制实际模型与路由以满足整行 patch 协议，读取失败则要求显式指定模型。
+- 用户在 CLI 默认模型那一行设的档位与参数也要生效。服务不知道 CLI 的默认模型，所以 App 每次探测后把各 CLI 的 `native` 写到数据根的 `cli-defaults.json`（版本 1，`clis.<provider>.{model, effort}`；内容不变不写，不创建数据根；探测失败的 CLI 保留上次结果，未安装或读不到默认模型的不写）。调用未指定模型、App 也没设默认模型时，服务按该文件里的模型套用它的设置，但不传 `model`，模型仍由 CLI 自己选。文件缺失或损坏时按无设置处理。缓存只提供模型身份的参考，不能证明实际执行模型：这条回退路径不继承模型的权限、仓库检查绕过、工具、agent、mode 或 project 等执行控制，也不继承模型路由或已存认证选项；需要这些默认值时，须显式指定模型或在 App 中设定默认模型。显式传入的执行控制仍保留优先级。DeepSeek 只设档位时，Adapter 从实时 headless profile 复制实际模型与路由以满足整行 patch 协议，读取失败则要求显式指定模型。
+- 2026-11-14 修订：回退路径仅对 DeepSeek 不继承模型路由（Pi 的模型后端 `provider` 选项照常继承）；若该默认模型保存了 `deepseek-account` 路由或 `stored_credentials=false`，无模型调用显式传 `stored_credentials=false` 并记入 `defaults_applied`，落到官方路由时按缺凭据失败，避免按 [ADR-0027](0027-deepseek-official-route-stored-credentials.md) 静默换用已存的官方 API Key。
 
 ## 取舍
 

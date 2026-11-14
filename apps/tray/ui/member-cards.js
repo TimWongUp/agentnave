@@ -7,7 +7,7 @@
     getAllModelIds, hasPool, isSplit, known, limitChanged, loadCliInstallCommands, loadCliUpdates, markSaved,
     nativeDefault, outOfPool, renderCliInstallations, renderCliUpdate, renderCliUpdateError,
     renderCliUpdateSummary, renderCliVersion, renderCodexSource, renderMissingClis, renderPermission,
-    sameJson, saveLimit, savedEffort, sceneEffort, setInteractive, setProviderEnabled, setSplit, settingTip,
+    sameJson, saveLimit, savedEffort, sceneEffort, setDeepSeekRoute, setInteractive, setProviderEnabled, setSplit, settingTip,
     showNotice, shownPool, slot, takeReview, textNode, unlisted, writePool
   } = S;
   function slotRows(provider, scene, split) {
@@ -194,6 +194,31 @@
         settingTip(runtime.tip())));
   }
 
+  function deepSeekRouteRows() {
+    const rows = getAllModelIds("deepseek")
+      .filter((model) => model.startsWith("deepseek-"))
+      .map((model) => {
+        const options = S.currentDoc.clis?.deepseek?.models?.[model]?.options || {};
+        const route = options.provider === "deepseek-account" && options.stored_credentials === true ? "account"
+          : options.provider === "deepseek-official" && !Object.hasOwn(options, "stored_credentials") ? "official"
+          : !Object.hasOwn(options, "provider") && !Object.hasOwn(options, "stored_credentials") ? "default" : "custom";
+        const label = L(`${model} 的连接方式`, `Connection for ${model}`);
+        const tip = L("仅指定此模型时生效，适用于任务、会议和工位；场景自定义参数或调用方显式参数优先。账号方式使用 DeepSeek Harness 已登录的账号。", "Applies when this model is selected for tasks, meetings and seats. Scene overrides and explicit call options take precedence. Account uses the signed-in DeepSeek Harness account.");
+        return el("div", { className: "member-row" },
+          el("span", { className: "member-scene" }, label, settingTip(tip)),
+          el("select", { className: "member-model", dataset: { focusKey: `deepseek/route/${model}` },
+            "aria-label": label, onChange: (e) => setDeepSeekRoute(model, e.target.value) },
+            el("option", { value: "default", selected: route === "default" }, L("沿用 CLI 设置", "Follow CLI settings")),
+            el("option", { value: "account", selected: route === "account" }, L("登录账号", "Signed-in account")),
+            el("option", { value: "official", selected: route === "official" }, L("官方 API Key", "Official API key")),
+            route === "custom" ? el("option", { value: "custom", selected: true, disabled: true }, L("自定义参数", "Custom options")) : null));
+      });
+    if (!rows.length) return [];
+    return [...rows, el("p", { className: "member-muted member-note" }, L(
+      "在 DeepSeek Harness 登录账号后，需为所选模型选择“登录账号”并保存；“官方 API Key”使用官方 API 方式；“沿用 CLI 设置”不改变路由；仅选中对应模型时生效。",
+      "After signing in to DeepSeek Harness, select “Signed-in account” for the chosen model and save settings; “Official API key” uses the official API route; “Follow CLI settings” leaves routing unchanged. Applies only when that model is selected."))];
+  }
+
   // One card per CLI: one row for both scenes, or one row each once split.
   function renderCards() {
     const container = $("cli-cards");
@@ -250,6 +275,7 @@
       const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
       if (provider === "codex") card.appendChild(renderCodexSource());
       for (const row of [...poolRows(provider), ...rows, ...poolConflicts(provider)]) card.appendChild(row);
+      if (provider === "deepseek" && enabled) for (const row of deepSeekRouteRows()) card.appendChild(row);
       const runtime = renderInteractive(provider);
       if (runtime) card.appendChild(runtime);
       if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
@@ -450,7 +476,7 @@
   }
 
   Object.assign(S, {
-    slotRows, poolSummary, poolRows, poolConflicts, renderInteractive, renderCards, saveMembers,
+    slotRows, poolSummary, poolRows, poolConflicts, renderInteractive, deepSeekRouteRows, renderCards, saveMembers,
     renderErrorBanner, refreshDetection, probeWhenStale, loadMembers
   });
 }

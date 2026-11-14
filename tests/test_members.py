@@ -488,6 +488,114 @@ def test_a_call_without_a_level_passes_the_cli_default_one(
     assert effort({"model": "grok-4.6"}, document) is None
 
 
+def test_cached_model_does_not_select_deepseek_route_or_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    "deepseek": {"model": "deepseek-flash"},
+                    "pi": {"model": "pi-default"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    account = {"provider": "deepseek-account", "stored_credentials": True}
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {
+                "deepseek": {"models": {"deepseek-flash": {"options": account}}},
+                "pi": {
+                    "models": {
+                        "pi-default": {"options": {"provider": "openrouter", "tools": "read"}}
+                    }
+                },
+            },
+            "modes": {
+                "task": {
+                    "deepseek": {
+                        "models": [],
+                        "overrides": {
+                            "deepseek-flash": {
+                                "options": {**account, "permission_mode": "read-only"}
+                            }
+                        },
+                    },
+                    "pi": {"models": []},
+                },
+                "discussion": {
+                    "deepseek": {
+                        "models": [],
+                        "overrides": {
+                            "deepseek-flash": {"options": {"permission_mode": "read-only"}}
+                        },
+                    }
+                },
+            },
+        }
+    )
+    assert document.apply("task", "deepseek", {}, frozenset()) == (
+        {"stored_credentials": False},
+        ["stored_credentials"],
+    )
+    assert document.apply("task", "deepseek", {"stored_credentials": True}, frozenset()) == (
+        {"stored_credentials": True},
+        [],
+    )
+    assert document.apply("task", "deepseek", {"model": "deepseek-flash"}, frozenset()) == (
+        {"model": "deepseek-flash", **account, "permission_mode": "read-only"},
+        ["provider", "stored_credentials", "permission_mode"],
+    )
+    assert document.apply("discussion", "deepseek", {"model": "deepseek-flash"}, frozenset()) == (
+        {"model": "deepseek-flash", "permission_mode": "read-only"},
+        ["permission_mode"],
+    )
+    assert document.apply(
+        "task", "deepseek", {"model": "deepseek-flash", "provider": "gateway"}, frozenset()
+    ) == (
+        {"model": "deepseek-flash", "provider": "gateway", "permission_mode": "read-only"},
+        ["permission_mode"],
+    )
+    for saved_options in (
+        {"provider": "deepseek-account"},
+        {"stored_credentials": False},
+        {"provider": "deepseek-official", "stored_credentials": False},
+    ):
+        disabled = MemberFile.model_validate(
+            {
+                "version": 1,
+                "clis": {"deepseek": {"models": {"deepseek-flash": {"options": saved_options}}}},
+                "modes": {},
+            }
+        )
+        assert disabled.apply("task", "deepseek", {}, frozenset()) == (
+            {"stored_credentials": False},
+            ["stored_credentials"],
+        )
+    for saved_options in (
+        {"provider": "deepseek-official"},
+        {"provider": "gateway", "stored_credentials": True},
+        {},
+    ):
+        other = MemberFile.model_validate(
+            {
+                "version": 1,
+                "clis": {"deepseek": {"models": {"deepseek-flash": {"options": saved_options}}}},
+                "modes": {},
+            }
+        )
+        assert other.apply("task", "deepseek", {}, frozenset()) == ({}, [])
+    assert document.apply("task", "pi", {}, frozenset()) == (
+        {"provider": "openrouter"},
+        ["provider"],
+    )
+
+
 def test_cached_native_model_does_not_transfer_execution_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.models import (
+    InvocationRequest,
+    InvocationStatus,
+    ProviderActivity,
+    ProviderOption,
+)
 from agentnave.native_prompts import NativePrompt
 from agentnave.native_sessions import clean_model as clean_model
 from agentnave.native_sessions import object_dict as object_dict
@@ -108,6 +113,11 @@ class ProviderAdapter(Protocol):
     options_description: str
     supports_restricted_tools: bool
     restricted_extra_options: frozenset[str]
+    paired_options: Mapping[str, frozenset[str]]
+
+    def unmodeled_options(
+        self, options: Mapping[str, ProviderOption]
+    ) -> dict[str, ProviderOption]: ...
 
     def option_args(self, request: InvocationRequest) -> tuple[str, ...]: ...
 
@@ -148,6 +158,11 @@ class AdapterHooks:
     options_description = ""
     supports_restricted_tools = True
     restricted_extra_options: frozenset[str] = frozenset()
+    paired_options: Mapping[str, frozenset[str]] = {}
+
+    def unmodeled_options(self, options: Mapping[str, ProviderOption]) -> dict[str, ProviderOption]:
+        """Saved model options that still apply when the CLI chooses the model itself."""
+        return dict(options)
 
     def quota_group(self, model: str) -> str | None:
         return None

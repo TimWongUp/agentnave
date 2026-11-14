@@ -316,10 +316,22 @@ class MemberFile(StrictModel):
                 f"Effort {result['effort']!r} is not allowed; allowed efforts: "
                 + ", ".join(config.efforts)
             )
-        for key, value in config.options.items():
+        adapter = get_adapter(provider)
+        blocked = {
+            follower
+            for leader, followers in adapter.paired_options.items()
+            if leader in options
+            for follower in followers
+        }
+        candidate_options = (
+            adapter.unmodeled_options(config.options) if model is None else config.options
+        )
+        for key, value in candidate_options.items():
             if model is None and key in _MODEL_EXECUTION_OPTIONS:
                 continue
-            if restricted and key not in get_adapter(provider).restricted_extra_options:
+            if key in blocked:
+                continue
+            if restricted and key not in adapter.restricted_extra_options:
                 continue
             if key not in result:
                 result[key] = value

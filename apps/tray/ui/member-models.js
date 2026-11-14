@@ -240,6 +240,44 @@
     S.renderCards();
   }
 
+  function applyDeepSeekRoute(options, route) {
+    if (route === "account") {
+      options.provider = "deepseek-account";
+      options.stored_credentials = true;
+    } else if (route === "official") {
+      options.provider = "deepseek-official";
+      delete options.stored_credentials;
+    } else if (route === "default") {
+      delete options.provider;
+      delete options.stored_credentials;
+    }
+  }
+
+  const sameOptionField = (a, b, key) =>
+    Object.hasOwn(a, key) === Object.hasOwn(b, key) && a[key] === b[key];
+  const sameDeepSeekRoute = (a, b) =>
+    sameOptionField(a, b, "provider") && sameOptionField(a, b, "stored_credentials");
+
+  // Authentication is an explicit per-model choice shared by scenes and seats.
+  function setDeepSeekRoute(modelId, route) {
+    if (!["account", "official", "default"].includes(route)) return;
+    ensureCliModel("deepseek", modelId);
+    const model = S.currentDoc.clis.deepseek.models[modelId];
+    const prevOptions = { ...model.options };
+    const options = { ...prevOptions };
+    applyDeepSeekRoute(options, route);
+    if (Object.keys(options).length) model.options = options;
+    else delete model.options;
+    for (const scene of SCENE_IDS) {
+      const sceneOptions = S.currentDoc.modes?.[scene]?.deepseek?.overrides?.[modelId]?.options;
+      if (!sceneOptions) continue;
+      const synced = sameDeepSeekRoute(sceneOptions, prevOptions) ||
+        (route !== "default" && !Object.hasOwn(sceneOptions, "provider") && !Object.hasOwn(sceneOptions, "stored_credentials"));
+      if (synced) applyDeepSeekRoute(sceneOptions, route);
+    }
+    edited();
+  }
+
   // Change one scene, or both while the card is not split.
   function changeSlot(provider, scene, change) {
     if (S.pendingDisable === provider) S.pendingDisable = null;
@@ -307,7 +345,7 @@
   Object.assign(S, {
     isRestricted, hasPool, listedPool, outOfPool, unlisted, nativeDefault, cliEffort, effortLevels,
     savedEffort, getAllModelIds, hiddenModel, sceneEffort, slot, shownPool, isSplit, known, restrict,
-    confirmScenes, writePool, edited, changeSlot, setProviderEnabled, setSplit
+    confirmScenes, writePool, edited, setDeepSeekRoute, changeSlot, setProviderEnabled, setSplit
   });
   S.share({
     pickerOpen: [() => pickerOpen, (v) => { pickerOpen = v; }],
