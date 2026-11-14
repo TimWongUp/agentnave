@@ -724,8 +724,8 @@ function hostCliRow(host) {
   const choice = boss.keys.map((key) => S.hostCli.choices[key]).find(Boolean) || "subagent";
   const label = L("同款 CLI 的任务", "Tasks for its own CLI");
   const tip = L(
-    "工位或员工用的 CLI 和这个 boss 相同时（比如在 Claude Code 里派给 Claude 的任务）怎么执行。用 boss 自己的子代理：boss 用自带的子代理完成，不经过 AgentNave。由 AgentNave 另开：另启动一个同款 CLI，和 boss 共用账号额度。改用其他 CLI：跳过它，换用备选或其他员工。",
-    "How a task runs when its seat or employee uses the same CLI as this boss (say, a Claude task sent from Claude Code). Boss's own subagent: the boss finishes it with its built-in subagent, without AgentNave. Started by AgentNave: another copy of the CLI starts, sharing the boss's account quota. Use another CLI: it is skipped for a fallback or another employee.",
+    "工位或员工用的 CLI 和这个 boss 相同时（比如在 Claude Code 里派给 Claude 的任务）怎么执行。用 boss 自己的子代理：boss 用自带的子代理完成，不经过 AgentNave。由 AgentNave 另开：另启动一个同款 CLI，和 boss 共用账号额度。改用其他 CLI：跳过它，换用备选或其他员工。开会不受影响。",
+    "How a task runs when its seat or employee uses the same CLI as this boss (say, a Claude task sent from Claude Code). Boss's own subagent: the boss finishes it with its built-in subagent, without AgentNave. Started by AgentNave: another copy of the CLI starts, sharing the boss's account quota. Use another CLI: it is skipped for a fallback or another employee. Meetings are not affected.",
   );
   const select = h("select", { "aria-label": label, "data-act": "host-cli", disabled: Boolean(S.busy.get(host.id)) },
     HOST_CLI_CHOICES.map(([value, text]) => h("option", { value, selected: value === choice }, text)));
