@@ -1,6 +1,6 @@
 "use strict";
 {
-  // Settings -> 高级: Skills, orchestration and review seats. Viewing and picking
+  // Settings -> 技能 and 编排: Skills, orchestration and review seats. Viewing and picking
   // only change the drafts here; nothing is written until 保存设置. Sections save independently, so
   // one that fails stays unsaved for another try while the others land.
 
