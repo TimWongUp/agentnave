@@ -801,6 +801,7 @@ test("every model lifts a scene list an older file kept", () => {
     pickerOpen = "codex/pool";
   `);
   assert.equal(app.run('shownPool("codex")'), null, "one unlimited scene shows every model");
+  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/all").attrs["aria-checked"]'), "false", "a scene still limited is not shown as every model");
   app.run('poolPick("codex/pool/all")');
   assert.deepEqual(app.doc().modes.task.codex.models, [], "the limited scene takes every model too");
   assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);

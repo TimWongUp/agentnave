@@ -128,7 +128,7 @@
       rows.push(el("div", { className: "member-picker" },
         el("div", { className: "member-picker-actions" },
           el("div", { className: "segment-control", role: "radiogroup", "aria-label": L("可用模型", "Available models") },
-            tier(!chosen, L("全部模型（含以后新出的）", "All models, including future ones"), useAll, "all"),
+            tier(!chosen && !sceneLimited, L("全部模型（含以后新出的）", "All models, including future ones"), useAll, "all"),
             tier(Boolean(chosen), L("只用勾选的", "Only the ticked"), useTicked, "ticked", !all.length)),
           chosen ? el("button", { type: "button", dataset: { focusKey: `${key}/none` },
             onClick: () => writePool(provider, []),
