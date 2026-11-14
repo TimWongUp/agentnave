@@ -145,7 +145,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 - **无头宿主不要写 `apps` 和 `effective_apps`**：`enabled()` 用 `host.app_id or host.name` 作 key。bot 两者都为空，`apps` 里找不到就回落到 `preset`；但只要文件里有 `effective_apps`，没有 `app_id` 的连接就一律视为关闭（ADR-0041）。
 - 角色键：通用组 `explorer`、`worker`；专项组 `worker_frontend`（界面制作）、`worker_writing`（写作）、`explorer_web`（网页调研）、`explorer_social`（社交平台调研）、`worker_documents`（办公文件制作）。每个角色管什么写在 `src/agentnave/orchestration_roles.json` 的 `scope_zh`，`list_members.orchestration.scopes` 会列出开启角色的范围。`worker_code`、`worker_data` 已删除，写了会被 App 拒绝。
 - 专项只提供自己绑定的档，不沿用通用工位；App 里「区分难度」关闭时，两档存的是同一个模型。
-- 各档规则文字与拼装顺序随 Python 包发在 `agentnave/orchestration_rules.json`（用 `"$(uv tool dir)/agentnave/bin/python" -c 'from pathlib import Path; import agentnave; print(Path(agentnave.__file__).with_name("orchestration_rules.json"))'` 查看路径；角色目录数据在同目录 `orchestration_roles.json`）。有 App 时由 App 按其中的 `order.<档位>` 把正文写进宿主的全局规则文件；bot 宿主没有这一步：装好 `agentnave-manager` skill（§4）后，没有规则块时的默认行为及使用其他档位的做法见该 skill 的 [`references/headless.md`](../skills/agentnave-manager/references/headless.md)。要用决策模型档、并行分工、boss 可主动开会、`lead_only`（boss 只负责编排）、「只开会」（`meetings`，对服务算 `orchestration.enabled=false`）或 `meeting`（`count` 为 2–6，`seats` 可选且长度不超过 `count`，每席为 `{"provider": ...}` 或 `null`，模型与档位由服务按开会场景的员工设置补上）默认席位时，须经用户确认后，按 `orchestration_rules.json` 的 `order.<档位>` 从 `sections`、`switches`、`meeting_defaults`、`enabled_roles` 拼出对应文字放进 bot 的指令入口；`orchestration.json` 里的开关字段和 `meeting` 只供 App 生成规则块，bot 不读这些字段，只按指令入口里的文字执行。
+- 各档规则文字与拼装顺序随 Python 包发在 `agentnave/orchestration_rules.json`（用 `"$(uv tool dir)/agentnave/bin/python" -c 'from pathlib import Path; import agentnave; print(Path(agentnave.__file__).with_name("orchestration_rules.json"))'` 查看路径；角色目录数据在同目录 `orchestration_roles.json`）。有 App 时由 App 按其中的 `order.<档位>` 把正文写进宿主的全局规则文件；bot 宿主没有这一步：非只开会档安装 `agentnave-manager` 后，没有规则块时的默认行为见该 skill 的 [`references/headless.md`](../skills/agentnave-manager/references/headless.md)；只开会档安装 `agentnave-meeting`，它没有这个参考文件，须按下述方法手写规则。要用决策模型档、并行分工、boss 可主动开会、`lead_only`（boss 只负责编排）、「只开会」（`meetings`，对服务算 `orchestration.enabled=false`）或 `meeting`（`count` 为 2–6，`seats` 可选且长度不超过 `count`，每席为 `{"provider": ...}` 或 `null`，模型与档位由服务按开会场景的员工设置补上）默认席位时，须经用户确认后，按 `orchestration_rules.json` 的 `order.<档位>` 从 `sections`、`switches`、`meeting_defaults`、`enabled_roles` 拼出对应文字放进 bot 的指令入口；`orchestration.json` 里的开关字段和 `meeting` 只供 App 生成规则块，bot 不读这些字段，只按指令入口里的文字执行。只开会档的「boss 可主动开会」默认关闭，升级后不再主动开会；要恢复，在 `orchestration.json` 设 `"meetings_options": {"meetings": true}`，并按 `order.meetings` 将对应的开启文字写入 bot 指令入口。
 - 派发：`start_agent(seat="explorer-easy", role="具体职责", cwd=..., prompt=...)`，不传 `provider`、`access` 和模型，由服务补齐（Explorer 自动 `access=read`）。
 
 ### 3.3 review.json：agentnave-review 评审工位（`members.py` `ReviewFile`/`ReviewRole`）
@@ -192,7 +192,8 @@ Codex 在非 Git 目录也可直接派发，无需额外配置；1.0 忽略旧�
 ```bash
 SRC=~/.local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave/skills
 DEST=<bot 的 skill 目录>          # Grok Bot 见 §6.5
-for s in agentnave-manager agentnave-review; do   # 只开会档：把 agentnave-manager 换成 agentnave-meeting，并把另一份移走（两者不同时装）
+MAIN=agentnave-manager            # 只开会档改成 agentnave-meeting；先备份并移走另一份
+for s in "$MAIN" agentnave-review; do
   [ -d "$DEST/$s" ] && cp -a "$DEST/$s" "/tmp/$s.bak.$(date +%s)"   # 先备份旧版
   rm -rf "$DEST/$s" && cp -a "$SRC/$s" "$DEST/$s"
 done
@@ -304,7 +305,8 @@ Grok Bot 的全局 skill 仓库在 `/home/box/agent-data/workflows/<name>/SKILL.
 ```bash
 TAG=v1.11.0; DEST="$HOME/agent-data/workflows"; TMP=$(mktemp -d)
 git clone -q --depth 1 --branch $TAG https://github.com/TimWongUp/agentnave.git "$TMP/an"
-for s in agentnave-manager agentnave-review; do   # 只开会档：把 agentnave-manager 换成 agentnave-meeting，并把另一份移走（两者不同时装）
+MAIN=agentnave-manager            # 只开会档改成 agentnave-meeting；先备份并移走另一份
+for s in "$MAIN" agentnave-review; do
   [ -d "$DEST/$s" ] && mv "$DEST/$s" "/workspace/$s-backup-$(date +%m%d%H%M)"
   cp -a "$TMP/an/skills/$s" "$DEST/$s"
 done
