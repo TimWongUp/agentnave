@@ -127,14 +127,25 @@ impl Hosts {
         let meeting_path = host.optional("agentnave-meeting").unwrap();
         let connected = skill::state(path, &self.context.home, skill::MANAGER)["state"] == "app"
             || skill::state(&meeting_path, &self.context.home, skill::MEETING)["state"] == "app";
-        let (wanted_path, wanted, other_path, other) = if self.main_skill_is_meeting(host) {
+        // An unreadable orchestration file decides nothing: the Skill already there stays.
+        let decided = self.main_skill_is_meeting(host);
+        let meeting = decided.unwrap_or_else(|| {
+            skill::state(&meeting_path, &self.context.home, skill::MEETING)["state"] == "app"
+        });
+        let (wanted_path, wanted, other_path, other) = if meeting {
             (&meeting_path, skill::MEETING, path, skill::MANAGER)
         } else {
             (path, skill::MANAGER, &meeting_path, skill::MEETING)
         };
         let active = install_missing || connected;
         let mut changed = self.ensure_one(host, wanted_path, wanted, active)?;
-        if active && skill::state(other_path, &self.context.home, other)["state"] != "missing" {
+        if active
+            && decided.is_some()
+            && !matches!(
+                skill::state(other_path, &self.context.home, other)["state"].as_str(),
+                Some("missing" | "blocked")
+            )
+        {
             skill::remove(
                 other_path,
                 &self.context.app,
@@ -158,18 +169,19 @@ impl Hosts {
         Ok(changed)
     }
     /// Shared directories take manager if any connected row using them is not meetings-only.
-    pub(super) fn main_skill_is_meeting(&self, host: &Host) -> bool {
-        let document = crate::members::read_orchestration(&self.context.data).unwrap_or_default();
+    /// None when the orchestration file cannot be read, so nothing is switched on a guess.
+    pub(super) fn main_skill_is_meeting(&self, host: &Host) -> Option<bool> {
+        let document = crate::members::read_orchestration(&self.context.data).ok()?;
         let modes = &document["effective_apps"];
         if modes[host.id] != "meetings" {
-            return false;
+            return Some(false);
         }
-        !self.registry().iter().any(|other| {
+        Some(!self.registry().iter().any(|other| {
             other.id != host.id
                 && other.skill == host.skill
                 && self.has_managed_entry(other).unwrap_or(false)
                 && modes[other.id] != "meetings"
-        })
+        }))
     }
 
     pub(super) fn sync_main_skills(&self) -> Vec<Value> {

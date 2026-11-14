@@ -27,6 +27,21 @@ fn switches_main_skill_and_removes_both_on_disconnect() {
         "missing"
     );
     assert_eq!(hosts.state(&h)["skill"]["state"], "app");
+    // A damaged orchestration file switches nothing: the meeting Skill stays.
+    let file = hosts.context.data.join("orchestration.json");
+    let saved = std::fs::read(&file).unwrap();
+    std::fs::write(&file, b"{").unwrap();
+    hosts.ensure_skill(&h, true).unwrap();
+    assert_eq!(
+        skill::state(&meeting, &hosts.context.home, skill::MEETING)["state"],
+        "app"
+    );
+    assert_eq!(
+        skill::state(manager, &hosts.context.home, skill::MANAGER)["state"],
+        "missing"
+    );
+    assert_eq!(hosts.state(&h)["skill"]["state"], "app");
+    std::fs::write(&file, saved).unwrap();
     crate::members::save_orchestration(
         &hosts.context.data,
         &json!({"version":1,"preset":"off","effective_apps":{"pi":"off"}}),

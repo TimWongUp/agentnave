@@ -216,7 +216,7 @@ jq -n '{version:1,max_running:8,history_retention_days:90}' > "${AGENTNAVE_DATA_
 
 ## 9. 安装 skill
 
-`agentnave-manager` 必装，不用问；`agentnave-review` 只在第 6 步选了装时才装。`agentnave-handover` 是给桌面 App 宿主交接工作区用的，Linux 上的 bot 用不上，不装。已有的旧版会先备份。
+`agentnave-manager` 必装，不用问（用户选「只开会」档时改装 `agentnave-meeting`，两者不同时装）；`agentnave-review` 只在第 6 步选了装时才装。`agentnave-handover` 是给桌面 App 宿主交接工作区用的，Linux 上的 bot 用不上，不装。已有的旧版会先备份。
 
 直接执行（第 6 步选了装时先设 `EXTRA=agentnave-review`，否则留空）：
 ```bash

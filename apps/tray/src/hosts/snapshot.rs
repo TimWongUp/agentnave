@@ -217,7 +217,11 @@ impl Hosts {
             .iter()
             .find(|l| l["scope"] == "project" && l["has_entry"] == true)
             .map(|l| l["path"].clone());
-        let meeting = self.main_skill_is_meeting(host);
+        let meeting = self.main_skill_is_meeting(host).unwrap_or_else(|| {
+            host.optional("agentnave-meeting").is_some_and(|p| {
+                skill::state(&p, &self.context.home, skill::MEETING)["state"] == "app"
+            })
+        });
         let path = if meeting {
             host.optional("agentnave-meeting")
         } else {

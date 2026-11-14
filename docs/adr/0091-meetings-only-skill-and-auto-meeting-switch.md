@@ -19,7 +19,7 @@
 - **主动开会是开关**：只开会档增加「boss 可主动开会」（`orchestration.json` 的 `meetings_options.meetings`），缺省为关，关闭时规则块写「只在用户要求时开会」。已在用这一档的 boss 升级后不再主动开会，用户打开开关即可恢复。
 - **新增 `agentnave-meeting` Skill，与 `agentnave-manager` 互斥安装**：只开会档的 boss 装 `agentnave-meeting`，其余档位（含关闭）装 `agentnave-manager`；一个 Skill 目录只放其中一份，保存编排时 App 删掉另一份。`agentnave-meeting` 只含会议所需的内容（boss 会话归属、开会议室、讨论范围、等待与补跑、审核、保存、收尾两行）；`agentnave-manager` 仍含会议部分，供其他档开会。规则块按档位指向对应的 Skill。
 - **单一来源**：两份 Skill 的共用段落在仓库里只维护一份，用脚本拼出两份 Skill 的文件，并用测试检查生成结果是最新的。
-- **共用目录取 manager**：同一个 Skill 目录被档位不同的 boss 共用时（如多个宿主指向同一配置目录），装 `agentnave-manager`。宿主还会读其他宿主目录里的 Skill 时，App 管不到那一份，这时以规则块指向的 Skill 为准。
+- **共用目录取 manager**：同一个 Skill 目录被档位不同的 boss 共用时（如多个宿主指向同一配置目录），装 `agentnave-manager`；只开会档的规则块因此写明找不到 `agentnave-meeting` 时改读 manager 的开会部分。评审 Skill 依赖 manager 的私聊派发，只开会档下不派评审工位，由 boss 提示用户切档。宿主还会读其他宿主目录里的 Skill 时，App 管不到那一份，这时以规则块指向的 Skill 为准。
 - **决策模型档不拆**：`agentnave-manager` 主文件改为不偏向任何档位，固定工位的选法移到 `references/fixed-seats.md`，与 `references/decision.md` 并列，主文件只给分流表。
 - **无头宿主**：仍按 `references/headless.md` 手动复制；用户选「只开会」时复制 `agentnave-meeting`，否则复制 `agentnave-manager`。
 

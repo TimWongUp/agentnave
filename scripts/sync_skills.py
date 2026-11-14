@@ -25,6 +25,8 @@ REFERENCES = (
     "devin.md",
     "zcode.md",
 )
+# The blocks the meeting Skill takes from the manager; a lost marker would otherwise go unchecked.
+SHARED = ("boss-session", "boundaries", "cli-refs", "closing", "meeting-patterns", "prompts")
 BLOCK = re.compile(r"<!-- shared:([a-z-]+) -->\n(.*?)<!-- /shared:\1 -->", re.S)
 
 
@@ -39,12 +41,26 @@ def built() -> dict[Path, str]:
             raise SystemExit(f"agentnave-manager has no shared block {name!r}")
         return f"<!-- shared:{name} -->\n{source[name]}<!-- /shared:{name} -->"
 
+    if missing := sorted(set(SHARED) - {m[1] for m in BLOCK.finditer(text)}):
+        raise SystemExit(f"agentnave-meeting lost shared blocks: {', '.join(missing)}")
     files = {TARGET / "SKILL.md": BLOCK.sub(fill, text)}
     for name in REFERENCES:
         files[TARGET / "references" / name] = (SOURCE / "references" / name).read_text(
             encoding="utf-8"
         )
     return files
+
+
+LINK = re.compile(r"\]\((references/[^)#]+)\)")
+
+
+def unlinked() -> list[str]:
+    """References the built meeting Skill links but does not carry, and copies nothing links."""
+    files = built()
+    linked = set(LINK.findall(files[TARGET / "SKILL.md"]))
+    carried = {f"references/{name}" for name in REFERENCES}
+    present = {f"references/{p.name}" for p in (TARGET / "references").glob("*.md")}
+    return sorted((linked - carried) | (present - carried))
 
 
 def stale() -> list[Path]:
@@ -57,6 +73,9 @@ def stale() -> list[Path]:
 
 def main() -> int:
     if "--check" in sys.argv[1:]:
+        if names := unlinked():
+            print(f"agentnave-meeting references out of step: {', '.join(names)}", file=sys.stderr)
+            return 1
         if paths := stale():
             names = ", ".join(str(path.relative_to(SKILLS)) for path in paths)
             print(

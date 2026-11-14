@@ -185,7 +185,7 @@ Codex 在非 Git 目录也可直接派发，无需额外配置；1.0 忽略旧�
 
 ## 4. 安装自带 skill
 
-两个 skill：`agentnave-manager`（调用、开会、续接，必装）、`agentnave-review`（分级评审，可选）。包里还带了 `agentnave-handover`（桌面 App 宿主交接工作区用），Linux 上不需要装。复制到 bot 的 skill 仓库读取的目录，每个 skill 一个目录，目录里有 `SKILL.md` 和 `references/`：
+两个 skill：`agentnave-manager`（调用、开会、续接，必装）、`agentnave-review`（分级评审，可选）。用户选「只开会」档时，改装 `agentnave-meeting`（只讲会议室），不装 `agentnave-manager`，两者不同时装（ADR-0091）。包里还带了 `agentnave-handover`（桌面 App 宿主交接工作区用），Linux 上不需要装。复制到 bot 的 skill 仓库读取的目录，每个 skill 一个目录，目录里有 `SKILL.md` 和 `references/`：
 
 ```bash
 SRC=~/.local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave/skills
@@ -358,7 +358,7 @@ mv members.json.tmp members.json                             # 3) 原子替换
 | 员工、各模式白名单、默认模型 | `members.json`：`clis.<cli>.models`、`modes.{task,discussion}.<cli>.{models,default,overrides}`、`defaults` | `members.py` 的 `MemberFile`；`apps/tray/src/members.rs` | `list_members.members`/`restricted` | 不需要 |
 | 某个模型的默认档位和参数 | `members.json`：`clis.<cli>.models.<m>.{efforts,effort,options,notes}` | `MemberConfig`（`options` 里不能放 model/effort） | `list_members` 的组员 `options`/`effort` | 不需要 |
 | 每个 CLI 的权限档位 | `permissions.json`：`clis.<cli>` = `auto`/`full` | `PermissionFile`、`PERMISSION_TIERS` | `list_members.permissions`（auto 本身就是全权限的 CLI 会显示为 full） | 不需要 |
-| 编排档位（关闭/只开会/分工协作/并行分工/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`split_options.meetings`（分工协作下 boss 可主动开会，默认关）、`parallel_options.meetings`（并行分工下 boss 可主动开会，默认开）、`lead_only`（分工协作与并行分工共用，默认关；打开后小事也派出）、`meeting`（开会默认人数与席位）、`apps`/`effective_apps` | `OrchestrationFile`；`orchestration_rules.json`；`members.rs` 的 `validate_orchestration`；ADR-0041/0073/0083 | `list_members.orchestration.enabled`（`off` 与 `meetings` 为 `false`） | 不需要；**不要写 `apps` 和 `effective_apps`**（§3.2）；开关、`meeting` 和 `meetings` 正文只影响 App 写出的规则块，无头宿主按 `orchestration_rules.json` 与 `references/headless.md`（§3.2）写指令入口 |
+| 编排档位（关闭/只开会/分工协作/并行分工/自定义） | `orchestration.json`：`preset`、`custom`（自定义正文）、`split_options.meetings`（分工协作下 boss 可主动开会，默认关）、`parallel_options.meetings`（并行分工下 boss 可主动开会，默认开）、`meetings_options.meetings`（只开会档下 boss 可主动开会，默认关）、`lead_only`（分工协作与并行分工共用，默认关；打开后小事也派出）、`meeting`（开会默认人数与席位）、`apps`/`effective_apps` | `OrchestrationFile`；`orchestration_rules.json`；`members.rs` 的 `validate_orchestration`；ADR-0041/0073/0083 | `list_members.orchestration.enabled`（`off` 与 `meetings` 为 `false`） | 不需要；**不要写 `apps` 和 `effective_apps`**（§3.2）；开关、`meeting` 和 `meetings` 正文只影响 App 写出的规则块，无头宿主按 `orchestration_rules.json` 与 `references/headless.md`（§3.2）写指令入口 |
 | 通用与专项工位、角色开关 | `orchestration.json`：`explorer`、`worker` 与五个专项键的 `.{easy,hard}` → `{provider,model,effort?}`；`enabled_roles` | `ReviewSeat`；`orchestration_roles.json` | `list_members.orchestration`（含 `scopes`） | 不需要 |
 | 评审工位（技能 → agentnave-review） | `review.json`：`seats.<role>` | `ReviewFile`；`ui/skills.js`、`ui/advanced.js` | `list_members.review`/`review_error` | 不需要 |
 | 评审门（是否启用 agentnave-review） | **没有对应的服务配置文件**。App 会把这个 skill 按宿主开关（`ui/skills.js`，`/app/hosts/skill`），bot 这边就是装或卸 skill 目录（§6.5） | `apps/tray/src/hosts.rs` | 看 bot 的 skill 列表 | bot 下次读 skill 时生效 |
