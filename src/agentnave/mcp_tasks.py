@@ -72,7 +72,7 @@ from agentnave.models import (
     ProviderOption,
 )
 from agentnave.native_prompts import NativePrompt
-from agentnave.orchestration_roles import AUTO_SEAT
+from agentnave.orchestration_roles import AUTO_SEAT, ReviewSeat
 from agentnave.seat_fallbacks import SeatFallback
 from agentnave.seat_recommendation import Recommendation
 from agentnave.task_start import (
@@ -80,6 +80,7 @@ from agentnave.task_start import (
     StartArguments,
     add_write_warning,
     apply_task_defaults,
+    is_image_seat,
     native_seat_guidance,
     resolve_start,
     review_role,
@@ -170,7 +171,7 @@ async def start_agent(
         WrapValidator(_own_seat),
         Field(
             description=(
-                "App task seat from the visible list_members catalog: selects CLI if omitted, ordered available choices for new threads; explicit model wins, explicit CLI restricts choices; inherits on resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; also pass role as the desk label."
+                "App task seat from the visible list_members catalog: selects CLI if omitted, ordered available choices for new threads; explicit CLI or model wins; inherits on resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; also pass role as the desk label."
             )
         ),
     ] = None,
@@ -305,6 +306,29 @@ def native_seat_payload(
     return payload
 
 
+def _select_fallback(
+    seat_name: str | None,
+    session_id: str | None,
+    provider: ProviderName | None,
+    provider_options: dict[str, ProviderOption] | None,
+) -> tuple[ReviewSeat | None, SeatFallback | None]:
+    if session_id is not None or provider is not None or "model" in (provider_options or {}):
+        return None, None
+    configured = role_seat(seat_name, runtime.HOST)
+    if not configured or not configured.fallbacks:
+        return None, None
+    from agentnave.decision_seats import custom_seat
+    from agentnave.seat_fallbacks import select
+
+    custom = custom_seat(seat_name or "", runtime.HOST)
+    return select(
+        configured,
+        runtime.HOST,
+        runtime.task_excluded_providers(),
+        image=is_image_seat(seat_name, custom),
+    )
+
+
 async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPayload:
     """Resolve the seat and defaults, acquire isolation, start the task and describe it.
 
@@ -330,30 +354,16 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     fallback = None
     try:
         arguments = StartArguments(provider, cwd, role, requested, access)
-        if session_id is None and "model" not in (provider_options or {}):
-            from agentnave.seat_fallbacks import select
-
-            if (
-                configured := role_seat(requested or review_role(role), runtime.HOST)
-            ) and configured.fallbacks:
-                from agentnave.decision_seats import custom_seat
-
-                name = requested or review_role(role)
-                custom = custom_seat(name, runtime.HOST)
-                arguments.selected, fallback = select(
-                    configured,
-                    runtime.HOST,
-                    runtime.task_excluded_providers(),
-                    provider,
-                    image=name == "image-generator"
-                    or (custom is not None and custom.kind == "image"),
-                )
+        arguments.selected, fallback = _select_fallback(
+            requested or review_role(role), session_id, provider, provider_options
+        )
         arguments = resolve_start(
             arguments,
             _conversations(ctx),
             runtime.HOST,
             session_id,
             manager_session_id,
+            provider_options,
         )
     except NativeSeat as exc:
         return native_seat_payload(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
@@ -17,6 +17,7 @@ from agentnave.members import (
     ProviderName,
     ReviewRole,
     apply_member,
+    apply_seat,
     data_root,
     orchestration_enabled,
     read_members,
@@ -25,7 +26,8 @@ from agentnave.members import (
     validate_task_seat,
 )
 from agentnave.models import InvocationRequest, ProviderOption
-from agentnave.orchestration_roles import ReviewSeat, seat_role
+from agentnave.orchestration_roles import IMAGE_KIND, CustomSeat, ReviewSeat, seat_role
+from agentnave.seat_fallbacks import IMAGE_HOST_CLI_REASON
 from agentnave.store import Record, TaskRecord
 
 if TYPE_CHECKING:
@@ -83,6 +85,12 @@ def review_role(role: str | None) -> str:
     """Only review role labels select a seat; orchestration names require seat."""
     name = (role or "").strip()
     return name if name in get_args(ReviewRole.__value__) else ""
+
+
+def is_image_seat(name: str | None, custom: CustomSeat | None) -> bool:
+    return (name or "").strip() == "image-generator" or (
+        custom is not None and custom.kind == IMAGE_KIND
+    )
 
 
 def role_access(role: str | None) -> Literal["read", "write"] | None:
@@ -162,43 +170,47 @@ class StartArguments:
         self.defaults.append(f"{key} (session_id history)")
         return saved
 
-    def resolve_seat(self, host: Host) -> None:
+    def resolve_seat(
+        self, host: Host, provider_options: Mapping[str, ProviderOption] | None = None
+    ) -> None:
         if self.seat is not None:
             validate_task_seat(
                 self.seat, host, inherited="seat (session_id history)" in self.defaults
             )
         name = self.seat or review_role(self.role)
-        choice = host_cli_mode(host)
-        if (
-            self.selected is not None
-            and self.selected.provider == host.provider
-            and choice == "subagent"
-        ):
-            provider_health.check(data_root(), [(self.selected.provider, self.selected.model)])
-            raise NativeSeat(name, self.selected)
+        seat: ReviewSeat | None = None
         if self.provider is None:
             if not name:
                 raise ValueError("Pass provider, or seat / a review role to select an App seat")
             seat = self.selected or role_seat(name, host, required=True)
             assert seat is not None
-            if seat.provider == host.provider and choice == "subagent":
-                provider_health.check(data_root(), [(seat.provider, seat.model)])
-                raise NativeSeat(name, seat)
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
-        if self.provider == host.provider and choice == "skip":
-            raise ValueError("CLI is the host's own CLI")
         custom = custom_seat(name, host)
         implied = custom.access if custom is not None else role_access(name)
-        if implied is None:
-            return
-        if self.access is None:
-            self.access = implied
-            self.defaults.append(f"access ({name} seat)")
-        elif self.access != implied:
-            raise ValueError(
-                f"{name} declares access={implied}; omit access or pick a matching seat"
-            )
+        if implied is not None:
+            if self.access is None:
+                self.access = implied
+                self.defaults.append(f"access ({name} seat)")
+            elif self.access != implied:
+                raise ValueError(
+                    f"{name} declares access={implied}; omit access or pick a matching seat"
+                )
+        if is_image_seat(name, custom) and self.provider == host.provider:
+            raise ValueError(IMAGE_HOST_CLI_REASON)
+        choice = host_cli_mode(host)
+        if seat is not None and seat.provider == host.provider and choice == "subagent":
+            options, _ = apply_seat(seat, seat.provider, provider_options or {})
+            model = options.get("model", seat.model)
+            effort = options.get("effort", "")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError("model must be a non-empty string")
+            if not isinstance(effort, str):
+                raise ValueError("effort must be a string")
+            provider_health.check(data_root(), [(seat.provider, model)])
+            raise NativeSeat(name, ReviewSeat(provider=seat.provider, model=model, effort=effort))
+        if self.provider == host.provider and choice == "skip":
+            raise ValueError("CLI is the host's own CLI")
 
 
 def resolve_start(
@@ -207,6 +219,7 @@ def resolve_start(
     host: Host,
     session_id: str | None,
     manager_session_id: str | None,
+    provider_options: Mapping[str, ProviderOption] | None = None,
 ) -> StartArguments:
     if session_id is not None:
         task = conversations.resume_task(
@@ -221,7 +234,7 @@ def resolve_start(
             raise ValueError("Unknown session_id; pass provider and cwd explicitly")
     if arguments.cwd is None:
         raise ValueError("cwd is required for a new task; pass an absolute existing directory")
-    arguments.resolve_seat(host)
+    arguments.resolve_seat(host, provider_options)
     if arguments.access == "read":
         arguments.defaults.append(READ_ONLY_APPLIED)
     return arguments

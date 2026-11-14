@@ -22,7 +22,7 @@ from agentnave.mcp_runtime import (
     _short_title,
     _unreceived,
 )
-from agentnave.mcp_tasks import TaskLaunch, launch_task, native_seat_payload
+from agentnave.mcp_tasks import TaskLaunch, launch_task
 from agentnave.members import SettingsFileError, orchestration_decision
 from agentnave.models import InvocationRequest
 from agentnave.seat_recommendation import (
@@ -195,17 +195,6 @@ async def start_agents(
     for one, where, chosen in zip(tasks, directories, found, strict=True):
         if isinstance(chosen, RecommendationError):
             results.append(_not_started(chosen.code, chosen.message))
-        elif chosen.native:
-            results.append(
-                native_seat_payload(
-                    chosen.seat,
-                    runtime.HOST.provider,
-                    chosen.model,
-                    chosen.effort,
-                    recommendation=chosen,
-                    error=native_seat_message(chosen),
-                )
-            )
         else:
             results.append(
                 await _started(
@@ -257,4 +246,6 @@ async def _started(
     except (ToolError, ValueError, OSError) as exc:
         return _not_started("start_failed", str(exc), chosen)
     payload["recommendation"] = recommendation_payload(chosen)
+    if payload.get("reason") == "native_seat":
+        payload["error"] = {"code": "native_seat", "message": native_seat_message(chosen)}
     return payload

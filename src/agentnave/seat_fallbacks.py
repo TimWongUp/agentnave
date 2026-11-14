@@ -13,6 +13,9 @@ if TYPE_CHECKING:
     from agentnave.members import MemberFile, ModeStatus
 
 
+IMAGE_HOST_CLI_REASON = "Image CLI is the host's own CLI"
+
+
 class SkippedChoice(TypedDict):
     provider: str
     model: str
@@ -53,7 +56,7 @@ def statuses[Role: str](
             for choice, item in zip(choices, items, strict=True):
                 if choice.provider == host.provider:
                     item.available = False
-                    item.reason = "Image CLI is the host's own CLI"
+                    item.reason = IMAGE_HOST_CLI_REASON
                     item.native = None
         position = next((i for i, item in enumerate(items) if item.reason is None), 0)
         selected = items[position].model_copy(deep=True)
@@ -76,11 +79,13 @@ def select(
     seat: ReviewSeat,
     host: Host,
     excluded: frozenset[str],
-    provider: ProviderName | None,
+    provider: ProviderName | None = None,
     *,
     image: bool = False,
 ) -> tuple[ReviewSeat, SeatFallback | None]:
     """Pick a usable configured choice; leave failures to the existing dispatch path."""
+    if provider is not None:
+        return seat, None
     from agentnave.adapters import get_adapter
     from agentnave.members import (
         _member_modes,  # pyright: ignore[reportPrivateUsage]
@@ -106,13 +111,11 @@ def select(
 
     skipped: list[SkippedChoice] = []
     for index, choice in enumerate(choices):
-        if provider is not None and choice.provider != provider:
-            continue
         status = single_review_status(
             {"seat": choice}, mode, excluded, host, installed, document, health
         )["seat"]
         if image and choice.provider == host.provider:
-            status.reason = "Image CLI is the host's own CLI"
+            status.reason = IMAGE_HOST_CLI_REASON
         if status.reason is None:
             receipt = SeatFallback(position=index, skipped=skipped) if index else None
             return choice, receipt
