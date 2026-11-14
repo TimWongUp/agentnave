@@ -92,9 +92,10 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
    the element, so unfolding brings the same width back. */
 @media (min-width: 761px) {
   .app[data-side="off"] { --side-col: 0px; }
-  .app[data-side="off"], .app[data-conv-peek] { position: relative; }
+  .app[data-side="off"], .app:has(> .conv.folded) { position: relative; }
   .app[data-side="off"] > .floor-wrap { grid-column: 2; }
   .app[data-side="off"] > .conv { grid-column: 3; }
+  .app[data-side="off"] > .conv.folded { grid-column: auto; }
   .app[data-side="off"] .side { position: absolute; z-index: 40; top: 0; bottom: 0; left: 0; width: var(--side-w, 248px); transform: translateX(-100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; }
   .app[data-side="off"][data-side-peek] .side { transform: none; visibility: visible; box-shadow: 8px 0 30px #0006; transition: transform 0.2s ease; }
   /* the peeking list is the full one, whatever the rail looks like at this width */
@@ -108,13 +109,19 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
   .app[data-side="off"] .gi::before { left: 5px; }
 }
 @media (min-width: 861px) {
-  .app[data-conv-peek] { --conv-col: 0px; }
-  .app[data-conv-peek] > .conv { position: absolute; z-index: 40; top: 0; right: 0; bottom: 0; width: var(--conv-w, clamp(320px, 30vw, 440px)); box-shadow: -8px 0 30px #0006; animation: slide-in 0.2s ease-out; }
-  .app[data-conv-peek] .split-conv { display: none; }
+  .app:has(> .conv.folded) { --conv-col: 0px; }
+  .conv.folded { position: absolute; z-index: 40; top: 0; right: 0; bottom: 0; width: var(--conv-w, clamp(320px, 30vw, 440px)); transform: translateX(100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; }
+  .app[data-conv-peek] > .conv.folded { transform: none; visibility: visible; box-shadow: -8px 0 30px #0006; transition: transform 0.2s ease; }
+  .conv.folded .split-conv { display: none; }
 }
 @media (min-width: 861px) and (max-width: 1100px) {
-  .app[data-conv-peek] > .conv { width: var(--conv-w, clamp(300px, 34vw, 400px)); }
+  .conv.folded { width: var(--conv-w, clamp(300px, 34vw, 400px)); }
 }
+/* a column unfolded by its button slides in from its edge with the same motion it leaves by */
+@keyframes dock-left { from { transform: translateX(-100%); } }
+@keyframes dock-right { from { transform: translateX(100%); } }
+@media (min-width: 761px) { .side.docking { animation: dock-left 0.2s ease; } }
+@media (min-width: 861px) { .conv.docking { animation: dock-right 0.2s ease; } }
 .gi-host { position: relative; flex: none; align-self: flex-start; width: 30px; height: 30px; }
 .gi-host .avatar, .gi-host .host-letter { width: 30px; height: 30px; border-radius: 9px; }
 .gi-host .presence { right: -3px; bottom: -3px; }
@@ -163,7 +170,8 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 /* chat-office.js sets the width, 1.3 desks; 266px only holds until the first layout */
 .boss-zone .scene { width: 266px; max-width: 100%; margin-top: 14px; margin-bottom: -10px; }
 /* boss in the middle, recent chats and meetings on either side; narrow floors put the lists below */
-.boss-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: start; }
+/* the lists stop at 320px and sit against the boss, so the three stay together in the middle of a wide floor */
+.boss-row { display: grid; grid-template-columns: minmax(0, 320px) auto minmax(0, 320px); justify-content: center; gap: 14px; align-items: start; }
 .boss-mid { grid-column: 2; grid-row: 1; }
 .boss-side { min-width: 0; display: flex; flex-direction: column; gap: 2px; cursor: default; }
 .side-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 3 + 4px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }

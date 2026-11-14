@@ -62,8 +62,15 @@ function setCollapsed(on) {
   el.app.removeAttribute("data-conv-peek");
   store(COLLAPSED_KEY, on ? "1" : null);
 }
+// An unfolded column slides in; the class is dropped and set again so a second unfold plays too.
+function slideIn(panel) {
+  panel.classList.remove("docking");
+  void panel.offsetWidth;
+  panel.classList.add("docking");
+}
 el.convToggle.addEventListener("click", () => {
   setCollapsed(!state.convCollapsed);
+  if (!state.convCollapsed) slideIn(el.drawer);
   if (state.chat) renderAll(state.chat);
 });
 
@@ -82,6 +89,7 @@ el.sideToggle.addEventListener("click", () => {
   store(SIDE_COLLAPSED_KEY, state.sideCollapsed ? "1" : null);
   state.sidePeek = false;
   el.app.removeAttribute("data-side-peek");
+  if (!state.sideCollapsed) slideIn(el.app.querySelector(".side"));
   renderSideToggle();
 });
 renderSideToggle();
@@ -275,7 +283,10 @@ function instructionsFirst(replies) {
 }
 function renderConv(c, ctx) {
   const L = AN.L || ((zh) => zh);
-  el.drawer.hidden = overlay.matches ? !state.convOpen : state.convCollapsed && !state.convPeek;
+  // Beside the floor a folded drawer stays in the page, out to the right, so it can slide; only the overlay hides it.
+  const visible = overlay.matches ? state.convOpen : !state.convCollapsed || state.convPeek;
+  el.drawer.hidden = overlay.matches && !visible;
+  el.drawer.classList.toggle("folded", !overlay.matches && state.convCollapsed);
   // The fold button is in the top bar; the overlay has its own close button.
   el.convToggle.hidden = overlay.matches;
   const shut = state.convCollapsed;
@@ -283,7 +294,7 @@ function renderConv(c, ctx) {
   setAttr(el.convToggle, "aria-expanded", shut ? "false" : "true");
   setAttr(el.convToggle, "aria-label", hint);
   setAttr(el.convToggle, "title", hint);
-  if (el.drawer.hidden) {
+  if (!visible) {
     AN.voice?.controls(false, null, ctx);
     state.scopeKey = "";
     return;

@@ -268,11 +268,15 @@ function sideItems(c, ctx) {
     .sort((a, b) => Number(running(b)) - Number(running(a)) || recent(a, b))
     .map((d) => {
       const s = deskMood(d, ctx);
+      const status = `${cliOf(d)} · ${s.word}`;
+      // A desk with a role is told by it, with its model and effort below; one without keeps the model in the name.
+      const { name: model, effort } = deskParts(d);
+      const shownModel = d.identity?.model_source === "unknown" ? "" : model;
       return {
         scope: { kind: "desk", key: d.key },
         heads: [d],
-        name: deskName(d),
-        sub: `${cliOf(d)} · ${s.word}`,
+        name: d.role || deskName(d),
+        sub: (d.role && [shownModel, effort].filter(Boolean).join(" · ")) || status,
         tone: running(d) ? "run" : s.mood === "failed" ? "bad" : "",
         time: relTime(d.last_active),
       };

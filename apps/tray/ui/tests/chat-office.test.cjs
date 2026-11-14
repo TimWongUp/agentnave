@@ -549,3 +549,21 @@ test("a folded column peeks on its button or the window edge and leaves 300ms af
   assert.equal(attrs["data-side-peek"], false, "the bar does not open the list");
   assert.equal(attrs["data-conv-peek"], false, "a drag in progress does not open the drawer");
 });
+
+test("a private chat row is told by its role, with model and effort below, and falls back without them", () => {
+  const context = vm.createContext({
+    AN: { at: Date.parse, dozing: () => false }, window: {}, ResizeObserver: class { observe() {} }, state: {}, el: {}, FIG: 100, L: zh => zh,
+    activities: () => [], cliOf: () => "Codex", relTime: () => "", fullRoom: () => false,
+    deskName: d => (d.effort ? `${d.model} · ${d.effort}` : d.model),
+    deskParts: d => ({ name: d.model, effort: d.effort || "" }),
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  const row = d => context.sideItems({ desks: [{ kind: "private", last_active: "2026-11-14T00:00:00Z", ...d }], rooms: [] }, {}).chats[0];
+  const identity = { model_source: "native" };
+  assert.deepEqual([row({ key: "a", role: "接手方视角", model: "gpt-6.1-sol", effort: "high", identity }).name, row({ key: "a", role: "接手方视角", model: "gpt-6.1-sol", effort: "high", identity }).sub], ["接手方视角", "gpt-6.1-sol · high"]);
+  assert.equal(row({ key: "a", role: "r", model: "m", identity }).sub, "m", "no effort shows the model alone");
+  assert.equal(row({ key: "a", role: "r", model: "未记录模型", effort: "low", identity: { model_source: "unknown" } }).sub, "low", "a placeholder model is not shown");
+  assert.equal(row({ key: "a", role: "r", model: "未记录模型", identity: { model_source: "unknown" } }).sub, "Codex · 摸鱼", "nothing to show keeps the status line");
+  const plain = row({ key: "a", model: "m", effort: "high", identity });
+  assert.deepEqual([plain.name, plain.sub], ["m · high", "Codex · 摸鱼"], "without a role the row is as before");
+});
