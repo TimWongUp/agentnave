@@ -226,6 +226,8 @@ SRC=~/.local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave/ski
 DEST="$HOME/agent-data/workflows"      # Grok Bot 的全局 skill 仓库；其他 bot 换成自己的目录
 for s in $MAIN $EXTRA; do               # 第 6 步选了装时 EXTRA=agentnave-review
   [ -d "$DEST/$s" ] && mv "$DEST/$s" "$HOME/$s-backup-$(date +%m%d%H%M)"; cp -a "$SRC/$s" "$DEST/$s"; done
+OTHER=agentnave-meeting; [ "$MAIN" = agentnave-meeting ] && OTHER=agentnave-manager   # 两者不同时装，切档时移走另一份
+[ -d "$DEST/$OTHER" ] && mv "$DEST/$OTHER" "$HOME/$OTHER-backup-$(date +%m%d%H%M)"
 ```
 验证：`ls $DEST/agentnave-*/SKILL.md` 能列出装了的那几个（§6.5）。
 
