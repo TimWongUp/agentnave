@@ -472,8 +472,9 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
 .td-more { padding: 2px 6px; font-size: 11px; color: var(--faint); }
 
 /* ---- open desks ---- */
-/* four desks a row, each as wide as the row allows; fewer only when a desk would drop below 170px */
-.desks { --cols: 4; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+/* five desks a row, each as wide as the row allows; fewer only when a desk would drop below 170px */
+.desks { --cols: 5; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+@container (max-width: 956px) { .desks { --cols: 4; } }
 @container (max-width: 776px) { .desks { --cols: 3; } }
 @container (max-width: 596px) { .desks { --cols: 2; } }
 @container (max-width: 416px) { .desks { --cols: 1; } }
