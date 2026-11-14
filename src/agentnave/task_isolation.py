@@ -41,9 +41,15 @@ class IsolationHold:
         return self.claimed.lease if self.claimed is not None else None
 
 
-def may_touch_isolated_dirs(cwd: Path, *, requested: bool) -> bool:
-    """False when acquiring can be skipped without reading any registry or repository."""
-    if requested:
+def may_touch_isolated_dirs(
+    cwd: Path, *, requested: bool, resumed_task: TaskRecord | None = None
+) -> bool:
+    """False when acquiring can be skipped without reading any registry or repository.
+
+    A thread resumed where it last ran in an isolated directory never skips: that path may now
+    be a link to an ordinary directory, which only acquire_isolation refuses.
+    """
+    if requested or resumed_isolation_id(cwd, resumed_task) is not None:
         return True
     return any(part.lower() == WORKTREES_DIR_NAME for part in cwd.resolve().parts)
 

@@ -796,8 +796,6 @@ class Conversations(ConversationStore):
         isolation_requested: bool,
         isolation_ref: str | None,
     ) -> IsolationHold:
-        if not may_touch_isolated_dirs(request.cwd, requested=isolation_requested):
-            return IsolationHold(request)
         resumed_task = (
             self.resume_task(
                 request.session_id,
@@ -808,6 +806,10 @@ class Conversations(ConversationStore):
             if request.session_id is not None and not isolation_requested
             else None
         )
+        if not may_touch_isolated_dirs(
+            request.cwd, requested=isolation_requested, resumed_task=resumed_task
+        ):
+            return IsolationHold(request)
         hold = acquire_isolation(
             self.isolated,
             request,
@@ -875,7 +877,9 @@ class Conversations(ConversationStore):
                     "isolation needs a known manager session; pass manager_session_id or "
                     "configure AGENTNAVE_HOST_SESSION_ID"
                 )
-        if not may_touch_isolated_dirs(request.cwd, requested=isolation_requested):
+        if not may_touch_isolated_dirs(
+            request.cwd, requested=isolation_requested, resumed_task=resumed_task
+        ):
             return IsolationHold(request)
         self.manager.check_start(request)
         self._check_capacity(1)

@@ -139,7 +139,9 @@ STAGED_NOTE = (
 )
 _STAGED_TASK = (
     "This step is a read-only investigation. The same thread may turn to implementation "
-    "afterwards, so the candidates are write seats. Judge the difficulty by this step alone."
+    "afterwards, so the candidates are write seats. Judge the difficulty by this step alone, "
+    "and choose the specialty by the kind of files that implementation would change; a plain "
+    "code investigation takes the general worker."
 )
 
 

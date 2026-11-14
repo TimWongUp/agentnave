@@ -2881,6 +2881,55 @@ async def test_creating_an_isolated_directory_does_not_block_the_event_loop(
     assert ticks >= 10
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+@pytest.mark.asyncio
+async def test_resume_refuses_an_auto_released_path_replaced_by_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    repo = _light_repo(tmp_path / "repo")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, pathlib, sys\n"
+        "if 'TURN_TWO' in sys.stdin.read():\n"
+        "    pathlib.Path('ran-here').write_text('x', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': 'ok', 'session_id': 'sess-link', "
+        "'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    boss = {"provider": "claude", "manager_session_id": "boss-link"}
+    async with Client(mcp) as client:
+        first = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        **boss,
+                        "prompt": "look",
+                        "cwd": str(repo),
+                        "access": "read",
+                        "isolation": {},
+                        "wait": True,
+                    },
+                )
+            ).structured_content
+        )
+        wt_path = Path(str(_payload(first["isolation"])["path"]))
+        assert not wt_path.exists()  # untouched, so auto-released
+        # The released path now leads to an ordinary directory outside any isolated one.
+        wt_path.symlink_to(elsewhere, target_is_directory=True)
+        resumed = await client.call_tool(
+            "start_agent", {**boss, "prompt": "TURN_TWO", "session_id": "sess-link", "wait": True}
+        )
+        assert resumed.is_error and "no longer isolated directory" in str(resumed.content)
+        assert not (elsewhere / "ran-here").exists()
+
+
 def _own_seat(seat_id: str, provider: str, access: str, **extra: object) -> dict[str, object]:
     return {
         "id": seat_id,

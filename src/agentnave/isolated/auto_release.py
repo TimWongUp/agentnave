@@ -41,6 +41,7 @@ from agentnave.isolated.store import (
     WorktreeStore,
     local_machine_id,
 )
+from agentnave.isolated.worktree_state import worktree_link_valid
 from agentnave.store import now
 
 
@@ -82,13 +83,18 @@ def _partial_release_warning(isolation_id: str, exc: object) -> str:
 
 
 def _worktree_intact(record: IsolatedRecord, main_root: Path) -> bool:
-    """The directory is still a checked-out worktree on its managed branch."""
+    """The failed removal took nothing: still this record's worktree, on its managed branch,
+    with every tracked file in place. Files written late do not count against it."""
     wt_path = Path(record.worktree_path)
-    if is_link(wt_path) or not (wt_path / ".git").exists():
+    if is_link(wt_path) or not worktree_link_valid(
+        wt_path, record.worktree_git_dir, Path(record.repo_common_dir)
+    ):
         return False
     try:
-        return ref_exists(main_root, record.branch_ref)
-    except (IsolationError, OSError):
+        if not ref_exists(main_root, record.branch_ref):
+            return False
+        return not run_git(["ls-files", "--deleted", "-z"], cwd=wt_path).stdout
+    except (IsolationError, OSError, ValueError):
         return False
 
 

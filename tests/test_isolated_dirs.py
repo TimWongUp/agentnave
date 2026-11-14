@@ -932,6 +932,20 @@ def test_abort_without_the_repository_lock_hands_the_record_to_recovery(
     assert [outcome.status for outcome in dirs.recover()] == ["rolled_back"]
     assert dirs.store.get(created.id) is None
     assert not created.worktree_path.exists()
+
+    # A directory another resume already claimed stays theirs, lock or no lock.
+    shared = dirs.create(repo, workspace_id="ws-1")
+    other = dirs.claim_for_cwd(shared.execution_cwd)
+    assert other is not None
+    try:
+        with repo_lock(shared.repo_common_dir):
+            dirs.abort_created(shared)
+        assert shared.lease.closed
+        record = dirs.store.get(shared.id)
+        assert record is not None and record.state == "ready"
+        assert shared.worktree_path.is_dir()
+    finally:
+        other.lease.release()
     dirs.close()
 
 
@@ -1450,6 +1464,26 @@ def test_settle_task_retains_on_concurrent_lease_foreign_workspace_or_failures(
     assert (raced.worktree_path / "late.txt").read_text(encoding="utf-8") == "unsaved work\n"
     rec = dirs.store.get(raced.id)
     assert rec is not None and rec.state == "ready"
+
+    torn = dirs.create(repo, workspace_id="ws-1")
+
+    def delete_partway(*_args: object, **_kwargs: object) -> str | None:
+        # The removal took a tracked file before it failed; .git is still in place.
+        (torn.worktree_path / "README.md").unlink()
+        raise OSError("file in use")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(auto_release_mod, "complete_deletion_locked", delete_partway)
+        summary, warnings = dirs.settle_task(
+            torn.id,
+            workspace_id="ws-1",
+            lease=torn.lease,
+            auto_release=True,
+        )
+    assert summary.auto_released is False
+    assert any("stopped partway" in w for w in warnings)
+    rec = dirs.store.get(torn.id)
+    assert rec is not None and rec.state == "needs_attention"
     dirs.close()
 
 

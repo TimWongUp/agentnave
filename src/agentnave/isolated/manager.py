@@ -464,11 +464,26 @@ class IsolatedDirs:
                     rollback_creating_locked(self.store, latest)
         except RepoLockUnavailable:
             # Without the lock nothing can be removed safely. Hand the record to recovery as an
-            # unfinished creation instead of leaving a ready directory nobody knows about.
-            self.store.revert_to_creating(created.id, updated_at=now())
+            # unfinished creation instead of leaving a ready directory nobody knows about,
+            # unless another resume already claimed a rebuilt directory: that one stays theirs.
+            if not created.lease.closed:
+                created.lease.release()
+            if not self._leased_by_others(created):
+                self.store.revert_to_creating(created.id, updated_at=now())
         finally:
             if not created.lease.closed:
                 created.lease.release()
+
+    def _leased_by_others(self, created: CreatedIsolation) -> bool:
+        """Whether a lease is still live once created's own is released, read without the lock.
+
+        Stale lease files are left alone (see has_active_leases). When this cannot be read
+        the directory counts as leased, so its registration is not touched.
+        """
+        try:
+            return has_active_leases(created.repo_common_dir, created.id, cleanup_stale=False)
+        except (OSError, ValueError):
+            return True
 
     def summarize_changes(
         self,
