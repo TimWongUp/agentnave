@@ -95,12 +95,21 @@ def new_client(model: str, key: str) -> DecisionClient:
     return _MODELS[model][1](key)
 
 
-# What a difficulty asks of the work. Each seat's line carries its own meaning, so a specialty
-# that offers only some of the levels still tells them apart.
+# What is still undecided when the work starts. Each seat's line carries its own meaning, so a
+# specialty that offers only some of the levels still tells them apart.
 _DIFFICULTY_MEANING: dict[CustomSeatDifficulty, str] = {
-    "easy": "settled scope and explicit steps: locating, collecting evidence, a specified change",
-    "medium": "a defined goal that still needs some investigation or decisions on the way",
-    "hard": "design trade-offs, root-cause judgment or unclear boundaries",
+    "easy": (
+        "what to do is already spelled out: locating, collecting evidence, applying a "
+        "specified change, however many files it touches"
+    ),
+    "medium": (
+        "goal and acceptance are clear; the worker investigates and makes local decisions on "
+        "the way, e.g. a fix with a known cause or an ordinary feature"
+    ),
+    "hard": (
+        "the answer itself is still open: a root cause unknown after a first look, a lasting "
+        "architecture trade-off, or unclear module boundaries"
+    ),
 }
 
 

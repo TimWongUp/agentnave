@@ -3094,12 +3094,15 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
         (text, sent), *_ = decision.calls
         assert text == "Task:\n给设置页加一个开关\nRequired access: write"
         assert sent == {
-            "write-a": "role write-a | difficulty: medium (a defined goal that still needs some "
-            "investigation or decisions on the way) | access: write",
-            "write-b": "role write-b | difficulty: hard (design trade-offs, root-cause judgment "
-            "or unclear boundaries) | access: write",
-            "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy (settled scope "
-            "and explicit steps: locating, collecting evidence, a specified change) | access: write",
+            "write-a": "role write-a | difficulty: medium (goal and acceptance are clear; the "
+            "worker investigates and makes local decisions on the way, e.g. a fix with a known "
+            "cause or an ordinary feature) | access: write",
+            "write-b": "role write-b | difficulty: hard (the answer itself is still open: a root "
+            "cause unknown after a first look, a lasting architecture trade-off, or unclear "
+            "module boundaries) | access: write",
+            "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy (what to do is "
+            "already spelled out: locating, collecting evidence, applying a specified change, "
+            "however many files it touches) | access: write",
             "draw-comic": "漫画风格 (image generation) | access: write",
             "draw-real": "写实: 照片质感的写实人像 (image generation) | access: write",
         }
