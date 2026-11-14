@@ -24,6 +24,9 @@ from agentnave.claude_tui.screen import ANSI, clean_paste, workspace_matches
 from agentnave.claude_tui.terminal import Terminal
 
 STARTUP_TIMEOUT = 60.0
+# Post-login Mendel experiment refresh must finish before SendUserMessage or agy disables hooks
+# for the whole turn; proceed after this bound so a stalled refresh never hangs dispatch.
+EXPERIMENT_WAIT = 9.0
 DELIVERY_TIMEOUT = 30.0
 # A menu drawn this long is a real dialog, not a frame in the middle of a redraw.
 DIALOG_SETTLE = 2.0
@@ -34,6 +37,11 @@ STALL_LIMIT = 60.0
 # A call agy moves to the background names its task here, and ends with that task's message.
 BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
 TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
+_EXPERIMENTS_READY = b"Experiments refreshed after login"
+_CREATED_CONVERSATION = re.compile(rb"Created conversation ([0-9a-fA-F-]{36})\b")
+_UNMOUNTED_HOOKS_WARNING = (
+    "Antigravity CLI did not load hooks for this turn; completed from its written reply"
+)
 
 
 def emit(event: dict[str, object]) -> None:
@@ -52,6 +60,29 @@ def transcript_path(conversation_id: str) -> Path:
         / conversation_id
         / ".system_generated/logs/transcript_full.jsonl"
     )
+
+
+def log_dir() -> Path:
+    return Path.home() / ".gemini/antigravity-cli/log"
+
+
+def find_run_log(directory: Path, agy_pid: int, started: float) -> Path | None:
+    """The cli-*.log opened by agy_pid, never another concurrent agy process's log."""
+    marker = re.compile(rf"Starting language server process with pid {agy_pid}(?!\d)".encode())
+    try:
+        candidates = [
+            (stat.st_mtime, path)
+            for path in directory.glob("cli-*.log")
+            if (stat := path.stat()).st_mtime >= started - 5 and stat.st_size < 16 << 20
+        ]
+        for _, path in sorted(candidates, reverse=True)[:20]:
+            with path.open("rb") as source:
+                head = source.read(16384)
+            if marker.search(head):
+                return path
+    except OSError:
+        return None
+    return None
 
 
 def flat(text: str) -> str:
@@ -73,6 +104,8 @@ class Turn:
     response: str = ""
     answered: bool = False
     model: str | None = None
+    entry_intact: bool = True
+    pre_invocation_seen: bool = False
     stop_seen: bool = False
     stopped: bool = False
     error: str | None = None
@@ -212,10 +245,19 @@ class Turn:
         conversation_id = event.get("conversationId")
         if not isinstance(conversation_id, str) or not conversation_id:
             return
-        if name == "SessionStart" and self.conversation_id is None:
+        if (
+            name in ("SessionStart", "PreInvocation")
+            and self.conversation_id is None
+            and not event.get("parentConversationId")
+        ):
             self.start(conversation_id)
-        # Subagent conversations run in the same agy and stop on their own.
-        if name != "Stop" or conversation_id != self.conversation_id:
+        # Subagent conversations run in the same agy and fire their own hooks.
+        if conversation_id != self.conversation_id:
+            return
+        if name == "PreInvocation":
+            self.pre_invocation_seen = True
+            return
+        if name != "Stop":
             return
         self.stop_seen = True
         if isinstance(model := event.get("modelName"), str) and model:
@@ -224,6 +266,16 @@ class Turn:
             self.error = f"{event.get('terminationReason') or 'error'}: {error}"
         # Like print mode, the turn waits for its background commands.
         self.stopped = event.get("fullyIdle") is True or self.error is not None
+
+    def can_complete_without_stop(self) -> bool:
+        return (
+            not self.pre_invocation_seen
+            and self.entry_intact
+            and self.answered
+            and bool(self.response.strip())
+            and not self.open_tools
+            and not self.background
+        )
 
     def result(self) -> dict[str, object]:
         if self.error is None and not self.response:
@@ -247,16 +299,58 @@ class Run:
     turn: Turn
     hooks: Path
     seen: set[str] = field(default_factory=set[str])
+    started: float = field(default_factory=time.time)
+    run_log: Path | None = None
+
+    def log_bytes(self) -> bytes:
+        pid = getattr(getattr(self.terminal, "process", None), "pid", None)
+        if not isinstance(pid, int):
+            return b""
+        if self.run_log is None:
+            self.run_log = find_run_log(log_dir(), pid, self.started)
+        if self.run_log is None:
+            return b""
+        try:
+            if self.run_log.stat().st_size < 16 << 20:
+                return self.run_log.read_bytes()
+        except OSError:
+            return b""
+        return b""
 
     def poll(self) -> str:
         screen = self.terminal.poll()
         for name, event in read_events(self.hooks, self.terminal.process.pid, self.seen):
             self.turn.hook(name, event)
+        if self.turn.conversation_id is None and (
+            created := _CREATED_CONVERSATION.search(self.log_bytes())
+        ):
+            self.turn.start(created.group(1).decode())
         self.turn.read()
         return screen
 
     def exited(self) -> bool:
         return self.terminal.process.poll() is not None
+
+    def await_experiments(self) -> bool:
+        """Waits for this agy process's post-login experiment refresh, proceeding on timeout."""
+        deadline = time.monotonic() + EXPERIMENT_WAIT
+        menu_since: float | None = None
+        while time.monotonic() < deadline:
+            if _EXPERIMENTS_READY in self.log_bytes():
+                return True
+            screen = self.poll()
+            now = time.monotonic()
+            if self.exited():
+                self.turn.block("agy exited before becoming ready", screen)
+                return False
+            if state(screen) != "menu":
+                menu_since = None
+            elif menu_since is None:
+                menu_since = now
+            elif now - menu_since >= DIALOG_SETTLE:
+                self.turn.block("unexpected startup dialog; handle it in agy", screen)
+                return False
+        return True
 
     def await_ready(self) -> bool:
         deadline = time.monotonic() + STARTUP_TIMEOUT
@@ -359,8 +453,8 @@ class Run:
             self.turn.error = "agy stopped without a final reply after this task"
 
     def stalled(self, shown: str, steady: float, screen: str) -> bool:
-        """Blocks a turn whose screen has stood still past its limit. A busy footer has none,
-        nor an idle one after a Stop that left background commands running: agy stops again
+        """Ends or blocks a turn whose screen has stood still past its limit. A busy footer has
+        none, nor an idle one after a Stop that left background commands running: agy stops again
         once they finish."""
         # With permissions skipped, a menu mid-turn is one no hook can answer.
         if shown == "menu" and steady > DIALOG_SETTLE:
@@ -368,14 +462,33 @@ class Run:
         elif shown == "idle" and not self.turn.stop_seen and self.turn.answered:
             if steady < STOP_GRACE:
                 return False
+            if self.turn.can_complete_without_stop():
+                if _UNMOUNTED_HOOKS_WARNING not in self.turn.warnings:
+                    self.turn.warnings.append(_UNMOUNTED_HOOKS_WARNING)
+                self.turn.stopped = True
+                return True
             reason = (
-                "agy's reply is written but its Stop hook never arrived; check the "
-                "agentnave-interactive entry in ~/.gemini/config/hooks.json"
+                "agy's reply is written and PreInvocation ran, but its Stop hook never arrived; "
+                "check the agentnave-interactive entry in ~/.gemini/config/hooks.json"
+                if self.turn.pre_invocation_seen
+                else "agy's reply is written, but hooks did not load for this turn "
+                "(agy startup experiment race) and its Stop hook never arrived"
             )
         elif shown == "unknown" or (shown == "idle" and not self.turn.stop_seen):
             if steady < STALL_LIMIT:
                 return False
-            reason = "agy stopped changing without a reply or Stop hook"
+            if self.turn.stop_seen:
+                reason = "agy stopped changing on an unrecognized screen before finishing"
+            elif self.turn.pre_invocation_seen:
+                reason = (
+                    "agy stopped changing without a reply or Stop hook; check the "
+                    "agentnave-interactive entry in ~/.gemini/config/hooks.json"
+                )
+            else:
+                reason = (
+                    "agy stopped changing without a reply; hooks did not load for this turn "
+                    "(agy startup experiment race)"
+                )
         else:
             return False
         self.turn.block(reason, screen)
@@ -417,6 +530,7 @@ def run_main(executable: str, conversation_id: str | None, extra: list[str], pro
             transcript = cast(Path, turn.transcript)
             turn.offset = transcript.stat().st_size if transcript.exists() else 0
         if warning := ensure_entry():
+            turn.entry_intact = False
             turn.warnings.append(warning)
         with tempfile.TemporaryDirectory(prefix="agentnave-agy-") as tmp:
             args = [*extra, "--settings", settings(os.getcwd())]
@@ -425,7 +539,7 @@ def run_main(executable: str, conversation_id: str | None, extra: list[str], pro
             terminal = Terminal(executable, args, {ENV: tmp}, AgyScreen)
             try:
                 run = Run(terminal, turn, Path(tmp))
-                if run.await_ready() and run.deliver(prompt):
+                if run.await_ready() and run.await_experiments() and run.deliver(prompt):
                     run.await_stop()
             finally:
                 close(terminal)

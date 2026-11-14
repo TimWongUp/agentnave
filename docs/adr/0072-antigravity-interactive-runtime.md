@@ -1,9 +1,10 @@
 # ADR-0072：Antigravity CLI 在权限放开时改用交互模式运行
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-09
 - 信任屏确认与用户配置持久化例外修订见 [ADR-0078](0078-startup-confirmations.md)。
 - 运行活动可由屏幕状态行更新，见 [ADR-0079](0079-agy-screen-activity.md)。
+- 2026-11-14 修订启动投递、`agentnave-interactive` 条目与无 `Stop` 时的终态规则：投递前等待本次进程日志完成实验刷新，增加 `PreInvocation` 探针，并对整轮未挂载 hooks 的回合做条件保底收尾，见文末「修订（2026-11-14）」。
 - 沿用 [ADR-0056](0056-claude-interactive-runtime.md) 的形状：helper 在同一 supervisor 进程组里用伪终端驱动 CLI，一次调用一个进程，回合结束即退出。
 
 ## 背景
@@ -29,24 +30,35 @@ Antigravity Adapter 用 `agy --input-format stream-json --output-format stream-j
 - **何时使用**。macOS／Linux 默认打开，App 在 Antigravity 员工卡片上提供「交互模式运行」开关，存于数据根 `settings.json`，缺省打开；Windows 没有交互运行时。服务只在本次运行已带 `dangerously_skip_permissions=true`、且没有 `-p` 专有选项（`print_timeout`、`disable_slash_commands`）时套用，并在 `defaults_applied` 注明；App 的两个权限档位对 Antigravity 都写放开，所以开着开关时私聊与非受限会议席位都走交互模式。调用方显式传 `interactive=true` 却没放开权限，Adapter 拒绝。受限工具席位继续用 `-p`。
 - **形状**。Adapter 的 Provider argv 换成服务自带的 helper（`agentnave.agy_tui`），helper 用伪终端启动 `agy`，把 transcript 与 hook 事件归一成 agy `-p` 的 stream-json 事件（`init`、`step_update`、`result`）写到 stdout，Adapter 的解析和活动映射与 `-p` 共用。模型、档位、模式等参数映射与 `-p` 相同。
 - **hooks 走全局文件的门控条目**。helper 每次运行前确认全局 `hooks.json` 里有名为 `agentnave-interactive` 的条目，缺失或内容不同就补上，保留其他条目；首次写入在回执 `warnings` 注明。条目只在 helper 给 agy 设置了专用环境变量时起作用，否则立即返回空结果，不影响用户自己、Antigravity App 与 IDE 的会话。它包含：
-  - `SessionStart`、`Stop`：把事件写到本次调用的私有临时目录，文件名带 `$PPID`，helper 只认自己启动的 agy；任务里嵌套运行的 agy 进程号不同，被忽略。同一 agy 里子代理会话的 `Stop` 按会话 ID 忽略。
+  - `SessionStart`、`PreInvocation`、`Stop`：把事件写到本次调用的私有临时目录，文件名带 `$PPID`，helper 只认自己启动的 agy；任务里嵌套运行的 agy 进程号不同，被忽略。同一 agy 里子代理会话的 `PreInvocation`、`Stop` 按会话 ID 忽略。
   - `PreToolUse`（只匹配 `ask_question`）：拒绝并说明无人能答、把问题写进最终回答，与 `-p` 一致；没有环境变量时返回 `allow`，交给 agy 默认策略。
   - 文件不是合法 JSON 或条目被用户停用时报 BLOCKED，不覆盖。
 - **信任**。helper 用 `--settings` 只对本次会话把工作目录加入 `trustedWorkspaces`，属于协议必需参数，不弹信任框，也不写用户配置。
-- **分工**。页脚判断状态，transcript 提供回复和投递确认，`Stop` 证明回合连同后台命令已经结束。证据不足时限时报 BLOCKED，不推定成功，也不无限等待。
+- **分工**。页脚判断状态，transcript 提供回复和投递确认，`PreInvocation` 证明本轮已挂载 hooks，`Stop` 证明回合连同后台命令已经结束。证据不足时除下述未挂载 hooks 的窄例外外限时报 BLOCKED，不无限等待。
 - **画面识别**。helper 用 agy 专用的画面模型，在 Claude 的模型上补 `CSI X`、`CSI P`、`ESC M`，Claude 路径不变；只补实际字节里出现过的序列，滚动区等出现时再加。状态只看渲染后最下面四行非空行，按菜单、运行中、空闲、未知的顺序判定，对话里引用的这些字眼不算数。
-- **启动与投递**。页脚空闲后整段粘贴，粘贴前清理控制字符，以 `/`、`!`、`#`、`&` 开头时加防护；输入框（最后两条分隔线之间）出现任务开头或折叠标记后回车，3 秒未见投递再补一次回车。投递只认 transcript 里含本次任务开头的用户行，`SessionStart` 只用来取会话 ID。启动时页脚出现菜单（登录、信任等）或 60 秒未就绪报 BLOCKED，不按键。
-- **运行与终态**。运行中不按键。本会话的 `Stop` 且 `fullyIdle` 为真时回合结束，从 `transcript_full.jsonl` 取本次用户行之后最后一段回复作为结果，`modelName` 作为回执模型；`fullyIdle` 为假时继续等下一次 `Stop`，不看页脚。以下情形报 BLOCKED 并附画面摘录：页脚菜单停留超过 2 秒；回复已写出、页脚空闲 15 秒仍没有 `Stop`（保留回复，提示检查 hooks.json 的条目）；还没有 `Stop` 时画面空闲或无法识别、且画面和 transcript 60 秒没有变化。运行中的页脚不设时限。`Stop` 带 `error` 或没有回复按失败处理；进程意外退出按失败处理。结束时先发 SIGTERM，留 5 秒让 agy 写完会话，再交给原有清理。
+- **启动与投递**。页脚空闲后、粘贴前，先等待本次 agy 进程自己的运行日志出现实验刷新完成标记（`Experiments refreshed after login`），设 8–10 秒上限，超时照常投递；不读取其他并发 agy 进程的日志。随后整段粘贴，粘贴前清理控制字符，以 `/`、`!`、`#`、`&` 开头时加防护；输入框（最后两条分隔线之间）出现任务开头或折叠标记后回车，3 秒未见投递再补一次回车。投递只认 transcript 里含本次任务开头的用户行，新会话优先用 `SessionStart`（hooks 未挂载时回退本次运行日志的新建会话记录）取会话 ID。启动时页脚出现菜单（登录、信任等，信任屏例外见 ADR-0078）或 60 秒未就绪报 BLOCKED，不按键。
+- **运行与终态**。运行中不按键。本会话的 `Stop` 且 `fullyIdle` 为真时回合结束，从 `transcript_full.jsonl` 取本次用户行之后最后一段回复作为结果，`modelName` 作为回执模型；`fullyIdle` 为假时继续等下一次 `Stop`，不看页脚。没有 `Stop` 时：若本轮未收到本会话的 `PreInvocation`、`hooks.json` 条目在启动前已完好（`ensure_entry` 未返回改写警告）、transcript 已有本轮最终回复、没有未结束的工具调用与登记中的后台任务、且页脚空闲满 15 秒，则按已写出的回复作成功收尾并在 `warnings` 注明本轮未挂载 hooks；其余情形报 BLOCKED 并附画面摘录——页脚菜单停留超过 2 秒；回复已写出、页脚空闲 15 秒仍没有 `Stop`（保留回复，已见 `PreInvocation` 时提示检查 `hooks.json` 条目，未见时指明本轮 hooks 未挂载的启动竞态）；还没有 `Stop` 时画面空闲或无法识别、且画面和 transcript 60 秒没有变化（同样按是否见过 `PreInvocation` 区分原因）。运行中的页脚不设时限。`Stop` 带 `error` 或没有回复按失败处理；进程意外退出按失败处理。结束时先发 SIGTERM，留 5 秒让 agy 写完会话，再交给原有清理。
 
 ## 取舍
 
 - 写入用户与 Antigravity App／IDE 共用的全局 `hooks.json`。条目在 AgentNave 之外不起作用，但用户自己的每个回合会多起一个 `sh`（毫秒级）。用户在 2026-11-09 选定这一做法，放弃了零写入但会把命令跑错目录的 `--add-dir` 方案，也放弃了只靠读屏判断回合结束。
 - 只支持权限放开：运行中出现权限框没人能答，按 BLOCKED 处理。
 - 交互会话与用户自己的会话一样进 agy 的输入历史；读屏规则跟随 agy 版本变化，比 stream-json 脆弱，失败一律报 BLOCKED，不退回 `-p`，用户可以在 App 关掉开关。
-- 运行中只按 transcript 推进活动，不逐字流式；工具开始与结束按 transcript 的步骤顺序对应。
-- 没有 `Stop` 时宁可报 BLOCKED 也不报成功：画面看不出后台命令，空闲页脚不能证明回合真正结束；代价是 hook 出问题时已经写出的回复也要由 boss 判断是否可用。
+- 运行中只按 transcript 推进活动，不逐字流式；工具开始与结束按 transcript 的步骤顺序对应（屏幕状态行补充见 ADR-0079）。
+- 没有 `Stop` 时默认报 BLOCKED，仅在确认整轮未挂载 hooks 且本地可见状态全部空闲时例外按成功收尾：画面看不出后台命令，空闲页脚不能单独证明回合结束，因此已挂载 hooks 却丢失 `Stop`、条目刚被修复、或仍有未结束工具与已登记后台任务时一律报 BLOCKED；仅当启动竞态穿透投递前等待导致整轮未挂载 hooks 时，用上述窄条件挽回已完成回复，避免把正常完成的回合误判受阻。
 - 2026-11-09 开会讨论（Codex、Gemini、Grok 三席两轮）。三席一致保留门控 hook、改为锚定页脚读屏、不引入 pyte；后两项分歧（没有 `Stop` 时成功还是受阻、`fullyIdle` 为假后怎么收尾）按随后的实测定为上面的规则。
 
 ## 尚未真实验收
 
 Linux；更大或更小的终端尺寸下 agy 是否改用滚动区；首次使用、未登录或有更新提示时的启动画面；额度、登录报错是否发 `Stop`。出现时按上面的规则等待或报 BLOCKED。
+
+## 修订（2026-11-14）
+
+agy 冷启动存在实验开关刷新与首轮消息派发的竞态：界面在后台登录与 Mendel 实验拉取完成前就已渲染为空闲，而 agy 收到输入后最多只等 3 秒实验刷新，超时不阻断发消息；一旦发消息早于 `Experiments refreshed after login`，当轮环境初始化会因实验缓存尚未就绪把 `hooks` 整轮关闭，`SessionStart`、`PreInvocation`、`PreToolUse` 与 `Stop` 全部不触发，`--conversation` 续接跳过了新建会话开销更容易撞上该窗口。
+
+为此做三项修订：
+
+- **投递前等待实验就绪**。画面空闲后、粘贴任务前，定位本次 agy 进程自己的 `cli-*.log`（按进程号核对，不读其他并发 agy 进程的日志），等待出现 `Experiments refreshed after login`，上限 8–10 秒，超时照常投递；新会话与 `--conversation` 续接统一适用。
+- **`PreInvocation` 探针**。`agentnave-interactive` 条目增加 `PreInvocation`，复用同一门控记录命令，由 `ensure_entry` 原地升级并保留其他条目。helper 记录本轮是否收到本会话的 `PreInvocation`；缺少 `Stop` 而受阻时，据此区分「本轮 hooks 未挂载（agy 启动竞态）」与「hooks 已挂载但 `Stop` 未到达（检查 `hooks.json`）」。
+- **整轮未挂载 hooks 的保底收尾**。当投递前等待超时仍撞上竞态时，若同时满足：本轮未收到 `PreInvocation`、`ensure_entry` 未返回警告（条目在启动前已完好）、transcript 已有本轮最终回复、没有未结束的工具调用（`open_tools`）和登记中的后台任务（`background`）、且屏幕空闲满 `STOP_GRACE`（15 秒），helper 按已写出的回复作成功收尾并在 `warnings` 注明本轮未挂载 hooks；任一条件不满足仍报 BLOCKED。
+- **剩余风险**。等待超时穿透竞态、且本轮恰好发起 transcript 未按既有格式登记的后台命令时，缺少 `Stop(fullyIdle)` 可能提前交出半截回复；整轮未挂载 hooks 时 `PreToolUse` 对 `ask_question` 的拦截同样失效，但提问菜单停留在页脚超过 2 秒仍会按 BLOCKED 处理。
