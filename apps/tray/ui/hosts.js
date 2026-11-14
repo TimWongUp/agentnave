@@ -718,14 +718,13 @@ const HOST_CLI_CHOICES = [
   ["launch", L("由 AgentNave 另开", "Started by AgentNave")],
   ["skip", L("改用其他 CLI", "Use another CLI")],
 ];
-const defaultHostCli = (host) =>
-  host.default_host_cli || (host.boss === "antigravity" ? "launch" : "subagent");
 function hostCliRow(host) {
   const boss = host.status === "connected" && S.hostCli?.bosses.find((row) => row.keys.includes(host.id));
   if (!boss) return null;
   const choice = S.hostCli.choices[host.id]
     || boss.keys.map((key) => S.hostCli.choices[key]).find(Boolean)
-    || defaultHostCli(host);
+    || host.default_host_cli
+    || "subagent";
   const label = L("同款 CLI 的任务", "Tasks for its own CLI");
   const tip = L(
     "工位或员工用的 CLI 和这个 boss 相同时（比如在 Claude Code 里派给 Claude 的任务）怎么执行。用 boss 自己的子代理：boss 用自带的子代理完成，不经过 AgentNave。由 AgentNave 另开：另启动一个同款 CLI，和 boss 共用账号额度。改用其他 CLI：跳过它，换用备选或其他员工。开会不受影响。",
