@@ -4037,6 +4037,18 @@ async def test_native_review_role_receipt_names_the_seat_model_and_effort(
         )
         assert override_cooled.is_error and "explicit-model" in str(override_cooled.content)
         provider_health.clear(root, "codex")
+        # A named model stays within the CLI's pool, as it would for a started task.
+        members = {
+            "version": 1,
+            "modes": {},
+            "clis": {"codex": {"models": {"native-model": {}}, "allowed_models": ["native-model"]}},
+        }
+        (root / "members.json").write_text(json.dumps(members))
+        outside = await client.call_tool(
+            "start_agent", {**args, "provider_options": {"model": "explicit-model"}}
+        )
+        assert outside.is_error and "not allowed" in str(outside.content)
+        (root / "members.json").unlink()
         # Nothing behind the receipt: no invocation, no saved conversation, no isolated directory.
         listed = _payload((await client.call_tool("list", {})).structured_content)
         assert listed["invocations"] == [] and listed["conversations"] == []

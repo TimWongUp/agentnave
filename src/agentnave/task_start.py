@@ -207,6 +207,14 @@ class StartArguments:
                 raise ValueError("model must be a non-empty string")
             if not isinstance(effort, str):
                 raise ValueError("effort must be a string")
+            if model != seat.model:
+                # A named model stays within the CLI's pool, as it would for a started task.
+                from agentnave.member_policy import check_cli_model
+
+                document = read_members()
+                check_cli_model(
+                    document.clis.get(seat.provider) if document else None, seat.provider, model
+                )
             provider_health.check(data_root(), [(seat.provider, model)])
             raise NativeSeat(name, ReviewSeat(provider=seat.provider, model=model, effort=effort))
         if self.provider == host.provider and choice == "skip":

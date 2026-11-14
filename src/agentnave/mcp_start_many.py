@@ -13,7 +13,7 @@ from agentnave import mcp_runtime as runtime
 from agentnave.conversations_store import normalize_role
 from agentnave.mcp_isolated import IsolationInput
 from agentnave.mcp_payloads import NotStartedPayload, StartAgentsPayload, TaskStartPayload
-from agentnave.mcp_recommend import native_seat_message, recommendation_payload
+from agentnave.mcp_recommend import recommendation_payload
 from agentnave.mcp_runtime import (
     ManagerModel,
     ManagerSessionId,
@@ -247,5 +247,7 @@ async def _started(
         return _not_started("start_failed", str(exc), chosen)
     payload["recommendation"] = recommendation_payload(chosen)
     if payload.get("reason") == "native_seat":
-        payload["error"] = {"code": "native_seat", "message": native_seat_message(chosen)}
+        # The seat is resolved again at start, so the guidance follows what start chose.
+        message = f"the chosen seat {chosen.seat} ({chosen.role}) is the host's own CLI, so nothing was started. "
+        payload["error"] = {"code": "native_seat", "message": message + payload.get("message", "")}
     return payload
