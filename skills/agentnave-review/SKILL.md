@@ -1,11 +1,11 @@
 ---
 name: agentnave-review
-description: 代码评审流程：按失败风险定 R0–R3 级，通过 AgentNave 派只读评审工位，裁决 findings、定向复核并留存评审记录。
+description: 代码评审流程：按失败风险定 R0–R3 级，通过 AgentNave 派只读评审工位，裁决 findings、定向复核并写出评审记录。何时评审、记录留在哪里按用户规则。
 ---
 
 # AgentNave 评审门控
 
-本 Skill 规定评审分级、工位选择、裁决与留记录；派发、等待、续接和交接的调用方式按 `agentnave-manager`。boss（宿主里的主 Agent）负责固定候选、裁决、整改和最终结论，评审工位的报告只是假设。
+本 Skill 规定评审分级、工位选择、裁决与记录内容；何时评审、是否开 PR、记录发到哪里按用户或项目规则，本 Skill 不另规定。派发、等待、续接和交接的调用方式按 `agentnave-manager`。boss（宿主里的主 Agent）负责固定候选、裁决、整改和最终结论，评审工位的报告只是假设。
 
 ## 授权
 
@@ -80,7 +80,7 @@ R3 在聚焦评审、整改和验证之后，派 `adversarial-verifier`（宜换
 
 ### 7. 记录
 
-评审完成后留一条记录：
+评审完成后写一条记录：
 
 - 评审的 head 与 base
 - 等级及理由
@@ -89,7 +89,7 @@ R3 在聚焦评审、整改和验证之后，派 `adversarial-verifier`（宜换
 - 本地验证（注明所在 head）与 CI 状态
 - 剩余风险
 
-有 PR 时发为 PR 评论；没有 PR 时写入任务交接。合并或接手前据此复核，合并绑定记录里的 head：GitHub 用 `gh pr merge --match-head-commit <head>`，其他平台合并前核对。
+记录发到哪里（如 PR 评论、文件）按用户或项目规则；没有规定时写在给用户的回复里。合并或接手前据此复核，合并绑定记录里的 head：GitHub 用 `gh pr merge --match-head-commit <head>`，其他平台合并前核对。
 
 ## CI
 
