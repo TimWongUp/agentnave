@@ -106,15 +106,22 @@ fn save_host_cli(root: &Path, host_state: &Mutex<Option<Hosts>>, payload: &Value
 }
 
 fn save_orchestration(root: &Path, host_state: &Mutex<Option<Hosts>>, payload: &Value) -> Response {
-    // The modes each row runs on are worked out here, never taken from the page.
+    // The modes each row runs on and each boss's own-CLI choice are kept here, never taken from the page.
     let mut document = payload.clone();
     if let Some(fields) = document.as_object_mut() {
         fields.remove("effective_apps");
+        fields.remove("host_cli");
     }
     if let Err(error) = crate::members::validate_orchestration(&document) {
         return Response::error(400, &error);
     }
     let guard = host_state.lock().unwrap_or_else(|p| p.into_inner());
+    if let Ok(saved) = crate::members::read_orchestration(root)
+        && let Some(choices) = saved.get("host_cli").and_then(Value::as_object)
+        && !choices.is_empty()
+    {
+        document["host_cli"] = Value::Object(choices.clone());
+    }
     document["effective_apps"] = guard
         .as_ref()
         .map(|hosts| hosts.effective_apps(&document))
