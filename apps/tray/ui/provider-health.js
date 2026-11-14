@@ -52,7 +52,8 @@
         const affected = [models ? L(`${models} 个模型暂停派活`, `${models} model${models === 1 ? "" : "s"} paused`) : "", ...scopes.map(name => L(`${name} 暂停派活`, `${name} paused`))];
         if (group.some(row => !row.model && !row.quotaGroup)) affected.unshift(L("暂停派活", "Dispatch paused"));
         const line = document.createElement("span");
-        line.textContent = `⚠ ${PROVIDER_NAMES[first.provider] || first.provider} ${reason(first.item, L)}，${affected.filter(Boolean).join("、")}，${recovery(first.item, L)}`;
+        const comma = L("，", ", ");
+        line.textContent = `⚠ ${PROVIDER_NAMES[first.provider] || first.provider} ${reason(first.item, L)}${comma}${affected.filter(Boolean).join(L("、", ", "))}${comma}${recovery(first.item, L)}`;
         return line;
       });
       box.replaceChildren(...lines);
