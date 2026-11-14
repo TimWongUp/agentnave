@@ -1,4 +1,4 @@
-//! decision-seats.json and decision-keys.json (ADR-0087, ADR-0092): the user's own seat catalog,
+//! decision-seats.json and decision-keys.json (ADR-0087, ADR-0093): the user's own seat catalog,
 //! the random-candidates switch and the decision model's API key. The App writes them (without the
 //! App, decision-seats.json may be written by hand); the Python service reads them on every call.
 //! The checks here mirror the service's, so a file this module writes is one the service accepts.
