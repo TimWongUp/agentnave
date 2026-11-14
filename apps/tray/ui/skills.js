@@ -1,7 +1,7 @@
 "use strict";
 {
 "use strict";
-// Settings -> 高级 -> 技能. Optional Skills from GET /app/skills, switched per host with POST
+// Settings -> 技能. Optional Skills from GET /app/skills, switched per host with POST
 // /app/hosts/skill when 保存设置 is pressed; until then a picked switch only sits in S.want.
 // The review gate's seats are drawn by advanced.js (renderReviewSeats) into the card built here.
 const { h, $, load, post, L } = AN;

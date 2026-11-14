@@ -53,7 +53,7 @@
   <a draggable="false" id="nav-avatars" href="#avatars" data-en="Appearance">外观</a>
   <a draggable="false" id="nav-voice" href="#voice" data-en="Voice">语音</a>
   <a draggable="false" id="nav-storage" href="#storage" data-en="Data & Storage">数据与存储</a>
-  <a draggable="false" id="nav-advanced" href="#advanced" data-en="Advanced">高级<span id="skills-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+  <a draggable="false" id="nav-advanced" href="#advanced" data-en="Skills">技能<span id="skills-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
   <a draggable="false" id="nav-about" href="#about" data-en="About">关于<span id="update-badge" class="badge-dot" hidden></span></a>
 </nav>
 <main>
@@ -154,7 +154,12 @@
         </div>
       </div>
     </div>
-
+    <div class="updates-panel">
+      <div class="updates-card">
+        <h2 data-en="boss global rules files">boss 全局规则文件<span class="setting-tip" tabindex="0" role="note" aria-label="App 只改这些文件里 AgentNave 标记之间的一段，其他内容原样保留，改写前先备份。" data-en-label="The App only edits the section between the AgentNave markers in these files, leaves everything else as it is, and backs up before rewriting.">?</span></h2>
+        <ul id="rule-files" class="rule-files"></ul>
+      </div>
+    </div>
   </section>
 
   <section id="pane-advanced" class="tab-pane" hidden aria-labelledby="nav-advanced">
@@ -162,12 +167,6 @@
       <div class="updates-card">
         <h2 data-en="Skills">技能</h2>
         <div id="skill-list" class="skill-list" aria-live="polite"></div>
-      </div>
-    </div>
-    <div class="updates-panel">
-      <div class="updates-card">
-        <h2 data-en="boss global rules files">boss 全局规则文件<span class="setting-tip" tabindex="0" role="note" aria-label="App 只改这些文件里 AgentNave 标记之间的一段，其他内容原样保留，改写前先备份。" data-en-label="The App only edits the section between the AgentNave markers in these files, leaves everything else as it is, and backs up before rewriting.">?</span></h2>
-        <ul id="rule-files" class="rule-files"></ul>
       </div>
     </div>
   </section>

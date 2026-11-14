@@ -748,7 +748,7 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/old")'), null, "a saved model the CLI no longer lists is not offered");
   assert.equal(app.run('seatOptions({ provider: "codex", model: "old" }).find((o) => o.attrs.value === "old").attrs.disabled'), true, "a seat bound to it shows it as unavailable");
   app.run(`
-    poolPick("codex/pool/all");
+    poolPick("codex/pool/ticked");
     poolPick("codex/pool/allow/b", false);
   `);
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
@@ -778,10 +778,15 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   await assert.rejects(app.run('listSeatModel({ provider: "codex", model: "b" })'), /不在 Codex CLI 的可用模型里/);
   assert.deepEqual(posts, ["/app/members"]);
 
-  // Select all is an explicit list; future CLI models are not silently allowed.
-  app.run('poolPick("codex/pool/all"); detected.codex.models.push({ id: "next" })');
-  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a", "b"]);
+  // Only the ticked is an explicit list, so a model the CLI lists later is not let in.
+  app.run('poolPick("codex/pool/ticked"); detected.codex.models.push({ id: "next" })');
+  assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
   assert.equal(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'), false);
+  // All models drops the list, so later models count and the default and conflicts stay right.
+  app.run('poolPick("codex/pool/all")');
+  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
+  assert.equal(app.run('poolConflicts("codex").length'), 0);
+  assert.equal(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'), true);
   app.run(`
     currentDoc.clis.codex.allowed_models = ["a"];
     orchestration = { document: { version: 1, preset: "off", image_generation: { provider: "codex", model: "b" } } };
@@ -812,7 +817,22 @@ test("a model the CLI no longer lists is marked but blocks no save, and nothing 
   assert.deepEqual(Array.from(app.run('getAllModelIds("codex")')), ["old"]);
 });
 
-test("model choices start unchecked, clear all stays unsaved, and no list size is refused", () => {
+test("every model lifts a scene list an older file kept", () => {
+  const app = poolEditor();
+  app.run(`
+    currentDoc.modes.task.codex.models = ["a"];
+    currentDoc.modes.task.codex.default = "a";
+    markSaved();
+    pickerOpen = "codex/pool";
+  `);
+  assert.equal(app.run('shownPool("codex")'), null, "one unlimited scene shows every model");
+  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/all").attrs["aria-checked"]'), "false", "a scene still limited is not shown as every model");
+  app.run('poolPick("codex/pool/all")');
+  assert.deepEqual(app.doc().modes.task.codex.models, [], "the limited scene takes every model too");
+  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
+});
+
+test("every model is ticked until one is unticked, and no list size is refused", () => {
   const app = poolEditor();
   app.run(`
     function poolText(nodes) {
@@ -824,11 +844,17 @@ test("model choices start unchecked, clear all stays unsaved, and no list size i
     currentDoc.clis.codex.models = {};
     markSaved();
   `);
-  assert.equal(app.run('poolSummary("codex", getAllModelIds("codex"), shownPool("codex"))'), "不限模型");
+  assert.equal(app.run('poolSummary("codex", getAllModelIds("codex"), shownPool("codex"))'), "全部（含以后新出的）");
   app.run('pickerOpen = "codex/pool"');
-  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/model-0").attrs.checked'), false);
+  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/model-0").attrs.checked'), true);
+  assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/none")'), null, "clearing belongs to the ticked tier");
+  app.run('poolPick("codex/pool/allow/model-3", false)');
+  assert.equal(app.doc().clis.codex.allowed_models.length, 23, "unticking one leaves the rest as a list");
+  assert.equal(app.doc().clis.codex.allowed_models.includes("model-3"), false);
   app.run('poolPick("codex/pool/all")');
-  assert.equal(app.doc().clis.codex.allowed_models.length, 24, "every listed model is selectable");
+  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false, "all models saves no list");
+  app.run('poolPick("codex/pool/ticked")');
+  assert.equal(app.doc().clis.codex.allowed_models.length, 24, "the ticked tier starts from every listed model");
   assert.equal(app.run("memberSaveErrors().length"), 0);
   const text = Array.from(app.run('poolText(poolRows("codex"))'));
   assert.ok(text.includes("已选 24"), "the picker counts what is chosen");
