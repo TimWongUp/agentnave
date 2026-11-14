@@ -1516,3 +1516,83 @@ def test_native_seat_respects_model_pool_before_fallback(
     chosen, receipt = select(configured, host, frozenset(), None)
     assert chosen.model == "allowed" and receipt is not None
     assert "not allowed" in receipt["skipped"][0]["reason"]
+
+
+def test_decision_random_candidates_flag_and_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+    from agentnave.decision_seats import (
+        DecisionSeatsFileError,
+        random_candidates_enabled,
+        read_decision_seats,
+    )
+    from agentnave.members import role_seat
+    from agentnave.seat_fallbacks import select
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    host = Host("codex", "env")
+    seat = _custom_seat(
+        "own",
+        "claude",
+        "write",
+        fallbacks=[
+            {"provider": "grok", "model": "g-1", "effort": "low"},
+            {"provider": "claude", "model": "c-2"},
+        ],
+    )
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
+    _write_decision_seats(tmp_path, [seat])
+    assert read_decision_seats() is not None and not random_candidates_enabled(host)
+    for bad in (1, "true", None):
+        (tmp_path / "decision-seats.json").write_text(
+            json.dumps({"version": 1, "random_candidates": bad, "seats": [seat]})
+        )
+        with pytest.raises(DecisionSeatsFileError):
+            read_decision_seats()
+    (tmp_path / "decision-seats.json").write_text(
+        json.dumps({"version": 1, "random_candidates": True, "seats": [seat]})
+    )
+    assert random_candidates_enabled(host) is True
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "split"}))
+    assert random_candidates_enabled(host) is False
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
+
+    # list_members stays deterministic even while random_candidates is enabled.
+    listed = list_members(frozenset({"codex"}), host)
+    assert listed.orchestration.custom_seats["own"].model == "shared"
+    assert listed.orchestration.custom_seats["own"].fallback_position is None
+
+    configured = role_seat("own", host)
+    assert configured is not None
+    provider_health.record(tmp_path, "grok", "quota", "g-1")
+    seen_counts: list[int] = []
+    first, first_receipt = select(
+        configured,
+        host,
+        frozenset({"codex"}),
+        randomize=True,
+        randrange=lambda n: (seen_counts.append(n), 0)[1],
+    )
+    second, second_receipt = select(
+        configured,
+        host,
+        frozenset({"codex"}),
+        randomize=True,
+        randrange=lambda n: (seen_counts.append(n), 1)[1],
+    )
+    assert seen_counts == [2, 2]
+    assert first.model == "shared" and second.model == "c-2"
+    assert first_receipt is not None and first_receipt.get("random") is True
+    assert first_receipt["position"] == 0 and first_receipt["skipped"][0]["model"] == "g-1"
+    assert second_receipt is not None and second_receipt.get("random") is True
+    assert second_receipt["position"] == 2
+
+    # Only one usable candidate left: no random draw, so random is omitted.
+    provider_health.record(tmp_path, "claude", "auth", "shared")
+    sole, sole_receipt = select(
+        configured, host, frozenset({"codex"}), randomize=True, randrange=lambda _n: 99
+    )
+    assert sole.model == "c-2" and sole_receipt is not None
+    assert sole_receipt["position"] == 2 and "random" not in sole_receipt

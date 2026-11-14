@@ -59,6 +59,16 @@ fn what_the_fixtures_do_not_cover_is_refused_like_the_service_does() {
     let mut file = document(vec![]);
     file["extra"] = json!(1);
     assert!(validate(&file).is_err());
+    for ok in [json!(true), json!(false)] {
+        let mut with_flag = document(vec![]);
+        with_flag["random_candidates"] = ok;
+        assert!(validate(&with_flag).is_ok());
+    }
+    for bad in [json!(1), json!("true"), json!(null)] {
+        let mut with_flag = document(vec![]);
+        with_flag["random_candidates"] = bad.clone();
+        assert!(validate(&with_flag).is_err(), "{bad}");
+    }
     // A card is a kind and a role with one seat per difficulty; a group has one name and keeps
     // its access; the specialty text is bounded; an image seat is write-only with no difficulty.
     let group = |id: &str, role: &str, difficulty: &str| {

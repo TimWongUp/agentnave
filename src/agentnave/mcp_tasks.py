@@ -80,6 +80,7 @@ from agentnave.task_start import (
     StartArguments,
     add_write_warning,
     apply_task_defaults,
+    effective_seat,
     is_image_seat,
     native_seat_guidance,
     resolve_start,
@@ -171,7 +172,12 @@ async def start_agent(
         WrapValidator(_own_seat),
         Field(
             description=(
-                "App task seat from the visible list_members catalog: selects CLI if omitted, ordered available choices for new threads; explicit CLI or model wins; inherits on resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; also pass role as the desk label."
+                "App task seat from the visible list_members catalog: selects CLI if omitted, "
+                "ordered available choices for new threads (or a uniform random usable candidate "
+                "on custom task seats when enabled; seat_fallback sets random=true when drawn, "
+                "else earlier choices were skipped); explicit CLI or model wins; inherits on "
+                "resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; "
+                "also pass role as the desk label."
             )
         ),
     ] = None,
@@ -240,7 +246,7 @@ async def start_agent(
         ),
     )
     if recommendation is not None:
-        payload["recommendation"] = recommendation_payload(recommendation)
+        payload["recommendation"] = recommendation_payload(recommendation, payload)
     invocation_id = payload.get("invocation_id")
     if invocation_id is None:
         # A seat native to this host: nothing started, so there is nothing to wait for.
@@ -298,7 +304,7 @@ def native_seat_payload(
     if effort:
         payload["effort"] = effort
     if recommendation is not None:
-        payload["recommendation"] = recommendation_payload(recommendation)
+        payload["recommendation"] = recommendation_payload(recommendation, payload)
     if fallback is not None:
         payload["seat_fallback"] = fallback
     if error is not None:
@@ -317,15 +323,17 @@ def _select_fallback(
     configured = role_seat(seat_name, runtime.HOST)
     if not configured or not configured.fallbacks:
         return None, None
-    from agentnave.decision_seats import custom_seat
+    from agentnave.decision_seats import custom_seat, random_candidates_enabled
     from agentnave.seat_fallbacks import select
 
     custom = custom_seat(seat_name or "", runtime.HOST)
+    image = is_image_seat(seat_name, custom)
     return select(
         configured,
         runtime.HOST,
         runtime.task_excluded_providers(),
-        image=is_image_seat(seat_name, custom),
+        image=image,
+        randomize=custom is not None and not image and random_candidates_enabled(runtime.HOST),
     )
 
 
@@ -377,7 +385,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     seat_name = chosen_seat or review_role(role)
     try:
         options, seat_applied = apply_seat(
-            arguments.selected or role_seat(seat_name, runtime.HOST),
+            effective_seat(arguments, seat_name, runtime.HOST),
             provider,
             provider_options or {},
         )

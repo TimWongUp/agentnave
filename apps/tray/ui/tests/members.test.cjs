@@ -1117,7 +1117,7 @@ const NO_FILE = { document: null, error: null, key_set: false, key_error: null }
 const boss = (app) => app.run("AN.settings.orchestration.bosses[0]");
 
 const seatsOf = (app) => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)"));
-const cardsOf = (app) => roleChildren(app)[0].children[3].children;
+const cardsOf = (app) => roleChildren(app)[0].children[4].children;
 
 test("a boss put into the decision mode makes the first catalog from the fixed seats once", async () => {
   const { app, decision } = decisionEditor("split", NO_FILE);
@@ -1215,7 +1215,7 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.equal(cardsOf(app).length, 3);
   // The menu lists general seats, specialist seats, custom seats and image seats; a group or the image
   // card already on the page is disabled, custom stays open.
-  const menu = roleChildren(app)[0].children[4];
+  const menu = roleChildren(app)[0].children[5];
   const groups = menu.children.filter((child) => child.tagName === "optgroup");
   assert.deepEqual(Array.from(groups.map((one) => one.attrs.label)), ["通用工位", "专业工位", "自定义工位", "生图工位"]);
   const option = (value) => groups.flatMap((one) => one.children).find((one) => one.attrs.value === value);
@@ -1402,6 +1402,42 @@ test("saving sends the flat catalog on its own, without any boss switch", async 
   assert.equal(cardsOf(app).length, 5);
   app.run('window.AgentNaveDecisionSeats.addCard("custom")');
   assert.match(decision((d) => d.problem()), /缺少专业/);
+});
+
+test("the random-candidates switch defaults to off, writes random_candidates when on, and omits it when off", async () => {
+  const { app, calls, decision } = decisionEditor("decision", NO_FILE);
+  await decision((d) => d.load());
+  const row = () => roleChildren(app)[0].children[3];
+  const input = () => row().children[0];
+  assert.equal(row().className, "orchestration-switch");
+  assert.equal(row().children.length, 2);
+  assert.deepEqual(Array.from(row().children[1].children), ["同一档的候选随机选，分摊额度"]);
+  assert.equal(input().checked, false);
+  assert.equal(decision((d) => d.changed()), false);
+
+  input().listeners.change({ target: { checked: true } });
+  assert.equal(input().checked, true);
+  assert.equal(decision((d) => d.changed()), true);
+  await decision((d) => d.save());
+  const savedOn = calls.filter((call) => call.url === "/app/decision-seats" && call.method === "POST").at(-1);
+  assert.equal(savedOn.body.random_candidates, true);
+  assert.equal(decision((d) => d.changed()), false);
+
+  input().listeners.change({ target: { checked: false } });
+  assert.equal(decision((d) => d.changed()), true);
+  decision((d) => d.discard());
+  assert.equal(decision((d) => d.changed()), false);
+  app.run("renderOrchestration()");
+  assert.equal(input().checked, true);
+
+  input().listeners.change({ target: { checked: false } });
+  await decision((d) => d.save());
+  const savedOff = calls.filter((call) => call.url === "/app/decision-seats" && call.method === "POST").at(-1);
+  assert.equal("random_candidates" in savedOff.body, false);
+
+  const explicitFalse = decisionEditor("decision", { document: { version: 1, random_candidates: false, seats: [] }, error: null, key_set: false, key_error: null });
+  await explicitFalse.decision((d) => d.load());
+  assert.equal(explicitFalse.decision((d) => d.changed()), false);
 });
 
 test("the seat catalog is saved before the modes, and the modes wait when it fails", async () => {

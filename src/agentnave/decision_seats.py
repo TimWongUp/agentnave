@@ -85,6 +85,15 @@ def custom_seat(name: str, host: Host) -> CustomSeat | None:
     return (custom_seats(host) or {}).get(name)
 
 
+def random_candidates_enabled(host: Host) -> bool:
+    """Whether custom task seats pick uniformly at random among usable choices."""
+    try:
+        document = effective_decision_seats(host)
+    except DecisionSeatsFileError:
+        return False
+    return document is not None and document.random_candidates
+
+
 def custom_orchestration_status(
     custom: dict[str, CustomSeat],
     task_mode: ModeStatus,

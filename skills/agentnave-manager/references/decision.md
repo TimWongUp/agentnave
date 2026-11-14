@@ -24,6 +24,7 @@
 
 - `confidence` 低于 0.6，或前两名概率接近：核对选中的工位是否对题、难度是否合适（直接看回执里的 `difficulty`）。某个专业缺档时，服务会选同专业里最接近的一档，这不算选错，不按固定档「兜底不跨难度」改派。
 - 明显不对题：`cancel`，查 `list_members` 的 `custom_seats`，按 `role`、`description`、`difficulty`、`access` 直接指定 `seat` 重派，并在回报里说明改选的理由。
+- `seat_fallback`：带 `random=true` 表示用户在 App 开启了同档候选随机选，本次新线程在该自定义任务工位的多个可用候选里等概率随机抽中 `position`（抽中第 `0` 顺位也会返回，`skipped` 列出因冷却、未安装等不可用而被排除的候选）；不带 `random` 表示因前序顺位不可用才换用该顺位。两者都是用户设置，不改派；生图工位始终按顺位，传 `session_id` 续接沿用原线程的 CLI 和模型。
 
 ## 没启动时
 

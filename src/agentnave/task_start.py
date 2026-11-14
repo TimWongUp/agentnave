@@ -248,6 +248,31 @@ def resolve_start(
     return arguments
 
 
+def effective_seat(
+    arguments: StartArguments, seat_name: str | None, host: Host
+) -> ReviewSeat | None:
+    """Seat settings to apply: on inherited-seat resume, keep the choice the thread ran on."""
+    if arguments.selected is not None:
+        return arguments.selected
+    configured = role_seat(seat_name, host)
+    if (
+        configured is not None
+        and "seat (session_id history)" in arguments.defaults
+        and "model" in arguments.history
+    ):
+        return next(
+            (
+                ReviewSeat(
+                    provider=c.provider, model=c.model, effort=arguments.history.get("effort", "")
+                )
+                for c in [configured, *configured.fallbacks]
+                if c.provider == arguments.provider and c.model == arguments.history["model"]
+            ),
+            None,
+        )
+    return configured
+
+
 def apply_task_defaults(
     provider: ProviderName,
     seat_name: str | None,
@@ -267,7 +292,8 @@ def apply_task_defaults(
         permissions=read_permissions(),
         seat=frozenset(seat_applied),
         scenario=not orchestration_enabled(host),
-        seat_selected=selected is not None and selected.provider == provider,
+        seat_selected=selected is not None
+        and any(choice.provider == provider for choice in [selected, *selected.fallbacks]),
     )
     if seat_applied:
         applied = [f"{(seat_name or '').strip()} seat", *seat_applied, *applied]
