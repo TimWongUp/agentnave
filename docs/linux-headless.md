@@ -192,11 +192,13 @@ Codex 在非 Git 目录也可直接派发，无需额外配置；1.0 忽略旧�
 ```bash
 SRC=~/.local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave/skills
 DEST=<bot 的 skill 目录>          # Grok Bot 见 §6.5
-MAIN=agentnave-manager            # 只开会档改成 agentnave-meeting；先备份并移走另一份
+MAIN=agentnave-manager            # 只开会档改成 agentnave-meeting
 for s in "$MAIN" agentnave-review; do
   [ -d "$DEST/$s" ] && cp -a "$DEST/$s" "/tmp/$s.bak.$(date +%s)"   # 先备份旧版
   rm -rf "$DEST/$s" && cp -a "$SRC/$s" "$DEST/$s"
 done
+OTHER=agentnave-meeting; [ "$MAIN" = agentnave-meeting ] && OTHER=agentnave-manager   # 两者不同时装
+[ -d "$DEST/$OTHER" ] && mv "$DEST/$OTHER" "/tmp/$OTHER.bak.$(date +%s)"
 ```
 
 每次升级 AgentNave 都要重新复制一遍，因为 skill 和服务的版本要一致。
@@ -305,11 +307,13 @@ Grok Bot 的全局 skill 仓库在 `/home/box/agent-data/workflows/<name>/SKILL.
 ```bash
 TAG=v1.11.0; DEST="$HOME/agent-data/workflows"; TMP=$(mktemp -d)
 git clone -q --depth 1 --branch $TAG https://github.com/TimWongUp/agentnave.git "$TMP/an"
-MAIN=agentnave-manager            # 只开会档改成 agentnave-meeting；先备份并移走另一份
+MAIN=agentnave-manager            # 只开会档改成 agentnave-meeting
 for s in "$MAIN" agentnave-review; do
   [ -d "$DEST/$s" ] && mv "$DEST/$s" "/workspace/$s-backup-$(date +%m%d%H%M)"
   cp -a "$TMP/an/skills/$s" "$DEST/$s"
 done
+OTHER=agentnave-meeting; [ "$MAIN" = agentnave-meeting ] && OTHER=agentnave-manager   # 两者不同时装
+[ -d "$DEST/$OTHER" ] && mv "$DEST/$OTHER" "/workspace/$OTHER-backup-$(date +%m%d%H%M)"
 rm -rf "$TMP"
 ```
 

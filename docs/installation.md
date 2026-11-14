@@ -637,7 +637,7 @@ MCP. Install `agentnave-meeting` instead of `agentnave-manager` for the Meetings
 two are mutually exclusive. Replace the full Skill directory to pick up the updated instructions.
 
 Seats can now have ordered fallbacks, and quota cooldown can apply to a shared provider quota group.
-A v1.10 service rejects `orchestration.json` or `review.json` containing `fallbacks` as invalid;
+A v1.10 service rejects `orchestration.json`, `review.json` or `decision-seats.json` containing `fallbacks` as invalid;
 reconnect hosts to the new service before adding fallbacks. Older services or Apps may also ignore
 group cooldown records, so update the App.
 
