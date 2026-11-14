@@ -8,11 +8,12 @@
 | --- | --- |
 | 一项任务 | `start_agent`，`seat="auto"`，`access` 按是否改文件填；`role` 写具体职责，不传 `provider` 和模型 |
 | 几项互不依赖的任务（如一项调查拆成几份） | `start_agents`，每项各写 `access` 和 prompt；服务用一次决策请求为各项选工位并同时启动 |
+| 先调查、之后可能在同一线程转入实现 | `start_agent`，`seat="auto"`、`access="read"`、带 `isolation`；简报只写调查这一步。服务在执行类（可写）工位里选，任务仍按只读记录，回执 `recommendation.note` 说明原因；后续按主文件「先计划／调查后实现」 |
 | 接着同一线程干活 | 传 `session_id`，不传 `seat`，沿用原工位 |
 | 想先看选谁再定 | `recommend_seat`，`task` 直接传打算派发的 prompt；再按返回的 `seat` 派发 |
 | 生成图片 | 先查 `list_members`，目录里有 `kind` 为 `image` 的工位才派：`seat="auto"`、`access="write"`，简报开头写明要生成图片和画风，写清产物路径；没有生图工位时告诉用户缺这个工位 |
 
-`start_agents` 里有两个及以上可写项时，服务自动给每个可写项建隔离目录（显式传了 `isolation` 的以它为准）；可能转入实现的调查也建议在 `start_agent` 首次派发就传 `isolation` 并声明 `access="read"`，之后续接同一 `session_id` 改为 `write`。只读任务成功且完全无改动时服务自动释放，见[多任务编排](workflows.md)；保留下来的目录由 boss 验收合入后用 `isolated_dirs` 释放。
+`start_agents` 里有两个及以上可写项时，服务自动给每个可写项建隔离目录（显式传了 `isolation` 的以它为准）；声明 `access="read"` 且带 `isolation` 的项与 `start_agent` 一样在执行类工位里选，不带 `isolation` 的只读项在只读工位里选。只读任务成功且完全无改动时服务自动释放，见[多任务编排](workflows.md)；保留下来的目录由 boss 验收合入后用 `isolated_dirs` 释放。
 
 ## 简报就是决策依据
 

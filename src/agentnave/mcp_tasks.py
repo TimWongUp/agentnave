@@ -223,7 +223,9 @@ async def start_agent(
     requested = cast(str | None, seat)
     recommendation: Recommendation | None = None
     if requested == AUTO_SEAT:
-        recommendation = await choose_auto_seat(prompt, access, provider, cwd, session_id)
+        recommendation = await choose_auto_seat(
+            prompt, access, provider, cwd, session_id, isolation is not None
+        )
         requested = recommendation.seat
     payload = await launch_task(
         ctx,

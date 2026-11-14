@@ -6,7 +6,7 @@
 - 八个工具的集合由 [ADR-0033](0033-boss-workspace-handover.md) 修订：新增 `handover`，现为 9 个公开工具；标题保留历史数量。
 - 只在 `list` 启动浏览器看板的条款由 [ADR-0045](0045-remove-browser-dashboard.md) 取代
 - App 只给模板、不写全局规则的条款由 [ADR-0037](0037-app-writes-orchestration-rules.md) 取代
-- `access` 一律不拒绝调用的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊工位推断值与显式声明不一致时拒绝。
+- `access` 一律不拒绝调用的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊工位推断值与显式声明不一致时拒绝；这条拒绝已由 ADR-0038 的 2026-11-15 修订撤销，恢复「不拒绝调用」，工位推断值只作默认值。
 - 由 [ADR-0057](0057-boss-answers-native-prompts.md) 修订工具集合：新增 `answer_prompt`
 - 由 [ADR-0081](0081-account-cooldown-duration.md) 修订工具集合：新增 `clear_provider_cooldown`
 

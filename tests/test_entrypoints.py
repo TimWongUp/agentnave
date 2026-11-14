@@ -616,11 +616,12 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
             provider_options={"model": "explicit"},
         )
         assert other_model["model"] == "explicit" and "effort" not in other_model
-        contradiction = await client.call_tool(
-            "start_agent",
-            {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator", "access": "read"},
+        # The seat's access is a default; a declared one stands and is not marked as applied.
+        declared = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", access="read"
         )
-        assert contradiction.is_error and "declares access=write" in str(contradiction.content)
+        assert declared["access"] == "read"
+        assert "access (image-generator seat)" not in cast(list[str], declared["defaults_applied"])
 
         document["image_generation"] = {"provider": "codex", "model": "other-cli"}
         path.write_text(json.dumps(document))
@@ -2085,12 +2086,22 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         review = await start({}, role="correctness-reviewer", provider=None)
         assert review["access"] == "read"
         assert "access (correctness-reviewer seat)" in cast(list[str], review["defaults_applied"])
-        contradiction = await client.call_tool(
-            "start_agent",
-            {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy", "access": "read"},
+        # A seat's access is only a default. A Worker investigating read-only gets the
+        # read-only instruction, and an Explorer thread may turn to writing when resumed.
+        investigating = await start({}, seat="worker-easy", access="read")
+        assert investigating["access"] == "read"
+        assert cast(list[str], investigating["defaults_applied"])[-1] == (
+            "read-only instruction (access=read)"
         )
-        assert contradiction.is_error
-        assert "worker-easy declares access=write" in str(contradiction.content)
+        assert "access (worker-easy seat)" not in cast(list[str], investigating["defaults_applied"])
+        await start({"model": "chosen"}, seat="explorer-easy")
+        turned = await start({}, session_id="session-e2e", access="write")
+        assert turned["access"] == "write"
+        turned_defaults = cast(list[str], turned["defaults_applied"])
+        assert "seat (session_id history)" in turned_defaults
+        assert "read-only instruction (access=read)" not in turned_defaults
+        # Omitted again on the next resume, the seat gives its default back.
+        assert (await start({}, session_id="session-e2e"))["access"] == "read"
         # The current host's off override suppresses role defaults without deleting saved seats.
         from agentnave.host import Host
 
@@ -3117,13 +3128,16 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
             ({"seat": "nobody"}, "Unknown task seat: nobody"),
             ({"seat": "worker-easy"}, "not used in the decision-model mode"),
             ({"seat": "image-generator"}, "not used in the decision-model mode"),
-            ({"seat": "read-d", "access": "write"}, "declares access=read"),
             ({"seat": "x" * 129}, "seat"),
         ):
             rejected = await client.call_tool(
                 "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
             )
             assert rejected.is_error and expected in str(rejected.content)
+        # An own seat's access is a default too: the declared one stands.
+        declared = await _start_and_wait(client, cwd=str(tmp_path), seat="read-d", access="write")
+        assert declared["access"] == "write"
+        assert "access (read-d seat)" not in cast(list[str], declared["defaults_applied"])
 
         # The user deleted a seat the boss was about to use: no other seat takes its place.
         _write_own_seats([s for s in seats if s["id"] != "write-b"])
@@ -3350,6 +3364,33 @@ async def test_start_agent_auto_asks_the_decision_model_and_starts_in_one_call(
         recommendation = _payload(single["recommendation"])
         assert recommendation["seat"] == "read-c" and recommendation["difficulty"] == "easy"
         assert recommendation["decision_model_called"] is False and decision.calls == []
+        # Read-only in an isolated directory may turn into implementation in the same thread:
+        # the seat comes from the write seats, said in the receipt, and the task stays read-only.
+        staged = await _start_and_wait(
+            client,
+            cwd=str(_light_repo(tmp_path / "repo")),
+            seat="auto",
+            access="read",
+            isolation={},
+            prompt="查清开关为什么不生效",
+        )
+        [(text, sent)] = decision.calls
+        assert text == (
+            "Task:\n查清开关为什么不生效\nRequired access: read\n"
+            + seat_recommendation._STAGED_TASK  # pyright: ignore[reportPrivateUsage]
+        )
+        assert set(sent) == {"write-a", "write-b"}
+        recommendation = _payload(staged["recommendation"])
+        assert recommendation["seat"] == "write-b"
+        assert recommendation["note"] == seat_recommendation.STAGED_NOTE
+        assert staged["access"] == "read" and "isolation" in staged
+        staged_defaults = cast(list[str], staged["defaults_applied"])
+        assert "read-only instruction (access=read)" in staged_defaults
+        assert "access (write-b seat)" not in staged_defaults
+        # Turning to implementation: the resumed thread keeps the write seat and its default.
+        implementing = await _start_and_wait(client, session_id="session-e2e")
+        assert implementing["access"] == "write"
+        assert "access (write-b seat)" in cast(list[str], implementing["defaults_applied"])
 
 
 @pytest.mark.asyncio
@@ -3437,6 +3478,24 @@ async def test_start_agents_isolates_every_writer_when_there_are_several(
         assert broken["recommendation"]["seat"] == "write-a"
         after = _started_count((await client.call_tool("list")).structured_content)
         assert after == before + 1
+
+        # A read task with its own isolation may turn to implementation in its thread: its
+        # seat comes from the write seats; it stays read-only and is no writer to isolate.
+        staged, reader = await run(
+            [pick, read],
+            [_batch_task("查", "read", one, isolation={}), _batch_task("丙", "read", plain)],
+        )
+        (staged_text, staged_seats), (reader_text, reader_seats) = decision.batches[-1]
+        assert set(staged_seats) == {"write-a", "write-b"}
+        assert set(reader_seats) == {"read-c", "read-d"}
+        assert "may turn to implementation" in staged_text
+        assert "may turn to implementation" not in reader_text
+        assert staged["recommendation"]["seat"] == "write-a"
+        assert staged["recommendation"]["note"] == seat_recommendation.STAGED_NOTE
+        assert staged["access"] == "read" and "isolation" in staged
+        assert "read-only instruction (access=read)" in staged["defaults_applied"]
+        assert AUTO_ISOLATION_APPLIED not in staged["defaults_applied"]
+        assert "note" not in reader["recommendation"] and "isolation" not in reader
 
 
 def test_the_decision_model_reads_all_of_a_short_text_and_the_ends_of_a_long_one() -> None:
@@ -4218,8 +4277,11 @@ async def test_native_review_role_receipt_names_the_seat_model_and_effort(
             "Dispatch it with the host's built-in subagent using model native-model, effort high."
         )
         assert "seat_fallback" not in native and "error" not in native
-        conflict = await client.call_tool("start_agent", {**args, "access": "write"})
-        assert conflict.is_error and "declares access=read" in str(conflict.content)
+        # A declared access that differs from the review seat's default is not refused.
+        declared = _payload(
+            (await client.call_tool("start_agent", {**args, "access": "write"})).structured_content
+        )
+        assert declared == native
         provider_health.record(root, "codex", "auth", "native-model")
         cooled = await client.call_tool("start_agent", args)
         assert cooled.is_error and "native-model" in str(cooled.content)

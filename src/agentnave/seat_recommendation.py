@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from agentnave.decision_gemini import KEY_NAME, GeminiDecisionClient
@@ -30,6 +30,8 @@ MAX_DECISION_TEXT = 4000
 _KEPT_HEAD = 3000
 _KEPT_TAIL = 1000
 MAX_CANDIDATES = 3
+
+type Access = Literal["read", "write"]
 
 type RecommendationErrorCode = Literal[
     "not_enabled",
@@ -118,8 +120,27 @@ def clip_for_decision(text: str) -> str:
     return f"{text[:_KEPT_HEAD]}\n…\n{text[-_KEPT_TAIL:]}"
 
 
-def _task_text(task: str, access: Literal["read", "write"]) -> str:
-    return f"Task:\n{clip_for_decision(task)}\nRequired access: {access}"
+# A read-only step in an isolated directory may turn into implementation in the same thread,
+# which keeps its seat. Its seat is therefore chosen among the write seats; the task itself
+# stays read-only.
+STAGED_NOTE = (
+    "access=read with isolation is taken as an investigation that may turn into "
+    "implementation in the same thread, so the candidates are the write seats; the task "
+    "itself stays read-only."
+)
+_STAGED_TASK = (
+    "This step is a read-only investigation. The same thread may turn to implementation "
+    "afterwards, so the candidates are write seats. Judge the difficulty by this step alone."
+)
+
+
+def _staged(access: Access, isolated: bool) -> bool:
+    return access == "read" and isolated
+
+
+def _task_text(task: str, access: Access, staged: bool = False) -> str:
+    text = f"Task:\n{clip_for_decision(task)}\nRequired access: {access}"
+    return f"{text}\n{_STAGED_TASK}" if staged else text
 
 
 @dataclass(frozen=True)
@@ -147,14 +168,23 @@ def _catalog(host: Host, excluded: frozenset[str]) -> _Catalog:
 
 
 def _usable(
-    catalog: _Catalog, access: Literal["read", "write"]
+    catalog: _Catalog, access: Access, staged: bool = False
 ) -> dict[str, CustomSeatStatus] | RecommendationError:
-    """The seats that can be dispatched now with this access, or why there are none."""
-    matching = {seat_id: seat for seat_id, seat in catalog.seats.items() if seat.access == access}
+    """The seats that can be dispatched now for this access, or why there are none."""
+    wanted: Access = "write" if staged else access
+    matching = {seat_id: seat for seat_id, seat in catalog.seats.items() if seat.access == wanted}
     usable = {seat_id: seat for seat_id, seat in matching.items() if seat.available is None}
     if not usable:
-        return RecommendationError("no_candidates", _no_candidates(access, matching))
+        reason = _no_candidates(wanted, matching)
+        return RecommendationError("no_candidates", f"{reason} {STAGED_NOTE}" if staged else reason)
     return usable
+
+
+def _noted(found: Recommendation, staged: bool) -> Recommendation:
+    """Say why a read-only task got a write seat; never silent."""
+    if not staged:
+        return found
+    return replace(found, note=f"{found.note} {STAGED_NOTE}" if found.note else STAGED_NOTE)
 
 
 def _only(seat_id: str, seat: CustomSeatStatus) -> Recommendation:
@@ -172,29 +202,37 @@ def _only(seat_id: str, seat: CustomSeatStatus) -> Recommendation:
 
 
 async def recommend(
-    task: str, access: Literal["read", "write"], host: Host, excluded: frozenset[str]
+    task: str,
+    access: Access,
+    host: Host,
+    excluded: frozenset[str],
+    *,
+    isolated: bool = False,
 ) -> Recommendation:
+    """isolated: the task starts in a new isolated directory; see STAGED_NOTE."""
     catalog = _catalog(host, excluded)
-    usable = _usable(catalog, access)
+    staged = _staged(access, isolated)
+    usable = _usable(catalog, access, staged)
     if isinstance(usable, RecommendationError):
         raise usable
     if len(usable) == 1:
-        return _only(*next(iter(usable.items())))
+        return _noted(_only(*next(iter(usable.items()))), staged)
     client = _client(catalog.decision_model)
     try:
         decision = await asyncio.to_thread(
-            client.decide, _task_text(task, access), _described(usable)
+            client.decide, _task_text(task, access, staged), _described(usable)
         )
     except DecisionError as exc:
         raise RecommendationError(exc.code, exc.message) from None
-    return _chosen(decision, usable)
+    return _noted(_chosen(decision, usable), staged)
 
 
 async def recommend_many(
-    tasks: Sequence[tuple[str, Literal["read", "write"]]], host: Host, excluded: frozenset[str]
+    tasks: Sequence[tuple[str, Access, bool]], host: Host, excluded: frozenset[str]
 ) -> list[Recommendation | RecommendationError]:
     """One recommendation for each task, in order, from at most one decision request.
 
+    A task is its prompt, its access and whether it starts in a new isolated directory.
     A task with no dispatchable seat, or a decision the model answered badly, is a
     RecommendationError in its place. A failure of the request itself raises, and then no
     task has a recommendation.
@@ -202,18 +240,21 @@ async def recommend_many(
     catalog = _catalog(host, excluded)
     results: list[Recommendation | RecommendationError | None] = [None] * len(tasks)
     pending: list[tuple[int, dict[str, CustomSeatStatus]]] = []
-    for index, (_, access) in enumerate(tasks):
-        usable = _usable(catalog, access)
+    staged = [_staged(access, isolated) for _, access, isolated in tasks]
+    for index, (_, access, _) in enumerate(tasks):
+        usable = _usable(catalog, access, staged[index])
         if isinstance(usable, RecommendationError):
             results[index] = usable
         elif len(usable) == 1:
-            results[index] = _only(*next(iter(usable.items())))
+            results[index] = _noted(_only(*next(iter(usable.items()))), staged[index])
         else:
             pending.append((index, usable))
     if pending:
         client = _client(catalog.decision_model)
         questions = [
-            DecisionQuestion(_task_text(tasks[index][0], tasks[index][1]), _described(usable))
+            DecisionQuestion(
+                _task_text(tasks[index][0], tasks[index][1], staged[index]), _described(usable)
+            )
             for index, usable in pending
         ]
         try:
@@ -224,7 +265,7 @@ async def recommend_many(
             results[index] = (
                 RecommendationError(answer.code, answer.message)
                 if isinstance(answer, DecisionError)
-                else _safe_choice(answer, usable)
+                else _safe_choice(answer, usable, staged[index])
             )
     return [result for result in results if result is not None]
 
@@ -248,10 +289,10 @@ def _described(usable: Mapping[str, CustomSeatStatus]) -> dict[str, str]:
 
 
 def _safe_choice(
-    decision: Decision, usable: Mapping[str, CustomSeatStatus]
+    decision: Decision, usable: Mapping[str, CustomSeatStatus], staged: bool
 ) -> Recommendation | RecommendationError:
     try:
-        return _chosen(decision, usable)
+        return _noted(_chosen(decision, usable), staged)
     except RecommendationError as exc:
         return exc
 
@@ -286,9 +327,7 @@ def _chosen(decision: Decision, usable: Mapping[str, CustomSeatStatus]) -> Recom
     )
 
 
-def _no_candidates(
-    access: Literal["read", "write"], matching: Mapping[str, CustomSeatStatus]
-) -> str:
+def _no_candidates(access: Access, matching: Mapping[str, CustomSeatStatus]) -> str:
     if not matching:
         return (
             f"No seat of your own catalog has access={access}; the decision model was not called."

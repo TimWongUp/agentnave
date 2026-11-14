@@ -41,7 +41,12 @@ class StartTask(BaseModel):
 
     access: Annotated[
         Literal["read", "write"],
-        Field(description="Access this task needs; only seats with this access are candidates."),
+        Field(
+            description=(
+                "Access this task needs; only seats with this access are candidates, except "
+                "read with isolation, which is chosen among write seats and stays read-only."
+            )
+        ),
     ]
     prompt: Annotated[
         str,
@@ -183,7 +188,7 @@ async def start_agents(
     directories = _directories(tasks, cwd)
     try:
         found = await recommend_many(
-            [(one.prompt, one.access) for one in tasks],
+            [(one.prompt, one.access, one.isolation is not None) for one in tasks],
             runtime.HOST,
             runtime.task_excluded_providers(),
         )
