@@ -39,7 +39,8 @@ function openScope(scope, opener) {
   if (opener) state.opener = opener;
   state.drawer = scope;
   state.convOpen = true;
-  setCollapsed(false); // picking a desk or room is asking to read it
+  // picking a desk or room is asking to read it; a click inside the peeking column keeps it folded
+  if (!state.convPeek) setCollapsed(false);
   if (state.chat) renderAll(state.chat);
   if (overlay.matches) el.tl.focus({ preventScroll: true });
 }
