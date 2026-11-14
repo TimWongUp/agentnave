@@ -159,7 +159,7 @@ impl Hosts {
     }
     /// Shared directories take manager if any connected row using them is not meetings-only.
     pub(super) fn main_skill_is_meeting(&self, host: &Host) -> bool {
-        let document = crate::members::read_orchestration(&self.context.app).unwrap_or_default();
+        let document = crate::members::read_orchestration(&self.context.data).unwrap_or_default();
         let modes = &document["effective_apps"];
         if modes[host.id] != "meetings" {
             return false;

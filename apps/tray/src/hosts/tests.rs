@@ -20,6 +20,7 @@ fn fixture() -> (TempDir, Hosts) {
     let context = Context {
         home: home.clone(),
         app: base.join("app"),
+        data: base.join("data"),
         project: base.join("project"),
         env: BTreeMap::from([
             ("HOME".into(), home.display().to_string()),
@@ -1341,6 +1342,7 @@ fn roots_follow_user_env_shell_default_and_persist_first_seen_only_on_actions() 
     let restart = Hosts::new(Context {
         home: hosts.context.home.clone(),
         app: hosts.context.app.clone(),
+        data: hosts.context.data.clone(),
         project: hosts.context.project.clone(),
         env: hosts.context.env.clone(),
         search: hosts.context.search.clone(),

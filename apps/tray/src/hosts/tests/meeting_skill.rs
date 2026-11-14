@@ -13,7 +13,7 @@ fn switches_main_skill_and_removes_both_on_disconnect() {
         "app"
     );
     crate::members::save_orchestration(
-        &hosts.context.app,
+        &hosts.context.data,
         &json!({"version":1,"preset":"meetings","effective_apps":{"pi":"meetings"}}),
     )
     .unwrap();
@@ -28,7 +28,7 @@ fn switches_main_skill_and_removes_both_on_disconnect() {
     );
     assert_eq!(hosts.state(&h)["skill"]["state"], "app");
     crate::members::save_orchestration(
-        &hosts.context.app,
+        &hosts.context.data,
         &json!({"version":1,"preset":"off","effective_apps":{"pi":"off"}}),
     )
     .unwrap();
@@ -72,7 +72,7 @@ fn shared_directory_prefers_manager_for_a_connected_non_meeting_row() {
         hosts.action("connect", &json!({"id":id})).unwrap();
     }
     let h = host(&hosts, "codebuddy");
-    crate::members::save_orchestration(&hosts.context.app, &json!({"version":1,"preset":"meetings","effective_apps":{"codebuddy":"meetings","workbuddy":"split"}})).unwrap();
+    crate::members::save_orchestration(&hosts.context.data, &json!({"version":1,"preset":"meetings","effective_apps":{"codebuddy":"meetings","workbuddy":"split"}})).unwrap();
     hosts.ensure_skill(&h, true).unwrap();
     assert_eq!(
         skill::state(

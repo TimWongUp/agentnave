@@ -4,6 +4,7 @@ fn receipt_context() -> Context {
     Context {
         home: Default::default(),
         app: Default::default(),
+        data: Default::default(),
         project: Default::default(),
         env: Default::default(),
         search: Vec::new(),
