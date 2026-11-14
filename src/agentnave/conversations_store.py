@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, NamedTuple
@@ -164,7 +165,21 @@ _CONNECTION_ID = (
 _MANAGER_STARTED_AT = os.environ.get("AGENTNAVE_MANAGER_STARTED_AT") or now()
 
 
+_SCAN_PEER_IDS: ContextVar[dict[str, set[str]] | None] = ContextVar(
+    "scan_workspace_peer_ids", default=None
+)
+
+
 def _project(record: Record) -> bytes:
+    peer_ids = _SCAN_PEER_IDS.get()
+    if (
+        peer_ids is not None
+        and record.state.kind == "task"
+        and record.state.manager_session is not None
+    ):
+        workspace = record.state.manager_session
+        if workspace not in peer_ids:
+            peer_ids[workspace] = set(private_states(record).states)
     return _json(views.snapshot(record.state, naming_peers(record)))
 
 
@@ -222,20 +237,35 @@ class ConversationStore(Groups):
     @naming_scope()
     def scan(self) -> dict[str, bool]:
         """Load every saved conversation and report which ones this server may write."""
-        found = self.db.revisions()
-        self.unavailable = []
-        for conversation_id in [cid for cid in self.records if cid not in found]:
-            if self.records[conversation_id].lock is None:
-                self._forget(conversation_id)  # deleted by another server or the App
-        writable: dict[str, bool] = {}
-        refreshed: set[str] = set()
-        for conversation_id, rev in found.items():
-            record = self.records.get(conversation_id)
-            if record is None or record.needs_refresh(rev):
-                if self._scan_record(conversation_id, record, writable):
-                    refreshed.add(conversation_id)
-            else:
-                writable[conversation_id] = True
+        peer_ids: dict[str, set[str]] = {}
+        token = _SCAN_PEER_IDS.set(peer_ids)
+        try:
+            found = self.db.revisions()
+            self.unavailable = []
+            for conversation_id in [cid for cid in self.records if cid not in found]:
+                if self.records[conversation_id].lock is None:
+                    self._forget(conversation_id)  # deleted by another server or the App
+            writable: dict[str, bool] = {}
+            refreshed: set[str] = set()
+            for conversation_id, rev in found.items():
+                record = self.records.get(conversation_id)
+                if record is None or record.needs_refresh(rev):
+                    if self._scan_record(conversation_id, record, writable):
+                        refreshed.add(conversation_id)
+                else:
+                    self._scan_record(conversation_id, record, writable, probe_only=True)
+            self._scan_workspaces(found, refreshed, peer_ids, writable)
+            return writable
+        finally:
+            _SCAN_PEER_IDS.reset(token)
+
+    def _scan_workspaces(
+        self,
+        found: dict[str, int],
+        refreshed: set[str],
+        peer_ids: dict[str, set[str]],
+        writable: dict[str, bool],
+    ) -> None:
         workspaces: dict[str, dict[str, int]] = {}
         for conversation_id in found:
             record = self.records.get(conversation_id)
@@ -247,27 +277,36 @@ class ConversationStore(Groups):
                 workspaces.setdefault(record.state.manager_session, {})[conversation_id] = (
                     record.rev
                 )
+        complete: dict[str, dict[str, int]] = {}
         for workspace, revs in workspaces.items():
-            if revs == self._workspace_task_revs.get(workspace):
-                continue
-            for conversation_id in list(revs):
-                if conversation_id in refreshed:
-                    continue
-                peer = self.records.get(conversation_id)
-                if peer is not None:
-                    peer.view_rev = None  # other threads can change collision suffixes
-                    self._scan_record(conversation_id, peer, writable)
-        self._workspace_task_revs = workspaces
-        return writable
+            unchanged = revs == self._workspace_task_revs.get(workspace)
+            if not unchanged:
+                for conversation_id in list(revs):
+                    if conversation_id in refreshed:
+                        continue
+                    peer = self.records.get(conversation_id)
+                    if peer is not None:
+                        peer.view_rev = None  # other threads can change collision suffixes
+                        self._scan_record(conversation_id, peer, writable)
+            if (unchanged and workspace not in peer_ids) or set(revs) <= peer_ids.get(
+                workspace, set()
+            ):
+                complete[workspace] = revs
+        self._workspace_task_revs = complete
 
     def _scan_record(
-        self, conversation_id: str, record: Record | None, writable: dict[str, bool]
+        self,
+        conversation_id: str,
+        record: Record | None,
+        writable: dict[str, bool],
+        *,
+        probe_only: bool = False,
     ) -> bool:
         try:
             if record is None:
                 record = Record.read(self.db, self.locks, conversation_id)
                 self.records[conversation_id] = record
-            writable[conversation_id] = record.refresh()
+            writable[conversation_id] = record.probe() if probe_only else record.refresh()
             return True
         except FileNotFoundError:
             writable.pop(conversation_id, None)

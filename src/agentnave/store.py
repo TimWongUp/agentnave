@@ -294,10 +294,23 @@ class Record:
             raise
 
     def needs_refresh(self, rev: int) -> bool:
-        """Whether scan() must probe or rewrite this record at database revision rev."""
+        """Whether scan() must reload or rewrite this record at database revision rev."""
         if self.lock is not None:
             return self.view_rev != self.rev
         return self.rev != rev or self.contended or self.view_rev != self.rev
+
+    def probe(self) -> bool:
+        """Report whether this process could write an unchanged record right now."""
+        if self.lock is not None:
+            return True
+        try:
+            lock = self._lock()
+        except ValueError:
+            self._reload()
+            self.contended = True
+            return False
+        self._unlock(lock)
+        return True
 
     def refresh(self) -> bool:
         """Reload an unheld record and report whether this process could write it.
