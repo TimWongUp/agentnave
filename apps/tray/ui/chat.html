@@ -30,16 +30,20 @@
 </head>
 <body class="chat-page">
 <header class="bar">
-  <a draggable="false" class="brand" href="/chat/"><span class="mark"><svg viewBox="0 0 44 44" aria-hidden="true"><path class="stem" d="M10 35V10L32 35V20"/><ellipse class="drop" cx="32" cy="10" rx="4" ry="4"/></svg></span>AgentNave</a>
+  <div class="bar-start">
+    <button id="side-toggle" class="bar-toggle side-toggle" type="button" aria-controls="side"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2.5"/><path d="M8 4v12"/><rect class="pane" x="3.3" y="4.8" width="4" height="10.4" rx="1.4"/></svg></button>
+    <a draggable="false" class="brand" href="/chat/"><span class="mark"><svg viewBox="0 0 44 44" aria-hidden="true"><path class="stem" d="M10 35V10L32 35V20"/><ellipse class="drop" cx="32" cy="10" rx="4" ry="4"/></svg></span>AgentNave</a>
+  </div>
   <nav class="nav" aria-label="主导航" data-en-label="Main navigation">
     <a draggable="false" href="/chat/" aria-current="page" data-en="Office">办公室</a>
     <a draggable="false" href="/settings/" data-en="Settings">设置</a>
   </nav>
+  <button id="conv-toggle" class="bar-toggle conv-toggle" type="button" aria-controls="drawer" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2.5"/><path d="M12 4v12"/><rect class="pane" x="12.7" y="4.8" width="4" height="10.4" rx="1.4"/></svg></button>
 </header>
 <div id="provider-health-alert" class="provider-health-alert" hidden><a class="provider-health-lines" href="/settings/#members"></a><button class="provider-health-close" type="button" aria-label="关闭" data-en-label="Close" title="关闭" data-en-title="Close">×</button></div>
 <div id="banner" class="banner" role="status" hidden data-en="Connection interrupted, retrying…">读取中断，正在重试…</div>
 <div id="app" class="app" data-view="list">
-  <aside class="side" aria-label="工作区列表" data-en-label="Workspaces">
+  <aside id="side" class="side" aria-label="工作区列表" data-en-label="Workspaces">
     <div class="side-head"><h1 data-en="Workspaces">工作区</h1><span id="side-count" class="side-count"></span><select id="group-by" class="side-group" aria-label="工作区分组" data-en-label="Group workspaces by"><option value="project" data-en="Project">项目</option><option value="boss" data-en="Boss">boss</option><option value="none" data-en="Ungrouped">不分组</option></select><button id="cleanup" class="side-act" type="button" title="删除很久没有动静的工作区" data-en="Clean up…" data-en-title="Delete inactive workspaces">清理…</button></div>
     <div class="gl-wrap"><div id="list" class="gl"></div></div>
     <div class="split split-side" data-split="side" role="separator" aria-orientation="vertical" aria-label="调整工作区列表宽度" data-en-label="Resize workspace list" tabindex="0"></div>
@@ -58,7 +62,6 @@
       </div>
     </div>
     <div id="blank" class="blank" hidden></div>
-    <button id="conv-toggle" class="conv-toggle" type="button" aria-controls="drawer" hidden></button>
     <footer id="ticker" class="ticker" hidden><span class="lbl" data-en="Live">动态</span><span id="tick" class="tick"></span></footer>
   </main>
   <aside id="drawer" class="conv tp-im" aria-label="对话" data-en-label="Conversation" hidden>

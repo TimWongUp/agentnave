@@ -268,11 +268,15 @@ function sideItems(c, ctx) {
     .sort((a, b) => Number(running(b)) - Number(running(a)) || recent(a, b))
     .map((d) => {
       const s = deskMood(d, ctx);
+      const status = `${cliOf(d)} · ${s.word}`;
+      // A desk with a role is told by it, with its model and effort below; one without keeps the model in the name.
+      const { name: model, effort } = deskParts(d);
+      const shownModel = d.identity?.model_source === "unknown" ? "" : model;
       return {
         scope: { kind: "desk", key: d.key },
         heads: [d],
-        name: deskName(d),
-        sub: `${cliOf(d)} · ${s.word}`,
+        name: d.role || deskName(d),
+        sub: (d.role && [shownModel, effort].filter(Boolean).join(" · ")) || status,
         tone: running(d) ? "run" : s.mood === "failed" ? "bad" : "",
         time: relTime(d.last_active),
       };
@@ -524,12 +528,23 @@ function updateRoom(rec, r, ctx) {
   }
   reconcile(rec.scene, nodes);
 }
+// What one desk's scene measures: read off a desk, or, with none open, worked out from the grid
+// the next desk would join (--cols follows the floor's width in CSS).
+const DESK_FRAME = 18; // a desk's side padding and border around its scene
+function deskSceneWidth() {
+  const scene = el.desks.querySelector(".desk > .scene");
+  if (scene) return scene.offsetWidth;
+  const grid = getComputedStyle(el.desks);
+  const cols = parseInt(grid.getPropertyValue("--cols"), 10) || 1;
+  const gap = parseFloat(grid.columnGap) || 0;
+  return (el.desks.clientWidth - gap * (cols - 1)) / cols - DESK_FRAME;
+}
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
 // The boss's scene takes a desk's size too, so it grows and shrinks with the row.
 function layoutRooms() {
   let complete = true;
-  const deskScene = el.desks.querySelector(".desk > .scene");
-  const bossWidth = deskScene ? `${Math.round(deskScene.offsetWidth * 1.3)}px` : "";
+  const deskWidth = deskSceneWidth();
+  const bossWidth = deskWidth > 0 ? `${Math.round(deskWidth * 1.3)}px` : "";
   if (state.bossRec && state.bossRec.scene.style.width !== bossWidth)
     state.bossRec.scene.style.width = bossWidth;
   // Desks scale with the floor, so seats take the size their figures have at the desks.

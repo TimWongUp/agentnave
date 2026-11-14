@@ -56,7 +56,8 @@ test("office resizing ignores height feedback and still lays out changed desks a
     AN: {}, window: {},
     ResizeObserver: class { constructor(callback) { resize = callback; } observe() {} },
     requestAnimationFrame: callback => frames.push(callback),
-    el: { floor: {}, desks: { querySelector: selector => selector === ".desk > .scene" ? { offsetWidth: deskWidth } : null } },
+    getComputedStyle: () => ({ getPropertyValue: () => " 3", columnGap: "10px" }),
+    el: { floor: {}, desks: { clientWidth: 920, querySelector: selector => selector === ".desk > .scene" && deskWidth ? { offsetWidth: deskWidth } : null } },
     state: { bossRec: { scene: { style } }, roomRecs: new Map() },
     FIG: 100,
   });
@@ -76,6 +77,9 @@ test("office resizing ignores height feedback and still lays out changed desks a
   resize([{ contentRect: { width: 720, height: 710 } }]);
   frames.splice(0).forEach(callback => callback());
   assert.equal(style.width, "182px");
+  deskWidth = 0;
+  context.layoutRooms();
+  assert.equal(style.width, "367px", "with no desk open boss takes the size one desk would have");
 
   const chatSource = readFileSync(`${__dirname}/../chat.js`, "utf8");
   const start = chatSource.indexOf("function renderAll(");
@@ -87,7 +91,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
     AN: {}, state: { loaded: "ws-a", selected: "ws-b", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
     contextOf: c => c, followAlias() {}, counts: () => ({}),
-    renderHead() {}, renderConv() { drawer.hidden = false; }, renderTicker() {},
+    renderHead() {}, renderConv() { drawer.hidden = false; }, renderSideToggle() {}, renderTicker() {},
     renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
     showBlank: kind => blanks.push(kind), renderList() {}, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => 1, timeDriven: () => false,
@@ -394,7 +398,7 @@ function refreshing() {
   const context = vm.createContext({
     AN: { voice: { ingest() { calls.voice++; } } }, state: { loaded: null, selected: "ws", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
-    contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderTicker() {},
+    contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderSideToggle() {}, renderTicker() {},
     renderOffice() { calls.all++; }, showBlank() {}, renderList() { calls.list++; }, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => tick, timeDriven: () => busy,
     load: async path => structuredClone(path === "/app/chats" ? { groups } : chat),
@@ -494,6 +498,7 @@ test("a side list patches its relative times in place and lays out only when des
     AN: { at: Date.parse }, window: {}, ResizeObserver: class { observe() {} },
     ART: { head: d => d, version: () => 1 }, deskChar: d => d.key, setText: (node, text) => { node.textContent = text; },
     h: (tag, _attrs, ...kids) => ({ tag, kids: kids.flat(), textContent: kids.find(k => typeof k === "string"), addEventListener() {} }),
+    getComputedStyle: () => ({ getPropertyValue: () => "", columnGap: "" }),
     el: { desks: { querySelector: () => { read.push("desk"); return null; } } }, state: { bossRec: null, roomRecs: new Map() }, FIG: 100,
   });
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
@@ -514,4 +519,113 @@ test("a side list patches its relative times in place and lays out only when des
   assert.equal(read.length, once, "the same desks and seats are not measured again");
   context.layoutIfChanged("2 desks");
   assert.equal(read.length, 2 * once);
+});
+
+test("a folded column peeks on its button or the window edge and leaves 300ms after pointer and focus have gone", () => {
+  const source = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const start = source.indexOf("// A folded column slides");
+  const node = () => ({ hover: false, listeners: {}, inside: false, matches() { return this.hover; }, querySelector() { return this.inside ? {} : null; },
+    addEventListener(name, fn) { this.listeners[name] = fn; } });
+  const side = node(), conv = node(), sideToggle = node(), convToggle = node(), attrs = {}, timers = [], doc = node();
+  let renders = 0;
+  const context = vm.createContext({
+    state: { sideCollapsed: true, convCollapsed: true, chat: {} }, narrow: { matches: false }, overlay: { matches: false }, innerWidth: 1200,
+    el: { app: { querySelector: () => side, toggleAttribute(name, on) { attrs[name] = on; }, getBoundingClientRect: () => ({ top: 48 }) },
+      sideToggle, convToggle, drawer: conv },
+    document: { addEventListener: (name, fn) => { doc.listeners[name] = fn; }, activeElement: {} },
+    setTimeout: fn => timers.push(fn), clearTimeout: () => {}, renderAll: () => { renders++; },
+  });
+  vm.runInContext(source.slice(start, source.indexOf("// Drag the borders", start)), context);
+  const elapse = () => timers.splice(0).forEach(fn => fn());
+
+  convToggle.listeners.pointerenter();
+  assert.equal(attrs["data-conv-peek"], true);
+  assert.equal(renders, 1, "the hidden drawer is drawn for the peek");
+  conv.hover = true;
+  convToggle.listeners.pointerleave();
+  elapse();
+  assert.equal(attrs["data-conv-peek"], true, "a pointer on the drawer keeps it");
+  conv.hover = false; conv.inside = true;
+  conv.listeners.pointerleave();
+  elapse();
+  assert.equal(attrs["data-conv-peek"], true, "so does keyboard focus inside it");
+  conv.inside = false;
+  conv.listeners.focusout();
+  elapse();
+  assert.equal(attrs["data-conv-peek"], false);
+
+  doc.listeners.pointermove({ buttons: 0, clientX: 3, clientY: 200 });
+  assert.equal(attrs["data-side-peek"], true, "the left edge opens the workspace list");
+  attrs["data-side-peek"] = undefined;
+  context.state.sideCollapsed = false;
+  context.setPeek("side", false);
+  doc.listeners.pointermove({ buttons: 0, clientX: 3, clientY: 200 });
+  assert.equal(attrs["data-side-peek"], false, "a shown list does not peek");
+  context.state.sideCollapsed = true;
+  doc.listeners.pointermove({ buttons: 0, clientX: 3, clientY: 20 });
+  doc.listeners.pointermove({ buttons: 1, clientX: 1199, clientY: 200 });
+  assert.equal(attrs["data-side-peek"], false, "the bar does not open the list");
+  assert.equal(attrs["data-conv-peek"], false, "a drag in progress does not open the drawer");
+});
+
+test("a private chat row is told by its role, with model and effort below, and falls back without them", () => {
+  const context = vm.createContext({
+    AN: { at: Date.parse, dozing: () => false }, window: {}, ResizeObserver: class { observe() {} }, state: {}, el: {}, FIG: 100, L: zh => zh,
+    activities: () => [], cliOf: () => "Codex", relTime: () => "", fullRoom: () => false,
+    deskName: d => (d.effort ? `${d.model} · ${d.effort}` : d.model),
+    deskParts: d => ({ name: d.model, effort: d.effort || "" }),
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  const row = d => context.sideItems({ desks: [{ kind: "private", last_active: "2026-11-14T00:00:00Z", ...d }], rooms: [] }, {}).chats[0];
+  const identity = { model_source: "native" };
+  assert.deepEqual([row({ key: "a", role: "接手方视角", model: "gpt-6.1-sol", effort: "high", identity }).name, row({ key: "a", role: "接手方视角", model: "gpt-6.1-sol", effort: "high", identity }).sub], ["接手方视角", "gpt-6.1-sol · high"]);
+  assert.equal(row({ key: "a", role: "r", model: "m", identity }).sub, "m", "no effort shows the model alone");
+  assert.equal(row({ key: "a", role: "r", model: "未记录模型", effort: "low", identity: { model_source: "unknown" } }).sub, "low", "a placeholder model is not shown");
+  assert.equal(row({ key: "a", role: "r", model: "未记录模型", identity: { model_source: "unknown" } }).sub, "Codex · 摸鱼", "nothing to show keeps the status line");
+  const plain = row({ key: "a", model: "m", effort: "high", identity });
+  assert.deepEqual([plain.name, plain.sub], ["m · high", "Codex · 摸鱼"], "without a role the row is as before");
+});
+
+test("crossing a breakpoint drops both peeks before the page is drawn again", () => {
+  const source = readFileSync(`${__dirname}/../chat-state.js`, "utf8");
+  const start = source.indexOf("for (const query of [narrow, overlay])");
+  const listeners = [], removed = [], order = [];
+  const query = { addEventListener: (_name, fn) => listeners.push(fn) };
+  const state = { sidePeek: true, convPeek: true, chat: {} };
+  const context = vm.createContext({
+    narrow: query, overlay: query, state, el: { app: { removeAttribute: name => removed.push(name) } },
+    sync() { order.push("sync"); }, renderList() {}, renderAll: () => order.push(`draw ${state.convPeek}`),
+  });
+  vm.runInContext(source.slice(start, source.indexOf("\n\n", start)), context);
+  listeners.forEach(fn => fn());
+  assert.deepEqual([state.sidePeek, state.convPeek], [false, false]);
+  assert.deepEqual(removed.slice(0, 2), ["data-side-peek", "data-conv-peek"]);
+  assert.equal(order.at(-1), "draw false", "the redraw sees the settled state");
+});
+
+test("a folded drawer beside the floor keeps its conversation; the overlay's closed drawer does not", () => {
+  const source = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const start = source.indexOf("function renderConv(");
+  const calls = [];
+  const state = { convCollapsed: true, convPeek: false, convOpen: false, scopeKey: "ws{}" };
+  const overlay = { matches: false };
+  const drawer = { hidden: true, classList: { toggle() {} } };
+  const renderConv = vm.runInNewContext(`${source.slice(start, source.indexOf("function updateJump(", start))}; renderConv`, {
+    AN: { voice: { controls: on => calls.push(on) } }, state, overlay, el: { drawer, convToggle: {} }, setAttr() {},
+  });
+  renderConv({}, {});
+  assert.equal(state.scopeKey, "ws{}", "peeking again is not a change of scope, so nothing is rebuilt");
+  assert.equal(drawer.hidden, false, "it stays in the page to slide");
+  assert.deepEqual(calls, [false], "the voice controls still close");
+  overlay.matches = true;
+  renderConv({}, {});
+  assert.equal(state.scopeKey, "");
+  assert.equal(drawer.hidden, true);
+});
+
+test("the folded-column breakpoints in the stylesheet are the complements of the script's queries", () => {
+  const css = readFileSync(`${__dirname}/../chat.css`, "utf8");
+  assert.doesNotMatch(css, /@media \(min-width: (761|861)px\)|@media \(min-width: 861px\) and/, "min-width leaves a gap above max-width at fractional widths");
+  assert.match(css, /@media not all and \(max-width: 860px\)/);
+  assert.match(css, /@media not all and \(max-width: 760px\)/);
 });

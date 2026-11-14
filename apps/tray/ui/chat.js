@@ -39,7 +39,8 @@ function openScope(scope, opener) {
   if (opener) state.opener = opener;
   state.drawer = scope;
   state.convOpen = true;
-  setCollapsed(false); // picking a desk or room is asking to read it
+  // picking a desk or room is asking to read it; a click inside the peeking column keeps it folded
+  if (!state.convPeek) setCollapsed(false);
   if (state.chat) renderAll(state.chat);
   if (overlay.matches) el.tl.focus({ preventScroll: true });
 }
@@ -57,11 +58,83 @@ $("dr-close").addEventListener("click", closeConv);
 function setCollapsed(on) {
   if (state.convCollapsed === on) return;
   state.convCollapsed = on;
+  state.convPeek = false; // a docked or newly folded column is not peeking
+  el.app.removeAttribute("data-conv-peek");
   store(COLLAPSED_KEY, on ? "1" : null);
+}
+// An unfolded column slides in; the class is dropped and set again so a second unfold plays too.
+function slideIn(panel) {
+  panel.classList.remove("docking");
+  void panel.offsetWidth;
+  panel.classList.add("docking");
 }
 el.convToggle.addEventListener("click", () => {
   setCollapsed(!state.convCollapsed);
+  if (!state.convCollapsed) slideIn(el.drawer);
   if (state.chat) renderAll(state.chat);
+});
+
+// The workspace column folds away the same way; the grid itself is told through data-side.
+function renderSideToggle() {
+  const L = AN.L || ((zh) => zh);
+  const shut = state.sideCollapsed;
+  const label = shut ? L("显示工作区列表", "Show workspace list") : L("隐藏工作区列表", "Hide workspace list");
+  if (el.app.dataset.side !== (shut ? "off" : "on")) el.app.dataset.side = shut ? "off" : "on";
+  setAttr(el.sideToggle, "aria-expanded", shut ? "false" : "true");
+  setAttr(el.sideToggle, "aria-label", label);
+  setAttr(el.sideToggle, "title", label);
+}
+el.sideToggle.addEventListener("click", () => {
+  state.sideCollapsed = !state.sideCollapsed;
+  store(SIDE_COLLAPSED_KEY, state.sideCollapsed ? "1" : null);
+  state.sidePeek = false;
+  el.app.removeAttribute("data-side-peek");
+  if (!state.sideCollapsed) slideIn(el.app.querySelector(".side"));
+  renderSideToggle();
+});
+renderSideToggle();
+// The conversation button belongs at the bar's right end, beside the theme switch.
+document.querySelector("header.bar .bar-end")?.append(el.convToggle);
+
+// A folded column slides over the office while the pointer is on its top-bar button or the window's
+// edge, and goes 300ms after the pointer and the focus have both left it. The saved fold is untouched.
+const PEEK_EDGE = 6;
+const PEEK_DELAY = 300;
+const PEEK = {
+  side: { panel: el.app.querySelector(".side"), button: el.sideToggle, can: () => state.sideCollapsed && !narrow.matches, atEdge: (x) => x <= PEEK_EDGE },
+  conv: { panel: el.drawer, button: el.convToggle, can: () => state.convCollapsed && !overlay.matches, atEdge: (x) => x >= innerWidth - PEEK_EDGE },
+};
+const peekTimers = {};
+function setPeek(name, on) {
+  if (state[`${name}Peek`] === on) return;
+  state[`${name}Peek`] = on;
+  el.app.toggleAttribute(`data-${name}-peek`, on);
+  if (name === "conv" && state.chat) renderAll(state.chat); // the drawer is hidden while folded
+}
+function showPeek(name) {
+  clearTimeout(peekTimers[name]);
+  if (PEEK[name].can()) setPeek(name, true);
+}
+function hidePeekSoon(name) {
+  const { panel, button } = PEEK[name];
+  clearTimeout(peekTimers[name]);
+  peekTimers[name] = setTimeout(() => {
+    // only keyboard focus holds it open; a click leaves focus behind that the pointer has already left
+    if (panel.matches(":hover") || button.matches(":hover") || panel.querySelector(":focus-visible")) return;
+    setPeek(name, false);
+  }, PEEK_DELAY);
+}
+for (const [name, { panel, button }] of Object.entries(PEEK)) {
+  button.addEventListener("pointerenter", () => showPeek(name));
+  button.addEventListener("pointerleave", () => hidePeekSoon(name));
+  panel.addEventListener("pointerleave", () => hidePeekSoon(name));
+  panel.addEventListener("focusout", () => hidePeekSoon(name));
+}
+// Listening on the whole document leaves nothing at the edge to cover the office or its scrollbar.
+document.addEventListener("pointermove", (e) => {
+  if (e.buttons) return;
+  for (const [name, { atEdge }] of Object.entries(PEEK))
+    if (atEdge(e.clientX) && e.clientY >= el.app.getBoundingClientRect().top) showPeek(name);
 });
 
 // Drag the borders between the three columns. Each width is a share of the window, kept between
@@ -210,17 +283,21 @@ function instructionsFirst(replies) {
 }
 function renderConv(c, ctx) {
   const L = AN.L || ((zh) => zh);
-  el.drawer.hidden = overlay.matches ? !state.convOpen : state.convCollapsed;
-  // The fold button lives on the floor's right edge; the overlay has its own close button.
+  // Beside the floor a folded drawer stays in the page, out to the right, so it can slide; only the overlay hides it.
+  const visible = overlay.matches ? state.convOpen : !state.convCollapsed || state.convPeek;
+  el.drawer.hidden = overlay.matches && !visible;
+  el.drawer.classList.toggle("folded", !overlay.matches && state.convCollapsed);
+  // The fold button is in the top bar; the overlay has its own close button.
   el.convToggle.hidden = overlay.matches;
   const shut = state.convCollapsed;
-  setText(el.convToggle, shut ? "‹" : "›");
+  const hint = shut ? L("显示对话栏", "Show conversation") : L("隐藏对话栏", "Hide conversation");
   setAttr(el.convToggle, "aria-expanded", shut ? "false" : "true");
-  setAttr(el.convToggle, "aria-label", shut ? L("展开对话栏", "Expand conversation drawer") : L("收起对话栏", "Collapse conversation drawer"));
-  setAttr(el.convToggle, "title", shut ? L("展开对话栏", "Expand conversation drawer") : L("收起对话栏", "Collapse conversation drawer"));
-  if (el.drawer.hidden) {
+  setAttr(el.convToggle, "aria-label", hint);
+  setAttr(el.convToggle, "title", hint);
+  if (!visible) {
     AN.voice?.controls(false, null, ctx);
-    state.scopeKey = "";
+    // a drawer that is only folded keeps its conversation, scroll position and unread count included
+    if (overlay.matches) state.scopeKey = "";
     return;
   }
   // a selection that no longer exists falls back to the whole workspace
@@ -523,6 +600,7 @@ function renderAll(c, newGroup = false) {
   const n = counts(c);
   renderHead(c, n);
   renderConv(c, ctx);
+  renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);
   if (state.locate) locatePlaying();

@@ -67,8 +67,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 
 /* ---- three columns: workspaces · office floor · conversation ---- */
-.app { grid-template-columns: var(--side-w, 248px) minmax(0, 1fr) var(--conv-w, clamp(320px, 30vw, 440px)); }
-.app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--side-w, 248px) minmax(0, 1fr); }
+.app { grid-template-columns: var(--side-col, var(--side-w, 248px)) minmax(0, 1fr) var(--conv-col, var(--conv-w, clamp(320px, 30vw, 440px))); }
+.app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--side-col, var(--side-w, 248px)) minmax(0, 1fr); }
 /* drag handles on the column borders; widths are shares of the window, clamped in chat.js */
 .side { position: relative; }
 .split { position: absolute; z-index: 5; top: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; outline: none; }
@@ -77,17 +77,59 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: transparent; transition: background 0.15s; }
 .split:hover::after, .split:focus-visible::after, .app.resizing .split::after { background: var(--accent); }
 .app.resizing { cursor: col-resize; user-select: none; }
-/* fold the conversation column away from the floor's right edge */
-.conv-toggle { position: absolute; z-index: 4; top: 50%; right: 0; transform: translateY(-50%); width: 18px; height: 52px; padding: 0; border: 1px solid var(--line); border-right: 0; border-radius: 8px 0 0 8px; background: var(--solid); color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
-.conv-toggle:hover { color: var(--ink); background: var(--card-hover); }
-.conv-toggle[hidden] { display: none; }
+/* top-bar buttons that fold the workspace list and the conversation; the pane icon fills while the column shows */
+.bar-start { display: flex; align-items: center; gap: 10px; }
+.bar-toggle { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.bar-toggle:hover { color: var(--ink); background: var(--hover); }
+.bar-toggle[hidden] { display: none; }
+.bar-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.bar-toggle .pane { fill: currentColor; stroke: none; opacity: 0; }
+.bar-toggle[aria-expanded="true"] .pane { opacity: 0.3; }
+/* settings covers the office; the buttons keep their places so the bar does not shift */
+body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
+/* The queries below are the exact complements of chat-state.js's `narrow` and `overlay`, so no fractional width falls in a gap.
+   Folded columns leave the grid (--side-col, --conv-col are their tracks) and wait off to the side.
+   Hovering the button or the window edge lays one over the office; the dragged --side-w stays on
+   the element, so unfolding brings the same width back. */
+@media not all and (max-width: 760px) {
+  .app[data-side="off"] { --side-col: 0px; }
+  .app[data-side="off"], .app:has(> .conv.folded) { position: relative; }
+  .app[data-side="off"] > .floor-wrap { grid-column: 2; }
+  .app[data-side="off"] > .conv { grid-column: 3; }
+  .app[data-side="off"] > .conv.folded { grid-column: auto; }
+  .app[data-side="off"] .side { position: absolute; z-index: 40; top: 0; bottom: 0; left: 0; width: var(--side-w, 248px); transform: translateX(-100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; }
+  .app[data-side="off"][data-side-peek] .side { transform: none; visibility: visible; box-shadow: 8px 0 30px #0006; transition: transform 0.2s ease; }
+  /* the peeking list is the full one, whatever the rail looks like at this width */
+  .app[data-side="off"] .split-side { display: none; }
+  .app[data-side="off"] :is(.side-head, .gl-grp, .gi-body) { display: flex; }
+  .app[data-side="off"] .gl-sec { display: block; }
+  .app[data-side="off"] .gl-more { display: block; padding: 5px 8px; text-align: left; font-size: 11.5px; }
+  .app[data-side="off"] .gl-more::after { content: none; }
+  .app[data-side="off"] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
+  .app[data-side="off"] .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
+  .app[data-side="off"] .gi::before { left: 5px; }
+}
+@media not all and (max-width: 860px) {
+  .app:has(> .conv.folded) { --conv-col: 0px; }
+  .conv.folded { position: absolute; z-index: 40; top: 0; right: 0; bottom: 0; width: var(--conv-w, clamp(320px, 30vw, 440px)); transform: translateX(100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; }
+  .app[data-conv-peek] > .conv.folded { transform: none; visibility: visible; box-shadow: -8px 0 30px #0006; transition: transform 0.2s ease; }
+  .conv.folded .split-conv { display: none; }
+}
+@media (max-width: 1100px) {
+  .conv.folded { width: var(--conv-w, clamp(300px, 34vw, 400px)); }
+}
+/* a column unfolded by its button slides in from its edge with the same motion it leaves by */
+@keyframes dock-left { from { transform: translateX(-100%); } }
+@keyframes dock-right { from { transform: translateX(100%); } }
+@media not all and (max-width: 760px) { .side.docking { animation: dock-left 0.2s ease; } }
+@media not all and (max-width: 860px) { .conv.docking { animation: dock-right 0.2s ease; } }
 .gi-host { position: relative; flex: none; align-self: flex-start; width: 30px; height: 30px; }
 .gi-host .avatar, .gi-host .host-letter { width: 30px; height: 30px; border-radius: 9px; }
 .gi-host .presence { right: -3px; bottom: -3px; }
 .host-letter { display: grid; place-items: center; background: color-mix(in srgb, var(--mc) 30%, var(--surface)); color: var(--ink); font-weight: 700; font-size: 13px; }
 @media (max-width: 1100px) and (min-width: 761px) {
-  .app { grid-template-columns: 64px minmax(0, 1fr) var(--conv-w, clamp(300px, 34vw, 400px)); }
-  .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
+  .app { grid-template-columns: var(--side-col, 64px) minmax(0, 1fr) var(--conv-col, var(--conv-w, clamp(300px, 34vw, 400px))); }
+  .app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--side-col, 64px) minmax(0, 1fr); }
   .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split-side { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
@@ -126,12 +168,21 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* ---- painted scene: chair → character → desk → laptop → lid logo, one 1536×1200 stage ---- */
 .scene { position: relative; aspect-ratio: 1536 / 1200; max-width: 250px; margin-inline: auto; }
-.boss-zone .scene { width: 266px; max-width: min(325px, 100%); margin-top: 14px; margin-bottom: -10px; }
+/* chat-office.js sets the width, 1.3 desks; 266px only holds until the first layout */
+.boss-zone .scene { width: 266px; max-width: 100%; margin-top: 14px; margin-bottom: -10px; }
 /* boss in the middle, recent chats and meetings on either side; narrow floors put the lists below */
+/* the lists stop at 320px and sit against the boss, so the three stay together in the middle of a wide floor */
 .boss-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: start; }
 .boss-mid { grid-column: 2; grid-row: 1; }
-.boss-side { min-width: 0; display: flex; flex-direction: column; gap: 2px; cursor: default; }
+.boss-side { min-width: 0; width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 2px; cursor: default; }
+/* the lists keep to the floor's two edges, the boss alone in the middle */
+.boss-side:last-child { justify-self: end; }
 .side-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 3 + 4px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
+/* beside the boss the lists run as tall as the boss's scene: size containment keeps them from growing the row */
+@container (min-width: 641px) {
+  .boss-row { align-items: stretch; }
+  .boss-side .side-rows { flex: 1 1 0; min-height: calc(46px * 3 + 4px); max-height: none; contain: size; }
+}
 @container (max-width: 640px) { .boss-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); row-gap: 4px; } .boss-mid { grid-column: 1 / -1; } .boss-side { grid-row: 2; } }
 @container (max-width: 400px) { .boss-row { grid-template-columns: minmax(0, 1fr); } .boss-side { grid-row: auto; } }
 .l-chair, .l-desk { position: absolute; display: block; pointer-events: none; user-select: none; -webkit-user-drag: none; }
@@ -437,8 +488,9 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
 .td-more { padding: 2px 6px; font-size: 11px; color: var(--faint); }
 
 /* ---- open desks ---- */
-/* four desks a row, each as wide as the row allows; fewer only when a desk would drop below 170px */
-.desks { --cols: 4; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+/* five desks a row, each as wide as the row allows; fewer only when a desk would drop below 170px */
+.desks { --cols: 5; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+@container (max-width: 956px) { .desks { --cols: 4; } }
 @container (max-width: 776px) { .desks { --cols: 3; } }
 @container (max-width: 596px) { .desks { --cols: 2; } }
 @container (max-width: 416px) { .desks { --cols: 1; } }
@@ -614,7 +666,7 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
 
 /* ---- narrow: the conversation slides over the floor; very narrow: one column ---- */
 @media (max-width: 860px) {
-  .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
+  .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--side-col, 64px) minmax(0, 1fr); }
   .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
@@ -636,6 +688,7 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }
   .back { display: inline-block; }
+  .side-toggle { display: none; }
   .floor { padding: 10px 12px 18px; }
   .conv { width: 100vw; }
 }
