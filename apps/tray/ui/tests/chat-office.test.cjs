@@ -506,7 +506,7 @@ test("a side list patches its relative times in place and lays out only when des
 test("a folded column peeks on its button or the window edge and leaves 300ms after pointer and focus have gone", () => {
   const source = readFileSync(`${__dirname}/../chat.js`, "utf8");
   const start = source.indexOf("// A folded column slides");
-  const node = () => ({ hover: false, listeners: {}, inside: false, matches() { return this.hover; }, contains() { return this.inside; },
+  const node = () => ({ hover: false, listeners: {}, inside: false, matches() { return this.hover; }, querySelector() { return this.inside ? {} : null; },
     addEventListener(name, fn) { this.listeners[name] = fn; } });
   const side = node(), conv = node(), sideToggle = node(), convToggle = node(), attrs = {}, timers = [], doc = node();
   let renders = 0;
@@ -530,7 +530,7 @@ test("a folded column peeks on its button or the window edge and leaves 300ms af
   conv.hover = false; conv.inside = true;
   conv.listeners.pointerleave();
   elapse();
-  assert.equal(attrs["data-conv-peek"], true, "so does focus inside it");
+  assert.equal(attrs["data-conv-peek"], true, "so does keyboard focus inside it");
   conv.inside = false;
   conv.listeners.focusout();
   elapse();

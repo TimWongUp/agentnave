@@ -111,7 +111,8 @@ function hidePeekSoon(name) {
   const { panel, button } = PEEK[name];
   clearTimeout(peekTimers[name]);
   peekTimers[name] = setTimeout(() => {
-    if (panel.matches(":hover") || button.matches(":hover") || panel.contains(document.activeElement)) return;
+    // only keyboard focus holds it open; a click leaves focus behind that the pointer has already left
+    if (panel.matches(":hover") || button.matches(":hover") || panel.querySelector(":focus-visible")) return;
     setPeek(name, false);
   }, PEEK_DELAY);
 }

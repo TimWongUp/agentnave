@@ -167,6 +167,11 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 .boss-mid { grid-column: 2; grid-row: 1; }
 .boss-side { min-width: 0; display: flex; flex-direction: column; gap: 2px; cursor: default; }
 .side-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 3 + 4px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
+/* beside the boss the lists run as tall as the boss's scene: size containment keeps them from growing the row */
+@container (min-width: 641px) {
+  .boss-row { align-items: stretch; }
+  .boss-side .side-rows { flex: 1 1 0; min-height: calc(46px * 3 + 4px); max-height: none; contain: size; }
+}
 @container (max-width: 640px) { .boss-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); row-gap: 4px; } .boss-mid { grid-column: 1 / -1; } .boss-side { grid-row: 2; } }
 @container (max-width: 400px) { .boss-row { grid-template-columns: minmax(0, 1fr); } .boss-side { grid-row: auto; } }
 .l-chair, .l-desk { position: absolute; display: block; pointer-events: none; user-select: none; -webkit-user-drag: none; }
