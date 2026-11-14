@@ -331,11 +331,11 @@
   // and decorations stand still (html.blurred) and polling slows down. The App also reports the
   // window's focus as data-window-blurred, for when the page gets no blur events. Coming back
   // refreshes at once. The setting "pause when unfocused" (data-pause-unfocused) turns this off,
-  // except on battery (data-on-battery); a hidden or minimized window stays paused either way.
+  // except on battery (data-on-battery) unless figures may move on battery (data-battery-still="false"); a hidden or minimized window stays paused either way.
   const BLURRED_POLL = 5000;
   let blurred = false;
   function syncBlurred() {
-    const next = root.dataset?.idleBlur !== undefined && (root.dataset.pauseUnfocused !== "false" || root.dataset.onBattery === "true") && (root.dataset.windowBlurred === "true" || !document.hasFocus());
+    const next = root.dataset?.idleBlur !== undefined && (root.dataset.pauseUnfocused !== "false" || (root.dataset.onBattery === "true" && root.dataset.batteryStill !== "false")) && (root.dataset.windowBlurred === "true" || !document.hasFocus());
     if (next === blurred) return;
     blurred = next;
     root.classList?.toggle("blurred", next);
@@ -346,7 +346,7 @@
   window.addEventListener("blur", checkBlurred);
   window.addEventListener("focus", checkBlurred);
   if (typeof MutationObserver === "function") {
-    new MutationObserver(syncBlurred).observe(root, { attributes: true, attributeFilter: ["data-window-blurred", "data-pause-unfocused", "data-on-battery"] });
+    new MutationObserver(syncBlurred).observe(root, { attributes: true, attributeFilter: ["data-window-blurred", "data-pause-unfocused", "data-on-battery", "data-battery-still"] });
   }
   syncBlurred();
 
