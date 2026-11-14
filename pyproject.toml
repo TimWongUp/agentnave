@@ -35,6 +35,7 @@ packages = ["src/agentnave"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "skills/agentnave-manager" = "agentnave/skills/agentnave-manager"
+"skills/agentnave-meeting" = "agentnave/skills/agentnave-meeting"
 "skills/agentnave-review" = "agentnave/skills/agentnave-review"
 "skills/agentnave-handover" = "agentnave/skills/agentnave-handover"
 

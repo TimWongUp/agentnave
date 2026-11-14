@@ -88,6 +88,7 @@ async def main(launcher: str, *legacy_launchers: str) -> None:
 
     skills = Path(agentnave.__file__).resolve().parent / "skills"
     assert (skills / "agentnave-manager/SKILL.md").is_file(), "missing bundled agentnave-manager"
+    assert (skills / "agentnave-meeting/SKILL.md").is_file(), "missing bundled agentnave-meeting"
     assert (skills / "agentnave-review/SKILL.md").is_file(), "missing bundled agentnave-review"
     assert (skills / "agentnave-handover/SKILL.md").is_file(), "missing bundled agentnave-handover"
     with tempfile.TemporaryDirectory() as directory:
