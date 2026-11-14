@@ -3458,6 +3458,7 @@ async def test_native_meeting_prompts_wake_once_and_save_seat_audit(
 async def test_private_names_refresh_workspace_views_without_taking_other_server_lock(
     tmp_path: Path,
     data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def private(id_: str, model: str, time: str, workspace: str = "s-work") -> Conversation:
         return Conversation(
@@ -3535,6 +3536,44 @@ async def test_private_names_refresh_workspace_views_without_taking_other_server
         studio.scan()
         remaining = _views(data_root, "second")["director"]["tasks"][0]["identity"]
         assert remaining["ordinal"] == 1 and not remaining["numbered"]
+
+        written: list[str] = []
+        save_view = Database.save_view
+
+        def counted_save_view(db: Database, conversation_id: str, view: bytes) -> None:
+            written.append(conversation_id)
+            save_view(db, conversation_id, view)
+
+        monkeypatch.setattr(Database, "save_view", counted_save_view)
+        studio.scan()
+        assert written == []  # unchanged history skips per-conversation view writes
+
+        # Another writer adding or changing a sibling task conversation rewrites only that workspace.
+        third = _create(data_root, private("third", "route/shared", "2026-11-06T00:00:02Z"))
+        third.release()
+        written.clear()
+        studio.scan()
+        assert set(written) == {"second", "third"}
+        assert (
+            _views(data_root, "second")["director"]["tasks"][0]["identity"]["handle"]
+            == "@route/shared·Claude Code #1"
+        )
+        assert (
+            _views(data_root, "third")["director"]["tasks"][0]["identity"]["handle"]
+            == "@route/shared·Claude Code #2"
+        )
+
+        third_state = _state(data_root, "third")
+        third_state["tasks"][0]["model"] = "route/distinct"
+        _store(data_root, third_state)
+        written.clear()
+        studio.scan()
+        assert set(written) == {"second", "third"}
+        assert not _views(data_root, "second")["director"]["tasks"][0]["identity"]["numbered"]
+
+        written.clear()
+        studio.scan()
+        assert written == []
     finally:
         first.release()
         await studio.close()

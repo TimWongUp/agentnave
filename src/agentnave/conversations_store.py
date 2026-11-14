@@ -193,6 +193,7 @@ class ConversationStore(Groups):
         # each other's tasks and seats alike.
         manager.session_locks = self.root / "native-session-locks"
         self.records: dict[str, Record] = {}
+        self._workspace_task_revs: dict[str, dict[str, int]] = {}
         self.unavailable: list[Unavailable] = []
         self.running_tasks: dict[str, str] = {}  # task id -> invocation id
         # invocation id -> (conversation id, task id), for message ids in wait receipts.
@@ -223,32 +224,66 @@ class ConversationStore(Groups):
         """Load every saved conversation and report which ones this server may write."""
         found = self.db.revisions()
         self.unavailable = []
-        for conversation_id in set(self.records) - set(found):
+        for conversation_id in [cid for cid in self.records if cid not in found]:
             if self.records[conversation_id].lock is None:
                 self._forget(conversation_id)  # deleted by another server or the App
         writable: dict[str, bool] = {}
+        refreshed: set[str] = set()
+        for conversation_id, rev in found.items():
+            record = self.records.get(conversation_id)
+            if record is None or record.needs_refresh(rev):
+                if self._scan_record(conversation_id, record, writable):
+                    refreshed.add(conversation_id)
+            else:
+                writable[conversation_id] = True
+        workspaces: dict[str, dict[str, int]] = {}
         for conversation_id in found:
             record = self.records.get(conversation_id)
-            try:
-                if record is None:
-                    record = Record.read(self.db, self.locks, conversation_id)
-                    self.records[conversation_id] = record
-                if record.state.kind == "task":
-                    record.view_rev = None  # other threads can change collision suffixes
-                writable[conversation_id] = record.refresh()
-            except FileNotFoundError:
-                if record is None or record.lock is None:
-                    self._forget(conversation_id)  # deleted since the listing
-            except (OSError, ValueError) as exc:
-                if isinstance(exc, OSError) and record is not None:
-                    # Keep the last readable state through transient I/O failures.
-                    writable[conversation_id] = False
-                else:
-                    self._forget(conversation_id)
-                self.unavailable.append(
-                    Unavailable(path=f"{self.db.path}#{conversation_id}", reason=str(exc))
+            if (
+                record is not None
+                and record.state.kind == "task"
+                and record.state.manager_session is not None
+            ):
+                workspaces.setdefault(record.state.manager_session, {})[conversation_id] = (
+                    record.rev
                 )
+        for workspace, revs in workspaces.items():
+            if revs == self._workspace_task_revs.get(workspace):
+                continue
+            for conversation_id in list(revs):
+                if conversation_id in refreshed:
+                    continue
+                peer = self.records.get(conversation_id)
+                if peer is not None:
+                    peer.view_rev = None  # other threads can change collision suffixes
+                    self._scan_record(conversation_id, peer, writable)
+        self._workspace_task_revs = workspaces
         return writable
+
+    def _scan_record(
+        self, conversation_id: str, record: Record | None, writable: dict[str, bool]
+    ) -> bool:
+        try:
+            if record is None:
+                record = Record.read(self.db, self.locks, conversation_id)
+                self.records[conversation_id] = record
+            writable[conversation_id] = record.refresh()
+            return True
+        except FileNotFoundError:
+            writable.pop(conversation_id, None)
+            if record is None or record.lock is None:
+                self._forget(conversation_id)  # deleted since the listing
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, OSError) and record is not None:
+                # Keep the last readable state through transient I/O failures.
+                writable[conversation_id] = False
+            else:
+                writable.pop(conversation_id, None)
+                self._forget(conversation_id)
+            self.unavailable.append(
+                Unavailable(path=f"{self.db.path}#{conversation_id}", reason=str(exc))
+            )
+        return False
 
     def record(self, conversation_id: str) -> Record:
         if conversation_id not in self.records:
