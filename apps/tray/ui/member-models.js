@@ -272,7 +272,7 @@
       const sceneOptions = S.currentDoc.modes?.[scene]?.deepseek?.overrides?.[modelId]?.options;
       if (!sceneOptions) continue;
       const synced = sameDeepSeekRoute(sceneOptions, prevOptions) ||
-        (route !== "default" && !Object.hasOwn(sceneOptions, "provider"));
+        (route !== "default" && !Object.hasOwn(sceneOptions, "provider") && !Object.hasOwn(sceneOptions, "stored_credentials"));
       if (synced) applyDeepSeekRoute(sceneOptions, route);
     }
     edited();

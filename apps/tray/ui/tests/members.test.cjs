@@ -758,6 +758,10 @@ test("DeepSeek route selection is explicit, model scoped and preserves other set
   assert.deepEqual(app.doc().modes.discussion.deepseek.overrides["deepseek-flash"], {
     options: { permission_mode: "read-only", provider: "gateway", stored_credentials: false },
   });
+  // a scene that only turned stored credentials off keeps that choice
+  app.run('currentDoc.modes.discussion.deepseek.overrides["deepseek-flash"] = { options: { stored_credentials: false } }');
+  app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "account"}})');
+  assert.deepEqual(app.doc().modes.discussion.deepseek.overrides["deepseek-flash"], { options: { stored_credentials: false } });
 });
 
 test("DeepSeek route rows show a visible bilingual note without leaking internal fields", () => {
