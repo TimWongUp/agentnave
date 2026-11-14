@@ -223,7 +223,9 @@ for (const query of [narrow, overlay])
 
 // ---------------------------------------------------------------- workspace list
 function sectionEl(id, text) {
-  return (state.sections[id] ||= h("div.gl-sec", {}, text));
+  const node = (state.sections[id] ||= h("div.gl-sec"));
+  setText(node, text);
+  return node;
 }
 function createItem(g) {
   const rec = {
@@ -289,7 +291,7 @@ function updateItem(rec, g) {
   }
   setClass(rec.presence, g.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", g.live ? L("有任务在运行", "Tasks running") : null);
-  setText(rec.label, name);
+  setText(rec.label, chatName(g));
   setText(
     rec.meta,
     L(`${handoverWord(g)}${place} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`, `${handoverWord(g)}${place} · ${g.desks_count ?? 0} desks · ${g.rooms_count ?? 0} rooms`),
@@ -304,7 +306,7 @@ function updateItem(rec, g) {
 }
 // The boss, then the project unless the list is already grouped by it or it repeats the title.
 function itemPlace(g) {
-  const project = state.groupBy === "project" ? "" : g.project_label;
+  const project = state.groupBy === "project" && g.handover !== "pending" ? "" : g.project_label;
   return [g.label, project !== chatName(g) && project].filter(Boolean).join(" · ");
 }
 // Isolated directories nobody works in any more still wait for boss to release them.
@@ -326,9 +328,9 @@ function renderList() {
   if (!groups.length) nodes.push(h("div.gl-empty", {}, L("还没有工作区", "No workspaces yet")));
   reconcile(el.list, nodes);
 }
-// The cap may never hide work waiting on the reader, nor the workspace already open.
+// The cap may never hide a pending handover, work waiting on the reader, or the workspace already open.
 function mustShow(g) {
-  return urgent(g.status) || g.group === state.selected;
+  return g.handover === "pending" || urgent(g.status) || g.group === state.selected;
 }
 // A "show more" button, made once and reused: reconcile matches nodes, so it keeps its place and
 // the click handler reads whatever this render decided it opens.
@@ -352,12 +354,13 @@ function itemNode(g, folded) {
   setAttr(rec.el, "data-folded", folded ? "true" : null);
   return rec.el;
 }
-// Work going on first, then the most recent.
+const flatRank = (g) => (g.handover === "pending" ? 0 : urgent(g.status) ? 1 : 2);
+// Awaiting handover first, then work going on, then the most recent.
 function flatNodes(groups, by) {
   // The order covers every workspace, so opening up more of the list does not reshuffle the rest.
   state.flatOrder = stickyOrder(
     state.flatOrder,
-    groups.map((g) => ({ id: g.group, rank: urgent(g.status) ? 0 : 1 })),
+    groups.map((g) => ({ id: g.group, rank: flatRank(g) })),
   );
   const { items, hidden } = ChatGroups.capFlat(
     state.flatOrder.map((id) => by.get(id)),
@@ -367,11 +370,15 @@ function flatNodes(groups, by) {
   let section = -1;
   state.order = items.map((g) => g.group);
   for (const g of items) {
-    const rank = urgent(g.status) ? 0 : 1;
+    const rank = flatRank(g);
     if (rank !== section) {
       section = rank;
       nodes.push(
-        rank === 0 ? sectionEl("hot", L("进行中", "Active")) : sectionEl("rest", L("最近", "Recent")),
+        rank === 0
+          ? sectionEl("handover", L("待接手", "Awaiting handover"))
+          : rank === 1
+            ? sectionEl("hot", L("进行中", "Active"))
+            : sectionEl("rest", L("最近", "Recent")),
       );
     }
     nodes.push(itemNode(g, false));
@@ -430,7 +437,7 @@ function groupedNodes(groups) {
     nodes.push(headNode(section));
     for (const g of section.shown) {
       // A folded group still shows what needs the reader or is open.
-      const hidden = folded && !mustShow(g);
+      const hidden = folded && !(urgent(g.status) || g.group === state.selected);
       nodes.push(itemNode(g, hidden));
       if (!hidden) order.push(g.group);
     }

@@ -4,6 +4,7 @@
 // work going on first, then the most recent. A long list is capped the same way for both shapes.
 (() => {
   const OTHER = "other";
+  const HANDOVER = ":handover";
   const MODES = ["project", "boss", "none"];
   // How much of the list is shown before the reader asks for more, and how much one ask adds.
   const CAPS = { groups: 10, groupStep: 10, items: 5, itemStep: 5, flat: 30, flatStep: 30 };
@@ -12,8 +13,13 @@
 
   function arrange(groups, mode, { urgent, L }) {
     const keyOf = mode === "boss" ? (g) => g.boss_key || `${g.host}|${g.label}` : (g) => g.project_key || OTHER;
+    const pending = [];
     const buckets = new Map();
     for (const g of groups) {
+      if (g.handover === "pending") {
+        pending.push(g);
+        continue;
+      }
       const key = keyOf(g);
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push(g);
@@ -36,6 +42,19 @@
     const names = new Map();
     for (const s of sections) names.set(s.title, (names.get(s.title) || 0) + 1);
     for (const s of sections) s.hint = names.get(s.title) > 1 ? s.path : "";
+    if (pending.length) {
+      pending.sort((a, b) => when(b) - when(a) || byText(a.group, b.group));
+      sections.unshift({
+        key: HANDOVER,
+        pinned: true,
+        items: pending,
+        other: false,
+        latest: Math.max(...pending.map(when)),
+        title: L("待接手", "Awaiting handover"),
+        path: "",
+        hint: "",
+      });
+    }
     return sections;
   }
 
@@ -52,9 +71,10 @@
   function capSections(sections, { groupLimit, itemLimit, must }) {
     const limitOf = (s) => (typeof itemLimit === "function" ? itemLimit(s) : itemLimit);
     const kept = [];
+    let seen = 0;
     let hiddenGroups = 0;
-    for (const [i, section] of sections.entries()) {
-      if (i >= groupLimit && !section.items.some(must)) {
+    for (const section of sections) {
+      if (!section.pinned && seen++ >= groupLimit && !section.items.some(must)) {
         hiddenGroups++;
         continue;
       }
@@ -69,5 +89,5 @@
     return { items: shown, hidden: items.length - shown.length };
   }
 
-  window.ChatGroups = { arrange, capSections, capFlat, caps: CAPS, modes: MODES, other: OTHER };
+  window.ChatGroups = { arrange, capSections, capFlat, caps: CAPS, modes: MODES, other: OTHER, handover: HANDOVER };
 })();

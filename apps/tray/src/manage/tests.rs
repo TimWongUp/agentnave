@@ -655,6 +655,99 @@ fn retention_preview_preserves_waiting_handovers_until_claimed() {
 }
 
 #[test]
+fn cancel_handover_keeps_notes_until_claimed_and_refuses_non_pending_or_boss_only() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "conv");
+    let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    set(
+        root.path(),
+        "UPDATE conversations SET manager_session = 's-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id = ?1",
+        "conv",
+    );
+    let reader = Reader::new(root.path().to_owned());
+    let post = |path: &str, group: &str| -> Value {
+        let body = serde_json::to_vec(&json!({"group": group})).unwrap();
+        let reply = reader.request("POST", path, Some("1"), &body);
+        assert_eq!(reply.status, 200);
+        serde_json::from_slice(&reply.body).unwrap()
+    };
+    let row = |id: &str| -> (i64, Option<String>, Option<String>) {
+        crate::db::read(root.path())
+            .unwrap()
+            .unwrap()
+            .query_row(
+                "SELECT pending, note, released FROM workspaces WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap()
+    };
+
+    assert_eq!(
+        post("/app/workspaces/cancel-handover", workspace)["status"],
+        "not_pending"
+    );
+    assert_eq!(
+        post("/app/workspaces/handover", workspace)["status"],
+        "waiting"
+    );
+    set(
+        root.path(),
+        "UPDATE workspaces SET note = 'keep me' WHERE id = ?1",
+        workspace,
+    );
+
+    assert_eq!(
+        post("/app/workspaces/cancel-handover", workspace)["status"],
+        "cancelled"
+    );
+    assert_eq!(row(workspace), (0, Some("keep me".to_owned()), None));
+    assert_eq!(
+        post("/app/workspaces/cancel-handover", workspace)["status"],
+        "not_pending"
+    );
+
+    assert_eq!(
+        post("/app/workspaces/handover", workspace)["status"],
+        "waiting"
+    );
+    let (pending, note, released) = row(workspace);
+    assert_eq!((pending, note.as_deref()), (1, Some("keep me")));
+    assert!(released.is_some());
+
+    set(
+        root.path(),
+        "UPDATE workspaces SET pending = 0, owner = 's-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE id = ?1",
+        workspace,
+    );
+    assert_eq!(
+        post("/app/workspaces/cancel-handover", workspace)["status"],
+        "not_pending"
+    );
+    assert_eq!(
+        post("/app/workspaces/handover", workspace)["status"],
+        "waiting"
+    );
+    assert_eq!(row(workspace).1, None);
+
+    let boss_only = "s-cccccccccccccccccccccccccccccccc";
+    crate::db::write(root.path())
+        .unwrap()
+        .unwrap()
+        .execute(
+            "INSERT INTO workspaces (id, owner, owner_host, pending, note, released, title, cwd) \
+             VALUES (?1, ?1, 'claude', 1, 'solo', '2026-11-14T00:00:00Z', 'Solo', '/tmp')",
+            [boss_only],
+        )
+        .unwrap();
+    assert_eq!(
+        post("/app/workspaces/cancel-handover", boss_only)["status"],
+        "only_boss"
+    );
+    assert_eq!(row(boss_only).0, 1);
+}
+
+#[test]
 fn retention_preview_skips_unreadable_owners_and_ids_without_losing_healthy_counts() {
     for column in ["manager_session", "id"] {
         let root = tempfile::tempdir().unwrap();

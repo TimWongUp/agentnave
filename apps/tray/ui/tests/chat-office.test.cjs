@@ -203,14 +203,16 @@ test("the same character stays off the wall across model variants and reappears 
 
 
 function auditUI(english = false) {
+  const cancelled = [];
   const h = (tag, attributes = {}, ...children) => ({
-    tag, attributes, children, dataset: {}, textContent: "",
+    tag, attributes, children: children.flat(Infinity).filter(x => x != null && x !== false), dataset: {}, listeners: {}, textContent: "",
     replaceChildren(...items) { this.children = items; },
-    addEventListener() {},
+    addEventListener(name, fn) { this.listeners[name] = fn; },
     set innerHTML(_) { throw new Error("Audit data must never become HTML"); },
   });
+  const AN = common(english);
   const context = vm.createContext({
-    AN: common(english), state: { peers: new Set() }, h,
+    AN, Actions: { cancelHandover: id => cancelled.push(id) }, state: { peers: new Set(), expanded: new Set() }, h,
     L: (zh, en) => english ? en : zh,
     ART: { version: () => 1, character: () => "claude", head: () => h("img") },
     deskChar: () => "claude",
@@ -225,7 +227,7 @@ function auditUI(english = false) {
   vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), context);
   const ctx = { c: {}, desks: new Map(), rooms: new Map() };
   return {
-    context,
+    AN, cancelled, context,
     show(approval, existing) {
       const m = { id: "audit", kind: "approval", approval, time: "2026-11-05T00:00:00Z", speaker: { role: "member", provider: "claude" } };
       const rec = existing || context.createMessage(m);
@@ -628,4 +630,31 @@ test("the folded-column breakpoints in the stylesheet are the complements of the
   assert.doesNotMatch(css, /@media \(min-width: (761|861)px\)|@media \(min-width: 861px\) and/, "min-width leaves a gap above max-width at fractional widths");
   assert.match(css, /@media not all and \(max-width: 860px\)/);
   assert.match(css, /@media not all and \(max-width: 760px\)/);
+});
+
+test("pending handover card shows takeover command, copy, and cancel only while pending and cancelable", async () => {
+  const ui = auditUI();
+  const ctx = { desks: new Map(), rooms: new Map() };
+  const msg = { id: "h1", kind: "handover", time: "2026-11-14T12:00:00Z", text: "Claude Code 交出工作区，等待接手", detail: "note" };
+  const [card] = ui.context.tpDirectory({ group: "s-abc", title: "发版", label: "Claude Code", handover: "pending", conversations: [{ id: "c1" }], messages: [msg] }, ctx);
+  const next = card.children.find(n => n?.tag === "div.tp-handover-next");
+  assert.equal(next.children[0].children[0], "到任意 boss 的新聊天里说：");
+  assert.equal(next.children[1].children[0], "接手 AgentNave 工作区「发版」（s-abc）");
+  const [copyBtn, cancelBtn] = next.children[2].children;
+  await copyBtn.listeners.click();
+  assert.deepEqual(ui.AN.copied, ["接手 AgentNave 工作区「发版」（s-abc）"]);
+  cancelBtn.listeners.click();
+  assert.deepEqual(ui.cancelled, ["s-abc"]);
+
+  const [bossOnly] = ui.context.tpDirectory({ group: "s-empty", title: "空工作区", label: "Claude Code", handover: "pending", conversations: [], messages: [msg] }, ctx);
+  assert.equal(bossOnly.children.find(n => n?.tag === "div.tp-handover-next").children[2].children.length, 1);
+
+  const [taken] = ui.context.tpDirectory({ group: "s-abc", title: "发版", label: "Codex", handover: "changed", conversations: [{ id: "c1" }], messages: [msg] }, ctx);
+  assert.equal(taken.children.find(n => n?.tag === "div.tp-handover-next"), undefined);
+
+  const en = auditUI(true);
+  const [enCard] = en.context.tpDirectory({ group: "s-abc", title: "Release", label: "Claude Code", handover: "pending", conversations: [], messages: [msg] }, ctx);
+  const enNext = enCard.children.find(n => n?.tag === "div.tp-handover-next");
+  assert.equal(enNext.children[0].children[0], "In a new chat with any boss, say:");
+  assert.equal(enNext.children[1].children[0], 'Take over AgentNave workspace "Release" (s-abc)');
 });

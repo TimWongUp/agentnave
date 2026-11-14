@@ -79,12 +79,58 @@ def test_session_file_finds_each_kind_of_host_record(
     database = tmp_path / "hermes/state.db"
     database.parent.mkdir()
     with closing(sqlite3.connect(database)) as db, db:
-        db.execute("CREATE TABLE sessions (id TEXT)")
-        db.execute("INSERT INTO sessions VALUES ('chat')")
+        db.execute("CREATE TABLE sessions (id TEXT, model TEXT)")
+        db.execute("INSERT INTO sessions VALUES ('chat', 'base-model')")
     assert session_file(Host("hermes"), "chat") == database
     assert session_file(Host("hermes"), "absent") is None
     assert shared_session_id("hermes", boss_key("hermes", "chat")) == "chat"
     assert shared_session_id("hermes", boss_key("hermes", "absent")) is None
+
+    from agentnave import native_sessions
+    from agentnave.native_sessions import session_model
+
+    profile_chat = "local-" + "b" * 64
+    profile_db = tmp_path / "hermes/profiles/work/state.db"
+    profile_db.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(profile_db)) as db, db:
+        db.execute("CREATE TABLE sessions (id TEXT, model TEXT)")
+        db.execute("INSERT INTO sessions VALUES (?, 'profile-model')", (profile_chat,))
+    active = tmp_path / "hermes/active_profile"
+    active.write_text("\ufeffwork\n", encoding="utf-8")
+    assert session_file(Host("hermes"), profile_chat) == profile_db
+    assert session_model(Host("hermes"), profile_chat) == "profile-model"
+    assert shared_session_id("hermes", boss_key("hermes", profile_chat)) == profile_chat
+    for ignored in ("default", "Work", "_work", "a" * 65):
+        active.write_text(ignored, encoding="utf-8")
+        assert session_file(Host("hermes"), "chat") == database
+    active.write_text("work", encoding="utf-8")
+    deleted = tmp_path / "hermes/profiles/.deleted/work"
+    deleted.parent.mkdir(parents=True)
+    deleted.write_text("", encoding="utf-8")
+    assert session_file(Host("hermes"), "chat") == database
+    deleted.unlink()
+    monkeypatch.setenv("HERMES_HOME", str(profile_db.parent))
+    (profile_db.parent / "active_profile").write_text("nested", encoding="utf-8")
+    (profile_db.parent / "profiles/nested").mkdir(parents=True)
+    assert session_file(Host("hermes"), profile_chat) == profile_db
+
+    monkeypatch.delenv("HERMES_HOME")
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(native_sessions.sys, "platform", "win32")
+    local_root = tmp_path / "Local"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_root))
+    dot_db = tmp_path / ".hermes/state.db"
+    dot_db.parent.mkdir()
+    with closing(sqlite3.connect(dot_db)) as db, db:
+        db.execute("CREATE TABLE sessions (id TEXT)")
+        db.execute("INSERT INTO sessions VALUES ('dot-chat')")
+    assert session_file(Host("hermes"), "dot-chat") == dot_db
+    win_db = local_root / "hermes/state.db"
+    win_db.parent.mkdir(parents=True)
+    with closing(sqlite3.connect(win_db)) as db, db:
+        db.execute("CREATE TABLE sessions (id TEXT)")
+        db.execute("INSERT INTO sessions VALUES ('win-chat')")
+    assert session_file(Host("hermes"), "win-chat") == win_db
 
 
 def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
@@ -188,16 +234,23 @@ def test_native_session_model_uses_exact_chat_latest_turn_not_defaults(
     )
     assert session_model(Host("pi"), session) == "glm"
     monkeypatch.setenv("CODEBUDDY_CONFIG_DIR", str(tmp_path / "codebuddy"))
+    monkeypatch.delenv("WORKBUDDY_CONFIG_DIR", raising=False)
     buddy = tmp_path / "codebuddy" / "projects" / "project" / f"{session}.jsonl"
     buddy.parent.mkdir(parents=True)
     line = {"type": "message", "role": "assistant", "timestamp": 1767225600000}
     buddy.write_text(json.dumps(line | {"providerData": {"model": "glm-5.3-flash"}}))
     assert session_model(Host("codebuddy"), session) == "glm-5.3-flash"
-    # WorkBuddy, CodeBuddy's desktop app, keeps the same records.
+    assert session_model(Host("workbuddy"), session) is None
+    # WorkBuddy reads WORKBUDDY_CONFIG_DIR rather than CODEBUDDY_CONFIG_DIR.
+    monkeypatch.setenv("WORKBUDDY_CONFIG_DIR", str(tmp_path / "workbuddy"))
+    workbuddy = tmp_path / "workbuddy" / "projects" / "project" / f"{session}.jsonl"
+    workbuddy.parent.mkdir(parents=True)
+    workbuddy.write_text(json.dumps(line | {"providerData": {"model": "glm-5.3-flash"}}))
+    assert session_file(Host("workbuddy"), session) == workbuddy
     assert session_model(Host("workbuddy"), session) == "glm-5.3-flash"
     # Mid-turn rows have no role: reasoning and function calls already name the model.
     running = "01a14d5a-d23d-7263-b50d-ca6b5ac429df"
-    (buddy.parent / f"{running}.jsonl").write_text(
+    (workbuddy.parent / f"{running}.jsonl").write_text(
         json.dumps(
             {
                 "type": "reasoning",
