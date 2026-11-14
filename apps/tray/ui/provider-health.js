@@ -35,6 +35,19 @@
     const day = date.toDateString() === now.toDateString() ? "" : `${date.toLocaleDateString()} `;
     return L(`约 ${day}${time} 恢复`, `Resumes around ${day}${time}`);
   }
+  const DISMISSED = "agentnave.providerHealthDismissed";
+  function dismissed() {
+    try { return localStorage.getItem(DISMISSED); } catch { return null; }
+  }
+  function bindClose(box) {
+    const close = box.querySelector(".provider-health-close");
+    if (!close || close.dataset.bound) return;
+    close.dataset.bound = "1";
+    close.addEventListener("click", () => {
+      try { localStorage.setItem(DISMISSED, box.dataset.key || ""); } catch { /* Closed for this view only. */ }
+      box.hidden = true;
+    });
+  }
   async function refresh(box) {
     if (!box) return;
     try {
@@ -56,8 +69,12 @@
         line.textContent = `⚠ ${PROVIDER_NAMES[first.provider] || first.provider} ${reason(first.item, L)}${comma}${affected.filter(Boolean).join(L("、", ", "))}${comma}${recovery(first.item, L)}`;
         return line;
       });
-      box.replaceChildren(...lines);
-      box.hidden = !lines.length;
+      const list = box.querySelector(".provider-health-lines") || box;
+      list.replaceChildren(...lines);
+      bindClose(box);
+      // A closed warning stays closed until what it says changes.
+      box.dataset.key = lines.map(line => line.textContent).join("\n");
+      box.hidden = !lines.length || box.dataset.key === dismissed();
     } catch { /* Keep the previous warning when a refresh fails. */ }
   }
   AN.providerHealth = { names: PROVIDER_NAMES, rows, reason, recovery, refresh };
