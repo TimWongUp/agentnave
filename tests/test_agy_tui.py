@@ -31,6 +31,11 @@ home = Path(os.environ["HOME"])
 entry = json.loads((home / ".gemini/config/hooks.json").read_text())["agentnave-interactive"]
 transcript = home / ".gemini/antigravity-cli/brain" / cid / ".system_generated/logs/transcript_full.jsonl"
 transcript.parent.mkdir(parents=True, exist_ok=True)
+logs = home / ".gemini/antigravity-cli/log"
+logs.mkdir(parents=True, exist_ok=True)
+(logs / "cli-fake.log").write_text(
+    f"Starting language server process with pid {os.getpid()}\nExperiments refreshed after login\n"
+)
 
 def output(text):
     os.write(1, text.encode())
@@ -77,6 +82,8 @@ read_until(b"\r")
 row(step_index=10, source="USER_EXPLICIT", type="USER_INPUT", content="work")
 if case != "resume":
     hook("SessionStart")
+hook("PreInvocation", conversationId="subagent", parentConversationId=cid)
+hook("PreInvocation")
 assert hook("PreToolUse", toolCall={"name": "ask_question"})["decision"] == "deny"
 row(step_index=11, source="MODEL", type="PLANNER_RESPONSE", content="looking", tool_calls=[{"name": "run_command"}])
 row(step_index=12, source="MODEL", type="GENERIC", content="ran")
@@ -152,16 +159,19 @@ def test_hook_entry_keeps_other_hooks_and_acts_only_in_agentnave_runs(
     monkeypatch.setenv("HOME", str(tmp_path))
     path = hooks.hooks_path()
     path.parent.mkdir(parents=True)
-    # A user who keeps the file elsewhere keeps the link; the target gets the entry.
+    # A user who keeps the file elsewhere keeps the link; the target gets the entry, and an older
+    # agentnave-interactive entry without PreInvocation is upgraded in place.
     target = tmp_path / "dotfiles-hooks.json"
-    target.write_text(json.dumps({"mine": {"Stop": []}}))
+    target.write_text(json.dumps({"mine": {"Stop": []}, hooks.NAME: {"Stop": []}}))
     path.symlink_to(target)
     assert hooks.ensure_entry() is not None
     assert path.is_symlink()
     assert hooks.ensure_entry() is None
     saved = json.loads(path.read_text())
     assert list(saved) == ["mine", hooks.NAME]
+    assert saved["mine"] == {"Stop": []}
     ask = saved[hooks.NAME]["PreToolUse"][0]["hooks"][0]["command"]
+    pre = saved[hooks.NAME]["PreInvocation"][0]["command"]
     stop = saved[hooks.NAME]["Stop"][0]["command"]
     env = {k: v for k, v in os.environ.items() if k != hooks.ENV}
 
@@ -173,6 +183,9 @@ def test_hook_entry_keeps_other_hooks_and_acts_only_in_agentnave_runs(
 
     assert run(ask, {}) == {"decision": "allow"}
     assert run(ask, {hooks.ENV: str(tmp_path)})["decision"] == "deny"
+    assert run(pre, {}) == {} and not list(tmp_path.glob("*.PreInvocation.json"))
+    assert run(pre, {hooks.ENV: str(tmp_path)}) == {}
+    assert len(list(tmp_path.glob("*.PreInvocation.json"))) == 1
     assert run(stop, {}) == {} and not list(tmp_path.glob("*.Stop.json"))
     assert run(stop, {hooks.ENV: str(tmp_path)}) == {}
     assert len(list(tmp_path.glob("*.Stop.json"))) == 1
@@ -350,22 +363,114 @@ def test_screen_applies_agy_edits_and_reads_only_the_bottom_lines() -> None:
     assert state(f"{rule}\n>\n{rule}{tasks}") == "idle"
 
 
-def test_stalled_turns_block_on_limits_but_wait_for_background_stop() -> None:
+def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentnave.agy_tui as agy
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    logs = tmp_path / ".gemini/antigravity-cli/log"
+    logs.mkdir(parents=True)
+    # Concurrent agy logs—including one whose PID starts with ours—must not satisfy our wait.
+    for other_pid in (1234, 999):
+        (logs / f"cli-{other_pid}.log").write_text(
+            f"Starting language server process with pid {other_pid}\n"
+            "Experiments refreshed after login\n"
+        )
+    idle = "─" * 40 + "\n>\n" + "─" * 40 + "\n? for shortcuts"
+    terminal = cast(
+        Terminal,
+        SimpleNamespace(poll=lambda: idle, process=SimpleNamespace(pid=123, poll=lambda: None)),
+    )
+    clock = [0.0]
+
+    def advance() -> float:
+        clock[0] += 2.0
+        return clock[0]
+
+    monkeypatch.setattr(agy.time, "monotonic", advance)
+    timed_out = Run(terminal, Turn(None), tmp_path, started=0.0)
+    assert timed_out.await_experiments() is True
+    assert timed_out.turn.error is None
+    assert clock[0] >= agy.EXPERIMENT_WAIT
+
+    own_log = logs / "cli-123.log"
+    created_id = "11111111-2222-3333-4444-555555555555"
+    own_log.write_text(
+        "Starting language server process with pid 123\n"
+        f"Created conversation {created_id} (backend=BACKEND_TYPE_UNSPECIFIED)\n"
+        "Experiments refreshed after login\n"
+    )
+    clock[0] = 0.0
+    ready = Run(terminal, Turn(None), tmp_path, started=0.0)
+    assert ready.await_experiments() is True
+    assert clock[0] < agy.EXPERIMENT_WAIT
+    ready.poll()
+    assert ready.turn.conversation_id == created_id
+
+
+def test_stalled_turns_complete_when_hooks_unmounted_or_block_when_unsafe(
+    tmp_path: Path,
+) -> None:
+    adapter = AntigravityAdapter()
+    capture = adapter.prepare(InvocationRequest("antigravity", "w", tmp_path)).capture_line
+    assert capture is not None
+
     def run(**fields: object) -> Run:
         turn = Turn("c")
         for key, value in fields.items():
             setattr(turn, key, value)
         return Run(cast(Terminal, None), turn, Path())
 
-    answered = run(answered=True, response="done")
-    assert not answered.stalled("idle", STOP_GRACE - 1, "")
-    assert answered.stalled("idle", STOP_GRACE + 1, "")
-    assert "Stop hook never arrived" in str(answered.turn.error)
-    assert cast(dict[str, object], answered.turn.result()["result"])["response"] == "done"
+    # All fallback conditions met: unmounted hooks complete from the written reply with a warning.
+    fallback = run(answered=True, response="done")
+    assert not fallback.stalled("idle", STOP_GRACE - 1, "")
+    assert fallback.stalled("idle", STOP_GRACE + 1, "")
+    assert fallback.turn.stopped and fallback.turn.error is None
+    events = [
+        {
+            "event": "step_update",
+            "step_update": {"conversation_id": "c", "step_type": "agent_response", "state": "DONE"},
+        },
+        fallback.turn.result(),
+    ]
+    retained = b"".join(capture(json.dumps(e).encode()) for e in events)
+    parsed = adapter.parse(0, retained, b"")
+    assert parsed.status is InvocationStatus.SUCCEEDED
+    assert parsed.output == "done"
+    assert parsed.session_id == "c"
+    assert any("did not load hooks" in w for w in parsed.warnings)
+
+    # PreInvocation seen proves hooks loaded: missing Stop blocks and points to hooks.json.
+    mounted = run(answered=True, response="done", pre_invocation_seen=True)
+    assert mounted.stalled("idle", STOP_GRACE + 1, "")
+    assert "Stop hook never arrived" in str(mounted.turn.error)
+    assert "hooks.json" in str(mounted.turn.error)
+    blocked = adapter.parse(1, json.dumps(mounted.turn.result()).encode(), b"")
+    assert blocked.status is InvocationStatus.BLOCKED and blocked.output == "done"
+
+    # Any unmet fallback condition keeps BLOCKED while naming the unmounted-hooks race.
+    for unsafe in (
+        {"entry_intact": False},
+        {"open_tools": [100]},
+        {"background": {"c/task": 200}},
+        {"response": "   "},
+    ):
+        case = run(**{"answered": True, "response": "done", **unsafe})
+        assert case.stalled("idle", STOP_GRACE + 1, "")
+        assert "hooks did not load" in str(case.turn.error)
+        assert "hooks.json" not in str(case.turn.error)
+
     # A Stop that left background commands running is followed by another once they end.
     assert not run(answered=True, stop_seen=True).stalled("idle", 3600, "")
     assert not run().stalled("busy", 3600, "")
-    assert not run().stalled("unknown", 30, "") and run().stalled("unknown", 61, "")
+    unmounted_stall = run()
+    assert not unmounted_stall.stalled("unknown", 30, "")
+    assert unmounted_stall.stalled("unknown", 61, "")
+    assert "hooks did not load" in str(unmounted_stall.turn.error)
+    mounted_stall = run(pre_invocation_seen=True)
+    assert mounted_stall.stalled("idle", 61, "")
+    assert "hooks.json" in str(mounted_stall.turn.error)
     assert run().stalled("menu", 3, "")
 
 
