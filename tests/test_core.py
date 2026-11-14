@@ -1471,14 +1471,15 @@ def test_provider_health_cooldown_keeps_deadline_and_clears_success(tmp_path: Pa
 
 
 def test_provider_quota_extends_only_for_later_explicit_reset(tmp_path: Path) -> None:
+    # Claude names no quota group, so its quota stays on the model.
     now = datetime.now(UTC)
-    provider_health.record(tmp_path, "codex", "quota", "a", now + timedelta(hours=1))
-    first = provider_health.active(tmp_path)[("codex", "a")]
-    provider_health.record(tmp_path, "codex", "quota", "a", now + timedelta(minutes=30))
-    provider_health.record(tmp_path, "codex", "quota", "a")
-    assert provider_health.active(tmp_path)[("codex", "a")] == first
-    provider_health.record(tmp_path, "codex", "quota", "a", now + timedelta(hours=2))
-    assert provider_health.active(tmp_path)[("codex", "a")]["until"] != first["until"]
+    provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(hours=1))
+    first = provider_health.active(tmp_path)[("claude", "a")]
+    provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(minutes=30))
+    provider_health.record(tmp_path, "claude", "quota", "a")
+    assert provider_health.active(tmp_path)[("claude", "a")] == first
+    provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(hours=2))
+    assert provider_health.active(tmp_path)[("claude", "a")]["until"] != first["until"]
 
 
 def test_adapters_parse_explicit_quota_resets() -> None:
@@ -1508,8 +1509,8 @@ def test_billing_quota_merge_preserves_longer_deadline(tmp_path: Path, first: st
     reset = datetime.now(UTC) + timedelta(days=5)
     order = ("quota", "billing") if first == "quota" else ("billing", "quota")
     for category in order:
-        provider_health.record(tmp_path, "codex", cast(provider_health.Code, category), "x", reset)
-    entry = provider_health.active(tmp_path)[("codex", "x")]
+        provider_health.record(tmp_path, "claude", cast(provider_health.Code, category), "x", reset)
+    entry = provider_health.active(tmp_path)[("claude", "x")]
     assert entry["code"] == "billing" and entry["until"] is not None
     assert datetime.fromisoformat(entry["until"]) == reset
     assert "reset" not in entry
