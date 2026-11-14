@@ -64,6 +64,24 @@ el.convToggle.addEventListener("click", () => {
   if (state.chat) renderAll(state.chat);
 });
 
+// The workspace column folds away the same way; the grid itself is told through data-side.
+function renderSideToggle() {
+  const L = AN.L || ((zh) => zh);
+  const shut = state.sideCollapsed;
+  const label = shut ? L("展开工作区列表", "Expand workspace list") : L("收起工作区列表", "Collapse workspace list");
+  if (el.app.dataset.side !== (shut ? "off" : "on")) el.app.dataset.side = shut ? "off" : "on";
+  setText(el.sideToggle, shut ? "›" : "‹");
+  setAttr(el.sideToggle, "aria-expanded", shut ? "false" : "true");
+  setAttr(el.sideToggle, "aria-label", label);
+  setAttr(el.sideToggle, "title", label);
+}
+el.sideToggle.addEventListener("click", () => {
+  state.sideCollapsed = !state.sideCollapsed;
+  store(SIDE_COLLAPSED_KEY, state.sideCollapsed ? "1" : null);
+  renderSideToggle();
+});
+renderSideToggle();
+
 // Drag the borders between the three columns. Each width is a share of the window, kept between
 // a minimum and a maximum so the office in the middle never gets squeezed out.
 const SPLITS = {
@@ -523,6 +541,7 @@ function renderAll(c, newGroup = false) {
   const n = counts(c);
   renderHead(c, n);
   renderConv(c, ctx);
+  renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);
   if (state.locate) locatePlaying();

@@ -56,7 +56,8 @@ test("office resizing ignores height feedback and still lays out changed desks a
     AN: {}, window: {},
     ResizeObserver: class { constructor(callback) { resize = callback; } observe() {} },
     requestAnimationFrame: callback => frames.push(callback),
-    el: { floor: {}, desks: { querySelector: selector => selector === ".desk > .scene" ? { offsetWidth: deskWidth } : null } },
+    getComputedStyle: () => ({ getPropertyValue: () => " 3", columnGap: "10px" }),
+    el: { floor: {}, desks: { clientWidth: 920, querySelector: selector => selector === ".desk > .scene" && deskWidth ? { offsetWidth: deskWidth } : null } },
     state: { bossRec: { scene: { style } }, roomRecs: new Map() },
     FIG: 100,
   });
@@ -76,6 +77,9 @@ test("office resizing ignores height feedback and still lays out changed desks a
   resize([{ contentRect: { width: 720, height: 710 } }]);
   frames.splice(0).forEach(callback => callback());
   assert.equal(style.width, "182px");
+  deskWidth = 0;
+  context.layoutRooms();
+  assert.equal(style.width, "367px", "with no desk open boss takes the size one desk would have");
 
   const chatSource = readFileSync(`${__dirname}/../chat.js`, "utf8");
   const start = chatSource.indexOf("function renderAll(");
@@ -87,7 +91,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
     AN: {}, state: { loaded: "ws-a", selected: "ws-b", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
     contextOf: c => c, followAlias() {}, counts: () => ({}),
-    renderHead() {}, renderConv() { drawer.hidden = false; }, renderTicker() {},
+    renderHead() {}, renderConv() { drawer.hidden = false; }, renderSideToggle() {}, renderTicker() {},
     renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
     showBlank: kind => blanks.push(kind), renderList() {}, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => 1, timeDriven: () => false,
@@ -394,7 +398,7 @@ function refreshing() {
   const context = vm.createContext({
     AN: { voice: { ingest() { calls.voice++; } } }, state: { loaded: null, selected: "ws", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
-    contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderTicker() {},
+    contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderSideToggle() {}, renderTicker() {},
     renderOffice() { calls.all++; }, showBlank() {}, renderList() { calls.list++; }, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => tick, timeDriven: () => busy,
     load: async path => structuredClone(path === "/app/chats" ? { groups } : chat),
@@ -476,6 +480,7 @@ test("a side list patches its relative times in place and lays out only when des
     AN: { at: Date.parse }, window: {}, ResizeObserver: class { observe() {} },
     ART: { head: d => d, version: () => 1 }, deskChar: d => d.key, setText: (node, text) => { node.textContent = text; },
     h: (tag, _attrs, ...kids) => ({ tag, kids: kids.flat(), textContent: kids.find(k => typeof k === "string"), addEventListener() {} }),
+    getComputedStyle: () => ({ getPropertyValue: () => "", columnGap: "" }),
     el: { desks: { querySelector: () => { read.push("desk"); return null; } } }, state: { bossRec: null, roomRecs: new Map() }, FIG: 100,
   });
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);

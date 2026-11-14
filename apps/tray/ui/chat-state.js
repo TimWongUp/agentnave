@@ -47,6 +47,7 @@ const FOLD_PX = 320; // a bubble taller than this is folded behind "展开全文
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
 const COLLAPSED_KEY = "agentnave.office.convCollapsed";
+const SIDE_COLLAPSED_KEY = "agentnave.office.sideCollapsed";
 const GROUP_BY_KEY = "agentnave.office.groupBy";
 const FOLD_KEY = "agentnave.office.fold";
 // Layout preferences survive restarts; storage may be unavailable, which only loses them.
@@ -91,6 +92,7 @@ const el = {
   tick: $("tick"),
   drawer: $("drawer"),
   convToggle: $("conv-toggle"),
+  sideToggle: $("side-toggle"),
   drIco: $("dr-ico"),
   drTitle: $("dr-title"),
   drSub: $("dr-sub"),
@@ -139,6 +141,7 @@ const state = {
   drawer: { kind: "all" },
   convOpen: false, // only matters while the conversation is an overlay
   convCollapsed: stored(COLLAPSED_KEY) === "1", // the reader folded the conversation column away
+  sideCollapsed: stored(SIDE_COLLAPSED_KEY) === "1", // the reader folded the workspace column away
   opener: null,
   scopeKey: "",
   nodes: new Map(),

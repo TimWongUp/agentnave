@@ -81,13 +81,21 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .conv-toggle { position: absolute; z-index: 4; top: 50%; right: 0; transform: translateY(-50%); width: 18px; height: 52px; padding: 0; border: 1px solid var(--line); border-right: 0; border-radius: 8px 0 0 8px; background: var(--solid); color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
 .conv-toggle:hover { color: var(--ink); background: var(--card-hover); }
 .conv-toggle[hidden] { display: none; }
+/* fold the workspace column away from the floor's left edge; wide and rail layouts only, one column has no side to fold */
+.side-toggle { position: absolute; z-index: 4; top: 50%; left: 0; transform: translateY(-50%); width: 18px; height: 52px; padding: 0; border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; background: var(--solid); color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
+.side-toggle:hover { color: var(--ink); background: var(--card-hover); }
+/* the dragged --side-w stays on the element, so unfolding brings the same width back */
+@media (min-width: 761px) {
+  .app[data-side="off"] { --side-w: 0px !important; --rail-w: 0px !important; }
+  .app[data-side="off"] .side { visibility: hidden; overflow: hidden; border-right: 0; }
+}
 .gi-host { position: relative; flex: none; align-self: flex-start; width: 30px; height: 30px; }
 .gi-host .avatar, .gi-host .host-letter { width: 30px; height: 30px; border-radius: 9px; }
 .gi-host .presence { right: -3px; bottom: -3px; }
 .host-letter { display: grid; place-items: center; background: color-mix(in srgb, var(--mc) 30%, var(--surface)); color: var(--ink); font-weight: 700; font-size: 13px; }
 @media (max-width: 1100px) and (min-width: 761px) {
-  .app { grid-template-columns: 64px minmax(0, 1fr) var(--conv-w, clamp(300px, 34vw, 400px)); }
-  .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
+  .app { grid-template-columns: var(--rail-w, 64px) minmax(0, 1fr) var(--conv-w, clamp(300px, 34vw, 400px)); }
+  .app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--rail-w, 64px) minmax(0, 1fr); }
   .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split-side { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
@@ -126,7 +134,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* ---- painted scene: chair → character → desk → laptop → lid logo, one 1536×1200 stage ---- */
 .scene { position: relative; aspect-ratio: 1536 / 1200; max-width: 250px; margin-inline: auto; }
-.boss-zone .scene { width: 266px; max-width: min(325px, 100%); margin-top: 14px; margin-bottom: -10px; }
+/* chat-office.js sets the width, 1.3 desks; 266px only holds until the first layout */
+.boss-zone .scene { width: 266px; max-width: 100%; margin-top: 14px; margin-bottom: -10px; }
 /* boss in the middle, recent chats and meetings on either side; narrow floors put the lists below */
 .boss-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: start; }
 .boss-mid { grid-column: 2; grid-row: 1; }
@@ -614,7 +623,7 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
 
 /* ---- narrow: the conversation slides over the floor; very narrow: one column ---- */
 @media (max-width: 860px) {
-  .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 64px minmax(0, 1fr); }
+  .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--rail-w, 64px) minmax(0, 1fr); }
   .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
@@ -636,6 +645,7 @@ html[data-on-battery="true"]:not([data-battery-still="false"]) :is(.fig, .fig *,
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }
   .back { display: inline-block; }
+  .side-toggle { display: none; }
   .floor { padding: 10px 12px 18px; }
   .conv { width: 100vw; }
 }
