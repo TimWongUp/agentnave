@@ -233,7 +233,9 @@ function updateBlock(rec, m) {
   const working = d => brief(d).mood === "working";
   const shownDesks = desks.filter(d => d.kind !== "seat");
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
-  const ordered = [...shownDesks.filter(working).sort(recent).slice(0, ACTIVE_SHOWN), ...shownDesks.filter(d => !working(d)).sort(recent).slice(0, IDLE_SHOWN)];
+  // Working desks keep the order they started in, newest first, so new messages never move them.
+  const started = (a, b) => AN.at(b.first_seen) - AN.at(a.first_seen) || (a.key < b.key ? -1 : 1);
+  const ordered = [...shownDesks.filter(working).sort(started).slice(0, ACTIVE_SHOWN), ...shownDesks.filter(d => !working(d)).sort(recent).slice(0, IDLE_SHOWN)];
   for (const key of rec.cellRecs.keys()) if (!ordered.some(d => d.key === key)) rec.cellRecs.delete(key);
   reconcile(rec.cells, ordered.map((d) => {
     let cell = rec.cellRecs.get(d.key);
