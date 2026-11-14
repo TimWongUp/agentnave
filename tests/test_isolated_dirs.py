@@ -256,7 +256,7 @@ def test_rejects_option_refs_unborn_bare_submodules_and_custom_filters_and_emits
     joined_warnings = " | ".join(warned.warnings)
     assert "hooks" in joined_warnings.lower()
     assert "lfs" in joined_warnings.lower()
-    assert "Uncommitted changes" in joined_warnings
+    assert "Uncommitted changes" in joined_warnings and "dirty.txt" in joined_warnings
     assert dirs.release(warned.id, workspace_id="ws-1").status == "deleted"
 
     # 5. Custom non-LFS filter referenced in .gitattributes is rejected.
