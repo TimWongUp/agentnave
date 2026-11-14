@@ -468,6 +468,24 @@ test("an unfocused window polls every five seconds and refreshes the moment it r
   await flush();
   assert.equal(classes.blurred, false);
   assert.equal(timers.at(-1).delay, 1500, "and polls at the usual pace again");
+
+  const dataset = context.document.documentElement.dataset;
+  dataset.pauseUnfocused = "false";
+  focused = false;
+  emit("blur");
+  timers.splice(0).forEach(timer => timer.fn());
+  await flush();
+  assert.equal(classes.blurred, false, "with the setting off an unfocused window keeps moving");
+  dataset.onBattery = "true";
+  emit("blur");
+  timers.splice(0).forEach(timer => timer.fn());
+  await flush();
+  assert.equal(classes.blurred, true, "except on battery");
+  dataset.batteryStill = "false";
+  emit("blur");
+  timers.splice(0).forEach(timer => timer.fn());
+  await flush();
+  assert.equal(classes.blurred, false, "unless figures may move on battery");
 });
 
 test("a side list patches its relative times in place and lays out only when desks or seats change", () => {
