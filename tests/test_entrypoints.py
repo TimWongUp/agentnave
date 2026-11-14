@@ -2898,29 +2898,45 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
         result = await _recommend(client)
         assert not result.is_error, result.content
         picked = _payload(result.structured_content)
-        assert picked["seat"] == "write-b" and picked["confidence"] == 0.82
+        assert picked["seat"] == "write-b" and picked["difficulty"] == "hard"
+        assert picked["confidence"] == 0.82
         assert picked["decision_model_called"] is True and "native" not in picked
         assert [c["seat"] for c in cast(list[dict[str, object]], picked["candidates"])] == [
             "write-b",
             "write-a",
             "write-c",
         ]
+        assert [c["difficulty"] for c in cast(list[dict[str, object]], picked["candidates"])] == [
+            "hard",
+            "medium",
+            "easy",
+        ]
         assert [c["probability"] for c in cast(list[dict[str, object]], picked["candidates"])] == [
             0.7,
             0.2,
             0.1,
         ]
-        # Only the summary, the access and each candidate's specialty, difficulty and access.
+        # Only the summary, the access and each candidate's specialty, difficulty with what it
+        # asks of the work, and access.
         assert decision.created == [("gemini-decision-1", "test-key-123")]
         (text, sent), *_ = decision.calls
         assert text == "Task:\n给设置页加一个开关\nRequired access: write"
         assert sent == {
-            "write-a": "role write-a | difficulty: medium | access: write",
-            "write-b": "role write-b | difficulty: hard | access: write",
-            "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy | access: write",
+            "write-a": "role write-a | difficulty: medium (a defined goal that still needs some "
+            "investigation or decisions on the way) | access: write",
+            "write-b": "role write-b | difficulty: hard (design trade-offs, root-cause judgment "
+            "or unclear boundaries) | access: write",
+            "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy (settled scope "
+            "and explicit steps: locating, collecting evidence, a specified change) | access: write",
             "draw-comic": "漫画风格 (image generation) | access: write",
             "draw-real": "写实: 照片质感的写实人像 (image generation) | access: write",
         }
+        decision.result = Decision("draw-comic", {"draw-comic": 0.6, "write-b": 0.4}, 0.6)
+        image_picked = _payload((await _recommend(client)).structured_content)
+        assert "difficulty" not in image_picked
+        assert [
+            c.get("difficulty") for c in cast(list[dict[str, object]], image_picked["candidates"])
+        ] == [None, "hard", "medium"]
 
         started = await _start_and_wait(client, cwd=str(tmp_path), seat="write-b", role="加开关")
         assert started["provider"] == "claude" and started["model"] == "model-write-b"
@@ -2974,10 +2990,10 @@ async def test_recommendation_candidates_are_only_what_can_be_dispatched(
     _write_own_seats(
         [
             _own_seat("claude-w", "claude", "write"),
-            _own_seat("grok-w", "grok", "write"),
+            _own_seat("grok-w", "grok", "write", difficulty="easy"),
             _own_seat("pi-w", "pi", "write"),
-            _own_seat("grok-r", "grok", "read"),
-            _own_seat("codex-w", "codex", "write"),
+            _own_seat("grok-r", "grok", "read", difficulty="easy"),
+            _own_seat("codex-w", "codex", "write", difficulty="hard"),
         ]
     )
     _write_decision_key()
@@ -2990,13 +3006,26 @@ async def test_recommendation_candidates_are_only_what_can_be_dispatched(
         decision.result = Decision("codex-w", {"codex-w": 0.9, "grok-w": 0.1}, 0.9)
         result = _payload((await _recommend(client)).structured_content)
         assert [text for _, sent in decision.calls for text in sent] == ["grok-w", "codex-w"]
-        assert result["seat"] == "codex-w" and result["native"] is True
-        assert cast(list[dict[str, object]], result["candidates"])[0]["native"] is True
+        assert (
+            result["seat"] == "codex-w"
+            and result["difficulty"] == "hard"
+            and result["native"] is True
+        )
+        candidates = cast(list[dict[str, object]], result["candidates"])
+        assert candidates[0]["native"] is True
+        assert [c["difficulty"] for c in candidates] == ["hard", "easy"]
 
         # Only one seat can be dispatched: it is returned and the decision model is not called.
         decision.calls.clear()
         result = _payload((await _recommend(client, access="read")).structured_content)
-        assert result["seat"] == "grok-r" and result["decision_model_called"] is False
+        assert (
+            result["seat"] == "grok-r"
+            and result["difficulty"] == "easy"
+            and result["decision_model_called"] is False
+        )
+        assert [c["difficulty"] for c in cast(list[dict[str, object]], result["candidates"])] == [
+            "easy"
+        ]
         assert "confidence" not in result and "not called" in str(result["note"])
         assert decision.calls == []
 
@@ -3078,8 +3107,8 @@ async def test_start_agent_auto_asks_the_decision_model_and_starts_in_one_call(
     _write_own_seats(
         [
             _own_seat("write-a", "claude", "write", effort="high"),
-            _own_seat("write-b", "claude", "write"),
-            _own_seat("read-c", "claude", "read"),
+            _own_seat("write-b", "claude", "write", difficulty="hard"),
+            _own_seat("read-c", "claude", "read", difficulty="easy"),
         ]
     )
     _write_decision_key()
@@ -3112,11 +3141,22 @@ async def test_start_agent_auto_asks_the_decision_model_and_starts_in_one_call(
         assert started["recommendation"] == {
             "seat": "write-b",
             "role": "role write-b",
+            "difficulty": "hard",
             "confidence": 0.9,
             "decision_model_called": True,
             "candidates": [
-                {"seat": "write-b", "role": "role write-b", "probability": 0.8},
-                {"seat": "write-a", "role": "role write-a", "probability": 0.2},
+                {
+                    "seat": "write-b",
+                    "role": "role write-b",
+                    "difficulty": "hard",
+                    "probability": 0.8,
+                },
+                {
+                    "seat": "write-a",
+                    "role": "role write-a",
+                    "difficulty": "medium",
+                    "probability": 0.2,
+                },
             ],
         }
         # Only the prompt, the access and the candidate descriptions leave the machine.
@@ -3147,7 +3187,7 @@ async def test_start_agent_auto_asks_the_decision_model_and_starts_in_one_call(
             client, cwd=str(tmp_path), seat="auto", access="read", prompt="look around"
         )
         recommendation = _payload(single["recommendation"])
-        assert recommendation["seat"] == "read-c"
+        assert recommendation["seat"] == "read-c" and recommendation["difficulty"] == "easy"
         assert recommendation["decision_model_called"] is False and decision.calls == []
 
 
@@ -3537,6 +3577,11 @@ async def test_start_agents_chooses_every_seat_in_one_decision_request(
         ]
         picked = [_payload(item["recommendation"]) for item in results]
         assert [one["seat"] for one in picked] == ["write-a", "read-d", "write-b"]
+        assert [one["difficulty"] for one in picked] == ["medium", "easy", "hard"]
+        assert [
+            [c["difficulty"] for c in cast(list[dict[str, object]], one["candidates"])]
+            for one in picked
+        ] == [["medium", "hard"], ["easy", "medium"], ["hard", "medium"]]
         assert all(one["decision_model_called"] is True for one in picked)
         assert [item["access"] for item in results] == ["write", "read", "write"]
         assert "next" in payload

@@ -572,13 +572,35 @@ def collect_creation_warnings(ctx: RepoContext, *, lfs_detected: bool) -> tuple[
         warnings.append("Git hooks were skipped when creating the isolated directory.")
     elif lfs_detected:
         warnings.append("Git LFS downloads were skipped; LFS files may contain pointers.")
-    dirty = run_git(
-        ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignore-submodules=all"],
-        cwd=ctx.source_root,
-    ).stdout
-    if dirty:
-        warnings.append("Uncommitted changes in the source worktree were not copied.")
+    uncopied = _uncommitted_paths(ctx.source_root)
+    if uncopied:
+        shown = ", ".join(uncopied[:_UNCOPIED_SHOWN])
+        more = len(uncopied) - _UNCOPIED_SHOWN
+        warnings.append(
+            "Uncommitted changes in the source worktree were not copied: "
+            + (f"{shown} (+{more} more)." if more > 0 else f"{shown}.")
+        )
     return tuple(warnings)
+
+
+_UNCOPIED_SHOWN = 5
+
+
+def _uncommitted_paths(source_root: Path) -> list[str]:
+    """Changed and untracked paths of the worktree; an untracked directory counts once."""
+    fields = run_git(
+        ["status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=all"],
+        cwd=source_root,
+    ).stdout.split(b"\0")
+    paths: list[str] = []
+    renamed_from = False
+    for field in fields:
+        if renamed_from:  # a rename or copy is followed by the path it came from
+            renamed_from = False
+        elif len(field) > 3:
+            paths.append(field[3:].decode(errors="replace"))
+            renamed_from = field[0] in b"RC" or field[1] in b"RC"
+    return paths
 
 
 def ensure_info_exclude_locked(main_root: Path) -> None:
