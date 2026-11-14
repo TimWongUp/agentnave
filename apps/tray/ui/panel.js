@@ -407,6 +407,7 @@ function render(data) {
 }
 
 async function refresh() {
+  void AN.providerHealth?.refresh(document.getElementById("provider-health-alert"));
   const [stageResult, statusResult] = await Promise.allSettled([load("/app/stage"), load("/app/status")]);
   if (statusResult.status === "fulfilled") state.appStatus = statusResult.value;
   if (stageResult.status === "rejected") {

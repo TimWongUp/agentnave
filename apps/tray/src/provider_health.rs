@@ -19,6 +19,59 @@ pub fn read(root: &Path) -> Value {
     }
 }
 
+/// Return only records that can currently block dispatch, without modifying the file.
+pub fn active(root: &Path) -> Value {
+    filter_active(read(root), chrono::Utc::now())
+}
+
+fn filter_active(mut providers: Value, now: chrono::DateTime<chrono::Utc>) -> Value {
+    let Some(providers) = providers.as_object_mut() else {
+        return json!({});
+    };
+    providers.retain(|_, entry| {
+        if entry.get("code").is_some() {
+            return is_active(entry, now);
+        }
+        let Some(object) = entry.as_object_mut() else {
+            return false;
+        };
+        if object
+            .get("default")
+            .is_some_and(|record| !is_active(record, now))
+        {
+            object.remove("default");
+        }
+        for key in ["models", "groups"] {
+            if let Some(records) = object.get_mut(key).and_then(Value::as_object_mut) {
+                records.retain(|_, record| is_active(record, now));
+                if records.is_empty() {
+                    object.remove(key);
+                }
+            } else {
+                object.remove(key);
+            }
+        }
+        object.contains_key("default")
+            || object.contains_key("models")
+            || object.contains_key("groups")
+    });
+    Value::Object(providers.clone())
+}
+
+fn is_active(record: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let code = record["code"].as_str();
+    if code == Some("auth") && record["until"].is_null() {
+        return true;
+    }
+    if !matches!(code, Some("auth" | "quota" | "billing")) {
+        return false;
+    }
+    record["until"]
+        .as_str()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .is_some_and(|end| end > now && end <= now + chrono::Duration::days(8))
+}
+
 #[cfg(unix)]
 fn same_file(file: &File, path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -176,6 +229,30 @@ pub(crate) fn request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn active_filters_expired_and_out_of_range_without_writing() {
+        let root = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now();
+        let document = json!({"version": 1, "providers": {"claude": {
+            "default": {"code":"auth", "until":null},
+            "models": {
+                "live": {"code":"quota", "until":(now + chrono::Duration::hours(1)).to_rfc3339()},
+                "expired": {"code":"quota", "until":(now - chrono::Duration::seconds(1)).to_rfc3339()},
+                "far": {"code":"billing", "until":(now + chrono::Duration::days(9)).to_rfc3339()}
+            }, "groups": {"bad": {"code":"quota", "until":"invalid"}}
+        }}});
+        let bytes = serde_json::to_vec(&document).unwrap();
+        fs::write(root.path().join(FILE), &bytes).unwrap();
+        let reader = crate::data::Reader::new(root.path().to_path_buf());
+        let response = reader.request("GET", "/app/provider-health", None, &[]);
+        assert_eq!(response.status, 200);
+        let response: Value = serde_json::from_slice(&response.body).unwrap();
+        let filtered = &response["providers"];
+        assert_eq!(filtered["claude"]["default"]["code"], "auth");
+        assert_eq!(filtered["claude"]["models"].as_object().unwrap().len(), 1);
+        assert!(filtered["claude"]["groups"].is_null());
+        assert_eq!(fs::read(root.path().join(FILE)).unwrap(), bytes);
+    }
     #[test]
     fn clear_one_model_keeps_siblings() {
         let root = tempfile::tempdir().unwrap();

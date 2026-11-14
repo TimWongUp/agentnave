@@ -58,17 +58,7 @@
 
   // Supported CLI providers
   const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "devin", "zcode"];
-  const PROVIDER_NAMES = {
-    codex: "Codex CLI",
-    claude: "Claude Code",
-    codebuddy: "CodeBuddy Code",
-    grok: "Grok CLI",
-    antigravity: "Antigravity CLI",
-    pi: "Pi Coding Agent",
-    deepseek: "DeepSeek Harness",
-    devin: "Devin CLI",
-    zcode: "ZCode",
-  };
+  const PROVIDER_NAMES = AN.providerHealth.names;
 
   // The options each CLI's permission tier governs. The service sends its own table as `permission_keys`;
   // this one answers until it does.
@@ -142,20 +132,11 @@
   function renderProviderHealth(providers) {
     const box = $("provider-health");
     if (!box?.replaceChildren) return;
-    const rows = [];
-    for (const [provider, group] of Object.entries(providers)) {
-      if (group?.code) rows.push([provider, null, group]); // old version 1 record
-      if (group?.default) rows.push([provider, null, group.default]);
-      for (const [model, item] of Object.entries(group?.models || {})) rows.push([provider, model, item]);
-      for (const [quotaGroup, item] of Object.entries(group?.groups || {})) rows.push([provider, null, item, quotaGroup]);
-    }
-    const active = rows.filter(([, , item]) => {
-      if (item?.code === "auth" && item.until == null) return true;
-      const end = Date.parse(item?.until);
-      return ["auth", "billing", "quota"].includes(item?.code) && end > Date.now() && end <= Date.now() + 8 * 86400000;
-    });
-    box.replaceChildren(...active.map(([provider, model, item, quotaGroup]) => el("div", { className: "setting-row" },
-      el("span", {}, [provider, model || quotaGroup, item.code, item.until ? new Date(item.until).toLocaleString() : L("直到解除", "Until cleared")].filter(Boolean).join(" · ")),
+    const active = AN.providerHealth.rows(providers);
+    const section = $("provider-health-section");
+    if (section) section.hidden = !active.length;
+    box.replaceChildren(...active.map(({ provider, model, item, quotaGroup }) => el("div", { className: "setting-row" },
+      el("span", {}, [PROVIDER_NAMES[provider] || provider, model || quotaGroup, AN.providerHealth.reason(item, L), AN.providerHealth.recovery(item, L)].filter(Boolean).join(" · ")),
       el("button", { type: "button", onClick: async () => {
         try {
           const res = await fetch("/app/provider-health/clear", { method: "POST", headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" }, body: JSON.stringify({ provider, model, group: quotaGroup }) });
@@ -163,7 +144,7 @@
           if (!res.ok || data.error) throw new Error(data.error || res.status);
           await apiGetMembers();
         } catch (error) { showNotice(L(`解除失败：${error.message}`, `Could not clear cooldown: ${error.message}`), true); }
-      } }, L("解除", "Clear")))));
+      } }, L("立即恢复", "Resume now")))));
   }
 
   async function apiPostReview(doc) {

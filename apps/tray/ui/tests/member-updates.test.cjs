@@ -17,8 +17,9 @@ function app(fetch, AN = {}) {
   const run = (code) => vm.runInContext(code, context);
   const load = (file) => {
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
-    mirrorSettings(context);
+    if (context.AN.settings) mirrorSettings(context);
   };
+  load("provider-health.js");
   load("settings-state.js");
   // Plain nodes, installed before the sections that take them from AN.settings are loaded.
   run(`

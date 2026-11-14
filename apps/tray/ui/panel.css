@@ -212,3 +212,6 @@ html[lang^="en"] .voice-listen { width: 108px; }
 html[lang^="en"] .room-row { grid-template-columns: minmax(0, 1fr) 108px; }
 
 .room-row:has(> .voice-listen[hidden]) { grid-template-columns: minmax(0, 1fr); }
+
+.provider-health-alert { display: flex; flex-direction: column; gap: 2px; flex: none; margin: 4px 12px; padding: 7px 10px; border: 1px solid #b87518; border-radius: 8px; background: color-mix(in srgb, #e9a43b 22%, var(--bg)); color: var(--ink); font-size: 12px; font-weight: 600; text-decoration: none; max-height: 100px; overflow: auto; }
+.provider-health-alert:hover { background: color-mix(in srgb, #e9a43b 32%, var(--bg)); }

@@ -548,6 +548,7 @@ function applyHash(ctx) {
 }
 
 async function refresh() {
+  void AN.providerHealth?.refresh(document.getElementById("provider-health-alert"));
   if (state.refreshing) {
     state.again = true;
     return;

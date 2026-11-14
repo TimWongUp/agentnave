@@ -628,8 +628,8 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
     assert!(lead["replaces_in"].as_array().unwrap().iter().all(|name| {
         catalog::section(name.as_str().unwrap()).contains(lead["when_false"].as_str().unwrap())
     }));
-    // The settings page keeps its own copy in `PROVIDER_NAMES`; the two must not drift.
-    let page = include_str!("../../ui/settings-state.js");
+    // The shared tray display names and rule defaults must not drift.
+    let page = include_str!("../../ui/provider-health.js");
     let (_, rest) = page.split_once("const PROVIDER_NAMES = {").expect("table");
     let (body, _) = rest.split_once("};").expect("end of table");
     let shown: Vec<(&str, &str)> = body

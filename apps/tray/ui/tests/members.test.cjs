@@ -23,9 +23,9 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   const run = (code) => vm.runInContext(code, context);
   const load = (file) => {
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
-    mirrorSettings(context);
+    if (context.AN.settings) mirrorSettings(context);
   };
-  for (const file of ["settings-state.js", "member-models.js"]) load(file);
+  for (const file of ["provider-health.js", "settings-state.js", "member-models.js"]) load(file);
   run(`
     updateControls = () => {};
     AN.settings.renderCards = () => {};
@@ -96,7 +96,7 @@ test("cooldown clear removes only the chosen CLI from the displayed list", async
   providers.claude.groups = { "Gemini Models": { code: "quota", until, reset: until } };
   await app.run("apiGetMembers()");
   assert.equal(app.run('$("provider-health").children.length'), 2);
-  assert.match(app.run('$("provider-health").children[1].children[0].children[0]'), /claude · Gemini Models · quota/);
+  assert.match(app.run('$("provider-health").children[1].children[0].children[0]'), /Claude Code · Gemini Models · 额度用完/);
 });
 
 test("only a tier-governed option whose default loosens permissions is counted", () => {

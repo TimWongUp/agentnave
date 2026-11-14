@@ -13,6 +13,7 @@
 <script src="/chat/appearance.js" defer></script>
 <script src="./settings-frame.js" defer></script>
 <script src="/chat/common.js" defer></script>
+<script src="./provider-health.js" defer></script>
 <script src="/chat/common-select.js" defer></script>
 <script src="/chat/update-dialog.js" defer></script>
 <script src="/chat/common-status.js" defer></script>
@@ -76,7 +77,7 @@
       <select id="max-running"></select>
     </div>
 
-    <div id="provider-health" aria-live="polite"></div>
+    <section id="provider-health-section" hidden><h2 data-en="Dispatch paused">暂停派活</h2><div id="provider-health" aria-live="polite"></div></section>
 
     <p id="task-scope" class="member-muted member-scope" hidden></p>
 

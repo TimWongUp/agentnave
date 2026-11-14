@@ -59,6 +59,13 @@ impl Reader {
         if matches!(path, "/app/review" | "/app/permissions" | "/app/members") {
             return crate::members::request(&self.root, method, path, action, body);
         }
+        if path == "/app/provider-health" {
+            return if method == "GET" {
+                Response::json(&json!({"providers": crate::provider_health::active(&self.root)}))
+            } else {
+                Response::error(405, "此路由只接受 GET")
+            };
+        }
         if path == "/app/provider-health/clear" {
             return crate::provider_health::request(&self.root, method, action, body);
         }
