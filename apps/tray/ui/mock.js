@@ -930,7 +930,7 @@ All checks passed!
       tray_count: true,
       tray_font: "baskerville",
       keep_awake: false,
-      battery_still: true,
+      battery_still: false,
       pause_unfocused: true,
     },
     alerts: {

@@ -484,12 +484,44 @@ test("an unfocused window polls every five seconds and refreshes the moment it r
   emit("blur");
   timers.splice(0).forEach(timer => timer.fn());
   await flush();
-  assert.equal(classes.blurred, true, "except on battery");
-  dataset.batteryStill = "false";
+  assert.equal(classes.blurred, false, "battery alone does not pause: standing still on battery is off by default");
+  dataset.batteryStill = "true";
   emit("blur");
   timers.splice(0).forEach(timer => timer.fn());
   await flush();
-  assert.equal(classes.blurred, false, "unless figures may move on battery");
+  assert.equal(classes.blurred, true, "except on battery with figures standing still");
+  assert.equal(timers.at(-1).delay, 5000);
+
+  let focusEvents = 0;
+  context.window.addEventListener("agentnave:focus", () => { focusEvents++; });
+  delete dataset.onBattery; // plugged back in while the window is still behind others
+  emit("blur");
+  timers.splice(0).forEach(timer => timer.fn());
+  await flush();
+  assert.equal(classes.blurred, false, "plugging in lifts the pause");
+  assert.equal(focusEvents, 0, "but the window did not come back, so no focus event");
+  assert.equal(timers.at(-1).delay, 1500, "and polling returns to the usual pace");
+  focused = true;
+  emit("focus");
+  timers.splice(0).forEach(timer => timer.fn());
+  await flush();
+  assert.equal(focusEvents, 1, "coming back to the front is the focus event");
+});
+
+test("walking, flights and folds are drawn in place while the window is hidden or paused for being unfocused", () => {
+  const classes = new Set();
+  let hidden = false;
+  const context = vm.createContext({
+    AN: { isHidden: () => hidden }, window: {}, ResizeObserver: class { observe() {} }, reduceMotion: { matches: false }, el: { floor: {} },
+    document: { documentElement: { classList: { contains: name => classes.has(name) } } },
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8") + "\nglobalThis.canAnimate = canAnimate;", context);
+  context.Element = { prototype: { animate() {} } };
+  assert.equal(context.canAnimate(), true);
+  classes.add("blurred");
+  assert.equal(context.canAnimate(), false, "the CSS animations are frozen, so the animate() calls stop too");
+  classes.clear(); hidden = true;
+  assert.equal(context.canAnimate(), false, "a window the App hid is as good as a hidden page");
 });
 
 test("a side list patches its relative times in place and lays out only when desks or seats change", () => {

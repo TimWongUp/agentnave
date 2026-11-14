@@ -138,7 +138,7 @@ function player({ delayed = false, noFrameCallback = false, ext, jitter = 0 } = 
   const visible = async () => { sync(); events.intersect([{ target: fig, isIntersecting: true }]); await flush(); };
   const resolve = () => loadWaiters.splice(0).forEach(f => f());
   return { root, host, fig, body, poster, document, still, math, videos, frames, timers, observed, srcs, events, observers,
-    delays, canvas, reveals, overlaps, violations, swapped, blur: on => { root.classList.toggle("blurred", on); events[on ? "agentnave:blur" : "agentnave:focus"](); },
+    delays, canvas, reveals, overlaps, violations, swapped, blur: on => { root.classList.toggle("blurred", on); events["agentnave:pause"](); },
     reveals_: 0, violations_: 0, completeSeeks: () => seekWaiters.splice(0).forEach(f => f()), holdSeeks: () => { manualSeek = true; },
     sync, syncFigure: ctx.api.syncVideo, visible, resolve, flush, rec: () => ctx.api.videoPlayers.get(fig) };
 }
@@ -524,6 +524,28 @@ test("an unfocused window emits no particles", () => {
   // The tick also stays off: no timer is started for a window behind others.
   assert.deepEqual(emitted(false), [1, 1]);
   assert.deepEqual(emitted(true), [0, 0]);
+});
+
+test("particles follow battery, motion settings and the system setting, not only window focus", () => {
+  const source = readFileSync(`${__dirname}/../common.js`, "utf8").replace(/\r\n/g, "\n");
+  const start = source.indexOf("  let emitTimer = null;");
+  const still = { matches: true }, watchers = [], running = new Set();
+  let id = 0;
+  const context = vm.createContext({
+    isHidden: () => false, onVisibility() {}, blurred: false, still, root: {}, emitters: new Set([{}]),
+    EMIT_EVERY: {}, h: () => ({}), artUrl: s => s, performance: { now: () => 0 },
+    window: { addEventListener() {}, matchMedia: () => ({ addEventListener: (_name, fn) => watchers.push(fn) }) },
+    MutationObserver: class { constructor(fn) { watchers.push(fn); } observe() {} },
+    setInterval: () => (running.add(++id), id), clearInterval: n => running.delete(n),
+  });
+  vm.runInContext(`${source.slice(start, source.indexOf("  const frameUrl", start))};syncEmitTimer();`, context);
+  assert.equal(running.size, 0, "standing still on battery keeps the tick off");
+  still.matches = false; // plugged in: data-on-battery goes away, or the switch or the motion setting changes
+  watchers[0]();
+  assert.equal(running.size, 1, "the tick starts again without any focus change");
+  still.matches = true; // the system reduce-motion setting turns on
+  watchers[1]();
+  assert.equal(running.size, 0);
 });
 
 test("video packs stay off in static mode and switch figures in place across 272p, 544p and static", async () => {
