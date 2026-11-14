@@ -6,7 +6,7 @@ const vm = require("node:vm");
 test("warnings group models and disappear after recovery", async () => {
   const until = new Date(Date.now() + 3600000).toISOString();
   let providers = { antigravity: { models: { a: { code: "quota", until }, b: { code: "quota", until } } }, claude: { default: { code: "auth", until: null } } };
-  const list = { replaceChildren(...children) { this.children = children; } };
+  const list = {};
   const close = { dataset: {}, addEventListener(type, handler) { this.click = handler; } };
   const box = { hidden: true, dataset: {}, querySelector: (selector) => (selector === ".provider-health-lines" ? list : close) };
   const stored = new Map();
@@ -15,9 +15,8 @@ test("warnings group models and disappear after recovery", async () => {
   vm.runInContext(readFileSync(`${__dirname}/../provider-health.js`, "utf8"), context);
   await context.AN.providerHealth.refresh(box);
   assert.equal(box.hidden, false);
-  assert.equal(list.children.length, 2);
-  assert.match(list.children[0].textContent, /Antigravity CLI 额度用完，2 个模型暂停派活/);
-  assert.match(list.children[1].textContent, /重新登录后点“立即恢复”/);
+  assert.match(list.textContent, /^⚠ Antigravity CLI 额度用完，2 个模型暂停派活.*；另有 1 项$/);
+  assert.match(list.title, /重新登录后点“立即恢复”/);
   // Closed, it stays closed until the warning changes.
   close.click();
   await context.AN.providerHealth.refresh(box);

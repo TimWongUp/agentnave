@@ -59,22 +59,23 @@
         if (!grouped.has(key)) grouped.set(key, []);
         grouped.get(key).push(row);
       }
-      const lines = [...grouped.values()].map(group => {
+      const texts = [...grouped.values()].map(group => {
         const first = group[0], models = group.filter(row => row.model).length;
         const scopes = group.filter(row => row.quotaGroup).map(row => row.quotaGroup);
         const affected = [models ? L(`${models} 个模型暂停派活`, `${models} model${models === 1 ? "" : "s"} paused`) : "", ...scopes.map(name => L(`${name} 暂停派活`, `${name} paused`))];
         if (group.some(row => !row.model && !row.quotaGroup)) affected.unshift(L("暂停派活", "Dispatch paused"));
-        const line = document.createElement("span");
         const comma = L("，", ", ");
-        line.textContent = `⚠ ${PROVIDER_NAMES[first.provider] || first.provider} ${reason(first.item, L)}${comma}${affected.filter(Boolean).join(L("、", ", "))}${comma}${recovery(first.item, L)}`;
-        return line;
+        return `${PROVIDER_NAMES[first.provider] || first.provider} ${reason(first.item, L)}${comma}${affected.filter(Boolean).join(L("、", ", "))}${comma}${recovery(first.item, L)}`;
       });
+      // One line only: the first warning, then how many more; the full list is the tooltip.
       const list = box.querySelector(".provider-health-lines") || box;
-      list.replaceChildren(...lines);
+      const more = texts.length > 1 ? L(`；另有 ${texts.length - 1} 项`, `; ${texts.length - 1} more`) : "";
+      list.textContent = texts.length ? `⚠ ${texts[0]}${more}` : "";
+      list.title = texts.join("\n");
       bindClose(box);
       // A closed warning stays closed until what it says changes.
-      box.dataset.key = lines.map(line => line.textContent).join("\n");
-      box.hidden = !lines.length || box.dataset.key === dismissed();
+      box.dataset.key = texts.join("\n");
+      box.hidden = !texts.length || box.dataset.key === dismissed();
     } catch { /* Keep the previous warning when a refresh fails. */ }
   }
   AN.providerHealth = { names: PROVIDER_NAMES, rows, reason, recovery, refresh };
