@@ -217,10 +217,25 @@ impl Hosts {
             .iter()
             .find(|l| l["scope"] == "project" && l["has_entry"] == true)
             .map(|l| l["path"].clone());
-        let skill = host
-            .skill
+        let meeting = self.main_skill_is_meeting(host);
+        let path = if meeting {
+            host.optional("agentnave-meeting")
+        } else {
+            host.skill.clone()
+        };
+        let skill = path
             .as_ref()
-            .map(|p| skill::state(p, &self.context.home, skill::MANAGER))
+            .map(|p| {
+                skill::state(
+                    p,
+                    &self.context.home,
+                    if meeting {
+                        skill::MEETING
+                    } else {
+                        skill::MANAGER
+                    },
+                )
+            })
             .unwrap_or_else(|| json!({"state":"manual","path":null,"version":null}));
         let mut skills = serde_json::Map::new();
         for (name, embedded) in skill::OPTIONAL {

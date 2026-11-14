@@ -322,7 +322,7 @@ test("meetings only shows its preset text as is, no seat cards, and never counts
   assert.equal(app.run('orchestrationPresetText("meetings")'), "H\nT");
   assert.equal(app.run('$("orchestration-text").textContent'), "H\nT");
   assert.equal(app.run('$("orchestration-roles").children.length'), 0);
-  assert.equal(app.run('$("orchestration-split").hidden'), true);
+  assert.equal(app.run('$("orchestration-split").hidden'), false);
 });
 
 test("meeting seats are picked one by one, shown in the three meeting presets, kept to the count, and clear to nothing", async () => {
@@ -903,6 +903,18 @@ test("each boss is named by its own saved orchestration mode", () => {
   assert.match(app.run('$("task-scope").textContent'), /^Codex CLI 已启用编排.*单独干活只提供给未启用编排的 boss/);
   app.run('orchestration.document.apps = {}; renderTaskScope()');
   assert.equal(app.run('$("task-scope").hidden'), true);
+});
+
+test("meetings mode saves its opt-in switch and previews both branches", async () => {
+  const { app, state } = rolesEditor({ version: 1, preset: "meetings" });
+  await app.run("loadOrchestration()");
+  app.run('orchestration.presets.meetings_parts.meetings_asked = "\\nasked"; orchestration.presets.meetings_parts.meetings_own = "\\nown"');
+  const toggle = () => app.run('$("orchestration-split").children[0].children[0]');
+  assert.equal(app.run('orchestrationPresetText("meetings")'), "H\nasked\nT");
+  toggle().listeners.change({ target: { checked: true } });
+  assert.equal(app.run('orchestrationPresetText("meetings")'), "H\nown\nT");
+  await app.run("saveOrchestration()");
+  assert.equal(JSON.stringify(state.saved.meetings_options), '{"meetings":true}');
 });
 
 test("split work lets the boss call meetings only when its switch is on", async () => {

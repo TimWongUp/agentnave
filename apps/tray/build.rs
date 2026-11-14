@@ -7,6 +7,7 @@ fn main() {
     let mut source = String::new();
     for (constant, name) in [
         ("FILES", "agentnave-manager"),
+        ("MEETING_FILES", "agentnave-meeting"),
         ("HANDOVER_FILES", "agentnave-handover"),
         ("REVIEW_FILES", "agentnave-review"),
     ] {
@@ -101,6 +102,7 @@ fn write_embedded_wheel(skills: &std::path::Path) {
     }
     for skill in [
         "agentnave-manager",
+        "agentnave-meeting",
         "agentnave-handover",
         "agentnave-review",
     ] {

@@ -17,7 +17,7 @@
   // with every app that reads it.
   const ORCHESTRATION_EFFECTS = {
     off: AN.L("不写入全局规则，boss 按自己的习惯派发。", "Does not write global rules; the boss dispatches in its own way."),
-    meetings: AN.L("写入所选 boss 的全局规则：遇到要取舍的事 boss 可以自己开会，会用到参会模型的额度；活由谁做不受影响。", "Writes to selected bosses' global rules: for choices with trade-offs the boss may call a meeting, using the attending models' quota; who does the work is unchanged."),
+    meetings: AN.L("写入所选 boss 的全局规则：boss 只用 AgentNave 会议室，不私聊派活；是否主动开会由下方开关决定。", "Writes to selected bosses' global rules: the boss only uses AgentNave meeting rooms and does not delegate privately; the switch below controls whether it may call meetings on its own."),
     split: AN.L("写入所选 boss 的全局规则：boss 未被点名也会把活派给已开启的角色，会用到它们的额度；同时改多处文件要你同意。", "Writes to selected bosses' global rules: even when not named, the boss delegates to the roles turned on, using their quota; changing several things at once needs your consent."),
     parallel: AN.L("在分工协作之外，boss 自己决定同时改多处文件，额度用得更多。", "Beyond split work, the boss decides on its own to change several things at once, using more quota."),
     decision: AN.L("写入所选 boss 的全局规则：选工位交给决策模型，从你自建的工位里挑；boss 未被点名也会把活派出去，会用到这些工位的额度。", "Writes to selected bosses' global rules: choosing a seat is left to the decision model, which picks from the seats you built; even when not named, the boss delegates, using those seats' quota."),
@@ -172,8 +172,8 @@
     const text = presets?.[mode];
     if (!text) return text;
     if (mode === "meetings") {
-      const { head, tail } = presets.meetings_parts || {};
-      return head == null ? text : head + meetingLine(orchestrationShown()) + tail;
+      const { head, tail, meetings_asked = "", meetings_own = "" } = presets.meetings_parts || {};
+      return head == null ? text : head + (orchestrationShown()?.meetings_options?.meetings ? meetings_own : meetings_asked) + meetingLine(orchestrationShown()) + tail;
     }
     const image = presets.image_generation || "";
     const shown = orchestrationShown();
@@ -355,7 +355,7 @@
   }
 
   // Whether the boss may call meetings without being asked: off by default in split work, on in parallel.
-  const meetingsOn = (doc, preset) => preset === "split" ? doc.split_options?.meetings === true : doc.parallel_options?.meetings !== false;
+  const meetingsOn = (doc, preset) => preset === "parallel" ? doc.parallel_options?.meetings !== false : doc[`${preset}_options`]?.meetings === true;
   const setMeetings = (preset, on) => setOption(`${preset}_options`, on === meetingsOn(orchestration.document, preset),
     on === (preset === "parallel") ? undefined : { meetings: on });
 
@@ -378,7 +378,7 @@
 
   function renderSplitOptions(preset, editable) {
     const box = $("orchestration-split");
-    box.hidden = !["split", "parallel", "decision"].includes(preset) || !editable;
+    box.hidden = !["meetings", "split", "parallel", "decision"].includes(preset) || !editable;
     if (box.hidden) return box.replaceChildren();
     const shown = orchestrationShown();
     const meetingsTip = AN.L("打开后遇到有实质取舍或分歧的问题，boss 会自己召集几个员工开会讨论再定，会用到他们的额度；关闭时只在你要求时开会。", "On: when a choice has real trade-offs or disagreement, the boss calls a few employees into a meeting before deciding, using their quota. Off: meetings happen only when you ask.");
@@ -394,9 +394,8 @@
         lead);
       return;
     }
-    box.replaceChildren(
-      switchRow(`${preset}/meetings`, meetingsOn(shown, preset), (on) => setMeetings(preset, on), AN.L("boss 可主动开会", "Boss may call meetings"), meetingsTip),
-      lead);
+    const meetingSwitch = switchRow(`${preset}/meetings`, meetingsOn(shown, preset), (on) => setMeetings(preset, on), AN.L("boss 可主动开会", "Boss may call meetings"), meetingsTip);
+    box.replaceChildren(...(preset === "meetings" ? [meetingSwitch] : [meetingSwitch, lead]));
   }
 
   // Count and seats are saved together; no seat picked at the default count leaves the key out, and

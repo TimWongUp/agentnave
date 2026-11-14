@@ -113,10 +113,7 @@ fn assemble_steps(document: &Value, steps: &[Value], apply_lead: bool) -> String
                     out.push_str(section("image_generation"));
                 }
             }
-            "split_meetings"
-            | "parallel_meetings"
-            | "decision_parallel_writes"
-            | "decision_meetings" => {
+            name if catalog()["switches"].get(name).is_some() => {
                 out.push_str(switched_section(document, name));
             }
             _ => {
@@ -163,7 +160,7 @@ pub(super) fn presets_payload(document: &Value) -> Value {
         "parallel": super::text_of(document, "parallel"),
         "decision": super::text_of(document, "decision"),
         "meeting": meeting_line(document),
-        "meetings_parts": {"head": section("meetings_only_head"), "tail": section("meetings_only_tail")},
+        "meetings_parts": {"head": section("meetings_only_head"), "tail": section("meetings_only_tail"), "meetings_asked": section("meetings_when_asked"), "meetings_own": section("meetings_on_tradeoffs")},
         "meeting_parts": {"default_count": default_count, "separator": str_at(md, "separator"),
             "seat_provider": str_at(md, "seat_provider"),
             "all": str_at(md, "all_named"), "some": str_at(md, "some_named"), "none": str_at(md, "none_named")},

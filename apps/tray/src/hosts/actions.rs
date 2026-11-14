@@ -124,9 +124,26 @@ impl Hosts {
         let Some(path) = &host.skill else {
             return Ok(false);
         };
-        let mut changed = self.ensure_one(host, path, skill::MANAGER, install_missing)?;
-        // A host connected before a required Skill existed has the manager and lacks that Skill.
-        let connected = skill::state(path, &self.context.home, skill::MANAGER)["state"] == "app";
+        let meeting_path = host.optional("agentnave-meeting").unwrap();
+        let connected = skill::state(path, &self.context.home, skill::MANAGER)["state"] == "app"
+            || skill::state(&meeting_path, &self.context.home, skill::MEETING)["state"] == "app";
+        let (wanted_path, wanted, other_path, other) = if self.main_skill_is_meeting(host) {
+            (&meeting_path, skill::MEETING, path, skill::MANAGER)
+        } else {
+            (path, skill::MANAGER, &meeting_path, skill::MEETING)
+        };
+        let active = install_missing || connected;
+        let mut changed = self.ensure_one(host, wanted_path, wanted, active)?;
+        if active && skill::state(other_path, &self.context.home, other)["state"] != "missing" {
+            skill::remove(
+                other_path,
+                &self.context.app,
+                host.id,
+                &self.context.home,
+                other,
+            )?;
+            changed = true;
+        }
         for (name, embedded) in skill::REQUIRED {
             if let Some(path) = host.optional(name) {
                 changed |= self.ensure_one(host, &path, embedded, install_missing || connected)?;
@@ -139,6 +156,32 @@ impl Hosts {
             }
         }
         Ok(changed)
+    }
+    /// Shared directories take manager if any connected row using them is not meetings-only.
+    pub(super) fn main_skill_is_meeting(&self, host: &Host) -> bool {
+        let document = crate::members::read_orchestration(&self.context.app).unwrap_or_default();
+        let modes = &document["effective_apps"];
+        if modes[host.id] != "meetings" {
+            return false;
+        }
+        !self.registry().iter().any(|other| {
+            other.id != host.id
+                && other.skill == host.skill
+                && self.has_managed_entry(other).unwrap_or(false)
+                && modes[other.id] != "meetings"
+        })
+    }
+
+    pub(super) fn sync_main_skills(&self) -> Vec<Value> {
+        let mut failures = Vec::new();
+        for host in self.registry() {
+            if self.has_managed_entry(&host).unwrap_or(false)
+                && let Err(error) = self.ensure_skill(&host, true)
+            {
+                failures.push(json!({"path": host.skill, "error": error}));
+            }
+        }
+        failures
     }
     pub(super) fn ensure_one(
         &self,
@@ -357,18 +400,36 @@ impl Hosts {
                 removed.push(path.display().to_string());
             }
         }
-        if let Some(path) = &host.skill {
-            skill::remove(
-                path,
-                &self.context.app,
-                id,
-                &self.context.home,
-                skill::MANAGER,
-            )?;
+        let shared = self.registry().iter().any(|other| {
+            other.id != host.id
+                && other.skill == host.skill
+                && self.has_managed_entry(other).unwrap_or(false)
+        });
+        if !shared {
+            if let Some(path) = &host.skill {
+                skill::remove(
+                    path,
+                    &self.context.app,
+                    id,
+                    &self.context.home,
+                    skill::MANAGER,
+                )?;
+            }
+            if let Some(path) = host.optional("agentnave-meeting") {
+                skill::remove(
+                    &path,
+                    &self.context.app,
+                    id,
+                    &self.context.home,
+                    skill::MEETING,
+                )?;
+            }
         }
-        for (name, embedded) in skill::REQUIRED {
-            if let Some(path) = host.optional(name) {
-                skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+        if !shared {
+            for (name, embedded) in skill::REQUIRED {
+                if let Some(path) = host.optional(name) {
+                    skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+                }
             }
         }
         for (name, embedded) in skill::OPTIONAL {

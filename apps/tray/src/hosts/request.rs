@@ -163,6 +163,7 @@ pub(crate) fn sync_orchestration(
         }
     }
     failures.extend(hosts.sync_rules(&document, also));
+    failures.extend(hosts.sync_main_skills());
     failures
 }
 /// The global rules files with whether each carries the current orchestration block.
@@ -226,9 +227,9 @@ pub(crate) fn request(
             Response::json(&hosts.snapshot())
         }
         "/app/hosts/refresh" => {
-            let snapshot = hosts.refresh();
+            hosts.refresh();
             sync_orchestration(root, hosts, &[]);
-            Response::json(&snapshot)
+            Response::json(&hosts.snapshot())
         }
         "/app/hosts/reveal-backups" => match hosts.reveal_backups() {
             Ok(result) => Response::json(&result),
