@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -350,9 +351,14 @@ async def handover(
                 "status": "waiting",
                 "conversations": count,
                 "next": "Tell the user to open a new chat in any host and ask it to take over "
-                "this workspace. Work still running here finishes and lands in history.",
+                "this workspace. Work still running here finishes and lands in history. To "
+                "withdraw, claim workspace_id from this chat, or have the user cancel it in "
+                "the App.",
             }
         if workspace_id is None:
+            mine: str | None = None
+            with suppress(OSError, ValueError):
+                mine = conversations.workspace_id(manager_session_id)
             return {
                 "waiting": [
                     {
@@ -363,6 +369,7 @@ async def handover(
                         "released": item.released,
                         "conversations": len(records),
                         "note": item.note,
+                        **({"yours": True} if item.id == mine else {}),
                     }
                     for item, records in conversations.waiting()
                 ]

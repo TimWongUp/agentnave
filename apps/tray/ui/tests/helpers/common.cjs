@@ -3,23 +3,32 @@ const vm = require("node:vm");
 
 // Run the shared production helpers instead of maintaining test-side naming rules.
 function common(english = false) {
-  const storage = new Map(), listeners = {};
+  const storage = new Map(), listeners = {}, copied = [];
   let selection = "";
   const context = vm.createContext({
     document: {
       documentElement: { lang: english ? "en" : "zh", dataset: {}, classList: { toggle() {} } },
       querySelectorAll: () => [], querySelector: () => null, addEventListener: (name, fn) => { listeners[name] = fn; },
+      createElement: (tag) => ({
+        tagName: tag.toUpperCase(), className: "", style: {}, attributes: {}, children: [], listeners: {}, textContent: "",
+        setAttribute(k, v) { this.attributes[k] = v; },
+        append(...kids) { this.children.push(...kids); if (kids.length === 1 && typeof kids[0] === "string") this.textContent = kids[0]; },
+        addEventListener(k, fn) { this.listeners[k] = fn; },
+      }),
     },
+    navigator: { clipboard: { writeText: async (text) => { copied.push(text); } } },
     getSelection: () => selection,
     window: { ANAppearance: { applyTheme() {}, reducedMotion: { matches: true } }, addEventListener() {}, dispatchEvent() {} },
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
     fetch: async () => ({ ok: false, json: async () => ({}) }),
     setInterval() {},
+    setTimeout() {},
   });
   vm.runInContext(readFileSync(`${__dirname}/../../common.js`, "utf8"), context);
-  const api = Object.fromEntries(["deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames", "dayLabel", "clock", "fullTime"]
+  const api = Object.fromEntries(["L", "at", "pick", "MEMBER", "chatName", "copyButton", "deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames", "dayLabel", "clock", "fullTime"]
     .map(key => [key, context.window.AN[key]]));
+  api.copied = copied;
   // Whether the shared contextmenu listener blocks WebKit's menu for this event and selection.
   api.menuBlocked = (event, current = "") => {
     selection = current;

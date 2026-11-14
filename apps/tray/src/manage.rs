@@ -332,7 +332,10 @@ pub fn handover(root: &Path, group: &str) -> Value {
             "INSERT INTO workspaces (id, owner, owner_host, pending, released) \
              VALUES (?1, ?1, (SELECT host FROM conversations WHERE manager_session = ?1 \
              ORDER BY created DESC, id DESC LIMIT 1), 1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')) \
-             ON CONFLICT (id) DO UPDATE SET pending = 1, note = NULL, released = excluded.released, \
+             ON CONFLICT (id) DO UPDATE SET pending = 1, \
+             note = CASE WHEN workspaces.pending = 0 AND workspaces.released IS NULL \
+             THEN workspaces.note ELSE NULL END, \
+             released = excluded.released, \
              owner_host = coalesce(workspaces.owner_host, excluded.owner_host)",
             [group],
         )?;
@@ -346,6 +349,53 @@ pub fn handover(root: &Path, group: &str) -> Value {
         ),
         Ok(false) => result(group, "missing", "工作区已不存在"),
         Err(e) => result(group, "error", &format!("交接失败：{e}")),
+    }
+}
+
+/// Cancel a pending handover for a workspace with conversations, keeping any handover notes.
+pub fn cancel_handover(root: &Path, group: &str) -> Value {
+    let mut connection = match crate::db::write(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return result(group, "not_pending", "已被接手或已取消，刷新后再看"),
+        Err(e) => return result(group, "error", &e),
+    };
+    let outcome = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .and_then(|transaction| {
+            let has_conversations: bool = transaction.query_row(
+                "SELECT EXISTS (SELECT 1 FROM conversations WHERE manager_session = ?1)",
+                [group],
+                |row| row.get(0),
+            )?;
+            if !has_conversations {
+                let pending: bool = transaction.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = ?1 AND pending = 1)",
+                    [group],
+                    |row| row.get(0),
+                )?;
+                return Ok(if pending {
+                    (
+                        "only_boss",
+                        "这个工作区没有会话，取消后会从列表消失；不需要时请删除工作区",
+                    )
+                } else {
+                    ("not_pending", "已被接手或已取消，刷新后再看")
+                });
+            }
+            let updated = transaction.execute(
+                "UPDATE workspaces SET pending = 0, released = NULL WHERE id = ?1 AND pending = 1",
+                [group],
+            )?;
+            transaction.commit()?;
+            Ok(if updated == 1 {
+                ("cancelled", "已取消交接")
+            } else {
+                ("not_pending", "已被接手或已取消，刷新后再看")
+            })
+        });
+    match outcome {
+        Ok((status, message)) => result(group, status, message),
+        Err(e) => result(group, "error", &format!("取消交接失败：{e}")),
     }
 }
 

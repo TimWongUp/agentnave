@@ -96,6 +96,7 @@ impl Reader {
             "/app/conversations/rename"
                 | "/app/conversations/delete"
                 | "/app/workspaces/handover"
+                | "/app/workspaces/cancel-handover"
                 | "/app/workspaces/forget"
         ) {
             return crate::manage::request(&self.root, method, path, action, body);

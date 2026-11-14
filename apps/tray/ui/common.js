@@ -1037,6 +1037,19 @@
   const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");
   // Cut long labels to n characters (by code point) with an ellipsis.
   const clip = (text, n) => { const chars = [...text]; return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : text; };
+  function copyButton(text, cls = "") {
+    const b = h(`button${cls ? `.${cls}` : ""}`, { type: "button" }, L("复制", "Copy"));
+    b.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        b.textContent = L("已复制", "Copied");
+      } catch {
+        b.textContent = L("复制失败", "Copy failed");
+      }
+      setTimeout(() => { b.textContent = L("复制", "Copy"); }, 1600);
+    });
+    return b;
+  }
   // A desk's live activities: private chats and meeting seats can run at the same time.
   function activities(d) {
     if (Array.isArray(d.activities)) return d.activities;
@@ -1055,5 +1068,5 @@
     // Bumped whenever a set is replaced or restored: views fold it into their render caches.
     version: () => version };
 
-  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, isHidden, onVisibility, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, handleOf, fullHandle, cliOf, chatName, shownName, chatPlace, activities, dozing, SLEEP_AFTER, ongoing, clip, modelName, fullModelNames, setFullModelNames };
+  window.AN = { h, $, L, setLanguage, load, post, installService, href, shellOS, MEMBER, GROUP, pick, urgent, deskState, avatar, colorClass, at, relTime, clock, fullTime, dayLabel, setText, setAttr, setClass, reconcile, stickyOrder, isHidden, onVisibility, poll, plain, themeSwitch, applyTheme, reducedMotion: window.ANAppearance.reducedMotion, art, cliName, hostTile, deskName, deskParts, handleOf, fullHandle, cliOf, chatName, shownName, chatPlace, activities, dozing, SLEEP_AFTER, ongoing, clip, copyButton, modelName, fullModelNames, setFullModelNames };
 }

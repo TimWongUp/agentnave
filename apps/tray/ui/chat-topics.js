@@ -110,15 +110,19 @@ function tpDirectory(c, ctx) {
     });
   }
   // A handover belongs to no meeting or desk, so its note is read here, folded until asked for.
-  for (const m of c.messages.filter((x) => x.kind === "handover")) {
+  const handovers = c.messages.filter((x) => x.kind === "handover");
+  const pending = c.handover === "pending";
+  if (pending && !handovers.length) handovers.push({ id: `${c.group}:handover`, time: c.updated || "", text: "" });
+  for (const m of handovers) {
     items.push({
-      weight: 2,
+      weight: pending ? 0 : 2,
       time: m.time,
       tag: AN.L("交接", "Handover"),
       title: m.speaker?.label || AN.L("工作区交接", "Workspace handover"),
       faces: [],
       meta: "",
       line: m.text,
+      next: pending ? handoverNext(c) : null,
       note: m.detail ? { id: m.id, text: m.detail } : null,
       scope: null,
     });
@@ -133,12 +137,30 @@ function tpDirectory(c, ctx) {
       h("span.tp-card-top", {}, h("span.tp-tag", {}, item.tag), h("b", {}, item.title), tpBadge(item.status)),
       h("span.tp-card-meta", {}, h("span.tp-faces", {}, item.faces), h("span", {}, item.meta), h("time", {}, item.time ? clock(item.time) : "")),
       item.line ? h("span.tp-card-line", {}, item.line) : null,
+      item.next,
       item.note ? handoverNote(item.note) : null,
     );
     if (item.scope) card.onclick = () => openScope(item.scope, card);
     return card;
   });
   return [...cards, ...omitted];
+}
+function handoverNext(c) {
+  const name = AN.chatName(c);
+  const cmd = AN.L(`接手 AgentNave 工作区「${name}」（${c.group}）`, `Take over AgentNave workspace "${name}" (${c.group})`);
+  const hasConv = Array.isArray(c.conversations) ? c.conversations.length > 0 : Boolean(c.conversations);
+  let cancel = null;
+  if (hasConv) {
+    cancel = h("button.tp-btn", { type: "button" }, AN.L("取消交接", "Cancel handover"));
+    cancel.addEventListener("click", () => Actions.cancelHandover(c.group));
+  }
+  return h(
+    "div.tp-handover-next",
+    {},
+    h("span.tp-handover-hint", {}, AN.L("到任意 boss 的新聊天里说：", "In a new chat with any boss, say:")),
+    h("code.tp-handover-cmd", {}, cmd),
+    h("div.tp-handover-actions", {}, AN.copyButton(cmd, "tp-btn"), cancel),
+  );
 }
 // The fold survives the list being drawn again.
 function handoverNote(note) {
@@ -162,7 +184,9 @@ function renderDirectory(c, ctx) {
   el.jump.hidden = true;
   setAttr(el.drawer, "aria-label", AN.L("boss 的对话", "boss conversations"));
   const key = JSON.stringify([
-    c.group, ART.version(),
+    document.documentElement.lang, c.group, c.handover, AN.chatName(c),
+    Array.isArray(c.conversations) ? c.conversations.length : Boolean(c.conversations),
+    ART.version(),
     c.messages.map((m) => [m.id, m.status, m.kind === "typing" ? m.text : (m.text || "").length, m.detail, m.doing, m.speaker?.identity, m.speaker?.effort]),
     [...ctx.rooms.values()].map((r) => [r.id, r.title, r.status, r.pending_review]),
     [...ctx.desks.values()].map((d) => [d.key, deskName(d)]),

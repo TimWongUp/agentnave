@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from dataclasses import dataclass
@@ -314,8 +315,37 @@ def _hermes_model(session_id: str) -> str | None:
     return clean_model(used[0] if used else None) or clean_model(row[0] if row else None)
 
 
+def _hermes_default() -> Path:
+    home = Path.home()
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        installed = (Path(local) if local else home / "AppData/Local") / "hermes"
+        if installed.is_dir():
+            return installed
+    return home / ".hermes"
+
+
+def _active_hermes_profile(root: Path) -> Path | None:
+    parent = root.parent
+    if parent == root or parent.name == "profiles":
+        return None
+    try:
+        raw = (root / "active_profile").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    name = raw.strip().lstrip("\ufeff")
+    if name == "default" or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
+        return None
+    profile = root / "profiles" / name
+    if profile.is_dir() and not (root / "profiles/.deleted" / name).exists():
+        return profile
+    return None
+
+
 def _hermes_database() -> Path:
-    return _home("HERMES_HOME", ".hermes") / "state.db"
+    raw = os.environ.get("HERMES_HOME", "").strip()
+    root = Path(raw) if raw else _hermes_default()
+    return (_active_hermes_profile(root) or root) / "state.db"
 
 
 def _devin_root() -> Path:
@@ -406,7 +436,7 @@ def zcode_database() -> Path:
 
 
 def _home(variable: str, default: str) -> Path:
-    return Path(os.environ.get(variable) or Path.home() / default)
+    return Path(os.environ.get(variable, "").strip() or Path.home() / default)
 
 
 def _read_only(path: Path) -> sqlite3.Connection:
@@ -576,7 +606,7 @@ _HOSTS = {
     ),
     "workbuddy": _transcript_host(
         _Transcript(
-            "CODEBUDDY_CONFIG_DIR",
+            "WORKBUDDY_CONFIG_DIR",
             ".workbuddy",
             "projects",
             "*/{id}.jsonl",
