@@ -111,6 +111,8 @@ _MODEL_EXECUTION_OPTIONS = frozenset(
         "restricted_tools",
         "disable_slash_commands",
         "interactive",
+        "provider",
+        "stored_credentials",
     }
 )
 

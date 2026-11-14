@@ -488,6 +488,38 @@ def test_a_call_without_a_level_passes_the_cli_default_one(
     assert effort({"model": "grok-4.6"}, document) is None
 
 
+def test_cached_model_does_not_select_deepseek_route_or_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    (tmp_path / "cli-defaults.json").write_text(
+        json.dumps({"version": 1, "clis": {"deepseek": {"model": "deepseek-flash"}}}),
+        encoding="utf-8",
+    )
+    account = {"provider": "deepseek-account", "stored_credentials": True}
+    document = MemberFile.model_validate(
+        {
+            "version": 1,
+            "clis": {"deepseek": {"models": {"deepseek-flash": {"options": account}}}},
+            "modes": {},
+        }
+    )
+    assert document.apply("task", "deepseek", {}, frozenset()) == ({}, [])
+    assert document.apply("task", "deepseek", {"model": "deepseek-flash"}, frozenset()) == (
+        {"model": "deepseek-flash", **account},
+        ["provider", "stored_credentials"],
+    )
+    assert (
+        document.apply(
+            "task",
+            "deepseek",
+            {"model": "deepseek-flash", "provider": "deepseek-official"},
+            frozenset(),
+        )[0]["provider"]
+        == "deepseek-official"
+    )
+
+
 def test_cached_native_model_does_not_transfer_execution_permissions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

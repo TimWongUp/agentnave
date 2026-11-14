@@ -240,6 +240,26 @@
     S.renderCards();
   }
 
+  // Authentication is an explicit per-model choice shared by scenes and seats.
+  function setDeepSeekRoute(modelId, route) {
+    ensureCliModel("deepseek", modelId);
+    const model = S.currentDoc.clis.deepseek.models[modelId];
+    const options = { ...model.options };
+    if (route === "account") {
+      options.provider = "deepseek-account";
+      options.stored_credentials = true;
+    } else if (route === "official") {
+      options.provider = "deepseek-official";
+      delete options.stored_credentials;
+    } else if (route === "default") {
+      delete options.provider;
+      delete options.stored_credentials;
+    } else return;
+    if (Object.keys(options).length) model.options = options;
+    else delete model.options;
+    edited();
+  }
+
   // Change one scene, or both while the card is not split.
   function changeSlot(provider, scene, change) {
     if (S.pendingDisable === provider) S.pendingDisable = null;
@@ -307,7 +327,7 @@
   Object.assign(S, {
     isRestricted, hasPool, listedPool, outOfPool, unlisted, nativeDefault, cliEffort, effortLevels,
     savedEffort, getAllModelIds, hiddenModel, sceneEffort, slot, shownPool, isSplit, known, restrict,
-    confirmScenes, writePool, edited, changeSlot, setProviderEnabled, setSplit
+    confirmScenes, writePool, edited, setDeepSeekRoute, changeSlot, setProviderEnabled, setSplit
   });
   S.share({
     pickerOpen: [() => pickerOpen, (v) => { pickerOpen = v; }],

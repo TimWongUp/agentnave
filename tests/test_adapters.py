@@ -1653,6 +1653,12 @@ def test_deepseek_options_become_a_temporary_patch_overlay(
     assert '    provider: "deepseek-official"\n' in official
     assert "- id: credentials\n  disabled: false\n" in official
     assert "credentials" not in patch_of({"model": "deepseek-flash", "stored_credentials": False})
+    account = patch_of(
+        {"model": "deepseek-flash", "provider": "deepseek-account", "stored_credentials": True}
+    )
+    assert '    provider: "deepseek-account"\n    model: "deepseek-flash"\n' in account
+    for row in ("credentials", "authorization", "deepseek-account"):
+        assert f"- id: {row}\n  disabled: false\n" in account
 
     def official_default(_executable: str) -> tuple[tuple[str, str], dict[str, str]]:
         return ("deepseek-official", "deepseek-flash"), {}

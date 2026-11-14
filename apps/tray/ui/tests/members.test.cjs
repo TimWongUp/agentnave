@@ -707,6 +707,70 @@ function poolEditor(fetch) {
   return app;
 }
 
+test("DeepSeek route selection is explicit, model scoped and preserves other settings", () => {
+  const app = poolEditor();
+  app.run(`
+    detected.deepseek = { installed: true, models: [{ id: "deepseek-flash" }, { id: "deepseek-v4-pro" }] };
+    currentDoc.clis.deepseek = { models: {
+      "deepseek-flash": { effort: "high", options: { extra: "keep" } },
+      "deepseek-v4-pro": { options: { provider: "gateway", stored_credentials: false } },
+    } };
+    markSaved();
+  `);
+  assert.equal(app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").children[0].attrs.selected'), true);
+  assert.equal(app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-v4-pro").children[3].attrs.selected'), true);
+  app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "account"}})');
+  assert.deepEqual(app.doc().clis.deepseek.models["deepseek-flash"], {
+    effort: "high", options: { extra: "keep", provider: "deepseek-account", stored_credentials: true },
+  });
+  assert.deepEqual(app.doc().clis.deepseek.models["deepseek-v4-pro"].options, { provider: "gateway", stored_credentials: false });
+  app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "official"}})');
+  assert.deepEqual(app.doc().clis.deepseek.models["deepseek-flash"].options, { extra: "keep", provider: "deepseek-official" });
+  app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "default"}})');
+  assert.deepEqual(app.doc().clis.deepseek.models["deepseek-flash"].options, { extra: "keep" });
+});
+
+test("DeepSeek route rows show a visible bilingual note without leaking internal fields", () => {
+  const forbidden = /\b(provider|stored_credentials|deepseek-account|deepseek-official|options)\b/;
+  const zhApp = poolEditor();
+  zhApp.run('detected.deepseek = { installed: true, models: [{ id: "custom-model" }] }');
+  assert.equal(zhApp.run("deepSeekRouteRows().length"), 0);
+  zhApp.run('detected.deepseek = { installed: true, models: [{ id: "deepseek-flash" }] }');
+  const zhRows = zhApp.run("deepSeekRouteRows()");
+  const zhNote = zhRows.find((node) => node.tag === "p");
+  assert.ok(zhNote);
+  assert.equal(zhNote.attrs.className, "member-muted member-note");
+  assert.equal(zhNote.attrs.hidden, undefined);
+  const zhText = zhNote.children.join("");
+  assert.match(zhText, /登录账号.*保存/);
+  assert.match(zhText, /官方 API Key.*官方 API/);
+  assert.match(zhText, /沿用 CLI 设置.*不改变路由/);
+  assert.match(zhText, /选中.*模型时生效/);
+  assert.doesNotMatch(zhText, forbidden);
+
+  const enApp = editor();
+  enApp.run(`
+    AN.settings.el = (tag, attrs, ...children) => ({ tag, attrs, children });
+    AN.settings.textNode = (s) => s;
+    AN.settings.settingTip = () => AN.settings.el("span");
+    AN.L = (_zh, en) => en;
+    AN.settings.L = AN.L;
+  `);
+  enApp.load("member-cards.js");
+  enApp.run('detected.deepseek = { installed: true, models: [{ id: "deepseek-flash" }] }');
+  const enRows = enApp.run("deepSeekRouteRows()");
+  const enNote = enRows.find((node) => node.tag === "p");
+  assert.ok(enNote);
+  assert.equal(enNote.attrs.className, "member-muted member-note");
+  assert.equal(enNote.attrs.hidden, undefined);
+  const enText = enNote.children.join("");
+  assert.match(enText, /Signed-in account.*save settings/i);
+  assert.match(enText, /Official API key.*official API/i);
+  assert.match(enText, /Follow CLI settings.*leaves routing unchanged/i);
+  assert.match(enText, /when that model is selected/i);
+  assert.doesNotMatch(enText, forbidden);
+});
+
 test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out model through", async () => {
   const posts = [];
   const app = poolEditor(async (url, options) => {
