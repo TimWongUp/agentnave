@@ -41,7 +41,19 @@ fn switches_main_skill_and_removes_both_on_disconnect() {
         "missing"
     );
     assert_eq!(hosts.state(&h)["skill"]["state"], "app");
+    // With no App copy left, nothing is installed on a guess either.
+    skill::remove(
+        &meeting,
+        &hosts.context.app,
+        "pi",
+        &hosts.context.home,
+        skill::MEETING,
+    )
+    .unwrap();
+    hosts.ensure_skill(&h, true).unwrap();
+    assert!(!manager.exists() && !meeting.exists());
     std::fs::write(&file, saved).unwrap();
+    hosts.ensure_skill(&h, true).unwrap();
     crate::members::save_orchestration(
         &hosts.context.data,
         &json!({"version":1,"preset":"off","effective_apps":{"pi":"off"}}),

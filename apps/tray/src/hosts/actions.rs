@@ -125,20 +125,25 @@ impl Hosts {
             return Ok(false);
         };
         let meeting_path = host.optional("agentnave-meeting").unwrap();
-        let connected = skill::state(path, &self.context.home, skill::MANAGER)["state"] == "app"
-            || skill::state(&meeting_path, &self.context.home, skill::MEETING)["state"] == "app";
-        // An unreadable orchestration file decides nothing: the Skill already there stays.
+        let manager_app = skill::state(path, &self.context.home, skill::MANAGER)["state"] == "app";
+        let meeting_app =
+            skill::state(&meeting_path, &self.context.home, skill::MEETING)["state"] == "app";
+        let connected = manager_app || meeting_app;
+        // An unreadable orchestration file decides nothing: only an App copy already there is kept
+        // up to date, and nothing is installed or removed on a guess.
         let decided = self.main_skill_is_meeting(host);
-        let meeting = decided.unwrap_or_else(|| {
-            skill::state(&meeting_path, &self.context.home, skill::MEETING)["state"] == "app"
-        });
+        let meeting = decided.unwrap_or(meeting_app);
         let (wanted_path, wanted, other_path, other) = if meeting {
             (&meeting_path, skill::MEETING, path, skill::MANAGER)
         } else {
             (path, skill::MANAGER, &meeting_path, skill::MEETING)
         };
         let active = install_missing || connected;
-        let mut changed = self.ensure_one(host, wanted_path, wanted, active)?;
+        let mut changed = if decided.is_some() || connected {
+            self.ensure_one(host, wanted_path, wanted, active)?
+        } else {
+            false
+        };
         if active
             && decided.is_some()
             && !matches!(

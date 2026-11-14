@@ -60,7 +60,7 @@ def unlinked() -> list[str]:
     linked = set(LINK.findall(files[TARGET / "SKILL.md"]))
     carried = {f"references/{name}" for name in REFERENCES}
     present = {f"references/{p.name}" for p in (TARGET / "references").glob("*.md")}
-    return sorted((linked - carried) | (present - carried))
+    return sorted((linked - carried) | (present - carried) | (carried - linked))
 
 
 def stale() -> list[Path]:
