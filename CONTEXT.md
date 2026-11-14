@@ -112,7 +112,7 @@ _Avoid_: 丢弃
 
 ## 评审门控（Review Gate）
 
-可选 Skill `agentnave-review` 规定的代码评审流程：由 boss 按失败风险定 R0–R3 级、派只读评审工位、裁决 findings 并写出记录；何时评审、记录留在哪里按用户或项目规则。流程由调用方 Agent 执行，不进入运行时；用户在 App「高级」页按宿主选择并保存后安装该 Skill，默认关闭。
+可选 Skill `agentnave-review` 规定的代码评审流程：由 boss 按失败风险定 R0–R3 级、派只读评审工位、裁决 findings 并写出记录；何时评审、记录留在哪里按用户或项目规则。流程由调用方 Agent 执行，不进入运行时；用户在 App「技能」页按宿主选择并保存后安装该 Skill，默认关闭。
 _Avoid_: Review（专指会议答案的审核）
 
 ## 评审工位（Review Seat）
