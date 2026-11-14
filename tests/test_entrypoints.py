@@ -4038,7 +4038,7 @@ async def test_native_review_role_receipt_names_the_seat_model_and_effort(
         assert override_cooled.is_error and "explicit-model" in str(override_cooled.content)
         provider_health.clear(root, "codex")
         # A named model stays within the CLI's pool, as it would for a started task.
-        members = {
+        members: dict[str, object] = {
             "version": 1,
             "modes": {},
             "clis": {"codex": {"models": {"native-model": {}}, "allowed_models": ["native-model"]}},
