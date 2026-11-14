@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.10.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.11.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.10.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.11.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -613,44 +613,20 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.10.0
+### Upgrading to v1.11.0
 
-Update the App; it installs the paired service and refreshed Skills at startup. Reconnect or reopen
-host copies as the boss card asks so existing sessions pick up the narrower default `list` scope,
-service-managed isolated directories, the `decision` orchestration preset and the revised quota
-cooldown. For a manual installation, reinstall the runtime and Skills from `@v1.10.0`—replacing
-the full `agentnave-manager` directory so the new `references/decision.md` is included—and
-reconnect MCP.
+Update the App; it installs the paired service and Skills at startup. Reconnect or reopen hosts as
+prompted. For a manual installation, reinstall the runtime and Skills from `@v1.11.0` and reconnect
+MCP. Install `agentnave-meeting` instead of `agentnave-manager` for the Meetings only preset; the
+two are mutually exclusive. Replace the full Skill directory to pick up the updated instructions.
 
-`list` now returns only this chat's workspace unless `scope="all"` is passed; a call without
-`manager_session_id` and without a host-injected identity is rejected. `scope="all"` groups by
-workspace newest first, counts `limit` in workspaces (default 10, at most 50) and takes `offset` to
-page; pass a `workspace_id` from that list to read one workspace's conversations in the usual
-format. Isolation is now created and registered by the service under `.agentnave-worktrees/` in the
-dispatching repository and recorded in `worktrees.db` in the data root; worktrees created by hand
-before this release stay outside that registry, are not shown in the App, and are not cleaned by
-the service. Releasing an isolated directory discards Git-ignored files and requires a confirmation
-token when it holds uncommitted source or unmerged commits.
+Seats can now have ordered fallbacks, and quota cooldown can apply to a shared provider quota group.
+Older services or Apps may ignore group cooldown records, so reconnect hosts and update the App.
+The decision model now selects a difficulty using the meaning of each tier. DeepSeek member settings
+can select a signed-in account, an official API key or the CLI's own configuration.
 
-The `decision` preset needs a Gemini key (`decision-keys.json` in the data root) and sends the
-dispatch prompt to Gemini; free-tier input may be used to improve the product, and Google's
-supported regions exclude mainland China and Hong Kong. A host connection still served by the
-previous service does not recognize `preset: "decision"` and treats `orchestration.json` as
-invalid, so reconnect it before or after switching. The menu bar panel's "⋯" menu is gone—Open,
-Settings and Quit now sit in the bottom bar—and Settings has a left sidebar, with orchestration
-under Settings → Orchestration instead of Settings → Advanced → Orchestration. The new "Pause
-characters when unfocused" switch in Settings → General is on by default, matching the previous
-behavior; minimizing always pauses. On Windows, Claude Code now runs interactively by default; turn
-off "Run interactively" on the member card to keep using `-p`.
-
-Quota failures without a reset time now cool the model for one hour instead of not cooling at all
-(the CLI when no model was requested), after asking the CLI's own usage query for a reset time when
-one is available; clear a record from the tray. In a Claude Code terminal interactive session,
-`wait` without `wait_seconds` now waits 1500 seconds; an explicit 270 still applies, and other
-entrypoints are unchanged.
-
-See [v1.10.0 release notes](releases/v1.10.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.9.0.md).
+See [v1.11.0 release notes](releases/v1.11.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.10.0.md).
 
 ## Uninstall
 
