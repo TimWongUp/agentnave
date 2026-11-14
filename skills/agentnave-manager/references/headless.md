@@ -18,7 +18,7 @@
 
   非 `uv tool` 安装时，把命令里的 Python 换成运行 `agentnave-mcp` 的环境。
 - 按文件顶层的 `order.<档位>` 依次拼接：`sections` 存固定段落，`switches` 写明各开关选哪一段或替换 `shared` 里的哪一行，`meeting_defaults` 存「开会默认 … 席」的模板与 CLI 显示名，`enabled_roles` 存按 `orchestration_roles.json` 顺序生成角色目录行的模板。`orchestration.json` 里的开关字段与 `meeting` 只供 App 生成规则块，没有 App 时宿主只按指令入口里的文字执行。
-- **「只开会」档**（`preset: "meetings"`）：对服务算未开启编排（`orchestration.enabled=false`），不会走到本文上面的默认分工协作；想让没有规则块的宿主主动开会，同样在用户决定后按 `order.meetings` 把该档文字放进指令入口。
+- **「只开会」档**（`preset: "meetings"`）：对服务算未开启编排（`orchestration.enabled=false`），不会走到本文上面的默认分工协作。用户选这一档时，按 `order.meetings` 把该档文字放进指令入口，并把宿主 Skill 目录里的 `agentnave-manager` 换成随包发布的 `agentnave-meeting`（与 `agentnave-manager` 同在包内 `skills/` 目录，两份只装一份）；要 boss 主动开会时，`meetings_options.meetings` 开关对应的那段也由用户决定后再放。
 
 ## 手写 orchestration.json 的注意项
 

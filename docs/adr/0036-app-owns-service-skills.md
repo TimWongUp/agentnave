@@ -1,6 +1,6 @@
 # ADR-0036：本服务的 Skill 只由 App 管理
 
-- 状态：已接受
+- 状态：已接受；App 管理的 Skill 增加按档位互斥安装的 `agentnave-meeting`，见 [ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md)
 - 日期：2026-10-30
 - 修订 [ADR-0015](0015-app-host-integration.md) 与 [ADR-0030](0030-optional-review-gate-skill.md) 中“外部 Skill（包括符号链接）只标 external、跳过写入”的规则。
 

@@ -1,6 +1,6 @@
 # ADR-0083：新增「只开会」编排档位，对服务按未开启任务编排处理
 
-- 状态：部分修订；开会席位结构见本文修订（2026-11-12）
+- 状态：部分修订；开会席位结构见本文修订（2026-11-12）；主动开会、点名派发与 Skill 由 [ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) 修订
 - 日期：2026-11-11
 - 扩展 [ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 的编排档位与规则块，补充 [ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) 中工位启用与普通任务目录切换的边界。
 

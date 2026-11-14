@@ -334,6 +334,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "enabled_roles",
         "image_generation",
         "meeting",
+        "meetings_options",
         "split_options",
         "parallel_options",
         "decision_options",
@@ -392,7 +393,8 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         validate_meeting(meeting)?;
     }
     for (key, allowed) in [
-        ("split_options", &["meetings"][..]),
+        ("meetings_options", &["meetings"][..]),
+        ("split_options", &["meetings"]),
         ("parallel_options", &["meetings"]),
         ("decision_options", &["parallel_writes", "meetings"]),
     ] {

@@ -141,6 +141,7 @@ fn chats_do_not_wait_for_host_refresh() {
     let context = crate::hosts::Context {
         home: home.clone(),
         app: home.join("app"),
+        data: home.join("app"),
         project: home.clone(),
         env: std::collections::BTreeMap::from([(
             "CODEX_HOME".into(),

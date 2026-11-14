@@ -216,15 +216,18 @@ jq -n '{version:1,max_running:8,history_retention_days:90}' > "${AGENTNAVE_DATA_
 
 ## 9. 安装 skill
 
-`agentnave-manager` 必装，不用问；`agentnave-review` 只在第 6 步选了装时才装。`agentnave-handover` 是给桌面 App 宿主交接工作区用的，Linux 上的 bot 用不上，不装。已有的旧版会先备份。
+`agentnave-manager` 必装，不用问（用户选「只开会」档时改装 `agentnave-meeting`，两者不同时装）；`agentnave-review` 只在第 6 步选了装时才装。`agentnave-handover` 是给桌面 App 宿主交接工作区用的，Linux 上的 bot 用不上，不装。已有的旧版会先备份。
 
 直接执行（第 6 步选了装时先设 `EXTRA=agentnave-review`，否则留空）：
 ```bash
+MAIN=agentnave-manager                  # 选「只开会」档时：MAIN=agentnave-meeting（两者不同时装）
 EXTRA=""                                # 第 6 步选了装：EXTRA=agentnave-review
 SRC=~/.local/share/uv/tools/agentnave/lib/python3.12/site-packages/agentnave/skills
 DEST="$HOME/agent-data/workflows"      # Grok Bot 的全局 skill 仓库；其他 bot 换成自己的目录
-for s in agentnave-manager $EXTRA; do   # 第 6 步选了装时 EXTRA=agentnave-review
+for s in $MAIN $EXTRA; do               # 第 6 步选了装时 EXTRA=agentnave-review
   [ -d "$DEST/$s" ] && mv "$DEST/$s" "$HOME/$s-backup-$(date +%m%d%H%M)"; cp -a "$SRC/$s" "$DEST/$s"; done
+OTHER=agentnave-meeting; [ "$MAIN" = agentnave-meeting ] && OTHER=agentnave-manager   # 两者不同时装，切档时移走另一份
+[ -d "$DEST/$OTHER" ] && mv "$DEST/$OTHER" "$HOME/$OTHER-backup-$(date +%m%d%H%M)"
 ```
 验证：`ls $DEST/agentnave-*/SKILL.md` 能列出装了的那几个（§6.5）。
 

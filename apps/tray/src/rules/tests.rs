@@ -158,7 +158,20 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         "enabled_roles": ["explorer", "worker", "worker_writing"],
         "image_generation": {"provider": "codex", "model": "chat"}
     });
-    let plain_meetings = format!("{meetings_head}{meetings_tail}");
+    let plain_meetings = format!("{meetings_head}{split_meetings_asked}{meetings_tail}");
+    let parts = &presets(&meetings_only_doc)["meetings_parts"];
+    for (on, key) in [(false, "meetings_asked"), (true, "meetings_own")] {
+        let doc = json!({"preset":"meetings", "meetings_options":{"meetings":on}});
+        assert_eq!(
+            text_of(&doc, "meetings").unwrap(),
+            format!(
+                "{}{}{}",
+                parts["head"].as_str().unwrap(),
+                parts[key].as_str().unwrap(),
+                parts["tail"].as_str().unwrap()
+            )
+        );
+    }
     let meetings_only = text_of(&meetings_only_doc, "meetings").unwrap();
     assert_eq!(meetings_only, plain_meetings);
     assert_eq!(
@@ -193,7 +206,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     });
     assert_eq!(
         text_of(&doc_partial, "meetings").unwrap(),
-        format!("{meetings_head}{partial_seats}{meetings_tail}")
+        format!("{meetings_head}{split_meetings_asked}{partial_seats}{meetings_tail}")
     );
     assert!(text_of(&doc_partial, "split").unwrap().contains(&format!(
         "{split_meetings_asked}{partial_seats}\n- 通用探索"
@@ -682,8 +695,9 @@ fn the_decision_mode_has_its_own_text_and_leaves_the_others_as_they_were() {
     assert_eq!(
         text_of(&doc("meetings"), "meetings").unwrap(),
         format!(
-            "{}{}",
+            "{}{}{}",
             section("meetings_only_head"),
+            section("meetings_when_asked"),
             section("meetings_only_tail")
         )
     );

@@ -115,6 +115,8 @@ impl ToolDirs {
 pub struct Context {
     pub home: PathBuf,
     pub app: PathBuf,
+    /// The data root the service and App share (`orchestration.json` lives here).
+    pub data: PathBuf,
     pub project: PathBuf,
     pub env: BTreeMap<String, String>,
     pub search: Vec<PathBuf>,
@@ -179,6 +181,7 @@ impl Context {
             project: std::env::current_dir().unwrap_or_else(|_| home.clone()),
             home,
             app,
+            data: crate::data_files::data_root(),
             env,
             search,
         }

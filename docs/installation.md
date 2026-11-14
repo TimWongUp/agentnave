@@ -421,6 +421,8 @@ Use the host's Skill installer or existing deployment manager to install
 `skills/agentnave-manager/` from the **same `AGENTNAVE_RELEASE` tag** as the runtime.
 Install the whole directory, including `SKILL.md` and every file in `references/`.
 The Skill content is shared across hosts; the destination and discovery scope belong to the host.
+When the user picks the meetings-only orchestration preset, install `skills/agentnave-meeting/`
+instead of `skills/agentnave-manager/` (never both); see `skills/agentnave-manager/references/headless.md`.
 
 The checked macOS user-level discovery locations are listed below as examples; use the host's
 installed-version settings and your deployment manager as authority, especially with custom
