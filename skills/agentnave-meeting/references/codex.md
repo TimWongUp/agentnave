@@ -1,6 +1,6 @@
 # Codex CLI
 
-在 Codex 作宿主并用 `functions.exec` 调 `wait` 时，首行写 `// @exec: {"yield_time_ms": 300000}`；返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id, yield_time_ms=300000)` 收取同一脚本，不再创建第二个 AgentNave `wait`。五分钟让出窗口长过 `wait` 的 270 秒；不要使用默认十秒间隔反复轮询。外层让出控制权不代表超时或取消；`seq` 只在新发起一次 AgentNave `wait` 时递增。
+在 Codex 作宿主并用 `functions.exec` 调 `wait` 时，首行写 `// @exec: {"yield_time_ms": 300000}`；返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id, yield_time_ms=300000)` 收取同一脚本，不再创建第二个 AgentNave `wait`。脚本一结束这两种调用都会立即返回，长让出不会推迟拿到结果，所以不要为了早点发现完成而缩短让出时间，也不要用默认十秒或其他短间隔反复检查；宿主限制更短时用它允许的最长值。五分钟让出窗口长过 `wait` 的 270 秒。外层让出控制权不代表超时或取消；`seq` 只在新发起一次 AgentNave `wait` 时递增。等待期间没有新终态、阻塞、待答弹框或需要用户决定的事时，不发进展消息。
 
 通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
