@@ -19,6 +19,59 @@ pub fn read(root: &Path) -> Value {
     }
 }
 
+/// Return only records that can currently block dispatch, without modifying the file.
+pub fn active(root: &Path) -> Value {
+    filter_active(read(root), chrono::Utc::now())
+}
+
+fn filter_active(mut providers: Value, now: chrono::DateTime<chrono::Utc>) -> Value {
+    let Some(providers) = providers.as_object_mut() else {
+        return json!({});
+    };
+    providers.retain(|_, entry| {
+        if entry.get("code").is_some() {
+            return is_active(entry, now);
+        }
+        let Some(object) = entry.as_object_mut() else {
+            return false;
+        };
+        if object
+            .get("default")
+            .is_some_and(|record| !is_active(record, now))
+        {
+            object.remove("default");
+        }
+        for key in ["models", "groups"] {
+            if let Some(records) = object.get_mut(key).and_then(Value::as_object_mut) {
+                records.retain(|_, record| is_active(record, now));
+                if records.is_empty() {
+                    object.remove(key);
+                }
+            } else {
+                object.remove(key);
+            }
+        }
+        object.contains_key("default")
+            || object.contains_key("models")
+            || object.contains_key("groups")
+    });
+    Value::Object(providers.clone())
+}
+
+fn is_active(record: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let code = record["code"].as_str();
+    if code == Some("auth") && record["until"].is_null() {
+        return true;
+    }
+    if !matches!(code, Some("auth" | "quota" | "billing")) {
+        return false;
+    }
+    record["until"]
+        .as_str()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .is_some_and(|end| end > now && end <= now + chrono::Duration::days(8))
+}
+
 #[cfg(unix)]
 fn same_file(file: &File, path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -32,7 +85,15 @@ fn same_file(_file: &File, path: &Path) -> bool {
     path.exists()
 }
 
-pub fn clear(root: &Path, provider: &str, model: Option<&str>) -> Result<(), String> {
+/// What one clear removes: the CLI's own record, one model's, or one quota group's.
+#[derive(Clone, Copy)]
+pub enum Scope<'a> {
+    Cli,
+    Model(&'a str),
+    Group(&'a str),
+}
+
+pub fn clear(root: &Path, provider: &str, scope: Scope) -> Result<(), String> {
     let lock_path = root.join("locks/provider-health.lock");
     fs::create_dir_all(lock_path.parent().unwrap()).map_err(|e| e.to_string())?;
     for _ in 0..5 {
@@ -54,7 +115,7 @@ pub fn clear(root: &Path, provider: &str, model: Option<&str>) -> Result<(), Str
         if !same_file(&lock, &lock_path) {
             continue;
         }
-        let result = clear_locked(root, provider, model);
+        let result = clear_locked(root, provider, scope);
         #[cfg(unix)]
         let _ = fs::remove_file(&lock_path);
         drop(lock);
@@ -65,7 +126,7 @@ pub fn clear(root: &Path, provider: &str, model: Option<&str>) -> Result<(), Str
     Err("CLI 冷却状态正忙，请重试".into())
 }
 
-fn clear_locked(root: &Path, provider: &str, model: Option<&str>) -> Result<(), String> {
+fn clear_locked(root: &Path, provider: &str, scope: Scope) -> Result<(), String> {
     let bytes = match fs::read(root.join(FILE)) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -78,45 +139,57 @@ fn clear_locked(root: &Path, provider: &str, model: Option<&str>) -> Result<(), 
     let providers = document["providers"]
         .as_object_mut()
         .ok_or("冷却文件格式错误")?;
-    let changed = if let Some(item) = providers.get_mut(provider) {
-        if item.get("code").is_some() {
-            if model.is_none() {
-                providers.remove(provider);
-                true
-            } else {
-                false
-            }
-        } else if let Some(object) = item.as_object_mut() {
-            let removed = if let Some(name) = model {
-                object
-                    .get_mut("models")
-                    .and_then(Value::as_object_mut)
-                    .and_then(|models| models.remove(name))
-                    .is_some()
-            } else {
-                object.remove("default").is_some()
-            };
-            if object
-                .get("models")
-                .and_then(Value::as_object)
-                .is_some_and(|m| m.is_empty())
-            {
-                object.remove("models");
-            }
-            if object.is_empty() {
-                providers.remove(provider);
-            }
-            removed
-        } else {
-            false
-        }
-    } else {
-        false
+    let changed = match providers.get_mut(provider) {
+        Some(item) => clear_item(item, scope),
+        None => false,
     };
+    if changed && providers.get(provider).is_some_and(is_empty_record) {
+        providers.remove(provider);
+    }
     if changed {
         crate::data_files::write_atomic(root, FILE, &document)?;
     }
     Ok(())
+}
+
+/// Take the scope's record out of one provider's entry; true when something was removed.
+fn clear_item(item: &mut Value, scope: Scope) -> bool {
+    // A version 1 record is the CLI's own and has no models or groups.
+    if item.get("code").is_some() {
+        if !matches!(scope, Scope::Cli) {
+            return false;
+        }
+        *item = json!({});
+        return true;
+    }
+    let Some(object) = item.as_object_mut() else {
+        return false;
+    };
+    match scope {
+        Scope::Cli => object.remove("default").is_some(),
+        Scope::Model(name) => remove_entry(object, "models", name),
+        Scope::Group(name) => remove_entry(object, "groups", name),
+    }
+}
+
+fn remove_entry(object: &mut serde_json::Map<String, Value>, key: &str, name: &str) -> bool {
+    let removed = object
+        .get_mut(key)
+        .and_then(Value::as_object_mut)
+        .and_then(|entries| entries.remove(name))
+        .is_some();
+    if object
+        .get(key)
+        .and_then(Value::as_object)
+        .is_some_and(|entries| entries.is_empty())
+    {
+        object.remove(key);
+    }
+    removed
+}
+
+fn is_empty_record(item: &Value) -> bool {
+    item.as_object().is_some_and(|object| object.is_empty())
 }
 
 pub(crate) fn request(
@@ -137,7 +210,16 @@ pub(crate) fn request(
         if !payload["model"].is_null() && payload["model"].as_str().is_none_or(str::is_empty) {
             return Response::error(400, "需要有效的模型");
         }
-        match crate::provider_health::clear(root, provider, payload["model"].as_str()) {
+        if !payload["group"].is_null() && payload["group"].as_str().is_none_or(str::is_empty) {
+            return Response::error(400, "需要有效的额度组");
+        }
+        let scope = match (payload["model"].as_str(), payload["group"].as_str()) {
+            (Some(_), Some(_)) => return Response::error(400, "模型与额度组只能选一个"),
+            (Some(model), None) => Scope::Model(model),
+            (None, Some(group)) => Scope::Group(group),
+            (None, None) => Scope::Cli,
+        };
+        match crate::provider_health::clear(root, provider, scope) {
             Ok(()) => Response::json(&json!({"cleared": true})),
             Err(error) => Response::error(400, &error),
         }
@@ -148,11 +230,35 @@ pub(crate) fn request(
 mod tests {
     use super::*;
     #[test]
+    fn active_filters_expired_and_out_of_range_without_writing() {
+        let root = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now();
+        let document = json!({"version": 1, "providers": {"claude": {
+            "default": {"code":"auth", "until":null},
+            "models": {
+                "live": {"code":"quota", "until":(now + chrono::Duration::hours(1)).to_rfc3339()},
+                "expired": {"code":"quota", "until":(now - chrono::Duration::seconds(1)).to_rfc3339()},
+                "far": {"code":"billing", "until":(now + chrono::Duration::days(9)).to_rfc3339()}
+            }, "groups": {"bad": {"code":"quota", "until":"invalid"}}
+        }}});
+        let bytes = serde_json::to_vec(&document).unwrap();
+        fs::write(root.path().join(FILE), &bytes).unwrap();
+        let reader = crate::data::Reader::new(root.path().to_path_buf());
+        let response = reader.request("GET", "/app/provider-health", None, &[]);
+        assert_eq!(response.status, 200);
+        let response: Value = serde_json::from_slice(&response.body).unwrap();
+        let filtered = &response["providers"];
+        assert_eq!(filtered["claude"]["default"]["code"], "auth");
+        assert_eq!(filtered["claude"]["models"].as_object().unwrap().len(), 1);
+        assert!(filtered["claude"]["groups"].is_null());
+        assert_eq!(fs::read(root.path().join(FILE)).unwrap(), bytes);
+    }
+    #[test]
     fn clear_one_model_keeps_siblings() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(FILE);
         fs::write(&path, r#"{"version":1,"providers":{"claude":{"models":{"a":{"code":"auth","until":null},"b":{"code":"billing","until":"future"}}}}}"#).unwrap();
-        clear(root.path(), "claude", Some("a")).unwrap();
+        clear(root.path(), "claude", Scope::Model("a")).unwrap();
         assert!(read(root.path())["claude"]["models"].get("a").is_none());
         assert_eq!(
             read(root.path())["claude"]["models"]["b"]["code"],
@@ -160,16 +266,55 @@ mod tests {
         );
     }
     #[test]
+    fn clear_one_group_keeps_models_and_other_groups() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(FILE);
+        let until = "2999-01-01T00:00:00Z";
+        let group = |name: &str| json!({"code": "quota", "until": until, "reset": name});
+        let document = json!({"version": 1, "providers": {"antigravity": {
+            "models": {"m": {"code": "quota", "until": until}},
+            "groups": {"Gemini Models": group("a"), "Claude and GPT models": group("b")}}}});
+        fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let shown = read(root.path());
+        assert_eq!(
+            shown["antigravity"]["groups"]["Gemini Models"]["reset"],
+            "a"
+        );
+        clear(root.path(), "antigravity", Scope::Model("m")).unwrap();
+        assert!(read(root.path())["antigravity"].get("models").is_none());
+        assert_eq!(
+            read(root.path())["antigravity"]["groups"]
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        clear(root.path(), "antigravity", Scope::Group("Gemini Models")).unwrap();
+        let left = read(root.path());
+        assert!(left["antigravity"]["groups"].get("Gemini Models").is_none());
+        assert_eq!(
+            left["antigravity"]["groups"]["Claude and GPT models"],
+            group("b")
+        );
+        clear(
+            root.path(),
+            "antigravity",
+            Scope::Group("Claude and GPT models"),
+        )
+        .unwrap();
+        assert!(read(root.path()).get("antigravity").is_none());
+    }
+    #[test]
     fn clear_preserves_other_providers_and_unknown_versions() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(FILE);
         fs::write(&path, r#"{"version":1,"providers":{"claude":{"code":"auth","until":"future"},"grok":{"code":"quota","until":"future"}}}"#).unwrap();
-        clear(root.path(), "claude", None).unwrap();
+        clear(root.path(), "claude", Scope::Cli).unwrap();
         assert!(read(root.path()).get("claude").is_none());
         assert_eq!(read(root.path())["grok"]["code"], "quota");
         let future = r#"{"version":2,"providers":{"grok":{}}}"#;
         fs::write(&path, future).unwrap();
-        assert!(clear(root.path(), "grok", None).is_err());
+        assert!(clear(root.path(), "grok", Scope::Cli).is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), future);
     }
 }

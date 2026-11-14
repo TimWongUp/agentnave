@@ -23,9 +23,9 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   const run = (code) => vm.runInContext(code, context);
   const load = (file) => {
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
-    mirrorSettings(context);
+    if (context.AN.settings) mirrorSettings(context);
   };
-  for (const file of ["settings-state.js", "member-models.js"]) load(file);
+  for (const file of ["provider-health.js", "settings-state.js", "member-models.js"]) load(file);
   run(`
     updateControls = () => {};
     AN.settings.renderCards = () => {};
@@ -93,6 +93,10 @@ test("cooldown clear removes only the chosen CLI from the displayed list", async
   await app.run('$("provider-health").children[0].children[1].listeners.click()');
   assert.deepEqual(Object.keys(providers.claude.models), ["b"]);
   assert.equal(app.run('$("provider-health").children.length'), 1);
+  providers.claude.groups = { "Gemini Models": { code: "quota", until, reset: until } };
+  await app.run("apiGetMembers()");
+  assert.equal(app.run('$("provider-health").children.length'), 2);
+  assert.match(app.run('$("provider-health").children[1].children[0].children[0]'), /Claude Code · Gemini Models · 额度用完/);
 });
 
 test("only a tier-governed option whose default loosens permissions is counted", () => {
@@ -181,6 +185,27 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   app.run('delete currentDoc.modes.discussion.codex; renderOrchestration()');
   assert.equal(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled), false,
     "removing both scenes disables the CLI despite its historical model settings");
+});
+
+test("a boss's own-CLI choice saved from the boss page is kept by this page's later save", async () => {
+  let saved = { version: 1, preset: "split" };
+  const bosses = [{ keys: ["codex"], labels: ["Codex"], ids: [], mark: "codex" }];
+  const app = advancedEditor(async (url, options) => {
+    const body = options?.body && JSON.parse(options.body);
+    if (url === "/app/orchestration" && !body) {
+      return { ok: true, json: async () => ({ document: saved, error: null, bosses, presets: { split: "rule" }, files: [] }) };
+    }
+    if (url === "/app/orchestration") saved = body;
+    return { ok: true, json: async () => ({ saved: true, files: [], bosses }) };
+  });
+  await app.run("loadOrchestration()");
+  app.run('setBossMode(orchestration.bosses[0], "meetings")');
+  app.listeners["agentnave:host-cli"]({ detail: { codex: "launch" } });
+  assert.equal(app.run("orchestrationChanged()"), true);
+  await app.run("saveOrchestration()");
+  assert.equal(JSON.stringify(saved.host_cli), JSON.stringify({ codex: "launch" }));
+  app.listeners["agentnave:host-cli"]({ detail: {} });
+  assert.equal(app.run('"host_cli" in orchestration.document'), false);
 });
 
 function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_roles.json`, "utf8"))) {
@@ -1147,9 +1172,9 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.equal(new Set(images.map((seat) => seat.id)).size, 2);
   assert.ok(images.every((seat) => !("difficulty" in seat)));
   // A row goes with its own delete button; with none left the card cannot be saved.
-  imageRow(1).children[4].listeners.click();
+  imageRow(1).children.at(-1).listeners.click();
   assert.deepEqual(seatsOf(app).filter((seat) => seat.kind === "image").map((seat) => seat.role), ["写实"]);
-  imageRow(1).children[4].listeners.click();
+  imageRow(1).children.at(-1).listeners.click();
   assert.equal(decision((d) => d.problem()), "生图工位至少要有一行");
   Array.from(cardsOf(app))[2].children[1].listeners.click();
   fill(imageRow(1).children[0], "写实");
@@ -1309,4 +1334,82 @@ test("the key goes out once and the page afterwards only knows that one is set",
   // Clearing sends an empty key.
   await keyRow().children[1].children[2].listeners.click();
   assert.deepEqual(calls.filter((call) => call.url === "/app/decision-key").at(-1).body, { key: "" });
+});
+
+test("a seat gains up to three ordered fallbacks that never repeat it, and keeps them when its own pick changes", () => {
+  const app = advancedEditor();
+  app.run(`
+    detected.codex.models = [{ id: "chat-model" }, { id: "m2" }, { id: "m3" }, { id: "m4" }];
+    reviewSeats = { "security-reviewer": { provider: "codex", model: "chat-model" } };
+    renderReviewSeats();
+    function findKey(nodes, key) {
+      for (const node of [nodes].flat(Infinity)) {
+        if (!node || typeof node !== "object") continue;
+        if (node.dataset?.focusKey === key) return node;
+        const found = findKey(node.children, key);
+        if (found) return found;
+      }
+      return null;
+    }
+    const review = () => $("review-seats").children;
+    const seat = () => seatsShown()["security-reviewer"];
+  `);
+  const seat = () => JSON.parse(app.run("JSON.stringify(seat())"));
+  const find = (key) => app.run(`findKey(review(), ${JSON.stringify(key)})`);
+  const offered = (key) => Array.from(find(key).children.flat().filter((option) => !option.disabled).map((option) => option.attrs.value));
+
+  find("security-reviewer/fb-add").listeners.click();
+  assert.deepEqual(seat().fallbacks, [{ provider: "codex", model: "m2" }], "the first free pick, at its default level");
+  assert.deepEqual(offered("security-reviewer/fb0/model"), ["m2", "m3", "m4"], "never the seat's own model");
+  assert.deepEqual(offered("security-reviewer/model"), ["chat-model", "m3", "m4"], "nor a model a fallback took");
+  find("security-reviewer/fb0/model").listeners.change({ target: { value: "m4" } });
+  find("security-reviewer/fb-add").listeners.click();
+  find("security-reviewer/fb-add").listeners.click();
+  assert.deepEqual(seat().fallbacks.map((pick) => pick.model), ["m4", "m2", "m3"]);
+  assert.equal(find("security-reviewer/fb-add"), null, "no fourth fallback to add");
+
+  find("security-reviewer/model").listeners.change({ target: { value: "chat-model" } });
+  find("security-reviewer/cli").listeners.change({ target: { value: "codex" } });
+  assert.equal(seat().fallbacks.length, 3, "changing the seat's CLI or model keeps its fallbacks");
+  find("security-reviewer/fb1/remove").listeners.click();
+  assert.deepEqual(seat().fallbacks.map((pick) => pick.model), ["m4", "m3"]);
+  find("security-reviewer/fb0/remove").listeners.click();
+  find("security-reviewer/fb0/remove").listeners.click();
+  assert.deepEqual(seat(), { provider: "codex", model: "chat-model" }, "no fallback left, no field");
+  app.run("discardAdvanced()");
+});
+
+test("a catalog seat's fallbacks come back as saved, and the add button sits in the row's last column", async () => {
+  const fallbacks = [{ provider: "codex", model: "m2", effort: "low" }];
+  const seat = { id: "w-1", kind: "worker", role: "通用执行", description: "改代码", provider: "codex", model: "chat-model", access: "write", difficulty: "easy", fallbacks };
+  const saved = { document: { version: 1, seats: [seat] }, error: null, key_set: false, key_error: null };
+  const { app, decision } = decisionEditor("decision", saved);
+  await decision((d) => d.load());
+  assert.equal(decision((d) => d.changed()), false);
+  assert.deepEqual(JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)")), [seat]);
+  const card = cardsOf(app)[0];
+  const rows = card.children.filter((child) => child.className === "seat-block");
+  assert.equal(rows.length, 1, "only the easy level has a fallback line");
+  assert.equal(rows[0].children[1].className, "fallback-row");
+  assert.equal(rows[0].children[0].children.at(-1).tagName, "button");
+});
+
+test("an image seat row adds and removes fallbacks, with the delete button kept last", async () => {
+  const img = { id: "img-a", kind: "image", role: "漫画风格", description: "漫画风格", provider: "codex", model: "chat-model", access: "write" };
+  const saved = { document: { version: 1, seats: [img] }, error: null, key_set: false, key_error: null };
+  const { app, decision } = decisionEditor("decision", saved);
+  app.run('detected.codex.models = [{ id: "chat-model" }, { id: "m2" }]');
+  await decision((d) => d.load());
+  const imageRow = () => cardsOf(app)[0].children[1];
+  const fallbacks = () => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats[0].fallbacks || null)"));
+  const [add, remove] = [imageRow().children.at(-2), imageRow().children.at(-1)];
+  assert.equal(add.children[0], "添加备选");
+  assert.equal(remove.children[0], "删除");
+  add.listeners.click();
+  assert.deepEqual(fallbacks(), [{ provider: "codex", model: "m2" }]);
+  const block = cardsOf(app)[0].children[1];
+  assert.equal(block.className, "seat-block");
+  assert.equal(block.children[0].children.at(-1).children[0], "删除");
+  block.children[1].children.at(-1).listeners.click();
+  assert.equal(fallbacks(), null, "no fallback left, no field");
 });

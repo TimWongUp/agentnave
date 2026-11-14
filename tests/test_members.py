@@ -981,7 +981,7 @@ def test_cooling_clis_disable_seats_and_filter_replacements(
     assert cooled.alternatives == []
     assert cooled.replacement is not None and cooled.replacement.provider == "codebuddy"
     assert result.review["simplicity-reviewer"].native is True
-    assert result.review["simplicity-reviewer"].available is None
+    assert result.review["simplicity-reviewer"].available is False
 
     (tmp_path / "orchestration.json").write_text(
         json.dumps(
@@ -1338,3 +1338,73 @@ def test_an_image_seat_may_say_null_for_its_difficulty_and_others_may_not() -> N
         DecisionSeatsFile.model_validate(
             {"version": 1, "seats": [{**_custom_seat("s-2", "grok", "write"), "difficulty": None}]}
         )
+
+
+def test_seat_fallback_duplicates_invalidate_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    seat = {
+        "provider": "grok",
+        "model": "shared",
+        "fallbacks": [{"provider": "grok", "model": "shared", "effort": "high"}],
+    }
+    (tmp_path / "review.json").write_text(
+        json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+    )
+    assert list_members(frozenset(), Host()).review_error is not None
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps({"version": 1, "preset": "split", "worker": {"easy": seat}})
+    )
+    assert list_members(frozenset(), Host()).orchestration_error is not None
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
+    _write_decision_seats(
+        tmp_path, [_custom_seat("own", "grok", "read", fallbacks=seat["fallbacks"])]
+    )
+    assert list_members(frozenset(), Host()).orchestration_error is not None
+
+
+def test_native_seat_respects_model_pool_before_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    (tmp_path / "members.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "clis": {
+                    "codex": {
+                        "models": {"allowed": {}, "blocked": {}},
+                        "allowed_models": ["allowed"],
+                    }
+                },
+                "modes": {},
+            }
+        )
+    )
+    (tmp_path / "review.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seats": {
+                    "correctness-reviewer": {
+                        "provider": "codex",
+                        "model": "blocked",
+                        "fallbacks": [{"provider": "codex", "model": "allowed", "effort": "high"}],
+                    },
+                },
+            }
+        )
+    )
+    status = list_members(frozenset(), Host("codex", "env")).review["correctness-reviewer"]
+    assert status.model == "allowed" and status.fallback_position == 1 and status.native
+    from agentnave.members import role_seat
+    from agentnave.seat_fallbacks import select
+
+    host = Host("codex", "env")
+    configured = role_seat("correctness-reviewer", host)
+    assert configured is not None
+    chosen, receipt = select(configured, host, frozenset(), None)
+    assert chosen.model == "allowed" and receipt is not None
+    assert "not allowed" in receipt["skipped"][0]["reason"]

@@ -125,6 +125,8 @@ class ProviderAdapter(Protocol):
 
     def usage_query(self, model: str | None) -> UsageQuery | None: ...
 
+    def quota_group(self, model: str) -> str | None: ...
+
     def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
 
     def event_model(self, event: dict[str, object]) -> str | None: ...
@@ -146,6 +148,9 @@ class AdapterHooks:
     options_description = ""
     supports_restricted_tools = True
     restricted_extra_options: frozenset[str] = frozenset()
+
+    def quota_group(self, model: str) -> str | None:
+        return None
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         raise NotImplementedError

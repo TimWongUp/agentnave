@@ -1,6 +1,7 @@
 # ADR-0081：按 CLI 和模型冷却账户阻断
 
 - 状态：已接受
+- 配额冷却按请求模型记录的条款由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订为优先按 Adapter 声明的额度组记录；认证、计费规则不变。
 - 日期：2026-11-11
 - 修订 [ADR-0024](0024-consolidated-tools-and-private-review.md) 的工具集合：新增 `clear_provider_cooldown`。
 - 2026-11-13 修订本篇「配额仅在有可靠重置时间时冷却」：先用 CLI 自带的用量查询取重置时间，取不到则冷却一小时，见文末「用量查询补充与固定一小时兜底」。

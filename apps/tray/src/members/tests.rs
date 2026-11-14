@@ -344,6 +344,51 @@ fn review_seats_save_to_their_own_file() {
 }
 
 #[test]
+fn seat_fallbacks_round_trip_and_are_checked_like_the_service_does() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let pick = |provider: &str, model: &str| json!({"provider": provider, "model": model});
+    let mut main = pick("codex", "gpt-6.1-sol");
+    main["fallbacks"] = json!([
+        {"provider": "codex", "model": "gpt-6.1-mini", "effort": "low"},
+        pick("grok", "gpt-6.1-sol")
+    ]);
+    let review = json!({"version": 1, "seats": {"correctness-reviewer": main}});
+    save_review(root, &review).unwrap();
+    assert_eq!(read_review(root).unwrap(), review);
+    let mut orchestration = json!({"version": 1, "preset": "split", "image_generation": main});
+    orchestration["explorer"] = json!({"easy": main, "hard": pick("codex", "m")});
+    save_orchestration(root, &orchestration).unwrap();
+    assert_eq!(read_orchestration(root).unwrap(), orchestration);
+    // An empty list is no fallback; a seat without the field keeps its old shape.
+    let mut empty = pick("codex", "m");
+    empty["fallbacks"] = json!([]);
+    assert!(
+        validate_review(&json!({"version": 1, "seats": {"correctness-reviewer": empty}})).is_ok()
+    );
+
+    let seat_with = |fallbacks: Value| {
+        let mut seat = pick("codex", "gpt-6.1-sol");
+        seat["fallbacks"] = fallbacks;
+        json!({"version": 1, "seats": {"correctness-reviewer": seat}})
+    };
+    let many: Vec<Value> = (0..4).map(|i| pick("codex", &format!("m{i}"))).collect();
+    assert!(validate_review(&seat_with(json!(many[..3]))).is_ok());
+    for bad in [
+        json!(many),
+        // The same CLI and model as the seat, or as an earlier fallback; effort does not count.
+        json!([{"provider": "codex", "model": "gpt-6.1-sol", "effort": "low"}]),
+        json!([pick("codex", "a"), pick("codex", " a ")]),
+        json!([pick("nowhere", "a")]),
+        json!([pick("codex", "")]),
+        json!([{"provider": "codex", "model": "a", "fallbacks": []}]),
+        json!({"provider": "codex", "model": "a"}),
+    ] {
+        assert!(validate_review(&seat_with(bad.clone())).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn permission_tiers_save_to_their_own_file() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("data");
@@ -460,6 +505,32 @@ fn the_decision_mode_and_its_options_are_checked_like_the_other_modes() {
     }
     let apps = json!({"version": 1, "preset": "off", "apps": {"codex": "decision"}});
     assert!(validate_orchestration(&apps).is_ok());
+}
+
+#[test]
+fn host_cli_choices_round_trip_and_refuse_unknown_values() {
+    let root = tempfile::tempdir().unwrap();
+    let document =
+        json!({"version": 1, "preset": "split", "host_cli": {"codex": "launch", "grok": "skip"}});
+    save_orchestration(root.path(), &document).unwrap();
+    assert_eq!(read_orchestration(root.path()).unwrap(), document);
+    // Without the key the file keeps its old shape.
+    let plain = json!({"version": 1, "preset": "split"});
+    save_orchestration(root.path(), &plain).unwrap();
+    assert!(
+        read_orchestration(root.path())
+            .unwrap()
+            .get("host_cli")
+            .is_none()
+    );
+    for bad in [
+        json!({"codex": "other"}),
+        json!({"codex": true}),
+        json!(["skip"]),
+    ] {
+        let document = json!({"version": 1, "preset": "split", "host_cli": bad});
+        assert!(validate_orchestration(&document).is_err(), "{document}");
+    }
 }
 
 #[test]

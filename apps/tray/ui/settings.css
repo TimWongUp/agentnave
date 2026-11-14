@@ -333,10 +333,11 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
   .hc-main > :is(.hc-note, .hc-orphan, .hc-details) { margin-left: 0; }
 }
 .review-grid { display: grid; gap: 8px; }
-.review-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 180px) minmax(0, 260px) minmax(0, 112px); gap: 10px; align-items: center; }
+.review-row, .fallback-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 180px) minmax(0, 260px) minmax(0, 112px) minmax(0, 112px); gap: 10px; align-items: center; }
 .review-role { display: flex; flex-direction: column; gap: 2px; }
 .review-role small { color: var(--muted); font-size: 11px; }
-.review-row select { min-width: 0; text-overflow: ellipsis; }
+.review-row select, .fallback-row select { min-width: 0; text-overflow: ellipsis; }
+.review-row > button, .fallback-row > button, .ds-image-row > button { white-space: nowrap; }
 .orchestration-section { display: grid; gap: 8px; }
 .orchestration-section + :is(.orchestration-section, .review-row) { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
 .orchestration-section h3 { margin: 0; font-size: 13px; }
@@ -347,12 +348,16 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .orchestration-switch { display: flex; align-items: center; gap: 10px; min-height: var(--control-height); cursor: pointer; }
 .orchestration-switch small { color: var(--muted); font-size: 11px; }
 .orchestration-group .review-role { padding-left: 44px; font-size: 12.5px; }
+.seat-block { display: grid; gap: 8px; }
+.fallback-label { padding-left: 16px; font-size: 12.5px; color: var(--muted); }
+.orchestration-group .fallback-label { padding-left: 60px; }
 @media (max-width: 700px) {
-  .review-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(80px, 112px); }
+  .review-row, .fallback-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(80px, 112px) auto; }
+  .fallback-label { grid-column: 1 / -1; }
   .review-role { grid-column: 1 / -1; }
   .orchestration-meeting > .review-row { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.2fr) 76px; }
   .orchestration-meeting > .review-row > .segment-control { grid-column: 1 / -1; }
-  .orchestration-group .review-role { padding-left: 0; }
+  .orchestration-group .review-role, .orchestration-group .fallback-label { padding-left: 0; }
 }
 .segment-btn .mode-tag { margin-left: 6px; padding: 0 5px; font-size: 10px; font-weight: 600; border-radius: 99px; background: var(--line); color: var(--muted); vertical-align: 1px; }
 .segment-btn.active .mode-tag { background: color-mix(in srgb, var(--accent-ink) 22%, transparent); color: var(--accent-ink); }
@@ -372,7 +377,8 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .ds-head { display: grid; grid-template-columns: minmax(0, 1fr) 120px 96px 64px; gap: 10px; align-items: center; }
 .ds-tiers { font-size: 12.5px; color: var(--muted); }
 .ds-tiers.unset { color: var(--warn); }
-.ds-image-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 180px) minmax(0, 260px) minmax(0, 112px) 64px; gap: 10px; align-items: center; }
+.ds-image-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(0, 180px) minmax(0, 260px) minmax(0, 112px) minmax(0, 112px) 64px; gap: 10px; align-items: center; }
+.ds-image-row > .ds-remove { grid-column: 6; }
 .ds-image-row > :is(input, select) { width: 100%; min-width: 0; box-sizing: border-box; text-overflow: ellipsis; }
 .ds-add-row { justify-self: start; }
 .ds-head > :is(input, select) { width: 100%; min-width: 0; box-sizing: border-box; text-overflow: ellipsis; }
@@ -382,7 +388,8 @@ select.decision-add { justify-self: start; width: 200px; }
   .decision-key-row { grid-template-columns: minmax(0, 1fr); }
   .ds-head { grid-template-columns: minmax(0, 1fr) 120px 64px; }
   .ds-head > :first-child { grid-column: 1 / -1; }
-  .ds-image-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(80px, 112px) 64px; }
+  .ds-image-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(80px, 112px) auto 64px; }
+  .ds-image-row > .ds-remove { grid-column: 5; }
   .ds-image-row > :first-child { grid-column: 1 / -1; }
 }
 .skill-rows { display: grid; gap: 10px; max-width: 1100px; }

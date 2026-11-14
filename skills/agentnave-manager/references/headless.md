@@ -22,4 +22,4 @@
 
 ## 手写 orchestration.json 的注意项
 
-手写数据根 `orchestration.json` 时写必填的 `"version": 1`、顶层 `preset` 和工位绑定；要用通用探索、通用执行、界面制作以外的工位时，在 `enabled_roles` 里列出要开启的全部角色（不写时只开这三类）。不要写 `apps` 和 `effective_apps`：没有 App 的连接没有接入行身份（`app_id`），写了 `effective_apps` 会被服务一律当成关闭编排。
+手写数据根 `orchestration.json` 时写必填的 `"version": 1`、顶层 `preset` 和工位绑定；要用通用探索、通用执行、界面制作以外的工位时，在 `enabled_roles` 里列出要开启的全部角色（不写时只开这三类）。工位绑定可选 `fallbacks`：按顺序尝试的备选数组，最多 3 项，每项 `provider`、`model` 和可选 `effort`。不要写 `apps` 和 `effective_apps`：没有 App 的连接没有接入行身份（`app_id`），写了 `effective_apps` 会被服务一律当成关闭编排。

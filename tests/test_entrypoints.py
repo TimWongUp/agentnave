@@ -527,11 +527,24 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
         missing_cwd = await client.call_tool("start_agent", {"prompt": "ok", "seat": "worker-easy"})
         assert missing_cwd.is_error and "cwd is required" in str(missing_cwd.content)
         monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
-        native = await client.call_tool(
-            "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
+        native = _payload(
+            (
+                await client.call_tool(
+                    "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
+                )
+            ).structured_content
         )
-        assert native.is_error and "native" in str(native.content)
-        assert "built-in subagent" in str(native.content)
+        # The seat is this host's own CLI: nothing starts, and the receipt names the subagent run.
+        assert native["status"] == "not_started" and native["reason"] == "native_seat"
+        assert native["seat"] == "worker-easy" and native["provider"] == "claude"
+        assert native["model"] == "chosen" and "effort" not in native
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model chosen."
+        )
+        assert "nothing to wait for" in cast(str, native["next"])
+        assert "invocation_id" not in native and "conversation_id" not in native
+        assert "error" not in native and "recommendation" not in native
+        assert _started_count((await client.call_tool("list", {})).structured_content) == 0
 
 
 @pytest.mark.asyncio
@@ -564,7 +577,7 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
         document["image_generation"] = seat
         path.write_text(json.dumps(document))
         listed = _payload((await client.call_tool("list_members", {})).structured_content)
-        assert _payload(listed["orchestration"])["image_generation"] == seat
+        assert _payload(listed["orchestration"])["image_generation"] == {**seat, "fallbacks": []}
         assert "worker" not in _payload(listed["orchestration"])
         assert "worker-easy" not in str(await client.list_tools())
         assert "image-generator" in str(await client.list_tools())
@@ -3334,10 +3347,18 @@ async def test_start_agent_auto_never_starts_when_the_decision_fails(
         assert len(decision.calls) == 5  # no retry, no fallback to another seat
         # The decision picked the host's own CLI: its seat is named, nothing starts.
         decision.result = Decision("codex-w", {"codex-w": 0.9}, 0.9)
-        await refused("native_seat")
-        native = await client.call_tool("start_agent", arguments)
-        assert "codex-w (role codex-w)" in str(native.content)
-        assert "subagent using model " in str(native.content)
+        native = _payload((await client.call_tool("start_agent", arguments)).structured_content)
+        assert native["status"] == "not_started" and native["reason"] == "native_seat"
+        assert native["seat"] == "codex-w" and native["provider"] == "codex"
+        assert native["model"] == "model-codex-w"
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model model-codex-w."
+        )
+        picked = _payload(native["recommendation"])
+        assert picked["seat"] == "codex-w" and picked["native"] is True
+        assert "nothing to wait for" in cast(str, native["next"])
+        assert "invocation_id" not in native
+        assert _started_count((await client.call_tool("list", {})).structured_content) == 0
         # Nothing can be dispatched.
         (root / "decision-seats.json").write_text(json.dumps({"version": 1, "seats": []}))
         await refused("no_candidates")
@@ -3562,8 +3583,16 @@ async def test_one_task_that_cannot_start_does_not_stop_the_others(
         assert solo["model"] == "model-read-solo"
         assert _payload(solo["recommendation"])["decision_model_called"] is False
         assert native["status"] == "not_started"
+        assert native["reason"] == "native_seat"
         assert _payload(native["error"])["code"] == "native_seat"
         assert _payload(native["recommendation"])["native"] is True
+        # The same receipt start_agent gives: the host's subagent needs the seat and its settings.
+        assert native["seat"] == "codex-w" and native["provider"] == "codex"
+        assert native["model"] == "model-codex-w"
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model model-codex-w."
+        )
+        assert "invocation_id" not in native and "conversation_id" not in native
         assert started["model"] == "model-write-b"
         # Only the two that started are waited for; the unstarted ones left nothing behind.
         listed = _payload((await client.call_tool("list")).structured_content)
@@ -3737,3 +3766,434 @@ async def test_start_agents_exists_only_in_the_decision_mode(
         _write_own_seats([_own_seat("a", "claude", "write")])
         tools = await client.list_tools(cache_mode="refresh")
         assert "start_agents" in [tool.name for tool in tools.tools]
+
+
+@pytest.mark.asyncio
+async def test_review_seat_fallback_dispatch_and_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    provider_health.record(root, "claude", "auth", "first")
+    (root / "review.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seats": {
+                    "correctness-reviewer": {
+                        "provider": "claude",
+                        "model": "first",
+                        "fallbacks": [{"provider": "claude", "model": "second", "effort": "low"}],
+                    }
+                },
+            }
+        )
+    )
+    async with Client(mcp) as client:
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        seat = _payload(_payload(listed["review"])["correctness-reviewer"])
+        assert seat["model"] == "second" and seat["fallback_position"] == 1
+        assert _payload(cast(list[object], seat["fallbacks"])[0])["available"] is True
+        started = await _start_and_wait(client, cwd=str(tmp_path), role="correctness-reviewer")
+        assert started["model"] == "second"
+        receipt = _payload(started["seat_fallback"])
+        assert receipt["position"] == 1 and "auth" in str(receipt["skipped"])
+        explicit = await client.call_tool(
+            "start_agent",
+            {
+                "cwd": str(tmp_path),
+                "role": "correctness-reviewer",
+                "provider": "claude",
+                "prompt": "ok",
+            },
+        )
+        assert explicit.is_error and "first" in str(explicit.content)
+        resumed = await client.call_tool(
+            "start_agent",
+            {"session_id": "session-e2e", "role": "correctness-reviewer", "prompt": "ok"},
+        )
+        assert resumed.is_error and "auth" in str(resumed.content)
+        provider_health.record(root, "claude", "auth", "second")
+        failed = await client.call_tool(
+            "start_agent", {"cwd": str(tmp_path), "role": "correctness-reviewer", "prompt": "ok"}
+        )
+        assert failed.is_error and "first" in str(failed.content)
+        provider_health.clear(root, "claude")
+        (root / "review.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "seats": {
+                        "correctness-reviewer": {
+                            "provider": "grok",
+                            "model": "primary",
+                            "fallbacks": [{"provider": "claude", "model": "third"}],
+                        }
+                    },
+                }
+            )
+        )
+        explicit_cli = await _start_and_wait(
+            client, cwd=str(tmp_path), role="correctness-reviewer", provider="claude"
+        )
+        assert "model" not in explicit_cli and "seat_fallback" not in explicit_cli
+        explicit_model = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            role="correctness-reviewer",
+            provider="claude",
+            provider_options={"model": "third"},
+        )
+        assert "seat_fallback" not in explicit_model
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+        (root / "review.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "seats": {
+                        "correctness-reviewer": {
+                            "provider": "codex",
+                            "model": "native-primary",
+                            "fallbacks": [{"provider": "grok", "model": "backup"}],
+                        }
+                    },
+                }
+            )
+        )
+        unmatched_cli = await _start_and_wait(
+            client, cwd=str(tmp_path), role="correctness-reviewer", provider="claude"
+        )
+        assert unmatched_cli["provider"] == "claude" and "seat_fallback" not in unmatched_cli
+
+
+@pytest.mark.asyncio
+async def test_decision_candidate_and_batch_use_available_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    _write_own_seats(
+        [
+            _own_seat(
+                "mine", "grok", "read", fallbacks=[{"provider": "claude", "model": "backup"}]
+            ),
+            _own_seat(
+                "native", "grok", "write", fallbacks=[{"provider": "codex", "model": "native-bak"}]
+            ),
+        ]
+    )
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    provider_health.record(root, "grok", "auth")
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agents",
+            {
+                "tasks": [
+                    {"prompt": "one", "access": "read", "cwd": str(tmp_path)},
+                    {"prompt": "two", "access": "write", "cwd": str(tmp_path)},
+                ]
+            },
+        )
+        assert not result.is_error, result.content
+        first, second = cast(
+            list[dict[str, object]], _payload(result.structured_content)["results"]
+        )
+        assert first.get("model") == "backup" and "seat_fallback" in first
+        assert second.get("reason") == "native_seat" and second.get("model") == "native-bak"
+        assert _payload(second["error"])["code"] == "native_seat"
+        assert _payload(second["seat_fallback"])["position"] == 1
+        await _finish(client, [first, second])
+
+
+@pytest.mark.asyncio
+async def test_image_fallback_skips_host_cli_and_hides_all_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    root = tmp_path / "data"
+    root.mkdir()
+    path = root / "orchestration.json"
+    image = {
+        "provider": "codex",
+        "model": "host-image",
+        "fallbacks": [
+            {"provider": "claude", "model": "other-image"},
+            {"provider": "codex", "model": "another-host-image"},
+        ],
+    }
+    path.write_text(json.dumps({"version": 1, "preset": "split", "image_generation": image}))
+    async with Client(mcp) as client:
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        status = _payload(_payload(listing["orchestration"])["image_generation"])
+        assert status["provider"] == "claude" and status["fallback_position"] == 1
+        fallback_status = cast(list[dict[str, object]], status["fallbacks"])
+        assert fallback_status[1]["available"] is False
+        assert "host's own CLI" in str(fallback_status[1]["reason"])
+        assert "effort" not in fallback_status[0]
+        started = await _start_and_wait(client, cwd=str(tmp_path), seat="image-generator")
+        assert started["model"] == "other-image"
+        receipt = _payload(started["seat_fallback"])
+        assert receipt["position"] == 1 and "host's own CLI" in str(receipt["skipped"])
+        from agentnave import provider_health
+
+        explicit_model = await client.call_tool(
+            "start_agent",
+            {
+                "cwd": str(tmp_path),
+                "seat": "image-generator",
+                "prompt": "draw",
+                "provider_options": {"model": "explicit-image"},
+            },
+        )
+        assert explicit_model.is_error and "Image CLI is the host's own CLI" in str(
+            explicit_model.content
+        )
+        provider_health.record(root, "claude", "auth")
+        for mode in ("subagent", "launch", "skip"):
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "preset": "split",
+                        "host_cli": {"codex": mode},
+                        "image_generation": image,
+                    }
+                )
+            )
+            blocked = await client.call_tool(
+                "start_agent", {"cwd": str(tmp_path), "seat": "image-generator", "prompt": "draw"}
+            )
+            assert blocked.is_error and "Image CLI is the host's own CLI" in str(blocked.content)
+        explicit_host = await client.call_tool(
+            "start_agent",
+            {
+                "cwd": str(tmp_path),
+                "seat": "image-generator",
+                "provider": "codex",
+                "prompt": "draw",
+            },
+        )
+        assert explicit_host.is_error and "Image CLI is the host's own CLI" in str(
+            explicit_host.content
+        )
+        provider_health.clear(root, "claude")
+        image["fallbacks"] = [{"provider": "codex", "model": "another-host-image"}]
+        path.write_text(json.dumps({"version": 1, "preset": "split", "image_generation": image}))
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert "image_generation" not in _payload(listing["orchestration"])
+
+
+@pytest.mark.asyncio
+async def test_native_review_role_receipt_names_the_seat_model_and_effort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    root = tmp_path / "data"
+    provider_health.record(root, "grok", "auth")
+    path = root / "review.json"
+    seat: dict[str, object] = {"provider": "codex", "model": "native-model", "effort": "high"}
+    args = {"prompt": "ok", "cwd": str(tmp_path), "role": "correctness-reviewer"}
+    async with Client(mcp) as client:
+        path.write_text(json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}}))
+        native = _payload((await client.call_tool("start_agent", args)).structured_content)
+        assert native["status"] == "not_started" and native["reason"] == "native_seat"
+        assert native["seat"] == "correctness-reviewer" and native["provider"] == "codex"
+        assert native["model"] == "native-model" and native["effort"] == "high"
+        assert native["message"] == (
+            "Dispatch it with the host's built-in subagent using model native-model, effort high."
+        )
+        assert "seat_fallback" not in native and "error" not in native
+        conflict = await client.call_tool("start_agent", {**args, "access": "write"})
+        assert conflict.is_error and "declares access=read" in str(conflict.content)
+        provider_health.record(root, "codex", "auth", "native-model")
+        cooled = await client.call_tool("start_agent", args)
+        assert cooled.is_error and "native-model" in str(cooled.content)
+        overridden = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {**args, "provider_options": {"model": "explicit-model", "effort": "low"}},
+                )
+            ).structured_content
+        )
+        assert overridden["reason"] == "native_seat"
+        assert overridden["model"] == "explicit-model" and overridden["effort"] == "low"
+        assert overridden["message"] == (
+            "Dispatch it with the host's built-in subagent using model explicit-model, effort low."
+        )
+        provider_health.record(root, "codex", "auth", "explicit-model")
+        override_cooled = await client.call_tool(
+            "start_agent",
+            {**args, "provider_options": {"model": "explicit-model", "effort": "low"}},
+        )
+        assert override_cooled.is_error and "explicit-model" in str(override_cooled.content)
+        provider_health.clear(root, "codex")
+        # A named model stays within the CLI's pool, as it would for a started task.
+        members: dict[str, object] = {
+            "version": 1,
+            "modes": {},
+            "clis": {"codex": {"models": {"native-model": {}}, "allowed_models": ["native-model"]}},
+        }
+        (root / "members.json").write_text(json.dumps(members))
+        outside = await client.call_tool(
+            "start_agent", {**args, "provider_options": {"model": "explicit-model"}}
+        )
+        assert outside.is_error and "not allowed" in str(outside.content)
+        (root / "members.json").unlink()
+        # Nothing behind the receipt: no invocation, no saved conversation, no isolated directory.
+        listed = _payload((await client.call_tool("list", {})).structured_content)
+        assert listed["invocations"] == [] and listed["conversations"] == []
+        dirs = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "boss-1"}
+                )
+            ).structured_content
+        )
+        assert dirs["items"] == []
+        # A fallback that is the host's own CLI still starts nothing; the receipt shows the switch.
+        seat = {
+            "provider": "grok",
+            "model": "blocked",
+            "fallbacks": [{"provider": "codex", "model": "native-backup"}],
+        }
+        path.write_text(json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}}))
+        fallback_native = _payload((await client.call_tool("start_agent", args)).structured_content)
+        assert fallback_native["status"] == "not_started"
+        assert fallback_native["reason"] == "native_seat"
+        assert fallback_native["provider"] == "codex" and "effort" not in fallback_native
+        assert fallback_native["model"] == "native-backup"
+        assert fallback_native["message"] == (
+            "Dispatch it with the host's built-in subagent using model native-backup."
+        )
+        skipped = _payload(fallback_native["seat_fallback"])
+        assert skipped["position"] == 1
+        assert [
+            (item["provider"], item["model"])
+            for item in cast(list[dict[str, object]], skipped["skipped"])
+        ] == [("grok", "blocked")]
+        assert _started_count((await client.call_tool("list", {})).structured_content) == 0
+
+
+@pytest.mark.asyncio
+async def test_decision_image_fallback_skips_host_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+    image = _own_seat(
+        "draw",
+        "codex",
+        "write",
+        kind="image",
+        fallbacks=[{"provider": "claude", "model": "draw-model"}],
+    )
+    del image["difficulty"]
+    _write_own_seats([image])
+    async with Client(mcp) as client:
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        seat = _payload(_payload(_payload(listing["orchestration"])["custom_seats"])["draw"])
+        assert seat["provider"] == "claude" and seat["fallback_position"] == 1
+        started = await _start_and_wait(client, cwd=str(tmp_path), seat="draw")
+        assert started["model"] == "draw-model" and "host's own CLI" in str(
+            started["seat_fallback"]
+        )
+        from agentnave import provider_health
+
+        root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "preset": "decision", "host_cli": {"codex": "launch"}})
+        )
+        explicit = await client.call_tool(
+            "start_agent",
+            {
+                "cwd": str(tmp_path),
+                "seat": "draw",
+                "prompt": "draw",
+                "provider_options": {"model": "explicit"},
+            },
+        )
+        assert explicit.is_error and "Image CLI is the host's own CLI" in str(explicit.content)
+        provider_health.record(root, "claude", "auth")
+        exhausted = await client.call_tool(
+            "start_agent", {"cwd": str(tmp_path), "seat": "draw", "prompt": "draw"}
+        )
+        assert exhausted.is_error and "Image CLI is the host's own CLI" in str(exhausted.content)
+        image["fallbacks"] = [{"provider": "codex", "model": "another-model"}]
+        _write_own_seats([image])
+        listing = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert _payload(listing["orchestration"]).get("custom_seats", {}) == {}
+
+
+@pytest.mark.asyncio
+async def test_host_cli_modes_and_group_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    root = tmp_path / "data"
+    root.mkdir(exist_ok=True)
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+    seat: dict[str, Any] = {"provider": "claude", "model": "first"}
+    (root / "review.json").write_text(
+        json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+    )
+    async with Client(mcp) as client:
+        args = {"cwd": str(tmp_path), "role": "correctness-reviewer", "prompt": "ok"}
+        native = _payload((await client.call_tool("start_agent", args)).structured_content)
+        assert native["reason"] == "native_seat"
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "host_cli": {"claude": "launch"}})
+        )
+        started = await _start_and_wait(client, **args)
+        assert started["provider"] == "claude"
+        monkeypatch.setenv("AGENTNAVE_EXCLUDED_PROVIDERS", "claude")
+        blocked = await client.call_tool("start_agent", args)
+        assert blocked.is_error and "excluded" in str(blocked.content).lower()
+        monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS")
+        seat["provider"] = "antigravity"
+        seat["model"] = "gemini-first"
+        seat["fallbacks"] = [
+            {"provider": "antigravity", "model": "gemini-second"},
+            {"provider": "claude", "model": "next"},
+        ]
+        (root / "review.json").write_text(
+            json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+        )
+        provider_health.record(root, "antigravity", "quota", "gemini-first")
+        started = await _start_and_wait(client, **args)
+        assert started["model"] == "next"
+        assert _payload(started["seat_fallback"])["position"] == 2
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "host_cli": {"claude": "skip"}})
+        )
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        status = _payload(_payload(listed["review"])["correctness-reviewer"])
+        assert status["available"] is False
+        assert "host's own CLI" in str(status["fallbacks"])
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+        monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"codex"}))
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "host_cli": {"codex": "skip"}})
+        )
+        seat.update(
+            provider="codex", model="first", fallbacks=[{"provider": "claude", "model": "next"}]
+        )
+        (root / "review.json").write_text(
+            json.dumps({"version": 1, "seats": {"correctness-reviewer": seat}})
+        )
+        started = await _start_and_wait(client, **args)
+        assert started["provider"] == "claude"
+        assert "host's own CLI" in str(started["seat_fallback"])

@@ -16,8 +16,10 @@
   const enabled = () => q.has("mock") || location.protocol === "file:";
   if (!enabled()) return;
 
+  const mockHealth = q.has("health") ? { antigravity: { models: { "gemini-3.8-flash-high": { code: "quota", until: new Date(Date.now() + 3600000).toISOString() } } } } : {};
   const mockMembersData = {
-    review: { version: 1, seats: {} },
+    provider_health: mockHealth,
+    review: { version: 1, seats: { "security-reviewer": { provider: "codex", model: "gpt-6.1-sol", effort: "high", fallbacks: [{ provider: "claude", model: "claude-3-7-sonnet" }, { provider: "codex", model: "gpt-5.4-turbo", effort: "low" }] } } },
     permissions: { version: 1, clis: { codex: "auto", claude: "full" } },
     document: {
       version: 1,
@@ -979,6 +981,7 @@ All checks passed!
   };
   const mockDecision = { document: null, error: null, key_set: false, key_error: null };
   async function p3Fetch(path) {
+    if (path === "/app/provider-health") return { providers: structuredClone(mockHealth) };
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
     if (path === "/app/decision-seats") return structuredClone(mockDecision);
@@ -1005,12 +1008,19 @@ All checks passed!
     if (path === "/app/voice/player") { mockPlayer = structuredClone(body); window.dispatchEvent(new CustomEvent("agentnave:voice-player", { detail: mockPlayer })); return { ok: true }; }
     if (path === "/app/voice/player/command") { window.dispatchEvent(new CustomEvent("agentnave:voice-command", { detail: body })); return { ok: true, opening: false }; }
     if (path.split("?")[0] === "/settings/members") return p3Fetch(path);
+    if (path === "/app/provider-health/clear") { const entry = mockHealth[body.provider]; if (entry) { if (body.model) delete entry.models?.[body.model]; else if (body.group) delete entry.groups?.[body.group]; else delete entry.default; } return { cleared: true }; }
     if (path === "/app/members") { mockMembersData.document = structuredClone(body); return { saved: true }; }
     if (path === "/app/review") { mockMembersData.review = structuredClone(body); return { saved: true }; }
     if (path === "/app/permissions") { mockMembersData.permissions = structuredClone(body); return { saved: true }; }
     if (path === "/app/decision-seats") { mockDecision.document = structuredClone(body); return { saved: true }; }
     if (path === "/app/decision-key") { mockDecision.key_set = Boolean(body.key); return { key_set: mockDecision.key_set }; }
     if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
+    if (path === "/app/orchestration/host-cli") {
+      const choices = { ...mockOrchestration.document.host_cli };
+      for (const key of body.keys) { if (body.choice === "subagent") delete choices[key]; else choices[key] = body.choice; }
+      mockOrchestration.document.host_cli = choices;
+      return { saved: true, host_cli: choices };
+    }
     if (path.split("?")[0] === "/app/update/check") return p3Fetch("/app/status");
     if (path === "/app/update/apply?service=1") {
       installedState = { state: "upgrading" };

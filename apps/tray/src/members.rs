@@ -228,7 +228,7 @@ pub fn save(root: &Path, document: &Value) -> Result<(), String> {
 /// review.json: `{"version": 1, "seats": {role: {provider, model, effort?}}}`. Kept out of
 /// members.json so a server that predates review seats still reads its members.
 /// Seats stay structural only: a seat whose model was removed later is reported by the server
-/// and replaced when the review Skill dispatches.
+/// and replaced when the review Skill dispatches. A seat may add `fallbacks`.
 pub fn validate_review(document: &Value) -> Result<(), String> {
     let top = object(document, REVIEW_FILE)?;
     only(top, &["version", "seats"], REVIEW_FILE)?;
@@ -244,10 +244,17 @@ pub fn validate_review(document: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// One picked CLI and model, with an optional effort; shared by review and orchestration seats.
+/// One picked CLI and model, with an optional effort and up to three fallbacks (ADR-0089);
+/// shared by review and orchestration seats.
 fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     let fields = object(seat, what)?;
-    only(fields, &["provider", "model", "effort"], what)?;
+    only(fields, &["provider", "model", "effort", "fallbacks"], what)?;
+    validate_pick(fields, what)?;
+    validate_fallbacks(fields, what)
+}
+
+/// The provider, model and optional effort a seat or one of its fallbacks names.
+fn validate_pick(fields: &Map<String, Value>, what: &str) -> Result<(), String> {
     if !fields
         .get("provider")
         .and_then(Value::as_str)
@@ -271,8 +278,43 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     Ok(())
 }
 
+const MAX_FALLBACKS: usize = 3;
+
+/// The seat's `fallbacks`: at most three picks of the same shape in order, none the same CLI and
+/// model as the seat or as an earlier one (effort does not tell them apart). The seat's own
+/// provider and model must already have passed `validate_pick`.
+pub(crate) fn validate_fallbacks(fields: &Map<String, Value>, what: &str) -> Result<(), String> {
+    let Some(list) = fields.get("fallbacks") else {
+        return Ok(());
+    };
+    let list = list
+        .as_array()
+        .ok_or_else(|| format!("{what} 的 fallbacks 必须为数组"))?;
+    if list.len() > MAX_FALLBACKS {
+        return Err(format!("{what} 的备选最多 {MAX_FALLBACKS} 个"));
+    }
+    let pair = |fields: &Map<String, Value>| {
+        let text = |key: &str| fields[key].as_str().unwrap_or_default().trim().to_owned();
+        (text("provider"), text("model"))
+    };
+    let mut taken = vec![pair(fields)];
+    for (index, item) in list.iter().enumerate() {
+        let what = format!("{what}.fallbacks[{index}]");
+        let item = object(item, &what)?;
+        only(item, &["provider", "model", "effort"], &what)?;
+        validate_pick(item, &what)?;
+        let picked = pair(item);
+        if taken.contains(&picked) {
+            return Err(format!("{what} 与主选或其他备选重复"));
+        }
+        taken.push(picked);
+    }
+    Ok(())
+}
+
 /// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "decision" | "custom",
-/// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode}, "enabled_roles": [group],
+/// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode},
+/// "host_cli": {row: "subagent" | "launch" | "skip"} (a row left out is "subagent"), "enabled_roles": [group],
 /// group: {"easy" | "hard": seat}, "image_generation": seat,
 /// "meeting": {"count": 2..=6, "seats"?: [seat | null]}}`, with one group per catalog entry.
 /// A turned-off group keeps its seats. Interface Workers, the image seat and meeting defaults have
@@ -288,6 +330,7 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "custom",
         "apps",
         "effective_apps",
+        "host_cli",
         "enabled_roles",
         "image_generation",
         "meeting",
@@ -324,6 +367,13 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
             .is_some_and(|text| !text.trim().is_empty())
     {
         return Err("自定义编排不能为空".into());
+    }
+    if let Some(choices) = top.get("host_cli")
+        && !object(choices, "host_cli")?
+            .values()
+            .all(|choice| matches!(choice.as_str(), Some("subagent" | "launch" | "skip")))
+    {
+        return Err("host_cli 的值必须为 subagent、launch 或 skip".into());
     }
     crate::orchestration_roles::enabled_groups(document)?;
     for role in groups {

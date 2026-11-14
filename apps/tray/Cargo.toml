@@ -16,6 +16,7 @@ tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 base64 = "0.22"
+chrono = "0.4"
 dirs = "6"
 flate2 = "1"
 getrandom = "0.3"

@@ -77,6 +77,17 @@ impl Reader {
         if let Some((mime, bytes)) = crate::avatars::asset(path.trim_start_matches('/')) {
             return Response::ok(mime, bytes.to_vec());
         }
+        if matches!(
+            path,
+            "/chat/provider-health.js"
+                | "/panel/provider-health.js"
+                | "/settings/provider-health.js"
+        ) {
+            return Response::ok(
+                "text/javascript; charset=utf-8",
+                include_bytes!("../../ui/provider-health.js").to_vec(),
+            );
+        }
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         if let ["chat", resource] = parts.as_slice() {
             return chat_asset(resource);

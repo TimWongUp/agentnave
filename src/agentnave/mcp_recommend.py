@@ -16,6 +16,7 @@ from agentnave.seat_recommendation import (
     RecommendationError,
     recommend,
 )
+from agentnave.task_start import native_seat_guidance
 
 
 def _candidate_payload(candidate: Candidate) -> SeatCandidatePayload:
@@ -59,7 +60,7 @@ async def recommend_seat(
 async def recommend_or_raise(task: str, access: Literal["read", "write"]) -> Recommendation:
     """The recommendation for the running host; failures become coded tool errors."""
     try:
-        return await recommend(task, access, runtime.HOST, runtime.EXCLUDED_PROVIDERS)
+        return await recommend(task, access, runtime.HOST, runtime.task_excluded_providers())
     except RecommendationError as exc:
         raise ToolError(f"{exc.code}: {exc.message}") from None
 
@@ -92,7 +93,8 @@ async def choose_auto_seat(
     session_id: str | None,
 ) -> Recommendation:
     """start_agent(seat="auto"): the seat the decision model picks, or a refusal before any
-    task starts. Everything cheap is checked first so a refused call costs no decision."""
+    task starts. Everything cheap is checked first so a refused call costs no decision. A
+    native seat is returned as is; start_agent answers with a not_started receipt for it."""
     if session_id is not None:
         raise ToolError(
             "seat='auto' cannot be combined with session_id: a resumed thread keeps its seat. "
@@ -107,21 +109,12 @@ async def choose_auto_seat(
         raise ToolError("seat='auto' needs access (read or write).")
     if cwd is None:
         raise ToolError("cwd is required for a new task; pass an absolute existing directory")
-    found = await recommend_or_raise(prompt, access)
-    if found.native:
-        raise ToolError(f"native_seat: {native_seat_message(found)}")
-    return found
+    return await recommend_or_raise(prompt, access)
 
 
 def native_seat_message(found: Recommendation) -> str:
     """Why a chosen seat on the host's own CLI starts nothing, and how to run it instead."""
-    settings = ", ".join(
-        f"{name} {value}"
-        for name, value in (("model", found.model), ("effort", found.effort))
-        if value
-    )
     return (
         f"the chosen seat {found.seat} ({found.role}) is the host's own CLI, so nothing was "
-        "started. Dispatch it with the host's built-in subagent"
-        + (f" using {settings}." if settings else ".")
+        "started. " + native_seat_guidance(found.model, found.effort)
     )

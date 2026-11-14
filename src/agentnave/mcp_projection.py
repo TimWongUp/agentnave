@@ -26,6 +26,8 @@ _IDENTITY_FIELDS = ("handle", "model_source")
 _REQUIRED_CONTAINERS = frozenset(
     {
         "invocations",
+        "fallbacks",
+        "skipped",
         "conversations",
         "seats",
         "entries",

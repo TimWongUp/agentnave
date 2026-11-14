@@ -1,9 +1,11 @@
 # ADR-0074：App 工位模型作为选择来源，Claude 原生子代理使用同系列别名
 
 - 状态：已接受
+- 执行边界由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充：同类 CLI 可按 boss 选择交给原生子代理、由服务启动或跳过；Claude 同系列别名规则仍适用于使用原生子代理时。
 - 日期：2026-11-10
 - 修订 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 的「归属」与「退化」：区分任务编排授权和已保存工位的模型选择，仅为 App 工位模型来源及 Claude 同系列映射明确例外；任务派发、并行写入和开会的授权规则不变。
 - 「决策模型」档下工位不可用「按同难度规则兜底」由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订：由 boss 从公布的目录里自选。
+- 「不可用边界」中工位不可用即报告并按同难度规则兜底，由 [ADR-0089](0089-seat-fallback-order.md) 修订：先按用户配置的备选顺位取第一个可用，全部不可用才报告不可用并兜底。
 
 ## 背景
 

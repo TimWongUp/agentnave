@@ -131,6 +131,15 @@ def write_restricted_profile(directory: Path) -> None:
 
 class AntigravityAdapter(AdapterHooks):
     name = "antigravity"
+
+    def quota_group(self, model: str) -> str | None:
+        family = model.lower().split("-")[0]
+        if family == "gemini":
+            return "Gemini Models"
+        if family in ("claude", "gpt"):
+            return "Claude and GPT models"
+        return None
+
     executable_name = "agy"
     options_description = (
         "agent, mode, project, print_timeout, sandbox (boolean), disable_slash_commands (boolean), "

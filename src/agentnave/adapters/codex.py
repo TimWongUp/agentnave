@@ -139,6 +139,10 @@ def _bundled_paths() -> tuple[str, ...]:
 
 class CodexAdapter(AdapterHooks):
     name = "codex"
+
+    def quota_group(self, model: str) -> str | None:
+        return "codex"
+
     options_description = (
         "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
         "workspace-write sandbox; not with sandbox or "

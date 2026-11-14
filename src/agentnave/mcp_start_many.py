@@ -13,7 +13,7 @@ from agentnave import mcp_runtime as runtime
 from agentnave.conversations_store import normalize_role
 from agentnave.mcp_isolated import IsolationInput
 from agentnave.mcp_payloads import NotStartedPayload, StartAgentsPayload, TaskStartPayload
-from agentnave.mcp_recommend import native_seat_message, recommendation_payload
+from agentnave.mcp_recommend import recommendation_payload
 from agentnave.mcp_runtime import (
     ManagerModel,
     ManagerSessionId,
@@ -161,7 +161,10 @@ async def start_agents(
     nothing is checked first and a bad task rejects the whole call. results follow the order
     of tasks: a started one is start_agent's receipt (invocation_id goes to wait); one that did
     not start says why in error.code (no_candidates, bad_response, native_seat, start_failed)
-    and, when a seat was chosen, in recommendation; the others are unaffected. A decision that
+    and, when a seat was chosen, in recommendation; the others are unaffected. A task whose
+    seat is native to this host starts nothing either and answers like start_agent does
+    (status not_started, reason native_seat, the seat, provider/model/effort and a message for
+    the host's built-in subagent), with error.code native_seat kept. A decision that
     fails as a whole (not_enabled, config_error, no_key, network, rate_limited, auth, rejected,
     bad_response) starts nothing. Nothing is retried or replaced. With two or more
     access=write tasks the service gives each its own new isolated directory, as if it had
@@ -180,7 +183,9 @@ async def start_agents(
     directories = _directories(tasks, cwd)
     try:
         found = await recommend_many(
-            [(one.prompt, one.access) for one in tasks], runtime.HOST, runtime.EXCLUDED_PROVIDERS
+            [(one.prompt, one.access) for one in tasks],
+            runtime.HOST,
+            runtime.task_excluded_providers(),
         )
     except RecommendationError as exc:
         raise ToolError(f"{exc.code}: {exc.message}") from None
@@ -190,8 +195,6 @@ async def start_agents(
     for one, where, chosen in zip(tasks, directories, found, strict=True):
         if isinstance(chosen, RecommendationError):
             results.append(_not_started(chosen.code, chosen.message))
-        elif chosen.native:
-            results.append(_not_started("native_seat", native_seat_message(chosen), chosen))
         else:
             results.append(
                 await _started(
@@ -243,4 +246,8 @@ async def _started(
     except (ToolError, ValueError, OSError) as exc:
         return _not_started("start_failed", str(exc), chosen)
     payload["recommendation"] = recommendation_payload(chosen)
+    if payload.get("reason") == "native_seat":
+        # The seat is resolved again at start, so the guidance follows what start chose.
+        message = f"the chosen seat {chosen.seat} ({chosen.role}) is the host's own CLI, so nothing was started. "
+        payload["error"] = {"code": "native_seat", "message": message + payload.get("message", "")}
     return payload

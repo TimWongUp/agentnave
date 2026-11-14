@@ -16,6 +16,7 @@ from agentnave import provider_health
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import restricted_options
 from agentnave.host import Host, HostName, HostSource
+from agentnave.host_choice import host_cli_mode
 from agentnave.member_policy import (
     check_cli_model,
     cli_confirmed,
@@ -54,6 +55,7 @@ from agentnave.orchestration_roles import (
 from agentnave.orchestration_roles import (
     SeatReplacement as SeatReplacement,
 )
+from agentnave.seat_fallbacks import statuses as _review_status
 
 type Mode = Literal["task", "discussion"]
 type ReviewRole = Literal[
@@ -991,7 +993,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     )
 
 
-def _review_status[Role: str](
+def single_review_status[Role: str](
     review: dict[Role, ReviewSeat],
     mode: ModeStatus,
     excluded: frozenset[str],
@@ -1007,8 +1009,9 @@ def _review_status[Role: str](
             (m for m in task if m.provider == seat.provider and m.model in (seat.model, "*")),
             None,
         )
-        # The host's own CLI is never dispatched through AgentNave; its built-in subagent does it.
-        native = seat.provider == host.provider
+        same_host = seat.provider == host.provider
+        host_choice = host_cli_mode(host) if same_host else None
+        native = same_host and host_choice == "subagent"
         pool_error = None
         try:
             check_cli_model(
@@ -1018,10 +1021,12 @@ def _review_status[Role: str](
             pool_error = str(exc)
         if pool_error is not None:
             reason = pool_error
-        elif native:
-            reason = None
+        elif same_host and host_choice == "skip":
+            reason = "CLI is the host's own CLI"
         elif match := provider_health.matching(active_health, seat.provider, seat.model):
             reason = provider_health.reason(seat.provider, match[1], match[0])
+        elif native:
+            reason = None
         elif seat.provider in excluded:
             reason = "CLI is excluded by this host"
         elif mode.restricted and all(m.provider != seat.provider for m in task):

@@ -149,8 +149,27 @@ WAIT_AGAIN = (
     "review_needed, then call wait again "
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
+# A seat the host's own CLI owns starts nothing, so a dispatch receipt must not send the boss to wait.
+NATIVE_SEAT_NEXT = (
+    "Nothing was started, so there is nothing to wait for: run this seat with the host's "
+    "built-in subagent."
+)
 
 EXCLUDED_PROVIDERS = _read_excluded_providers()
+
+
+def task_excluded_providers() -> frozenset[str]:
+    from agentnave.host_choice import host_cli_mode
+
+    explicit = {
+        name.strip().lower()
+        for name in os.environ.get("AGENTNAVE_EXCLUDED_PROVIDERS", "").split(",")
+    }
+    if HOST.provider and HOST.provider not in explicit and host_cli_mode(HOST) == "launch":
+        return EXCLUDED_PROVIDERS - {HOST.provider}
+    return EXCLUDED_PROVIDERS
+
+
 PROVIDER_SELECTION = (
     "Providers permitted by this host configuration: "
     + (
@@ -161,7 +180,7 @@ PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(EXCLUDED_PROVIDERS)) or "none")
-    + ". start_agent rejects excluded providers; meetings follow discussion member limits without host exclusions."
+    + ". App settings may allow launching the host's own CLI for private tasks; environment exclusions still apply. Meetings follow discussion member limits without host exclusions."
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 DISPATCH_WAIT = (
@@ -493,7 +512,9 @@ mcp = _Server(
         "isolation creates a workspace-owned Git worktree per task; inspect or delete with isolated_dirs (release discards ignored files). "
         "Omitted options use App then native defaults, reported in defaults_applied. "
         "Concurrent tasks/seats obey the App cap; wait for capacity before retrying. "
-        "native=true seats use the host's built-in subagent, not start_agent. " + PROVIDER_SELECTION
+        "native=true seats start nothing: start_agent returns a not_started receipt with the "
+        "seat's model and effort, and the boss runs it with the host's built-in subagent. "
+        + PROVIDER_SELECTION
     ),
     lifespan=_lifespan,
 )
@@ -885,6 +906,7 @@ __all__ = [
     "_restrict_wait_windows",
     "WAIT_AGAIN",
     "WAIT_NEXT",
+    "NATIVE_SEAT_NEXT",
     "WAIT_SECONDS",
     "LONG_WAIT_SECONDS",
     "EXCLUDED_PROVIDERS",

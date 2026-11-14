@@ -31,6 +31,7 @@ const S = {
   install: { busy: false, error: null },
   focus: null, // {id, act} restored after a re-render
   updateKey: null,
+  hostCli: null, // { choices, bosses } from GET /app/orchestration: what each boss does with its own CLI
   updating: false,
   refreshResult: "",
 };
@@ -150,10 +151,23 @@ function setData(data) {
 }
 async function reload() {
   try {
-    const next = await load("/app/hosts");
-    if (!S.busy.size && !S.confirm && !S.copyConfirm && !document.activeElement?.closest(".hc-adv") && JSON.stringify(next) !== JSON.stringify(S.data)) setData(next);
+    const [next, roles] = await Promise.all([load("/app/hosts"), loadHostCli()]);
+    const idle = !S.busy.size && !S.confirm && !S.copyConfirm && !document.activeElement?.closest(".hc-adv, .hc-hostcli");
+    const rolesChanged = JSON.stringify(roles) !== JSON.stringify(S.hostCli);
+    if (idle) S.hostCli = roles;
+    if (idle && JSON.stringify(next) !== JSON.stringify(S.data)) setData(next);
+    else if (idle && rolesChanged) renderAll();
   } catch {
     /* keep what is shown */
+  }
+}
+// A file that cannot be read shows no choice rather than a wrong one.
+async function loadHostCli() {
+  try {
+    const roles = await load("/app/orchestration");
+    return roles.error ? null : { choices: roles.document.host_cli || {}, bosses: roles.bosses || [] };
+  } catch {
+    return null;
   }
 }
 async function run(id, kind, request) {
@@ -657,6 +671,8 @@ function buildCard(host) {
       h("div.hc-acts", {}, ...(S.confirm === id && !busy ? [] : actionButtons(host)), details),
     ),
   ];
+  const hostCli = hostCliRow(host);
+  if (hostCli) main.push(hostCli);
   if (orphan)
     main.push(h("p.hc-orphan", {}, L(`本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`, `${host.label} is no longer detected locally, but its config still has the agentnave entry. Leaving it is harmless; remove it if no longer needed.`)));
   if (host.shadowed_by)
@@ -693,6 +709,41 @@ function buildCard(host) {
       !orphan && advPanel(host)));
   card.append(h("div.hc-main", {}, ...main));
   return card;
+}
+
+// What a connected boss does with a task whose CLI is its own; "subagent" is the default and stays
+// out of the file. Rows that share rules files share the choice.
+const HOST_CLI_CHOICES = [
+  ["subagent", L("用 boss 自己的子代理", "Boss's own subagent")],
+  ["launch", L("由 AgentNave 另开", "Started by AgentNave")],
+  ["skip", L("改用其他 CLI", "Use another CLI")],
+];
+function hostCliRow(host) {
+  const boss = host.status === "connected" && S.hostCli?.bosses.find((row) => row.keys.includes(host.id));
+  if (!boss) return null;
+  const choice = boss.keys.map((key) => S.hostCli.choices[key]).find(Boolean) || "subagent";
+  const label = L("同款 CLI 的任务", "Tasks for its own CLI");
+  const tip = L(
+    "工位或员工用的 CLI 和这个 boss 相同时（比如在 Claude Code 里派给 Claude 的任务）怎么执行。用 boss 自己的子代理：boss 用自带的子代理完成，不经过 AgentNave。由 AgentNave 另开：另启动一个同款 CLI，和 boss 共用账号额度。改用其他 CLI：跳过它，换用备选或其他员工。开会不受影响。",
+    "How a task runs when its seat or employee uses the same CLI as this boss (say, a Claude task sent from Claude Code). Boss's own subagent: the boss finishes it with its built-in subagent, without AgentNave. Started by AgentNave: another copy of the CLI starts, sharing the boss's account quota. Use another CLI: it is skipped for a fallback or another employee. Meetings are not affected.",
+  );
+  const select = h("select", { "aria-label": label, "data-act": "host-cli", disabled: Boolean(S.busy.get(host.id)) },
+    HOST_CLI_CHOICES.map(([value, text]) => h("option", { value, selected: value === choice }, text)));
+  select.addEventListener("change", async () => {
+    S.focus = { id: host.id, act: "host-cli" };
+    S.localErr.delete(host.id);
+    try {
+      const saved = await post("/app/orchestration/host-cli", { keys: boss.keys, choice: select.value });
+      S.hostCli.choices = saved.host_cli;
+      window.dispatchEvent(new CustomEvent("agentnave:host-cli", { detail: saved.host_cli }));
+    } catch (e) {
+      S.localErr.set(host.id, L(`没有保存（${e.message || "未知错误"}）`, `Not saved (${e.message || "Unknown error"})`));
+    }
+    renderAll();
+  });
+  return h("div.hc-hostcli", {},
+    h("span.hc-hostcli-label", {}, label, h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tip }, "?")),
+    select);
 }
 
 // Why a reload is required; the per-copy instructions below the title say how to reopen.
@@ -900,10 +951,12 @@ window.addEventListener("agentnave:status", ({ detail }) => {
   S.seen = loadSeen();
   S.firstRun = S.seen.size === 0;
   try {
-    const [hosts, status] = await Promise.all([
+    const [hosts, status, roles] = await Promise.all([
       load("/app/hosts"),
       load("/app/status"),
+      loadHostCli(),
     ]);
+    S.hostCli = roles;
     S.appVersion = status.version || "";
     S.install.busy = status.service?.state === "installing";
     S.install.error = status.service?.state === "failed" ? status.service.error : null;
