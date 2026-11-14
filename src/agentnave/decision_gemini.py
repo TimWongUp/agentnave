@@ -23,8 +23,11 @@ MODEL = "gemini-decision-1"
 KEY_NAME = "gemini"
 QUESTION = "seat"
 INSTRUCTIONS = (
-    "Pick the seat best suited to the task. Seats are described by specialty, "
-    "difficulty and access."
+    "Pick the seat best suited to the task. Seats are described by specialty, difficulty and "
+    "access. Choose the specialty from what the task mainly delivers, and the difficulty from the "
+    "kind of work, not from how long the task text is. A specialty may not offer every "
+    "difficulty: when the fitting one is missing, take the closest difficulty of the same "
+    "specialty rather than another specialty."
 )
 TIMEOUT_SECONDS = 10
 _MAX_RESPONSE_BYTES = 1_000_000
