@@ -95,14 +95,14 @@ The App's interface is available in English and Chinese; choose it under Setting
 
 ### Option 2: manual install (Linux, or without the App)
 
-The paired release is **`v1.10.0`**; install both the runtime and the Skill from that tag:
+The paired release is **`v1.11.0`**; install both the runtime and the Skill from that tag:
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.10.0"
+uv tool install --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.11.0"
 ```
 
 Then follow the [installation guide](docs/installation.md) to register the MCP server, install the
-[agentnave-manager](skills/agentnave-manager/SKILL.md) and [agentnave-handover](skills/agentnave-handover/SKILL.md) Skills and verify both. The guide is written for Agents, so you
+[agentnave-manager](skills/agentnave-manager/SKILL.md) (or [agentnave-meeting](skills/agentnave-meeting/SKILL.md) for the Meetings only preset) and [agentnave-handover](skills/agentnave-handover/SKILL.md) Skills and verify both. The guide is written for Agents, so you
 can hand it straight to yours and let it check and install. **Headless Linux (no App)**: bots such as Grok Bot that run on Linux
 and connect only as an MCP connector follow the [Linux after-install guide](docs/linux-after-install.md) (in Chinese) to walk
 the user through setup; config file details are in the [headless Linux host guide](docs/linux-headless.md) (in Chinese).

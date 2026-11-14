@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.10.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.11.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.10.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.11.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -443,7 +443,8 @@ configuration directories.
 | DeepSeek Harness | `${DSH_HOME:-~/.dsh}/skills` |
 
 First inspect the host's effective Skill discovery locations and any existing deployment-manager
-entry. Check `agentnave-manager` in both user and project scopes, its source/release, and all of
+entry. Check the selected `agentnave-manager` or `agentnave-meeting` in both user and project
+scopes, its source/release, and all of
 `references/`; an existing name or `SKILL.md` alone is not sufficient.
 
 - Matching source/release and complete content: reuse it and skip copying or re-registering.
@@ -456,15 +457,21 @@ entry. Check `agentnave-manager` in both user and project scopes, its source/rel
 
 If installing manually, set `AGENTNAVE_SKILLS_DIR` to the absolute Skill directory supported by
 that host and desired scope. The installed `agentnave` wheel already bundles `skills/agentnave-manager`,
-`skills/agentnave-handover` and `skills/agentnave-review`, so you can locate the bundled source directly from the runtime's
+`skills/agentnave-meeting`, `skills/agentnave-handover` and `skills/agentnave-review`, so you can locate the bundled source directly from the runtime's
 Python environment (or fall back to a shallow checkout of the selected release tag):
 
 ```bash
 : "${AGENTNAVE_RELEASE:?Set the same tag used for the runtime}"
 : "${AGENTNAVE_SKILLS_DIR:?Set the absolute Skill directory for the host}"
+# Set to agentnave-meeting for the Meetings only preset.
+AGENTNAVE_MAIN_SKILL="${AGENTNAVE_MAIN_SKILL:-agentnave-manager}"
+case "$AGENTNAVE_MAIN_SKILL" in
+  agentnave-manager|agentnave-meeting) ;;
+  *) echo "Choose agentnave-manager or agentnave-meeting" >&2; exit 1 ;;
+esac
 AGENTNAVE_BUNDLED="$("$(uv tool dir)/agentnave/bin/python" -c \
   'import agentnave, pathlib; print(pathlib.Path(agentnave.__file__).resolve().parent)' 2>/dev/null || true)"
-if test -n "$AGENTNAVE_BUNDLED" && test -f "$AGENTNAVE_BUNDLED/skills/agentnave-manager/SKILL.md"; then
+if test -n "$AGENTNAVE_BUNDLED" && test -f "$AGENTNAVE_BUNDLED/skills/$AGENTNAVE_MAIN_SKILL/SKILL.md"; then
   AGENTNAVE_SOURCE="$AGENTNAVE_BUNDLED"
 else
   AGENTNAVE_SOURCE="$(mktemp -d)"
@@ -473,8 +480,9 @@ else
 fi
 ```
 
-Then copy the two required Skills if missing, or leave identical content unchanged. Differing content is
-reported for the update procedure instead of being overwritten:
+Then copy the selected main Skill and handover Skill if missing, or leave identical content unchanged.
+Before switching presets, inspect and move the other main Skill out of discovery after backing it up.
+Differing content is reported for the update procedure instead of being overwritten:
 
 ```bash
 (
@@ -483,7 +491,15 @@ reported for the update procedure instead of being overwritten:
     /*) ;;
     *) echo "Use an absolute Skill directory" >&2; exit 1 ;;
   esac
-  for skill in agentnave-manager agentnave-handover; do
+  case "$AGENTNAVE_MAIN_SKILL" in
+    agentnave-manager) other=agentnave-meeting ;;
+    agentnave-meeting) other=agentnave-manager ;;
+    *) echo "Choose a main Skill first" >&2; exit 1 ;;
+  esac
+  if test -e "$AGENTNAVE_SKILLS_DIR/$other" || test -L "$AGENTNAVE_SKILLS_DIR/$other"; then
+    echo "Inspect and move the other main Skill out of discovery first: $other" >&2; exit 1
+  fi
+  for skill in "$AGENTNAVE_MAIN_SKILL" agentnave-handover; do
     test -f "$AGENTNAVE_SOURCE/skills/$skill/SKILL.md"
     test -d "$AGENTNAVE_SOURCE/skills/$skill/references"
     if test -e "$AGENTNAVE_SKILLS_DIR/$skill" ||
@@ -528,9 +544,9 @@ After registration or upgrade:
 2. Restart the server/session and confirm `start_agent`, `wait`, `answer_prompt`, `cancel`, `list`,
    `list_members`, `clear_provider_cooldown`, `run_round`, `decide_answers`, `handover` and
    `read_conversation` are visible (11 total).
-   Confirm the host also discovers `agentnave-manager` and `agentnave-handover` in the intended
-   scope and can read its nine referenced CLI files. Check for older user/project copies that
-   could shadow it. For hosts without Skill support, record the installation as MCP-only.
+   Confirm the host discovers the selected `agentnave-manager` or `agentnave-meeting` and
+   `agentnave-handover` in the intended scope and can read the selected Skill's nine CLI reference
+   files. Check for older or mutually exclusive user/project copies that could shadow it. For hosts without Skill support, record the installation as MCP-only.
 3. Call `list_members(provider=...)` only for the selected CLI to confirm its permitted status and supported
    options. This read does not launch a CLI.
 4. A `start_agent` call selecting an excluded provider must return a Tool error without starting a CLI.
@@ -602,7 +618,7 @@ uv tool install --force --python 3.12 \
 
 Then update the Skill from that same tag through its installer or deployment manager. For a manual
 copy, stage the new Skill outside the discovered directory, preserve user-authored additions, and
-replace only the existing `agentnave-manager` and `agentnave-handover` trees, including `references/`; do not merge new files
+replace only the selected `agentnave-manager` or `agentnave-meeting` and `agentnave-handover` trees, including `references/`; do not merge new files
 over old files and leave stale references behind. A managed symlink is updated through its source
 registration, without deleting the source directory, then repeat step 5. Agents read the updated
 Skill from disk on use, so a Skill update needs no restart. The launcher relays switch to a
@@ -613,48 +629,32 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.10.0
+### Upgrading to v1.11.0
 
-Update the App; it installs the paired service and refreshed Skills at startup. Reconnect or reopen
-host copies as the boss card asks so existing sessions pick up the narrower default `list` scope,
-service-managed isolated directories, the `decision` orchestration preset and the revised quota
-cooldown. For a manual installation, reinstall the runtime and Skills from `@v1.10.0`—replacing
-the full `agentnave-manager` directory so the new `references/decision.md` is included—and
-reconnect MCP.
+Update the App; it installs the paired service and Skills at startup. Reconnect or reopen hosts as
+prompted. For a manual installation, reinstall the runtime and Skills from `@v1.11.0` and reconnect
+MCP. Install `agentnave-meeting` instead of `agentnave-manager` for the Meetings only preset; the
+two are mutually exclusive. Replace the full Skill directory to pick up the updated instructions.
 
-`list` now returns only this chat's workspace unless `scope="all"` is passed; a call without
-`manager_session_id` and without a host-injected identity is rejected. `scope="all"` groups by
-workspace newest first, counts `limit` in workspaces (default 10, at most 50) and takes `offset` to
-page; pass a `workspace_id` from that list to read one workspace's conversations in the usual
-format. Isolation is now created and registered by the service under `.agentnave-worktrees/` in the
-dispatching repository and recorded in `worktrees.db` in the data root; worktrees created by hand
-before this release stay outside that registry, are not shown in the App, and are not cleaned by
-the service. Releasing an isolated directory discards Git-ignored files and requires a confirmation
-token when it holds uncommitted source or unmerged commits.
+Seats can now have ordered fallbacks, and quota cooldown can apply to a shared provider quota group.
+A v1.10 service rejects `orchestration.json`, `review.json` or `decision-seats.json` containing `fallbacks` as invalid;
+reconnect hosts to the new service before adding fallbacks. Older services or Apps may also ignore
+group cooldown records, so update the App.
 
-The `decision` preset needs a Gemini key (`decision-keys.json` in the data root) and sends the
-dispatch prompt to Gemini; free-tier input may be used to improve the product, and Google's
-supported regions exclude mainland China and Hong Kong. A host connection still served by the
-previous service does not recognize `preset: "decision"` and treats `orchestration.json` as
-invalid, so reconnect it before or after switching. The menu bar panel's "⋯" menu is gone—Open,
-Settings and Quit now sit in the bottom bar—and Settings has a left sidebar, with orchestration
-under Settings → Orchestration instead of Settings → Advanced → Orchestration. The new "Pause
-characters when unfocused" switch in Settings → General is on by default, matching the previous
-behavior; minimizing always pauses. On Windows, Claude Code now runs interactively by default; turn
-off "Run interactively" on the member card to keep using `-p`.
+In the Meetings only preset, “boss may initiate meetings” now defaults off, so existing users no
+longer get proactive meetings after upgrading. Turn the switch on in the App to restore them. On a
+headless host set `meetings_options.meetings: true` in `orchestration.json` and put the corresponding
+rule in the host instruction entry as described in [linux-headless.md](linux-headless.md).
 
-Quota failures without a reset time now cool the model for one hour instead of not cooling at all
-(the CLI when no model was requested), after asking the CLI's own usage query for a reset time when
-one is available; clear a record from the tray. In a Claude Code terminal interactive session,
-`wait` without `wait_seconds` now waits 1500 seconds; an explicit 270 still applies, and other
-entrypoints are unchanged.
+The decision model now selects a difficulty using the meaning of each tier. DeepSeek member settings
+can select a signed-in account, an official API key or the CLI's own configuration.
 
-See [v1.10.0 release notes](releases/v1.10.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.9.0.md).
+See [v1.11.0 release notes](releases/v1.11.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.10.0.md).
 
 ## Uninstall
 
-For each target host, remove AgentNave's MCP registration and uninstall `agentnave-manager` and
+For each target host, remove AgentNave's MCP registration and uninstall the installed `agentnave-manager` or `agentnave-meeting` and
 `agentnave-handover` through its Skill installer or deployment manager. Remove the shared runtime only after all hosts stop
 using it. These are separate operations; the MCP removal commands do not uninstall the Skill:
 
