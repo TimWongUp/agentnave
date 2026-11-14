@@ -79,12 +79,14 @@
     if (!hasPool(provider) && lists.length > 1 && !sameJson(lists[0], lists[1])) {
       return scenes.map((s, i) => `${SCENES[s]} ${count(lists[i])}`).join(L("、", ", "));
     }
-    if (!pool) return L("不限模型", "Any model");
+    if (!pool) return L("全部（含以后新出的）", "All, including future ones");
     const shown = visible(pool);
     if (!shown.length) return L("未选择", "None selected");
     const names = shown.slice(0, 3).join(L("、", ", "));
     return L(`${shown.length} 个：${names}${shown.length > 3 ? " 等" : ""}`, `${shown.length}: ${names}${shown.length > 3 ? ", etc." : ""}`);
   }
+
+  const lastPicked = new Map(); // The ticks a CLI had before it was switched to every model.
 
   // One list per CLI; every scene and seat of the CLI picks its model from it.
   function poolRows(provider) {
@@ -105,26 +107,42 @@
         onClick: () => { S.pickerOpen = open ? null : key; S.renderCards(); },
       }, el("span", {}, poolSummary(provider, all, pool)), el("span", { className: "member-muted" }, open ? "▴" : "▾")))];
     if (open) {
+      // With every model on, unticking one leaves the rest ticked, so the saved list names them.
       const toggle = (m, on) => {
-        const list = chosen || [];
+        if (!chosen && on) return;
+        const list = chosen || all;
         writePool(provider, on ? [...list, m] : list.filter((x) => x !== m));
       };
+      const useAll = () => {
+        if (!chosen) return;
+        lastPicked.set(provider, chosen);
+        writePool(provider, null);
+      };
+      const useTicked = () => {
+        if (chosen) return;
+        const back = lastPicked.get(provider)?.filter((id) => all.includes(id));
+        writePool(provider, back?.length ? back : all);
+      };
+      const tier = (active, text, onClick, focus, disabled) => el("button", {
+        type: "button", className: `segment-btn${active ? " active" : ""}`, role: "radio",
+        dataset: { focusKey: `${key}/${focus}` }, "aria-checked": String(active), disabled, onClick,
+      }, text);
       const defaults = SCENE_IDS.map((s) => slot(s, provider).model);
       rows.push(el("div", { className: "member-picker" },
         el("div", { className: "member-picker-actions" },
-          el("button", { type: "button", dataset: { focusKey: `${key}/all` }, disabled: !all.length,
-            onClick: () => writePool(provider, all),
-          }, L("全选", "Select all")),
-          el("button", { type: "button", dataset: { focusKey: `${key}/none` },
+          el("div", { className: "segment-control", role: "radiogroup", "aria-label": L("可用模型", "Available models") },
+            tier(!chosen, L("全部模型（含以后新出的）", "All models, including future ones"), useAll, "all"),
+            tier(Boolean(chosen), L("只用勾选的", "Only the ticked"), useTicked, "ticked", !all.length)),
+          chosen ? el("button", { type: "button", dataset: { focusKey: `${key}/none` },
             onClick: () => writePool(provider, []),
-          }, L("全不选", "Clear all")),
-          el("span", {}, L(`已选 ${chosen?.length || 0}`, `Selected ${chosen?.length || 0}`)),
-          el("span", { className: "member-muted" }, L("建议每个 CLI 不超过 10 个模型", "Up to 10 models per CLI recommended"))),
+          }, L("全不选", "Clear all")) : null,
+          el("span", {}, L(`已选 ${chosen ? chosen.length : all.length}`, `Selected ${chosen ? chosen.length : all.length}`)),
+          chosen ? el("span", { className: "member-muted" }, L("建议每个 CLI 不超过 10 个模型", "Up to 10 models per CLI recommended")) : null),
         ...all.map((m) => el("label", { className: "member-option" },
           el("input", {
             type: "checkbox",
             dataset: { focusKey: `${key}/allow/${m}` },
-            checked: Boolean(pool?.includes(m)),
+            checked: !pool || pool.includes(m),
             onChange: (e) => toggle(m, e.target.checked),
           }),
           el("span", { className: "member-option-id" }, m),
