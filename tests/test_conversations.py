@@ -2222,12 +2222,30 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
             (workspace, "goal: ship", 1)
         ]
 
-        claimed = await _call(
-            client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
-        )
-        assert claimed["status"] == "claimed" and claimed["note"] == "goal: ship"
-        listed = cast(list[dict[str, object]], claimed["conversations"])
-        assert [item["conversation_id"] for item in listed] == [group]
+        holder = Record.read(Database(data_root), data_root / "locks", str(group))
+        holder.acquire()
+        try:
+            busy_list = await _call(client, "list", {"workspace_id": workspace})
+            assert [
+                (item["conversation_id"], item["writable"])
+                for item in cast(list[dict[str, object]], busy_list["conversations"])
+            ] == [(group, False)]
+            claimed = await _call(
+                client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
+            )
+            assert claimed["status"] == "claimed" and claimed["note"] == "goal: ship"
+            listed = cast(list[dict[str, object]], claimed["conversations"])
+            assert [(item["conversation_id"], item["writable"]) for item in listed] == [
+                (group, False)
+            ]
+        finally:
+            holder.release()
+            holder.db.close()
+        idle_list = await _call(client, "list", {"manager_session_id": "chat-b"})
+        assert [
+            (item["conversation_id"], item["writable"])
+            for item in cast(list[dict[str, object]], idle_list["conversations"])
+        ] == [(group, True)]
         assert (await _call(client, "handover", {}))["waiting"] == []
         # The new boss continues the show and adds to the same workspace.
         await _wait(client, (await _run(client, {"group_id": group, "seats": ["a"], "prompt": "two", "manager_session_id": "chat-b"}))["round_id"])  # fmt: skip
@@ -3458,6 +3476,7 @@ async def test_native_meeting_prompts_wake_once_and_save_seat_audit(
 async def test_private_names_refresh_workspace_views_without_taking_other_server_lock(
     tmp_path: Path,
     data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def private(id_: str, model: str, time: str, workspace: str = "s-work") -> Conversation:
         return Conversation(
@@ -3535,6 +3554,89 @@ async def test_private_names_refresh_workspace_views_without_taking_other_server
         studio.scan()
         remaining = _views(data_root, "second")["director"]["tasks"][0]["identity"]
         assert remaining["ordinal"] == 1 and not remaining["numbered"]
+
+        written: list[str] = []
+        save_view = Database.save_view
+
+        def counted_save_view(db: Database, conversation_id: str, view: bytes) -> None:
+            written.append(conversation_id)
+            save_view(db, conversation_id, view)
+
+        monkeypatch.setattr(Database, "save_view", counted_save_view)
+        studio.scan()
+        assert written == []  # unchanged history skips per-conversation view writes
+
+        # Another writer adding or changing a sibling task conversation rewrites only that workspace.
+        third = _create(data_root, private("third", "route/shared", "2026-11-06T00:00:02Z"))
+        third.release()
+        written.clear()
+        studio.scan()
+        assert set(written) == {"second", "third"}
+        assert (
+            _views(data_root, "second")["director"]["tasks"][0]["identity"]["handle"]
+            == "@route/shared·Claude Code #1"
+        )
+        assert (
+            _views(data_root, "third")["director"]["tasks"][0]["identity"]["handle"]
+            == "@route/shared·Claude Code #2"
+        )
+
+        third_state = _state(data_root, "third")
+        third_state["tasks"][0]["model"] = "route/distinct"
+        _store(data_root, third_state)
+        written.clear()
+        studio.scan()
+        assert set(written) == {"second", "third"}
+        assert not _views(data_root, "second")["director"]["tasks"][0]["identity"]["numbered"]
+
+        written.clear()
+        studio.scan()
+        assert written == []
+
+        # Another writer taking an unchanged conversation's lock is observed without SQL view writes.
+        contended = Record.read(Database(data_root), data_root / "locks", "second")
+        contended.acquire()
+        try:
+            written.clear()
+            assert studio.scan()["second"] is False
+            assert written == []
+        finally:
+            contended.release()
+            contended.db.close()
+
+        # A transient workspace-member read failure on first scan must not cache incomplete names.
+        retry_a = _create(
+            data_root, private("retry-a", "route/shared", "2026-11-06T00:00:03Z", "s-retry")
+        )
+        retry_a.release()
+        retry_b = _create(
+            data_root, private("retry-b", "route/shared", "2026-11-06T00:00:04Z", "s-retry")
+        )
+        retry_b.release()
+
+        def fail_private_conversations(_db: Database, _workspace: str | None) -> list[Conversation]:
+            raise OSError("temporary workspace member read failure")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Database, "private_conversations", fail_private_conversations)
+            studio.scan()
+        assert (
+            _views(data_root, "retry-a")["director"]["tasks"][0]["identity"]["handle"]
+            == "@route/shared·Claude Code"
+        )
+        written.clear()
+        studio.scan()
+        assert (
+            _views(data_root, "retry-a")["director"]["tasks"][0]["identity"]["handle"]
+            == "@route/shared·Claude Code #1"
+        )
+        assert (
+            _views(data_root, "retry-b")["director"]["tasks"][0]["identity"]["handle"]
+            == "@route/shared·Claude Code #2"
+        )
+        written.clear()
+        studio.scan()
+        assert written == []
     finally:
         first.release()
         await studio.close()
