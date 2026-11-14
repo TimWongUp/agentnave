@@ -2598,7 +2598,7 @@ async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with
                     "start_agent",
                     {
                         "provider": "claude",
-                        "prompt": "ok",
+                        "prompt": "sleep",
                         "cwd": str(repo),
                         "isolation": {},
                         "manager_session_id": "chat-old",
@@ -2607,7 +2607,9 @@ async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with
             ).structured_content
         )
         wt_id = str(_payload(started["isolation"])["id"])
-        await client.call_tool("wait", {"ids": [started["invocation_id"]]})
+        await client.call_tool("cancel", {"id": started["invocation_id"]})
+        cancelled = _first(await client.call_tool("wait", {"ids": [started["invocation_id"]]}))
+        assert cancelled["status"] == "cancelled"
 
         own = _payload(
             (
@@ -2663,6 +2665,165 @@ async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with
             ).structured_content
         )
         assert done["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_mcp_auto_release_wait_true_and_session_id_in_place_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    sub = repo / "packages" / "app"
+    (repo / ".worktreeinclude").write_text("*.ignored\n", encoding="utf-8")
+    (repo / "keep.ignored").write_text("from-source\n", encoding="utf-8")
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "add", ".worktreeinclude"], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "add include"], cwd=repo, check=True, capture_output=True)
+    base_oid = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, os, pathlib, sys\n"
+        "prompt = sys.stdin.read()\n"
+        "if 'TURN_TWO_WRITE' in prompt:\n"
+        "    pathlib.Path('feature.py').write_text('built = True\\n', encoding='utf-8')\n"
+        "else:\n"
+        "    pathlib.Path('scratch.ignored').write_text('drop\\n', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': json.dumps({'cwd': os.getcwd()}), "
+        "'session_id': 'sess-auto-rel', 'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    async with Client(mcp) as client:
+        # Turn 1: access=read + isolation={} + wait=True -> untouched -> auto-released, count omitted.
+        turn1 = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "TURN_ONE_READ",
+                        "cwd": str(sub),
+                        "access": "read",
+                        "isolation": {},
+                        "wait": True,
+                        "manager_session_id": "boss-auto",
+                    },
+                )
+            ).structured_content
+        )
+        assert "unreleased_isolation_count" not in turn1
+        iso1 = _payload(turn1["isolation"])
+        wt_id = str(iso1["id"])
+        wt_path = Path(str(iso1["path"]))
+        exec_cwd = Path(str(iso1["cwd"]))
+        wait1 = cast(list[dict[str, object]], _payload(turn1["wait"])["updates"])[0]
+        assert wait1["status"] == "succeeded"
+        end_iso1 = _payload(wait1["isolation"])
+        assert end_iso1["auto_released"] is True
+        assert end_iso1["summary_status"] == "complete"
+        assert end_iso1["head_oid"] == base_oid
+        assert not wt_path.exists()
+        assert (
+            f"agentnave/{wt_id}"
+            not in subprocess.run(
+                ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+        )
+        listed1 = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "boss-auto"}
+                )
+            ).structured_content
+        )
+        assert listed1["items"] == []
+
+        # Turn 2: resume same session_id with access=write -> rebuilt at identical path/id/branch/cwd.
+        turn2 = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "TURN_TWO_WRITE",
+                        "session_id": "sess-auto-rel",
+                        "access": "write",
+                        "wait": True,
+                        "manager_session_id": "boss-auto",
+                    },
+                )
+            ).structured_content
+        )
+        assert turn2["unreleased_isolation_count"] == 1
+        iso2 = _payload(turn2["isolation"])
+        assert iso2["id"] == wt_id
+        assert Path(str(iso2["path"])) == wt_path
+        assert Path(str(iso2["cwd"])) == exec_cwd
+        assert iso2["branch"] == f"agentnave/{wt_id}"
+        assert iso2["base_oid"] == base_oid
+        assert wt_path.is_dir()
+        assert (wt_path / "keep.ignored").read_text(encoding="utf-8") == "from-source\n"
+
+        wait2 = cast(list[dict[str, object]], _payload(turn2["wait"])["updates"])[0]
+        assert wait2["status"] == "succeeded"
+        seen2 = json.loads(str(wait2["output"]))
+        assert Path(seen2["cwd"]).resolve() == exec_cwd.resolve()
+        end_iso2 = _payload(wait2["isolation"])
+        assert "auto_released" not in end_iso2
+        assert end_iso2["uncommitted"] is True
+
+        # Turn 3: after explicit release, resuming the session_id refuses rebuild cleanly.
+        confirm_req = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "boss-auto"},
+                )
+            ).structured_content
+        )
+        deleted = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": confirm_req["confirmation"],
+                        "manager_session_id": "boss-auto",
+                    },
+                )
+            ).structured_content
+        )
+        assert deleted["status"] == "deleted"
+        after_manual = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "TURN_THREE",
+                "session_id": "sess-auto-rel",
+                "manager_session_id": "boss-auto",
+            },
+        )
+        assert after_manual.is_error and "not auto-released" in str(after_manual.content)
 
 
 @pytest.mark.asyncio

@@ -7,8 +7,13 @@ import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
+from agentnave.isolated.auto_release import (
+    plan_rebuild,
+    rebuild_worktree_locked,
+    try_auto_release,
+)
 from agentnave.isolated.copy import copy_worktreeinclude
 from agentnave.isolated.leases import (
     IsolationLease,
@@ -38,12 +43,12 @@ from agentnave.isolated.repo import (
     decode_git_path,
     discover_repo,
     ensure_info_exclude_locked,
-    has_link_in_relpath,
     is_link,
     is_same_or_subpath,
     isolated_worktree_root,
     parse_worktrees,
     ref_exists,
+    resolve_mapped_cwd,
     resolve_target_commit,
     run_git,
     same_dir,
@@ -72,6 +77,7 @@ class CreatedIsolation:
     base_oid: str
     warnings: tuple[str, ...]
     lease: IsolationLease
+    source_root: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,24 +126,6 @@ def _allocate_id_locked(store: WorktreeStore, main_root: Path) -> tuple[str, Pat
             continue
         return candidate, wt_path, branch_ref
     raise IsolationError("Could not allocate a unique isolated directory identifier")
-
-
-def _resolve_mapped_cwd(worktree_path: Path, subdir_prefix: PurePosixPath) -> Path:
-    if not subdir_prefix.parts:
-        return worktree_path.resolve()
-    if has_link_in_relpath(worktree_path, subdir_prefix):
-        raise IsolationError(
-            f"Mapped cwd contains a symlink or junction component: {subdir_prefix.as_posix()}"
-        )
-    mapped = worktree_path.joinpath(*subdir_prefix.parts)
-    if not mapped.is_dir():
-        raise IsolationError(
-            f"Target commit does not contain subdirectory: {subdir_prefix.as_posix()}"
-        )
-    resolved = mapped.resolve()
-    if not is_same_or_subpath(resolved, worktree_path):
-        raise IsolationError("Mapped cwd resolves outside the isolated worktree")
-    return resolved
 
 
 class IsolatedDirs:
@@ -237,7 +225,7 @@ class IsolatedDirs:
                 updated_at=now(),
             )
             copy_worktreeinclude(ctx.source_root, wt_path)
-            mapped_cwd = _resolve_mapped_cwd(wt_path, ctx.subdir_prefix)
+            mapped_cwd = resolve_mapped_cwd(wt_path, ctx.subdir_prefix)
             lease = acquire_lease_locked(ctx.repo_common_dir, isolation_id)
             self.store.mark_ready(isolation_id, usage_generation=1, updated_at=now())
             return CreatedIsolation(
@@ -251,6 +239,7 @@ class IsolatedDirs:
                 base_oid=base_oid,
                 warnings=warnings,
                 lease=lease,
+                source_root=ctx.source_root,
             )
         except BaseException:
             if lease is not None:
@@ -321,37 +310,42 @@ class IsolatedDirs:
     def _claim_registered(self, record: IsolatedRecord, resolved_cwd: Path) -> ClaimedIsolation:
         common_dir = Path(record.repo_common_dir)
         with repo_lock(common_dir):
-            latest = self.store.get(record.id)
-            if latest is None or latest.state != "ready":
-                state = "deleted" if latest is None else latest.state
-                raise IsolationError(
-                    f"Isolated directory {record.id} is not available for use (state: {state})"
-                )
-            wt_path = Path(latest.worktree_path)
-            if is_link(wt_path) or not wt_path.is_dir():
-                raise IsolationError(f"Isolated directory is missing or unsafe: {wt_path}")
-            if not is_same_or_subpath(resolved_cwd, wt_path):
-                raise IsolationError("cwd resolves outside the isolated worktree")
-            try:
-                updated = self.store.bump_usage(latest.id, updated_at=now())
-            except OSError as exc:
-                # Recording the use is what voids confirmation tokens already handed out, so a
-                # claim that cannot record it must not succeed.
-                raise IsolationError(
-                    f"Isolated directory {record.id} cannot be used right now: the registry "
-                    f"is not writable ({exc}). Retry shortly."
-                ) from exc
-            lease = acquire_lease_locked(common_dir, updated.id)
-            return ClaimedIsolation(
-                id=updated.id,
-                worktree_path=wt_path.resolve(),
-                execution_cwd=resolved_cwd,
-                branch=updated.branch,
-                main_root=Path(updated.main_root),
-                repo_common_dir=common_dir,
-                lease=lease,
-                base_oid=updated.base_oid,
+            return self._claim_registered_locked(record, resolved_cwd, common_dir)
+
+    def _claim_registered_locked(
+        self, record: IsolatedRecord, resolved_cwd: Path, common_dir: Path
+    ) -> ClaimedIsolation:
+        latest = self.store.get(record.id)
+        if latest is None or latest.state != "ready":
+            state = "deleted" if latest is None else latest.state
+            raise IsolationError(
+                f"Isolated directory {record.id} is not available for use (state: {state})"
             )
+        wt_path = Path(latest.worktree_path)
+        if is_link(wt_path) or not wt_path.is_dir():
+            raise IsolationError(f"Isolated directory is missing or unsafe: {wt_path}")
+        if not is_same_or_subpath(resolved_cwd, wt_path):
+            raise IsolationError("cwd resolves outside the isolated worktree")
+        try:
+            updated = self.store.bump_usage(latest.id, updated_at=now())
+        except OSError as exc:
+            # Recording the use is what voids confirmation tokens already handed out, so a
+            # claim that cannot record it must not succeed.
+            raise IsolationError(
+                f"Isolated directory {record.id} cannot be used right now: the registry "
+                f"is not writable ({exc}). Retry shortly."
+            ) from exc
+        lease = acquire_lease_locked(common_dir, updated.id)
+        return ClaimedIsolation(
+            id=updated.id,
+            worktree_path=wt_path.resolve(),
+            execution_cwd=resolved_cwd,
+            branch=updated.branch,
+            main_root=Path(updated.main_root),
+            repo_common_dir=common_dir,
+            lease=lease,
+            base_oid=updated.base_oid,
+        )
 
     def _claim_cross_data_root(self, resolved_cwd: Path) -> ClaimedIsolation | None:
         try:
@@ -497,6 +491,91 @@ class IsolatedDirs:
             summary_status="error",
             error=f"Unknown isolated directory: {isolation_id}",
         )
+
+    def settle_task(
+        self,
+        isolation_id: str,
+        *,
+        workspace_id: str | None,
+        lease: IsolationLease,
+        auto_release: bool,
+        fallback_path: str = "",
+        fallback_branch: str | None = None,
+    ) -> tuple[ChangeSummary, list[str]]:
+        """Summarize changes, release lease, and auto-release if strictly untouched and unleased."""
+        try:
+            summary = self.summarize_changes(
+                isolation_id,
+                fallback_path=fallback_path,
+                fallback_branch=fallback_branch,
+            )
+            if not auto_release or workspace_id is None:
+                return summary, []
+            ws_id = _validate_workspace_id(workspace_id)
+            with self._mutating():
+                return try_auto_release(
+                    self.store,
+                    isolation_id,
+                    workspace_id=ws_id,
+                    lease=lease,
+                    summary=summary,
+                )
+        finally:
+            if not lease.closed:
+                lease.release()
+
+    def rebuild_auto_released(
+        self,
+        *,
+        isolation_id: str,
+        worktree_path: Path | str,
+        cwd: Path | str,
+        base_oid: str,
+        main_root: Path | str,
+        source_root: Path | str | None,
+        workspace_id: str,
+    ) -> CreatedIsolation | ClaimedIsolation:
+        """Rebuild an auto-released isolated directory in place, or claim if already ready."""
+        ws_id = _validate_workspace_id(workspace_id)
+        plan = plan_rebuild(
+            isolation_id=isolation_id,
+            worktree_path=Path(worktree_path),
+            cwd=Path(cwd),
+            base_oid=base_oid,
+            main_root=Path(main_root),
+            source_root=Path(source_root) if source_root is not None else None,
+        )
+        with self._mutating(), repo_lock(plan.ctx.repo_common_dir):
+            existing = self.store.get(isolation_id)
+            if existing is not None:
+                if existing.state == "ready":
+                    return self._claim_registered_locked(
+                        existing, Path(cwd).resolve(), plan.ctx.repo_common_dir
+                    )
+                raise IsolationError(
+                    f"Isolated directory {isolation_id} is not available for rebuild "
+                    f"(state: {existing.state})"
+                )
+            rebuilt = rebuild_worktree_locked(
+                self.store,
+                plan,
+                isolation_id=isolation_id,
+                base_oid=base_oid,
+                workspace_id=ws_id,
+            )
+            return CreatedIsolation(
+                id=isolation_id,
+                worktree_path=rebuilt.worktree_path,
+                execution_cwd=rebuilt.execution_cwd,
+                branch=rebuilt.branch,
+                branch_ref=rebuilt.branch_ref,
+                main_root=rebuilt.main_root,
+                repo_common_dir=rebuilt.repo_common_dir,
+                base_oid=rebuilt.base_oid,
+                warnings=rebuilt.warnings,
+                lease=rebuilt.lease,
+                source_root=rebuilt.source_root,
+            )
 
     def recover(self) -> list[RecoveryOutcome]:
         """Roll back unfinished `creating` rows when safe and resume `deleting` rows."""

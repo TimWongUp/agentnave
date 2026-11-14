@@ -88,10 +88,11 @@
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
 | 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 部分修订 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063；2026-11-12 修订（开会席位只存 CLI，模型与档位随员工「开会」设置）、[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) |
 | 0084 | [Claude Code 终端交互会话省略等待窗口时用 1500 秒](0084-claude-terminal-default-long-wait.md) | 已接受 | 修订 ADR-0077 的默认窗口 |
-| 0085 | [隔离目录由服务创建、登记和回收，是否隔离仍由 boss 决定](0085-service-managed-isolated-dirs.md) | 已接受 | 修订 ADR-0002 的 worktree 归属；扩展 ADR-0043 |
+| 0085 | [隔离目录由服务创建、登记和回收，是否隔离仍由 boss 决定](0085-service-managed-isolated-dirs.md) | 部分修订 | 修订 ADR-0002 的 worktree 归属；扩展 ADR-0043；「只显式释放」与「不自动回收未释放的目录」由 [ADR-0092](0092-auto-release-untouched-isolated-dirs.md) 修订 |
 | 0086 | [Windows Claude Code 使用交互模式](0086-windows-claude-interactive.md) | 已接受 | 修订 ADR-0056 的 Windows 运行方式 |
 | 0087 | [新增「决策模型」档：服务请决策模型在用户自定义的工位里选，派发仍由 boss 发起](0087-decision-model-recommends-seats.md) | 已接受 | 修订 ADR-0037、ADR-0038、ADR-0052、ADR-0068、ADR-0074 在「决策模型」档下的适用范围；扩展 ADR-0041；「候选只含真正能派的工位」的可用判断由 [ADR-0089](0089-seat-fallback-order.md) 扩展；候选可用性由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充 |
 | 0088 | [中继记录服务子进程的非预期退出，托盘据此提示宿主连接中断](0088-relay-records-service-exit-fault.md) | 已接受 | 扩展 ADR-0012 的托盘写入范围；沿用 ADR-0022 的观测读取约束 |
 | 0089 | [App 工位可配备选顺位，服务派发时按顺位取第一个可用](0089-seat-fallback-order.md) | 已接受 | 修订 ADR-0074「不可用边界」的兜底顺序、ADR-0087「候选只含真正能派的工位」的可用判断；扩展 ADR-0038 的工位设置套用；同类顺位与配额冷却判断由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订 |
 | 0090 | [配额按额度组冷却，宿主同类 CLI 按 boss 选择处理](0090-quota-group-cooldown-and-host-cli-choice.md) | 已接受 | 修订 ADR-0081、ADR-0013、ADR-0089；补充 ADR-0087、ADR-0074 |
 | 0091 | [「只开会」档只用会议室，按档位互斥安装 Skill，主动开会改为默认关的开关](0091-meetings-only-skill-and-auto-meeting-switch.md) | 已接受 | 修订 ADR-0083、ADR-0068；扩展 ADR-0036 |
+| 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」 |

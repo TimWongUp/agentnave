@@ -59,6 +59,35 @@ class InvocationPhase(StrEnum):
     STOPPING = "stopping"
 
 
+def validate_invocation_inputs(
+    provider: str,
+    prompt: str,
+    cwd: Path,
+    session_id: str | None = None,
+    *,
+    require_cwd_dir: bool = True,
+) -> tuple[str, Path]:
+    """Validate invocation inputs; callers that rebuild missing worktrees defer require_cwd_dir."""
+    normalized_provider = provider.strip().lower()
+    if not cwd.is_absolute():
+        raise ValueError("cwd must be an absolute path")
+    resolved_cwd = cwd.resolve()
+    if not normalized_provider:
+        raise ValueError("provider must not be empty")
+    if not prompt.strip():
+        raise ValueError("prompt must not be empty")
+    if require_cwd_dir and not resolved_cwd.is_dir():
+        raise ValueError(f"cwd is not a directory: {resolved_cwd}")
+    if session_id is not None and not session_id.strip():
+        raise ValueError("session_id must not be empty")
+    if session_id is not None and (
+        session_id.startswith("-")
+        or any(ord(character) < 32 or ord(character) == 127 for character in session_id)
+    ):
+        raise ValueError("session_id contains unsafe characters")
+    return normalized_provider, resolved_cwd
+
+
 @dataclass(frozen=True, slots=True)
 class InvocationRequest:
     provider: str
@@ -70,23 +99,9 @@ class InvocationRequest:
     extra_instructions: str | None = None  # Appended after the shared instructions.
 
     def __post_init__(self) -> None:
-        provider = self.provider.strip().lower()
-        if not self.cwd.is_absolute():
-            raise ValueError("cwd must be an absolute path")
-        cwd = self.cwd.resolve()
-        if not provider:
-            raise ValueError("provider must not be empty")
-        if not self.prompt.strip():
-            raise ValueError("prompt must not be empty")
-        if not cwd.is_dir():
-            raise ValueError(f"cwd is not a directory: {cwd}")
-        if self.session_id is not None and not self.session_id.strip():
-            raise ValueError("session_id must not be empty")
-        if self.session_id is not None and (
-            self.session_id.startswith("-")
-            or any(ord(character) < 32 or ord(character) == 127 for character in self.session_id)
-        ):
-            raise ValueError("session_id contains unsafe characters")
+        provider, cwd = validate_invocation_inputs(
+            self.provider, self.prompt, self.cwd, self.session_id
+        )
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "cwd", cwd)
         object.__setattr__(self, "provider_options", MappingProxyType(dict(self.provider_options)))

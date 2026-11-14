@@ -33,6 +33,8 @@ class TaskIsolationInfo:
     base_oid: str | None = None
     warnings: tuple[str, ...] = ()
     instructions_applied: bool = True
+    main_root: Path | None = None
+    source_root: Path | None = None
 
 
 def format_isolated_instructions(isolation: IsolationContext, cwd: Path, *, read_only: bool) -> str:

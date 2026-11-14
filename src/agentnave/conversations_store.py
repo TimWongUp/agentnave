@@ -203,6 +203,7 @@ class ConversationStore(Groups):
         manager.health_root = self.root
         self.db = Database(self.root)
         self.isolation_summaries: dict[str, ChangeSummary] = {}
+        self.settlement_warnings: dict[str, list[str]] = {}
         self.locks = self.root / "locks"
         # Runs hold their native session's lock here, so servers on one data root exclude
         # each other's tasks and seats alike.
@@ -542,6 +543,7 @@ class ConversationStore(Groups):
         self.task_invocations.pop(invocation_id, None)
         self.delivered_tasks.discard(invocation_id)
         self.isolation_summaries.pop(invocation_id, None)
+        self.settlement_warnings.pop(invocation_id, None)
 
     def _round(self, round_id: str) -> Round:
         if round_id in self._completed_rounds:

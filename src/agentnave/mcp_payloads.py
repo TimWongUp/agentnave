@@ -81,6 +81,7 @@ class TaskIsolationSummaryPayload(TypedDict):
     changed_files_from_base: NotRequired[list[str]]
     truncated: NotRequired[bool]
     uncommitted: NotRequired[bool]
+    auto_released: NotRequired[bool]
     error: NotRequired[str]
 
 

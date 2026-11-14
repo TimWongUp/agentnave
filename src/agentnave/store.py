@@ -129,6 +129,10 @@ class TaskRecord(BaseModel):
     isolation_id: str | None = None
     isolation_path: str | None = None
     isolation_branch: str | None = None
+    isolation_base_oid: str | None = None
+    isolation_main_root: str | None = None
+    isolation_source_root: str | None = None
+    isolation_auto_released: bool = False
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
     prompts: list[dict[str, object]] = Field(default_factory=list[dict[str, object]])

@@ -16,7 +16,9 @@ from agentnave.isolated import (
     isolation_instructions,
 )
 from agentnave.isolated.prompts import TaskIsolationInfo
+from agentnave.isolated.repo import is_same_or_subpath
 from agentnave.models import InvocationRequest
+from agentnave.store import TaskRecord
 
 
 @dataclass
@@ -29,6 +31,8 @@ class IsolationHold:
     info: TaskIsolationInfo | None = None
     warnings: tuple[str, ...] = ()
     consumed: bool = False  # the run owns the lease from here on
+    owns_isolation: bool = False
+    rebuilt: bool = False
 
     @property
     def lease(self) -> IsolationLease | None:
@@ -51,31 +55,78 @@ def acquire_isolation(
     *,
     requested: bool,
     ref: str | None,
+    resumed_task: TaskRecord | None = None,
 ) -> IsolationHold:
     """Create a new isolated directory or lease the one cwd already lies in (blocking)."""
     if requested:
         assert workspace_id is not None
         created = isolated.create(request.cwd, workspace_id=workspace_id, ref=ref)
-        context = IsolationContext(
-            id=created.id,
-            worktree_path=created.worktree_path,
-            branch=created.branch,
-            main_root=created.main_root,
-        )
-        info = TaskIsolationInfo(
-            id=created.id,
-            path=str(created.worktree_path),
-            cwd=str(created.execution_cwd),
-            branch=created.branch,
-            repo_common_dir=created.repo_common_dir,
-            base_oid=created.base_oid,
-            warnings=created.warnings,
-        )
-        return _hold(request, context, created.execution_cwd, info, created=created)
+        return hold_from_created(request, created, owns_isolation=True)
     notes: list[str] = []
     claimed = isolated.claim_for_cwd(request.cwd, notes)
     if claimed is None:
         return IsolationHold(request, warnings=tuple(notes))
+    owns = resumed_task is not None and resumed_task.isolation_id == claimed.id
+    source_root = (
+        Path(resumed_task.isolation_source_root)
+        if resumed_task is not None and resumed_task.isolation_source_root
+        else claimed.main_root
+    )
+    fallback_base_oid = resumed_task.isolation_base_oid if resumed_task is not None else None
+    return hold_from_claimed(
+        request,
+        claimed,
+        notes,
+        source_root=source_root,
+        owns_isolation=owns,
+        fallback_base_oid=fallback_base_oid,
+    )
+
+
+def hold_from_created(
+    request: InvocationRequest,
+    created: CreatedIsolation,
+    *,
+    owns_isolation: bool = True,
+    rebuilt: bool = False,
+) -> IsolationHold:
+    context = IsolationContext(
+        id=created.id,
+        worktree_path=created.worktree_path,
+        branch=created.branch,
+        main_root=created.main_root,
+    )
+    info = TaskIsolationInfo(
+        id=created.id,
+        path=str(created.worktree_path),
+        cwd=str(created.execution_cwd),
+        branch=created.branch,
+        repo_common_dir=created.repo_common_dir,
+        base_oid=created.base_oid,
+        warnings=created.warnings,
+        main_root=created.main_root,
+        source_root=created.source_root or created.main_root,
+    )
+    return _hold(
+        request,
+        context,
+        created.execution_cwd,
+        info,
+        created=created,
+        owns_isolation=owns_isolation,
+        rebuilt=rebuilt,
+    )
+
+
+def hold_from_claimed(
+    request: InvocationRequest,
+    claimed: ClaimedIsolation,
+    notes: list[str],
+    *,
+    source_root: Path | None = None,
+    owns_isolation: bool = False,
+    fallback_base_oid: str | None = None,
+) -> IsolationHold:
     context = IsolationContext(
         id=claimed.id,
         worktree_path=claimed.worktree_path,
@@ -88,9 +139,18 @@ def acquire_isolation(
         cwd=str(claimed.execution_cwd),
         branch=claimed.branch,
         repo_common_dir=claimed.repo_common_dir,
-        base_oid=claimed.base_oid,
+        base_oid=claimed.base_oid or fallback_base_oid,
+        main_root=claimed.main_root,
+        source_root=source_root or claimed.main_root,
     )
-    hold = _hold(request, context, claimed.execution_cwd, info, claimed=claimed)
+    hold = _hold(
+        request,
+        context,
+        claimed.execution_cwd,
+        info,
+        claimed=claimed,
+        owns_isolation=owns_isolation,
+    )
     hold.warnings = tuple(notes)
     return hold
 
@@ -103,6 +163,8 @@ def _hold(
     *,
     created: CreatedIsolation | None = None,
     claimed: ClaimedIsolation | None = None,
+    owns_isolation: bool = False,
+    rebuilt: bool = False,
 ) -> IsolationHold:
     text = isolation_instructions(context, cwd, read_only=request.read_only)
     info = replace(info, instructions_applied=text is not None)
@@ -111,7 +173,98 @@ def _hold(
         created=created,
         claimed=claimed,
         info=info,
+        owns_isolation=owns_isolation,
+        rebuilt=rebuilt,
     )
+
+
+def needs_resumed_rebuild(cwd: Path, resumed_task: TaskRecord | None) -> bool:
+    """True when a resumed task targets an isolated path that is currently missing on disk."""
+    if (
+        resumed_task is None
+        or not cwd.is_absolute()
+        or cwd.is_dir()
+        or resumed_task.isolation_id is None
+        or resumed_task.isolation_path is None
+    ):
+        return False
+    return is_same_or_subpath(cwd, Path(resumed_task.isolation_path))
+
+
+def rebuild_resumed_isolation(
+    isolated: IsolatedDirs,
+    cwd: Path,
+    resumed_task: TaskRecord,
+    workspace_id: str | None,
+) -> CreatedIsolation | ClaimedIsolation:
+    """Validate and rebuild a missing isolated directory for its own resumed session thread."""
+    if not resumed_task.isolation_auto_released:
+        raise ValueError(
+            f"Isolated directory {resumed_task.isolation_id} ({resumed_task.isolation_path}) "
+            "is no longer present and was not auto-released; start a new task with isolation instead."
+        )
+    if (
+        not resumed_task.isolation_id
+        or not resumed_task.isolation_path
+        or not resumed_task.isolation_base_oid
+        or not resumed_task.isolation_main_root
+    ):
+        raise ValueError(
+            f"Isolated directory {resumed_task.isolation_id} is missing saved rebuild metadata; "
+            "start a new task with isolation instead."
+        )
+    if workspace_id is None:
+        raise ValueError(
+            "Rebuilding an auto-released isolated directory needs a known manager session; "
+            "pass manager_session_id or configure AGENTNAVE_HOST_SESSION_ID"
+        )
+    return isolated.rebuild_auto_released(
+        isolation_id=resumed_task.isolation_id,
+        worktree_path=resumed_task.isolation_path,
+        cwd=cwd,
+        base_oid=resumed_task.isolation_base_oid,
+        main_root=resumed_task.isolation_main_root,
+        source_root=resumed_task.isolation_source_root,
+        workspace_id=workspace_id,
+    )
+
+
+def hold_from_acquired(
+    request: InvocationRequest,
+    acquired: CreatedIsolation | ClaimedIsolation,
+    resumed_task: TaskRecord,
+) -> IsolationHold:
+    """Wrap a rebuilt/claimed resumed isolated directory into an IsolationHold with prompt instructions."""
+    if isinstance(acquired, CreatedIsolation):
+        return hold_from_created(request, acquired, owns_isolation=True, rebuilt=True)
+    source_root = (
+        Path(resumed_task.isolation_source_root)
+        if resumed_task.isolation_source_root
+        else acquired.main_root
+    )
+    return hold_from_claimed(
+        request,
+        acquired,
+        [],
+        source_root=source_root,
+        owns_isolation=resumed_task.isolation_id == acquired.id,
+        fallback_base_oid=resumed_task.isolation_base_oid,
+    )
+
+
+def release_acquired(isolated: IsolatedDirs, acquired: CreatedIsolation | ClaimedIsolation) -> None:
+    """Roll back an acquired directory/lease before an IsolationHold was built."""
+    log = logging.getLogger(__name__)
+    if isinstance(acquired, CreatedIsolation):
+        try:
+            isolated.abort_created(acquired)
+        except Exception:
+            log.exception("Rolling back isolated directory %s failed", acquired.id)
+    else:
+        try:
+            acquired.lease.release()
+        except Exception:
+            log.exception("Releasing lease on isolated directory %s failed", acquired.id)
 
 
 def release_hold(isolated: IsolatedDirs, hold: IsolationHold) -> None:

@@ -66,6 +66,29 @@ async def attach_unreleased_count(
         return
     if count > 0:
         payload["unreleased_isolation_count"] = count
+    else:
+        payload.pop("unreleased_isolation_count", None)
+
+
+async def refresh_unreleased_count(
+    payload: TaskStartPayload,
+    conversations: Conversations,
+    manager_session_id: str | None,
+) -> None:
+    if "conversation_id" not in payload:
+        return
+    conv_id = payload["conversation_id"]
+    record = conversations.records.get(conv_id)
+    workspace_id = (
+        record.state.manager_session
+        if record is not None
+        else conversations.workspace_id(manager_session_id)
+    )
+    warnings: list[str] = []
+    await attach_unreleased_count(payload, warnings, conversations, workspace_id)
+    if warnings:
+        existing = payload.get("warnings")
+        payload["warnings"] = [*existing, *warnings] if existing else warnings
 
 
 def isolated_item_payload(item: IsolatedListItem) -> IsolatedDirItemPayload:
@@ -151,8 +174,9 @@ async def isolated_dirs(
     *,
     ctx: Context[Runtime],
 ) -> IsolatedDirsPayload:
-    """List or delete isolated Git worktrees (no paths accepted). release permanently deletes
-    the worktree, including all Git-ignored files; with uncommitted source files or unmerged
+    """List or delete isolated Git worktrees (no paths accepted). Untouched succeeded tasks are
+    auto-released and rebuilt on session_id resume; release permanently deletes any retained
+    worktree, including all Git-ignored files; with uncommitted source files or unmerged
     commits, or when the worktree belongs to another workspace, it first returns inspection
     results and a confirmation token without deleting; call again with the token.
     """
@@ -200,5 +224,6 @@ __all__ = [
     "attach_unreleased_count",
     "isolated_dirs",
     "isolated_item_payload",
+    "refresh_unreleased_count",
     "start_isolation_payload",
 ]

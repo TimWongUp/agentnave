@@ -4489,3 +4489,147 @@ async def test_isolated_task_rollbacks_resume_summary_errors_and_warnings(
         assert any("another process" in w for w in cross_warnings)
     finally:
         ext_lease.release()
+
+
+@pytest.mark.asyncio
+async def test_resumed_rebuild_rollback_preserves_metadata_and_surfaces_auto_release_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    claude = bin_dir / "claude"
+    claude.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "sys.stdin.read()\n"
+        "print(json.dumps({'type': 'result', 'result': 'ok', "
+        "'session_id': 'sess-rb', 'num_turns': 1, 'is_error': False}))\n",
+        encoding="utf-8",
+    )
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    studio = Conversations(InvocationManager(), tmp_path / "data")
+    try:
+        hold1 = await studio.acquire_task_isolation(
+            InvocationRequest("claude", "turn 1", repo),
+            "ws-1",
+            isolation_requested=True,
+            isolation_ref=None,
+        )
+        assert hold1.info is not None
+        wt_id = hold1.info.id
+        wt_path = Path(hold1.info.path)
+        started1 = studio.start_task(
+            InvocationRequest("claude", "turn 1", repo),
+            None,
+            None,
+            manager_session_id="ws-1",
+            isolation_requested=True,
+            hold=hold1,
+        )
+        await studio.manager.wait(started1.invocation_id, timeout_seconds=5)
+        await asyncio.gather(*list(studio.collectors))
+        rec = studio.records[started1.conversation_id].state.tasks[-1]
+        assert rec.isolation_auto_released is True
+        assert not wt_path.exists()
+
+        # Rebuild, then fail Database.save -> rebuilt worktree rolls back, record stays rebuildable.
+        rebuilt = await studio.acquire_resumed_isolation(wt_path, rec, "ws-1")
+        assert rebuilt is not None
+        assert wt_path.is_dir()
+        original_save = Database.save
+
+        def fail_save(_self: Database, *_args: object, **_kwargs: object) -> int:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Database, "save", fail_save)
+        hold2 = studio.bind_resumed_isolation(
+            InvocationRequest("claude", "turn 2", wt_path, session_id="sess-rb"),
+            rebuilt,
+            rec,
+        )
+        try:
+            with pytest.raises(OSError, match="disk full"):
+                studio.start_task(
+                    InvocationRequest("claude", "turn 2", wt_path, session_id="sess-rb"),
+                    None,
+                    started1.conversation_id,
+                    manager_session_id="ws-1",
+                    hold=hold2,
+                )
+        finally:
+            monkeypatch.setattr(Database, "save", original_save)
+        await studio.give_back_isolation(hold2)
+        assert not wt_path.exists()
+        assert studio.isolated.store.get(wt_id) is None
+
+        # Retry after transient save error: rebuild still succeeds cleanly.
+        rebuilt2 = await studio.acquire_resumed_isolation(wt_path, rec, "ws-1")
+        assert rebuilt2 is not None
+        req2 = InvocationRequest("claude", "turn 2 retry", wt_path, session_id="sess-rb")
+        hold3 = studio.bind_resumed_isolation(req2, rebuilt2, rec)
+
+        from agentnave.isolated import IsolatedDirs
+        from agentnave.isolated.release import ChangeSummary
+
+        real_settle = IsolatedDirs.settle_task
+
+        def warn_settle(
+            self: IsolatedDirs,
+            isolation_id: str,
+            *,
+            workspace_id: str | None,
+            lease: object,
+            auto_release: bool,
+            fallback_path: str = "",
+            fallback_branch: str | None = None,
+        ) -> tuple[ChangeSummary, list[str]]:
+            summary, _ = real_settle(
+                self,
+                isolation_id,
+                workspace_id=workspace_id,
+                lease=lease,  # type: ignore[arg-type]
+                auto_release=False,
+                fallback_path=fallback_path,
+                fallback_branch=fallback_branch,
+            )
+            return summary, [
+                f"Could not auto-release untouched isolated directory {isolation_id}: busy"
+            ]
+
+        monkeypatch.setattr(IsolatedDirs, "settle_task", warn_settle)
+        started2 = studio.start_task(
+            req2,
+            None,
+            started1.conversation_id,
+            manager_session_id="ws-1",
+            hold=hold3,
+        )
+        await studio.manager.wait(started2.invocation_id, timeout_seconds=5)
+        await asyncio.gather(*list(studio.collectors))
+        assert any(
+            "Could not auto-release" in w
+            for w in studio.settlement_warnings.get(started2.invocation_id, ())
+        )
+        assert wt_path.is_dir()
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()

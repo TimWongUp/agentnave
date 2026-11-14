@@ -8,7 +8,7 @@ import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 from uuid import uuid4
 
 from agentnave import provider_health
@@ -50,12 +50,12 @@ from agentnave.group import (
     Round,
     SeatState,
 )
-from agentnave.isolated import IsolationLease
+from agentnave.isolated import ClaimedIsolation, CreatedIsolation, IsolationLease
 from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.locks import release_and_remove
 from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
-from agentnave.models import InvocationRequest, RoundOrder
+from agentnave.models import InvocationRequest, InvocationStatus, RoundOrder
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -70,7 +70,11 @@ from agentnave.store import (
 from agentnave.task_isolation import (
     IsolationHold,
     acquire_isolation,
+    hold_from_acquired,
     may_touch_isolated_dirs,
+    needs_resumed_rebuild,
+    rebuild_resumed_isolation,
+    release_acquired,
     release_hold,
 )
 from agentnave.task_start import latest_session_task
@@ -734,6 +738,13 @@ class Conversations(ConversationStore):
             isolation_id=info.id if info is not None else None,
             isolation_path=info.path if info is not None else None,
             isolation_branch=info.branch if info is not None else None,
+            isolation_base_oid=info.base_oid if info is not None else None,
+            isolation_main_root=str(info.main_root)
+            if info is not None and info.main_root is not None
+            else None,
+            isolation_source_root=str(info.source_root)
+            if info is not None and info.source_root is not None
+            else None,
             forward=[item.message_id for item in forwarded],
         )
 
@@ -760,10 +771,16 @@ class Conversations(ConversationStore):
                 claim=startup.native_lock,
             )
         except Exception:
-            if startup.hold is not None and startup.hold.created is not None:
+            if startup.hold is not None and startup.hold.rebuilt:
+                task.isolation_auto_released = True
+            elif startup.hold is not None and startup.hold.created is not None:
                 task.isolation_id = None
                 task.isolation_path = None
                 task.isolation_branch = None
+                task.isolation_base_oid = None
+                task.isolation_main_root = None
+                task.isolation_source_root = None
+                task.isolation_auto_released = False
             task.status = "failed"
             task.error = "start_failed"
             self._persist(record)
@@ -779,16 +796,62 @@ class Conversations(ConversationStore):
     ) -> IsolationHold:
         if not may_touch_isolated_dirs(request.cwd, requested=isolation_requested):
             return IsolationHold(request)
+        resumed_task = (
+            self.resume_task(
+                request.session_id,
+                cast(ProviderName, request.provider),
+                manager_session,
+                explicit_identity=True,
+            )
+            if request.session_id is not None and not isolation_requested
+            else None
+        )
         hold = acquire_isolation(
             self.isolated,
             request,
             manager_session,
             requested=isolation_requested,
             ref=isolation_ref,
+            resumed_task=resumed_task,
         )
         if (lease := hold.lease) is not None:
             self.active_lease_paths.add(lease.path)
         return hold
+
+    async def acquire_resumed_isolation(
+        self,
+        cwd: Path,
+        resumed_task: TaskRecord | None,
+        manager_session_id: str | None,
+    ) -> CreatedIsolation | ClaimedIsolation | None:
+        """Rebuild an auto-released isolated dir before InvocationRequest checks cwd."""
+        if not needs_resumed_rebuild(cwd, resumed_task):
+            return None
+        assert resumed_task is not None
+        self._check_capacity(1)
+        manager_session = self._manager_session(manager_session_id)
+        acquired = await to_thread_keeping(
+            lambda item: release_acquired(self.isolated, item),
+            rebuild_resumed_isolation,
+            self.isolated,
+            cwd,
+            resumed_task,
+            manager_session,
+        )
+        self.active_lease_paths.add(acquired.lease.path)
+        return acquired
+
+    def bind_resumed_isolation(
+        self,
+        request: InvocationRequest,
+        acquired: CreatedIsolation | ClaimedIsolation,
+        resumed_task: TaskRecord,
+    ) -> IsolationHold:
+        return hold_from_acquired(request, acquired, resumed_task)
+
+    async def give_back_resumed(self, acquired: CreatedIsolation | ClaimedIsolation) -> None:
+        self.active_lease_paths.discard(acquired.lease.path)
+        await to_thread_uninterrupted(release_acquired, self.isolated, acquired)
 
     async def acquire_task_isolation(
         self,
@@ -797,6 +860,7 @@ class Conversations(ConversationStore):
         *,
         isolation_requested: bool,
         isolation_ref: str | None,
+        resumed_task: TaskRecord | None = None,
     ) -> IsolationHold:
         """Acquire the task's isolated directory on a worker thread, so waiting calls and other
         tasks keep running; pass the result to start_task and give it back on failure."""
@@ -821,6 +885,7 @@ class Conversations(ConversationStore):
             manager_session,
             requested=isolation_requested,
             ref=isolation_ref,
+            resumed_task=resumed_task,
         )
         if (lease := hold.lease) is not None:
             self.active_lease_paths.add(lease.path)
@@ -832,24 +897,36 @@ class Conversations(ConversationStore):
             self.active_lease_paths.discard(lease.path)
         await to_thread_uninterrupted(release_hold, self.isolated, hold)
 
-    def _task_settlement(self, startup: _TaskStartup) -> Callable[[str], None] | None:
+    def _task_settlement(
+        self, startup: _TaskStartup
+    ) -> Callable[[str, InvocationStatus], None] | None:
         hold = startup.hold
         if hold is None or hold.info is None or hold.lease is None:
             return None
         info = hold.info
         lease: IsolationLease = hold.lease
+        owns_isolation = hold.owns_isolation
+        workspace_id = startup.record.state.manager_session if startup.record is not None else None
 
-        def settle(invocation_id: str) -> None:
+        def settle(invocation_id: str, status: InvocationStatus) -> None:
             # Runs on a worker thread after the process tree ended; the lease goes last.
+            auto_release = owns_isolation and status == InvocationStatus.SUCCEEDED
             try:
-                self.isolation_summaries[invocation_id] = self.isolated.summarize_changes(
+                summary, warnings = self.isolated.settle_task(
                     info.id,
+                    workspace_id=workspace_id,
+                    lease=lease,
+                    auto_release=auto_release,
                     fallback_path=info.path,
                     fallback_branch=info.branch,
                 )
+                self.isolation_summaries[invocation_id] = summary
+                if warnings:
+                    self.settlement_warnings[invocation_id] = warnings
             finally:
                 self.active_lease_paths.discard(lease.path)
-                lease.release()
+                if not lease.closed:
+                    lease.release()
 
         return settle
 
@@ -957,6 +1034,9 @@ class Conversations(ConversationStore):
             task.reported_model = result.reported_model or task.reported_model
             task.error = error
             task.prompts = self._prompt_audit(task.prompts, invocation_id)
+            summary = self.isolation_summaries.get(invocation_id)
+            if summary is not None and summary.auto_released:
+                task.isolation_auto_released = True
 
         error = result.error
         # Keep the provider's own message like a seat does; older records hold only the code.
