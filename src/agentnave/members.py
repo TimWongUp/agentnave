@@ -238,17 +238,10 @@ class MemberFile(StrictModel):
         shared = cli.models.get(model, MemberConfig()) if cli else MemberConfig()
         selection = self.modes.get(mode, {}).get(provider) if scenario else None
         override = selection.overrides.get(model) if selection else None
-        merged = shared.model_dump(exclude_unset=True)
-        if override:
-            merged |= override.model_dump(exclude_unset=True)
-            if "options" in shared.model_fields_set and "options" in override.model_fields_set:
-                base = dict(shared.options)
-                for leader, followers in get_adapter(provider).paired_options.items():
-                    if leader in override.options:
-                        for key in followers:
-                            base.pop(key, None)
-                merged["options"] = base | override.options
-        return MemberConfig.model_validate(merged)
+        return MemberConfig.model_validate(
+            shared.model_dump(exclude_unset=True)
+            | (override.model_dump(exclude_unset=True) if override else {})
+        )
 
     @model_validator(mode="after")
     def references(self) -> MemberFile:

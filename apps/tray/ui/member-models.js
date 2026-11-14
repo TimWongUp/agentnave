@@ -240,11 +240,7 @@
     S.renderCards();
   }
 
-  // Authentication is an explicit per-model choice shared by scenes and seats.
-  function setDeepSeekRoute(modelId, route) {
-    ensureCliModel("deepseek", modelId);
-    const model = S.currentDoc.clis.deepseek.models[modelId];
-    const options = { ...model.options };
+  function applyDeepSeekRoute(options, route) {
     if (route === "account") {
       options.provider = "deepseek-account";
       options.stored_credentials = true;
@@ -254,17 +250,30 @@
     } else if (route === "default") {
       delete options.provider;
       delete options.stored_credentials;
-    } else return;
+    }
+  }
+
+  const sameOptionField = (a, b, key) =>
+    Object.hasOwn(a, key) === Object.hasOwn(b, key) && a[key] === b[key];
+  const sameDeepSeekRoute = (a, b) =>
+    sameOptionField(a, b, "provider") && sameOptionField(a, b, "stored_credentials");
+
+  // Authentication is an explicit per-model choice shared by scenes and seats.
+  function setDeepSeekRoute(modelId, route) {
+    if (!["account", "official", "default"].includes(route)) return;
+    ensureCliModel("deepseek", modelId);
+    const model = S.currentDoc.clis.deepseek.models[modelId];
+    const prevOptions = { ...model.options };
+    const options = { ...prevOptions };
+    applyDeepSeekRoute(options, route);
     if (Object.keys(options).length) model.options = options;
     else delete model.options;
     for (const scene of SCENE_IDS) {
-      const overrides = S.currentDoc.modes?.[scene]?.deepseek?.overrides;
-      const sceneOptions = overrides?.[modelId]?.options;
+      const sceneOptions = S.currentDoc.modes?.[scene]?.deepseek?.overrides?.[modelId]?.options;
       if (!sceneOptions) continue;
-      delete sceneOptions.provider;
-      delete sceneOptions.stored_credentials;
-      if (!Object.keys(sceneOptions).length) delete overrides[modelId].options;
-      if (!Object.keys(overrides[modelId]).length) delete overrides[modelId];
+      const synced = sameDeepSeekRoute(sceneOptions, prevOptions) ||
+        (route !== "default" && !Object.hasOwn(sceneOptions, "provider"));
+      if (synced) applyDeepSeekRoute(sceneOptions, route);
     }
     edited();
   }

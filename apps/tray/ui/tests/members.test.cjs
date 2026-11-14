@@ -718,6 +718,12 @@ test("DeepSeek route selection is explicit, model scoped and preserves other set
     currentDoc.modes.task.deepseek = {
       models: [],
       overrides: {
+        "deepseek-flash": { options: { permission_mode: "read-only" } },
+      },
+    };
+    currentDoc.modes.discussion.deepseek = {
+      models: [],
+      overrides: {
         "deepseek-flash": { options: { permission_mode: "read-only", provider: "gateway", stored_credentials: false } },
       },
     };
@@ -730,13 +736,28 @@ test("DeepSeek route selection is explicit, model scoped and preserves other set
     effort: "high", options: { extra: "keep", provider: "deepseek-account", stored_credentials: true },
   });
   assert.deepEqual(app.doc().modes.task.deepseek.overrides["deepseek-flash"], {
-    options: { permission_mode: "read-only" },
+    options: { permission_mode: "read-only", provider: "deepseek-account", stored_credentials: true },
+  });
+  assert.deepEqual(app.doc().modes.discussion.deepseek.overrides["deepseek-flash"], {
+    options: { permission_mode: "read-only", provider: "gateway", stored_credentials: false },
   });
   assert.deepEqual(app.doc().clis.deepseek.models["deepseek-v4-pro"].options, { provider: "gateway", stored_credentials: false });
   app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "official"}})');
   assert.deepEqual(app.doc().clis.deepseek.models["deepseek-flash"].options, { extra: "keep", provider: "deepseek-official" });
+  assert.deepEqual(app.doc().modes.task.deepseek.overrides["deepseek-flash"], {
+    options: { permission_mode: "read-only", provider: "deepseek-official" },
+  });
+  assert.deepEqual(app.doc().modes.discussion.deepseek.overrides["deepseek-flash"], {
+    options: { permission_mode: "read-only", provider: "gateway", stored_credentials: false },
+  });
   app.run('findKey(deepSeekRouteRows(), "deepseek/route/deepseek-flash").attrs.onChange({target: {value: "default"}})');
   assert.deepEqual(app.doc().clis.deepseek.models["deepseek-flash"].options, { extra: "keep" });
+  assert.deepEqual(app.doc().modes.task.deepseek.overrides["deepseek-flash"], {
+    options: { permission_mode: "read-only" },
+  });
+  assert.deepEqual(app.doc().modes.discussion.deepseek.overrides["deepseek-flash"], {
+    options: { permission_mode: "read-only", provider: "gateway", stored_credentials: false },
+  });
 });
 
 test("DeepSeek route rows show a visible bilingual note without leaking internal fields", () => {

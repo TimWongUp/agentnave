@@ -197,9 +197,9 @@ class DeepSeekAdapter(AdapterHooks):
             for key, value in options.items()
             if key not in ("provider", "stored_credentials")
         }
-        # Account sign-in must not silently fall back to saved official API keys on headless's
-        # default route when no model was selected.
-        if options.get("provider") == _ACCOUNT_ROUTE and options.get("stored_credentials") is True:
+        # Account routing or an explicit false must not silently re-enable saved official API keys
+        # on headless's default route when no model was selected.
+        if options.get("stored_credentials") is False or options.get("provider") == _ACCOUNT_ROUTE:
             kept["stored_credentials"] = False
         return kept
 

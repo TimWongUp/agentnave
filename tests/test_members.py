@@ -290,40 +290,15 @@ def test_member_structure_references_and_effective_overrides() -> None:
                 "claude": {
                     "models": ["chosen"],
                     "default": "chosen",
-                    "overrides": {
-                        "chosen": {"effort": "medium", "options": {"tools": "Read"}},
-                    },
+                    "overrides": {"chosen": {"effort": "medium", "options": {}}},
                 }
             }
         },
     }
     parsed = MemberFile.model_validate(document)
     options, defaults = parsed.apply("task", "claude", {}, frozenset())
-    assert options == {"model": "chosen", "effort": "medium", "agent": "shared", "tools": "Read"}
-    assert defaults == ["model", "effort", "agent", "tools"]
-    # Same-key scene options beat shared ones; explicit call options beat both.
-    overridden = MemberFile.model_validate(
-        {
-            **document,
-            "modes": {
-                "task": {
-                    "claude": {
-                        "models": ["chosen"],
-                        "default": "chosen",
-                        "overrides": {"chosen": {"options": {"agent": "scene", "tools": "Read"}}},
-                    }
-                }
-            },
-        }
-    )
-    assert overridden.apply("task", "claude", {}, frozenset()) == (
-        {"model": "chosen", "effort": "high", "agent": "scene", "tools": "Read"},
-        ["model", "effort", "agent", "tools"],
-    )
-    assert overridden.apply("task", "claude", {"agent": "explicit"}, frozenset()) == (
-        {"agent": "explicit", "model": "chosen", "effort": "high", "tools": "Read"},
-        ["model", "effort", "tools"],
-    )
+    assert options == {"model": "chosen", "effort": "medium"}
+    assert defaults == ["model", "effort"]
     # A missing mode is unrestricted, and shared defaults still apply to a known model.
     assert parsed.apply("discussion", "claude", {"model": "chosen"}, frozenset({"claude"})) == (
         {"model": "chosen", "effort": "high", "agent": "shared"},
@@ -546,11 +521,21 @@ def test_cached_model_does_not_select_deepseek_route_or_credentials(
                     "deepseek": {
                         "models": [],
                         "overrides": {
-                            "deepseek-flash": {"options": {"permission_mode": "read-only"}}
+                            "deepseek-flash": {
+                                "options": {**account, "permission_mode": "read-only"}
+                            }
                         },
                     },
                     "pi": {"models": []},
-                }
+                },
+                "discussion": {
+                    "deepseek": {
+                        "models": [],
+                        "overrides": {
+                            "deepseek-flash": {"options": {"permission_mode": "read-only"}}
+                        },
+                    }
+                },
             },
         }
     )
@@ -566,19 +551,37 @@ def test_cached_model_does_not_select_deepseek_route_or_credentials(
         {"model": "deepseek-flash", **account, "permission_mode": "read-only"},
         ["provider", "stored_credentials", "permission_mode"],
     )
+    assert document.apply("discussion", "deepseek", {"model": "deepseek-flash"}, frozenset()) == (
+        {"model": "deepseek-flash", "permission_mode": "read-only"},
+        ["permission_mode"],
+    )
     assert document.apply(
         "task", "deepseek", {"model": "deepseek-flash", "provider": "gateway"}, frozenset()
     ) == (
         {"model": "deepseek-flash", "provider": "gateway", "permission_mode": "read-only"},
         ["permission_mode"],
     )
-    assert document.apply(
-        "discussion",
-        "deepseek",
-        {"model": "deepseek-flash", "provider": "deepseek-official"},
-        frozenset(),
-    ) == ({"model": "deepseek-flash", "provider": "deepseek-official"}, [])
-    for saved_options in ({"provider": "deepseek-official"}, {}):
+    for saved_options in (
+        {"provider": "deepseek-account"},
+        {"stored_credentials": False},
+        {"provider": "deepseek-official", "stored_credentials": False},
+    ):
+        disabled = MemberFile.model_validate(
+            {
+                "version": 1,
+                "clis": {"deepseek": {"models": {"deepseek-flash": {"options": saved_options}}}},
+                "modes": {},
+            }
+        )
+        assert disabled.apply("task", "deepseek", {}, frozenset()) == (
+            {"stored_credentials": False},
+            ["stored_credentials"],
+        )
+    for saved_options in (
+        {"provider": "deepseek-official"},
+        {"provider": "gateway", "stored_credentials": True},
+        {},
+    ):
         other = MemberFile.model_validate(
             {
                 "version": 1,
