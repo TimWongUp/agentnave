@@ -792,6 +792,20 @@ test("a model the CLI no longer lists is marked but blocks no save, and nothing 
   assert.deepEqual(Array.from(app.run('getAllModelIds("codex")')), ["old"]);
 });
 
+test("every model lifts a scene list an older file kept", () => {
+  const app = poolEditor();
+  app.run(`
+    currentDoc.modes.task.codex.models = ["a"];
+    currentDoc.modes.task.codex.default = "a";
+    markSaved();
+    pickerOpen = "codex/pool";
+  `);
+  assert.equal(app.run('shownPool("codex")'), null, "one unlimited scene shows every model");
+  app.run('poolPick("codex/pool/all")');
+  assert.deepEqual(app.doc().modes.task.codex.models, [], "the limited scene takes every model too");
+  assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
+});
+
 test("every model is ticked until one is unticked, and no list size is refused", () => {
   const app = poolEditor();
   app.run(`
@@ -814,10 +828,7 @@ test("every model is ticked until one is unticked, and no list size is refused",
   app.run('poolPick("codex/pool/all")');
   assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false, "all models saves no list");
   app.run('poolPick("codex/pool/ticked")');
-  assert.deepEqual(Array.from(app.doc().clis.codex.allowed_models.slice(0, 3)), ["model-0", "model-1", "model-2"]);
-  assert.equal(app.doc().clis.codex.allowed_models.length, 23, "the earlier ticks come back");
-  app.run('poolPick("codex/pool/allow/model-3", true)');
-  assert.equal(app.doc().clis.codex.allowed_models.length, 24, "every listed model is selectable");
+  assert.equal(app.doc().clis.codex.allowed_models.length, 24, "the ticked tier starts from every listed model");
   assert.equal(app.run("memberSaveErrors().length"), 0);
   const text = Array.from(app.run('poolText(poolRows("codex"))'));
   assert.ok(text.includes("已选 24"), "the picker counts what is chosen");

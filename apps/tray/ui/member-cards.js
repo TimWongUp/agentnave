@@ -86,8 +86,6 @@
     return L(`${shown.length} 个：${names}${shown.length > 3 ? " 等" : ""}`, `${shown.length}: ${names}${shown.length > 3 ? ", etc." : ""}`);
   }
 
-  const lastPicked = new Map(); // The ticks a CLI had before it was switched to every model.
-
   // One list per CLI; every scene and seat of the CLI picks its model from it.
   function poolRows(provider) {
     const key = `${provider}/pool`;
@@ -113,15 +111,14 @@
         const list = chosen || all;
         writePool(provider, on ? [...list, m] : list.filter((x) => x !== m));
       };
+      // An older file may still limit one scene by its own list; every model lifts that too.
+      const sceneLimited = !hasPool(provider) && SCENE_IDS.some((s) => slot(s, provider).allowed);
       const useAll = () => {
-        if (!chosen) return;
-        lastPicked.set(provider, chosen);
+        if (!chosen && !sceneLimited) return;
         writePool(provider, null);
       };
       const useTicked = () => {
-        if (chosen) return;
-        const back = lastPicked.get(provider)?.filter((id) => all.includes(id));
-        writePool(provider, back?.length ? back : all);
+        if (!chosen) writePool(provider, all);
       };
       const tier = (active, text, onClick, focus, disabled) => el("button", {
         type: "button", className: `segment-btn${active ? " active" : ""}`, role: "radio",
