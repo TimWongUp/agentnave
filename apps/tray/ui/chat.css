@@ -171,9 +171,11 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 .boss-zone .scene { width: 266px; max-width: 100%; margin-top: 14px; margin-bottom: -10px; }
 /* boss in the middle, recent chats and meetings on either side; narrow floors put the lists below */
 /* the lists stop at 320px and sit against the boss, so the three stay together in the middle of a wide floor */
-.boss-row { display: grid; grid-template-columns: minmax(0, 320px) auto minmax(0, 320px); justify-content: center; gap: 14px; align-items: start; }
+.boss-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: start; }
 .boss-mid { grid-column: 2; grid-row: 1; }
-.boss-side { min-width: 0; display: flex; flex-direction: column; gap: 2px; cursor: default; }
+.boss-side { min-width: 0; width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 2px; cursor: default; }
+/* the lists keep to the floor's two edges, the boss alone in the middle */
+.boss-side:last-child { justify-self: end; }
 .side-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 3 + 4px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 /* beside the boss the lists run as tall as the boss's scene: size containment keeps them from growing the row */
 @container (min-width: 641px) {
