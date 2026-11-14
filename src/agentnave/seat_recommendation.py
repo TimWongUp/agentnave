@@ -22,7 +22,7 @@ from agentnave.decision_model import (
 from agentnave.decision_seats import effective_decision_seats
 from agentnave.host import Host
 from agentnave.members import MemberFileError, SettingsFileError, list_members
-from agentnave.orchestration_roles import IMAGE_KIND, CustomSeatStatus
+from agentnave.orchestration_roles import IMAGE_KIND, CustomSeatDifficulty, CustomSeatStatus
 
 # What the decision model reads of a task: all of it up to this many characters, otherwise
 # the beginning and the end with the middle left out.
@@ -64,6 +64,7 @@ class Candidate:
     role: str
     probability: float | None = None
     native: bool = False
+    difficulty: CustomSeatDifficulty | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,7 @@ class Recommendation:
     native: bool
     decision_model_called: bool
     candidates: list[Candidate]
+    difficulty: CustomSeatDifficulty | None = None
     note: str | None = None
     # A native seat's saved model and effort: what the host's own subagent is asked to use.
     model: str | None = None
@@ -152,7 +154,8 @@ def _only(seat_id: str, seat: CustomSeatStatus) -> Recommendation:
         None,
         bool(seat.native),
         False,
-        [Candidate(seat_id, seat.role, None, bool(seat.native))],
+        [Candidate(seat_id, seat.role, None, bool(seat.native), seat.difficulty)],
+        seat.difficulty,
         "Only one dispatchable seat has this access; the decision model was not called.",
         **_native_settings(seat),
     )
@@ -264,9 +267,11 @@ def _chosen(decision: Decision, usable: Mapping[str, CustomSeatStatus]) -> Recom
                 usable[seat_id].role,
                 decision.probabilities.get(seat_id),
                 bool(usable[seat_id].native),
+                usable[seat_id].difficulty,
             )
             for seat_id in [decision.choice, *others][:MAX_CANDIDATES]
         ],
+        chosen.difficulty,
         **_native_settings(chosen),
     )
 

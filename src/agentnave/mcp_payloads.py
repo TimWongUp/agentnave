@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from agentnave.members import MemberList, ProviderName
 from agentnave.native_prompts import PromptPayload
+from agentnave.orchestration_roles import CustomSeatDifficulty
 from agentnave.seat_fallbacks import SeatFallback
 from agentnave.store import Unavailable
 
@@ -27,6 +28,7 @@ class MemberListPayload(MemberList):
 class SeatCandidatePayload(TypedDict):
     seat: str
     role: str
+    difficulty: NotRequired[CustomSeatDifficulty]
     probability: NotRequired[float]
     native: NotRequired[bool]
 
@@ -34,6 +36,7 @@ class SeatCandidatePayload(TypedDict):
 class SeatRecommendationPayload(TypedDict):
     seat: str
     role: str
+    difficulty: NotRequired[CustomSeatDifficulty]
     confidence: NotRequired[float]
     native: NotRequired[bool]  # the host's own CLI: dispatch with its built-in subagent
     model: NotRequired[str]  # a native seat's saved model, for that subagent

@@ -21,6 +21,8 @@ from agentnave.task_start import native_seat_guidance
 
 def _candidate_payload(candidate: Candidate) -> SeatCandidatePayload:
     payload: SeatCandidatePayload = {"seat": candidate.seat, "role": candidate.role}
+    if candidate.difficulty is not None:
+        payload["difficulty"] = candidate.difficulty
     if candidate.probability is not None:
         payload["probability"] = candidate.probability
     if candidate.native:
@@ -72,6 +74,8 @@ def recommendation_payload(found: Recommendation) -> SeatRecommendationPayload:
         "decision_model_called": found.decision_model_called,
         "candidates": [_candidate_payload(candidate) for candidate in found.candidates],
     }
+    if found.difficulty is not None:
+        payload["difficulty"] = found.difficulty
     if found.confidence is not None:
         payload["confidence"] = found.confidence
     if found.native:

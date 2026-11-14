@@ -20,9 +20,9 @@
 
 ## 读回执
 
-回执的 `recommendation` 给出选中的 `seat`、`role`、`confidence` 和前几名 `candidates`。选择是数据，boss 照常对结果负责：
+回执的 `recommendation` 给出选中的 `seat`、`role`、`difficulty`、`confidence` 和前几名 `candidates`（各带 `difficulty`）。选择是数据，boss 照常对结果负责：
 
-- `confidence` 低于 0.6，或前两名概率接近：核对选中的工位是否对题、难度是否合适。
+- `confidence` 低于 0.6，或前两名概率接近：核对选中的工位是否对题、难度是否合适（直接看回执里的 `difficulty`）。
 - 明显不对题：`cancel`，查 `list_members` 的 `custom_seats`，按 `role`、`description`、`difficulty`、`access` 直接指定 `seat` 重派，并在回报里说明改选的理由。
 
 ## 没启动时
