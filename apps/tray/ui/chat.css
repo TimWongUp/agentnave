@@ -87,10 +87,11 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .bar-toggle[aria-expanded="true"] .pane { opacity: 0.3; }
 /* settings covers the office; the buttons keep their places so the bar does not shift */
 body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
-/* Folded columns leave the grid (--side-col, --conv-col are their tracks) and wait off to the side.
+/* The queries below are the exact complements of chat-state.js's `narrow` and `overlay`, so no fractional width falls in a gap.
+   Folded columns leave the grid (--side-col, --conv-col are their tracks) and wait off to the side.
    Hovering the button or the window edge lays one over the office; the dragged --side-w stays on
    the element, so unfolding brings the same width back. */
-@media (min-width: 761px) {
+@media not all and (max-width: 760px) {
   .app[data-side="off"] { --side-col: 0px; }
   .app[data-side="off"], .app:has(> .conv.folded) { position: relative; }
   .app[data-side="off"] > .floor-wrap { grid-column: 2; }
@@ -108,20 +109,20 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
   .app[data-side="off"] .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
   .app[data-side="off"] .gi::before { left: 5px; }
 }
-@media (min-width: 861px) {
+@media not all and (max-width: 860px) {
   .app:has(> .conv.folded) { --conv-col: 0px; }
   .conv.folded { position: absolute; z-index: 40; top: 0; right: 0; bottom: 0; width: var(--conv-w, clamp(320px, 30vw, 440px)); transform: translateX(100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; }
   .app[data-conv-peek] > .conv.folded { transform: none; visibility: visible; box-shadow: -8px 0 30px #0006; transition: transform 0.2s ease; }
   .conv.folded .split-conv { display: none; }
 }
-@media (min-width: 861px) and (max-width: 1100px) {
+@media (max-width: 1100px) {
   .conv.folded { width: var(--conv-w, clamp(300px, 34vw, 400px)); }
 }
 /* a column unfolded by its button slides in from its edge with the same motion it leaves by */
 @keyframes dock-left { from { transform: translateX(-100%); } }
 @keyframes dock-right { from { transform: translateX(100%); } }
-@media (min-width: 761px) { .side.docking { animation: dock-left 0.2s ease; } }
-@media (min-width: 861px) { .conv.docking { animation: dock-right 0.2s ease; } }
+@media not all and (max-width: 760px) { .side.docking { animation: dock-left 0.2s ease; } }
+@media not all and (max-width: 860px) { .conv.docking { animation: dock-right 0.2s ease; } }
 .gi-host { position: relative; flex: none; align-self: flex-start; width: 30px; height: 30px; }
 .gi-host .avatar, .gi-host .host-letter { width: 30px; height: 30px; border-radius: 9px; }
 .gi-host .presence { right: -3px; bottom: -3px; }

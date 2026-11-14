@@ -296,7 +296,8 @@ function renderConv(c, ctx) {
   setAttr(el.convToggle, "title", hint);
   if (!visible) {
     AN.voice?.controls(false, null, ctx);
-    state.scopeKey = "";
+    // a drawer that is only folded keeps its conversation, scroll position and unread count included
+    if (overlay.matches) state.scopeKey = "";
     return;
   }
   // a selection that no longer exists falls back to the whole workspace

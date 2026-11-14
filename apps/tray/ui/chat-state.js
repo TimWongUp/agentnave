@@ -212,6 +212,10 @@ el.groupBy.value = state.groupBy;
 el.groupBy.addEventListener("change", () => setGroupBy(el.groupBy.value));
 for (const query of [narrow, overlay])
   query.addEventListener("change", () => {
+    // a breakpoint changes which columns can peek: start from the settled state
+    state.sidePeek = state.convPeek = false;
+    el.app.removeAttribute("data-side-peek");
+    el.app.removeAttribute("data-conv-peek");
     sync();
     renderList();
     if (state.chat) renderAll(state.chat);

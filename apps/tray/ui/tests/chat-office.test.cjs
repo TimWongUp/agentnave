@@ -567,3 +567,47 @@ test("a private chat row is told by its role, with model and effort below, and f
   const plain = row({ key: "a", model: "m", effort: "high", identity });
   assert.deepEqual([plain.name, plain.sub], ["m · high", "Codex · 摸鱼"], "without a role the row is as before");
 });
+
+test("crossing a breakpoint drops both peeks before the page is drawn again", () => {
+  const source = readFileSync(`${__dirname}/../chat-state.js`, "utf8");
+  const start = source.indexOf("for (const query of [narrow, overlay])");
+  const listeners = [], removed = [], order = [];
+  const query = { addEventListener: (_name, fn) => listeners.push(fn) };
+  const state = { sidePeek: true, convPeek: true, chat: {} };
+  const context = vm.createContext({
+    narrow: query, overlay: query, state, el: { app: { removeAttribute: name => removed.push(name) } },
+    sync() { order.push("sync"); }, renderList() {}, renderAll: () => order.push(`draw ${state.convPeek}`),
+  });
+  vm.runInContext(source.slice(start, source.indexOf("\n\n", start)), context);
+  listeners.forEach(fn => fn());
+  assert.deepEqual([state.sidePeek, state.convPeek], [false, false]);
+  assert.deepEqual(removed.slice(0, 2), ["data-side-peek", "data-conv-peek"]);
+  assert.equal(order.at(-1), "draw false", "the redraw sees the settled state");
+});
+
+test("a folded drawer beside the floor keeps its conversation; the overlay's closed drawer does not", () => {
+  const source = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const start = source.indexOf("function renderConv(");
+  const calls = [];
+  const state = { convCollapsed: true, convPeek: false, convOpen: false, scopeKey: "ws{}" };
+  const overlay = { matches: false };
+  const drawer = { hidden: true, classList: { toggle() {} } };
+  const renderConv = vm.runInNewContext(`${source.slice(start, source.indexOf("function updateJump(", start))}; renderConv`, {
+    AN: { voice: { controls: on => calls.push(on) } }, state, overlay, el: { drawer, convToggle: {} }, setAttr() {},
+  });
+  renderConv({}, {});
+  assert.equal(state.scopeKey, "ws{}", "peeking again is not a change of scope, so nothing is rebuilt");
+  assert.equal(drawer.hidden, false, "it stays in the page to slide");
+  assert.deepEqual(calls, [false], "the voice controls still close");
+  overlay.matches = true;
+  renderConv({}, {});
+  assert.equal(state.scopeKey, "");
+  assert.equal(drawer.hidden, true);
+});
+
+test("the folded-column breakpoints in the stylesheet are the complements of the script's queries", () => {
+  const css = readFileSync(`${__dirname}/../chat.css`, "utf8");
+  assert.doesNotMatch(css, /@media \(min-width: (761|861)px\)|@media \(min-width: 861px\) and/, "min-width leaves a gap above max-width at fractional widths");
+  assert.match(css, /@media not all and \(max-width: 860px\)/);
+  assert.match(css, /@media not all and \(max-width: 760px\)/);
+});
