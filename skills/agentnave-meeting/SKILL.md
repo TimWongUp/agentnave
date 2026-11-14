@@ -68,7 +68,7 @@ description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude 
 
 - **成员**：用户点名的人数、成员和轮数优先；其余按[会话与审核](references/studio.md)的「boss 主动开会」一条选，用户要求开会时同样适用。会议席位可以用与宿主同类的 CLI，不受宿主排除的限制。
 - **模型**：席位只传 `provider`，用户没点名模型或档位时不传 `model`、`effort`，由服务按员工页「开会」的设置补上，开会后核对 `defaults_applied`。权限类参数（如 `dangerously_*`、`permission_mode`、`sandbox`）只能来自 App 设置或用户本轮明确要求，boss 不自行追加。
-- **任务**：开头写清议题和要得出的决定，再按[会话与审核](references/studio.md)的「讨论范围与回复」约定范围；把下面这段原样放在任务末尾：
+- **任务**：开头写清议题和要得出的决定，再按[会话与审核](references/studio.md)的「讨论范围与回复」约定范围。要席位查证、读代码或跑检查的轮次，把下面这段原样放在任务末尾；只是交换看法的讨论不放：
 
 <!-- shared:closing -->
 ```text
@@ -85,7 +85,7 @@ description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude 
 
 1. **怎么等**：`run_round` 保持默认 `wait=false`，拿到 `round_id` 后单独 `wait`。常规用收件箱：省略 `ids`、带上相同的 `manager_session_id`，`seq` 从 1 起每次加 1；省略 `wait_seconds`，`wait_elapsed` 后直接再等，到终态或显式取消为止，不另加总时限。宿主专属做法见 [Claude Code](references/claude.md)、[Codex CLI](references/codex.md)。回执带 `unreceived` 或 `next` 时先照做。
 2. **先处理再等**：任一就绪即返回，先处理 `prompt_pending`、`review_needed` 和 `seat_lost`，再继续等到 `all_finished=true`（只表示没有待收终态，不代表全部成功）。`wait(wait_seconds=0)` 只在用户询问进展时用，它返回的运行中 `output` 只是最新公开正文尾部，不凭此判定卡死。
-3. **验收答案**：先看每席的收尾行，归为「部分」「未做」，或含糊、缺失的，按未完成看待并在总结里注明；结论核对出处，推测不当作事实。席位失败、补跑和取消按[会话与审核](references/studio.md)处理，不另开私聊顶替。
+3. **验收答案**：加了收尾行的轮次先看每席的收尾行，归为「部分」「未做」，或含糊、缺失的，按未完成看待并在总结里注明；结论核对出处，推测不当作事实。席位失败、补跑和取消按[会话与审核](references/studio.md)处理，不另开私聊顶替。
 4. **总结**：两轮 `parallel` 后由 boss 综合，按[会话与审核](references/studio.md)的「会议总结」写入会议并回复用户；仍有实质分歧时列出分歧和各方理由，交用户决定。
 
 <!-- shared:prompts -->
