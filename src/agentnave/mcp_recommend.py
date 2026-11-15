@@ -59,10 +59,14 @@ async def recommend_seat(
     return recommendation_payload(found)
 
 
-async def recommend_or_raise(task: str, access: Literal["read", "write"]) -> Recommendation:
+async def recommend_or_raise(
+    task: str, access: Literal["read", "write"], *, isolated: bool = False
+) -> Recommendation:
     """The recommendation for the running host; failures become coded tool errors."""
     try:
-        return await recommend(task, access, runtime.HOST, runtime.task_excluded_providers())
+        return await recommend(
+            task, access, runtime.HOST, runtime.task_excluded_providers(), isolated=isolated
+        )
     except RecommendationError as exc:
         raise ToolError(f"{exc.code}: {exc.message}") from None
 
@@ -95,10 +99,12 @@ async def choose_auto_seat(
     provider: str | None,
     cwd: str | None,
     session_id: str | None,
+    isolated: bool,
 ) -> Recommendation:
     """start_agent(seat="auto"): the seat the decision model picks, or a refusal before any
     task starts. Everything cheap is checked first so a refused call costs no decision. A
-    native seat is returned as is; start_agent answers with a not_started receipt for it."""
+    native seat is returned as is; start_agent answers with a not_started receipt for it.
+    isolated: the call asks for a new isolated directory."""
     if session_id is not None:
         raise ToolError(
             "seat='auto' cannot be combined with session_id: a resumed thread keeps its seat. "
@@ -113,7 +119,7 @@ async def choose_auto_seat(
         raise ToolError("seat='auto' needs access (read or write).")
     if cwd is None:
         raise ToolError("cwd is required for a new task; pass an absolute existing directory")
-    return await recommend_or_raise(prompt, access)
+    return await recommend_or_raise(prompt, access, isolated=isolated)
 
 
 def native_seat_message(found: Recommendation) -> str:

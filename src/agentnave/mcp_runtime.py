@@ -248,7 +248,9 @@ _HIDDEN_TOOLS = frozenset({"list_invocations"})
 AUTO_SEAT_NOTE = (
     "seat='auto' (with access and cwd): the decision model picks one of your own seats from "
     "the prompt and the service starts it in this call. The prompt is sent to an external "
-    "decision model, only its beginning and end when long: leave out secrets."
+    "decision model, only its beginning and end when long: leave out secrets. access=read "
+    "with isolation (an investigation that may turn into implementation in the same thread) "
+    "is chosen among write seats and stays read-only."
 )
 # Published only while the user's own seat catalog is effective for this boss; called while
 # off, they answer with the reason instead.
@@ -503,13 +505,16 @@ mcp = _Server(
         "or a subagent model. Message metadata only; no provider setting changes. Wait for started work; "
         "do not redispatch to fix metadata. "
         "access: read for exploration/planning/review, write for file changes; shown in App. "
-        "read adds a prompt instruction, never native permissions. Catalog seats supply their declared access; review seats supply read. "
-        "Omit access for seats; contradictions reject. Never inherited on resume; "
+        "read adds a prompt instruction, never native permissions. Catalog seats default to their declared access, review seats to read; "
+        "an explicit access wins. Never inherited on resume: a seat gives its default again; "
         "without a seat declare each time or leave undeclared. "
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
         "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "
         "Injected as data, not instructions; saved task prompts stay original. "
-        "isolation creates a workspace-owned Git worktree per task; inspect or delete with isolated_dirs (release discards ignored files). "
+        "isolation creates a workspace-owned Git worktree per task. Succeeded access=read tasks "
+        "with no changes from base are auto-released (discarding ignored files) and rebuilt "
+        "in place on session_id resume; retained worktrees can be inspected or deleted with isolated_dirs "
+        "(release discards ignored files). "
         "Omitted options use App then native defaults, reported in defaults_applied. "
         "Concurrent tasks/seats obey the App cap; wait for capacity before retrying. "
         "native=true seats start nothing: start_agent returns a not_started receipt with the "
@@ -616,6 +621,8 @@ def _isolation_summary_payload(summary: ChangeSummary) -> TaskIsolationSummaryPa
             payload["nested_repos"] = list(summary.nested_repos)
     elif summary.error is not None:
         payload["error"] = summary.error
+    if summary.auto_released:
+        payload["auto_released"] = True
     return payload
 
 
@@ -630,6 +637,11 @@ def update_payload(
     """Final result, or a running snapshot that reports the given blocker."""
     if isinstance(update, InvocationResult):
         response = finished_payload(invocation_id, update)
+        if extra_warnings := conversations.settlement_warnings.get(invocation_id):
+            existing = response.get("warnings")
+            response["warnings"] = (
+                [*existing, *extra_warnings] if existing else list(extra_warnings)
+            )
         if identity := conversations.task_identity(invocation_id, update):
             response["identity"] = identity
         message_id = conversations.task_message_id(invocation_id)

@@ -525,7 +525,7 @@ def _configured_custom_filters(source_root: Path) -> set[str]:
     return drivers
 
 
-def _has_active_hooks(source_root: Path) -> bool:
+def has_active_hooks(source_root: Path) -> bool:
     cfg = run_git(
         ["config", "--get", "core.hooksPath"],
         cwd=source_root,
@@ -565,7 +565,7 @@ def _has_active_hooks(source_root: Path) -> bool:
 def collect_creation_warnings(ctx: RepoContext, *, lfs_detected: bool) -> tuple[str, ...]:
     """Build user-facing warnings for skipped hooks/LFS and uncopied dirty worktree state."""
     warnings: list[str] = []
-    hooks_skipped = _has_active_hooks(ctx.source_root)
+    hooks_skipped = has_active_hooks(ctx.source_root)
     if hooks_skipped and lfs_detected:
         warnings.append("Git hooks and LFS downloads were skipped; LFS files may contain pointers.")
     elif hooks_skipped:
@@ -717,3 +717,21 @@ def shares_cwd_tree(first: Path, second: Path) -> bool:
     if iso_first is not None or iso_second is not None:
         return iso_first is not None and iso_first == iso_second
     return is_same_or_subpath(first, second) or is_same_or_subpath(second, first)
+
+
+def resolve_mapped_cwd(worktree_path: Path, subdir_prefix: PurePosixPath) -> Path:
+    if not subdir_prefix.parts:
+        return worktree_path.resolve()
+    if has_link_in_relpath(worktree_path, subdir_prefix):
+        raise IsolationError(
+            f"Mapped cwd contains a symlink or junction component: {subdir_prefix.as_posix()}"
+        )
+    mapped = worktree_path.joinpath(*subdir_prefix.parts)
+    if not mapped.is_dir():
+        raise IsolationError(
+            f"Target commit does not contain subdirectory: {subdir_prefix.as_posix()}"
+        )
+    resolved = mapped.resolve()
+    if not is_same_or_subpath(resolved, worktree_path):
+        raise IsolationError("Mapped cwd resolves outside the isolated worktree")
+    return resolved
