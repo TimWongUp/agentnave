@@ -466,6 +466,8 @@ mod tests {
             ("POST", "/app/service/install"),
             ("POST", "/app/update/apply"),
             ("POST", "/app/cli-updates/update"),
+            ("POST", "/app/workspaces/handover"),
+            ("POST", "/app/workspaces/cancel-handover"),
             ("DELETE", "/app/chats/x"),
             ("DELETE", "/settings/members"),
         ] {

@@ -2195,7 +2195,7 @@ def test_only_one_boss_wins_a_claim_race(data_root: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_handover_moves_a_workspace_to_another_boss_chat(
-    data_root: Path, tmp_path: Path
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with Client(mcp) as client:
         show = await _open(
@@ -2217,10 +2217,27 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
             {"release": True, "note": "goal: ship", "manager_session_id": "chat-a"},
         )
         assert released["workspace_id"] == workspace
+        assert "withdraw" in str(released["next"]) and "App" in str(released["next"])
         waiting = cast(list[dict[str, object]], (await _call(client, "handover", {}))["waiting"])
-        assert [(w["workspace_id"], w["note"], w["conversations"]) for w in waiting] == [
-            (workspace, "goal: ship", 1)
-        ]
+        assert [
+            (w["workspace_id"], w["note"], w["conversations"], "yours" in w) for w in waiting
+        ] == [(workspace, "goal: ship", 1, False)]
+        own_waiting = cast(
+            list[dict[str, object]],
+            (await _call(client, "handover", {"manager_session_id": "chat-a"}))["waiting"],
+        )
+        assert [w.get("yours") for w in own_waiting] == [True]
+        monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "chat-a")
+        injected_waiting = cast(
+            list[dict[str, object]], (await _call(client, "handover", {}))["waiting"]
+        )
+        monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
+        assert [w.get("yours") for w in injected_waiting] == [True]
+        blank_waiting = cast(
+            list[dict[str, object]],
+            (await _call(client, "handover", {"manager_session_id": "   "}))["waiting"],
+        )
+        assert ["yours" in w for w in blank_waiting] == [False]
 
         holder = Record.read(Database(data_root), data_root / "locks", str(group))
         holder.acquire()
@@ -2274,6 +2291,11 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
         assert row is not None and row.note is None and row.released is None
         # A boss that passes on a workspace it took over is refused too, not given a new one.
         await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
+        former_waiting = cast(
+            list[dict[str, object]],
+            (await _call(client, "handover", {"manager_session_id": "chat-a"}))["waiting"],
+        )
+        assert ["yours" in w for w in former_waiting] == [False]
         await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-c"})
         passed = await client.call_tool(
             "start_agent",
