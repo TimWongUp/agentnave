@@ -220,6 +220,7 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
     role_base: { parallel: "base+" }, parallel_base: "base+",
     split_parts: { base: "base", meetings_asked: "\nasked", meetings_own: "\nown" },
     role_sections: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}`])),
+    role_sections_medium: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}+medium`])),
   };
   const app = advancedEditor(async (url, options) => {
     const body = options?.body && JSON.parse(options.body);
@@ -275,13 +276,13 @@ test("role switches default like old files, round-trip through save, and keep bi
   await app.run("loadOrchestration()");
 
   assert.equal(groups().length, 7);
-  assert.equal(group("通用探索").children.length, 3);
+  assert.equal(group("通用探索").children.length, 4);
   assert.equal(group("写作").children.length, 1, "a new role starts off with its seats out of sight");
   assert.equal(group("写作").children[0].children.length, 1, "and without its difficulty switch");
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend");
 
   toggle("写作", true);
-  assert.equal(group("写作").children.length, 3, "turning a role on shows its seats, split while only one is set");
+  assert.equal(group("写作").children.length, 4, "turning a role on shows its seats, split while only one is set");
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend\nworker_writing");
   assert.equal(app.run("orchestrationChanged()"), true);
   toggle("写作", false);
@@ -426,7 +427,7 @@ test("a specialist picks one seat for both difficulties until it is split", asyn
   assert.equal(group("写作").children.length, 2, "the same seat on both stays one row");
 
   split("写作", true);
-  assert.equal(group("写作").children.length, 3);
+  assert.equal(group("写作").children.length, 4);
   assert.equal(app.run("orchestrationChanged()"), true);
   pick(1, "");
   assert.deepEqual(seats(), { hard: shared });
@@ -435,9 +436,17 @@ test("a specialist picks one seat for both difficulties until it is split", asyn
   assert.equal(group("写作").children.length, 2);
 
   split("写作", true);
-  pick(2, "");
+  pick(3, "");
   split("写作", false);
   assert.deepEqual(seats(), { easy: shared, hard: shared }, "or the easy one when hard is unset");
+
+  split("写作", true);
+  pick(2, "codex");
+  assert.deepEqual(seats(), { easy: shared, medium: shared, hard: shared });
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nworker_writing+medium");
+  split("写作", false);
+  assert.deepEqual(seats(), { easy: shared, hard: shared }, "joining drops the medium seat");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nworker_writing");
   pick(1, "");
   assert.equal(seats(), null);
   assert.equal(app.run("orchestrationChanged()"), false);

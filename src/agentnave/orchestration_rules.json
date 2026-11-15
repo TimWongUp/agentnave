@@ -104,6 +104,7 @@
   "enabled_roles": {
     "source": "orchestration_roles.json",
     "line": "\n- {name_zh}（{access_zh}）：{scope_zh}简单用 `{seat_prefix}-easy`，困难用 `{seat_prefix}-hard`。",
+    "line_medium": "\n- {name_zh}（{access_zh}）：{scope_zh}简单用 `{seat_prefix}-easy`，中等用 `{seat_prefix}-medium`，困难用 `{seat_prefix}-hard`。",
     "access_zh": {
       "read": "只读",
       "write": "可写"
