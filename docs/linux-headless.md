@@ -1,7 +1,7 @@
-# 无头 Linux 宿主接入指引（v1.11.0，bot 作 boss）
+# 无头 Linux 宿主接入指引（v1.12.0，bot 作 boss）
 
 > 草稿。适用对象：跑在无图形界面 Linux 上的 bot（例如 Grok Bot），只能通过 **MCP stdio 连接器** 和 **shell** 接入 AgentNave，没有托盘 App。
-> 托盘 App 平时替你写的配置文件，本文教你手写；每个字段都注明出处（适用于 1.11.0）。
+> 托盘 App 平时替你写的配置文件，本文教你手写；每个字段都注明出处（适用于 1.12.0）。
 
 ## 0. 心智模型
 
@@ -15,7 +15,7 @@
 ### 1.1 AgentNave
 
 ```bash
-uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.11.0"
+uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v1.12.0"
 which agentnave-mcp      # 一般是 ~/.local/bin/agentnave-mcp
 ```
 
@@ -302,10 +302,10 @@ Grok Bot 的 box 是一台 Linux 机器，同一用户的所有 bot 共用它，
 - `start_agent` 会返回 `Boss model unknown` 警告，原因见 §8.4。不想看到它，就同时传 `manager_model`；它不影响执行，也不要因为它重复调用。
 
 ### 6.5 安装 skill
-Grok Bot 的全局 skill 仓库在 `/home/box/agent-data/workflows/<name>/SKILL.md`，所有 bot 共用。从 v1.11.0 标签安装：
+Grok Bot 的全局 skill 仓库在 `/home/box/agent-data/workflows/<name>/SKILL.md`，所有 bot 共用。从 v1.12.0 标签安装：
 
 ```bash
-TAG=v1.11.0; DEST="$HOME/agent-data/workflows"; TMP=$(mktemp -d)
+TAG=v1.12.0; DEST="$HOME/agent-data/workflows"; TMP=$(mktemp -d)
 git clone -q --depth 1 --branch $TAG https://github.com/TimWongUp/agentnave.git "$TMP/an"
 MAIN=agentnave-manager            # 只开会档改成 agentnave-meeting
 for s in "$MAIN" agentnave-review; do
@@ -317,7 +317,7 @@ OTHER=agentnave-meeting; [ "$MAIN" = agentnave-meeting ] && OTHER=agentnave-mana
 rm -rf "$TMP"
 ```
 
-（已经有本地仓库的话，也可以用 `git -C <repo> archive v1.11.0 skills/ | tar -x -C "$TMP"` 导出，或者直接从 §4 的 uv 安装目录复制。）
+（已经有本地仓库的话，也可以用 `git -C <repo> archive v1.12.0 skills/ | tar -x -C "$TMP"` 导出，或者直接从 §4 的 uv 安装目录复制。）
 
 ### 6.6 编排
 只用默认的分工协作时，不需要另写宿主规则：按 §3.2 写好 `orchestration.json`（`preset` 设为 `split`，且不写 `apps` 和 `effective_apps`），再装上 `agentnave-manager`（§6.5），bot 在看不到规则块时会按 `agentnave-manager` 的 [`references/headless.md`](../skills/agentnave-manager/references/headless.md) 执行，从 `list_members.orchestration` 选工位传 `seat`。要用决策模型、只开会、并行分工、主动开会、`lead_only` 或开会默认席位时，在用户确认后按 `orchestration_rules.json` 的 `order` 拼出规则文字放进 bot 的指令入口（§3.2）。
