@@ -50,6 +50,7 @@ from agentnave.members import (
     ProviderName,
     SettingsFileError,
     data_root,
+    medium_role_groups,
     orchestration_decision,
     role_seat,
     visible_role_groups,
@@ -307,15 +308,17 @@ def _filter_role_schema(
     groups: frozenset[str],
     image_enabled: bool,
     custom_ids: list[str] | None = None,
+    medium: frozenset[str] = frozenset(),
 ) -> None:
     """Publish only visible ordinary seats wherever the wire contract references them.
 
     custom_ids is the user's own catalog while it is effective: its seats join the seat enum.
+    medium names the visible groups whose optional medium seat is bound.
     """
     if not isinstance(schema, dict):
         if isinstance(schema, list):
             for item in cast(list[Any], schema):
-                _filter_role_schema(item, groups, image_enabled, custom_ids)
+                _filter_role_schema(item, groups, image_enabled, custom_ids, medium)
         return
     schema = cast(dict[str, Any], schema)
     values: Any = schema.get("enum")
@@ -324,7 +327,11 @@ def _filter_role_schema(
             value
             for value in cast(list[Any], values)
             if not isinstance(value, str)
-            or ((definition := seat_role(value)) is None or definition.group in groups)
+            or (
+                (definition := seat_role(value)) is None
+                or definition.group in groups
+                and (not value.endswith("-medium") or definition.group in medium)
+            )
             and (value != "image-generator" or image_enabled)
         ]
         if custom_ids and any(
@@ -350,7 +357,7 @@ def _filter_role_schema(
         # Clients may have cached this schema before switches changed.
         schema["additionalProperties"] = True
     for value in schema.values():
-        _filter_role_schema(value, groups, image_enabled, custom_ids)
+        _filter_role_schema(value, groups, image_enabled, custom_ids, medium)
 
 
 def _describe_auto_seat(schema: dict[str, Any]) -> None:
@@ -415,6 +422,7 @@ class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
         image_enabled = role_seat("image-generator", HOST) is not None
         groups = visible_role_groups(HOST)
+        medium = medium_role_groups(HOST)
         # The mode decides what is published, not whether the file can be read: with a broken file the
         # tools stay and answer config_error, as list_members reports the file.
         decision = orchestration_decision(HOST)
@@ -429,7 +437,7 @@ class _Server(MCPServer[Runtime]):
             schema = json.loads(json.dumps(tool.input_schema))
             schema["additionalProperties"] = False
             output = json.loads(json.dumps(tool.output_schema))
-            _filter_role_schema(schema, groups, image_enabled, input_ids)
+            _filter_role_schema(schema, groups, image_enabled, input_ids, medium)
             if decision and tool.name == "start_agent":
                 _describe_auto_seat(schema)
             if tool.name == "wait" and not long_wait_enabled():
@@ -442,7 +450,7 @@ class _Server(MCPServer[Runtime]):
             ):
                 schema.get("properties", {}).pop("seat", None)
             if output:
-                _filter_role_schema(output, groups, image_enabled, custom_ids)
+                _filter_role_schema(output, groups, image_enabled, custom_ids, medium)
                 if custom_ids is None:
                     _drop_custom_seat_output(output)
             published.append(

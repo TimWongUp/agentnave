@@ -542,16 +542,32 @@ def orchestration_decision(host: Host) -> bool:
     return roles is not None and roles.decision(host)
 
 
-def visible_role_groups(host: Host) -> frozenset[OrchestrationGroup]:
+def _fixed_seats(host: Host) -> OrchestrationFile | None:
+    """The saved fixed groups while this host dispatches through them."""
     if orchestration_decision(host):
-        return frozenset()  # the user's own seats replace the fixed groups
+        return None  # the user's own seats replace the fixed groups
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     except MemberFileError:
-        return frozenset()
-    if roles is None or not roles.enabled(host):
+        return None
+    return roles if roles is not None and roles.enabled(host) else None
+
+
+def visible_role_groups(host: Host) -> frozenset[OrchestrationGroup]:
+    roles = _fixed_seats(host)
+    if roles is None:
         return frozenset()
     return frozenset(role.group for role in role_catalog() if roles.group_enabled(role.group))
+
+
+def medium_role_groups(host: Host) -> frozenset[OrchestrationGroup]:
+    """The visible groups with their optional medium seat bound; only these publish it."""
+    roles = _fixed_seats(host)
+    if roles is None:
+        return frozenset()
+    return frozenset(
+        role.group for role in role_catalog() if "medium" in roles.group_seats(role.group)
+    )
 
 
 def validate_task_seat(name: str, host: Host, *, inherited: bool = False) -> None:
@@ -583,6 +599,15 @@ def validate_task_seat(name: str, host: Host, *, inherited: bool = False) -> Non
         raise MemberFileError(
             f"{name} seat is not enabled in orchestration.json; {remedy}. "
             "Enable this seat in the App only if intended."
+        )
+    if (
+        roles is not None
+        and name.endswith("-medium")
+        and "medium" not in roles.group_seats(definition.group)
+    ):
+        raise MemberFileError(
+            f"{name} seat is not set in the App: this group has no medium seat. "
+            f"Pass seat='{definition.seat_prefix}-easy' with a detailed brief instead."
         )
 
 

@@ -124,7 +124,7 @@ async def _start_and_wait(client: Client, **arguments: object) -> dict[str, obje
 
 
 @pytest.mark.asyncio
-async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_resume(
+async def test_specialist_seats_dispatch_every_difficulty_and_reject_disabled_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
@@ -137,7 +137,7 @@ async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_r
         **{
             role.group: {
                 difficulty: {"provider": "claude", "model": f"{role.group}-{difficulty}"}
-                for difficulty in ("easy", "hard")
+                for difficulty in ("easy", "medium", "hard")
             }
             for role in catalog
         },
@@ -146,7 +146,7 @@ async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_r
     path.write_text(json.dumps(document))
     async with Client(mcp) as client:
         for role in catalog:
-            for difficulty in ("easy", "hard"):
+            for difficulty in ("easy", "medium", "hard"):
                 result = await _start_and_wait(
                     client, cwd=str(tmp_path), seat=f"{role.seat_prefix}-{difficulty}"
                 )
@@ -199,10 +199,13 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
     path = tmp_path / "orchestration.json"
     catalog = role_catalog()
+    saved = {"provider": "claude", "model": "saved"}
     document = {
         "version": 1,
         "preset": "split",
-        **{role.group: {"easy": {"provider": "claude", "model": "saved"}} for role in catalog},
+        **{role.group: {"easy": saved} for role in catalog},
+        # Only a bound medium seat is published.
+        "worker_writing": {"easy": saved, "medium": saved},
     }
     async with Client(mcp) as client:
         for enabled in (
@@ -224,7 +227,7 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
                 for role in catalog
                 if role.group in expected
                 for difficulty in ("easy", "hard")
-            }
+            } | ({"worker-writing-medium"} if "worker_writing" in expected else set[str]())
             if seats:
                 assert set(start.input_schema["$defs"]["OrchestrationRole"]["enum"]) == seats
             else:
@@ -243,6 +246,14 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
                     assert (f'"{role.seat_prefix}-{difficulty}"' in schemas) is (
                         role.group in expected
                     )
+                assert (f'"{role.seat_prefix}-medium"' in schemas) is (
+                    role.group in expected and role.group == "worker_writing"
+                )
+            if "explorer" in expected:
+                unbound = await client.call_tool(
+                    "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "explorer-medium"}
+                )
+                assert unbound.is_error and "seat='explorer-easy'" in str(unbound.content)
             assert '"image-generator"' not in schemas
             assert '"image_generation"' not in schemas
 

@@ -55,7 +55,7 @@
 | 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | — |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
 | 0051 | [并行档不再逐次复核，评审时机交给用户](0051-parallel-preset-without-recheck.md) | 已接受 | [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) |
-| 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 部分取代 | [ADR-0065](0065-predefined-specialist-roles.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
+| 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 部分取代 | [ADR-0065](0065-predefined-specialist-roles.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md)、[ADR-0087](0087-decision-model-recommends-seats.md)；2026-11-15 自身修订：各分组可加可选的中等档 `<前缀>-medium`，只公布绑定了的 |
 | 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 部分取代 | [ADR-0054](0054-members-need-confirmation.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) |
 | 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
