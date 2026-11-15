@@ -2930,6 +2930,62 @@ async def test_resume_refuses_an_auto_released_path_replaced_by_a_link(
         assert not (elsewhere / "ran-here").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+@pytest.mark.asyncio
+async def test_resume_refuses_a_kept_subdirectory_replaced_by_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    repo = _light_repo(tmp_path / "repo")
+    (repo / "sub").mkdir()
+    (repo / "sub" / "f").write_text("x\n", encoding="utf-8")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "add", "sub"], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "sub"], cwd=repo, check=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, pathlib, sys\n"
+        "if 'TURN_TWO' in sys.stdin.read():\n"
+        "    pathlib.Path('ran-here').write_text('x', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': 'ok', 'session_id': 'sess-sub', "
+        "'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    boss = {"provider": "claude", "manager_session_id": "boss-sub"}
+    async with Client(mcp) as client:
+        first = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        **boss,
+                        "prompt": "look",
+                        "cwd": str(repo / "sub"),
+                        "access": "write",
+                        "isolation": {},
+                        "wait": True,
+                    },
+                )
+            ).structured_content
+        )
+        moved = Path(str(_payload(first["isolation"])["path"])) / "sub"
+        assert moved.is_dir()  # a write task's directory is kept
+        # The thread's own subdirectory now leads outside the isolated directory.
+        (moved / "f").unlink()
+        moved.rmdir()
+        moved.symlink_to(elsewhere, target_is_directory=True)
+        resumed = await client.call_tool(
+            "start_agent", {**boss, "prompt": "TURN_TWO", "session_id": "sess-sub", "wait": True}
+        )
+        assert resumed.is_error and "replaced by a link" in str(resumed.content)
+        assert not (elsewhere / "ran-here").exists()
+
+
 def _own_seat(seat_id: str, provider: str, access: str, **extra: object) -> dict[str, object]:
     return {
         "id": seat_id,

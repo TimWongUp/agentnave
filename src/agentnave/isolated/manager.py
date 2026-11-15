@@ -61,6 +61,7 @@ from agentnave.isolated.store import (
     WorktreeStore,
     local_machine_id,
 )
+from agentnave.isolated.worktree_state import worktree_link_valid
 from agentnave.members import data_root
 from agentnave.store import now
 
@@ -324,6 +325,12 @@ class IsolatedDirs:
         wt_path = Path(latest.worktree_path)
         if is_link(wt_path) or not wt_path.is_dir():
             raise IsolationError(f"Isolated directory is missing or unsafe: {wt_path}")
+        if not worktree_link_valid(wt_path, latest.worktree_git_dir, common_dir):
+            # Git run in a directory whose .git is gone or replaced acts on another repository.
+            raise IsolationError(
+                f"{wt_path} is no longer the worktree of isolated directory {record.id}: "
+                "its .git link is missing or points elsewhere"
+            )
         if not is_same_or_subpath(resolved_cwd, wt_path):
             raise IsolationError("cwd resolves outside the isolated worktree")
         try:

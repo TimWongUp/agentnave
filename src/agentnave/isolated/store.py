@@ -336,10 +336,14 @@ class WorktreeStore:
         )
 
     def revert_to_creating(self, isolation_id: str, *, updated_at: str) -> bool:
-        """Hand a ready record back to recovery as an unfinished creation."""
+        """Hand a ready record back to recovery as an unfinished creation.
+
+        Only while nobody has claimed it since mark_ready set generation 1: every claim bumps it.
+        """
         return self._update(
             "UPDATE isolated_dirs SET state = 'creating', phase = 'abort_pending', "
-            "confirmation_digest = NULL, updated_at = ? WHERE id = ? AND state = 'ready'",
+            "confirmation_digest = NULL, updated_at = ? "
+            "WHERE id = ? AND state = 'ready' AND usage_generation = 1",
             (updated_at, isolation_id),
         )
 

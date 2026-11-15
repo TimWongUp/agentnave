@@ -946,6 +946,16 @@ def test_abort_without_the_repository_lock_hands_the_record_to_recovery(
         assert shared.worktree_path.is_dir()
     finally:
         other.lease.release()
+
+    # A claim that already gave its lease back still counts: the registry saw the use.
+    claimed_once = dirs.create(repo, workspace_id="ws-1")
+    brief = dirs.claim_for_cwd(claimed_once.execution_cwd)
+    assert brief is not None
+    brief.lease.release()
+    with repo_lock(claimed_once.repo_common_dir):
+        dirs.abort_created(claimed_once)
+    record = dirs.store.get(claimed_once.id)
+    assert record is not None and record.state == "ready"
     dirs.close()
 
 
@@ -1216,6 +1226,23 @@ def test_bare_repository_in_an_ignored_directory_forces_confirmation(tmp_path: P
     (created.worktree_path / "ignored_dir").mkdir()
     _git(created.worktree_path / "ignored_dir", "init", "--bare", "bare.git")
     assert dirs.summarize_changes(created.id).nested_repos == ("ignored_dir/bare.git",)
+    dirs.close()
+
+
+def test_bare_repository_whose_own_directory_git_does_not_list_is_kept(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    # Ignore every file but no directory: Git lists only leaf directories of the bare repo.
+    (repo / ".gitignore").write_text("build/**\n!build/**/\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "ignore build files")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    (created.worktree_path / "build").mkdir()
+    _git(created.worktree_path / "build", "clone", "-q", "--bare", str(repo), "nested.git")
+    summary, _ = dirs.settle_task(
+        created.id, workspace_id="ws-1", lease=created.lease, auto_release=True
+    )
+    assert summary.nested_repos == ("build/nested.git",)
+    assert summary.auto_released is False and created.worktree_path.is_dir()
     dirs.close()
 
 
@@ -1680,4 +1707,41 @@ def test_abort_created_keeps_a_directory_another_resume_already_claimed(tmp_path
         assert created.worktree_path.is_dir()
     finally:
         other.lease.release()
+    dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_rebuild_refuses_a_released_path_taken_by_a_dangling_link(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    summary, _ = dirs.settle_task(
+        created.id, workspace_id="ws-1", lease=created.lease, auto_release=True
+    )
+    assert summary.auto_released is True
+    target = tmp_path / "outside" / "wt"
+    created.worktree_path.symlink_to(target, target_is_directory=True)
+    with pytest.raises(IsolationError, match="occupied by a link"):
+        dirs.rebuild_auto_released(
+            isolation_id=created.id,
+            worktree_path=created.worktree_path,
+            cwd=created.execution_cwd,
+            base_oid=created.base_oid,
+            main_root=created.main_root,
+            source_root=created.source_root,
+            workspace_id="ws-1",
+        )
+    assert not target.parent.exists()
+    assert dirs.store.get(created.id) is None
+    dirs.close()
+
+
+def test_claim_refuses_a_registered_directory_that_lost_its_git_link(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / ".git").unlink()
+    with pytest.raises(IsolationError, match="no longer the worktree"):
+        dirs.claim_for_cwd(created.execution_cwd)
     dirs.close()

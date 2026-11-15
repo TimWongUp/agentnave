@@ -77,6 +77,7 @@ from agentnave.native_prompts import NativePrompt
 from agentnave.orchestration_roles import AUTO_SEAT, ReviewSeat
 from agentnave.seat_fallbacks import SeatFallback
 from agentnave.seat_recommendation import Recommendation
+from agentnave.task_isolation import check_resumed_cwd_not_redirected
 from agentnave.task_start import (
     NativeSeat,
     StartArguments,
@@ -352,6 +353,8 @@ async def _acquire_and_start_task(
     manager_session_id = launch.manager_session_id
     resumed_acquired = None
     hold = None
+    # Before InvocationRequest resolves cwd, which hides a link swapped in below the directory.
+    check_resumed_cwd_not_redirected(Path(cwd), arguments.resumed_task)
     if not Path(cwd).is_dir() and arguments.resumed_task is not None:
         validate_invocation_inputs(
             provider, launch.prompt, Path(cwd), launch.session_id, require_cwd_dir=False

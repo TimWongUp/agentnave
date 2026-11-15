@@ -115,12 +115,21 @@ def _ignored_nested_repositories(wt_path: Path) -> tuple[set[Path], set[str]]:
         cwd=wt_path,
     ).stdout
     unreadable = _unreadable(wt_path, found)
+    checked_parents: set[Path] = set()
 
     for item in listing.split(b"\x00"):
         if not item.endswith(b"/"):
             continue
         root = wt_path / decode_git_path(item).rstrip("/")
         ignored.add(root)
+        # Rules such as `build/**` with `!build/**/` list only leaf directories, so a
+        # repository can sit in a parent that no walk below starts from.
+        for parent in root.parents:
+            if parent == wt_path or parent in checked_parents:
+                break
+            checked_parents.add(parent)
+            if _repository_dir(parent):
+                found.add(parent.relative_to(wt_path).as_posix())
         for top, dirs, names in os.walk(root, onerror=unreadable):
             if ".git" in names or ".git" in dirs or _bare_repository(names, dirs):
                 found.add(Path(top).relative_to(wt_path).as_posix())
@@ -133,6 +142,13 @@ def _ignored_nested_repositories(wt_path: Path) -> tuple[set[Path], set[str]]:
 def _bare_repository(names: list[str], dirs: list[str]) -> bool:
     """A bare repository has no .git entry, only its own HEAD, objects and refs."""
     return "HEAD" in names and "objects" in dirs and "refs" in dirs
+
+
+def _repository_dir(path: Path) -> bool:
+    """The walk's test for one directory: it holds .git, or is a bare repository."""
+    return os.path.lexists(path / ".git") or (
+        (path / "HEAD").is_file() and (path / "objects").is_dir() and (path / "refs").is_dir()
+    )
 
 
 def tree_fingerprint(root: Path) -> bytes:

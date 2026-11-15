@@ -219,7 +219,14 @@ def plan_rebuild(
                 "A repository path contains control characters (such as a newline); "
                 "the isolated directory cannot be rebuilt"
             )
-    wt_path = (ctx.main_root / WORKTREES_DIR_NAME / isolation_id).resolve()
+    # discover_repo already refused a linked container. Check the entry before resolving: a
+    # dangling link would resolve to its target outside the repository.
+    unresolved = ctx.main_root / WORKTREES_DIR_NAME / isolation_id
+    if is_link(unresolved):
+        raise IsolationError(
+            f"Cannot rebuild isolated directory {isolation_id}: {unresolved} is occupied by a link"
+        )
+    wt_path = unresolved.resolve()
     if os.path.normcase(str(wt_path)) != os.path.normcase(str(worktree_path.resolve())):
         raise IsolationError(
             f"Recorded worktree path {worktree_path} no longer matches repository layout {wt_path}"
@@ -254,10 +261,13 @@ def plan_rebuild(
 
     include_source = ctx.main_root
     if source_root is not None and not control_char_in(str(source_root)):
+        source_is_link = is_link(source_root)
         resolved_source = source_root.resolve()
-        if not is_link(resolved_source) and resolved_source.is_dir():
+        if not source_is_link and resolved_source.is_dir():
             include_source = resolved_source
-        elif os.path.normcase(str(resolved_source)) != os.path.normcase(str(ctx.main_root)):
+        elif source_is_link or os.path.normcase(str(resolved_source)) != os.path.normcase(
+            str(ctx.main_root)
+        ):
             warnings.append(
                 f"Original .worktreeinclude source ({source_root}) is no longer present; "
                 "copied ignored files from main worktree instead."

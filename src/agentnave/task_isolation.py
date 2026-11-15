@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -208,6 +209,30 @@ def resumed_isolation_id(cwd: Path, resumed_task: TaskRecord | None) -> str | No
     if not is_same_or_subpath(cwd, Path(resumed_task.isolation_path)):
         return None
     return resumed_task.isolation_id
+
+
+def check_resumed_cwd_not_redirected(cwd: Path, resumed_task: TaskRecord | None) -> None:
+    """Refuse a resumed cwd that lies inside its isolated directory by name but resolves outside.
+
+    A subdirectory replaced by a link would otherwise send the task into the link target, which
+    no isolation check sees once the request has resolved cwd.
+    """
+    if (
+        resumed_task is None
+        or resumed_task.isolation_id is None
+        or resumed_task.isolation_path is None
+        or not cwd.is_absolute()
+    ):
+        return
+    root = Path(resumed_task.isolation_path)
+    literal = Path(os.path.normcase(os.path.abspath(cwd)))
+    if not literal.is_relative_to(Path(os.path.normcase(os.path.abspath(root)))):
+        return
+    if not is_same_or_subpath(cwd, root):
+        raise ValueError(
+            f"{cwd} now leads outside isolated directory {resumed_task.isolation_id}; the path "
+            "was replaced by a link. Start a new task with isolation instead."
+        )
 
 
 def needs_resumed_rebuild(cwd: Path, resumed_task: TaskRecord | None) -> bool:
