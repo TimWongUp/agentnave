@@ -300,8 +300,7 @@ def apply_task_defaults(
         permissions=read_permissions(),
         seat=frozenset(seat_applied),
         scenario=not orchestration_enabled(host),
-        seat_selected=selected is not None
-        and any(choice.provider == provider for choice in [selected, *selected.fallbacks]),
+        seat_selected=selected is not None and selected.provider == provider,
     )
     if seat_applied:
         applied = [f"{(seat_name or '').strip()} seat", *seat_applied, *applied]

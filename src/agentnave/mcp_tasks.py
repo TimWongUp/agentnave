@@ -462,11 +462,8 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     role, chosen_seat, access = arguments.role, arguments.seat, arguments.access
     seat_name = chosen_seat or review_role(role)
     try:
-        options, seat_applied = apply_seat(
-            effective_seat(arguments, seat_name, runtime.HOST),
-            provider,
-            provider_options or {},
-        )
+        seat = effective_seat(arguments, seat_name, runtime.HOST)
+        options, seat_applied = apply_seat(seat, provider, provider_options or {})
         options = arguments.apply_history(options)
         options, defaults_applied = apply_task_defaults(
             provider,
@@ -475,7 +472,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
             seat_applied,
             runtime.task_excluded_providers(),
             runtime.HOST,
-            arguments.selected,
+            seat,
         )
         provider_health.check(
             _conversations(ctx).root, [(provider, provider_health.model_option(options))]
