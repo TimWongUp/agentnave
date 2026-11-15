@@ -4585,3 +4585,266 @@ async def test_host_cli_modes_and_group_fallback(
         started = await _start_and_wait(client, **args)
         assert started["provider"] == "claude"
         assert "host's own CLI" in str(started["seat_fallback"])
+
+
+@pytest.mark.asyncio
+async def test_decision_random_candidates_dispatch_resume_and_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    from agentnave import provider_health, seat_fallbacks
+
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    def installed_without_grok(adapter: AdapterHooks) -> bool:
+        return adapter.name != "grok"
+
+    monkeypatch.setattr(AdapterHooks, "is_installed", installed_without_grok)
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    _write_decision_key()
+    draws = iter([1, 0, 1])
+
+    def pick_from_draws(_count: int) -> int:
+        return next(draws)
+
+    def pick_two(_count: int) -> int:
+        return 2
+
+    def forbid_random(_count: int) -> int:
+        raise AssertionError("must not randomize")
+
+    monkeypatch.setattr(seat_fallbacks, "choose_index", pick_from_draws)
+
+    task_seat = _own_seat(
+        "write-mix",
+        "claude",
+        "write",
+        effort="high",
+        fallbacks=[
+            {"provider": "grok", "model": "uninstalled-g"},
+            {"provider": "claude", "model": "claude-alt", "effort": "low"},
+            {"provider": "codex", "model": "codex-native", "effort": "medium"},
+        ],
+    )
+    image_seat = _own_seat(
+        "draw-style",
+        "claude",
+        "write",
+        kind="image",
+        role="水彩",
+        description="水彩插画",
+        fallbacks=[{"provider": "claude", "model": "draw-backup"}],
+    )
+    del image_seat["difficulty"]
+    (root / "review.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "seats": {
+                    "correctness-reviewer": {
+                        "provider": "claude",
+                        "model": "rev-first",
+                        "fallbacks": [{"provider": "claude", "model": "rev-second"}],
+                    }
+                },
+            }
+        )
+    )
+    _write_own_seats([task_seat, image_seat])
+    decision.result = Decision("write-mix", {"write-mix": 0.9}, confidence=0.9)
+
+    async with Client(mcp) as client:
+        # Switch off (omitted): always picks the first usable choice in order, no seat_fallback.
+        ordered = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="auto", access="write", prompt="do work"
+        )
+        assert ordered["model"] == "model-write-mix" and "seat_fallback" not in ordered
+
+        # Switch on: draws only among usable choices (grok is uninstalled and skipped).
+        # Available indices are [0: model-write-mix, 2: claude-alt, 3: codex-native].
+        _write_own_seats([task_seat, image_seat], random_candidates=True)
+        picked_alt = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="auto", access="write", prompt="do work"
+        )
+        assert picked_alt["provider"] == "claude"
+        assert (picked_alt["model"], picked_alt["effort"]) == ("claude-alt", "low")
+        fb_alt = _payload(picked_alt["seat_fallback"])
+        assert fb_alt["position"] == 2 and fb_alt["random"] is True
+        assert [item["provider"] for item in cast(list[dict[str, object]], fb_alt["skipped"])] == [
+            "grok"
+        ]
+        assert "native" not in _payload(picked_alt["recommendation"])
+
+        # session_id resume keeps the same-CLI fallback model & effort without re-drawing,
+        # whether seat is inherited or explicitly passed with the same seat id.
+        resumed = await _start_and_wait(client, session_id="session-e2e", prompt="continue")
+        assert (resumed["provider"], resumed["model"], resumed["effort"]) == (
+            "claude",
+            "claude-alt",
+            "low",
+        )
+        assert "seat_fallback" not in resumed
+        assert "write-mix seat" in cast(list[str], resumed["defaults_applied"])
+        resumed_same = await _start_and_wait(
+            client, session_id="session-e2e", seat="write-mix", prompt="continue explicit"
+        )
+        assert (resumed_same["provider"], resumed_same["model"], resumed_same["effort"]) == (
+            "claude",
+            "claude-alt",
+            "low",
+        )
+        assert "seat (session_id history)" not in cast(list[str], resumed_same["defaults_applied"])
+        assert "write-mix seat" in cast(list[str], resumed_same["defaults_applied"])
+
+        # Switching to a different seat on resume applies the new seat's configured choice;
+        # removing the historical candidate falls back to configured instead of dropping the seat.
+        other_seat = _own_seat(
+            "write-other",
+            "claude",
+            "write",
+            effort="medium",
+            fallbacks=[{"provider": "claude", "model": "claude-alt", "effort": "low"}],
+        )
+        _write_own_seats([task_seat, other_seat, image_seat], random_candidates=True)
+        switched = await _start_and_wait(
+            client, session_id="session-e2e", seat="write-other", prompt="switch seat"
+        )
+        assert (switched["model"], switched["effort"]) == ("model-write-other", "medium")
+        trimmed_seat = _own_seat("write-other", "claude", "write", effort="high")
+        _write_own_seats([task_seat, trimmed_seat, image_seat], random_candidates=True)
+        dropped_hist = await _start_and_wait(client, session_id="session-e2e", prompt="continue")
+        assert (dropped_hist["model"], dropped_hist["effort"]) == ("model-write-other", "high")
+        assert "write-other seat" in cast(list[str], dropped_hist["defaults_applied"])
+        _write_own_seats([task_seat, image_seat], random_candidates=True)
+
+        # Drawing position 0 still reports random=True so boss distinguishes it from ordered pick;
+        # start_agents reconciles native vs started per task when a native candidate is drawn.
+        decision.answers = [Decision("write-mix", {"write-mix": 0.9}, confidence=0.9)]
+        monkeypatch.setattr(seat_fallbacks, "choose_index", pick_from_draws)
+        batch = _payload(
+            (
+                await client.call_tool(
+                    "start_agents",
+                    {
+                        "cwd": str(tmp_path),
+                        "manager_session_id": "boss-1",
+                        "tasks": [
+                            {"access": "read", "prompt": "a"},
+                            {"access": "write", "prompt": "b"},
+                        ],
+                    },
+                )
+            ).structured_content
+        )
+        # First task requested read, so write-mix wasn't a candidate; run two write tasks instead.
+        assert _payload(cast(list[object], batch["results"])[0])["status"] == "not_started"
+        # First write task above consumed draw=0 (position 0, model-write-mix).
+        b_res = _payload(cast(list[object], batch["results"])[1])
+        assert b_res["model"] == "model-write-mix"
+        assert _payload(b_res["seat_fallback"]) == {
+            "position": 0,
+            "random": True,
+            "skipped": [
+                {
+                    "provider": "grok",
+                    "model": "uninstalled-g",
+                    "reason": "CLI is not installed",
+                }
+            ],
+        }
+        await client.call_tool(
+            "wait", {"ids": [b_res["invocation_id"]], "manager_session_id": "boss-1"}
+        )
+
+        # Drawing the native candidate (usable index 2 -> position 3: codex-native) updates
+        # recommendation.native/model/effort to match the not_started native receipt.
+        monkeypatch.setattr(seat_fallbacks, "choose_index", pick_two)
+        native_draw = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "cwd": str(tmp_path),
+                        "seat": "auto",
+                        "access": "write",
+                        "prompt": "native draw",
+                        "manager_session_id": "boss-1",
+                    },
+                )
+            ).structured_content
+        )
+        assert native_draw["status"] == "not_started" and native_draw["reason"] == "native_seat"
+        assert (native_draw["provider"], native_draw["model"], native_draw["effort"]) == (
+            "codex",
+            "codex-native",
+            "medium",
+        )
+        assert _payload(native_draw["seat_fallback"])["random"] is True
+        rec = _payload(native_draw["recommendation"])
+        assert rec["native"] is True and rec["model"] == "codex-native"
+        assert rec["effort"] == "medium"
+
+        # Review seats and image seats stay ordered even while random_candidates is true.
+        monkeypatch.setattr(seat_fallbacks, "choose_index", forbid_random)
+        reviewed = await _start_and_wait(client, cwd=str(tmp_path), role="correctness-reviewer")
+        assert reviewed["model"] == "rev-first" and "seat_fallback" not in reviewed
+        drawn = await _start_and_wait(client, cwd=str(tmp_path), seat="draw-style")
+        assert drawn["model"] == "model-draw-style" and "seat_fallback" not in drawn
+        (root / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {
+                        "easy": {
+                            "provider": "claude",
+                            "model": "fixed-first",
+                            "fallbacks": [{"provider": "claude", "model": "fixed-second"}],
+                        }
+                    },
+                }
+            )
+        )
+        fixed = await _start_and_wait(client, cwd=str(tmp_path), seat="worker-easy")
+        assert fixed["model"] == "fixed-first" and "seat_fallback" not in fixed
+        # Fixed orchestration seats still prioritize the seat's current model on resume (ADR-0038).
+        (root / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {
+                        "easy": {
+                            "provider": "claude",
+                            "model": "fixed-updated",
+                            "fallbacks": [{"provider": "claude", "model": "fixed-first"}],
+                        }
+                    },
+                }
+            )
+        )
+        fixed_resumed = await _start_and_wait(client, session_id="session-e2e", prompt="next")
+        assert fixed_resumed["model"] == "fixed-updated"
+        assert "worker-easy seat" in cast(list[str], fixed_resumed["defaults_applied"])
+        (root / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {"easy": {"provider": "claude", "model": "fixed-current"}},
+                }
+            )
+        )
+        fixed_no_fb = await _start_and_wait(client, session_id="session-e2e", prompt="again")
+        assert fixed_no_fb["model"] == "fixed-current"
+        assert "worker-easy seat" in cast(list[str], fixed_no_fb["defaults_applied"])
+
+        # All candidates unavailable: fails identically to ordered mode.
+        (root / "orchestration.json").write_text(
+            json.dumps({"version": 1, "preset": "decision", "host_cli": {"codex": "skip"}})
+        )
+        provider_health.record(root, "claude", "auth")
+        exhausted = await client.call_tool(
+            "start_agent", {"cwd": str(tmp_path), "seat": "write-mix", "prompt": "fail"}
+        )
+        assert exhausted.is_error and "auth" in str(exhausted.content)

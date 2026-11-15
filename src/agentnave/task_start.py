@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
 
 from agentnave import provider_health
-from agentnave.decision_seats import custom_seat
+from agentnave.decision_seats import custom_seat, random_candidates_enabled
 from agentnave.host import Host
 from agentnave.host_choice import host_cli_mode
 from agentnave.isolated import other_active_leases, shares_cwd_tree
@@ -91,6 +91,14 @@ def is_image_seat(name: str | None, custom: CustomSeat | None) -> bool:
     return (name or "").strip() == "image-generator" or (
         custom is not None and custom.kind == IMAGE_KIND
     )
+
+
+def uses_random_candidates(seat_name: str | None, host: Host) -> bool:
+    """Whether ADR-0093 equal-weight candidate selection applies to this seat."""
+    if not random_candidates_enabled(host):
+        return False
+    custom = custom_seat((seat_name or "").strip(), host)
+    return custom is not None and not is_image_seat(seat_name, custom)
 
 
 def role_access(role: str | None) -> Literal["read", "write"] | None:
@@ -244,6 +252,33 @@ def resolve_start(
     if arguments.access == "read":
         arguments.defaults.append(READ_ONLY_APPLIED)
     return arguments
+
+
+def effective_seat(
+    arguments: StartArguments, seat_name: str | None, host: Host
+) -> ReviewSeat | None:
+    """Seat settings to apply: keep the drawn candidate when resuming the same randomized seat."""
+    if arguments.selected is not None:
+        return arguments.selected
+    configured = role_seat(seat_name, host)
+    resumed_seat = arguments.resumed_task.seat if arguments.resumed_task is not None else None
+    if (
+        configured is not None
+        and bool(seat_name)
+        and resumed_seat is not None
+        and seat_name.strip() == resumed_seat.strip()
+        and "model" in arguments.history
+        and uses_random_candidates(seat_name, host)
+    ):
+        return next(
+            (
+                ReviewSeat(provider=c.provider, model=c.model, effort=c.effort)
+                for c in [configured, *configured.fallbacks]
+                if c.provider == arguments.provider and c.model == arguments.history["model"]
+            ),
+            configured,
+        )
+    return configured
 
 
 def apply_task_defaults(

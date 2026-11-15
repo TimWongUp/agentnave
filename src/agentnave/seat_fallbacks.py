@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import random
 from collections.abc import Callable
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from agentnave import provider_health
 from agentnave.host import Host
@@ -25,6 +26,12 @@ class SkippedChoice(TypedDict):
 class SeatFallback(TypedDict):
     position: int
     skipped: list[SkippedChoice]
+    random: NotRequired[Literal[True]]
+
+
+def choose_index(count: int) -> int:
+    """Uniform random index in range(count); separated so tests can fix draws."""
+    return random.randrange(count)
 
 
 def statuses[Role: str](
@@ -82,6 +89,8 @@ def select(
     provider: ProviderName | None = None,
     *,
     image: bool = False,
+    randomize: bool = False,
+    randrange: Callable[[int], int] | None = None,
 ) -> tuple[ReviewSeat, SeatFallback | None]:
     """Pick a usable configured choice; leave failures to the existing dispatch path."""
     if provider is not None:
@@ -92,6 +101,7 @@ def select(
         data_root,
         orchestration_enabled,
         read_members,
+        single_review_status,
     )
 
     document = read_members()
@@ -107,9 +117,8 @@ def select(
         ReviewSeat(provider=c.provider, model=c.model, effort=c.effort)
         for c in [seat, *seat.fallbacks]
     ]
-    from agentnave.members import single_review_status
-
     skipped: list[SkippedChoice] = []
+    usable: list[tuple[int, ReviewSeat]] = []
     for index, choice in enumerate(choices):
         status = single_review_status(
             {"seat": choice}, mode, excluded, host, installed, document, health
@@ -117,9 +126,18 @@ def select(
         if image and choice.provider == host.provider:
             status.reason = IMAGE_HOST_CLI_REASON
         if status.reason is None:
-            receipt = SeatFallback(position=index, skipped=skipped) if index else None
-            return choice, receipt
-        skipped.append(
-            {"provider": choice.provider, "model": choice.model, "reason": status.reason}
-        )
-    return seat, None
+            if not randomize:
+                receipt = SeatFallback(position=index, skipped=skipped) if index else None
+                return choice, receipt
+            usable.append((index, choice))
+        else:
+            skipped.append(
+                {"provider": choice.provider, "model": choice.model, "reason": status.reason}
+            )
+    if not usable:
+        return seat, None
+    if len(usable) == 1:
+        index, choice = usable[0]
+        return choice, SeatFallback(position=index, skipped=skipped) if index else None
+    index, choice = usable[(randrange or choose_index)(len(usable))]
+    return choice, SeatFallback(position=index, skipped=skipped, random=True)
