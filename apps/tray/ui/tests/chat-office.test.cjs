@@ -526,23 +526,28 @@ test("walking, flights and folds are drawn in place while the window is hidden o
   assert.equal(context.canAnimate(), false, "a window the App hid is as good as a hidden page");
 });
 
-test("motion under way stands still with the pause and goes on after it; a teleport due during the pause just appears", () => {
+test("a flight under way stands still with the pause and goes on after it; a fold and a teleport due during the pause do not wait", () => {
   const classes = new Set(), listeners = {}, timers = [], warps = [], calls = [];
   const context = vm.createContext({
     AN: { isHidden: () => false }, ResizeObserver: class { observe() {} }, reduceMotion: { matches: false }, el: { floor: {} },
     window: { addEventListener: (name, fn) => { listeners[name] = fn; } },
     document: { documentElement: { classList: { contains: name => classes.has(name) } } },
-    Element: class { animate() {} }, getComputedStyle: () => ({}), setTimeout: fn => timers.push(fn),
+    Element: class { animate() {} }, getComputedStyle: () => ({}), setTimeout: fn => timers.push(fn), h: () => token,
     ART: { warp: (_fig, kind) => warps.push(kind) }, FOLD_MS: 1, WALK_MS: 1, HOLD_MS: 1,
   });
+  const box = { left: 0, top: 0, width: 10, height: 10 };
+  const spot = { isConnected: true, getBoundingClientRect: () => box };
+  const run = name => ({ finished: new Promise(() => {}), pause: () => calls.push(`${name} pause`), play: () => calls.push(`${name} play`) });
+  const token = { style: {}, animate: () => run("flight"), remove() {} };
+  context.el.fx = { getBoundingClientRect: () => box, append() {} };
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
-  const run = { finished: new Promise(() => {}), pause: () => calls.push("pause"), play: () => calls.push("play") };
-  context.foldRoom({ offsetHeight: 40, animate: () => run });
+  context.fly("dispatch", spot, spot, 0);
+  context.foldRoom({ offsetHeight: 40, animate: () => run("fold") });
   classes.add("blurred");
   listeners["agentnave:pause"]();
   classes.clear();
   listeners["agentnave:pause"]();
-  assert.deepEqual(calls, ["pause", "play"]);
+  assert.deepEqual(calls, ["flight pause", "flight play"], "the fold runs on: the room leaves on a wall-clock timer");
 
   const end = { dataset: { char: "x" }, style: {}, isConnected: true };
   context.teleport(Object.assign(new context.Element(), { dataset: {} }), end, "x");

@@ -592,7 +592,7 @@ const canAnimate = () =>
   !AN.isHidden() &&
   !blurred() &&
   typeof Element.prototype.animate === "function";
-// A walk, flight or fold already under way stands still with the window's pause and goes on from there.
+// A walk or flight already under way stands still with the window's pause and goes on from there.
 const moving = new Set();
 function moves(run) {
   moving.add(run);
@@ -692,7 +692,7 @@ function renderOffice(c, ctx, n, newGroup) {
 // the desks below slide up into its place and nothing jumps when it leaves the page.
 function foldRoom(node) {
   const style = getComputedStyle(node);
-  return moves(node.animate(
+  return node.animate(
     [
       {
         height: `${node.offsetHeight}px`,
@@ -714,7 +714,7 @@ function foldRoom(node) {
       },
     ],
     { duration: FOLD_MS, delay: WALK_MS + HOLD_MS, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
-  ));
+  );
 }
 
 // Desks past the running limit are not drawn: a text list, opened on demand, links to each one.
