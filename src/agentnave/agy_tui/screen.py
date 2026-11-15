@@ -44,10 +44,17 @@ class AgyScreen(Screen):
         super().escape(code)
 
 
-def bottom(screen: str) -> list[str]:
+def footer_tasks(screen: str) -> int:
+    """Background tasks the footer counts as running."""
     lines = [line.strip() for line in ANSI.sub("", screen).splitlines() if line.strip()]
     tasks = _TASKS.search(lines[-1]) if lines else None
-    return lines[-(BOTTOM + (int(tasks.group(1)) + 1 if tasks else 0)) :]
+    return int(tasks.group(1)) if tasks else 0
+
+
+def bottom(screen: str) -> list[str]:
+    lines = [line.strip() for line in ANSI.sub("", screen).splitlines() if line.strip()]
+    tasks = footer_tasks(screen)
+    return lines[-(BOTTOM + (tasks + 1 if tasks else 0)) :]
 
 
 def state(screen: str) -> str:

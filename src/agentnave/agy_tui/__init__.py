@@ -19,7 +19,14 @@ from pathlib import Path
 from typing import cast
 
 from agentnave.agy_tui.hooks import ENV, ensure_entry, read_events
-from agentnave.agy_tui.screen import AgyScreen, busy_activity, input_box, state, trust_menu
+from agentnave.agy_tui.screen import (
+    AgyScreen,
+    busy_activity,
+    footer_tasks,
+    input_box,
+    state,
+    trust_menu,
+)
 from agentnave.claude_tui.screen import ANSI, clean_paste, workspace_matches
 from agentnave.claude_tui.terminal import Terminal
 
@@ -39,8 +46,6 @@ BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
 TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
 _EXPERIMENTS_READY = b"Experiments refreshed after login"
 _CREATED_CONVERSATION = re.compile(rb"Created conversation ([0-9a-fA-F-]{36})\b")
-# The idle footer counts running background tasks even when the transcript never named them.
-_FOOTER_TASKS = re.compile(r"\b[1-9]\d* task\(s\)")
 _UNMOUNTED_HOOKS_WARNING = (
     "Antigravity CLI did not load hooks for this turn; completed from its written reply"
 )
@@ -464,7 +469,8 @@ class Run:
         elif shown == "idle" and not self.turn.stop_seen and self.turn.answered:
             if steady < STOP_GRACE:
                 return False
-            if self.turn.can_complete_without_stop() and not _FOOTER_TASKS.search(screen):
+            # The footer counts background tasks the transcript may never have named.
+            if self.turn.can_complete_without_stop() and not footer_tasks(screen):
                 if _UNMOUNTED_HOOKS_WARNING not in self.turn.warnings:
                     self.turn.warnings.append(_UNMOUNTED_HOOKS_WARNING)
                 self.turn.stopped = True
