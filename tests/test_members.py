@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast, get_args
 
 import pytest
 from pydantic import ValidationError
 
+from agentnave.adapters import get_adapter
 from agentnave.adapters.base import AdapterHooks
 from agentnave.decision_seats import DecisionSeatsFileError, custom_seats, decision_seats_for
 from agentnave.host import Host
+from agentnave.host_choice import default_host_cli_mode
 from agentnave.members import (
     MemberFile,
     MemberFileError,
@@ -106,6 +109,68 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     # The decision text has no per-group seat lines.
     assert "enabled_roles" not in rules["order"]["decision"]
     assert set(rules["meeting_defaults"]["provider_names"]) == set(get_args(ProviderName.__value__))
+
+    providers_rs = (
+        Path(__file__).resolve().parents[1] / "apps" / "tray" / "src" / "providers.rs"
+    ).read_text("utf-8")
+    match = re.search(
+        r"pub const LAUNCH_HOST_CLIS:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\];", providers_rs
+    )
+    assert match is not None
+    tray_launch_hosts = set(re.findall(r'"([^"]+)"', match.group(1)))
+    adapter_launch_hosts = {
+        name
+        for name in get_args(ProviderName.__value__)
+        if get_adapter(name).default_host_cli_mode == "launch"
+    }
+    assert tray_launch_hosts == adapter_launch_hosts == {"antigravity"}
+    assert default_host_cli_mode(Host("antigravity", "parent")) == "launch"
+    assert default_host_cli_mode(Host("antigravity", "parent", app_id="antigravity")) == "launch"
+    assert default_host_cli_mode(Host("claude", "env")) == "subagent"
+    assert default_host_cli_mode(Host("workbuddy", "env")) == "subagent"
+    assert default_host_cli_mode(Host()) == "subagent"
+    assert OrchestrationFile(version=1).host_cli_mode(Host("antigravity", "parent")) == "launch"
+    assert (
+        OrchestrationFile(version=1, host_cli={"antigravity": "subagent"}).host_cli_mode(
+            Host("antigravity", "parent")
+        )
+        == "subagent"
+    )
+
+
+def test_host_cli_mode_falls_back_when_orchestration_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host_choice import host_cli_mode
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "orchestration.json"
+    host = Host("antigravity", "parent", app_id="antigravity")
+    path.write_text('{"version": 1, "host_cli": {"antigravity": "skip"}')
+    assert host_cli_mode(host) == "subagent"
+    path.unlink()
+    path.mkdir()
+    assert host_cli_mode(host) == "subagent"
+
+
+def test_host_cli_mode_old_connection_cannot_identify_saved_row() -> None:
+    host = Host("antigravity", "parent")
+    for choice in ("skip", "subagent"):
+        roles = OrchestrationFile.model_validate(
+            {
+                "version": 1,
+                "effective_apps": {"antigravity": "split"},
+                "host_cli": {"antigravity": choice},
+            }
+        )
+        assert roles.host_cli_mode(host) == "subagent"
+    assert OrchestrationFile(version=1, effective_apps={}).host_cli_mode(host) == "subagent"
+    assert (
+        OrchestrationFile(version=1, effective_apps={}).host_cli_mode(
+            Host("antigravity", "parent", app_id="antigravity")
+        )
+        == "launch"
+    )
 
 
 @pytest.mark.parametrize("switches", [{}, {"enabled_roles": None}, {"enabled_roles": []}])

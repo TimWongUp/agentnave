@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from agentnave.adapters.base import (
     AdapterHooks,
@@ -131,6 +131,7 @@ def write_restricted_profile(directory: Path) -> None:
 
 class AntigravityAdapter(AdapterHooks):
     name = "antigravity"
+    default_host_cli_mode: Literal["subagent", "launch"] = "launch"
 
     def quota_group(self, model: str) -> str | None:
         family = model.lower().split("-")[0]

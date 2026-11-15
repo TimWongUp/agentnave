@@ -2,7 +2,14 @@
 
 from typing import Literal
 
+from agentnave.adapters import get_adapter
 from agentnave.host import Host
+
+
+def default_host_cli_mode(host: Host) -> Literal["subagent", "launch"]:
+    if not host.provider:
+        return "subagent"
+    return get_adapter(host.provider).default_host_cli_mode
 
 
 def host_cli_mode(host: Host) -> Literal["subagent", "launch", "skip"]:
@@ -12,8 +19,9 @@ def host_cli_mode(host: Host) -> Literal["subagent", "launch", "skip"]:
     )
     from agentnave.orchestration_roles import OrchestrationFile
 
+    default = default_host_cli_mode(host)
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     except MemberFileError:
         return "subagent"
-    return roles.host_cli_mode(host) if roles is not None else "subagent"
+    return roles.host_cli_mode(host) if roles is not None else default

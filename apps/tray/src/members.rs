@@ -314,7 +314,7 @@ pub(crate) fn validate_fallbacks(fields: &Map<String, Value>, what: &str) -> Res
 
 /// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "decision" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode},
-/// "host_cli": {row: "subagent" | "launch" | "skip"} (a row left out is "subagent"), "enabled_roles": [group],
+/// "host_cli": {row: "subagent" | "launch" | "skip"} (a row left out uses its host default), "enabled_roles": [group],
 /// group: {"easy" | "medium" | "hard": seat} (medium optional), "image_generation": seat,
 /// "meeting": {"count": 2..=6, "seats"?: [seat | null]}}`, with one group per catalog entry.
 /// A turned-off group keeps its seats. Interface Workers, the image seat and meeting defaults have

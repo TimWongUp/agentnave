@@ -711,8 +711,8 @@ function buildCard(host) {
   return card;
 }
 
-// What a connected boss does with a task whose CLI is its own; "subagent" is the default and stays
-// out of the file. Rows that share rules files share the choice.
+// What a connected boss does with a task whose CLI is its own; a choice equal to the host's
+// default stays out of the file. Rows that share rules files share the choice.
 const HOST_CLI_CHOICES = [
   ["subagent", L("用 boss 自己的子代理", "Boss's own subagent")],
   ["launch", L("由 AgentNave 另开", "Started by AgentNave")],
@@ -721,7 +721,10 @@ const HOST_CLI_CHOICES = [
 function hostCliRow(host) {
   const boss = host.status === "connected" && S.hostCli?.bosses.find((row) => row.keys.includes(host.id));
   if (!boss) return null;
-  const choice = boss.keys.map((key) => S.hostCli.choices[key]).find(Boolean) || "subagent";
+  const choice = S.hostCli.choices[host.id]
+    || boss.keys.map((key) => S.hostCli.choices[key]).find(Boolean)
+    || host.default_host_cli
+    || "subagent";
   const label = L("同款 CLI 的任务", "Tasks for its own CLI");
   const tip = L(
     "工位或员工用的 CLI 和这个 boss 相同时（比如在 Claude Code 里派给 Claude 的任务）怎么执行。用 boss 自己的子代理：boss 用自带的子代理完成，不经过 AgentNave。由 AgentNave 另开：另启动一个同款 CLI，和 boss 共用账号额度。改用其他 CLI：跳过它，换用备选或其他员工。开会不受影响。",

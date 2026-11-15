@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from agentnave.models import (
     InvocationRequest,
@@ -112,6 +112,7 @@ class ProviderAdapter(Protocol):
     name: str
     options_description: str
     supports_restricted_tools: bool
+    default_host_cli_mode: Literal["subagent", "launch"]
     restricted_extra_options: frozenset[str]
     paired_options: Mapping[str, frozenset[str]]
 
@@ -157,6 +158,7 @@ class AdapterHooks:
     executable_name: str | None = None
     options_description = ""
     supports_restricted_tools = True
+    default_host_cli_mode: Literal["subagent", "launch"] = "subagent"
     restricted_extra_options: frozenset[str] = frozenset()
     paired_options: Mapping[str, frozenset[str]] = {}
 

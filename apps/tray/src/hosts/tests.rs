@@ -2386,8 +2386,16 @@ fn codex_folders_beside_codex_home_count_once_each() {
 #[test]
 fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
     let (_temp, mut hosts) = fixture();
-    for id in ["claude", "grok", "codex"] {
+    for id in ["claude", "grok", "codex", "antigravity"] {
         let h = host(&hosts, id);
+        assert_eq!(
+            hosts.state(&h)["default_host_cli"],
+            if id == "antigravity" {
+                "launch"
+            } else {
+                "subagent"
+            }
+        );
         executable_file(
             &hosts.context.search[0].join(h.binary),
             "#!/bin/sh\nexit 99\n",
@@ -2418,10 +2426,11 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
     let read: Value = serde_json::from_slice(&read.body).unwrap();
     assert_eq!(
         read["document"]["effective_apps"],
-        json!({"claude": "split", "grok": "split", "codex": "off"})
+        json!({"claude": "split", "grok": "split", "codex": "off", "antigravity": "off"})
     );
     assert!(read["document"].get("host_cli").is_none());
-    // The boss page saves one boss's choice alone; "subagent" is the default and leaves the file.
+    // The boss page saves one boss's choice alone; a choice equal to that boss's default leaves
+    // the file, while an explicit non-default choice (such as "subagent" on antigravity) stays.
     let choose =
         |body: &[u8]| reader.request("POST", "/app/orchestration/host-cli", Some("1"), body);
     assert_eq!(
@@ -2434,8 +2443,22 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
         200
     );
     assert_eq!(
+        choose(br#"{"keys":["antigravity"],"choice":"subagent"}"#).status,
+        200
+    );
+    assert_eq!(
         choose(br#"{"keys":["codex"],"choice":"later"}"#).status,
         400
+    );
+    let read = reader.request("GET", "/app/orchestration", None, b"");
+    let read: Value = serde_json::from_slice(&read.body).unwrap();
+    assert_eq!(
+        read["document"]["host_cli"],
+        json!({"codex": "skip", "antigravity": "subagent"})
+    );
+    assert_eq!(
+        choose(br#"{"keys":["antigravity"],"choice":"launch"}"#).status,
+        200
     );
     let read = reader.request("GET", "/app/orchestration", None, b"");
     let read: Value = serde_json::from_slice(&read.body).unwrap();
@@ -2448,7 +2471,7 @@ fn saving_orchestration_works_out_each_rows_mode_and_drops_the_pages_copy() {
     let read: Value = serde_json::from_slice(&read.body).unwrap();
     assert_eq!(
         read["document"]["effective_apps"],
-        json!({"claude": "split", "grok": "split"})
+        json!({"claude": "split", "grok": "split", "antigravity": "off"})
     );
     // Custom text with retired generated wording is read back as it is written to the rules;
     // host_cli stays the value saved on disk rather than what the page sent.
