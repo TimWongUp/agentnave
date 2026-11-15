@@ -748,9 +748,17 @@ fn panel_response(
 fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
     let mut previews = PREVIEWS.lock().unwrap_or_else(|p| p.into_inner());
     let mut kept = HashMap::new();
+    let mut other_count = 0;
     let groups: Vec<_> = groups
         .into_iter()
-        .take(200)
+        .filter(|g| {
+            if g.handover.pending {
+                true
+            } else {
+                other_count += 1;
+                other_count <= 200
+            }
+        })
         .map(|mut g| {
             let key = (
                 g.sources

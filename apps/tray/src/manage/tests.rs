@@ -696,6 +696,11 @@ fn cancel_handover_keeps_notes_until_claimed_and_refuses_non_pending_or_boss_onl
         "UPDATE workspaces SET note = 'keep me' WHERE id = ?1",
         workspace,
     );
+    assert_eq!(
+        post("/app/workspaces/handover", workspace)["status"],
+        "waiting"
+    );
+    assert_eq!(row(workspace).1.as_deref(), Some("keep me"));
 
     assert_eq!(
         post("/app/workspaces/cancel-handover", workspace)["status"],
