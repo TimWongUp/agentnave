@@ -4675,7 +4675,8 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
         ]
         assert "native" not in _payload(picked_alt["recommendation"])
 
-        # session_id resume keeps the same-CLI fallback model & effort without re-drawing.
+        # session_id resume keeps the same-CLI fallback model & effort without re-drawing,
+        # whether seat is inherited or explicitly passed with the same seat id.
         resumed = await _start_and_wait(client, session_id="session-e2e", prompt="continue")
         assert (resumed["provider"], resumed["model"], resumed["effort"]) == (
             "claude",
@@ -4683,6 +4684,38 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
             "low",
         )
         assert "seat_fallback" not in resumed
+        assert "write-mix seat" in cast(list[str], resumed["defaults_applied"])
+        resumed_same = await _start_and_wait(
+            client, session_id="session-e2e", seat="write-mix", prompt="continue explicit"
+        )
+        assert (resumed_same["provider"], resumed_same["model"], resumed_same["effort"]) == (
+            "claude",
+            "claude-alt",
+            "low",
+        )
+        assert "seat (session_id history)" not in cast(list[str], resumed_same["defaults_applied"])
+        assert "write-mix seat" in cast(list[str], resumed_same["defaults_applied"])
+
+        # Switching to a different seat on resume applies the new seat's configured choice;
+        # removing the historical candidate falls back to configured instead of dropping the seat.
+        other_seat = _own_seat(
+            "write-other",
+            "claude",
+            "write",
+            effort="medium",
+            fallbacks=[{"provider": "claude", "model": "claude-alt", "effort": "low"}],
+        )
+        _write_own_seats([task_seat, other_seat, image_seat], random_candidates=True)
+        switched = await _start_and_wait(
+            client, session_id="session-e2e", seat="write-other", prompt="switch seat"
+        )
+        assert (switched["model"], switched["effort"]) == ("model-write-other", "medium")
+        trimmed_seat = _own_seat("write-other", "claude", "write", effort="high")
+        _write_own_seats([task_seat, trimmed_seat, image_seat], random_candidates=True)
+        dropped_hist = await _start_and_wait(client, session_id="session-e2e", prompt="continue")
+        assert (dropped_hist["model"], dropped_hist["effort"]) == ("model-write-other", "high")
+        assert "write-other seat" in cast(list[str], dropped_hist["defaults_applied"])
+        _write_own_seats([task_seat, image_seat], random_candidates=True)
 
         # Drawing position 0 still reports random=True so boss distinguishes it from ordered pick;
         # start_agents reconciles native vs started per task when a native candidate is drawn.
@@ -4774,6 +4807,37 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
         )
         fixed = await _start_and_wait(client, cwd=str(tmp_path), seat="worker-easy")
         assert fixed["model"] == "fixed-first" and "seat_fallback" not in fixed
+        # Fixed orchestration seats still prioritize the seat's current model on resume (ADR-0038).
+        (root / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {
+                        "easy": {
+                            "provider": "claude",
+                            "model": "fixed-updated",
+                            "fallbacks": [{"provider": "claude", "model": "fixed-first"}],
+                        }
+                    },
+                }
+            )
+        )
+        fixed_resumed = await _start_and_wait(client, session_id="session-e2e", prompt="next")
+        assert fixed_resumed["model"] == "fixed-updated"
+        assert "worker-easy seat" in cast(list[str], fixed_resumed["defaults_applied"])
+        (root / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {"easy": {"provider": "claude", "model": "fixed-current"}},
+                }
+            )
+        )
+        fixed_no_fb = await _start_and_wait(client, session_id="session-e2e", prompt="again")
+        assert fixed_no_fb["model"] == "fixed-current"
+        assert "worker-easy seat" in cast(list[str], fixed_no_fb["defaults_applied"])
 
         # All candidates unavailable: fails identically to ordered mode.
         (root / "orchestration.json").write_text(

@@ -55,9 +55,10 @@ async def recommend_seat(
     """Recommend one of your own seats for a task; it never dispatches. Candidates are the
     seats of list_members that can be dispatched now and have this access. Dispatch with
     start_agent(seat=...), or choose another seat; native=true means the host's built-in
-    subagent. Errors start with a code: not_enabled, config_error, no_key, no_candidates,
-    network, rate_limited, auth, rejected or bad_response. Nothing is retried or replaced:
-    choose a seat from list_members yourself.
+    subagent (with random candidates enabled, native/model/effort only preview the first
+    usable choice in order; follow the start_agent receipt). Errors start with a code:
+    not_enabled, config_error, no_key, no_candidates, network, rate_limited, auth, rejected
+    or bad_response. Nothing is retried or replaced: choose a seat from list_members yourself.
     """
     found = await recommend_or_raise(task, access)
     return recommendation_payload(found)

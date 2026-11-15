@@ -88,6 +88,7 @@ from agentnave.task_start import (
     native_seat_guidance,
     resolve_start,
     review_role,
+    uses_random_candidates,
 )
 
 
@@ -334,17 +335,16 @@ def _select_fallback(
     configured = role_seat(seat_name, runtime.HOST)
     if not configured or not configured.fallbacks:
         return None, None
-    from agentnave.decision_seats import custom_seat, random_candidates_enabled
+    from agentnave.decision_seats import custom_seat
     from agentnave.seat_fallbacks import select
 
     custom = custom_seat(seat_name or "", runtime.HOST)
-    image = is_image_seat(seat_name, custom)
     return select(
         configured,
         runtime.HOST,
         runtime.task_excluded_providers(),
-        image=image,
-        randomize=custom is not None and not image and random_candidates_enabled(runtime.HOST),
+        image=is_image_seat(seat_name, custom),
+        randomize=uses_random_candidates(seat_name, runtime.HOST),
     )
 
 
