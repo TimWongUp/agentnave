@@ -177,7 +177,7 @@
     const found = status?.update?.state === "available";
     if (recheck || !status || !usable(status)) {
       const reason = found
-        ? L("上次检查已超过一天，先确认有没有更新的版本…", "Last checked over a day ago; checking for a newer version first…")
+        ? L("上次检查已超过 4 小时，先确认有没有更新的版本…", "Last checked over 4 hours ago; checking for a newer version first…")
         : L("正在检查最新版本…", "Checking for the latest version…");
       show(L("检查更新", "Check for updates"), [h("p.upd-p", {}, reason)], [[L("取消", "Cancel"), () => { check.cancelled = true; close(); }]]);
       try {

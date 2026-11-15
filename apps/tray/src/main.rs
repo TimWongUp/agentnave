@@ -332,13 +332,13 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             takeover.prepare_members();
         });
         if !PREVIEW {
-            update::resume(&resumer);
             thread::spawn(move || {
                 loop {
                     update::auto_check(&checker);
                     thread::sleep(update::POLL);
                 }
             });
+            update::resume(&resumer);
         }
     });
     alerts::start(handle.clone(), reader.clone());

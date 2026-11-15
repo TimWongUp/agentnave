@@ -16,6 +16,8 @@
   end.prepend(button);
   const short = end.matches(".top-end");
   let status = null;
+  // Every status that lands takes the next number; a read that started before it and ends after is stale and dropped.
+  let statusSeq = 0;
   let checking = false; // a background check started by a click
   let note = null; // {kind, title}: what that check answered, shown on the icon for a moment
   const draw = kind => { if (glyph.textContent !== GLYPHS[kind]) glyph.textContent = GLYPHS[kind]; };
@@ -43,9 +45,15 @@
   }
   render();
   async function refresh() {
-    if (document.hidden) return;
-    try { status = await load("/app/status"); } catch { return; }
+    if (AN.isHidden ? AN.isHidden() : document.hidden) return;
+    const seq = ++statusSeq;
+    let answer;
+    try { answer = await load("/app/status"); } catch { return; }
+    // A newer status landed while this read was in flight; its answer is older news.
+    if (seq !== statusSeq) return;
+    status = answer;
     render();
+    window.dispatchEvent(new CustomEvent("agentnave:status", { detail: status }));
   }
   // Fast only while an update runs, which another window may have started.
   const busyNow = () => status?.update?.state === "installing" || ["upgrading", "installing"].includes(status?.service?.state);
@@ -68,6 +76,7 @@
     try {
       const answer = await post("/app/update/check");
       status = answer;
+      statusSeq++;
       // A silent check this one waited for restores the earlier state when it fails; only this says so.
       if (answer.update?.state === "failed") failure = answer.update.error || "";
       else if (answer.check_answered === false) failure = L("没有连上更新源", "could not reach the update source");
@@ -87,8 +96,13 @@
     else AN.updateFlow();
   });
   // The settings page and the update flow read the status themselves; reuse what they got.
-  addEventListener("agentnave:status", ({ detail }) => { status = detail; render(); });
-  document.addEventListener("visibilitychange", refresh);
+  addEventListener("agentnave:status", ({ detail }) => {
+    if (detail === status) return;
+    status = detail;
+    statusSeq++;
+    render();
+  });
+  (AN.onVisibility || ((fn) => document.addEventListener("visibilitychange", fn)))(refresh);
   // After every deferred script has initialized.
   addEventListener("DOMContentLoaded", tick);
 })();

@@ -23,13 +23,13 @@ mod cleanup;
 pub(crate) use cleanup::prune;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// Automatic checks run at start and then once a day; the menu can check at any time.
-pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// Automatic checks run at start and then every four hours by default; the menu can check at any time.
+pub const EVERY: Duration = Duration::from_secs(4 * 60 * 60);
 /// How often the App looks whether an automatic check is due. A sleeping thread does not count
-/// the hours the computer is asleep, so the day is measured on the clock, a short nap at a time.
+/// the hours the computer is asleep, so elapsed time is measured on the wall clock.
 pub const POLL: Duration = Duration::from_secs(10 * 60);
 /// An automatic check that got no answer (offline at login, say) is tried again this soon.
-const RETRY: Duration = Duration::from_secs(60 * 60);
+const RETRY: Duration = POLL;
 const REPOSITORY: &str = "https://github.com/TimWongUp/agentnave.git";
 /// Where the notes of releases older than those in the manifest are.
 const RELEASES: &str = "https://github.com/TimWongUp/agentnave/releases";
@@ -38,11 +38,11 @@ const UPGRADED_NOTE: Duration = Duration::from_secs(10 * 60);
 /// The version an update installed, read once by its first start to say so.
 const UPDATED_MARKER: &str = "updated-to";
 /// How long `POST /app/update/check` waits for a check started elsewhere.
-/// Three endpoints are tried in series, so the wait has to cover all of their timeouts.
+/// The waiter may return while a check is still running, including when an override adds a source.
 const CHECK_WAIT: Duration = Duration::from_secs(120);
 /// Bounds the update check request.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
-/// A found update is used as it is for this long, the same as the automatic checks' interval;
+/// A found update is used as it is for this long, the default automatic interval;
 /// after that the update flow first looks for a newer one.
 const FOUND_FOR: Duration = EVERY;
 /// The updater sets no limit of its own, and the update dialog cannot be closed while it runs.
@@ -312,7 +312,15 @@ async fn check_across_endpoints(
 }
 
 async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
-    let found = check_across_endpoints(&app).await;
+    // A panic in the network task must not strand the state in Checking.
+    let network = app.clone();
+    let found =
+        match tauri::async_runtime::spawn(async move { check_across_endpoints(&network).await })
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => Err(format!("检查更新异常：{error}")),
+        };
     let updates = app.state::<Updates>();
     // A failed silent check still counts as an attempt, so an offline cache is not
     // checked again on every click. Explicit rechecks remain available.
@@ -376,7 +384,7 @@ pub fn auto_check(app: &AppHandle) {
 }
 
 /// Whether an automatic check should run now: `every` after the last check that got an answer,
-/// and an hour after one that did not. A clock set back counts as due.
+/// and `RETRY` after one that did not. A clock set back counts as due.
 fn check_due(
     checked: Option<SystemTime>,
     answered: Option<SystemTime>,
@@ -393,7 +401,7 @@ fn check_due(
 }
 
 /// How often the automatic check runs, or `None` while the App setting is off. No file, no
-/// section or a value this build cannot read keeps the previous behaviour: on, once a day.
+/// section or a value this build cannot read defaults to every four hours.
 fn automatic_check_interval(preferences: &Map<String, Value>) -> Option<Duration> {
     let updates = preferences.get("updates");
     if updates.and_then(|updates| updates.get("auto_check")) == Some(&Value::Bool(false)) {
