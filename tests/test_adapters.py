@@ -560,7 +560,7 @@ def test_codex_adapter_fails_turn_without_reply_or_usage() -> None:
 
     assert result.status is InvocationStatus.FAILED
     assert result.session_id == "session-1"
-    assert result.error_message == "codex turn completed without a reply or token usage"
+    assert result.error_message == "codex turn completed without a reply"
 
 
 def test_codex_adapter_preserves_blocked_failure() -> None:

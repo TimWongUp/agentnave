@@ -256,6 +256,9 @@ class CodexAdapter(AdapterHooks):
 
         return session_model(Host("codex"), session_id, since=since)
 
+    def terminal_event(self, event: dict[str, object]) -> bool:
+        return event.get("type") in ("turn.completed", "turn.failed")
+
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
         if event_type in ("thread.started", "turn.started", "turn.completed", "turn.failed"):
@@ -343,13 +346,12 @@ class CodexAdapter(AdapterHooks):
         )
 
         if returncode == 0 and terminal is not None and terminal.get("type") == "turn.completed":
-            # Codex can close a turn whose model response never arrived: no reply, zero usage.
-            if not output and not any(object_dict(terminal.get("usage")).values()):
+            if not output.strip():
                 return ParsedProviderResult(
                     InvocationStatus.FAILED,
                     output,
                     session_id,
-                    error_message="codex turn completed without a reply or token usage",
+                    error_message="codex turn completed without a reply",
                 )
             return ParsedProviderResult(InvocationStatus.SUCCEEDED, output, session_id)
 
