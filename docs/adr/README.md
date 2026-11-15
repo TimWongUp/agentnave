@@ -75,7 +75,7 @@
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
-| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md) |
+| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)；2026-11-14 修订（投递前等实验刷新、`PreInvocation` 探针与未挂载 hooks 保底收尾） |
 | 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 已接受 | 扩展并修订 ADR-0068 |
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射、[ADR-0087](0087-decision-model-recommends-seats.md)；「不可用边界」的兜底顺序由 [ADR-0089](0089-seat-fallback-order.md) 修订；执行边界由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
