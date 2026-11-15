@@ -89,5 +89,22 @@
     return { items: shown, hidden: items.length - shown.length };
   }
 
-  window.ChatGroups = { arrange, capSections, capFlat, caps: CAPS, modes: MODES, other: OTHER, handover: HANDOVER };
+  // A workspace that leaves the handover section goes back below everything the newest-first order of the
+  // list (items) puts ahead of it, not to the top slot it held while it waited; the rest keep their places.
+  function placeBack(order, items, back) {
+    const rank = new Map(items.map((x) => [x.id, x.rank]));
+    const at = new Map(items.map((x, i) => [x.id, i]));
+    const placed = order.filter((id) => !back.has(id));
+    for (const { id } of items.filter((x) => back.has(x.id))) {
+      const ahead = (o) => rank.get(o) < rank.get(id) || (rank.get(o) === rank.get(id) && at.get(o) < at.get(id));
+      let after = -1;
+      placed.forEach((o, i) => {
+        if (ahead(o)) after = i;
+      });
+      placed.splice(after + 1, 0, id);
+    }
+    return placed;
+  }
+
+  window.ChatGroups = { arrange, capSections, capFlat, placeBack, caps: CAPS, modes: MODES, other: OTHER, handover: HANDOVER };
 })();

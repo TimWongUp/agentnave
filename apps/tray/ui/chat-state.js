@@ -121,6 +121,7 @@ const state = {
   moreFlat: 0, // extra entries the ungrouped list shows
   moreNodes: new Map(), // the "show more" buttons by id, reused across renders
   flatOrder: [], // the ungrouped order over every workspace, shown or not
+  flatPending: new Set(), // workspaces the ungrouped order last placed in the handover section
   liveMore: new Set(), // the "show more" buttons this render put in the list
   chat: null,
   ctx: null, // last payload and its lookup tables
@@ -358,10 +359,10 @@ const flatRank = (g) => (g.handover === "pending" ? 0 : urgent(g.status) ? 1 : 2
 // Awaiting handover first, then work going on, then the most recent.
 function flatNodes(groups, by) {
   // The order covers every workspace, so opening up more of the list does not reshuffle the rest.
-  state.flatOrder = stickyOrder(
-    state.flatOrder,
-    groups.map((g) => ({ id: g.group, rank: flatRank(g) })),
-  );
+  const ranked = groups.map((g) => ({ id: g.group, rank: flatRank(g) }));
+  const back = new Set(ranked.filter((x) => x.rank !== 0 && state.flatPending.has(x.id)).map((x) => x.id));
+  state.flatPending = new Set(ranked.filter((x) => x.rank === 0).map((x) => x.id));
+  state.flatOrder = ChatGroups.placeBack(stickyOrder(state.flatOrder, ranked), ranked, back);
   const { items, hidden } = ChatGroups.capFlat(
     state.flatOrder.map((id) => by.get(id)),
     { limit: ChatGroups.caps.flat + state.moreFlat, must: mustShow },
