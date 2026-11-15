@@ -65,7 +65,9 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     assert len(catalog) == 7
     assert {role.group for role in catalog} == set(get_args(OrchestrationGroup.__value__))
     assert {
-        f"{role.seat_prefix}-{difficulty}" for role in catalog for difficulty in ("easy", "hard")
+        f"{role.seat_prefix}-{difficulty}"
+        for role in catalog
+        for difficulty in ("easy", "medium", "hard")
     } | {"image-generator"} == set(get_args(OrchestrationRole.__value__))
     bindings = {
         difficulty: {"provider": "claude", "model": difficulty} for difficulty in ("easy", "hard")

@@ -493,6 +493,24 @@ fn role_switches_remove_generated_seats_without_losing_bindings_or_custom_text()
     assert!(!generated.contains("worker-frontend"));
     assert!(!generated.contains("explorer-web"));
     assert!(generated.contains("同难度专项优先"));
+    assert!(!generated.contains("-medium"));
+    // A bound medium seat changes its group's line only; the custom text drops it with the seat.
+    let line = "简单用 `worker-writing-easy`，中等用 `worker-writing-medium`，困难用 `worker-writing-hard`。";
+    document["worker_writing"]["medium"] = json!({"provider":"codex","model":"gpt"});
+    let with_medium = text_of(&document, "split").unwrap();
+    assert!(with_medium.contains(line));
+    assert_eq!(
+        with_medium.replace("，中等用 `worker-writing-medium`", ""),
+        generated
+    );
+    document["custom"] = json!(format!("{with_medium}\n用户正文"));
+    document["worker_writing"]
+        .as_object_mut()
+        .unwrap()
+        .remove("medium");
+    let dropped = text_of(&document, "custom").unwrap();
+    assert!(!dropped.contains("-medium") && dropped.contains("worker-writing-hard"));
+    assert!(dropped.contains("用户正文"));
     document["custom"] = json!(format!(
         "{generated}\n- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。\n用户自写要求：保留引用来源。"
     ));

@@ -7,7 +7,7 @@
 - 非交互与只读派发说明由 [ADR-0043](0043-service-prompt-instructions.md) 补充
 - “role 兼当编排工位名的旧写法保留”由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代：Explorer／Worker 只用 `seat`，评审角色名仍可用 `role`。
 - 工位不受 CLI 名单约束的条款由 [ADR-0053](0053-disabled-cli-runs-for-no-seat.md) 修订：员工里停用的 CLI 不能当工位。
-- 工位名由 [ADR-0052](0052-orchestration-specialty-seats.md) 补充 `worker-frontend-easy`、`worker-frontend-hard`。
+- 工位名由 [ADR-0052](0052-orchestration-specialty-seats.md) 补充 `worker-frontend-easy`、`worker-frontend-hard`，并由其 2026-11-15 修订补充各分组可选的 `<前缀>-medium`（如 `explorer-medium`）。
 - 「决策模型」档下工位目录改为用户自定义，由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订。
 - 评审、Explorer／Worker 与专项工位套用单一 App 设置的条款由 [ADR-0089](0089-seat-fallback-order.md) 扩展为可按顺序配备选。
 
@@ -31,6 +31,8 @@
 新任务有 `seat` 或评审 `role` 而省略 `provider` 时，服务按 App 工位定 CLI；工位缺失、未启用或文件损坏报错，工位属于宿主自身 CLI 时提示改用宿主自带子代理。没有工位就必须传 `provider`，新任务仍必须传 `cwd`。
 
 `access` 属于职责，能推断的不让 boss 填：Explorer／评审工位固定 `read`，Worker 工位固定 `write`，服务补上，声明不一致时拒绝，免得 App 显示矛盾的标签。其他任务由 boss 每次声明；续接不继承 `access`，工位按继承的 `seat` 重新得出，没有工位时留空，按可能写入对待。只传新 `role` 视为换职责，不沿用旧 `seat`，否则旧工位会压过新角色。线程转去写文件时，继承旧声明会留下错误的「只读」并跳过并行写入提醒，留空最多多一条提醒。工位不可用时 `list_members` 给出可直接传的 `replacement` 和原因，服务不自动替换，由 boss 决定。继承和推断都在 `defaults_applied` 标明来源；模型、档位及权限参数的套用保持原规则，访问等级仍只作声明。
+
+2026-11-15 访问等级修订：撤销上一段的「固定」和「声明不一致时拒绝」。工位或评审角色推断出的访问等级只是默认值：调用没传 `access` 时由服务补上并在 `defaults_applied` 标明来源，传了就以这次声明为准，不报错；自定义工位、Explorer／Worker 工位、评审角色和生图工位同一条规则。访问等级只是声明，拒绝挡不住写入，只会卡住「先只读调查、确认后在同一线程转入实现」：在执行工位上声明只读，或在探索工位的线程上续接转写，原先都被拒绝。App 显示的是任务这一次实际声明的访问等级，不存在矛盾的标签。续接仍不继承 `access`，不传时按继承的 `seat` 重新得出默认值，所以执行工位线程上的只读追问要每次显式传 `read`。
 
 规则块要求 boss 使用 `seat` 等新参数，旧版服务会以未知参数拒绝，因此本机服务落后于 App 时，App 暂不写入新规则块，已有规则块保留（旧规则的 `role` 写法两边都可用）；关闭编排仍立即移除规则块。服务升级后 App 刷新宿主并补写。
 

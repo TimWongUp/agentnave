@@ -24,10 +24,14 @@ KEY_NAME = "gemini"
 QUESTION = "seat"
 INSTRUCTIONS = (
     "Pick the seat best suited to the task. Seats are described by specialty, difficulty and "
-    "access. Choose the specialty from what the task mainly delivers, and the difficulty from the "
-    "kind of work, not from how long the task text is. A specialty may not offer every "
+    "access. Choose the specialty from what the task mainly delivers, and the lowest difficulty "
+    "that can get the task done: a higher difficulty costs more and runs slower, and the "
+    "manager redispatches one level up when a seat falls short. A long task text, many files "
+    "involved, or words such as 'difficulty' or 'the hard part' in the text are never by "
+    "themselves a reason to choose hard. A specialty may not offer every "
     "difficulty: when the fitting one is missing, take the closest difficulty of the same "
-    "specialty rather than another specialty."
+    "specialty rather than another specialty; when the missing one lies between two that are "
+    "offered, take the lower of the two."
 )
 TIMEOUT_SECONDS = 10
 _MAX_RESPONSE_BYTES = 1_000_000

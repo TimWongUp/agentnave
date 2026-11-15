@@ -44,7 +44,7 @@ Claude runs interactively by default, so its sessions can be resumed in Claude C
 
 ### 🧭 Seats and review
 
-Pick models for the easy and hard tiers of general exploration and execution in the App, turn on specialists such as interface work, writing or web research as needed, and the boss dispatches by task type and difficulty. An optional image generation seat selects a CLI and its conversation model, which calls its own image service. You can also add a [review before merging](skills/agentnave-review/SKILL.md): how much review a change gets depends on its risk, reviewers read but never edit, and their conclusions are kept as a record.
+Pick models for the easy and hard tiers of general exploration and execution in the App (a medium tier can be added), turn on specialists such as interface work, writing or web research as needed, and the boss dispatches by task type and difficulty. An optional image generation seat selects a CLI and its conversation model, which calls its own image service. You can also add a [review before merging](skills/agentnave-review/SKILL.md): how much review a change gets depends on its risk, reviewers read but never edit, and their conclusions are kept as a record.
 
 ### 🤝 Continue in another chat
 

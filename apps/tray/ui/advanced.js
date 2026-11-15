@@ -23,7 +23,8 @@
     decision: AN.L("写入所选 boss 的全局规则：选工位交给决策模型，从你自建的工位里挑；boss 未被点名也会把活派出去，会用到这些工位的额度。", "Writes to selected bosses' global rules: choosing a seat is left to the decision model, which picks from the seats you built; even when not named, the boss delegates, using those seats' quota."),
     custom: AN.L("写入你自己的规则，起始内容是选自定义前的档位。", "Writes your own rules, starting from the preset selected before Custom."),
   };
-  const DIFFICULTIES = [["easy", AN.L("简单", "Easy")], ["hard", AN.L("困难", "Hard")]];
+  // Medium is optional: a group without it leaves the row unset and its rules line without it.
+  const DIFFICULTIES = [["easy", AN.L("简单", "Easy")], ["medium", AN.L("中等", "Medium")], ["hard", AN.L("困难", "Hard")]];
   const ROLE_ACCESS = { read: AN.L("只读", "Read-only"), write: AN.L("可写", "Writable") };
   const SEAT_UNSET = AN.L("未配置", "Not configured");
   // One seat with no difficulty and no switch, its model the one the CLI talks to, which calls the image service.
@@ -68,13 +69,18 @@
   // The fixed catalog, or nothing from a page that was not given one: its roles are then left as saved.
   const roleCatalog = () => orchestration?.roles || [];
   const roleName = (role) => AN.L(role.name_zh, role.name_en);
-  // General roles are what the specialists fall back to; they always show both difficulties.
+  // General roles are what the specialists fall back to; they always show every difficulty.
   const isGeneral = (role) => !role.fallback_group;
-  // A specialist is split by difficulty when its two saved seats differ; unset and identical ones share one row.
-  const seatsSplit = (doc, group) => splitOpened.has(group) || !sameJson(doc[group]?.easy ?? null, doc[group]?.hard ?? null);
+  // A specialist is split by difficulty when its easy and hard seats differ or it has a medium one;
+  // unset and identical ones share one row.
+  const seatsSplit = (doc, group) => splitOpened.has(group) || Boolean(doc[group]?.medium)
+    || !sameJson(doc[group]?.easy ?? null, doc[group]?.hard ?? null);
+  // A role's rules line, which names its medium seat once one is picked.
+  const roleSection = (presets, doc, group) =>
+    (doc?.[group]?.medium ? presets.role_sections_medium?.[group] : null) ?? presets.role_sections?.[group] ?? "";
   // A document without the list keeps the groups from before the switches.
   const enabledGroups = (doc) => doc?.enabled_roles ?? roleCatalog().filter((role) => role.legacy_enabled).map((role) => role.group);
-  // Every seat a document offers: both difficulties of each role turned on, and the image seat.
+  // Every seat a document offers: each difficulty of each role turned on, and the image seat.
   function liveSeats(doc) {
     const enabled = enabledGroups(doc);
     return [...roleCatalog().filter((role) => enabled.includes(role.group)).flatMap((role) => DIFFICULTIES
@@ -87,11 +93,11 @@
   }
   function customRoleText(text, doc) {
     const presets = orchestration?.presets || {};
-    const sections = presets.role_sections || {};
-    const generated = new Set([...Object.values(sections), presets.image_generation || ""].flatMap((section) => section.split("\n").filter(Boolean)));
+    const sections = [...Object.values(presets.role_sections || {}), ...Object.values(presets.role_sections_medium || {})];
+    const generated = new Set([...sections, presets.image_generation || ""].flatMap((section) => section.split("\n").filter(Boolean)));
     const base = text.split("\n").filter((line) => !generated.has(line.replace(/\r$/, ""))).join("\n").trimEnd();
     const enabled = enabledGroups(doc);
-    return [base, ...roleCatalog().filter((role) => enabled.includes(role.group)).map((role) => sections[role.group] || ""), doc.image_generation ? presets.image_generation || "" : ""].join("");
+    return [base, ...roleCatalog().filter((role) => enabled.includes(role.group)).map((role) => roleSection(presets, doc, role.group)), doc.image_generation ? presets.image_generation || "" : ""].join("");
   }
   const orchestrationChanged = () => {
     if (!orchestration || orchestration.error) return false;
@@ -186,7 +192,7 @@
     }
     const enabled = enabledGroups(shown);
     const sections = roleCatalog().filter((role) => enabled.includes(role.group))
-      .map((role) => presets.role_sections?.[role.group] || "");
+      .map((role) => roleSection(presets, shown, role.group));
     const parts = presets.split_parts;
     let base = mode === "split" && parts
       ? parts.base + (shown?.split_options?.meetings ? parts.meetings_own : parts.meetings_asked) + meetingLine(shown)
@@ -315,7 +321,7 @@
     $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“编排”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Orchestration; solo tasks are offered only to bosses without orchestration.`) : "";
   }
 
-  // One seat for both difficulties of a specialist that is not split.
+  // One seat for easy and hard of a specialist that is not split; it has no medium seat.
   function setSharedSeat(group, seat) {
     const shown = orchestrationShown();
     orchestrationDraft = { ...shown, [group]: { easy: seat, hard: seat } };
@@ -324,7 +330,7 @@
     advancedEdited();
   }
 
-  // Joining the difficulties again keeps the hard seat, or the easy one when hard is unset.
+  // Joining the difficulties again keeps the hard seat, or the easy one when hard is unset, and drops medium.
   function setRoleSplit(group, on) {
     if (on) {
       splitOpened.add(group);
@@ -334,7 +340,7 @@
     splitOpened.delete(group);
     const seats = orchestrationShown()[group];
     const seat = seats?.hard ?? seats?.easy ?? null;
-    if (sameJson(seats?.easy ?? null, seats?.hard ?? null)) renderOrchestration();
+    if (!seats?.medium && sameJson(seats?.easy ?? null, seats?.hard ?? null)) renderOrchestration();
     else setSharedSeat(group, seat);
   }
 
@@ -467,7 +473,7 @@
             onChange: (e) => setRoleSplit(group, e.target.checked),
           }),
           el("span", {}, AN.L("区分难度", "By difficulty")),
-          settingTip(AN.L("关闭时这个专项的简单、困难两档共用一个模型；打开后两档各选一个。", "Off: easy and hard share one model for this specialist. On: pick a model for each."), true))),
+          settingTip(AN.L("关闭时这个专项各档共用一个模型；打开后简单、困难各选一个，中等可选。", "Off: every level of this specialist shares one model. On: pick one each for easy and hard; medium is optional."), true))),
       ...seats);
   }
 

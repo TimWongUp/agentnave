@@ -50,7 +50,7 @@ fn reserved(id: &str) -> bool {
         .filter_map(|role| role["seat_prefix"].as_str())
         .any(|prefix| {
             id.strip_prefix(prefix)
-                .is_some_and(|rest| rest == "-easy" || rest == "-hard")
+                .is_some_and(|rest| matches!(rest, "-easy" | "-medium" | "-hard"))
         });
     fixed || id == "image-generator" || id == "auto" || crate::members::REVIEW_ROLES.contains(&id)
 }
