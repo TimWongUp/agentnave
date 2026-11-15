@@ -8,7 +8,7 @@ use rusqlite::{Connection, OpenFlags};
 
 const NAME: &str = "agentnave.db";
 /// The schema version this tray understands; servers record theirs in `user_version`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 pub(crate) const BUSY: Duration = Duration::from_secs(5);
 
 pub fn path(root: &Path) -> PathBuf {
@@ -117,14 +117,14 @@ fn open(root: &Path, flags: OpenFlags) -> Result<Option<Connection>, String> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| e.to_string())?;
-    if version == 1 && flags.contains(OpenFlags::SQLITE_OPEN_READ_WRITE) {
+    if (version == 1 || version == 2) && flags.contains(OpenFlags::SQLITE_OPEN_READ_WRITE) {
         return Err(crate::preferences::general::text(
             "先重连宿主，让服务完成升级",
             "Reconnect the host first so the service can finish upgrading",
         )
         .to_owned());
     }
-    if version != SCHEMA_VERSION && version != 1 {
+    if version != SCHEMA_VERSION && version != 1 && version != 2 {
         return Err(format!(
             "会话数据库版本为 {version}，此 App 只支持 {SCHEMA_VERSION}；请更新 App 或服务"
         ));

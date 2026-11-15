@@ -219,6 +219,7 @@ class ConversationStore(Groups):
         self.collectors: set[asyncio.Task[None]] = set()
         # Workspace key -> (the boss key now writing it, that boss's own chat id as passed).
         self._bosses: dict[str, tuple[str, str]] = {}
+        self._fresh: dict[str, str] = {}  # boss key -> newly allocated workspace
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
         # Completed replies remain readable, but never participate in group writes again.
         self._completed_rounds: dict[str, Round] = {}
@@ -582,13 +583,38 @@ class ConversationStore(Groups):
             self._bosses[workspace] = boss
         return workspace
 
+    def new_manager_session(self, session_id: str | None) -> str | None:
+        """Resolve a workspace for a new conversation, replacing one handed away."""
+        boss = self._boss(session_id)
+        if boss is None:
+            return None
+        workspace, away = self.db.resolve(boss[0])
+        if away is not None:
+            cached = self._fresh.get(boss[0])
+            row = self.db.workspace(cached) if cached is not None else None
+            if cached is None or (row is not None and row.owner != boss[0]):
+                cached = "s-" + uuid4().hex
+                self._fresh[boss[0]] = cached
+            workspace = cached
+        self._bosses[workspace] = boss
+        return workspace
+
+    def validate_manager_workspace(self, session_id: str | None, workspace: str) -> None:
+        """Reject a workspace that changed while the conversation was being prepared."""
+        if self.new_manager_session(session_id) != workspace:
+            self._manager_session(session_id)  # Raise the handover error when applicable.
+            raise ValueError("workspace changed while starting the conversation; please retry")
+
     def _manager_model(self, session: str | None) -> str | None:
         boss = self._bosses.get(session or "")
         return session_model(self.host, boss[1] if boss else None)
 
     def _not_yours(self, what: str, workspace: str | None) -> str:
         found = self.db.workspace(workspace) if workspace else None
-        if found is not None and (found.owner != found.id or found.previous_host is not None):
+        if found is not None and (
+            found.owner != (found.origin if found.origin is not None else found.id)
+            or found.previous_host is not None
+        ):
             return (
                 f"{what} belongs to workspace {found.id}, led by {_host_label(found.owner_host)} "
                 "since a handover; continue there, or have that boss hand it over with handover"
@@ -603,14 +629,19 @@ class ConversationStore(Groups):
         state.host = self.host.name
         state.host_source = self.host.source
         state.manager_session = manager_session
+        boss = self._bosses.get(manager_session or "")
+        if manager_session is not None and boss is not None:
+            # Who leads this workspace, and where its transcript is for a later handover. Only a
+            # new workspace under a fresh id has no owner without this row, so only it must fail.
+            fresh = manager_session != boss[0] and self.db.workspace(manager_session) is None
+            try:
+                self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
+            except OSError:
+                if fresh:
+                    raise
         record = Record.create(self.db, self.locks, state)
         self.records[state.id] = record
         self._ensure_live_writer(record)
-        boss = self._bosses.get(manager_session or "")
-        if manager_session is not None and boss is not None:
-            # Who leads this workspace, and where its transcript is for a later handover.
-            with suppress(OSError):
-                self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
         return record
 
     # Handover (ADR-0033)

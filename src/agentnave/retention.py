@@ -194,7 +194,7 @@ def _remove_locked(connection: sqlite3.Connection, root: Path, ids: list[str], c
                 "DELETE FROM workspaces WHERE pending != 1 AND NOT EXISTS "
                 "(SELECT 1 FROM conversations WHERE manager_session = workspaces.id) "
                 "AND (id IS ? OR title IS NULL "
-                "OR NOT (pending = 1 OR owner != id OR previous_host IS NOT NULL))",
+                "OR NOT (pending = 1 OR owner != coalesce(origin, id) OR previous_host IS NOT NULL))",
                 (group,),
             )
             connection.execute(

@@ -54,7 +54,18 @@ fn old_database_displays_views_but_all_mutations_require_the_service_upgrade() {
 fn future_schema_is_rejected_for_reading_and_writing() {
     let dir = tempfile::tempdir().unwrap();
     let connection = create(dir.path());
-    connection.pragma_update(None, "user_version", 3).unwrap();
+    connection.pragma_update(None, "user_version", 4).unwrap();
     assert!(read(dir.path()).is_err());
+    assert!(write(dir.path()).is_err());
+}
+
+#[test]
+fn v2_is_readable_but_requires_service_upgrade_for_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let connection = create(dir.path());
+    connection
+        .execute_batch("ALTER TABLE workspaces DROP COLUMN origin; PRAGMA user_version = 2;")
+        .unwrap();
+    assert!(read(dir.path()).is_ok());
     assert!(write(dir.path()).is_err());
 }

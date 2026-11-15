@@ -473,13 +473,21 @@ fn view_rows(connection: &rusqlite::Connection) -> Result<Vec<(String, i64, i64)
 /// its creator.
 /// Handed-over workspaces; None when they could not be read.
 fn handovers(connection: &rusqlite::Connection) -> Option<Vec<(String, crate::stage::Handover)>> {
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .ok()?;
+    let origin = if version >= 3 {
+        "coalesce(origin, id)"
+    } else {
+        "id"
+    };
     let rows = connection
-        .prepare(
-            "SELECT id, owner != id OR previous_host IS NOT NULL, owner_host, pending, \
+        .prepare(&format!(
+            "SELECT id, owner != {origin} OR previous_host IS NOT NULL, owner_host, pending, \
              note, released, previous_host, title, cwd \
-             FROM workspaces WHERE pending = 1 OR owner != id OR previous_host IS NOT NULL \
+             FROM workspaces WHERE pending = 1 OR owner != {origin} OR previous_host IS NOT NULL \
              ORDER BY id",
-        )
+        ))
         .and_then(|mut statement| {
             statement
                 .query_map([], |row| {

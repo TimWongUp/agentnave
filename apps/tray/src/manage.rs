@@ -273,7 +273,7 @@ fn forget_emptied(connection: &Connection, emptied: Option<&str>) -> rusqlite::R
         "DELETE FROM workspaces WHERE NOT EXISTS \
          (SELECT 1 FROM conversations WHERE manager_session = workspaces.id) \
          AND (id IS ?1 OR title IS NULL \
-         OR NOT (pending = 1 OR owner != id OR previous_host IS NOT NULL))",
+         OR NOT (pending = 1 OR owner != coalesce(origin, id) OR previous_host IS NOT NULL))",
         [emptied],
     )?;
     connection.execute(

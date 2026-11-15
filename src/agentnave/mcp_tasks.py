@@ -359,6 +359,11 @@ async def _acquire_and_start_task(
     access = arguments.access
     isolation = launch.isolation
     manager_session_id = launch.manager_session_id
+    manager_workspace = (
+        conversations.new_manager_session(manager_session_id)
+        if launch.conversation_id is None and launch.session_id is None
+        else None
+    )
     resumed_acquired = None
     hold = None
     # Before InvocationRequest resolves cwd, which hides a link swapped in below the directory.
@@ -394,6 +399,7 @@ async def _acquire_and_start_task(
                     isolation_requested=isolation is not None,
                     isolation_ref=isolation.ref if isolation is not None else None,
                     resumed_task=arguments.resumed_task,
+                    manager_workspace=manager_workspace,
                 )
             except (ValueError, OSError) as exc:
                 if not launch.isolation_auto:
@@ -415,6 +421,7 @@ async def _acquire_and_start_task(
             isolation_requested=isolation is not None,
             isolation_ref=isolation.ref if isolation is not None else None,
             hold=hold,
+            manager_workspace=manager_workspace,
         )
     except BaseException:
         if hold is not None:

@@ -802,6 +802,19 @@ fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
             .iter()
             .all(|m| m["kind"] != "handover")
     );
+    connection
+        .execute(
+            "UPDATE workspaces SET owner = 'creator', origin = 'creator' WHERE id = ?1",
+            [MANAGER],
+        )
+        .unwrap();
+    assert!(
+        state(&reader, &path)["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["kind"] != "handover")
+    );
 }
 
 #[test]
