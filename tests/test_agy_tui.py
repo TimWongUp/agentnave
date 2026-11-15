@@ -369,6 +369,7 @@ def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
     import agentnave.agy_tui as agy
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     logs = tmp_path / ".gemini/antigravity-cli/log"
     logs.mkdir(parents=True)
     # Concurrent agy logs—including one whose PID starts with ours—must not satisfy our wait.
