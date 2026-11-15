@@ -219,6 +219,7 @@ class ConversationStore(Groups):
         self.collectors: set[asyncio.Task[None]] = set()
         # Workspace key -> (the boss key now writing it, that boss's own chat id as passed).
         self._bosses: dict[str, tuple[str, str]] = {}
+        self._fresh: dict[str, str] = {}  # boss key -> newly allocated workspace
         self.reviews: dict[str, dict[str, Review | None]] = {}  # round id -> seat -> review
         # Completed replies remain readable, but never participate in group writes again.
         self._completed_rounds: dict[str, Round] = {}
@@ -589,7 +590,12 @@ class ConversationStore(Groups):
             return None
         workspace, away = self.db.resolve(boss[0])
         if away is not None:
-            workspace = "s-" + uuid4().hex
+            cached = self._fresh.get(boss[0])
+            row = self.db.workspace(cached) if cached is not None else None
+            if cached is None or (row is not None and row.owner != boss[0]):
+                cached = "s-" + uuid4().hex
+                self._fresh[boss[0]] = cached
+            workspace = cached
         self._bosses[workspace] = boss
         return workspace
 

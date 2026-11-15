@@ -2309,7 +2309,9 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
 
 
 @pytest.mark.asyncio
-async def test_handed_over_boss_creates_a_new_workspace(data_root: Path, tmp_path: Path) -> None:
+async def test_handed_over_boss_creates_a_new_workspace(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async with Client(mcp) as client:
         args: dict[str, object] = {
             "provider": "claude",
@@ -2322,9 +2324,27 @@ async def test_handed_over_boss_creates_a_new_workspace(data_root: Path, tmp_pat
         old = _state(data_root, first["conversation_id"])["manager_session"]
         await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
         await _call(client, "handover", {"workspace_id": old, "manager_session_id": "chat-b"})
-        fresh = await _call(client, "start_agent", args)
+        original_acquire = Conversations.acquire_task_isolation
+        both_ready = asyncio.Event()
+        arrivals = 0
+
+        async def hold_until_both(self: Conversations, *args: Any, **kwargs: Any) -> Any:
+            nonlocal arrivals
+            arrivals += 1
+            if arrivals == 2:
+                both_ready.set()
+            await asyncio.wait_for(both_ready.wait(), timeout=5)
+            return await original_acquire(self, *args, **kwargs)
+
+        monkeypatch.setattr(Conversations, "acquire_task_isolation", hold_until_both)
+        fresh, another = await asyncio.gather(
+            _call(client, "start_agent", args), _call(client, "start_agent", args)
+        )
+        monkeypatch.setattr(Conversations, "acquire_task_isolation", original_acquire)
         await _wait_task(client, fresh["invocation_id"])
+        await _wait_task(client, another["invocation_id"])
         new = _state(data_root, fresh["conversation_id"])["manager_session"]
+        assert _state(data_root, another["conversation_id"])["manager_session"] == new
         db = Database(data_root)
         row = db.workspace(new)
         assert new != old and row is not None and row.owner == row.origin and row.owner != row.id
@@ -2339,6 +2359,10 @@ async def test_handed_over_boss_creates_a_new_workspace(data_root: Path, tmp_pat
         await _call(client, "handover", {"workspace_id": new, "manager_session_id": "chat-c"})
         row = db.workspace(new)
         assert row is not None and _handed_over(row)
+        latest = await _call(client, "start_agent", args)
+        await _wait_task(client, latest["invocation_id"])
+        latest_workspace = _state(data_root, latest["conversation_id"])["manager_session"]
+        assert latest_workspace != new and latest_workspace != old
         db.close()
 
 
