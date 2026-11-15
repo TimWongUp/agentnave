@@ -2367,6 +2367,131 @@ async def test_handed_over_boss_creates_a_new_workspace(
 
 
 @pytest.mark.asyncio
+async def test_handover_during_isolation_rejects_start_and_releases_directory(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.native_sessions import boss_key
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+    (repo / "a.txt").write_text("base\n")
+    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    async with Client(mcp) as client:
+        args: dict[str, object] = {
+            "provider": "claude",
+            "prompt": "x",
+            "cwd": str(repo),
+            "manager_session_id": "chat-a",
+        }
+        first = await _call(client, "start_agent", args)
+        await _wait_task(client, first["invocation_id"])
+        workspace = _state(data_root, first["conversation_id"])["manager_session"]
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
+        original = Conversations.acquire_task_isolation
+        paths: list[Path] = []
+
+        async def claim_after_acquire(self: Conversations, *args: Any, **kwargs: Any) -> Any:
+            hold = await original(self, *args, **kwargs)
+            assert hold.info is not None
+            paths.append(Path(hold.info.path))
+            self.db.claim(str(workspace), boss_key(self.host.name, "chat-b"), self.host.name, None)
+            return hold
+
+        monkeypatch.setattr(Conversations, "acquire_task_isolation", claim_after_acquire)
+        result = await client.call_tool("start_agent", {**args, "isolation": {}})
+        assert result.is_error and "handed its workspace" in str(result.content)
+        assert len(paths) == 1 and not paths[0].exists()
+        with sqlite3.connect(data_root / "agentnave.db") as db:
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM conversations WHERE manager_session = ?", (workspace,)
+                ).fetchone()[0]
+                == 1
+            )
+
+
+@pytest.mark.asyncio
+async def test_handover_during_meeting_preparation_rejects_creation(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.native_sessions import boss_key
+
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        first = studio.open_show(
+            "first",
+            tmp_path,
+            [GroupSeat("a", "claude", {}, tmp_path)],
+            review=False,
+            isolated=False,
+            manager_session_id="chat-a",
+        )
+        workspace = first.state.manager_session
+        assert workspace is not None
+        studio.release("chat-a", None)
+        original_open = studio.open
+
+        def claim_during_open(*args: Any, **kwargs: Any) -> Any:
+            group = original_open(*args, **kwargs)
+            studio.db.claim(workspace, boss_key(studio.host.name, "chat-b"), studio.host.name, None)
+            return group
+
+        monkeypatch.setattr(studio, "open", claim_during_open)
+        with pytest.raises(ValueError, match="handed its workspace"):
+            studio.open_show(
+                "second",
+                tmp_path,
+                [GroupSeat("a", "claude", {}, tmp_path)],
+                review=False,
+                isolated=False,
+                manager_session_id="chat-a",
+            )
+        assert len(studio.records) == 1
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_new_workspace_registration_failure_leaves_no_conversation(
+    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_register(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("register failed")
+
+    async with Client(mcp) as client:
+        args: dict[str, object] = {
+            "provider": "claude",
+            "prompt": "x",
+            "cwd": str(tmp_path),
+            "manager_session_id": "chat-a",
+        }
+        with monkeypatch.context() as patch:
+            patch.setattr(Database, "register", fail_register)
+            first = await _call(client, "start_agent", args)
+        await _wait_task(client, first["invocation_id"])
+        workspace = _state(data_root, first["conversation_id"])["manager_session"]
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
+        await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"})
+        locks_before = set((data_root / "locks").glob("*"))
+
+        monkeypatch.setattr(Database, "register", fail_register)
+        result = await client.call_tool("start_agent", args)
+        assert result.is_error and "register failed" in str(result.content)
+        with sqlite3.connect(data_root / "agentnave.db") as db:
+            assert db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 1
+        assert set((data_root / "locks").glob("*")) == locks_before
+
+
+@pytest.mark.asyncio
 async def test_desk_role_is_validated_and_saved_with_tasks_and_seats(
     tmp_path: Path, data_root: Path
 ) -> None:

@@ -162,6 +162,8 @@ class Conversations(ConversationStore):
                 ],
                 sessions={seat_id: SessionRecord() for seat_id in group.seats},
             )
+            if manager_session is not None:
+                self.validate_manager_workspace(manager_session_id, manager_session)
             record = self._create(state, manager_session)
             self._release_idle(record)
             return record
@@ -642,6 +644,8 @@ class Conversations(ConversationStore):
         declared = normalize_access(access)
         if isolation_requested and request.session_id is not None:
             raise ValueError("isolation cannot be combined with session_id")
+        if manager_workspace is not None:
+            self.validate_manager_workspace(manager_session_id, manager_workspace)
         manager_session = manager_workspace or (
             self.new_manager_session(manager_session_id)
             if conversation_id is None and request.session_id is None

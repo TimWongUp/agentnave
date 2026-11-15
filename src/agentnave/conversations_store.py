@@ -599,6 +599,12 @@ class ConversationStore(Groups):
         self._bosses[workspace] = boss
         return workspace
 
+    def validate_manager_workspace(self, session_id: str | None, workspace: str) -> None:
+        """Reject a workspace that changed while the conversation was being prepared."""
+        if self.new_manager_session(session_id) != workspace:
+            self._manager_session(session_id)  # Raise the handover error when applicable.
+            raise ValueError("workspace changed while starting the conversation; please retry")
+
     def _manager_model(self, session: str | None) -> str | None:
         boss = self._bosses.get(session or "")
         return session_model(self.host, boss[1] if boss else None)
@@ -623,13 +629,19 @@ class ConversationStore(Groups):
         state.host = self.host.name
         state.host_source = self.host.source
         state.manager_session = manager_session
-        record = Record.create(self.db, self.locks, state)
-        self.records[state.id] = record
-        self._ensure_live_writer(record)
         boss = self._bosses.get(manager_session or "")
         if manager_session is not None and boss is not None:
             # Who leads this workspace, and where its transcript is for a later handover.
-            self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
+            if manager_session == boss[0]:
+                with suppress(OSError):
+                    self.db.register(
+                        manager_session, boss[0], self.host.name, self._boss_file(boss[1])
+                    )
+            else:
+                self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
+        record = Record.create(self.db, self.locks, state)
+        self.records[state.id] = record
+        self._ensure_live_writer(record)
         return record
 
     # Handover (ADR-0033)
