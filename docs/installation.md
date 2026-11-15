@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.11.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.12.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.11.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.12.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -629,28 +629,29 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.11.0
+### Upgrading to v1.12.0
 
-Update the App; it installs the paired service and Skills at startup. Reconnect or reopen hosts as
-prompted. For a manual installation, reinstall the runtime and Skills from `@v1.11.0` and reconnect
-MCP. Install `agentnave-meeting` instead of `agentnave-manager` for the Meetings only preset; the
-two are mutually exclusive. Replace the full Skill directory to pick up the updated instructions.
+Update the App and reconnect or reopen hosts as prompted. For a manual installation, reinstall the
+runtime and Skills from `@v1.12.0` and reconnect MCP. Replace the full Skill directory to pick up
+the updated instructions.
 
-Seats can now have ordered fallbacks, and quota cooldown can apply to a shared provider quota group.
-A v1.10 service rejects `orchestration.json`, `review.json` or `decision-seats.json` containing `fallbacks` as invalid;
-reconnect hosts to the new service before adding fallbacks. Older services or Apps may also ignore
-group cooldown records, so update the App.
+The v1.11 service and App reject `orchestration.json` containing a fixed seat's `medium` tier.
+The v1.11 App rejects `decision-seats.json` containing `random_candidates`; the v1.11 service
+ignores that field. Update the App and reconnect hosts to the new service before configuring these
+options. In a hand-written `decision-seats.json`, seat IDs such as `worker-medium` or
+`explorer-medium` are now reserved; rename them before upgrading.
 
-In the Meetings only preset, “boss may initiate meetings” now defaults off, so existing users no
-longer get proactive meetings after upgrading. Turn the switch on in the App to restore them. On a
-headless host set `meetings_options.meetings: true` in `orchestration.json` and put the corresponding
-rule in the host instruction entry as described in [linux-headless.md](linux-headless.md).
+“Keep characters still on battery” now defaults off. If you never changed it, enable it in the App
+to restore the previous behavior. Antigravity hosts now default to launching their own CLI through
+AgentNave. If you previously selected the boss's native subagent, select it again in the App; the
+old selection was not saved explicitly. Old connections without an App identity must reconnect to
+the new service to use the new default.
 
-The decision model now selects a difficulty using the meaning of each tier. DeepSeek member settings
-can select a signed-in account, an official API key or the CLI's own configuration.
-
-See [v1.11.0 release notes](releases/v1.11.0.md). Earlier upgrade instructions remain in
-[the release archive](releases/v1.10.0.md).
+A seat's read/write setting is now a default: an explicitly declared access takes precedence.
+Successful read-only isolated tasks may automatically release an unchanged directory, including
+ignored files; resuming the same thread recreates it at the original path. See
+[v1.12.0 release notes](releases/v1.12.0.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.11.0.md).
 
 ## Uninstall
 
