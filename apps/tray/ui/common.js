@@ -1045,8 +1045,8 @@
     if (d.private?.running > 0) out.push({ kind: "private", status: "running" });
     return out;
   }
-  // A desk rests once it has had no work for two hours.
-  const SLEEP_AFTER = 2 * 3600e3;
+  // A desk rests once it has had no work for four hours.
+  const SLEEP_AFTER = 4 * 3600e3;
   const dozing = (d) => Date.now() - at(d.last_active) > SLEEP_AFTER;
   // A reviewed answer waits only briefly on the boss: it reads as work going on, not a state of its own.
   const ongoing = (status) => (status === "review" ? "running" : status);

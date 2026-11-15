@@ -697,11 +697,13 @@ All checks passed!
   function limited(all, countOnly = false) {
     const limit = Number(q.get("limit") || 8);
     const busy = (d) => d.status === "running";
-    const order = [...all].sort((a, b) => Number(busy(b)) - Number(busy(a)) || Date.parse(b.last_active) - Date.parse(a.last_active));
-    const keep = new Set(order.slice(0, Math.max(limit, all.filter(busy).length)).map((d) => d.key));
+    const stampOf = (d) => Date.parse(countOnly ? d.last_prompted || d.last_active : d.last_active);
+    const order = [...all].sort((a, b) => Number(busy(b)) - Number(busy(a)) || stampOf(b) - stampOf(a));
+    const cap = countOnly ? all.filter(busy).length + limit : Math.max(limit, all.filter(busy).length);
+    const keep = new Set(order.slice(0, cap).map((d) => d.key));
     const rest = order.filter((d) => !keep.has(d.key));
     return {
-      desks: all.filter((d) => keep.has(d.key)),
+      desks: (countOnly ? order : all).filter((d) => keep.has(d.key)),
       optimized: countOnly ? { count: rest.length } : { count: rest.length, desks: rest },
     };
   }
@@ -712,10 +714,11 @@ All checks passed!
       for (const sp of conv.specs) {
         const e = evalSpec(sp, w);
         if (!e) continue;
-        const d = map.get(sp.desk) || { sp, first: sp.start, last: e.at, active: false, latest: null, threads: 0, running: 0, meeting: null };
+        const d = map.get(sp.desk) || { sp, first: sp.start, last: e.at, prompted: sp.start, active: false, latest: null, threads: 0, running: 0, meeting: null };
         map.set(sp.desk, d);
         d.first = Math.min(d.first, sp.start);
         d.last = Math.max(d.last, e.at);
+        d.prompted = Math.max(d.prompted, sp.start);
         if (isActive(e.status)) d.active = true;
         else if (!d.latest || e.at >= d.latest.at) d.latest = { at: e.at, status: e.status };
         if (conv.mode === "task") {
@@ -727,7 +730,7 @@ All checks passed!
       .sort((a, b) => b.first - a.first || (a.sp.desk < b.sp.desk ? -1 : 1))
       .map((d) => ({
         key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, access: d.sp.access ?? null, identity: d.sp.identity,
-        first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),
+        first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last), last_prompted: stamp(w, d.prompted),
         status: d.active ? "running" : FAILED.includes(d.latest?.status) ? "failed" : "idle",
         private_allowed: d.sp.provider !== hostCli,
         kind: d.threads ? "task" : "seat", room: d.threads ? null : d.meeting?.room || null,
