@@ -1131,14 +1131,16 @@ const cardsOf = (app) => roleChildren(app)[0].children[3].children;
 test("a boss put into the decision mode makes the first catalog from the fixed seats once", async () => {
   const { app, decision } = decisionEditor("split", NO_FILE);
   await decision((d) => d.load());
+  app.run('orchestration.document.worker.medium = { provider: "codex", model: "chat-model", effort: "low" }');
   app.run('viewMode("decision")');
   app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
   const seats = seatsOf(app);
-  // One card per bound group with easy and hard filled in and medium empty, then the image seat.
+  // One card per bound group with each bound difficulty filled in and medium empty where unbound, then the image seat.
   assert.deepEqual(seats.map(({ kind, role, description, access, difficulty }) => [kind, role, description, access, difficulty]), [
     ["explorer", "通用探索", "读代码", "read", "easy"],
     ["explorer", "通用探索", "读代码", "read", "hard"],
     ["worker", "通用执行", "改代码", "write", "easy"],
+    ["worker", "通用执行", "改代码", "write", "medium"],
     ["worker", "通用执行", "改代码", "write", "hard"],
     ["worker_frontend", "界面制作", "做界面", "write", "easy"],
     ["worker_frontend", "界面制作", "做界面", "write", "hard"],
@@ -1146,8 +1148,9 @@ test("a boss put into the decision mode makes the first catalog from the fixed s
     ["image", "通用生图", "通用生图", "write", undefined],
   ]);
   assert.equal(seats[1].effort, "high");
-  assert.ok(!("difficulty" in seats[7]));
-  assert.equal(new Set(seats.map((seat) => seat.id)).size, 8);
+  assert.equal(seats[3].effort, "low");
+  assert.ok(!("difficulty" in seats[8]));
+  assert.equal(new Set(seats.map((seat) => seat.id)).size, 9);
   assert.ok(seats.every((seat) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(seat.id) && !("tags" in seat)));
   assert.equal(cardsOf(app).length, 5);
   assert.equal(decision((d) => d.changed()), true);
@@ -1155,7 +1158,7 @@ test("a boss put into the decision mode makes the first catalog from the fixed s
   // Leaving the mode keeps the catalog, and coming back does not make another one.
   app.run('setBossMode(AN.settings.orchestration.bosses[0], "off")');
   app.run('setBossMode(AN.settings.orchestration.bosses[0], "decision")');
-  assert.equal(seatsOf(app).length, 8);
+  assert.equal(seatsOf(app).length, 9);
 });
 
 test("a saved file is never prefilled again, and a boss already on the mode does not prefill", async () => {
