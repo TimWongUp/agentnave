@@ -9,7 +9,7 @@ window.ANAppearance = (() => {
   let characterStyle = root.dataset.characterStyle || "static";
   let generation = 0;
   const reducedMotion = { get matches() {
-    if (root.dataset.onBattery === "true" && root.dataset.batteryStill !== "false") return true;
+    if (root.dataset.onBattery === "true" && root.dataset.batteryStill === "true") return true;
     return root.dataset.motion === "reduce" || (root.dataset.motion !== "full" && motion.matches);
   } };
 
@@ -91,5 +91,5 @@ window.ANAppearance = (() => {
   applyTheme();
   return { applyTheme, applyPreferences, themeSwitch, reducedMotion,
     preferences: () => ({ theme, motion: root.dataset.motion, character_style: characterStyle,
-      battery_still: root.dataset.batteryStill !== "false", pause_unfocused: root.dataset.pauseUnfocused !== "false" }) };
+      battery_still: root.dataset.batteryStill === "true", pause_unfocused: root.dataset.pauseUnfocused !== "false" }) };
 })();

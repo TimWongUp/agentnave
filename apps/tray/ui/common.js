@@ -233,18 +233,23 @@
   // An unfocused window (see syncBlurred) polls less often.
   function poll(tick, every = 1500) {
     let timer = null, busy = false;
+    const wait = () => (blurred ? Math.max(every, BLURRED_POLL) : every);
     async function run() {
       clearTimeout(timer);
       if (isHidden() || busy) return;
       busy = true;
       try { await tick(); } finally {
         busy = false;
-        if (!isHidden()) timer = setTimeout(run, blurred ? Math.max(every, BLURRED_POLL) : every);
+        if (!isHidden()) timer = setTimeout(run, wait());
       }
     }
     onVisibility(run);
     window.addEventListener("focus", run);
     window.addEventListener("agentnave:focus", run);
+    // The pause changed without the window moving (power plugged in or a setting turned): only the pace follows.
+    window.addEventListener("agentnave:pause", () => {
+      if (timer && !busy && !isHidden()) { clearTimeout(timer); timer = setTimeout(run, wait()); }
+    });
     run();
     return run;
   }
@@ -331,15 +336,22 @@
   // and decorations stand still (html.blurred) and polling slows down. The App also reports the
   // window's focus as data-window-blurred, for when the page gets no blur events. Coming back
   // refreshes at once. The setting "pause when unfocused" (data-pause-unfocused) turns this off,
-  // except on battery (data-on-battery) unless figures may move on battery (data-battery-still="false"); a hidden or minimized window stays paused either way.
+  // except on battery (data-on-battery) when figures stand still on battery (data-battery-still="true"); a hidden or minimized window stays paused either way.
+  // "agentnave:pause" announces every change of html.blurred; "agentnave:blur"/"agentnave:focus" only mean the window really left or came back to the front.
   const BLURRED_POLL = 5000;
-  let blurred = false;
+  let blurred = false, away = false;
   function syncBlurred() {
-    const next = root.dataset?.idleBlur !== undefined && (root.dataset.pauseUnfocused !== "false" || (root.dataset.onBattery === "true" && root.dataset.batteryStill !== "false")) && (root.dataset.windowBlurred === "true" || !document.hasFocus());
-    if (next === blurred) return;
-    blurred = next;
-    root.classList?.toggle("blurred", next);
-    window.dispatchEvent(new Event(next ? "agentnave:blur" : "agentnave:focus"));
+    const nextAway = root.dataset?.idleBlur !== undefined && (root.dataset.windowBlurred === "true" || !document.hasFocus());
+    const next = nextAway && (root.dataset.pauseUnfocused !== "false" || (root.dataset.onBattery === "true" && root.dataset.batteryStill === "true"));
+    if (next !== blurred) {
+      blurred = next;
+      root.classList?.toggle("blurred", next);
+      window.dispatchEvent(new Event("agentnave:pause"));
+    }
+    if (nextAway !== away) {
+      away = nextAway;
+      window.dispatchEvent(new Event(away ? "agentnave:blur" : "agentnave:focus"));
+    }
   }
   // Focus moving into an embedded frame blurs this window too; ask again once it has settled.
   const checkBlurred = () => setTimeout(syncBlurred, 0);
@@ -401,9 +413,10 @@
     else if (!wanted && emitTimer) { clearInterval(emitTimer); emitTimer = null; }
   }
   onVisibility(syncEmitTimer);
-  window.addEventListener("agentnave:blur", syncEmitTimer);
-  window.addEventListener("agentnave:focus", syncEmitTimer);
-  still.addEventListener?.("change", syncEmitTimer);
+  window.addEventListener("agentnave:pause", syncEmitTimer);
+  // `still` is a getter, not an event target: follow what it reads (on-battery, battery-still, motion) and the system setting.
+  if (typeof MutationObserver === "function") new MutationObserver(syncEmitTimer).observe(root, { attributes: true, attributeFilter: ["data-motion", "data-on-battery", "data-battery-still"] });
+  window.matchMedia?.("(prefers-reduced-motion: reduce)")?.addEventListener?.("change", syncEmitTimer);
   function emitTick() {
     if (isHidden() || blurred || still.matches) return syncEmitTimer();
     const now = performance.now();
@@ -964,8 +977,7 @@
   }).observe(root, { subtree: true, childList: true, attributes: true, attributeOldValue: true,
     attributeFilter: ["data-mood", "hidden", "inert", "class", "data-motion", "data-art-paused", "data-window-hidden", "data-on-battery", "data-battery-still"] });
   document.addEventListener("visibilitychange", syncAllVideos);
-  window.addEventListener("agentnave:blur", syncAllVideos);
-  window.addEventListener("agentnave:focus", syncAllVideos);
+  window.addEventListener("agentnave:pause", syncAllVideos);
   window.addEventListener("pagehide", () => { for (const fig of [...videoPlayers.keys()]) releaseFigure(fig); });
   window.addEventListener("pageshow", () => scheduleVideoTree(root));
   window.matchMedia?.("(prefers-reduced-motion: reduce)")?.addEventListener?.("change", syncAllVideos);
