@@ -631,14 +631,14 @@ class ConversationStore(Groups):
         state.manager_session = manager_session
         boss = self._bosses.get(manager_session or "")
         if manager_session is not None and boss is not None:
-            # Who leads this workspace, and where its transcript is for a later handover.
-            if manager_session == boss[0]:
-                with suppress(OSError):
-                    self.db.register(
-                        manager_session, boss[0], self.host.name, self._boss_file(boss[1])
-                    )
-            else:
+            # Who leads this workspace, and where its transcript is for a later handover. Only a
+            # new workspace under a fresh id has no owner without this row, so only it must fail.
+            fresh = manager_session != boss[0] and self.db.workspace(manager_session) is None
+            try:
                 self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
+            except OSError:
+                if fresh:
+                    raise
         record = Record.create(self.db, self.locks, state)
         self.records[state.id] = record
         self._ensure_live_writer(record)
