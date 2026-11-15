@@ -39,6 +39,8 @@ BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
 TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
 _EXPERIMENTS_READY = b"Experiments refreshed after login"
 _CREATED_CONVERSATION = re.compile(rb"Created conversation ([0-9a-fA-F-]{36})\b")
+# The idle footer counts running background tasks even when the transcript never named them.
+_FOOTER_TASKS = re.compile(r"\b[1-9]\d* task\(s\)")
 _UNMOUNTED_HOOKS_WARNING = (
     "Antigravity CLI did not load hooks for this turn; completed from its written reply"
 )
@@ -462,7 +464,7 @@ class Run:
         elif shown == "idle" and not self.turn.stop_seen and self.turn.answered:
             if steady < STOP_GRACE:
                 return False
-            if self.turn.can_complete_without_stop():
+            if self.turn.can_complete_without_stop() and not _FOOTER_TASKS.search(screen):
                 if _UNMOUNTED_HOOKS_WARNING not in self.turn.warnings:
                     self.turn.warnings.append(_UNMOUNTED_HOOKS_WARNING)
                 self.turn.stopped = True

@@ -461,6 +461,11 @@ def test_stalled_turns_complete_when_hooks_unmounted_or_block_when_unsafe(
         assert case.stalled("idle", STOP_GRACE + 1, "")
         assert "hooks did not load" in str(case.turn.error)
         assert "hooks.json" not in str(case.turn.error)
+    footer_tasks = run(answered=True, response="done")
+    assert footer_tasks.stalled(
+        "idle", STOP_GRACE + 1, "? for shortcuts   model · 1 task(s) · /tasks"
+    )
+    assert "hooks did not load" in str(footer_tasks.turn.error)
 
     # A Stop that left background commands running is followed by another once they end.
     assert not run(answered=True, stop_seen=True).stalled("idle", 3600, "")
