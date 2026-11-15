@@ -546,8 +546,10 @@ def test_codex_adapter_preserves_final_message_and_session() -> None:
     assert result.session_id == "0199a213-81c0-7800-8aa1-bbab2a035a53"
 
 
-def test_codex_adapter_fails_turn_without_reply_or_usage() -> None:
-    usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+@pytest.mark.parametrize("output_tokens", [0, 3])
+def test_codex_adapter_fails_turn_without_reply(output_tokens: int) -> None:
+    # The model can close a turn with no reply whether or not it spent tokens.
+    usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": output_tokens}
     payload = b"\n".join(
         (
             json.dumps({"type": "thread.started", "thread_id": "session-1"}).encode(),
@@ -560,7 +562,7 @@ def test_codex_adapter_fails_turn_without_reply_or_usage() -> None:
 
     assert result.status is InvocationStatus.FAILED
     assert result.session_id == "session-1"
-    assert result.error_message == "codex turn completed without a reply or token usage"
+    assert result.error_message == "codex turn completed without a reply"
 
 
 def test_codex_adapter_preserves_blocked_failure() -> None:

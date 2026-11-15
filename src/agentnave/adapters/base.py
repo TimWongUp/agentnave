@@ -140,6 +140,8 @@ class ProviderAdapter(Protocol):
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None: ...
 
+    def terminal_event(self, event: dict[str, object]) -> bool: ...
+
     def event_model(self, event: dict[str, object]) -> str | None: ...
 
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None: ...
@@ -190,6 +192,15 @@ class AdapterHooks:
     def is_installed(self) -> bool:
         """Resolve the launch executable without preparing a command or starting a process."""
         return os.path.isabs(self.executable_path())
+
+    def terminal_event(self, event: dict[str, object]) -> bool:
+        """Whether this native event is the invocation's final outcome (ADR-0095).
+
+        Once it is seen, the service stops the process tree if it has not exited within the grace
+        period and parses with exit status 0. Only declare it for single-turn runs: never for
+        multi-turn or stdin-kept interactive runtimes, where a turn's end is not the process's.
+        """
+        return False
 
     def event_model(self, event: dict[str, object]) -> str | None:
         """The main assistant's model named by one native stream event."""

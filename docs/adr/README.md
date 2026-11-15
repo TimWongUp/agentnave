@@ -52,7 +52,7 @@
 | 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 已接受 | — |
 | 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 部分取代 | [ADR-0061](0061-fixed-service-launcher.md) |
 | 0048 | [SQLite schema 演进与迁移归属](0048-sqlite-schema-evolution.md) | 已接受 | — |
-| 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | — |
+| 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | [ADR-0095](0095-provider-terminal-grace.md) 补充 |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
 | 0051 | [并行档不再逐次复核，评审时机交给用户](0051-parallel-preset-without-recheck.md) | 已接受 | [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) |
 | 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 部分取代 | [ADR-0065](0065-predefined-specialist-roles.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md)、[ADR-0087](0087-decision-model-recommends-seats.md)；2026-11-15 自身修订：各分组可加可选的中等档 `<前缀>-medium`，只公布绑定了的 |
@@ -98,3 +98,4 @@
 | 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」 |
 | 0093 | [「决策模型」档自定义任务工位支持同档可用候选随机选](0093-decision-seat-random-candidates.md) | 已接受 | 修订 ADR-0089 在「决策模型」档自定义任务工位上的顺位挑选与回执含义、ADR-0038 在该类工位开启随机选时的续接模型优先级；扩展 ADR-0087 |
 | 0094 | [Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动](0094-antigravity-host-cli-defaults-to-launch.md) | 已接受 | 修订 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的私聊同类默认值 |
+| 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049 |

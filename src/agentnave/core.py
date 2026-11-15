@@ -69,6 +69,8 @@ _RETRY_STALL_ERROR = InvocationError(
     "the provider kept retrying without producing output for 5 minutes; the invocation was stopped",
 )
 _PIPE_DRAIN_SECONDS = 1.0
+# After an Adapter's terminal event, the provider gets this long to exit on its own (ADR-0095).
+_TERMINAL_GRACE_SECONDS = 2.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "done", "failed", "error", "errored"})
 _RECENT_TOOLS = 5
@@ -115,6 +117,7 @@ class _InvocationRecord:
     tool_names: dict[str, str] = field(default_factory=lambda: {})
     # Names of the latest tool calls, oldest first, one entry per call.
     recent_tools: deque[str] = field(default_factory=lambda: deque[str](maxlen=_RECENT_TOOLS))
+    terminal_event: asyncio.Event = field(default_factory=asyncio.Event)
     attention_event: asyncio.Event = field(default_factory=asyncio.Event)
     pending_attention: deque[InvocationError] = field(
         default_factory=lambda: deque[InvocationError]()
@@ -133,6 +136,8 @@ class _InvocationRecord:
         if event is None:
             return
         self.last_event_at = time.monotonic()
+        if adapter.terminal_event(event):
+            self.terminal_event.set()
         self.reported_model = adapter.event_model(event) or self.reported_model
         if self.prompts.encode is not None:
             prompt = adapter.prompt_event(event)
@@ -316,6 +321,7 @@ class _RunIO:
     cancel_task: asyncio.Task[bool]
     exceeded_task: asyncio.Task[bool]
     stall_task: asyncio.Task[None]
+    terminal_task: asyncio.Task[None]
     output_exceeded: asyncio.Event
     stdout_diagnostics: _StreamDiagnostics
     stderr_diagnostics: _StreamDiagnostics
@@ -330,7 +336,13 @@ class _RunIO:
             self.cancel_task,
             self.exceeded_task,
             self.stall_task,
+            self.terminal_task,
         )
+
+
+async def _terminal_grace(event: asyncio.Event) -> None:
+    await event.wait()
+    await asyncio.sleep(_TERMINAL_GRACE_SECONDS)
 
 
 def _start_run_io(
@@ -379,6 +391,7 @@ def _start_run_io(
         cancel_task=cancel_task,
         exceeded_task=exceeded_task,
         stall_task=stall_task,
+        terminal_task=asyncio.create_task(_terminal_grace(record.terminal_event)),
         output_exceeded=output_exceeded,
         stdout_diagnostics=stdout_diagnostics,
         stderr_diagnostics=stderr_diagnostics,
@@ -412,6 +425,9 @@ def _run_outcome(
                 ("launch_error" if completion.kind == "launch_error" else "supervision_lost"),
                 completion.message or "provider supervisor failed",
             )
+    elif io.terminal_task in done and io.stall_task not in done:
+        terminal = error = None
+        provider_returncode = 0
     else:
         # The stall guard is the only trigger left, and the provider had not exited:
         # stop it as the retry policy did before the guard existed.
@@ -873,7 +889,13 @@ class InvocationManager:
             tasks.extend(io.tasks)
 
             done, _ = await asyncio.wait(
-                (io.completion_task, io.cancel_task, io.exceeded_task, io.stall_task),
+                (
+                    io.completion_task,
+                    io.cancel_task,
+                    io.exceeded_task,
+                    io.stall_task,
+                    io.terminal_task,
+                ),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             terminal, error, provider_returncode = _run_outcome(record, io, done)
