@@ -69,6 +69,8 @@ _RETRY_STALL_ERROR = InvocationError(
     "the provider kept retrying without producing output for 5 minutes; the invocation was stopped",
 )
 _PIPE_DRAIN_SECONDS = 1.0
+# After an Adapter's terminal event, the provider gets this long to exit on its own (ADR-0095).
+_TERMINAL_GRACE_SECONDS = 2.0
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "done", "failed", "error", "errored"})
 _RECENT_TOOLS = 5
@@ -340,7 +342,7 @@ class _RunIO:
 
 async def _terminal_grace(event: asyncio.Event) -> None:
     await event.wait()
-    await asyncio.sleep(2.0)
+    await asyncio.sleep(_TERMINAL_GRACE_SECONDS)
 
 
 def _start_run_io(

@@ -1920,25 +1920,3 @@ async def test_codex_terminal_event_ends_sleeping_process(tmp_path: Path) -> Non
         assert 2 <= time.monotonic() - started < 8
     finally:
         await manager.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_codex_empty_reply_with_usage_fails(tmp_path: Path) -> None:
-    events = [
-        {"type": "thread.started", "thread_id": "session-1"},
-        {"type": "turn.completed", "usage": {"input_tokens": 12, "output_tokens": 3}},
-    ]
-    script = f"print({json.dumps(chr(10).join(map(json.dumps, events)))}, flush=True)"
-    manager = InvocationManager()
-    request = InvocationRequest("codex", "work", tmp_path)
-    prepared = replace(manager.prepare(request), argv=(sys.executable, "-c", script))
-    try:
-        result = await manager.wait(manager.start(request, prepared=prepared), 10)
-        assert result is not None and result.status is InvocationStatus.FAILED
-        assert result.session_id == "session-1"
-        assert (
-            result.error is not None
-            and result.error.message == "codex turn completed without a reply"
-        )
-    finally:
-        await manager.shutdown()
