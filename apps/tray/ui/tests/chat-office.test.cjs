@@ -25,7 +25,7 @@ function office(character = (_host, model) => model || "default") {
     remove() {},
   });
   const context = vm.createContext({
-    AN: { at: Date.parse }, window: {}, ResizeObserver: class { observe() {} },
+    AN: { at: Date.parse }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} },
     ART: { character, figure: node,
       head: name => ({ name }), lid: host => ({ host }), url: path => path },
     el: { boss: node() }, state: { groupsData: [], drawer: {} },
@@ -53,7 +53,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
     set(target, key, value) { writes.push([key, value]); target[key] = value; return true; },
   });
   const context = vm.createContext({
-    AN: {}, window: {},
+    AN: {}, window: { addEventListener() {} },
     ResizeObserver: class { constructor(callback) { resize = callback; } observe() {} },
     requestAnimationFrame: callback => frames.push(callback),
     getComputedStyle: () => ({ getPropertyValue: () => " 3", columnGap: "10px" }),
@@ -514,7 +514,7 @@ test("walking, flights and folds are drawn in place while the window is hidden o
   const classes = new Set();
   let hidden = false;
   const context = vm.createContext({
-    AN: { isHidden: () => hidden }, window: {}, ResizeObserver: class { observe() {} }, reduceMotion: { matches: false }, el: { floor: {} },
+    AN: { isHidden: () => hidden }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} }, reduceMotion: { matches: false }, el: { floor: {} },
     document: { documentElement: { classList: { contains: name => classes.has(name) } } },
   });
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8") + "\nglobalThis.canAnimate = canAnimate;", context);
@@ -526,10 +526,36 @@ test("walking, flights and folds are drawn in place while the window is hidden o
   assert.equal(context.canAnimate(), false, "a window the App hid is as good as a hidden page");
 });
 
+test("motion under way stands still with the pause and goes on after it; a teleport due during the pause just appears", () => {
+  const classes = new Set(), listeners = {}, timers = [], warps = [], calls = [];
+  const context = vm.createContext({
+    AN: { isHidden: () => false }, ResizeObserver: class { observe() {} }, reduceMotion: { matches: false }, el: { floor: {} },
+    window: { addEventListener: (name, fn) => { listeners[name] = fn; } },
+    document: { documentElement: { classList: { contains: name => classes.has(name) } } },
+    Element: class { animate() {} }, getComputedStyle: () => ({}), setTimeout: fn => timers.push(fn),
+    ART: { warp: (_fig, kind) => warps.push(kind) }, FOLD_MS: 1, WALK_MS: 1, HOLD_MS: 1,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  const run = { finished: new Promise(() => {}), pause: () => calls.push("pause"), play: () => calls.push("play") };
+  context.foldRoom({ offsetHeight: 40, animate: () => run });
+  classes.add("blurred");
+  listeners["agentnave:pause"]();
+  classes.clear();
+  listeners["agentnave:pause"]();
+  assert.deepEqual(calls, ["pause", "play"]);
+
+  const end = { dataset: { char: "x" }, style: {}, isConnected: true };
+  context.teleport(Object.assign(new context.Element(), { dataset: {} }), end, "x");
+  classes.add("blurred");
+  timers.splice(0).forEach(fn => fn());
+  assert.deepEqual(warps, [], "no entrance plays while the window stands still");
+  assert.equal(end.style.visibility, "", "the figure is shown in place");
+});
+
 test("a side list patches its relative times in place and lays out only when desks or seats change", () => {
   const read = [];
   const context = vm.createContext({
-    AN: { at: Date.parse }, window: {}, ResizeObserver: class { observe() {} },
+    AN: { at: Date.parse }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} },
     ART: { head: d => d, version: () => 1 }, deskChar: d => d.key, setText: (node, text) => { node.textContent = text; },
     h: (tag, _attrs, ...kids) => ({ tag, kids: kids.flat(), textContent: kids.find(k => typeof k === "string"), addEventListener() {} }),
     getComputedStyle: () => ({ getPropertyValue: () => "", columnGap: "" }),
@@ -604,7 +630,7 @@ test("a folded column peeks on its button or the window edge and leaves 300ms af
 
 test("a private chat row is told by its role, with model and effort below, and falls back without them", () => {
   const context = vm.createContext({
-    AN: { at: Date.parse, dozing: () => false }, window: {}, ResizeObserver: class { observe() {} }, state: {}, el: {}, FIG: 100, L: zh => zh,
+    AN: { at: Date.parse, dozing: () => false }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} }, state: {}, el: {}, FIG: 100, L: zh => zh,
     activities: () => [], cliOf: () => "Codex", relTime: () => "", fullRoom: () => false,
     deskName: d => (d.effort ? `${d.model} · ${d.effort}` : d.model),
     deskParts: d => ({ name: d.model, effort: d.effort || "" }),
