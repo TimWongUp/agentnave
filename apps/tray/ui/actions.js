@@ -266,6 +266,7 @@ const Actions = {};
     const answer = await ask({
       title: L(`把工作区“${groupName(id)}”交给其他 boss？`, `Hand over workspace "${groupName(id)}" to another boss?`),
       body: [
+        h("p.act-note", {}, L("boss 还能回话时，直接对它说「转交这个会话」，它会写好交接文档；这里用于 boss 已经用不了的情况。", "When the current boss can still reply, tell it \"Hand over this session\" directly so it writes handover notes; use this when that boss can no longer be used.")),
         h("p.act-note", {}, L("工作区会标为待接手。然后在任意宿主开一个新聊天，请它接手这个工作区：接手后由新 boss 继续派活，原来的 boss 不能再在这里派活；还在跑的任务会跑完，结果留在历史里。", "Marks the workspace as awaiting handover. Start a new chat in any host and ask it to take over this workspace: the new boss will dispatch future work, while running tasks finish and stay in history.")),
         h("p.act-note", {}, L("有新 boss 接手之前，原来的 boss 照常可用。", "Until a new boss takes over, the current boss can keep working as usual.")),
       ],
@@ -277,6 +278,20 @@ const Actions = {};
       say(data.message || L("已标为待接手", "Marked as awaiting handover"), data.status !== "waiting");
     } catch (error) {
       say(L(`没有交接：${error.message}`, `Handover failed: ${error.message}`), true);
+    }
+    await refresh();
+  }
+  async function cancelHandover(id) {
+    try {
+      const data = await AN.post("/app/workspaces/cancel-handover", { group: id });
+      const text = {
+        cancelled: L("已取消交接", "Handover cancelled"),
+        not_pending: L("已被接手或已取消，刷新后再看", "Already taken over or cancelled; refresh to check"),
+        only_boss: L("这个工作区没有会话，取消后会从列表消失；不需要时请删除工作区", "This workspace has no conversations and would disappear if cancelled; delete the workspace instead"),
+      }[data.status];
+      say(text || data.message || L("未能取消交接", "Failed to cancel handover"), data.status !== "cancelled");
+    } catch (error) {
+      say(L(`未能取消交接：${error.message}`, `Failed to cancel handover: ${error.message}`), true);
     }
     await refresh();
   }
@@ -378,7 +393,9 @@ const Actions = {};
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("工作区", "workspace")) },
-      g.handover !== "pending" && { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
+      g.handover === "pending"
+        ? g.conversations && { label: L("取消交接", "Cancel handover"), run: () => cancelHandover(id) }
+        : { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
       { label: L("删除工作区…", "Delete workspace…"), danger: true, run: () => removeGroups([id]) },
     ].filter(Boolean));
   }
@@ -394,5 +411,5 @@ const Actions = {};
 
   $("cleanup").addEventListener("click", cleanup);
 
-  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu });
+  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu, cancelHandover });
 }

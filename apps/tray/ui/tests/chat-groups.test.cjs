@@ -5,7 +5,7 @@ const vm = require("node:vm");
 
 const context = vm.createContext({ window: {}, Date });
 vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
-const { other, caps, capSections, capFlat } = context.window.ChatGroups;
+const { other, handover, caps, capSections, capFlat } = context.window.ChatGroups;
 // Results come from another realm; copy them so deepEqual compares plain values.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const arrange = (...args) => plain(context.window.ChatGroups.arrange(...args));
@@ -103,4 +103,33 @@ test("the ungrouped list keeps its first entries plus the ones it must show", ()
   const wider = flat(items, { limit: caps.flat + caps.flatStep, must });
   assert.equal(wider.items.length, items.length);
   assert.equal(wider.hidden, 0);
+});
+
+test("pending handovers move into a pinned top section without counting against the group cap", () => {
+  assert.equal(arrange([ws("a", "/w/app", "2026-11-12T00:00:00Z")], "project", env).some(s => s.key === handover), false);
+
+  const byProject = arrange([
+    ws("a", "/w/app", "2026-11-10T00:00:00Z", "idle", { handover: "pending" }),
+    ws("b", "/w/app", "2026-11-12T00:00:00Z"),
+    ws("c", "/w/solo", "2026-11-13T00:00:00Z", "running", { handover: "pending" }),
+  ], "project", env);
+  assert.deepEqual(byProject.map(s => [s.key, s.title, s.items.map(g => g.group)]), [
+    [handover, "待接手", ["c", "a"]],
+    ["/w/app", "app", ["b"]],
+  ]);
+
+  const byBoss = arrange([
+    ws("a", "/w/a", "2026-11-10T00:00:00Z", "idle", { handover: "pending", boss_key: "claude|Claude Code", label: "Claude Code" }),
+    ws("b", "/w/b", "2026-11-12T00:00:00Z"),
+  ], "boss", env);
+  assert.deepEqual(byBoss.map(s => [s.key, s.items.map(g => g.group)]), [[handover, ["a"]], ["codex|Codex", ["b"]]]);
+
+  const ahead = Array.from({ length: caps.groups }, (_, p) => ws(`p${p}`, `/w/p${p}`, `2026-11-${String(20 - p).padStart(2, "0")}T00:00:00Z`));
+  const pending = Array.from({ length: caps.items + 2 }, (_, i) => ws(`h${i}`, "/w/h", `2026-11-0${9 - i}T00:00:00Z`, "idle", { handover: "pending" }));
+  const capped = cap(arrange([...ahead, ...pending], "project", env), {
+    groupLimit: caps.groups, itemLimit: caps.items, must: g => g.handover === "pending" || must(g),
+  });
+  assert.equal(capped.sections.length, caps.groups + 1);
+  assert.equal(capped.hiddenGroups, 0);
+  assert.equal(capped.sections[0].shown.length, pending.length);
 });

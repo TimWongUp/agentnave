@@ -41,6 +41,24 @@ fn project_name_skips_agent_worktrees() {
 use super::Desk;
 
 #[test]
+fn list_keeps_pending_workspaces_beyond_the_other_workspace_limit() {
+    let mut groups: Vec<_> = (0..202)
+        .map(|i| super::Group::new(format!("workspace-{i}")))
+        .collect();
+    groups[201].handover.pending = true;
+    let response = super::list_response(groups, &[]);
+    let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let listed = body["groups"].as_array().unwrap();
+    assert_eq!(listed.len(), 201);
+    assert!(
+        listed
+            .iter()
+            .any(|g| g["group"] == "workspace-201" && g["handover"] == "pending")
+    );
+    assert!(!listed.iter().any(|g| g["group"] == "workspace-200"));
+}
+
+#[test]
 fn a_failed_desk_settles_after_half_an_hour_unless_it_runs_again() {
     let mut desk = Desk::default();
     let minutes = |n: i64| n * 60 * 1_000_000;
