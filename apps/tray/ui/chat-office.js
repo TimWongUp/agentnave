@@ -586,11 +586,24 @@ new ResizeObserver(([entry]) => {
 }).observe(el.floor);
 
 // ---------------------------------------------------------------- the office, patched in place
+const blurred = () => document.documentElement.classList.contains("blurred");
 const canAnimate = () =>
   !reduceMotion.matches &&
   !AN.isHidden() &&
-  !document.documentElement.classList.contains("blurred") &&
+  !blurred() &&
   typeof Element.prototype.animate === "function";
+// A walk or flight already under way stands still with the window's pause and goes on from there.
+const moving = new Set();
+function moves(run) {
+  moving.add(run);
+  const done = () => moving.delete(run);
+  run.finished.then(done, done);
+  return run;
+}
+window.addEventListener("agentnave:pause", () => {
+  const still = blurred();
+  for (const run of moving) still ? run.pause() : run.play();
+});
 
 function renderOffice(c, ctx, n, newGroup) {
   if (newGroup) {
@@ -794,7 +807,7 @@ function travel(start, end, name) {
   walker.style.cssText += `left:${a.left - base.left}px;top:${a.top - base.top}px;width:${a.width}px;height:${a.height}px`;
   el.fx.append(walker);
   const scale = b.width / a.width;
-  const run = walker.animate(
+  const run = moves(walker.animate(
     [
       { transform: "none", opacity: 0.95 },
       {
@@ -809,7 +822,7 @@ function travel(start, end, name) {
     walks
       ? { duration: WALK_MS, easing: "linear" }
       : { duration: 900, easing: "ease-in-out" },
-  );
+  ));
   // The figure at the destination waits until the walker arrives, so the desk is never shown twice.
   end.style.visibility = "hidden";
   run.onfinish = run.oncancel = () => {
@@ -832,7 +845,7 @@ function teleport(start, end, name, a, base) {
   end.style.visibility = "hidden";
   setTimeout(() => {
     end.style.visibility = "";
-    if (end.isConnected) ART.warp(end, "in");
+    if (end.isConnected && canAnimate()) ART.warp(end, "in");
   }, TELEPORT_GAP_MS);
 }
 
@@ -850,7 +863,7 @@ function fly(kind, from, to, delay) {
   token.style.top = `${a.top + a.height / 2 - base.top}px`;
   el.fx.append(token);
   const centre = "translate(-50%, -50%)";
-  const run = token.animate(
+  const run = moves(token.animate(
     [
       { transform: `${centre} scale(.5)`, opacity: 0 },
       { transform: `${centre} scale(1)`, opacity: 1, offset: 0.15 },
@@ -865,7 +878,7 @@ function fly(kind, from, to, delay) {
       },
     ],
     { duration: 1100, delay, easing: "ease-in-out", fill: "backwards" },
-  );
+  ));
   run.onfinish = run.oncancel = () => token.remove();
 }
 // New messages since the previous poll tell what moved. Typing bubbles are in-place updates, not events.
