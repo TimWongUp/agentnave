@@ -53,8 +53,8 @@ def footer_tasks(screen: str) -> int:
 
 def bottom(screen: str) -> list[str]:
     lines = [line.strip() for line in ANSI.sub("", screen).splitlines() if line.strip()]
-    tasks = footer_tasks(screen)
-    return lines[-(BOTTOM + (tasks + 1 if tasks else 0)) :]
+    tasks = _TASKS.search(lines[-1]) if lines else None
+    return lines[-(BOTTOM + (int(tasks.group(1)) + 1 if tasks else 0)) :]
 
 
 def state(screen: str) -> str:
