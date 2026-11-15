@@ -226,6 +226,28 @@ class StartArguments:
             raise ValueError("CLI is the host's own CLI")
 
 
+def reject_foreign_seat(
+    explicit_seat: str | None, provider: ProviderName | None, task: TaskRecord | None, host: Host
+) -> None:
+    """A resumed native session keeps its CLI, so another CLI's seat would be a false record."""
+    name = (explicit_seat or "").strip()
+    if not name or provider is None:
+        return
+    resumed_seat = (task.seat or "").strip() if task is not None else ""
+    if name == resumed_seat:
+        return
+    validate_task_seat(name, host)
+    seat = role_seat(name, host)
+    if seat is None or seat.provider == provider:
+        return
+    raise ValueError(
+        f"{name} seat runs on {seat.provider}, but the resumed native session runs on {provider}: "
+        "a native session cannot switch to a seat of another CLI, and keeping the thread's model "
+        f"would record a seat that never ran. Omit seat to keep the thread's seat, choose a seat "
+        f"of {provider}, or omit session_id to start a new thread with {name} and hand the work over."
+    )
+
+
 def resolve_start(
     arguments: StartArguments,
     conversations: Conversations,
@@ -234,6 +256,7 @@ def resolve_start(
     manager_session_id: str | None,
     provider_options: Mapping[str, ProviderOption] | None = None,
 ) -> StartArguments:
+    explicit_seat = arguments.seat
     if session_id is not None:
         task = conversations.resume_task(
             session_id,
@@ -248,6 +271,8 @@ def resolve_start(
             raise ValueError("Unknown session_id; pass provider and cwd explicitly")
     if arguments.cwd is None:
         raise ValueError("cwd is required for a new task; pass an absolute existing directory")
+    if session_id is not None:
+        reject_foreign_seat(explicit_seat, arguments.provider, arguments.resumed_task, host)
     arguments.resolve_seat(host, provider_options)
     if arguments.access == "read":
         arguments.defaults.append(READ_ONLY_APPLIED)

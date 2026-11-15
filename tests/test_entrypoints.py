@@ -4747,6 +4747,44 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
             client, session_id="session-e2e", seat="write-other", prompt="switch seat"
         )
         assert (switched["model"], switched["effort"]) == ("model-write-other", "medium")
+        # A resumed native session keeps its CLI: a seat of another CLI is a rejected switch,
+        # before any task record exists.
+        codex_seat = _own_seat("write-codex", "codex", "write")
+        _write_own_seats([task_seat, other_seat, codex_seat, image_seat], random_candidates=True)
+        history = _payload(
+            (
+                await client.call_tool(
+                    "read_conversation", {"conversation_id": switched["conversation_id"]}
+                )
+            ).structured_content
+        )
+        rejected = await client.call_tool(
+            "start_agent",
+            {"prompt": "foreign seat", "session_id": "session-e2e", "seat": "write-codex"},
+        )
+        assert rejected.is_error
+        message = str(rejected.content)
+        assert "cannot switch to a seat of another CLI" in message
+        assert "Omit seat" in message and "choose a seat of claude" in message
+        after = _payload(
+            (
+                await client.call_tool(
+                    "read_conversation", {"conversation_id": switched["conversation_id"]}
+                )
+            ).structured_content
+        )
+        assert len(cast(list[object], after["tasks"])) == len(cast(list[object], history["tasks"]))
+        unknown = await client.call_tool(
+            "start_agent",
+            {
+                "prompt": "foreign seat",
+                "session_id": "session-unknown",
+                "provider": "claude",
+                "cwd": str(tmp_path),
+                "seat": "write-codex",
+            },
+        )
+        assert unknown.is_error and "choose a seat of claude" in str(unknown.content)
         trimmed_seat = _own_seat("write-other", "claude", "write", effort="high")
         _write_own_seats([task_seat, trimmed_seat, image_seat], random_candidates=True)
         dropped_hist = await _start_and_wait(client, session_id="session-e2e", prompt="continue")
@@ -4875,6 +4913,29 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
         fixed_no_fb = await _start_and_wait(client, session_id="session-e2e", prompt="again")
         assert fixed_no_fb["model"] == "fixed-current"
         assert "worker-easy seat" in cast(list[str], fixed_no_fb["defaults_applied"])
+
+        # The same seat rebound to another CLI still resumes this thread on its own CLI and
+        # history model, whether seat is omitted or passed again with the same name.
+        (root / "orchestration.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "preset": "split",
+                    "worker": {"easy": {"provider": "codex", "model": "codex-worker"}},
+                }
+            )
+        )
+        rebound = await _start_and_wait(
+            client, session_id="session-e2e", seat="worker-easy", prompt="same seat rebound"
+        )
+        assert (rebound["provider"], rebound["model"]) == ("claude", "fixed-current")
+        rebound_inherited = await _start_and_wait(
+            client, session_id="session-e2e", prompt="same seat rebound inherited"
+        )
+        assert (rebound_inherited["provider"], rebound_inherited["model"]) == (
+            "claude",
+            "fixed-current",
+        )
 
         # All candidates unavailable: fails identically to ordered mode.
         (root / "orchestration.json").write_text(
