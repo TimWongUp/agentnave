@@ -3480,11 +3480,12 @@ async def test_start_agent_auto_asks_the_decision_model_and_starts_in_one_call(
             seat="auto",
             access="read",
             isolation={},
-            prompt="查清开关为什么不生效",
+            # ASCII: the fake CLI reads stdin in the Windows locale encoding.
+            prompt="find why the switch has no effect",
         )
         [(text, sent)] = decision.calls
         assert text == (
-            "Task:\n查清开关为什么不生效\nRequired access: read\n"
+            "Task:\nfind why the switch has no effect\nRequired access: read\n"
             + seat_recommendation._STAGED_TASK  # pyright: ignore[reportPrivateUsage]
         )
         assert set(sent) == {"write-a", "write-b"}
