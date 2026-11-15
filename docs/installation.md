@@ -638,7 +638,8 @@ the updated instructions.
 The v1.11 service and App reject `orchestration.json` containing a fixed seat's `medium` tier.
 The v1.11 App rejects `decision-seats.json` containing `random_candidates`; the v1.11 service
 ignores that field. Update the App and reconnect hosts to the new service before configuring these
-options.
+options. In a hand-written `decision-seats.json`, seat IDs such as `worker-medium` or
+`explorer-medium` are now reserved; rename them before upgrading.
 
 “Keep characters still on battery” now defaults off. If you never changed it, enable it in the App
 to restore the previous behavior. Antigravity hosts now default to launching their own CLI through
