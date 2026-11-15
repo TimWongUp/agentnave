@@ -388,7 +388,7 @@ All checks passed!
     const c3 = { id: "20261017-0958-c3d4e5", title: "补 relay 文档", mode: "task", specs: [buddy] };
     const c5 = { id: "20261017-0930-d4e5f6", title: "整理 relay 历史改动", mode: "task", specs: [ds] };
     return {
-      group: "3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", host: "claude", app: "claude-desktop", color: 0, live: true,
+      group: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", host: "claude", app: "claude-desktop", color: 0, live: true,
       convs: [room1, c1, c4, room2, c3, c5],
     };
   }
@@ -682,10 +682,11 @@ All checks passed!
           ));
       }
     }
-    if (q.has("handover")) out.push({
+    const ho = handoverOf(g);
+    if (ho) out.push({
       id: `${g.group}:handover`, time: stamp(w, w.s - 1), conversation: "", kind: "handover",
       speaker: { role: "system", label: "工作区交接" },
-      text: q.get("handover") === "pending" ? "Claude Code 交出工作区，等待接手" : "Claude Code 交出工作区，Codex 已接手",
+      text: ho === "pending" ? "Claude Code 交出工作区，等待接手" : "Claude Code 交出工作区，Codex 已接手",
       detail: "下一步：评审三个 PR 后统一发版。\n说明按纯文本显示：<script>alert(1)</script>\n\n" + "保留已有改动，核对 CI 与正式发布产物。\n".repeat(25),
     });
     out.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
@@ -697,11 +698,13 @@ All checks passed!
   function limited(all, countOnly = false) {
     const limit = Number(q.get("limit") || 8);
     const busy = (d) => d.status === "running";
-    const order = [...all].sort((a, b) => Number(busy(b)) - Number(busy(a)) || Date.parse(b.last_active) - Date.parse(a.last_active));
-    const keep = new Set(order.slice(0, Math.max(limit, all.filter(busy).length)).map((d) => d.key));
+    const stampOf = (d) => Date.parse(countOnly ? d.last_prompted || d.last_active : d.last_active);
+    const order = [...all].sort((a, b) => Number(busy(b)) - Number(busy(a)) || stampOf(b) - stampOf(a));
+    const cap = countOnly ? all.filter(busy).length + limit : Math.max(limit, all.filter(busy).length);
+    const keep = new Set(order.slice(0, cap).map((d) => d.key));
     const rest = order.filter((d) => !keep.has(d.key));
     return {
-      desks: all.filter((d) => keep.has(d.key)),
+      desks: (countOnly ? order : all).filter((d) => keep.has(d.key)),
       optimized: countOnly ? { count: rest.length } : { count: rest.length, desks: rest },
     };
   }
@@ -712,10 +715,11 @@ All checks passed!
       for (const sp of conv.specs) {
         const e = evalSpec(sp, w);
         if (!e) continue;
-        const d = map.get(sp.desk) || { sp, first: sp.start, last: e.at, active: false, latest: null, threads: 0, running: 0, meeting: null };
+        const d = map.get(sp.desk) || { sp, first: sp.start, last: e.at, prompted: sp.start, active: false, latest: null, threads: 0, running: 0, meeting: null };
         map.set(sp.desk, d);
         d.first = Math.min(d.first, sp.start);
         d.last = Math.max(d.last, e.at);
+        d.prompted = Math.max(d.prompted, sp.start);
         if (isActive(e.status)) d.active = true;
         else if (!d.latest || e.at >= d.latest.at) d.latest = { at: e.at, status: e.status };
         if (conv.mode === "task") {
@@ -727,7 +731,7 @@ All checks passed!
       .sort((a, b) => b.first - a.first || (a.sp.desk < b.sp.desk ? -1 : 1))
       .map((d) => ({
         key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, access: d.sp.access ?? null, identity: d.sp.identity,
-        first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last),
+        first_seen: stamp(w, d.first), last_active: d.active ? nowIso() : stamp(w, d.last), last_prompted: stamp(w, d.prompted),
         status: d.active ? "running" : FAILED.includes(d.latest?.status) ? "failed" : "idle",
         private_allowed: d.sp.provider !== hostCli,
         kind: d.threads ? "task" : "seat", room: d.threads ? null : d.meeting?.room || null,
@@ -777,6 +781,9 @@ All checks passed!
   ];
   const placeOf = (g, w) => PLACES[w.groups.indexOf(g) % PLACES.length];
 
+  const mockHandovers = new Map();
+  const handoverOf = (g) => mockHandovers.has(g.group) ? mockHandovers.get(g.group) : (g.group.startsWith("s-") ? q.get("handover") || null : null);
+
   function chats() {
     const w = world();
     const rows = w.groups
@@ -789,13 +796,13 @@ All checks passed!
         const preview = last ? clip((last.kind === "typing" ? plain(last.text).slice(-1) : plain(last.text).slice(0, 1)).join(" "), 90) : "";
         return {
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
-          title: conv.title, conversations: g.convs.length, preview,
+          handover: handoverOf(g), title: conv.title, title_id: conv.id, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
           isolated_count: isolatedOf(g, w).length,
           ...placeOf(g, w), boss_key: `${g.host}|${label(g)}`,
         };
       })
-      .sort((a, b) => (URGENCY[a.status] ?? 2) - (URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
+      .sort((a, b) => (a.handover === "pending" ? -1 : URGENCY[a.status] ?? 2) - (b.handover === "pending" ? -1 : URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
     return { groups: rows };
   }
 
@@ -804,12 +811,16 @@ All checks passed!
     const g = w.groups.find((x) => x.group === group);
     if (!g || !summaryOf(g, w).members.length) throw Object.assign(new Error("404"), { status: 404 });
     const { members, status } = summaryOf(g, w);
+    const ho = handoverOf(g);
+    const place = placeOf(g, w);
     return {
       group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status,
-      handover: q.get("handover") || null,
-      took_over: q.get("handover") === "changed" ? `${label(g)} 接手了 Claude Code` : null,
-      previous_host: q.get("handover") === "changed" ? "claude" : null,
-      previous_label: q.get("handover") === "changed" ? "Claude Code" : null,
+      title: g.convs[0]?.title || "", title_id: g.convs[0]?.id || null, project: place.project_label,
+      handover: ho,
+      took_over: ho === "changed" ? `${label(g)} 接手了 Claude Code` : null,
+      previous_host: ho === "changed" ? "claude" : null,
+      previous_label: ho === "changed" ? "Claude Code" : null,
+      ...place,
       conversations: g.convs
         .filter((c) => c.specs.some((sp) => w.s >= sp.start))
         .map((c) => ({ id: c.id, title: c.title, mode: c.mode, status: convStatus(c, w) })),
@@ -930,7 +941,7 @@ All checks passed!
       tray_count: true,
       tray_font: "baskerville",
       keep_awake: false,
-      battery_still: true,
+      battery_still: false,
       pause_unfocused: true,
     },
     alerts: {
@@ -1062,6 +1073,15 @@ All checks passed!
     }
     if (path === "/app/alerts/test") return { sent: true };
     if (path === "/app/storage/open") return { opened: true };
+    if (path === "/app/workspaces/handover") {
+      mockHandovers.set(body.group, "pending");
+      return { id: body.group, status: "waiting", message: "已标为待接手。在任意宿主开一个新聊天，请它接手这个工作区" };
+    }
+    if (path === "/app/workspaces/cancel-handover") {
+      if (handoverOf({ group: body.group }) !== "pending") return { id: body.group, status: "not_pending", message: "已被接手或已取消，刷新后再看" };
+      mockHandovers.set(body.group, null);
+      return { id: body.group, status: "cancelled", message: "已取消交接" };
+    }
     if (path === "/app/settings") {
       if (q.has("preview")) throw Object.assign(new Error("预览版不修改正式数据"), { status: 403 });
       if (Object.hasOwn(body, "history_retention_days")) mockRetentionDays = body.history_retention_days;

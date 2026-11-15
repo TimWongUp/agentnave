@@ -10,6 +10,7 @@
 - 工位名由 [ADR-0052](0052-orchestration-specialty-seats.md) 补充 `worker-frontend-easy`、`worker-frontend-hard`，并由其 2026-11-15 修订补充各分组可选的 `<前缀>-medium`（如 `explorer-medium`）。
 - 「决策模型」档下工位目录改为用户自定义，由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订。
 - 评审、Explorer／Worker 与专项工位套用单一 App 设置的条款由 [ADR-0089](0089-seat-fallback-order.md) 扩展为可按顺序配备选。
+- 「决策模型」档自定义任务工位开启同档候选随机选时，续接同一工位沿用原线程抽中的候选（不再改回工位主选），由 [ADR-0093](0093-decision-seat-random-candidates.md) 修订；其余工位、开关关闭、换用不同工位或历史模型不在候选时仍以工位当前模型优先。
 
 ## 背景
 

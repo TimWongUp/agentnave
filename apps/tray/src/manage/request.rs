@@ -21,20 +21,18 @@ pub(crate) fn request(
             Response::json(&crate::manage::rename(root, id, title))
         });
     }
-    if path == "/app/workspaces/handover" {
+    let op: Option<fn(&Path, &str) -> Value> = match path {
+        "/app/workspaces/handover" => Some(crate::manage::handover),
+        "/app/workspaces/cancel-handover" => Some(crate::manage::cancel_handover),
+        "/app/workspaces/forget" => Some(crate::manage::forget),
+        _ => None,
+    };
+    if let Some(op) = op {
         return post(method, action, body, |payload| {
             let Some(group) = payload["group"].as_str().filter(|id| valid_id(id)) else {
                 return Response::error(400, "需要有效的工作区 ID");
             };
-            Response::json(&crate::manage::handover(root, group))
-        });
-    }
-    if path == "/app/workspaces/forget" {
-        return post(method, action, body, |payload| {
-            let Some(group) = payload["group"].as_str().filter(|id| valid_id(id)) else {
-                return Response::error(400, "需要有效的工作区 ID");
-            };
-            Response::json(&crate::manage::forget(root, group))
+            Response::json(&op(root, group))
         });
     }
     if path == "/app/conversations/delete" {

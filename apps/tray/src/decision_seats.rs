@@ -1,7 +1,7 @@
-//! decision-seats.json and decision-keys.json (ADR-0087): the user's own seat catalog and the
-//! decision model's API key. The App is their only writer; the Python service reads them on every
-//! call. The checks here mirror the service's, so a file this module writes is one the service
-//! accepts.
+//! decision-seats.json and decision-keys.json (ADR-0087, ADR-0093): the user's own seat catalog,
+//! the random-candidates switch and the decision model's API key. The App writes them (without the
+//! App, decision-seats.json may be written by hand); the Python service reads them on every call.
+//! The checks here mirror the service's, so a file this module writes is one the service accepts.
 //!
 //! Which bosses use the catalog is their `decision` mode in orchestration.json, not anything in
 //! this file.
@@ -197,13 +197,14 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// decision-seats.json: `{"version": 1, "decision_model": "gemini-decision-1", "seats": [{id, kind,
-/// role, description, provider, model, effort?, fallbacks?, access, difficulty}]}`, one seat per difficulty of
-/// a card: `kind` is a group of the role catalog, "custom" or "image". An image seat is a card of
-/// one seat, write access and no difficulty.
+/// decision-seats.json: `{"version": 1, "decision_model": "gemini-decision-1",
+/// "random_candidates"?: bool, "seats": [{id, kind, role, description, provider, model, effort?,
+/// fallbacks?, access, difficulty}]}`, one seat per difficulty of a card: `kind` is a group of the
+/// role catalog, "custom" or "image". An image seat is a card of one seat, write access and no
+/// difficulty.
 pub fn validate(document: &Value) -> Result<(), String> {
     let top = object(document, FILE)?;
-    let allowed = ["version", "decision_model", "seats"];
+    let allowed = ["version", "decision_model", "random_candidates", "seats"];
     if let Some(key) = top.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(format!("{FILE} 含未知字段 {key}"));
     }
@@ -215,6 +216,12 @@ pub fn validate(document: &Value) -> Result<(), String> {
         .is_some_and(|model| model != DECISION_MODEL)
     {
         return Err("决策模型不受支持".into());
+    }
+    if top
+        .get("random_candidates")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err("random_candidates 必须为布尔值".into());
     }
     let seats = match top.get("seats") {
         None => &Vec::new(),

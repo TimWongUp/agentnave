@@ -21,6 +21,7 @@ pub(super) struct Desk {
     pub(super) identified: Option<i64>,
     pub(super) first: Option<i64>,
     pub(super) last: Option<i64>,
+    pub(super) prompted: Option<i64>,
     pub(super) latest: Option<(i64, String)>,
     pub(super) active: bool,
     pub(super) tasks: usize,
@@ -69,6 +70,16 @@ impl Desk {
     pub(super) fn seen(&mut self, at: i64) {
         self.first = Some(self.first.map_or(at, |first| first.min(at)));
         self.last = Some(self.last.map_or(at, |last| last.max(at)));
+    }
+
+    pub(super) fn prompt(&mut self, at: Option<i64>) {
+        if let Some(at) = at {
+            self.prompted = Some(self.prompted.map_or(at, |old| old.max(at)));
+        }
+    }
+
+    pub(super) fn prompted(&self) -> Option<i64> {
+        self.prompted.or(self.last)
     }
 
     pub(super) fn observe(&mut self, at: i64, status: &str) {
@@ -164,6 +175,7 @@ impl Desk {
             "activities": self.activities.iter().rev().collect::<Vec<_>>(),
             "first_seen": iso(self.first.unwrap_or_default()),
             "last_active": iso(self.last.unwrap_or_default()),
+            "last_prompted": iso(self.prompted().unwrap_or_default()),
             "status": status,
             "private_allowed": host_provider(host) != Some(self.provider.as_str()),
             "private": {"tasks": self.tasks, "running": self.running},

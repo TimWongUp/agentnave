@@ -1,6 +1,6 @@
 ---
 name: agentnave-handover
-description: 转交和接手 boss 会话。用户说「转交这个会话」时交出工作；用户说「接手」或「接手某个 Agent 的会话」时认领待接手的工作区，或读本机的老会话接着做，额度耗尽、连不上 AgentNave 时也适用。
+description: 转交和接手 boss 会话。用户说「转交这个会话」时交出工作，说「取消转交」或「撤回转交」时撤回；用户说「接手」或「接手某个 Agent 的会话」时认领待接手的工作区，或读本机的老会话接着做，额度耗尽、连不上 AgentNave 时也适用。
 ---
 
 # 转交与接手
@@ -13,29 +13,38 @@ description: 转交和接手 boss 会话。用户说「转交这个会话」时�
 
 1. 写交接文档，写给下一位 boss：为什么转交、目标、已完成、决定及理由、未决事项、在用的工位、要先读的会话和 worktree、未提交的改动、建议加载的 Skill。已有材料只给出处（会话 ID、PR、ADR），不写密钥和敏感个人信息，因为文档会保存并显示在 App 里。
 2. 调 `handover(release=true, note=文档, manager_session_id=...)`。这个聊天还没有 AgentNave 会话时，同时传 `title`（工作区名）和 `cwd`（当前目录的绝对路径），服务会新建一个只有 boss 的工作区；已有会话时不传。
-3. 回执 `status` 为 `waiting` 后，告诉用户：App 里已标为待接手，到任意宿主开新聊天说「接手」即可。
+3. 回执 `status` 为 `waiting` 后，告诉用户：App 里已标为待接手，到任意宿主开新聊天说「接手」即可；改主意时在 App 里右键该工作区选「取消交接」，或回到本聊天说取消转交。
+
+## 撤回
+
+用户要求取消转交时：
+
+1. 取本聊天的工作区 ID：上下文里有转交回执的 `workspace_id` 就直接用；没有就调 `handover(manager_session_id=...)`，取 `waiting` 里标了 `yours` 的那一项。
+2. 调 `handover(workspace_id=..., manager_session_id=...)`。
+3. 回执 `status` 为 `withdrawn` 即已撤回，交接文档随之清除；被拒绝说明已有新 boss 接手，告诉用户让新 boss 转交回来。用户自己也可以在 App 里右键该工作区选「取消交接」。
 
 ## 接手
 
 用户要求接手时，按顺序做到能开工为止：
 
-1. **看待接手标记。** 有 `handover` 工具就先调 `handover()`（`title` 是工作区首次派发时的名字，老工作区后续的会议或任务标题在认领后的 `conversations` 里）：
-   - 用户点名了某个宿主或工作区：只看与之相符的。
+1. **看待接手标记。** 有 `handover` 工具时（列表里的 `title` 是工作区首次派发时的名字，老工作区后续的会议或任务标题在认领后的 `conversations` 里）：
+   - 用户给出了工作区 ID（`s-` 开头，App 复制的口令里带）：直接调 `handover(workspace_id=..., manager_session_id=...)` 认领，不再按时间和目录筛。
+   - 其余情况先调 `handover()`。用户点名了某个宿主或工作区时，只看与之相符的：`from_host` 用内部名——`codex`（Codex）、`claude`（Claude Code／Claude 桌面）、`codebuddy`（CodeBuddy Code）、`workbuddy`（WorkBuddy）、`grok`（Grok CLI）、`antigravity`（Antigravity／agy）、`pi`（Pi）、`deepseek`（DeepSeek Harness／dsh）、`devin`（Devin CLI）、`hermes`（Hermes）、`zcode`（ZCode），旧记录可能有 `gemini`、`opencode`；`from_host` 为空的待接手项不要筛掉，`cwd` 相符就列为候选让用户确认。
    - 只有一个待接手，`released` 在一天内，`cwd` 与当前目录相同，且与用户的说法不矛盾：调 `handover(workspace_id=..., manager_session_id=...)` 认领。
-   - 其余情况：列出每一个的 `title`、`from_host`、`cwd`、`released`，让用户选。
-2. **没有可接手的标记时找老会话。** 用户点名了宿主，按 [各宿主的会话位置](references/sessions.md) 找，排除本聊天自己的记录；同一目录有多个候选就列出来问。没点名就问用户接手哪个宿主的会话。找不到时，告诉用户查过哪些位置。
+   - 仍有多个或不相符：列出每一个的 `title`、`from_host`、`cwd`、`released`，让用户选。
+2. **没有可接手的标记时找老会话。** 用户点名了宿主，按 [各宿主的会话位置](references/sessions.md) 找，排除本聊天自己的记录（本聊天的会话 ID 即传给 `manager_session_id` 的那个原生 ID；拿不到原生 ID 时，最近一条记录如果就是本聊天刚发的请求就跳过）；同一目录有多个候选时只列最近几个（时间和标题或首句摘要）让用户选。没点名就问用户接手哪个宿主的会话。找不到时，告诉用户查过哪些位置。
 3. **读历史。** 按下面的顺序读 `note` 和老会话，直到说得清目标、已完成、未完成和停在哪里：
    - 先读 `note`。
    - 再从末尾读老会话最后几轮用户和 boss 的对话：
-     - `previous_session_file`：老会话位置（Codex 同一会话可能有更新的 `rollout-*-<ID>_*.jsonl` 续写文件，先核对有无更新的同 ID 文件）。
+     - `previous_session_file`：老会话位置（Codex 同一会话可能有更新的 `rollout-*-<ID>_*.jsonl*` 续写文件，先核对有无更新的同 ID 文件）。
      - `previous_session_moved`：文件已不在原处，按位置表找同一个会话 ID。
      - `previous_session_id`：宿主共用数据库时，用它查这一个会话。
-     - 这些字段都没有：按位置表在回执的 `cwd` 下找 `from_host` 最近的会话，排除本聊天自己的记录；有多个候选或 `from_host` 为空就问用户。
+     - 这些字段都没有：按位置表在回执的 `cwd` 下找 `from_host` 最近的会话，同样排除本聊天自己的记录；有多个候选（只列最近几个的时间和标题或首句摘要）或 `from_host` 为空就问用户。
    - `note` 为空或老会话不够用时，在回执 `conversations` 里找最近的或标题与用户所说相符的会话，调 `read_conversation` 先传 `limit`（如 `limit=3`）看最后结论或 `会议总结`，不够再往前读。
 4. **核对现状。** 确认当前目录、分支和 diff，重读提到的文件，结果过期或缺失就重跑最小的相关检查。记录和现状不符时告诉用户。
 5. **汇报并继续。** 用几句话告诉用户目标、已完成、未完成、停在哪里和不确定的地方，然后继续未完成的工作；下一步不明确时只问一个问题。
 
-已认领工作区的工位用回执里的会话继续。用户点名的老会话也有工作区、又要用那些工位时，请用户在 App 里右键该工作区选「交给其他 boss 接手」，再回到第 1 步。
+已认领工作区的工位用回执里的会话继续。要用老工作区的工位或会议，必须在本聊天第一次派发之前认领（用户点名的老会话也有工作区但未标待接手时，请用户在 App 里右键该工作区选「交给其他 boss 接手」，再回到第 1 步认领）；本聊天已经派发过时认领会被拒绝，告诉用户另开一个新聊天认领。
 
 ## 读老会话的规则
 

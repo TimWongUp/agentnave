@@ -250,7 +250,7 @@ async def _started(
         )
     except (ToolError, ValueError, OSError) as exc:
         return _not_started("start_failed", str(exc), chosen)
-    payload["recommendation"] = recommendation_payload(chosen)
+    payload["recommendation"] = recommendation_payload(chosen, payload)
     if payload.get("reason") == "native_seat":
         # The seat is resolved again at start, so the guidance follows what start chose.
         message = f"the chosen seat {chosen.seat} ({chosen.role}) is the host's own CLI, so nothing was started. "

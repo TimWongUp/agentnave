@@ -44,6 +44,7 @@ def _command(script: str, *args: str) -> dict[str, object]:
 def entry() -> dict[str, object]:
     return {
         "SessionStart": [_command(_RECORD, "SessionStart")],
+        "PreInvocation": [_command(_RECORD, "PreInvocation")],
         "Stop": [_command(_RECORD, "Stop")],
         # Print mode cannot ask either; the dispatch prompt already asks for questions in the
         # final answer.

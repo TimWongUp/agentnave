@@ -8,7 +8,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from agentnave import mcp_runtime as runtime
-from agentnave.mcp_payloads import SeatCandidatePayload, SeatRecommendationPayload
+from agentnave.mcp_payloads import (
+    SeatCandidatePayload,
+    SeatRecommendationPayload,
+    TaskStartPayload,
+)
 from agentnave.mcp_runtime import ManagerSessionId
 from agentnave.seat_recommendation import (
     Candidate,
@@ -51,9 +55,10 @@ async def recommend_seat(
     """Recommend one of your own seats for a task; it never dispatches. Candidates are the
     seats of list_members that can be dispatched now and have this access. Dispatch with
     start_agent(seat=...), or choose another seat; native=true means the host's built-in
-    subagent. Errors start with a code: not_enabled, config_error, no_key, no_candidates,
-    network, rate_limited, auth, rejected or bad_response. Nothing is retried or replaced:
-    choose a seat from list_members yourself.
+    subagent (with random candidates enabled, native/model/effort only preview the first
+    usable choice in order; follow the start_agent receipt). Errors start with a code:
+    not_enabled, config_error, no_key, no_candidates, network, rate_limited, auth, rejected
+    or bad_response. Nothing is retried or replaced: choose a seat from list_members yourself.
     """
     found = await recommend_or_raise(task, access)
     return recommendation_payload(found)
@@ -71,23 +76,34 @@ async def recommend_or_raise(
         raise ToolError(f"{exc.code}: {exc.message}") from None
 
 
-def recommendation_payload(found: Recommendation) -> SeatRecommendationPayload:
+def recommendation_payload(
+    found: Recommendation, started: TaskStartPayload | None = None
+) -> SeatRecommendationPayload:
+    candidates = [_candidate_payload(candidate) for candidate in found.candidates]
+    native = found.native if started is None else started.get("reason") == "native_seat"
+    if started is not None and candidates and candidates[0]["seat"] == found.seat:
+        if native:
+            candidates[0]["native"] = True
+        else:
+            candidates[0].pop("native", None)
     payload: SeatRecommendationPayload = {
         "seat": found.seat,
         "role": found.role,
         "decision_model_called": found.decision_model_called,
-        "candidates": [_candidate_payload(candidate) for candidate in found.candidates],
+        "candidates": candidates,
     }
     if found.difficulty is not None:
         payload["difficulty"] = found.difficulty
     if found.confidence is not None:
         payload["confidence"] = found.confidence
-    if found.native:
+    if native:
         payload["native"] = True
-        if found.model:
-            payload["model"] = found.model
-        if found.effort:
-            payload["effort"] = found.effort
+        model = found.model if started is None else started.get("model")
+        effort = found.effort if started is None else started.get("effort")
+        if model:
+            payload["model"] = model
+        if effort:
+            payload["effort"] = effort
     if found.note:
         payload["note"] = found.note
     return payload

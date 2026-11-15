@@ -235,6 +235,7 @@ class DecisionSeatsFile(BaseModel):
 
     version: int = Field(ge=1, le=1)
     decision_model: DecisionModelName = "gemini-decision-1"
+    random_candidates: bool = False
     # Two to 255 candidates is what the decision model accepts.
     seats: list[CustomSeat] = Field(default_factory=list[CustomSeat], max_length=255)
 

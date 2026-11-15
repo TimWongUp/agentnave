@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -218,7 +219,8 @@ async def list_members(
     Omitted available means usable; recent quota/auth/billing blockers also mark seats
     unavailable during a CLI and model cooldown; clear it in App or, on explicit user request,
     with clear_provider_cooldown. Unavailable seats may offer replacement parameters:
-    pass with original seat/role; configured fallbacks are selected automatically for new threads.
+    pass with original seat/role; configured fallbacks are selected automatically for new threads
+    (in order, or uniformly at random among usable choices on custom task seats when enabled).
     A native seat starts nothing: start_agent returns status not_started with its
     provider/model/effort, and the boss runs it with the host's built-in subagent.
     Exclusions: see MCP instructions.
@@ -350,9 +352,14 @@ async def handover(
                 "status": "waiting",
                 "conversations": count,
                 "next": "Tell the user to open a new chat in any host and ask it to take over "
-                "this workspace. Work still running here finishes and lands in history.",
+                "this workspace. Work still running here finishes and lands in history. To "
+                "withdraw, claim workspace_id from this chat, or have the user cancel it in "
+                "the App.",
             }
         if workspace_id is None:
+            mine: str | None = None
+            with suppress(OSError, ValueError):
+                mine = conversations.workspace_id(manager_session_id)
             return {
                 "waiting": [
                     {
@@ -363,6 +370,7 @@ async def handover(
                         "released": item.released,
                         "conversations": len(records),
                         "note": item.note,
+                        **({"yours": True} if item.id == mine else {}),
                     }
                     for item, records in conversations.waiting()
                 ]

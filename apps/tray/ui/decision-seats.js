@@ -20,6 +20,7 @@
 
   let saved = null; // { document | null, error, key_set, key_error } from GET /app/decision-seats.
   let draft = null; // The cards as edited; null while they are what is saved.
+  let randomDraft = null; // Boolean when the random-candidates switch differs from saved; else null.
   let prefilled = false; // The first catalog was already made in this draft.
   let keyDraft = "";
   let keyBusy = false;
@@ -92,9 +93,16 @@
     if (base.of !== saved) base = { of: saved, cards: toCards(saved?.document?.seats || []) };
     return base.cards;
   }
-  const fileDocument = () => ({ version: 1, decision_model: saved?.document?.decision_model || "gemini-decision-1", seats: toSeats(cards()) });
-  const changed = () => Boolean(draft) && Boolean(saved) && !saved.error
-    && !sameJson(canon(toSeats(draft)), canon(saved.document?.seats || []));
+  const savedRandom = () => saved?.document?.random_candidates === true;
+  const randomCandidates = () => (randomDraft === null ? savedRandom() : randomDraft);
+  const fileDocument = () => ({
+    version: 1,
+    decision_model: saved?.document?.decision_model || "gemini-decision-1",
+    ...(randomCandidates() ? { random_candidates: true } : {}),
+    seats: toSeats(cards()),
+  });
+  const cardsChanged = () => Boolean(draft) && !sameJson(canon(toSeats(draft)), canon(saved.document?.seats || []));
+  const changed = () => Boolean(saved) && !saved.error && (cardsChanged() || randomCandidates() !== savedRandom());
   const locked = () => !saved || Boolean(saved.error) || !S.orchestration || Boolean(S.orchestration.error);
 
   const takenIds = () => new Set(cards().flatMap((card) => seatsOfCard(card).map((seat) => seat.id)));
@@ -132,6 +140,12 @@
 
   // The catalog stands in the orchestration card, so it is drawn with it.
   const render = () => S.renderOrchestration();
+
+  function setRandomCandidates(on) {
+    randomDraft = Boolean(on) === savedRandom() ? null : Boolean(on);
+    render();
+    S.advancedEdited();
+  }
 
   function edit(next, rerender = true) {
     draft = next;
@@ -241,6 +255,7 @@
       if (loaded.error) S.showNotice(L(`${loaded.error}；请先修复或删除这个文件`, `${loaded.error}; fix or delete this file first`), true);
       if (!keep) {
         draft = null;
+        randomDraft = null;
         prefilled = false;
       }
     } catch (error) {
@@ -261,11 +276,13 @@
     await post("/app/decision-seats", doc);
     saved = { ...saved, document: doc, error: null };
     draft = null;
+    randomDraft = null;
     render();
   }
 
   function discard() {
     draft = null;
+    randomDraft = null;
     prefilled = false;
     keyDraft = "";
   }
@@ -402,6 +419,15 @@
         "The decision model never touches a CLI or changes the task. When the work is done, the boss collects the result as usual.")));
   }
 
+  function randomRow() {
+    return el("label", { className: "orchestration-switch" },
+      el("input", {
+        type: "checkbox", className: "switch-input", dataset: { focusKey: "decision/random-candidates" },
+        checked: randomCandidates(), onChange: (e) => setRandomCandidates(e.target.checked),
+      }),
+      el("span", {}, L("同一档的候选随机选，分摊额度", "Pick randomly among a tier's candidates to spread quota")));
+  }
+
   function panel() {
     if (locked()) return null;
     return el("div", { className: "orchestration-section decision-seats" },
@@ -410,6 +436,7 @@
         "派发任务时，派发内容（过长时只取开头和结尾）和各工位的名称、专业说明、难度、读写类型会发给 Google 的决策模型；Gemini 免费层的输入可能被用于改进产品；可用地区以 Google 公布的为准。",
         "When a task is dispatched, its prompt (only the beginning and end when long) and each seat's name, specialty, difficulty and access type are sent to Google's decision model. On the Gemini free tier, inputs may be used to improve Google's products. Availability by region follows what Google publishes.")),
       keyRow(),
+      randomRow(),
       el("div", { className: "decision-catalog" }, ...cards().map(seatCard)),
       addMenu());
   }
