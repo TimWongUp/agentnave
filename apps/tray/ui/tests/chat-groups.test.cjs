@@ -5,7 +5,7 @@ const vm = require("node:vm");
 
 const context = vm.createContext({ window: {}, Date });
 vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
-const { other, handover, caps, capSections, capFlat } = context.window.ChatGroups;
+const { other, handover, caps, capSections, capFlat, placeBack } = context.window.ChatGroups;
 // Results come from another realm; copy them so deepEqual compares plain values.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const arrange = (...args) => plain(context.window.ChatGroups.arrange(...args));
@@ -132,4 +132,19 @@ test("pending handovers move into a pinned top section without counting against 
   assert.equal(capped.sections.length, caps.groups + 1);
   assert.equal(capped.hiddenGroups, 0);
   assert.equal(capped.sections[0].shown.length, pending.length);
+});
+
+test("a workspace leaving the handover section goes back by recency, the rest keep their places", () => {
+  const ranked = (...pairs) => pairs.map(([id, rank]) => ({ id, rank }));
+  const back = (order, items, ids) => plain(placeBack(order, items, new Set(ids)));
+  // Newest first from the server: new, mid, old; "old" was handed over, so it sat on top.
+  const items = ranked(["new", 2], ["mid", 2], ["old", 2]);
+  assert.deepEqual(back(["old", "new", "mid"], items, ["old"]), ["new", "mid", "old"]);
+  // Work going on still leads, and the other workspaces keep the order the reader saw.
+  const busy = ranked(["run", 1], ["new", 2], ["mid", 2], ["old", 2]);
+  assert.deepEqual(back(["new", "run", "mid", "old"], busy, ["new"]), ["run", "new", "mid", "old"]);
+  assert.deepEqual(back(["mid", "run", "new"], ranked(["run", 1], ["new", 2], ["mid", 2]), ["mid"]), ["run", "new", "mid"]);
+  // Two leaving at once keep their order from the server, and nothing leaving changes nothing.
+  assert.deepEqual(back(["old", "new", "mid"], items, ["old", "new"]), ["new", "mid", "old"]);
+  assert.deepEqual(back(["mid", "new", "old"], items, []), ["mid", "new", "old"]);
 });
