@@ -1,6 +1,7 @@
 # ADR-0049：服务主动终止任务的情形
 
 - 状态：已接受
+- 主动终止情形由 [ADR-0095](0095-provider-terminal-grace.md) 补充：Adapter 声明的终态事件出现后，进程超过宽限仍未退出时清理进程树（非故障情形）；下文「只在两种故障情形下」指故障判定。
 - 日期：2026-11-03
 - 补充 [ADR-0002](0002-lightweight-cli-subagent-adapter.md) 的执行边界，以及 [ADR-0007](0007-wait-any-ready-subset.md) 的等待语义。
 
@@ -14,5 +15,3 @@ Invocation 没有总运行时限，停止原则上只靠 Manager 显式 `cancel`
 ## 考虑过的方案
 
 - **重试卡死时只报告给 Manager，不终止**：Codex 遇到某些网络故障时会无限重试，而 Manager 只有在 `wait` 里才看得到，往往会一直等下去。由服务判定并终止，失败原因能写进终态，Manager 可以直接决定重派还是续接。
-
-本决定的主动终止情形由 [ADR-0095](0095-provider-terminal-grace.md) 补充。

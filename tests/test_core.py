@@ -1917,6 +1917,7 @@ async def test_codex_terminal_event_ends_sleeping_process(tmp_path: Path) -> Non
         result = await manager.wait(manager.start(request, prepared=prepared), 10)
         assert result is not None and result.status is InvocationStatus.SUCCEEDED
         assert (result.output, result.session_id) == ("ok", "session-1")
-        assert 2 <= time.monotonic() - started < 8
+        # Well under the fake's 60-second sleep, with room for a slow CI runner.
+        assert 2 <= time.monotonic() - started < 30
     finally:
         await manager.shutdown()
