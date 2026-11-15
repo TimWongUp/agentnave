@@ -169,16 +169,16 @@
     }
   }
 
-  // Opening this tab checks again when the automatic daily check is over an hour old. A found
-  // update or a failure the user has not retried is left as it is.
-  const AUTO_CHECK_AFTER = 60 * 60 * 1000;
+  // Opening this tab follows the selected automatic interval. A failed silent check is retried
+  // after ten minutes, like the background loop.
   async function checkIfStale() {
-    if ((await window.AgentNaveAboutSettings?.automatic()) === false) return;
+    const hours = await window.AgentNaveAboutSettings?.interval() ?? 4;
+    if (!hours) return;
     const update = appStatus?.update?.state;
     const service = appStatus?.service?.state;
     if (!appStatus || ["checking", "installing", "available", "failed"].includes(update) || ["upgrading", "installing"].includes(service)) return;
     const checked = Date.parse(appStatus.last_checked || "");
-    if (Number.isNaN(checked) || Date.now() - checked > AUTO_CHECK_AFTER) triggerCheckUpdate(true);
+    if (Number.isNaN(checked) || Date.now() - checked >= (appStatus.check_answered === false ? 10 * 60 * 1000 : hours * 60 * 60 * 1000)) triggerCheckUpdate(true);
   }
 
   async function triggerCheckUpdate(quiet = false) {

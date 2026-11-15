@@ -9,7 +9,7 @@
   const notice = document.getElementById("notice");
   const label = L("自动检查更新", "Check for updates automatically");
   const CHOICES = [[0, L("关闭", "Off")], ...[4, 12, 24].map((hours) => [hours, L(`${hours} 小时`, `${hours} hours`)])];
-  let saved = 24; // Hours between checks, 0 for off. No setting yet means daily, like the App before this choice existed.
+  let saved = 4; // Hours between checks, 0 for off; the default is four hours.
   let busy = true;
   const control = h("div.segment-control", { role: "radiogroup", "aria-label": label });
   const buttons = CHOICES.map(([hours, text]) => {
@@ -44,7 +44,7 @@
   function chosen(data) {
     const updates = data.preferences?.updates;
     if (updates?.auto_check === false) return 0;
-    return [4, 12, 24].includes(updates?.check_hours) ? updates.check_hours : 24;
+    return [4, 12, 24].includes(updates?.check_hours) ? updates.check_hours : 4;
   }
 
   async function choose(hours) {
@@ -76,5 +76,5 @@
     }
   })();
   // The pane's own check on opening obeys the same setting as the App's.
-  window.AgentNaveAboutSettings = { automatic: async () => { await ready; return saved !== 0; } };
+  window.AgentNaveAboutSettings = { interval: async () => { await ready; return saved; }, automatic: async () => { await ready; return saved !== 0; } };
 })();

@@ -59,6 +59,7 @@ fn validate_field(section: &str, field: &str, value: &Value) -> Result<(), Strin
     }
 }
 
+// An absent check_hours defaults to four hours in the update scheduler.
 fn updates(field: &str, value: &Value) -> Result<(), String> {
     match field {
         "auto_check" => match value.as_bool() {
