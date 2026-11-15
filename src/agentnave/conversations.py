@@ -112,7 +112,7 @@ class Conversations(ConversationStore):
         isolated: bool,
         manager_session_id: str | None = None,
     ) -> Record:
-        manager_session = self._manager_session(manager_session_id)
+        manager_session = self.new_manager_session(manager_session_id)
         seats = [
             replace(seat, role=normalize_role(seat.role), access=normalize_access(seat.access))
             for seat in seats
@@ -631,6 +631,7 @@ class Conversations(ConversationStore):
         isolation_requested: bool = False,
         isolation_ref: str | None = None,
         hold: IsolationHold | None = None,
+        manager_workspace: str | None = None,
     ) -> TaskStart:
         """Start one private task.
 
@@ -641,7 +642,11 @@ class Conversations(ConversationStore):
         declared = normalize_access(access)
         if isolation_requested and request.session_id is not None:
             raise ValueError("isolation cannot be combined with session_id")
-        manager_session = self._manager_session(manager_session_id)
+        manager_session = manager_workspace or (
+            self.new_manager_session(manager_session_id)
+            if conversation_id is None and request.session_id is None
+            else self._manager_session(manager_session_id)
+        )
         if isolation_requested and manager_session is None:
             raise ValueError(
                 "isolation needs a known manager session; pass manager_session_id or "
@@ -865,10 +870,11 @@ class Conversations(ConversationStore):
         isolation_requested: bool,
         isolation_ref: str | None,
         resumed_task: TaskRecord | None = None,
+        manager_workspace: str | None = None,
     ) -> IsolationHold:
         """Acquire the task's isolated directory on a worker thread, so waiting calls and other
         tasks keep running; pass the result to start_task and give it back on failure."""
-        manager_session = self._manager_session(manager_session_id)
+        manager_session = manager_workspace or self._manager_session(manager_session_id)
         if isolation_requested:
             if request.session_id is not None:
                 raise ValueError("isolation cannot be combined with session_id")

@@ -495,6 +495,7 @@ def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> No
             db.execute("INSERT INTO workspaces (id, owner) VALUES (?, ?)", (_WORKSPACE, _WORKSPACE))
             db.execute("ALTER TABLE workspaces DROP COLUMN title")
             db.execute("ALTER TABLE workspaces DROP COLUMN cwd")
+            db.execute("ALTER TABLE workspaces DROP COLUMN origin")
         db.execute("PRAGMA user_version = 1")
     # Retention never migrates: only opening through the service's Database does.
     assert cleanup(tmp_path, now=_NOW) == 0
@@ -508,13 +509,28 @@ def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> No
         finally:
             database.close()
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
         columns = {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
-        assert {"title", "cwd"} <= columns
+        assert {"title", "cwd", "origin"} <= columns
         for table in ["entries", "rounds", "tasks", "former_bosses"]:
             assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
         assert db.execute("SELECT conversation_id FROM views").fetchall() == [("modern",)]
     assert list((tmp_path / "seats").iterdir()) == []
+
+
+def test_v2_migration_adds_origin_and_preserves_workspace(tmp_path: Path) -> None:
+    fixture(tmp_path, "modern")
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        db.execute("INSERT INTO workspaces (id, owner) VALUES (?, ?)", (_WORKSPACE, _WORKSPACE))
+        db.execute("ALTER TABLE workspaces DROP COLUMN origin")
+        db.execute("PRAGMA user_version = 2")
+    database = Database(tmp_path)
+    row = database.workspace(_WORKSPACE)
+    assert row is not None and row.origin is None
+    database.close()
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert "origin" in {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
 
 
 def test_v1_migration_preserves_busy_history_and_retries_after_unlock(tmp_path: Path) -> None:

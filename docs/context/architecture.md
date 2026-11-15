@@ -96,7 +96,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 
 - 宿主在服务启动时识别：显式 `AGENTNAVE_HOST` 优先，否则 macOS／Linux 沿祖先进程只读匹配，Windows 只读环境变量。宿主身份用于会话归属与识别同类 Provider；私聊同类 CLI 由用户按 boss 选择交给宿主自带子代理、由服务启动或跳过取下一顺位（默认随宿主能力：Antigravity 由服务启动，其他交给宿主自带子代理），会议席位不受影响。App 写入数据根 `orchestration.json`，服务读取；同类生图顺位始终跳过（[ADR-0090](../adr/0090-quota-group-cooldown-and-host-cli-choice.md)、[ADR-0094](../adr/0094-antigravity-host-cli-defaults-to-launch.md)）。
 - 派发与按聊天收件均要求可确定的 boss 聊天身份；收件箱不在身份未知时回退为全服务收件（[ADR-0007](../adr/0007-wait-any-ready-subset.md)、[ADR-0017](../adr/0017-manager-chat-session-identity.md)）。磁盘只存宿主与原始 ID 的哈希，作为工作区的分组键；交接记录另存老 boss 原生会话文件的路径（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
-- 工作区可交给另一个 boss 聊天接手；交接不转移运行中的调用，老 boss 之后的写入被拒绝；没有会话的聊天交出时，`workspaces` 行自带名字和目录，由它承载只有 boss 的工作区（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
+- 工作区可交给另一个 boss 聊天接手；交接不转移运行中的调用，老 boss 对原工作区的写入被拒绝，但可新建工作区；没有会话的聊天交出时，`workspaces` 行自带名字和目录，由它承载只有 boss 的工作区（[ADR-0033](../adr/0033-boss-workspace-handover.md)）。
 - boss 与组员的模型优先取原生会话记录中的回报值，其次取调用声明；不从 CLI 全局默认值推测。
 
 ## 托盘 App

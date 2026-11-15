@@ -582,13 +582,27 @@ class ConversationStore(Groups):
             self._bosses[workspace] = boss
         return workspace
 
+    def new_manager_session(self, session_id: str | None) -> str | None:
+        """Resolve a workspace for a new conversation, replacing one handed away."""
+        boss = self._boss(session_id)
+        if boss is None:
+            return None
+        workspace, away = self.db.resolve(boss[0])
+        if away is not None:
+            workspace = "s-" + uuid4().hex
+        self._bosses[workspace] = boss
+        return workspace
+
     def _manager_model(self, session: str | None) -> str | None:
         boss = self._bosses.get(session or "")
         return session_model(self.host, boss[1] if boss else None)
 
     def _not_yours(self, what: str, workspace: str | None) -> str:
         found = self.db.workspace(workspace) if workspace else None
-        if found is not None and (found.owner != found.id or found.previous_host is not None):
+        if found is not None and (
+            found.owner != (found.origin if found.origin is not None else found.id)
+            or found.previous_host is not None
+        ):
             return (
                 f"{what} belongs to workspace {found.id}, led by {_host_label(found.owner_host)} "
                 "since a handover; continue there, or have that boss hand it over with handover"
@@ -609,8 +623,7 @@ class ConversationStore(Groups):
         boss = self._bosses.get(manager_session or "")
         if manager_session is not None and boss is not None:
             # Who leads this workspace, and where its transcript is for a later handover.
-            with suppress(OSError):
-                self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
+            self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
         return record
 
     # Handover (ADR-0033)

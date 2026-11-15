@@ -2289,7 +2289,7 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
         assert withdrawn["status"] == "withdrawn"
         row = Database(data_root).workspace(workspace)
         assert row is not None and row.note is None and row.released is None
-        # A boss that passes on a workspace it took over is refused too, not given a new one.
+        # A boss that passes on a workspace it took over may create a new one.
         await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
         former_waiting = cast(
             list[dict[str, object]],
@@ -2297,14 +2297,49 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
         )
         assert ["yours" in w for w in former_waiting] == [False]
         await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-c"})
-        passed = await client.call_tool(
+        passed = await _call(
+            client,
             "start_agent",
             {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
         )  # fmt: skip
-        assert passed.is_error and f"handed its workspace {workspace}" in str(passed.content)
-        # It still reads the workspace it passed on as its own.
+        await _wait_task(client, passed["invocation_id"])
+        assert _state(data_root, passed["conversation_id"])["manager_session"] != workspace
         listed = await _call(client, "list", {"manager_session_id": "chat-b"})
         assert cast(int, listed["total"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_handed_over_boss_creates_a_new_workspace(data_root: Path, tmp_path: Path) -> None:
+    async with Client(mcp) as client:
+        args: dict[str, object] = {
+            "provider": "claude",
+            "prompt": "x",
+            "cwd": str(tmp_path),
+            "manager_session_id": "chat-a",
+        }
+        first = await _call(client, "start_agent", args)
+        await _wait_task(client, first["invocation_id"])
+        old = _state(data_root, first["conversation_id"])["manager_session"]
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
+        await _call(client, "handover", {"workspace_id": old, "manager_session_id": "chat-b"})
+        fresh = await _call(client, "start_agent", args)
+        await _wait_task(client, fresh["invocation_id"])
+        new = _state(data_root, fresh["conversation_id"])["manager_session"]
+        db = Database(data_root)
+        row = db.workspace(new)
+        assert new != old and row is not None and row.owner == row.origin and row.owner != row.id
+        from agentnave.db import _handed_over  # pyright: ignore[reportPrivateUsage]
+
+        assert not _handed_over(row)
+        refused = await client.call_tool(
+            "start_agent", {**args, "conversation_id": first["conversation_id"]}
+        )
+        assert refused.is_error
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
+        await _call(client, "handover", {"workspace_id": new, "manager_session_id": "chat-c"})
+        row = db.workspace(new)
+        assert row is not None and _handed_over(row)
+        db.close()
 
 
 @pytest.mark.asyncio

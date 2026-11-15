@@ -17,7 +17,7 @@ from typing import NamedTuple
 from agentnave.locks import locked_conversations, remove_seats
 from agentnave.store import Conversation, EntryRecord, RoundRecord, TaskRecord
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 NAME = "agentnave.db"
 
 # Shared with the tray app's tests, which build the same database.
@@ -106,6 +106,9 @@ class Database:
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version == 1:
                     _migrate_v1(connection, self.path.parent)
+                    version = connection.execute("PRAGMA user_version").fetchone()[0]
+                if version == 2:
+                    _migrate_v2(connection)
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version != SCHEMA_VERSION:
                     raise sqlite3.DatabaseError(
@@ -268,12 +271,12 @@ class Database:
         """Record the boss that created a conversation, and its transcript once it is known."""
         with self._write() as connection:
             connection.execute(
-                "INSERT INTO workspaces (id, owner, owner_host, owner_file) VALUES (?, ?, ?, ?) "
+                "INSERT INTO workspaces (id, owner, origin, owner_host, owner_file) VALUES (?, ?, ?, ?, ?) "
                 "ON CONFLICT (id) DO UPDATE SET owner_host = excluded.owner_host, "
                 "owner_file = coalesce(excluded.owner_file, owner_file) "
                 "WHERE owner = excluded.owner AND (owner_host IS NOT excluded.owner_host OR "
                 "coalesce(excluded.owner_file, owner_file) IS NOT owner_file)",
-                (workspace_id, boss, host, file),
+                (workspace_id, boss, boss, host, file),
             )
 
     def release(
@@ -290,15 +293,15 @@ class Database:
         """Mark the boss's own workspace as waiting for another boss."""
         with self._write() as connection:
             cursor = connection.execute(
-                "INSERT INTO workspaces (id, owner, owner_host, owner_file, pending, note, "
-                "released, title, cwd) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) "
+                "INSERT INTO workspaces (id, owner, origin, owner_host, owner_file, pending, note, "
+                "released, title, cwd) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?) "
                 "ON CONFLICT (id) DO UPDATE SET "
                 "pending = 1, note = excluded.note, released = excluded.released, "
                 "owner_host = excluded.owner_host, "
                 "owner_file = coalesce(excluded.owner_file, owner_file), "
                 "title = coalesce(excluded.title, title), cwd = coalesce(excluded.cwd, cwd) "
                 "WHERE owner = excluded.owner",
-                (workspace_id, boss, host, file, note, released, title, cwd),
+                (workspace_id, boss, boss, host, file, note, released, title, cwd),
             )
             if cursor.rowcount != 1:
                 raise ValueError("this workspace was just taken over by another boss")
@@ -402,6 +405,7 @@ class Workspace(NamedTuple):
     previous_file: str | None
     title: str | None
     cwd: str | None
+    origin: str | None
 
 
 def remove_conversations(connection: sqlite3.Connection, ids: list[str]) -> None:
@@ -435,7 +439,7 @@ def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
                     if statement.strip():
                         connection.execute(statement)
                 columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
-                for column in ("title", "cwd"):
+                for column in ("title", "cwd", "origin"):
                     if column not in columns:
                         connection.execute(f"ALTER TABLE workspaces ADD COLUMN {column} TEXT")
                 remove_conversations(connection, ids)
@@ -452,6 +456,20 @@ def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
         ) from exc
 
 
+def _migrate_v2(connection: sqlite3.Connection) -> None:
+    """Add workspace origin and advance the version in one transaction."""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == 2:
+            connection.execute("ALTER TABLE workspaces ADD COLUMN origin TEXT")
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.commit()
+    finally:
+        if connection.in_transaction:
+            connection.rollback()
+
+
 def _row(row: tuple[object, ...]) -> Workspace:
     item = Workspace(*row)  # pyright: ignore[reportArgumentType]
     return item._replace(pending=bool(item.pending))
@@ -466,7 +484,8 @@ def _workspace(connection: sqlite3.Connection, column: str, value: str) -> Works
 
 def _handed_over(row: Workspace) -> bool:
     """Whether the App shows this workspace's handover: the same rule as the tray's."""
-    return bool(row.pending) or row.owner != row.id or row.previous_host is not None
+    origin = row.origin if row.origin is not None else row.id
+    return bool(row.pending) or row.owner != origin or row.previous_host is not None
 
 
 def _resolve(connection: sqlite3.Connection, boss: str) -> tuple[str, Workspace | None]:
