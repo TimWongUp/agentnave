@@ -144,6 +144,9 @@ test("a workspace leaving the handover section goes back by recency, the rest ke
   const busy = ranked(["run", 1], ["new", 2], ["mid", 2], ["old", 2]);
   assert.deepEqual(back(["new", "run", "mid", "old"], busy, ["new"]), ["run", "new", "mid", "old"]);
   assert.deepEqual(back(["mid", "run", "new"], ranked(["run", 1], ["new", 2], ["mid", 2]), ["mid"]), ["run", "new", "mid"]);
+  // The shown order may lag the server's ("c" got news but kept its slot): never above a newer one.
+  const drifted = ranked(["c", 2], ["w", 2], ["a", 2], ["b", 2]);
+  assert.deepEqual(back(["a", "b", "c"], drifted, ["w"]), ["a", "b", "c", "w"]);
   // Two leaving at once keep their order from the server, and nothing leaving changes nothing.
   assert.deepEqual(back(["old", "new", "mid"], items, ["old", "new"]), ["new", "mid", "old"]);
   assert.deepEqual(back(["mid", "new", "old"], items, []), ["mid", "new", "old"]);
