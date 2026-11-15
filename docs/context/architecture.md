@@ -7,12 +7,12 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | 角色 | 拥有 |
 | --- | --- |
 | Manager（boss） | 目标解释、任务拆解、角色与模型选择、并行、重试、审核、综合、是否隔离与合入、长期任务状态 |
-| AgentNave 服务 | 启动与取消 Provider 进程树、默认值套用、活动快照与终态归一化、进程内 Invocation 句柄、会议轮次、会话历史与按用户设定天数的自动清理、隔离目录的创建、登记与释放后的删除 |
+| AgentNave 服务 | 启动与取消 Provider 进程树、默认值套用、活动快照与终态归一化、进程内 Invocation 句柄、会议轮次、会话历史与按用户设定天数的自动清理、隔离目录的创建、登记、只读任务无改动时的自动释放与显式释放后的删除 |
 | 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)） |
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI（「决策模型」档下，服务应 boss 的调用请决策模型在用户自定义的工位里选一个，启动仍由 boss 的调用发起，[ADR-0087](../adr/0087-decision-model-recommends-seats.md)）；隔离目录只应 boss 的要求创建，可用的目录只在 boss 释放后删除，服务自己只回滚没建成的半成品、续完目录已删掉的收尾（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）；「只开会」档的 boss 改装只含会议室用法的 `agentnave-meeting`，两份按档位互斥安装（[ADR-0091](../adr/0091-meetings-only-skill-and-auto-meeting-switch.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI（「决策模型」档下，服务应 boss 的调用请决策模型在用户自定义的工位里选一个，启动仍由 boss 的调用发起，[ADR-0087](../adr/0087-decision-model-recommends-seats.md)）；隔离目录只应 boss 的要求创建（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；只读任务成功完成且相对起点无任何改动、无其他租约时由服务自动释放，后续续接同一原生会话时原位重建；其余可用的目录只在 boss 释放后删除，服务自己另只回滚没建成的半成品、续完目录已删掉的收尾（[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）；「只开会」档的 boss 改装只含会议室用法的 `agentnave-meeting`，两份按档位互斥安装（[ADR-0091](../adr/0091-meetings-only-skill-and-auto-meeting-switch.md)）。
 
 ## 进程与模块
 
@@ -42,7 +42,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - Adapter 只加协议必需参数。其余参数只能来自调用方显式值、用户在 App 中设定的默认值、`role`／`seat` 指明的评审、Explorer／Worker 工位，或续接原生会话时本 boss 的最近一次任务；服务在回执 `defaults_applied` 注明继承与推断来源（[ADR-0038](../adr/0038-role-applies-app-seat.md)）。仍无档位时，服务按 App 探测到的 CLI 自身默认档位兜底（[ADR-0042](../adr/0042-pass-cli-default-effort.md)）。唯一例外是 DeepSeek 官方路由恢复已存认证（[ADR-0027](../adr/0027-deepseek-official-route-stored-credentials.md)）。
 - App 工位可在主选之外按顺序配备选，每个备选同样是 CLI、模型与可选档位；用户保存的顺位与主选同为用户选择。派发新线程、启动前发现主选不可用时，服务按顺位取第一个可用，并在回执注明实际顺位与跳过原因（[ADR-0089](../adr/0089-seat-fallback-order.md)）。调用方显式指定 CLI 或模型、以及续接原生会话时不按顺位切换；启动后失败不重试。权限仍按最终 CLI 的档位套用；全部顺位不可用才报告不可用，非决策档按同难度规则兜底，「决策模型」档按 [ADR-0087](../adr/0087-decision-model-recommends-seats.md) 不进候选，`list_members` 给出的替代仍只是给 boss 的建议。开会席位只存 CLI，不配备选。
 - 显式值优先；超出 App 允许范围时拒绝，不替换为别的模型或档位。默认值在服务入口统一套用，不下沉到 Adapter（[ADR-0013](../adr/0013-members-defaults-and-host-identity.md)、[ADR-0021](../adr/0021-keep-default-models-when-unrestricted.md)、[ADR-0028](../adr/0028-follow-cli-default-model.md)）。
-- 私聊可由工位确定 CLI；需要它确定 CLI 时必须读到可用工位，落在宿主同类 CLI 的工位按该 boss 的选择交给宿主自带子代理（默认）、由服务启动或跳过（[ADR-0090](../adr/0090-quota-group-cooldown-and-host-cli-choice.md)）。新任务的执行目录由调用方明确提供，续接只继承本 boss 的任务元数据并保持原生会话的 Provider 身份。工位决定访问等级，与之矛盾的声明被拒绝；访问等级仍是声明，不改变原生权限。
+- 私聊可由工位确定 CLI；需要它确定 CLI 时必须读到可用工位，落在宿主同类 CLI 的工位按该 boss 的选择交给宿主自带子代理（默认）、由服务启动或跳过（[ADR-0090](../adr/0090-quota-group-cooldown-and-host-cli-choice.md)）。新任务的执行目录由调用方明确提供，续接只继承本 boss 的任务元数据并保持原生会话的 Provider 身份。工位给出默认访问等级，调用显式声明时以声明为准；访问等级仍是声明，不改变原生权限。
 - 权限类参数只来自按 CLI 的权限档位（缺省「完全放开」；CLI 没有可用的自动审核时「自动」即完全放开）、App 中的默认 options 或用户本轮明确要求，boss 不得自行追加；档位与 App 默认值在续接时同样套用并在回执注明。调用方给出该 CLI 任一权限键时整档不套用；受限工具运行不套用档位；只按 `cli-defaults.json` 回退时不继承权限等执行控制（[ADR-0028](../adr/0028-follow-cli-default-model.md)、[ADR-0076](../adr/0076-full-permission-default.md)）。Claude 两档所选的模式不可用时，改用另一档的模式重跑一次，两种都不可用时任务受阻（[ADR-0059](../adr/0059-claude-tier-fallback.md)）。
 - `restricted_tools=true` 是显式受限配置，普通调用不继承；它收紧原生工具，但不等于操作系统沙箱。
 - Provider 进程不继承 `CLAUDE_CODE_OAUTH_TOKEN`，Claude 子代理一律用 Claude Code 自己存的登录，不随 boss 宿主变化；AgentNave 不保存、不读取 Claude 凭据（[ADR-0058](../adr/0058-claude-stored-login.md)）。
@@ -61,7 +61,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
 - macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
-- 服务只为隔离目录写用户仓库：boss 要求隔离时写主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude` 和 `agentnave/` 前缀的受管分支；任务或席位在隔离目录里运行时，在 git 公共目录下的 `agentnave/` 写仓库锁和目录使用租约。可用的目录只在 boss 释放后删除，服务自己只回滚没建成的半成品、续完目录已删掉的收尾。建目录和检查时不执行仓库配置的 hooks、filter 与文件监视程序，也不进入嵌套仓库（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）。
+- 服务只为隔离目录写用户仓库：boss 要求隔离时写主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude` 和 `agentnave/` 前缀的受管分支；任务或席位在隔离目录里运行时，在 git 公共目录下的 `agentnave/` 写仓库锁和目录使用租约。只读任务成功完成且相对起点无任何改动、无其他租约时，服务自动释放该隔离目录，并在后续续接同一原生会话时原位重建；其余可用的目录只在 boss 释放后删除，服务自己另只回滚没建成的半成品、续完目录已删掉的收尾。建目录和检查时不执行仓库配置的 hooks、filter 与文件监视程序，也不进入嵌套仓库（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)、[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)）。
 - AgentNave 不是沙箱。主动杀 supervisor、创建新 OS session 或其他同用户逃逸不在隔离范围内；Provider 原生权限才是安全边界。
 
 ## 会议

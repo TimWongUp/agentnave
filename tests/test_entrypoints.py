@@ -124,7 +124,7 @@ async def _start_and_wait(client: Client, **arguments: object) -> dict[str, obje
 
 
 @pytest.mark.asyncio
-async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_resume(
+async def test_specialist_seats_dispatch_every_difficulty_and_reject_disabled_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_fake_claude(tmp_path, monkeypatch)
@@ -137,7 +137,7 @@ async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_r
         **{
             role.group: {
                 difficulty: {"provider": "claude", "model": f"{role.group}-{difficulty}"}
-                for difficulty in ("easy", "hard")
+                for difficulty in ("easy", "medium", "hard")
             }
             for role in catalog
         },
@@ -146,7 +146,7 @@ async def test_specialist_seats_dispatch_both_difficulties_and_reject_disabled_r
     path.write_text(json.dumps(document))
     async with Client(mcp) as client:
         for role in catalog:
-            for difficulty in ("easy", "hard"):
+            for difficulty in ("easy", "medium", "hard"):
                 result = await _start_and_wait(
                     client, cwd=str(tmp_path), seat=f"{role.seat_prefix}-{difficulty}"
                 )
@@ -199,10 +199,13 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
     path = tmp_path / "orchestration.json"
     catalog = role_catalog()
+    saved = {"provider": "claude", "model": "saved"}
     document = {
         "version": 1,
         "preset": "split",
-        **{role.group: {"easy": {"provider": "claude", "model": "saved"}} for role in catalog},
+        **{role.group: {"easy": saved} for role in catalog},
+        # Only a bound medium seat is published.
+        "worker_writing": {"easy": saved, "medium": saved},
     }
     async with Client(mcp) as client:
         for enabled in (
@@ -224,7 +227,7 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
                 for role in catalog
                 if role.group in expected
                 for difficulty in ("easy", "hard")
-            }
+            } | ({"worker-writing-medium"} if "worker_writing" in expected else set[str]())
             if seats:
                 assert set(start.input_schema["$defs"]["OrchestrationRole"]["enum"]) == seats
             else:
@@ -243,6 +246,14 @@ async def test_role_switches_filter_complete_published_schemas_and_member_fields
                     assert (f'"{role.seat_prefix}-{difficulty}"' in schemas) is (
                         role.group in expected
                     )
+                assert (f'"{role.seat_prefix}-medium"' in schemas) is (
+                    role.group in expected and role.group == "worker_writing"
+                )
+            if "explorer" in expected:
+                unbound = await client.call_tool(
+                    "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "explorer-medium"}
+                )
+                assert unbound.is_error and "seat='explorer-easy'" in str(unbound.content)
             assert '"image-generator"' not in schemas
             assert '"image_generation"' not in schemas
 
@@ -616,11 +627,12 @@ async def test_image_generator_seat_defaults_access_resume_and_native(
             provider_options={"model": "explicit"},
         )
         assert other_model["model"] == "explicit" and "effort" not in other_model
-        contradiction = await client.call_tool(
-            "start_agent",
-            {"prompt": "ok", "cwd": str(tmp_path), "seat": "image-generator", "access": "read"},
+        # The seat's access is a default; a declared one stands and is not marked as applied.
+        declared = await _start_and_wait(
+            client, cwd=str(tmp_path), seat="image-generator", access="read"
         )
-        assert contradiction.is_error and "declares access=write" in str(contradiction.content)
+        assert declared["access"] == "read"
+        assert "access (image-generator seat)" not in cast(list[str], declared["defaults_applied"])
 
         document["image_generation"] = {"provider": "codex", "model": "other-cli"}
         path.write_text(json.dumps(document))
@@ -2085,12 +2097,22 @@ async def test_members_apply_defaults_and_enforce_each_mode(
         review = await start({}, role="correctness-reviewer", provider=None)
         assert review["access"] == "read"
         assert "access (correctness-reviewer seat)" in cast(list[str], review["defaults_applied"])
-        contradiction = await client.call_tool(
-            "start_agent",
-            {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy", "access": "read"},
+        # A seat's access is only a default. A Worker investigating read-only gets the
+        # read-only instruction, and an Explorer thread may turn to writing when resumed.
+        investigating = await start({}, seat="worker-easy", access="read")
+        assert investigating["access"] == "read"
+        assert cast(list[str], investigating["defaults_applied"])[-1] == (
+            "read-only instruction (access=read)"
         )
-        assert contradiction.is_error
-        assert "worker-easy declares access=write" in str(contradiction.content)
+        assert "access (worker-easy seat)" not in cast(list[str], investigating["defaults_applied"])
+        await start({"model": "chosen"}, seat="explorer-easy")
+        turned = await start({}, session_id="session-e2e", access="write")
+        assert turned["access"] == "write"
+        turned_defaults = cast(list[str], turned["defaults_applied"])
+        assert "seat (session_id history)" in turned_defaults
+        assert "read-only instruction (access=read)" not in turned_defaults
+        # Omitted again on the next resume, the seat gives its default back.
+        assert (await start({}, session_id="session-e2e"))["access"] == "read"
         # The current host's off override suppresses role defaults without deleting saved seats.
         from agentnave.host import Host
 
@@ -2598,7 +2620,7 @@ async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with
                     "start_agent",
                     {
                         "provider": "claude",
-                        "prompt": "ok",
+                        "prompt": "sleep",
                         "cwd": str(repo),
                         "isolation": {},
                         "manager_session_id": "chat-old",
@@ -2607,7 +2629,9 @@ async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with
             ).structured_content
         )
         wt_id = str(_payload(started["isolation"])["id"])
-        await client.call_tool("wait", {"ids": [started["invocation_id"]]})
+        await client.call_tool("cancel", {"id": started["invocation_id"]})
+        cancelled = _first(await client.call_tool("wait", {"ids": [started["invocation_id"]]}))
+        assert cancelled["status"] == "cancelled"
 
         own = _payload(
             (
@@ -2666,6 +2690,165 @@ async def test_mcp_isolated_dirs_lists_a_repo_and_releases_other_workspaces_with
 
 
 @pytest.mark.asyncio
+async def test_mcp_auto_release_wait_true_and_session_id_in_place_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    sub = repo / "packages" / "app"
+    (repo / ".worktreeinclude").write_text("*.ignored\n", encoding="utf-8")
+    (repo / "keep.ignored").write_text("from-source\n", encoding="utf-8")
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run([*git, "add", ".worktreeinclude"], cwd=repo, check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-m", "add include"], cwd=repo, check=True, capture_output=True)
+    base_oid = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, os, pathlib, sys\n"
+        "prompt = sys.stdin.read()\n"
+        "if 'TURN_TWO_WRITE' in prompt:\n"
+        "    pathlib.Path('feature.py').write_text('built = True\\n', encoding='utf-8')\n"
+        "else:\n"
+        "    pathlib.Path('scratch.ignored').write_text('drop\\n', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': json.dumps({'cwd': os.getcwd()}), "
+        "'session_id': 'sess-auto-rel', 'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    async with Client(mcp) as client:
+        # Turn 1: access=read + isolation={} + wait=True -> untouched -> auto-released, count omitted.
+        turn1 = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "TURN_ONE_READ",
+                        "cwd": str(sub),
+                        "access": "read",
+                        "isolation": {},
+                        "wait": True,
+                        "manager_session_id": "boss-auto",
+                    },
+                )
+            ).structured_content
+        )
+        assert "unreleased_isolation_count" not in turn1
+        iso1 = _payload(turn1["isolation"])
+        wt_id = str(iso1["id"])
+        wt_path = Path(str(iso1["path"]))
+        exec_cwd = Path(str(iso1["cwd"]))
+        wait1 = cast(list[dict[str, object]], _payload(turn1["wait"])["updates"])[0]
+        assert wait1["status"] == "succeeded"
+        end_iso1 = _payload(wait1["isolation"])
+        assert end_iso1["auto_released"] is True
+        assert end_iso1["summary_status"] == "complete"
+        assert end_iso1["head_oid"] == base_oid
+        assert not wt_path.exists()
+        assert (
+            f"agentnave/{wt_id}"
+            not in subprocess.run(
+                ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+        )
+        listed1 = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "boss-auto"}
+                )
+            ).structured_content
+        )
+        assert listed1["items"] == []
+
+        # Turn 2: resume same session_id with access=write -> rebuilt at identical path/id/branch/cwd.
+        turn2 = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "TURN_TWO_WRITE",
+                        "session_id": "sess-auto-rel",
+                        "access": "write",
+                        "wait": True,
+                        "manager_session_id": "boss-auto",
+                    },
+                )
+            ).structured_content
+        )
+        assert turn2["unreleased_isolation_count"] == 1
+        iso2 = _payload(turn2["isolation"])
+        assert iso2["id"] == wt_id
+        assert Path(str(iso2["path"])) == wt_path
+        assert Path(str(iso2["cwd"])) == exec_cwd
+        assert iso2["branch"] == f"agentnave/{wt_id}"
+        assert iso2["base_oid"] == base_oid
+        assert wt_path.is_dir()
+        assert (wt_path / "keep.ignored").read_text(encoding="utf-8") == "from-source\n"
+
+        wait2 = cast(list[dict[str, object]], _payload(turn2["wait"])["updates"])[0]
+        assert wait2["status"] == "succeeded"
+        seen2 = json.loads(str(wait2["output"]))
+        assert Path(seen2["cwd"]).resolve() == exec_cwd.resolve()
+        end_iso2 = _payload(wait2["isolation"])
+        assert "auto_released" not in end_iso2
+        assert end_iso2["uncommitted"] is True
+
+        # Turn 3: after explicit release, resuming the session_id refuses rebuild cleanly.
+        confirm_req = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "boss-auto"},
+                )
+            ).structured_content
+        )
+        deleted = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": confirm_req["confirmation"],
+                        "manager_session_id": "boss-auto",
+                    },
+                )
+            ).structured_content
+        )
+        assert deleted["status"] == "deleted"
+        after_manual = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "TURN_THREE",
+                "session_id": "sess-auto-rel",
+                "manager_session_id": "boss-auto",
+            },
+        )
+        assert after_manual.is_error and "not auto-released" in str(after_manual.content)
+
+
+@pytest.mark.asyncio
 async def test_creating_an_isolated_directory_does_not_block_the_event_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2707,6 +2890,111 @@ async def test_creating_an_isolated_directory_does_not_block_the_event_loop(
         await tick_task
         assert not result.is_error
     assert ticks >= 10
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+@pytest.mark.asyncio
+async def test_resume_refuses_an_auto_released_path_replaced_by_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    repo = _light_repo(tmp_path / "repo")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, pathlib, sys\n"
+        "if 'TURN_TWO' in sys.stdin.read():\n"
+        "    pathlib.Path('ran-here').write_text('x', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': 'ok', 'session_id': 'sess-link', "
+        "'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    boss = {"provider": "claude", "manager_session_id": "boss-link"}
+    async with Client(mcp) as client:
+        first = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        **boss,
+                        "prompt": "look",
+                        "cwd": str(repo),
+                        "access": "read",
+                        "isolation": {},
+                        "wait": True,
+                    },
+                )
+            ).structured_content
+        )
+        wt_path = Path(str(_payload(first["isolation"])["path"]))
+        assert not wt_path.exists()  # untouched, so auto-released
+        # The released path now leads to an ordinary directory outside any isolated one.
+        wt_path.symlink_to(elsewhere, target_is_directory=True)
+        resumed = await client.call_tool(
+            "start_agent", {**boss, "prompt": "TURN_TWO", "session_id": "sess-link", "wait": True}
+        )
+        assert resumed.is_error and "no longer isolated directory" in str(resumed.content)
+        assert not (elsewhere / "ran-here").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+@pytest.mark.asyncio
+async def test_resume_refuses_a_kept_subdirectory_replaced_by_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    repo = _light_repo(tmp_path / "repo")
+    (repo / "sub").mkdir()
+    (repo / "sub" / "f").write_text("x\n", encoding="utf-8")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run([*git, "add", "sub"], cwd=repo, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "sub"], cwd=repo, check=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, pathlib, sys\n"
+        "if 'TURN_TWO' in sys.stdin.read():\n"
+        "    pathlib.Path('ran-here').write_text('x', encoding='utf-8')\n"
+        "print(json.dumps({'type': 'result', 'result': 'ok', 'session_id': 'sess-sub', "
+        "'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    boss = {"provider": "claude", "manager_session_id": "boss-sub"}
+    async with Client(mcp) as client:
+        first = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        **boss,
+                        "prompt": "look",
+                        "cwd": str(repo / "sub"),
+                        "access": "write",
+                        "isolation": {},
+                        "wait": True,
+                    },
+                )
+            ).structured_content
+        )
+        moved = Path(str(_payload(first["isolation"])["path"])) / "sub"
+        assert moved.is_dir()  # a write task's directory is kept
+        # The thread's own subdirectory now leads outside the isolated directory.
+        (moved / "f").unlink()
+        moved.rmdir()
+        moved.symlink_to(elsewhere, target_is_directory=True)
+        resumed = await client.call_tool(
+            "start_agent", {**boss, "prompt": "TURN_TWO", "session_id": "sess-sub", "wait": True}
+        )
+        assert resumed.is_error and "replaced by a link" in str(resumed.content)
+        assert not (elsewhere / "ran-here").exists()
 
 
 def _own_seat(seat_id: str, provider: str, access: str, **extra: object) -> dict[str, object]:
@@ -2922,12 +3210,15 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
         (text, sent), *_ = decision.calls
         assert text == "Task:\n给设置页加一个开关\nRequired access: write"
         assert sent == {
-            "write-a": "role write-a | difficulty: medium (a defined goal that still needs some "
-            "investigation or decisions on the way) | access: write",
-            "write-b": "role write-b | difficulty: hard (design trade-offs, root-cause judgment "
-            "or unclear boundaries) | access: write",
-            "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy (settled scope "
-            "and explicit steps: locating, collecting evidence, a specified change) | access: write",
+            "write-a": "role write-a | difficulty: medium (goal and acceptance are clear; the "
+            "worker investigates and makes local decisions on the way, e.g. a fix with a known "
+            "cause or an ordinary feature) | access: write",
+            "write-b": "role write-b | difficulty: hard (the answer itself is still open: a root "
+            "cause unknown after a first look, a lasting architecture trade-off, or unclear "
+            "module boundaries) | access: write",
+            "write-c": "写作: 写、改、翻译给人看的文章、文案和报告。 | difficulty: easy (what to do is "
+            "already spelled out: locating, collecting evidence, applying a specified change, "
+            "however many files it touches) | access: write",
             "draw-comic": "漫画风格 (image generation) | access: write",
             "draw-real": "写实: 照片质感的写实人像 (image generation) | access: write",
         }
@@ -2956,13 +3247,16 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
             ({"seat": "nobody"}, "Unknown task seat: nobody"),
             ({"seat": "worker-easy"}, "not used in the decision-model mode"),
             ({"seat": "image-generator"}, "not used in the decision-model mode"),
-            ({"seat": "read-d", "access": "write"}, "declares access=read"),
             ({"seat": "x" * 129}, "seat"),
         ):
             rejected = await client.call_tool(
                 "start_agent", {"prompt": "ok", "cwd": str(tmp_path), **arguments}
             )
             assert rejected.is_error and expected in str(rejected.content)
+        # An own seat's access is a default too: the declared one stands.
+        declared = await _start_and_wait(client, cwd=str(tmp_path), seat="read-d", access="write")
+        assert declared["access"] == "write"
+        assert "access (read-d seat)" not in cast(list[str], declared["defaults_applied"])
 
         # The user deleted a seat the boss was about to use: no other seat takes its place.
         _write_own_seats([s for s in seats if s["id"] != "write-b"])
@@ -3189,6 +3483,34 @@ async def test_start_agent_auto_asks_the_decision_model_and_starts_in_one_call(
         recommendation = _payload(single["recommendation"])
         assert recommendation["seat"] == "read-c" and recommendation["difficulty"] == "easy"
         assert recommendation["decision_model_called"] is False and decision.calls == []
+        # Read-only in an isolated directory may turn into implementation in the same thread:
+        # the seat comes from the write seats, said in the receipt, and the task stays read-only.
+        staged = await _start_and_wait(
+            client,
+            cwd=str(_light_repo(tmp_path / "repo")),
+            seat="auto",
+            access="read",
+            isolation={},
+            # ASCII: the fake CLI reads stdin in the Windows locale encoding.
+            prompt="find why the switch has no effect",
+        )
+        [(text, sent)] = decision.calls
+        assert text == (
+            "Task:\nfind why the switch has no effect\nRequired access: read\n"
+            + seat_recommendation._STAGED_TASK  # pyright: ignore[reportPrivateUsage]
+        )
+        assert set(sent) == {"write-a", "write-b"}
+        recommendation = _payload(staged["recommendation"])
+        assert recommendation["seat"] == "write-b"
+        assert recommendation["note"] == seat_recommendation.STAGED_NOTE
+        assert staged["access"] == "read" and "isolation" in staged
+        staged_defaults = cast(list[str], staged["defaults_applied"])
+        assert "read-only instruction (access=read)" in staged_defaults
+        assert "access (write-b seat)" not in staged_defaults
+        # Turning to implementation: the resumed thread keeps the write seat and its default.
+        implementing = await _start_and_wait(client, session_id="session-e2e")
+        assert implementing["access"] == "write"
+        assert "access (write-b seat)" in cast(list[str], implementing["defaults_applied"])
 
 
 @pytest.mark.asyncio
@@ -3276,6 +3598,24 @@ async def test_start_agents_isolates_every_writer_when_there_are_several(
         assert broken["recommendation"]["seat"] == "write-a"
         after = _started_count((await client.call_tool("list")).structured_content)
         assert after == before + 1
+
+        # A read task with its own isolation may turn to implementation in its thread: its
+        # seat comes from the write seats; it stays read-only and is no writer to isolate.
+        staged, reader = await run(
+            [pick, read],
+            [_batch_task("查", "read", one, isolation={}), _batch_task("丙", "read", plain)],
+        )
+        (staged_text, staged_seats), (reader_text, reader_seats) = decision.batches[-1]
+        assert set(staged_seats) == {"write-a", "write-b"}
+        assert set(reader_seats) == {"read-c", "read-d"}
+        assert "may turn to implementation" in staged_text
+        assert "may turn to implementation" not in reader_text
+        assert staged["recommendation"]["seat"] == "write-a"
+        assert staged["recommendation"]["note"] == seat_recommendation.STAGED_NOTE
+        assert staged["access"] == "read" and "isolation" in staged
+        assert "read-only instruction (access=read)" in staged["defaults_applied"]
+        assert AUTO_ISOLATION_APPLIED not in staged["defaults_applied"]
+        assert "note" not in reader["recommendation"] and "isolation" not in reader
 
 
 def test_the_decision_model_reads_all_of_a_short_text_and_the_ends_of_a_long_one() -> None:
@@ -4057,8 +4397,11 @@ async def test_native_review_role_receipt_names_the_seat_model_and_effort(
             "Dispatch it with the host's built-in subagent using model native-model, effort high."
         )
         assert "seat_fallback" not in native and "error" not in native
-        conflict = await client.call_tool("start_agent", {**args, "access": "write"})
-        assert conflict.is_error and "declares access=read" in str(conflict.content)
+        # A declared access that differs from the review seat's default is not refused.
+        declared = _payload(
+            (await client.call_tool("start_agent", {**args, "access": "write"})).structured_content
+        )
+        assert declared == native
         provider_health.record(root, "codex", "auth", "native-model")
         cooled = await client.call_tool("start_agent", args)
         assert cooled.is_error and "native-model" in str(cooled.content)

@@ -485,6 +485,8 @@ fn orchestration_role_switches_keep_every_group_and_refuse_bad_lists() {
     }
     document["enabled_roles"] = json!(null);
     document["worker_documents"] = json!({"medium": seat});
+    assert_eq!(validate_orchestration(&document), Ok(()));
+    document["worker_documents"] = json!({"extreme": seat});
     assert!(validate_orchestration(&document).is_err());
 }
 
