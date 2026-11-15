@@ -58,10 +58,10 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 | 情况 | 读 |
 | --- | --- |
 | 规则块写明工位交给决策模型选（「决策模型」档） | [决策模型档](references/decision.md) |
-| 其他档开启了编排（`list_members` 的 `orchestration.enabled=true`） | [固定编排工位](references/fixed-seats.md) |
+| 规则块列出了固定工位（分工协作、并行分工等） | [固定编排工位](references/fixed-seats.md) |
 | 编排未开启，或用户点名 CLI、模型或参数 | [点名与冷却](references/models.md) |
 
-是否开启以 `list_members` 的 `orchestration.enabled` 为准，每个聊天第一次选执行者前查一次；规则块和 `seat` 的 schema 只用来提醒，不作判断依据。
+档位按规则块判断，派发前不用先查 `list_members`；规则块与实际配置不符时派发会被拒绝并说明原因，再按报错查 `list_members`。宿主全局规则里没有「AgentNave 编排偏好」一段时，先查一次 `list_members`：`orchestration.enabled=true` 读[没有规则块的宿主](references/headless.md)，否则按编排未开启处理。
 
 做任务、问意见、复核、分头做、择优、接力：一个或多个 `start_agent` + `wait`，结果由 boss 验收，需要时用 `forward` 交给下一位。私聊的常用组合：
 
