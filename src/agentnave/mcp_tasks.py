@@ -180,7 +180,8 @@ async def start_agent(
                 "ordered available choices for new threads (or a uniform random usable candidate "
                 "on custom task seats when enabled; seat_fallback sets random=true when drawn, "
                 "else earlier choices were skipped); explicit CLI or model wins; inherits on "
-                "resume. Disabled ordinary seats reject even with an explicit CLI. Not shown; "
+                "resume, where another seat must use the resumed thread's CLI. Disabled ordinary "
+                "seats reject even with an explicit CLI. Not shown; "
                 "also pass role as the desk label."
             )
         ),
