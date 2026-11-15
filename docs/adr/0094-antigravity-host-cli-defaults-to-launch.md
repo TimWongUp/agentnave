@@ -1,4 +1,4 @@
-# ADR-0092：Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动
+# ADR-0094：Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动
 
 - 状态：已接受
 - 日期：2026-11-14
@@ -14,7 +14,7 @@ ADR-0090 将私聊同类 CLI 的默认处理统一设为交给宿主自带子代
 ## 决定
 
 - **默认值按宿主能力决定。** 原生子代理能按工位模型执行的宿主（Claude Code、Codex 等）默认 `subagent`；Antigravity（`agy` CLI 与 Antigravity 应用）默认 `launch`，由 AgentNave 启动 `agy` 子进程并传入工位的模型与推理档。Provider 专属默认值由 Adapter 声明，核心不按 Provider 名分支；托盘维护对应声明并向前端下发，测试锁住两侧一致。
-- **仅省略等于该宿主默认值的选择。** `orchestration.json` 的 `host_cli` 在选择等于该宿主默认值时省略条目，偏离默认值时写入（包括在 Antigravity 上显式选择 `subagent`）。旧文件中已写入的 `launch`、`skip` 照常读取生效。
+- **仅省略等于该宿主默认值的选择。** `orchestration.json` 的 `host_cli` 在选择等于该宿主默认值时省略条目，偏离默认值时写入（包括在 Antigravity 上显式选择 `subagent`）。旧文件中已写入的 `launch`、`skip` 照常读取生效。读取或校验失败时回退 `subagent`；旧连接无法确定应用行时也回退 `subagent`，避免覆盖可能存在的显式选择。
 
 ## 取舍
 

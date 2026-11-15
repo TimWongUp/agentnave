@@ -35,7 +35,8 @@ type ProviderName = Literal[
     "pi",
     "zcode",
 ]
-type Difficulty = Literal["easy", "hard"]
+# A fixed group's medium seat is optional; only a bound one is published.
+type Difficulty = Literal["easy", "medium", "hard"]
 type CustomSeatDifficulty = Literal["easy", "medium", "hard"]
 type DecisionModelName = Literal["gemini-decision-1"]
 type OrchestrationPreset = Literal["off", "meetings", "split", "parallel", "decision", "custom"]
@@ -50,18 +51,25 @@ type OrchestrationGroup = Literal[
 ]
 type OrchestrationRole = Literal[
     "explorer-easy",
+    "explorer-medium",
     "explorer-hard",
     "worker-easy",
+    "worker-medium",
     "worker-hard",
     "worker-frontend-easy",
+    "worker-frontend-medium",
     "worker-frontend-hard",
     "worker-writing-easy",
+    "worker-writing-medium",
     "worker-writing-hard",
     "explorer-web-easy",
+    "explorer-web-medium",
     "explorer-web-hard",
     "explorer-social-easy",
+    "explorer-social-medium",
     "explorer-social-hard",
     "worker-documents-easy",
+    "worker-documents-medium",
     "worker-documents-hard",
     "image-generator",
 ]
@@ -92,7 +100,7 @@ def role_catalog() -> tuple[CatalogRole, ...]:
 
 def seat_role(name: str) -> CatalogRole | None:
     prefix, separator, difficulty = name.rpartition("-")
-    if not separator or difficulty not in ("easy", "hard"):
+    if not separator or difficulty not in ("easy", "medium", "hard"):
         return None
     return next((role for role in role_catalog() if role.seat_prefix == prefix), None)
 
@@ -326,7 +334,8 @@ class OrchestrationFile(BaseModel):
 
         default = default_host_cli_mode(host)
         if self.effective_apps is not None and not host.app_id:
-            return default
+            # Without a row identity or a reliable app-to-provider map, preserve old behavior.
+            return "subagent"
         return self.host_cli.get(host.app_id or host.name or "", default)
 
     def decision(self, host: Host) -> bool:

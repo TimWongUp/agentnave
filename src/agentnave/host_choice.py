@@ -23,5 +23,5 @@ def host_cli_mode(host: Host) -> Literal["subagent", "launch", "skip"]:
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     except MemberFileError:
-        return default
+        return "subagent"
     return roles.host_cli_mode(host) if roles is not None else default

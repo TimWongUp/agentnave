@@ -133,6 +133,7 @@ class StartArguments:
     # Model and effort the resumed thread last ran with; see apply_history.
     history: dict[str, str] = field(default_factory=lambda: {})
     selected: ReviewSeat | None = None
+    resumed_task: TaskRecord | None = None
 
     def inherit(self, task: TaskRecord) -> None:
         self.provider = self._inherited(
@@ -187,15 +188,11 @@ class StartArguments:
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
         custom = custom_seat(name, host)
+        # The seat's access is only a default: a declared one stands, even when it differs.
         implied = custom.access if custom is not None else role_access(name)
-        if implied is not None:
-            if self.access is None:
-                self.access = implied
-                self.defaults.append(f"access ({name} seat)")
-            elif self.access != implied:
-                raise ValueError(
-                    f"{name} declares access={implied}; omit access or pick a matching seat"
-                )
+        if implied is not None and self.access is None:
+            self.access = implied
+            self.defaults.append(f"access ({name} seat)")
         if is_image_seat(name, custom) and self.provider == host.provider:
             raise ValueError(IMAGE_HOST_CLI_REASON)
         choice = host_cli_mode(host)
@@ -237,6 +234,7 @@ def resolve_start(
             explicit_identity=arguments.provider is not None and arguments.cwd is not None,
         )
         if task is not None:
+            arguments.resumed_task = task
             arguments.inherit(task)
         elif arguments.provider is None or arguments.cwd is None:
             raise ValueError("Unknown session_id; pass provider and cwd explicitly")

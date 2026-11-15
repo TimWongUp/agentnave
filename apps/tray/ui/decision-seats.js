@@ -111,8 +111,8 @@
     ...(kind === IMAGE ? { rows: [blankRow()] } : {}), ...fields,
   });
 
-  // The fixed seats the user has bound make one card per group, easy and hard filled in, medium left
-  // empty, and the fixed image seat a card of its own.
+  // The fixed seats the user has bound make one card per group with each bound difficulty filled in,
+  // medium left empty where the group has none, and the fixed image seat a card of its own.
   function prefill() {
     const doc = S.orchestrationShown();
     const taken = new Set();
@@ -123,7 +123,7 @@
       return { id, provider: seat.provider, model: seat.model, ...(seat.effort ? { effort: seat.effort } : {}) };
     };
     const made = S.roleCatalog().filter((entry) => S.liveSeats(doc).some(({ role }) => role === entry.group)).map((entry) => newCard(entry.group, {
-      seats: Object.fromEntries(["easy", "hard"].map((difficulty) => [difficulty, bound(S.orchestrationSeat(doc, entry.group, difficulty))]).filter(([, seat]) => seat)),
+      seats: Object.fromEntries(["easy", "medium", "hard"].map((difficulty) => [difficulty, bound(S.orchestrationSeat(doc, entry.group, difficulty))]).filter(([, seat]) => seat)),
     })).filter((card) => Object.keys(card.seats).length);
     const image = bound(doc.image_generation);
     if (image) made.push(newCard(IMAGE, { rows: [blankRow({ role: L("通用生图", "General image generation"), seat: image })] }));

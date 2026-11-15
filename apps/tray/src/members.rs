@@ -315,7 +315,7 @@ pub(crate) fn validate_fallbacks(fields: &Map<String, Value>, what: &str) -> Res
 /// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "decision" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode},
 /// "host_cli": {row: "subagent" | "launch" | "skip"} (a row left out uses its host default), "enabled_roles": [group],
-/// group: {"easy" | "hard": seat}, "image_generation": seat,
+/// group: {"easy" | "medium" | "hard": seat} (medium optional), "image_generation": seat,
 /// "meeting": {"count": 2..=6, "seats"?: [seat | null]}}`, with one group per catalog entry.
 /// A turned-off group keeps its seats. Interface Workers, the image seat and meeting defaults have
 /// keys of their own so servers that predate them ignore them rather than reject the file. The App
@@ -380,8 +380,8 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     for role in groups {
         let Some(seats) = top.get(role) else { continue };
         for (difficulty, seat) in object(seats, role)? {
-            if !matches!(difficulty.as_str(), "easy" | "hard") {
-                return Err(format!("{role} 只有 easy 与 hard 两档"));
+            if !matches!(difficulty.as_str(), "easy" | "medium" | "hard") {
+                return Err(format!("{role} 只有 easy、medium 与 hard 三档"));
             }
             validate_seat(seat, &format!("{role}.{difficulty}"))?;
         }

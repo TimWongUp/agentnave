@@ -20,8 +20,10 @@ fn small_tasks() -> String {
     rest[..end].to_owned()
 }
 
-fn directory_line(role: &Value) -> String {
+/// A group's directory line; with its optional medium seat bound, the line names that seat too.
+fn directory_line(role: &Value, medium: bool) -> String {
     let template = &super::catalog::catalog()["enabled_roles"];
+    let key = if medium { "line_medium" } else { "line" };
     let prefix = role["seat_prefix"].as_str().expect("seat prefix");
     let name = role["name_zh"].as_str().expect("role name");
     let scope = role["scope_zh"].as_str().expect("role scope");
@@ -29,29 +31,28 @@ fn directory_line(role: &Value) -> String {
     let access = template["access_zh"][access_key]
         .as_str()
         .unwrap_or_else(|| panic!("missing access label {access_key}"));
-    template["line"]
+    template[key]
         .as_str()
-        .expect("enabled_roles line template")
+        .unwrap_or_else(|| panic!("missing enabled_roles {key} template"))
         .replace("{name_zh}", name)
         .replace("{access_zh}", access)
         .replace("{scope_zh}", scope)
         .replace("{seat_prefix}", prefix)
 }
 
-pub(super) fn sections() -> Value {
+/// Each group's line, without or with its medium seat.
+pub(super) fn sections(medium: bool) -> Value {
     let mut sections = serde_json::Map::new();
     if let Some(catalog) = crate::orchestration_roles::catalog().as_array() {
         for role in catalog {
             let group = role["group"].as_str().expect("role group");
-            sections.insert(group.into(), json!(directory_line(role)));
+            sections.insert(group.into(), json!(directory_line(role, medium)));
         }
     }
     Value::Object(sections)
 }
 
 pub(super) fn enabled_lines(document: &Value) -> String {
-    let sections = sections();
-    let sections = sections.as_object().expect("role sections");
     // Use catalogue order rather than JSON map sorting for a stable, readable directory.
     let enabled = crate::orchestration_roles::enabled_groups(document).unwrap_or_default();
     let mut out = String::new();
@@ -59,7 +60,7 @@ pub(super) fn enabled_lines(document: &Value) -> String {
         for role in catalog {
             let group = role["group"].as_str().expect("role group");
             if enabled.contains(&group) {
-                out.push_str(sections[group].as_str().expect("role section"));
+                out.push_str(&directory_line(role, document[group]["medium"].is_object()));
             }
         }
     }
@@ -110,10 +111,10 @@ pub(super) fn migrate_legacy(text: &str) -> String {
 
 pub(super) fn apply(document: &Value, text: String) -> String {
     let mut text = migrate_legacy(&text);
-    let sections = sections();
-    let sections = sections.as_object().expect("role sections");
-    let generated: Vec<String> = sections
-        .values()
+    let generated: Vec<String> = [sections(false), sections(true)]
+        .iter()
+        .filter_map(Value::as_object)
+        .flat_map(|sections| sections.values())
         .filter_map(Value::as_str)
         .map(|section| section.trim_start_matches('\n').to_owned())
         .collect();
@@ -143,7 +144,7 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     assert!(migrated.contains("兜底不跨难度"));
     assert!(!migrated.contains("Worker"));
     assert!(migrated.contains("用户正文"));
-    let section = sections()["worker_writing"]
+    let section = sections(false)["worker_writing"]
         .as_str()
         .unwrap()
         .trim()

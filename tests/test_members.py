@@ -68,7 +68,9 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     assert len(catalog) == 7
     assert {role.group for role in catalog} == set(get_args(OrchestrationGroup.__value__))
     assert {
-        f"{role.seat_prefix}-{difficulty}" for role in catalog for difficulty in ("easy", "hard")
+        f"{role.seat_prefix}-{difficulty}"
+        for role in catalog
+        for difficulty in ("easy", "medium", "hard")
     } | {"image-generator"} == set(get_args(OrchestrationRole.__value__))
     bindings = {
         difficulty: {"provider": "claude", "model": difficulty} for difficulty in ("easy", "hard")
@@ -133,6 +135,41 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
             Host("antigravity", "parent")
         )
         == "subagent"
+    )
+
+
+def test_host_cli_mode_falls_back_when_orchestration_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.host_choice import host_cli_mode
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    path = tmp_path / "orchestration.json"
+    host = Host("antigravity", "parent", app_id="antigravity")
+    path.write_text('{"version": 1, "host_cli": {"antigravity": "skip"}')
+    assert host_cli_mode(host) == "subagent"
+    path.unlink()
+    path.mkdir()
+    assert host_cli_mode(host) == "subagent"
+
+
+def test_host_cli_mode_old_connection_cannot_identify_saved_row() -> None:
+    host = Host("antigravity", "parent")
+    for choice in ("skip", "subagent"):
+        roles = OrchestrationFile.model_validate(
+            {
+                "version": 1,
+                "effective_apps": {"antigravity": "split"},
+                "host_cli": {"antigravity": choice},
+            }
+        )
+        assert roles.host_cli_mode(host) == "subagent"
+    assert OrchestrationFile(version=1, effective_apps={}).host_cli_mode(host) == "subagent"
+    assert (
+        OrchestrationFile(version=1, effective_apps={}).host_cli_mode(
+            Host("antigravity", "parent", app_id="antigravity")
+        )
+        == "launch"
     )
 
 
