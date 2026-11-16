@@ -528,6 +528,7 @@ function renderTicker(c, ctx) {
 // ---------------------------------------------------------------- body states
 function showBlank(kind) {
   const none = !kind;
+  AN.onboarding?.place(kind === "nogroups");
   el.blank.hidden = none;
   el.office.hidden = !none;
   if (none) return;
@@ -551,7 +552,7 @@ function showBlank(kind) {
     loading: [L("正在读取办公室…", "Loading office…"), ""],
     error: [L("无法读取办公室", "Failed to load office"), L("正在重试，请稍候。", "Retrying, please wait.")],
   }[kind];
-  el.blank.replaceChildren(
+  $("blank-note").replaceChildren(
     ...[
       h("strong", {}, text[0]),
       h("p", {}, text[1]),

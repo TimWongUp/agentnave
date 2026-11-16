@@ -239,6 +239,18 @@ fn chat_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/actions.js").to_vec(),
         ),
+        "onboarding-steps.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/onboarding-steps.js").to_vec(),
+        ),
+        "onboarding.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/onboarding.js").to_vec(),
+        ),
+        "onboarding.css" => Response::ok(
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/onboarding.css").to_vec(),
+        ),
         "chat.css" => Response::ok("text/css; charset=utf-8", CHAT_CSS.to_vec()),
         "appearance.js" => Response::ok("text/javascript; charset=utf-8", APPEARANCE_JS.to_vec()),
         "common.js" => Response::ok("text/javascript; charset=utf-8", COMMON_JS.to_vec()),

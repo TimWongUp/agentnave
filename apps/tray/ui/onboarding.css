@@ -1,0 +1,166 @@
+/* First-run checklist under the office's "no workspaces" message. Colours come from theme.css. */
+.blank-note {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.blank.ob-open {
+  overflow-y: auto;
+  justify-content: flex-start;
+}
+.blank.ob-open > .blank-note {
+  margin-top: auto;
+}
+.blank.ob-open > .onboarding {
+  margin-bottom: auto;
+}
+.onboarding {
+  width: min(100%, 480px);
+  margin-top: 22px;
+  padding: 14px 16px 6px;
+  text-align: left;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  flex: none;
+}
+.onboarding[hidden] {
+  display: none;
+}
+.ob-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.ob-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ob-skip {
+  flex: none;
+  background: transparent;
+  border: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ob-skip:hover:enabled {
+  color: var(--ink);
+  background: var(--hover);
+  border-color: transparent;
+}
+.ob-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ob-step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 92px;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.ob-step:first-child {
+  border-top: 0;
+}
+.ob-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.ob-step[data-state="done"] .ob-mark {
+  background: var(--done);
+  border-color: var(--done);
+  color: var(--solid);
+}
+.ob-step[data-state="failed"] .ob-mark {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.ob-step[data-state="busy"] .ob-mark {
+  border-color: var(--run);
+  color: var(--run);
+}
+.ob-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ob-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ob-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ob-step[data-state="failed"] .ob-note {
+  color: var(--bad);
+}
+.ob-act {
+  display: flex;
+}
+.ob-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  text-align: center;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+a.ob-btn:hover,
+button.ob-btn:hover:enabled {
+  border-color: var(--muted);
+}
+button.ob-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+button.ob-btn.pending:disabled {
+  opacity: 0.85;
+}
+.ob-spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  animation: ob-spin 0.8s linear infinite;
+}
+@keyframes ob-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-spin {
+    animation-duration: 2.4s;
+  }
+}
