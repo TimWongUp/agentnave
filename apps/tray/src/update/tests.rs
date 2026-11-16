@@ -30,23 +30,6 @@ fn notes_an_older_service() {
 }
 
 #[test]
-fn a_found_update_is_used_for_four_hours() {
-    let now = SystemTime::now();
-    assert!(!check_fresh(None, now));
-    assert!(check_fresh(Some(now - Duration::from_secs(60)), now));
-    assert!(!check_fresh(Some(now - FOUND_FOR), now));
-    // The window is four hours, not just whatever the constant holds.
-    assert!(check_fresh(
-        Some(now - Duration::from_secs(3 * 60 * 60 + 59 * 60)),
-        now
-    ));
-    assert!(!check_fresh(
-        Some(now - Duration::from_secs(4 * 60 * 60)),
-        now
-    ));
-}
-
-#[test]
 fn an_automatic_check_is_due_after_its_interval_or_retry_after_no_answer() {
     let now = SystemTime::now();
     let ago = |seconds| Some(now - Duration::from_secs(seconds));

@@ -42,9 +42,6 @@ const UPDATED_MARKER: &str = "updated-to";
 const CHECK_WAIT: Duration = Duration::from_secs(120);
 /// Bounds the update check request.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
-/// A found update is used as it is for this long, the default automatic interval;
-/// after that the update flow first looks for a newer one.
-const FOUND_FOR: Duration = EVERY;
 /// The updater sets no limit of its own, and the update dialog cannot be closed while it runs.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// The dependency index used for the retry that follows a failed direct install. PyPI is slow or
@@ -711,18 +708,11 @@ pub fn status(app: &AppHandle) -> Value {
         "update": update,
         "service": service_state(service_for_app(app), upgrade),
         "last_checked": checked.map(rfc3339),
-        "check_fresh": check_fresh(checked, SystemTime::now()),
         // False when the last check, silent ones included, got no answer from any source.
         "check_answered": checked.is_none() || checked == answered,
         "elapsed": started.filter(|_| running).map(|at| at.elapsed().as_secs()),
         "updated": updated,
     })
-}
-
-/// Whether what the last check found can be used without checking again.
-fn check_fresh(checked: Option<SystemTime>, now: SystemTime) -> bool {
-    // A clock set back reads as just checked, which at worst keeps a found update a little longer.
-    checked.is_some_and(|at| now.duration_since(at).unwrap_or_default() < FOUND_FOR)
 }
 
 /// The outdated note combined with what a one-click upgrade is doing or did.

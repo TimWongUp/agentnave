@@ -1,10 +1,9 @@
 "use strict";
 
-// Updating, as one flow everywhere (header button, settings, the menu's "检查更新"): use what the
-// last check found (check again only when it found nothing to do or is too old), show what changed
-// since this version, and only on "立即更新" upgrade the service, install the App and restart. An
-// update already running shows its progress. The release notes are plain text set with
-// textContent, never as HTML.
+// Updating, as one flow everywhere (header button, settings, the menu's "检查更新"): check first,
+// show what changed since this version, and only on "立即更新" upgrade the service, install the App
+// and restart. An update already running shows its progress. The release notes are plain text set
+// with textContent, never as HTML.
 {
   const { h, L, load, post } = AN;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -154,10 +153,6 @@
     }
   }
 
-  // Something to do, from a check recent enough to use as it is.
-  const usable = (status) => status.check_fresh && (status.update?.state === "available"
-    || (status.update?.state === "none" && ["outdated", "failed"].includes(status.service?.state)));
-
   async function run(recheck = false) {
     if (running || checking) return;
     const check = checking = { cancelled: false };
@@ -175,17 +170,15 @@
     }
     // Only a found update can stay if this check fails, so only that one may fail silently.
     const found = status?.update?.state === "available";
-    if (recheck || !status || !usable(status)) {
-      const reason = found
-        ? L("上次检查已超过 4 小时，先确认有没有更新的版本…", "Last checked over 4 hours ago; checking for a newer version first…")
-        : L("正在检查最新版本…", "Checking for the latest version…");
-      show(L("检查更新", "Check for updates"), [h("p.upd-p", {}, reason)], [[L("取消", "Cancel"), () => { check.cancelled = true; close(); }]]);
-      try {
-        status = await post(found ? "/app/update/check?quiet=1" : "/app/update/check");
-      } catch (error) {
-        if (check.cancelled) return void load("/app/status").then(done, () => {});
-        return show(L("检查更新失败", "Update check failed"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重试", "Retry"), () => run(true), true]]);
-      }
+    const reason = found
+      ? L("正在确认有没有更新的版本…", "Checking for a newer version…")
+      : L("正在检查最新版本…", "Checking for the latest version…");
+    show(L("检查更新", "Check for updates"), [h("p.upd-p", {}, reason)], [[L("取消", "Cancel"), () => { check.cancelled = true; close(); }]]);
+    try {
+      status = await post(found ? "/app/update/check?quiet=1" : "/app/update/check");
+    } catch (error) {
+      if (check.cancelled) return void load("/app/status").then(done, () => {});
+      return show(L("检查更新失败", "Update check failed"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重试", "Retry"), () => run(true), true]]);
     }
     done(status);
     if (check.cancelled) return;

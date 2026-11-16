@@ -5,7 +5,7 @@
 //
 // Loaded only by preview.html?mock&scene=live|calm|review|failed|six|quiet|empty|error
 // &update=available|installing|failed &service=older|upgrading|done|failed &at=<seconds into live>
-// &stale (the last check is too old) &fail=download|service|app (the update stops at that step)
+// &fail=download|service|app (the update stops at that step)
 // &restart (reset the scenario clock; it is shared between pages through localStorage).
 // Hosts page: &hosts=typical|fresh|reload (reload: every boss waiting on a reload; &copyfail fails
 // the one-click stop/restart).
@@ -844,7 +844,6 @@ All checks passed!
       version: mockVersion,
       update: updateOverride || (update ? { state: update, version: "0.21.1", notes: NOTES, step: update === "installing" ? "service" : null, ...(update === "failed" ? { step: "service", error: "本机服务升级失败，App 未更新：无法连接 github.com" } : {}) } : { state: "current" }),
       service: service ? { state: service === "older" ? "outdated" : service, version: service === "older" ? "0.19.2" : mockVersion, error: service === "failed" ? "uv tool install 失败：无法连接 github.com" : null } : null,
-      check_fresh: !q.has("stale"),
       elapsed: mockElapsed(),
     };
   }
