@@ -466,6 +466,23 @@ pub fn resume(app: &AppHandle) {
     }
 }
 
+/// After the first host detection: a machine without any service installs the one bundled
+/// with this build, so a new user does not have to find the install button first.
+pub fn install_missing(app: &AppHandle) {
+    let Some(dirs) = service_dirs(app) else {
+        return;
+    };
+    let installed = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|data| active_version(&data))
+        .or_else(|| installed_version(&dirs.tools.join("agentnave")));
+    if installed.is_none() {
+        install_service_now(app);
+    }
+}
+
 fn marker_dir(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok()
 }
