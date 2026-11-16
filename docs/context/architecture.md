@@ -45,7 +45,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - 私聊可由工位确定 CLI；需要它确定 CLI 时必须读到可用工位，落在宿主同类 CLI 的工位按该 boss 的选择（默认随宿主能力：Antigravity 由服务启动，其他交给宿主自带子代理）交给宿主自带子代理、由服务启动或跳过（[ADR-0090](../adr/0090-quota-group-cooldown-and-host-cli-choice.md)、[ADR-0094](../adr/0094-antigravity-host-cli-defaults-to-launch.md)）。新任务的执行目录由调用方明确提供，续接只继承本 boss 的任务元数据并保持原生会话的 Provider 身份。工位给出默认访问等级，调用显式声明时以声明为准；访问等级仍是声明，不改变原生权限。
 - 权限类参数只来自按 CLI 的权限档位（缺省「完全放开」；CLI 没有可用的自动审核时「自动」即完全放开）、App 中的默认 options 或用户本轮明确要求，boss 不得自行追加；档位与 App 默认值在续接时同样套用并在回执注明。调用方给出该 CLI 任一权限键时整档不套用；受限工具运行不套用档位；只按 `cli-defaults.json` 回退时不继承权限等执行控制（[ADR-0028](../adr/0028-follow-cli-default-model.md)、[ADR-0076](../adr/0076-full-permission-default.md)）。Claude 两档所选的模式不可用时，改用另一档的模式重跑一次，两种都不可用时任务受阻（[ADR-0059](../adr/0059-claude-tier-fallback.md)）。
 - `restricted_tools=true` 是显式受限配置，普通调用不继承；它收紧原生工具，但不等于操作系统沙箱。
-- Provider 进程不继承 boss 的宿主身份与连接标识（`AGENTNAVE_HOST`、`AGENTNAVE_HOST_APP`、`AGENTNAVE_HOST_SESSION_ID`、`AGENTNAVE_EXCLUDED_PROVIDERS` 及中继的连接会话变量），子 CLI 自己的 MCP 条目或祖先进程决定其中继代表的宿主（[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）。
+- Provider 进程不继承 boss 的宿主身份与连接标识（`AGENTNAVE_HOST`、`AGENTNAVE_HOST_APP`、`AGENTNAVE_HOST_SESSION_ID`、`AGENTNAVE_EXCLUDED_PROVIDERS` 及中继的连接会话变量），中继代表的宿主只来自子 CLI 自己 MCP 条目的环境，服务的宿主识别仍可回退到祖先进程（[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）。
 - Provider 进程不继承 `CLAUDE_CODE_OAUTH_TOKEN`，Claude 子代理一律用 Claude Code 自己存的登录，不随 boss 宿主变化；AgentNave 不保存、不读取 Claude 凭据（[ADR-0058](../adr/0058-claude-stored-login.md)）。
 
 生图工位沿用普通 CLI 调用边界：App 选择对话 CLI 与模型，Provider CLI 拥有其生图工具、服务访问和产物生成；AgentNave 不维护生图模型目录或直接调用生图接口。同类 CLI 的宿主不接收生图工位；生图规则也不写进它会读取的规则文件，共享文件按所有读取方约束。

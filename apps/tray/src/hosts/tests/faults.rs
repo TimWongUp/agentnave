@@ -82,6 +82,13 @@ fn a_newer_healthy_connection_answers_older_faults() {
         .to_string(),
     );
     assert_eq!(hosts.state(&h)["fault"], json!({"count":1,"at_ms":9500}));
+    // An unlabelled connection, such as a hand-written project entry's, proves nothing here.
+    save(
+        &root.join("connections/unlabelled.json"),
+        &json!({"version":1,"host":"codex","started_ms":9800}).to_string(),
+    );
+    assert_eq!(hosts.state(&h)["fault"], json!({"count":1,"at_ms":9500}));
+    fs::remove_file(root.join("connections/unlabelled.json")).unwrap();
     // Reading only filters; the refresh removes what is answered or can no longer be owned.
     assert!(dir.join("before.json").exists());
     hosts.refresh_probed();

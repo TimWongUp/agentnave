@@ -35,7 +35,7 @@ impl Hosts {
             .collect()
     }
     /// Whether this row's entry names the row its relays write, as the App's takeover does.
-    fn labelled(&self, host: &Host) -> bool {
+    pub(super) fn labelled(&self, host: &Host) -> bool {
         host.read()
             .ok()
             .and_then(|document| document.entry)

@@ -156,8 +156,16 @@ impl Hosts {
     /// that for up to 105 seconds, so only a longer silence counts as no connection at all.
     /// A relay whose host closed normally marks its receipt ended and keeps it as proof.
     fn receipts(&self, host: &Host, now: SystemTime, changed_at: Option<u64>) -> Receipts {
+        self.owned_receipts(host, now, changed_at, self.sole_row(host))
+    }
+    fn owned_receipts(
+        &self,
+        host: &Host,
+        now: SystemTime,
+        changed_at: Option<u64>,
+        legacy_unambiguous: bool,
+    ) -> Receipts {
         let mut receipts = Receipts::default();
-        let legacy_unambiguous = self.sole_row(host);
         let dir = self
             .connection_root(host)
             .map(|root| root.join("connections"));
@@ -192,8 +200,10 @@ impl Hosts {
     }
     /// The latest start of this row's connections that loaded their tools: one running now, or
     /// one that closed normally with the tools it was given (ADR-0096).
+    /// Ownership follows the fault records': a labelled row does not count unlabelled receipts.
     pub(super) fn healthy_since(&self, host: &Host) -> Option<u64> {
-        let receipts = self.receipts(host, SystemTime::now(), None);
+        let unambiguous = self.sole_row(host) && !self.labelled(host);
+        let receipts = self.owned_receipts(host, SystemTime::now(), None, unambiguous);
         let closed = receipts.ended.iter().filter(|c| {
             valid_hash(&c["runtime_tools_hash"]) && c["runtime_tools_hash"] == c["host_tools_hash"]
         });

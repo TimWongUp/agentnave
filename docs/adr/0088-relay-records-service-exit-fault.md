@@ -1,7 +1,7 @@
 # ADR-0088：中继记录服务子进程的非预期退出，托盘据此提示宿主连接中断
 
 - 状态：部分修订
-- 「消除」与取舍最后一条由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订：同一配置行之后出现健康连接时旧故障视为已恢复，带标识的配置行只认带相同标识的记录。
+- 「消除」、取舍最后一条，以及头部「另可在用户确认后删除」的写入范围与取舍中的删除方条款由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订：同一配置行之后出现健康连接时旧故障视为已恢复，带标识的配置行只认带相同标识的记录；托盘另可在非预览版刷新时删除已恢复或无人认领的记录，中继另清理写入中断留下的暂存文件。
 - 日期：2026-11-13
 - 扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘写入范围：另可在用户确认后删除 `connection-faults/` 下的故障记录。沿用 [ADR-0022](0022-auto-clear-host-reload.md) 对连接观测的读取约束；回执只证明工具加载，不表达故障，故障记录另设。不改变 [ADR-0060](0060-tray-detects-orphaned-running-work.md) 的历史所有权边界。
 
