@@ -4,6 +4,7 @@
 - 日期：2026-10-18
 - App 群聊展示由 [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 修订
 - 记录永远归原 boss 与磁盘只存归属哈希的条款由 [ADR-0033](0033-boss-workspace-handover.md) 修订
+- 显式身份（`session_id` + `provider` + `cwd`）跨 boss 续接由 [ADR-0099](0099-handover-links-workspaces.md) 修订为拒绝跨工作区续接
 - “旧历史保留内容并独立展示”由 [ADR-0050](0050-v1-compatibility-baseline.md) 取代：1.0 迁移删除旧身份记录。
 
 原 `manager_session` 是 MCP 连接的 UUID，常驻宿主可能在多个聊天间共用一个连接，重连又会把同一聊天拆开。App 群聊因此改用调用方每次创建任务或协作组时提供的主控聊天 ID；宿主未公开原生 ID 时，由主控为当前聊天生成并复用一个 UUID。明确按聊天注入的环境变量仅作兜底，不扫描宿主日志或依据 CLI、目录、时间推测归属。

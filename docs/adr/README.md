@@ -20,7 +20,7 @@
 | 0014 | [托盘维护组员配置、探测 CLI 模型，并一键全部更新](0014-tray-members-and-one-click-update.md) | 部分取代 | [ADR-0029](0029-settings-without-free-text.md)、[ADR-0034](0034-models-and-efforts-from-each-cli.md)、[ADR-0047](0047-versioned-service-install.md)、[ADR-0050](0050-v1-compatibility-baseline.md)；2026-11-12 修订（Codex 优先读配置指向的 `model_catalog_json`，缓存兜底） |
 | 0015 | [App 定点编辑宿主配置，保留外部 Skill 所有权](0015-app-host-integration.md) | 部分取代 | [ADR-0029](0029-settings-without-free-text.md)、[ADR-0036](0036-app-owns-service-skills.md)、[ADR-0040](0040-boss-app-from-session-records.md)、[ADR-0066](0066-unified-wait-window-and-call-sequence.md)、[ADR-0067](0067-wait-270s-window-and-host-background-limits.md)；保留用户环境不含宿主自身排除项由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订 |
 | 0016 | [统一核心与 MCP 入口](0016-single-core-and-mcp-entrypoint.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0031](0031-prompt-only-orchestration.md)、[ADR-0033](0033-boss-workspace-handover.md)、[ADR-0045](0045-remove-browser-dashboard.md) |
-| 0017 | [按主控聊天归集 App 群聊](0017-manager-chat-session-identity.md) | 部分取代 | [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md)、[ADR-0033](0033-boss-workspace-handover.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
+| 0017 | [按主控聊天归集 App 群聊](0017-manager-chat-session-identity.md) | 部分取代 | [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md)、[ADR-0033](0033-boss-workspace-handover.md)、[ADR-0050](0050-v1-compatibility-baseline.md)；跨 boss 显式续接由 [ADR-0099](0099-handover-links-workspaces.md) 修订 |
 | 0018 | [主控工作区、工位与会议室](0018-office-workspace-desks-and-meeting-rooms.md) | 部分取代 | [ADR-0023](0023-explicit-desk-continuation.md)、[ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
 | 0019 | [不提供运行中消息](0019-no-running-messages.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0056](0056-claude-interactive-runtime.md)、[ADR-0057](0057-boss-answers-native-prompts.md) |
 | 0020 | [首次预填各 CLI 的主力模型](0020-prefill-main-model-defaults.md) | 已被 ADR-0028 取代 | [ADR-0028](0028-follow-cli-default-model.md) |
@@ -36,7 +36,7 @@
 | 0030 | [App「技能」页提供可选 Skill，评审门控为首个，评审工位在 App 设置](0030-optional-review-gate-skill.md) | 部分取代 | [ADR-0036](0036-app-owns-service-skills.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md) |
 | 0031 | [单向编排使用派发指令约束](0031-prompt-only-orchestration.md) | 已接受 | [ADR-0043](0043-service-prompt-instructions.md) |
 | 0032 | [App 按 CLI 设权限档位](0032-cli-permission-tiers.md) | 部分取代 | [ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0059](0059-claude-tier-fallback.md)、[ADR-0076](0076-full-permission-default.md) |
-| 0033 | [boss 工作区交接](0033-boss-workspace-handover.md) | 部分取代 | [ADR-0048](0048-sqlite-schema-evolution.md) |
+| 0033 | [boss 工作区交接](0033-boss-workspace-handover.md) | 部分取代 | [ADR-0048](0048-sqlite-schema-evolution.md)；归属转移由 [ADR-0099](0099-handover-links-workspaces.md) 取代 |
 | 0034 | [模型与档位以 CLI 自己给出的为准](0034-models-and-efforts-from-each-cli.md) | 部分修订 | [ADR-0075](0075-model-lists-only-what-the-cli-lists.md)；2026-11-12 修订（Codex 档位随 `model_catalog_json` 目录；Pi 经登录 shell 探测） |
 | 0035 | [员工卡片一行设好一个 CLI，需要时再分开两个场景](0035-member-cards-one-row-per-cli.md) | 部分取代 | [ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0050](0050-v1-compatibility-baseline.md) |
 | 0036 | [本服务的 Skill 只由 App 管理](0036-app-owns-service-skills.md) | 已接受 | [ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) |
@@ -49,7 +49,7 @@
 | 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分取代 | [ADR-0062](0062-service-owned-member-names.md) |
 | 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 已接受 | — |
 | 0045 | [去掉浏览器看板](0045-remove-browser-dashboard.md) | 已接受 | [ADR-0046](0046-service-history-retention.md) |
-| 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 已接受 | — |
+| 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 部分修订 | 清理计时起点由 [ADR-0099](0099-handover-links-workspaces.md) 修订 |
 | 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 部分取代 | [ADR-0061](0061-fixed-service-launcher.md) |
 | 0048 | [SQLite schema 演进与迁移归属](0048-sqlite-schema-evolution.md) | 已接受 | — |
 | 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | [ADR-0095](0095-provider-terminal-grace.md) 补充 |
@@ -102,3 +102,4 @@
 | 0096 | [清除宿主自身的遗留排除项，重连后消除连接中断提示](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) | 已接受 | 修订 ADR-0015、ADR-0088、ADR-0090；扩展 ADR-0012；已结束连接的范围由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 补充 |
 | 0097 | [中继收到终止信号视为宿主关闭，已退出的加载回执仍作证据](0097-relay-termination-signal-and-exited-tool-receipts.md) | 已接受 | 修订 ADR-0022；补充 ADR-0096 |
 | 0098 | [托盘可在仓库锁与租约协议下手动删除隔离目录](0098-tray-deletes-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的 App 清理边界；扩展 ADR-0012 |
+| 0099 | [接手改为建立关联，工作区不再转移](0099-handover-links-workspaces.md) | 已接受 | 取代 ADR-0033 的归属转移部分；修订 ADR-0017 的跨 boss 显式续接、ADR-0046 的清理计时起点 |
