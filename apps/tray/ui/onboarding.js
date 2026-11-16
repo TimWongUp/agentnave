@@ -23,6 +23,9 @@
   let started = false; // this window decided the checklist is on, saved or not
   let over = false; // finished or skipped in this window
   let writing = null; // the state being saved, so one decision is written once
+  let saving = Promise.resolve(); // writes go out one after another, so a later state lands last
+  let reading = null; // the read in flight
+  let again = false; // something changed while it was in flight: read once more after it
   let drawn = "";
 
   // null while preferences could not be read, so nothing is decided or written.
@@ -31,16 +34,18 @@
       ? data.prefs.preferences?.onboarding?.state || ""
       : null;
 
-  async function saveState(state) {
+  function saveState(state) {
     if (writing === state) return;
     writing = state;
-    try {
-      const saved = await post("/app/preferences", { onboarding: { state } });
-      data.prefs = { ...data.prefs, preferences: saved.preferences };
-    } catch {
-      writing = null; // tried again by the next decision
-    }
-    render();
+    saving = saving.then(async () => {
+      try {
+        const saved = await post("/app/preferences", { onboarding: { state } });
+        data.prefs = { ...data.prefs, preferences: saved.preferences };
+      } catch {
+        if (writing === state) writing = null; // tried again by the next decision
+      }
+      render();
+    });
   }
 
   // Whether the checklist shows; the first showing and the finish are saved.
@@ -255,7 +260,23 @@
     );
   }
 
-  async function read() {
+  // One read at a time, so a slow answer never lands over a newer one.
+  function read() {
+    if (reading) {
+      again = true;
+      return reading;
+    }
+    reading = readAll().finally(() => {
+      reading = null;
+      if (again) {
+        again = false;
+        void read();
+      }
+    });
+    return reading;
+  }
+
+  async function readAll() {
     const keys = ["status", "hosts", "members", "orchestration", "prefs"];
     const paths = [
       "/app/status",
@@ -273,8 +294,14 @@
   }
 
   addEventListener("agentnave:status", ({ detail }) => {
+    const installed =
+      detail?.service?.state === "done" &&
+      data.status?.service?.state !== "done";
     data.status = detail;
-    if (placed) render();
+    if (!placed) return;
+    // The install finished: the hosts answer says so too, so read it instead of drawing a gap.
+    if (installed) void read();
+    else render();
   });
 
   window.AN.onboarding = {
@@ -286,7 +313,7 @@
       if (on) {
         void read();
         timer = setInterval(() => {
-          if (!document.hidden && !busy.size) void read();
+          if (!AN.isHidden() && !busy.size) void read();
         }, POLL_MS);
       } else render();
     },
