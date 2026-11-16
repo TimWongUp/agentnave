@@ -319,8 +319,8 @@ async fn finish_check(app: AppHandle, manual: bool, before: Phase) {
             Err(error) => Err(format!("检查更新异常：{error}")),
         };
     let updates = app.state::<Updates>();
-    // A failed silent check still counts as an attempt, so an offline cache is not
-    // checked again on every click. Explicit rechecks remain available.
+    // A failed silent check still counts as an attempt, so the automatic check waits `RETRY`
+    // before trying again instead of every round.
     let now = SystemTime::now();
     *updates.checked.lock().unwrap() = Some(now);
     if found.is_ok() {

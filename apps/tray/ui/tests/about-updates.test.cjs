@@ -99,3 +99,29 @@ test("opening the about page checks only once the chosen hours are stale", async
     assert.equal(checks, expected, `answered=${answered} ago=${ago}`);
   }
 });
+
+test("the update flow checks again on every click and keeps an offline service upgrade", async () => {
+  async function click(status, answer = status) {
+    const posts = [], titles = [];
+    const node = () => ({ open: false, addEventListener() {}, replaceChildren() {}, showModal() { this.open = true; }, querySelector: () => null, append() {} });
+    const AN = {
+      h: (tag, attrs, ...children) => { if (tag === "h2.upd-title") titles.push(children[0]); return node(); },
+      L: zh => zh,
+      load: async () => status,
+      post: async path => { posts.push(path); return answer; },
+    };
+    const window = { dispatchEvent() {} };
+    const context = { AN, window, document: { body: node() }, CustomEvent: class { constructor(type, { detail }) { this.detail = detail; } },
+      addEventListener() {}, setTimeout };
+    vm.runInNewContext(readFileSync(`${__dirname}/../update-dialog.js`, "utf8"), context);
+    await AN.updateFlow();
+    return { posts, title: titles.at(-1) };
+  }
+  const found = { version: "1.0", update: { state: "available", version: "2.0", notes: { items: [] } }, service: null };
+  assert.deepEqual(await click(found), { posts: ["/app/update/check?quiet=1"], title: "有新版本 v2.0" });
+  // A quiet check that gets no answer leaves the status as it was; the service upgrade needs no network.
+  const outdated = { version: "1.0", update: { state: "none" }, service: { state: "outdated", version: "0.9" } };
+  assert.deepEqual(await click(outdated), { posts: ["/app/update/check?quiet=1"], title: "升级本机服务" });
+  const current = { version: "1.0", update: { state: "none" }, service: null };
+  assert.deepEqual(await click(current), { posts: ["/app/update/check"], title: "已是最新版本" });
+});

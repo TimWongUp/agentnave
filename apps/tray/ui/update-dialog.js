@@ -168,14 +168,16 @@
       if (["upgrading", "installing"].includes(status?.service?.state)) return follow(status, true);
       if (update?.state === "failed" && update.step) return failure(update);
     }
-    // Only a found update can stay if this check fails, so only that one may fail silently.
+    // A found update, or a service upgrade that needs no network, stays if this check fails, so
+    // only those may fail silently.
     const found = status?.update?.state === "available";
+    const quiet = found || ["outdated", "failed"].includes(status?.service?.state);
     const reason = found
       ? L("正在确认有没有更新的版本…", "Checking for a newer version…")
       : L("正在检查最新版本…", "Checking for the latest version…");
     show(L("检查更新", "Check for updates"), [h("p.upd-p", {}, reason)], [[L("取消", "Cancel"), () => { check.cancelled = true; close(); }]]);
     try {
-      status = await post(found ? "/app/update/check?quiet=1" : "/app/update/check");
+      status = await post(quiet ? "/app/update/check?quiet=1" : "/app/update/check");
     } catch (error) {
       if (check.cancelled) return void load("/app/status").then(done, () => {});
       return show(L("检查更新失败", "Update check failed"), [h("p.upd-p.upd-error", {}, error.message)], [[L("关闭", "Close"), close], [L("重试", "Retry"), () => run(true), true]]);
