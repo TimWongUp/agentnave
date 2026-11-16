@@ -101,3 +101,42 @@ fn a_newer_healthy_connection_answers_older_faults() {
     );
     assert!(hosts.state(&h)["fault"].is_null());
 }
+
+#[test]
+fn a_connection_whose_relay_was_killed_still_answers_faults_unless_its_own_server_died() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    let root = hosts.context.home.join(".agentnave");
+    let dir = root.join("connection-faults");
+    save(&dir.join("before.json"), &record("codex", "codex", 1000));
+    let hash = "a".repeat(64);
+    let unmarked = |start: u64| {
+        json!({"version":1,"host":"codex","host_app":"codex","started_ms":start,
+            "runtime_tools_hash":hash,"host_tools_hash":hash})
+        .to_string()
+    };
+    // Silent for longer than any live relay stays, with no end mark: it loaded its tools.
+    let silent = root.join("connections/silent.json");
+    save(&silent, &unmarked(9000));
+    age(&silent, 200);
+    assert!(hosts.state(&h)["fault"].is_null());
+    // Its server dying under it is recorded under the same name; then it proves nothing.
+    save(&dir.join("silent.json"), &record("codex", "codex", 9500));
+    assert_eq!(hosts.state(&h)["fault"], json!({"count":2,"at_ms":9500}));
+    fs::remove_file(dir.join("silent.json")).unwrap();
+    fs::remove_file(&silent).unwrap();
+    assert_eq!(hosts.state(&h)["fault"], json!({"count":1,"at_ms":1000}));
+    // A recent one counts once its relay is known to have exited.
+    let exited = root.join("connections/17-0123456789abcdef0123456789abcdef.json");
+    save(&exited, &unmarked(9000));
+    hosts.processes =
+        Mutex::new(processes::Probe::fixed(None).with_receipt_processes(Some(HashMap::new())));
+    assert!(hosts.state(&h)["fault"].is_null());
+    hosts.refresh_probed();
+    assert!(!dir.join("before.json").exists());
+}

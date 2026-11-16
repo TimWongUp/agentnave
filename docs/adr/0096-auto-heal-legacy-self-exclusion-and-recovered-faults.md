@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-16
+- 「健康的新连接消除旧故障」所指已结束连接的范围，由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 补充：含已确认退出、补作结束时间的无标记回执。
 - 修订 [ADR-0015](0015-app-host-integration.md) 的「保留用户选择的环境」：环境变量中排除宿主自身 CLI 的项不再保留。修订 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的私聊同类三选一：选择不再被环境变量排除项压过。
 - 修订 [ADR-0088](0088-relay-records-service-exit-fault.md) 的「消除」与取舍最后一条：同一配置行之后出现健康连接时，旧故障视为已恢复；配置行带标识时只认带相同标识的记录。
 - 扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 与 [ADR-0088](0088-relay-records-service-exit-fault.md) 的托盘写入范围：除用户确认外，托盘另可在非预览版刷新时删除 `connection-faults/` 下已恢复或无人认领的记录；中继另清理写入中断留下的暂存文件。

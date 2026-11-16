@@ -166,9 +166,9 @@ impl Hosts {
         legacy_unambiguous: bool,
     ) -> Receipts {
         let mut receipts = Receipts::default();
-        let dir = self
-            .connection_root(host)
-            .map(|root| root.join("connections"));
+        let root = self.connection_root(host);
+        let faults = root.as_ref().map(|root| root.join("connection-faults"));
+        let dir = root.map(|root| root.join("connections"));
         for entry in dir
             .into_iter()
             .flat_map(|dir| fs::read_dir(dir).into_iter().flatten().flatten())
@@ -180,14 +180,21 @@ impl Hosts {
             };
             if !value["ended_ms"].is_null() {
                 receipts.ended.push(value);
-            } else if age <= LINGER_SECONDS
-                && self.receipt_process_exited(&entry.path(), &value, modified)
+            } else if age > LINGER_SECONDS
+                || self.receipt_process_exited(&entry.path(), &value, modified)
             {
-                continue;
+                // A relay killed outright could not mark its end; its last write stands in for
+                // it unless the server's death under it was recorded (ADR-0097).
+                let faulted = faults
+                    .as_ref()
+                    .is_some_and(|dir| dir.join(entry.file_name()).exists());
+                if !faulted {
+                    receipts.ended.push(ended_at(value, modified));
+                }
             } else if age <= 20 {
                 receipts.live_pids.push(receipt_pid(&entry.path()));
                 receipts.live.push(value);
-            } else if age <= LINGER_SECONDS {
+            } else {
                 receipts.lingering = true;
                 // A paused receipt that started after the change still runs the current entry;
                 // one paused since before it, or with an unreadable start time, may not.
@@ -435,6 +442,16 @@ pub(super) fn owns(value: &Value, host: &Host, legacy_unambiguous: bool) -> bool
         None => legacy_unambiguous && host.id == host.boss,
     };
     value["host"] == host.boss && matching_row
+}
+
+/// A receipt whose relay died unmarked, ended at its last write and never before it started.
+fn ended_at(mut value: Value, modified: SystemTime) -> Value {
+    let wrote = modified
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |at| at.as_millis() as u64);
+    let started = value["started_ms"].as_u64().unwrap_or_default();
+    value["ended_ms"] = json!(wrote.max(started));
+    value
 }
 
 fn receipt_pid(path: &Path) -> Option<u32> {
