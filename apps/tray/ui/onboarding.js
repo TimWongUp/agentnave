@@ -42,7 +42,8 @@
         const saved = await post("/app/preferences", { onboarding: { state } });
         data.prefs = { ...data.prefs, preferences: saved.preferences };
       } catch {
-        if (writing === state) writing = null; // tried again by the next decision
+        // Not retried in this window, or a lasting error would post on every render; the next start
+        // decides again from what was saved.
       }
       render();
     });
