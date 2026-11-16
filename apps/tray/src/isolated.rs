@@ -3,6 +3,7 @@
 //! (ADR-0085, ADR-0098).
 
 mod git;
+mod inspect;
 mod leases;
 mod release;
 mod request;
