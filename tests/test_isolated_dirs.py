@@ -1860,3 +1860,69 @@ def test_signature_programs_and_promisor_fetches_never_run(tmp_path: Path) -> No
     _git(repo, "config", "remote.origin.uploadpack", program)
     run_git(["cat-file", "-e", "1" * 40], cwd=repo, allowed_exit_codes=(0, 1, 128))
     assert not marker.exists()
+
+
+def _set_record(dirs: IsolatedDirs, isolation_id: str, assignments: str, *values: Any) -> None:
+    with closing(sqlite3.connect(dirs.store.path)) as db, db:
+        db.execute(f"UPDATE isolated_dirs SET {assignments} WHERE id = ?", (*values, isolation_id))
+
+
+def test_a_record_pointing_at_another_directory_never_removes_it(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    for victim in (tmp_path / "victim", repo / WORKTREES_DIR_NAME / "wt-ffffffffffff"):
+        created = dirs.create(repo, workspace_id="ws-1")
+        created.lease.release()
+        _git(repo, "worktree", "remove", "--force", str(created.worktree_path))
+        _git(repo, "worktree", "add", str(victim), created.branch)
+        _set_record(
+            dirs,
+            created.id,
+            "state = 'creating', worktree_path = ?, worktree_git_dir = NULL",
+            str(victim),
+        )
+        assert dirs.recover()[0].status == "needs_attention"
+        assert dirs.release(created.id, workspace_id="ws-1").status == "needs_attention"
+        assert victim.is_dir()
+
+    gone = dirs.create(repo, workspace_id="ws-1")
+    gone.lease.release()
+    _git(repo, "worktree", "remove", "--force", str(gone.worktree_path))
+    _set_record(
+        dirs,
+        gone.id,
+        "state = 'deleting', delete_oid = ?, worktree_path = ?",
+        gone.base_oid,
+        str(tmp_path / "elsewhere" / WORKTREES_DIR_NAME / gone.id),
+    )
+    assert dirs.release(gone.id, workspace_id="ws-1").status == "needs_attention"
+    latest = dirs.store.get(gone.id)
+    assert latest is not None and latest.state == "needs_attention"
+    dirs.close()
+
+
+def test_a_leftover_whose_directory_is_gone_checks_owner_and_leases(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    other = dirs.create(repo, workspace_id="ws-1")
+    other.lease.release()
+    _git(repo, "worktree", "remove", "--force", str(other.worktree_path))
+    dirs.store.mark_deleting(
+        other.id, phase="removing_worktree", delete_oid=other.base_oid, updated_at=now()
+    )
+    asked = dirs.release(other.id, workspace_id="ws-2")
+    assert asked.status == "confirmation_required"
+    done = dirs.release(other.id, workspace_id="ws-2", confirmation=asked.confirmation)
+    assert done.status == "deleted"
+
+    leased = dirs.create(repo, workspace_id="ws-1")  # its creation lease stays active
+    _git(repo, "worktree", "remove", "--force", str(leased.worktree_path))
+    dirs.store.mark_deleting(
+        leased.id, phase="removing_worktree", delete_oid=leased.base_oid, updated_at=now()
+    )
+    stuck = dirs.release(leased.id, workspace_id="ws-1")
+    assert stuck.status == "needs_attention" and "in use" in (stuck.reason or "")
+    latest = dirs.store.get(leased.id)
+    assert latest is not None and latest.state == "needs_attention"
+    leased.lease.release()
+    dirs.close()

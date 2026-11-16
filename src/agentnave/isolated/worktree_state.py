@@ -12,6 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from agentnave.isolated.repo import (
+    WORKTREES_DIR_NAME,
     IsolationError,
     decode_git_path,
     is_link,
@@ -20,6 +21,28 @@ from agentnave.isolated.repo import (
 )
 
 MAX_FINGERPRINT_ENTRIES = 200_000
+
+
+def verify_worktree_container(wt_path: Path, main_root: Path, isolation_id: str) -> None:
+    """Refuse a path other than <main worktree>/.agentnave-worktrees/<isolation_id>.
+
+    Every release, rollback and leftover cleanup checks this before deleting anything, so a
+    record rewritten to point elsewhere never removes another directory.
+    """
+    parent = wt_path.parent
+    if wt_path.name != isolation_id or parent.name != WORKTREES_DIR_NAME:
+        raise IsolationError(
+            f"{wt_path} is not .agentnave-worktrees/{isolation_id} of this repository"
+        )
+    container = main_root / WORKTREES_DIR_NAME
+    if is_link(container) or is_link(parent):
+        raise IsolationError(f"Unsafe link at {container}")
+    if container.exists() or parent.exists():
+        inside = same_dir(parent, container)
+    else:
+        inside = same_dir(parent.parent, main_root)
+    if not inside:
+        raise IsolationError(f"{wt_path} is not inside {container}")
 
 
 def worktree_link_valid(wt_path: Path, admin_dir: str | None, common_dir: Path) -> bool:

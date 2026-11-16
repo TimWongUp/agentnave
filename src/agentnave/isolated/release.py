@@ -40,6 +40,7 @@ from agentnave.isolated.worktree_state import (
     nested_repositories,
     remove_tree,
     tree_fingerprint,
+    verify_worktree_container,
     worktree_link_valid,
 )
 from agentnave.store import now
@@ -195,7 +196,7 @@ def _compute_digest(
 
 
 def _verify_repo_identity(record: IsolatedRecord) -> tuple[Path, Path]:
-    """Check the recorded repository, and that the record names only its own managed branch."""
+    """Check the recorded repository, and that the record names only its own branch and path."""
     verify_managed_branch_ref(record)
     main_root = Path(record.main_root)
     common_dir = Path(record.repo_common_dir)
@@ -216,9 +217,7 @@ def _verify_repo_identity(record: IsolatedRecord) -> tuple[Path, Path]:
     if not same_dir(common_dir, actual_common):
         raise IsolationError("Main worktree no longer belongs to the recorded repository")
     run_git(["cat-file", "-e", f"{record.base_oid}^{{commit}}"], cwd=main_root)
-    container = main_root / WORKTREES_DIR_NAME
-    if is_link(container):
-        raise IsolationError(f"Unsafe link at {container}")
+    verify_worktree_container(Path(record.worktree_path), main_root, record.id)
     return main_root, common_dir
 
 
@@ -231,8 +230,6 @@ def _verify_worktree_identity(
     wt_path = Path(record.worktree_path)
     if is_link(wt_path) or not wt_path.is_dir():
         raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
-    if not same_dir(wt_path.parent, main_root / WORKTREES_DIR_NAME):
-        raise IsolationError("Isolated worktree is not directly under .agentnave-worktrees")
     wt_common = Path(
         decode_git_path(
             run_git(
@@ -565,8 +562,6 @@ def _inspect_orphan_locked(
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Isolated directory is currently in use by an active lease")
     wt_path = Path(record.worktree_path)
-    if wt_path.name != record.id or not same_dir(wt_path.parent, main_root / WORKTREES_DIR_NAME):
-        raise IsolationError("Isolated worktree is not directly under .agentnave-worktrees")
     tip = branch_tip(main_root, record.branch_ref)
     unique = bool(tip) and has_unique_commits(main_root, tip)
     digest = _compute_digest(
@@ -664,10 +659,21 @@ def _retry_attention_locked(
         return _inspect_and_delete(store, record, workspace_id, confirmation)
     try:
         main_root, common_dir = _verify_repo_identity(record)
+        if has_active_leases(common_dir, record.id, cleanup_stale=True):
+            raise IsolationError("Isolated directory is currently in use by an active lease")
         snap = _inspect_missing_locked(record, workspace_id, main_root)
     except (IsolationError, OSError, ValueError) as exc:
-        return ReleaseResult(id=record.id, status="needs_attention", reason=str(exc))
-    if failure := _verify_confirmation(store, record, snap, confirmation, foreign=False):
+        detail = str(exc)
+        store.mark_attention(
+            record.id,
+            expected_state=record.state,
+            phase="delete_failed",
+            reason=detail,
+            updated_at=now(),
+        )
+        return ReleaseResult(id=record.id, status="needs_attention", reason=detail)
+    foreign = record.workspace_id != workspace_id
+    if failure := _verify_confirmation(store, record, snap, confirmation, foreign=foreign):
         return failure
     if not store.mark_deleting(
         record.id,
