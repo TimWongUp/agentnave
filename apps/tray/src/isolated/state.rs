@@ -94,10 +94,12 @@ fn rel_posix(wt_path: &Path, target: &Path) -> String {
         .join("/")
 }
 
+/// Breadth first, so one huge directory cannot use up `limit` before shallow ones are seen. Names
+/// compare without case: git finds `.Git` on case-insensitive file systems.
 fn scan_nested_tree(wt_path: &Path, found: &mut BTreeSet<String>, limit: usize) -> bool {
-    let mut stack = vec![wt_path.to_path_buf()];
+    let mut stack = std::collections::VecDeque::from([wt_path.to_path_buf()]);
     let mut count = 0usize;
-    while let Some(dir) = stack.pop() {
+    while let Some(dir) = stack.pop_front() {
         let is_root = dir == wt_path;
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
@@ -125,7 +127,8 @@ fn scan_nested_tree(wt_path: &Path, found: &mut BTreeSet<String>, limit: usize) 
                 continue;
             };
             let name_os = entry.file_name();
-            if name_os == ".git" {
+            let is = |name: &str| name_os.eq_ignore_ascii_case(name);
+            if is(".git") {
                 if !is_root {
                     has_dotgit = true;
                 }
@@ -140,12 +143,12 @@ fn scan_nested_tree(wt_path: &Path, found: &mut BTreeSet<String>, limit: usize) 
             }
             if meta.is_dir() {
                 subdirs.push(path);
-                if name_os == "objects" {
+                if is("objects") {
                     has_objects = true;
-                } else if name_os == "refs" {
+                } else if is("refs") {
                     has_refs = true;
                 }
-            } else if meta.is_file() && name_os == "HEAD" {
+            } else if meta.is_file() && is("HEAD") {
                 has_head_file = true;
             }
         }

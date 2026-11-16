@@ -374,27 +374,32 @@ pub(crate) fn check_hidden_index_flags(git: &GitRunner, wt_path: &Path) -> Resul
     Ok(())
 }
 
+/// Whether `oid` holds commits no durable branch reaches. `for-each-ref --contains` reports a
+/// false match with exit 0 when a promisor object is missing; this walk fails instead.
 fn is_unique_commit(git: &GitRunner, cwd: &Path, oid: &str) -> Result<bool, String> {
-    let contains = format!("--contains={oid}");
+    let managed = MANAGED_BRANCH_PREFIX.trim_start_matches("refs/heads/");
+    let exclude = format!("--exclude={managed}*");
     let out = git
         .run(
             cwd,
             &[
-                "for-each-ref",
-                &contains,
-                "--format=%(refname)",
-                "refs/heads/",
-                "refs/remotes/",
+                "rev-list",
+                "--count",
+                oid,
+                "--not",
+                &exclude,
+                "--branches",
+                "--remotes",
             ],
             &[0],
             &[],
         )?
         .stdout;
-    let text = String::from_utf8_lossy(&out);
-    let has_durable = text
-        .lines()
-        .any(|line| !line.is_empty() && !line.starts_with(MANAGED_BRANCH_PREFIX));
-    Ok(!has_durable)
+    let count: u64 = String::from_utf8_lossy(&out)
+        .trim()
+        .parse()
+        .map_err(|_| "无法判断受管分支是否已合入".to_owned())?;
+    Ok(count > 0)
 }
 
 fn collect_unmerged_commits(
