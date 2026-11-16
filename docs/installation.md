@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.13.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.13.1` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.13.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.13.1`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -612,37 +612,21 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.13.0
+### Upgrading to v1.13.1
 
-Update the App and reconnect or reopen hosts as prompted. For a manual installation, reinstall the
-runtime and Skills from `@v1.13.0` and reconnect MCP. Replace the full Skill directory to pick up
-the updated instructions.
+Update the App and reconnect or reopen hosts as prompted. When the App starts or refreshes, it removes
+leftover entries for the host's own CLI from `AGENTNAVE_EXCLUDED_PROVIDERS` in connected host
+configurations, and clears connection-interruption notices already covered by a healthy connection.
+Hosts that were running before the upgrade should reconnect or reopen once to run with the new service
+and the cleaned configuration. For a manual installation, reinstall the runtime and Skills from
+`@v1.13.1` and reconnect MCP. Replace the full Skill directory to pick up the updated instructions.
 
-The v1.13 service upgrades an existing `agentnave.db` to schema version 3 (adding
-`workspaces.origin`) the first time it opens the database, including read-only calls such as `list`
-and `read_conversation`. The upgrade is one-way: afterwards v1.12 Apps and services can no longer
-read or write this database. Until the database is migrated to version 3, the v1.13 App reads the
-older database read-only, and any write asks you to reconnect the host first so the service can
-finish upgrading.
+Upgrading from v1.12 or earlier still applies the one-way schema version 3 migration of `agentnave.db`
+described in [the v1.13.0 release notes](releases/v1.13.0.md); read it before the new service first
+opens the database.
 
-To keep the option of rolling back to v1.12, stop all services sharing the data directory and back
-up the whole data directory before the v1.13 service first opens the database, or roll back before
-that first open. After the first open, stop all v1.13 services using that data directory and restore
-that backup before running v1.12.
-
-Automatic update checks now default to every 4 hours instead of every 24 hours. If you have not
-turned automatic checks off and never saved an interval, the App checks every 4 hours after
-upgrading; if you turned them off, they stay off. To keep daily checks, choose 24 hours in Settings;
-12 hours and off are also available.
-
-When `start_agent` resumes a native thread with `session_id`, an explicit task `seat` naming a
-different seat whose configured CLI differs from the thread's CLI is now rejected. Passing the
-thread's recorded seat name is not rejected by this cross-CLI check (the seat itself must still
-exist and be enabled). To keep the thread's seat, omit `seat`; to stay on the thread's CLI, choose a
-seat of that CLI; or omit `session_id` to start a new thread.
-
-See [v1.13.0 release notes](releases/v1.13.0.md). Earlier upgrade instructions remain in
-[the v1.12.0 release notes](releases/v1.12.0.md).
+See [v1.13.1 release notes](releases/v1.13.1.md). Earlier upgrade instructions remain in
+[the release archive](releases/v1.13.0.md).
 
 ## Uninstall
 
