@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="/chat/chat.css">
 <link rel="stylesheet" href="/chat/voice-menu.css">
+<link rel="stylesheet" href="/chat/onboarding.css">
 <script src="/avatars.js" defer></script>
 <script src="/chat/appearance.js" defer></script>
 <script src="/chat/common.js" defer></script>
@@ -16,6 +17,8 @@
 <script src="/chat/common-select.js" defer></script>
 <script src="/chat/update-dialog.js" defer></script>
 <script src="/chat/common-status.js" defer></script>
+<script src="/chat/onboarding-steps.js" defer></script>
+<script src="/chat/onboarding.js" defer></script>
 <script src="/chat/actions.js" defer></script>
 <script src="/chat/office-settings.js" defer></script>
 <script src="/chat/voice-menu.js" defer></script>
@@ -61,7 +64,7 @@
         <div id="fx" class="fx" aria-hidden="true"></div>
       </div>
     </div>
-    <div id="blank" class="blank" hidden></div>
+    <div id="blank" class="blank" hidden><div id="blank-note" class="blank-note"></div><section id="onboarding" class="onboarding" aria-labelledby="ob-title" hidden></section></div>
     <footer id="ticker" class="ticker" hidden><span class="lbl" data-en="Live">动态</span><span id="tick" class="tick"></span></footer>
   </main>
   <aside id="drawer" class="conv tp-im" aria-label="对话" data-en-label="Conversation" hidden>

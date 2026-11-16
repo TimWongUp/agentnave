@@ -320,13 +320,20 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
     let handle = handle.clone();
     let checker = handle.clone();
     let resumer = handle.clone();
+    let installer = handle.clone();
     thread::spawn(move || {
         let shell = takeover.probe_tools(&host_context);
+        // A failed shell probe falls back to default tool dirs, where a service installed elsewhere
+        // would look missing; auto-install only trusts a probe that answered.
+        let probed = shell.is_ok();
         thread::spawn(move || {
             takeover.configure_hosts(host_context, shell);
             // Refreshing repairs host configs and reinstalls Skills; that stays with the installed app.
             if !PREVIEW {
                 takeover.refresh_hosts();
+                if probed {
+                    update::install_missing(&installer);
+                }
             }
             // After the repair, which settles each boss's status; probing the CLIs takes a while.
             takeover.prepare_members();

@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-9cc9ff" alt="支持 macOS、Linux、Windows">
 </p>
 
-**AgentNave 是一个本地 MCP 服务。** 让你正在用的 Agent（Claude Code、Codex……）当 boss，把活派给本机装好的其他 CLI。配套的托盘 App 是一间小办公室：谁在干活、谁在开会、大家说了什么，都看得见，也听得到。
+**AgentNave 是一个本地 MCP 服务。** 让你正在用的 Agent（Claude Code、Codex……）当 boss，把活派给本机装好的其他 CLI。配套的托盘 App 是这个服务的可视化部分，本身不是 Agent，也不在里面聊天：你照常在 boss 里说话，App 负责设置，也是一间小办公室，谁在干活、谁在开会、大家说了什么，都看得见，也听得到。
 
 ## 🎬 实机演示
 
@@ -52,7 +52,7 @@ Claude 默认以交互模式运行，会话可在 Claude Code 中续接；也可
 
 ### 🧹 App 替你管杂事
 
-接入宿主时顺便装好 Skill，员工要确认后才能派发。CLI 有新版本时一键更新，没装的给出官方安装命令。App 和本机服务在 App 里更新，旧工作区一键清理，历史按你设的天数自动清理。
+首次打开时自动安装本机服务，办公室里的上手清单带你接入 boss、确认员工、选模型和编排档位。接入宿主时顺便装好 Skill，员工要确认后才能派发。CLI 有新版本时一键更新，没装的给出官方安装命令。App 和本机服务在 App 里更新，旧工作区和员工留下的隔离目录一键清理，历史按你设的天数自动清理。
 
 ## 👀 谁当 boss，谁当员工
 
@@ -83,7 +83,7 @@ Grok Bot 只能在 Linux 上接入，不支持 macOS 和 Windows App，也看不
 ### 方式一：托盘 App（macOS、Windows，推荐）
 
 1. 到 [Releases](https://github.com/TimWongUp/agentnave/releases/latest) 下载安装包：macOS 用 `AgentNave_<版本>_universal.dmg`，拖进「应用程序」；Windows 用 `AgentNave_<版本>_x64-setup.exe`。
-2. 打开 App，在设置的「boss」页接入一个宿主，按需在「员工」页确认其他 CLI。本机服务和配套 Skill 由 App 自动安装。
+2. 打开 App，本机服务会自动安装，按办公室里的上手清单接入 boss、确认员工、选模型和编排档位。配套 Skill 在接入时自动装好。
 3. 回到宿主里说一句试试：
 
    ```text

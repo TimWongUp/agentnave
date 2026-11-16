@@ -185,6 +185,12 @@
   };
 
 
+  // hosts=fresh is a new user: no employee confirmed, orchestration off (the first-run checklist shows).
+  if (hostScene === "fresh") {
+    mockMembersData.document = { version: 1, clis: {}, modes: {} };
+    mockOrchestration.document = { version: 1, preset: "off" };
+  }
+
   // ---- scenario clock -------------------------------------------------------------------
   const CLOCK_KEY = "agentnave.mock.t0";
   function startTime() {
@@ -902,7 +908,7 @@ All checks passed!
       status: orphan ? "orphaned" : connected ? "connected" : "available", entry: connected || orphan ? "agentnave" : null,
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
       config_path: `${root}/config.json`, root: { path: root, source: "default" }, has_host_env: connected, shadowed_by: null,
-      layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: false,
+      layers: [{ path: `${root}/config.json`, scope: "user", has_entry: connected || orphan }], tested: freshHosts,
       first_seen: "2026-10-17T00:00:00Z", reload_hint: reload, attention: null, last_action: null, boss: id, default_host_cli: id === "antigravity" ? "launch" : "subagent",
       reopen: REOPEN[id] || { cli: reload }, copy_actions: { claude: ["daemon"], codex: ["daemon"], hermes: ["gateway"] }[id] || [], trust: id === "workbuddy" ? "WorkBuddy 会把改动后的条目停用，请到“自定义连接器 › MCP 服务管理”点“信任”" : "",
       skill: { state: connected ? "app" : "missing", path: `${root}/skills/agentnave-manager`, version: connected ? mockVersion : null },
@@ -1130,6 +1136,10 @@ All checks passed!
     if (path.endsWith("/root")) host.root = { path: body.path || `/preview/${host.id}`, source: body.path ? "user" : "default" };
     else if (path.endsWith("/remove")) { confirmedReloads.delete(host.id); host.status = "available"; host.entry = host.command = host.command_state = null; host.layers.forEach((l) => l.has_entry = false); }
     else { host.status = "connected"; host.entry = "agentnave"; host.command = "/preview/bin/agentnave-mcp"; host.has_host_env = true; host.command_state = "present"; host.layers.forEach((l) => l.has_entry = true); if (host.skill.state === "missing") host.skill = { ...host.skill, state: "app", version: status().version }; }
+    // Connecting a boss confirms its CLI as an employee.
+    if (freshHosts && host.status === "connected" && mockMembersData.detected[host.id]) {
+      for (const scene of ["task", "discussion"]) (mockMembersData.document.modes[scene] ||= {})[host.id] ||= { models: [], overrides: {} };
+    }
     host.attention = null;
     host.last_action = { ok: true, message: "预览操作完成", at: new Date().toISOString() };
     return { host: structuredClone(host), ok: true, message: host.last_action.message };

@@ -15,6 +15,7 @@ pub mod runtime;
 const FILE: &str = "preferences.json";
 
 mod alerts;
+mod onboarding;
 
 /// `app_config_dir` of this build: the config folder named by the bundle identifier.
 pub fn dir() -> PathBuf {
@@ -54,6 +55,7 @@ fn validate_field(section: &str, field: &str, value: &Value) -> Result<(), Strin
     match section {
         "general" => general::validate(field, value),
         "alerts" => alerts::validate(field, value),
+        "onboarding" => onboarding::validate(field, value),
         "updates" => updates(field, value),
         _ => Err(format!("未知的设置分区：{section}")),
     }
