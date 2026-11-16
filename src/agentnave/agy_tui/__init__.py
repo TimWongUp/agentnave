@@ -96,6 +96,27 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def delivered(row: dict[str, object], expected: str) -> bool:
+    content = row.get("content")
+    return isinstance(content, str) and bool(expected) and expected in flat(content)
+
+
+def first_request(conversation_id: str, expected: str) -> bool | None:
+    """Whether a new conversation's first request is this delivery; None until agy writes one."""
+    try:
+        with transcript_path(conversation_id).open("rb") as source:
+            while (line := source.readline()).endswith(b"\n"):
+                try:
+                    row = object_dict(json.loads(line))
+                except ValueError:
+                    continue
+                if row.get("type") == "USER_INPUT" and row.get("source") == "USER_EXPLICIT":
+                    return delivered(row, expected)
+    except OSError:
+        pass
+    return None
+
+
 def excerpt(screen: str) -> str:
     return " ".join(ANSI.sub("", screen).split())[-600:]
 
@@ -103,7 +124,8 @@ def excerpt(screen: str) -> str:
 @dataclass
 class Turn:
     conversation_id: str | None
-    # The start of the task as pasted: only a user row carrying it is this delivery.
+    # The whole task as pasted: only a user row carrying it is this delivery. Concurrent tasks
+    # share the service's opening instructions, so no excerpt tells them apart.
     expected: str = ""
     transcript: Path | None = None
     offset: int = 0
@@ -152,8 +174,7 @@ class Turn:
         if (
             kind == "USER_INPUT"
             and row.get("source") == "USER_EXPLICIT"
-            and isinstance(content, str)
-            and self.expected in flat(content)
+            and delivered(row, self.expected)
         ):
             self.user_seen, self.response, self.answered = True, "", False
             self.step(index, "user_input", "DONE")
@@ -308,6 +329,8 @@ class Run:
     seen: set[str] = field(default_factory=set[str])
     started: float = field(default_factory=time.time)
     run_log: Path | None = None
+    # Logged conversations whose first request is another task's.
+    foreign: set[str] = field(default_factory=set[str])
 
     def log_bytes(self) -> bytes:
         pid = getattr(getattr(self.terminal, "process", None), "pid", None)
@@ -328,12 +351,27 @@ class Run:
         screen = self.terminal.poll()
         for name, event in read_events(self.hooks, self.terminal.process.pid, self.seen):
             self.turn.hook(name, event)
-        if self.turn.conversation_id is None and (
-            created := _CREATED_CONVERSATION.search(self.log_bytes())
-        ):
-            self.turn.start(created.group(1).decode())
+        if self.turn.conversation_id is None and self.turn.expected:
+            self.adopt_logged_conversation()
         self.turn.read()
         return screen
+
+    def adopt_logged_conversation(self) -> None:
+        """Without hooks, finds this delivery's conversation in agy's log. Concurrent agy processes
+        can write one shared cli-*.log, so a logged conversation is ours only when its first request
+        is this delivery, and never while another one matches too."""
+        mine: list[str] = []
+        for raw in dict.fromkeys(_CREATED_CONVERSATION.findall(self.log_bytes())):
+            candidate = raw.decode()
+            if candidate in self.foreign:
+                continue
+            owned = first_request(candidate, self.turn.expected)
+            if owned is False:
+                self.foreign.add(candidate)
+            elif owned:
+                mine.append(candidate)
+        if len(mine) == 1:
+            self.turn.start(mine[0])
 
     def exited(self) -> bool:
         return self.terminal.process.poll() is not None
@@ -405,7 +443,7 @@ class Run:
         paste = clean_paste(prompt)
         self.terminal.outgoing.extend(b"\x1b[200~" + paste.encode() + b"\x1b[201~")
         evidence = flat(paste)[:40]
-        self.turn.expected = evidence
+        self.turn.expected = flat(paste)
         started = time.monotonic()
         submitted: float | None = None
         retried = False

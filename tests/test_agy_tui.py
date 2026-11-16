@@ -395,10 +395,13 @@ def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
     assert timed_out.turn.error is None
     assert clock[0] >= agy.EXPERIMENT_WAIT
 
+    # agy processes started in the same second share one log, conversations interleaved.
     own_log = logs / "cli-123.log"
+    other_id = "aaaaaaaa-2222-3333-4444-555555555555"
     created_id = "11111111-2222-3333-4444-555555555555"
     own_log.write_text(
         "Starting language server process with pid 123\n"
+        f"Created conversation {other_id} (backend=BACKEND_TYPE_UNSPECIFIED)\n"
         f"Created conversation {created_id} (backend=BACKEND_TYPE_UNSPECIFIED)\n"
         "Experiments refreshed after login\n"
     )
@@ -406,8 +409,32 @@ def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
     ready = Run(terminal, Turn(None), tmp_path, started=0.0)
     assert ready.await_experiments() is True
     assert clock[0] < agy.EXPERIMENT_WAIT
+
+    shared = "You are an AgentNave subagent. " * 4 + "\n\nAssigned task:\n"
+
+    def request(conversation_id: str, task: str) -> None:
+        path = agy.transcript_path(conversation_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = f"<USER_REQUEST>\n{shared}{task}\n</USER_REQUEST>"
+        row = {"source": "USER_EXPLICIT", "type": "USER_INPUT", "content": content}
+        path.write_text(json.dumps(row) + "\n")
+
+    ready.poll()
+    assert ready.turn.conversation_id is None  # nothing is delivered yet
+    ready.turn.expected = agy.flat(shared + "review   the parser")
+    request(other_id, "review the tray")
+    ready.poll()
+    assert ready.turn.conversation_id is None  # ours is not written yet
+    request(created_id, "review the\nparser")
     ready.poll()
     assert ready.turn.conversation_id == created_id
+    assert ready.turn.user_seen
+
+    # Two conversations carrying the same task cannot tell which is ours.
+    twin = Run(terminal, Turn(None, expected=agy.flat(shared + "review the tray")), tmp_path)
+    request(created_id, "review the tray")
+    twin.poll()
+    assert twin.turn.conversation_id is None
 
 
 def test_stalled_turns_complete_when_hooks_unmounted_or_block_when_unsafe(
