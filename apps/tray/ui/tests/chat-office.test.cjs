@@ -726,12 +726,12 @@ test("pending handover card shows takeover command, copy, and cancel only while 
 test("isolated directory cards disable delete while in use and trigger deletion when idle or unfinished", () => {
   const ui = auditUI();
   const ctx = { c: { group: "s-iso" }, desks: new Map(), rooms: new Map() };
-  const using = ui.context.isolatedCard({ id: "wt-1", branch: "agentnave/wt-1", path: "/repo/.agentnave-worktrees/wt-1", status: "using", in_use: true }, ctx);
+  const using = ui.context.isolatedCard({ id: "wt-1", branch: "agentnave/wt-1", path: "/repo/.agentnave-worktrees/wt-1", status: "using" }, ctx);
   const usingBtn = using.children[0].children[1].children[1];
   assert.equal(usingBtn.attributes.disabled, true);
   assert.equal(usingBtn.listeners.click, undefined);
 
-  const idle = ui.context.isolatedCard({ id: "wt-2", branch: "agentnave/wt-2", path: "/repo/.agentnave-worktrees/wt-2", status: "idle", in_use: false }, ctx);
+  const idle = ui.context.isolatedCard({ id: "wt-2", branch: "agentnave/wt-2", path: "/repo/.agentnave-worktrees/wt-2", status: "idle" }, ctx);
   const idleBtn = idle.children[0].children[1].children[1];
   assert.equal(idleBtn.attributes.disabled, false);
   assert.equal(idleBtn.children[0], "删除");
@@ -746,4 +746,60 @@ test("isolated directory cards disable delete while in use and trigger deletion 
   const en = auditUI(true);
   const enIdle = en.context.isolatedCard({ id: "wt-2", branch: "agentnave/wt-2", path: "/repo/.agentnave-worktrees/wt-2", status: "idle" }, ctx);
   assert.equal(enIdle.children[0].children[1].children[1].children[0], "Delete");
+});
+
+test("deleteIsolated keeps its button disabled until completion or cancel and ignores re-entry", async () => {
+  const h = (tag, attributes = {}, ...children) => ({
+    tag, attributes, children: children.flat(Infinity).filter(x => x != null && x !== false),
+    classList: { toggle() {} }, listeners: {}, textContent: "",
+    replaceChildren(...items) { this.children = items; },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    append(...items) { this.children.push(...items); },
+    querySelector() { return { focus() {} }; },
+    showModal() { this.open = true; },
+    close() { this.open = false; },
+  });
+  let resolveInspect, resolveDelete, dialogNode;
+  const posts = [];
+  const cleanupBtn = h("button#cleanup");
+  const context = vm.createContext({
+    AN: {
+      h, $: id => (id === "cleanup" ? cleanupBtn : null), L: zh => zh, load: async () => ({}), chatName: () => "",
+      post: (path, body) => {
+        posts.push([path, body]);
+        if (path === "/app/isolated/inspect") return new Promise(r => { resolveInspect = r; });
+        return new Promise(r => { resolveDelete = r; });
+      },
+    },
+    document: { body: { append(...nodes) { for (const node of nodes) if (node.tag === "dialog.act") dialogNode = node; } }, addEventListener() {} },
+    window: { addEventListener() {} },
+    state: { groupsData: [], order: [] },
+    refresh: async () => {},
+    renderList() {}, go() {}, openScope() {},
+    setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../actions.js`, "utf8") + "\nglobalThis.Actions = Actions;", context);
+  const btn = { disabled: false };
+  const run = context.Actions.deleteIsolated("s-1", { id: "wt-1", path: "/p", branch: "b" }, btn);
+  assert.equal(btn.disabled, true);
+  await context.Actions.deleteIsolated("s-1", { id: "wt-2", path: "/p2", branch: "b2" }, { disabled: false });
+  assert.equal(posts.length, 1);
+
+  resolveInspect({ status: "confirm", id: "wt-1", path: "/p", branch: "b", confirmation: "tok" });
+  await new Promise(r => setImmediate(r));
+  assert.equal(dialogNode.open, true);
+  assert.equal(btn.disabled, true);
+  await context.Actions.deleteIsolated("s-1", { id: "wt-2", path: "/p2", branch: "b2" }, { disabled: false });
+  assert.equal(posts.length, 1);
+
+  const buttonsRow = dialogNode.children.at(-1);
+  const deleteBtn = buttonsRow.children[1];
+  deleteBtn.listeners.click();
+  await new Promise(r => setImmediate(r));
+  assert.equal(posts.length, 2);
+  assert.equal(btn.disabled, true);
+
+  resolveDelete({ status: "deleted" });
+  await run;
+  assert.equal(btn.disabled, false);
 });

@@ -7,7 +7,10 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::git::{GitRunner, WORKTREES_DIR_NAME, never_checked_out, parse_worktrees, ref_exists};
-use super::inspect::{STATUS_ARGS, inspect_record, verify_repo_identity};
+use super::inspect::{
+    STATUS_ARGS, inspect_record, verify_managed_branch_ref, verify_repo_identity,
+    verify_worktree_container,
+};
 use super::leases::{
     acquire_repo_lock, has_active_leases, is_link, remove_lease_dir_locked, same_dir,
 };
@@ -37,6 +40,7 @@ fn remove_managed_branch(
     main_root: &Path,
     expected_oid: &str,
 ) -> Result<Option<String>, String> {
+    verify_managed_branch_ref(record)?;
     if !ref_exists(git, main_root, &record.branch_ref)? {
         return Ok(None);
     }
@@ -76,7 +80,13 @@ fn remove_managed_branch(
     }
     git.run(
         main_root,
-        &["update-ref", "-d", &record.branch_ref, expected_oid],
+        &[
+            "update-ref",
+            "--no-deref",
+            "-d",
+            &record.branch_ref,
+            expected_oid,
+        ],
         &[0],
         &[],
     )?;
@@ -92,7 +102,7 @@ fn complete_deletion_locked(
     expected_oid: &str,
     remove_orphan: bool,
 ) -> Result<Option<String>, String> {
-    if has_active_leases(common_dir, &record.id, true)? {
+    if has_active_leases(common_dir, &record.id)? {
         return Err("存在活跃租约，不能完成删除".to_owned());
     }
     let wt_path = PathBuf::from(&record.worktree_path);
@@ -157,6 +167,10 @@ fn verify_rollback_worktree(
     common_dir: &Path,
     wt_path: &Path,
 ) -> Result<(), String> {
+    verify_worktree_container(wt_path, main_root, &record.id)?;
+    if !wt_path.exists() && !is_link(wt_path) {
+        git.run(main_root, &["worktree", "prune"], &[0], &[])?;
+    }
     let worktrees = parse_worktrees(
         &git.run(
             main_root,
@@ -212,8 +226,9 @@ fn verify_rollback_worktree(
 
 fn rollback_creating_locked(git: &GitRunner, store: &WorktreeStore, record: &Record) -> Value {
     let attempt = || -> Result<(), String> {
+        verify_managed_branch_ref(record)?;
         let (main_root, common_dir) = verify_repo_identity(git, record)?;
-        if has_active_leases(&common_dir, &record.id, true)? {
+        if has_active_leases(&common_dir, &record.id)? {
             return Err("未完成创建的隔离目录仍有活跃租约".to_owned());
         }
         let wt_path = PathBuf::from(&record.worktree_path);
@@ -239,7 +254,13 @@ fn rollback_creating_locked(git: &GitRunner, store: &WorktreeStore, record: &Rec
             }
             git.run(
                 &main_root,
-                &["update-ref", "-d", &record.branch_ref, &record.base_oid],
+                &[
+                    "update-ref",
+                    "--no-deref",
+                    "-d",
+                    &record.branch_ref,
+                    &record.base_oid,
+                ],
                 &[0],
                 &[],
             )?;
@@ -292,7 +313,7 @@ fn with_locked_record(
         Ok(_) => return outcome(isolation_id, "not_found", "隔离目录已不存在"),
         Err(e) => return outcome(isolation_id, "blocked", &e),
     };
-    match has_active_leases(&common_dir, isolation_id, true) {
+    match has_active_leases(&common_dir, isolation_id) {
         Ok(true) => return outcome(isolation_id, "in_use", "隔离目录正在被任务使用，不能删除"),
         Ok(false) => {}
         Err(e) => return outcome(isolation_id, "blocked", &e),

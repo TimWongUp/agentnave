@@ -208,7 +208,7 @@ const isolatedStatus = (status) =>
   })[status] || [L("任务已结束", "Task ended"), "tone-idle"];
 function isolatedCard(d, ctx) {
   const [word, tone] = isolatedStatus(d.status);
-  const inUse = d.status === "using" || Boolean(d.in_use);
+  const inUse = d.status === "using";
   const desk = d.task && ctx.desks.get(d.task.desk);
   const who = [desk && deskName(desk), d.task?.text].filter(Boolean).join(" · ");
   const workspace = ctx.c?.group || state?.chat?.group || "";

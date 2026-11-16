@@ -261,6 +261,7 @@ const Actions = {};
   }
 
   // ---- delete isolated directory ----------------------------------------------------------
+  let deletingIsolated = false;
   function isolatedConfirmBody(info) {
     const items = [];
     const target = info.branch ? `${info.branch} · ${info.path}` : info.path;
@@ -311,45 +312,49 @@ const Actions = {};
   }
 
   async function deleteIsolated(group, dir, button) {
-    if (!group || !dir?.id) return;
+    if (!group || !dir?.id || dialog.open || deletingIsolated) return;
+    deletingIsolated = true;
     if (button) button.disabled = true;
-    let info;
     try {
-      info = await AN.post("/app/isolated/inspect", { id: dir.id, workspace: group });
-    } catch (error) {
-      if (button) button.disabled = false;
-      say(error.message || L("无法检查隔离目录", "Failed to inspect isolated directory"), true);
-      return;
-    }
-    if (button) button.disabled = false;
-    if (info.status !== "confirm") {
-      say(info.reason || info.message || L("暂时不能删除这个隔离目录", "Cannot delete this isolated directory right now"), true);
-      await refresh();
-      return;
-    }
-    while (true) {
-      const answer = await ask({
-        title: L("删除隔离目录？", "Delete isolated directory?"),
-        body: isolatedConfirmBody(info),
-        buttons: [{ label: L("取消", "Cancel") }, { label: L("删除", "Delete"), danger: true, primary: true, value: "delete" }],
-      });
-      if (!answer) return;
+      let info;
       try {
-        const result = await AN.post("/app/isolated/delete", { id: dir.id, workspace: group, confirmation: info.confirmation });
-        if (result.status === "confirmation_required") {
-          info = result;
-          continue;
-        }
-        if (result.status === "deleted") {
-          say(result.reason || L("已删除隔离目录", "Deleted isolated directory"));
-        } else {
-          say(result.reason || result.message || L("未能删除隔离目录", "Failed to delete isolated directory"), true);
-        }
+        info = await AN.post("/app/isolated/inspect", { id: dir.id, workspace: group });
       } catch (error) {
-        say(error.message || L("删除隔离目录失败", "Failed to delete isolated directory"), true);
+        say(error.message || L("无法检查隔离目录", "Failed to inspect isolated directory"), true);
+        return;
       }
-      await refresh();
-      return;
+      if (info.status !== "confirm") {
+        say(info.reason || info.message || L("暂时不能删除这个隔离目录", "Cannot delete this isolated directory right now"), true);
+        await refresh();
+        return;
+      }
+      while (true) {
+        const answer = await ask({
+          title: L("删除隔离目录？", "Delete isolated directory?"),
+          body: isolatedConfirmBody(info),
+          buttons: [{ label: L("取消", "Cancel") }, { label: L("删除", "Delete"), danger: true, primary: true, value: "delete" }],
+        });
+        if (!answer) return;
+        try {
+          const result = await AN.post("/app/isolated/delete", { id: dir.id, workspace: group, confirmation: info.confirmation });
+          if (result.status === "confirmation_required") {
+            info = result;
+            continue;
+          }
+          if (result.status === "deleted") {
+            say(result.reason || L("已删除隔离目录", "Deleted isolated directory"));
+          } else {
+            say(result.reason || result.message || L("未能删除隔离目录", "Failed to delete isolated directory"), true);
+          }
+        } catch (error) {
+          say(error.message || L("删除隔离目录失败", "Failed to delete isolated directory"), true);
+        }
+        await refresh();
+        return;
+      }
+    } finally {
+      deletingIsolated = false;
+      if (button) button.disabled = false;
     }
   }
 

@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const LOCK_RETRY: Duration = Duration::from_millis(25);
+const DELETE_PENDING_RETRY: Duration = Duration::from_millis(10);
 
 /// Valid `wt-<12 lowercase hex>` identifier.
 pub(crate) fn valid_isolation_id(id: &str) -> bool {
@@ -108,6 +109,32 @@ fn check_safe_regular(path: &Path) -> Result<(), String> {
     }
 }
 
+/// Check an existing disposable lease file; returns `Ok(false)` when already gone or
+/// delete-pending on Windows so closing/unlinking in another process is not treated as fatal.
+fn check_lease_regular(path: &Path) -> Result<bool, String> {
+    for attempt in 0..3 {
+        match fs::symlink_metadata(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) if cfg!(windows) && e.kind() == io::ErrorKind::PermissionDenied => {
+                if attempt < 2 {
+                    thread::sleep(DELETE_PENDING_RETRY);
+                    continue;
+                }
+                return Ok(false);
+            }
+            Err(e) => return Err(e.to_string()),
+            Ok(meta) if !plain_entry(&meta) => {
+                return Err(format!("锁文件存在不安全链接：{}", path.display()));
+            }
+            Ok(meta) if !meta.is_file() => {
+                return Err(format!("锁路径不是普通文件：{}", path.display()));
+            }
+            Ok(_) => return Ok(true),
+        }
+    }
+    Ok(false)
+}
+
 fn state_dir(repo_common_dir: &Path) -> Result<PathBuf, String> {
     if is_link(repo_common_dir) || !repo_common_dir.is_dir() {
         return Err(format!(
@@ -161,16 +188,28 @@ fn open_lock(path: &Path, create: bool) -> io::Result<File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(0x0020_0000);
+        // Match db.rs and provider_health.rs: allow concurrent openers and unlink while open.
+        options.custom_flags(0x0020_0000).share_mode(3);
     }
     options.open(path)
+}
+
+fn is_gone_or_delete_pending(err: &io::Error, create: bool) -> bool {
+    err.kind() == io::ErrorKind::NotFound
+        || (!create && cfg!(windows) && err.kind() == io::ErrorKind::PermissionDenied)
 }
 
 fn try_lock_verified(path: &Path, create: bool) -> Result<Option<File>, TryLockError> {
     for _ in 0..5 {
         let file = match open_lock(path, create) {
             Ok(file) => file,
-            Err(e) if !create && e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if is_gone_or_delete_pending(&e, create) => {
+                if cfg!(windows) && !create && e.kind() == io::ErrorKind::PermissionDenied {
+                    thread::sleep(DELETE_PENDING_RETRY);
+                    continue;
+                }
+                return Ok(None);
+            }
             Err(e) => return Err(TryLockError::Error(e)),
         };
         let opened = match file.metadata() {
@@ -182,7 +221,12 @@ fn try_lock_verified(path: &Path, create: bool) -> Result<Option<File>, TryLockE
         let current = match fs::symlink_metadata(path) {
             Ok(meta) if meta.is_file() && plain_entry(&meta) => meta,
             Ok(_) => return Err(TryLockError::Error(io::Error::other("锁不是普通文件"))),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) if is_gone_or_delete_pending(&e, create) => {
+                if cfg!(windows) && !create && e.kind() == io::ErrorKind::PermissionDenied {
+                    thread::sleep(DELETE_PENDING_RETRY);
+                }
+                continue;
+            }
             Err(e) => return Err(TryLockError::Error(e)),
         };
         #[cfg(unix)]
@@ -195,6 +239,9 @@ fn try_lock_verified(path: &Path, create: bool) -> Result<Option<File>, TryLockE
         #[cfg(not(unix))]
         let _ = (opened, current);
         return Ok(Some(file));
+    }
+    if !create {
+        return Ok(None);
     }
     Err(TryLockError::WouldBlock)
 }
@@ -245,27 +292,19 @@ fn release_and_remove(file: File, path: &Path) {
     }
 }
 
-/// Read-only probe for UI status: never creates or unlinks files, fails closed on error.
-pub(crate) fn probe_in_use(repo_common_dir: &Path, isolation_id: &str) -> bool {
-    if is_link(repo_common_dir) || !repo_common_dir.is_dir() {
-        return false;
-    }
-    has_active_leases(repo_common_dir, isolation_id, false).unwrap_or(true)
-}
-
-/// Check whether any live process holds a lease on `isolation_id`.
-/// Pass `cleanup_stale = true` only while holding `acquire_repo_lock(repo_common_dir)`.
+/// Check whether any live process holds a lease on `isolation_id` and reclaim stale lease files.
+/// Caller must hold `acquire_repo_lock(repo_common_dir)`.
 pub(crate) fn has_active_leases(
     repo_common_dir: &Path,
     isolation_id: &str,
-    cleanup_stale: bool,
 ) -> Result<bool, String> {
     let dir = leases_dir(repo_common_dir, isolation_id)?;
-    if !dir.exists() {
-        return Ok(false);
-    }
-    let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
-        .map_err(|e| e.to_string())?
+    let read_dir = match fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut entries: Vec<PathBuf> = read_dir
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -276,16 +315,12 @@ pub(crate) fn has_active_leases(
         if entry.extension().and_then(|ext| ext.to_str()) != Some("lock") {
             return Err(format!("租约目录中存在异常文件：{}", entry.display()));
         }
-        check_safe_regular(&entry)?;
+        if !check_lease_regular(&entry)? {
+            continue;
+        }
         match try_lock_verified(&entry, false) {
             Ok(None) => continue,
-            Ok(Some(file)) => {
-                if cleanup_stale {
-                    release_and_remove(file, &entry);
-                } else {
-                    drop(file);
-                }
-            }
+            Ok(Some(file)) => release_and_remove(file, &entry),
             Err(TryLockError::WouldBlock) => return Ok(true),
             Err(TryLockError::Error(e)) => return Err(e.to_string()),
         }
@@ -301,7 +336,7 @@ pub(crate) fn remove_lease_dir_locked(
     if !dir.exists() {
         return Ok(());
     }
-    if has_active_leases(repo_common_dir, isolation_id, true)? {
+    if has_active_leases(repo_common_dir, isolation_id)? {
         return Err(format!("隔离目录 {isolation_id} 仍有活跃租约"));
     }
     let _ = fs::remove_dir(&dir);

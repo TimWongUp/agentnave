@@ -201,6 +201,51 @@ pub(crate) fn verify_repo_identity(
     Ok((main_root, common_dir))
 }
 
+pub(crate) fn verify_managed_branch_ref(record: &Record) -> Result<(), String> {
+    let expected = format!("{MANAGED_BRANCH_PREFIX}{}", record.id);
+    if record.branch_ref != expected {
+        return Err(format!(
+            "受管分支名 {} 不符合约定（应为 {expected}），已拒绝操作",
+            record.branch_ref
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_worktree_container(
+    wt_path: &Path,
+    main_root: &Path,
+    isolation_id: &str,
+) -> Result<(), String> {
+    if wt_path.file_name().and_then(|n| n.to_str()) != Some(isolation_id) {
+        return Err(format!(
+            "隔离目录名与登记 ID（{isolation_id}）不符：{}",
+            wt_path.display()
+        ));
+    }
+    let Some(wt_parent) = wt_path.parent() else {
+        return Err("隔离目录路径无效".to_owned());
+    };
+    if wt_parent.file_name().and_then(|n| n.to_str()) != Some(WORKTREES_DIR_NAME) {
+        return Err("隔离目录不在 .agentnave-worktrees 下".to_owned());
+    }
+    let container = main_root.join(WORKTREES_DIR_NAME);
+    if is_link(&container) || is_link(wt_parent) {
+        return Err(format!(
+            "隔离目录容器存在不安全链接：{}",
+            container.display()
+        ));
+    }
+    if container.exists() || wt_parent.exists() {
+        if !same_dir(wt_parent, &container) {
+            return Err("隔离目录不在主工作树的 .agentnave-worktrees 下".to_owned());
+        }
+    } else if !wt_parent.parent().is_some_and(|gp| same_dir(gp, main_root)) {
+        return Err("隔离目录不在主工作树的 .agentnave-worktrees 下".to_owned());
+    }
+    Ok(())
+}
+
 fn verify_worktree_identity(
     git: &GitRunner,
     store: &WorktreeStore,
@@ -212,12 +257,7 @@ fn verify_worktree_identity(
     if is_link(&wt_path) || !wt_path.is_dir() {
         return Err(format!("隔离目录不存在或不安全：{}", wt_path.display()));
     }
-    let Some(wt_parent) = wt_path.parent() else {
-        return Err("隔离目录路径无效".to_owned());
-    };
-    if !same_dir(wt_parent, &main_root.join(WORKTREES_DIR_NAME)) {
-        return Err("隔离目录不在 .agentnave-worktrees 下".to_owned());
-    }
+    verify_worktree_container(&wt_path, main_root, &record.id)?;
     let wt_common = bytes_to_path(trim_line_end(
         &git.run(
             &wt_path,
@@ -500,14 +540,7 @@ fn inspect_orphan_locked(
     main_root: &Path,
 ) -> Result<Snapshot, String> {
     let wt_path = PathBuf::from(&record.worktree_path);
-    let Some(parent) = wt_path.parent() else {
-        return Err("隔离目录路径无效".to_owned());
-    };
-    if wt_path.file_name().and_then(|n| n.to_str()) != Some(record.id.as_str())
-        || !same_dir(parent, &main_root.join(WORKTREES_DIR_NAME))
-    {
-        return Err("隔离目录不在 .agentnave-worktrees 下".to_owned());
-    }
+    verify_worktree_container(&wt_path, main_root, &record.id)?;
     let mut tip = String::new();
     if ref_exists(git, main_root, &record.branch_ref)? {
         let target = format!("{}^{{commit}}", record.branch_ref);
@@ -567,11 +600,15 @@ pub(crate) fn inspect_record(
     record: &Record,
     workspace_id: &str,
 ) -> Result<(Option<(PathBuf, PathBuf)>, Snapshot), String> {
+    verify_managed_branch_ref(record)?;
     let wt_path = PathBuf::from(&record.worktree_path);
     let dir_present = wt_path.exists() || is_link(&wt_path);
 
     if matches!(record.state.as_str(), "deleting" | "needs_attention") {
         if record.delete_oid.as_deref().is_none_or(str::is_empty) {
+            if record.state == "deleting" {
+                return Err("删除记录缺少预期的分支提交（delete_oid），无法完成删除".to_owned());
+            }
             let digest = compute_digest(DigestInput {
                 isolation_id: &record.id,
                 workspace_id,

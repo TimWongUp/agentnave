@@ -6,7 +6,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use super::Dir;
-use super::leases::probe_in_use;
 
 pub(crate) const NAME: &str = "worktrees.db";
 /// The service's `SCHEMA_VERSION` this build understands.
@@ -61,17 +60,14 @@ pub(crate) fn read_dirs(root: &Path) -> rusqlite::Result<Vec<Dir>> {
         return Ok(Vec::new());
     }
     let mut statement = connection.prepare(
-        "SELECT workspace_id, worktree_path, branch_ref, state, id, created_at, \
-         repo_common_dir, attention FROM isolated_dirs \
+        "SELECT workspace_id, worktree_path, branch_ref, state, id, created_at, attention \
+         FROM isolated_dirs \
          WHERE state IN ('ready', 'deleting', 'needs_attention') ORDER BY created_at, id",
     )?;
     statement
         .query_map([], |row| {
-            let id: String = row.get(4)?;
             let branch: String = row.get(2)?;
             let state: String = row.get(3)?;
-            let common_dir: String = row.get(6)?;
-            let leased = probe_in_use(Path::new(&common_dir), &id);
             Ok(Dir {
                 workspace: row.get(0)?,
                 path: row.get(1)?,
@@ -80,9 +76,8 @@ pub(crate) fn read_dirs(root: &Path) -> rusqlite::Result<Vec<Dir>> {
                     .unwrap_or(&branch)
                     .to_owned(),
                 ready: state == "ready",
-                leased,
-                attention: row.get(7)?,
-                id,
+                attention: row.get(6)?,
+                id: row.get(4)?,
                 created: row.get(5)?,
             })
         })?

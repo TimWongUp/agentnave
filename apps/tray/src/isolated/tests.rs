@@ -63,7 +63,6 @@ fn a_directory_is_in_use_only_while_a_running_call_works_inside_it() {
         path: path.into(),
         branch: "agentnave/x".into(),
         ready,
-        leased: false,
         attention: None,
         id: path.into(),
         created: String::new(),
@@ -92,7 +91,6 @@ fn the_builder_is_found_by_the_registered_id() {
         path: "/r/a".into(),
         branch: "agentnave/a".into(),
         ready: true,
-        leased: false,
         attention: None,
         id: "wt-1".into(),
         created: "2026-11-12T00:00:00+00:00".into(),
@@ -299,8 +297,12 @@ fn active_lease_blocks_deletion_and_marks_card_using_while_unfinished_can_retry(
 
     let dirs = read(&fx.root);
     assert_eq!(dirs.len(), 1);
-    assert!(dirs[0].leased);
-    let items = classify(&dirs, &fx.workspace, &[], &[]);
+    let items = classify(
+        &dirs,
+        &fx.workspace,
+        &[fx.wt_path.to_string_lossy().into_owned()],
+        &[],
+    );
     assert_eq!(items[0]["status"], "using");
     assert_eq!(items[0]["in_use"], true);
 
@@ -409,4 +411,170 @@ fn uncommitted_and_unmerged_changes_require_matching_confirmation_token() {
     assert_eq!(deleted["status"], "deleted");
     assert!(!fx.wt_path.exists());
     assert!(read(&fx.root).is_empty());
+}
+
+#[test]
+fn symref_managed_branch_to_main_keeps_main_and_tampered_branch_ref_is_blocked() {
+    let fx = setup_worktree_fixture("wt-778899aabbcc");
+    // Turn the managed branch into a symbolic ref pointing to refs/heads/main
+    // and break the worktree link so inspect takes the orphan deletion path
+    // down to remove_managed_branch (`git update-ref --no-deref -d`).
+    git_cmd(
+        &fx.main_root,
+        &["symbolic-ref", &fx.branch_ref, "refs/heads/main"],
+    );
+    fs::remove_file(fx.wt_path.join(".git")).unwrap();
+
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+
+    let deleted = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected["confirmation"],
+        }),
+    );
+    assert_eq!(deleted["status"], "deleted");
+    assert!(!fx.wt_path.exists());
+    let main_exists = Command::new("git")
+        .arg("-C")
+        .arg(&fx.main_root)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/main"])
+        .status()
+        .unwrap();
+    assert!(main_exists.success(), "refs/heads/main must still exist");
+    let managed_exists = Command::new("git")
+        .arg("-C")
+        .arg(&fx.main_root)
+        .args(["show-ref", "--verify", "--quiet", &fx.branch_ref])
+        .status()
+        .unwrap();
+    assert!(!managed_exists.success(), "managed symref must be deleted");
+
+    // A tampered branch_ref in worktrees.db must be blocked at inspect time.
+    let fx2 = setup_worktree_fixture("wt-ccddee001122");
+    Connection::open(fx2.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET branch_ref = 'refs/heads/main' WHERE id = ?1",
+            [&fx2.id],
+        )
+        .unwrap();
+    let reader2 = Reader::new(fx2.root.clone());
+    let blocked = post(
+        &reader2,
+        "/app/isolated/inspect",
+        json!({"id": fx2.id, "workspace": fx2.workspace}),
+    );
+    assert_eq!(blocked["status"], "blocked");
+}
+
+#[test]
+fn rollback_checks_container_prunes_missing_dir_and_blocks_deleting_without_oid() {
+    // 1) deleting without delete_oid is blocked (not offered as rollback_only).
+    let fx = setup_worktree_fixture("wt-001122334455");
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'deleting', delete_oid = NULL WHERE id = ?1",
+            [&fx.id],
+        )
+        .unwrap();
+    let reader = Reader::new(fx.root.clone());
+    let blocked = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(blocked["status"], "blocked");
+
+    // 2) needs_attention without delete_oid pointing outside .agentnave-worktrees/<id> refuses removal.
+    let other_wt = fx.main_root.parent().unwrap().join("other-linked");
+    git_cmd(
+        &fx.main_root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "other-branch",
+            other_wt.to_str().unwrap(),
+        ],
+    );
+    let other_wt_real = other_wt.canonicalize().unwrap();
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'needs_attention', delete_oid = NULL, worktree_path = ?1 WHERE id = ?2",
+            rusqlite::params![other_wt_real.to_str().unwrap(), fx.id],
+        )
+        .unwrap();
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+    assert_eq!(inspected["rollback_only"], true);
+    let refused = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected["confirmation"],
+        }),
+    );
+    assert_eq!(refused["status"], "needs_attention");
+    assert!(
+        other_wt_real.is_dir(),
+        "unrelated worktree must not be removed"
+    );
+
+    // 3) needs_attention without delete_oid whose dir is missing on disk prunes stale git registration and deletes branch.
+    let fx3 = setup_worktree_fixture("wt-556677889900");
+    fs::remove_dir_all(&fx3.wt_path).unwrap();
+    Connection::open(fx3.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'needs_attention', delete_oid = NULL WHERE id = ?1",
+            [&fx3.id],
+        )
+        .unwrap();
+    let reader3 = Reader::new(fx3.root.clone());
+    let inspected3 = post(
+        &reader3,
+        "/app/isolated/inspect",
+        json!({"id": fx3.id, "workspace": fx3.workspace}),
+    );
+    assert_eq!(inspected3["status"], "confirm");
+    assert_eq!(inspected3["rollback_only"], true);
+    let deleted3 = post(
+        &reader3,
+        "/app/isolated/delete",
+        json!({
+            "id": fx3.id,
+            "workspace": fx3.workspace,
+            "confirmation": inspected3["confirmation"],
+        }),
+    );
+    assert_eq!(deleted3["status"], "deleted");
+    assert!(read(&fx3.root).is_empty());
+    let managed_exists = Command::new("git")
+        .arg("-C")
+        .arg(&fx3.main_root)
+        .args(["show-ref", "--verify", "--quiet", &fx3.branch_ref])
+        .status()
+        .unwrap();
+    assert!(
+        !managed_exists.success(),
+        "managed branch should be removed after prune"
+    );
 }
