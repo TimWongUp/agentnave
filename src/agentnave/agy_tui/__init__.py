@@ -46,6 +46,7 @@ BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
 TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
 _EXPERIMENTS_READY = b"Experiments refreshed after login"
 _CREATED_CONVERSATION = re.compile(rb"Created conversation ([0-9a-fA-F-]{36})\b")
+_REQUEST_OPEN, _REQUEST_CLOSE = "<USER_REQUEST>", "</USER_REQUEST>"
 _UNMOUNTED_HOOKS_WARNING = (
     "Antigravity CLI did not load hooks for this turn; completed from its written reply"
 )
@@ -97,8 +98,15 @@ def flat(text: str) -> str:
 
 
 def delivered(row: dict[str, object], expected: str) -> bool:
+    """Whether a user row's request is exactly this task: one task may quote another whole."""
     content = row.get("content")
-    return isinstance(content, str) and bool(expected) and expected in flat(content)
+    if not isinstance(content, str) or not expected:
+        return False
+    # agy wraps the typed request and follows it with metadata of its own.
+    start, end = content.find(_REQUEST_OPEN), content.rfind(_REQUEST_CLOSE)
+    if start >= 0 and end > start:
+        content = content[start + len(_REQUEST_OPEN) : end]
+    return flat(content) == expected
 
 
 def first_request(conversation_id: str, expected: str) -> bool | None:
@@ -124,8 +132,9 @@ def excerpt(screen: str) -> str:
 @dataclass
 class Turn:
     conversation_id: str | None
-    # The whole task as pasted: only a user row carrying it is this delivery. Concurrent tasks
-    # share the service's opening instructions, so no excerpt tells them apart.
+    # The whole task as pasted, set as Enter submits it: only a user row requesting exactly it
+    # is this delivery. Concurrent tasks share the service's opening instructions, so no
+    # excerpt tells them apart.
     expected: str = ""
     transcript: Path | None = None
     offset: int = 0
@@ -329,8 +338,10 @@ class Run:
     seen: set[str] = field(default_factory=set[str])
     started: float = field(default_factory=time.time)
     run_log: Path | None = None
-    # Logged conversations whose first request is another task's.
-    foreign: set[str] = field(default_factory=set[str])
+    # Conversations the run log names: whether their first request is this delivery, None until
+    # agy writes one. The stamp is the log's size and mtime when they were last read.
+    logged: dict[str, bool | None] = field(default_factory=dict[str, bool | None])
+    log_stamp: tuple[int, int] | None = None
 
     def log_bytes(self) -> bytes:
         pid = getattr(getattr(self.terminal, "process", None), "pid", None)
@@ -356,20 +367,39 @@ class Run:
         self.turn.read()
         return screen
 
+    def read_logged_conversations(self) -> None:
+        """Notes conversations the run log names, rereading it only after it changes."""
+        stamp = None
+        if self.run_log is not None:
+            try:
+                stat = self.run_log.stat()
+            except OSError:
+                return
+            stamp = (stat.st_size, stat.st_mtime_ns)
+            if stamp == self.log_stamp:
+                return
+        for raw in _CREATED_CONVERSATION.findall(self.log_bytes()):
+            self.logged.setdefault(raw.decode(), None)
+        self.log_stamp = stamp
+
+    def submitting(self, expected: str) -> None:
+        """Called as Enter is queued: agy creates a new conversation on that first submission, so
+        any conversation the log already names belongs to another agy process."""
+        self.read_logged_conversations()
+        self.logged = dict.fromkeys(self.logged, False)
+        self.turn.expected = expected
+
     def adopt_logged_conversation(self) -> None:
         """Without hooks, finds this delivery's conversation in agy's log. Concurrent agy processes
         can write one shared cli-*.log, so a logged conversation is ours only when its first request
-        is this delivery, and never while another one matches too."""
-        mine: list[str] = []
-        for raw in dict.fromkeys(_CREATED_CONVERSATION.findall(self.log_bytes())):
-            candidate = raw.decode()
-            if candidate in self.foreign:
-                continue
-            owned = first_request(candidate, self.turn.expected)
-            if owned is False:
-                self.foreign.add(candidate)
-            elif owned:
-                mine.append(candidate)
+        is exactly this delivery, and never while another could still be or already is too."""
+        self.read_logged_conversations()
+        for candidate, owned in self.logged.items():
+            if owned is None:
+                self.logged[candidate] = first_request(candidate, self.turn.expected)
+        if None in self.logged.values():
+            return  # an unwritten conversation might carry the same task
+        mine = [candidate for candidate, owned in self.logged.items() if owned]
         if len(mine) == 1:
             self.turn.start(mine[0])
 
@@ -443,7 +473,6 @@ class Run:
         paste = clean_paste(prompt)
         self.terminal.outgoing.extend(b"\x1b[200~" + paste.encode() + b"\x1b[201~")
         evidence = flat(paste)[:40]
-        self.turn.expected = flat(paste)
         started = time.monotonic()
         submitted: float | None = None
         retried = False
@@ -463,6 +492,7 @@ class Run:
                 time.sleep(0.5)  # Let agy finish taking the paste before Enter.
                 if state(self.poll()) == "menu":
                     continue
+                self.submitting(flat(paste))
                 self.terminal.outgoing.extend(b"\r")
                 submitted = now
             elif submitted is not None and now - submitted >= 3 and not retried:

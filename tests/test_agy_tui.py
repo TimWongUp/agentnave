@@ -397,12 +397,12 @@ def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
 
     # agy processes started in the same second share one log, conversations interleaved.
     own_log = logs / "cli-123.log"
-    other_id = "aaaaaaaa-2222-3333-4444-555555555555"
-    created_id = "11111111-2222-3333-4444-555555555555"
+    other_id, created_id, later_id, twin_id, twin2_id = (
+        f"{digit * 8}-2222-3333-4444-555555555555" for digit in "a1bcd"
+    )
     own_log.write_text(
         "Starting language server process with pid 123\n"
         f"Created conversation {other_id} (backend=BACKEND_TYPE_UNSPECIFIED)\n"
-        f"Created conversation {created_id} (backend=BACKEND_TYPE_UNSPECIFIED)\n"
         "Experiments refreshed after login\n"
     )
     clock[0] = 0.0
@@ -411,28 +411,45 @@ def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
     assert clock[0] < agy.EXPERIMENT_WAIT
 
     shared = "You are an AgentNave subagent. " * 4 + "\n\nAssigned task:\n"
+    task = agy.flat(shared + "review   the parser")
 
-    def request(conversation_id: str, task: str) -> None:
+    def created(conversation_id: str) -> None:
+        with own_log.open("a") as log:
+            log.write(f"Created conversation {conversation_id} (backend=X)\n")
+
+    def request(conversation_id: str, body: str) -> None:
         path = agy.transcript_path(conversation_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        content = f"<USER_REQUEST>\n{shared}{task}\n</USER_REQUEST>"
+        content = f"<USER_REQUEST>\n{shared}{body}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>"
         row = {"source": "USER_EXPLICIT", "type": "USER_INPUT", "content": content}
         path.write_text(json.dumps(row) + "\n")
 
+    # Another agy already submitted the same task: before our Enter nothing is adopted, and
+    # after it, a conversation logged before it is never ours.
+    request(other_id, "review the parser")
     ready.poll()
-    assert ready.turn.conversation_id is None  # nothing is delivered yet
-    ready.turn.expected = agy.flat(shared + "review   the parser")
-    request(other_id, "review the tray")
+    assert ready.turn.conversation_id is None
+    ready.submitting(task)
+    created(created_id)
     ready.poll()
     assert ready.turn.conversation_id is None  # ours is not written yet
+    # A later agy's unwritten conversation could still carry the same task.
+    created(later_id)
     request(created_id, "review the\nparser")
+    ready.poll()
+    assert ready.turn.conversation_id is None
+    # A task quoting ours whole is another task.
+    request(later_id, "compare with: review the parser")
     ready.poll()
     assert ready.turn.conversation_id == created_id
     assert ready.turn.user_seen
 
     # Two conversations carrying the same task cannot tell which is ours.
-    twin = Run(terminal, Turn(None, expected=agy.flat(shared + "review the tray")), tmp_path)
-    request(created_id, "review the tray")
+    twin = Run(terminal, Turn(None), tmp_path)
+    twin.submitting(task)
+    for twin_conversation in (twin_id, twin2_id):
+        created(twin_conversation)
+        request(twin_conversation, "review the parser")
     twin.poll()
     assert twin.turn.conversation_id is None
 
