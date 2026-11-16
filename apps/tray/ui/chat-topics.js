@@ -208,14 +208,37 @@ const isolatedStatus = (status) =>
   })[status] || [L("任务已结束", "Task ended"), "tone-idle"];
 function isolatedCard(d, ctx) {
   const [word, tone] = isolatedStatus(d.status);
+  const inUse = d.status === "using";
   const desk = d.task && ctx.desks.get(d.task.desk);
   const who = [desk && deskName(desk), d.task?.text].filter(Boolean).join(" · ");
+  const workspace = ctx.c?.group || state?.chat?.group || "";
+  const del = h(
+    "button.iso-del",
+    {
+      type: "button",
+      disabled: inUse,
+      title: inUse
+        ? L("任务正在使用这个隔离目录，暂时不能删除", "In use by a task; cannot delete right now")
+        : L("检查并确认后删除这个隔离目录和受管分支", "Inspect and confirm deleting this isolated directory and managed branch"),
+      "aria-label": inUse
+        ? L("隔离目录使用中，不能删除", "Isolated directory in use; cannot delete")
+        : L(`删除隔离目录 ${d.branch || d.path}`, `Delete isolated directory ${d.branch || d.path}`),
+    },
+    L("删除", "Delete"),
+  );
+  if (!inUse) del.addEventListener("click", () => Actions.deleteIsolated(workspace, d, del));
   return h(
     "div.iso-card",
     {},
-    h("div.iso-top", {}, h("b.iso-branch", {}, d.branch || d.path), h(`span.pill.${tone}`, {}, word)),
+    h(
+      "div.iso-top",
+      {},
+      h("b.iso-branch", {}, d.branch || d.path),
+      h("span.iso-top-end", {}, h(`span.pill.${tone}`, {}, word), del),
+    ),
     who ? h("div.iso-line", {}, L(`建立者：${who}`, `Created by: ${who}`)) : null,
     d.created && Number.isFinite(AN.at(d.created)) ? h("div.iso-line", {}, L(`建立于 ${relTime(d.created)}`, `Created ${relTime(d.created)}`)) : null,
+    d.attention ? h("div.iso-line.iso-warn", {}, L(`上次清理未完成：${d.attention}`, `Last cleanup incomplete: ${d.attention}`)) : null,
     h("div.iso-path", {}, d.path),
   );
 }

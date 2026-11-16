@@ -204,6 +204,7 @@ test("the same character stays off the wall across model variants and reappears 
 
 function auditUI(english = false) {
   const cancelled = [];
+  const deletedIsolated = [];
   const h = (tag, attributes = {}, ...children) => ({
     tag, attributes, children: children.flat(Infinity).filter(x => x != null && x !== false), dataset: {}, listeners: {}, textContent: "",
     replaceChildren(...items) { this.children = items; },
@@ -212,7 +213,7 @@ function auditUI(english = false) {
   });
   const AN = common(english);
   const context = vm.createContext({
-    AN, Actions: { cancelHandover: id => cancelled.push(id) }, state: { peers: new Set(), expanded: new Set() }, h,
+    AN, Actions: { cancelHandover: id => cancelled.push(id), deleteIsolated: (group, d) => deletedIsolated.push([group, d.id]) }, state: { peers: new Set(), expanded: new Set() }, h,
     L: (zh, en) => english ? en : zh,
     ART: { version: () => 1, character: () => "claude", head: () => h("img") },
     deskChar: () => "claude",
@@ -227,7 +228,7 @@ function auditUI(english = false) {
   vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), context);
   const ctx = { c: {}, desks: new Map(), rooms: new Map() };
   return {
-    AN, cancelled, context,
+    AN, cancelled, deletedIsolated, context,
     show(approval, existing) {
       const m = { id: "audit", kind: "approval", approval, time: "2026-11-05T00:00:00Z", speaker: { role: "member", provider: "claude" } };
       const rec = existing || context.createMessage(m);
@@ -720,4 +721,85 @@ test("pending handover card shows takeover command, copy, and cancel only while 
   const enNext = enCard.children.find(n => n?.tag === "div.tp-handover-next");
   assert.equal(enNext.children[0].children[0], "In a new chat with any boss, say:");
   assert.equal(enNext.children[1].children[0], 'Take over AgentNave workspace "Release" (s-abc)');
+});
+
+test("isolated directory cards disable delete while in use and trigger deletion when idle or unfinished", () => {
+  const ui = auditUI();
+  const ctx = { c: { group: "s-iso" }, desks: new Map(), rooms: new Map() };
+  const using = ui.context.isolatedCard({ id: "wt-1", branch: "agentnave/wt-1", path: "/repo/.agentnave-worktrees/wt-1", status: "using" }, ctx);
+  const usingBtn = using.children[0].children[1].children[1];
+  assert.equal(usingBtn.attributes.disabled, true);
+  assert.equal(usingBtn.listeners.click, undefined);
+
+  const idle = ui.context.isolatedCard({ id: "wt-2", branch: "agentnave/wt-2", path: "/repo/.agentnave-worktrees/wt-2", status: "idle" }, ctx);
+  const idleBtn = idle.children[0].children[1].children[1];
+  assert.equal(idleBtn.attributes.disabled, false);
+  assert.equal(idleBtn.children[0], "删除");
+  idleBtn.listeners.click();
+
+  const unfinished = ui.context.isolatedCard({ id: "wt-3", branch: "agentnave/wt-3", path: "/repo/.agentnave-worktrees/wt-3", status: "unfinished", attention: "hook err" }, ctx);
+  const unfinishedBtn = unfinished.children[0].children[1].children[1];
+  assert.equal(unfinishedBtn.attributes.disabled, false);
+  unfinishedBtn.listeners.click();
+  assert.deepEqual(ui.deletedIsolated, [["s-iso", "wt-2"], ["s-iso", "wt-3"]]);
+
+  const en = auditUI(true);
+  const enIdle = en.context.isolatedCard({ id: "wt-2", branch: "agentnave/wt-2", path: "/repo/.agentnave-worktrees/wt-2", status: "idle" }, ctx);
+  assert.equal(enIdle.children[0].children[1].children[1].children[0], "Delete");
+});
+
+test("deleteIsolated keeps its button disabled until completion or cancel and ignores re-entry", async () => {
+  const h = (tag, attributes = {}, ...children) => ({
+    tag, attributes, children: children.flat(Infinity).filter(x => x != null && x !== false),
+    classList: { toggle() {} }, listeners: {}, textContent: "",
+    replaceChildren(...items) { this.children = items; },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    append(...items) { this.children.push(...items); },
+    querySelector() { return { focus() {} }; },
+    showModal() { this.open = true; },
+    close() { this.open = false; },
+  });
+  let resolveInspect, resolveDelete, dialogNode;
+  const posts = [];
+  const cleanupBtn = h("button#cleanup");
+  const context = vm.createContext({
+    AN: {
+      h, $: id => (id === "cleanup" ? cleanupBtn : null), L: zh => zh, load: async () => ({}), chatName: () => "",
+      post: (path, body) => {
+        posts.push([path, body]);
+        if (path === "/app/isolated/inspect") return new Promise(r => { resolveInspect = r; });
+        return new Promise(r => { resolveDelete = r; });
+      },
+    },
+    document: { body: { append(...nodes) { for (const node of nodes) if (node.tag === "dialog.act") dialogNode = node; } }, addEventListener() {} },
+    window: { addEventListener() {} },
+    state: { groupsData: [], order: [] },
+    refresh: async () => {},
+    renderList() {}, go() {}, openScope() {},
+    setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../actions.js`, "utf8") + "\nglobalThis.Actions = Actions;", context);
+  const btn = { disabled: false };
+  const run = context.Actions.deleteIsolated("s-1", { id: "wt-1", path: "/p", branch: "b" }, btn);
+  assert.equal(btn.disabled, true);
+  await context.Actions.deleteIsolated("s-1", { id: "wt-2", path: "/p2", branch: "b2" }, { disabled: false });
+  assert.equal(posts.length, 1);
+
+  resolveInspect({ status: "confirm", id: "wt-1", path: "/p", branch: "b", confirmation: "tok" });
+  await new Promise(r => setImmediate(r));
+  assert.equal(dialogNode.open, true);
+  assert.equal(btn.disabled, true);
+  await context.Actions.deleteIsolated("s-1", { id: "wt-2", path: "/p2", branch: "b2" }, { disabled: false });
+  assert.equal(posts.length, 1);
+
+  const buttonsRow = dialogNode.children.at(-1);
+  const deleteBtn = buttonsRow.children[1];
+  deleteBtn.listeners.click();
+  await new Promise(r => setImmediate(r));
+  assert.equal(posts.length, 2);
+  assert.equal(btn.disabled, true);
+
+  resolveDelete({ status: "deleted" });
+  await run;
+  assert.equal(btn.disabled, false);
 });

@@ -77,9 +77,25 @@ elif case == "dialog":
 box(">")
 pasted = read_until(b"\x1b[201~")
 assert b"\x1b[200~" in pasted and b"work" in pasted
-box("> work")
+text = pasted.split(b"\x1b[200~")[1].split(b"\x1b[201~")[0].decode()
+if case == "resume":
+    # A redraw can leave the last request, with the same start, as the last box on screen.
+    output("\x1b[2J\x1b[H" + "\r\n".join(["Antigravity CLI", rule, "> " + text[:40] + " on the previous task", rule]))
+    early = b""
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if select.select([0], [], [], 0.1)[0]:
+            early += os.read(0, 65536)
+    assert b"\r" not in early, early
+if case == "scrolled":
+    # agy scrolls an unfolded paste taller than the box to its end; wrapping splits a line.
+    lines = text.split("\n")
+    shown = [*lines[-6:-1], lines[-1][:10], lines[-1][10:]]
+    box("> ↑ 3 more lines\r\n" + "\r\n".join("  " + line for line in shown))
+else:
+    box("> " + " ".join(text.split()))
 read_until(b"\r")
-row(step_index=10, source="USER_EXPLICIT", type="USER_INPUT", content="work")
+row(step_index=10, source="USER_EXPLICIT", type="USER_INPUT", content=text)
 if case != "resume":
     hook("SessionStart")
 hook("PreInvocation", conversationId="subagent", parentConversationId=cid)
@@ -94,10 +110,18 @@ hook("Stop", conversationId="subagent", fullyIdle=True, terminationReason="NO_TO
 hook("Stop", fullyIdle=True, terminationReason="NO_TOOL_CALL", error="")
 time.sleep(12)
 """
+PROMPTS = {
+    "resume": "work through the same start as every turn on the resumed task",
+    "scrolled": "work begins on a line that scrolls away\n"
+    + "\n".join(f"step {i}" for i in range(7))
+    + "\n最后这段中文在输入框里折成两行显示出来",
+}
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY runtime")
-@pytest.mark.parametrize("case", ["new", "resume", "dialog", "noreply", "trust", "trust_mismatch"])
+@pytest.mark.parametrize(
+    "case", ["new", "resume", "scrolled", "dialog", "noreply", "trust", "trust_mismatch"]
+)
 def test_fake_agy_turn_through_the_standalone_helper(
     case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -117,8 +141,9 @@ def test_fake_agy_turn_through_the_standalone_helper(
     adapter = AntigravityAdapter()
     monkeypatch.setattr(adapter, "executable_path", lambda: str(executable))
     options = {"interactive": True, "dangerously_skip_permissions": True}
+    prompt = PROMPTS.get(case, "work")
     command = adapter.prepare(
-        InvocationRequest("antigravity", "work", tmp_path, session_id=sid, provider_options=options)
+        InvocationRequest("antigravity", prompt, tmp_path, session_id=sid, provider_options=options)
     )
     completed = subprocess.run(
         command.argv, input=command.stdin, capture_output=True, cwd=tmp_path, timeout=60
