@@ -183,12 +183,15 @@ pub(crate) fn decode_git_path(raw: &[u8]) -> String {
     String::from_utf8_lossy(raw).into_owned()
 }
 
+/// Output of a one-line git command without its line end, and never more than that one: a path
+/// can itself end in CR or LF, and trimming every trailing one would name another path.
 pub(crate) fn trim_line_end(raw: &[u8]) -> &[u8] {
-    let mut end = raw.len();
-    while end > 0 && matches!(raw[end - 1], b'\r' | b'\n') {
-        end -= 1;
+    let line = raw.strip_suffix(b"\n").unwrap_or(raw);
+    if cfg!(windows) {
+        line.strip_suffix(b"\r").unwrap_or(line)
+    } else {
+        line
     }
-    &raw[..end]
 }
 
 pub(crate) fn parse_worktrees(porcelain_z: &[u8]) -> Vec<WorktreeEntry> {

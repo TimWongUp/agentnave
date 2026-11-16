@@ -63,7 +63,7 @@ def _read_head_and_branch(wt_path: Path) -> tuple[str, str | None]:
     sym_res = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path, allowed_exit_codes=(0, 1))
     actual_branch: str | None = None
     if sym_res.returncode == 0 and sym_res.stdout.strip():
-        raw_ref = decode_git_path(sym_res.stdout.rstrip(b"\r\n"))
+        raw_ref = decode_git_path(sym_res.line)
         actual_branch = raw_ref.removeprefix("refs/heads/")
     return head_oid, actual_branch
 

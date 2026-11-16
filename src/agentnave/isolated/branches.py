@@ -56,7 +56,8 @@ def _symbolic_refs(cwd: Path) -> tuple[list[str], list[str]]:
     ).stdout
     heads: list[str] = []
     remotes: list[str] = []
-    for line in out.decode("utf-8", errors="surrogateescape").splitlines():
+    # Only "\n" ends a line: ref names may hold U+2028 or U+0085, where splitlines() breaks.
+    for line in out.decode("utf-8", errors="surrogateescape").split("\n"):
         target, _, name = line.partition(" ")
         if not target:
             continue

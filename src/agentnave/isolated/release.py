@@ -210,9 +210,7 @@ def _verify_repo_identity(record: IsolatedRecord) -> tuple[Path, Path]:
         raise IsolationError("Repository became bare")
     actual_common = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root).line
         )
     )
     if not same_dir(common_dir, actual_common):
@@ -234,16 +232,12 @@ def _verify_worktree_identity(
     verify_worktree_root(wt_path)
     wt_common = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=wt_path
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=wt_path).line
         )
     )
     wt_git_dir = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-dir"], cwd=wt_path
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd=wt_path).line
         )
     )
     if not same_dir(wt_common, common_dir):
@@ -301,7 +295,7 @@ def inspect_ready_locked(
     if not worktree_link_valid(wt_path, record.worktree_git_dir, common_dir):
         raise IsolationError("Isolated directory is no longer a valid git worktree of this record")
     sym_res = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path, allowed_exit_codes=(0, 1))
-    actual_ref = decode_git_path(sym_res.stdout.rstrip(b"\r\n")) if sym_res.returncode == 0 else ""
+    actual_ref = decode_git_path(sym_res.line) if sym_res.returncode == 0 else ""
     if actual_ref != record.branch_ref:
         raise IsolationError(
             f"Worktree HEAD is not on managed branch {record.branch} (found {actual_ref or 'detached HEAD'})"

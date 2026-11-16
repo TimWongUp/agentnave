@@ -1976,3 +1976,38 @@ def test_a_symbolic_ref_to_the_managed_branch_does_not_keep_its_commits(tmp_path
     first = dirs.release(created.id, workspace_id="ws-1")
     assert first.status == "confirmation_required" and first.unique_commits is True
     dirs.close()
+
+
+def test_a_symbolic_ref_named_with_a_unicode_line_separator_is_still_left_out(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "commit", "--allow-empty", "-m", "work")
+    _git(repo, "symbolic-ref", "refs/heads/saved work", f"refs/heads/{created.branch}")
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.unique_commits is True
+    dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="CR and LF are not valid in Windows paths")
+def test_a_working_tree_named_like_the_directory_plus_a_line_end_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    dirs = IsolatedDirs(tmp_path / "data")
+    for suffix in ("\n", "\r"):
+        created = dirs.create(repo, workspace_id="ws-1")
+        created.lease.release()
+        decoy = Path(f"{created.worktree_path}{suffix}")
+        shutil.copytree(created.worktree_path, decoy, ignore=shutil.ignore_patterns(".git"))
+        _git(created.worktree_path, "config", "--worktree", "core.worktree", str(decoy))
+        (created.worktree_path / "README.md").write_text("unsaved\n", encoding="utf-8")
+        assert dirs.release(created.id, workspace_id="ws-1").status == "blocked"
+        _set_record(dirs, created.id, "state = 'creating'")
+        assert dirs.recover()[0].status == "needs_attention"
+        assert (created.worktree_path / "README.md").read_text(encoding="utf-8") == "unsaved\n"
+    dirs.close()

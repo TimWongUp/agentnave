@@ -928,3 +928,39 @@ fn symbolic_ref_to_the_managed_branch_does_not_keep_its_commits() {
     );
     assert_eq!(inspected["unique_commits"], true);
 }
+
+#[cfg(unix)]
+#[test]
+fn working_tree_named_like_the_directory_plus_a_line_end_is_refused() {
+    for (id, suffix) in [("wt-1a2b3c4d5e6f", "\n"), ("wt-2a2b3c4d5e6f", "\r")] {
+        let fx = setup_worktree_fixture(id);
+        git_cmd(
+            &fx.main_root,
+            &["config", "extensions.worktreeConfig", "true"],
+        );
+        let mut decoy = fx.wt_path.clone().into_os_string();
+        decoy.push(suffix);
+        let decoy = std::path::PathBuf::from(decoy);
+        fs::create_dir(&decoy).unwrap();
+        for name in ["README.md", ".gitignore"] {
+            fs::copy(fx.wt_path.join(name), decoy.join(name)).unwrap();
+        }
+        git_cmd(
+            &fx.wt_path,
+            &[
+                "config",
+                "--worktree",
+                "core.worktree",
+                decoy.to_str().unwrap(),
+            ],
+        );
+        fs::write(fx.wt_path.join("README.md"), "unsaved\n").unwrap();
+        let reader = Reader::new(fx.root.clone());
+        let inspected = post(
+            &reader,
+            "/app/isolated/inspect",
+            json!({"id": fx.id, "workspace": fx.workspace}),
+        );
+        assert_eq!(inspected["status"], "blocked");
+    }
+}

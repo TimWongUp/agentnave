@@ -38,6 +38,15 @@ class GitResult:
     stdout: bytes
     stderr: str
 
+    @property
+    def line(self) -> bytes:
+        """Output of a one-line command without its line end, and never more than that one.
+
+        A path can itself end in CR or LF; trimming every trailing one would name another path.
+        """
+        line = self.stdout.removesuffix(b"\n")
+        return line.removesuffix(b"\r") if os.name == "nt" else line
+
 
 @dataclass(frozen=True, slots=True)
 class WorktreeEntry:
@@ -329,19 +338,17 @@ def discover_repo(cwd: Path | str) -> RepoContext:
         decode_git_path(
             run_git(
                 ["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd=resolved_cwd
-            ).stdout.rstrip(b"\r\n")
+            ).line
         )
     ).resolve()
     common_dir = Path(
         decode_git_path(
             run_git(
                 ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=resolved_cwd
-            ).stdout.rstrip(b"\r\n")
+            ).line
         )
     ).resolve()
-    prefix_raw = decode_git_path(
-        run_git(["rev-parse", "--show-prefix"], cwd=resolved_cwd).stdout.rstrip(b"\r\n")
-    )
+    prefix_raw = decode_git_path(run_git(["rev-parse", "--show-prefix"], cwd=resolved_cwd).line)
     prefix = PurePosixPath(prefix_raw.rstrip("/")) if prefix_raw.rstrip("/") else PurePosixPath()
     worktrees = parse_worktrees(
         run_git(["worktree", "list", "--porcelain", "-z"], cwd=resolved_cwd).stdout
@@ -353,9 +360,7 @@ def discover_repo(cwd: Path | str) -> RepoContext:
         raise IsolationError(f"Main worktree is missing: {main_root}")
     main_common = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root).line
         )
     ).resolve()
     if not same_dir(common_dir, main_common):
@@ -456,7 +461,7 @@ def _attribute_files(ctx: RepoContext) -> list[Path]:
     info = run_git(
         ["rev-parse", "--path-format=absolute", "--git-path", "info/attributes"],
         cwd=ctx.main_root,
-    ).stdout.rstrip(b"\r\n")
+    ).line
     found.append(Path(decode_git_path(info)))
     configured = run_git(
         ["config", "--path", "--get", "core.attributesfile"],
@@ -464,7 +469,7 @@ def _attribute_files(ctx: RepoContext) -> list[Path]:
         allowed_exit_codes=(0, 1),
     )
     if configured.returncode == 0 and configured.stdout.strip():
-        path = Path(decode_git_path(configured.stdout.rstrip(b"\r\n")))
+        path = Path(decode_git_path(configured.line))
         if path.is_absolute():
             found.append(path)
         else:
@@ -476,7 +481,7 @@ def _attribute_files(ctx: RepoContext) -> list[Path]:
     ):
         reported = run_git(["var", variable], cwd=ctx.source_root, allowed_exit_codes=(0, 128))
         if reported.returncode == 0 and reported.stdout.strip():
-            found.append(Path(decode_git_path(reported.stdout.rstrip(b"\r\n"))))
+            found.append(Path(decode_git_path(reported.line)))
         elif fallback is not None:
             found.append(fallback)
     return found
@@ -534,14 +539,14 @@ def has_active_hooks(source_root: Path) -> bool:
         disable_hooks=False,
     )
     if cfg.returncode == 0 and cfg.stdout.strip():
-        raw_hooks = Path(decode_git_path(cfg.stdout.rstrip(b"\r\n"))).expanduser()
+        raw_hooks = Path(decode_git_path(cfg.line)).expanduser()
         hooks_dir = raw_hooks if raw_hooks.is_absolute() else (source_root / raw_hooks)
     else:
         hooks_out = run_git(
             ["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
             cwd=source_root,
             disable_hooks=False,
-        ).stdout.rstrip(b"\r\n")
+        ).line
         hooks_dir = Path(decode_git_path(hooks_out))
     if not hooks_dir.is_dir():
         return False
@@ -609,7 +614,7 @@ def ensure_info_exclude_locked(main_root: Path) -> None:
     exclude_out = run_git(
         ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
         cwd=main_root,
-    ).stdout.rstrip(b"\r\n")
+    ).line
     exclude_path = Path(decode_git_path(exclude_out))
     if is_link(exclude_path) or is_link(exclude_path.parent):
         raise IsolationError(f"Unsafe symlink or junction on info/exclude: {exclude_path}")
@@ -666,16 +671,12 @@ def add_worktree_locked(
         .stdout.strip()
         .decode("ascii", errors="replace")
     )
-    actual_ref = decode_git_path(
-        run_git(["symbolic-ref", "-q", "HEAD"], cwd=worktree_path).stdout.rstrip(b"\r\n")
-    )
+    actual_ref = decode_git_path(run_git(["symbolic-ref", "-q", "HEAD"], cwd=worktree_path).line)
     if actual_head != base_oid or actual_ref != f"refs/heads/{branch_name}":
         raise IsolationError("Created worktree HEAD or branch does not match target")
     git_dir = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-dir"], cwd=worktree_path
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd=worktree_path).line
         )
     ).resolve()
     return git_dir
@@ -694,7 +695,7 @@ def never_checked_out(worktree_path: Path) -> bool:
     every tracked file as a staged deletion, which is not a change anyone made."""
     index = run_git(
         ["rev-parse", "--path-format=absolute", "--git-path", "index"], cwd=worktree_path
-    ).stdout.rstrip(b"\r\n")
+    ).line
     return not Path(decode_git_path(index)).exists()
 
 

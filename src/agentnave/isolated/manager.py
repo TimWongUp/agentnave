@@ -377,7 +377,7 @@ class IsolatedDirs:
                 raise IsolationError(f"Isolated directory is no longer registered: {wt_root}")
             sym = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_root, allowed_exit_codes=(0, 1))
             branch = (
-                decode_git_path(sym.stdout.rstrip(b"\r\n")).removeprefix("refs/heads/")
+                decode_git_path(sym.line).removeprefix("refs/heads/")
                 if sym.returncode == 0 and sym.stdout.strip()
                 else f"agentnave/{isolation_id}"
             )

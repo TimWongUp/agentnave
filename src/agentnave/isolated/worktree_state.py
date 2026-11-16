@@ -51,7 +51,7 @@ def verify_worktree_root(wt_path: Path) -> None:
     Status would then describe that other directory, and this one's changes would go unseen.
     """
     out = run_git(["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd=wt_path)
-    if not same_dir(Path(decode_git_path(out.stdout.rstrip(b"\r\n"))), wt_path):
+    if not same_dir(Path(decode_git_path(out.line)), wt_path):
         raise IsolationError(f"Git uses another working tree than {wt_path} (core.worktree)")
 
 
