@@ -1926,3 +1926,53 @@ def test_a_leftover_whose_directory_is_gone_checks_owner_and_leases(tmp_path: Pa
     assert latest is not None and latest.state == "needs_attention"
     leased.lease.release()
     dirs.close()
+
+
+def test_a_worktree_redirected_by_core_worktree_is_never_released_unseen(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "config", "--worktree", "core.worktree", str(repo))
+    (created.worktree_path / "README.md").write_text("unsaved\n", encoding="utf-8")
+    assert dirs.release(created.id, workspace_id="ws-1").status == "blocked"
+    _set_record(dirs, created.id, "state = 'creating'")
+    assert dirs.recover()[0].status == "needs_attention"
+    assert (created.worktree_path / "README.md").read_text(encoding="utf-8") == "unsaved\n"
+    dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a shell script as the filter")
+def test_auto_release_never_runs_a_filter_only_the_worktree_configures(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / ".gitattributes").write_text("*.txt filter=late\n", encoding="utf-8")
+    (repo / "a.txt").write_text("same\n", encoding="utf-8")
+    _git(repo, "add", ".gitattributes", "a.txt")
+    _git(repo, "commit", "-m", "late filter")
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    marker = tmp_path / "late-ran"
+    script = _script(tmp_path / "late.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    _git(created.worktree_path, "config", "--worktree", "filter.late.clean", script)
+    git_dir = Path(_git(created.worktree_path, "rev-parse", "--absolute-git-dir"))
+    (git_dir / "index.lock").write_bytes(b"")
+    target = created.worktree_path / "a.txt"
+    target.write_text("same\n", encoding="utf-8")
+    os.utime(target, (1, 1))
+    dirs.settle_task(created.id, workspace_id="ws-1", lease=created.lease, auto_release=True)
+    assert not marker.exists()
+    dirs.close()
+
+
+def test_a_symbolic_ref_to_the_managed_branch_does_not_keep_its_commits(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "commit", "--allow-empty", "-m", "work")
+    _git(repo, "symbolic-ref", "refs/heads/saved-work", f"refs/heads/{created.branch}")
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.unique_commits is True
+    dirs.close()

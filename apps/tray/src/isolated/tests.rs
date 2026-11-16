@@ -862,3 +862,69 @@ fn confirm_digest_invalidated_when_external_branch_drops_managed_commit() {
     );
     assert!(fx.wt_path.exists());
 }
+
+#[test]
+fn worktree_redirected_by_core_worktree_is_blocked_and_never_rolled_back() {
+    let fx = setup_worktree_fixture("wt-0a1b2c3d4e5f");
+    git_cmd(
+        &fx.main_root,
+        &["config", "extensions.worktreeConfig", "true"],
+    );
+    git_cmd(
+        &fx.wt_path,
+        &[
+            "config",
+            "--worktree",
+            "core.worktree",
+            fx.main_root.to_str().unwrap(),
+        ],
+    );
+    fs::write(fx.wt_path.join("README.md"), "unsaved\n").unwrap();
+    let reader = Reader::new(fx.root.clone());
+    let body = json!({"id": fx.id, "workspace": fx.workspace});
+    assert_eq!(
+        post(&reader, "/app/isolated/inspect", body.clone())["status"],
+        "blocked"
+    );
+
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'needs_attention' WHERE id = ?1",
+            [&fx.id],
+        )
+        .unwrap();
+    let inspected = post(&reader, "/app/isolated/inspect", body);
+    assert_eq!(inspected["rollback_only"], true);
+    let outcome = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected["confirmation"],
+        }),
+    );
+    assert_eq!(outcome["status"], "needs_attention");
+    assert_eq!(
+        fs::read_to_string(fx.wt_path.join("README.md")).unwrap(),
+        "unsaved\n"
+    );
+}
+
+#[test]
+fn symbolic_ref_to_the_managed_branch_does_not_keep_its_commits() {
+    let fx = setup_worktree_fixture("wt-6f5e4d3c2b1a");
+    git_cmd(&fx.wt_path, &["commit", "--allow-empty", "-m", "work"]);
+    git_cmd(
+        &fx.main_root,
+        &["symbolic-ref", "refs/heads/saved-work", &fx.branch_ref],
+    );
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["unique_commits"], true);
+}

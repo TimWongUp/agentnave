@@ -41,6 +41,7 @@ from agentnave.isolated.worktree_state import (
     remove_tree,
     tree_fingerprint,
     verify_worktree_container,
+    verify_worktree_root,
     worktree_link_valid,
 )
 from agentnave.store import now
@@ -230,6 +231,7 @@ def _verify_worktree_identity(
     wt_path = Path(record.worktree_path)
     if is_link(wt_path) or not wt_path.is_dir():
         raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
+    verify_worktree_root(wt_path)
     wt_common = Path(
         decode_git_path(
             run_git(
@@ -392,6 +394,7 @@ def complete_deletion_locked(
         run_git(
             ["worktree", "remove", *(["--force"] if force else []), "--", str(wt_path)],
             cwd=main_root,
+            filters_from=() if force else (wt_path,),
         )
     elif wt_path.exists() or is_link(wt_path):
         raise IsolationError(f"Unregistered path remains at {wt_path}; refusing recursive removal")
@@ -792,6 +795,7 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
                 )
                 if not linked:
                     raise IsolationError("Unfinished directory is not a valid git worktree")
+                verify_worktree_root(wt_path)
                 if never_checked_out(wt_path):
                     # Interrupted between adding and checking out. Without an index git reports
                     # every file as deleted, so only a directory holding nothing but its .git

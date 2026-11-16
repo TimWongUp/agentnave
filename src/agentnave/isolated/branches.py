@@ -19,17 +19,52 @@ def has_unique_commits(cwd: Path, oid: str) -> bool:
     """Whether oid holds commits no durable branch reaches.
 
     `for-each-ref --contains` reports a false match with exit 0 when a promisor object is
-    missing; this walk fails instead.
+    missing; this walk fails instead. Symbolic refs are left out: one pointing at the managed
+    branch would vouch for it and dangle once the branch is deleted, and one pointing at another
+    branch adds nothing that branch does not already count for.
     """
     managed = MANAGED_BRANCH_PREFIX.removeprefix("refs/heads/")
+    heads, remotes = _symbolic_refs(cwd)
     out = run_git(
-        ["rev-list", "--count", oid, "--not", f"--exclude={managed}*", "--branches", "--remotes"],
+        [
+            "rev-list",
+            "--count",
+            oid,
+            "--not",
+            f"--exclude={managed}*",
+            *(f"--exclude={name}" for name in heads),
+            "--branches",
+            *(f"--exclude={name}" for name in remotes),
+            "--remotes",
+        ],
         cwd=cwd,
     ).stdout
     try:
         return int(out.strip()) > 0
     except ValueError as exc:
         raise IsolationError("Could not tell whether the managed branch is merged") from exc
+
+
+def _symbolic_refs(cwd: Path) -> tuple[list[str], list[str]]:
+    """Symbolic refs under refs/heads/ and refs/remotes/, named as --exclude expects them.
+
+    Ref names cannot hold glob characters, so each name excludes exactly that ref.
+    """
+    out = run_git(
+        ["for-each-ref", "--format=%(symref) %(refname)", "refs/heads/", "refs/remotes/"],
+        cwd=cwd,
+    ).stdout
+    heads: list[str] = []
+    remotes: list[str] = []
+    for line in out.decode("utf-8", errors="surrogateescape").splitlines():
+        target, _, name = line.partition(" ")
+        if not target:
+            continue
+        if name.startswith("refs/heads/"):
+            heads.append(name.removeprefix("refs/heads/"))
+        elif name.startswith("refs/remotes/"):
+            remotes.append(name.removeprefix("refs/remotes/"))
+    return heads, remotes
 
 
 def branch_tip(main_root: Path, branch_ref: str) -> str:

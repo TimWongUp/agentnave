@@ -255,6 +255,57 @@ pub(crate) fn verify_worktree_container(
     Ok(())
 }
 
+/// Refuse a worktree whose configuration (`core.worktree`) points Git at another directory:
+/// status would then describe that directory, and this one's changes would go unseen.
+pub(crate) fn verify_worktree_root(git: &GitRunner, wt_path: &Path) -> Result<(), String> {
+    let out = git.run(
+        wt_path,
+        &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+        &[0],
+        &[],
+    )?;
+    if !same_dir(&bytes_to_path(trim_line_end(&out.stdout)), wt_path) {
+        return Err("隔离目录的 Git 配置（core.worktree）指向了别的工作树，已拒绝操作".to_owned());
+    }
+    Ok(())
+}
+
+/// Symbolic refs under refs/heads/ and refs/remotes/ as `--exclude` arguments for the
+/// `--branches` and `--remotes` that follow. Ref names cannot hold glob characters.
+fn symbolic_ref_excludes(
+    git: &GitRunner,
+    cwd: &Path,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let out = git
+        .run(
+            cwd,
+            &[
+                "for-each-ref",
+                "--format=%(symref) %(refname)",
+                "refs/heads/",
+                "refs/remotes/",
+            ],
+            &[0],
+            &[],
+        )?
+        .stdout;
+    let (mut heads, mut remotes) = (Vec::new(), Vec::new());
+    for line in String::from_utf8_lossy(&out).lines() {
+        let Some((target, name)) = line.split_once(' ') else {
+            continue;
+        };
+        if target.is_empty() {
+            continue;
+        }
+        if let Some(rest) = name.strip_prefix("refs/heads/") {
+            heads.push(format!("--exclude={rest}"));
+        } else if let Some(rest) = name.strip_prefix("refs/remotes/") {
+            remotes.push(format!("--exclude={rest}"));
+        }
+    }
+    Ok((heads, remotes))
+}
+
 fn verify_worktree_identity(
     git: &GitRunner,
     store: &WorktreeStore,
@@ -267,6 +318,7 @@ fn verify_worktree_identity(
         return Err(format!("隔离目录不存在或不安全：{}", wt_path.display()));
     }
     verify_worktree_container(&wt_path, main_root, &record.id)?;
+    verify_worktree_root(git, &wt_path)?;
     let wt_common = bytes_to_path(trim_line_end(
         &git.run(
             &wt_path,
@@ -375,26 +427,19 @@ pub(crate) fn check_hidden_index_flags(git: &GitRunner, wt_path: &Path) -> Resul
 }
 
 /// Whether `oid` holds commits no durable branch reaches. `for-each-ref --contains` reports a
-/// false match with exit 0 when a promisor object is missing; this walk fails instead.
+/// false match with exit 0 when a promisor object is missing; this walk fails instead. Symbolic
+/// refs are left out: one pointing at the managed branch would vouch for it and dangle once the
+/// branch is deleted, and one pointing at another branch adds nothing that branch does not.
 fn is_unique_commit(git: &GitRunner, cwd: &Path, oid: &str) -> Result<bool, String> {
     let managed = MANAGED_BRANCH_PREFIX.trim_start_matches("refs/heads/");
     let exclude = format!("--exclude={managed}*");
-    let out = git
-        .run(
-            cwd,
-            &[
-                "rev-list",
-                "--count",
-                oid,
-                "--not",
-                &exclude,
-                "--branches",
-                "--remotes",
-            ],
-            &[0],
-            &[],
-        )?
-        .stdout;
+    let (heads, remotes) = symbolic_ref_excludes(git, cwd)?;
+    let mut args = vec!["rev-list", "--count", oid, "--not", exclude.as_str()];
+    args.extend(heads.iter().map(String::as_str));
+    args.push("--branches");
+    args.extend(remotes.iter().map(String::as_str));
+    args.push("--remotes");
+    let out = git.run(cwd, &args, &[0], &[])?.stdout;
     let count: u64 = String::from_utf8_lossy(&out)
         .trim()
         .parse()

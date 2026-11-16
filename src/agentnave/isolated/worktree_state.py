@@ -45,6 +45,16 @@ def verify_worktree_container(wt_path: Path, main_root: Path, isolation_id: str)
         raise IsolationError(f"{wt_path} is not inside {container}")
 
 
+def verify_worktree_root(wt_path: Path) -> None:
+    """Refuse a worktree whose configuration (core.worktree) points Git at another directory.
+
+    Status would then describe that other directory, and this one's changes would go unseen.
+    """
+    out = run_git(["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd=wt_path)
+    if not same_dir(Path(decode_git_path(out.stdout.rstrip(b"\r\n"))), wt_path):
+        raise IsolationError(f"Git uses another working tree than {wt_path} (core.worktree)")
+
+
 def worktree_link_valid(wt_path: Path, admin_dir: str | None, common_dir: Path) -> bool:
     """True while wt_path/.git still points at this record's own admin directory.
 

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::git::{GitRunner, WORKTREES_DIR_NAME, never_checked_out, parse_worktrees, ref_exists};
 use super::inspect::{
     STATUS_ARGS, check_hidden_index_flags, inspect_record, verify_managed_branch_ref,
-    verify_repo_identity, verify_worktree_container,
+    verify_repo_identity, verify_worktree_container, verify_worktree_root,
 };
 use super::leases::{
     acquire_repo_lock, has_active_leases, is_link, remove_lease_dir_locked, same_dir,
@@ -200,6 +200,7 @@ fn verify_rollback_worktree(
             if !linked {
                 return Err("未完成的目录不是有效的 git worktree".to_owned());
             }
+            verify_worktree_root(git, wt_path)?;
             if never_checked_out(git, wt_path)? {
                 let has_other = fs::read_dir(wt_path)
                     .map_err(|e| e.to_string())?

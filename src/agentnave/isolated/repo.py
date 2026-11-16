@@ -195,13 +195,16 @@ def run_git(
     timeout: float = DEFAULT_GIT_TIMEOUT,
     max_output_bytes: int = MAX_GIT_OUTPUT_BYTES,
     disable_hooks: bool = True,
+    filters_from: Sequence[Path] = (),
 ) -> GitResult:
     """Run git as an argument array without a shell, bounded in time and output size.
 
     Every call neutralizes repository-configured executables: fsmonitor, hooks, external diff
     programs, signature verification (gpg.program), promisor lazy fetches and every filter driver
     (clean, smudge, process) in the effective configuration, whatever the attribute files say.
-    Pass disable_hooks=False only for commands that read hook configuration.
+    Pass disable_hooks=False only for commands that read hook configuration. filters_from names
+    other worktrees the command runs Git in (a non-forced `worktree remove` checks the target's
+    status): the drivers in their own configuration are neutralized too.
     """
     cmd = ["git", "-C", str(cwd), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true"]
     # Never recurse into submodules or nested repositories, whose own config would run there.
@@ -217,7 +220,10 @@ def run_git(
     for item in config_overrides:
         cmd.extend(["-c", item])
     if args and args[0] not in _NO_FILTER_COMMANDS:
-        cmd.extend(_filter_disable_args(filter_driver_names(cwd)))
+        names = set(filter_driver_names(cwd))
+        for other in filters_from:
+            names.update(filter_driver_names(other))
+        cmd.extend(_filter_disable_args(sorted(names)))
     cmd.extend(args)
     env = os.environ.copy()
     # Also drop variables that point git at another config, repository, index or tree than
