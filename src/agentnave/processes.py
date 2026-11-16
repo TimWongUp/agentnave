@@ -74,6 +74,14 @@ async def spawn_process(
 # Claude Code withholds these from its own children, MCP servers included, so a subagent's
 # login would otherwise depend on which host started the service (ADR-0058).
 WITHHELD_CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN",)
+INHERITED_HOST_ENV = (
+    "AGENTNAVE_HOST",
+    "AGENTNAVE_HOST_APP",
+    "AGENTNAVE_HOST_SESSION_ID",
+    "AGENTNAVE_EXCLUDED_PROVIDERS",
+    "AGENTNAVE_MANAGER_SESSION",
+    "AGENTNAVE_MANAGER_STARTED_AT",
+)
 
 
 def provider_environment(
@@ -87,8 +95,10 @@ def provider_environment(
     install directories.
     """
     env = dict(os.environ)
-    env.pop("AGENTNAVE_HOST_SESSION_ID", None)
-    env.pop("AGENTNAVE_HOST_APP", None)
+    # The boss's identity stays with the boss: a provider's own MCP entry, or its own
+    # ancestry, names the host its relay serves (ADR-0096).
+    for name in INHERITED_HOST_ENV:
+        env.pop(name, None)
     # WorkBuddy/CodeBuddy set these to their own live HTTP listener. A nested CLI
     # must choose its own address, as their native nested-CLI launcher also does.
     env.pop("SERVER__PORT", None)

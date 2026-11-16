@@ -457,6 +457,10 @@ def test_provider_environment_keeps_manager_chat_identity_private(
 ) -> None:
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "private-manager-chat")
     monkeypatch.setenv("AGENTNAVE_HOST_APP", "codex@private-account")
+    monkeypatch.setenv("AGENTNAVE_HOST", "antigravity")
+    monkeypatch.setenv("AGENTNAVE_EXCLUDED_PROVIDERS", "codex")
+    monkeypatch.setenv("AGENTNAVE_MANAGER_SESSION", "a" * 32)
+    monkeypatch.setenv("AGENTNAVE_MANAGER_STARTED_AT", "2026-11-16T00:00:00+00:00")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "boss-claude-chat")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "boss-token")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "user-key")
@@ -465,6 +469,10 @@ def test_provider_environment_keeps_manager_chat_identity_private(
         not {
             "AGENTNAVE_HOST_SESSION_ID",
             "AGENTNAVE_HOST_APP",
+            "AGENTNAVE_HOST",
+            "AGENTNAVE_EXCLUDED_PROVIDERS",
+            "AGENTNAVE_MANAGER_SESSION",
+            "AGENTNAVE_MANAGER_STARTED_AT",
             "CLAUDE_CODE_SESSION_ID",
             "CLAUDE_CODE_OAUTH_TOKEN",
         }

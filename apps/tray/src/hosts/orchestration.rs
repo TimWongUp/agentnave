@@ -17,7 +17,34 @@ pub(super) fn set_host_env(entry: &mut Value, host: &Host, code: &str) -> Result
     if let Value::Object(wanted) = host_env(host) {
         env.extend(wanted);
     }
+    drop_self_exclusion(env, crate::providers::own_provider(host.boss));
     Ok(())
+}
+
+/// The manual setup once excluded each host's own CLI; that choice now lives in
+/// `orchestration.json`, so only the other providers stay excluded (ADR-0096).
+fn drop_self_exclusion(env: &mut serde_json::Map<String, Value>, own: &str) {
+    const KEY: &str = "AGENTNAVE_EXCLUDED_PROVIDERS";
+    let Some(listed) = env.get(KEY).and_then(Value::as_str) else {
+        return;
+    };
+    let names: Vec<&str> = listed.split(',').collect();
+    if !names
+        .iter()
+        .any(|name| name.trim().eq_ignore_ascii_case(own))
+    {
+        return;
+    }
+    let others: Vec<&str> = names
+        .into_iter()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case(own))
+        .collect();
+    if others.is_empty() {
+        env.remove(KEY);
+    } else {
+        env.insert(KEY.into(), json!(others.join(",")));
+    }
 }
 
 impl Hosts {

@@ -36,19 +36,68 @@ fn fault_records_show_per_host_until_dismissed_or_expired() {
         &dir.join("not-a-fault.json"),
         &json!({"version":1,"host":"codex","host_app":"codex"}).to_string(),
     );
+    // The App labels the rows it connects, so an unlabelled record is not this row's.
+    save(
+        &dir.join("unlabelled.json"),
+        &json!({"version":1,"host":"codex","started_ms":1,"fault_ms":4000}).to_string(),
+    );
     let state = hosts.state(&h);
     assert_eq!(state["fault"], json!({"count":2,"at_ms":2000}));
-    // A new connection on the same row proves nothing about the old chats.
-    save(
-        &hosts.context.home.join(".agentnave/connections/new.json"),
-        &json!({"version":1,"host":"codex","host_app":"codex","started_ms":9000}).to_string(),
-    );
-    assert_eq!(hosts.state(&h)["fault"]["count"], 2);
     let result = hosts
         .action("dismiss-fault", &json!({"id":"codex"}))
         .unwrap();
     assert_eq!(result["ok"], true);
     assert!(result["host"]["fault"].is_null());
     assert!(!dir.join("a.json").exists() && !dir.join("b.json").exists());
-    assert!(dir.join("other.json").exists());
+    assert!(dir.join("other.json").exists() && dir.join("unlabelled.json").exists());
+}
+
+#[test]
+fn a_newer_healthy_connection_answers_older_faults() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    let root = hosts.context.home.join(".agentnave");
+    let dir = root.join("connection-faults");
+    save(&dir.join("before.json"), &record("codex", "codex", 1000));
+    save(&dir.join("after.json"), &record("codex", "codex", 9500));
+    save(
+        &dir.join("unlabelled.json"),
+        &json!({"version":1,"host":"codex","started_ms":1,"fault_ms":4000}).to_string(),
+    );
+    save(
+        &dir.join("unknown-boss.json"),
+        &json!({"version":1,"host":"grok","started_ms":1,"fault_ms":4000}).to_string(),
+    );
+    let hash = "a".repeat(64);
+    // A connection that closed normally with the tools it was given, started after the first.
+    save(
+        &root.join("connections/closed.json"),
+        &json!({"version":1,"host":"codex","host_app":"codex","started_ms":9000,
+            "ended_ms":9100,"runtime_tools_hash":hash,"host_tools_hash":hash})
+        .to_string(),
+    );
+    assert_eq!(hosts.state(&h)["fault"], json!({"count":1,"at_ms":9500}));
+    // An unlabelled connection, such as a hand-written project entry's, proves nothing here.
+    save(
+        &root.join("connections/unlabelled.json"),
+        &json!({"version":1,"host":"codex","started_ms":9800}).to_string(),
+    );
+    assert_eq!(hosts.state(&h)["fault"], json!({"count":1,"at_ms":9500}));
+    fs::remove_file(root.join("connections/unlabelled.json")).unwrap();
+    // Reading only filters; the refresh removes what is answered or can no longer be owned.
+    assert!(dir.join("before.json").exists());
+    hosts.refresh_probed();
+    assert!(!dir.join("before.json").exists() && !dir.join("unlabelled.json").exists());
+    assert!(dir.join("after.json").exists() && dir.join("unknown-boss.json").exists());
+    // A connection running now answers every fault before it.
+    save(
+        &root.join("connections/live.json"),
+        &json!({"version":1,"host":"codex","host_app":"codex","started_ms":9900}).to_string(),
+    );
+    assert!(hosts.state(&h)["fault"].is_null());
 }

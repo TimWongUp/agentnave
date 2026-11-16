@@ -160,13 +160,11 @@ EXCLUDED_PROVIDERS = _read_excluded_providers()
 
 
 def task_excluded_providers() -> frozenset[str]:
+    """The host's own CLI follows the App's host_cli choice; an explicit exclusion of it is a
+    leftover of the manual setup and does not override that choice (ADR-0096)."""
     from agentnave.host_choice import host_cli_mode
 
-    explicit = {
-        name.strip().lower()
-        for name in os.environ.get("AGENTNAVE_EXCLUDED_PROVIDERS", "").split(",")
-    }
-    if HOST.provider and HOST.provider not in explicit and host_cli_mode(HOST) == "launch":
+    if HOST.provider and host_cli_mode(HOST) == "launch":
         return EXCLUDED_PROVIDERS - {HOST.provider}
     return EXCLUDED_PROVIDERS
 
@@ -182,7 +180,7 @@ PROVIDER_SELECTION = (
     )
     + ". Excluded providers: "
     + (", ".join(sorted(_STARTUP_EXCLUDED)) or "none")
-    + ". Host defaults or App settings decide whether private tasks launch the host's own CLI; environment exclusions still apply. Meetings follow discussion member limits without host exclusions."
+    + ". Host defaults or App settings decide whether private tasks launch the host's own CLI; environment exclusions apply to other providers only. Meetings follow discussion member limits without host exclusions."
 )
 ACCESS = "Declared read/write access; see MCP instructions."
 DISPATCH_WAIT = (

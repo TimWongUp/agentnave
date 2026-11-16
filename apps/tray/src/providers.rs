@@ -21,12 +21,17 @@ pub(crate) fn boss_of(id: &str) -> &str {
     }
 }
 
-/// What a boss row does with tasks for its own CLI when `orchestration.json` omits the row.
-pub(crate) fn default_host_cli(id: &str) -> &'static str {
-    let provider = match boss_of(id) {
+/// The provider a boss runs as its own CLI; WorkBuddy shares CodeBuddy's.
+pub(crate) fn own_provider(boss: &str) -> &str {
+    match boss {
         "workbuddy" => "codebuddy",
         boss => boss,
-    };
+    }
+}
+
+/// What a boss row does with tasks for its own CLI when `orchestration.json` omits the row.
+pub(crate) fn default_host_cli(id: &str) -> &'static str {
+    let provider = own_provider(boss_of(id));
     if LAUNCH_HOST_CLIS.contains(&provider) {
         "launch"
     } else {

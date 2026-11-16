@@ -1227,6 +1227,10 @@ fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
         assert_eq!(hosts.command_state(&h, &entry), "missing");
         entry["args"] = json!(["--keep"]);
         entry["env"]["CUSTOM"] = json!("preserve");
+        // The manual setup excluded the host's own CLI; only the other providers stay.
+        let own = crate::providers::own_provider(h.boss).to_uppercase();
+        let other = if own == "PI" { "zcode" } else { "pi" };
+        entry["env"]["AGENTNAVE_EXCLUDED_PROVIDERS"] = json!(format!(" {own} ,{other}"));
         // A connection made before rows were named lacks the row; refreshing adds it back.
         entry["env"]
             .as_object_mut()
@@ -1238,10 +1242,11 @@ fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
         assert_eq!(hosts.state(&h)["has_host_env"], false, "{id}");
         let mut expected = entry;
         expected["env"]["AGENTNAVE_HOST_APP"] = json!(id);
+        expected["env"]["AGENTNAVE_EXCLUDED_PROVIDERS"] = json!(other);
         h.set_command(&mut expected, &hosts.launcher().unwrap());
         hosts.refresh();
         let after = h.read().unwrap();
-        assert_eq!(after.entry, Some(expected), "{id}");
+        assert_eq!(after.entry, Some(expected.clone()), "{id}");
         assert_eq!(after.rest, before.rest, "{id}");
         let bytes = fs::read(&h.config).unwrap();
         let backups = backup_paths(&hosts.context.app, CONFIG_BACKUP).len();
@@ -1250,6 +1255,21 @@ fn missing_commands_are_repaired_across_formats_without_changing_host_policy() {
         assert_eq!(
             backup_paths(&hosts.context.app, CONFIG_BACKUP).len(),
             backups
+        );
+        // A fully taken-over entry whose only leftover is the self-exclusion is still repaired.
+        let mut leftover = expected.clone();
+        leftover["env"]["AGENTNAVE_EXCLUDED_PROVIDERS"] = json!(own.to_lowercase());
+        save(&h.config, &after.render(Some(&leftover)).unwrap());
+        hosts.refresh();
+        expected["env"]
+            .as_object_mut()
+            .unwrap()
+            .remove("AGENTNAVE_EXCLUDED_PROVIDERS");
+        assert_eq!(h.read().unwrap().entry, Some(expected), "{id}");
+        assert_eq!(
+            backup_paths(&hosts.context.app, CONFIG_BACKUP).len(),
+            backups + 1,
+            "{id}"
         );
     }
 }

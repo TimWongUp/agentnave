@@ -54,7 +54,7 @@ npm 全局目录若无写权限：`npm config set prefix ~/.local`。
 - `AGENTNAVE_HOST`：宿主名，只能取 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|devin|hermes|zcode`。bot 不属于这些，**不要设**；这时 `list_members` 报 `"host_source":"unknown"`，属正常。（`grok` 指 Grok CLI，不是 Grok Bot。）
 - `AGENTNAVE_HOST_SESSION_ID`：当前聊天的会话 ID，优先于宿主原生环境变量；只能按聊天注入，不能给多个聊天共用同一个值。设置后可省略调用中的 `manager_session_id`。
 - `AGENTNAVE_HOST_APP`：App 的接入行身份，没有 App 就不设（见 §3.4）。
-- `AGENTNAVE_EXCLUDED_PROVIDERS=codex,antigravity`：在 task 模式下禁止这些 CLI，是暂停 CLI 的另一种做法。
+- `AGENTNAVE_EXCLUDED_PROVIDERS=codex,antigravity`：在 task 模式下禁止这些 CLI，是暂停 CLI 的另一种做法；与 `AGENTNAVE_HOST` 相同的项不起作用。
 - `AGENTNAVE_DATA_DIR`：改数据根目录。
 
 ### 2.2 升级与重连

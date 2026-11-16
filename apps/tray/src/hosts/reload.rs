@@ -156,8 +156,16 @@ impl Hosts {
     /// that for up to 105 seconds, so only a longer silence counts as no connection at all.
     /// A relay whose host closed normally marks its receipt ended and keeps it as proof.
     fn receipts(&self, host: &Host, now: SystemTime, changed_at: Option<u64>) -> Receipts {
+        self.owned_receipts(host, now, changed_at, self.sole_row(host))
+    }
+    fn owned_receipts(
+        &self,
+        host: &Host,
+        now: SystemTime,
+        changed_at: Option<u64>,
+        legacy_unambiguous: bool,
+    ) -> Receipts {
         let mut receipts = Receipts::default();
-        let legacy_unambiguous = self.sole_row(host);
         let dir = self
             .connection_root(host)
             .map(|root| root.join("connections"));
@@ -189,6 +197,22 @@ impl Hosts {
             }
         }
         receipts
+    }
+    /// The latest start of this row's connections that loaded their tools: one running now, or
+    /// one that closed normally with the tools it was given (ADR-0096).
+    /// Ownership follows the fault records': a labelled row does not count unlabelled receipts.
+    pub(super) fn healthy_since(&self, host: &Host) -> Option<u64> {
+        let unambiguous = self.sole_row(host) && !self.labelled(host);
+        let receipts = self.owned_receipts(host, SystemTime::now(), None, unambiguous);
+        let closed = receipts.ended.iter().filter(|c| {
+            valid_hash(&c["runtime_tools_hash"]) && c["runtime_tools_hash"] == c["host_tools_hash"]
+        });
+        receipts
+            .live
+            .iter()
+            .chain(closed)
+            .filter_map(|c| c["started_ms"].as_u64())
+            .max()
     }
     /// A missing or reused PID only excludes an old blocker; it never proves tools loaded.
     fn receipt_process_exited(&self, path: &Path, value: &Value, modified: SystemTime) -> bool {
@@ -380,6 +404,15 @@ pub(super) fn read_receipt(
     legacy_unambiguous: bool,
     max_age: u64,
 ) -> Option<(u64, SystemTime, Value)> {
+    read_record(entry, now, max_age).filter(|(_, _, value)| owns(value, host, legacy_unambiguous))
+}
+
+/// A private, size-limited relay record no older than `max_age` seconds, whoever wrote it.
+pub(super) fn read_record(
+    entry: &fs::DirEntry,
+    now: SystemTime,
+    max_age: u64,
+) -> Option<(u64, SystemTime, Value)> {
     let path = entry.path();
     if path.is_symlink() || path.extension().is_none_or(|ext| ext != "json") {
         return None;
@@ -391,15 +424,17 @@ pub(super) fn read_receipt(
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    (value["version"] == 1 && value["dispatched"] != true).then_some((age, modified, value))
+}
+
+/// Whether a boss's relay wrote this record for this row; an unlabelled one can only belong to
+/// the boss's sole row.
+pub(super) fn owns(value: &Value, host: &Host, legacy_unambiguous: bool) -> bool {
     let matching_row = match value["host_app"].as_str() {
         Some(id) => id == host.id,
         None => legacy_unambiguous && host.id == host.boss,
     };
-    (value["version"] == 1
-        && value["host"] == host.boss
-        && matching_row
-        && value["dispatched"] != true)
-        .then_some((age, modified, value))
+    value["host"] == host.boss && matching_row
 }
 
 fn receipt_pid(path: &Path) -> Option<u32> {

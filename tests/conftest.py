@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -34,11 +35,21 @@ def claude_over_print(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def manager_chat(monkeypatch: pytest.MonkeyPatch) -> None:
+def manager_chat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # Dispatch and inbox receiving need a boss chat identity; tests run as one injected chat.
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
     # Running the suite inside Claude Code must not hand tests that chat's native identity.
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    # Nor, inside any host or dispatched CLI, its connection identity and real data root: a
+    # relay under test would otherwise leave receipts and faults in ~/.agentnave.
+    for name in (
+        "AGENTNAVE_HOST",
+        "AGENTNAVE_HOST_APP",
+        "AGENTNAVE_DISPATCHED",
+        "AGENTNAVE_EXCLUDED_PROVIDERS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "agentnave-data"))
 
 
 @pytest.fixture(autouse=True)

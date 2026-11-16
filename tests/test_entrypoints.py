@@ -4555,9 +4555,10 @@ async def test_host_cli_modes_and_group_fallback(
         )
         started = await _start_and_wait(client, **args)
         assert started["provider"] == "claude"
+        # A leftover manual self-exclusion no longer overrides the App's launch choice.
         monkeypatch.setenv("AGENTNAVE_EXCLUDED_PROVIDERS", "claude")
-        blocked = await client.call_tool("start_agent", args)
-        assert blocked.is_error and "excluded" in str(blocked.content).lower()
+        started = await _start_and_wait(client, **args)
+        assert started["provider"] == "claude"
         monkeypatch.delenv("AGENTNAVE_EXCLUDED_PROVIDERS")
         seat["provider"] = "antigravity"
         seat["model"] = "gemini-first"
