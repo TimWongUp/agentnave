@@ -96,6 +96,10 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def compact(text: str) -> str:
+    return "".join(text.split())
+
+
 def excerpt(screen: str) -> str:
     return " ".join(ANSI.sub("", screen).split())[-600:]
 
@@ -406,6 +410,8 @@ class Run:
         self.terminal.outgoing.extend(b"\x1b[200~" + paste.encode() + b"\x1b[201~")
         evidence = flat(paste)[:40]
         self.turn.expected = evidence
+        # Unfolded, a paste taller than the box scrolls to its end, and wrapping adds spaces.
+        tail = compact(paste)[-40:]
         started = time.monotonic()
         submitted: float | None = None
         retried = False
@@ -414,9 +420,12 @@ class Run:
             now = time.monotonic()
             if self.exited() or self.turn.error:
                 return False
-            # agy folds a long paste into "[Pasted text #1 +121 lines]".
+            # agy folds a paste of over 15 lines, or with a line over 1000 characters, into
+            # "[Pasted text #1 +121 lines]".
             box = input_box(screen)
-            echoed = evidence in box or box.lower().startswith("> [pasted text #")
+            echoed = (bool(tail) and compact(box).endswith(tail)) or box.lower().startswith(
+                "> [pasted text #"
+            )
             # Enter never answers a menu that came up after the paste.
             if state(screen) == "menu":
                 self.turn.block("agy opened a dialog while taking the task", screen)
