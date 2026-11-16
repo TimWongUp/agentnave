@@ -478,9 +478,21 @@ pub fn install_missing(app: &AppHandle) {
         .ok()
         .and_then(|data| active_version(&data))
         .or_else(|| installed_version(&dirs.tools.join("agentnave")));
-    if installed.is_none() {
-        install_service_now(app);
+    if installed.is_some() {
+        return;
     }
+    // The start-up update check may be running; only another install or upgrade stops this one.
+    {
+        let updates = app.state::<Updates>();
+        let mut state = updates.lock();
+        if state.installing() || matches!(state.upgrade, Upgrade::Running | Upgrade::Installing) {
+            return;
+        }
+        state.upgrade = Upgrade::Installing;
+        state.started = Some(Instant::now());
+    }
+    let app = app.clone();
+    thread::spawn(move || finish_upgrade(&app));
 }
 
 fn marker_dir(app: &AppHandle) -> Option<PathBuf> {
