@@ -621,7 +621,7 @@ Hosts that were running before the upgrade should reconnect or reopen once to ru
 and the cleaned configuration. For a manual installation, reinstall the runtime and Skills from
 `@v1.13.1` and reconnect MCP. Replace the full Skill directory to pick up the updated instructions.
 
-Upgrading directly from v1.12 still applies the one-way schema version 3 migration of `agentnave.db`
+Upgrading from v1.12 or earlier still applies the one-way schema version 3 migration of `agentnave.db`
 described in [the v1.13.0 release notes](releases/v1.13.0.md); read it before the new service first
 opens the database.
 
