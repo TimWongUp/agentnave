@@ -96,7 +96,9 @@ window.ANOnboarding = (() => {
   // A user who connected a boss and confirmed an employee is already set up.
   const isNewUser = (steps) =>
     steps[1].state !== "done" || steps[2].state !== "done";
-  const isFinished = (steps) => steps.every((step) => step.state === "done");
+  // Picking models is optional: following each CLI's default leaves nothing to check off.
+  const isFinished = (steps) =>
+    steps.every((step) => step.id === "models" || step.state === "done");
 
   return { evaluate, isNewUser, isFinished };
 })();

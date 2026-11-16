@@ -58,12 +58,13 @@ test("orchestration is done once a preset or any app's own mode is on", () => {
   assert.equal(orchestration({ preset: "meetings" }), "done");
 });
 
-test("a set-up user is not new, and the list finishes only when every step is done", () => {
+test("a set-up user is not new, and the list finishes once every step but models is done", () => {
   const steps = evaluate(everything({ orchestration: { document: { preset: "off" } } }));
   assert.equal(isNewUser(steps), false);
   assert.equal(isFinished(steps), false);
-  const done = evaluate(everything({ members: { document: { modes: { task: { claude: { models: [], default: "m" } } } } } }));
-  assert.equal(isFinished(done), true);
+  const defaults = evaluate(everything());
+  assert.equal(defaults[3].state, "todo");
+  assert.equal(isFinished(defaults), true);
 });
 
 test("nothing is decided while hosts or employees cannot be read", () => {
