@@ -5,6 +5,7 @@
 - 修订：2026-11-01，见文末「修订：只有 boss 的工作区与接手 Skill」；2026-11-14，见文末「修订：App 取消交接」；2026-11-15，见文末「修订：被接手的聊天新建工作区」。
 - 修订 [ADR-0017](0017-manager-chat-session-identity.md) 的“记录永远归原 boss”与“磁盘只存归属哈希”；扩展 [ADR-0026](0026-sqlite-conversation-store.md) 的表。
 - 加表、加列不升 `user_version` 及托盘补表补列的做法由 [ADR-0048](0048-sqlite-schema-evolution.md) 取代
+- 归属转移（认领后工作区归新 boss、新会话存进原工作区、老 boss 写入被拒、认领要求名下没有其他有会话的工作区）及 2026-11-15 修订由 [ADR-0099](0099-handover-links-workspaces.md) 取代，改为接手只建立关联
 
 ## 背景
 
