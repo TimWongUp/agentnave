@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-9cc9ff" alt="macOS, Linux and Windows">
 </p>
 
-**AgentNave is a local MCP server.** The Agent you already use (Claude Code, Codex, …) becomes the boss and hands work to the other CLIs installed on your machine. The tray App is a small office: you can see who is working, who is in a meeting and what everyone said, and you can listen in too.
+**AgentNave is a local MCP server.** The Agent you already use (Claude Code, Codex, …) becomes the boss and hands work to the other CLIs installed on your machine. The tray App is the visual side of that server, not an agent, and you don't chat in it: you keep talking to your boss, while the App handles the settings and works as a small office where you can see who is working, who is in a meeting and what everyone said, and listen in too.
 
 ## 🎬 Live demo
 
@@ -52,7 +52,7 @@ Tell the boss to hand this chat over, then say take over in a new chat. If quota
 
 ### 🧹 The App handles the chores
 
-Connecting a host installs the Skills, and an employee has to be confirmed before it can be dispatched. CLIs with a new version update in one click, and missing ones come with the official install command. The App and the local service update inside the App, old workspaces clear in one click, and history cleans up after the number of days you set.
+On first launch the App installs the local service, and a getting-started list in the office walks you through connecting a boss, confirming employees, picking models and choosing an orchestration preset. Connecting a host installs the Skills, and an employee has to be confirmed before it can be dispatched. CLIs with a new version update in one click, and missing ones come with the official install command. The App and the local service update inside the App, old workspaces and the isolated directories employees leave behind clear in one click, and history cleans up after the number of days you set.
 
 ## 👀 Who can be the boss, who can be an employee
 
@@ -84,7 +84,7 @@ install or sign in to CLIs for you.
 ### Option 1: the tray App (macOS and Windows, recommended)
 
 1. Download the installer from [Releases](https://github.com/TimWongUp/agentnave/releases/latest): on macOS, `AgentNave_<version>_universal.dmg`, dragged into Applications; on Windows, `AgentNave_<version>_x64-setup.exe`.
-2. Open the App, connect a host on the boss page in Settings, and confirm other CLIs under **Employees** as needed. The App installs the local service and the companion Skills.
+2. Open the App. It installs the local service on its own; then follow the getting-started list in the office to connect a boss, confirm employees, pick models and choose an orchestration preset. The companion Skills are installed when you connect.
 3. Back in your host, try:
 
    ```text
