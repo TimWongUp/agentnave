@@ -91,6 +91,10 @@ impl Hosts {
                 Err(e) => self.settings_error = Some(e),
             }
         }
+        // Answered faults go with the refresh, so a GET only ever filters them (ADR-0096).
+        if !crate::PREVIEW {
+            self.prune_faults();
+        }
         self.cached = self.snapshot();
         self.prune_service_versions();
         self.cached.clone()

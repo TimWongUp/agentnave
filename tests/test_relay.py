@@ -450,8 +450,11 @@ def test_server_dying_under_an_open_host_leaves_a_fault_record(tmp_path: Path, m
     )
     old = data / "connection-faults" / "old.json"
     old.parent.mkdir(parents=True)
-    old.write_text("{}")
-    os.utime(old, (time.time() - 90000, time.time() - 90000))
+    # Staging files a relay killed mid-write left, under the old and the current names.
+    leftovers = [old, old.with_name("tmpk1ll3d"), old.with_name(".tmp-k1ll3d")]
+    for path in leftovers:
+        path.write_text("{}")
+        os.utime(path, (time.time() - 90000, time.time() - 90000))
     try:
         host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
         host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -466,7 +469,7 @@ def test_server_dying_under_an_open_host_leaves_a_fault_record(tmp_path: Path, m
     if marker:
         assert old.exists()  # a dispatched provider's relay records nothing
         return
-    assert not old.exists()  # pruned when the new record is written
+    assert not any(path.exists() for path in leftovers)  # pruned when the new record is written
     (path,) = data.glob("connection-faults/*.json")
     assert path.name == host.relay.connection_path.name
     record = json.loads(path.read_bytes())

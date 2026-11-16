@@ -805,7 +805,8 @@ function copyRow(host, copy) {
     h("div.hc-copy-act", {}, control));
 }
 
-// The service died while the host was still connected; only the user's confirmation clears it.
+// The service died while the host was still connected; the user's confirmation or a newer healthy
+// connection of the row clears it (ADR-0096).
 function faultNote(host) {
   const id = host.id;
   return h("div.hc-reload.hc-note.info", { "data-fault": "" },

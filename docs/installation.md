@@ -148,38 +148,25 @@ If the user selected none, explain that provider calls require a separately inst
 This is an Agent-assisted installation procedure, not an interactive prompt or automatic discovery
 feature in the MCP server. AgentNave continues to inherit the configured `PATH` at runtime.
 
-## 2. Configure provider exclusions per host
+## 2. Host identity and provider exclusions
 
 服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|hermes|zcode|devin`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装在 OpenCode 配置目录 `skills/agentnave-manager`（默认 `~/.config/opencode/skills/agentnave-manager`）的 Skill 也需手动删除；两者的历史会话仍可读取）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
-宿主对应的 Provider 与已有 `AGENTNAVE_EXCLUDED_PROVIDERS` 取并集，仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 或 `AGENTNAVE_HOST=opencode` 的旧条目外，已有 MCP 配置无需修改，以下显式排除项继续有效，与宿主当前模型无关：
-
-| Host product | Exclusion value |
-| --- | --- |
-| Codex | `codex` |
-| Claude Code | `claude` |
-| CodeBuddy Code / WorkBuddy | `codebuddy` |
-| Grok CLI | `grok` |
-| Antigravity | `antigravity` |
-| Pi Coding Agent | `pi` |
-| DeepSeek Harness | `deepseek` |
-| ZCode | `zcode` |
-| Devin CLI | `devin` |
-| Other hosts | Explicitly choose exclusions, or use an empty value |
+宿主自身 CLI 的私聊任务由 App 中该 boss 的「同款 CLI」选择决定：交给宿主自带子代理、由 AgentNave 启动或跳过（默认随宿主能力，Antigravity 由 AgentNave 启动，其他交给宿主自带子代理）。`AGENTNAVE_EXCLUDED_PROVIDERS` 只用来排除其他 Provider，与当前宿主相同的项不起作用；旧版文档让每个宿主写入排除自身的值，App 接入或自检时会自动从条目中去掉这一项，手动接入也无需再写。排除项仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 或 `AGENTNAVE_HOST=opencode` 的旧条目外，已有 MCP 配置无需修改。
 
 Values are comma-separated provider IDs: `codex,claude` excludes both. Whitespace, letter case, and
-duplicates are normalized; empty items are ignored. An unset or empty value adds no exclusions beyond the detected host provider.
+duplicates are normalized; empty items are ignored. An unset or empty value excludes nothing.
 Unknown IDs prevent server startup so a typo cannot silently disable the intended restriction.
-Every provider may be excluded; the tools remain discoverable, but `start_agent` then accepts none.
+Every other provider may be excluded; the tools remain discoverable, but `start_agent` then only
+reaches the host's own CLI if the App lets AgentNave launch it.
 Meetings still run, since exclusions apply to single tasks only.
 
 Exclusions are fixed when the server starts. Restart it after changing configuration. MCP tool
 metadata lists permitted and excluded providers. A permitted provider is not necessarily installed
 or authenticated. `start_agent` rejects an excluded provider before creating an invocation; a call
 cannot override the exclusion and the server never substitutes a different provider. If no permitted
-provider is usable, the Manager reports the blocker. Exclusions apply to single tasks only: the host
-can run its own native subagents for those, while meetings may seat any provider, including
-the host's own CLI.
+provider is usable, the Manager reports the blocker. Exclusions apply to single tasks only, while
+meetings may seat any provider, including the host's own CLI.
 
 This is a restriction on calls through this MCP server, not a sandbox preventing the host from
 executing commands through its other tools.
@@ -205,7 +192,7 @@ under another name that resolve to the same launcher; do not create a duplicate 
 
 The examples below are for missing registrations, not commands to replay on every installation.
 
-For hosts documenting the `mcpServers` JSON format, this example excludes the `codex` provider:
+For hosts documenting the `mcpServers` JSON format:
 
 ```json
 {
@@ -213,13 +200,13 @@ For hosts documenting the `mcpServers` JSON format, this example excludes the `c
     "agentnave": {
       "command": "/absolute/path/from/uv/tool/dir/bin/agentnave-mcp",
       "args": [],
-      "env": {"AGENTNAVE_EXCLUDED_PROVIDERS": "codex"}
+      "env": {}
     }
   }
 }
 ```
 
-Replace the path and exclusion value for your host. Configuration formats differ; this JSON is an
+Replace the path for your host. Configuration formats differ; this JSON is an
 example for hosts that document this shape, not a universal MCP configuration standard. Preserve
 unrelated server entries. JSON does not expand shell variables. Codex uses its own configuration
 format; register it with the official CLI command below instead of copying this JSON into Codex.
@@ -234,7 +221,7 @@ format; register it with the official CLI command below instead of copying this 
 
 登录 shell 使用固定白名单打印脚本，空 stdin、三秒超时，输出只按变量名和绝对路径解析（同时读取代理与 uv 镜像环境变量），绝不执行；结果缓存至下次“刷新检测”。失败或输出不完整时不自动接管，界面显示 `root_unconfirmed`，可显式接入默认目录或保存根目录。服务定位、安装、升级与版本检查共用缓存的有效 `UV_TOOL_DIR` / `XDG_DATA_HOME`，同一变量优先取 GUI 环境、再取 shell 结果。命令链接目录依次取有效 `UV_TOOL_BIN_DIR`、`XDG_BIN_HOME`、`XDG_DATA_HOME` 的同级 bin、默认目录，并与工具环境目录及探测到的代理／uv 镜像变量一起显式传给 uv；更新检查与下载同样优先使用探测到的代理。App 内置同版本预构建 wheel，安装或升级本机服务（含从已下载的更新包中提取目标版本 wheel）直接由本地 wheel 安装，在已有旧版服务且联网解析失败时自动尝试 `--offline` 复用本机缓存。首次目录探测完成前不安装；重启后的自动升级仅等待三秒超时的 shell 目录探测，目录快照使用独立缓存，完整宿主刷新与接管在后台运行，不阻塞升级。App 不编辑 shell 配置。GET 不写文件、不运行探测。
 
-启动、刷新检测及安装成功后只接管已有条目：补宿主标识，统一运行时就绪后修复缺失的统一命令；保留原参数、环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入；接入成功时把它对应的 CLI 加为员工（[ADR-0054](adr/0054-members-need-confirmation.md)），其他 CLI 要在「员工」里确认后才能被派发；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，DeepSeek Harness 桌面 App 已通过真实调用 `list_members` 与 `start_agent` 验收，均标为已实测；ZCode Desktop 已用手写条目通过真实调用 `list_members` 验收，尚未经 App 接管验收，仍标为未实测。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
+启动、刷新检测及安装成功后只接管已有条目：补宿主标识，去掉 `AGENTNAVE_EXCLUDED_PROVIDERS` 中排除宿主自身的遗留项，统一运行时就绪后修复缺失的统一命令；保留原参数、其他环境、启停与工具过滤。完好但未接管的条目为 connected，另标 `has_host_env=false`。裸命令优先按条目自己的 PATH 解析；无法确定为 unknown，不替换。新增宿主需显式接入；接入成功时把它对应的 CLI 加为员工（[ADR-0054](adr/0054-members-need-confirmation.md)），其他 CLI 要在「员工」里确认后才能被派发；孤留条目需显式移除。Codex、Claude Code、CodeBuddy、Grok、Antigravity（agy）、Pi 和 Hermes 已通过 App 接管及宿主真实调用 `describe_provider` 验收，WorkBuddy 桌面 GUI 已通过真实调用 `list_members` 验收，DeepSeek Harness 桌面 App 已通过真实调用 `list_members` 与 `start_agent` 验收，均标为已实测；ZCode Desktop 已用手写条目通过真实调用 `list_members` 验收，尚未经 App 接管验收，仍标为未实测。WorkBuddy 桌面会停用配置改动后的 MCP 条目，接入或接管后须在其“自定义连接器 › MCP 服务管理”里点“信任”，App 的结果提示会注明。接入配置变化时，已在运行的会话需要重开才会生效；需要时宿主卡片会提示具体方式，没有提示就无需操作。接管验收不代表所有模型或宿主版本都可用。
 
 十一个宿主全部由 App 定点编辑文件，不调用宿主 CLI 写配置。接管只编辑变更字段：JSON/JSONC 保留原键序与对象缩进，TOML 保留表的位置和原键序并在表末尾追加新键，Hermes 在块式 env 中按原缩进追加标识，DeepSeek Harness 只增删自己的 `- insert:` 列表项；新建条目采用现有缩进风格的可读块。读取字节与哈希后在内存编辑、暂存；替换前重读比较，变化时基于最新内容重做，最多三次，仍冲突报 conflict。替换前备份至 App 数据目录 backups/，宿主配置文件与 Skill 文件分开计数，各保留最近 30 份。写后重新解析并校验其他语义不变；仅当文件仍等于本次写入字节才回滚，否则保留外部新内容并报 conflict。替换前比对与 rename 之间仍有极短竞态窗口，不能保证跨应用的完整事务。
 
@@ -280,25 +267,24 @@ App 在接入与刷新已有用户级 AgentNave 条目时，将工具超时补�
 ### Codex
 
 ```bash
-codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- "$AGENTNAVE_MCP"
+codex mcp add agentnave -- "$AGENTNAVE_MCP"
 codex mcp get agentnave
 ```
 
 PowerShell uses the same Codex interface with the Windows launcher variable:
 
 ```powershell
-codex mcp add agentnave --env AGENTNAVE_EXCLUDED_PROVIDERS=codex -- $AgentNaveMcp
+codex mcp add agentnave -- $AgentNaveMcp
 codex mcp get agentnave
 ```
 
-Start a new session and confirm the eleven tools and the `codex` exclusion.
+Start a new session and confirm the eleven tools.
 Reference: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
 ### Claude Code
 
 ```bash
-claude mcp add agentnave --transport stdio --scope user \
-  --env AGENTNAVE_EXCLUDED_PROVIDERS=claude -- "$AGENTNAVE_MCP"
+claude mcp add agentnave --transport stdio --scope user -- "$AGENTNAVE_MCP"
 claude mcp get agentnave
 ```
 
@@ -309,8 +295,7 @@ Reference: [Claude Code MCP](https://code.claude.com/docs/en/mcp).
 CodeBuddy Code's native command manages its CLI registration:
 
 ```bash
-codebuddy mcp add agentnave --transport stdio --scope user \
-  --env AGENTNAVE_EXCLUDED_PROVIDERS=codebuddy -- "$AGENTNAVE_MCP"
+codebuddy mcp add agentnave --transport stdio --scope user -- "$AGENTNAVE_MCP"
 codebuddy mcp get agentnave
 ```
 
@@ -321,13 +306,12 @@ directory. With the CLI configured to use `~/.workbuddy`, these were respectivel
 `~/.workbuddy/.mcp.json` and `~/.workbuddy/mcp.json`. Preserve `CODEBUDDY_CONFIG_DIR` when
 configured; WorkBuddy's own root follows `WORKBUDDY_CONFIG_DIR`. Do not copy this machine's override as a universal default. Use WorkBuddy's MCP
 settings to locate and edit its effective entry, preserving other servers and environment values.
-Use the `codebuddy` exclusion for both hosts and restart each connection separately.
+Restart each host's connection separately.
 
 ### Grok CLI
 
 ```bash
-grok mcp add agentnave --scope user --transport stdio \
-  --env AGENTNAVE_EXCLUDED_PROVIDERS=grok -- "$AGENTNAVE_MCP"
+grok mcp add agentnave --scope user --transport stdio -- "$AGENTNAVE_MCP"
 grok mcp list
 ```
 
@@ -336,7 +320,7 @@ can override the effective entry. Recheck `grok mcp add --help` for the installe
 
 ### Antigravity
 
-Use Antigravity's MCP settings to register the launcher and the `antigravity` exclusion.
+Use Antigravity's MCP settings to register the launcher.
 The checked CLI version 1.1.27 uses the shared MCP configuration at
 `~/.gemini/config/mcp_config.json`. Verify the effective path in the installed product before
 editing it; preserve sibling entries. Restart the MCP connection and check discovery from a
@@ -345,7 +329,7 @@ new host session rather than treating the existence of the file as proof of load
 ### Hermes
 
 ```bash
-hermes mcp add agentnave --command "$AGENTNAVE_MCP" --env AGENTNAVE_EXCLUDED_PROVIDERS=
+hermes mcp add agentnave --command "$AGENTNAVE_MCP"
 hermes mcp test agentnave
 ```
 
@@ -410,10 +394,9 @@ boss tool calls. This host configuration does not change its permission mode.
 
 ### Other hosts
 
-Use the host's documented MCP registration interface. Configure the absolute command, empty
-arguments, and the appropriate exclusion environment value. For CodeBuddy Code, Grok CLI, or
-Antigravity hosts, use the corresponding value from the table above. These are configuration
-requirements, not claims that every host/version combination has been live-tested.
+Use the host's documented MCP registration interface. Configure the absolute command and empty
+arguments. These are configuration requirements, not claims that every host/version combination
+has been live-tested.
 
 ## 4. Install the matching Skill
 
@@ -536,11 +519,11 @@ not as part of a release. Keep the installed runtime's stable launcher registrat
 
 boss 先调用 `list_members`，按 task／discussion 模式的组员及说明选择，再用 `list_members(provider=...)` 核对该 CLI 的允许状态与参数。App 将默认值存于数据根（`AGENTNAVE_DATA_DIR`，默认 `~/.agentnave`）下的 `members.json`；服务每次调用现读，未传的 model／effort／options 自动补齐并在 `defaults_applied` 中注明。显式参数优先，但超出模式范围会拒绝。未配置字段继续继承 CLI 原生设置，其中档位由服务按 CLI 自身设置显式传入并注明 `effort (CLI default)`；要请求完全原生的对应字段，须同时移除 App 默认值，单纯省略调用参数并不跳过默认值。
 
-配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 11 个。已有 PATH 与排除环境变量不需改写。
+配置文件缺失时保留原有行为、不创建目录；损坏时返回明确错误，需在 App 修复。工具为 11 个。已有 PATH 不需改写；排除宿主自身的遗留排除项由 App 自动去掉。
 
 After registration or upgrade:
 
-1. Use the host's MCP list/get interface to verify the command and exclusion environment.
+1. Use the host's MCP list/get interface to verify the command and environment.
 2. Restart the server/session and confirm `start_agent`, `wait`, `answer_prompt`, `cancel`, `list`,
    `list_members`, `clear_provider_cooldown`, `run_round`, `decide_answers`, `handover` and
    `read_conversation` are visible (11 total).

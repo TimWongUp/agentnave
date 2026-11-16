@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import queue
+import stat
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,8 @@ _STALE_CONNECTION_SECONDS = 3600.0
 _FAULT_RETENTION_SECONDS = 86400.0
 # A host that closes as the server exits has its EOF handled a moment after the server's.
 _HOST_EOF_GRACE_SECONDS = 1.0
+# A relay killed between writing and replacing leaves its staging file; pruning finds it by name.
+_STAGING_PREFIX = ".tmp-"
 SESSION_ENV = "AGENTNAVE_MANAGER_SESSION"
 STARTED_ENV = "AGENTNAVE_MANAGER_STARTED_AT"
 # 2026-07-28 and later hosts skip initialize; every request carries this envelope instead.
@@ -106,11 +109,16 @@ def _dispatched(value: str | None) -> bool:
 
 
 def _prune_connections(directory: Path, max_age: float = _STALE_CONNECTION_SECONDS) -> None:
-    """Remove observations of relays that died without deleting their own file."""
+    """Remove observations of relays that died without deleting their own file, and staging
+    files a relay killed mid-write left behind (older relays named them tmp*)."""
     with contextlib.suppress(OSError):
-        for path in directory.glob("*.json"):
+        for path in directory.iterdir():
+            name = path.name
+            if not (name.endswith(".json") or name.startswith((_STAGING_PREFIX, "tmp"))):
+                continue
             with contextlib.suppress(OSError):
-                if time.time() - path.stat().st_mtime > max_age:
+                status = path.lstat()
+                if stat.S_ISREG(status.st_mode) and time.time() - status.st_mtime > max_age:
                     path.unlink(missing_ok=True)
 
 
@@ -360,7 +368,9 @@ class Relay:
                 return
             path.parent.mkdir(parents=True, exist_ok=True)
             _prune_connections(path.parent, _FAULT_RETENTION_SECONDS)
-            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent, prefix=_STAGING_PREFIX, delete=False
+            ) as output:
                 temporary = Path(output.name)
                 try:
                     output.write(json.dumps(payload).encode())
@@ -407,7 +417,9 @@ class Relay:
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 _prune_connections(path.parent)  # once, as this relay first publishes
-            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent, prefix=_STAGING_PREFIX, delete=False
+            ) as output:
                 temporary = Path(output.name)
                 try:
                     output.write(body)

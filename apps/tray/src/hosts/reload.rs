@@ -190,6 +190,20 @@ impl Hosts {
         }
         receipts
     }
+    /// The latest start of this row's connections that loaded their tools: one running now, or
+    /// one that closed normally with the tools it was given (ADR-0096).
+    pub(super) fn healthy_since(&self, host: &Host) -> Option<u64> {
+        let receipts = self.receipts(host, SystemTime::now(), None);
+        let closed = receipts.ended.iter().filter(|c| {
+            valid_hash(&c["runtime_tools_hash"]) && c["runtime_tools_hash"] == c["host_tools_hash"]
+        });
+        receipts
+            .live
+            .iter()
+            .chain(closed)
+            .filter_map(|c| c["started_ms"].as_u64())
+            .max()
+    }
     /// A missing or reused PID only excludes an old blocker; it never proves tools loaded.
     fn receipt_process_exited(&self, path: &Path, value: &Value, modified: SystemTime) -> bool {
         let Some(pid) = receipt_pid(path) else {
@@ -380,6 +394,15 @@ pub(super) fn read_receipt(
     legacy_unambiguous: bool,
     max_age: u64,
 ) -> Option<(u64, SystemTime, Value)> {
+    read_record(entry, now, max_age).filter(|(_, _, value)| owns(value, host, legacy_unambiguous))
+}
+
+/// A private, size-limited relay record no older than `max_age` seconds, whoever wrote it.
+pub(super) fn read_record(
+    entry: &fs::DirEntry,
+    now: SystemTime,
+    max_age: u64,
+) -> Option<(u64, SystemTime, Value)> {
     let path = entry.path();
     if path.is_symlink() || path.extension().is_none_or(|ext| ext != "json") {
         return None;
@@ -391,15 +414,17 @@ pub(super) fn read_receipt(
         return None;
     }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
+    (value["version"] == 1 && value["dispatched"] != true).then_some((age, modified, value))
+}
+
+/// Whether a boss's relay wrote this record for this row; an unlabelled one can only belong to
+/// the boss's sole row.
+pub(super) fn owns(value: &Value, host: &Host, legacy_unambiguous: bool) -> bool {
     let matching_row = match value["host_app"].as_str() {
         Some(id) => id == host.id,
         None => legacy_unambiguous && host.id == host.boss,
     };
-    (value["version"] == 1
-        && value["host"] == host.boss
-        && matching_row
-        && value["dispatched"] != true)
-        .then_some((age, modified, value))
+    value["host"] == host.boss && matching_row
 }
 
 fn receipt_pid(path: &Path) -> Option<u32> {
