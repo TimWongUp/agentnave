@@ -828,17 +828,16 @@ class InvocationManager:
     def _settle_session(
         self, record: _InvocationRecord, result: InvocationResult
     ) -> InvocationResult:
-        """Reject a new task whose CLI returned another concurrent task's native session."""
+        """Reject a task whose CLI returned another concurrent task's native session."""
         record.end_seq = self._next_seq()
         session_id = result.session_id
         if (
-            record.request.session_id is None
-            and session_id
-            and result.status is not InvocationStatus.CANCELLED
+            session_id
+            and session_id != record.request.session_id
             and self._has_overlapping_session(record, session_id)
         ):
             record.session_id = None
-            if result.status is InvocationStatus.FAILED:
+            if result.status in (InvocationStatus.FAILED, InvocationStatus.CANCELLED):
                 return replace(result, session_id=None)
             return replace(
                 result,

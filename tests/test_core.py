@@ -2003,7 +2003,7 @@ async def test_concurrent_new_task_rejects_foreign_session_without_affecting_val
             prepared=claude_cmd("resumed output", "shared-session", resume_gate),
         )
         hijacker = manager.start(
-            InvocationRequest("claude", "hijack", tmp_path),
+            InvocationRequest("claude", "hijack", tmp_path, "other-session"),
             prepared=claude_cmd("hijacked output", "shared-session"),
         )
         hijacker_result = await asyncio.wait_for(manager.wait(hijacker), 10)
