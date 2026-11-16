@@ -14,11 +14,9 @@ from agentnave.isolated.leases import (
     repo_lock,
 )
 from agentnave.isolated.release import (
-    ChangeSummary,
     complete_deletion_locked,
     inspect_ready_locked,
     rollback_creating_locked,
-    summarize_record_changes,
 )
 from agentnave.isolated.repo import (
     WORKTREES_DIR_NAME,
@@ -41,6 +39,7 @@ from agentnave.isolated.store import (
     WorktreeStore,
     local_machine_id,
 )
+from agentnave.isolated.summary import ChangeSummary, summarize_record_changes
 from agentnave.isolated.worktree_state import worktree_link_valid
 from agentnave.store import now
 
@@ -241,7 +240,6 @@ def plan_rebuild(
         run_git(
             ["cat-file", "-e", f"{base_oid}^{{commit}}"],
             cwd=ctx.main_root,
-            extra_env={"GIT_NO_LAZY_FETCH": "1"},
         )
     except IsolationError as exc:
         raise IsolationError(

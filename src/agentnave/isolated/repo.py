@@ -127,6 +127,7 @@ _NO_FILTER_COMMANDS = frozenset(
         "ls-tree",
         "cat-file",
         "update-ref",
+        "rev-list",
     }
 )
 _FILTER_PROPS_EMPTY = ("clean", "smudge", "process")
@@ -198,14 +199,15 @@ def run_git(
     """Run git as an argument array without a shell, bounded in time and output size.
 
     Every call neutralizes repository-configured executables: fsmonitor, hooks, external diff
-    programs and every filter driver (clean, smudge, process) in the effective configuration,
-    whatever the attribute files say. Pass disable_hooks=False only for commands that read hook
-    configuration.
+    programs, signature verification (gpg.program), promisor lazy fetches and every filter driver
+    (clean, smudge, process) in the effective configuration, whatever the attribute files say.
+    Pass disable_hooks=False only for commands that read hook configuration.
     """
     cmd = ["git", "-C", str(cwd), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true"]
     # Never recurse into submodules or nested repositories, whose own config would run there.
     for item in (
         "diff.ignoreSubmodules=all",
+        "log.showSignature=false",
         "status.submoduleSummary=false",
         "submodule.recurse=false",
     ):
@@ -232,6 +234,8 @@ def run_git(
     ):
         env.pop(name, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # A partial clone would otherwise fetch missing objects from its promisor remote.
+    env["GIT_NO_LAZY_FETCH"] = "1"
     if extra_env:
         env.update(extra_env)
     try:
@@ -377,7 +381,6 @@ def resolve_target_commit(ctx: RepoContext, ref: str | None) -> str:
     out = run_git(
         ["rev-parse", "--verify", "--end-of-options", f"{target}^{{commit}}"],
         cwd=ctx.source_root,
-        extra_env={"GIT_NO_LAZY_FETCH": "1"},
     ).stdout.strip()
     oid = out.decode("ascii", errors="replace")
     if not _OID_RE.fullmatch(oid):
@@ -391,12 +394,7 @@ def check_tree_and_filters(ctx: RepoContext, base_oid: str) -> bool:
     Filters are looked up in every place Git reads attributes from, because checkout and status
     run any configured smudge/clean command. When a source cannot be read, isolation is refused.
     """
-    no_fetch = {"GIT_NO_LAZY_FETCH": "1"}
-    tree = run_git(
-        ["ls-tree", "-r", "-z", "--full-tree", base_oid],
-        cwd=ctx.main_root,
-        extra_env=no_fetch,
-    ).stdout
+    tree = run_git(["ls-tree", "-r", "-z", "--full-tree", base_oid], cwd=ctx.main_root).stdout
     for entry in tree.split(b"\x00"):
         if entry.startswith(b"160000 "):
             raise IsolationError(
@@ -415,7 +413,6 @@ def check_tree_and_filters(ctx: RepoContext, base_oid: str) -> bool:
 
 def _attribute_texts(ctx: RepoContext, base_oid: str) -> str:
     """Text of every attribute source Git may consult for the target tree and source worktree."""
-    no_fetch = {"GIT_NO_LAZY_FETCH": "1"}
     if os.environ.get("GIT_ATTR_SOURCE"):
         raise IsolationError("GIT_ATTR_SOURCE is set; attribute sources cannot be verified")
     attr_tree = run_git(
@@ -429,13 +426,11 @@ def _attribute_texts(ctx: RepoContext, base_oid: str) -> str:
             ["grep", "-h", "-e", "filter=", base_oid, *pathspec],
             cwd=ctx.source_root,
             allowed_exit_codes=(0, 1),
-            extra_env=no_fetch,
         ).stdout,
         run_git(
             ["grep", "-h", "--untracked", "-e", "filter=", *pathspec],
             cwd=ctx.source_root,
             allowed_exit_codes=(0, 1),
-            extra_env=no_fetch,
         ).stdout,
     ]
     for path in _attribute_files(ctx):
@@ -680,7 +675,7 @@ def add_worktree_locked(
     return git_dir
 
 
-_CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1", "GIT_NO_LAZY_FETCH": "1"}
+_CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1"}
 
 
 def check_out(worktree_path: Path, base_oid: str) -> None:

@@ -25,13 +25,10 @@ from agentnave.isolated.prompts import (
     isolation_instructions,
 )
 from agentnave.isolated.release import (
-    MAX_SUMMARY_FILES,
-    ChangeSummary,
     RecoveryOutcome,
     RecoveryStatus,
     ReleaseResult,
     ReleaseStatus,
-    SummaryStatus,
 )
 from agentnave.isolated.repo import (
     WORKTREES_DIR_NAME,
@@ -48,6 +45,7 @@ from agentnave.isolated.store import (
     IsolationState,
     WorktreeStore,
 )
+from agentnave.isolated.summary import MAX_SUMMARY_FILES, ChangeSummary, SummaryStatus
 
 __all__ = [
     "ChangeSummary",

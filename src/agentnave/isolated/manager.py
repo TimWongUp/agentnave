@@ -23,14 +23,11 @@ from agentnave.isolated.leases import (
     repo_lock,
 )
 from agentnave.isolated.release import (
-    ChangeSummary,
     RecoveryOutcome,
     ReleaseResult,
     recover_record,
     release_isolated_dir,
     rollback_creating_locked,
-    summarize_record_changes,
-    summarize_unregistered,
 )
 from agentnave.isolated.repo import (
     WORKTREES_DIR_NAME,
@@ -60,6 +57,11 @@ from agentnave.isolated.store import (
     IsolationState,
     WorktreeStore,
     local_machine_id,
+)
+from agentnave.isolated.summary import (
+    ChangeSummary,
+    summarize_record_changes,
+    summarize_unregistered,
 )
 from agentnave.isolated.worktree_state import worktree_link_valid
 from agentnave.members import data_root

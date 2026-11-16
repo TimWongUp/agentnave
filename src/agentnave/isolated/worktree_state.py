@@ -6,6 +6,7 @@ import hashlib
 import os
 import shutil
 import stat
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
@@ -69,7 +70,11 @@ def foreign_link_valid(wt_path: Path) -> bool:
 
 
 def nested_repositories(wt_path: Path, status_raw: bytes) -> list[str]:
-    """Gitlinks and untracked nested repositories, found without starting Git inside them."""
+    """Gitlinks and nested repositories anywhere in the tree, found without starting Git in them.
+
+    The walk covers tracked, untracked and ignored directories alike: `status` does not list a
+    repository inside a tracked directory, nor a bare repository, nor an ignored one.
+    """
     nested: set[str] = set()
     listing = run_git(["ls-files", "-s", "-z"], cwd=wt_path).stdout
     for item in listing.split(b"\x00"):
@@ -78,77 +83,51 @@ def nested_repositories(wt_path: Path, status_raw: bytes) -> list[str]:
     for token in status_raw.split(b"\x00"):
         if token.startswith(b"? ") and token.endswith(b"/"):
             nested.add(decode_git_path(token[2:]).rstrip("/"))
-    ignored, found = _ignored_nested_repositories(wt_path)
-    nested.update(found)
-    nested.update(_unreadable_directories(wt_path, ignored))
+    nested.update(_walk_nested(wt_path))
     return sorted(nested)
 
 
-def _unreadable(wt_path: Path, found: set[str]) -> Callable[[OSError], None]:
-    def record(error: OSError) -> None:
-        # A directory that cannot be searched may hold a repository: ask, do not assume.
-        if error.filename is not None:
-            found.add(Path(error.filename).relative_to(wt_path).as_posix())
+def _walk_nested(wt_path: Path) -> set[str]:
+    """Directories holding a .git entry or a bare repository layout, and unreadable directories.
 
-    return record
-
-
-def _unreadable_directories(wt_path: Path, ignored: set[Path]) -> set[str]:
-    """Directories outside the ignored ones that cannot be read: `status` only warns on them."""
+    Breadth first, never following links and never descending into a repository found. Names
+    compare without case: Git finds `.Git` on case-insensitive file systems.
+    """
     found: set[str] = set()
-    for top, dirs, _ in os.walk(wt_path, onerror=_unreadable(wt_path, found)):
-        here = Path(top)
-        dirs[:] = [
-            d
-            for d in dirs
-            if d != ".git" and not (here / d).is_symlink() and here / d not in ignored
-        ]
-    return found
-
-
-def _ignored_nested_repositories(wt_path: Path) -> tuple[set[Path], set[str]]:
-    """Ignored directories, and the repositories inside them, which `status` never lists."""
-    found: set[str] = set()
-    ignored: set[Path] = set()
-    listing = run_git(
-        ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-        cwd=wt_path,
-    ).stdout
-    unreadable = _unreadable(wt_path, found)
-    checked_parents: set[Path] = set()
-
-    for item in listing.split(b"\x00"):
-        if not item.endswith(b"/"):
+    pending = deque([wt_path])
+    while pending:
+        directory = pending.popleft()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            # A directory that cannot be searched may hold a repository: ask, do not assume.
+            found.add(directory.relative_to(wt_path).as_posix())
             continue
-        root = wt_path / decode_git_path(item).rstrip("/")
-        ignored.add(root)
-        # Rules such as `build/**` with `!build/**/` list only leaf directories, so a
-        # repository can sit in a parent that no walk below starts from.
-        for parent in root.parents:
-            if parent == wt_path or parent in checked_parents:
-                break
-            checked_parents.add(parent)
-            if _repository_dir(parent):
-                found.add(parent.relative_to(wt_path).as_posix())
-        for top, dirs, names in os.walk(root, onerror=unreadable):
-            if ".git" in names or ".git" in dirs or _bare_repository(names, dirs):
-                found.add(Path(top).relative_to(wt_path).as_posix())
-                dirs.clear()
-            else:
-                dirs[:] = [d for d in dirs if not (Path(top) / d).is_symlink()]
-    return ignored, found
-
-
-def _bare_repository(names: list[str], dirs: list[str]) -> bool:
-    """A bare repository has no .git entry, only its own HEAD, objects and refs."""
-    return "HEAD" in names and "objects" in dirs and "refs" in dirs
-
-
-def _repository_dir(path: Path) -> bool:
-    """The walk's test for one directory: it holds .git, or is a bare repository."""
-    return os.path.lexists(path / ".git") or (
-        (path / "HEAD").is_file() and (path / "objects").is_dir() and (path / "refs").is_dir()
-    )
+        subdirs: list[Path] = []
+        dir_names: set[str] = set()
+        file_names: set[str] = set()
+        has_dotgit = False
+        for entry in entries:
+            name = entry.name.lower()
+            if name == ".git":
+                has_dotgit = True
+                continue
+            try:
+                if entry.is_symlink() or entry.is_junction():
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    subdirs.append(Path(entry.path))
+                    dir_names.add(name)
+                elif entry.is_file(follow_symlinks=False):
+                    file_names.add(name)
+            except OSError:
+                continue
+        bare = "head" in file_names and {"objects", "refs"} <= dir_names
+        if directory != wt_path and (has_dotgit or bare):
+            found.add(directory.relative_to(wt_path).as_posix())
+        else:
+            pending.extend(subdirs)
+    return found
 
 
 def tree_fingerprint(root: Path) -> bytes:
