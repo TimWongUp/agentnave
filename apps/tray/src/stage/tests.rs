@@ -176,6 +176,7 @@ fn a_running_seat_works_in_its_own_directory() {
         path: "/r/.agentnave-worktrees/a".into(),
         branch: "agentnave/a".into(),
         ready: true,
+        attention: None,
         id: "a".into(),
         created: String::new(),
     }];
