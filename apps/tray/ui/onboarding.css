@@ -40,6 +40,13 @@
   font-size: 14px;
   font-weight: 600;
 }
+.onboarding .ob-about {
+  max-width: none;
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
 .ob-skip {
   flex: none;
   background: transparent;

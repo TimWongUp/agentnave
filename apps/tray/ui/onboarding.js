@@ -243,6 +243,14 @@
         h("h2", { id: "ob-title" }, L("上手清单", "Getting started")),
         skip,
       ),
+      h(
+        "p.ob-about",
+        {},
+        L(
+          "AgentNave 本身不是 Agent，也不在这里聊天。你照常在 Claude Code、Codex 等应用里和 boss 对话，boss 通过 AgentNave 的 MCP 服务派活、开会；这个 App 负责设置，并让你看到员工在做什么。",
+          "AgentNave is not an agent, and you don't chat here. Keep talking to your boss in Claude Code, Codex, or another app; the boss dispatches work and runs meetings through the AgentNave MCP service, and this App sets it up and shows what the employees are doing.",
+        ),
+      ),
       h("ol.ob-steps", {}, ...steps.map(stepRow)),
     );
   }
