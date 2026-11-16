@@ -333,6 +333,8 @@ fn make_tree_writable(root: &Path) {
     }
 }
 
+// Making read-only files writable before deleting the tree is the point here.
+#[allow(clippy::permissions_set_readonly_false)]
 fn set_writable(path: &Path) {
     #[cfg(unix)]
     {

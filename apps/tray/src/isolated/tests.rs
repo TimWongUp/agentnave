@@ -105,6 +105,16 @@ fn the_builder_is_found_by_the_registered_id() {
     assert_eq!(items[0]["task"]["text"], "修登录");
 }
 
+/// The resolved path as the service records it: no Windows verbatim prefix, which git rejects.
+fn real(path: &Path) -> std::path::PathBuf {
+    let path = path.canonicalize().unwrap();
+    #[cfg(windows)]
+    if let Some(rest) = path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        return std::path::PathBuf::from(rest);
+    }
+    path
+}
+
 fn git_cmd(cwd: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
@@ -147,13 +157,11 @@ fn setup_worktree_fixture(id: &str) -> RepoFixture {
     fs::write(repo_dir.join("README.md"), "hello\n").unwrap();
     git_cmd(&repo_dir, &["add", ".gitignore", "README.md"]);
     git_cmd(&repo_dir, &["commit", "-m", "initial"]);
-    let main_root = repo_dir.canonicalize().unwrap();
-    let common_dir = std::path::PathBuf::from(git_cmd(
+    let main_root = real(&repo_dir);
+    let common_dir = real(&std::path::PathBuf::from(git_cmd(
         &main_root,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    ))
-    .canonicalize()
-    .unwrap();
+    )));
     let base_oid = git_cmd(&main_root, &["rev-parse", "HEAD"]);
     let branch_name = format!("agentnave/{id}");
     let branch_ref = format!("refs/heads/{branch_name}");
@@ -170,7 +178,7 @@ fn setup_worktree_fixture(id: &str) -> RepoFixture {
             &base_oid,
         ],
     );
-    let wt_path = wt_path.canonicalize().unwrap();
+    let wt_path = real(&wt_path);
     let wt_git_dir = git_cmd(
         &wt_path,
         &["rev-parse", "--path-format=absolute", "--git-dir"],
@@ -508,7 +516,7 @@ fn rollback_checks_container_prunes_missing_dir_and_blocks_deleting_without_oid(
             other_wt.to_str().unwrap(),
         ],
     );
-    let other_wt_real = other_wt.canonicalize().unwrap();
+    let other_wt_real = real(&other_wt);
     Connection::open(fx.root.join(store::NAME))
         .unwrap()
         .execute(
