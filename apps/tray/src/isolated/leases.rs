@@ -109,18 +109,16 @@ fn check_safe_regular(path: &Path) -> Result<(), String> {
     }
 }
 
-/// Check an existing disposable lease file; returns `Ok(false)` when already gone or
-/// delete-pending on Windows so closing/unlinking in another process is not treated as fatal.
+/// Check an existing disposable lease file; returns `Ok(false)` only once it is gone. A Windows
+/// access denial is retried briefly (an owner may be unlinking it) and then fails closed.
 fn check_lease_regular(path: &Path) -> Result<bool, String> {
     for attempt in 0..3 {
         match fs::symlink_metadata(path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
-            Err(e) if cfg!(windows) && e.kind() == io::ErrorKind::PermissionDenied => {
-                if attempt < 2 {
-                    thread::sleep(DELETE_PENDING_RETRY);
-                    continue;
-                }
-                return Ok(false);
+            Err(e)
+                if cfg!(windows) && e.kind() == io::ErrorKind::PermissionDenied && attempt < 2 =>
+            {
+                thread::sleep(DELETE_PENDING_RETRY);
             }
             Err(e) => return Err(e.to_string()),
             Ok(meta) if !plain_entry(&meta) => {
@@ -132,7 +130,7 @@ fn check_lease_regular(path: &Path) -> Result<bool, String> {
             Ok(_) => return Ok(true),
         }
     }
-    Ok(false)
+    unreachable!("the last attempt always returns")
 }
 
 fn state_dir(repo_common_dir: &Path) -> Result<PathBuf, String> {
@@ -188,27 +186,26 @@ fn open_lock(path: &Path, create: bool) -> io::Result<File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
-        // Match db.rs and provider_health.rs: allow concurrent openers and unlink while open.
+        // Match db.rs and provider_health.rs: share read and write, but not delete, while open.
         options.custom_flags(0x0020_0000).share_mode(3);
     }
     options.open(path)
 }
 
-fn is_gone_or_delete_pending(err: &io::Error, create: bool) -> bool {
-    err.kind() == io::ErrorKind::NotFound
-        || (!create && cfg!(windows) && err.kind() == io::ErrorKind::PermissionDenied)
+/// A Windows lease file an owner may be unlinking: worth another look, never proof it is free.
+fn maybe_delete_pending(err: &io::Error, create: bool) -> bool {
+    !create && cfg!(windows) && err.kind() == io::ErrorKind::PermissionDenied
 }
 
+/// `Ok(None)` only when the file is gone; anything uncertain after the retries counts as held.
 fn try_lock_verified(path: &Path, create: bool) -> Result<Option<File>, TryLockError> {
     for _ in 0..5 {
         let file = match open_lock(path, create) {
             Ok(file) => file,
-            Err(e) if is_gone_or_delete_pending(&e, create) => {
-                if cfg!(windows) && !create && e.kind() == io::ErrorKind::PermissionDenied {
-                    thread::sleep(DELETE_PENDING_RETRY);
-                    continue;
-                }
-                return Ok(None);
+            Err(e) if !create && e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if maybe_delete_pending(&e, create) => {
+                thread::sleep(DELETE_PENDING_RETRY);
+                continue;
             }
             Err(e) => return Err(TryLockError::Error(e)),
         };
@@ -221,10 +218,9 @@ fn try_lock_verified(path: &Path, create: bool) -> Result<Option<File>, TryLockE
         let current = match fs::symlink_metadata(path) {
             Ok(meta) if meta.is_file() && plain_entry(&meta) => meta,
             Ok(_) => return Err(TryLockError::Error(io::Error::other("锁不是普通文件"))),
-            Err(e) if is_gone_or_delete_pending(&e, create) => {
-                if cfg!(windows) && !create && e.kind() == io::ErrorKind::PermissionDenied {
-                    thread::sleep(DELETE_PENDING_RETRY);
-                }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) if maybe_delete_pending(&e, create) => {
+                thread::sleep(DELETE_PENDING_RETRY);
                 continue;
             }
             Err(e) => return Err(TryLockError::Error(e)),
@@ -239,9 +235,6 @@ fn try_lock_verified(path: &Path, create: bool) -> Result<Option<File>, TryLockE
         #[cfg(not(unix))]
         let _ = (opened, current);
         return Ok(Some(file));
-    }
-    if !create {
-        return Ok(None);
     }
     Err(TryLockError::WouldBlock)
 }
