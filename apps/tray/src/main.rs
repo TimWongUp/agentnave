@@ -468,6 +468,8 @@ mod tests {
             ("POST", "/app/cli-updates/update"),
             ("POST", "/app/workspaces/handover"),
             ("POST", "/app/workspaces/cancel-handover"),
+            ("POST", "/app/isolated/inspect"),
+            ("POST", "/app/isolated/delete"),
             ("DELETE", "/app/chats/x"),
             ("DELETE", "/settings/members"),
         ] {

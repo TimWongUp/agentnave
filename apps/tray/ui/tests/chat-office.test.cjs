@@ -204,6 +204,7 @@ test("the same character stays off the wall across model variants and reappears 
 
 function auditUI(english = false) {
   const cancelled = [];
+  const deletedIsolated = [];
   const h = (tag, attributes = {}, ...children) => ({
     tag, attributes, children: children.flat(Infinity).filter(x => x != null && x !== false), dataset: {}, listeners: {}, textContent: "",
     replaceChildren(...items) { this.children = items; },
@@ -212,7 +213,7 @@ function auditUI(english = false) {
   });
   const AN = common(english);
   const context = vm.createContext({
-    AN, Actions: { cancelHandover: id => cancelled.push(id) }, state: { peers: new Set(), expanded: new Set() }, h,
+    AN, Actions: { cancelHandover: id => cancelled.push(id), deleteIsolated: (group, d) => deletedIsolated.push([group, d.id]) }, state: { peers: new Set(), expanded: new Set() }, h,
     L: (zh, en) => english ? en : zh,
     ART: { version: () => 1, character: () => "claude", head: () => h("img") },
     deskChar: () => "claude",
@@ -227,7 +228,7 @@ function auditUI(english = false) {
   vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), context);
   const ctx = { c: {}, desks: new Map(), rooms: new Map() };
   return {
-    AN, cancelled, context,
+    AN, cancelled, deletedIsolated, context,
     show(approval, existing) {
       const m = { id: "audit", kind: "approval", approval, time: "2026-11-05T00:00:00Z", speaker: { role: "member", provider: "claude" } };
       const rec = existing || context.createMessage(m);
@@ -720,4 +721,29 @@ test("pending handover card shows takeover command, copy, and cancel only while 
   const enNext = enCard.children.find(n => n?.tag === "div.tp-handover-next");
   assert.equal(enNext.children[0].children[0], "In a new chat with any boss, say:");
   assert.equal(enNext.children[1].children[0], 'Take over AgentNave workspace "Release" (s-abc)');
+});
+
+test("isolated directory cards disable delete while in use and trigger deletion when idle or unfinished", () => {
+  const ui = auditUI();
+  const ctx = { c: { group: "s-iso" }, desks: new Map(), rooms: new Map() };
+  const using = ui.context.isolatedCard({ id: "wt-1", branch: "agentnave/wt-1", path: "/repo/.agentnave-worktrees/wt-1", status: "using", in_use: true }, ctx);
+  const usingBtn = using.children[0].children[1].children[1];
+  assert.equal(usingBtn.attributes.disabled, true);
+  assert.equal(usingBtn.listeners.click, undefined);
+
+  const idle = ui.context.isolatedCard({ id: "wt-2", branch: "agentnave/wt-2", path: "/repo/.agentnave-worktrees/wt-2", status: "idle", in_use: false }, ctx);
+  const idleBtn = idle.children[0].children[1].children[1];
+  assert.equal(idleBtn.attributes.disabled, false);
+  assert.equal(idleBtn.children[0], "删除");
+  idleBtn.listeners.click();
+
+  const unfinished = ui.context.isolatedCard({ id: "wt-3", branch: "agentnave/wt-3", path: "/repo/.agentnave-worktrees/wt-3", status: "unfinished", attention: "hook err" }, ctx);
+  const unfinishedBtn = unfinished.children[0].children[1].children[1];
+  assert.equal(unfinishedBtn.attributes.disabled, false);
+  unfinishedBtn.listeners.click();
+  assert.deepEqual(ui.deletedIsolated, [["s-iso", "wt-2"], ["s-iso", "wt-3"]]);
+
+  const en = auditUI(true);
+  const enIdle = en.context.isolatedCard({ id: "wt-2", branch: "agentnave/wt-2", path: "/repo/.agentnave-worktrees/wt-2", status: "idle" }, ctx);
+  assert.equal(enIdle.children[0].children[1].children[1].children[0], "Delete");
 });

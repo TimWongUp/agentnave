@@ -101,6 +101,9 @@ impl Reader {
         ) {
             return crate::manage::request(&self.root, method, path, action, body);
         }
+        if matches!(path, "/app/isolated/inspect" | "/app/isolated/delete") {
+            return crate::isolated::request(&self.root, method, path, action, body);
+        }
         if method != "GET" {
             return Response::error(405, "此路由只接受 GET");
         }

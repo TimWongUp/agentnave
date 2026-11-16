@@ -260,6 +260,99 @@ const Actions = {};
     await remove([title], all.filter((i) => i.id === id), L(`会议“${title}”`, `meeting "${title}"`));
   }
 
+  // ---- delete isolated directory ----------------------------------------------------------
+  function isolatedConfirmBody(info) {
+    const items = [];
+    const target = info.branch ? `${info.branch} · ${info.path}` : info.path;
+    items.push(h("p.act-note", {}, target));
+    if (info.missing_dir) {
+      items.push(h("p.act-note", {}, L("目录已不在磁盘上。确认后将清理残留的受管分支和登记记录。", "The directory is no longer on disk. Confirming cleans up the remaining managed branch and registry entry.")));
+    } else if (info.rollback_only) {
+      items.push(h("p.act-note", {}, L("这个目录上次创建或回滚未完成。确认后将尝试删除残留目录、受管分支和登记记录，目录里被 git 忽略的文件也会一并丢弃；若目录内已有未提交改动则会保留并说明原因。", "Creation or rollback of this directory did not finish. Confirming attempts to remove the leftover directory, managed branch, and registry entry, discarding any Git-ignored files; if uncommitted changes exist, the directory will be kept and the reason shown.")));
+    } else {
+      items.push(h("p.act-note", {}, L("将永久删除这个隔离目录、受管分支和登记记录；目录里被 git 忽略的文件（如依赖或构建缓存）也会一并丢弃，无法恢复。", "Permanently deletes this isolated directory, its managed branch, and its registry entry. Any Git-ignored files inside (such as dependencies or build caches) will also be discarded and cannot be recovered.")));
+    }
+    if (info.attention) {
+      items.push(h("p.act-note.warn", {}, L(`上次清理未完成：${info.attention}`, `Last cleanup failed: ${info.attention}`)));
+    }
+    if (info.orphan) {
+      items.push(h("p.act-note.warn", {}, L("该目录已不是有效的 git worktree，确认后将直接删除目录内的剩余文件（不做 git 检查）。", "This directory is no longer a valid Git worktree. Confirming deletes all remaining files inside without Git inspection.")));
+    } else if (info.uncommitted) {
+      const files = info.uncommitted_files || [];
+      const total = info.uncommitted_total || files.length;
+      items.push(h("p.act-note.warn", {}, total
+        ? L(`有 ${total} 处未提交的源码改动或未跟踪文件：`, `Contains ${total} uncommitted source change(s) or untracked file(s):`)
+        : L("存在未提交的源码改动或未跟踪文件。", "Contains uncommitted source changes or untracked files.")));
+      if (files.length) {
+        const list = files.map((f) => h("li", {}, f));
+        if (total > files.length) list.push(h("li", {}, L(`……其余 ${total - files.length} 项`, `…and ${total - files.length} more`)));
+        items.push(h("ul.act-list", {}, list));
+      }
+    }
+    if (info.unique_commits) {
+      const commits = info.unmerged_commits || [];
+      const total = info.unmerged_total || commits.length;
+      items.push(h("p.act-note.warn", {}, total
+        ? L(`受管分支上有 ${total} 个尚未合入其他分支的提交：`, `Managed branch has ${total} commit(s) not merged into any other branch:`)
+        : L("受管分支当前提交尚未合入其他本地或远程分支。", "The managed branch commit is not merged into any other local or remote branch.")));
+      if (commits.length) {
+        const list = commits.map((c) => h("li", {}, c));
+        if (total > commits.length) list.push(h("li", {}, L(`……其余 ${total - commits.length} 个`, `…and ${total - commits.length} more`)));
+        items.push(h("ul.act-list", {}, list));
+      }
+    }
+    if (info.nested_repos?.length) {
+      items.push(h("p.act-note.warn", {}, L(`目录内包含未检查内容的嵌套仓库：${info.nested_repos.join("、")}`, `Contains nested repositories whose contents were not checked: ${info.nested_repos.join(", ")}`)));
+    }
+    if (info.reason) {
+      items.push(h("p.act-note.warn", {}, L("目录状态在确认期间发生变化，请核对以上最新情况后再确认。", "The directory state changed before deletion. Review the updated details above before confirming.")));
+    }
+    return items;
+  }
+
+  async function deleteIsolated(group, dir, button) {
+    if (!group || !dir?.id) return;
+    if (button) button.disabled = true;
+    let info;
+    try {
+      info = await AN.post("/app/isolated/inspect", { id: dir.id, workspace: group });
+    } catch (error) {
+      if (button) button.disabled = false;
+      say(error.message || L("无法检查隔离目录", "Failed to inspect isolated directory"), true);
+      return;
+    }
+    if (button) button.disabled = false;
+    if (info.status !== "confirm") {
+      say(info.reason || info.message || L("暂时不能删除这个隔离目录", "Cannot delete this isolated directory right now"), true);
+      await refresh();
+      return;
+    }
+    while (true) {
+      const answer = await ask({
+        title: L("删除隔离目录？", "Delete isolated directory?"),
+        body: isolatedConfirmBody(info),
+        buttons: [{ label: L("取消", "Cancel") }, { label: L("删除", "Delete"), danger: true, primary: true, value: "delete" }],
+      });
+      if (!answer) return;
+      try {
+        const result = await AN.post("/app/isolated/delete", { id: dir.id, workspace: group, confirmation: info.confirmation });
+        if (result.status === "confirmation_required") {
+          info = result;
+          continue;
+        }
+        if (result.status === "deleted") {
+          say(result.reason || L("已删除隔离目录", "Deleted isolated directory"));
+        } else {
+          say(result.reason || result.message || L("未能删除隔离目录", "Failed to delete isolated directory"), true);
+        }
+      } catch (error) {
+        say(error.message || L("删除隔离目录失败", "Failed to delete isolated directory"), true);
+      }
+      await refresh();
+      return;
+    }
+  }
+
   // ---- hand over --------------------------------------------------------------------------
   // For a boss that can no longer call tools: the workspace waits until a new chat takes it over.
   async function handOver(id) {
@@ -411,5 +504,5 @@ const Actions = {};
 
   $("cleanup").addEventListener("click", cleanup);
 
-  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu, cancelHandover });
+  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu, cancelHandover, deleteIsolated });
 }

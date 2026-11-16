@@ -8,11 +8,11 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | --- | --- |
 | Manager（boss） | 目标解释、任务拆解、角色与模型选择、并行、重试、审核、综合、是否隔离与合入、长期任务状态 |
 | AgentNave 服务 | 启动与取消 Provider 进程树、默认值套用、活动快照与终态归一化、进程内 Invocation 句柄、会议轮次、会话历史与按用户设定天数的自动清理、隔离目录的创建、登记、只读任务无改动时的自动释放与显式释放后的删除 |
-| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)） |
+| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、隔离目录的手动删除（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)） |
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
-统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI（「决策模型」档下，服务应 boss 的调用请决策模型在用户自定义的工位里选一个，启动仍由 boss 的调用发起，[ADR-0087](../adr/0087-decision-model-recommends-seats.md)）；隔离目录只应 boss 的要求创建（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；只读任务成功完成且相对起点无任何改动、无其他租约时由服务自动释放，后续续接同一原生会话时原位重建；其余可用的目录只在 boss 释放后删除，服务自己另只回滚没建成的半成品、续完目录已删掉的收尾（[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）；「只开会」档的 boss 改装只含会议室用法的 `agentnave-meeting`，两份按档位互斥安装（[ADR-0091](../adr/0091-meetings-only-skill-and-auto-meeting-switch.md)）。
+统一核心总是保存历史，不再提供无历史模式（[ADR-0016](../adr/0016-single-core-and-mcp-entrypoint.md)）。AgentNave 不拥有 DAG、调度器、角色决策、自动重规划、合入或面向人的 TUI（「决策模型」档下，服务应 boss 的调用请决策模型在用户自定义的工位里选一个，启动仍由 boss 的调用发起，[ADR-0087](../adr/0087-decision-model-recommends-seats.md)）；隔离目录只应 boss 的要求创建（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)）；只读任务成功完成且相对起点无任何改动、无其他租约时由服务自动释放，后续续接同一原生会话时原位重建；其余可用的目录只在 boss 释放或用户在托盘 App 手动删除后移除，服务自己另只回滚没建成的半成品、续完目录已删掉的收尾（[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)、[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）；历史保留天数由用户在 App 设置（不装 App 时手写）、写入数据根 `settings.json`，服务按它清理过期工作区，并独立回收孤儿资源与过期待接手空工作区（[ADR-0046](../adr/0046-service-history-retention.md)）。编排偏好属于用户的宿主全局规则，App 按随服务包发布的共享定义（`orchestration_rules.json`）在其中写入 AgentNave 标记的一段，没有 App 的宿主也可按该定义取用，服务不据此调度（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）；这一段只放授权与派发前约束，编排方法在随服务发布的 `agentnave-manager` Skill，工具语义在 MCP 说明（[ADR-0068](../adr/0068-rules-hold-authorization-skill-holds-method.md)）；「只开会」档的 boss 改装只含会议室用法的 `agentnave-meeting`，两份按档位互斥安装（[ADR-0091](../adr/0091-meetings-only-skill-and-auto-meeting-switch.md)）。
 
 ## 进程与模块
 
@@ -62,7 +62,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
 - macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
-- 服务只为隔离目录写用户仓库：boss 要求隔离时写主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude` 和 `agentnave/` 前缀的受管分支；任务或席位在隔离目录里运行时，在 git 公共目录下的 `agentnave/` 写仓库锁和目录使用租约。只读任务成功完成且相对起点无任何改动、无其他租约时，服务自动释放该隔离目录，并在后续续接同一原生会话时原位重建；其余可用的目录只在 boss 释放后删除，服务自己另只回滚没建成的半成品、续完目录已删掉的收尾。建目录和检查时不执行仓库配置的 hooks、filter 与文件监视程序，也不进入嵌套仓库（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)、[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)）。
+- 服务与托盘只为隔离目录写用户仓库：boss 要求隔离时服务写主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude` 和 `agentnave/` 前缀的受管分支；任务或席位在隔离目录里运行时，在 git 公共目录下的 `agentnave/` 写仓库锁和目录使用租约。只读任务成功完成且相对起点无任何改动、无其他租约时，服务自动释放该隔离目录，并在后续续接同一原生会话时原位重建；其余可用的目录在 boss 释放后由服务删除，或由用户在托盘 App 在同一仓库锁与租约协议下手动删除（使用中禁止删除，两步摘要确认，丢弃被 git 忽略的文件），服务自己另只回滚没建成的半成品、续完目录已删掉的收尾。建目录、检查与删除时不执行仓库配置的 hooks、filter 与文件监视程序，也不进入嵌套仓库（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)、[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)、[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）。
 - AgentNave 不是沙箱。主动杀 supervisor、创建新 OS session 或其他同用户逃逸不在隔离范围内；Provider 原生权限才是安全边界。
 
 ## 会议
@@ -87,7 +87,7 @@ App 设置文件按写入方和损坏时的影响范围分开：
 | `permissions.json` | App | 每次派发现读；损坏时返回 App 修复错误 |
 | `settings.json` | App；不装 App 时由用户手写 | 每次接纳时读取同时运行上限；清理时读取保留天数；派发 Claude、Antigravity 时读取各自的交互模式开关，缺省打开 |
 | `cli-defaults.json` | App 探测结果 | CLI 自身默认模型与档位的兜底 |
-| `worktrees.db` | 服务 | 隔离目录的登记，独立于会话库，不随工作区历史清理；损坏时只影响隔离目录功能，不影响普通派发；App 只读显示，不清理、不删除 |
+| `worktrees.db` | 服务；托盘 App（仅手动删除） | 隔离目录的登记，独立于会话库，不随工作区历史清理；损坏时只影响隔离目录功能，不影响普通派发；App 展示并在仓库锁与租约检查下执行手动删除与状态更新，预览版只读不写（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)） |
 
 App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样例由两侧测试共同断言接受或拒绝，保证 App 能保存的服务就能读取。
 
@@ -104,7 +104,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 
 - 界面只经 `agentnave` 自定义协议提供：不开放 IPC、导航限于自身协议；除 ChatGPT 订阅登录期间仅在回环地址临时监听登录回调端口，以及 macOS 上只读提供视频包片段、带启动令牌的回环端口外，不监听端口（[ADR-0080](../adr/0080-tray-video-loopback-http.md)）。界面写操作都要求 `X-AgentNave-Action: 1`，可能刷新并保存令牌的目录请求也属于写操作。
 - 工作区所属的项目由托盘派生显示，不落服务库，服务不感知；托盘在自己的配置目录记下目录所属仓库（文件名 projects.json，托盘独写）。
-- 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、工作区交接与取消待接手标记、清空工作区时删去交接记录和删除只有 boss 的工作区（不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)）、数据根的设置文件、小人视频选装包 `video-packs/`、语音设置 `voice.json`、语音密钥与登录令牌 `voice-keys.json`、语音缓存 `voice-cache/`、用户确认或刷新时删除 `connection-faults/` 下已确认、已恢复或无人认领的连接故障记录（[ADR-0088](../adr/0088-relay-records-service-exit-fault.md)、[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。托盘不迁移会话库的 schema：遇到旧版本的库只读展示，写操作提示先重连宿主（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。
+- 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、在仓库锁与租约协议下手动删除隔离目录并更新 `worktrees.db`（不执行仓库 hooks、filter 与文件监视程序，[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、工作区交接与取消待接手标记、清空工作区时删去交接记录和删除只有 boss 的工作区（不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)）、数据根的设置文件、小人视频选装包 `video-packs/`、语音设置 `voice.json`、语音密钥与登录令牌 `voice-keys.json`、语音缓存 `voice-cache/`、用户确认或刷新时删除 `connection-faults/` 下已确认、已恢复或无人认领的连接故障记录（[ADR-0088](../adr/0088-relay-records-service-exit-fault.md)、[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。托盘不迁移会话库和隔离目录库的 schema：遇到旧版本的库只读展示，写操作提示先重连宿主（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。
 - 设置界面面向非技术用户，只提供开关、单选、下拉与档位条，不让手填（[ADR-0029](../adr/0029-settings-without-free-text.md)）；语音 API 密钥、自定义口语摘要连接信息、摘要要求及语音人设为例外（[ADR-0044](../adr/0044-meeting-voice-cloud-and-key-input.md)）。
 - 模型与档位以各 CLI 自己给出的为准，App 只探测、不猜测（[ADR-0034](../adr/0034-models-and-efforts-from-each-cli.md)）。
 - 员工页的 CLI 更新只沿该 CLI 原来的安装方式执行，不提权、不替用户安装；没装的 CLI 只给出官方安装命令（[ADR-0055](../adr/0055-app-updates-member-clis.md)）。
