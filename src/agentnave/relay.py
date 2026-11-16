@@ -261,6 +261,8 @@ class Relay:
         self.connection_lock = threading.Lock()
         self.closing = threading.Event()
         self.stopped = threading.Event()
+        # Set once host_left has finished, so the entry point never exits in the middle of it.
+        self.left = threading.Event()
         self.host_pending: set[str] = set()
         self.host_methods: dict[str, str] = {}
         self.child_pending: set[str] = set()
@@ -333,9 +335,12 @@ class Relay:
         if self.stopped.is_set():
             self.closing.wait(_HOST_EOF_GRACE_SECONDS)
         with self.connection_lock:
-            if not self.closing.is_set():  # the server quit on its own; a host close ends it
+            left = self.closing.is_set()
+            if not left:  # the server quit on its own; a host close ends it
                 self._drop_connection()
                 self._record_fault()
+        if left:
+            self.left.wait()  # the host's own close is still writing the receipt and exit code
         return self.code
 
     def _publish_connection(self) -> None:
@@ -476,6 +481,7 @@ class Relay:
         child.close()
         self.code = child.process.wait()
         self.stopped.set()
+        self.left.set()
 
     def _note_host(self, line: bytes) -> None:
         for message in _messages(line):
@@ -602,7 +608,11 @@ class Relay:
         starting = method in ("initialize", "server/discover")
         deadline = time.monotonic() + (_START_SECONDS if starting else _PROBE_SECONDS)
         try:
-            while child.process.poll() is None and time.monotonic() < deadline:
+            while (
+                child.process.poll() is None
+                and not self.closing.is_set()
+                and time.monotonic() < deadline
+            ):
                 try:
                     return reply.get(timeout=0.2)
                 except queue.Empty:

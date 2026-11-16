@@ -475,6 +475,30 @@ def test_termination_signal_closes_the_connection_like_a_host_exit(
     assert not list(data.glob("connection-faults/*.json"))
 
 
+def test_host_leaving_during_the_grace_after_the_server_died_finishes_before_exit(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data"
+    host = Host(
+        tmp_path,
+        env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)},
+    )
+    host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+    host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    host.call("tools/list")
+    host.relay.child.process.kill()
+    deadline = time.monotonic() + 5
+    while not host.relay.stopped.is_set() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    host.writer.close()  # the host leaves inside the grace period
+    host.thread.join(10)
+    assert not host.thread.is_alive()
+    assert host.relay.left.is_set()  # nothing was left half done when the entry point exits
+    assert host.code != [0]
+    assert not list(data.glob("connections/*.json"))
+    assert not list(data.glob("connection-faults/*.json"))
+
+
 def test_zero_tool_relay_never_creates_connection_observations(tmp_path: Path) -> None:
     (tmp_path / "busy.tools").write_text("null")
     data = tmp_path / "data"

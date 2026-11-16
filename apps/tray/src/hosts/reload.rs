@@ -153,8 +153,9 @@ impl Hosts {
         copies.into_values().collect()
     }
     /// Live receipts refresh every five seconds; a relay swapping to a new install may pause
-    /// that for up to 105 seconds, so only a longer silence counts as no connection at all.
-    /// A relay whose host closed normally marks its receipt ended and keeps it as proof.
+    /// that for up to 105 seconds. A relay whose host closed normally marks its receipt ended and
+    /// keeps it as proof; one silent for longer, or known to have exited, is treated as ended at
+    /// its last write (ADR-0097).
     fn receipts(&self, host: &Host, now: SystemTime, changed_at: Option<u64>) -> Receipts {
         self.owned_receipts(host, now, changed_at, self.sole_row(host))
     }
@@ -167,7 +168,10 @@ impl Hosts {
     ) -> Receipts {
         let mut receipts = Receipts::default();
         let root = self.connection_root(host);
-        let faults = root.as_ref().map(|root| root.join("connection-faults"));
+        let faults = root
+            .as_ref()
+            .map(|root| root.join("connection-faults"))
+            .filter(|dir| !dir.is_symlink());
         let dir = root.map(|root| root.join("connections"));
         for entry in dir
             .into_iter()
@@ -206,7 +210,7 @@ impl Hosts {
         receipts
     }
     /// The latest start of this row's connections that loaded their tools: one running now, or
-    /// one that closed normally with the tools it was given (ADR-0096).
+    /// one that ended, marked or not, with the tools it was given (ADR-0096, ADR-0097).
     /// Ownership follows the fault records': a labelled row does not count unlabelled receipts.
     pub(super) fn healthy_since(&self, host: &Host) -> Option<u64> {
         let unambiguous = self.sole_row(host) && !self.labelled(host);
@@ -221,7 +225,9 @@ impl Hosts {
             .filter_map(|c| c["started_ms"].as_u64())
             .max()
     }
-    /// A missing or reused PID only excludes an old blocker; it never proves tools loaded.
+    /// Whether the relay has exited: its PID is gone or now belongs to another process. Such a
+    /// receipt is ended at its last write and counts as proof of its tools, unless a fault
+    /// record names it (ADR-0097).
     fn receipt_process_exited(&self, path: &Path, value: &Value, modified: SystemTime) -> bool {
         let Some(pid) = receipt_pid(path) else {
             return false;
