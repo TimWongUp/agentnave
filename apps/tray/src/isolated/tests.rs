@@ -586,3 +586,279 @@ fn rollback_checks_container_prunes_missing_dir_and_blocks_deleting_without_oid(
         "managed branch should be removed after prune"
     );
 }
+
+#[test]
+fn tracked_subdir_nested_git_and_bare_repo_are_detected_and_scan_limit_warns() {
+    let fx = setup_worktree_fixture("wt-1234567890ab");
+    let tracked_sub = fx.wt_path.join("packages/sub");
+    fs::create_dir_all(&tracked_sub).unwrap();
+    fs::write(tracked_sub.join("lib.rs"), "pub fn ok() {}\n").unwrap();
+    git_cmd(&fx.wt_path, &["add", "packages/sub/lib.rs"]);
+    git_cmd(&fx.wt_path, &["commit", "-m", "add tracked subdir"]);
+
+    // Nested .git inside a tracked subdirectory (even without untracked files) and an untracked bare repo.
+    git_cmd(&tracked_sub, &["init"]);
+    let bare_dir = fx.wt_path.join("packages/bare.git");
+    fs::create_dir_all(bare_dir.join("objects")).unwrap();
+    fs::create_dir_all(bare_dir.join("refs")).unwrap();
+    fs::write(bare_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+    assert_eq!(inspected["nested_truncated"], false);
+    let nested = inspected["nested_repos"].as_array().unwrap();
+    assert!(nested.iter().any(|v| v == "packages/sub"), "{nested:?}");
+    assert!(
+        nested.iter().any(|v| v == "packages/bare.git"),
+        "{nested:?}"
+    );
+
+    // Hitting the entry cap flags the scan as truncated so the confirm dialog warns the user.
+    let git = git::GitRunner::new().unwrap();
+    let limited = state::nested_repositories_with_limit(&git, &fx.wt_path, b"", 2).unwrap();
+    assert!(limited.truncated);
+}
+
+#[test]
+fn rollback_refuses_hidden_index_flags_and_nested_repos() {
+    let fx = setup_worktree_fixture("wt-2345678901bc");
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'needs_attention', delete_oid = NULL WHERE id = ?1",
+            [&fx.id],
+        )
+        .unwrap();
+    git_cmd(
+        &fx.wt_path,
+        &["update-index", "--skip-worktree", "README.md"],
+    );
+    fs::write(fx.wt_path.join("README.md"), "hidden local edit\n").unwrap();
+
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+    assert_eq!(inspected["rollback_only"], true);
+    let refused = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected["confirmation"],
+        }),
+    );
+    assert_eq!(refused["status"], "needs_attention");
+    assert_eq!(
+        fs::read_to_string(fx.wt_path.join("README.md")).unwrap(),
+        "hidden local edit\n"
+    );
+
+    // Clear hidden flag and instead place a nested repo inside an ignored directory.
+    git_cmd(
+        &fx.wt_path,
+        &["update-index", "--no-skip-worktree", "README.md"],
+    );
+    git_cmd(&fx.wt_path, &["checkout", "--", "README.md"]);
+    let ignored_repo = fx.wt_path.join("ignored/subrepo");
+    fs::create_dir_all(&ignored_repo).unwrap();
+    git_cmd(&ignored_repo, &["init"]);
+
+    let inspected2 = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    let refused2 = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected2["confirmation"],
+        }),
+    );
+    assert_eq!(refused2["status"], "needs_attention");
+    assert!(ignored_repo.join(".git").exists());
+}
+
+#[test]
+fn missing_dir_inspect_reports_unmerged_commits_and_checks_container() {
+    let fx = setup_worktree_fixture("wt-3456789012cd");
+    fs::write(fx.wt_path.join("README.md"), "unmerged change\n").unwrap();
+    git_cmd(&fx.wt_path, &["add", "README.md"]);
+    git_cmd(&fx.wt_path, &["commit", "-m", "feat: missing dir commit"]);
+    let tip = git_cmd(&fx.wt_path, &["rev-parse", "HEAD"]);
+    fs::remove_dir_all(&fx.wt_path).unwrap();
+
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'needs_attention', delete_oid = ?1 WHERE id = ?2",
+            rusqlite::params![tip, fx.id],
+        )
+        .unwrap();
+
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+    assert_eq!(inspected["missing_dir"], true);
+    assert_eq!(inspected["unique_commits"], true);
+    assert!(
+        inspected["unmerged_commits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("feat: missing dir commit"))
+    );
+
+    // An outside missing path must be blocked by container validation.
+    let outside = real(fx.main_root.parent().unwrap()).join("outside-missing-wt");
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET worktree_path = ?1 WHERE id = ?2",
+            rusqlite::params![outside.to_str().unwrap(), fx.id],
+        )
+        .unwrap();
+    let blocked = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(blocked["status"], "blocked");
+}
+
+#[test]
+fn inspect_ignores_log_signature_and_blocks_non_utf8_filter_keys() {
+    let fx = setup_worktree_fixture("wt-4567890123de");
+    fs::write(fx.wt_path.join("README.md"), "signed change\n").unwrap();
+    git_cmd(&fx.wt_path, &["add", "README.md"]);
+    git_cmd(&fx.wt_path, &["commit", "-m", "feat: signed commit"]);
+
+    let raw_commit = Command::new("git")
+        .arg("-C")
+        .arg(&fx.wt_path)
+        .args(["cat-file", "commit", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(raw_commit.status.success());
+    let text = String::from_utf8(raw_commit.stdout).unwrap();
+    let (headers, body) = text.split_once("\n\n").unwrap();
+    let signed = format!(
+        "{headers}\ngpgsig -----BEGIN PGP SIGNATURE-----\n fake\n -----END PGP SIGNATURE-----\n\n{body}"
+    );
+    let mut hash_cmd = Command::new("git")
+        .arg("-C")
+        .arg(&fx.wt_path)
+        .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    hash_cmd
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(signed.as_bytes())
+        .unwrap();
+    let out = hash_cmd.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let signed_oid = String::from_utf8(out.stdout).unwrap().trim().to_owned();
+    git_cmd(&fx.wt_path, &["reset", "--hard", &signed_oid]);
+
+    git_cmd(&fx.main_root, &["config", "log.showSignature", "true"]);
+    let gpg_marker = fx.main_root.join("gpg-ran.txt");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let script = fx.main_root.join("fake-gpg.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch {}\n", gpg_marker.display()),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        git_cmd(
+            &fx.main_root,
+            &["config", "gpg.program", script.to_str().unwrap()],
+        );
+    }
+
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+    assert_eq!(inspected["unique_commits"], true);
+    assert!(!gpg_marker.exists(), "gpg.program must never execute");
+
+    // Non-UTF-8 filter driver name in git config must fail inspection cleanly.
+    let mut cfg = fs::read(fx.common_dir.join("config")).unwrap();
+    cfg.extend_from_slice(b"\n[filter \"evil\xff\"]\n\tclean = true\n");
+    fs::write(fx.common_dir.join("config"), cfg).unwrap();
+
+    let blocked = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(blocked["status"], "blocked");
+}
+
+#[test]
+fn confirm_digest_invalidated_when_external_branch_drops_managed_commit() {
+    let fx = setup_worktree_fixture("wt-5678901234ef");
+    fs::write(fx.wt_path.join("README.md"), "shared work\n").unwrap();
+    git_cmd(&fx.wt_path, &["add", "README.md"]);
+    git_cmd(&fx.wt_path, &["commit", "-m", "feat: shared commit"]);
+    let tip = git_cmd(&fx.wt_path, &["rev-parse", "HEAD"]);
+    git_cmd(&fx.main_root, &["branch", "other", &tip]);
+
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+    assert_eq!(inspected["unique_commits"], false);
+
+    // Deleting the external branch makes the commit unique to the managed branch.
+    git_cmd(&fx.main_root, &["branch", "-D", "other"]);
+    let stale = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected["confirmation"],
+        }),
+    );
+    assert_eq!(stale["status"], "confirmation_required");
+    assert_eq!(stale["unique_commits"], true);
+    assert!(
+        stale["unmerged_commits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("feat: shared commit"))
+    );
+    assert!(fx.wt_path.exists());
+}

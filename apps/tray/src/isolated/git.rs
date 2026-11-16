@@ -71,11 +71,13 @@ impl GitRunner {
         extra_env: &[(&str, &str)],
     ) -> Result<GitOutput, String> {
         let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(cwd);
+        cmd.arg("--no-pager").arg("-C").arg(cwd);
         for item in [
             "core.fsmonitor=false",
             "core.longpaths=true",
+            "diff.external=",
             "diff.ignoreSubmodules=all",
+            "log.showSignature=false",
             "status.submoduleSummary=false",
             "submodule.recurse=false",
         ] {
@@ -104,6 +106,7 @@ impl GitRunner {
             cmd.env_remove(name);
         }
         cmd.env("GIT_TERMINAL_PROMPT", "0");
+        cmd.env("GIT_NO_LAZY_FETCH", "1");
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
@@ -146,8 +149,13 @@ impl GitRunner {
         )?;
         let mut names = BTreeSet::new();
         for item in res.stdout.split(|&b| b == 0) {
+            if item.is_empty() {
+                continue;
+            }
             let key_bytes = item.split(|&b| b == b'\n').next().unwrap_or_default();
-            let key = String::from_utf8_lossy(key_bytes);
+            let key = std::str::from_utf8(key_bytes).map_err(|_| {
+                "Git filter 配置键包含非 UTF-8 字节，无法安全禁用，已拒绝操作".to_owned()
+            })?;
             if let Some(rest) = key.strip_prefix("filter.")
                 && let Some((driver, _prop)) = rest.rsplit_once('.')
             {

@@ -6,10 +6,17 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::git::{GitRunner, bytes_to_path, decode_git_path};
-use super::leases::{is_link, same_dir};
+use super::git::{GitRunner, decode_git_path};
+use super::leases::{is_link, plain_entry, same_dir};
 
 const MAX_FINGERPRINT_ENTRIES: usize = 200_000;
+const MAX_NESTED_SCAN_ENTRIES: usize = 200_000;
+
+#[derive(Debug, Default)]
+pub(crate) struct NestedScan {
+    pub repos: Vec<String>,
+    pub truncated: bool,
+}
 
 fn read_gitdir_pointer(dotgit: &Path, wt_path: &Path) -> Option<PathBuf> {
     let raw = fs::read_to_string(dotgit).ok()?;
@@ -77,19 +84,6 @@ pub(crate) fn foreign_link_valid(wt_path: &Path) -> bool {
         .is_some_and(|parent| same_dir(parent, wt_path))
 }
 
-fn is_bare_repo(names: &[String], dirs: &[String]) -> bool {
-    names.iter().any(|n| n == "HEAD")
-        && dirs.iter().any(|d| d == "objects")
-        && dirs.iter().any(|d| d == "refs")
-}
-
-fn is_repo_dir(path: &Path) -> bool {
-    fs::symlink_metadata(path.join(".git")).is_ok()
-        || (path.join("HEAD").is_file()
-            && path.join("objects").is_dir()
-            && path.join("refs").is_dir())
-}
-
 fn rel_posix(wt_path: &Path, target: &Path) -> String {
     target
         .strip_prefix(wt_path)
@@ -100,88 +94,91 @@ fn rel_posix(wt_path: &Path, target: &Path) -> String {
         .join("/")
 }
 
-fn scan_ignored_subtree(wt_path: &Path, root: &Path, found: &mut BTreeSet<String>) {
-    let mut stack = vec![root.to_path_buf()];
+fn scan_nested_tree(wt_path: &Path, found: &mut BTreeSet<String>, limit: usize) -> bool {
+    let mut stack = vec![wt_path.to_path_buf()];
+    let mut count = 0usize;
     while let Some(dir) = stack.pop() {
+        let is_root = dir == wt_path;
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(_) => {
+                if is_root {
+                    return true;
+                }
                 found.insert(rel_posix(wt_path, &dir));
                 continue;
             }
         };
-        let mut names = Vec::new();
         let mut subdirs = Vec::new();
         let mut has_dotgit = false;
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let path = entry.path();
-            if name == ".git" {
-                has_dotgit = true;
-                continue;
+        let mut has_head_file = false;
+        let mut has_objects = false;
+        let mut has_refs = false;
+        let mut read_error = false;
+        for entry_res in entries {
+            count += 1;
+            if count > limit {
+                return true;
             }
-            if is_link(&path) {
-                continue;
-            }
-            let Ok(ft) = entry.file_type() else {
+            let Ok(entry) = entry_res else {
+                read_error = true;
                 continue;
             };
-            if ft.is_dir() {
+            let name_os = entry.file_name();
+            if name_os == ".git" {
+                if !is_root {
+                    has_dotgit = true;
+                }
+                continue;
+            }
+            let path = entry.path();
+            let Ok(meta) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !plain_entry(&meta) {
+                continue;
+            }
+            if meta.is_dir() {
                 subdirs.push(path);
-                names.push((name, true));
-            } else {
-                names.push((name, false));
+                if name_os == "objects" {
+                    has_objects = true;
+                } else if name_os == "refs" {
+                    has_refs = true;
+                }
+            } else if meta.is_file() && name_os == "HEAD" {
+                has_head_file = true;
             }
         }
-        let file_names: Vec<String> = names
-            .iter()
-            .filter(|(_, is_dir)| !*is_dir)
-            .map(|(n, _)| n.clone())
-            .collect();
-        let dir_names: Vec<String> = names
-            .iter()
-            .filter(|(_, is_dir)| *is_dir)
-            .map(|(n, _)| n.clone())
-            .collect();
-        if has_dotgit || is_bare_repo(&file_names, &dir_names) {
+        if read_error {
+            if is_root {
+                return true;
+            }
+            found.insert(rel_posix(wt_path, &dir));
+        }
+        if !is_root && (has_dotgit || (has_head_file && has_objects && has_refs)) {
             found.insert(rel_posix(wt_path, &dir));
         } else {
             stack.extend(subdirs);
         }
     }
+    false
 }
 
-fn scan_unreadable(wt_path: &Path, ignored: &BTreeSet<PathBuf>, found: &mut BTreeSet<String>) {
-    let mut stack = vec![wt_path.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = match fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(_) => {
-                found.insert(rel_posix(wt_path, &dir));
-                continue;
-            }
-        };
-        for entry in entries.flatten() {
-            if entry.file_name() == ".git" {
-                continue;
-            }
-            let path = entry.path();
-            if is_link(&path) || ignored.contains(&path) {
-                continue;
-            }
-            if entry.file_type().is_ok_and(|ft| ft.is_dir()) {
-                stack.push(path);
-            }
-        }
-    }
-}
-
-/// Detect gitlinks, untracked nested repositories, ignored repositories, and unreadable dirs.
+/// Detect gitlinks, untracked/tracked/ignored nested repositories, bare repos, and unreadable dirs.
 pub(crate) fn nested_repositories(
     git: &GitRunner,
     wt_path: &Path,
     status_raw: &[u8],
-) -> Result<Vec<String>, String> {
+) -> Result<NestedScan, String> {
+    nested_repositories_with_limit(git, wt_path, status_raw, MAX_NESTED_SCAN_ENTRIES)
+}
+
+pub(crate) fn nested_repositories_with_limit(
+    git: &GitRunner,
+    wt_path: &Path,
+    status_raw: &[u8],
+    limit: usize,
+) -> Result<NestedScan, String> {
     let mut nested = BTreeSet::new();
     let listing = git.run(wt_path, &["ls-files", "-s", "-z"], &[0], &[])?;
     for item in listing.stdout.split(|&b| b == 0) {
@@ -199,40 +196,11 @@ pub(crate) fn nested_repositories(
             nested.insert(decode_git_path(trimmed));
         }
     }
-    let ignored_list = git.run(
-        wt_path,
-        &[
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-            "--directory",
-            "-z",
-        ],
-        &[0],
-        &[],
-    )?;
-    let mut ignored = BTreeSet::new();
-    let mut checked_parents = BTreeSet::new();
-    for item in ignored_list.stdout.split(|&b| b == 0) {
-        if !item.ends_with(b"/") {
-            continue;
-        }
-        let rel = bytes_to_path(&item[..item.len() - 1]);
-        let root = wt_path.join(rel);
-        ignored.insert(root.clone());
-        for parent in root.ancestors().skip(1) {
-            if parent == wt_path || !checked_parents.insert(parent.to_path_buf()) {
-                break;
-            }
-            if is_repo_dir(parent) {
-                nested.insert(rel_posix(wt_path, parent));
-            }
-        }
-        scan_ignored_subtree(wt_path, &root, &mut nested);
-    }
-    scan_unreadable(wt_path, &ignored, &mut nested);
-    Ok(nested.into_iter().collect())
+    let truncated = scan_nested_tree(wt_path, &mut nested, limit);
+    Ok(NestedScan {
+        repos: nested.into_iter().collect(),
+        truncated,
+    })
 }
 
 /// Digest of every entry under `root` without following links.

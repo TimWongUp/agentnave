@@ -269,7 +269,7 @@ const Actions = {};
     if (info.missing_dir) {
       items.push(h("p.act-note", {}, L("目录已不在磁盘上。确认后将清理残留的受管分支和登记记录。", "The directory is no longer on disk. Confirming cleans up the remaining managed branch and registry entry.")));
     } else if (info.rollback_only) {
-      items.push(h("p.act-note", {}, L("这个目录上次创建或回滚未完成。确认后将尝试删除残留目录、受管分支和登记记录，目录里被 git 忽略的文件也会一并丢弃；若目录内已有未提交改动则会保留并说明原因。", "Creation or rollback of this directory did not finish. Confirming attempts to remove the leftover directory, managed branch, and registry entry, discarding any Git-ignored files; if uncommitted changes exist, the directory will be kept and the reason shown.")));
+      items.push(h("p.act-note", {}, L("这个目录上次创建或回滚未完成。确认后将尝试删除残留目录、受管分支和登记记录，目录里被 git 忽略的文件也会一并丢弃；若目录内已有未提交改动、隐藏索引标记或嵌套仓库（含无法检查的目录），则会保留目录并说明原因。", "Creation or rollback of this directory did not finish. Confirming attempts to remove the leftover directory, managed branch, and registry entry, discarding any Git-ignored files; if uncommitted changes, hidden index flags, or nested repositories (including unreadable directories) exist, the directory will be kept and the reason shown.")));
     } else {
       items.push(h("p.act-note", {}, L("将永久删除这个隔离目录、受管分支和登记记录；目录里被 git 忽略的文件（如依赖或构建缓存）也会一并丢弃，无法恢复。", "Permanently deletes this isolated directory, its managed branch, and its registry entry. Any Git-ignored files inside (such as dependencies or build caches) will also be discarded and cannot be recovered.")));
     }
@@ -304,6 +304,9 @@ const Actions = {};
     }
     if (info.nested_repos?.length) {
       items.push(h("p.act-note.warn", {}, L(`目录内包含未检查内容的嵌套仓库：${info.nested_repos.join("、")}`, `Contains nested repositories whose contents were not checked: ${info.nested_repos.join(", ")}`)));
+    }
+    if (info.nested_truncated) {
+      items.push(h("p.act-note.warn", {}, L("目录条目过多，未完成全部嵌套仓库检查，可能仍有未检查的嵌套仓库或内容。", "Directory contains too many entries to complete nested repository inspection; unchecked nested repositories or contents may remain.")));
     }
     if (info.reason) {
       items.push(h("p.act-note.warn", {}, L("目录状态在确认期间发生变化，请核对以上最新情况后再确认。", "The directory state changed before deletion. Review the updated details above before confirming.")));

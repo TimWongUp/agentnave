@@ -8,13 +8,13 @@ use serde_json::{Value, json};
 
 use super::git::{GitRunner, WORKTREES_DIR_NAME, never_checked_out, parse_worktrees, ref_exists};
 use super::inspect::{
-    STATUS_ARGS, inspect_record, verify_managed_branch_ref, verify_repo_identity,
-    verify_worktree_container,
+    STATUS_ARGS, check_hidden_index_flags, inspect_record, verify_managed_branch_ref,
+    verify_repo_identity, verify_worktree_container,
 };
 use super::leases::{
     acquire_repo_lock, has_active_leases, is_link, remove_lease_dir_locked, same_dir,
 };
-use super::state::{foreign_link_valid, remove_tree, worktree_link_valid};
+use super::state::{foreign_link_valid, nested_repositories, remove_tree, worktree_link_valid};
 use super::store::{Record, WorktreeStore, now_iso};
 
 const REPO_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -106,6 +106,7 @@ fn complete_deletion_locked(
         return Err("存在活跃租约，不能完成删除".to_owned());
     }
     let wt_path = PathBuf::from(&record.worktree_path);
+    verify_worktree_container(&wt_path, main_root, &record.id)?;
     if remove_orphan && (wt_path.exists() || is_link(&wt_path)) {
         remove_tree(&wt_path, &main_root.join(WORKTREES_DIR_NAME))?;
         git.run(main_root, &["worktree", "prune"], &[0], &[])?;
@@ -207,9 +208,27 @@ fn verify_rollback_worktree(
                 if has_other {
                     return Err("未检出的 worktree 目录里已有额外文件".to_owned());
                 }
-            } else if !git.run(wt_path, STATUS_ARGS, &[0], &[])?.stdout.is_empty() {
-                return Err("未完成的 worktree 包含未提交的源码改动".to_owned());
+            } else {
+                check_hidden_index_flags(git, wt_path)?;
+                let status_raw = git.run(wt_path, STATUS_ARGS, &[0], &[])?.stdout;
+                if !status_raw.is_empty() {
+                    return Err("未完成的 worktree 包含未提交的源码改动".to_owned());
+                }
+                let nested = nested_repositories(git, wt_path, &status_raw)?;
+                if !nested.repos.is_empty() {
+                    return Err(format!(
+                        "未完成的 worktree 包含嵌套仓库（{}）",
+                        nested.repos.join("、")
+                    ));
+                }
+                if nested.truncated {
+                    return Err(
+                        "未完成的 worktree 目录条目过多，无法确认是否包含嵌套仓库".to_owned()
+                    );
+                }
             }
+        } else if wt_path.exists() {
+            return Err(format!("路径 {} 不是目录", wt_path.display()));
         }
         let wt_str = wt_path.to_string_lossy();
         git.run(

@@ -46,6 +46,7 @@ pub(crate) struct Snapshot {
     pub unmerged_commits: Vec<String>,
     pub unmerged_total: usize,
     pub nested: Vec<String>,
+    pub nested_truncated: bool,
     pub orphan: bool,
     pub missing_dir: bool,
     pub rollback_only: bool,
@@ -75,6 +76,7 @@ impl Snapshot {
             "unmerged_commits": self.unmerged_commits,
             "unmerged_total": self.unmerged_total,
             "nested_repos": self.nested,
+            "nested_truncated": self.nested_truncated,
             "orphan": self.orphan,
             "missing_dir": self.missing_dir,
             "rollback_only": self.rollback_only,
@@ -92,12 +94,20 @@ struct DigestInput<'a> {
     status_raw: &'a [u8],
     stat_bytes: &'a [u8],
     nested: &'a [String],
+    nested_truncated: bool,
+    unique_commits: bool,
+    unmerged_commits: &'a [String],
+    unmerged_total: usize,
 }
 
 fn compute_digest(input: DigestInput<'_>) -> String {
     let joined_nested = input.nested.join("\n");
+    let joined_unmerged = input.unmerged_commits.join("\n");
     let gen_text = input.usage_generation.to_string();
-    let parts: [&[u8]; 8] = [
+    let nested_truncated_flag: &[u8] = if input.nested_truncated { b"1" } else { b"0" };
+    let unique_flag: &[u8] = if input.unique_commits { b"1" } else { b"0" };
+    let unmerged_total_text = input.unmerged_total.to_string();
+    let parts: [&[u8]; 12] = [
         input.isolation_id.as_bytes(),
         input.workspace_id.as_bytes(),
         input.head_oid.as_bytes(),
@@ -106,6 +116,10 @@ fn compute_digest(input: DigestInput<'_>) -> String {
         input.status_raw,
         input.stat_bytes,
         joined_nested.as_bytes(),
+        nested_truncated_flag,
+        unique_flag,
+        unmerged_total_text.as_bytes(),
+        joined_unmerged.as_bytes(),
     ];
     let mut hasher = Sha256::new();
     for part in parts {
@@ -185,12 +199,7 @@ pub(crate) fn verify_repo_identity(
         return Err("主工作树不再属于原登记的仓库".to_owned());
     }
     let base_arg = format!("{}^{{commit}}", record.base_oid);
-    git.run(
-        &main_root,
-        &["cat-file", "-e", &base_arg],
-        &[0],
-        &[("GIT_NO_LAZY_FETCH", "1")],
-    )?;
+    git.run(&main_root, &["cat-file", "-e", &base_arg], &[0], &[])?;
     let container = main_root.join(WORKTREES_DIR_NAME);
     if is_link(&container) {
         return Err(format!(
@@ -347,7 +356,7 @@ fn verify_worktree_list(
     Ok(())
 }
 
-fn check_hidden_index_flags(git: &GitRunner, wt_path: &Path) -> Result<(), String> {
+pub(crate) fn check_hidden_index_flags(git: &GitRunner, wt_path: &Path) -> Result<(), String> {
     let out = git
         .run(wt_path, &["ls-files", "-v", "-z"], &[0], &[])?
         .stdout;
@@ -485,7 +494,7 @@ fn inspect_ready_locked(
     let (head_oid, branch_oid) = read_verified_head(git, record, &main_root, &wt_path)?;
     check_hidden_index_flags(git, &wt_path)?;
     let status_raw = git.run(&wt_path, STATUS_ARGS, &[0], &[])?.stdout;
-    let nested = nested_repositories(git, &wt_path, &status_raw)?;
+    let nested_scan = nested_repositories(git, &wt_path, &status_raw)?;
     let unique_commits = is_unique_commit(git, &wt_path, &head_oid)?;
     let (unmerged_commits, unmerged_total) = if unique_commits {
         collect_unmerged_commits(git, &wt_path, &record.base_oid, &head_oid)
@@ -510,7 +519,11 @@ fn inspect_ready_locked(
         usage_generation: record.usage_generation,
         status_raw: &status_raw,
         stat_bytes: &stat_bytes,
-        nested: &nested,
+        nested: &nested_scan.repos,
+        nested_truncated: nested_scan.truncated,
+        unique_commits,
+        unmerged_commits: &unmerged_commits,
+        unmerged_total,
     });
     Ok((
         main_root,
@@ -524,7 +537,8 @@ fn inspect_ready_locked(
             unique_commits,
             unmerged_commits,
             unmerged_total,
-            nested,
+            nested: nested_scan.repos,
+            nested_truncated: nested_scan.truncated,
             orphan: false,
             missing_dir: false,
             rollback_only: false,
@@ -533,17 +547,15 @@ fn inspect_ready_locked(
     ))
 }
 
-fn inspect_orphan_locked(
+fn inspect_branch_commits(
     git: &GitRunner,
-    record: &Record,
-    workspace_id: &str,
     main_root: &Path,
-) -> Result<Snapshot, String> {
-    let wt_path = PathBuf::from(&record.worktree_path);
-    verify_worktree_container(&wt_path, main_root, &record.id)?;
+    branch_ref: &str,
+    base_oid: &str,
+) -> Result<(String, bool, Vec<String>, usize), String> {
     let mut tip = String::new();
-    if ref_exists(git, main_root, &record.branch_ref)? {
-        let target = format!("{}^{{commit}}", record.branch_ref);
+    if ref_exists(git, main_root, branch_ref)? {
+        let target = format!("{branch_ref}^{{commit}}");
         tip = String::from_utf8_lossy(
             git.run(
                 main_root,
@@ -562,10 +574,23 @@ fn inspect_orphan_locked(
         is_unique_commit(git, main_root, &tip)?
     };
     let (unmerged_commits, unmerged_total) = if unique_commits {
-        collect_unmerged_commits(git, main_root, &record.base_oid, &tip)
+        collect_unmerged_commits(git, main_root, base_oid, &tip)
     } else {
         (Vec::new(), 0)
     };
+    Ok((tip, unique_commits, unmerged_commits, unmerged_total))
+}
+
+fn inspect_orphan_locked(
+    git: &GitRunner,
+    record: &Record,
+    workspace_id: &str,
+    main_root: &Path,
+) -> Result<Snapshot, String> {
+    let wt_path = PathBuf::from(&record.worktree_path);
+    verify_worktree_container(&wt_path, main_root, &record.id)?;
+    let (tip, unique_commits, unmerged_commits, unmerged_total) =
+        inspect_branch_commits(git, main_root, &record.branch_ref, &record.base_oid)?;
     let fp = tree_fingerprint(&wt_path);
     let digest = compute_digest(DigestInput {
         isolation_id: &record.id,
@@ -576,6 +601,10 @@ fn inspect_orphan_locked(
         status_raw: b"orphan",
         stat_bytes: &fp,
         nested: &[],
+        nested_truncated: false,
+        unique_commits,
+        unmerged_commits: &unmerged_commits,
+        unmerged_total,
     });
     Ok(Snapshot {
         head_oid: String::new(),
@@ -587,6 +616,7 @@ fn inspect_orphan_locked(
         unmerged_commits,
         unmerged_total,
         nested: Vec::new(),
+        nested_truncated: false,
         orphan: true,
         missing_dir: false,
         rollback_only: false,
@@ -618,6 +648,10 @@ pub(crate) fn inspect_record(
                 status_raw: b"rollback",
                 stat_bytes: &[],
                 nested: &[],
+                nested_truncated: false,
+                unique_commits: false,
+                unmerged_commits: &[],
+                unmerged_total: 0,
             });
             return Ok((
                 None,
@@ -631,6 +665,7 @@ pub(crate) fn inspect_record(
                     unmerged_commits: Vec::new(),
                     unmerged_total: 0,
                     nested: Vec::new(),
+                    nested_truncated: false,
                     orphan: false,
                     missing_dir: !dir_present,
                     rollback_only: true,
@@ -640,7 +675,10 @@ pub(crate) fn inspect_record(
         }
         if !dir_present {
             let (main_root, common_dir) = verify_repo_identity(git, record)?;
+            verify_worktree_container(&wt_path, &main_root, &record.id)?;
             let expected_oid = record.delete_oid.as_deref().unwrap_or("");
+            let (tip, unique_commits, unmerged_commits, unmerged_total) =
+                inspect_branch_commits(git, &main_root, &record.branch_ref, &record.base_oid)?;
             let digest = compute_digest(DigestInput {
                 isolation_id: &record.id,
                 workspace_id,
@@ -648,8 +686,12 @@ pub(crate) fn inspect_record(
                 branch_oid: expected_oid,
                 usage_generation: record.usage_generation,
                 status_raw: b"missing",
-                stat_bytes: &[],
+                stat_bytes: tip.as_bytes(),
                 nested: &[],
+                nested_truncated: false,
+                unique_commits,
+                unmerged_commits: &unmerged_commits,
+                unmerged_total,
             });
             return Ok((
                 Some((main_root, common_dir)),
@@ -659,10 +701,11 @@ pub(crate) fn inspect_record(
                     uncommitted: false,
                     uncommitted_files: Vec::new(),
                     uncommitted_total: 0,
-                    unique_commits: false,
-                    unmerged_commits: Vec::new(),
-                    unmerged_total: 0,
+                    unique_commits,
+                    unmerged_commits,
+                    unmerged_total,
                     nested: Vec::new(),
+                    nested_truncated: false,
                     orphan: false,
                     missing_dir: true,
                     rollback_only: false,
