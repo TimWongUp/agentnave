@@ -68,6 +68,11 @@ _RETRY_STALL_ERROR = InvocationError(
     "provider_error",
     "the provider kept retrying without producing output for 5 minutes; the invocation was stopped",
 )
+_FOREIGN_SESSION_ERROR = InvocationError(
+    "foreign_session",
+    "CLI returned a native session belonging to another concurrent task; "
+    "output cannot be trusted, retry the task.",
+)
 _PIPE_DRAIN_SECONDS = 1.0
 # After an Adapter's terminal event, the provider gets this long to exit on its own (ADR-0095).
 _TERMINAL_GRACE_SECONDS = 2.0
@@ -130,6 +135,9 @@ class _InvocationRecord:
     # unread result would be lost.
     result_read: bool = False
     prompts: PromptChannel = field(default_factory=PromptChannel)
+    start_seq: int = 0
+    end_seq: int | None = None
+    session_id: str | None = None
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -479,12 +487,17 @@ class InvocationManager:
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
+        self._seq = 0
         self._closed = False
         self.on_forget: Callable[[str], None] | None = None
         self.on_prompt_change: Callable[[str], None] | None = None
         # Lock directory shared by every server on one data root; None claims in-process only.
         self.session_locks: Path | None = None
         self.health_root: Path | None = None
+
+    def _next_seq(self) -> int:
+        self._seq += 1
+        return self._seq
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         """Apply the shared subagent instruction before provider-specific encoding."""
@@ -513,7 +526,12 @@ class InvocationManager:
             adapter = get_adapter(request.provider)
             prepared = prepared if prepared is not None else self.prepare(request)
             invocation_id = str(uuid.uuid4())
-            record = _InvocationRecord(request, health_root=self.health_root)
+            record = _InvocationRecord(
+                request,
+                health_root=self.health_root,
+                start_seq=self._next_seq(),
+                session_id=request.session_id or prepared.session_id,
+            )
             if prepared.keep_stdin_open:
                 record.prompts.encode = adapter.encode_prompt_answer
                 record.prompts.changed = lambda: self._prompts_changed(invocation_id)
@@ -796,6 +814,41 @@ class InvocationManager:
         except KeyError as exc:
             raise KeyError(f"unknown invocation_id: {invocation_id}") from exc
 
+    def _has_overlapping_session(self, record: _InvocationRecord, session_id: str) -> bool:
+        provider = record.request.provider
+        for other in self._records.values():
+            if other is record or other.request.provider != provider:
+                continue
+            if other.session_id != session_id:
+                continue
+            if other.end_seq is None or other.end_seq > record.start_seq:
+                return True
+        return False
+
+    def _settle_session(
+        self, record: _InvocationRecord, result: InvocationResult
+    ) -> InvocationResult:
+        """Reject a task whose CLI returned another concurrent task's native session."""
+        record.end_seq = self._next_seq()
+        session_id = result.session_id
+        if (
+            session_id
+            and session_id != record.request.session_id
+            and self._has_overlapping_session(record, session_id)
+        ):
+            record.session_id = None
+            if result.status in (InvocationStatus.FAILED, InvocationStatus.CANCELLED):
+                return replace(result, session_id=None)
+            return replace(
+                result,
+                status=InvocationStatus.FAILED,
+                session_id=None,
+                error=_FOREIGN_SESSION_ERROR,
+            )
+        if result.status is not InvocationStatus.CANCELLED:
+            record.session_id = session_id or record.request.session_id
+        return result
+
     async def _execute(
         self,
         record: _InvocationRecord,
@@ -807,6 +860,7 @@ class InvocationManager:
         outcome = InvocationStatus.FAILED
         try:
             result = await self._run(record, adapter, prepared)
+            result = self._settle_session(record, result)
             outcome = result.status
             reported = record.reported_model or adapter.session_model(
                 result.session_id, since=record.started_wall_at
@@ -814,6 +868,7 @@ class InvocationManager:
             record.reported_model = reported
             return replace(result, reported_model=reported)
         except Exception:
+            record.end_seq = record.end_seq or self._next_seq()
             logging.getLogger(__name__).exception("Unexpected invocation failure")
             outcome = InvocationStatus.FAILED
             return InvocationResult(

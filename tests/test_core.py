@@ -1921,3 +1921,103 @@ async def test_codex_terminal_event_ends_sleeping_process(tmp_path: Path) -> Non
         assert 2 <= time.monotonic() - started < 30
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_new_task_rejects_foreign_session_without_affecting_valid_runs(
+    tmp_path: Path,
+) -> None:
+    def claude_cmd(output: str, session_id: str, gate: Path | None = None) -> PreparedCommand:
+        wait = (
+            f"import pathlib,time\nwhile not pathlib.Path({str(gate)!r}).exists():\n"
+            "    time.sleep(0.01)\n"
+            if gate is not None
+            else ""
+        )
+        payload = json.dumps(
+            {"type": "result", "subtype": "success", "result": output, "session_id": session_id}
+        )
+        return PreparedCommand((sys.executable, "-c", f"{wait}print({payload!r})"), tmp_path)
+
+    def codex_cmd(output: str, session_id: str, gate: Path) -> PreparedCommand:
+        events = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": session_id}),
+                json.dumps(
+                    {"type": "item.completed", "item": {"type": "agent_message", "text": output}}
+                ),
+                json.dumps({"type": "turn.completed"}),
+            ]
+        )
+        code = (
+            f"import pathlib,time\nwhile not pathlib.Path({str(gate)!r}).exists():\n"
+            "    time.sleep(0.01)\n"
+            f"print({events!r})"
+        )
+        return PreparedCommand((sys.executable, "-c", code), tmp_path)
+
+    gate = tmp_path / "go"
+    resume_gate = tmp_path / "resume-go"
+    manager = InvocationManager()
+    try:
+        first = manager.start(
+            InvocationRequest("claude", "task 1", tmp_path),
+            prepared=claude_cmd("owner output", "shared-session"),
+        )
+        second = manager.start(
+            InvocationRequest("claude", "task 2", tmp_path),
+            prepared=claude_cmd("mixed output", "shared-session", gate),
+        )
+        other_provider = manager.start(
+            InvocationRequest("codex", "task 3", tmp_path),
+            prepared=codex_cmd("codex output", "shared-session", gate),
+        )
+        first_result = await asyncio.wait_for(manager.wait(first), 10)
+        assert first_result is not None and first_result.status is InvocationStatus.SUCCEEDED
+        assert (first_result.output, first_result.session_id) == ("owner output", "shared-session")
+
+        gate.touch()
+        second_result = await asyncio.wait_for(manager.wait(second), 10)
+        assert second_result is not None and second_result.status is InvocationStatus.FAILED
+        assert second_result.error is not None and second_result.error.code == "foreign_session"
+        assert second_result.output == "mixed output"
+        assert second_result.session_id is None
+
+        other_result = await asyncio.wait_for(manager.wait(other_provider), 10)
+        assert other_result is not None and other_result.status is InvocationStatus.SUCCEEDED
+        assert (other_result.output, other_result.session_id) == ("codex output", "shared-session")
+
+        sequential = manager.start(
+            InvocationRequest("claude", "task 4", tmp_path),
+            prepared=claude_cmd("sequential output", "shared-session"),
+        )
+        seq_result = await asyncio.wait_for(manager.wait(sequential), 10)
+        assert seq_result is not None and seq_result.status is InvocationStatus.SUCCEEDED
+        assert (seq_result.output, seq_result.session_id) == (
+            "sequential output",
+            "shared-session",
+        )
+
+        resuming = manager.start(
+            InvocationRequest("claude", "resume", tmp_path, "shared-session"),
+            prepared=claude_cmd("resumed output", "shared-session", resume_gate),
+        )
+        hijacker = manager.start(
+            InvocationRequest("claude", "hijack", tmp_path, "other-session"),
+            prepared=claude_cmd("hijacked output", "shared-session"),
+        )
+        hijacker_result = await asyncio.wait_for(manager.wait(hijacker), 10)
+        assert hijacker_result is not None and hijacker_result.status is InvocationStatus.FAILED
+        assert hijacker_result.error is not None and hijacker_result.error.code == "foreign_session"
+        assert hijacker_result.output == "hijacked output"
+        assert hijacker_result.session_id is None
+
+        resume_gate.touch()
+        resumed_result = await asyncio.wait_for(manager.wait(resuming), 10)
+        assert resumed_result is not None and resumed_result.status is InvocationStatus.SUCCEEDED
+        assert (resumed_result.output, resumed_result.session_id) == (
+            "resumed output",
+            "shared-session",
+        )
+    finally:
+        await manager.shutdown()
