@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -417,6 +418,85 @@ def test_host_eof_ends_observation_and_prevents_swap_while_child_exits(tmp_path:
         host.thread.join(10)
     assert host.code == [0]
     assert [json.loads(p.read_bytes()) for p in data.glob("connections/*.json")] == [receipt]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows hosts do not deliver POSIX signals")
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT], ids=["term", "int"])
+def test_termination_signal_closes_the_connection_like_a_host_exit(
+    tmp_path: Path, signum: int
+) -> None:
+    data = tmp_path / "data"
+    server = tmp_path / "server.py"
+    server.write_text(FAKE_SERVER)
+    (tmp_path / "busy.version").write_text("1.0")
+    runner = tmp_path / "runner.py"
+    runner.write_text(
+        "import sys\n"
+        "from agentnave import relay\n"
+        f"relay.command = lambda module: [sys.executable, {str(server)!r}, {str(tmp_path / 'busy')!r}]\n"
+        "relay.main()\n"
+    )
+    env = {**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)}
+    relay = subprocess.Popen(
+        [sys.executable, str(runner)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=env,
+    )
+    assert relay.stdin is not None and relay.stdout is not None
+    try:
+        for ident, method in enumerate(["initialize", "tools/list"], 1):
+            params: dict[str, Any] = (
+                {"protocolVersion": "2025-06-18", "capabilities": {}} if ident == 1 else {}
+            )
+            request: dict[str, Any] = {
+                "jsonrpc": "2.0",
+                "id": ident,
+                "method": method,
+                "params": params,
+            }
+            relay.stdin.write(json.dumps(request).encode() + b"\n")
+            if ident == 1:
+                relay.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
+            relay.stdin.flush()
+            assert json.loads(relay.stdout.readline())["id"] == ident
+        deadline = time.monotonic() + 5
+        while not list(data.glob("connections/*.json")) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        relay.send_signal(signum)  # the host quits without closing the pipe first
+        assert relay.wait(15) == 0
+    finally:
+        relay.kill()
+        relay.wait()
+    (path,) = data.glob("connections/*.json")
+    receipt = json.loads(path.read_bytes())
+    assert receipt["ended_ms"] >= receipt["started_ms"]
+    assert receipt["runtime_tools_hash"] == receipt["host_tools_hash"]
+    assert not list(data.glob("connection-faults/*.json"))
+
+
+def test_host_leaving_during_the_grace_after_the_server_died_finishes_before_exit(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data"
+    host = Host(
+        tmp_path,
+        env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)},
+    )
+    host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+    host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    host.call("tools/list")
+    host.relay.child.process.kill()
+    deadline = time.monotonic() + 5
+    while not host.relay.stopped.is_set() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    host.writer.close()  # the host leaves inside the grace period
+    host.thread.join(10)
+    assert not host.thread.is_alive()
+    assert host.relay.left.is_set()  # nothing was left half done when the entry point exits
+    assert host.code != [0]
+    assert not list(data.glob("connections/*.json"))
+    assert not list(data.glob("connection-faults/*.json"))
 
 
 def test_zero_tool_relay_never_creates_connection_observations(tmp_path: Path) -> None:

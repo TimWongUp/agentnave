@@ -25,7 +25,7 @@
 | 0019 | [不提供运行中消息](0019-no-running-messages.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0056](0056-claude-interactive-runtime.md)、[ADR-0057](0057-boss-answers-native-prompts.md) |
 | 0020 | [首次预填各 CLI 的主力模型](0020-prefill-main-model-defaults.md) | 已被 ADR-0028 取代 | [ADR-0028](0028-follow-cli-default-model.md) |
 | 0021 | [关闭自选时保留各 CLI 的默认模型](0021-keep-default-models-when-unrestricted.md) | 部分取代 | [ADR-0028](0028-follow-cli-default-model.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0054](0054-members-need-confirmation.md) |
-| 0022 | [新会话自动消除宿主重新加载提醒](0022-auto-clear-host-reload.md) | 已接受（含服务升级工具变化修订） | — |
+| 0022 | [新会话自动消除宿主重新加载提醒](0022-auto-clear-host-reload.md) | 部分修订 | 含服务升级工具变化修订；仅接受带结束时间回执、不把无结束标记的已退出回执作为加载证据由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 修订 |
 | 0023 | [私聊续接改为显式开启](0023-explicit-desk-continuation.md) | 已被 ADR-0025 取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md) |
 | 0024 | [工具收敛为 8 个，审核改为公开／不公开](0024-consolidated-tools-and-private-review.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0081](0081-account-cooldown-duration.md) |
 | 0025 | [工位即原生线程，并发上限决定显示上限](0025-session-desks-and-running-limit.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0062](0062-service-owned-member-names.md) |
@@ -99,4 +99,5 @@
 | 0093 | [「决策模型」档自定义任务工位支持同档可用候选随机选](0093-decision-seat-random-candidates.md) | 已接受 | 修订 ADR-0089 在「决策模型」档自定义任务工位上的顺位挑选与回执含义、ADR-0038 在该类工位开启随机选时的续接模型优先级；扩展 ADR-0087 |
 | 0094 | [Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动](0094-antigravity-host-cli-defaults-to-launch.md) | 已接受 | 修订 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的私聊同类默认值 |
 | 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049 |
-| 0096 | [清除宿主自身的遗留排除项，重连后消除连接中断提示](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) | 已接受 | 修订 ADR-0015、ADR-0088、ADR-0090；扩展 ADR-0012 |
+| 0096 | [清除宿主自身的遗留排除项，重连后消除连接中断提示](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) | 已接受 | 修订 ADR-0015、ADR-0088、ADR-0090；扩展 ADR-0012；已结束连接的范围由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 补充 |
+| 0097 | [中继收到终止信号视为宿主关闭，已退出的加载回执仍作证据](0097-relay-termination-signal-and-exited-tool-receipts.md) | 已接受 | 修订 ADR-0022；补充 ADR-0096 |

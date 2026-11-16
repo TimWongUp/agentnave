@@ -20,13 +20,15 @@ import hashlib
 import json
 import os
 import queue
+import signal
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, cast
@@ -74,7 +76,11 @@ def main() -> None:
     }
     with hold():
         result = serve(command("agentnave.mcp_server"), env=env)
-    sys.exit(result)
+    # After a termination signal the thread reading the host's stdin may still be blocked on it,
+    # and finalizing the interpreter around that read aborts the process.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(result)
 
 
 def command(module: str) -> list[str]:
@@ -255,6 +261,8 @@ class Relay:
         self.connection_lock = threading.Lock()
         self.closing = threading.Event()
         self.stopped = threading.Event()
+        # Set once host_left has finished, so the entry point never exits in the middle of it.
+        self.left = threading.Event()
         self.host_pending: set[str] = set()
         self.host_methods: dict[str, str] = {}
         self.child_pending: set[str] = set()
@@ -327,9 +335,12 @@ class Relay:
         if self.stopped.is_set():
             self.closing.wait(_HOST_EOF_GRACE_SECONDS)
         with self.connection_lock:
-            if not self.closing.is_set():  # the server quit on its own; a host close ends it
+            left = self.closing.is_set()
+            if not left:  # the server quit on its own; a host close ends it
                 self._drop_connection()
                 self._record_fault()
+        if left:
+            self.left.wait()  # the host's own close is still writing the receipt and exit code
         return self.code
 
     def _publish_connection(self) -> None:
@@ -456,7 +467,13 @@ class Relay:
                 self._note_host(line)
                 child = self.child
             child.send(line)
+        self.host_left()
+
+    def host_left(self) -> None:
+        """The host closed its end, or told the relay to stop (ADR-0097); only the first counts."""
         with self.lock:
+            if self.closing.is_set():
+                return
             self.closing.set()
             child = self.child
             child.retiring = True  # the host left; the child's exit is expected
@@ -464,6 +481,7 @@ class Relay:
         child.close()
         self.code = child.process.wait()
         self.stopped.set()
+        self.left.set()
 
     def _note_host(self, line: bytes) -> None:
         for message in _messages(line):
@@ -590,7 +608,11 @@ class Relay:
         starting = method in ("initialize", "server/discover")
         deadline = time.monotonic() + (_START_SECONDS if starting else _PROBE_SECONDS)
         try:
-            while child.process.poll() is None and time.monotonic() < deadline:
+            while (
+                child.process.poll() is None
+                and not self.closing.is_set()
+                and time.monotonic() < deadline
+            ):
                 try:
                     return reply.get(timeout=0.2)
                 except queue.Empty:
@@ -708,11 +730,52 @@ def serve(
     env: dict[str, str] | None = None,
 ) -> int:
     """Relay one host connection until the host closes it; returns the exit code."""
-    return Relay(
+    relay = Relay(
         command,
         site=site or _site(),
         stdin=stdin or sys.stdin.buffer,
         stdout=stdout or sys.stdout.buffer,
         interval=interval,
         env=env,
-    ).run()
+    )
+    with _termination_signals(relay.host_left):
+        return relay.run()
+
+
+@contextlib.contextmanager
+def _termination_signals(on_signal: Callable[[], None]) -> Generator[None]:
+    """Treat SIGTERM and SIGINT as the host closing the connection (ADR-0097).
+
+    A host that quits may signal its MCP processes instead of closing stdin. The C-level handler
+    only writes the signal number to a socket, so nothing in signal context takes a lock or does
+    I/O; an ordinary thread reads it and runs the close. Only the main thread can register
+    handlers; elsewhere (tests, embedding) nothing is installed.
+    """
+    names = [name for name in ("SIGTERM", "SIGINT") if hasattr(signal, name)]
+    if threading.current_thread() is not threading.main_thread() or not names:
+        yield
+        return
+    reader, writer = socket.socketpair()
+    writer.setblocking(False)
+
+    def watch() -> None:
+        with reader:
+            while reader.recv(16):
+                on_signal()
+
+    threading.Thread(target=watch, daemon=True).start()
+    previous = {
+        name: signal.signal(getattr(signal, name), _ignore) or signal.SIG_DFL for name in names
+    }
+    wakeup = signal.set_wakeup_fd(writer.fileno(), warn_on_full_buffer=False)
+    try:
+        yield
+    finally:
+        signal.set_wakeup_fd(wakeup)
+        for name, handler in previous.items():
+            signal.signal(getattr(signal, name), handler)
+        writer.close()  # ends the watcher's recv
+
+
+def _ignore(_signum: int, _frame: object) -> None:
+    """The Python-level handler does nothing; the wakeup socket carries the signal."""

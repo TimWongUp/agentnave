@@ -41,6 +41,68 @@ fn dispatched_receipts_never_supply_boss_evidence_or_block_it() {
     assert_eq!(hosts.state(&h)["reload"]["state"], "current");
 }
 
+#[test]
+fn a_killed_relay_that_delivered_the_tools_still_confirms_a_reload() {
+    let (_temp, mut hosts) = fixture();
+    let h = host(&hosts, "codex");
+    executable_file(
+        &hosts.context.search[0].join(h.binary),
+        "#!/bin/sh\nexit 99\n",
+    );
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    hosts.processes = Mutex::new(processes::Probe::fixed(None));
+    let root = hosts.context.home.join(".agentnave");
+    let since = hosts.settings["codex"]["reload_changed"]["at_ms"]
+        .as_u64()
+        .unwrap();
+    let hash = "a".repeat(64);
+    let receipt = |start: u64| {
+        json!({"version":1,"host":"codex","started_ms":start,"runtime_version":"0.22.0",
+            "runtime_tools_hash":hash,"host_tools_hash":hash})
+        .to_string()
+    };
+    let path = root.join("connections/17-0123456789abcdef0123456789abcdef.json");
+    // The host reopened and no new connection exists yet; this one has no end mark.
+    save(&path, &receipt(since + 1));
+    hosts.processes =
+        Mutex::new(processes::Probe::fixed(None).with_receipt_processes(Some(HashMap::new())));
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+    assert_eq!(hosts.state(&h)["reload"]["connections"], 0);
+    // One from before the change, or whose server died under it, proves nothing.
+    save(&path, &receipt(since));
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unverified");
+    save(&path, &receipt(since + 1));
+    let fault = root
+        .join("connection-faults")
+        .join(path.file_name().unwrap());
+    save(
+        &fault,
+        &json!({"version":1,"host":"codex","host_app":"codex","started_ms":since + 1,
+            "fault_ms":since + 2,"reason":"service_exited"})
+        .to_string(),
+    );
+    assert_eq!(hosts.state(&h)["reload"]["state"], "unverified");
+    fs::remove_file(&fault).unwrap();
+    // Paused rather than known gone, it keeps the protection until it falls silent for long enough.
+    hosts.processes = Mutex::new(
+        processes::Probe::fixed(None).with_receipt_processes(Some(HashMap::from([(17, 1)]))),
+    );
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(SystemTime::now() - std::time::Duration::from_secs(100))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "required");
+    fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(SystemTime::now() - std::time::Duration::from_secs(200))
+        .unwrap();
+    assert_eq!(hosts.state(&h)["reload"]["state"], "current");
+}
+
 #[cfg(unix)]
 #[test]
 fn native_copy_actions_use_resolved_fake_clis_and_preserve_host_files() {
