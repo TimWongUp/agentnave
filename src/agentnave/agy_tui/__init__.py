@@ -423,7 +423,9 @@ class Run:
             # agy folds a paste of over 15 lines, or with a line over 1000 characters, into
             # "[Pasted text #1 +121 lines]".
             box = input_box(screen)
-            echoed = compact(box).endswith(tail) or box.lower().startswith("> [pasted text #")
+            echoed = (bool(tail) and compact(box).endswith(tail)) or box.lower().startswith(
+                "> [pasted text #"
+            )
             # Enter never answers a menu that came up after the paste.
             if state(screen) == "menu":
                 self.turn.block("agy opened a dialog while taking the task", screen)
