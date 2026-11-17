@@ -8,7 +8,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | --- | --- |
 | Manager（boss） | 目标解释、任务拆解、角色与模型选择、并行、重试、审核、综合、是否隔离与合入、长期任务状态 |
 | AgentNave 服务 | 启动与取消 Provider 进程树、默认值套用、活动快照与终态归一化、进程内 Invocation 句柄、会议轮次、会话历史与按用户设定天数的自动清理、隔离目录的创建、登记、只读任务无改动时的自动释放与显式释放后的删除 |
-| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、隔离目录的手动删除（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)） |
+| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、隔离目录的手动删除（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)）、用户自己开的内嵌终端（[ADR-0101](../adr/0101-tray-embedded-terminal.md)） |
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
@@ -103,6 +103,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 ## 托盘 App
 
 - 界面只经 `agentnave` 自定义协议提供：不开放 IPC、导航限于自身协议；除 ChatGPT 订阅登录期间仅在回环地址临时监听登录回调端口，以及 macOS 上只读提供视频包片段、带启动令牌的回环端口外，不监听端口（[ADR-0080](../adr/0080-tray-video-loopback-http.md)）。界面写操作都要求 `X-AgentNave-Action: 1`，可能刷新并保存令牌的目录请求也属于写操作。
+- 内嵌终端由托盘拥有：托盘在伪终端里启动用户选的已装 CLI，进程随 App 退出结束；服务不知道这些进程，终端不写会话记录、不接入服务持有的会话。只有终端页的 CSP 额外允许内联样式（[ADR-0101](../adr/0101-tray-embedded-terminal.md)）。
 - 工作区所属的项目由托盘派生显示，不落服务库，服务不感知；托盘在自己的配置目录记下目录所属仓库（文件名 projects.json，托盘独写）。
 - 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、在仓库锁与租约协议下手动删除隔离目录并更新 `worktrees.db`（不执行仓库 hooks、filter 与文件监视程序，[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、工作区交接与取消待接手标记、清空或按同一保留边界清理工作区（含被接手后已无会话的只有 boss 工作区及两端都清理后的关联记录，不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)、[ADR-0099](../adr/0099-handover-links-workspaces.md)）、数据根的设置文件、小人视频选装包 `video-packs/`、语音设置 `voice.json`、语音密钥与登录令牌 `voice-keys.json`、语音缓存 `voice-cache/`、用户确认或刷新时删除 `connection-faults/` 下已确认、已恢复或无人认领的连接故障记录（[ADR-0088](../adr/0088-relay-records-service-exit-fault.md)、[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。托盘不迁移会话库和隔离目录库的 schema：遇到旧版本的库只读展示，写操作提示先重连宿主（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。
 - 卸载由托盘 App 拥有确认与宿主清理：按登记表移除用户级接入、Skill 和规则块，删除 agy 的 AgentNave hook 并关闭开机启动；任务运行或状态无法确认时拒绝。App 退出后的独立辅助进程清理自有数据，记录数据根仅按用户开关删除；信任标记、项目级配置与仓库隔离目录保留。macOS 把当前 App 移入废纸篓，Windows 由 NSIS 删除程序文件（[ADR-0100](../adr/0100-app-uninstall.md)）。
