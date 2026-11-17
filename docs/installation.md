@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.14.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.15.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.14.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.15.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -614,19 +614,15 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.14.0
+### Upgrading to v1.15.0
 
-Update the App and reconnect or reopen hosts as prompted. For a manual installation, reinstall the runtime and Skills from `@v1.14.0` and reconnect MCP. Replace the full Skill directory to pick up the updated instructions.
+Update the App and reconnect or reopen hosts as prompted. For a manual installation, reinstall the runtime and Skills from `@v1.15.0` and reconnect MCP. Replace the full Skill directory to pick up the updated instructions.
 
-The v1.14 service upgrades an existing `agentnave.db` from schema version 3 to version 4 (adding `workspace_links`) the first time it opens the database, including read-only calls such as `list` and `read_conversation`. The upgrade is one-way: afterwards v1.13 Apps and services can no longer read or write this database, and a v1.13 service still running against it reports a schema version mismatch, so reconnect those hosts to start the new service. Until the database is migrated, the v1.14 App reads it read-only, and any write asks you to reconnect the host first.
+v1.15 adds an uninstall flow to the App; see [Uninstall](#uninstall). On Windows, the uninstaller of v1.15 and later asks the App to confirm before removing the program. Uninstalling v1.14 or earlier from Windows Settings still removes only the program files, so update to v1.15 first, or use the manual steps below to clean up hosts.
 
-Handovers now link two workspaces instead of transferring ownership. Workspaces handed over before this upgrade keep their existing ownership and are not migrated. After claiming a pending workspace, open new seats in it and use `forward` to carry results from the linked workspace; a `session_id` that belongs to another workspace's seat is rejected.
+Upgrading from v1.13 or earlier still applies the one-way schema migrations of `agentnave.db` described in [the v1.14.0 release notes](releases/v1.14.0.md) and [the v1.13.0 release notes](releases/v1.13.0.md); read them before the new service first opens the database.
 
-To keep the option of rolling back to v1.13, stop all services sharing the data directory and back up the whole data directory before the v1.14 service first opens the database, or roll back before that first open. After the first open, stop all v1.14 services using that data directory and restore that backup before running v1.13.
-
-Upgrading from v1.12 or earlier still applies the one-way schema migration described in [the v1.13.0 release notes](releases/v1.13.0.md); read it before the new service first opens the database.
-
-See [v1.14.0 release notes](releases/v1.14.0.md). Earlier upgrade instructions remain in [the release archive](releases/v1.13.1.md).
+See [v1.15.0 release notes](releases/v1.15.0.md). Earlier upgrade instructions remain in [the release archive](releases/v1.14.0.md).
 
 ## Uninstall
 
