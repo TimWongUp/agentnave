@@ -104,4 +104,4 @@
 | 0098 | [托盘可在仓库锁与租约协议下手动删除隔离目录](0098-tray-deletes-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的 App 清理边界；扩展 ADR-0012 |
 | 0099 | [接手改为建立关联，工作区不再转移](0099-handover-links-workspaces.md) | 已接受 | 取代 ADR-0033 的归属转移部分；修订 ADR-0017 的跨 boss 显式续接、ADR-0046 的清理计时起点 |
 | 0100 | [由 App 卸载并默认保留任务和会议记录](0100-app-uninstall.md) | 已接受 | 扩展 ADR-0012 的托盘写入边界；保留 ADR-0078 的工作区信任标记 |
-| 0101 | [托盘 App 内嵌终端，运行用户自己开的 CLI](0101-tray-embedded-terminal.md) | 已接受 | 修订 CONTEXT「Tray App」的只读与「控制台」范围；扩展 ADR-0012 的托盘写入边界 |
+| 0101 | [办公室里开 agent，终端与它的工作区对应](0101-tray-embedded-terminal.md) | 已接受 | 修订 CONTEXT「Tray App」的只读与「控制台」范围；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执 |

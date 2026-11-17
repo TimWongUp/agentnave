@@ -90,3 +90,46 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         assert!(!parent_session(name), "{name}");
     }
 }
+
+/// A relay running under a terminal's CLI names the workspaces that CLI is the boss of: the one a
+/// chat owns, and an older chat's own; a chat that never dispatched names none.
+#[test]
+fn a_relay_under_a_terminal_names_its_workspaces() {
+    let root = tempfile::tempdir().unwrap();
+    let db = crate::db::create(root.path());
+    let (owned, older, idle) = (
+        format!("s-{}", "a".repeat(32)),
+        format!("s-{}", "b".repeat(32)),
+        format!("s-{}", "c".repeat(32)),
+    );
+    db.execute(
+        "INSERT INTO workspaces (id, owner, owner_host) VALUES ('s-handed', ?1, 'claude')",
+        [&owned],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO conversations (id, kind, title, created, host_source, manager_session, \
+         review, isolated, seats, sessions, rev) \
+         VALUES ('c-1', 'task', 't', '2026-11-18T00:00:00Z', 'unknown', ?1, 0, 0, '[]', '{}', 1)",
+        [&older],
+    )
+    .unwrap();
+    // This test process stands in for the terminal's CLI and a child of it for the relay.
+    let mut relay = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let connections = root.path().join("connections");
+    std::fs::create_dir_all(&connections).unwrap();
+    let receipt = serde_json::json!({"host": "claude", "bosses": [owned, idle, older]});
+    std::fs::write(
+        connections.join(format!("{}-x.json", relay.id())),
+        receipt.to_string(),
+    )
+    .unwrap();
+    let found = super::links::workspaces(root.path(), &[(7, std::process::id()), (8, 1)]);
+    relay.kill().unwrap();
+    relay.wait().unwrap();
+    assert_eq!(found.get(&7), Some(&vec!["s-handed".to_owned(), older]));
+    assert_eq!(found.get(&8), None);
+}

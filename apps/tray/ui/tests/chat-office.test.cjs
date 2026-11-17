@@ -90,6 +90,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
   const chatContext = vm.createContext({
     AN: {}, state: { loaded: "ws-a", selected: "ws-b", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}),
     renderHead() {}, renderConv() { drawer.hidden = false; }, renderSideToggle() {}, renderTicker() {},
     renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
@@ -401,6 +402,7 @@ function refreshing() {
   const context = vm.createContext({
     AN: { voice: { ingest() { calls.voice++; } } }, state: { loaded: null, selected: "ws", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderSideToggle() {}, renderTicker() {},
     renderOffice() { calls.all++; }, showBlank() {}, renderList() { calls.list++; }, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => tick, timeDriven: () => busy,

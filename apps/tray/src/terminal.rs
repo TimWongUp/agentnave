@@ -1,15 +1,18 @@
-//! The embedded terminal (ADR-0101): installed CLIs the user starts from the App, each in a folder
-//! they picked. They are the user's own processes: the service never sees them, nothing is
-//! written to the conversation history, and they end with the App.
+//! The embedded terminal (ADR-0101): installed CLIs the user starts from the office, each in a
+//! project's folder. They are the user's own processes and end with the App; a CLI that works
+//! through AgentNave is the boss of the workspaces it dispatched from, which the office shows it
+//! beside.
 //!
 //! Pages read output by long polling and send keys, size changes, stop and close as action POSTs,
 //! all over the `agentnave` scheme like every other page. Every route but the list names its
 //! terminal with `?session=<id>`.
 
+mod links;
 mod session;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -49,7 +52,8 @@ struct Running {
 impl Running {
     fn describe(&self) -> Value {
         json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
-            "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE)})
+            "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
+            "workspaces": [], "project_key": crate::projects::OTHER})
     }
 }
 
@@ -110,10 +114,38 @@ impl Terminals {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    /// Every terminal with the workspaces its CLI is the boss of and the project of its folder.
     fn describe(&self) -> Value {
-        let state = self.lock();
-        let cwd = state.cwd.clone().or_else(dirs::home_dir);
-        let open: Vec<Value> = state.open.iter().map(Running::describe).collect();
+        let (cwd, mut open, pids) = {
+            let state = self.lock();
+            let pids: Vec<(u64, u32)> = state
+                .open
+                .iter()
+                .filter(|running| running.session.exit().is_none())
+                .filter_map(|running| Some((running.id, running.session.pid()?)))
+                .collect();
+            let open: Vec<(u64, PathBuf, Value)> = state
+                .open
+                .iter()
+                .map(|running| (running.id, running.cwd.clone(), running.describe()))
+                .collect();
+            (state.cwd.clone().or_else(dirs::home_dir), open, pids)
+        };
+        let mut links = links::workspaces(&crate::data_files::data_root(), &pids);
+        let folders: BTreeMap<String, String> = open
+            .iter()
+            .map(|(id, cwd, _)| (id.to_string(), cwd.display().to_string()))
+            .collect();
+        let projects = crate::projects::lookup(&folders, false);
+        for (id, _, value) in &mut open {
+            value["workspaces"] = json!(links.remove(id).unwrap_or_default());
+            if let Some(project) = projects.get(&id.to_string()) {
+                value["project_key"] = json!(project.key);
+                value["project_label"] = json!(project.label);
+                value["project_path"] = json!(project.path);
+            }
+        }
+        let open: Vec<Value> = open.into_iter().map(|(_, _, value)| value).collect();
         json!({"sessions": open, "cwd": cwd.map(|cwd| cwd.display().to_string())})
     }
 

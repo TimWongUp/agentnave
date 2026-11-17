@@ -159,6 +159,11 @@ impl Session {
         self.output().exit
     }
 
+    /// The CLI's own pid: the login shell execs it in place.
+    pub(crate) fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
     pub(crate) fn write(&self, bytes: &[u8]) -> Result<(), String> {
         let mut writer = self.writer.lock().unwrap_or_else(|p| p.into_inner());
         writer

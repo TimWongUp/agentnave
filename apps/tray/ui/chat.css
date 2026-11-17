@@ -86,7 +86,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .bar-toggle .pane { fill: currentColor; stroke: none; opacity: 0; }
 .bar-toggle[aria-expanded="true"] .pane { opacity: 0.3; }
 /* settings covers the office; the buttons keep their places so the bar does not shift */
-body:has(.office-settings:not([hidden])) .bar-toggle, body:has(.office-terminal:not([hidden])) .bar-toggle { visibility: hidden; }
+body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 /* The queries below are the exact complements of chat-state.js's `narrow` and `overlay`, so no fractional width falls in a gap.
    Folded columns leave the grid (--side-col, --conv-col are their tracks) and wait off to the side.
    Hovering the button or the window edge lays one over the office; the dragged --side-w stays on
@@ -842,8 +842,6 @@ dialog.act::backdrop { background: #0006; }
 
 .office-settings { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
 .office-settings[hidden] { display: none; }
-.office-terminal { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
-.office-terminal[hidden] { display: none; }
 button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .pill.act { cursor: pointer; }
 .iso-card { display: grid; gap: 4px; margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; color: var(--soft); user-select: text; }
@@ -863,3 +861,29 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .provider-health-lines:hover { text-decoration: underline; }
 .provider-health-close { flex: none; width: 24px; height: 24px; margin: 0 4px 0 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
 .provider-health-close:hover { background: color-mix(in srgb, #e9a43b 32%, var(--bg)); color: var(--ink); }
+
+/* Terminals (ADR-0101): a project's "+" starts an agent; the conversation column can show the
+   terminal of a workspace's boss in place of its messages, wider while it does. */
+.gl-grp-add { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin: -3px -2px -3px 2px; border-radius: 6px; font-size: 15px; font-weight: 400; line-height: 1; color: var(--muted); }
+.gl-grp-add[hidden] { display: none; }
+.gl-grp-add:hover { background: var(--card-hover); color: var(--ink); }
+.gi-term { flex: none; padding: 0 4px; border-radius: 4px; font: 600 10px/15px ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.gi-term[hidden] { display: none; }
+.ctx-cli { display: flex; align-items: center; gap: 8px; }
+.ctx-cli .avatar, .ctx-cli .host-letter { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; }
+.dr-mode { flex: none; display: flex; padding: 2px; border-radius: 9px; background: var(--card); }
+.dr-mode[hidden] { display: none; }
+.dr-mode button { padding: 3px 10px; border-radius: 7px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.dr-mode button:hover { color: var(--ink); }
+.dr-mode button[aria-pressed="true"] { background: var(--card-hover); color: var(--ink); box-shadow: 0 1px 2px #0003; }
+.dr-stop { flex: none; padding: 4px 10px; border-radius: 99px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.dr-stop[hidden] { display: none; }
+.dr-stop:hover { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+.dr-term { display: none; flex: 1; min-height: 0; position: relative; }
+.dr-term-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.dr-term-frame[hidden] { display: none; }
+.conv.term-mode .dr-term { display: block; }
+.conv.term-mode :is(.tl, .jump, .ro, .voice-channel) { display: none; }
+@media not all and (max-width: 860px) {
+  .app:has(> .conv.term-mode:not(.folded)) { --conv-col: clamp(480px, 50%, 920px); }
+}

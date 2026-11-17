@@ -133,7 +133,7 @@ fn terminal_asset(resource: &str) -> Response {
     }
 }
 
-/// xterm.js and dockview as shipped on npm (ui/vendor/*/README.md).
+/// xterm.js as shipped on npm (ui/vendor/xterm/README.md).
 fn terminal_vendor(resource: &str) -> Response {
     let (mime, bytes): (&'static str, &[u8]) = match resource {
         "xterm.js" => (
@@ -151,14 +151,6 @@ fn terminal_vendor(resource: &str) -> Response {
         "xterm.css" => (
             "text/css; charset=utf-8",
             include_bytes!("../../ui/vendor/xterm/xterm.css"),
-        ),
-        "dockview.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../ui/vendor/dockview/dockview-core.min.noStyle.js"),
-        ),
-        "dockview.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("../../ui/vendor/dockview/dockview.css"),
         ),
         _ => return Response::not_found(),
     };
@@ -266,9 +258,9 @@ fn chat_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/office-settings.js").to_vec(),
         ),
-        "office-terminal.js" => Response::ok(
+        "chat-terminal.js" => Response::ok(
             "text/javascript; charset=utf-8",
-            include_bytes!("../../ui/office-terminal.js").to_vec(),
+            include_bytes!("../../ui/chat-terminal.js").to_vec(),
         ),
         "chat-state.js" => Response::ok(
             "text/javascript; charset=utf-8",

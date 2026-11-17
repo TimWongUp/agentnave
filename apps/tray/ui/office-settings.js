@@ -18,10 +18,9 @@
     return url;
   }
   function highlight(open) {
-    // Closed settings hands the bar back to the office; the terminal marks itself when it opens.
-    const current = open ? "/settings/" : "/chat/";
     for (const link of header.querySelectorAll("nav a")) {
-      if (targetOf(link.href)?.pathname.startsWith(current)) link.setAttribute("aria-current", "page");
+      const settings = targetOf(link.href)?.pathname.startsWith("/settings/");
+      if (settings === open) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     }
   }

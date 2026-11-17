@@ -549,6 +549,7 @@ function showBlank(kind) {
       L("左侧是每个 boss 会话的工作区，进行中的排在最前面。", "Workspaces for each boss session are listed on the left, with active ones first."),
     ],
     missing: [L("找不到这个工作区", "Workspace not found"), L("它可能已被删除。", "It may have been deleted.")],
+    agent: [L("还没有派活", "No work dispatched yet"), L("它派出第一个任务后，这里会变成它的办公室。", "Once it dispatches its first task, its office appears here.")],
     loading: [L("正在读取办公室…", "Loading office…"), ""],
     error: [L("无法读取办公室", "Failed to load office"), L("正在重试，请稍候。", "Retrying, please wait.")],
   }[kind];
@@ -601,6 +602,7 @@ function renderAll(c, newGroup = false) {
   const n = counts(c);
   renderHead(c, n);
   renderConv(c, ctx);
+  ChatTerminal.column(c.group);
   renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);
@@ -645,15 +647,21 @@ async function refresh() {
       return;
     }
     el.banner.hidden = true;
-    state.groupsData = chats.groups;
+    await ChatTerminal.refresh();
+    state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
+    const followed = ChatTerminal.follow(state.selected);
+    if (followed !== state.selected) {
+      state.selected = followed;
+      history.replaceState({}, "", href(`/chat/${followed}`));
+    }
     if (
       state.auto &&
       !narrow.matches &&
-      !chats.groups.some((g) => g.group === state.selected)
+      !state.groupsData.some((g) => g.group === state.selected)
     )
-      state.selected = chats.groups[0]?.group ?? null;
+      state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([chats.groups, state.selected, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();
@@ -663,6 +671,11 @@ async function refresh() {
       return;
     }
     const selected = state.selected;
+    if (ChatTerminal.pendingId(selected) != null) {
+      showBlank("agent");
+      if (!ChatTerminal.showPending(selected)) showBlank("missing");
+      return;
+    }
     const hashKey = state.hashKey;
     const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
     if (!state.loaded) showBlank("loading");

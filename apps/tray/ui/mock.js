@@ -996,7 +996,29 @@ All checks passed!
     },
   };
   const mockDecision = { document: null, error: null, key_set: false, key_error: null };
+  // Terminals the office started (ADR-0101): the first one's CLI is the boss of the first workspace.
+  const mockTerminals = [
+    { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app" },
+    { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+  ];
+  function terminalPost(path, body) {
+    const id = Number(new URLSearchParams(path.split("?")[1] || "").get("session"));
+    const route = path.split("?")[0];
+    if (route === "/app/terminal/pick") return { cwd: "/work/app" };
+    if (route === "/app/terminal/start") {
+      const project = PLACES.find((p) => p.project_path === body.cwd) || { project_key: "other" };
+      const session = { id: mockTerminals.length + 1, provider: body.provider, cwd: body.cwd, exit: null, active: false, workspaces: [], ...project };
+      mockTerminals.push(session);
+      return { session };
+    }
+    const at = mockTerminals.findIndex((t) => t.id === id);
+    if (route === "/app/terminal/stop" && at >= 0) mockTerminals[at].exit = 0;
+    if (route === "/app/terminal/close" && at >= 0) mockTerminals.splice(at, 1);
+    return { ok: true };
+  }
   async function p3Fetch(path) {
+    if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
+    if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider })) };
     if (path === "/app/provider-health") return { providers: structuredClone(mockHealth) };
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
@@ -1021,6 +1043,7 @@ All checks passed!
     return mockFetch(path);
   }
   async function post(path, body = {}) {
+    if (path.startsWith("/app/terminal/")) return terminalPost(path, body);
     if (path === "/app/voice/player") { mockPlayer = structuredClone(body); window.dispatchEvent(new CustomEvent("agentnave:voice-player", { detail: mockPlayer })); return { ok: true }; }
     if (path === "/app/voice/player/command") { window.dispatchEvent(new CustomEvent("agentnave:voice-command", { detail: body })); return { ok: true, opening: false }; }
     if (path.split("?")[0] === "/settings/members") return p3Fetch(path);

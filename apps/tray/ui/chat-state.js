@@ -267,7 +267,7 @@ function createItem(g) {
   };
   rec.iso.addEventListener("click", openIsolated);
   rec.iso.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && openIsolated(e));
-  rec.el.addEventListener("contextmenu", (e) => Actions.workspaceMenu(rec.id, e));
+  rec.el.addEventListener("contextmenu", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e));
   return rec;
 }
 function updateItem(rec, g) {
@@ -304,6 +304,7 @@ function updateItem(rec, g) {
   rec.pill.hidden = shown === "idle";
   setClass(rec.pill, `pill tone-${tone}`);
   setText(rec.pill, word);
+  ChatTerminal.decorate(rec, g);
 }
 // The boss, then the project unless the list is already grouped by it or it repeats the title.
 function itemPlace(g) {
@@ -417,6 +418,8 @@ function headNode(section) {
   setText(rec.name, section.title);
   setText(rec.hint, section.hint);
   setText(rec.count, String(section.items.length));
+  rec.section = section;
+  ChatTerminal.headAction(rec);
   return rec.el;
 }
 // Folded groups stay in the list (the narrow rail has no headers to open them) but are not shown.
