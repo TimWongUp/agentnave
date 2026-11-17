@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
 
@@ -47,15 +48,58 @@ def _foreign_session_error(session_id: str, workspace: str | None) -> ValueError
     )
 
 
-def _matching_seat_providers(state: Record, session_id: str) -> set[str]:
-    if state.state.kind != "show":
-        return set()
-    by_seat = {seat.id: seat.provider for seat in state.state.seats}
-    return {
-        seat_provider
-        for seat_id, saved in state.state.sessions.items()
-        if saved.session_id == session_id and (seat_provider := by_seat.get(seat_id)) is not None
-    }
+type _BindingOrder = tuple[tuple[int, int, str], tuple[int, int, str], str, int, int, str]
+
+
+def _timestamp_key(raw: str | None) -> tuple[int, int, str]:
+    if not raw:
+        return (1, 0, "")
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return (1, 0, raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    delta = parsed.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    us = (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+    return (0, us, raw)
+
+
+def _session_bindings(
+    records: Iterable[Record],
+    session_id: str,
+    provider: ProviderName | None,
+) -> list[tuple[str, _BindingOrder, str | None]]:
+    bindings: list[tuple[str, _BindingOrder, str | None]] = []
+    for record in records:
+        state = record.state
+        created_key = _timestamp_key(state.created)
+        if state.kind == "task":
+            for index, task in enumerate(state.tasks):
+                if task.session_id == session_id and (
+                    provider is None or task.provider == provider
+                ):
+                    order: _BindingOrder = (
+                        _timestamp_key(task.time),
+                        created_key,
+                        state.id,
+                        0,
+                        index,
+                        "",
+                    )
+                    bindings.append((task.provider, order, state.manager_session))
+        elif state.kind == "show":
+            by_seat = {seat.id: seat.provider for seat in state.seats}
+            for seat_id, saved in state.sessions.items():
+                seat_provider = by_seat.get(seat_id)
+                if (
+                    saved.session_id == session_id
+                    and seat_provider is not None
+                    and (provider is None or seat_provider == provider)
+                ):
+                    order = (created_key, created_key, state.id, 1, 0, seat_id)
+                    bindings.append((seat_provider, order, state.manager_session))
+    return bindings
 
 
 def check_foreign_session(
@@ -64,30 +108,32 @@ def check_foreign_session(
     provider: ProviderName | None,
     manager_session: str | None,
 ) -> None:
-    """Reject resuming a native thread bound to another workspace's task or meeting seat."""
-    all_records = list(records)
-    for record in all_records:
-        if record.state.manager_session != manager_session:
-            continue
-        if record.state.kind == "task" and any(
-            t.session_id == session_id and (provider is None or t.provider == provider)
-            for t in record.state.tasks
-        ):
-            return
-        seat_providers = _matching_seat_providers(record, session_id)
-        if seat_providers and (provider is None or provider in seat_providers):
-            return
-    for record in all_records:
-        if record.state.manager_session == manager_session:
-            continue
-        if record.state.kind == "task" and any(
-            t.session_id == session_id and (provider is None or t.provider == provider)
-            for t in record.state.tasks
-        ):
-            raise _foreign_session_error(session_id, record.state.manager_session)
-        seat_providers = _matching_seat_providers(record, session_id)
-        if seat_providers and (provider is None or provider in seat_providers):
-            raise _foreign_session_error(session_id, record.state.manager_session)
+    """Reject resuming a native thread unless the earliest workspace recording it matches."""
+    bindings = _session_bindings(records, session_id, provider)
+    if not bindings:
+        return
+    earliest_by_provider: dict[str, tuple[_BindingOrder, str | None]] = {}
+    for bound_provider, order, owner in bindings:
+        current = earliest_by_provider.get(bound_provider)
+        if current is None or order < current[0]:
+            earliest_by_provider[bound_provider] = (order, owner)
+    if provider is not None:
+        owner = earliest_by_provider[provider][1]
+        if owner != manager_session:
+            raise _foreign_session_error(session_id, owner)
+        return
+    local_providers = sorted(
+        {bound_provider for bound_provider, _, owner in bindings if owner == manager_session},
+        key=lambda item: earliest_by_provider[item][0],
+    )
+    if local_providers:
+        for bound_provider in local_providers:
+            owner = earliest_by_provider[bound_provider][1]
+            if owner != manager_session:
+                raise _foreign_session_error(session_id, owner)
+        return
+    _, (_, owner) = min(earliest_by_provider.items(), key=lambda item: item[1][0])
+    raise _foreign_session_error(session_id, owner)
 
 
 def latest_session_task(

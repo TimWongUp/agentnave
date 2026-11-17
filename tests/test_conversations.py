@@ -2170,6 +2170,110 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
 
 
 @pytest.mark.asyncio
+async def test_preupgrade_shared_session_belongs_only_to_earliest_recording_workspace(
+    data_root: Path, tmp_path: Path
+) -> None:
+    from agentnave.native_sessions import boss_key
+
+    db = Database(data_root)
+    locks = data_root / "locks"
+    early = boss_key(None, "early-boss")
+    late = boss_key(None, "late-boss")
+    seat_owner = boss_key(None, "seat-boss")
+    try:
+        for conv_id, owner, when, session_id in (
+            ("c-early", early, "2026-01-01T00:00:00Z", "shared-task-sid"),
+            ("c-late", late, "2026-01-02T00:00:00Z", "shared-task-sid"),
+            ("c-seat-late", late, "2026-01-02T00:00:00Z", "shared-seat-sid"),
+        ):
+            rec = Record.create(
+                db,
+                locks,
+                Conversation(
+                    id=conv_id,
+                    title=conv_id,
+                    kind="task",
+                    created=when,
+                    manager_session=owner,
+                    tasks=[
+                        TaskRecord(
+                            id=f"t-{conv_id}",
+                            provider="claude",
+                            model="",
+                            cwd=str(tmp_path),
+                            prompt="check",
+                            session_id=session_id,
+                            status="succeeded",
+                            time=when,
+                        )
+                    ],
+                ),
+            )
+            rec.release()
+        show_rec = Record.create(
+            db,
+            locks,
+            Conversation(
+                id="c-seat-early",
+                title="c-seat-early",
+                kind="show",
+                created="2026-01-01T00:00:00Z",
+                manager_session=seat_owner,
+                cwd=str(tmp_path),
+                seats=[SeatRecord(id="a", provider="claude", cwd=str(tmp_path))],
+                sessions={"a": SessionRecord(session_id="shared-seat-sid")},
+            ),
+        )
+        show_rec.release()
+    finally:
+        db.close()
+
+    async with Client(mcp) as client:
+        for session_id, loser, winner in (
+            ("shared-task-sid", "late-boss", "early-boss"),
+            ("shared-seat-sid", "late-boss", "seat-boss"),
+        ):
+            for extra in ({}, {"provider": "claude", "cwd": str(tmp_path)}):
+                rejected = await client.call_tool(
+                    "start_agent",
+                    {
+                        "prompt": "check",
+                        "manager_session_id": loser,
+                        "session_id": session_id,
+                        **extra,
+                    },
+                )
+                assert rejected.is_error and "different manager session" in str(rejected.content)
+                assert "forward" in str(rejected.content)
+            allowed = await _call(
+                client,
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "prompt": "check",
+                    "cwd": str(tmp_path),
+                    "manager_session_id": winner,
+                    "session_id": session_id,
+                },
+            )
+            await _wait_task(client, allowed["invocation_id"])
+
+    # Post-lock guard inside Conversations.start_task enforces the same earliest-owner rule.
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        with pytest.raises(ValueError, match="different manager session"):
+            studio.start_task(
+                InvocationRequest("claude", "check", tmp_path, "shared-task-sid"),
+                None,
+                None,
+                manager_session_id="late-boss",
+            )
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
 async def test_handover_opens_a_workspace_for_a_chat_that_never_dispatched(
     data_root: Path, tmp_path: Path
 ) -> None:
