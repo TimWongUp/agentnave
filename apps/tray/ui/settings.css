@@ -557,11 +557,12 @@ select.decision-add { justify-self: start; width: 200px; }
 :root[data-embedded="true"] .bar { display: none; }
 :root[data-embedded="true"] .subnav { top: 0; max-height: 100vh; }
 
-.uninstall-entry { display: flex; justify-content: flex-start; }
-.uninstall-dialog { height: min(330px, 82vh); }
-.uninstall-content { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 0 8px; }
+.uninstall-entry { margin: 12px 0 0; }
+.uninstall-entry button { min-width: 76px; }
+.uninstall-content { max-height: 50vh; overflow-y: auto; padding: 18px 0 0; }
 .uninstall-option { display: flex; align-items: center; justify-content: space-between; gap: 18px; font-size: 13px; cursor: pointer; }
-.uninstall-status { min-height: 2.8em; margin: 16px 0 4px; font-size: 12.5px; color: var(--muted); }
-.uninstall-failures { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--bad); overflow-wrap: anywhere; }
+.uninstall-status { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+.uninstall-status:empty { display: none; }
+.uninstall-failures { margin: 10px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: var(--bad); overflow-wrap: anywhere; }
 .uninstall-dialog .upd-row { flex: none; margin-top: 14px; }
 .uninstall-dialog .upd-row button { min-width: 76px; }
