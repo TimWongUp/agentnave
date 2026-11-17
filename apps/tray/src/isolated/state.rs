@@ -139,6 +139,9 @@ fn scan_nested_tree(wt_path: &Path, found: &mut BTreeSet<String>, limit: usize) 
                 continue;
             };
             if !plain_entry(&meta) {
+                has_head_file |= is("HEAD");
+                has_objects |= is("objects");
+                has_refs |= is("refs");
                 continue;
             }
             if meta.is_dir() {

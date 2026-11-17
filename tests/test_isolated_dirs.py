@@ -1229,6 +1229,29 @@ def test_bare_repository_in_an_ignored_directory_forces_confirmation(tmp_path: P
     dirs.close()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+@pytest.mark.parametrize("marker", ["HEAD", "objects", "refs"])
+def test_ignored_bare_repository_with_linked_marker_requires_confirmation(
+    tmp_path: Path, marker: str
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    ignored = created.worktree_path / "ignored_dir"
+    ignored.mkdir()
+    _git(ignored, "init", "--bare", "bare.git")
+    bare = ignored / "bare.git"
+    target = tmp_path / marker
+    (bare / marker).rename(target)
+    (bare / marker).symlink_to(target, target_is_directory=marker != "HEAD")
+    result = dirs.release(created.id, workspace_id="ws-1")
+    assert result.status == "confirmation_required"
+    assert result.nested_repos == ("ignored_dir/bare.git",)
+    assert created.worktree_path.is_dir()
+    dirs.close()
+
+
 def test_bare_repository_whose_own_directory_git_does_not_list_is_kept(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     # Ignore every file but no directory: Git lists only leaf directories of the bare repo.
@@ -1744,4 +1767,270 @@ def test_claim_refuses_a_registered_directory_that_lost_its_git_link(tmp_path: P
     (created.worktree_path / ".git").unlink()
     with pytest.raises(IsolationError, match="no longer the worktree"):
         dirs.claim_for_cwd(created.execution_cwd)
+    dirs.close()
+
+
+def test_a_managed_branch_turned_into_a_link_never_takes_its_target_along(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    main_oid = _git(repo, "rev-parse", "main")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(repo, "worktree", "remove", "--force", str(created.worktree_path))
+    _git(repo, "symbolic-ref", f"refs/heads/{created.branch}", "refs/heads/main")
+    dirs.store.mark_deleting(
+        created.id, phase="removing_worktree", delete_oid=main_oid, updated_at=now()
+    )
+    assert dirs.recover()[0].status == "deleted"
+    assert _git(repo, "rev-parse", "main") == main_oid
+    assert f"agentnave/{created.id}" not in _git(repo, "for-each-ref", "refs/heads/")
+
+    renamed = dirs.create(repo, workspace_id="ws-1")
+    renamed.lease.release()
+    with closing(sqlite3.connect(dirs.store.path)) as db, db:
+        db.execute(
+            "UPDATE isolated_dirs SET branch_ref = 'refs/heads/main' WHERE id = ?", (renamed.id,)
+        )
+    assert dirs.release(renamed.id, workspace_id="ws-1").status == "blocked"
+    assert _git(repo, "rev-parse", "main") == main_oid
+    dirs.close()
+
+
+def test_repositories_in_tracked_directories_and_bare_ones_force_confirmation(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "a.txt").write_text("tracked\n", encoding="utf-8")
+    _git(repo, "add", "pkg")
+    _git(repo, "commit", "-m", "pkg")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path / "pkg", "init", "-b", "main")
+    _git(created.worktree_path / "pkg", "commit", "--allow-empty", "-m", "nested work")
+    _git(created.worktree_path, "init", "--bare", "loose.git")
+    assert run_git(_STATUS_ARGS, cwd=created.worktree_path).stdout.count(b"pkg") == 0
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required"
+    assert first.nested_repos == ("loose.git", "pkg")
+    dirs.close()
+
+
+def test_a_leftover_whose_directory_is_gone_confirms_unmerged_commits(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "commit", "--allow-empty", "-m", "work")
+    tip = _git(created.worktree_path, "rev-parse", "HEAD")
+    _git(repo, "worktree", "remove", "--force", str(created.worktree_path))
+    dirs.store.mark_deleting(
+        created.id, phase="removing_worktree", delete_oid=tip, updated_at=now()
+    )
+    assert dirs.recover()[0].status == "needs_attention"
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.unique_commits is True
+    assert _git(repo, "rev-parse", f"refs/heads/{created.branch}") == tip
+    done = dirs.release(created.id, workspace_id="ws-1", confirmation=first.confirmation)
+    assert done.status == "deleted"
+    assert dirs.store.get(created.id) is None
+    dirs.close()
+
+
+def test_a_branch_that_vouched_for_the_commits_going_away_needs_a_new_confirmation(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "commit", "--allow-empty", "-m", "work")
+    _git(repo, "branch", "saved", _git(created.worktree_path, "rev-parse", "HEAD"))
+    (created.worktree_path / "draft.txt").write_text("draft\n", encoding="utf-8")
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.unique_commits is False
+    _git(repo, "branch", "-D", "saved")
+    second = dirs.release(created.id, workspace_id="ws-1", confirmation=first.confirmation)
+    assert second.status == "confirmation_required" and second.unique_commits is True
+    dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses shell scripts as configured programs")
+def test_signature_programs_and_promisor_fetches_never_run(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "ran"
+    program = _script(tmp_path / "program.sh", f"touch '{marker.as_posix()}'\nexit 1\n")
+    tree = _git(repo, "rev-parse", "HEAD^{tree}")
+    signed = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+        input=(
+            f"tree {tree}\nauthor T <t@e> 0 +0000\ncommitter T <t@e> 0 +0000\n"
+            "gpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\nsigned\n"
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _git(repo, "config", "log.showSignature", "true")
+    _git(repo, "config", "gpg.program", program)
+    run_git(["log", "-1", signed], cwd=repo)
+    _git(repo, "config", "extensions.partialClone", "origin")
+    _git(repo, "config", "remote.origin.url", str(repo))
+    _git(repo, "config", "remote.origin.promisor", "true")
+    _git(repo, "config", "remote.origin.uploadpack", program)
+    run_git(["cat-file", "-e", "1" * 40], cwd=repo, allowed_exit_codes=(0, 1, 128))
+    assert not marker.exists()
+
+
+def _set_record(dirs: IsolatedDirs, isolation_id: str, assignments: str, *values: Any) -> None:
+    with closing(sqlite3.connect(dirs.store.path)) as db, db:
+        db.execute(f"UPDATE isolated_dirs SET {assignments} WHERE id = ?", (*values, isolation_id))
+
+
+def test_a_record_pointing_at_another_directory_never_removes_it(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    for victim in (tmp_path / "victim", repo / WORKTREES_DIR_NAME / "wt-ffffffffffff"):
+        created = dirs.create(repo, workspace_id="ws-1")
+        created.lease.release()
+        _git(repo, "worktree", "remove", "--force", str(created.worktree_path))
+        _git(repo, "worktree", "add", str(victim), created.branch)
+        _set_record(
+            dirs,
+            created.id,
+            "state = 'creating', worktree_path = ?, worktree_git_dir = NULL",
+            str(victim),
+        )
+        assert dirs.recover()[0].status == "needs_attention"
+        assert dirs.release(created.id, workspace_id="ws-1").status == "needs_attention"
+        assert victim.is_dir()
+
+    gone = dirs.create(repo, workspace_id="ws-1")
+    gone.lease.release()
+    _git(repo, "worktree", "remove", "--force", str(gone.worktree_path))
+    _set_record(
+        dirs,
+        gone.id,
+        "state = 'deleting', delete_oid = ?, worktree_path = ?",
+        gone.base_oid,
+        str(tmp_path / "elsewhere" / WORKTREES_DIR_NAME / gone.id),
+    )
+    assert dirs.release(gone.id, workspace_id="ws-1").status == "needs_attention"
+    latest = dirs.store.get(gone.id)
+    assert latest is not None and latest.state == "needs_attention"
+    dirs.close()
+
+
+def test_a_leftover_whose_directory_is_gone_checks_owner_and_leases(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    other = dirs.create(repo, workspace_id="ws-1")
+    other.lease.release()
+    _git(repo, "worktree", "remove", "--force", str(other.worktree_path))
+    dirs.store.mark_deleting(
+        other.id, phase="removing_worktree", delete_oid=other.base_oid, updated_at=now()
+    )
+    asked = dirs.release(other.id, workspace_id="ws-2")
+    assert asked.status == "confirmation_required"
+    done = dirs.release(other.id, workspace_id="ws-2", confirmation=asked.confirmation)
+    assert done.status == "deleted"
+
+    leased = dirs.create(repo, workspace_id="ws-1")  # its creation lease stays active
+    _git(repo, "worktree", "remove", "--force", str(leased.worktree_path))
+    dirs.store.mark_deleting(
+        leased.id, phase="removing_worktree", delete_oid=leased.base_oid, updated_at=now()
+    )
+    stuck = dirs.release(leased.id, workspace_id="ws-1")
+    assert stuck.status == "needs_attention" and "in use" in (stuck.reason or "")
+    latest = dirs.store.get(leased.id)
+    assert latest is not None and latest.state == "needs_attention"
+    leased.lease.release()
+    dirs.close()
+
+
+def test_a_worktree_redirected_by_core_worktree_is_never_released_unseen(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "config", "--worktree", "core.worktree", str(repo))
+    (created.worktree_path / "README.md").write_text("unsaved\n", encoding="utf-8")
+    assert dirs.release(created.id, workspace_id="ws-1").status == "blocked"
+    _set_record(dirs, created.id, "state = 'creating'")
+    assert dirs.recover()[0].status == "needs_attention"
+    assert (created.worktree_path / "README.md").read_text(encoding="utf-8") == "unsaved\n"
+    dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a shell script as the filter")
+def test_auto_release_never_runs_a_filter_only_the_worktree_configures(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    (repo / ".gitattributes").write_text("*.txt filter=late\n", encoding="utf-8")
+    (repo / "a.txt").write_text("same\n", encoding="utf-8")
+    _git(repo, "add", ".gitattributes", "a.txt")
+    _git(repo, "commit", "-m", "late filter")
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    marker = tmp_path / "late-ran"
+    script = _script(tmp_path / "late.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    _git(created.worktree_path, "config", "--worktree", "filter.late.clean", script)
+    git_dir = Path(_git(created.worktree_path, "rev-parse", "--absolute-git-dir"))
+    (git_dir / "index.lock").write_bytes(b"")
+    target = created.worktree_path / "a.txt"
+    target.write_text("same\n", encoding="utf-8")
+    os.utime(target, (1, 1))
+    dirs.settle_task(created.id, workspace_id="ws-1", lease=created.lease, auto_release=True)
+    assert not marker.exists()
+    dirs.close()
+
+
+def test_a_symbolic_ref_to_the_managed_branch_does_not_keep_its_commits(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "commit", "--allow-empty", "-m", "work")
+    _git(repo, "symbolic-ref", "refs/heads/saved-work", f"refs/heads/{created.branch}")
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.unique_commits is True
+    dirs.close()
+
+
+def test_a_symbolic_ref_named_with_a_unicode_line_separator_is_still_left_out(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    _git(created.worktree_path, "commit", "--allow-empty", "-m", "work")
+    _git(repo, "symbolic-ref", "refs/heads/saved work", f"refs/heads/{created.branch}")
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.unique_commits is True
+    dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="CR and LF are not valid in Windows paths")
+def test_a_working_tree_named_like_the_directory_plus_a_line_end_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    dirs = IsolatedDirs(tmp_path / "data")
+    for suffix in ("\n", "\r"):
+        created = dirs.create(repo, workspace_id="ws-1")
+        created.lease.release()
+        decoy = Path(f"{created.worktree_path}{suffix}")
+        shutil.copytree(created.worktree_path, decoy, ignore=shutil.ignore_patterns(".git"))
+        _git(created.worktree_path, "config", "--worktree", "core.worktree", str(decoy))
+        (created.worktree_path / "README.md").write_text("unsaved\n", encoding="utf-8")
+        assert dirs.release(created.id, workspace_id="ws-1").status == "blocked"
+        _set_record(dirs, created.id, "state = 'creating'")
+        assert dirs.recover()[0].status == "needs_attention"
+        assert (created.worktree_path / "README.md").read_text(encoding="utf-8") == "unsaved\n"
     dirs.close()

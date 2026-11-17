@@ -1,4 +1,4 @@
-"""Safety inspection, confirmation digests, explicit release, summaries, and recovery."""
+"""Safety inspection, confirmation digests, explicit release, and recovery."""
 
 from __future__ import annotations
 
@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from agentnave.isolated.branches import (
+    branch_tip,
+    has_unique_commits,
+    verify_managed_branch_ref,
+)
 from agentnave.isolated.leases import (
     RepoLockUnavailable,
     has_active_leases,
@@ -27,7 +32,6 @@ from agentnave.isolated.repo import (
     same_dir,
 )
 from agentnave.isolated.store import (
-    MANAGED_BRANCH_PREFIX,
     IsolatedRecord,
     WorktreeStore,
 )
@@ -36,11 +40,11 @@ from agentnave.isolated.worktree_state import (
     nested_repositories,
     remove_tree,
     tree_fingerprint,
+    verify_worktree_container,
+    verify_worktree_root,
     worktree_link_valid,
 )
 from agentnave.store import now
-
-MAX_SUMMARY_FILES = 200
 
 # Never look inside submodules or nested repositories: that would start Git there, with the
 # nested repository's own configuration.
@@ -75,7 +79,6 @@ type ReleaseStatus = Literal[
     "needs_attention",
     "not_found",
 ]
-type SummaryStatus = Literal["complete", "no_baseline", "error"]
 type RecoveryStatus = Literal["rolled_back", "deleted", "needs_attention", "skipped"]
 
 
@@ -89,22 +92,6 @@ class ReleaseResult:
     confirmation: str | None = None
     reason: str | None = None
     nested_repos: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class ChangeSummary:
-    id: str
-    path: str
-    branch: str
-    summary_status: SummaryStatus
-    head_oid: str | None = None
-    actual_branch: str | None = None
-    changed_files_from_base: tuple[str, ...] = ()
-    truncated: bool = False
-    uncommitted: bool | None = None
-    nested_repos: tuple[str, ...] = ()
-    error: str | None = None
-    auto_released: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +175,8 @@ def _compute_digest(
     status_raw: bytes,
     stat_bytes: bytes,
     nested: tuple[str, ...] = (),
+    *,
+    unique_commits: bool,
 ) -> str:
     hasher = hashlib.sha256()
     for part in (
@@ -199,6 +188,7 @@ def _compute_digest(
         status_raw,
         stat_bytes,
         "\n".join(nested).encode("utf-8", errors="surrogateescape"),
+        b"1" if unique_commits else b"0",
     ):
         hasher.update(f"{len(part)}:".encode("ascii"))
         hasher.update(part)
@@ -207,6 +197,8 @@ def _compute_digest(
 
 
 def _verify_repo_identity(record: IsolatedRecord) -> tuple[Path, Path]:
+    """Check the recorded repository, and that the record names only its own branch and path."""
+    verify_managed_branch_ref(record)
     main_root = Path(record.main_root)
     common_dir = Path(record.repo_common_dir)
     if is_link(main_root) or not main_root.is_dir():
@@ -218,17 +210,13 @@ def _verify_repo_identity(record: IsolatedRecord) -> tuple[Path, Path]:
         raise IsolationError("Repository became bare")
     actual_common = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root).line
         )
     )
     if not same_dir(common_dir, actual_common):
         raise IsolationError("Main worktree no longer belongs to the recorded repository")
     run_git(["cat-file", "-e", f"{record.base_oid}^{{commit}}"], cwd=main_root)
-    container = main_root / WORKTREES_DIR_NAME
-    if is_link(container):
-        raise IsolationError(f"Unsafe link at {container}")
+    verify_worktree_container(Path(record.worktree_path), main_root, record.id)
     return main_root, common_dir
 
 
@@ -241,20 +229,15 @@ def _verify_worktree_identity(
     wt_path = Path(record.worktree_path)
     if is_link(wt_path) or not wt_path.is_dir():
         raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
-    if not same_dir(wt_path.parent, main_root / WORKTREES_DIR_NAME):
-        raise IsolationError("Isolated worktree is not directly under .agentnave-worktrees")
+    verify_worktree_root(wt_path)
     wt_common = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=wt_path
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=wt_path).line
         )
     )
     wt_git_dir = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-dir"], cwd=wt_path
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd=wt_path).line
         )
     )
     if not same_dir(wt_common, common_dir):
@@ -312,7 +295,7 @@ def inspect_ready_locked(
     if not worktree_link_valid(wt_path, record.worktree_git_dir, common_dir):
         raise IsolationError("Isolated directory is no longer a valid git worktree of this record")
     sym_res = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path, allowed_exit_codes=(0, 1))
-    actual_ref = decode_git_path(sym_res.stdout.rstrip(b"\r\n")) if sym_res.returncode == 0 else ""
+    actual_ref = decode_git_path(sym_res.line) if sym_res.returncode == 0 else ""
     if actual_ref != record.branch_ref:
         raise IsolationError(
             f"Worktree HEAD is not on managed branch {record.branch} (found {actual_ref or 'detached HEAD'})"
@@ -335,21 +318,7 @@ def inspect_ready_locked(
     _check_hidden_index_flags(wt_path)
     status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
     nested = tuple(nested_repositories(wt_path, status_raw))
-    containing = (
-        run_git(
-            [
-                "for-each-ref",
-                f"--contains={head_oid}",
-                "--format=%(refname)",
-                "refs/heads/",
-                "refs/remotes/",
-            ],
-            cwd=wt_path,
-        )
-        .stdout.decode("utf-8", errors="replace")
-        .splitlines()
-    )
-    durable_refs = [ref for ref in containing if ref and not ref.startswith(MANAGED_BRANCH_PREFIX)]
+    unique_commits = has_unique_commits(wt_path, head_oid)
     paths, _ = porcelain_v2_paths(status_raw)
     stat_bytes = _stat_fingerprint(wt_path, paths)
     # The token is bound to the workspace asking, so one workspace's token never confirms
@@ -363,12 +332,13 @@ def inspect_ready_locked(
         status_raw,
         stat_bytes,
         nested,
+        unique_commits=unique_commits,
     )
     snapshot = InspectionSnapshot(
         head_oid=head_oid,
         branch_oid=branch_oid,
         uncommitted=bool(status_raw),
-        unique_commits=not durable_refs,
+        unique_commits=unique_commits,
         digest=digest,
         nested=nested,
     )
@@ -418,6 +388,7 @@ def complete_deletion_locked(
         run_git(
             ["worktree", "remove", *(["--force"] if force else []), "--", str(wt_path)],
             cwd=main_root,
+            filters_from=() if force else (wt_path,),
         )
     elif wt_path.exists() or is_link(wt_path):
         raise IsolationError(f"Unregistered path remains at {wt_path}; refusing recursive removal")
@@ -462,7 +433,8 @@ def _remove_managed_branch(
             f"Branch {record.branch} was kept: it moved to {current[:12]} after the release "
             "check, so it was not deleted."
         )
-    run_git(["update-ref", "-d", record.branch_ref, expected_oid], cwd=main_root)
+    # --no-deref: a task may have turned the managed branch into a link to another branch.
+    run_git(["update-ref", "--no-deref", "-d", record.branch_ref, expected_oid], cwd=main_root)
     return None
 
 
@@ -587,35 +559,8 @@ def _inspect_orphan_locked(
     if has_active_leases(common_dir, record.id, cleanup_stale=True):
         raise IsolationError("Isolated directory is currently in use by an active lease")
     wt_path = Path(record.worktree_path)
-    if wt_path.name != record.id or not same_dir(wt_path.parent, main_root / WORKTREES_DIR_NAME):
-        raise IsolationError("Isolated worktree is not directly under .agentnave-worktrees")
-    tip = ""
-    if ref_exists(main_root, record.branch_ref):
-        tip = (
-            run_git(
-                ["rev-parse", "--verify", "--end-of-options", f"{record.branch_ref}^{{commit}}"],
-                cwd=main_root,
-            )
-            .stdout.strip()
-            .decode("ascii", errors="replace")
-        )
-    unique = False
-    if tip:
-        containing = (
-            run_git(
-                [
-                    "for-each-ref",
-                    f"--contains={tip}",
-                    "--format=%(refname)",
-                    "refs/heads/",
-                    "refs/remotes/",
-                ],
-                cwd=main_root,
-            )
-            .stdout.decode("utf-8", errors="replace")
-            .splitlines()
-        )
-        unique = not any(ref and not ref.startswith(MANAGED_BRANCH_PREFIX) for ref in containing)
+    tip = branch_tip(main_root, record.branch_ref)
+    unique = bool(tip) and has_unique_commits(main_root, tip)
     digest = _compute_digest(
         record.id,
         workspace_id,
@@ -624,6 +569,7 @@ def _inspect_orphan_locked(
         record.usage_generation,
         b"orphan",
         tree_fingerprint(wt_path),
+        unique_commits=unique,
     )
     return InspectionSnapshot(
         head_oid="",
@@ -687,7 +633,8 @@ def _retry_attention_locked(
     """Re-check a record left in needs_attention and finish its interrupted deletion or rollback.
 
     While the directory still exists it goes through the same inspection and confirmation as a
-    normal release; only an already removed directory is finished without asking.
+    normal release; an already removed directory is finished without asking unless its branch
+    holds unmerged commits.
     """
     stuck = ReleaseResult(
         id=record.id,
@@ -709,8 +656,22 @@ def _retry_attention_locked(
         return _inspect_and_delete(store, record, workspace_id, confirmation)
     try:
         main_root, common_dir = _verify_repo_identity(record)
+        if has_active_leases(common_dir, record.id, cleanup_stale=True):
+            raise IsolationError("Isolated directory is currently in use by an active lease")
+        snap = _inspect_missing_locked(record, workspace_id, main_root)
     except (IsolationError, OSError, ValueError) as exc:
-        return ReleaseResult(id=record.id, status="needs_attention", reason=str(exc))
+        detail = str(exc)
+        store.mark_attention(
+            record.id,
+            expected_state=record.state,
+            phase="delete_failed",
+            reason=detail,
+            updated_at=now(),
+        )
+        return ReleaseResult(id=record.id, status="needs_attention", reason=detail)
+    foreign = record.workspace_id != workspace_id
+    if failure := _verify_confirmation(store, record, snap, confirmation, foreign=foreign):
+        return failure
     if not store.mark_deleting(
         record.id,
         phase="removing_worktree",
@@ -719,7 +680,40 @@ def _retry_attention_locked(
         expected_state=record.state,
     ):
         return stuck
-    return _run_deletion(store, record, main_root, common_dir, record.delete_oid)
+    return _run_deletion(
+        store,
+        record,
+        main_root,
+        common_dir,
+        record.delete_oid,
+        unique_commits=snap.unique_commits,
+    )
+
+
+def _inspect_missing_locked(
+    record: IsolatedRecord, workspace_id: str, main_root: Path
+) -> InspectionSnapshot:
+    """Snapshot a leftover whose directory is gone: only its branch can still hold work."""
+    expected_oid = record.delete_oid or ""
+    tip = branch_tip(main_root, record.branch_ref)
+    unique = bool(tip) and has_unique_commits(main_root, tip)
+    digest = _compute_digest(
+        record.id,
+        workspace_id,
+        "missing",
+        expected_oid,
+        record.usage_generation,
+        b"missing",
+        tip.encode("ascii"),
+        unique_commits=unique,
+    )
+    return InspectionSnapshot(
+        head_oid="",
+        branch_oid=expected_oid,
+        uncommitted=False,
+        unique_commits=unique,
+        digest=digest,
+    )
 
 
 def _verify_confirmation(
@@ -795,6 +789,7 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
                 )
                 if not linked:
                     raise IsolationError("Unfinished directory is not a valid git worktree")
+                verify_worktree_root(wt_path)
                 if never_checked_out(wt_path):
                     # Interrupted between adding and checking out. Without an index git reports
                     # every file as deleted, so only a directory holding nothing but its .git
@@ -803,8 +798,17 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
                         raise IsolationError(
                             "Unfinished worktree was never checked out but holds files"
                         )
-                elif run_git(_STATUS_ARGS, cwd=wt_path).stdout:
-                    raise IsolationError("Unfinished worktree contains uncommitted source changes")
+                else:
+                    _check_hidden_index_flags(wt_path)
+                    status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
+                    if status_raw:
+                        raise IsolationError(
+                            "Unfinished worktree contains uncommitted source changes"
+                        )
+                    if nested := nested_repositories(wt_path, status_raw):
+                        raise IsolationError(
+                            f"Unfinished worktree contains nested repositories: {', '.join(nested)}"
+                        )
             run_git(["worktree", "remove", "--force", "--", str(wt_path)], cwd=main_root)
         elif wt_path.exists():
             raise IsolationError(f"Unregistered path exists at {wt_path}")
@@ -815,7 +819,10 @@ def rollback_creating_locked(store: WorktreeStore, record: IsolatedRecord) -> No
             )
             if any(w.branch_ref == record.branch_ref for w in remaining):
                 raise IsolationError("Managed branch is checked out in another worktree")
-            run_git(["update-ref", "-d", record.branch_ref, record.base_oid], cwd=main_root)
+            run_git(
+                ["update-ref", "--no-deref", "-d", record.branch_ref, record.base_oid],
+                cwd=main_root,
+            )
         store.delete(record.id, expected_state=record.state)
         remove_lease_dir_locked(common_dir, record.id)
     except (IsolationError, OSError, ValueError) as exc:
@@ -895,105 +902,13 @@ def _recover_deleting_locked(store: WorktreeStore, latest: IsolatedRecord) -> Re
         return fail("Deleting record is missing expected branch OID")
     try:
         main_root, verified_common = _verify_repo_identity(latest)
+        tip = branch_tip(main_root, latest.branch_ref)
+        if tip and has_unique_commits(main_root, tip):
+            # Another branch that held these commits may have gone since the confirmation.
+            return fail("Managed branch holds unmerged commits; release it again to confirm")
         note = complete_deletion_locked(
             store, latest, main_root, verified_common, latest.delete_oid
         )
     except (IsolationError, OSError, ValueError) as exc:
         return fail(str(exc))
     return RecoveryOutcome(latest.id, "deleting", "deleted", note)
-
-
-def _changed_paths(wt_path: Path, base_oid: str, status_raw: bytes) -> list[str]:
-    """Files changed from base_oid: committed, staged, working tree, and untracked."""
-    paths, _ = porcelain_v2_paths(status_raw)
-    found = set(paths)
-    diff_head = [
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--ignore-submodules=all",
-        "--name-only",
-        "-z",
-    ]
-    for revisions in ([base_oid, "HEAD"], ["--cached", base_oid], [base_oid]):
-        raw = run_git([*diff_head, *revisions, "--"], cwd=wt_path).stdout
-        found.update(decode_git_path(item) for item in raw.split(b"\x00") if item)
-    return sorted(found)
-
-
-def _read_head_and_branch(wt_path: Path) -> tuple[str, str | None]:
-    head_oid = (
-        run_git(["rev-parse", "--verify", "HEAD^{commit}"], cwd=wt_path)
-        .stdout.strip()
-        .decode("ascii", errors="replace")
-    )
-    sym_res = run_git(["symbolic-ref", "-q", "HEAD"], cwd=wt_path, allowed_exit_codes=(0, 1))
-    actual_branch: str | None = None
-    if sym_res.returncode == 0 and sym_res.stdout.strip():
-        raw_ref = decode_git_path(sym_res.stdout.rstrip(b"\r\n"))
-        actual_branch = raw_ref.removeprefix("refs/heads/")
-    return head_oid, actual_branch
-
-
-def summarize_record_changes(record: IsolatedRecord) -> ChangeSummary:
-    """Collect cumulative changes from base_oid without raising to the caller."""
-    wt_path = Path(record.worktree_path)
-    try:
-        if is_link(wt_path) or not wt_path.is_dir():
-            raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
-        if not worktree_link_valid(wt_path, record.worktree_git_dir, Path(record.repo_common_dir)):
-            raise IsolationError("Isolated directory is no longer a valid git worktree")
-        head_oid, actual_branch = _read_head_and_branch(wt_path)
-        status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
-        combined = _changed_paths(wt_path, record.base_oid, status_raw)
-        nested = tuple(nested_repositories(wt_path, status_raw))
-        return ChangeSummary(
-            id=record.id,
-            path=record.worktree_path,
-            branch=record.branch,
-            summary_status="complete",
-            head_oid=head_oid,
-            actual_branch=actual_branch,
-            changed_files_from_base=tuple(combined[:MAX_SUMMARY_FILES]),
-            truncated=len(combined) > MAX_SUMMARY_FILES,
-            uncommitted=bool(status_raw),
-            nested_repos=nested,
-        )
-    except (IsolationError, OSError, ValueError) as exc:
-        return ChangeSummary(
-            id=record.id,
-            path=record.worktree_path,
-            branch=record.branch,
-            summary_status="error",
-            error=str(exc),
-        )
-
-
-def summarize_unregistered(isolation_id: str, wt_path: Path, branch: str) -> ChangeSummary:
-    """Summary without a start commit, for a directory this data root has no registration of."""
-    try:
-        if is_link(wt_path) or not wt_path.is_dir():
-            raise IsolationError(f"Isolated worktree is missing or unsafe: {wt_path}")
-        if not foreign_link_valid(wt_path):
-            raise IsolationError("Isolated directory is no longer a valid git worktree")
-        head_oid, actual_branch = _read_head_and_branch(wt_path)
-        status_raw = run_git(_STATUS_ARGS, cwd=wt_path).stdout
-        nested = tuple(nested_repositories(wt_path, status_raw))
-        return ChangeSummary(
-            id=isolation_id,
-            path=str(wt_path),
-            branch=branch,
-            summary_status="no_baseline",
-            head_oid=head_oid,
-            actual_branch=actual_branch,
-            uncommitted=bool(status_raw),
-            nested_repos=nested,
-        )
-    except (IsolationError, OSError, ValueError) as exc:
-        return ChangeSummary(
-            id=isolation_id,
-            path=str(wt_path),
-            branch=branch,
-            summary_status="error",
-            error=str(exc),
-        )

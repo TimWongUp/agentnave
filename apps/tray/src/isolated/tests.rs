@@ -618,6 +618,27 @@ fn tracked_subdir_nested_git_and_bare_repo_are_detected_and_scan_limit_warns() {
         "{nested:?}"
     );
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        for marker in ["HEAD", "objects", "refs"] {
+            let original = bare_dir.join(marker);
+            let target = fx.root.join(format!("linked-{marker}"));
+            fs::rename(&original, &target).unwrap();
+            symlink(&target, &original).unwrap();
+            let scan = state::nested_repositories_with_limit(
+                &git::GitRunner::new().unwrap(),
+                &fx.wt_path,
+                b"",
+                200_000,
+            )
+            .unwrap();
+            assert!(scan.repos.contains(&"packages/bare.git".to_owned()));
+            fs::remove_file(&original).unwrap();
+            fs::rename(&target, &original).unwrap();
+        }
+    }
+
     // Hitting the entry cap flags the scan as truncated so the confirm dialog warns the user.
     let git = git::GitRunner::new().unwrap();
     let limited = state::nested_repositories_with_limit(&git, &fx.wt_path, b"", 2).unwrap();
@@ -861,4 +882,116 @@ fn confirm_digest_invalidated_when_external_branch_drops_managed_commit() {
             .any(|v| v.as_str().unwrap().contains("feat: shared commit"))
     );
     assert!(fx.wt_path.exists());
+}
+
+#[test]
+fn worktree_redirected_by_core_worktree_is_blocked_and_never_rolled_back() {
+    let fx = setup_worktree_fixture("wt-0a1b2c3d4e5f");
+    git_cmd(
+        &fx.main_root,
+        &["config", "extensions.worktreeConfig", "true"],
+    );
+    git_cmd(
+        &fx.wt_path,
+        &[
+            "config",
+            "--worktree",
+            "core.worktree",
+            fx.main_root.to_str().unwrap(),
+        ],
+    );
+    fs::write(fx.wt_path.join("README.md"), "unsaved\n").unwrap();
+    let reader = Reader::new(fx.root.clone());
+    let body = json!({"id": fx.id, "workspace": fx.workspace});
+    assert_eq!(
+        post(&reader, "/app/isolated/inspect", body.clone())["status"],
+        "blocked"
+    );
+
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'needs_attention' WHERE id = ?1",
+            [&fx.id],
+        )
+        .unwrap();
+    let inspected = post(&reader, "/app/isolated/inspect", body);
+    assert_eq!(inspected["rollback_only"], true);
+    let outcome = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected["confirmation"],
+        }),
+    );
+    assert_eq!(outcome["status"], "needs_attention");
+    assert_eq!(
+        fs::read_to_string(fx.wt_path.join("README.md")).unwrap(),
+        "unsaved\n"
+    );
+}
+
+#[test]
+fn symbolic_ref_to_the_managed_branch_does_not_keep_its_commits() {
+    let fx = setup_worktree_fixture("wt-6f5e4d3c2b1a");
+    git_cmd(&fx.wt_path, &["commit", "--allow-empty", "-m", "work"]);
+    git_cmd(
+        &fx.main_root,
+        &["symbolic-ref", "refs/heads/saved-work", &fx.branch_ref],
+    );
+    let reader = Reader::new(fx.root.clone());
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["unique_commits"], true);
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_symbolic_ref_excludes_preserve_raw_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let output = b"refs/heads/agentnave/wt-1 refs/heads/saved-\xff\nrefs/heads/agentnave/wt-1 refs/remotes/origin/saved-\xfe\n";
+    let (heads, remotes) = inspect::parse_symbolic_ref_excludes(output).unwrap();
+    assert_eq!(heads[0].as_bytes(), b"--exclude=saved-\xff");
+    assert_eq!(remotes[0].as_bytes(), b"--exclude=origin/saved-\xfe");
+}
+
+#[cfg(unix)]
+#[test]
+fn working_tree_named_like_the_directory_plus_a_line_end_is_refused() {
+    for (id, suffix) in [("wt-1a2b3c4d5e6f", "\n"), ("wt-2a2b3c4d5e6f", "\r")] {
+        let fx = setup_worktree_fixture(id);
+        git_cmd(
+            &fx.main_root,
+            &["config", "extensions.worktreeConfig", "true"],
+        );
+        let mut decoy = fx.wt_path.clone().into_os_string();
+        decoy.push(suffix);
+        let decoy = std::path::PathBuf::from(decoy);
+        fs::create_dir(&decoy).unwrap();
+        for name in ["README.md", ".gitignore"] {
+            fs::copy(fx.wt_path.join(name), decoy.join(name)).unwrap();
+        }
+        git_cmd(
+            &fx.wt_path,
+            &[
+                "config",
+                "--worktree",
+                "core.worktree",
+                decoy.to_str().unwrap(),
+            ],
+        );
+        fs::write(fx.wt_path.join("README.md"), "unsaved\n").unwrap();
+        let reader = Reader::new(fx.root.clone());
+        let inspected = post(
+            &reader,
+            "/app/isolated/inspect",
+            json!({"id": fx.id, "workspace": fx.workspace}),
+        );
+        assert_eq!(inspected["status"], "blocked");
+    }
 }

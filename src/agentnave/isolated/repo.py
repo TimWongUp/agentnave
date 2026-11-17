@@ -38,6 +38,15 @@ class GitResult:
     stdout: bytes
     stderr: str
 
+    @property
+    def line(self) -> bytes:
+        """Output of a one-line command without its line end, and never more than that one.
+
+        A path can itself end in CR or LF; trimming every trailing one would name another path.
+        """
+        line = self.stdout.removesuffix(b"\n")
+        return line.removesuffix(b"\r") if os.name == "nt" else line
+
 
 @dataclass(frozen=True, slots=True)
 class WorktreeEntry:
@@ -127,6 +136,7 @@ _NO_FILTER_COMMANDS = frozenset(
         "ls-tree",
         "cat-file",
         "update-ref",
+        "rev-list",
     }
 )
 _FILTER_PROPS_EMPTY = ("clean", "smudge", "process")
@@ -194,18 +204,22 @@ def run_git(
     timeout: float = DEFAULT_GIT_TIMEOUT,
     max_output_bytes: int = MAX_GIT_OUTPUT_BYTES,
     disable_hooks: bool = True,
+    filters_from: Sequence[Path] = (),
 ) -> GitResult:
     """Run git as an argument array without a shell, bounded in time and output size.
 
     Every call neutralizes repository-configured executables: fsmonitor, hooks, external diff
-    programs and every filter driver (clean, smudge, process) in the effective configuration,
-    whatever the attribute files say. Pass disable_hooks=False only for commands that read hook
-    configuration.
+    programs, signature verification (gpg.program), promisor lazy fetches and every filter driver
+    (clean, smudge, process) in the effective configuration, whatever the attribute files say.
+    Pass disable_hooks=False only for commands that read hook configuration. filters_from names
+    other worktrees the command runs Git in (a non-forced `worktree remove` checks the target's
+    status): the drivers in their own configuration are neutralized too.
     """
     cmd = ["git", "-C", str(cwd), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true"]
     # Never recurse into submodules or nested repositories, whose own config would run there.
     for item in (
         "diff.ignoreSubmodules=all",
+        "log.showSignature=false",
         "status.submoduleSummary=false",
         "submodule.recurse=false",
     ):
@@ -215,7 +229,10 @@ def run_git(
     for item in config_overrides:
         cmd.extend(["-c", item])
     if args and args[0] not in _NO_FILTER_COMMANDS:
-        cmd.extend(_filter_disable_args(filter_driver_names(cwd)))
+        names = set(filter_driver_names(cwd))
+        for other in filters_from:
+            names.update(filter_driver_names(other))
+        cmd.extend(_filter_disable_args(sorted(names)))
     cmd.extend(args)
     env = os.environ.copy()
     # Also drop variables that point git at another config, repository, index or tree than
@@ -232,6 +249,8 @@ def run_git(
     ):
         env.pop(name, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # A partial clone would otherwise fetch missing objects from its promisor remote.
+    env["GIT_NO_LAZY_FETCH"] = "1"
     if extra_env:
         env.update(extra_env)
     try:
@@ -319,19 +338,17 @@ def discover_repo(cwd: Path | str) -> RepoContext:
         decode_git_path(
             run_git(
                 ["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd=resolved_cwd
-            ).stdout.rstrip(b"\r\n")
+            ).line
         )
     ).resolve()
     common_dir = Path(
         decode_git_path(
             run_git(
                 ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=resolved_cwd
-            ).stdout.rstrip(b"\r\n")
+            ).line
         )
     ).resolve()
-    prefix_raw = decode_git_path(
-        run_git(["rev-parse", "--show-prefix"], cwd=resolved_cwd).stdout.rstrip(b"\r\n")
-    )
+    prefix_raw = decode_git_path(run_git(["rev-parse", "--show-prefix"], cwd=resolved_cwd).line)
     prefix = PurePosixPath(prefix_raw.rstrip("/")) if prefix_raw.rstrip("/") else PurePosixPath()
     worktrees = parse_worktrees(
         run_git(["worktree", "list", "--porcelain", "-z"], cwd=resolved_cwd).stdout
@@ -343,9 +360,7 @@ def discover_repo(cwd: Path | str) -> RepoContext:
         raise IsolationError(f"Main worktree is missing: {main_root}")
     main_common = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=main_root).line
         )
     ).resolve()
     if not same_dir(common_dir, main_common):
@@ -377,7 +392,6 @@ def resolve_target_commit(ctx: RepoContext, ref: str | None) -> str:
     out = run_git(
         ["rev-parse", "--verify", "--end-of-options", f"{target}^{{commit}}"],
         cwd=ctx.source_root,
-        extra_env={"GIT_NO_LAZY_FETCH": "1"},
     ).stdout.strip()
     oid = out.decode("ascii", errors="replace")
     if not _OID_RE.fullmatch(oid):
@@ -391,12 +405,7 @@ def check_tree_and_filters(ctx: RepoContext, base_oid: str) -> bool:
     Filters are looked up in every place Git reads attributes from, because checkout and status
     run any configured smudge/clean command. When a source cannot be read, isolation is refused.
     """
-    no_fetch = {"GIT_NO_LAZY_FETCH": "1"}
-    tree = run_git(
-        ["ls-tree", "-r", "-z", "--full-tree", base_oid],
-        cwd=ctx.main_root,
-        extra_env=no_fetch,
-    ).stdout
+    tree = run_git(["ls-tree", "-r", "-z", "--full-tree", base_oid], cwd=ctx.main_root).stdout
     for entry in tree.split(b"\x00"):
         if entry.startswith(b"160000 "):
             raise IsolationError(
@@ -415,7 +424,6 @@ def check_tree_and_filters(ctx: RepoContext, base_oid: str) -> bool:
 
 def _attribute_texts(ctx: RepoContext, base_oid: str) -> str:
     """Text of every attribute source Git may consult for the target tree and source worktree."""
-    no_fetch = {"GIT_NO_LAZY_FETCH": "1"}
     if os.environ.get("GIT_ATTR_SOURCE"):
         raise IsolationError("GIT_ATTR_SOURCE is set; attribute sources cannot be verified")
     attr_tree = run_git(
@@ -429,13 +437,11 @@ def _attribute_texts(ctx: RepoContext, base_oid: str) -> str:
             ["grep", "-h", "-e", "filter=", base_oid, *pathspec],
             cwd=ctx.source_root,
             allowed_exit_codes=(0, 1),
-            extra_env=no_fetch,
         ).stdout,
         run_git(
             ["grep", "-h", "--untracked", "-e", "filter=", *pathspec],
             cwd=ctx.source_root,
             allowed_exit_codes=(0, 1),
-            extra_env=no_fetch,
         ).stdout,
     ]
     for path in _attribute_files(ctx):
@@ -455,7 +461,7 @@ def _attribute_files(ctx: RepoContext) -> list[Path]:
     info = run_git(
         ["rev-parse", "--path-format=absolute", "--git-path", "info/attributes"],
         cwd=ctx.main_root,
-    ).stdout.rstrip(b"\r\n")
+    ).line
     found.append(Path(decode_git_path(info)))
     configured = run_git(
         ["config", "--path", "--get", "core.attributesfile"],
@@ -463,7 +469,7 @@ def _attribute_files(ctx: RepoContext) -> list[Path]:
         allowed_exit_codes=(0, 1),
     )
     if configured.returncode == 0 and configured.stdout.strip():
-        path = Path(decode_git_path(configured.stdout.rstrip(b"\r\n")))
+        path = Path(decode_git_path(configured.line))
         if path.is_absolute():
             found.append(path)
         else:
@@ -475,7 +481,7 @@ def _attribute_files(ctx: RepoContext) -> list[Path]:
     ):
         reported = run_git(["var", variable], cwd=ctx.source_root, allowed_exit_codes=(0, 128))
         if reported.returncode == 0 and reported.stdout.strip():
-            found.append(Path(decode_git_path(reported.stdout.rstrip(b"\r\n"))))
+            found.append(Path(decode_git_path(reported.line)))
         elif fallback is not None:
             found.append(fallback)
     return found
@@ -533,14 +539,14 @@ def has_active_hooks(source_root: Path) -> bool:
         disable_hooks=False,
     )
     if cfg.returncode == 0 and cfg.stdout.strip():
-        raw_hooks = Path(decode_git_path(cfg.stdout.rstrip(b"\r\n"))).expanduser()
+        raw_hooks = Path(decode_git_path(cfg.line)).expanduser()
         hooks_dir = raw_hooks if raw_hooks.is_absolute() else (source_root / raw_hooks)
     else:
         hooks_out = run_git(
             ["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
             cwd=source_root,
             disable_hooks=False,
-        ).stdout.rstrip(b"\r\n")
+        ).line
         hooks_dir = Path(decode_git_path(hooks_out))
     if not hooks_dir.is_dir():
         return False
@@ -608,7 +614,7 @@ def ensure_info_exclude_locked(main_root: Path) -> None:
     exclude_out = run_git(
         ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
         cwd=main_root,
-    ).stdout.rstrip(b"\r\n")
+    ).line
     exclude_path = Path(decode_git_path(exclude_out))
     if is_link(exclude_path) or is_link(exclude_path.parent):
         raise IsolationError(f"Unsafe symlink or junction on info/exclude: {exclude_path}")
@@ -665,22 +671,18 @@ def add_worktree_locked(
         .stdout.strip()
         .decode("ascii", errors="replace")
     )
-    actual_ref = decode_git_path(
-        run_git(["symbolic-ref", "-q", "HEAD"], cwd=worktree_path).stdout.rstrip(b"\r\n")
-    )
+    actual_ref = decode_git_path(run_git(["symbolic-ref", "-q", "HEAD"], cwd=worktree_path).line)
     if actual_head != base_oid or actual_ref != f"refs/heads/{branch_name}":
         raise IsolationError("Created worktree HEAD or branch does not match target")
     git_dir = Path(
         decode_git_path(
-            run_git(
-                ["rev-parse", "--path-format=absolute", "--git-dir"], cwd=worktree_path
-            ).stdout.rstrip(b"\r\n")
+            run_git(["rev-parse", "--path-format=absolute", "--git-dir"], cwd=worktree_path).line
         )
     ).resolve()
     return git_dir
 
 
-_CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1", "GIT_NO_LAZY_FETCH": "1"}
+_CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1"}
 
 
 def check_out(worktree_path: Path, base_oid: str) -> None:
@@ -693,7 +695,7 @@ def never_checked_out(worktree_path: Path) -> bool:
     every tracked file as a staged deletion, which is not a change anyone made."""
     index = run_git(
         ["rev-parse", "--path-format=absolute", "--git-path", "index"], cwd=worktree_path
-    ).stdout.rstrip(b"\r\n")
+    ).line
     return not Path(decode_git_path(index)).exists()
 
 
