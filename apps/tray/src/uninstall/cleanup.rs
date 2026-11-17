@@ -57,11 +57,14 @@ fn resolved(path: &Path) -> PathBuf {
 
 fn validate_directory(dir: &Path, home: &Path, executable: &Path) -> Result<(), String> {
     let resolved = resolved(dir);
+    // Compare HOME both as given and resolved: a symlinked HOME has two sets of ancestors.
     if !dir.is_absolute()
+        || !home.is_absolute()
         || dir
             .components()
             .any(|part| matches!(part, Component::ParentDir))
         || resolved.parent().is_none()
+        || home.starts_with(dir)
         || self::resolved(home).starts_with(&resolved)
         || self::resolved(executable).starts_with(&resolved)
     {

@@ -76,6 +76,12 @@ fn deletion_targets_only_app_directories_and_explicitly_selected_history() {
         std::fs::create_dir_all(&home).unwrap();
         std::os::unix::fs::symlink(&home, &alias).unwrap();
         assert!(cleanup::Plan::new(vec![alias], &history, false, &home, &exe).is_err());
+        // HOME itself may be a link; the directory holding the link is still its ancestor.
+        let links = temp.path().join("links");
+        std::fs::create_dir_all(&links).unwrap();
+        let linked_home = links.join("home");
+        std::os::unix::fs::symlink(&home, &linked_home).unwrap();
+        assert!(cleanup::Plan::new(vec![links], &history, false, &linked_home, &exe).is_err());
     }
     assert_eq!(
         cleanup::app_bundle(Path::new("/custom/AgentNave.app/Contents/MacOS/tray")),

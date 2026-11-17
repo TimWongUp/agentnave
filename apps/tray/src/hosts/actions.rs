@@ -233,11 +233,13 @@ impl Hosts {
     }
     /// Hosts can share one folder (CODEBUDDY_CONFIG_DIR); the copy stays while another wants it.
     pub(super) fn shared_wanted(&self, host: &Host, name: &str, path: &Path) -> bool {
-        self.registry().iter().any(|other| {
-            other.id != host.id
-                && other.optional(name).as_deref() == Some(path)
-                && self.skill_wanted(other.id, name)
-        })
+        // Uninstall removes every host, so no other host keeps wanting it.
+        !self.uninstalling
+            && self.registry().iter().any(|other| {
+                other.id != host.id
+                    && other.optional(name).as_deref() == Some(path)
+                    && self.skill_wanted(other.id, name)
+            })
     }
     /// Switches one optional Skill: on installs it now if the host is connected (otherwise on the
     /// next connect), off removes only the App's own copy.
@@ -398,7 +400,8 @@ impl Hosts {
             host.read_at(path)
                 .map_err(|e| format!("parse_failed:{e}"))?;
         }
-        if id == "antigravity" {
+        // Uninstall removes the hook once on its own, so a bad hooks file cannot block MCP cleanup.
+        if id == "antigravity" && !self.uninstalling {
             hooks::remove_interactive(&self.context.home)?;
         }
         let mut removed = Vec::new();
