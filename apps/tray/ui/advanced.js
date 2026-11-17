@@ -137,7 +137,7 @@
     }
     renderOrchestration();
     window.AgentNaveDecisionSeats?.load();
-    // Review seats list the connected bosses' CLIs too.
+    // Review seats depend on whether any boss orchestrates.
     renderReviewSeats();
     renderAdvancedBar();
     // Cards name the seats their pool left out.

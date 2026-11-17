@@ -741,6 +741,20 @@ function poolEditor(fetch) {
   return app;
 }
 
+test("task seats offer only CLIs Employees enabled, not a connected boss's other CLI", () => {
+  const app = poolEditor();
+  app.run(`
+    detected.grok = { installed: true, models: [{ id: "g" }] };
+    orchestration = { error: null, files: [], bosses: [{ keys: ["grok"], ids: ["grok"], labels: ["Grok"], mark: "grok" }],
+      document: { version: 1, preset: "split" } };
+  `);
+  const clis = (seat) => JSON.parse(app.run(`JSON.stringify(seatSelects("seat", "工位", ${JSON.stringify(seat)}, () => {})[0].children.flat()
+    .filter((option) => option.attrs.value && !option.attrs.disabled).map((option) => option.attrs.value))`));
+  assert.deepEqual(clis(null), ["codex"]);
+  assert.match(app.run(`seatSelects("seat", "工位", { provider: "grok", model: "g" }, () => {})[0].children.flat()
+    .find((option) => option.attrs.value === "grok").children.join("")`), /员工里已停用/);
+});
+
 test("DeepSeek route selection is explicit, model scoped and preserves other settings", () => {
   const app = poolEditor();
   app.run(`
