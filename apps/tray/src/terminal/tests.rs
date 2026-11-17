@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::CommandBuilder;
 
-use super::session::{KEPT, Output, Session};
+use super::session::{KEPT, Output, Session, parent_session};
 
 /// Reads until `wanted` shows up in the output or the CLI exits, within a few seconds.
 fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
@@ -66,4 +66,27 @@ fn old_output_is_dropped_past_the_limit() {
     output.push(b"tail");
     assert_eq!(output.start, 4);
     assert_eq!(output.end(), KEPT as u64 + 4);
+}
+
+#[test]
+fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
+    for name in [
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "AGENTNAVE_HOST_SESSION_ID",
+        "TERM_PROGRAM",
+    ] {
+        assert!(parent_session(name), "{name}");
+    }
+    for name in [
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "CODEBUDDY_CONFIG_DIR",
+        "HOME",
+        "PATH",
+    ] {
+        assert!(!parent_session(name), "{name}");
+    }
 }

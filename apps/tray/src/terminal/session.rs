@@ -190,6 +190,38 @@ fn size(cols: u16, rows: u16) -> PtySize {
     }
 }
 
+/// What a parent session leaves in the App's environment when the App was started from it, such
+/// as a terminal or an agent running the preview script. A CLI that inherits these takes itself for
+/// that session's child (Claude Code then stops saving its transcript) or for one AgentNave
+/// dispatched. The terminal starts a session of its own, like a new terminal window; the login
+/// shell sets the user's own variables again.
+const PARENT_SESSION: [&str; 19] = [
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_AGENT_SDK_VERSION",
+    "CLAUDE_PROJECT_DIR",
+    "CODEX_THREAD_ID",
+    "CODEX_SANDBOX",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "AGENTNAVE_HOST",
+    "AGENTNAVE_HOST_APP",
+    "AGENTNAVE_HOST_SESSION_ID",
+    "AGENTNAVE_EXCLUDED_PROVIDERS",
+    "AGENTNAVE_MANAGER_SESSION",
+    "AGENTNAVE_MANAGER_STARTED_AT",
+    "AGENTNAVE_DISPATCHED",
+    // WorkBuddy and CodeBuddy point these at their own live listener.
+    "SERVER__PORT",
+    "SERVER__HOST",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+];
+
+pub(super) fn parent_session(name: &str) -> bool {
+    name.starts_with("CLAUDE_CODE_") || PARENT_SESSION.contains(&name)
+}
+
 /// The CLI started through the user's login shell, as in their own terminal, so it sees the PATH
 /// and keys set in shell startup files that an app started from the Dock lacks.
 fn command(program: &Path, cwd: &Path) -> CommandBuilder {
@@ -207,6 +239,11 @@ fn command(program: &Path, cwd: &Path) -> CommandBuilder {
         None => CommandBuilder::new(program),
     };
     command.cwd(cwd);
+    for (name, _) in std::env::vars_os() {
+        if name.to_str().is_some_and(parent_session) {
+            command.env_remove(name);
+        }
+    }
     if let Some(path) = crate::detect::search_path(program) {
         command.env("PATH", path);
     }
