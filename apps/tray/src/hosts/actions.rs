@@ -459,10 +459,8 @@ impl Hosts {
     /// Uninstall deletes the App's backups too, so it removes only the App's own unmodified
     /// copy; a Skill the user wrote or edited stays where it is.
     fn remove_skill(&self, path: &Path, id: &str, embedded: skill::Files) -> Result<(), String> {
-        if self.uninstalling && skill::state(path, &self.context.home, embedded)["state"] != "app" {
-            return Ok(());
-        }
-        skill::remove(path, &self.context.app, id, &self.context.home, embedded)
+        let (app, home) = (&self.context.app, &self.context.home);
+        skill::remove_with(path, app, id, home, embedded, self.uninstalling)
     }
     fn connect_host(&mut self, id: &str, host: &Host, operation: &str) -> Result<String, String> {
         if !self.detect(host).0 {

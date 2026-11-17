@@ -637,12 +637,14 @@ Open **Settings → About → Uninstall AgentNave**, then choose **Uninstall**. 
 AgentNave installed. Running tasks must finish first. If a host cannot be cleaned up, the App
 lists it and offers **Retry**.
 
-The App removes its user-level MCP entries from every registered host, installed companion
-Skills according to the existing removal rules, the marked AgentNave global rules blocks and
-agy's `agentnave-interactive` hook. It disables login startup and removes its own application
+The App removes its user-level MCP entries from every registered host, its own unmodified copies
+of companion Skills (Skills you wrote or edited stay in place), the marked AgentNave global rules
+blocks and agy's `agentnave-interactive` hook. It disables login startup and removes its own application
 data after exit. Files still in use may remain. macOS moves the currently running `.app` to the
 Trash, including an App installed outside `/Applications`; Windows runs the installed NSIS
-uninstaller. A development executable outside an `.app` is not moved to the Trash.
+uninstaller. A development executable outside an `.app` is not moved to the Trash. On Windows,
+upgrading with a newer installer is not an uninstall, and a silent `/S` uninstall run without the
+App only removes the program files; neither cleans up hosts.
 
 **Also delete task and meeting history** is off by default. Enable it only to delete the data
 root (`~/.agentnave/` or `AGENTNAVE_DATA_DIR`) as well. Claude and agy trust records, project-level
