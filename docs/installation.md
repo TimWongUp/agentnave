@@ -108,7 +108,9 @@ their official instructions. On macOS and Linux, AgentNave looks for each CLI on
 CLI's directory first, then the inherited `PATH`, then those directories. Desktop hosts may have a
 different environment from your terminal; set an explicit `PATH` in the server's host configuration
 if a CLI or its runtime lives elsewhere, or on Windows.
-AgentNave does not install providers or change their login or configuration. It passes each CLI's
+AgentNave does not install providers or change their login. The App can maintain an AgentNave
+rules block in host configuration, and interactive Antigravity runs maintain the
+`agentnave-interactive` entry in `~/.gemini/config/hooks.json`. It passes each CLI's
 permission tier on every dispatch (full access by default, or automatic approval when selected
 in the App) without changing the CLI's saved
 settings.
@@ -643,8 +645,10 @@ For other hosts, use their documented removal interface.
 Remove the companion Skill through its deployment manager, or remove only its installed directory
 or symlink, preserving user-authored additions. Uninstalling the runtime does not delete private
 history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
-Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
-configuration, sessions, and user projects remain owned by the user and providers.
+Keep these records unless the user separately requests their deletion. Remove the marked
+`AGENTNAVE` rules blocks and the `agentnave-interactive` key in
+`~/.gemini/config/hooks.json` when no longer using AgentNave. Provider CLIs, authentication,
+other configuration, sessions, and user projects remain owned by the user and providers.
 
 ## 中国大陆网络
 

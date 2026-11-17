@@ -82,6 +82,35 @@ fn seed(host: &Host) -> String {
         Format::DshPatch => "# keep comment\n- id: it's opaque\n- id: agent-default-model # keep\n  config:\n    model: keep\n- id: plugin-manager\n  disabled: !!js '!ctx.get(''profileContext'')'\n- insert:\n    - id: other\n      config:\n        command: keep\n".into(),
     }
 }
+
+#[test]
+fn rules_sync_removes_blocks_for_an_uninstalled_cli() {
+    let (_temp, hosts) = fixture();
+    let h = host(&hosts, "zcode");
+    assert!(!hosts.detect(&h).0);
+    let path = h.root.path.join("AGENTS.md");
+    save(
+        &path,
+        "保留\n<!-- AGENTNAVE:START -->\n旧规则\n<!-- AGENTNAVE:END -->\n",
+    );
+    assert!(hosts.sync_rules(&json!({"preset":"off"}), &[]).is_empty());
+    let text = fs::read_to_string(path).unwrap();
+    assert!(text.contains("保留"));
+    assert!(!text.contains("AGENTNAVE:START"));
+}
+
+#[test]
+fn removing_antigravity_also_removes_its_global_hook() {
+    let (_temp, mut hosts) = fixture();
+    let path = hosts.context.home.join(".gemini/config/hooks.json");
+    save(&path, r#"{"agentnave-interactive":{},"other":1}"#);
+    let result = hosts
+        .action("remove", &json!({"id":"antigravity"}))
+        .unwrap();
+    assert_eq!(result["ok"], true);
+    let hooks: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    assert_eq!(hooks, json!({"other":1}));
+}
 #[test]
 fn revision_concurrent_unrelated_change_is_preserved_and_edit_rebased() {
     let (_temp, hosts) = fixture();

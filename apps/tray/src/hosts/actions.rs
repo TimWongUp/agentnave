@@ -398,6 +398,9 @@ impl Hosts {
             host.read_at(path)
                 .map_err(|e| format!("parse_failed:{e}"))?;
         }
+        if id == "antigravity" {
+            hooks::remove_interactive(&self.context.home)?;
+        }
         let mut removed = Vec::new();
         // Clear before the first mutation: a later partial removal may fail.
         if self.settings[id].get("reload_confirmed").is_some() {
