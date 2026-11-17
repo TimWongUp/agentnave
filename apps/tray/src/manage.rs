@@ -265,6 +265,18 @@ fn conversation_group(connection: &Connection, id: &str) -> rusqlite::Result<Opt
         .map(Option::flatten)
 }
 
+fn prune_workspace_links(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute(
+        "DELETE FROM workspace_links WHERE target_workspace IS NOT NULL \
+         AND NOT EXISTS (SELECT 1 FROM conversations WHERE manager_session = workspace_links.source_workspace) \
+         AND NOT EXISTS (SELECT 1 FROM workspaces WHERE id = workspace_links.source_workspace AND title IS NOT NULL) \
+         AND NOT EXISTS (SELECT 1 FROM conversations WHERE manager_session = workspace_links.target_workspace) \
+         AND NOT EXISTS (SELECT 1 FROM workspaces WHERE id = workspace_links.target_workspace AND title IS NOT NULL)",
+        [],
+    )?;
+    Ok(())
+}
+
 /// Drop the handover of a workspace whose last conversation is gone, so its bosses are free
 /// again (ADR-0033). Other workspaces a boss opened by handing over never had a conversation
 /// to lose, so they stay while the App shows them.
@@ -273,40 +285,91 @@ fn forget_emptied(connection: &Connection, emptied: Option<&str>) -> rusqlite::R
         "DELETE FROM workspaces WHERE NOT EXISTS \
          (SELECT 1 FROM conversations WHERE manager_session = workspaces.id) \
          AND (id IS ?1 OR title IS NULL \
-         OR NOT (pending = 1 OR owner != coalesce(origin, id) OR previous_host IS NOT NULL))",
+         OR NOT (pending = 1 OR owner != coalesce(origin, id) OR previous_host IS NOT NULL \
+         OR EXISTS (SELECT 1 FROM workspace_links WHERE source_workspace = workspaces.id)))",
         [emptied],
     )?;
     connection.execute(
         "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)",
         [],
     )?;
-    Ok(())
+    prune_workspace_links(connection)
 }
 
 /// Delete a workspace that has no conversation, which only exists as its handover row.
 pub fn forget(root: &Path, group: &str) -> Value {
-    let connection = match crate::db::write(root) {
+    let mut connection = match crate::db::write(root) {
         Ok(Some(connection)) => connection,
         Ok(None) => return result(group, "missing", "工作区已不存在"),
         Err(e) => return result(group, "error", &e),
     };
     let deleted = connection
-        .execute(
-            "DELETE FROM workspaces WHERE id = ?1 AND NOT EXISTS \
-             (SELECT 1 FROM conversations WHERE manager_session = ?1)",
-            [group],
-        )
-        .and_then(|rows| {
-            connection.execute(
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .and_then(|transaction| {
+            let rows = transaction.execute(
+                "DELETE FROM workspaces WHERE id = ?1 AND NOT EXISTS \
+                 (SELECT 1 FROM conversations WHERE manager_session = ?1)",
+                [group],
+            )?;
+            transaction.execute(
                 "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)",
                 [],
             )?;
+            prune_workspace_links(&transaction)?;
+            transaction.commit()?;
             Ok(rows)
         });
     match deleted {
         Ok(0) => result(group, "missing", "工作区有会话或已不存在，刷新后再试"),
         Ok(_) => result(group, "deleted", "已删除工作区"),
         Err(e) => result(group, "error", &format!("删除失败：{e}")),
+    }
+}
+
+/// Age-clean a claimed boss-only workspace only if it is still empty and older than `cutoff`.
+pub fn forget_before(root: &Path, group: &str, cutoff: i64) -> Value {
+    let mut connection = match crate::db::write(root) {
+        Ok(Some(connection)) => connection,
+        Ok(None) => return result(group, "missing", "工作区已不存在"),
+        Err(e) => return result(group, "error", &e),
+    };
+    let outcome = (|| -> Result<&'static str, String> {
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = ?1 AND pending = 0 \
+                 AND title IS NOT NULL AND NOT EXISTS \
+                 (SELECT 1 FROM conversations WHERE manager_session = ?1))",
+                [group],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Ok("missing");
+        }
+        if !retention::handover_before(&transaction, Some(group), cutoff, true)? {
+            return Ok("changed");
+        }
+        transaction
+            .execute("DELETE FROM workspaces WHERE id = ?1", [group])
+            .map_err(|e| e.to_string())?;
+        transaction
+            .execute(
+                "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        prune_workspace_links(&transaction).map_err(|e| e.to_string())?;
+        transaction.commit().map_err(|e| e.to_string())?;
+        Ok("deleted")
+    })();
+    match outcome {
+        Ok("deleted") => result(group, "deleted", "已清理工作区历史"),
+        Ok("changed") => result(group, "changed", "工作区已有新活动或时间无法确认，已保留"),
+        Ok(_) => result(group, "missing", "工作区有会话或已不存在，刷新后再试"),
+        Err(e) => result(group, "error", &format!("清理失败：{e}")),
     }
 }
 
@@ -345,7 +408,7 @@ pub fn handover(root: &Path, group: &str) -> Value {
         Ok(true) => result(
             group,
             "waiting",
-            "已标为待接手。在任意宿主开一个新聊天，请它接手这个工作区",
+            "已标为待接手。可在任意宿主的聊天里请它接手这个工作区",
         ),
         Ok(false) => result(group, "missing", "工作区已不存在"),
         Err(e) => result(group, "error", &format!("交接失败：{e}")),
@@ -459,19 +522,8 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
         if workspace_ids(&transaction, anchor)? != expected {
             return Ok(false);
         }
-        // A workspace released for another boss keeps its history until someone takes it over.
-        let handover_pending: bool = transaction
-            .query_row(
-                "SELECT EXISTS (
-                    SELECT 1 FROM workspaces
-                    JOIN conversations ON manager_session = workspaces.id
-                    WHERE conversations.id = ?1 AND pending = 1
-                )",
-                [anchor],
-                |row| row.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if handover_pending {
+        let group = conversation_group(&transaction, anchor).map_err(|e| e.to_string())?;
+        if !retention::handover_before(&transaction, group.as_deref(), cutoff, false)? {
             return Ok(false);
         }
         for id in &expected {
@@ -490,11 +542,10 @@ pub fn cleanup(root: &Path, ids: &[String], cutoff: i64) -> Vec<Value> {
             let Some((created, updated)) = created.zip(updated) else {
                 return Ok(false);
             };
-            if created.max(updated) / 1_000 >= cutoff {
+            if created.max(updated).div_euclid(1_000) >= cutoff {
                 return Ok(false);
             }
         }
-        let group = conversation_group(&transaction, anchor).map_err(|e| e.to_string())?;
         for id in &expected {
             transaction
                 .execute("DELETE FROM conversations WHERE id = ?1", [id])
@@ -585,7 +636,8 @@ pub fn list(root: &Path, overview: Overview) -> Value {
         }));
         // The probe's File drops here, before reading the next conversation.
     }
-    json!({"items": items, "unavailable": unavailable, "missing": false})
+    let workspaces = retention::workspace_states(&connection);
+    json!({"items": items, "workspaces": workspaces, "unavailable": unavailable, "missing": false})
 }
 
 #[cfg(test)]

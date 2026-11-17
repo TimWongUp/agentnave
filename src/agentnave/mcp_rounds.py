@@ -18,6 +18,7 @@ from agentnave.conversations import (
     entry_message_id,
 )
 from agentnave.group import GroupSeat, Round
+from agentnave.handover import handover_dispatch_warning
 from agentnave.manager_identity import model_warnings
 from agentnave.mcp_payloads import (
     CommittedEntryPayload,
@@ -62,6 +63,8 @@ def _add_started(
     payload: ShowRunPayload,
     conversations: Conversations,
     round_: Round,
+    *,
+    warn_handover: bool = True,
 ) -> None:
     manager_session_id = conversations.records[round_.group.id].state.manager_session
     payload["round"] = round_payload(
@@ -82,6 +85,12 @@ def _add_started(
     warnings = model_warnings(
         conversations.host, message, manager_session_id, conversations.model_warned
     )
+    if warn_handover:
+        warnings.extend(
+            handover_dispatch_warning(
+                conversations, manager_session_id, current_round=(round_.group.id, round_.number)
+            )
+        )
     if warnings:
         payload["warnings"] = warnings
 
@@ -106,7 +115,7 @@ async def _retry_seats(
             raise ToolError(str(exc)) from exc
         raise _rejected(exc) from exc
     payload: ShowRunPayload = {"group_id": group_id}
-    _add_started(payload, conversations, round_)
+    _add_started(payload, conversations, round_, warn_handover=False)
     return payload, round_.id
 
 

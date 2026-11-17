@@ -140,7 +140,7 @@ function bossSpeech(c, match) {
 // CLI. A different old host can still speak after release, so time alone is not identity.
 function seatHolder(c) {
   const marks = (c.boss_messages || c.messages).filter((m) => m.kind === "handover").map((m) => AN.at(m.time));
-  const at = marks.length && c.handover !== "pending" ? Math.max(...marks) : null;
+  const at = marks.length && c.handover === "changed" ? Math.max(...marks) : null;
   const later = (m) => m.speaker.provider === c.host && (at === null || AN.at(m.time) >= at);
   const earlier = (m) => !later(m);
   const modelOf = (when) => bossSpeech(c, (m) => m.speaker.model && when(m))?.model || "";
@@ -225,6 +225,72 @@ function createBoss() {
   el.boss.onclick = () => openScope({ kind: "all" }, el.boss);
   return rec;
 }
+function handoverParts(c) {
+  const parts = [];
+  for (const item of c.handover_from || []) {
+    if (item.status === "linked" && item.group) {
+      parts.push({
+        text: L(`接手自 ${item.label}「${item.title}」`, `Taken over from ${item.label} "${item.title}"`),
+        group: item.group,
+      });
+    } else if (item.status === "cleaned") {
+      parts.push({ text: L("接手自原工作区（已清理）", "Taken over from cleaned workspace") });
+    }
+  }
+  for (const item of c.handover_to || []) {
+    if (item.status === "claimed") {
+      parts.push({ text: L(`已由 ${item.label} 接手`, `Taken over by ${item.label}`) });
+    } else if (item.status === "linked" && item.group) {
+      parts.push({
+        text: L(`已由 ${item.label}「${item.title}」接手`, `Taken over by ${item.label} "${item.title}"`),
+        group: item.group,
+      });
+    } else if (item.status === "cleaned") {
+      parts.push({ text: L(`已由 ${item.label} 接手（已清理）`, `Taken over by ${item.label} (cleaned)`) });
+    }
+  }
+  return parts;
+}
+function renderBossState(rec, parts, tookOver, model) {
+  const linkTexts = parts.map((p) => p.text);
+  const allTexts = [...linkTexts, tookOver, model].filter(Boolean);
+  const full = allTexts.join(" · ");
+  if (!parts.length) {
+    if (rec.stateKey) {
+      rec.state.replaceChildren?.();
+      rec.stateKey = "";
+    }
+    setText(rec.state, full);
+  } else {
+    const key = JSON.stringify([parts, tookOver || "", model || ""]);
+    if (rec.stateKey !== key) {
+      rec.stateKey = key;
+      const items = [
+        ...parts,
+        ...(tookOver ? [{ text: tookOver }] : []),
+        ...(model ? [{ text: model }] : []),
+      ];
+      const nodes = [];
+      items.forEach((item, index) => {
+        if (index > 0) nodes.push(" · ");
+        if (item.group) {
+          const link = h("a.boss-link", { href: href(`/chat/${encodeURIComponent(item.group)}`) }, item.text);
+          link.addEventListener?.("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            go(`/chat/${encodeURIComponent(item.group)}`);
+          });
+          nodes.push(link);
+        } else {
+          nodes.push(item.text);
+        }
+      });
+      rec.state.replaceChildren(...nodes);
+    }
+  }
+  setAttr(rec.state, "title", full || null);
+  return [...linkTexts, tookOver].filter(Boolean);
+}
 function updateBoss(rec, c, n) {
   const holder = seatHolder(c);
   const model = holder.model;
@@ -239,11 +305,13 @@ function updateBoss(rec, c, n) {
     rec.st,
     n.running ? L(`等 ${n.running} 个回复`, `Waiting on ${n.running}`) : n.review ? L("会议进行中", "In meeting") : L("空闲", "Idle"),
   );
-  setText(rec.state, [c.took_over, model].filter(Boolean).join(" · "));
+  const notes = renderBossState(rec, handoverParts(c), c.took_over, model);
+  const zhNote = notes.length ? `${notes.join("，")}，` : "";
+  const enNote = notes.length ? `${notes.join(", ")}, ` : "";
   setAttr(
     el.boss,
     "aria-label",
-    L(`boss 办公室，${c.took_over ? `${c.took_over}，` : ""}${rec.st.textContent}，查看全部消息`, `boss office, ${c.took_over ? `${c.took_over}, ` : ""}${rec.st.textContent}, view all messages`),
+    L(`boss 办公室，${zhNote}${rec.st.textContent}，查看全部消息`, `boss office, ${enNote}${rec.st.textContent}, view all messages`),
   );
   el.boss.classList.toggle("sel", state.drawer.kind === "all");
 }

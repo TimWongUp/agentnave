@@ -21,10 +21,27 @@ pub(crate) fn request(
             Response::json(&crate::manage::rename(root, id, title))
         });
     }
+    if path == "/app/workspaces/forget" {
+        return post(method, action, body, |payload| {
+            let Some(group) = payload["group"].as_str().filter(|id| valid_id(id)) else {
+                return Response::error(400, "需要有效的工作区 ID");
+            };
+            let cutoff = match payload.get("updated_before") {
+                None => None,
+                Some(value) => match value.as_i64().filter(|cutoff| *cutoff > 0) {
+                    Some(cutoff) => Some(cutoff),
+                    None => return Response::error(400, "updated_before 必须是有效的毫秒时间"),
+                },
+            };
+            Response::json(&match cutoff {
+                Some(cutoff) => crate::manage::forget_before(root, group, cutoff),
+                None => crate::manage::forget(root, group),
+            })
+        });
+    }
     let op: Option<fn(&Path, &str) -> Value> = match path {
         "/app/workspaces/handover" => Some(crate::manage::handover),
         "/app/workspaces/cancel-handover" => Some(crate::manage::cancel_handover),
-        "/app/workspaces/forget" => Some(crate::manage::forget),
         _ => None,
     };
     if let Some(op) = op {

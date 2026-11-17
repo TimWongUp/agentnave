@@ -20,6 +20,7 @@ from agentnave.conversations import (
 )
 from agentnave.core import InvocationManager
 from agentnave.group import Round
+from agentnave.handover import handover_dispatch_warning
 from agentnave.isolated import ISOLATED_APPLIED
 from agentnave.manager_identity import model_warnings
 from agentnave.mcp_isolated import (
@@ -135,7 +136,7 @@ async def start_agent(
         Field(
             min_length=1,
             description=(
-                "Native session_id from a finished task, never invocation_id; omit for a new thread. Resume inherits provider/cwd/role/seat and, without a seat model, the thread's last model/effort; explicit values win. Unknown or ambiguous history needs provider and cwd; a new role without seat drops the old seat."
+                "Native session_id from a finished task in this workspace, never invocation_id; omit for a new thread. Threads belonging to another workspace (task or meeting seat) are rejected; start a new thread and use forward instead. Resume inherits provider/cwd/role/seat and, without a seat model, the thread's last model/effort; explicit values win. Unknown or ambiguous history needs provider and cwd; a new role without seat drops the old seat."
             ),
         ),
     ] = None,
@@ -536,6 +537,11 @@ async def _task_start_payload(
         record_state.tasks[-1],
         record_state.manager_session,
         conversations.model_warned,
+    )
+    warnings.extend(
+        handover_dispatch_warning(
+            conversations, record_state.manager_session, current_task=record_state.tasks[-1]
+        )
     )
     warnings.extend(started.warnings)
     if started.isolation is not None:

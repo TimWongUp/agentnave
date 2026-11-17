@@ -1420,7 +1420,10 @@ async def main():
             continue
         try:
             started = studio.start_task(
-                InvocationRequest("claude", prompt, Path(cwd), session), None, None
+                InvocationRequest("claude", prompt, Path(cwd), session),
+                None,
+                None,
+                manager_session_id="same-boss",
             ).invocation_id
         except ValueError as exc:
             print("rejected:", exc, flush=True)
@@ -1437,7 +1440,9 @@ asyncio.run(main())
 async def test_servers_exclude_one_native_session_until_its_run_ends(
     tmp_path: Path, data_root: Path
 ) -> None:
-    studio = Conversations(InvocationManager(), data_root)
+    from agentnave.host import Host
+
+    studio = Conversations(InvocationManager(), data_root, host=Host())
     servers: list[subprocess.Popen[str]] = []
 
     def other_server(session: str) -> subprocess.Popen[str]:
@@ -1475,25 +1480,42 @@ async def test_servers_exclude_one_native_session_until_its_run_ends(
             [GroupSeat("a", "claude", {}, tmp_path)],
             review=False,
             isolated=False,
+            manager_session_id="same-boss",
         )
-        first = studio.run(record.state.id, ["a"], "serial", "one", {})
+        first = studio.run(
+            record.state.id, ["a"], "serial", "one", {}, manager_session_id="same-boss"
+        )
         await studio.wait(first.id, 10)
         session_id = record.state.sessions["a"].session_id
         assert session_id
 
         crashed = other_server(session_id)
         assert await ask(crashed, "start") == "started\n"
-        blocked = studio.run(record.state.id, ["a"], "serial", "two", {})
+        blocked = studio.run(
+            record.state.id, ["a"], "serial", "two", {}, manager_session_id="same-boss"
+        )
         await studio.wait(blocked.id, 10)
         assert blocked.runs[0].launch_error is not None
         assert "active invocation" in blocked.runs[0].launch_error.message
         with pytest.raises(ValueError, match="active invocation"):
-            studio.start_task(InvocationRequest("claude", "two", tmp_path, session_id), None, None)
+            studio.start_task(
+                InvocationRequest("claude", "two", tmp_path, session_id),
+                None,
+                None,
+                manager_session_id="same-boss",
+            )
         crashed.kill()
         await asyncio.to_thread(crashed.wait)
 
         # The crash released the session; now this server's seat holds it.
-        seat = studio.run(record.state.id, ["a"], "serial", "three", {"a": "SLEEP"})
+        seat = studio.run(
+            record.state.id,
+            ["a"],
+            "serial",
+            "three",
+            {"a": "SLEEP"},
+            manager_session_id="same-boss",
+        )
         assert seat.runs[0].status == "running"
         other = other_server(session_id)
         assert (await ask(other, "start")).startswith("rejected: This native session")
@@ -1959,10 +1981,14 @@ async def main():
         try:
             invocation, _, *_ = studio.start_task(
                 InvocationRequest('claude', 'check', Path(sys.argv[2]), 'shared-native'),
-                None, None, manager_session_id='chat-b')
+                None, None, manager_session_id=sys.argv[3])
         except ValueError as exc:
-            assert 'native session' in str(exc), str(exc)
-            print('blocked')
+            text = str(exc)
+            if 'different manager session' in text:
+                print('foreign')
+            else:
+                assert 'native session' in text, text
+                print('blocked')
         else:
             await studio.manager.wait(invocation)
             print('started')
@@ -1972,9 +1998,9 @@ async def main():
 asyncio.run(main())
 """
 
-    def another_process() -> str:
+    def another_process(manager: str) -> str:
         return subprocess.run(
-            [sys.executable, "-c", child, str(data_root), str(tmp_path)],
+            [sys.executable, "-c", child, str(data_root), str(tmp_path), manager],
             capture_output=True,
             text=True,
             check=True,
@@ -2002,7 +2028,8 @@ asyncio.run(main())
         if record.state.tasks:
             monkeypatch.setattr(Record, "save", save)
             # The first record exists, but its running task has not reached disk yet.
-            assert another_process() == "blocked"
+            assert another_process("chat-a") == "blocked"
+            assert another_process("chat-b") == "blocked"
         save(record)
 
     monkeypatch.setattr(Record, "save", before_running_is_saved)
@@ -2015,7 +2042,8 @@ asyncio.run(main())
         )
         await studio.manager.wait(invocation)
         await asyncio.gather(*studio.collectors)
-        assert another_process() == "started"
+        assert another_process("chat-a") == "started"
+        assert another_process("chat-b") == "foreign"
     finally:
         await studio.manager.shutdown()
         await studio.close()
@@ -2055,15 +2083,44 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
                 "seats": [{"id": "a", "provider": "claude"}, {"id": "b", "provider": "claude"}],
             },
         )
+        await _wait(
+            client,
+            (
+                await _run(
+                    client,
+                    {
+                        "group_id": show["group_id"],
+                        "seats": ["a"],
+                        "prompt": "round one",
+                        "manager_session_id": "chat-a",
+                    },
+                )
+            )["round_id"],
+        )
+        seat_session = _state(data_root, show["group_id"])["sessions"]["a"]["session_id"]
         session = saved(first)["manager_session"]
         assert str(session).startswith("s-")
         assert saved(second)["manager_session"] == session
         assert _state(data_root, show["group_id"])["manager_session"] == session
         assert saved(other)["manager_session"] != session
-        # Continuing a provider session from another manager chat keeps that chat separate.
-        resumed = await start(client, "chat-b", session_id=ended["session_id"])
-        assert resumed["conversation_id"] != first["conversation_id"]
-        assert saved(resumed)["manager_session"] == saved(other)["manager_session"]
+        # Same-workspace meeting seat thread may still be continued in a private task.
+        same_seat = await start(client, "chat-a", session_id=seat_session)
+        await _wait_task(client, same_seat["invocation_id"])
+        assert saved(same_seat)["manager_session"] == session
+        # Resuming another workspace's task or meeting-seat thread is rejected even with explicit provider+cwd.
+        for foreign_session in (ended["session_id"], seat_session):
+            foreign = await client.call_tool(
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "prompt": "check",
+                    "cwd": str(tmp_path),
+                    "manager_session_id": "chat-b",
+                    "session_id": foreign_session,
+                },
+            )
+            assert foreign.is_error and "different manager session" in str(foreign.content)
+            assert "forward" in str(foreign.content)
         rejected = await client.call_tool(
             "start_agent",
             {
@@ -2113,6 +2170,110 @@ async def test_history_follows_manager_chat_not_shared_mcp_connection(
 
 
 @pytest.mark.asyncio
+async def test_preupgrade_shared_session_belongs_only_to_earliest_recording_workspace(
+    data_root: Path, tmp_path: Path
+) -> None:
+    from agentnave.native_sessions import boss_key
+
+    db = Database(data_root)
+    locks = data_root / "locks"
+    early = boss_key(None, "early-boss")
+    late = boss_key(None, "late-boss")
+    seat_owner = boss_key(None, "seat-boss")
+    try:
+        for conv_id, owner, when, session_id in (
+            ("c-early", early, "2026-01-01T00:00:00Z", "shared-task-sid"),
+            ("c-late", late, "2026-01-02T00:00:00Z", "shared-task-sid"),
+            ("c-seat-late", late, "2026-01-02T00:00:00Z", "shared-seat-sid"),
+        ):
+            rec = Record.create(
+                db,
+                locks,
+                Conversation(
+                    id=conv_id,
+                    title=conv_id,
+                    kind="task",
+                    created=when,
+                    manager_session=owner,
+                    tasks=[
+                        TaskRecord(
+                            id=f"t-{conv_id}",
+                            provider="claude",
+                            model="",
+                            cwd=str(tmp_path),
+                            prompt="check",
+                            session_id=session_id,
+                            status="succeeded",
+                            time=when,
+                        )
+                    ],
+                ),
+            )
+            rec.release()
+        show_rec = Record.create(
+            db,
+            locks,
+            Conversation(
+                id="c-seat-early",
+                title="c-seat-early",
+                kind="show",
+                created="2026-01-01T00:00:00Z",
+                manager_session=seat_owner,
+                cwd=str(tmp_path),
+                seats=[SeatRecord(id="a", provider="claude", cwd=str(tmp_path))],
+                sessions={"a": SessionRecord(session_id="shared-seat-sid")},
+            ),
+        )
+        show_rec.release()
+    finally:
+        db.close()
+
+    async with Client(mcp) as client:
+        for session_id, loser, winner in (
+            ("shared-task-sid", "late-boss", "early-boss"),
+            ("shared-seat-sid", "late-boss", "seat-boss"),
+        ):
+            for extra in ({}, {"provider": "claude", "cwd": str(tmp_path)}):
+                rejected = await client.call_tool(
+                    "start_agent",
+                    {
+                        "prompt": "check",
+                        "manager_session_id": loser,
+                        "session_id": session_id,
+                        **extra,
+                    },
+                )
+                assert rejected.is_error and "different manager session" in str(rejected.content)
+                assert "forward" in str(rejected.content)
+            allowed = await _call(
+                client,
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "prompt": "check",
+                    "cwd": str(tmp_path),
+                    "manager_session_id": winner,
+                    "session_id": session_id,
+                },
+            )
+            await _wait_task(client, allowed["invocation_id"])
+
+    # Post-lock guard inside Conversations.start_task enforces the same earliest-owner rule.
+    studio = Conversations(InvocationManager(), data_root)
+    try:
+        with pytest.raises(ValueError, match="different manager session"):
+            studio.start_task(
+                InvocationRequest("claude", "check", tmp_path, "shared-task-sid"),
+                None,
+                None,
+                manager_session_id="late-boss",
+            )
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
+
+
+@pytest.mark.asyncio
 async def test_handover_opens_a_workspace_for_a_chat_that_never_dispatched(
     data_root: Path, tmp_path: Path
 ) -> None:
@@ -2135,23 +2296,17 @@ async def test_handover_opens_a_workspace_for_a_chat_that_never_dispatched(
         )
         assert claimed["status"] == "claimed" and claimed["note"] == "next"
         assert claimed["conversations"] == []
-        # Asking again, as after a context reset, keeps the note.
+        # Repeat claim by the same boss is idempotent and preserves the note.
         again = await _call(
             client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
         )
-        assert again["note"] == "next"
-        # Taking over another workspace must not cost this one its note.
+        assert again["status"] == "claimed" and again["note"] == "next"
+        # A boss may claim multiple waiting workspaces, even after opening its own workspace.
         other = await _call(
             client,
             "handover",
             {"release": True, "title": "Other", "cwd": str(tmp_path), "manager_session_id": "chat-c"},
         )  # fmt: skip
-        busy = await client.call_tool(
-            "handover", {"workspace_id": other["workspace_id"], "manager_session_id": "chat-b"}
-        )
-        assert busy.is_error and "already leads" in str(busy.content)
-
-        # A withdrawn row is out of sight in the App, so it must not hold this chat back.
         withdrawn = await _call(
             client, "handover", {"workspace_id": other["workspace_id"], "manager_session_id": "chat-c"}
         )  # fmt: skip
@@ -2162,17 +2317,38 @@ async def test_handover_opens_a_workspace_for_a_chat_that_never_dispatched(
             {"release": True, "title": "Third", "cwd": str(tmp_path), "manager_session_id": "chat-d"},
         )  # fmt: skip
         taken = await _call(
-            client, "handover", {"workspace_id": third["workspace_id"], "manager_session_id": "chat-c"}
+            client, "handover", {"workspace_id": third["workspace_id"], "manager_session_id": "chat-b"}
         )  # fmt: skip
         assert taken["status"] == "claimed"
 
+        # First dispatch by chat-b opens chat-b's own workspace and backfills target_workspace.
         task = await _call(
             client,
             "start_agent",
             {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
         )  # fmt: skip
         await _wait_task(client, task["invocation_id"])
-        assert _state(data_root, task["conversation_id"])["manager_session"] == workspace
+        own_workspace = _state(data_root, task["conversation_id"])["manager_session"]
+        assert own_workspace != workspace and own_workspace != third["workspace_id"]
+        db = Database(data_root)
+        try:
+            claims = db.claims_from(str(workspace))
+            assert len(claims) == 1 and claims[0].target_workspace == own_workspace
+            # Chat with an existing workspace can still claim another pending workspace.
+            fourth = await _call(
+                client,
+                "handover",
+                {"release": True, "title": "Fourth", "cwd": str(tmp_path), "manager_session_id": "chat-e"},
+            )  # fmt: skip
+            claimed_existing = await _call(
+                client,
+                "handover",
+                {"workspace_id": fourth["workspace_id"], "manager_session_id": "chat-b"},
+            )
+            assert claimed_existing["status"] == "claimed"
+            assert db.claims_from(str(fourth["workspace_id"]))[0].target_workspace == own_workspace
+        finally:
+            db.close()
 
 
 def test_only_one_boss_wins_a_claim_race(data_root: Path) -> None:
@@ -2189,12 +2365,22 @@ def test_only_one_boss_wins_a_claim_race(data_root: Path) -> None:
 
     with ThreadPoolExecutor(4) as pool:
         winners = [boss for boss in pool.map(claim, ("a", "b", "c", "d")) if boss]
-    row = Database(data_root).workspace("w")
-    assert len(winners) == 1 and row is not None and row.owner == winners[0]
+    db = Database(data_root)
+    try:
+        row = db.workspace("w")
+        claims = db.claims_from("w")
+        assert len(winners) == 1 and row is not None and not row.pending and row.owner == "w"
+        assert len(claims) == 1 and claims[0].target_boss == winners[0]
+        assert db.claim("w", winners[0], "codex", None)[2] == "claimed"
+        loser = next(boss for boss in ("a", "b", "c", "d") if boss != winners[0])
+        with pytest.raises(ValueError, match="not waiting for a new boss"):
+            db.claim("w", loser, "codex", None)
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
-async def test_handover_moves_a_workspace_to_another_boss_chat(
+async def test_handover_links_workspaces_allows_direct_forward_and_warns_old_boss_once(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with Client(mcp) as client:
@@ -2209,7 +2395,24 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
         )
         group = show["group_id"]
         await _wait(client, (await _run(client, {"group_id": group, "seats": ["a"], "prompt": "one", "manager_session_id": "chat-a"}))["round_id"])  # fmt: skip
-        workspace = _state(data_root, group)["manager_session"]
+        ok_task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "ok-body", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
+        )  # fmt: skip
+        ok_done = await _wait_task(client, ok_task["invocation_id"])
+        bad_task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "FAIL_TASK", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
+        )  # fmt: skip
+        await _wait_task(client, bad_task["invocation_id"])
+        workspace = str(_state(data_root, group)["manager_session"])
+        entry_id = f"{group}:e:{len(_state(data_root, group)['entries']) - 1}"
+        ok_msg_id = ok_done["message_id"]
+        bad_conv = str(bad_task["conversation_id"])
+        bad_msg_id = f"{bad_conv}:t:{_state(data_root, bad_conv)['tasks'][0]['id']}"
+
         assert (await _call(client, "handover", {}))["waiting"] == []
         released = await _call(
             client,
@@ -2221,7 +2424,7 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
         waiting = cast(list[dict[str, object]], (await _call(client, "handover", {}))["waiting"])
         assert [
             (w["workspace_id"], w["note"], w["conversations"], "yours" in w) for w in waiting
-        ] == [(workspace, "goal: ship", 1, False)]
+        ] == [(workspace, "goal: ship", 3, False)]
         own_waiting = cast(
             list[dict[str, object]],
             (await _call(client, "handover", {"manager_session_id": "chat-a"}))["waiting"],
@@ -2243,227 +2446,207 @@ async def test_handover_moves_a_workspace_to_another_boss_chat(
         holder.acquire()
         try:
             busy_list = await _call(client, "list", {"workspace_id": workspace})
-            assert [
-                (item["conversation_id"], item["writable"])
+            busy_ids = {
+                item["conversation_id"]: item["writable"]
                 for item in cast(list[dict[str, object]], busy_list["conversations"])
-            ] == [(group, False)]
+            }
+            assert busy_ids[group] is False
             claimed = await _call(
                 client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
             )
             assert claimed["status"] == "claimed" and claimed["note"] == "goal: ship"
-            listed = cast(list[dict[str, object]], claimed["conversations"])
-            assert [(item["conversation_id"], item["writable"]) for item in listed] == [
-                (group, False)
-            ]
+            claimed_ids = {
+                item["conversation_id"]: item["writable"]
+                for item in cast(list[dict[str, object]], claimed["conversations"])
+            }
+            assert claimed_ids[group] is False
         finally:
             holder.release()
             holder.db.close()
-        idle_list = await _call(client, "list", {"manager_session_id": "chat-b"})
-        assert [
-            (item["conversation_id"], item["writable"])
-            for item in cast(list[dict[str, object]], idle_list["conversations"])
-        ] == [(group, True)]
         assert (await _call(client, "handover", {}))["waiting"] == []
-        # The new boss continues the show and adds to the same workspace.
-        await _wait(client, (await _run(client, {"group_id": group, "seats": ["a"], "prompt": "two", "manager_session_id": "chat-b"}))["round_id"])  # fmt: skip
-        task = await _call(
+
+        # Claiming links workspaces without transferring conversations or write access.
+        crossed = await client.call_tool(
+            "run_round",
+            {"group_id": group, "seats": ["a"], "prompt": "two", "manager_session_id": "chat-b"},
+        )
+        assert crossed.is_error and "different manager session" in str(crossed.content)
+
+        # Direct linked source allows forwarding succeeded tasks and committed entries, not failed ones.
+        bad_fwd = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "use failed",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-b",
+                "forward": [bad_msg_id],
+            },
+        )
+        assert bad_fwd.is_error
+        forwarded = await _call(
             client,
             "start_agent",
-            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
-        )  # fmt: skip
-        await _wait_task(client, task["invocation_id"])
-        assert _state(data_root, task["conversation_id"])["manager_session"] == workspace
-        refused = await client.call_tool(
-            "run_round", {"group_id": group, "prompt": "remark", "manager_session_id": "chat-a"}
+            {
+                "provider": "claude",
+                "prompt": "continue here",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-b",
+                "forward": [entry_id, ok_msg_id],
+            },
         )
-        assert refused.is_error and "handed its workspace" in str(refused.content)
-        # Withdrawing a later release must not relabel the previous handover with its note/time.
+        forwarded_done = await _wait_task(client, forwarded["invocation_id"])
+        seen_prompt = json.loads(str(forwarded_done["output"]))["prompt"]
+        assert f"workspace {workspace}" in seen_prompt
+        target_workspace = str(_state(data_root, forwarded["conversation_id"])["manager_session"])
+        assert target_workspace != workspace
+        b_msg_id = forwarded_done["message_id"]
+
+        # Link is directional (A cannot forward B) and non-transitive (C claiming B cannot forward A).
+        reverse_fwd = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "reverse",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-a",
+                "forward": [b_msg_id],
+            },
+        )
+        assert reverse_fwd.is_error and "not in this manager workspace" in str(reverse_fwd.content)
+        rel_b = await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
         await _call(
             client,
             "handover",
-            {"release": True, "note": "cancelled release", "manager_session_id": "chat-b"},
+            {"workspace_id": rel_b["workspace_id"], "manager_session_id": "chat-c"},
         )
-        withdrawn = await _call(
-            client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"}
+        transitive_fwd = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "transitive",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-c",
+                "forward": [ok_msg_id],
+            },
         )
-        assert withdrawn["status"] == "withdrawn"
-        row = Database(data_root).workspace(workspace)
-        assert row is not None and row.note is None and row.released is None
-        # A boss that passes on a workspace it took over may create a new one.
-        await _call(client, "handover", {"release": True, "manager_session_id": "chat-b"})
-        former_waiting = cast(
-            list[dict[str, object]],
-            (await _call(client, "handover", {"manager_session_id": "chat-a"}))["waiting"],
+        assert transitive_fwd.is_error and "not in this manager workspace" in str(
+            transitive_fwd.content
         )
-        assert ["yours" in w for w in former_waiting] == [False]
-        await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-c"})
-        passed = await _call(
+
+        # Old boss is not refused; its next dispatch warns once about the claimed workspace.
+        warned_round = await _call(
+            client,
+            "run_round",
+            {"group_id": group, "seats": ["a"], "prompt": "two", "manager_session_id": "chat-a"},
+        )
+        assert "warnings" in warned_round and workspace in str(warned_round["warnings"])
+        await _wait(client, _data(warned_round["round"])["round_id"])
+        second_dispatch = await _call(
             client,
             "start_agent",
-            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+            {"provider": "claude", "prompt": "after", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
         )  # fmt: skip
-        await _wait_task(client, passed["invocation_id"])
-        assert _state(data_root, passed["conversation_id"])["manager_session"] != workspace
-        listed = await _call(client, "list", {"manager_session_id": "chat-b"})
-        assert cast(int, listed["total"]) > 0
+        assert "warnings" not in second_dispatch
+        await _wait_task(client, second_dispatch["invocation_id"])
+
+        # Re-releasing and claiming again warns once on the next start_agent, then clears again.
+        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
+        await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-d"})
+        warned_task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "again", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
+        )  # fmt: skip
+        assert "warnings" in warned_task and workspace in str(warned_task["warnings"])
+        await _wait_task(client, warned_task["invocation_id"])
+        unwarned_task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "quiet", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
+        )  # fmt: skip
+        assert "warnings" not in unwarned_task
+        await _wait_task(client, unwarned_task["invocation_id"])
 
 
 @pytest.mark.asyncio
-async def test_handed_over_boss_creates_a_new_workspace(
-    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_legacy_transferred_workspace_stays_compatible_without_affecting_new_links(
+    data_root: Path, tmp_path: Path
 ) -> None:
+    from agentnave.db import _handed_over  # pyright: ignore[reportPrivateUsage]
+    from agentnave.native_sessions import boss_key
+
     async with Client(mcp) as client:
-        args: dict[str, object] = {
-            "provider": "claude",
-            "prompt": "x",
-            "cwd": str(tmp_path),
-            "manager_session_id": "chat-a",
-        }
-        first = await _call(client, "start_agent", args)
+        first = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "x", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
+        )  # fmt: skip
         await _wait_task(client, first["invocation_id"])
-        old = _state(data_root, first["conversation_id"])["manager_session"]
-        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
-        await _call(client, "handover", {"workspace_id": old, "manager_session_id": "chat-b"})
-        original_acquire = Conversations.acquire_task_isolation
-        both_ready = asyncio.Event()
-        arrivals = 0
-
-        async def hold_until_both(self: Conversations, *args: Any, **kwargs: Any) -> Any:
-            nonlocal arrivals
-            arrivals += 1
-            if arrivals == 2:
-                both_ready.set()
-            await asyncio.wait_for(both_ready.wait(), timeout=5)
-            return await original_acquire(self, *args, **kwargs)
-
-        monkeypatch.setattr(Conversations, "acquire_task_isolation", hold_until_both)
-        fresh, another = await asyncio.gather(
-            _call(client, "start_agent", args), _call(client, "start_agent", args)
-        )
-        monkeypatch.setattr(Conversations, "acquire_task_isolation", original_acquire)
-        await _wait_task(client, fresh["invocation_id"])
-        await _wait_task(client, another["invocation_id"])
-        new = _state(data_root, fresh["conversation_id"])["manager_session"]
-        assert _state(data_root, another["conversation_id"])["manager_session"] == new
+        legacy_ws = str(_state(data_root, first["conversation_id"])["manager_session"])
+        boss_a = boss_key(None, "chat-a")
+        boss_b = boss_key(None, "chat-b")
+        # Simulate a pre-upgrade transferred workspace row (ADR-0033).
+        with sqlite3.connect(data_root / "agentnave.db") as raw:
+            raw.execute(
+                "INSERT INTO workspaces (id, owner, origin, pending, previous_host) "
+                "VALUES (?, ?, ?, 0, 'claude') ON CONFLICT (id) DO UPDATE SET "
+                "owner = excluded.owner, origin = excluded.origin, pending = 0",
+                (legacy_ws, boss_b, boss_a),
+            )
+            raw.execute(
+                "INSERT OR IGNORE INTO former_bosses (boss, workspace) VALUES (?, ?)",
+                (boss_a, legacy_ws),
+            )
         db = Database(data_root)
-        row = db.workspace(new)
-        assert new != old and row is not None and row.owner == row.origin and row.owner != row.id
-        from agentnave.db import _handed_over  # pyright: ignore[reportPrivateUsage]
+        try:
+            legacy_row = db.workspace(legacy_ws)
+            assert legacy_row is not None and _handed_over(legacy_row)
+        finally:
+            db.close()
 
-        assert not _handed_over(row)
-        refused = await client.call_tool(
-            "start_agent", {**args, "conversation_id": first["conversation_id"]}
-        )
-        assert refused.is_error
+        # New owner keeps the legacy workspace; former boss gets a fresh workspace.
+        b_task = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "b", "cwd": str(tmp_path), "manager_session_id": "chat-b"},
+        )  # fmt: skip
+        await _wait_task(client, b_task["invocation_id"])
+        assert _state(data_root, b_task["conversation_id"])["manager_session"] == legacy_ws
+
+        a_fresh = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "a", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
+        )  # fmt: skip
+        await _wait_task(client, a_fresh["invocation_id"])
+        new_a_ws = str(_state(data_root, a_fresh["conversation_id"])["manager_session"])
+        assert new_a_ws != legacy_ws
+
+        # A new ADR-0099 claim on new_a_ws does NOT set _handed_over or write former_bosses.
         await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
-        await _call(client, "handover", {"workspace_id": new, "manager_session_id": "chat-c"})
-        row = db.workspace(new)
-        assert row is not None and _handed_over(row)
-        latest = await _call(client, "start_agent", args)
-        await _wait_task(client, latest["invocation_id"])
-        latest_workspace = _state(data_root, latest["conversation_id"])["manager_session"]
-        assert latest_workspace != new and latest_workspace != old
-        db.close()
-
-
-@pytest.mark.asyncio
-async def test_handover_during_isolation_rejects_start_and_releases_directory(
-    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from agentnave.native_sessions import boss_key
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
-    subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
-    (repo / "a.txt").write_text("base\n")
-    subprocess.run([*git, "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        [*git, "-c", "commit.gpgsign=false", "commit", "-m", "init"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-    async with Client(mcp) as client:
-        args: dict[str, object] = {
-            "provider": "claude",
-            "prompt": "x",
-            "cwd": str(repo),
-            "manager_session_id": "chat-a",
-        }
-        first = await _call(client, "start_agent", args)
-        await _wait_task(client, first["invocation_id"])
-        workspace = _state(data_root, first["conversation_id"])["manager_session"]
-        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
-        original = Conversations.acquire_task_isolation
-        paths: list[Path] = []
-
-        async def claim_after_acquire(self: Conversations, *args: Any, **kwargs: Any) -> Any:
-            hold = await original(self, *args, **kwargs)
-            assert hold.info is not None
-            paths.append(Path(hold.info.path))
-            self.db.claim(str(workspace), boss_key(self.host.name, "chat-b"), self.host.name, None)
-            return hold
-
-        monkeypatch.setattr(Conversations, "acquire_task_isolation", claim_after_acquire)
-        result = await client.call_tool("start_agent", {**args, "isolation": {}})
-        assert result.is_error and "handed its workspace" in str(result.content)
-        assert len(paths) == 1 and not paths[0].exists()
-        with sqlite3.connect(data_root / "agentnave.db") as db:
-            assert (
-                db.execute(
-                    "SELECT count(*) FROM conversations WHERE manager_session = ?", (workspace,)
-                ).fetchone()[0]
-                == 1
-            )
-
-
-@pytest.mark.asyncio
-async def test_handover_during_meeting_preparation_rejects_creation(
-    data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from agentnave.native_sessions import boss_key
-
-    studio = Conversations(InvocationManager(), data_root)
-    try:
-        first = studio.open_show(
-            "first",
-            tmp_path,
-            [GroupSeat("a", "claude", {}, tmp_path)],
-            review=False,
-            isolated=False,
-            manager_session_id="chat-a",
-        )
-        workspace = first.state.manager_session
-        assert workspace is not None
-        studio.release("chat-a", None)
-        original_open = studio.open
-
-        def claim_during_open(*args: Any, **kwargs: Any) -> Any:
-            group = original_open(*args, **kwargs)
-            studio.db.claim(workspace, boss_key(studio.host.name, "chat-b"), studio.host.name, None)
-            return group
-
-        monkeypatch.setattr(studio, "open", claim_during_open)
-        with pytest.raises(ValueError, match="handed its workspace"):
-            studio.open_show(
-                "second",
-                tmp_path,
-                [GroupSeat("a", "claude", {}, tmp_path)],
-                review=False,
-                isolated=False,
-                manager_session_id="chat-a",
-            )
-        assert len(studio.records) == 1
-    finally:
-        await studio.manager.shutdown()
-        await studio.close()
+        await _call(client, "handover", {"workspace_id": new_a_ws, "manager_session_id": "chat-c"})
+        db = Database(data_root)
+        try:
+            linked_row = db.workspace(new_a_ws)
+            assert linked_row is not None and not _handed_over(linked_row)
+        finally:
+            db.close()
+        a_continues = await _call(
+            client,
+            "start_agent",
+            {"provider": "claude", "prompt": "stay", "cwd": str(tmp_path), "manager_session_id": "chat-a"},
+        )  # fmt: skip
+        await _wait_task(client, a_continues["invocation_id"])
+        assert _state(data_root, a_continues["conversation_id"])["manager_session"] == new_a_ws
 
 
 @pytest.mark.asyncio
 async def test_new_workspace_registration_failure_leaves_no_conversation(
     data_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from agentnave.native_sessions import boss_key
+
     def fail_register(*_args: Any, **_kwargs: Any) -> None:
         raise OSError("register failed")
 
@@ -2474,13 +2657,21 @@ async def test_new_workspace_registration_failure_leaves_no_conversation(
             "cwd": str(tmp_path),
             "manager_session_id": "chat-a",
         }
-        with monkeypatch.context() as patch:
-            patch.setattr(Database, "register", fail_register)
-            first = await _call(client, "start_agent", args)
+        first = await _call(client, "start_agent", args)
         await _wait_task(client, first["invocation_id"])
-        workspace = _state(data_root, first["conversation_id"])["manager_session"]
-        await _call(client, "handover", {"release": True, "manager_session_id": "chat-a"})
-        await _call(client, "handover", {"workspace_id": workspace, "manager_session_id": "chat-b"})
+        legacy_ws = str(_state(data_root, first["conversation_id"])["manager_session"])
+        boss_a = boss_key(None, "chat-a")
+        boss_b = boss_key(None, "chat-b")
+        with sqlite3.connect(data_root / "agentnave.db") as raw:
+            raw.execute(
+                "INSERT INTO workspaces (id, owner, origin, pending) VALUES (?, ?, ?, 0) "
+                "ON CONFLICT (id) DO UPDATE SET owner = excluded.owner, origin = excluded.origin",
+                (legacy_ws, boss_b, boss_a),
+            )
+            raw.execute(
+                "INSERT OR IGNORE INTO former_bosses (boss, workspace) VALUES (?, ?)",
+                (boss_a, legacy_ws),
+            )
         locks_before = set((data_root / "locks").glob("*"))
 
         monkeypatch.setattr(Database, "register", fail_register)
@@ -3554,31 +3745,27 @@ async def test_native_prompt_inbox_validation_ownership_and_audit(
         for args, expected in cases:
             response = await client.call_tool("answer_prompt", args)
             assert response.is_error and expected in str(response.content)
-        # A transferred workspace resolves ownership live, including still-running work.
+        # Claiming links workspaces without transferring run control (ADR-0099).
         release = await _call(client, "handover", {"release": True, "manager_session_id": "owner"})
         await _call(
             client,
             "handover",
             {"workspace_id": release["workspace_id"], "manager_session_id": "new-owner"},
         )
-        old = await client.call_tool("answer_prompt", {**base, **valid})
-        assert old.is_error and "handed its workspace" in str(old.content)
-        receipt = await _call(
-            client, "answer_prompt", {**base, **valid, "manager_session_id": "new-owner"}
-        )
-        assert receipt["status"] == "answered"
-        duplicate = await client.call_tool(
+        foreign = await client.call_tool(
             "answer_prompt", {**base, **valid, "manager_session_id": "new-owner"}
         )
+        assert foreign.is_error and "different manager" in str(foreign.content)
+        receipt = await _call(client, "answer_prompt", {**base, **valid})
+        assert receipt["status"] == "answered"
+        duplicate = await client.call_tool("answer_prompt", {**base, **valid})
         assert duplicate.is_error and "already answered" in str(duplicate.content)
         finished = await _wait_task(client, invocation)
         assert finished["status"] == "succeeded"
         wire = json.loads(str(finished["output"]))
         assert wire["decision"] == "allow"
         assert wire.get("answers") == ({"Which?": "A"} if question else None)
-        ended = await client.call_tool(
-            "answer_prompt", {**base, **valid, "manager_session_id": "new-owner"}
-        )
+        ended = await client.call_tool("answer_prompt", {**base, **valid})
         assert ended.is_error and "ended" in str(ended.content)
         saved = _state(data_root, start["conversation_id"])["tasks"][0]["prompts"][0]
         assert saved["status"] == "answered"
