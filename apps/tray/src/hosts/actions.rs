@@ -233,11 +233,13 @@ impl Hosts {
     }
     /// Hosts can share one folder (CODEBUDDY_CONFIG_DIR); the copy stays while another wants it.
     pub(super) fn shared_wanted(&self, host: &Host, name: &str, path: &Path) -> bool {
-        self.registry().iter().any(|other| {
-            other.id != host.id
-                && other.optional(name).as_deref() == Some(path)
-                && self.skill_wanted(other.id, name)
-        })
+        // Uninstall removes every host, so no other host keeps wanting it.
+        !self.uninstalling
+            && self.registry().iter().any(|other| {
+                other.id != host.id
+                    && other.optional(name).as_deref() == Some(path)
+                    && self.skill_wanted(other.id, name)
+            })
     }
     /// Switches one optional Skill: on installs it now if the host is connected (otherwise on the
     /// next connect), off removes only the App's own copy.
@@ -391,12 +393,16 @@ impl Hosts {
             json!({"host":self.state(host),"ok":true,"message":"已记录你已重启或重连；未自动验证宿主接口"}),
         )
     }
-    fn remove_host(&mut self, id: &str, host: &Host) -> Result<String, String> {
+    pub(super) fn remove_host(&mut self, id: &str, host: &Host) -> Result<String, String> {
         // Preflight all layers; each subsequent replacement is independently checked.
         for path in &host.user_layers {
             safe_path(path, &self.context.home)?;
             host.read_at(path)
                 .map_err(|e| format!("parse_failed:{e}"))?;
+        }
+        // Uninstall removes the hook once on its own, so a bad hooks file cannot block MCP cleanup.
+        if id == "antigravity" && !self.uninstalling {
+            hooks::remove_interactive(&self.context.home)?;
         }
         let mut removed = Vec::new();
         // Clear before the first mutation: a later partial removal may fail.
@@ -424,28 +430,16 @@ impl Hosts {
         });
         if !shared {
             if let Some(path) = &host.skill {
-                skill::remove(
-                    path,
-                    &self.context.app,
-                    id,
-                    &self.context.home,
-                    skill::MANAGER,
-                )?;
+                self.remove_skill(path, id, skill::MANAGER)?;
             }
             if let Some(path) = host.optional("agentnave-meeting") {
-                skill::remove(
-                    &path,
-                    &self.context.app,
-                    id,
-                    &self.context.home,
-                    skill::MEETING,
-                )?;
+                self.remove_skill(&path, id, skill::MEETING)?;
             }
         }
         if !shared {
             for (name, embedded) in skill::REQUIRED {
                 if let Some(path) = host.optional(name) {
-                    skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+                    self.remove_skill(&path, id, embedded)?;
                 }
             }
         }
@@ -453,7 +447,7 @@ impl Hosts {
             if let Some(path) = host.optional(name)
                 && !self.shared_wanted(host, name, &path)
             {
-                skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+                self.remove_skill(&path, id, embedded)?;
             }
         }
         Ok(if removed.is_empty() {
@@ -461,6 +455,12 @@ impl Hosts {
         } else {
             format!("已移除：{}", removed.join("、"))
         })
+    }
+    /// Uninstall deletes the App's backups too, so it removes only the App's own unmodified
+    /// copy; a Skill the user wrote or edited stays where it is.
+    fn remove_skill(&self, path: &Path, id: &str, embedded: skill::Files) -> Result<(), String> {
+        let (app, home) = (&self.context.app, &self.context.home);
+        skill::remove_with(path, app, id, home, embedded, self.uninstalling)
     }
     fn connect_host(&mut self, id: &str, host: &Host, operation: &str) -> Result<String, String> {
         if !self.detect(host).0 {

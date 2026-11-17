@@ -417,6 +417,12 @@ jq 'del(.modes.task.codebuddy, .modes.discussion.codebuddy)' members.json > m.tm
 - 改历史保留天数会删掉旧记录，同样要先问。
 - 其他像换工位模型、调整并发上限这类小改动，在用户已确认的任务范围内可以直接做，做完告诉用户。
 
+## 卸载
+
+结束所有 AgentNave 任务后，从各宿主的用户级 MCP 配置中移除 `agentnave` 条目，移除通过部署管理器安装的 AgentNave Skill，并从宿主规则文件中摘除 `<!-- AGENTNAVE:START -->` 到 `<!-- AGENTNAVE:END -->` 的标记块。检查 `~/.gemini/config/hooks.json`，只删除 `agentnave-interactive` 键，保留其他键；文件变成空对象时可删除该文件。
+
+确认所有宿主不再使用服务后执行 `uv tool uninstall agentnave`。`~/.agentnave`（或 `AGENTNAVE_DATA_DIR`）中的任务和会议记录默认保留，项目配置、工作区信任标记和各仓库的 `.agentnave-worktrees` 也保留。
+
 ## 8. 常见报错
 
 ### 8.1 连接器 schema 过期

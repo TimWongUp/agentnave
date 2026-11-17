@@ -9,6 +9,9 @@ impl Hosts {
         self.refresh_probed()
     }
     pub(crate) fn refresh_probed(&mut self) -> Value {
+        if self.uninstalling {
+            return self.snapshot();
+        }
         let launcher_error = crate::update::ensure_active_launcher(&self.context.app).err();
         self.codex_homes = self.other_codex_homes();
         self.remember_reloads();

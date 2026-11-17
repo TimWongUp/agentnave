@@ -1,7 +1,7 @@
 "use strict";
 // Settings borrows the office's content area; the office and its player stay mounted.
 {
-  let frame = null, receiving = false, loaded = false, pendingSection = null;
+  let frame = null, receiving = false, loaded = false, pendingSection = null, pendingUninstall = false;
   const header = document.querySelector("header.bar");
   const origin = location.origin === "null" ? "*" : location.origin;
   const send = data => frame?.contentWindow?.postMessage({ type: "agentnave:settings", ...data }, origin);
@@ -28,13 +28,20 @@
     const target = targetOf(path);
     if (!target?.pathname.startsWith("/settings/")) return false;
     if (target.hash) pendingSection = target.hash;
+    const uninstall = target.searchParams.has("uninstall");
     if (!frame) {
       frame = AN.h("iframe.office-settings", { title: AN.L("设置", "Settings"), hidden: true });
       const source = new URL(AN.href(target.pathname + target.search + target.hash), location.href);
       source.searchParams.set("embedded", "1");
       frame.src = source.href;
       document.body.append(frame);
-    } else if (loaded && pendingSection) { send({ action: "section", hash: pendingSection }); pendingSection = null; }
+    } else {
+      if (uninstall) pendingUninstall = true;
+      if (loaded) {
+        if (pendingSection) { send({ action: "section", hash: pendingSection }); pendingSection = null; }
+        if (pendingUninstall) { send({ action: "uninstall" }); pendingUninstall = false; }
+      }
+    }
     frame.hidden = false;
     document.getElementById("app").inert = true;
     highlight(true);
@@ -81,6 +88,7 @@
     else if (data.action === "ready") {
       loaded = true;
       if (pendingSection) { send({ action: "section", hash: pendingSection }); pendingSection = null; }
+      if (pendingUninstall) { send({ action: "uninstall" }); pendingUninstall = false; }
       if (typeof data.language === "string") AN.setLanguage?.(data.language);
       if (typeof data.choice === "string") document.documentElement.dataset.lang = data.choice;
       send({ action: "preferences", general: window.ANAppearance?.preferences() });

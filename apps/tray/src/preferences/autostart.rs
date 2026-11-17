@@ -66,6 +66,14 @@ fn windows_command(exe: &std::path::Path) -> Result<String, String> {
     Ok(format!("\"{exe}\""))
 }
 
+/// Uninstall also forgets Task Manager's disabled startup entry.
+pub fn remove(app: &AppHandle) -> Result<(), String> {
+    set(app, false)?;
+    #[cfg(windows)]
+    windows::remove_approval(&app.package_info().name)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

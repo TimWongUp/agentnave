@@ -59,7 +59,8 @@ fn codex_bundle(path: &Path) -> bool {
 
 #[cfg(windows)]
 fn windows(context: &Context, boss: &str) -> Option<(&'static str, Option<PathBuf>)> {
-    if boss == "codex" && store_package("OpenAI.Codex_", Some("2p2nqsd0c76g0")) {
+    let live_profile = dirs::home_dir().as_deref() == Some(&context.home);
+    if boss == "codex" && live_profile && store_package("OpenAI.Codex_", Some("2p2nqsd0c76g0")) {
         return Some(("store", None));
     }
     if boss == "claude" {
@@ -71,11 +72,13 @@ fn windows(context: &Context, boss: &str) -> Option<(&'static str, Option<PathBu
         if squirrel.is_file() {
             return Some(("app", Some(squirrel)));
         }
-        if store_package("Claude_", None) || store_package("AnthropicPBC.Claude_", None) {
+        if live_profile
+            && (store_package("Claude_", None) || store_package("AnthropicPBC.Claude_", None))
+        {
             return Some(("store", None));
         }
     }
-    if boss == "workbuddy" {
+    if boss == "workbuddy" && live_profile {
         return crate::detect::uninstall_icon("WorkBuddy").map(|path| ("app", Some(path)));
     }
     if boss == "deepseek" {
@@ -87,7 +90,10 @@ fn windows(context: &Context, boss: &str) -> Option<(&'static str, Option<PathBu
         {
             return Some(("app", Some(path)));
         }
-        return crate::detect::uninstall_icon("DeepSeek Harness").map(|path| ("app", Some(path)));
+        if live_profile {
+            return crate::detect::uninstall_icon("DeepSeek Harness")
+                .map(|path| ("app", Some(path)));
+        }
     }
     None
 }

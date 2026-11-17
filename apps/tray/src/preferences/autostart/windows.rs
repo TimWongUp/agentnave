@@ -64,6 +64,13 @@ pub(super) fn set(name: &str, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn remove_approval(name: &str) -> Result<(), String> {
+    if let Some(key) = optional(CURRENT_USER.options().write().open(APPROVED))? {
+        optional(key.remove_value(name))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

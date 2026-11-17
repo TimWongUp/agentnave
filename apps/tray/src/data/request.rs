@@ -20,6 +20,9 @@ impl Reader {
 
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
+        if self.uninstalling() && method != "GET" {
+            return Response::error(409, "卸载已开始，请完成卸载或重新打开 App");
+        }
         // Live protocol requests pass `Some(app)` for the native picker; headless callers reach here.
         if path == "/app/video-packs" || path.starts_with("/app/video-packs/") {
             return self.video_packs_request(None, method, path, action, body);
@@ -163,6 +166,9 @@ impl Reader {
             .unwrap_or_else(|p| p.into_inner())
             .as_mut()
         {
+            if self.uninstalling() {
+                return;
+            }
             hosts.refresh_probed();
             crate::hosts::sync_orchestration(&self.root, hosts, &[]);
             self.update_boss_homes(hosts);

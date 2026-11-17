@@ -1,10 +1,12 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod actions;
 mod request;
+mod uninstall;
 pub(crate) use request::{orchestration_request, request, skill_request, sync_orchestration};
 mod config;
 mod decision;
 mod faults;
+mod hooks;
 pub(crate) use decision::decision_request;
 mod installed;
 #[cfg(all(test, windows, feature = "windows-live-tests"))]
@@ -290,6 +292,7 @@ const IDS: [&str; 11] = [
 ];
 
 pub struct Hosts {
+    uninstalling: bool,
     pub context: Context,
     settings: Value,
     settings_error: Option<String>,
@@ -317,6 +320,7 @@ impl Hosts {
         let loaded = roots::load(&context);
         let settings_error = loaded.as_ref().err().cloned();
         let mut hosts = Self {
+            uninstalling: false,
             context,
             settings: loaded.unwrap_or_else(|_| json!({})),
             settings_error,
@@ -421,13 +425,20 @@ impl Hosts {
         self.registry()
             .into_iter()
             .filter(|host| self.detect(host).0)
-            .map(|host| crate::rules::App {
-                key: host.id,
-                id: host.boss,
-                label: host.label,
-                root: host.root.path,
-            })
+            .map(Self::rule_app)
             .collect()
+    }
+    /// Include removed CLIs when removing stale managed blocks from their rules files.
+    fn all_rule_apps(&self) -> Vec<crate::rules::App> {
+        self.registry().into_iter().map(Self::rule_app).collect()
+    }
+    fn rule_app(host: Host) -> crate::rules::App {
+        crate::rules::App {
+            key: host.id,
+            id: host.boss,
+            label: host.label,
+            root: host.root.path,
+        }
     }
     /// The installed boss apps that are connected, which alone get the orchestration block.
     pub fn connected_rule_apps(&self) -> Vec<crate::rules::App> {
@@ -454,9 +465,14 @@ impl Hosts {
             backup_bytes(app, RULES_BACKUP, id, path, bytes, home)
                 .map_err(|error| message(&error).to_owned())
         };
+        let connected = if self.uninstalling {
+            Vec::new()
+        } else {
+            self.connected_rule_apps()
+        };
         crate::rules::sync(
-            &self.rule_apps(),
-            &self.connected_rule_apps(),
+            &self.all_rule_apps(),
+            &connected,
             home,
             document,
             also,

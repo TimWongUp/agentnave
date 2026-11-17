@@ -528,8 +528,8 @@ function confirmBlock(host) {
   const paths = (host.layers || []).filter((l) => l.scope !== "project" && l.has_entry).map((l) => shortPath(l.path));
   const where = L(`${(paths.length ? paths : [shortPath(host.config_path)]).join("、")} 里名为 agentnave 的条目`, `the agentnave entry in ${(paths.length ? paths : [shortPath(host.config_path)]).join(", ")}`);
   const msg = orphan
-    ? L(`将删除 ${where}（写入前会备份）。${host.label} 本身不会受影响${skill ? `；${skill}` : ""}。`, `Will remove ${where} (backed up before writing). ${host.label} itself is unaffected${skill ? `; ${skill}` : ""}.`)
-    : L(`只删除 ${where}（写入前会备份），其他配置不动${skill ? `；${skill}` : ""}。之后可以随时重新接入。`, `Only removes ${where} (backed up before writing); other settings remain untouched${skill ? `; ${skill}` : ""}. You can reconnect anytime.`);
+    ? L(`将删除 ${where}（写入前会备份），并摘掉不再使用的 AgentNave 规则块${host.id === "antigravity" ? "和交互 hook" : ""}${skill ? `；${skill}` : ""}。${host.label} 本身不会受影响。`, `Removes ${where} (backed up before writing), unused AgentNave rules blocks${host.id === "antigravity" ? " and the interactive hook" : ""}${skill ? `; ${skill}` : ""}. ${host.label} itself is unaffected.`)
+    : L(`将删除 ${where}（写入前会备份），并摘掉不再使用的 AgentNave 规则块${host.id === "antigravity" ? "和交互 hook" : ""}${skill ? `；${skill}` : ""}。之后可以随时重新接入。`, `Removes ${where} (backed up before writing), unused AgentNave rules blocks${host.id === "antigravity" ? " and the interactive hook" : ""}${skill ? `; ${skill}` : ""}. You can reconnect anytime.`);
   return h(
     "div.hc-confirm",
     { role: "group", "aria-label": L(`确认移除 ${host.label}`, `Confirm removing ${host.label}`) },

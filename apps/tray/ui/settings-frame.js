@@ -29,6 +29,7 @@ if (window.parent !== window && new URLSearchParams(location.search).get("embedd
     if (event.source !== window.parent || event.data?.type !== "agentnave:settings") return;
     const data = event.data;
     if (data.action === "section") section(data.hash);
+    else if (data.action === "uninstall") window.dispatchEvent(new Event("agentnave:uninstall"));
     else if (data.action === "visible") {
       document.documentElement.dataset.artPaused = String(!data.visible);
       document.documentElement.dataset.windowHidden = String(!data.visible);

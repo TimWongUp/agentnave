@@ -108,7 +108,9 @@ their official instructions. On macOS and Linux, AgentNave looks for each CLI on
 CLI's directory first, then the inherited `PATH`, then those directories. Desktop hosts may have a
 different environment from your terminal; set an explicit `PATH` in the server's host configuration
 if a CLI or its runtime lives elsewhere, or on Windows.
-AgentNave does not install providers or change their login or configuration. It passes each CLI's
+AgentNave does not install providers or change their login. The App can maintain an AgentNave
+rules block in host configuration, and interactive Antigravity runs maintain the
+`agentnave-interactive` entry in `~/.gemini/config/hooks.json`. It passes each CLI's
 permission tier on every dispatch (full access by default, or automatic approval when selected
 in the App) without changing the CLI's saved
 settings.
@@ -628,23 +630,46 @@ See [v1.14.0 release notes](releases/v1.14.0.md). Earlier upgrade instructions r
 
 ## Uninstall
 
-For each target host, remove AgentNave's MCP registration and uninstall the installed `agentnave-manager` or `agentnave-meeting` and
-`agentnave-handover` through its Skill installer or deployment manager. Remove the shared runtime only after all hosts stop
-using it. These are separate operations; the MCP removal commands do not uninstall the Skill:
+### macOS and Windows App
 
-```bash
-# Run the relevant commands for your configured hosts.
-codex mcp remove agentnave
-claude mcp remove --scope user agentnave
-uv tool uninstall agentnave
-```
+Open **Settings → About → Uninstall AgentNave**, then choose **Uninstall**. On Windows,
+**Settings → Apps → AgentNave → Uninstall** opens the same confirmation page; cancelling keeps
+AgentNave installed. Running tasks must finish first. If a host cannot be cleaned up, the App
+lists it and offers **Retry**.
 
-For other hosts, use their documented removal interface.
-Remove the companion Skill through its deployment manager, or remove only its installed directory
-or symlink, preserving user-authored additions. Uninstalling the runtime does not delete private
-history in `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) or explicitly selected conversation directories.
-Keep these records unless the user separately requests their deletion. Provider CLIs, authentication,
-configuration, sessions, and user projects remain owned by the user and providers.
+The App removes its user-level MCP entries from every registered host, its own unmodified copies
+of companion Skills (Skills you wrote or edited stay in place), the marked AgentNave global rules
+blocks and agy's `agentnave-interactive` hook. It disables login startup and removes its own application
+data after exit. Files still in use may remain. macOS moves the currently running `.app` to the
+Trash, including an App installed outside `/Applications`; Windows runs the installed NSIS
+uninstaller. A development executable outside an `.app` is not moved to the Trash. On Windows,
+upgrading with a newer installer is not an uninstall, and a silent `/S` uninstall run without the
+App only removes the program files; neither cleans up hosts.
+
+**Also delete task and meeting history** is off by default. Enable it only to delete the data
+root (`~/.agentnave/` or `AGENTNAVE_DATA_DIR`) as well. Claude and agy trust records, project-level
+MCP configuration and repositories' `.agentnave-worktrees` directories remain. Preview builds
+cannot uninstall AgentNave.
+
+### Manual runtime installation
+
+1. Remove AgentNave's user-level MCP registration in each configured host. For example:
+
+   ```bash
+   codex mcp remove agentnave
+   claude mcp remove --scope user agentnave
+   ```
+
+   For other hosts, use their documented removal interface. Project-level entries must be
+   removed separately in the corresponding project.
+2. Remove `agentnave-manager` or `agentnave-meeting`, `agentnave-handover` and other installed
+   companion Skills through their deployment manager. When removing directories or symlinks
+   manually, preserve user-authored additions. Remove only the marked `AGENTNAVE` rules blocks
+   and agy's `agentnave-interactive` key in `~/.gemini/config/hooks.json`; keep unrelated entries.
+3. Once all hosts stop using the shared runtime, run `uv tool uninstall agentnave`. Disable any
+   manually configured login startup, and remove any manually installed App and its own data.
+4. Keep `~/.agentnave/` (or `AGENTNAVE_DATA_DIR`) unless task and meeting history should also be
+   deleted. Provider CLIs, authentication, sessions, trust records and user projects remain.
 
 ## 中国大陆网络
 

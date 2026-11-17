@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-16
+- 卸载时的写入边界由 [ADR-0100](0100-app-uninstall.md) 扩展：App 清理用户级宿主接入与自有数据，任务和会议记录仅按用户开关删除。
 - 按天数的自动清理归属由 [ADR-0046](0046-service-history-retention.md) 取代：由服务执行，托盘保留手动清理。
 - 托盘写入范围由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订：另可在同一把锁下改名。
 - 托盘写入范围由 [ADR-0088](0088-relay-records-service-exit-fault.md) 扩展：另可删除用户已确认的连接故障记录（`connection-faults/`，不取会话锁）；并由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 扩展：另可在非预览版刷新时删除已恢复或无人认领的连接故障记录。

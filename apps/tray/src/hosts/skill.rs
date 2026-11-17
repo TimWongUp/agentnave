@@ -280,11 +280,25 @@ pub(super) fn remove(
     home: &Path,
     embedded: Files,
 ) -> Result<(), String> {
+    remove_with(path, app, id, home, embedded, false)
+}
+/// `keep_foreign` leaves a copy the App does not own in place instead of moving it to backups.
+pub(super) fn remove_with(
+    path: &Path,
+    app: &Path,
+    id: &str,
+    home: &Path,
+    embedded: Files,
+    keep_foreign: bool,
+) -> Result<(), String> {
     let current = state(path, home, embedded);
     if current["state"] == "missing" || current["state"] == "blocked" {
         return Ok(());
     }
     if current["state"] != "app" {
+        if keep_foreign {
+            return Ok(());
+        }
         return move_to_backups(path, app, id, home).map(|_| ());
     }
     crate::config_paths::safe_path(&app.join("backups"), home)?;
