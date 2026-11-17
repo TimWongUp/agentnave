@@ -124,6 +124,7 @@ fn terminal_asset(resource: &str) -> Response {
     match resource {
         "" => page(include_bytes!("../../ui/terminal.html")),
         "terminal.js" => script(include_bytes!("../../ui/terminal.js")),
+        "terminal-view.js" => script(include_bytes!("../../ui/terminal-view.js")),
         "terminal.css" => Response::ok(
             "text/css; charset=utf-8",
             include_bytes!("../../ui/terminal.css").to_vec(),
@@ -132,7 +133,7 @@ fn terminal_asset(resource: &str) -> Response {
     }
 }
 
-/// xterm.js as shipped on npm (ui/vendor/xterm/README.md).
+/// xterm.js and dockview as shipped on npm (ui/vendor/*/README.md).
 fn terminal_vendor(resource: &str) -> Response {
     let (mime, bytes): (&'static str, &[u8]) = match resource {
         "xterm.js" => (
@@ -150,6 +151,14 @@ fn terminal_vendor(resource: &str) -> Response {
         "xterm.css" => (
             "text/css; charset=utf-8",
             include_bytes!("../../ui/vendor/xterm/xterm.css"),
+        ),
+        "dockview.js" => (
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/vendor/dockview/dockview-core.min.noStyle.js"),
+        ),
+        "dockview.css" => (
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/vendor/dockview/dockview.css"),
         ),
         _ => return Response::not_found(),
     };
@@ -256,15 +265,6 @@ fn chat_asset(resource: &str) -> Response {
         "office-settings.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/office-settings.js").to_vec(),
-        ),
-        // PROTOTYPE: three office terminal layouts (proto-terminal.js), prototype branch only.
-        "proto-terminal.js" => Response::ok(
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../ui/proto-terminal.js").to_vec(),
-        ),
-        "proto-terminal.css" => Response::ok(
-            "text/css; charset=utf-8",
-            include_bytes!("../../ui/proto-terminal.css").to_vec(),
         ),
         "office-terminal.js" => Response::ok(
             "text/javascript; charset=utf-8",
