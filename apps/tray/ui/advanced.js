@@ -137,7 +137,7 @@
     }
     renderOrchestration();
     window.AgentNaveDecisionSeats?.load();
-    // Review seats list the connected bosses' CLIs too.
+    // Review seats depend on whether any boss orchestrates.
     renderReviewSeats();
     renderAdvancedBar();
     // Cards name the seats their pool left out.
@@ -691,11 +691,10 @@
   const seatModels = (provider) => listedPool(provider)
     ? listedPool(provider).filter((id) => getAllModelIds(provider).includes(id)) : getAllModelIds(provider);
 
-  // The CLIs a seat may pick: a meeting seat follows the 开会 scene as Employees sets it and may use any
-  // CLI, the boss's own too.
+  // The CLIs a seat may pick: only CLIs Employees has enabled; a meeting seat follows the 开会 scene.
+  // A boss's own CLI gets no exception: seats are shared by every boss (ADR-0053, 2026-11-17).
   function cliUsable(scene) {
     // Orchestrated bosses use confirmed CLI configurations, not the hidden solo-task switches.
-    const bossClis = (orchestration?.bosses || []).flatMap((boss) => (boss.ids || []).map((id) => id === "workbuddy" ? "codebuddy" : id));
     const doc = orchestrationShown();
     const orchestrated = doc && [doc.preset, ...Object.values(doc.apps || {})].some(usesSeats);
     const inScene = (p, scene) => Object.hasOwn(S.currentDoc.modes?.[scene] || {}, p);
@@ -705,7 +704,7 @@
       return Object.hasOwn(S.currentDoc.clis || {}, p) || SCENE_IDS.some((scene) => inScene(p, scene));
     };
     const usable = (p) => scene !== "task" ? known(p) && slot(scene, p).enabled
-      : (known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled)) || bossClis.includes(p);
+      : known(p) && (orchestrated ? confirmed(p) : slot("task", p).enabled);
     return usable;
   }
 
