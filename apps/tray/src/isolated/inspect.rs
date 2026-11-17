@@ -1,5 +1,7 @@
 //! Safety inspection and confirmation-digest computation for isolated directories.
 
+use std::ffi::{OsStr, OsString};
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -275,7 +277,7 @@ pub(crate) fn verify_worktree_root(git: &GitRunner, wt_path: &Path) -> Result<()
 fn symbolic_ref_excludes(
     git: &GitRunner,
     cwd: &Path,
-) -> Result<(Vec<String>, Vec<String>), String> {
+) -> Result<(Vec<OsString>, Vec<OsString>), String> {
     let out = git
         .run(
             cwd,
@@ -289,19 +291,40 @@ fn symbolic_ref_excludes(
             &[],
         )?
         .stdout;
+    parse_symbolic_ref_excludes(&out)
+}
+
+pub(super) fn parse_symbolic_ref_excludes(
+    out: &[u8],
+) -> Result<(Vec<OsString>, Vec<OsString>), String> {
     let (mut heads, mut remotes) = (Vec::new(), Vec::new());
-    for line in String::from_utf8_lossy(&out).lines() {
-        let Some((target, name)) = line.split_once(' ') else {
+    for line in out.split(|&byte| byte == b'\n') {
+        let Some(space) = line.iter().position(|&byte| byte == b' ') else {
             continue;
         };
-        if target.is_empty() {
+        if space == 0 {
             continue;
         }
-        if let Some(rest) = name.strip_prefix("refs/heads/") {
-            heads.push(format!("--exclude={rest}"));
-        } else if let Some(rest) = name.strip_prefix("refs/remotes/") {
-            remotes.push(format!("--exclude={rest}"));
+        let name = &line[space + 1..];
+        let (destination, rest) = if let Some(rest) = name.strip_prefix(b"refs/heads/") {
+            (&mut heads, rest)
+        } else if let Some(rest) = name.strip_prefix(b"refs/remotes/") {
+            (&mut remotes, rest)
+        } else {
+            continue;
+        };
+        let mut arg = OsString::from("--exclude=");
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            arg.push(OsStr::from_bytes(rest));
         }
+        #[cfg(not(unix))]
+        arg.push(
+            std::str::from_utf8(rest)
+                .map_err(|_| "符号引用名不是有效 UTF-8，无法安全排除".to_owned())?,
+        );
+        destination.push(arg);
     }
     Ok((heads, remotes))
 }
@@ -434,12 +457,15 @@ fn is_unique_commit(git: &GitRunner, cwd: &Path, oid: &str) -> Result<bool, Stri
     let managed = MANAGED_BRANCH_PREFIX.trim_start_matches("refs/heads/");
     let exclude = format!("--exclude={managed}*");
     let (heads, remotes) = symbolic_ref_excludes(git, cwd)?;
-    let mut args = vec!["rev-list", "--count", oid, "--not", exclude.as_str()];
-    args.extend(heads.iter().map(String::as_str));
-    args.push("--branches");
-    args.extend(remotes.iter().map(String::as_str));
-    args.push("--remotes");
-    let out = git.run(cwd, &args, &[0], &[])?.stdout;
+    let mut args: Vec<&OsStr> = ["rev-list", "--count", oid, "--not", &exclude]
+        .into_iter()
+        .map(OsStr::new)
+        .collect();
+    args.extend(heads.iter().map(OsString::as_os_str));
+    args.push(OsStr::new("--branches"));
+    args.extend(remotes.iter().map(OsString::as_os_str));
+    args.push(OsStr::new("--remotes"));
+    let out = git.run_os(cwd, &args, &[0], &[])?.stdout;
     let count: u64 = String::from_utf8_lossy(&out)
         .trim()
         .parse()

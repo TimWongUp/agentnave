@@ -618,6 +618,27 @@ fn tracked_subdir_nested_git_and_bare_repo_are_detected_and_scan_limit_warns() {
         "{nested:?}"
     );
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        for marker in ["HEAD", "objects", "refs"] {
+            let original = bare_dir.join(marker);
+            let target = fx.root.join(format!("linked-{marker}"));
+            fs::rename(&original, &target).unwrap();
+            symlink(&target, &original).unwrap();
+            let scan = state::nested_repositories_with_limit(
+                &git::GitRunner::new().unwrap(),
+                &fx.wt_path,
+                b"",
+                200_000,
+            )
+            .unwrap();
+            assert!(scan.repos.contains(&"packages/bare.git".to_owned()));
+            fs::remove_file(&original).unwrap();
+            fs::rename(&target, &original).unwrap();
+        }
+    }
+
     // Hitting the entry cap flags the scan as truncated so the confirm dialog warns the user.
     let git = git::GitRunner::new().unwrap();
     let limited = state::nested_repositories_with_limit(&git, &fx.wt_path, b"", 2).unwrap();
@@ -927,6 +948,16 @@ fn symbolic_ref_to_the_managed_branch_does_not_keep_its_commits() {
         json!({"id": fx.id, "workspace": fx.workspace}),
     );
     assert_eq!(inspected["unique_commits"], true);
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_symbolic_ref_excludes_preserve_raw_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let output = b"refs/heads/agentnave/wt-1 refs/heads/saved-\xff\nrefs/heads/agentnave/wt-1 refs/remotes/origin/saved-\xfe\n";
+    let (heads, remotes) = inspect::parse_symbolic_ref_excludes(output).unwrap();
+    assert_eq!(heads[0].as_bytes(), b"--exclude=saved-\xff");
+    assert_eq!(remotes[0].as_bytes(), b"--exclude=origin/saved-\xfe");
 }
 
 #[cfg(unix)]

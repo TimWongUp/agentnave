@@ -1229,6 +1229,29 @@ def test_bare_repository_in_an_ignored_directory_forces_confirmation(tmp_path: P
     dirs.close()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+@pytest.mark.parametrize("marker", ["HEAD", "objects", "refs"])
+def test_ignored_bare_repository_with_linked_marker_requires_confirmation(
+    tmp_path: Path, marker: str
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    ignored = created.worktree_path / "ignored_dir"
+    ignored.mkdir()
+    _git(ignored, "init", "--bare", "bare.git")
+    bare = ignored / "bare.git"
+    target = tmp_path / marker
+    (bare / marker).rename(target)
+    (bare / marker).symlink_to(target, target_is_directory=marker != "HEAD")
+    result = dirs.release(created.id, workspace_id="ws-1")
+    assert result.status == "confirmation_required"
+    assert result.nested_repos == ("ignored_dir/bare.git",)
+    assert created.worktree_path.is_dir()
+    dirs.close()
+
+
 def test_bare_repository_whose_own_directory_git_does_not_list_is_kept(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     # Ignore every file but no directory: Git lists only leaf directories of the bare repo.

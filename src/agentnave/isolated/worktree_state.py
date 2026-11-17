@@ -147,6 +147,10 @@ def _walk_nested(wt_path: Path) -> set[str]:
                 continue
             try:
                 if entry.is_symlink() or entry.is_junction():
+                    if name == "head":
+                        file_names.add(name)
+                    elif name in {"objects", "refs"}:
+                        dir_names.add(name)
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     subdirs.append(Path(entry.path))

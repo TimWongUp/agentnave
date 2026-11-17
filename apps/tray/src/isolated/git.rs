@@ -1,6 +1,7 @@
 //! Git execution with hooks, filters, and fsmonitor neutralized (ADR-0085, ADR-0098).
 
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -70,6 +71,17 @@ impl GitRunner {
         allowed_exit_codes: &[i32],
         extra_env: &[(&str, &str)],
     ) -> Result<GitOutput, String> {
+        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        self.run_os(cwd, &args, allowed_exit_codes, extra_env)
+    }
+
+    pub(crate) fn run_os(
+        &self,
+        cwd: &Path,
+        args: &[&OsStr],
+        allowed_exit_codes: &[i32],
+        extra_env: &[(&str, &str)],
+    ) -> Result<GitOutput, String> {
         let mut cmd = Command::new("git");
         cmd.arg("--no-pager").arg("-C").arg(cwd);
         for item in [
@@ -87,10 +99,11 @@ impl GitRunner {
             "core.hooksPath={}",
             self.empty_hooks.path().display()
         ));
-        if args
-            .first()
-            .is_some_and(|first| !NO_FILTER_COMMANDS.contains(first))
-        {
+        if args.first().is_some_and(|first| {
+            !NO_FILTER_COMMANDS
+                .iter()
+                .any(|name| *first == OsStr::new(name))
+        }) {
             for name in self.filter_driver_names(cwd)? {
                 if name.contains('=') {
                     return Err(format!("不支持的 Git filter 驱动名：{name}"));
@@ -113,14 +126,14 @@ impl GitRunner {
         let out = match output(cmd, DEFAULT_GIT_TIMEOUT) {
             Ok(out) => out,
             Err(OutputError::Timeout) => {
-                let op = args.first().copied().unwrap_or("");
+                let op = args.first().copied().unwrap_or_default().to_string_lossy();
                 return Err(format!("git {op} 执行超时"));
             }
             Err(OutputError::Io(e)) => return Err(format!("无法执行 git：{e}")),
             Err(OutputError::Reader) => return Err("读取 git 输出失败".to_owned()),
         };
         if out.stdout.len() > MAX_GIT_OUTPUT_BYTES {
-            let op = args.first().copied().unwrap_or("");
+            let op = args.first().copied().unwrap_or_default().to_string_lossy();
             return Err(format!("git {op} 输出超出上限"));
         }
         let code = out.status.code().unwrap_or(-1);
@@ -131,7 +144,12 @@ impl GitRunner {
             } else {
                 stderr
             };
-            let op: String = args.iter().take(2).copied().collect::<Vec<_>>().join(" ");
+            let op = args
+                .iter()
+                .take(2)
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ");
             return Err(format!("git {op} failed: {detail}"));
         }
         Ok(GitOutput {
