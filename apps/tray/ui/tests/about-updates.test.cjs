@@ -176,3 +176,84 @@ test("uninstall keeps history by default, blocks running work and retries failed
   assert.equal(dialog.open, false);
   assert.equal(posted.at(-1)[0], "/app/uninstall/cancel");
 });
+
+test("reopening the retained settings frame with ?uninstall opens the uninstall dialog", () => {
+  const sent = [], events = new Map();
+  const frameWindow = { postMessage(data) { sent.push(data); } };
+  const frame = { hidden: true, src: "", contentWindow: frameWindow };
+  const header = { querySelectorAll: () => [] };
+  const office = {
+    AN: { h: () => frame, L: zh => zh, href: path => path },
+    location: { href: "http://agentnave.localhost/chat/", origin: "http://agentnave.localhost", protocol: "http:", host: "agentnave.localhost" },
+    URL,
+    document: {
+      hidden: false,
+      documentElement: { dataset: {} },
+      querySelector: () => header,
+      getElementById: () => ({ inert: false }),
+      body: { append() {} },
+      addEventListener() {},
+    },
+    window: { addEventListener: (name, fn) => events.set(name, fn) },
+    MutationObserver: undefined,
+  };
+  vm.runInNewContext(readFileSync(`${__dirname}/../office-settings.js`, "utf8"), office);
+  office.AN.navigate("/settings/");
+  events.get("message")({ source: frameWindow, data: { type: "agentnave:settings", action: "ready" } });
+  office.AN.navigate("/chat/");
+  sent.length = 0;
+  office.AN.navigate("/settings/?uninstall#about");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(sent.filter(item => item.action === "section" || item.action === "uninstall"))),
+    [
+      { type: "agentnave:settings", action: "section", hash: "#about" },
+      { type: "agentnave:settings", action: "uninstall" },
+    ],
+  );
+
+  // Inside the settings document itself, settings-frame forwards `uninstall` and ?uninstall strips itself from the URL.
+  const replaced = [], opened = [];
+  const winListeners = new Map(), docListeners = new Map();
+  const settingsWindow = {
+    parent: {},
+    addEventListener: (name, fn) => winListeners.set(name, fn),
+    dispatchEvent(event) { winListeners.get(event.type)?.(event); },
+  };
+  settingsWindow.window = settingsWindow;
+  let dialog = null;
+  const settingsCtx = {
+    window: settingsWindow,
+    globalThis: settingsWindow,
+    Event: class { constructor(type) { this.type = type; } },
+    CustomEvent: class { constructor(type, { detail }) { this.type = type; this.detail = detail; } },
+    URL, URLSearchParams,
+    location: { href: "http://agentnave.localhost/settings/?uninstall&embedded=1#about", pathname: "/settings/", search: "?uninstall&embedded=1", hash: "#about", origin: "http://agentnave.localhost", protocol: "http:", host: "agentnave.localhost" },
+    history: { replaceState: (_s, _t, url) => replaced.push(url) },
+    document: {
+      documentElement: { dataset: {} },
+      addEventListener: (name, fn) => docListeners.set(name, fn),
+      getElementById: () => null,
+      body: { append() {} },
+    },
+    AN: {
+      h: tag => {
+        const node = { tag, addEventListener() {}, append() {}, replaceChildren() {}, showModal() { opened.push(true); this.open = true; }, close() { this.open = false; }, focus() {} };
+        if (tag.startsWith("dialog.")) dialog = node;
+        return node;
+      },
+      L: zh => zh,
+      load: async () => ({ blocked: null, ready: true }),
+      post: async () => ({ ok: true }),
+    },
+    setTimeout: () => 0, clearTimeout() {},
+  };
+  vm.runInNewContext(readFileSync(`${__dirname}/../settings-frame.js`, "utf8"), settingsCtx);
+  vm.runInNewContext(readFileSync(`${__dirname}/../uninstall-settings.js`, "utf8"), settingsCtx);
+  assert.deepEqual(replaced, ["/settings/?embedded=1#about"]);
+  assert.equal(opened.length, 1);
+  winListeners.get("message")({ source: settingsWindow.parent, data: { type: "agentnave:settings", action: "uninstall" } });
+  assert.equal(opened.length, 1, "an already-open dialog ignores duplicate requests");
+  dialog.close();
+  winListeners.get("message")({ source: settingsWindow.parent, data: { type: "agentnave:settings", action: "uninstall" } });
+  assert.equal(opened.length, 2, "a closed dialog reopens when a new uninstall message arrives");
+});

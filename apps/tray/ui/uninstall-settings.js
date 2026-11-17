@@ -87,5 +87,14 @@
     refresh();
   }
   launch?.addEventListener("click", open);
-  if (new URLSearchParams(location.search).has("uninstall")) open();
+  globalThis.addEventListener?.("agentnave:uninstall", open);
+  const query = new URLSearchParams(location.search);
+  if (query.has("uninstall")) {
+    query.delete("uninstall");
+    const search = query.toString();
+    if (typeof history !== "undefined" && history.replaceState) {
+      history.replaceState(null, "", `${location.pathname}${search ? `?${search}` : ""}${location.hash}`);
+    }
+    open();
+  }
 }

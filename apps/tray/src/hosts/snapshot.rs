@@ -7,6 +7,7 @@ impl Hosts {
         if host.id.starts_with("codex@") {
             return clients;
         }
+        let live_profile = dirs::home_dir().as_deref() == Some(&self.context.home);
         let separate_desktop =
             host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
         let desktop = if separate_desktop {
@@ -28,11 +29,13 @@ impl Hosts {
                     .find(|path| {
                         executable(path) && crate::detect::codex_desktop_app(path).is_none()
                     })
-                    .or_else(crate::detect::standalone_codex)
+                    .or_else(|| live_profile.then(crate::detect::standalone_codex).flatten())
             } else {
-                self.context
-                    .find(host.binary)
-                    .or_else(|| crate::detect::locate(host.binary))
+                self.context.find(host.binary).or_else(|| {
+                    live_profile
+                        .then(|| crate::detect::locate(host.binary))
+                        .flatten()
+                })
             };
             // A CLI shipped inside the desktop app (DeepSeek Harness's dsh) is that app.
             let app = desktop.as_ref().and_then(|(_, path)| path.as_deref());
@@ -63,7 +66,9 @@ impl Hosts {
         {
             return (true, source, path);
         }
-        if self.context.find(host.binary).is_some() || crate::detect::locate(host.binary).is_some()
+        let live_profile = dirs::home_dir().as_deref() == Some(&self.context.home);
+        if self.context.find(host.binary).is_some()
+            || (live_profile && crate::detect::locate(host.binary).is_some())
         {
             return (true, "path", None);
         }
