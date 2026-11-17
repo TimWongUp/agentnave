@@ -4497,7 +4497,7 @@ async def test_isolated_task_rollbacks_resume_summary_errors_and_warnings(
     from agentnave.isolated import IsolatedDirs
     from agentnave.isolated.leases import acquire_lease_locked, repo_lock
     from agentnave.isolated.prompts import TaskIsolationInfo
-    from agentnave.isolated.release import ChangeSummary
+    from agentnave.isolated.summary import ChangeSummary
     from agentnave.models import InvocationListing
     from agentnave.task_start import add_write_warning
 
@@ -4794,7 +4794,7 @@ async def test_resumed_rebuild_rollback_preserves_metadata_and_surfaces_auto_rel
         hold3 = studio.bind_resumed_isolation(req2, rebuilt2, rec)
 
         from agentnave.isolated import IsolatedDirs
-        from agentnave.isolated.release import ChangeSummary
+        from agentnave.isolated.summary import ChangeSummary
 
         real_settle = IsolatedDirs.settle_task
 
