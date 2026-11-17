@@ -430,28 +430,16 @@ impl Hosts {
         });
         if !shared {
             if let Some(path) = &host.skill {
-                skill::remove(
-                    path,
-                    &self.context.app,
-                    id,
-                    &self.context.home,
-                    skill::MANAGER,
-                )?;
+                self.remove_skill(path, id, skill::MANAGER)?;
             }
             if let Some(path) = host.optional("agentnave-meeting") {
-                skill::remove(
-                    &path,
-                    &self.context.app,
-                    id,
-                    &self.context.home,
-                    skill::MEETING,
-                )?;
+                self.remove_skill(&path, id, skill::MEETING)?;
             }
         }
         if !shared {
             for (name, embedded) in skill::REQUIRED {
                 if let Some(path) = host.optional(name) {
-                    skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+                    self.remove_skill(&path, id, embedded)?;
                 }
             }
         }
@@ -459,7 +447,7 @@ impl Hosts {
             if let Some(path) = host.optional(name)
                 && !self.shared_wanted(host, name, &path)
             {
-                skill::remove(&path, &self.context.app, id, &self.context.home, embedded)?;
+                self.remove_skill(&path, id, embedded)?;
             }
         }
         Ok(if removed.is_empty() {
@@ -467,6 +455,14 @@ impl Hosts {
         } else {
             format!("已移除：{}", removed.join("、"))
         })
+    }
+    /// Uninstall deletes the App's backups too, so it removes only the App's own unmodified
+    /// copy; a Skill the user wrote or edited stays where it is.
+    fn remove_skill(&self, path: &Path, id: &str, embedded: skill::Files) -> Result<(), String> {
+        if self.uninstalling && skill::state(path, &self.context.home, embedded)["state"] != "app" {
+            return Ok(());
+        }
+        skill::remove(path, &self.context.app, id, &self.context.home, embedded)
     }
     fn connect_host(&mut self, id: &str, host: &Host, operation: &str) -> Result<String, String> {
         if !self.detect(host).0 {

@@ -16,6 +16,9 @@ fn uninstall_removes_undetected_hosts_and_does_not_repair_them_again() {
         &hosts.context.home.join(".gemini/config/hooks.json"),
         r#"{"agentnave-interactive":{},"keep":true}"#,
     );
+    // A Skill the user wrote at an App Skill path must survive: uninstall deletes the backups.
+    let own = host(&hosts, "codex").optional("agentnave-review").unwrap();
+    save(&own.join("SKILL.md"), "mine");
     let failures = hosts.uninstall();
     assert!(failures.is_empty(), "{failures:?}");
     for (path, format, key) in &configs {
@@ -36,4 +39,5 @@ fn uninstall_removes_undetected_hosts_and_does_not_repair_them_again() {
     )
     .unwrap();
     assert_eq!(hook, json!({"keep": true}));
+    assert_eq!(fs::read_to_string(own.join("SKILL.md")).unwrap(), "mine");
 }

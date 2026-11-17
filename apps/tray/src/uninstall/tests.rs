@@ -70,6 +70,7 @@ fn deletion_targets_only_app_directories_and_explicitly_selected_history() {
     assert!(
         cleanup::Plan::new(vec![app.clone()], &app.join("records"), false, &home, &exe).is_err()
     );
+    assert!(cleanup::Plan::new(vec![], Path::new("records"), true, &home, &exe).is_err());
     #[cfg(unix)]
     {
         let alias = temp.path().join("home-alias");

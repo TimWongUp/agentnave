@@ -18,11 +18,12 @@ impl Plan {
     ) -> Result<Self, String> {
         #[cfg(unix)]
         let bundle = app_bundle(executable);
-        let history = std::path::absolute(history).map_err(|e| e.to_string())?;
         let mut directories = app_directories;
         if delete_history {
-            directories.push(history.clone());
+            // Validated as given: a relative data root must not resolve against the working directory.
+            directories.push(history.to_path_buf());
         }
+        let history = std::path::absolute(history).map_err(|e| e.to_string())?;
         directories.sort();
         directories.dedup();
         for dir in &directories {
