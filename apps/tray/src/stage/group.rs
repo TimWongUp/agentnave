@@ -28,6 +28,8 @@ impl Group {
             sources: Vec::new(),
             include_messages: false,
             isolated: Vec::new(),
+            handover_to: Vec::new(),
+            handover_from: Vec::new(),
         }
     }
     /// A workspace a boss opened by handing over: only that boss, no desks or conversations yet.
@@ -82,7 +84,9 @@ impl Group {
             .filter(|p| p.key != crate::projects::OTHER);
         json!({"group": self.id, "host": host, "app": app, "label": label, "handover": handover,
             "took_over": took_over, "previous_host": previous_host,
-            "previous_label": previous_host.map(|_| previous), "project": self.project_name, "title": self.title,
+            "previous_label": previous_host.map(|_| previous),
+            "handover_to": self.handover_to, "handover_from": self.handover_from,
+            "project": self.project_name, "title": self.title,
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated,
@@ -128,7 +132,9 @@ impl Group {
     /// Office identities survive the message window without sending older prompt bodies.
     /// Keep each host's latest activity and last known model on either side of the handover.
     pub(super) fn boss_messages(&self) -> Vec<Value> {
-        let boundary = (!self.handover.pending)
+        let boundary = self
+            .handover
+            .changed
             .then(|| self.handover.released.as_deref().and_then(timestamp))
             .flatten();
         let mut prompts: Vec<_> = self
@@ -150,12 +156,14 @@ impl Group {
             }
         }
         let mut messages: Vec<_> = identities.into_values().collect();
-        messages.extend(
-            self.messages
-                .iter()
-                .filter(|m| m["kind"] == "handover")
-                .map(|m| json!({"kind": "handover", "time": m["time"]})),
-        );
+        if self.handover.changed {
+            messages.extend(
+                self.messages
+                    .iter()
+                    .filter(|m| m["kind"] == "handover")
+                    .map(|m| json!({"kind": "handover", "time": m["time"]})),
+            );
+        }
         messages.sort_by_key(|m| timestamp(text(m, "time")));
         messages
     }
@@ -361,20 +369,14 @@ impl Group {
         }
         self.finish_messages();
         if include_messages
-            && (self.handover.pending || self.handover.changed)
+            && (self.handover.pending || self.handover.changed || !self.handover_to.is_empty())
             && let Some(released) = self.handover.released.as_deref()
         {
-            // Only the latest handover is stored. Its timestamp is the release time;
-            // the database does not record when the next boss took over.
-            let from = if self.handover.pending {
-                self.handover.host.as_deref().or(self.host.as_deref())
-            } else {
-                self.handover.previous_host.as_deref()
-            };
+            let own_from = self.handover.host.as_deref().or(self.host.as_deref());
             let text = if self.handover.pending {
-                format!("{} 交出工作区，等待接手", label(from))
-            } else {
-                match from {
+                format!("{} 交出工作区，等待接手", label(own_from))
+            } else if self.handover.changed {
+                match self.handover.previous_host.as_deref() {
                     Some(from) => format!(
                         "{} 交出工作区，{} 已接手",
                         label(Some(from)),
@@ -385,6 +387,12 @@ impl Group {
                         label(self.handover.host.as_deref())
                     ),
                 }
+            } else {
+                format!(
+                    "{} 交出工作区，已由 {} 接手",
+                    label(own_from),
+                    links::claimed_hosts(&self.handover_to)
+                )
             };
             let mut message = Self::message(
                 format!("{}:handover:{released}", self.id),

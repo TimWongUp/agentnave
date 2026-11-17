@@ -618,7 +618,7 @@ fn retention_preview_never_opens_a_recent_conversations_lock() {
 }
 
 #[test]
-fn retention_preview_preserves_waiting_handovers_until_claimed() {
+fn retention_preview_preserves_waiting_and_recently_claimed_handovers() {
     let root = tempfile::tempdir().unwrap();
     fixture(root.path(), "old");
     let workspace = "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -646,12 +646,139 @@ fn retention_preview_preserves_waiting_handovers_until_claimed() {
     assert_eq!(reply.status, 200);
     let payload: Value = serde_json::from_slice(&reply.body).unwrap();
     assert_eq!(payload["workspaces"], 0);
-    set(
-        root.path(),
-        "UPDATE workspaces SET pending = 0, owner = 'new-boss' WHERE id = ?1",
-        workspace,
+
+    // Recent release or recent link claim keeps the source workspace past cutoff (ADR-0099).
+    let target = "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let connection = crate::db::write(root.path()).unwrap().unwrap();
+    connection
+        .execute(
+            "UPDATE workspaces SET pending = 0 WHERE id = ?1",
+            [workspace],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspace_links (source_workspace, target_boss, target_workspace, target_host, claimed_at) \
+             VALUES (?1, ?2, ?2, 'codex', '2026-10-15T00:00:00Z')",
+            [workspace, target],
+        )
+        .unwrap();
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+    connection
+        .execute(
+            "UPDATE workspaces SET released = '2026-09-01T00:00:00Z' WHERE id = ?1",
+            [workspace],
+        )
+        .unwrap();
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+    assert_eq!(
+        cleanup(root.path(), &["old".to_owned()], cutoff)[0]["status"],
+        "changed"
     );
+
+    // Once released and claimed_at are both older than cutoff, cleanup and preview include it.
+    connection
+        .execute(
+            "UPDATE workspace_links SET claimed_at = '2026-09-15T00:00:00Z' WHERE source_workspace = ?1",
+            [workspace],
+        )
+        .unwrap();
     assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+    drop(connection);
+    assert_eq!(
+        cleanup(root.path(), &["old".to_owned()], cutoff)[0]["status"],
+        "deleted"
+    );
+}
+
+#[test]
+fn claimed_empty_workspaces_expire_by_cutoff_while_pending_ones_stay_until_90d() {
+    let root = tempfile::tempdir().unwrap();
+    fixture(root.path(), "target-conv");
+    let target = "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let empty_claimed = "s-cccccccccccccccccccccccccccccccc";
+    let empty_pending = "s-dddddddddddddddddddddddddddddddd";
+    let connection = crate::db::write(root.path()).unwrap().unwrap();
+    connection
+        .execute(
+            "UPDATE conversations SET created = '2026-11-01T00:00:00Z', manager_session = ?1 WHERE id = 'target-conv'",
+            [target],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE views SET body = json_set(body, '$.summary.updated', '2026-11-01T00:00:00Z') WHERE conversation_id = 'target-conv'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, owner_host, pending, note, released, title, cwd) VALUES \
+             (?1, ?1, 'claude', 0, 'claimed', '2026-09-01T00:00:00Z', 'Old Claimed', '/tmp'), \
+             (?2, ?2, 'claude', 1, 'waiting', '2026-09-01T00:00:00Z', 'Still Pending', '/tmp')",
+            [empty_claimed, empty_pending],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspace_links (source_workspace, target_boss, target_workspace, target_host, claimed_at) \
+             VALUES (?1, ?2, ?2, 'codex', '2026-10-15T00:00:00Z')",
+            [empty_claimed, target],
+        )
+        .unwrap();
+
+    let cutoff = crate::time_format::timestamp("2026-10-01T00:00:00Z").unwrap() / 1_000;
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 0);
+    assert_eq!(
+        forget_before(root.path(), empty_claimed, cutoff)["status"],
+        "changed"
+    );
+
+    connection
+        .execute(
+            "UPDATE workspace_links SET claimed_at = '2026-09-15T00:00:00Z' WHERE source_workspace = ?1",
+            [empty_claimed],
+        )
+        .unwrap();
+    assert_eq!(retention_preview(root.path(), cutoff).unwrap(), 1);
+    let overview = Reader::new(root.path().to_owned()).overview();
+    let listed = list(root.path(), overview);
+    let states = listed["workspaces"].as_array().unwrap();
+    let claimed_state = states.iter().find(|w| w["id"] == empty_claimed).unwrap();
+    assert_eq!(claimed_state["empty_claimed"], true);
+    let pending_state = states.iter().find(|w| w["id"] == empty_pending).unwrap();
+    assert_eq!(pending_state["pending"], true);
+    assert_eq!(pending_state["empty_claimed"], false);
+
+    assert_eq!(
+        forget_before(root.path(), empty_claimed, cutoff)["status"],
+        "deleted"
+    );
+    assert_eq!(
+        forget_before(root.path(), empty_pending, cutoff)["status"],
+        "missing"
+    );
+    // Source empty_claimed is gone, target remains, so link survives until target is deleted too.
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT count(*) FROM workspace_links WHERE source_workspace = ?1",
+                [empty_claimed],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+        1
+    );
+    drop(connection);
+    assert_eq!(delete(root.path(), "target-conv")["status"], "deleted");
+    let conn2 = crate::db::read(root.path()).unwrap().unwrap();
+    assert_eq!(
+        conn2
+            .query_row("SELECT count(*) FROM workspace_links", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
 }
 
 #[test]

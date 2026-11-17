@@ -1,5 +1,6 @@
 //! Read-only projections of Studio snapshots for the stage and manager chats.
 mod group;
+mod links;
 mod origin;
 
 use std::cmp::Reverse;
@@ -22,6 +23,7 @@ mod show;
 mod summary;
 
 use desk::Desk;
+pub(crate) use links::WorkspaceLink;
 use show::identity_of;
 use summary::line;
 
@@ -350,6 +352,8 @@ struct Group {
     include_messages: bool,
     /// The isolated directories of this workspace.
     isolated: Vec<Value>,
+    handover_to: Vec<Value>,
+    handover_from: Vec<Value>,
 }
 
 /// The mark and name of a Claude or Codex boss, by the app its session records name (see
@@ -389,7 +393,11 @@ pub(crate) fn source_key(snapshot: &Snapshot) -> SourceKey {
 
 /// The chat list's previews by group, with the views each was computed from (held so their
 /// addresses stay unique); only groups whose snapshots changed are projected again.
-type Preview = ((Vec<SourceKey>, Handover), Vec<Arc<Value>>, String);
+type Preview = (
+    (Vec<SourceKey>, Handover, Vec<Value>, Vec<Value>),
+    Vec<Arc<Value>>,
+    String,
+);
 static PREVIEWS: LazyLock<Mutex<HashMap<String, Preview>>> = LazyLock::new(Mutex::default);
 
 /// At most this many undrawn desks are listed; the count still covers all of them.
@@ -471,10 +479,11 @@ pub(crate) fn stage_ids_of(
     groups.into_iter().take(5).map(|g| g.id).collect()
 }
 
-/// What the answer shows besides sessions: the isolated directories and each workspace's project.
+/// What the answer shows besides sessions: isolated directories, projects and workspace links.
 pub(crate) struct Places<'a> {
     pub dirs: &'a [Dir],
     pub projects: &'a BTreeMap<String, Project>,
+    pub links: &'a [WorkspaceLink],
 }
 
 pub(crate) use origin::origin_cwds;
@@ -673,6 +682,7 @@ fn unprojected_groups(
         let builders = isolated_builders(snapshots, &group.sources);
         group.isolated = isolated::classify(places.dirs, &group.id, &running, &builders);
     }
+    links::attach_links(&mut groups, places.links);
     // Work going on first, then the most recent; never empty while history exists. A failure is
     // no reason to come first: the boss handles it, the user has nothing to do.
     let tier = |status: &str| match status {
@@ -766,6 +776,8 @@ fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
                     .map(|&i| source_key(&snapshots[i]))
                     .collect(),
                 g.handover.clone(),
+                g.handover_to.clone(),
+                g.handover_from.clone(),
             );
             let mut projected_messages = false;
             let preview = match previews.remove(&g.id) {

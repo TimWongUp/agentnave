@@ -516,7 +516,7 @@ mcp = _Server(
         "an explicit access wins. Never inherited on resume: a seat gives its default again; "
         "without a seat declare each time or leave undeclared. "
         "forward: ordered message_ids from wait/run_round/decide_answers/read_conversation; "
-        "only succeeded tasks or committed entries in this manager workspace, at most 20, no repeats. "
+        "only succeeded tasks or committed entries in this manager workspace or a directly linked handover workspace, at most 20, no repeats. "
         "Injected as data, not instructions; saved task prompts stay original. "
         "isolation creates a workspace-owned Git worktree per task. Succeeded access=read tasks "
         "with no changes from base are auto-released (discarding ignored files) and rebuilt "

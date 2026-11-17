@@ -157,7 +157,7 @@ function handoverNext(c) {
   return h(
     "div.tp-handover-next",
     {},
-    h("span.tp-handover-hint", {}, AN.L("到任意 boss 的新聊天里说：", "In a new chat with any boss, say:")),
+    h("span.tp-handover-hint", {}, AN.L("到任意 boss 的聊天里说：", "In a chat with any boss, say:")),
     h("code.tp-handover-cmd", {}, cmd),
     h("div.tp-handover-actions", {}, AN.copyButton(cmd, "tp-btn"), cancel),
   );

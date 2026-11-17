@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
@@ -38,38 +38,76 @@ if TYPE_CHECKING:
 READ_ONLY_APPLIED = "read-only instruction (access=read)"
 
 
+def _foreign_session_error(session_id: str, workspace: str | None) -> ValueError:
+    where = f"workspace {workspace}" if workspace else "another manager session"
+    return ValueError(
+        f"Native session {session_id} belongs to {where} (a different manager session) and "
+        "cannot be resumed across workspaces; omit session_id to start a new thread, and use "
+        "forward (or read_conversation) to carry prior results"
+    )
+
+
+def _matching_seat_providers(state: Record, session_id: str) -> set[str]:
+    if state.state.kind != "show":
+        return set()
+    by_seat = {seat.id: seat.provider for seat in state.state.seats}
+    return {
+        seat_provider
+        for seat_id, saved in state.state.sessions.items()
+        if saved.session_id == session_id and (seat_provider := by_seat.get(seat_id)) is not None
+    }
+
+
+def check_foreign_session(
+    records: Iterable[Record],
+    session_id: str,
+    provider: ProviderName | None,
+    manager_session: str | None,
+) -> None:
+    """Reject resuming a native thread bound to another workspace's task or meeting seat."""
+    all_records = list(records)
+    for record in all_records:
+        if record.state.manager_session != manager_session:
+            continue
+        if record.state.kind == "task" and any(
+            t.session_id == session_id and (provider is None or t.provider == provider)
+            for t in record.state.tasks
+        ):
+            return
+        seat_providers = _matching_seat_providers(record, session_id)
+        if seat_providers and (provider is None or provider in seat_providers):
+            return
+    for record in all_records:
+        if record.state.manager_session == manager_session:
+            continue
+        if record.state.kind == "task" and any(
+            t.session_id == session_id and (provider is None or t.provider == provider)
+            for t in record.state.tasks
+        ):
+            raise _foreign_session_error(session_id, record.state.manager_session)
+        seat_providers = _matching_seat_providers(record, session_id)
+        if seat_providers and (provider is None or provider in seat_providers):
+            raise _foreign_session_error(session_id, record.state.manager_session)
+
+
 def latest_session_task(
     records: Iterable[Record],
     session_id: str,
     provider: ProviderName | None,
     manager_session: str | None,
-    not_yours: Callable[[str, str | None], str],
-    *,
-    explicit_identity: bool,
 ) -> TaskRecord | None:
-    """Only the owning boss's history may supply defaults or identify a provider."""
-    matches = [
+    """Only the owning workspace's history may supply defaults, identify a provider, or resume."""
+    all_records = list(records)
+    check_foreign_session(all_records, session_id, provider, manager_session)
+    owned = [
         (record.state, index, task)
-        for record in records
-        if record.state.kind == "task"
+        for record in all_records
+        if record.state.kind == "task" and record.state.manager_session == manager_session
         for index, task in enumerate(record.state.tasks)
         if task.session_id == session_id
     ]
-    owned = [
-        (state, index, task)
-        for state, index, task in matches
-        if state.manager_session == manager_session
-    ]
     candidates = [item for item in owned if provider is None or item[2].provider == provider]
     if not candidates:
-        foreign = next(
-            (state for state, _, task in matches if provider is None or task.provider == provider),
-            None,
-        )
-        if foreign is not None:
-            if explicit_identity:
-                return None  # Preserve explicit cross-boss resume without borrowing its metadata.
-            raise ValueError(not_yours("Task conversation", foreign.manager_session))
         if owned:
             raise ValueError("A native session cannot change provider; use its original provider")
         return None
@@ -262,7 +300,6 @@ def resolve_start(
             session_id,
             arguments.provider,
             manager_session_id,
-            explicit_identity=arguments.provider is not None and arguments.cwd is not None,
         )
         if task is not None:
             arguments.resumed_task = task

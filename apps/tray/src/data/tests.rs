@@ -821,6 +821,105 @@ fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
 }
 
 #[test]
+fn handover_links_show_claimed_then_bidirectional_links_then_cleaned() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let mut source_snap = task_snapshot("src-task", "succeeded", "2026-01-01T00:00:00Z");
+    source_snap["summary"]["title"] = json!("来源任务");
+    save(dir.path(), &source_snap);
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    connection
+        .execute(
+            "UPDATE conversations SET manager_session = ?1 WHERE id = 'src-task'",
+            [MANAGER],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, origin, owner_host, pending, note, released) \
+             VALUES (?1, ?1, ?1, 'claude', 0, 'handoff details', '2026-01-02T00:00:00Z')",
+            [MANAGER],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspace_links (source_workspace, target_boss, target_workspace, target_host, claimed_at) \
+             VALUES (?1, ?2, NULL, 'codex', '2026-01-02T01:00:00Z')",
+            [MANAGER, target],
+        )
+        .unwrap();
+    let reader = Reader::new(dir.path().to_path_buf());
+
+    // Before target dispatches: no placeholder workspace exists; source shows plain claimed status.
+    let list_before = state(&reader, "/app/chats");
+    assert_eq!(list_before["groups"].as_array().unwrap().len(), 1);
+    let source_claimed = state(&reader, &format!("/app/chats/{MANAGER}"));
+    assert_eq!(source_claimed["handover"], Value::Null);
+    assert_eq!(source_claimed["took_over"], Value::Null);
+    assert_eq!(
+        source_claimed["handover_to"],
+        json!([{"status": "claimed", "host": "codex", "label": "Codex", "claimed_at": "2026-01-02T01:00:00Z"}])
+    );
+    let last_msg = source_claimed["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(last_msg["kind"], "handover");
+    assert_eq!(last_msg["text"], "Claude Code 交出工作区，已由 Codex 接手");
+    assert_eq!(last_msg["detail"], "handoff details");
+    assert!(
+        source_claimed["boss_messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["kind"] != "handover")
+    );
+
+    // Once target dispatches, both offices carry mutual links.
+    let mut target_snap = task_snapshot("dst-task", "succeeded", "2026-01-03T00:00:00Z");
+    target_snap["summary"]["manager_session"] = json!(target);
+    target_snap["summary"]["host"] = json!("codex");
+    target_snap["summary"]["title"] = json!("接手继续");
+    save(dir.path(), &target_snap);
+    connection
+        .execute(
+            "UPDATE conversations SET manager_session = ?1 WHERE id = 'dst-task'",
+            [target],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE workspace_links SET target_workspace = ?1 WHERE source_workspace = ?2 AND target_boss = ?1",
+            [target, MANAGER],
+        )
+        .unwrap();
+    let source_linked = state(&reader, &format!("/app/chats/{MANAGER}"));
+    assert_eq!(
+        source_linked["handover_to"],
+        json!([{"status": "linked", "group": target, "host": "codex", "label": "Codex", "title": "接手继续", "claimed_at": "2026-01-02T01:00:00Z"}])
+    );
+    let target_linked = state(&reader, &format!("/app/chats/{target}"));
+    assert_eq!(target_linked["handover"], Value::Null);
+    assert_eq!(
+        target_linked["handover_from"],
+        json!([{"status": "linked", "group": MANAGER, "host": "claude", "label": "Claude", "title": "来源任务", "claimed_at": "2026-01-02T01:00:00Z"}])
+    );
+
+    // Deleting source leaves target showing cleaned.
+    drop(connection);
+    assert_eq!(
+        crate::manage::delete(dir.path(), "src-task")["status"],
+        "deleted"
+    );
+    let target_cleaned = state(&reader, &format!("/app/chats/{target}"));
+    assert_eq!(
+        target_cleaned["handover_from"],
+        json!([{"status": "cleaned", "claimed_at": "2026-01-02T01:00:00Z"}])
+    );
+}
+
+#[test]
 fn boss_identity_survives_the_chat_message_window_without_retaining_prompt_bodies() {
     let dir = tempfile::tempdir().unwrap();
     let mut old = task_snapshot("old-boss", "succeeded", "2026-01-01T00:00:00Z");

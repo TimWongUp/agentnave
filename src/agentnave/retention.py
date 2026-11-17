@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from agentnave.db import NAME, SCHEMA_VERSION, remove_conversations
+from agentnave.db import NAME, SCHEMA_VERSION, prune_workspace_links, remove_conversations
 from agentnave.locks import (
     contained_directory,
     conversation_lock_path,
@@ -109,8 +109,28 @@ def _expire_handovers(connection: sqlite3.Connection, cutoff: int) -> None:
             if timestamp is not None and timestamp < cutoff:
                 connection.execute("DELETE FROM workspaces WHERE id = ?", (id_,))
         connection.execute(
+            "DELETE FROM workspaces WHERE pending = 0 AND NOT EXISTS "
+            "(SELECT 1 FROM conversations WHERE manager_session = workspaces.id) "
+            "AND (title IS NULL OR NOT ("
+            "owner != coalesce(origin, id) OR previous_host IS NOT NULL "
+            "OR EXISTS (SELECT 1 FROM workspace_links WHERE source_workspace = workspaces.id)))"
+        )
+        connection.execute(
             "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)"
         )
+        prune_workspace_links(connection)
+        for source, target_boss, claimed_at in connection.execute(
+            "SELECT source_workspace, target_boss, claimed_at FROM workspace_links "
+            "WHERE target_workspace IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM conversations WHERE manager_session = workspace_links.source_workspace) "
+            "AND NOT EXISTS (SELECT 1 FROM workspaces WHERE id = workspace_links.source_workspace AND title IS NOT NULL)"
+        ).fetchall():
+            timestamp = _timestamp(claimed_at)
+            if timestamp is not None and timestamp < cutoff:
+                connection.execute(
+                    "DELETE FROM workspace_links WHERE source_workspace = ? AND target_boss = ?",
+                    (source, target_boss),
+                )
         connection.commit()
     finally:
         if connection.in_transaction:
@@ -149,12 +169,42 @@ def _timestamp(value: object) -> int | None:
         return None
 
 
+def _handover_before(
+    connection: sqlite3.Connection,
+    workspace: str | None,
+    cutoff: int,
+    *,
+    require_timestamp: bool = False,
+) -> bool:
+    if workspace is None:
+        return not require_timestamp
+    seen = False
+    row = connection.execute(
+        "SELECT pending, released FROM workspaces WHERE id = ?", (workspace,)
+    ).fetchone()
+    if row is not None:
+        if row[0]:
+            return False
+        if row[1] is not None:
+            ts = _timestamp(row[1])
+            if ts is None or ts >= cutoff:
+                return False
+            seen = True
+    for (claimed_at,) in connection.execute(
+        "SELECT claimed_at FROM workspace_links WHERE source_workspace = ?", (workspace,)
+    ).fetchall():
+        ts = _timestamp(claimed_at)
+        if ts is None or ts >= cutoff:
+            return False
+        seen = True
+    return seen or not require_timestamp
+
+
 def _eligible(connection: sqlite3.Connection, ids: list[str], cutoff: int) -> bool:
-    if connection.execute(
-        "SELECT 1 FROM workspaces JOIN conversations ON manager_session = workspaces.id "
-        "WHERE conversations.id = ? AND pending = 1",
-        (ids[0],),
-    ).fetchone():
+    session = connection.execute(
+        "SELECT manager_session FROM conversations WHERE id = ?", (ids[0],)
+    ).fetchone()
+    if session is None or not _handover_before(connection, session[0], cutoff):
         return False
     for id_ in ids:
         row = connection.execute(_CANDIDATE, (id_,)).fetchone()
@@ -194,18 +244,60 @@ def _remove_locked(connection: sqlite3.Connection, root: Path, ids: list[str], c
                 "DELETE FROM workspaces WHERE pending != 1 AND NOT EXISTS "
                 "(SELECT 1 FROM conversations WHERE manager_session = workspaces.id) "
                 "AND (id IS ? OR title IS NULL "
-                "OR NOT (pending = 1 OR owner != coalesce(origin, id) OR previous_host IS NOT NULL))",
+                "OR NOT (pending = 1 OR owner != coalesce(origin, id) OR previous_host IS NOT NULL "
+                "OR EXISTS (SELECT 1 FROM workspace_links WHERE source_workspace = workspaces.id)))",
                 (group,),
             )
             connection.execute(
                 "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)"
             )
+            prune_workspace_links(connection)
             connection.commit()
             remove_seats(root, ids)
             return True
         finally:
             if connection.in_transaction:
                 connection.rollback()
+
+
+def _cleanup_claimed_empty_workspaces(
+    connection: sqlite3.Connection, cutoff: int, stopped: Callable[[], bool]
+) -> int:
+    removed = 0
+    rows = connection.execute(
+        "SELECT id FROM workspaces WHERE pending = 0 AND title IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM conversations WHERE manager_session = workspaces.id) "
+        "AND (owner != coalesce(origin, id) OR previous_host IS NOT NULL "
+        "OR EXISTS (SELECT 1 FROM workspace_links WHERE source_workspace = workspaces.id)) "
+        "ORDER BY id"
+    ).fetchall()
+    for (id_,) in rows:
+        if stopped():
+            break
+        if not _handover_before(connection, id_, cutoff, require_timestamp=True):
+            continue
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            still_empty = connection.execute(
+                "SELECT 1 FROM workspaces WHERE id = ? AND pending = 0 AND title IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM conversations WHERE manager_session = ?)",
+                (id_, id_),
+            ).fetchone()
+            if still_empty is None or not _handover_before(
+                connection, id_, cutoff, require_timestamp=True
+            ):
+                continue
+            connection.execute("DELETE FROM workspaces WHERE id = ?", (id_,))
+            connection.execute(
+                "DELETE FROM former_bosses WHERE workspace NOT IN (SELECT id FROM workspaces)"
+            )
+            prune_workspace_links(connection)
+            connection.commit()
+            removed += 1
+        finally:
+            if connection.in_transaction:
+                connection.rollback()
+    return removed
 
 
 def cleanup(
@@ -264,6 +356,8 @@ def cleanup(
                 # A single damaged workspace must not prevent healthy workspaces expiring.
                 # _remove rolls back its transaction and releases its locks before this log.
                 _LOG.exception("History retention skipped workspace anchored by %s", anchor)
+        if not stopped():
+            removed += _cleanup_claimed_empty_workspaces(connection, cutoff, stopped)
         return removed
 
 

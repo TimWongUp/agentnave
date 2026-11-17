@@ -69,3 +69,14 @@ CREATE TABLE IF NOT EXISTS former_bosses (
     boss TEXT PRIMARY KEY,
     workspace TEXT NOT NULL
 );
+-- Handover links between independent workspaces (ADR-0099).
+CREATE TABLE IF NOT EXISTS workspace_links (
+    source_workspace TEXT NOT NULL,
+    target_boss TEXT NOT NULL,
+    target_workspace TEXT,
+    target_host TEXT,
+    claimed_at TEXT NOT NULL,
+    PRIMARY KEY (source_workspace, target_boss)
+);
+CREATE INDEX IF NOT EXISTS workspace_links_target_boss ON workspace_links (target_boss);
+CREATE INDEX IF NOT EXISTS workspace_links_target_workspace ON workspace_links (target_workspace);

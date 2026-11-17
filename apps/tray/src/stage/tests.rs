@@ -230,6 +230,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
         let places = super::Places {
             dirs: &[],
             projects: &Default::default(),
+            links: &[],
         };
         let res = super::respond(
             path,

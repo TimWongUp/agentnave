@@ -163,6 +163,8 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 .zone-h .r { margin-left: auto; letter-spacing: 0; font-weight: 550; }
 .zone-h .r.run { color: var(--run); }
 .boss-zone .zone-h .r { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.boss-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+.chat-page .boss-link:hover { color: var(--accent); text-decoration: underline; }
 .zone-count { margin-left: 2px; color: var(--muted); letter-spacing: 0; }
 .zone-empty { grid-column: 1 / -1; padding: 22px 14px; border-radius: 14px; border: 1.5px dashed var(--line-strong); text-align: center; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
 
