@@ -124,6 +124,10 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/alerts-settings.js").to_vec(),
         ),
+        "uninstall-settings.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/uninstall-settings.js").to_vec(),
+        ),
         "about-settings.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/about-settings.js").to_vec(),

@@ -79,6 +79,7 @@ enum Upgrade {
 /// both at once: an app install never overlaps a service upgrade.
 #[derive(Default)]
 struct State {
+    uninstalling: bool,
     phase: Phase,
     pending: Option<Update>,
     upgrade: Upgrade,
@@ -143,6 +144,15 @@ impl Updates {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    pub(crate) fn begin_uninstall(&self) -> Result<(), String> {
+        let mut state = self.lock();
+        if state.busy() {
+            return Err("正在检查、安装或更新，请结束之后重试".into());
+        }
+        state.uninstalling = true;
+        Ok(())
+    }
+
     pub fn refresh_label(&self) {
         self.label(&self.lock().phase);
     }
@@ -184,7 +194,7 @@ impl Updates {
     /// the check ends, so a silent one that fails can keep it.
     fn begin(&self) -> Option<Phase> {
         let mut state = self.lock();
-        if matches!(state.phase, Phase::Checking | Phase::Installing(_)) {
+        if state.uninstalling || matches!(state.phase, Phase::Checking | Phase::Installing(_)) {
             return None;
         }
         let before = std::mem::replace(&mut state.phase, Phase::Checking);
@@ -197,7 +207,7 @@ impl Updates {
     /// silently substitute each other. `outdated` is whether the installed service is older.
     fn claim(&self, upgrade: bool, outdated: bool) -> Claim {
         let mut state = self.lock();
-        if state.busy() {
+        if state.uninstalling || state.busy() {
             return Claim::Busy;
         }
         if !upgrade && let Some(update) = state.pending.take() {
@@ -219,7 +229,10 @@ impl Updates {
     /// Mark the service upgrade as running, unless it already is or the app is installing.
     fn claim_upgrade(&self) -> bool {
         let mut state = self.lock();
-        if state.installing() || matches!(state.upgrade, Upgrade::Running | Upgrade::Installing) {
+        if state.uninstalling
+            || state.installing()
+            || matches!(state.upgrade, Upgrade::Running | Upgrade::Installing)
+        {
             return false;
         }
         state.upgrade = Upgrade::Running;
@@ -822,7 +835,10 @@ pub fn install_service_now(app: &AppHandle) -> Value {
     {
         let mut state = updates.lock();
         // An update check installs nothing, so only another install or upgrade stops this one.
-        if state.installing() || matches!(state.upgrade, Upgrade::Running | Upgrade::Installing) {
+        if state.uninstalling
+            || state.installing()
+            || matches!(state.upgrade, Upgrade::Running | Upgrade::Installing)
+        {
             return json!({"ok": false, "message": "已有更新或安装正在进行"});
         }
         state.upgrade = Upgrade::Installing;

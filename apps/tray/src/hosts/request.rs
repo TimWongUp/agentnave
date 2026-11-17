@@ -219,6 +219,9 @@ pub(crate) fn request(
     let Some(hosts) = guard.as_mut() else {
         return Response::error(503, "宿主接入尚未初始化");
     };
+    if hosts.uninstalling && method != "GET" {
+        return Response::error(409, "卸载已开始，请完成卸载或重新打开 App");
+    }
     match path {
         "/app/hosts" => {
             if !crate::PREVIEW {

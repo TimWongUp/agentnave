@@ -1,4 +1,5 @@
 //! Studio snapshots (ADR-0008) and the tray-only management routes (ADR-0012).
+mod uninstall;
 
 mod assets;
 mod orphaned;
@@ -69,6 +70,7 @@ struct Live {
 type Merged = (Arc<Value>, Arc<Value>, Option<String>, Arc<Value>);
 
 pub struct Reader {
+    uninstalling: std::sync::atomic::AtomicBool,
     root: PathBuf,
     hosts: Mutex<Option<crate::hosts::Hosts>>,
     boss_homes: Mutex<boss_app::Homes>,
@@ -90,6 +92,7 @@ pub struct Reader {
 impl Reader {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            uninstalling: std::sync::atomic::AtomicBool::new(false),
             root,
             hosts: Mutex::new(None),
             boss_homes: Mutex::new(boss_app::Homes::here()),

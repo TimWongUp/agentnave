@@ -31,6 +31,7 @@ mod stage;
 mod storage;
 mod time_format;
 mod tool_dirs;
+mod uninstall;
 mod update;
 mod video_packs;
 mod voice;
@@ -92,6 +93,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                 || matches!(
                     path,
                     "/app/preferences"
+                        | "/app/uninstall/cancel"
                         | "/app/alerts/test"
                         | "/settings/members"
                         | "/app/voice"
@@ -123,13 +125,17 @@ pub(crate) struct Tray {
 }
 
 fn main() {
+    uninstall::entry();
     proxy::apply();
     let reader = Arc::new(Reader::new(data_files::data_root()));
     #[cfg(target_os = "macos")]
     video_packs::http::start(data_files::data_root());
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            window::restore(app)
+        .manage(uninstall::Uninstall::default())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+            if !uninstall::forwarded(app, &args, false) {
+                window::restore(app);
+            }
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
@@ -153,15 +159,24 @@ fn main() {
         // Like any regular app, launching it shows the main window. Opening it once the event
         // loop runs keeps its first requests from stalling behind start-up.
         RunEvent::Ready => {
-            if preferences::general::current()["open_on_start"] == true {
+            let args: Vec<_> = std::env::args().collect();
+            if !uninstall::forwarded(app, &args, true)
+                && preferences::general::current()["open_on_start"] == true
+            {
                 window::open(app, TRAY, "/chat/");
             }
         }
+        RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::CloseRequested { .. },
+            ..
+        } if label == TRAY => uninstall::cancel(app),
         RunEvent::Exit => {
             preferences::runtime::shutdown(app);
             if let Some(window) = app.get_webview_window(TRAY) {
                 window::save_size(&window);
             }
+            uninstall::exited(app);
         }
         // A click on the Dock icon brings the main window back where it was left.
         #[cfg(target_os = "macos")]
@@ -395,6 +410,12 @@ impl ProtocolRequest {
             _ if path == "/app/video-packs" || path.starts_with("/app/video-packs/") => {
                 reader.video_packs_request(Some(app), method, path, action, self.request.body())
             }
+            _ if path == "/app/uninstall" || path.starts_with("/app/uninstall/") => {
+                uninstall::request(app, reader, method, path, action, self.request.body())
+            }
+            _ if reader.uninstalling() && method != "GET" && !path.starts_with("/app/window/") => {
+                response::Response::error(409, "卸载已开始，请完成卸载或重新打开 App")
+            }
             ("GET", "/app/status") => response::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),
             // Whether the page's maximize button should read as maximize or restore.
@@ -464,6 +485,7 @@ mod tests {
     #[test]
     fn a_preview_build_refuses_every_write_but_moving_its_window() {
         for (method, path) in [
+            ("POST", "/app/uninstall"),
             ("POST", "/app/members"),
             ("POST", "/app/decision-seats"),
             ("POST", "/app/decision-key"),
@@ -504,6 +526,7 @@ mod tests {
         assert!(!preview_refuses(true, "POST", "/app/window/minimize"));
         assert!(!preview_refuses(true, "POST", "/app/window/close"));
         assert!(!preview_refuses(true, "POST", "/app/update/check"));
+        assert!(!preview_refuses(true, "POST", "/app/uninstall/cancel"));
         assert!(!preview_refuses(true, "POST", "/app/rules/open"));
         assert!(!preview_refuses(true, "POST", "/app/storage/open"));
         assert!(!preview_refuses(

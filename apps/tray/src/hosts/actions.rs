@@ -391,7 +391,7 @@ impl Hosts {
             json!({"host":self.state(host),"ok":true,"message":"已记录你已重启或重连；未自动验证宿主接口"}),
         )
     }
-    fn remove_host(&mut self, id: &str, host: &Host) -> Result<String, String> {
+    pub(super) fn remove_host(&mut self, id: &str, host: &Host) -> Result<String, String> {
         // Preflight all layers; each subsequent replacement is independently checked.
         for path in &host.user_layers {
             safe_path(path, &self.context.home)?;

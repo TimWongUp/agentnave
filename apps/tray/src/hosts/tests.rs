@@ -8,6 +8,7 @@ mod meeting_skill;
 mod reload_guidance;
 mod timeouts;
 mod tools_upgrade;
+mod uninstall;
 mod versioned;
 
 fn fixture() -> (TempDir, Hosts) {

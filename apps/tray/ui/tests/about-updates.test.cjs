@@ -125,3 +125,54 @@ test("the update flow checks again on every click and keeps an offline service u
   const current = { version: "1.0", update: { state: "none" }, service: null };
   assert.deepEqual(await click(current), { posts: ["/app/update/check"], title: "已是最新版本" });
 });
+
+test("uninstall keeps history by default, blocks running work and retries failed hosts in place", async () => {
+  const nodes = [], posted = [], timers = [];
+  let blocked = "还有任务在跑，结束之后才能卸载";
+  const launch = { addEventListener(name, fn) { this[name] = fn; } };
+  function h(tag, attrs, ...kids) {
+    const node = { tag, attrs, kids, textContent: kids.filter(k => typeof k === "string").join(""),
+      addEventListener(name, fn) { this[name] = fn; },
+      append(...children) { this.kids.push(...children); },
+      replaceChildren(...children) { this.kids = children; },
+      showModal() { this.open = true; }, close() { this.open = false; }, focus() {},
+    };
+    nodes.push(node);
+    return node;
+  }
+  const context = {
+    AN: { h, L: zh => zh, load: async () => ({ blocked, ready: true }), post: async (path, body) => {
+      posted.push([path, body]);
+      return { ok: false, failures: [{ host: "Codex", error: "配置被占用" }] };
+    } },
+    document: { getElementById: () => launch, body: { append() {} } },
+    location: { search: "" }, URLSearchParams,
+    setTimeout: fn => timers.push(fn), clearTimeout() {},
+  };
+  vm.runInNewContext(readFileSync(`${__dirname}/../uninstall-settings.js`, "utf8"), context);
+  launch.click();
+  await new Promise(resolve => setImmediate(resolve));
+  const toggle = nodes.find(n => n.tag === "input.switch-input");
+  const confirm = nodes.find(n => n.tag === "button.danger");
+  const cancel = nodes.find(n => n.tag === "button");
+  const dialog = nodes.find(n => n.tag === "dialog.upd.uninstall-dialog");
+  assert.equal(toggle.checked, false);
+  assert.equal(toggle.disabled, true);
+  assert.equal(confirm.disabled, true);
+  blocked = null;
+  await timers.pop()();
+  assert.equal(confirm.disabled, false);
+  await confirm.click();
+  assert.equal(posted[0][0], "/app/uninstall");
+  assert.equal(posted[0][1].delete_history, false);
+  assert.equal(confirm.textContent, "重试");
+  assert.equal(cancel.disabled, false);
+  assert.ok(nodes.find(n => n.tag === "li" && n.textContent === "Codex：配置被占用"));
+  toggle.checked = true;
+  await confirm.click();
+  assert.equal(posted[1][1].delete_history, true);
+  assert.equal(nodes.filter(n => n.tag === "dialog.upd.uninstall-dialog").length, 1);
+  await cancel.click();
+  assert.equal(dialog.open, false);
+  assert.equal(posted.at(-1)[0], "/app/uninstall/cancel");
+});

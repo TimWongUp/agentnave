@@ -1,6 +1,7 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
 mod actions;
 mod request;
+mod uninstall;
 pub(crate) use request::{orchestration_request, request, skill_request, sync_orchestration};
 mod config;
 mod decision;
@@ -291,6 +292,7 @@ const IDS: [&str; 11] = [
 ];
 
 pub struct Hosts {
+    uninstalling: bool,
     pub context: Context,
     settings: Value,
     settings_error: Option<String>,
@@ -318,6 +320,7 @@ impl Hosts {
         let loaded = roots::load(&context);
         let settings_error = loaded.as_ref().err().cloned();
         let mut hosts = Self {
+            uninstalling: false,
             context,
             settings: loaded.unwrap_or_else(|_| json!({})),
             settings_error,
@@ -462,9 +465,14 @@ impl Hosts {
             backup_bytes(app, RULES_BACKUP, id, path, bytes, home)
                 .map_err(|error| message(&error).to_owned())
         };
+        let connected = if self.uninstalling {
+            Vec::new()
+        } else {
+            self.connected_rule_apps()
+        };
         crate::rules::sync(
             &self.all_rule_apps(),
-            &self.connected_rule_apps(),
+            &connected,
             home,
             document,
             also,
