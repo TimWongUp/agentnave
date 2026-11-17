@@ -4,9 +4,13 @@
 // stop are action POSTs. The CLI is the user's own process and keeps running when the page goes.
 {
   const root = document.documentElement;
-  const embedded = window.parent !== window && new URLSearchParams(location.search).get("embedded") === "1";
+  const params = new URLSearchParams(location.search);
+  const embedded = window.parent !== window && params.get("embedded") === "1";
+  // A pane shows one terminal and nothing else; the office around it draws the rest.
+  const pane = window.parent !== window ? Number(params.get("pane")) || null : null;
   // Before common.js runs, which leaves the bar to the office when the page is embedded.
-  if (embedded) root.dataset.embedded = "true";
+  if (embedded || pane) root.dataset.embedded = "true";
+  if (pane) root.dataset.pane = "true";
 
   const FONT = '"SF Mono", Menlo, Monaco, Consolas, "Noto Sans Mono CJK SC", monospace';
   const THEMES = {
@@ -40,7 +44,7 @@
 
   function themed() {
     const theme = THEMES[root.dataset.theme === "light" ? "light" : "dark"];
-    document.querySelector(".term-card")?.style.setProperty("--term-bg", theme.background);
+    root.style.setProperty("--term-bg", theme.background);
     if (term) term.options.theme = theme;
   }
 
@@ -50,6 +54,7 @@
   }
 
   function render() {
+    if (pane) return;
     const { $, L } = AN;
     for (const chip of $("term-clis").children) {
       const chosen = chip.dataset.provider === state.provider;
@@ -76,13 +81,16 @@
   }
 
   async function refresh() {
-    const [clis, current] = await Promise.all([AN.load("/app/terminal/clis"), AN.load("/app/terminal/state")]);
+    const current = await AN.load("/app/terminal/state");
+    const session = pane ? current.sessions.find(s => s.id === pane) : current.sessions.at(-1);
+    if (pane) { attach(session); return; }
+    const clis = await AN.load("/app/terminal/clis");
     state.clis = clis.clis.map(cli => cli.provider);
-    state.cwd = current.session?.cwd || current.cwd || null;
-    if (current.session) state.provider = current.session.provider;
+    state.cwd = session?.cwd || current.cwd || null;
+    if (session) state.provider = session.provider;
     else if (!state.clis.includes(state.provider)) state.provider = state.clis[0] || null;
     buildClis();
-    attach(current.session);
+    attach(session);
   }
 
   // Follows the session the App holds: replays its kept output, then streams until it exits.
@@ -106,8 +114,6 @@
           response = await fetch(`/app/terminal/output?session=${state.session}&from=${state.offset}`, { cache: "no-store" });
         } catch { await sleep(1000); continue; }
         if (!response.ok) { state.running = false; break; }
-        const session = Number(response.headers.get("X-Terminal-Session"));
-        if (session !== state.session) { state.session = session; term.reset(); }
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (bytes.length) term.write(bytes);
         state.offset = Number(response.headers.get("X-Terminal-End"));
@@ -149,11 +155,11 @@
   function send(data, binary = false) {
     if (!state.running) return;
     const body = binary ? Uint8Array.from(data, c => c.charCodeAt(0) & 255) : data;
-    sending = sending.then(() => act("/app/terminal/input", body, "application/octet-stream")).catch(() => {});
+    sending = sending.then(() => act(`/app/terminal/input?session=${state.session}`, body, "application/octet-stream")).catch(() => {});
   }
 
   function resize({ cols, rows }) {
-    if (state.running) act("/app/terminal/resize", JSON.stringify({ cols, rows })).catch(() => {});
+    if (state.running) act(`/app/terminal/resize?session=${state.session}`, JSON.stringify({ cols, rows })).catch(() => {});
   }
 
   function mount() {
@@ -179,7 +185,27 @@
     new MutationObserver(themed).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
   }
 
+  // A pane tells the office when it is clicked or right-clicked, so the office can mark it and open
+  // its own menu over the whole window.
+  function reportToOffice() {
+    const origin = location.origin === "null" ? "*" : location.origin;
+    const tell = data => window.parent.postMessage({ type: "agentnave:pane", pane, ...data }, origin);
+    document.addEventListener("pointerdown", () => tell({ action: "focus" }), true);
+    document.addEventListener("contextmenu", event => {
+      if (term.hasSelection()) return;
+      event.preventDefault();
+      tell({ action: "menu", x: event.clientX, y: event.clientY });
+    }, true);
+    window.addEventListener("message", event => {
+      if (event.source !== window.parent || event.data?.type !== "agentnave:pane") return;
+      if (event.data.action === "focus") { fit.fit(); term.focus(); }
+      else if (event.data.action === "fit") fit.fit();
+      else if (event.data.action === "preferences") window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail: event.data.general }));
+    });
+  }
+
   function listenToOffice() {
+    if (pane) return reportToOffice();
     if (!embedded) return;
     const origin = location.origin === "null" ? "*" : location.origin;
     window.addEventListener("message", event => {
@@ -197,9 +223,10 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     mount();
+    if (pane) { listenToOffice(); refresh().catch(() => {}); return; }
     AN.$("term-folder").addEventListener("click", () => pickFolder().catch(() => {}));
     AN.$("term-run").addEventListener("click", () => {
-      if (state.running) act("/app/terminal/stop", "").catch(() => {});
+      if (state.running) act(`/app/terminal/stop?session=${state.session}`, "").catch(() => {});
       else start().catch(() => {});
     });
     listenToOffice();

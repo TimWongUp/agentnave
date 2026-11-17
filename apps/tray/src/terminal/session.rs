@@ -36,6 +36,7 @@ pub(super) struct Output {
     /// The offset of the first kept byte in everything the CLI wrote.
     pub(super) start: u64,
     exit: Option<u32>,
+    wrote: Option<Instant>,
 }
 
 impl Output {
@@ -106,7 +107,10 @@ impl Session {
         let mut buffer = vec![0; READ_CHUNK];
         // macOS reports the closed terminal as an error rather than end of file.
         while let Ok(read @ 1..) = reader.read(&mut buffer) {
-            self.output().push(&buffer[..read]);
+            let mut output = self.output();
+            output.push(&buffer[..read]);
+            output.wrote = Some(Instant::now());
+            drop(output);
             self.changed.notify_all();
         }
         let code = child.wait().map_or(1, |status| status.exit_code());
@@ -143,6 +147,12 @@ impl Session {
             bytes: output.kept.iter().skip(skip).copied().collect(),
             exit: output.exit,
         }
+    }
+
+    /// Whether the CLI wrote anything within `span`, which the office shows as working.
+    pub(crate) fn wrote_within(&self, span: Duration) -> bool {
+        let output = self.output();
+        output.exit.is_none() && output.wrote.is_some_and(|at| at.elapsed() < span)
     }
 
     pub(crate) fn exit(&self) -> Option<u32> {

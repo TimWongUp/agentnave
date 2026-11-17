@@ -236,11 +236,11 @@ fn register_protocol(
         let reader = served.clone();
         let app = ctx.app_handle().clone();
         let path = match request.uri().path() {
-            "/app/storage/preview" | "/app/terminal/output" => request
+            // These routes read their query.
+            path if path == "/app/storage/preview" || path.starts_with("/app/terminal/") => request
                 .uri()
                 .path_and_query()
-                .map(|path| path.as_str())
-                .unwrap_or("/app/storage/preview")
+                .map_or(path, |path| path.as_str())
                 .to_owned(),
             path => path.to_owned(),
         };

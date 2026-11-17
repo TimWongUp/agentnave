@@ -257,6 +257,15 @@ fn chat_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/office-settings.js").to_vec(),
         ),
+        // PROTOTYPE: three office terminal layouts (proto-terminal.js), prototype branch only.
+        "proto-terminal.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/proto-terminal.js").to_vec(),
+        ),
+        "proto-terminal.css" => Response::ok(
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/proto-terminal.css").to_vec(),
+        ),
         "office-terminal.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/office-terminal.js").to_vec(),
