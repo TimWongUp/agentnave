@@ -56,11 +56,12 @@ def _timestamp_key(raw: str | None) -> tuple[int, int, str]:
         return (1, 0, "")
     try:
         parsed = datetime.fromisoformat(raw)
-    except ValueError:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        # Offsets at the year bounds overflow; such a time ranks like an unparsable one.
+        delta = parsed.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    except (ValueError, OverflowError):
         return (1, 0, raw)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    delta = parsed.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
     us = (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
     return (0, us, raw)
 
