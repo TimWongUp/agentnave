@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -112,6 +113,8 @@ async def attach_handover_isolated_dirs(
     result: dict[str, Any],
     conversations: Conversations,
     workspace_id: str,
+    *,
+    own_workspace: bool = False,
 ) -> None:
     try:
         items = await asyncio.to_thread(conversations.isolated.list_for_workspace, workspace_id)
@@ -120,7 +123,9 @@ async def attach_handover_isolated_dirs(
             f"Could not read isolated directories for workspace {workspace_id}: {exc}"
         )
         return
-    result["isolated_dirs"] = [isolated_item_payload(item) for item in items]
+    result["isolated_dirs"] = [
+        isolated_item_payload(replace(item, own_workspace=own_workspace)) for item in items
+    ]
 
 
 def _release_payload(released: ReleaseResult) -> IsolatedDirsPayload:

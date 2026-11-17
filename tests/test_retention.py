@@ -509,28 +509,41 @@ def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> No
         finally:
             database.close()
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
         columns = {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
         assert {"title", "cwd", "origin"} <= columns
-        for table in ["entries", "rounds", "tasks", "former_bosses"]:
+        for table in ["entries", "rounds", "tasks", "former_bosses", "workspace_links"]:
             assert db.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
         assert db.execute("SELECT conversation_id FROM views").fetchall() == [("modern",)]
     assert list((tmp_path / "seats").iterdir()) == []
 
 
-def test_v2_migration_adds_origin_and_preserves_workspace(tmp_path: Path) -> None:
+def test_v2_and_v3_migrations_upgrade_to_v4_and_preserve_workspace(tmp_path: Path) -> None:
     fixture(tmp_path, "modern")
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
         db.execute("INSERT INTO workspaces (id, owner) VALUES (?, ?)", (_WORKSPACE, _WORKSPACE))
         db.execute("ALTER TABLE workspaces DROP COLUMN origin")
+        db.execute("DROP TABLE workspace_links")
         db.execute("PRAGMA user_version = 2")
     database = Database(tmp_path)
     row = database.workspace(_WORKSPACE)
     assert row is not None and row.origin is None
     database.close()
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
         assert "origin" in {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
+        assert db.execute("SELECT count(*) FROM workspace_links").fetchone()[0] == 0
+        db.execute("DROP TABLE workspace_links")
+        db.execute("PRAGMA user_version = 3")
+    reopened = Database(tmp_path)
+    try:
+        preserved = reopened.workspace(_WORKSPACE)
+        assert preserved is not None and preserved.owner == _WORKSPACE
+    finally:
+        reopened.close()
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("SELECT count(*) FROM workspace_links").fetchone()[0] == 0
 
 
 def test_v1_migration_preserves_busy_history_and_retries_after_unlock(tmp_path: Path) -> None:
@@ -609,29 +622,63 @@ def test_v1_migration_rereads_identity_under_locks(
         database.close()
 
 
-def test_pending_handover_preserves_note_until_claimed(tmp_path: Path) -> None:
+def test_pending_and_claimed_handover_retention_clock(tmp_path: Path) -> None:
     settings(tmp_path)
     fixture(tmp_path, "old")
     db = Database(tmp_path)
     try:
+        # Old conversation + old release, still protected while pending (up to 90d if boss-only).
         db.release(
-            _WORKSPACE, _WORKSPACE, "codex", None, "new handover note", "2026-11-03T00:00:00Z"
+            _WORKSPACE, _WORKSPACE, "codex", None, "new handover note", "2026-09-01T00:00:00Z"
         )
         assert cleanup(tmp_path, now=_NOW) == 0
         waiting = db.workspace(_WORKSPACE)
         assert waiting is not None and waiting.pending and waiting.note == "new handover note"
-        empty_workspace = "s-" + "b" * 32
+
+        empty_pending = "s-" + "b" * 32
         db.release(
-            empty_workspace,
-            empty_workspace,
+            empty_pending,
+            empty_pending,
             "codex",
             None,
             "empty workspace note",
-            "2026-11-03T00:00:00Z",
+            "2026-09-20T00:00:00Z",
+            "Pending boss-only",
+            str(tmp_path),
         )
+        empty_claimed = "s-" + "c" * 32
+        db.release(
+            empty_claimed,
+            empty_claimed,
+            "codex",
+            None,
+            "claimed boss-only note",
+            "2026-09-01T00:00:00Z",
+            "Claimed boss-only",
+            str(tmp_path),
+        )
+        # Claim resets the retention start to max(activity, released, latest_claimed_at).
         db.claim(_WORKSPACE, "new-boss", "codex", None)
-        assert cleanup(tmp_path, now=_NOW) == 1
-        waiting_empty = db.workspace(empty_workspace)
+        db.claim(empty_claimed, "other-boss", "codex", None)
+        with sqlite3.connect(tmp_path / "agentnave.db") as raw:
+            raw.execute(
+                "UPDATE workspace_links SET claimed_at = '2026-11-03T00:00:00Z' "
+                "WHERE source_workspace IN (?, ?)",
+                (_WORKSPACE, empty_claimed),
+            )
+        assert cleanup(tmp_path, now=_NOW) == 0
+        assert db.workspace(_WORKSPACE) is not None
+        assert db.workspace(empty_claimed) is not None
+        assert db.workspace(empty_pending) is not None
+
+        # 31 days after claimed_at: claimed source workspaces expire by retention days (30d),
+        # while pending boss-only workspace (< 90d since 2026-09-20) stays.
+        later = _NOW + 31 * 86_400
+        assert cleanup(tmp_path, now=later) == 2
+        assert remaining(tmp_path) == []
+        assert db.workspace(_WORKSPACE) is None
+        assert db.workspace(empty_claimed) is None
+        waiting_empty = db.workspace(empty_pending)
         assert waiting_empty is not None and waiting_empty.note == "empty workspace note"
     finally:
         db.close()

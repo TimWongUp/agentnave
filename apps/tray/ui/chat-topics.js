@@ -112,17 +112,23 @@ function tpDirectory(c, ctx) {
   // A handover belongs to no meeting or desk, so its note is read here, folded until asked for.
   const handovers = c.messages.filter((x) => x.kind === "handover");
   const pending = c.handover === "pending";
-  if (pending && !handovers.length) handovers.push({ id: `${c.group}:handover`, time: c.updated || "", text: "" });
+  const explicitPending = handovers.some((x) => x.status === "pending");
+  const latestHandover = handovers.reduce((best, x) => (!best || AN.at(x.time) >= AN.at(best.time) ? x : best), null);
+  const isPendingCard = (m) => pending && (m.status === "pending" || (!explicitPending && m === latestHandover));
+  if (pending && !handovers.some(isPendingCard)) {
+    handovers.push({ id: `${c.group}:handover:pending`, status: "pending", time: c.updated || "", text: "" });
+  }
   for (const m of handovers) {
+    const awaiting = isPendingCard(m);
     items.push({
-      weight: pending ? 0 : 2,
+      weight: awaiting ? 0 : 2,
       time: m.time,
       tag: AN.L("交接", "Handover"),
       title: m.speaker?.label || AN.L("工作区交接", "Workspace handover"),
       faces: [],
       meta: "",
       line: m.text,
-      next: pending ? handoverNext(c) : null,
+      next: awaiting ? handoverNext(c) : null,
       note: m.detail ? { id: m.id, text: m.detail } : null,
       scope: null,
     });
@@ -157,7 +163,7 @@ function handoverNext(c) {
   return h(
     "div.tp-handover-next",
     {},
-    h("span.tp-handover-hint", {}, AN.L("到任意 boss 的新聊天里说：", "In a new chat with any boss, say:")),
+    h("span.tp-handover-hint", {}, AN.L("到任意 boss 的聊天里说：", "In a chat with any boss, say:")),
     h("code.tp-handover-cmd", {}, cmd),
     h("div.tp-handover-actions", {}, AN.copyButton(cmd, "tp-btn"), cancel),
   );

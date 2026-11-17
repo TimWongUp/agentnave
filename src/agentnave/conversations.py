@@ -50,6 +50,7 @@ from agentnave.group import (
     Round,
     SeatState,
 )
+from agentnave.handover import linked_source_prefix
 from agentnave.isolated import ClaimedIsolation, CreatedIsolation, IsolationLease
 from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.locks import release_and_remove
@@ -77,7 +78,7 @@ from agentnave.task_isolation import (
     release_acquired,
     release_hold,
 )
-from agentnave.task_start import latest_session_task
+from agentnave.task_start import check_foreign_session, latest_session_task
 from agentnave.threaded import to_thread_keeping, to_thread_uninterrupted
 
 
@@ -494,9 +495,13 @@ class Conversations(ConversationStore):
                 "configure AGENTNAVE_HOST_SESSION_ID"
             )
         self.scan()  # Include records another server saved.
-        return [self._resolve_forward(item, manager_session) for item in forward]
+        boss = self._bosses.get(manager_session)
+        linked = self.db.linked_sources(manager_session, boss[0] if boss else None)
+        return [self._resolve_forward(item, manager_session, linked) for item in forward]
 
-    def _resolve_forward(self, message_id: str, manager_session: str) -> Forwarded:
+    def _resolve_forward(
+        self, message_id: str, manager_session: str, linked: set[str] | frozenset[str] = frozenset()
+    ) -> Forwarded:
         parts = message_id.split(":")
         if len(parts) != 3 or parts[1] not in ("t", "e"):
             raise ForwardError(f"forward id {message_id} is not a workspace message id")
@@ -504,8 +509,12 @@ class Conversations(ConversationStore):
         record = self.records.get(conversation_id)
         if record is None or (kind == "e" and record.state.kind != "show"):
             raise _missing_forward(message_id)
-        if record.state.manager_session != manager_session:
-            raise ForwardError(f"forward id {message_id} is not in this manager workspace")
+        source_workspace = record.state.manager_session
+        prefix = ""
+        if source_workspace != manager_session:
+            if source_workspace is None or source_workspace not in linked:
+                raise ForwardError(f"forward id {message_id} is not in this manager workspace")
+            prefix = linked_source_prefix(self.records.values(), self.db, source_workspace)
         if kind == "t":
             task = next((item for item in record.state.tasks if item.id == local), None)
             if task is None:
@@ -519,7 +528,8 @@ class Conversations(ConversationStore):
             return Forwarded(
                 message_id,
                 task.output,
-                _task_source(task, task_identity(record.state, task, naming_peers(record))),
+                prefix
+                + _task_source(task, task_identity(record.state, task, naming_peers(record))),
             )
         if not local.isascii() or not local.isdigit():
             raise _missing_forward(message_id)
@@ -531,7 +541,7 @@ class Conversations(ConversationStore):
             raise ForwardError(f"forward id {message_id} is an absent entry, not a message")
         if entry.kind not in ("answer", "host", "task", "forward"):
             raise ForwardError(f"forward id {message_id} is not a committed message")
-        return Forwarded(message_id, entry.text or "", _entry_source(record.state, entry))
+        return Forwarded(message_id, entry.text or "", prefix + _entry_source(record.state, entry))
 
     def task_message_id(self, invocation_id: str) -> str | None:
         """The saved task's message id, once it reached a terminal state."""
@@ -605,17 +615,17 @@ class Conversations(ConversationStore):
         provider: ProviderName | None,
         manager_session_id: str | None,
         *,
-        explicit_identity: bool,
+        workspace: str | None = None,
     ) -> TaskRecord | None:
-        manager_session = self._manager_session(manager_session_id)
+        manager_session = (
+            workspace if workspace is not None else self._manager_session(manager_session_id)
+        )
         self.scan()
         return latest_session_task(
             self.records.values(),
             session_id,
             provider,
             manager_session,
-            self._not_yours,
-            explicit_identity=explicit_identity,
         )
 
     def start_task(
@@ -809,8 +819,8 @@ class Conversations(ConversationStore):
             self.resume_task(
                 request.session_id,
                 cast(ProviderName, request.provider),
-                manager_session,
-                explicit_identity=True,
+                None,
+                workspace=manager_session,
             )
             if request.session_id is not None and not isolation_requested
             else None
@@ -1001,6 +1011,12 @@ class Conversations(ConversationStore):
         if request.session_id:
             # Under the native-session lock, include other chats' active bindings.
             self.scan()
+            check_foreign_session(
+                self.records.values(),
+                request.session_id,
+                cast(ProviderName, request.provider),
+                manager_session,
+            )
 
             def resumes(task: TaskRecord) -> bool:
                 return task.provider == request.provider and task.session_id == request.session_id

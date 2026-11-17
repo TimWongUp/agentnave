@@ -476,7 +476,11 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
         )
         assert "PRIVATE_" not in str(selected)
         assert str(cast(dict[str, object], selected["identity"])["handle"]).endswith("·own-role")
-        for arguments in ({}, {"provider": "claude"}):
+        for arguments in (
+            {},
+            {"provider": "claude"},
+            {"provider": "claude", "cwd": str(tmp_path)},
+        ):
             foreign = await client.call_tool(
                 "start_agent",
                 {
@@ -487,20 +491,8 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
                 },
             )
             assert foreign.is_error and "different manager session" in str(foreign.content)
+            assert "forward" in str(foreign.content)
             assert "PRIVATE_" not in str(foreign.content)
-        foreign_explicit = await _start_and_wait(
-            client,
-            session_id="session-e2e",
-            manager_session_id="third-boss",
-            provider="claude",
-            cwd=str(tmp_path),
-        )
-        assert "access" not in foreign_explicit
-        assert "PRIVATE_" not in str(foreign_explicit)
-        assert not any(
-            "session_id history" in key
-            for key in cast(list[str], foreign_explicit["defaults_applied"])
-        )
 
 
 @pytest.mark.asyncio

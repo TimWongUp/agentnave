@@ -52,6 +52,7 @@ type RouteKey = (
     Vec<(String, &'static str)>,
     Vec<crate::isolated::Dir>,
     Vec<(String, crate::projects::Project)>,
+    Vec<crate::stage::WorkspaceLink>,
 );
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
@@ -233,19 +234,22 @@ impl Reader {
             .as_secs()
             / ROUTE_REUSE.as_secs();
         let limit = crate::settings::max_running(&self.root) as usize;
-        let (handovers, apps) = match &database {
+        let (handovers, links, apps) = match &database {
             Ok(Some(connection)) => (
                 handovers(connection),
+                links(connection),
                 self.boss_apps.of(connection, || self.boss_homes()),
             ),
-            _ => (None, Vec::new()),
+            _ => (None, None, Vec::new()),
         };
         // Records of directories are only forgotten when every workspace was read.
         let complete = !overview.missing
             && overview.scan_error.is_none()
             && overview.unreadable.is_empty()
-            && handovers.is_some();
+            && handovers.is_some()
+            && links.is_some();
         let handovers = handovers.unwrap_or_default();
+        let links = links.unwrap_or_default();
         let handover_map: HashMap<_, _> = handovers.iter().cloned().collect();
         let app_map: HashMap<_, _> = apps.iter().cloned().collect();
         let data_exists = self.root.is_dir();
@@ -254,29 +258,48 @@ impl Reader {
             &crate::stage::origin_cwds(&snapshots, &handover_map),
             complete,
         );
-        let (sources, stage_ids, key_handovers, key_apps, views) =
+        let (sources, stage_ids, key_handovers, key_apps, key_links, views) =
             if let Some(group_id) = crate::stage::requested_group(path) {
                 dirs.retain(|dir| dir.workspace == group_id);
                 projects.retain(|id, _| id == group_id);
+                let rel_links: Vec<_> = links
+                    .iter()
+                    .filter(|l| {
+                        l.source == group_id
+                            || l.target.as_deref() == Some(group_id)
+                            || (l.target.is_none() && l.target_boss == group_id)
+                    })
+                    .cloned()
+                    .collect();
+                let mut watched = HashSet::from([group_id.to_owned()]);
+                for l in &rel_links {
+                    watched.insert(l.source.clone());
+                    if let Some(target) = &l.target {
+                        watched.insert(target.clone());
+                    }
+                }
                 let stage_ids = crate::stage::stage_ids_of(&snapshots, &handover_map);
                 let mut sources = Vec::new();
                 let mut views = Vec::new();
                 for s in &snapshots {
-                    if crate::stage::chat_group(&s.item).as_deref() == Some(group_id) {
+                    if crate::stage::chat_group(&s.item).is_some_and(|id| watched.contains(&id)) {
                         sources.push(crate::stage::source_key(s));
                         views.push(s.view.clone());
                     }
                 }
                 let h = handovers
                     .into_iter()
-                    .filter(|(id, _)| id == group_id)
+                    .filter(|(id, _)| watched.contains(id))
                     .collect();
-                let a = apps.into_iter().filter(|(id, _)| id == group_id).collect();
-                (sources, stage_ids, h, a, views)
+                let a = apps
+                    .into_iter()
+                    .filter(|(id, _)| watched.contains(id))
+                    .collect();
+                (sources, stage_ids, h, a, rel_links, views)
             } else {
                 let sources = snapshots.iter().map(crate::stage::source_key).collect();
                 let views = snapshots.iter().map(|s| s.view.clone()).collect();
-                (sources, Vec::new(), handovers, apps, views)
+                (sources, Vec::new(), handovers, apps, links.clone(), views)
             };
         let key = (
             sources,
@@ -288,6 +311,7 @@ impl Reader {
             key_apps,
             dirs.clone(),
             projects.clone().into_iter().collect(),
+            key_links,
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -305,6 +329,7 @@ impl Reader {
             &crate::stage::Places {
                 dirs: &dirs,
                 projects: &projects,
+                links: &links,
             },
         );
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
@@ -481,11 +506,17 @@ fn handovers(connection: &rusqlite::Connection) -> Option<Vec<(String, crate::st
     } else {
         "id"
     };
+    let linked = if version >= 4 {
+        " OR EXISTS (SELECT 1 FROM workspace_links WHERE source_workspace = workspaces.id)"
+    } else {
+        ""
+    };
     let rows = connection
         .prepare(&format!(
             "SELECT id, owner != {origin} OR previous_host IS NOT NULL, owner_host, pending, \
              note, released, previous_host, title, cwd \
-             FROM workspaces WHERE pending = 1 OR owner != {origin} OR previous_host IS NOT NULL \
+             FROM workspaces \
+             WHERE pending = 1 OR owner != {origin} OR previous_host IS NOT NULL{linked} \
              ORDER BY id",
         ))
         .and_then(|mut statement| {
@@ -508,6 +539,34 @@ fn handovers(connection: &rusqlite::Connection) -> Option<Vec<(String, crate::st
                 .collect()
         });
     rows.ok()
+}
+
+fn links(connection: &rusqlite::Connection) -> Option<Vec<crate::stage::WorkspaceLink>> {
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .ok()?;
+    if version < 4 {
+        return Some(Vec::new());
+    }
+    connection
+        .prepare(
+            "SELECT source_workspace, target_boss, target_workspace, target_host, claimed_at \
+             FROM workspace_links ORDER BY claimed_at ASC, source_workspace ASC, target_boss ASC",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| {
+                    Ok(crate::stage::WorkspaceLink {
+                        source: row.get(0)?,
+                        target_boss: row.get(1)?,
+                        target: row.get(2)?,
+                        target_host: row.get(3)?,
+                        claimed_at: row.get(4)?,
+                    })
+                })?
+                .collect()
+        })
+        .ok()
 }
 
 fn view_body(connection: &rusqlite::Connection, id: &str) -> Option<String> {

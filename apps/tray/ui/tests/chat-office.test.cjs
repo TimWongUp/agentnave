@@ -702,7 +702,7 @@ test("pending handover card shows takeover command, copy, and cancel only while 
   const msg = { id: "h1", kind: "handover", time: "2026-11-14T12:00:00Z", text: "Claude Code 交出工作区，等待接手", detail: "note" };
   const [card] = ui.context.tpDirectory({ group: "s-abc", title: "发版", label: "Claude Code", handover: "pending", conversations: [{ id: "c1" }], messages: [msg] }, ctx);
   const next = card.children.find(n => n?.tag === "div.tp-handover-next");
-  assert.equal(next.children[0].children[0], "到任意 boss 的新聊天里说：");
+  assert.equal(next.children[0].children[0], "到任意 boss 的聊天里说：");
   assert.equal(next.children[1].children[0], "接手 AgentNave 工作区「发版」（s-abc）");
   const [copyBtn, cancelBtn] = next.children[2].children;
   await copyBtn.listeners.click();
@@ -716,10 +716,17 @@ test("pending handover card shows takeover command, copy, and cancel only while 
   const [taken] = ui.context.tpDirectory({ group: "s-abc", title: "发版", label: "Codex", handover: "changed", conversations: [{ id: "c1" }], messages: [msg] }, ctx);
   assert.equal(taken.children.find(n => n?.tag === "div.tp-handover-next"), undefined);
 
+  const earlier = { id: "s-abc:handover:claim:s-1", kind: "handover", status: "claimed", time: "2026-11-13T12:00:00Z", text: "Claude 交出工作区，已由 Codex 接手", detail: null };
+  const waiting = { id: "s-abc:handover:pending", kind: "handover", status: "pending", time: "2026-11-14T12:00:00Z", text: "Claude 交出工作区，等待接手", detail: "note" };
+  const [first, second] = ui.context.tpDirectory({ group: "s-abc", title: "发版", label: "Claude", handover: "pending", conversations: [{ id: "c1" }], messages: [earlier, waiting] }, ctx);
+  assert.ok(first.children.find(n => n?.tag === "div.tp-handover-next"));
+  assert.equal(second.children.find(n => n?.tag === "div.tp-handover-next"), undefined);
+  assert.equal(second.children.find(n => n?.tag === "details.tp-card-note"), undefined);
+
   const en = auditUI(true);
   const [enCard] = en.context.tpDirectory({ group: "s-abc", title: "Release", label: "Claude Code", handover: "pending", conversations: [], messages: [msg] }, ctx);
   const enNext = enCard.children.find(n => n?.tag === "div.tp-handover-next");
-  assert.equal(enNext.children[0].children[0], "In a new chat with any boss, say:");
+  assert.equal(enNext.children[0].children[0], "In a chat with any boss, say:");
   assert.equal(enNext.children[1].children[0], 'Take over AgentNave workspace "Release" (s-abc)');
 });
 
@@ -802,4 +809,152 @@ test("deleteIsolated keeps its button disabled until completion or cancel and ig
   resolveDelete({ status: "deleted" });
   await run;
   assert.equal(btn.disabled, false);
+});
+
+test("linked handover workspaces keep boss character intact and render plain status, mutual links, or cleaned text", () => {
+  const routes = [];
+  let stopped = 0;
+  const h = (tag, attributes = {}, ...children) => ({
+    tag, attributes, children: children.flat(Infinity).filter(x => x != null && x !== false),
+    dataset: {}, classList: { toggle() {} }, listeners: {}, textContent: "",
+    replaceChildren(...items) { this.children = items; },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    insertBefore(child, before) { child.parentNode = this; child.nextSibling = before; },
+    remove() {},
+  });
+  function linkedOffice(english = false) {
+    const context = vm.createContext({
+      AN: { at: Date.parse }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} },
+      ART: { character: (_host, model) => model || "default", figure: h, head: name => ({ name }), lid: host => ({ host }), url: path => path },
+      el: { boss: h("section#boss") }, state: { groupsData: [], drawer: {} },
+      L: (zh, en) => (english ? en : zh), cliName: host => host,
+      h, href: path => path, go: path => routes.push(path),
+      setText: (element, text) => { element.textContent = text; },
+      setAttr: (element, key, value) => { element[key] = value; },
+    });
+    vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+    const rec = Object.fromEntries(["lid", "scene", "desk", "chair", "open", "closed", "portrait", "cli", "st", "state"].map(key => [key, h("span")]));
+    rec.laptop = { laptop: { dress() {} } };
+    return { rec, update: c => context.updateBoss(rec, c, { running: 0, review: 0 }) };
+  }
+
+  const app = linkedOffice();
+  const srcClaimed = {
+    host: "claude", label: "Claude Code", handover: null,
+    handover_to: [{ status: "claimed", host: "codex", label: "Codex" }],
+    messages: [old, { ...handover, text: "Claude Code 交出工作区，已由 Codex 接手" }],
+  };
+  app.update(srcClaimed);
+  assert.equal(app.rec.char, old.speaker.model);
+  assert.equal(app.rec.portrait.hidden, true);
+  assert.deepEqual(app.rec.state.children, ["已由 Codex 接手", " · ", old.speaker.model]);
+
+  app.update({
+    ...srcClaimed,
+    handover_to: [{ status: "linked", group: "s-target", host: "codex", label: "Codex", title: "续做发布" }],
+  });
+  const toLink = app.rec.state.children[0];
+  assert.equal(toLink.tag, "a.boss-link");
+  assert.equal(toLink.attributes.href, "/chat/s-target");
+  assert.deepEqual(toLink.children, ["已由 Codex「续做发布」接手"]);
+  toLink.listeners.click({ preventDefault() {}, stopPropagation() { stopped++; } });
+  assert.deepEqual(routes, ["/chat/s-target"]);
+  assert.equal(stopped, 1);
+
+  app.update({
+    host: "codex", label: "Codex", handover: null,
+    handover_from: [{ status: "linked", group: "s-source", host: "claude", label: "Claude Code", title: "发版检查" }],
+    messages: [speech("codex", "gpt-6", "2026-11-04T15:00:00Z")],
+  });
+  const fromLink = app.rec.state.children[0];
+  assert.equal(fromLink.tag, "a.boss-link");
+  assert.deepEqual(fromLink.children, ["接手自 Claude Code「发版检查」"]);
+  fromLink.listeners.click({ preventDefault() {}, stopPropagation() { stopped++; } });
+  assert.deepEqual(routes, ["/chat/s-target", "/chat/s-source"]);
+  assert.equal(stopped, 2);
+
+  app.update({
+    host: "codex", label: "Codex", handover: null,
+    handover_from: [{ status: "cleaned" }],
+    messages: [],
+  });
+  assert.deepEqual(app.rec.state.children, ["接手自原工作区（已清理）"]);
+
+  const en = linkedOffice(true);
+  en.update({
+    host: "claude", label: "Claude Code", handover: null,
+    handover_to: [{ status: "cleaned", host: "codex", label: "Codex" }],
+    messages: [],
+  });
+  assert.deepEqual(en.rec.state.children, ["Taken over by Codex (cleaned)"]);
+});
+
+test("cleanup respects handover_ms, pending state, and expired empty_claimed workspaces", async () => {
+  const h = (tag, attributes = {}, ...children) => {
+    const kids = children.flat(Infinity).filter(x => x != null && x !== false);
+    return {
+      tag, attributes, children: kids,
+      classList: { toggle() {} }, listeners: {}, textContent: kids.map(k => (typeof k === "string" ? k : k.textContent || "")).join(""),
+      setAttribute(k, v) { this.attributes[k] = v; },
+      replaceChildren(...items) { this.children = items; },
+      addEventListener(name, fn) { this.listeners[name] = fn; },
+      append(...items) { this.children.push(...items); },
+      querySelector() { return { focus() {} }; },
+      showModal() { this.open = true; },
+      close() { this.open = false; },
+    };
+  };
+  const posts = [];
+  let dialogNode;
+  const cleanupBtn = h("button#cleanup");
+  const recentClaimMs = Date.now() - 10 * 864e5;
+  const oldConvIso = new Date(Date.now() - 45 * 864e5).toISOString();
+  const oldClaimMs = Date.now() - 45 * 864e5;
+  const statePayload = {
+    items: [
+      { id: "c-recent-claim", title: "刚被接手", group: "s-recent-claim", deletable: true, updated: oldConvIso },
+      { id: "c-pending", title: "待接手", group: "s-pending", deletable: true, updated: oldConvIso },
+      { id: "c-old", title: "已过期", group: "s-old", deletable: true, updated: oldConvIso },
+    ],
+    workspaces: [
+      { id: "s-recent-claim", title: "刚被接手", pending: false, empty_claimed: false, handover_ms: recentClaimMs },
+      { id: "s-pending", title: "待接手", pending: true, empty_claimed: false, handover_ms: oldClaimMs },
+      { id: "s-old", title: "已过期", pending: false, empty_claimed: false, handover_ms: oldClaimMs },
+      { id: "s-empty-old", title: "空已接手", pending: false, empty_claimed: true, handover_ms: oldClaimMs },
+      { id: "s-empty-pending", title: "空待接手", pending: true, empty_claimed: false, handover_ms: oldClaimMs },
+    ],
+  };
+  const context = vm.createContext({
+    AN: {
+      h, $: id => (id === "cleanup" ? cleanupBtn : null), L: zh => zh,
+      at: Date.parse,
+      load: async () => statePayload,
+      chatName: g => g.title || g.group,
+      post: async (path, body) => { posts.push([path, body]); return { status: "deleted", results: [{ status: "deleted" }] }; },
+    },
+    document: { body: { append(...nodes) { for (const node of nodes) if (node.tag === "dialog.act") dialogNode = node; } }, addEventListener() {} },
+    window: { addEventListener() {} },
+    state: { groupsData: [{ group: "s-old", title: "已过期" }, { group: "s-empty-old", title: "空已接手" }], order: [] },
+    refresh: async () => {}, renderList() {}, go() {}, openScope() {},
+    setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../actions.js`, "utf8"), context);
+  const cleanupPromise = cleanupBtn.listeners.click();
+  await new Promise(r => setImmediate(r));
+  // 30d default: s-recent-claim (10d claim), s-pending, s-empty-pending are excluded; s-old and s-empty-old qualify.
+  const countLine = dialogNode.children.find(n => n?.tag === "p.act-note" && String(n.textContent).includes("没有动静。"));
+  assert.match(countLine.textContent, /有 2 个工作区超过 30 天没有动静/);
+  const nextBtn = dialogNode.children.at(-1).children.at(-1);
+  nextBtn.listeners.click();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  const deleteBtn = dialogNode.children.at(-1).children.at(-1);
+  deleteBtn.listeners.click();
+  await cleanupPromise;
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[0][0], "/app/conversations/delete");
+  assert.deepEqual([...posts[0][1].ids], ["c-old"]);
+  assert.equal(posts[1][0], "/app/workspaces/forget");
+  assert.equal(posts[1][1].group, "s-empty-old");
+  assert.equal(typeof posts[1][1].updated_before, "number");
 });

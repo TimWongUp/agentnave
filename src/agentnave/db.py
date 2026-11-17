@@ -12,16 +12,29 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from agentnave.locks import locked_conversations, remove_seats
-from agentnave.store import Conversation, EntryRecord, RoundRecord, TaskRecord
+from agentnave.store import Conversation, EntryRecord, RoundRecord, TaskRecord, now
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 NAME = "agentnave.db"
+
+type ClaimStatus = Literal["claimed", "withdrawn", "yours"]
 
 # Shared with the tray app's tests, which build the same database.
 _SCHEMA = Path(__file__).with_name("schema.sql").read_text(encoding="utf-8")
+_LINKS_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS workspace_links ("
+    "source_workspace TEXT NOT NULL, "
+    "target_boss TEXT NOT NULL, "
+    "target_workspace TEXT, "
+    "target_host TEXT, "
+    "claimed_at TEXT NOT NULL, "
+    "PRIMARY KEY (source_workspace, target_boss))",
+    "CREATE INDEX IF NOT EXISTS workspace_links_target_boss ON workspace_links (target_boss)",
+    "CREATE INDEX IF NOT EXISTS workspace_links_target_workspace ON workspace_links (target_workspace)",
+)
 
 _HEADER = (
     "kind",
@@ -109,6 +122,9 @@ class Database:
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version == 2:
                     _migrate_v2(connection)
+                    version = connection.execute("PRAGMA user_version").fetchone()[0]
+                if version == 3:
+                    _migrate_v3(connection)
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version != SCHEMA_VERSION:
                     raise sqlite3.DatabaseError(
@@ -305,54 +321,105 @@ class Database:
             )
             if cursor.rowcount != 1:
                 raise ValueError("this workspace was just taken over by another boss")
+            after = _workspace(connection, "id", workspace_id)
+            if after is not None and after.title:
+                _bind_target_workspace(connection, boss, workspace_id, host)
 
     def claim(
-        self, workspace_id: str, boss: str, host: str | None, file: str | None
-    ) -> tuple[Workspace, Workspace]:
-        """Take a waiting workspace over (or withdraw one's own); the row before and after."""
+        self,
+        workspace_id: str,
+        boss: str,
+        host: str | None,
+        file: str | None,
+        claimed_at: str | None = None,
+    ) -> tuple[Workspace, Workspace, ClaimStatus]:
+        """Link a waiting workspace (or withdraw one's own); the row before, after, and status."""
         with self._write() as connection:
             before = _workspace(connection, "id", workspace_id)
-            if before is None or (not before.pending and before.owner != boss):
+            if before is None:
                 raise ValueError(f"workspace {workspace_id} is not waiting for a new boss")
-            if before.owner != boss:
-                current, away = _resolve(connection, boss)
-                own = _workspace(connection, "id", current)
-                if away is None and (
-                    (own is not None and own.title and _handed_over(own))
-                    or connection.execute(
-                        "SELECT 1 FROM conversations WHERE manager_session = ? LIMIT 1",
-                        (current,),
-                    ).fetchone()
-                ):
-                    raise ValueError(
-                        f"this chat already leads workspace {current}; take over from a new "
-                        "chat, or hand that workspace over first"
-                    )
-                # An empty workspace of this boss gives way to the one it takes over.
-                connection.execute("DELETE FROM workspaces WHERE owner = ?", (boss,))
-                connection.execute("DELETE FROM former_bosses WHERE boss = ?", (boss,))
-                connection.execute(
-                    "UPDATE workspaces SET previous_host = owner_host, "
-                    "previous_file = owner_file, owner = ?, owner_host = ?, owner_file = ?, "
-                    "pending = 0 WHERE id = ?",
-                    (boss, host, file, workspace_id),
-                )
-                if before.owner != workspace_id:
-                    connection.execute(
-                        "INSERT OR REPLACE INTO former_bosses (boss, workspace) VALUES (?, ?)",
-                        (before.owner, workspace_id),
-                    )
-            else:
-                # Only a withdrawal clears the note: asking again keeps what the boss took over.
+            if before.owner == boss:
+                if not before.pending and not _handed_over(before):
+                    raise ValueError(f"workspace {workspace_id} is not waiting for a new boss")
+                # Only a withdrawal clears the note: asking again keeps what a legacy boss took over.
                 connection.execute(
                     "UPDATE workspaces SET note = CASE pending WHEN 1 THEN NULL ELSE note END, "
                     "released = CASE pending WHEN 1 THEN NULL ELSE released END, pending = 0, "
                     "owner_host = ?, owner_file = coalesce(?, owner_file) WHERE id = ?",
                     (host, file, workspace_id),
                 )
+                status: ClaimStatus = "withdrawn" if before.pending else "yours"
+            else:
+                target_ws = _existing_target_workspace(connection, boss)
+                if before.pending:
+                    connection.execute(
+                        "UPDATE workspaces SET pending = 0 WHERE id = ?",
+                        (workspace_id,),
+                    )
+                    connection.execute(
+                        "INSERT INTO workspace_links (source_workspace, target_boss, "
+                        "target_workspace, target_host, claimed_at) VALUES (?, ?, ?, ?, ?) "
+                        "ON CONFLICT (source_workspace, target_boss) DO UPDATE SET "
+                        "target_workspace = coalesce(excluded.target_workspace, "
+                        "workspace_links.target_workspace), "
+                        "target_host = coalesce(excluded.target_host, workspace_links.target_host), "
+                        "claimed_at = excluded.claimed_at",
+                        (workspace_id, boss, target_ws, host, claimed_at or now()),
+                    )
+                else:
+                    existing = connection.execute(
+                        "SELECT 1 FROM workspace_links "
+                        "WHERE source_workspace = ? AND target_boss = ?",
+                        (workspace_id, boss),
+                    ).fetchone()
+                    if existing is None:
+                        raise ValueError(f"workspace {workspace_id} is not waiting for a new boss")
+                    connection.execute(
+                        "UPDATE workspace_links SET "
+                        "target_workspace = coalesce(?, target_workspace), "
+                        "target_host = coalesce(?, target_host) "
+                        "WHERE source_workspace = ? AND target_boss = ?",
+                        (target_ws, host, workspace_id, boss),
+                    )
+                status = "claimed"
             after = _workspace(connection, "id", workspace_id)
             assert after is not None
-            return before, after
+            return before, after, status
+
+    def linked_sources(self, workspace_id: str, boss: str | None = None) -> set[str]:
+        """Direct source workspaces claimed by this workspace or boss chat (ADR-0099)."""
+        connection = self._read()
+        if connection is None:
+            return set()
+        try:
+            if boss is None:
+                owner = connection.execute(
+                    "SELECT owner FROM workspaces WHERE id = ?", (workspace_id,)
+                ).fetchone()
+                boss = str(owner[0]) if owner is not None else workspace_id
+            rows = connection.execute(
+                "SELECT source_workspace FROM workspace_links "
+                "WHERE target_workspace = ? OR target_boss = ?",
+                (workspace_id, boss),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise OSError(str(exc)) from exc
+        return {str(source) for (source,) in rows}
+
+    def claims_from(self, workspace_id: str) -> list[WorkspaceLink]:
+        """Links claiming workspace_id as their source, in stored order."""
+        connection = self._read()
+        if connection is None:
+            return []
+        try:
+            rows = connection.execute(
+                f"SELECT {', '.join(WorkspaceLink._fields)} FROM workspace_links "
+                "WHERE source_workspace = ?",
+                (workspace_id,),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise OSError(str(exc)) from exc
+        return [WorkspaceLink(*row) for row in rows]  # pyright: ignore[reportArgumentType]
 
     # Writes
 
@@ -365,6 +432,12 @@ class Database:
                     f"VALUES (?, {', '.join('?' * len(_HEADER))}, 1)",
                     (new.id, *_header(new)),
                 )
+                if new.manager_session is not None:
+                    owner = connection.execute(
+                        "SELECT owner FROM workspaces WHERE id = ?", (new.manager_session,)
+                    ).fetchone()
+                    boss = str(owner[0]) if owner is not None else new.manager_session
+                    _bind_target_workspace(connection, boss, new.manager_session, new.host)
             else:
                 if not _same_header(old, new):
                     connection.execute(
@@ -408,9 +481,30 @@ class Workspace(NamedTuple):
     origin: str | None
 
 
+class WorkspaceLink(NamedTuple):
+    """One handover link from a source workspace to a claiming boss chat (ADR-0099)."""
+
+    source_workspace: str
+    target_boss: str
+    target_workspace: str | None
+    target_host: str | None
+    claimed_at: str
+
+
 def remove_conversations(connection: sqlite3.Connection, ids: list[str]) -> None:
     """Delete rows and their cascades under the caller's transaction and OS locks."""
     connection.executemany("DELETE FROM conversations WHERE id = ?", [(id_,) for id_ in ids])
+
+
+def prune_workspace_links(connection: sqlite3.Connection) -> None:
+    """Drop handover links only once both workspaces are completely gone."""
+    connection.execute(
+        "DELETE FROM workspace_links WHERE target_workspace IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM conversations WHERE manager_session = workspace_links.source_workspace) "
+        "AND NOT EXISTS (SELECT 1 FROM workspaces WHERE id = workspace_links.source_workspace AND title IS NOT NULL) "
+        "AND NOT EXISTS (SELECT 1 FROM conversations WHERE manager_session = workspace_links.target_workspace) "
+        "AND NOT EXISTS (SELECT 1 FROM workspaces WHERE id = workspace_links.target_workspace AND title IS NOT NULL)"
+    )
 
 
 def _legacy_ids(connection: sqlite3.Connection) -> list[str]:
@@ -457,17 +551,59 @@ def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
 
 
 def _migrate_v2(connection: sqlite3.Connection) -> None:
-    """Add workspace origin and advance the version in one transaction."""
+    """Add workspace origin and handover links, advancing the version in one transaction."""
     connection.execute("BEGIN IMMEDIATE")
     try:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version == 2:
             connection.execute("ALTER TABLE workspaces ADD COLUMN origin TEXT")
+            for statement in _LINKS_SCHEMA:
+                connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         connection.commit()
     finally:
         if connection.in_transaction:
             connection.rollback()
+
+
+def _migrate_v3(connection: sqlite3.Connection) -> None:
+    """Add workspace_links and advance the version in one transaction."""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == 3:
+            for statement in _LINKS_SCHEMA:
+                connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        connection.commit()
+    finally:
+        if connection.in_transaction:
+            connection.rollback()
+
+
+def _existing_target_workspace(connection: sqlite3.Connection, boss: str) -> str | None:
+    current, away = _resolve(connection, boss)
+    if away is not None:
+        return None
+    own = _workspace(connection, "id", current)
+    has_conv = (
+        connection.execute(
+            "SELECT 1 FROM conversations WHERE manager_session = ? LIMIT 1", (current,)
+        ).fetchone()
+        is not None
+    )
+    return current if has_conv or (own is not None and bool(own.title)) else None
+
+
+def _bind_target_workspace(
+    connection: sqlite3.Connection, boss: str, workspace_id: str, host: str | None
+) -> None:
+    connection.execute(
+        "UPDATE workspace_links SET target_workspace = ?, "
+        "target_host = coalesce(?, target_host) "
+        "WHERE target_boss = ? AND target_workspace IS NULL",
+        (workspace_id, host, boss),
+    )
 
 
 def _row(row: tuple[object, ...]) -> Workspace:
