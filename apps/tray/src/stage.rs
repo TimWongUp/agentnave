@@ -35,7 +35,7 @@ fn array<'a>(value: &'a Value, key: &str) -> impl DoubleEndedIterator<Item = &'a
     value[key].as_array().into_iter().flatten()
 }
 
-fn label(host: Option<&str>) -> &str {
+fn label(host: Option<&str>) -> &'static str {
     match host {
         Some("codex") => "Codex",
         Some("claude") => "Claude Code",
@@ -229,7 +229,7 @@ fn manager_speaker(identity: &Value, opened_by: Option<&str>, name: &str) -> Val
     let name = provider
         .as_deref()
         .filter(|host| Some(*host) != opened_by)
-        .map_or(name, |host| label(Some(host)));
+        .map_or(name, |host| boss_label(Some(host), None));
     let provider = provider.as_deref().or(opened_by).unwrap_or("");
     let reported = text(identity, "manager_reported_model");
     let mut who = speaker(
@@ -354,6 +354,11 @@ struct Group {
     isolated: Vec<Value>,
     handover_to: Vec<Value>,
     handover_from: Vec<Value>,
+    handover_links: Vec<links::ClaimCard>,
+}
+
+fn boss_label(host: Option<&str>, app: Option<&str>) -> &'static str {
+    boss_name(host, app).1.unwrap_or_else(|| label(host))
 }
 
 /// The mark and name of a Claude or Codex boss, by the app its session records name (see
@@ -394,7 +399,13 @@ pub(crate) fn source_key(snapshot: &Snapshot) -> SourceKey {
 /// The chat list's previews by group, with the views each was computed from (held so their
 /// addresses stay unique); only groups whose snapshots changed are projected again.
 type Preview = (
-    (Vec<SourceKey>, Handover, Vec<Value>, Vec<Value>),
+    (
+        Vec<SourceKey>,
+        Handover,
+        Option<&'static str>,
+        Vec<Value>,
+        Vec<Value>,
+    ),
     Vec<Arc<Value>>,
     String,
 );
@@ -776,6 +787,7 @@ fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
                     .map(|&i| source_key(&snapshots[i]))
                     .collect(),
                 g.handover.clone(),
+                g.app,
                 g.handover_to.clone(),
                 g.handover_from.clone(),
             );

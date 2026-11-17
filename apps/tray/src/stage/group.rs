@@ -30,6 +30,7 @@ impl Group {
             isolated: Vec::new(),
             handover_to: Vec::new(),
             handover_from: Vec::new(),
+            handover_links: Vec::new(),
         }
     }
     /// A workspace a boss opened by handing over: only that boss, no desks or conversations yet.
@@ -49,23 +50,21 @@ impl Group {
         group
     }
     pub(super) fn manager_label(&self) -> &str {
-        boss_name(self.host.as_deref(), self.app)
-            .1
-            .unwrap_or(label(self.host.as_deref()))
+        boss_label(self.host.as_deref(), self.app)
     }
     pub(super) fn header(&self) -> Value {
-        let (host, name) = match &self.handover.host {
-            Some(host) if self.handover.changed => (Some(host.as_str()), label(Some(host))),
-            _ => (self.host.as_deref(), self.manager_label()),
+        let host = match &self.handover.host {
+            Some(host) if self.handover.changed => Some(host.as_str()),
+            _ => self.host.as_deref(),
         };
-        let (app, named) = boss_name(host, self.app);
+        let app = boss_name(host, self.app).0;
         let previous = self
             .handover
             .previous_host
             .as_deref()
-            .map(|host| label(Some(host)))
+            .map(|host| boss_label(Some(host), None))
             .unwrap_or("这个工作区");
-        let label = named.unwrap_or(name);
+        let label = boss_label(host, self.app);
         let handover = if self.handover.pending {
             Some("pending")
         } else {
@@ -160,7 +159,9 @@ impl Group {
             messages.extend(
                 self.messages
                     .iter()
-                    .filter(|m| m["kind"] == "handover")
+                    .filter(|m| {
+                        m["kind"] == "handover" && !text(m, "id").contains(":handover:claim:")
+                    })
                     .map(|m| json!({"kind": "handover", "time": m["time"]})),
             );
         }
@@ -368,42 +369,8 @@ impl Group {
             }
         }
         self.finish_messages();
-        if include_messages
-            && (self.handover.pending || self.handover.changed || !self.handover_to.is_empty())
-            && let Some(released) = self.handover.released.as_deref()
-        {
-            let own_from = self.handover.host.as_deref().or(self.host.as_deref());
-            let text = if self.handover.pending {
-                format!("{} 交出工作区，等待接手", label(own_from))
-            } else if self.handover.changed {
-                match self.handover.previous_host.as_deref() {
-                    Some(from) => format!(
-                        "{} 交出工作区，{} 已接手",
-                        label(Some(from)),
-                        label(self.handover.host.as_deref())
-                    ),
-                    None => format!(
-                        "工作区已交出，{} 已接手",
-                        label(self.handover.host.as_deref())
-                    ),
-                }
-            } else {
-                format!(
-                    "{} 交出工作区，已由 {} 接手",
-                    label(own_from),
-                    links::claimed_hosts(&self.handover_to)
-                )
-            };
-            let mut message = Self::message(
-                format!("{}:handover:{released}", self.id),
-                released,
-                "",
-                "handover",
-                json!({"role": "system", "label": "工作区交接"}),
-                &text,
-            );
-            message["detail"] = json!(self.handover.note);
-            self.messages.push(message);
+        if include_messages {
+            self.push_handover_messages();
         }
         if !active(self.status) {
             self.status = if self
@@ -415,6 +382,72 @@ impl Group {
             } else {
                 "idle"
             };
+        }
+    }
+    fn push_handover_messages(&mut self) {
+        let own_from = self.handover.host.as_deref().or(self.host.as_deref());
+        let from_label = boss_label(own_from, self.app).to_owned();
+        if self.handover.changed && !self.handover.pending && self.handover_links.is_empty() {
+            let Some(released) = self.handover.released.as_deref() else {
+                return;
+            };
+            let to_label = boss_label(self.handover.host.as_deref(), self.app);
+            let text = match self.handover.previous_host.as_deref() {
+                Some(from) => format!(
+                    "{} 交出工作区，{to_label} 已接手",
+                    boss_label(Some(from), None)
+                ),
+                None => format!("工作区已交出，{to_label} 已接手"),
+            };
+            self.messages.push(handover_card(
+                format!("{}:handover:{released}", self.id),
+                released,
+                &text,
+                json!(self.handover.note),
+                None,
+            ));
+            return;
+        }
+        let latest_claim = (!self.handover.pending)
+            .then(|| {
+                self.handover_links
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, link)| {
+                        (
+                            timestamp(&link.claimed_at).unwrap_or(i64::MIN),
+                            &link.target_boss,
+                        )
+                    })
+                    .map(|(index, _)| index)
+            })
+            .flatten();
+        for (index, link) in self.handover_links.iter().enumerate() {
+            let text = format!("{from_label} 交出工作区，已由 {} 接手", link.label);
+            let detail = if latest_claim == Some(index) {
+                json!(self.handover.note)
+            } else {
+                Value::Null
+            };
+            self.messages.push(handover_card(
+                format!("{}:handover:claim:{}", self.id, link.target_boss),
+                &link.claimed_at,
+                &text,
+                detail,
+                Some("claimed"),
+            ));
+        }
+        if self.handover.pending
+            && let Some(released) = self.handover.released.as_deref()
+        {
+            let text = format!("{from_label} 交出工作区，等待接手");
+            self.messages.push(handover_card(
+                format!("{}:handover:pending", self.id),
+                released,
+                &text,
+                json!(self.handover.note),
+                Some("pending"),
+            ));
         }
     }
     pub(super) fn finish_messages(&mut self) {
@@ -830,4 +863,20 @@ struct TaskMessage<'a> {
     time: &'a str,
     status: &'a str,
     message_id: Option<&'a str>,
+}
+
+fn handover_card(id: String, time: &str, text: &str, detail: Value, status: Option<&str>) -> Value {
+    let mut message = Group::message(
+        id,
+        time,
+        "",
+        "handover",
+        json!({"role": "system", "label": "工作区交接"}),
+        text,
+    );
+    message["detail"] = detail;
+    if let Some(status) = status {
+        message["status"] = json!(status);
+    }
+    message
 }

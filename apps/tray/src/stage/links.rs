@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use super::{Group, boss_name, label};
+use super::{Group, boss_label};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkspaceLink {
@@ -12,6 +12,12 @@ pub(crate) struct WorkspaceLink {
     pub target_boss: String,
     pub target: Option<String>,
     pub target_host: Option<String>,
+    pub claimed_at: String,
+}
+
+pub(super) struct ClaimCard {
+    pub target_boss: String,
+    pub label: String,
     pub claimed_at: String,
 }
 
@@ -23,11 +29,11 @@ struct Peer {
 
 impl Peer {
     fn of(group: &Group) -> Self {
-        let (host, base) = match &group.handover.host {
-            Some(host) if group.handover.changed => (Some(host.as_str()), label(Some(host))),
-            _ => (group.host.as_deref(), group.manager_label()),
+        let host = match &group.handover.host {
+            Some(host) if group.handover.changed => Some(host.as_str()),
+            _ => group.host.as_deref(),
         };
-        let host_label = boss_name(host, group.app).1.unwrap_or(base).to_owned();
+        let host_label = boss_label(host, group.app).to_owned();
         let title = if !group.title.is_empty() {
             group.title.clone()
         } else {
@@ -55,7 +61,14 @@ pub(super) fn attach_links(groups: &mut [Group], links: &[WorkspaceLink]) {
     for group in groups {
         for link in links {
             if link.source == group.id {
-                group.handover_to.push(outgoing_json(link, &peers));
+                let outgoing = outgoing_json(link, &peers);
+                let target_label = outgoing["label"].as_str().unwrap_or("未知 boss").to_owned();
+                group.handover_links.push(ClaimCard {
+                    target_boss: link.target_boss.clone(),
+                    label: target_label,
+                    claimed_at: link.claimed_at.clone(),
+                });
+                group.handover_to.push(outgoing);
             }
             let targets_group = link.target.as_deref() == Some(group.id.as_str())
                 || (link.target.is_none() && link.target_boss == group.id);
@@ -66,19 +79,8 @@ pub(super) fn attach_links(groups: &mut [Group], links: &[WorkspaceLink]) {
     }
 }
 
-pub(super) fn claimed_hosts(handover_to: &[Value]) -> String {
-    let mut hosts = Vec::new();
-    for entry in handover_to {
-        let name = entry["label"].as_str().unwrap_or("未知 boss");
-        if !hosts.contains(&name) {
-            hosts.push(name);
-        }
-    }
-    hosts.join("、")
-}
-
 fn outgoing_json(link: &WorkspaceLink, peers: &HashMap<String, Peer>) -> Value {
-    let fallback_label = label(link.target_host.as_deref());
+    let fallback_label = boss_label(link.target_host.as_deref(), None);
     match link.target.as_deref() {
         None => json!({
             "status": "claimed",

@@ -763,7 +763,7 @@ fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
     let waiting = state(&reader, &path);
     let message = waiting["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(message["kind"], "handover");
-    assert_eq!(message["text"], "Claude Code 交出工作区，等待接手");
+    assert_eq!(message["text"], "Claude 交出工作区，等待接手");
     assert_eq!(message["detail"], "<script>untrusted</script>\n下一步");
     assert_eq!(message["time"], "2026-01-02T00:00:00Z");
     connection.execute(
@@ -786,11 +786,11 @@ fn workspace_handover_is_read_into_chat_and_refreshes_without_new_tasks() {
             .all(|t| t["kind"].is_string())
     );
     assert_eq!(waiting["took_over"], Value::Null);
-    assert_eq!(claimed["took_over"], "Codex 接手了 Claude Code");
+    assert_eq!(claimed["took_over"], "Codex 接手了 Claude");
     assert_eq!(claimed["previous_host"], "claude");
-    assert_eq!(claimed["previous_label"], "Claude Code");
+    assert_eq!(claimed["previous_label"], "Claude");
     let message = claimed["messages"].as_array().unwrap().last().unwrap();
-    assert_eq!(message["text"], "Claude Code 交出工作区，Codex 已接手");
+    assert_eq!(message["text"], "Claude 交出工作区，Codex 已接手");
     assert_eq!(claimed["omitted"], 0);
     connection
         .execute(
@@ -866,7 +866,7 @@ fn handover_links_show_claimed_then_bidirectional_links_then_cleaned() {
         .last()
         .unwrap();
     assert_eq!(last_msg["kind"], "handover");
-    assert_eq!(last_msg["text"], "Claude Code 交出工作区，已由 Codex 接手");
+    assert_eq!(last_msg["text"], "Claude 交出工作区，已由 Codex 接手");
     assert_eq!(last_msg["detail"], "handoff details");
     assert!(
         source_claimed["boss_messages"]
@@ -916,6 +916,145 @@ fn handover_links_show_claimed_then_bidirectional_links_then_cleaned() {
     assert_eq!(
         target_cleaned["handover_from"],
         json!([{"status": "cleaned", "claimed_at": "2026-01-02T01:00:00Z"}])
+    );
+}
+
+#[test]
+fn repeated_handovers_emit_separate_cards_with_unique_ids_latest_note_and_matching_host_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let first_target = "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let second_target = "s-cccccccccccccccccccccccccccccccc";
+    let mut source_snap = task_snapshot("src-task", "succeeded", "2026-01-01T00:00:00Z");
+    source_snap["summary"]["title"] = json!("多次交接");
+    save(dir.path(), &source_snap);
+    let connection = crate::db::write(dir.path()).unwrap().unwrap();
+    connection
+        .execute(
+            "UPDATE conversations SET manager_session = ?1 WHERE id = 'src-task'",
+            [MANAGER],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces (id, owner, origin, owner_host, pending, note, released) \
+             VALUES (?1, ?1, ?1, 'claude', 1, 'second note', '2026-01-03T00:00:00Z')",
+            [MANAGER],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspace_links (source_workspace, target_boss, target_workspace, target_host, claimed_at) \
+             VALUES (?1, ?2, NULL, 'codex', '2026-01-02T01:00:00Z')",
+            [MANAGER, first_target],
+        )
+        .unwrap();
+    let reader = Reader::new(dir.path().to_path_buf());
+
+    // Claimed once earlier and handed over again: two separate cards, latest note only on waiting card.
+    let while_waiting = state(&reader, &format!("/app/chats/{MANAGER}"));
+    assert_eq!(while_waiting["label"], "Claude");
+    let cards: Vec<_> = while_waiting["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "handover")
+        .collect();
+    assert_eq!(cards.len(), 2);
+    assert_eq!(
+        cards[0]["id"],
+        format!("{MANAGER}:handover:claim:{first_target}")
+    );
+    assert_eq!(cards[0]["time"], "2026-01-02T01:00:00Z");
+    assert_eq!(cards[0]["text"], "Claude 交出工作区，已由 Codex 接手");
+    assert_eq!(cards[0]["detail"], Value::Null);
+    assert_eq!(cards[1]["id"], format!("{MANAGER}:handover:pending"));
+    assert_eq!(cards[1]["time"], "2026-01-03T00:00:00Z");
+    assert_eq!(cards[1]["text"], "Claude 交出工作区，等待接手");
+    assert_eq!(cards[1]["detail"], "second note");
+
+    // Claimed a second time by a claude boss: pending card clears, both claim cards remain with stable IDs.
+    connection
+        .execute(
+            "UPDATE workspaces SET pending = 0, released = '2026-01-03T00:00:00Z' WHERE id = ?1",
+            [MANAGER],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspace_links (source_workspace, target_boss, target_workspace, target_host, claimed_at) \
+             VALUES (?1, ?2, NULL, 'claude', '2026-01-04T00:00:00Z')",
+            [MANAGER, second_target],
+        )
+        .unwrap();
+    let after_second = state(&reader, &format!("/app/chats/{MANAGER}"));
+    assert_eq!(after_second["handover_to"][1]["label"], "Claude");
+    let cards: Vec<_> = after_second["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "handover")
+        .collect();
+    assert_eq!(cards.len(), 2);
+    assert_eq!(
+        cards[0]["id"],
+        format!("{MANAGER}:handover:claim:{first_target}")
+    );
+    assert_eq!(cards[0]["detail"], Value::Null);
+    assert_eq!(
+        cards[1]["id"],
+        format!("{MANAGER}:handover:claim:{second_target}")
+    );
+    assert_eq!(cards[1]["time"], "2026-01-04T00:00:00Z");
+    assert_eq!(cards[1]["text"], "Claude 交出工作区，已由 Claude 接手");
+    assert_eq!(cards[1]["detail"], "second note");
+
+    // Source transcript resolving to Claude Desktop updates office header, mutual link, and handover cards together.
+    let desktop_file = dir.path().join("claude-desktop.jsonl");
+    fs::write(
+        &desktop_file,
+        "{\"type\":\"user\",\"entrypoint\":\"claude-desktop\"}\n",
+    )
+    .unwrap();
+    connection
+        .execute(
+            "UPDATE workspaces SET owner_file = ?1 WHERE id = ?2",
+            [desktop_file.to_str().unwrap(), MANAGER],
+        )
+        .unwrap();
+    let mut target_snap = task_snapshot("dst-two", "succeeded", "2026-01-05T00:00:00Z");
+    target_snap["summary"]["manager_session"] = json!(second_target);
+    target_snap["summary"]["host"] = json!("claude");
+    save(dir.path(), &target_snap);
+    connection
+        .execute(
+            "UPDATE conversations SET manager_session = ?1 WHERE id = 'dst-two'",
+            [second_target],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE workspace_links SET target_workspace = ?1 WHERE source_workspace = ?2 AND target_boss = ?1",
+            [second_target, MANAGER],
+        )
+        .unwrap();
+    let source_desktop = state(&reader, &format!("/app/chats/{MANAGER}"));
+    let target_office = state(&reader, &format!("/app/chats/{second_target}"));
+    assert_eq!(source_desktop["label"], "Claude 桌面");
+    assert_eq!(target_office["label"], "Claude");
+    assert_eq!(target_office["handover_from"][0]["label"], "Claude 桌面");
+    let desktop_cards: Vec<_> = source_desktop["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "handover")
+        .collect();
+    assert_eq!(
+        desktop_cards[0]["text"],
+        "Claude 桌面 交出工作区，已由 Codex 接手"
+    );
+    assert_eq!(
+        desktop_cards[1]["text"],
+        "Claude 桌面 交出工作区，已由 Claude 接手"
     );
 }
 

@@ -716,6 +716,13 @@ test("pending handover card shows takeover command, copy, and cancel only while 
   const [taken] = ui.context.tpDirectory({ group: "s-abc", title: "发版", label: "Codex", handover: "changed", conversations: [{ id: "c1" }], messages: [msg] }, ctx);
   assert.equal(taken.children.find(n => n?.tag === "div.tp-handover-next"), undefined);
 
+  const earlier = { id: "s-abc:handover:claim:s-1", kind: "handover", status: "claimed", time: "2026-11-13T12:00:00Z", text: "Claude 交出工作区，已由 Codex 接手", detail: null };
+  const waiting = { id: "s-abc:handover:pending", kind: "handover", status: "pending", time: "2026-11-14T12:00:00Z", text: "Claude 交出工作区，等待接手", detail: "note" };
+  const [first, second] = ui.context.tpDirectory({ group: "s-abc", title: "发版", label: "Claude", handover: "pending", conversations: [{ id: "c1" }], messages: [earlier, waiting] }, ctx);
+  assert.ok(first.children.find(n => n?.tag === "div.tp-handover-next"));
+  assert.equal(second.children.find(n => n?.tag === "div.tp-handover-next"), undefined);
+  assert.equal(second.children.find(n => n?.tag === "details.tp-card-note"), undefined);
+
   const en = auditUI(true);
   const [enCard] = en.context.tpDirectory({ group: "s-abc", title: "Release", label: "Claude Code", handover: "pending", conversations: [], messages: [msg] }, ctx);
   const enNext = enCard.children.find(n => n?.tag === "div.tp-handover-next");
