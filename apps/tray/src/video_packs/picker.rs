@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 #[cfg(target_os = "macos")]
-pub(super) fn choose(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+pub(crate) fn choose(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         // AppKit's modal panel and all borrowed Objective-C objects stay on the main thread.
@@ -40,6 +40,6 @@ pub(super) fn choose(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> 
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn choose(_app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
-    Err("此平台暂不支持选择视频包文件夹".into())
+pub(crate) fn choose(_app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+    Err("此平台暂不支持选择文件夹".into())
 }

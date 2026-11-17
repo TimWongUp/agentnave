@@ -3,7 +3,7 @@ mod download;
 #[cfg(target_os = "macos")]
 pub mod http;
 mod install;
-mod picker;
+pub(crate) mod picker;
 #[cfg(test)]
 mod tests;
 mod webm;

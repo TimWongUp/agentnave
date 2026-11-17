@@ -34,6 +34,8 @@ const ROUTE_REUSE: Duration = Duration::from_secs(30);
 include!(concat!(env!("OUT_DIR"), "/office_art.rs"));
 
 pub const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob: http://127.0.0.1:*; base-uri 'none'; frame-src 'self'; frame-ancestors 'self'";
+/// The terminal page alone also allows inline styles, which xterm.js needs (ADR-0101).
+pub const TERMINAL_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob: http://127.0.0.1:*; base-uri 'none'; frame-src 'self'; frame-ancestors 'self'";
 
 /// (mtime, size, content hash, parsed value) of one JSON file.
 type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);

@@ -6,9 +6,9 @@
 mod locate;
 mod probe;
 pub(crate) mod update;
-#[cfg(unix)] // Only the Unix copy actions run a host CLI outside detection.
-pub(crate) use probe::search_path;
+// The Unix copy actions and the embedded terminal run CLIs outside detection.
 use probe::*;
+pub(crate) use probe::{login_exec, search_path};
 
 pub(crate) use locate::standalone_codex;
 #[cfg(windows)]

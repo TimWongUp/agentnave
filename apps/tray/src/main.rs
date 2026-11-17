@@ -29,6 +29,7 @@ mod rules;
 mod settings;
 mod stage;
 mod storage;
+mod terminal;
 mod time_format;
 mod tool_dirs;
 mod uninstall;
@@ -46,7 +47,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, RunEvent};
 
 use data::snapshot::Overview;
-use data::{CSP, Reader};
+use data::{CSP, Reader, TERMINAL_CSP};
 use update::Updates;
 use window::{UPDATE_PAGE, WindowAction, WindowState};
 
@@ -90,6 +91,8 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
         && !(method == "POST"
             && ((cfg!(unix) && path == "/app/hosts/reload-copy")
                 || path.starts_with("/app/video-packs/")
+                // The embedded terminal runs the user's own CLI and writes no App data.
+                || path.starts_with("/app/terminal/")
                 || matches!(
                     path,
                     "/app/preferences"
@@ -142,7 +145,8 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .manage(preferences::runtime::Runtime::default());
+        .manage(preferences::runtime::Runtime::default())
+        .manage(terminal::Terminals::default());
     let app = register_protocol(builder, reader.clone())
         .manage(Tray {
             reader: reader.clone(),
@@ -172,6 +176,7 @@ fn main() {
             ..
         } if label == TRAY => uninstall::cancel(app),
         RunEvent::Exit => {
+            terminal::shutdown(app);
             preferences::runtime::shutdown(app);
             if let Some(window) = app.get_webview_window(TRAY) {
                 window::save_size(&window);
@@ -231,7 +236,7 @@ fn register_protocol(
         let reader = served.clone();
         let app = ctx.app_handle().clone();
         let path = match request.uri().path() {
-            "/app/storage/preview" => request
+            "/app/storage/preview" | "/app/terminal/output" => request
                 .uri()
                 .path_and_query()
                 .map(|path| path.as_str())
@@ -240,6 +245,12 @@ fn register_protocol(
             path => path.to_owned(),
         };
         let label = ctx.webview_label().to_owned();
+        // xterm.js lays out the terminal with <style> elements; scripts stay local everywhere.
+        let csp = if path.starts_with("/terminal/") {
+            TERMINAL_CSP
+        } else {
+            CSP
+        };
         let flag = |name: &str| {
             request
                 .uri()
@@ -272,7 +283,7 @@ fn register_protocol(
                 .header(header::CACHE_CONTROL, reply.cache_control)
                 .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
                 .header(header::REFERRER_POLICY, "no-referrer")
-                .header(header::CONTENT_SECURITY_POLICY, CSP)
+                .header(header::CONTENT_SECURITY_POLICY, csp)
                 .body(reply.body)
                 .expect("static response headers are valid");
             responder.respond(response);
@@ -416,6 +427,9 @@ impl ProtocolRequest {
             _ if reader.uninstalling() && method != "GET" && !path.starts_with("/app/window/") => {
                 response::Response::error(409, "卸载已开始，请完成卸载或重新打开 App")
             }
+            _ if path.starts_with("/app/terminal/") => {
+                terminal::request(app, method, path, action, self.request.body())
+            }
             ("GET", "/app/status") => response::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),
             // Whether the page's maximize button should read as maximize or restore.
@@ -535,6 +549,8 @@ mod tests {
             "/app/storage/preview?days=30"
         ));
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
+        assert!(!preview_refuses(true, "POST", "/app/terminal/start"));
+        assert!(!preview_refuses(true, "POST", "/app/terminal/input"));
         assert_eq!(
             preview_refuses(true, "POST", "/app/hosts/reload-copy"),
             !cfg!(unix)

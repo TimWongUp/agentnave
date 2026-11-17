@@ -1,0 +1,32 @@
+/* The terminal page: a toolbar to pick a CLI and a folder over one terminal card. The card's
+   colours come from the terminal theme in terminal.js, so its frame and the cells match. */
+html, body { height: 100%; }
+body.terminal-page { display: flex; flex-direction: column; margin: 0; overflow: hidden; background: var(--bg); color: var(--ink); }
+:root[data-embedded="true"] .bar { display: none; }
+
+.term-main { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px 18px 18px; }
+.term-tools { flex: none; display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.term-clis { display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.term-clis::-webkit-scrollbar { display: none; }
+.term-cli { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 6px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--soft); font: inherit; font-size: 12.5px; font-weight: 550; cursor: pointer; }
+.term-cli:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.term-cli[aria-checked="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--ink); }
+.term-cli:disabled { cursor: default; }
+.term-cli:disabled:not([aria-checked="true"]) { opacity: .4; }
+.term-cli img, .term-cli .host-letter { width: 18px; height: 18px; border-radius: 5px; }
+.term-cli .host-letter { display: grid; place-items: center; background: var(--card); font-size: 11px; }
+
+.term-folder { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 7px; height: 30px; margin-left: auto; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--soft); font: inherit; font-size: 12.5px; cursor: pointer; }
+.term-folder:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.term-folder:disabled { cursor: default; opacity: .6; }
+.term-folder svg { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.term-folder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.term-run { flex: none; min-width: 64px; height: 30px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.term-run[data-state="running"] { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.term-run:disabled { opacity: .45; cursor: default; }
+
+.term-card { flex: 1; min-height: 0; padding: 12px 6px 10px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--term-bg, var(--solid)); box-shadow: 0 1px 0 var(--hover) inset, 0 12px 32px -18px #0000008c; }
+.term { width: 100%; height: 100%; }
+.term .xterm-viewport { scrollbar-color: var(--scrollbar) transparent; }

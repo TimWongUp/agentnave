@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title data-en="AgentNave · Terminal">AgentNave · 终端</title>
+<link rel="stylesheet" href="/manage/theme.css">
+<link rel="stylesheet" href="/manage/manage.css">
+<link rel="stylesheet" href="/terminal/vendor/xterm.css">
+<link rel="stylesheet" href="/terminal/terminal.css">
+<script src="/chat/appearance.js" defer></script>
+<script src="/terminal/terminal.js" defer></script>
+<script src="/chat/common.js" defer></script>
+<script src="/terminal/vendor/xterm.js" defer></script>
+<script src="/terminal/vendor/addon-fit.js" defer></script>
+<script src="/terminal/vendor/addon-webgl.js" defer></script>
+</head>
+<body class="terminal-page">
+<header class="bar">
+  <a draggable="false" class="brand" href="/chat/"><span class="mark"><svg viewBox="0 0 44 44" aria-hidden="true"><path class="stem" d="M10 35V10L32 35V20"/><ellipse class="drop" cx="32" cy="10" rx="4" ry="4"/></svg></span>AgentNave</a>
+  <nav class="nav" aria-label="主导航" data-en-label="Main navigation">
+    <a draggable="false" href="/chat/" data-en="Office">办公室</a>
+    <a draggable="false" href="/settings/" data-en="Settings">设置</a>
+    <a draggable="false" href="/terminal/" aria-current="page" data-en="Terminal">终端</a>
+  </nav>
+</header>
+<main class="term-main">
+  <div class="term-tools">
+    <div id="term-clis" class="term-clis" role="radiogroup" aria-label="CLI"></div>
+    <button id="term-folder" class="term-folder" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 6.5a2 2 0 0 1 2-2h3.2l1.8 2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2z"/></svg><span id="term-folder-name"></span></button>
+    <button id="term-run" class="term-run" type="button" data-en="Start">启动</button>
+  </div>
+  <div class="term-card"><div id="term" class="term"></div></div>
+</main>
+</body>
+</html>

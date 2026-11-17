@@ -106,11 +106,54 @@ impl Reader {
         if let ["panel", resource] = parts.as_slice() {
             return panel_asset(resource);
         }
+        if let ["terminal", resource] = parts.as_slice() {
+            return terminal_asset(resource);
+        }
+        if let ["terminal", "vendor", resource] = parts.as_slice() {
+            return terminal_vendor(resource);
+        }
         match parts.as_slice() {
             [""] => page(CHAT_HTML),
             _ => Response::not_found(),
         }
     }
+}
+
+fn terminal_asset(resource: &str) -> Response {
+    let script = |bytes: &[u8]| Response::ok("text/javascript; charset=utf-8", bytes.to_vec());
+    match resource {
+        "" => page(include_bytes!("../../ui/terminal.html")),
+        "terminal.js" => script(include_bytes!("../../ui/terminal.js")),
+        "terminal.css" => Response::ok(
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/terminal.css").to_vec(),
+        ),
+        _ => Response::not_found(),
+    }
+}
+
+/// xterm.js as shipped on npm (ui/vendor/xterm/README.md).
+fn terminal_vendor(resource: &str) -> Response {
+    let (mime, bytes): (&'static str, &[u8]) = match resource {
+        "xterm.js" => (
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/vendor/xterm/xterm.js"),
+        ),
+        "addon-fit.js" => (
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/vendor/xterm/addon-fit.js"),
+        ),
+        "addon-webgl.js" => (
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/vendor/xterm/addon-webgl.js"),
+        ),
+        "xterm.css" => (
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/vendor/xterm/xterm.css"),
+        ),
+        _ => return Response::not_found(),
+    };
+    Response::ok(mime, bytes.to_vec())
 }
 
 fn settings_asset(resource: &str) -> Response {
@@ -213,6 +256,10 @@ fn chat_asset(resource: &str) -> Response {
         "office-settings.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/office-settings.js").to_vec(),
+        ),
+        "office-terminal.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/office-terminal.js").to_vec(),
         ),
         "chat-state.js" => Response::ok(
             "text/javascript; charset=utf-8",
