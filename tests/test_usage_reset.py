@@ -272,5 +272,10 @@ def test_quota_groups_record_match_and_clear(tmp_path: Path) -> None:
     assert provider_health.active(tmp_path) == {}
     provider_health.record(tmp_path, "codex", "quota", "one")
     assert provider_health.matching(provider_health.active(tmp_path), "codex", "two") is not None
+    assert provider_health.matching(provider_health.active(tmp_path), "codex", "trae-cn/x") is None
     assert provider_health.clear(tmp_path, "codex", "two")
     assert provider_health.active(tmp_path) == {}
+    provider_health.record(tmp_path, "codex", "quota", "trae-cn/x")
+    health = provider_health.active(tmp_path)
+    assert provider_health.matching(health, "codex", "trae-cn/x") is not None
+    assert provider_health.matching(health, "codex", "gpt-one") is None

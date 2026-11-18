@@ -31,7 +31,7 @@
 
 - 先 `cancel` 仍在运行的阻断任务，再用原 `session_id` 续接并传 `provider_options.model`；`provider` 不变。
 - 候选模型只取两处：该工位 `list_members` 里同 CLI 且 `available` 的 `fallbacks` 条目；用户点名 CLI 时取 `list_members(provider=...)` 的 `default` 模型。不自己挑档次，没有候选就跨 CLI 交接。
-- 同额度组的模型一起冷却：Codex 全部模型同组，额度耗尽时不适用；Antigravity 只有换到另一组（Gemini 与 Claude/GPT 之间）才有意义。同组续接会被服务拒绝，不要重试。
+- 同额度组的模型一起冷却：Codex 官方路由的模型（不带路由前缀，如 `gpt-*`）同组，换同组模型会被服务拒绝；经第三方路由的模型（`trae-cn/…`、`grok/…`、`google/…` 这类带前缀的）不在该组，可以换过去续接。Antigravity 只有换到另一组（Gemini 与 Claude/GPT 之间）才有意义。同组续接会被服务拒绝，不要重试。
 - 其他 CLI 服务只按单个模型记冷却，真实额度可能跨模型共享。换一次，同类阻断再出现就改走跨 CLI，不连续试。
 - 有工位的线程换模型后，之后每次续接都要重传同一个 `model`，否则服务按当前工位供模型，回到被阻断的主选；没有工位的线程沿用历史里的新模型。
 - Devin 的可选模型随账号和会话而异，被拒时按报错里的 available 重选；ZCode 要同时传 `effort`，`model` 用 `providerId/modelId`；Pi 的 `model` 带路线前缀，用完整串。
