@@ -1030,6 +1030,13 @@ All checks passed!
     const at = mockTerminals.findIndex((t) => t.id === id);
     if (route === "/app/terminal/stop" && at >= 0) mockTerminals[at].exit = 0;
     if (route === "/app/terminal/close" && at >= 0) mockTerminals.splice(at, 1);
+    if (route === "/app/terminal/restart" && at >= 0) {
+      const ended = mockTerminals[at];
+      const resumes = ended.workspaces.length && ["claude", "codex"].includes(ended.provider);
+      const session = { ...ended, id: Math.max(...mockTerminals.map((t) => t.id)) + 1, exit: null, workspaces: resumes ? ended.workspaces : [] };
+      mockTerminals.splice(at, 1, session);
+      return { session };
+    }
     return { ok: true };
   }
   async function p3Fetch(path) {

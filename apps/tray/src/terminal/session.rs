@@ -13,22 +13,31 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 pub(super) const KEPT: usize = 1 << 20;
 const READ_CHUNK: usize = 16 * 1024;
 
-/// What to start: the CLI's executable, provider-specific arguments, where, and size in cells.
+/// What to start: the CLI's executable, its arguments, where, and the page's size in cells.
 pub(crate) struct Launch {
     pub program: PathBuf,
-    pub args: &'static [&'static str],
+    pub args: Vec<String>,
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
 }
 
-/// Provider-specific startup flags appended as separate argv entries (ADR-0103).
-pub(super) fn cli_args(provider: &str) -> &'static [&'static str] {
-    match provider {
-        // Codex otherwise connects to a shared app-server daemon whose MCP sits outside this PTY tree.
-        "codex" => &["--no-daemon"],
-        _ => &[],
-    }
+/// The CLI's arguments, each its own argv entry (ADR-0103): Codex runs without the shared daemon,
+/// whose MCP servers sit outside this terminal's process tree, and `resume` names the chat to
+/// continue, for the CLIs that can.
+pub(super) fn cli_args(provider: &str, resume: Option<&str>) -> Vec<String> {
+    let args: Vec<&str> = match (provider, resume) {
+        ("codex", Some(id)) => vec!["resume", "--no-daemon", id],
+        ("codex", None) => vec!["--no-daemon"],
+        ("claude", Some(id)) => vec!["--resume", id],
+        _ => Vec::new(),
+    };
+    args.into_iter().map(str::to_owned).collect()
+}
+
+/// Whether `cli_args` can continue a chat of this CLI.
+pub(super) fn resumes(provider: &str) -> bool {
+    matches!(provider, "codex" | "claude")
 }
 
 /// Output from `from` on: the bytes start at `start`, which is later than `from` when older
@@ -74,7 +83,7 @@ pub(crate) struct Session {
 impl Session {
     pub(crate) fn spawn(launch: &Launch) -> Result<Arc<Self>, String> {
         Self::start(
-            command(&launch.program, launch.args, &launch.cwd),
+            command(&launch.program, &launch.args, &launch.cwd),
             launch.cols,
             launch.rows,
         )
@@ -249,7 +258,7 @@ pub(super) fn parent_session(name: &str) -> bool {
 
 /// The CLI started through the user's login shell, as in their own terminal, so it sees the PATH
 /// and keys set in shell startup files that an app started from the Dock lacks.
-pub(super) fn command(program: &Path, args: &[&str], cwd: &Path) -> CommandBuilder {
+pub(super) fn command(program: &Path, args: &[String], cwd: &Path) -> CommandBuilder {
     let shell = std::env::var_os("SHELL")
         .map(PathBuf::from)
         .filter(|shell| cfg!(unix) && shell.is_absolute());

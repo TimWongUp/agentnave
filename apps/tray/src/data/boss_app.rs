@@ -372,6 +372,30 @@ fn codex_rollout_id(stem: &str) -> Option<&str> {
     Some(tail)
 }
 
+/// The native ID of the boss chat with this key, to continue it in a terminal (ADR-0103): from the
+/// session record its workspace names, else from a sweep of the session folders. Only an ID whose
+/// key matches is returned, so a file name with more than one ID cannot pick another chat.
+pub(crate) fn native_session(host: &str, key: &str, file: Option<&Path>) -> Option<String> {
+    let id_of = |path: &Path| -> Option<String> {
+        let name = file_name(path);
+        let id = match host {
+            "claude" => name.strip_suffix(".jsonl").filter(|id| is_uuid(id)),
+            "codex" => name
+                .strip_suffix(".jsonl.zst")
+                .or_else(|| name.strip_suffix(".jsonl"))
+                .and_then(codex_rollout_id),
+            _ => None,
+        }?;
+        (boss_key(host, id) == key).then(|| id.to_owned())
+    };
+    file.and_then(id_of).or_else(|| {
+        sweep(&Homes::here())
+            .transcripts
+            .get(key)
+            .and_then(|path| id_of(path))
+    })
+}
+
 /// A boss chat's key: the service's `_boss`, which hashes `json.dumps([host, session])`.
 fn boss_key(host: &str, session: &str) -> String {
     let digest = Sha256::digest(format!("[\"{host}\", \"{session}\"]"));

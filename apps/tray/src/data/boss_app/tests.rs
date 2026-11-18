@@ -175,3 +175,25 @@ fn a_startup_miss_is_retried_when_probed_roots_arrive() {
         vec![(key, CODEX_DESKTOP)],
     );
 }
+
+/// A terminal continues a chat by the ID its session record names, only when that ID's key is the
+/// chat's own.
+#[test]
+fn a_chat_is_continued_by_the_id_whose_key_matches() {
+    let id = "01a1ef3a-944a-7fc1-b936-694b4760a644";
+    let key = boss_key("codex", id);
+    let rollout =
+        Path::new("/s/rollout-2026-11-18T23-15-56-01a1ef3a-944a-7fc1-b936-694b4760a644.jsonl");
+    assert_eq!(
+        native_session("codex", &key, Some(rollout)).as_deref(),
+        Some(id)
+    );
+    assert_eq!(native_session("codex", "s-other", Some(rollout)), None);
+    let claude = boss_key("claude", id);
+    let transcript = PathBuf::from(format!("/p/x/{id}.jsonl"));
+    assert_eq!(
+        native_session("claude", &claude, Some(&transcript)).as_deref(),
+        Some(id)
+    );
+    assert_eq!(native_session("grok", &claude, Some(&transcript)), None);
+}

@@ -6,6 +6,8 @@
 const ChatTerminal = (() => {
   const { h, L } = AN;
   const PREFIX = "term-";
+  // CLIs whose ended terminal can continue its chat (the App's cli_args).
+  const RESUMES = new Set(["claude", "codex"]);
   const t = {
     list: [],
     clis: null,
@@ -184,6 +186,15 @@ const ChatTerminal = (() => {
     await refresh();
     refreshOffice();
   }
+  // Continues the chat an ended terminal was the boss of, or starts its CLI afresh, in its place.
+  async function restart(id) {
+    const result = await reply(await act(`/app/terminal/restart?session=${id}`, ""));
+    if (!result) return;
+    await refresh();
+    if (state.loaded) t.terminal.set(state.loaded, true);
+    if (pendingId(state.selected) === id) return go(`/chat/${PREFIX}${result.session.id}`);
+    refreshOffice();
+  }
   function refreshOffice() {
     state.listKey = null;
     state.chatKey = null;
@@ -207,7 +218,10 @@ const ChatTerminal = (() => {
   };
   toMessages.addEventListener("click", switchTo(false));
   toTerminal.addEventListener("click", switchTo(true));
-  stopButton.addEventListener("click", () => t.owned != null && stop(t.owned));
+  stopButton.addEventListener("click", () => {
+    const x = byId(t.owned);
+    if (x) void (x.exit == null ? stop(x.id) : restart(x.id));
+  });
 
   function frame(id) {
     let f = t.frames.get(id);
@@ -229,7 +243,11 @@ const ChatTerminal = (() => {
     const term = x && on ? x : null;
     el.drawer.classList.toggle("term-mode", !!term);
     modes.hidden = !x;
-    stopButton.hidden = !x || x.exit != null;
+    // One place for the terminal's action: stop it while it runs, start it again once it ended.
+    const ended = x?.exit != null;
+    stopButton.hidden = !x;
+    stopButton.classList.toggle("start", ended);
+    setText(stopButton, !ended ? L("结束", "Stop") : x.workspaces.length && RESUMES.has(x.provider) ? L("续接", "Resume") : L("启动", "Start"));
     t.owned = x?.id ?? null;
     setAttr(toMessages, "aria-pressed", term ? "false" : "true");
     setAttr(toTerminal, "aria-pressed", term ? "true" : "false");

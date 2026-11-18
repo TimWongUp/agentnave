@@ -208,13 +208,18 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
 
 #[test]
 fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
-    assert_eq!(cli_args("codex"), ["--no-daemon"]);
-    assert!(cli_args("claude").is_empty());
-    assert!(cli_args("grok").is_empty());
+    assert_eq!(cli_args("codex", None), ["--no-daemon"]);
+    assert!(cli_args("claude", None).is_empty());
+    assert!(cli_args("grok", None).is_empty());
+    assert_eq!(
+        cli_args("codex", Some("id")),
+        ["resume", "--no-daemon", "id"]
+    );
+    assert_eq!(cli_args("claude", Some("id")), ["--resume", "id"]);
 
     let codex = command(
         Path::new("/usr/local/bin/codex"),
-        cli_args("codex"),
+        &cli_args("codex", None),
         Path::new("/tmp"),
     );
     let argv: Vec<String> = codex
@@ -234,7 +239,7 @@ fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
 
     let claude = command(
         Path::new("/usr/local/bin/claude"),
-        cli_args("claude"),
+        &cli_args("claude", None),
         Path::new("/tmp"),
     );
     let claude_argv: Vec<String> = claude

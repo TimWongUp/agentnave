@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
@@ -119,4 +119,26 @@ fn owned(connection: &rusqlite::Connection, bosses: &[String]) -> Vec<String> {
         remember(&mut workspaces, found);
     }
     workspaces
+}
+
+/// The boss chat of a workspace: its host, key and session record when the history knows them. A
+/// chat saved before workspaces were recorded is keyed by the workspace itself.
+pub(super) fn chat(root: &Path, workspace: &str) -> Option<(String, String, Option<PathBuf>)> {
+    let connection = crate::db::read(root).ok()??;
+    connection
+        .query_row(
+            "SELECT owner_host, owner, owner_file FROM workspaces WHERE id = ?1 \
+             UNION ALL SELECT host, manager_session, NULL FROM conversations \
+             WHERE manager_session = ?1 LIMIT 1",
+            [workspace],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .ok()
+        .and_then(|(host, key, file)| Some((host?, key, file.map(PathBuf::from))))
 }

@@ -91,6 +91,7 @@ pub(crate) fn request(
             })
         }),
         (_, "/app/terminal/close") => response::action(method, action, || terminals.close(id)),
+        (_, "/app/terminal/restart") => response::action(method, action, || terminals.restart(id)),
         _ => Response::not_found(),
     }
 }
@@ -174,17 +175,75 @@ impl Terminals {
         if !PROVIDERS.contains(&provider) {
             return Response::error(400, "未知的 CLI");
         }
+        let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
+        let (cols, rows) = cells(payload);
+        self.launch(provider, cwd, (cols, rows), None, Vec::new())
+    }
+
+    /// Starts an ended terminal's CLI again in its folder, in its place: continuing the chat it
+    /// was the boss of when its CLI can, else afresh as a new agent.
+    fn restart(&self, id: Option<u64>) -> Response {
+        let (provider, cwd, workspaces) = {
+            let state = self.lock();
+            let Some(running) = state.open.iter().find(|running| Some(running.id) == id) else {
+                return Response::error(404, "找不到这个终端");
+            };
+            if running.session.exit().is_none() {
+                return Response::error(409, "终端还在运行");
+            }
+            (
+                running.provider.clone(),
+                running.cwd.clone(),
+                running.workspaces.clone(),
+            )
+        };
+        let resume = workspaces
+            .last()
+            .filter(|_| session::resumes(&provider))
+            .map(|workspace| {
+                let (host, key, file) = links::chat(&crate::data_files::data_root(), workspace)
+                    .ok_or("找不到这段聊天的记录")?;
+                if host != provider {
+                    return Err("这段聊天不是这个 CLI 的");
+                }
+                crate::data::boss_app::native_session(&host, &key, file.as_deref())
+                    .ok_or("找不到这段聊天的会话记录")
+            })
+            .transpose();
+        let resume = match resume {
+            Ok(resume) => resume,
+            Err(error) => return Response::error(409, error),
+        };
+        // Continuing keeps the workspaces it was the boss of; a fresh start is a new agent.
+        let kept = if resume.is_some() {
+            workspaces
+        } else {
+            Vec::new()
+        };
+        let reply = self.launch(&provider, cwd, (100, 30), resume.as_deref(), kept);
+        if reply.status == 200 {
+            self.lock().open.retain(|running| Some(running.id) != id);
+        }
+        reply
+    }
+
+    fn launch(
+        &self,
+        provider: &str,
+        cwd: PathBuf,
+        (cols, rows): (u16, u16),
+        resume: Option<&str>,
+        workspaces: Vec<String>,
+    ) -> Response {
         let Some(program) = installed_path(provider) else {
             return Response::error(400, "这个 CLI 没有安装");
         };
-        let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
         if !cwd.is_absolute() || !cwd.is_dir() {
             return Response::error(400, "文件夹不存在");
         }
-        let (cols, rows) = cells(payload);
         let launch = Launch {
             program,
-            args: session::cli_args(provider),
+            args: session::cli_args(provider, resume),
             cwd: cwd.clone(),
             cols,
             rows,
@@ -201,7 +260,7 @@ impl Terminals {
             provider: provider.to_owned(),
             cwd,
             session,
-            workspaces: Vec::new(),
+            workspaces,
         };
         let described = running.describe();
         state.open.push(running);
