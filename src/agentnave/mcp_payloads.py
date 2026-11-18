@@ -233,12 +233,28 @@ class RoundPayload(TypedDict):
     error: NotRequired[str]
 
 
+class FollowUpPayload(TypedDict):
+    id: str  # invocation_id, round_id or isolated directory id
+    kind: Literal["task", "round", "isolation"]
+    status: str  # a task's failed/blocked, a round's failed/seat_lost, or the directory's state
+    message_id: NotRequired[str]  # a task's saved message, for read_conversation
+    session_id: NotRequired[str]  # a task's native session, to resume it
+    group_id: NotRequired[str]  # a round's meeting
+    seats: NotRequired[list[str]]  # a round's failed or blocked seats
+    path: NotRequired[str]  # an isolated directory's path
+    branch: NotRequired[str]
+
+
 class WaitPayload(TypedDict):
     reason: Literal["ready", "wait_elapsed", "nothing_pending"]
     pending_ids: list[str]
     all_finished: bool
     updates: list[InvocationPayload]
     rounds: list[RoundPayload]
+    # Only when all_finished closes an inbox wait: ends delivered by earlier waits that still need
+    # the boss, and isolated directories still unreleased. Each item is listed once.
+    follow_up: NotRequired[list[FollowUpPayload]]
+    follow_up_omitted: NotRequired[int]  # still queued; listed by the next closing wait
     next: NotRequired[str]
     seq: NotRequired[int]
 

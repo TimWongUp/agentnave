@@ -23,6 +23,7 @@ from agentnave.group import Round
 from agentnave.handover import handover_dispatch_warning
 from agentnave.isolated import ISOLATED_APPLIED
 from agentnave.manager_identity import model_warnings
+from agentnave.mcp_followup import settle_follow_up
 from agentnave.mcp_isolated import (
     IsolationInput,
     attach_unreleased_count,
@@ -716,6 +717,8 @@ async def wait(
     Inbox: omit ids, pass this chat's manager_session_id; increment seq for each call.
     Selected ids: continue with pending_ids; retaining finished ids rereads their results.
     all_finished means no unreceived ends remain in that scope, not that all succeeded.
+    follow_up (inbox wait closing at all_finished): bad ends delivered by earlier waits and
+    isolated dirs still unreleased, each listed once; handle before reporting.
 
     ready: handle each item's reason first. prompt_pending requires answer_prompt, once per
     prompt, still running. execution_blocked is still running, once per category.
@@ -735,6 +738,9 @@ async def wait(
             "session; use 0 or 270."
         )
     payload = await _receive(ids, include_output, wait_seconds, manager_session_id, ctx)
+    await settle_follow_up(
+        _conversations(ctx), payload, inbox=ids is None, manager_session_id=manager_session_id
+    )
     if seq is not None:
         payload["seq"] = seq
         if next_step := payload.get("next"):
