@@ -157,11 +157,10 @@ class _InvocationRecord:
             code = activity.blocking_error
             if code is not None and code not in self.reported_errors:
                 self.reported_errors.add(code)
-                if self.health_root is not None and (
-                    category := provider_health.classify(
-                        InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
-                    )
-                ):
+                category = provider_health.classify(
+                    InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
+                )
+                if self.health_root is not None and category:
                     provider_health.record(
                         self.health_root,
                         self.request.provider,
@@ -169,11 +168,10 @@ class _InvocationRecord:
                         provider_health.model_option(self.request.provider_options),
                         adapter.quota_reset(line, b"", datetime.now(UTC)),
                     )
-                self.pending_attention.append(
-                    InvocationError(
-                        code, "CLI reported an execution blocker; inspect or cancel the invocation."
-                    )
-                )
+                message = "CLI reported an execution blocker; inspect or cancel the invocation."
+                if category == "quota":
+                    message += " " + provider_health.QUOTA_RESUME_HINT
+                self.pending_attention.append(InvocationError(code, message))
                 self.attention_event.set()
             if activity.kind == "message" and activity.public_output:
                 # Delta events append; cumulative/final message events replace the current reply.

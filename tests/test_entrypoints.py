@@ -79,12 +79,13 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "    for _ in range(8):\n"
         "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'working '}}}), flush=True)\n"
         "        time.sleep(0.05)\n"
-        "if prompt == 'blocker' or prompt.endswith('\\nblocker'):\n"
+        "if prompt in ('blocker', 'quota blocker') or prompt.endswith('\\nblocker'):\n"
         "    for text in ['旧' * 1100, '新进展']:\n"
         "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':text}}}), flush=True)\n"
         "    print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'Bash','input':{'secret':'DO_NOT_RETURN'}}]}}), flush=True)\n"
         "    for _ in range(5):\n"
-        "        print(json.dumps({'type':'system','subtype':'api_retry','error':'authentication_failed'}), flush=True)\n"
+        "        error = 'insufficient_quota' if prompt == 'quota blocker' else 'authentication_failed'\n"
+        "        print(json.dumps({'type':'system','subtype':'api_retry','error':error}), flush=True)\n"
         "        time.sleep(0.05)\n"
         "    time.sleep(30)\n"
         "if prompt.endswith('take a nap'):\n"
@@ -2328,6 +2329,69 @@ async def test_cooldown_only_blocks_selected_model(
             "clear_provider_cooldown", {"provider": "claude", "model": "a"}
         )
         assert not cleared.is_error and provider_health.active(root) == {}
+
+
+@pytest.mark.asyncio
+async def test_quota_blocker_points_to_resuming_with_another_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.provider_health import QUOTA_RESUME_HINT
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    async with Client(mcp) as client:
+        started = await client.call_tool(
+            "start_agent", {"provider": "claude", "prompt": "quota blocker", "cwd": str(tmp_path)}
+        )
+        invocation_id = _payload(started.structured_content)["invocation_id"]
+        async with asyncio.timeout(10):
+            payload = _first(await client.call_tool("wait", {"ids": [invocation_id]}))
+        assert payload["reason"] == "execution_blocked"
+        error = _payload(payload["error"])
+        assert error["code"] == "insufficient_quota"
+        assert QUOTA_RESUME_HINT in str(error["message"])
+        await client.call_tool("cancel", {"id": invocation_id})
+
+
+@pytest.mark.asyncio
+async def test_resume_with_explicit_model_leaves_a_cooling_seat_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "data"))
+    root = tmp_path / "data"
+    root.mkdir()
+    (root / "orchestration.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "preset": "split",
+                "worker": {"easy": {"provider": "claude", "model": "seat-main"}},
+            }
+        )
+    )
+    async with Client(mcp) as client:
+        first = await _start_and_wait(client, cwd=str(tmp_path), seat="worker-easy")
+        assert first["model"] == "seat-main"
+        provider_health.record(root, "claude", "quota", "seat-main")
+        # 续接被冷却拒绝时，提示指向同 CLI 换模型，而不是 list_members 的跨 CLI replacement。
+        rejected = await client.call_tool(
+            "start_agent", {"prompt": "next", "session_id": "session-e2e"}
+        )
+        text = str(rejected.content)
+        assert rejected.is_error and "resume the same session_id" in text
+        assert "replacement" not in text
+        # 显式模型优先于工位当前模型；换模型后不传 model 的续接又回到被冷却的工位模型。
+        switched = await _start_and_wait(
+            client, session_id="session-e2e", provider_options={"model": "seat-other"}
+        )
+        assert switched["model"] == "seat-other"
+        assert "model" not in cast(list[str], switched["defaults_applied"])
+        back = await client.call_tool(
+            "start_agent", {"prompt": "again", "session_id": "session-e2e"}
+        )
+        assert back.is_error and "seat-main" in str(back.content)
 
 
 @pytest.mark.asyncio

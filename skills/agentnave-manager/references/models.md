@@ -24,3 +24,14 @@
 - 工位 `available` 省略即可用。新派发默认由服务按主选和备选顺位取第一个可用（「决策模型」档开启同档候选随机选时，自定义任务工位改为在当前可用候选中等概率随机挑一个，见 [决策模型档](decision.md)），只在启动前挑选，任务启动后才失败的不重试；`available=false` 只在全部顺位都不可用时出现。派发被拒绝、因 CLI 未安装启动失败或全部顺位不可用时，按主文件「CLI 与模型」用 `reason` 和 `replacement` 处理。`list_members` 始终确定性展示首个可用顺位：生效的是备选时工位带 `fallback_position`，`fallbacks` 列出用户配置的全部备选及各自的 `available` 和 `reason`。
 - CLI 或模型在冷却时该顺位不可用，同额度组的模型一起冷却：认证冷却持续到解除，配额按重置时间冷却（最长 8 天，取不到时冷却 1 小时），计费冷却 30 分钟。
 - 用户可在 App 解除冷却；仅当用户在当前对话明确要求解除时，调 `clear_provider_cooldown(provider=..., model=...)`，省略 `model` 解除该 CLI 全部冷却。
+
+## 配额阻断后的同 CLI 换模型续接
+
+长线程中途遇配额阻断（`execution_blocked`、`failed` 或续接被「cooling down」拒绝）时，先试同 CLI 换模型续接，再考虑跨 CLI 新开线程重交接：原会话已读的文件和上下文都在，不用重写简报。服务不会自动切换，模型由 boss 显式传入。
+
+- 先 `cancel` 仍在运行的阻断任务，再用原 `session_id` 续接并传 `provider_options.model`；`provider` 不变。
+- 候选模型只取两处：该工位 `list_members` 里同 CLI 且 `available` 的 `fallbacks` 条目；用户点名 CLI 时取 `list_members(provider=...)` 的 `default` 模型。不自己挑档次，没有候选就跨 CLI 交接。
+- 同额度组的模型一起冷却：Codex 全部模型同组，额度耗尽时不适用；Antigravity 只有换到另一组（Gemini 与 Claude/GPT 之间）才有意义。同组续接会被服务拒绝，不要重试。
+- 其他 CLI 服务只按单个模型记冷却，真实额度可能跨模型共享。换一次，同类阻断再出现就改走跨 CLI，不连续试。
+- 有工位的线程换模型后，之后每次续接都要重传同一个 `model`，否则服务按当前工位供模型，回到被阻断的主选；没有工位的线程沿用历史里的新模型。
+- Devin 的可选模型随账号和会话而异，被拒时按报错里的 available 重选；ZCode 要同时传 `effort`，`model` 用 `providerId/modelId`；Pi 的 `model` 带路线前缀，用完整串。

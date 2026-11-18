@@ -162,13 +162,36 @@ def quota_group(provider: str, model: str) -> str | None:
         return None
 
 
-def reason(provider: str, health: Health, model: str | None = None) -> str:
+# 配额阻断时给 boss 的去向：先在同 CLI 其他未冷却额度组的模型上原位续接，再考虑跨 CLI 交接。
+QUOTA_RESUME_HINT = (
+    "If this CLI has another model in a quota group that is not cooling down, cancel and resume "
+    "the same session_id with provider_options.model set to it "
+    "(see agentnave-manager references/models.md); otherwise hand the work over to another CLI."
+)
+
+
+def blocker_hint(code: str) -> str:
+    """The quota hint for a blocker known only by its code, with a leading space; else empty."""
+    if classify(InvocationStatus.BLOCKED, code, None, [code]) == "quota":
+        return " " + QUOTA_RESUME_HINT
+    return ""
+
+
+def reason(provider: str, health: Health, model: str | None = None, *, resume: bool = False) -> str:
     target = f"{provider} CLI" + (f" model {model}" if model else "")
     duration = f"until {health['until']}" if health["until"] else "until cleared"
+    # 续接的是原生会话：换 CLI 会丢上下文，所以不指向 list_members 的跨 CLI replacement。
+    next_step = (
+        "To keep this thread's context, resume the same session_id with provider_options.model "
+        "set to another model of this CLI that is not cooling down (models in the same quota "
+        "group cool down together; see agentnave-manager references/models.md); if none is "
+        "available, hand the work over to another CLI. "
+        if resume
+        else "See list_members for a replacement. "
+    )
     return (
         f"{target} recently reported {health['code']}; cooling down {duration}. "
-        "See list_members for a replacement. The user can clear it in App, "
-        "or ask you to call clear_provider_cooldown."
+        f"{next_step}The user can clear it in App, or ask you to call clear_provider_cooldown."
     )
 
 
@@ -177,11 +200,11 @@ def model_option(options: dict[str, Any] | Any) -> str | None:
     return model if isinstance(model, str) and model else None
 
 
-def check(root: Path, providers: Iterable[tuple[str, str | None]]) -> None:
+def check(root: Path, providers: Iterable[tuple[str, str | None]], *, resume: bool = False) -> None:
     health = active(root)
     for provider, model in providers:
         if match := matching(health, provider, model):
-            raise ValueError(reason(provider, match[1], match[0]))
+            raise ValueError(reason(provider, match[1], match[0], resume=resume))
 
 
 def record(
