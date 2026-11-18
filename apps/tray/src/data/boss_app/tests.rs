@@ -185,15 +185,31 @@ fn a_chat_is_continued_by_the_id_whose_key_matches() {
     let rollout =
         Path::new("/s/rollout-2026-11-18T23-15-56-01a1ef3a-944a-7fc1-b936-694b4760a644.jsonl");
     assert_eq!(
-        native_session("codex", &key, Some(rollout)).as_deref(),
+        native_session("codex", &key, Some(rollout))
+            .map(|found| found.0)
+            .as_deref(),
         Some(id)
     );
     assert_eq!(native_session("codex", "s-other", Some(rollout)), None);
     let claude = boss_key("claude", id);
     let transcript = PathBuf::from(format!("/p/x/{id}.jsonl"));
     assert_eq!(
-        native_session("claude", &claude, Some(&transcript)).as_deref(),
+        native_session("claude", &claude, Some(&transcript))
+            .map(|found| found.0)
+            .as_deref(),
         Some(id)
     );
     assert_eq!(native_session("grok", &claude, Some(&transcript)), None);
+}
+
+#[test]
+fn a_chat_runs_again_in_the_folder_its_record_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("x.jsonl");
+    fs::write(
+        &record,
+        "{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/work/app\"}}\n",
+    )
+    .unwrap();
+    assert_eq!(session_cwd(&record), Some(PathBuf::from("/work/app")));
 }

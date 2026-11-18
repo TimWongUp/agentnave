@@ -92,6 +92,14 @@ pub(crate) fn request(
         }),
         (_, "/app/terminal/close") => response::action(method, action, || terminals.close(id)),
         (_, "/app/terminal/restart") => response::action(method, action, || terminals.restart(id)),
+        (_, "/app/terminal/resume") => {
+            let workspace = query
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("workspace="))
+                .unwrap_or_default()
+                .to_owned();
+            response::action(method, action, || terminals.resume(&workspace))
+        }
         _ => Response::not_found(),
     }
 }
@@ -200,15 +208,7 @@ impl Terminals {
         let resume = workspaces
             .last()
             .filter(|_| session::resumes(&provider))
-            .map(|workspace| {
-                let (host, key, file) = links::chat(&crate::data_files::data_root(), workspace)
-                    .ok_or("找不到这段聊天的记录")?;
-                if host != provider {
-                    return Err("这段聊天不是这个 CLI 的");
-                }
-                crate::data::boss_app::native_session(&host, &key, file.as_deref())
-                    .ok_or("找不到这段聊天的会话记录")
-            })
+            .map(|workspace| chat_session(workspace, &provider).map(|(id, _)| id))
             .transpose();
         let resume = match resume {
             Ok(resume) => resume,
@@ -223,6 +223,42 @@ impl Terminals {
         let reply = self.launch(&provider, cwd, (100, 30), resume.as_deref(), kept);
         if reply.status == 200 {
             self.lock().open.retain(|running| Some(running.id) != id);
+        }
+        reply
+    }
+
+    /// Continues the chat of a workspace that has no terminal here, in the folder it ran in. A
+    /// chat already open in a terminal here is not started twice.
+    fn resume(&self, workspace: &str) -> Response {
+        {
+            let state = self.lock();
+            let open = state.open.iter().find(|running| {
+                running.session.exit().is_none()
+                    && running.workspaces.last().map(String::as_str) == Some(workspace)
+            });
+            if let Some(running) = open {
+                return Response::json(&json!({"session": running.describe()}));
+            }
+        }
+        let Some((host, _, _)) = links::chat(&crate::data_files::data_root(), workspace) else {
+            return Response::error(404, "找不到这段聊天的记录");
+        };
+        let (id, record) = match chat_session(workspace, &host) {
+            Ok(found) => found,
+            Err(error) => return Response::error(409, error),
+        };
+        let Some(cwd) = crate::data::boss_app::session_cwd(&record) else {
+            return Response::error(409, "会话记录里没有它的文件夹");
+        };
+        let reply = self.launch(&host, cwd, (100, 30), Some(&id), vec![workspace.to_owned()]);
+        if reply.status == 200 {
+            // An ended terminal of this chat gives way to the new one.
+            let mut state = self.lock();
+            let latest = state.started;
+            state.open.retain(|running| {
+                running.id == latest
+                    || running.workspaces.last().map(String::as_str) != Some(workspace)
+            });
         }
         reply
     }
@@ -314,6 +350,21 @@ impl Terminals {
         ];
         reply
     }
+}
+
+/// The native ID and session record of a workspace's boss chat, when its CLI is `provider` and
+/// can continue it.
+fn chat_session(workspace: &str, provider: &str) -> Result<(String, PathBuf), &'static str> {
+    if !session::resumes(provider) {
+        return Err("这个 CLI 还不能在 App 里续接");
+    }
+    let (host, key, file) =
+        links::chat(&crate::data_files::data_root(), workspace).ok_or("找不到这段聊天的记录")?;
+    if host != provider {
+        return Err("这段聊天不是这个 CLI 的");
+    }
+    crate::data::boss_app::native_session(&host, &key, file.as_deref())
+        .ok_or("找不到这段聊天的会话记录")
 }
 
 fn cells(payload: &Value) -> (u16, u16) {

@@ -372,11 +372,16 @@ fn codex_rollout_id(stem: &str) -> Option<&str> {
     Some(tail)
 }
 
-/// The native ID of the boss chat with this key, to continue it in a terminal (ADR-0103): from the
-/// session record its workspace names, else from a sweep of the session folders. Only an ID whose
-/// key matches is returned, so a file name with more than one ID cannot pick another chat.
-pub(crate) fn native_session(host: &str, key: &str, file: Option<&Path>) -> Option<String> {
-    let id_of = |path: &Path| -> Option<String> {
+/// The native ID of the boss chat with this key and its session record, to continue it in a
+/// terminal (ADR-0103): from the record its workspace names, else from a sweep of the session
+/// folders. Only an ID whose key matches is returned, so a file name with more than one ID cannot
+/// pick another chat.
+pub(crate) fn native_session(
+    host: &str,
+    key: &str,
+    file: Option<&Path>,
+) -> Option<(String, PathBuf)> {
+    let id_of = |path: &Path| -> Option<(String, PathBuf)> {
         let name = file_name(path);
         let id = match host {
             "claude" => name.strip_suffix(".jsonl").filter(|id| is_uuid(id)),
@@ -386,7 +391,7 @@ pub(crate) fn native_session(host: &str, key: &str, file: Option<&Path>) -> Opti
                 .and_then(codex_rollout_id),
             _ => None,
         }?;
-        (boss_key(host, id) == key).then(|| id.to_owned())
+        (boss_key(host, id) == key).then(|| (id.to_owned(), path.to_owned()))
     };
     file.and_then(id_of).or_else(|| {
         sweep(&Homes::here())
@@ -394,6 +399,18 @@ pub(crate) fn native_session(host: &str, key: &str, file: Option<&Path>) -> Opti
             .get(key)
             .and_then(|path| id_of(path))
     })
+}
+
+/// The folder a boss chat ran in, from the start of its session record: Claude Code and Codex
+/// both write it there, and a CLI finds the chat to continue by it.
+pub(crate) fn session_cwd(path: &Path) -> Option<PathBuf> {
+    let mut chunk = Vec::new();
+    fs::File::open(path)
+        .ok()?
+        .take(WINDOW)
+        .read_to_end(&mut chunk)
+        .ok()?;
+    value_of(&chunk, b"\"cwd\":\"", false).map(PathBuf::from)
 }
 
 /// A boss chat's key: the service's `_boss`, which hashes `json.dumps([host, session])`.

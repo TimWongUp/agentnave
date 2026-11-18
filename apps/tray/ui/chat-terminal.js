@@ -195,6 +195,14 @@ const ChatTerminal = (() => {
     if (pendingId(state.selected) === id) return go(`/chat/${PREFIX}${result.session.id}`);
     refreshOffice();
   }
+  // Continues a workspace's chat in a new terminal, in the folder it ran in.
+  async function resume(group) {
+    const result = await reply(await act(`/app/terminal/resume?workspace=${encodeURIComponent(group)}`, ""));
+    if (!result) return;
+    t.terminal.set(group, true);
+    await refresh();
+    refreshOffice();
+  }
   function refreshOffice() {
     state.listKey = null;
     state.chatKey = null;
@@ -221,6 +229,7 @@ const ChatTerminal = (() => {
   stopButton.addEventListener("click", () => {
     const x = byId(t.owned);
     if (x) void (x.exit == null ? stop(x.id) : restart(x.id));
+    else if (t.resumable) void resume(t.resumable);
   });
 
   function frame(id) {
@@ -244,10 +253,11 @@ const ChatTerminal = (() => {
     el.drawer.classList.toggle("term-mode", !!term);
     modes.hidden = !x;
     // One place for the terminal's action: stop it while it runs, start it again once it ended.
+    // Without a terminal here, a chat its CLI can continue offers to, in the same place.
     const ended = x?.exit != null;
-    stopButton.hidden = !x;
-    stopButton.classList.toggle("start", ended);
-    setText(stopButton, !ended ? L("结束", "Stop") : x.workspaces.length && RESUMES.has(x.provider) ? L("续接", "Resume") : L("启动", "Start"));
+    stopButton.hidden = !x && !t.resumable;
+    stopButton.classList.toggle("start", !x || ended);
+    setText(stopButton, !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束", "Stop"));
     t.owned = x?.id ?? null;
     setAttr(toMessages, "aria-pressed", term ? "false" : "true");
     setAttr(toTerminal, "aria-pressed", term ? "true" : "false");
@@ -271,7 +281,7 @@ const ChatTerminal = (() => {
   }
   // After the conversation column is drawn for `group`: its terminal, shown unless the messages
   // were asked for.
-  function column(group) {
+  function column(group, host) {
     const agent = byId(pendingId(group));
     if (agent) {
       el.drawer.hidden = false;
@@ -280,6 +290,7 @@ const ChatTerminal = (() => {
       el.convToggle.hidden = true;
     }
     const x = agent || ofWorkspace(group);
+    t.resumable = !x && RESUMES.has(host) ? group : null;
     show(x, t.terminal.get(group) ?? true);
   }
   // Opening a desk, a room or everything is asking to read: the column turns to the messages.

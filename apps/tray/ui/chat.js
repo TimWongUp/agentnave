@@ -602,7 +602,7 @@ function renderAll(c, newGroup = false) {
   const n = counts(c);
   renderHead(c, n);
   renderConv(c, ctx);
-  ChatTerminal.column(c.group);
+  ChatTerminal.column(c.group, c.host);
   renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);

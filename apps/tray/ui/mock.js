@@ -1030,6 +1030,12 @@ All checks passed!
     const at = mockTerminals.findIndex((t) => t.id === id);
     if (route === "/app/terminal/stop" && at >= 0) mockTerminals[at].exit = 0;
     if (route === "/app/terminal/close" && at >= 0) mockTerminals.splice(at, 1);
+    if (route === "/app/terminal/resume") {
+      const workspace = new URLSearchParams(path.split("?")[1] || "").get("workspace");
+      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: "claude", cwd: "/work/app", exit: null, active: false, workspaces: [workspace], project_key: "/work/app" };
+      mockTerminals.push(session);
+      return { session };
+    }
     if (route === "/app/terminal/restart" && at >= 0) {
       const ended = mockTerminals[at];
       const resumes = ended.workspaces.length && ["claude", "codex"].includes(ended.provider);
