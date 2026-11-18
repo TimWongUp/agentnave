@@ -79,7 +79,7 @@ el.convToggle.addEventListener("click", () => {
 function renderSideToggle() {
   const L = AN.L || ((zh) => zh);
   const shut = state.sideCollapsed;
-  const label = shut ? L("显示工作区列表", "Show workspace list") : L("隐藏工作区列表", "Hide workspace list");
+  const label = shut ? L("显示项目列表", "Show project list") : L("隐藏项目列表", "Hide project list");
   if (el.app.dataset.side !== (shut ? "off" : "on")) el.app.dataset.side = shut ? "off" : "on";
   setAttr(el.sideToggle, "aria-expanded", shut ? "false" : "true");
   setAttr(el.sideToggle, "aria-label", label);
@@ -542,14 +542,14 @@ function showBlank(kind) {
   state.drawer = { kind: "all" };
   const text = {
     nogroups: [
-      L("还没有工作区", "No workspaces yet"),
+      L("还没有 agent", "No agents yet"),
       L("在 boss（Claude Code、Codex CLI 等宿主里的 Agent）里派出任务或开始会议，对应的办公室会自动出现在这里。", "Dispatch a task or start a meeting from boss (your agent in Claude Code, Codex CLI, or another host) and its office will appear here automatically."),
     ],
     pick: [
-      L("选一个工作区开始查看", "Select a workspace"),
-      L("左侧是每个 boss 会话的工作区，进行中的排在最前面。", "Workspaces for each boss session are listed on the left, with active ones first."),
+      L("选一个 agent 开始查看", "Select an agent"),
+      L("左侧按项目列出每个 boss 会话的 agent，进行中的排在最前面。", "Agents for each boss session are listed by project on the left, with active ones first."),
     ],
-    missing: [L("找不到这个工作区", "Workspace not found"), L("它可能已被删除。", "It may have been deleted.")],
+    missing: [L("找不到这个 agent", "Agent not found"), L("它可能已被删除。", "It may have been deleted.")],
     loading: [L("正在读取办公室…", "Loading office…"), ""],
     error: [L("无法读取办公室", "Failed to load office"), L("正在重试，请稍候。", "Retrying, please wait.")],
   }[kind];
@@ -558,7 +558,7 @@ function showBlank(kind) {
       h("strong", {}, text[0]),
       h("p", {}, text[1]),
       kind === "missing" &&
-        h("a.blank-link", { href: href("/chat/") }, L("回到工作区列表", "Back to workspaces")),
+        h("a.blank-link", { href: href("/chat/") }, L("回到项目列表", "Back to projects")),
     ].filter(Boolean),
   );
   el.jump.hidden = true;
@@ -648,6 +648,7 @@ async function refresh() {
     }
     el.banner.hidden = true;
     await ChatTerminal.refresh();
+    state.projects = chats.projects || [];
     state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
     const followed = ChatTerminal.follow(state.selected);
     if (followed !== state.selected) {
@@ -661,7 +662,7 @@ async function refresh() {
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([state.groupsData, state.selected, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, state.projects, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();

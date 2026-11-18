@@ -93,8 +93,8 @@ function renderHead(c, n) {
     state.headKey = c.group;
     const back = h(
       "a.back",
-      { href: href("/chat/"), "aria-label": L("返回工作区列表", "Back to workspaces") },
-      L("‹ 工作区", "‹ Workspaces"),
+      { href: href("/chat/"), "aria-label": L("返回项目列表", "Back to projects") },
+      L("‹ 项目", "‹ Projects"),
     );
     back.addEventListener("click", (e) => {
       e.preventDefault();
@@ -234,7 +234,7 @@ function handoverParts(c) {
         group: item.group,
       });
     } else if (item.status === "cleaned") {
-      parts.push({ text: L("接手自原工作区（已清理）", "Taken over from cleaned workspace") });
+      parts.push({ text: L("接手自原 agent（已清理）", "Taken over from cleaned agent") });
     }
   }
   for (const item of c.handover_to || []) {

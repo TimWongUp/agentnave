@@ -124,7 +124,7 @@ function tpDirectory(c, ctx) {
       weight: awaiting ? 0 : 2,
       time: m.time,
       tag: AN.L("交接", "Handover"),
-      title: m.speaker?.label || AN.L("工作区交接", "Workspace handover"),
+      title: m.speaker?.label || AN.L("agent 交接", "Agent handover"),
       faces: [],
       meta: "",
       line: m.text,

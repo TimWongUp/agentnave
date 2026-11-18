@@ -73,7 +73,7 @@ impl Machine {
         classify(
             &cwd.as_ref().to_string_lossy(),
             &self.env,
-            &mut self.memory.borrow_mut(),
+            Some(&mut self.memory.borrow_mut()),
         )
     }
 
@@ -501,4 +501,52 @@ fn a_record_that_could_not_be_saved_is_written_on_the_next_try() {
     std::fs::remove_file(&config).unwrap();
     memory.remember(&cwd, &root);
     assert!(config.join(super::memory::FILE).is_file());
+}
+
+#[test]
+fn manual_projects_persist_deduplicate_and_remove_cleanly() {
+    let machine = Machine::new();
+    machine.make("home/Code/repo/.git/worktrees/wt");
+    machine.write("home/Code/repo/.git/worktrees/wt/commondir", "../..\n");
+    machine.write("home/Code/wt/.git", "gitdir: ../repo/.git/worktrees/wt\n");
+    machine.make("home/Code/wt/sub");
+    machine.make("home/Code/existing/.git");
+    let config = machine.base.join("tray-config");
+
+    // Worktree subdirectory resolves to the main repository project.
+    let wt_proj = machine.project(machine.home().join("Code/wt/sub"));
+    assert_eq!(wt_proj.label, "repo");
+    let existing_proj = machine.project(machine.home().join("Code/existing"));
+    let existing = BTreeSet::from([existing_proj.key.clone()]);
+
+    let (entry, added, all) = super::manual::add(&config, wt_proj.clone(), &existing).unwrap();
+    assert!(added);
+    assert_eq!(entry.key, wt_proj.key);
+    assert_eq!(all.len(), 1);
+
+    // Persists across reads and deduplicates a second add of the same project.
+    assert_eq!(super::manual::list(&config).len(), 1);
+    let (_, added_again, all_again) =
+        super::manual::add(&config, wt_proj.clone(), &existing).unwrap();
+    assert!(!added_again);
+    assert_eq!(all_again.len(), 1);
+
+    // An existing auto-derived project is not written into manual-projects.json.
+    let (_, added_existing, all_after_existing) =
+        super::manual::add(&config, existing_proj, &existing).unwrap();
+    assert!(!added_existing);
+    assert_eq!(all_after_existing.len(), 1);
+
+    // Scratch / bare folders (OTHER) are rejected.
+    assert!(super::manual::add(&config, Project::other(), &existing).is_err());
+
+    // Removing deletes only the manual record, not the repository directory.
+    let (removed, remaining) = super::manual::remove(&config, &wt_proj.key).unwrap();
+    assert!(removed);
+    assert!(remaining.is_empty());
+    assert!(super::manual::list(&config).is_empty());
+    assert!(machine.home().join("Code/repo").is_dir());
+
+    let (removed_missing, _) = super::manual::remove(&config, &wt_proj.key).unwrap();
+    assert!(!removed_missing);
 }

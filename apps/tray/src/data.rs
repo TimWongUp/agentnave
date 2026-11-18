@@ -56,6 +56,7 @@ type RouteKey = (
     Vec<crate::isolated::Dir>,
     Vec<(String, crate::projects::Project)>,
     Vec<crate::stage::WorkspaceLink>,
+    Vec<crate::projects::ManualProject>,
 );
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
@@ -74,6 +75,7 @@ type Merged = (Arc<Value>, Arc<Value>, Option<String>, Arc<Value>);
 pub struct Reader {
     uninstalling: std::sync::atomic::AtomicBool,
     root: PathBuf,
+    projects_dir: PathBuf,
     hosts: Mutex<Option<crate::hosts::Hosts>>,
     boss_homes: Mutex<boss_app::Homes>,
     tools: Arc<Mutex<Option<crate::tool_dirs::ToolDirs>>>,
@@ -93,9 +95,15 @@ pub struct Reader {
 
 impl Reader {
     pub fn new(root: PathBuf) -> Self {
+        let projects_dir = if cfg!(test) {
+            root.join("tray-config")
+        } else {
+            crate::preferences::dir()
+        };
         Self {
             uninstalling: std::sync::atomic::AtomicBool::new(false),
             root,
+            projects_dir,
             hosts: Mutex::new(None),
             boss_homes: Mutex::new(boss_app::Homes::here()),
             tools: Arc::default(),
@@ -263,6 +271,11 @@ impl Reader {
             &crate::stage::origin_cwds(&snapshots, &handover_map),
             complete,
         );
+        let manual_projects = if path == "/app/chats" {
+            crate::projects::manual::list(&self.projects_dir)
+        } else {
+            Vec::new()
+        };
         let (sources, stage_ids, key_handovers, key_apps, key_links, views) =
             if let Some(group_id) = crate::stage::requested_group(path) {
                 dirs.retain(|dir| dir.workspace == group_id);
@@ -317,6 +330,7 @@ impl Reader {
             dirs.clone(),
             projects.clone().into_iter().collect(),
             key_links,
+            manual_projects.clone(),
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -335,6 +349,7 @@ impl Reader {
                 dirs: &dirs,
                 projects: &projects,
                 links: &links,
+                manual_projects: &manual_projects,
             },
         );
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.

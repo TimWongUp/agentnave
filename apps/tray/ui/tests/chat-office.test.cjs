@@ -881,7 +881,7 @@ test("linked handover workspaces keep boss character intact and render plain sta
     handover_from: [{ status: "cleaned" }],
     messages: [],
   });
-  assert.deepEqual(app.rec.state.children, ["接手自原工作区（已清理）"]);
+  assert.deepEqual(app.rec.state.children, ["接手自原 agent（已清理）"]);
 
   const en = linkedOffice(true);
   en.update({
@@ -946,7 +946,7 @@ test("cleanup respects handover_ms, pending state, and expired empty_claimed wor
   await new Promise(r => setImmediate(r));
   // 30d default: s-recent-claim (10d claim), s-pending, s-empty-pending are excluded; s-old and s-empty-old qualify.
   const countLine = dialogNode.children.find(n => n?.tag === "p.act-note" && String(n.textContent).includes("没有动静。"));
-  assert.match(countLine.textContent, /有 2 个工作区超过 30 天没有动静/);
+  assert.match(countLine.textContent, /有 2 个 agent 超过 30 天没有动静/);
   const nextBtn = dialogNode.children.at(-1).children.at(-1);
   nextBtn.listeners.click();
   await new Promise(r => setImmediate(r));
@@ -986,7 +986,7 @@ test("ChatTerminal matches only the latest confirmed workspace and keeps exited 
     el: {
       drawer, drAll, tl, drIco: node("span"), drTitle: node("span"), drSub: node("span"), convToggle: node("button"),
     },
-    state: { loaded: null, groupBy: "project", convCollapsed: false },
+    state: { loaded: null, convCollapsed: false },
     Actions: { openMenu() {}, say() {} },
     go() {},
     setText: (el, v) => { el.textContent = v; },
@@ -1026,4 +1026,227 @@ test("ChatTerminal matches only the latest confirmed workspace and keeps exited 
   ChatTerminal.column("ws-curr");
   assert.equal(modes.hidden, false);
   assert.equal(ChatTerminal.follow("term-1"), "ws-new");
+  const recProject = { el: node("button"), section: { key: "/repo/a", pinned: false } };
+  ChatTerminal.headAction(recProject);
+  assert.equal(recProject.add.hidden, false);
+  const recPinned = { el: node("button"), section: { key: ":handover", pinned: true } };
+  ChatTerminal.headAction(recPinned);
+  assert.equal(recPinned.add.hidden, true);
+});
+
+test("sidebar ignores legacy groupBy storage, renders empty manual projects, reveals hidden added projects, and restricts remove menu", () => {
+  const classes = (set = new Set()) => ({
+    set,
+    add: (...names) => names.forEach(n => set.add(n)),
+    remove: (...names) => names.forEach(n => set.delete(n)),
+    toggle: (name, on) => (on ? set.add(name) : set.delete(name)),
+    contains: name => set.has(name),
+  });
+  const makeNode = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [],
+    classList: classes(), listeners: {},
+    setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+    append(...items) { this.children.push(...items.flat()); },
+    replaceChildren(...items) { this.children = items.flat(); },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    scrollIntoView() {},
+    closest: () => null,
+  });
+  const h = (tag, attrs = {}, ...children) => {
+    const el = Object.assign(makeNode(tag), {
+      attributes: { ...attrs },
+      children: children.flat(Infinity).filter(x => x != null && x !== false),
+    });
+    return el;
+  };
+  const els = new Map([["app", makeNode("div")], ["list", makeNode("div")]]);
+  const storage = new Map([
+    ["agentnave.office.groupBy", "boss"],
+    ["agentnave.office.fold.project:/w/deep", "1"],
+  ]);
+  const menuCalls = [];
+  const context = vm.createContext({
+    AN: {
+      h, $: id => els.get(id) || makeNode(id), L: zh => zh,
+      load: async () => ({}), href: p => p, GROUP: { idle: ["空闲", "idle"] },
+      pick: (_map, key) => ["空闲", key || "idle"], urgent: s => s === "running",
+      avatar: () => makeNode("span"), colorClass: () => "c0", relTime: () => "刚刚",
+      clock: () => "", fullTime: () => "", dayLabel: () => "",
+      setText: (el, v) => { el.textContent = v == null ? "" : String(v); },
+      setAttr: (el, k, v) => el.setAttribute(k, v),
+      setClass: (el, v) => { el.className = v; },
+      reconcile: (parent, nodes) => { parent.children = [...nodes]; },
+      stickyOrder: items => items, poll() {}, plain: x => x,
+      art: { character: () => "c" }, hostTile: () => makeNode("span"),
+      deskName: () => "", deskParts: () => [], handleOf: () => "", fullHandle: () => "",
+      cliOf: () => "", chatName: g => g.title || g.group, shownName: g => g.title || g.group,
+      activities: () => [], ongoing: s => s || "idle",
+    },
+    localStorage: {
+      getItem: k => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, v),
+      removeItem: k => storage.delete(k),
+    },
+    window: null,
+    document: { addEventListener() {}, documentElement: { lang: "zh" } },
+    location: { search: "", pathname: "/", hash: "" },
+    history: { pushState() {}, replaceState() {} },
+    ChatTerminal: {
+      headAction(rec) { rec.add ||= makeNode("span.gl-grp-add"); },
+      decorate() {},
+      menu() { return false; },
+    },
+    Actions: {
+      picked: new Set(), pick: () => false, workspaceMenu() {},
+      projectMenu(section) { menuCalls.push(section.key); },
+    },
+    addEventListener() {},
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    Avatars: null,
+    requestAnimationFrame() {}, setTimeout, clearTimeout, Date,
+  });
+  context.window = context;
+  vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
+  vm.runInContext(
+    `${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.state = state; globalThis.renderList = renderList; globalThis.revealProject = revealProject;`,
+    context,
+  );
+
+  const agent = (group, key, updated, boss = "codex") => ({
+    group, title: group, status: "idle", updated, label: boss === "claude" ? "Claude Code" : "Codex",
+    boss_key: `${boss}|${boss}`, host: boss, project_key: key, project_label: key.split("/").pop(),
+    project_path: key, preview: "", desks_count: 0, rooms_count: 0,
+  });
+  const groups = [
+    agent("g-codex", "/w/app", "2026-11-12T10:00:00Z", "codex"),
+    agent("g-claude", "/w/app", "2026-11-12T09:00:00Z", "claude"),
+  ];
+  for (let i = 0; i < 10; i++) {
+    groups.push(agent(`g-p${i}`, `/w/p${i}`, `2026-11-${String(11 - i).padStart(2, "0")}T00:00:00Z`));
+  }
+  context.state.groupsData = groups;
+  context.state.projects = [
+    { key: "/w/app", label: "app", path: "/w/app", added_at: Date.parse("2026-11-01T00:00:00Z") },
+    { key: "/w/solo", label: "solo", path: "/w/solo", added_at: Date.parse("2026-11-12T08:00:00Z") },
+    { key: "/w/deep", label: "deep", path: "/w/deep", added_at: Date.parse("2026-10-01T00:00:00Z") },
+  ];
+  context.renderList();
+
+  // Even with boss grouping saved in storage, both bosses under /w/app stay under one project header,
+  // and empty manual /w/solo appears without rendering the empty list message.
+  const list = els.get("list");
+  assert.equal(list.children.some(n => n.tag === "div.gl-empty"), false);
+  const headTitles = list.children.filter(n => n.tag === "button.gl-grp").map(n => n.children[1].textContent);
+  assert.deepEqual(headTitles.slice(0, 2), ["app", "solo"]);
+  assert.equal(headTitles.includes("deep"), false, "project past cap waits until revealed or expanded");
+
+  // Context menu opens only on empty manual headers, never on non-empty manual, auto, or clicking '+'.
+  for (const key of ["project:/w/app", "project:/w/p0", "project:/w/solo"]) {
+    const rec = context.state.heads.get(key);
+    for (const fn of rec.el.listeners.contextmenu) fn({ target: { closest: () => null } });
+  }
+  assert.deepEqual(menuCalls, ["/w/solo"]);
+  for (const fn of context.state.heads.get("project:/w/solo").el.listeners.contextmenu) {
+    fn({ target: { closest: sel => sel === ".gl-grp-add" } });
+  }
+  assert.deepEqual(menuCalls, ["/w/solo"]);
+
+  context.revealProject("/w/deep");
+  assert.equal(storage.has("agentnave.office.fold.project:/w/deep"), false);
+  assert.equal(context.state.heads.get("project:/w/deep").el.classList.contains("flash"), true);
+});
+
+test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and empty manual project removal", async () => {
+  const h = (tag, attributes = {}, ...children) => {
+    const kids = children.flat(Infinity).filter(x => x != null && x !== false);
+    const classes = new Set();
+    return {
+      tag, attributes, children: kids, disabled: false, hidden: Boolean(attributes.hidden), style: {},
+      classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, classes },
+      listeners: {}, textContent: kids.map(k => (typeof k === "string" ? k : k.textContent || "")).join(""),
+      setAttribute(k, v) { this.attributes[k] = v; },
+      replaceChildren(...items) { this.children = items; },
+      addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+      append(...items) { this.children.push(...items); },
+      getBoundingClientRect: () => ({ width: 120, height: 40 }),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      contains: () => false,
+      focus() {},
+      remove() {},
+    };
+  };
+  const bodyChildren = [];
+  const posts = [];
+  const revealed = [];
+  let refreshes = 0;
+  let nextAddError = null;
+  const addBtn = h("button#add-project");
+  const cleanupBtn = h("button#cleanup");
+  const state = { groupsData: [], projects: [], listKey: "cached", order: [] };
+  const context = vm.createContext({
+    AN: {
+      h, $: id => (id === "add-project" ? addBtn : id === "cleanup" ? cleanupBtn : null),
+      L: zh => zh, load: async () => ({}), chatName: () => "",
+      post: async (path, body) => {
+        posts.push([path, body]);
+        if (path === "/app/projects/pick") return { cwd: "/tmp/repo/sub" };
+        if (path === "/app/projects/add") {
+          if (nextAddError) throw new Error(nextAddError);
+          const projects = [{ key: "/tmp/repo", label: "repo", path: "/tmp/repo", added_at: 10 }];
+          return { project: projects[0], projects };
+        }
+        if (path === "/app/projects/remove") return { projects: [] };
+        return {};
+      },
+    },
+    document: {
+      body: { append(...nodes) { bodyChildren.push(...nodes); } },
+      addEventListener() {},
+      querySelectorAll: () => [],
+    },
+    window: { addEventListener() {} },
+    state,
+    refresh: async () => { refreshes++; },
+    renderList() {}, go() {}, openScope() {},
+    revealProject: key => revealed.push(key),
+    setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../actions.js`, "utf8")}\nglobalThis.Actions = Actions;`, context);
+
+  const plain = v => JSON.parse(JSON.stringify(v));
+  const menu = bodyChildren.find(n => n.tag === "div.ctx");
+  const toast = bodyChildren.find(n => n.tag === "div.toast");
+  assert.ok(menu && toast);
+
+  await addBtn.listeners.click[0]();
+  assert.deepEqual(plain(posts), [
+    ["/app/projects/pick", {}],
+    ["/app/projects/add", { cwd: "/tmp/repo/sub" }],
+  ]);
+  assert.equal(state.projects.length, 1);
+  assert.equal(state.listKey, null);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(plain(revealed), ["/tmp/repo"]);
+  assert.equal(addBtn.disabled, false);
+
+  nextAddError = "不在项目目录中";
+  await addBtn.listeners.click[0]();
+  assert.equal(addBtn.disabled, false);
+  assert.equal(toast.textContent, "不在项目目录中");
+  assert.equal(toast.classList.classes.has("bad"), true);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [{ group: "g1" }] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: false, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  assert.equal(menu.hidden, true);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.children[0].textContent, "移除项目");
+  menu.children[0].listeners.click[0]();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(plain(posts.at(-1)), ["/app/projects/remove", { key: "/tmp/repo" }]);
+  assert.deepEqual(plain(state.projects), []);
+  assert.equal(refreshes, 2);
 });

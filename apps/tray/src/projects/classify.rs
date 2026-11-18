@@ -8,7 +8,7 @@ use super::path::{self, canonical};
 use super::{OTHER, Project};
 
 /// Where `cwd` is grouped. Only the record of past answers is written, and no process runs.
-pub(super) fn classify(cwd: &str, env: &Env, memory: &mut Memory) -> Project {
+pub(super) fn classify(cwd: &str, env: &Env, mut memory: Option<&mut Memory>) -> Project {
     let Some(dir) = (!cwd.trim().is_empty())
         .then(|| canonical(Path::new(cwd.trim())))
         .flatten()
@@ -22,14 +22,17 @@ pub(super) fn classify(cwd: &str, env: &Env, memory: &mut Memory) -> Project {
     let exists = dir.is_dir();
     // A directory removed since it was last seen (an agent worktree) is still the repository it
     // belonged to then.
-    if !exists && let Some(root) = memory.root(&dir) {
+    if !exists
+        && let Some(mem) = memory.as_deref_mut()
+        && let Some(root) = mem.root(&dir)
+    {
         return project(&root, env);
     }
     // A repository at the home, desktop or downloads folder (dotfiles) does not make everything
     // below it one project.
     if let Some(root) = super::git::root(&dir).filter(|root| !env.is_bare(root)) {
-        if exists {
-            memory.remember(&dir, &root);
+        if exists && let Some(mem) = memory {
+            mem.remember(&dir, &root);
         }
         return project(&root, env);
     }

@@ -186,10 +186,10 @@ const Actions = {};
       return;
     }
     const note = free.length && emptyIds.length
-      ? L(`将删除 ${free.length} 个会话与 ${emptyIds.length} 个已过期空工作区的记录，删除后不能恢复；各 CLI 自己的会话文件不受影响。`, `Deletes history for ${free.length} conversation(s) and ${emptyIds.length} expired empty workspace(s). This cannot be undone; each CLI's own session files are not affected.`)
+      ? L(`将删除 ${free.length} 个会话与 ${emptyIds.length} 个已过期空 agent 的记录，删除后不能恢复；各 CLI 自己的会话文件不受影响。`, `Deletes history for ${free.length} conversation(s) and ${emptyIds.length} expired empty agent(s). This cannot be undone; each CLI's own session files are not affected.`)
       : free.length
         ? L(`将删除 ${free.length} 个会话的历史记录，删除后不能恢复；各 CLI 自己的会话文件不受影响。`, `Deletes history for ${free.length} conversation(s). This cannot be undone; each CLI's own session files are not affected.`)
-        : L("交接文档与工作区记录会一起删除，删除后不能恢复；各 CLI 自己的会话文件不受影响。", "Handover notes and workspace records will also be deleted and cannot be recovered; each CLI's own session files are not affected.");
+        : L("交接文档与 agent 记录会一起删除，删除后不能恢复；各 CLI 自己的会话文件不受影响。", "Handover notes and agent records will also be deleted and cannot be recovered; each CLI's own session files are not affected.");
     const answer = await ask({
       title: L(`删除${what}？`, `Delete ${what}?`),
       body: [
@@ -227,8 +227,8 @@ const Actions = {};
       }
       const failed = results.filter((r) => !["deleted", "missing"].includes(r.status));
       if (failed.length) say(L(`${failed.length} 项未删除：${failed[0].message}`, `${failed.length} item(s) not deleted: ${failed[0].message}`), true);
-      else if (free.length && emptyIds.length) say(L(`已删除 ${free.length} 个会话与 ${emptyIds.length} 个工作区`, `Deleted ${free.length} conversation(s) and ${emptyIds.length} workspace(s)`));
-      else if (emptyIds.length) say(L(`已删除 ${emptyIds.length} 个工作区`, `Deleted ${emptyIds.length} workspace(s)`));
+      else if (free.length && emptyIds.length) say(L(`已删除 ${free.length} 个会话与 ${emptyIds.length} 个 agent`, `Deleted ${free.length} conversation(s) and ${emptyIds.length} agent(s)`));
+      else if (emptyIds.length) say(L(`已删除 ${emptyIds.length} 个 agent`, `Deleted ${emptyIds.length} agent(s)`));
       else say(L(`已删除 ${free.length} 个会话`, `Deleted ${free.length} conversation(s)`));
     } catch (error) {
       say(L(`删除没有完成：${error.message}。刷新后核对再试。`, `Deletion incomplete: ${error.message}. Refresh and check before trying again.`), true);
@@ -236,10 +236,10 @@ const Actions = {};
     for (const id of picked) if (!state.groupsData.some((g) => g.group === id)) picked.delete(id);
     await refresh();
   }
-  // A workspace with no conversation exists only as its handover, with nothing else to delete.
+  // An agent with no conversation exists only as its handover, with nothing else to delete.
   async function forgetGroups(ids) {
     const answer = await ask({
-      title: ids.length > 1 ? L(`删除 ${ids.length} 个只有 boss 的工作区？`, `Delete ${ids.length} boss-only workspaces?`) : L(`删除工作区“${groupName(ids[0])}”？`, `Delete workspace "${groupName(ids[0])}"?`),
+      title: ids.length > 1 ? L(`删除 ${ids.length} 个只有 boss 的 agent？`, `Delete ${ids.length} boss-only agents?`) : L(`删除 agent“${groupName(ids[0])}”？`, `Delete agent "${groupName(ids[0])}"?`),
       body: [
         ids.length > 1 && h("ul.act-list", {}, ids.map((id) => h("li", {}, groupName(id)))),
         h("p.act-note", {}, L("交接文档会一起删除，删除后不能恢复；各 CLI 自己的会话文件不受影响。", "Handover notes will also be deleted and cannot be recovered; each CLI's own session files are not affected.")),
@@ -250,8 +250,8 @@ const Actions = {};
     try {
       const results = await Promise.all(ids.map((group) => AN.post("/app/workspaces/forget", { group })));
       const failed = results.filter((r) => r.status !== "deleted");
-      if (failed.length) say(L(`${failed.length} 个工作区未删除：${failed[0].message}`, `${failed.length} workspace(s) not deleted: ${failed[0].message}`), true);
-      else say(L(`已删除 ${ids.length} 个工作区`, `Deleted ${ids.length} workspace(s)`));
+      if (failed.length) say(L(`${failed.length} 个 agent 未删除：${failed[0].message}`, `${failed.length} agent(s) not deleted: ${failed[0].message}`), true);
+      else say(L(`已删除 ${ids.length} 个 agent`, `Deleted ${ids.length} agent(s)`));
     } catch (error) {
       say(L(`删除没有完成：${error.message}。刷新后核对再试。`, `Deletion incomplete: ${error.message}. Refresh and check before trying again.`), true);
     }
@@ -265,7 +265,7 @@ const Actions = {};
       let all;
       try { all = await conversations(); } catch (error) { say(L(`无法读取会话：${error.message}`, `Failed to load conversations: ${error.message}`), true); return; }
       const set = new Set(used);
-      const what = used.length > 1 ? L(` ${used.length} 个工作区`, `${used.length} workspaces`) : L(`工作区“${groupName(used[0])}”`, `workspace "${groupName(used[0])}"`);
+      const what = used.length > 1 ? L(` ${used.length} 个 agent`, `${used.length} agents`) : L(`agent“${groupName(used[0])}”`, `agent "${groupName(used[0])}"`);
       await remove(used.map(groupName), all.filter((i) => set.has(i.group)), what);
     }
     for (const id of ids) picked.delete(id);
@@ -383,10 +383,10 @@ const Actions = {};
   // For a boss that can no longer call tools: the workspace waits until a new chat takes it over.
   async function handOver(id) {
     const answer = await ask({
-      title: L(`把工作区“${groupName(id)}”交给其他 boss？`, `Hand over workspace "${groupName(id)}" to another boss?`),
+      title: L(`把 agent“${groupName(id)}”交给其他 boss？`, `Hand over agent "${groupName(id)}" to another boss?`),
       body: [
         h("p.act-note", {}, L("boss 还能回话时，直接对它说「转交这个会话」，它会写好交接文档；这里用于 boss 已经用不了的情况。", "When the current boss can still reply, tell it \"Hand over this session\" directly so it writes handover notes; use this when that boss can no longer be used.")),
-        h("p.act-note", {}, L("工作区会标为待接手。之后在任意宿主的聊天里请它接手这个工作区：接手会在两个工作区之间建立关联，新 boss 可以在自己的工作区引用这里的已完成结果，原工作区和原来的 boss 仍可继续使用；还在跑的任务会留在原处跑完。", "Marks the workspace as awaiting handover. Ask a chat in any host to take over this workspace: claiming links the workspaces so the new boss can forward finished results from here into its own workspace, while this workspace and its current boss remain usable and running tasks finish here.")),
+        h("p.act-note", {}, L("这个 agent 会标为待接手。之后在任意宿主的聊天里请它接手这个 agent：接手会在两个 agent 之间建立关联，新 boss 可以在自己的 agent 里引用这里的已完成结果，原 agent 和原来的 boss 仍可继续使用；还在跑的任务会留在原处跑完。", "Marks the agent as awaiting handover. Ask a chat in any host to take over this agent: claiming links the agents so the new boss can forward finished results from here into its own agent, while this agent and its current boss remain usable and running tasks finish here.")),
       ],
       buttons: [{ label: L("取消", "Cancel") }, { label: L("交给其他 boss", "Hand over"), primary: true, value: "handover" }],
     });
@@ -405,7 +405,7 @@ const Actions = {};
       const text = {
         cancelled: L("已取消交接", "Handover cancelled"),
         not_pending: L("已被接手或已取消，刷新后再看", "Already taken over or cancelled; refresh to check"),
-        only_boss: L("这个工作区没有会话，取消后会从列表消失；不需要时请删除工作区", "This workspace has no conversations and would disappear if cancelled; delete the workspace instead"),
+        only_boss: L("这个 agent 没有会话，取消后会从列表消失；不需要时请删除这个 agent", "This agent has no conversations and would disappear if cancelled; delete the agent instead"),
       }[data.status];
       say(text || data.message || L("未能取消交接", "Failed to cancel handover"), data.status !== "cancelled");
     } catch (error) {
@@ -463,13 +463,13 @@ const Actions = {};
       for (const b of choices.children) b.setAttribute("aria-checked", String(b.textContent === dayLabel(days)));
       const n = quiet(stateNow).length;
       count.textContent = n
-        ? L(`有 ${n} 个工作区超过 ${days} 天没有动静。`, `${n} workspace(s) have been inactive for over ${days} days.`)
-        : L(`没有超过 ${days} 天没有动静的工作区。`, `No workspaces have been inactive for over ${days} days.`);
+        ? L(`有 ${n} 个 agent 超过 ${days} 天没有动静。`, `${n} agent(s) have been inactive for over ${days} days.`)
+        : L(`没有超过 ${days} 天没有动静的 agent。`, `No agents have been inactive for over ${days} days.`);
     };
     paint();
     const answer = await ask({
-      title: L("清理没有动静的工作区", "Clean up inactive workspaces"),
-      body: [h("p.act-note", {}, L("删除超过所选天数没有动静的工作区。进行中和待审核的不会删除。", "Deletes workspaces inactive for longer than the selected period. Running or review items are kept.")), choices, count],
+      title: L("清理没有动静的 agent", "Clean up inactive agents"),
+      body: [h("p.act-note", {}, L("删除超过所选天数没有动静的 agent。进行中和待审核的不会删除。", "Deletes agents inactive for longer than the selected period. Running or review items are kept.")), choices, count],
       buttons: [
         { label: L("取消", "Cancel") },
         ...(ungrouped.length ? [{ label: L(`其他记录（${ungrouped.length}）…`, `Other records (${ungrouped.length})…`), value: "ungrouped" }] : []),
@@ -501,16 +501,49 @@ const Actions = {};
     let fresh;
     try { fresh = await manageState(); } catch (error) { say(L(`无法重新核对会话：${error.message}`, `Failed to recheck conversations: ${error.message}`), true); return; }
     const eligible = quiet(fresh).filter((e) => selected.has(e.id));
-    if (!eligible.length) { say(L("没有需要清理的工作区，或工作区已有新活动", "No workspaces to clean up, or new activity occurred")); return; }
+    if (!eligible.length) { say(L("没有需要清理的 agent，或 agent 已有新活动", "No agents to clean up, or new activity occurred")); return; }
     const confirmedIds = new Set(all.map((i) => i.id));
     const confirmedEmpty = new Set((stateNow.workspaces || []).filter((w) => w.empty_claimed).map((w) => w.id));
     await remove(
       eligible.map((e) => state.groupsData.some((g) => g.group === e.id) ? groupName(e.id) : e.records[0]?.title || e.ws?.title || e.id),
       eligible.flatMap((e) => e.records.filter((i) => confirmedIds.has(i.id))),
-      L(`这 ${eligible.length} 个工作区`, `these ${eligible.length} workspaces`),
+      L(`这 ${eligible.length} 个 agent`, `these ${eligible.length} agents`),
       now - days * 864e5,
       eligible.filter((e) => e.empty && confirmedEmpty.has(e.id)).map((e) => e.id),
     );
+  }
+
+  // ---- manual projects --------------------------------------------------------------------
+  let addingProject = false;
+  async function addProject() {
+    if (addingProject) return;
+    addingProject = true;
+    const button = $("add-project");
+    if (button) button.disabled = true;
+    try {
+      const picked = await AN.post("/app/projects/pick", {});
+      if (!picked?.cwd) return;
+      const result = await AN.post("/app/projects/add", { cwd: picked.cwd });
+      if (Array.isArray(result.projects)) state.projects = result.projects;
+      state.listKey = null;
+      await refresh();
+      if (result.project?.key) revealProject(result.project.key);
+    } catch (error) {
+      say(error.message || L("未能添加项目", "Failed to add project"), true);
+    } finally {
+      addingProject = false;
+      if (button) button.disabled = false;
+    }
+  }
+  async function removeProject(key) {
+    try {
+      const result = await AN.post("/app/projects/remove", { key });
+      if (Array.isArray(result.projects)) state.projects = result.projects;
+      state.listKey = null;
+      await refresh();
+    } catch (error) {
+      say(error.message || L("未能移除项目", "Failed to remove project"), true);
+    }
   }
 
   // ---- menus ------------------------------------------------------------------------------
@@ -519,7 +552,7 @@ const Actions = {};
     if (picked.size > 1) {
       const ids = [...picked];
       openMenu(e, [
-        { label: L(`删除所选 ${ids.length} 个工作区…`, `Delete ${ids.length} selected workspaces…`), danger: true, run: () => removeGroups(ids) },
+        { label: L(`删除所选 ${ids.length} 个 agent…`, `Delete ${ids.length} selected agents…`), danger: true, run: () => removeGroups(ids) },
         { label: L("取消选择", "Clear selection"), run: clearPicks },
       ]);
       return;
@@ -528,12 +561,18 @@ const Actions = {};
     if (!g) return;
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
-      g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("工作区", "workspace")) },
+      g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("agent", "agent")) },
       g.handover === "pending"
         ? g.conversations && { label: L("取消交接", "Cancel handover"), run: () => cancelHandover(id) }
         : { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
-      { label: L("删除工作区…", "Delete workspace…"), danger: true, run: () => removeGroups([id]) },
+      { label: L("删除 agent…", "Delete agent…"), danger: true, run: () => removeGroups([id]) },
     ].filter(Boolean));
+  }
+  function projectMenu(section, e) {
+    if (!section?.manual || section.items.length) return;
+    openMenu(e, [
+      { label: L("移除项目", "Remove project"), run: () => removeProject(section.key) },
+    ]);
   }
   function roomMenu(id, e) {
     const room = state.ctx?.rooms.get(id);
@@ -546,6 +585,7 @@ const Actions = {};
   }
 
   $("cleanup").addEventListener("click", cleanup);
+  $("add-project")?.addEventListener("click", addProject);
 
-  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say });
+  Object.assign(Actions, { picked, pick, workspaceMenu, projectMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say });
 }

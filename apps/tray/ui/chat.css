@@ -21,12 +21,13 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); background: var(--solid); }
 .side-head { display: flex; align-items: baseline; gap: 8px; padding: 16px 18px 8px; }
 .side-head h1 { font-size: 16px; letter-spacing: -0.01em; font-weight: 650; }
-.side-count { color: var(--faint); font-size: 12px; }
 .gl { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
 .gl-sec { padding: 12px 10px 5px; font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em; color: var(--faint); }
-.side-group { appearance: none; -webkit-appearance: none; margin-left: auto; max-width: 96px; height: 24px; padding: 0 22px 0 8px; border: 1px solid var(--line); border-radius: 7px; background-color: transparent; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: right 11px center, right 7px center; background-size: 4px 4px; background-repeat: no-repeat; font-size: 11.5px; color: var(--muted); }
-.side-group:hover { color: var(--ink); background-color: var(--hover); }
-.side-group + .side-act { margin-left: 0; }
+.side-foot { flex: none; display: flex; align-items: center; box-sizing: border-box; height: var(--foot-h); padding: 0 8px; border-top: 1px solid var(--line); background: var(--solid); }
+.side-add { display: flex; align-items: center; width: 100%; height: 28px; padding: 0 8px; border-radius: 7px; font-size: 12px; font-weight: 550; color: var(--muted); text-align: left; cursor: pointer; }
+.side-add:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+.side-add:disabled { opacity: 0.6; cursor: default; }
+.gl-grp.flash { border-radius: 7px; animation: flash 1.6s ease-out; }
 .gl-grp { display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 8px 4px; border: 0; background: transparent; text-align: left; font-size: 12px; font-weight: 650; color: var(--ink); cursor: pointer; }
 .gl-grp:hover .gl-grp-name { color: var(--accent); }
 .gl-grp:focus-visible { outline-offset: -2px; border-radius: 7px; }
@@ -101,7 +102,7 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
   .app[data-side="off"][data-side-peek] .side { transform: none; visibility: visible; box-shadow: 8px 0 30px #0006; transition: transform 0.2s ease; }
   /* the peeking list is the full one, whatever the rail looks like at this width */
   .app[data-side="off"] .split-side { display: none; }
-  .app[data-side="off"] :is(.side-head, .gl-grp, .gi-body) { display: flex; }
+  .app[data-side="off"] :is(.side-head, .side-foot, .gl-grp, .gi-body) { display: flex; }
   .app[data-side="off"] .gl-sec { display: block; }
   .app[data-side="off"] .gl-more { display: block; padding: 5px 8px; text-align: left; font-size: 11.5px; }
   .app[data-side="off"] .gl-more::after { content: none; }
@@ -130,7 +131,7 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 @media (max-width: 1100px) and (min-width: 761px) {
   .app { grid-template-columns: var(--side-col, 64px) minmax(0, 1fr) var(--conv-col, var(--conv-w, clamp(300px, 34vw, 400px))); }
   .app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--side-col, 64px) minmax(0, 1fr); }
-  .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split-side { display: none; }
+  .side-head, .side-foot, .gl-sec, .gl-grp, .gl-more, .gi-body, .split-side { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   /* the rail shows every group's entries, so the way to the rest stays, as a dot row */
@@ -669,7 +670,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 /* ---- narrow: the conversation slides over the floor; very narrow: one column ---- */
 @media (max-width: 860px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: var(--side-col, 64px) minmax(0, 1fr); }
-  .side-head, .gl-sec, .gl-grp, .gl-more, .gi-body, .split { display: none; }
+  .side-head, .side-foot, .gl-sec, .gl-grp, .gl-more, .gi-body, .split { display: none; }
   .gi[data-folded="true"] { display: flex; }
   .gi { justify-content: center; padding: 9px 0; }
   .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
@@ -681,7 +682,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 @media (max-width: 760px) {
   .app, .app:not(:has(.conv:not([hidden]))) { grid-template-columns: 1fr; }
   .side-head, .gl-sec, .gi-body { display: revert; }
-  .gl-grp { display: flex; }
+  .side-foot, .gl-grp { display: flex; }
   .gl-more { display: block; padding: 5px 8px; text-align: left; font-size: 11.5px; }
   .gl-more::after { content: none; }
   .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }

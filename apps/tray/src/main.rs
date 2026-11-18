@@ -119,6 +119,9 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                         | "/app/theme/system"
                         | "/app/theme/light"
                         | "/app/theme/dark"
+                        | "/app/projects/pick"
+                        | "/app/projects/add"
+                        | "/app/projects/remove"
                 )))
 }
 
@@ -430,6 +433,9 @@ impl ProtocolRequest {
             _ if path.starts_with("/app/terminal/") => {
                 terminal::request(app, method, path, action, self.request.body())
             }
+            _ if path == "/app/projects" || path.starts_with("/app/projects/") => {
+                reader.projects_request(Some(app), method, path, action, self.request.body())
+            }
             ("GET", "/app/status") => response::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),
             // Whether the page's maximize button should read as maximize or restore.
@@ -551,6 +557,10 @@ mod tests {
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
         assert!(!preview_refuses(true, "POST", "/app/terminal/start"));
         assert!(!preview_refuses(true, "POST", "/app/terminal/input"));
+        assert!(!preview_refuses(true, "POST", "/app/projects/pick"));
+        assert!(!preview_refuses(true, "POST", "/app/projects/add"));
+        assert!(!preview_refuses(true, "POST", "/app/projects/remove"));
+        assert!(preview_refuses(true, "POST", "/app/projects/unknown"));
         assert_eq!(
             preview_refuses(true, "POST", "/app/hosts/reload-copy"),
             !cfg!(unix)

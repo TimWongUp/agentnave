@@ -145,7 +145,7 @@
           role: "group",
           "aria-label": title,
         },
-          h("p", {}, L(`将删除 ${n} 个工作区`, `Will delete ${n} workspace(s)`)),
+          h("p", {}, L(`将删除 ${n} 个 agent`, `Will delete ${n} agent(s)`)),
           h("div.btn-group", {}, cancelBtn, confirmBtn),
         ),
       );

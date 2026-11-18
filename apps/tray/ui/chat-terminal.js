@@ -149,7 +149,7 @@ const ChatTerminal = (() => {
       rec.el.append(rec.add);
     }
     const label = L("在这个项目里新开 agent", "New agent in this project");
-    rec.add.hidden = state.groupBy !== "project" || !!rec.section?.pinned;
+    rec.add.hidden = !!rec.section?.pinned;
     rec.add.title = label;
     rec.add.setAttribute("aria-label", label);
   }

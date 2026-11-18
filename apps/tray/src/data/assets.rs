@@ -33,6 +33,11 @@ impl Reader {
         if path == "/app/video-packs" {
             return Response::json(&crate::video_packs::status(&self.root));
         }
+        if path == "/app/projects" {
+            return Response::json(&json!({
+                "projects": crate::projects::manual::values(&crate::projects::manual::list(&self.projects_dir))
+            }));
+        }
         if let Some(rest) = path.strip_prefix("/art/video/") {
             return crate::video_packs::asset(&self.root, rest, None)
                 .unwrap_or_else(Response::not_found);

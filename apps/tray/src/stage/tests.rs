@@ -46,7 +46,7 @@ fn list_keeps_pending_workspaces_beyond_the_other_workspace_limit() {
         .map(|i| super::Group::new(format!("workspace-{i}")))
         .collect();
     groups[201].handover.pending = true;
-    let response = super::list_response(groups, &[]);
+    let response = super::list_response(groups, &[], &[]);
     let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let listed = body["groups"].as_array().unwrap();
     assert_eq!(listed.len(), 201);
@@ -231,6 +231,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
             dirs: &[],
             projects: &Default::default(),
             links: &[],
+            manual_projects: &[],
         };
         let res = super::respond(
             path,

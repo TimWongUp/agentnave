@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::data::snapshot::{Item, Snapshot};
 use crate::data_files::valid_id;
 use crate::isolated::{self, Dir};
-use crate::projects::Project;
+use crate::projects::{ManualProject, Project};
 use crate::response::Response;
 use crate::time_format::{iso, timestamp};
 
@@ -495,6 +495,7 @@ pub(crate) struct Places<'a> {
     pub dirs: &'a [Dir],
     pub projects: &'a BTreeMap<String, Project>,
     pub links: &'a [WorkspaceLink],
+    pub manual_projects: &'a [ManualProject],
 }
 
 pub(crate) use origin::origin_cwds;
@@ -555,7 +556,7 @@ pub(crate) fn respond(
     if path == "/app/stage" {
         panel_response(groups, &snapshots, &stage_ids, data_exists)
     } else {
-        list_response(groups, &snapshots)
+        list_response(groups, &snapshots, places.manual_projects)
     }
 }
 
@@ -766,7 +767,11 @@ fn panel_response(
     )
 }
 
-fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
+fn list_response(
+    groups: Vec<Group>,
+    snapshots: &[Snapshot],
+    manual_projects: &[ManualProject],
+) -> Response {
     let mut previews = PREVIEWS.lock().unwrap_or_else(|p| p.into_inner());
     let mut kept = HashMap::new();
     let mut other_count = 0;
@@ -824,5 +829,6 @@ fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
         })
         .collect();
     *previews = kept;
-    Response::json(&json!({"groups": groups}))
+    let projects = crate::projects::manual::values(manual_projects);
+    Response::json(&json!({"groups": groups, "projects": projects}))
 }

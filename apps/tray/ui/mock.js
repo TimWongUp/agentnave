@@ -691,8 +691,8 @@ All checks passed!
     const ho = handoverOf(g);
     if (ho) out.push({
       id: `${g.group}:handover`, time: stamp(w, w.s - 1), conversation: "", kind: "handover",
-      speaker: { role: "system", label: "工作区交接" },
-      text: ho === "pending" ? `${label(g)} 交出工作区，等待接手` : ho === "changed" ? `${label(g)} 交出工作区，Codex 已接手` : `${label(g)} 交出工作区，已由 Codex 接手`,
+      speaker: { role: "system", label: "agent 交接" },
+      text: ho === "pending" ? `${label(g)} 交出 agent，等待接手` : ho === "changed" ? `${label(g)} 交出 agent，Codex 已接手` : `${label(g)} 交出 agent，已由 Codex 接手`,
       detail: "下一步：评审三个 PR 后统一发版。\n说明按纯文本显示：<script>alert(1)</script>\n\n" + "保留已有改动，核对 CI 与正式发布产物。\n".repeat(25),
     });
     out.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
@@ -788,6 +788,7 @@ All checks passed!
   const placeOf = (g, w) => PLACES[w.groups.indexOf(g) % PLACES.length];
 
   const mockHandovers = new Map();
+  const mockProjects = [];
   const handoverOf = (g) => mockHandovers.has(g.group) ? mockHandovers.get(g.group) : (g.group.startsWith("s-") ? q.get("handover") || null : null);
 
   function chats() {
@@ -809,7 +810,7 @@ All checks passed!
         };
       })
       .sort((a, b) => (a.handover === "pending" ? -1 : URGENCY[a.status] ?? 2) - (b.handover === "pending" ? -1 : URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
-    return { groups: rows };
+    return { groups: rows, projects: structuredClone(mockProjects) };
   }
 
   function chat(group) {
@@ -1022,7 +1023,9 @@ All checks passed!
     const route = path.split("?")[0];
     if (route === "/app/terminal/pick") return { cwd: "/work/app" };
     if (route === "/app/terminal/start") {
-      const project = PLACES.find((p) => p.project_path === body.cwd) || { project_key: "other" };
+      const manual = mockProjects.find((p) => p.key === body.cwd);
+      const project = PLACES.find((p) => p.project_path === body.cwd)
+        || (manual ? { project_key: manual.key, project_label: manual.label, project_path: manual.path } : { project_key: "other" });
       const session = { id: mockTerminals.length + 1, provider: body.provider, cwd: body.cwd, exit: null, active: false, workspaces: [], ...project };
       mockTerminals.push(session);
       return { session };
@@ -1045,7 +1048,33 @@ All checks passed!
     }
     return { ok: true };
   }
+  function projectPost(path, body) {
+    if (path === "/app/projects/pick") return { cwd: "/work/sandbox" };
+    if (path === "/app/projects/add") {
+      const cwd = String(body.cwd || body.path || "").trim();
+      if (!cwd) throw Object.assign(new Error("文件夹不存在"), { status: 400 });
+      const known = PLACES.find((p) => p.project_key === cwd || p.project_path === cwd);
+      const key = known ? known.project_key : cwd;
+      const label = known?.project_label || cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || cwd;
+      const pathShown = known?.project_path || cwd;
+      const existing = mockProjects.find((p) => p.key === key);
+      if (existing) return { project: structuredClone(existing), added: false, projects: structuredClone(mockProjects) };
+      if (chats().groups.some((g) => g.project_key === key) || mockTerminals.some((t) => t.project_key === key)) {
+        return { project: { key, label, path: pathShown, added_at: Date.now() }, added: false, projects: structuredClone(mockProjects) };
+      }
+      const entry = { key, label, path: pathShown, added_at: Date.now() };
+      mockProjects.push(entry);
+      return { project: structuredClone(entry), added: true, projects: structuredClone(mockProjects) };
+    }
+    if (path === "/app/projects/remove") {
+      const idx = mockProjects.findIndex((p) => p.key === body.key);
+      if (idx >= 0) mockProjects.splice(idx, 1);
+      return { removed: idx >= 0, projects: structuredClone(mockProjects) };
+    }
+    throw Object.assign(new Error("404"), { status: 404 });
+  }
   async function p3Fetch(path) {
+    if (path === "/app/projects") return { projects: structuredClone(mockProjects) };
     if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
     if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider })) };
     if (path === "/app/provider-health") return { providers: structuredClone(mockHealth) };
@@ -1072,6 +1101,7 @@ All checks passed!
     return mockFetch(path);
   }
   async function post(path, body = {}) {
+    if (path.startsWith("/app/projects/")) return projectPost(path, body);
     if (path.startsWith("/app/terminal/")) return terminalPost(path, body);
     if (path === "/app/voice/player") { mockPlayer = structuredClone(body); window.dispatchEvent(new CustomEvent("agentnave:voice-player", { detail: mockPlayer })); return { ok: true }; }
     if (path === "/app/voice/player/command") { window.dispatchEvent(new CustomEvent("agentnave:voice-command", { detail: body })); return { ok: true, opening: false }; }
@@ -1132,7 +1162,7 @@ All checks passed!
     if (path === "/app/storage/open") return { opened: true };
     if (path === "/app/workspaces/handover") {
       mockHandovers.set(body.group, "pending");
-      return { id: body.group, status: "waiting", message: "已标为待接手。在任意宿主开一个新聊天，请它接手这个工作区" };
+      return { id: body.group, status: "waiting", message: "已标为待接手。在任意宿主开一个新聊天，请它接手这个 agent" };
     }
     if (path === "/app/workspaces/cancel-handover") {
       if (handoverOf({ group: body.group }) !== "pending") return { id: body.group, status: "not_pending", message: "已被接手或已取消，刷新后再看" };

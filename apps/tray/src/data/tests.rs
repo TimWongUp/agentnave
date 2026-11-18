@@ -2257,3 +2257,4 @@ fn office_timeline_reports_omitted_and_counts_full_threads() {
 }
 
 mod cli_updates;
+mod projects;

@@ -119,6 +119,14 @@ fn number(query: &str, name: &str) -> Option<u64> {
 }
 
 impl Terminals {
+    pub(crate) fn cwds(&self) -> Vec<String> {
+        self.lock()
+            .open
+            .iter()
+            .map(|running| running.cwd.display().to_string())
+            .collect()
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state
             .lock()

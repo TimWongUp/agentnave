@@ -9,15 +9,18 @@ mod auto;
 mod classify;
 mod env;
 mod git;
+pub(crate) mod manual;
 mod memory;
 mod path;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::Path;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use env::{Env, Stamp};
+pub(crate) use manual::ManualProject;
 use memory::Memory;
 
 /// The fixed key of the group for places that are not projects.
@@ -174,8 +177,55 @@ fn work(job: Job) {
     }
 }
 
-/// Resolve with the current places, reading them again when their files or variables changed.
-fn resolve(cwd: &str) -> (Project, u64) {
+/// Classify an existing directory synchronously using the same rules as background lookup.
+pub(crate) fn classify_dir(dir: &Path) -> Project {
+    let cwd = dir.to_string_lossy();
+    with_env(|env, _| classify::classify(&cwd, env, None))
+}
+
+/// Resolve all given working directories synchronously (reusing fresh cache entries) and return
+/// their non-`other` project keys.
+pub(crate) fn resolve_all(cwds: impl IntoIterator<Item = String>) -> BTreeSet<String> {
+    let cwds: Vec<String> = cwds.into_iter().collect();
+    if cwds.is_empty() {
+        return BTreeSet::new();
+    }
+    let mut keys = BTreeSet::new();
+    let mut pending = Vec::new();
+    {
+        let state = shared();
+        let generation = state.generation;
+        for cwd in cwds {
+            match state.cache.get(&cwd) {
+                Some(entry) if entry.generation == generation && entry.at.elapsed() <= REFRESH => {
+                    if entry.project.key != OTHER {
+                        keys.insert(entry.project.key.clone());
+                    }
+                }
+                _ => pending.push(cwd),
+            }
+        }
+    }
+    for cwd in pending {
+        let (project, generation) = resolve(&cwd);
+        if project.key != OTHER {
+            keys.insert(project.key.clone());
+        }
+        let mut state = shared();
+        state.cache.insert(
+            cwd,
+            Entry {
+                project,
+                at: Instant::now(),
+                generation,
+            },
+        );
+    }
+    keys
+}
+
+/// Run `f` with the current detected environment, refreshing when its config files or variables changed.
+fn with_env<T>(f: impl FnOnce(&Env, u64) -> T) -> T {
     let now = env::stamp();
     let mut places = ENV.lock().unwrap_or_else(|p| p.into_inner());
     if places.as_ref().is_none_or(|(stamp, _)| *stamp != now) {
@@ -185,10 +235,16 @@ fn resolve(cwd: &str) -> (Project, u64) {
         *places = Some((now, Env::detect()));
     }
     let generation = shared().generation;
-    let project = places.as_ref().map_or_else(Project::other, |(_, env)| {
-        classify::classify(cwd, env, &mut records())
-    });
-    (project, generation)
+    let env = &places.as_ref().expect("just populated").1;
+    f(env, generation)
+}
+
+/// Resolve with the current places, reading them again when their files or variables changed.
+fn resolve(cwd: &str) -> (Project, u64) {
+    with_env(|env, generation| {
+        let project = classify::classify(cwd, env, Some(&mut records()));
+        (project, generation)
+    })
 }
 
 #[cfg(test)]
