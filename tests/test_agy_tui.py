@@ -684,6 +684,7 @@ def test_private_logs_bind_identical_concurrent_tasks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     ids = ["11111111-2222-3333-4444-555555555555", "aaaaaaaa-2222-3333-4444-555555555555"]
     runs: list[Run] = []
     for index, cid in enumerate(ids):
