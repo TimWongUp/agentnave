@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 
 from agentnave.adapters.antigravity import AntigravityAdapter
-from agentnave.agy_tui import STOP_GRACE, Run, Turn, hooks, settings
+from agentnave.agy_tui import Run, Turn, settings
 from agentnave.agy_tui.screen import AgyScreen, busy_activity, input_box, state
 from agentnave.claude_tui.terminal import Terminal
 from agentnave.models import InvocationRequest, InvocationStatus
@@ -20,22 +20,23 @@ FAKE_AGY = r"""
 import json, os, select, subprocess, sys, time, tty
 from pathlib import Path
 
+if "--version" in sys.argv:
+    print("1.5.11")
+    sys.exit(0)
 tty.setraw(0)
 case = os.environ["FAKE_AGY_CASE"]
 args = sys.argv[1:]
 settings = json.loads(args[args.index("--settings") + 1])
 assert os.getcwd() in settings["trustedWorkspaces"]
 assert "--dangerously-skip-permissions=true" in args
-cid = args[args.index("--conversation") + 1] if "--conversation" in args else "new-conversation"
+cid = args[args.index("--conversation") + 1] if "--conversation" in args else "11111111-2222-3333-4444-555555555555"
 home = Path(os.environ["HOME"])
-entry = json.loads((home / ".gemini/config/hooks.json").read_text())["agentnave-interactive"]
+assert os.environ["AGY_CLI_OSC7501"] == "on"
+assert os.environ["AGY_CLI_OSC7501_MESSAGES"] == "brief"
 transcript = home / ".gemini/antigravity-cli/brain" / cid / ".system_generated/logs/transcript_full.jsonl"
 transcript.parent.mkdir(parents=True, exist_ok=True)
-logs = home / ".gemini/antigravity-cli/log"
-logs.mkdir(parents=True, exist_ok=True)
-(logs / "cli-fake.log").write_text(
-    f"Starting language server process with pid {os.getpid()}\nExperiments refreshed after login\n"
-)
+log = Path(args[args.index("--log-file") + 1])
+log.write_text("Experiments refreshed after login\n")
 
 def output(text):
     os.write(1, text.encode())
@@ -48,14 +49,6 @@ def read_until(marker):
             data += os.read(0, 65536)
     assert marker in data, (marker, data)
     return data
-
-def hook(name, **fields):
-    command = entry[name][0]
-    command = command["hooks"][0]["command"] if "hooks" in command else command["command"]
-    payload = {"conversationId": cid, "modelName": "fake-model", **fields}
-    done = subprocess.run(command, shell=True, input=json.dumps(payload).encode(), capture_output=True, timeout=5)
-    assert done.returncode == 0, done.stderr
-    return json.loads(done.stdout)
 
 def row(**fields):
     with transcript.open("a") as f:
@@ -97,17 +90,14 @@ else:
 read_until(b"\r")
 row(step_index=10, source="USER_EXPLICIT", type="USER_INPUT", content=text)
 if case != "resume":
-    hook("SessionStart")
-hook("PreInvocation", conversationId="subagent", parentConversationId=cid)
-hook("PreInvocation")
-assert hook("PreToolUse", toolCall={"name": "ask_question"})["decision"] == "deny"
+    with log.open("a") as f:
+        f.write(f"Created conversation {cid}\n")
+output("\x1b]7501;state=working:app=antigravity\x07")
 row(step_index=11, source="MODEL", type="PLANNER_RESPONSE", content="looking", tool_calls=[{"name": "run_command"}])
 row(step_index=12, source="MODEL", type="GENERIC", content="ran")
 if case != "noreply":
-    row(step_index=13, source="MODEL", type="PLANNER_RESPONSE", content="finished")
-# A subagent of this agy stops first; only this conversation's Stop ends the turn.
-hook("Stop", conversationId="subagent", fullyIdle=True, terminationReason="NO_TOOL_CALL")
-hook("Stop", fullyIdle=True, terminationReason="NO_TOOL_CALL", error="")
+    row(step_index=13, source="MODEL", type="PLANNER_RESPONSE", content="finished", model="fake-model")
+output("\x1b]7501;state=done:app=antigravity\x1b\\")
 time.sleep(12)
 """
 PROMPTS = {
@@ -131,6 +121,10 @@ def test_fake_agy_turn_through_the_standalone_helper(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("FAKE_AGY_CASE", case)
+    hook = home / ".gemini/config/hooks.json"
+    if case == "new":
+        hook.parent.mkdir(parents=True)
+        hook.write_text("{unparseable existing config")
     sid = None
     if case == "resume":
         sid = "old-conversation"
@@ -145,6 +139,7 @@ def test_fake_agy_turn_through_the_standalone_helper(
     command = adapter.prepare(
         InvocationRequest("antigravity", prompt, tmp_path, session_id=sid, provider_options=options)
     )
+    assert command.model_from_result_only
     completed = subprocess.run(
         command.argv, input=command.stdin, capture_output=True, cwd=tmp_path, timeout=60
     )
@@ -169,58 +164,15 @@ def test_fake_agy_turn_through_the_standalone_helper(
         return
     assert parsed.status is InvocationStatus.SUCCEEDED, completed.stdout.decode()
     assert parsed.output == "finished"
-    assert parsed.session_id == (sid or "new-conversation")
+    assert parsed.session_id == (sid or "11111111-2222-3333-4444-555555555555")
     assert any(adapter.event_model(event) == "fake-model" for event in events)
     assert "earlier" not in completed.stdout.decode()
     tools = [adapter.activity(event) for event in events]
     assert [a.state for a in tools if a is not None and a.kind == "tool"] == ["ACTIVE", "DONE"]
-    assert any(hooks.NAME in warning for warning in parsed.warnings)
-
-
-@pytest.mark.skipif(os.name == "nt", reason="POSIX shell hook; no interactive runtime on Windows")
-def test_hook_entry_keeps_other_hooks_and_acts_only_in_agentnave_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    path = hooks.hooks_path()
-    path.parent.mkdir(parents=True)
-    # A user who keeps the file elsewhere keeps the link; the target gets the entry, and an older
-    # agentnave-interactive entry without PreInvocation is upgraded in place.
-    target = tmp_path / "dotfiles-hooks.json"
-    target.write_text(json.dumps({"mine": {"Stop": []}, hooks.NAME: {"Stop": []}}))
-    path.symlink_to(target)
-    assert hooks.ensure_entry() is not None
-    assert path.is_symlink()
-    assert hooks.ensure_entry() is None
-    saved = json.loads(path.read_text())
-    assert list(saved) == ["mine", hooks.NAME]
-    assert saved["mine"] == {"Stop": []}
-    ask = saved[hooks.NAME]["PreToolUse"][0]["hooks"][0]["command"]
-    pre = saved[hooks.NAME]["PreInvocation"][0]["command"]
-    stop = saved[hooks.NAME]["Stop"][0]["command"]
-    env = {k: v for k, v in os.environ.items() if k != hooks.ENV}
-
-    def run(command: str, extra: dict[str, str]) -> dict[str, object]:
-        done = subprocess.run(
-            command, shell=True, input=b"{}", capture_output=True, env={**env, **extra}
-        )
-        return json.loads(done.stdout)
-
-    assert run(ask, {}) == {"decision": "allow"}
-    assert run(ask, {hooks.ENV: str(tmp_path)})["decision"] == "deny"
-    assert run(pre, {}) == {} and not list(tmp_path.glob("*.PreInvocation.json"))
-    assert run(pre, {hooks.ENV: str(tmp_path)}) == {}
-    assert len(list(tmp_path.glob("*.PreInvocation.json"))) == 1
-    assert run(stop, {}) == {} and not list(tmp_path.glob("*.Stop.json"))
-    assert run(stop, {hooks.ENV: str(tmp_path)}) == {}
-    assert len(list(tmp_path.glob("*.Stop.json"))) == 1
-    saved[hooks.NAME]["enabled"] = False
-    path.write_text(json.dumps(saved))
-    with pytest.raises(ValueError, match="disabled"):
-        hooks.ensure_entry()
-    path.write_text("{broken")
-    with pytest.raises(ValueError, match="not valid JSON"):
-        hooks.ensure_entry()
+    if case == "new":
+        assert hook.read_text() == "{unparseable existing config"
+    else:
+        assert not hook.exists()
 
 
 def test_settings_trust_the_pwd_spelling_of_the_same_folder(
@@ -397,16 +349,14 @@ def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     logs = tmp_path / ".gemini/antigravity-cli/log"
     logs.mkdir(parents=True)
-    # Concurrent agy logs—including one whose PID starts with ours—must not satisfy our wait.
-    for other_pid in (1234, 999):
-        (logs / f"cli-{other_pid}.log").write_text(
-            f"Starting language server process with pid {other_pid}\n"
-            "Experiments refreshed after login\n"
-        )
+    # The shared log must not satisfy the private log's wait, even with a matching PID.
+    (logs / "cli-123.log").write_text("Experiments refreshed after login\n")
     idle = "─" * 40 + "\n>\n" + "─" * 40 + "\n? for shortcuts"
     terminal = cast(
         Terminal,
-        SimpleNamespace(poll=lambda: idle, process=SimpleNamespace(pid=123, poll=lambda: None)),
+        SimpleNamespace(
+            poll=lambda: idle, process=SimpleNamespace(poll=lambda: None), screen=AgyScreen()
+        ),
     )
     clock = [0.0]
 
@@ -415,138 +365,33 @@ def test_experiment_wait_isolates_process_log_and_proceeds_on_timeout(
         return clock[0]
 
     monkeypatch.setattr(agy.time, "monotonic", advance)
-    timed_out = Run(terminal, Turn(None), tmp_path, started=0.0)
-    assert timed_out.await_experiments() is True
-    assert timed_out.turn.error is None
-    assert clock[0] >= agy.EXPERIMENT_WAIT
-
-    # agy processes started in the same second share one log, conversations interleaved.
-    own_log = logs / "cli-123.log"
-    other_id, created_id, later_id, twin_id, twin2_id = (
-        f"{digit * 8}-2222-3333-4444-555555555555" for digit in "a1bcd"
-    )
-    own_log.write_text(
-        "Starting language server process with pid 123\n"
-        f"Created conversation {other_id} (backend=BACKEND_TYPE_UNSPECIFIED)\n"
-        "Experiments refreshed after login\n"
-    )
+    own_log = tmp_path / "private.log"
+    run = Run(terminal, Turn(None), own_log)
+    assert run.await_experiments()
+    assert run.turn.error is None and clock[0] >= agy.EXPERIMENT_WAIT
+    own_log.write_text("Experiments refreshed after login\n")
     clock[0] = 0.0
-    ready = Run(terminal, Turn(None), tmp_path, started=0.0)
-    assert ready.await_experiments() is True
-    assert clock[0] < agy.EXPERIMENT_WAIT
-
-    shared = "You are an AgentNave subagent. " * 4 + "\n\nAssigned task:\n"
-    task = agy.flat(shared + "review   the parser")
-
-    def created(conversation_id: str) -> None:
-        with own_log.open("a") as log:
-            log.write(f"Created conversation {conversation_id} (backend=X)\n")
-
-    def request(conversation_id: str, body: str) -> None:
-        path = agy.transcript_path(conversation_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        content = f"<USER_REQUEST>\n{shared}{body}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>"
-        row = {"source": "USER_EXPLICIT", "type": "USER_INPUT", "content": content}
-        path.write_text(json.dumps(row) + "\n")
-
-    # Another agy already submitted the same task: before our Enter nothing is adopted, and
-    # after it, a conversation logged before it is never ours.
-    request(other_id, "review the parser")
-    ready.poll()
-    assert ready.turn.conversation_id is None
-    ready.submitting(task)
-    created(created_id)
-    ready.poll()
-    assert ready.turn.conversation_id is None  # ours is not written yet
-    # A later agy's unwritten conversation could still carry the same task.
-    created(later_id)
-    request(created_id, "review the\nparser")
-    ready.poll()
-    assert ready.turn.conversation_id is None
-    # A task quoting ours whole is another task.
-    request(later_id, "compare with: review the parser")
-    ready.poll()
-    assert ready.turn.conversation_id == created_id
-    assert ready.turn.user_seen
-
-    # Two conversations carrying the same task cannot tell which is ours.
-    twin = Run(terminal, Turn(None), tmp_path)
-    twin.submitting(task)
-    for twin_conversation in (twin_id, twin2_id):
-        created(twin_conversation)
-        request(twin_conversation, "review the parser")
-    twin.poll()
-    assert twin.turn.conversation_id is None
+    assert run.await_experiments() and clock[0] < agy.EXPERIMENT_WAIT
 
 
-def test_stalled_turns_complete_when_hooks_unmounted_or_block_when_unsafe(
-    tmp_path: Path,
-) -> None:
-    adapter = AntigravityAdapter()
-    capture = adapter.prepare(InvocationRequest("antigravity", "w", tmp_path)).capture_line
-    assert capture is not None
-
-    def run(**fields: object) -> Run:
-        turn = Turn("c")
-        for key, value in fields.items():
-            setattr(turn, key, value)
-        return Run(cast(Terminal, None), turn, Path())
-
-    # All fallback conditions met: unmounted hooks complete from the written reply with a warning.
-    fallback = run(answered=True, response="done")
-    assert not fallback.stalled("idle", STOP_GRACE - 1, "")
-    assert fallback.stalled("idle", STOP_GRACE + 1, "")
-    assert fallback.turn.stopped and fallback.turn.error is None
-    events = [
-        {
-            "event": "step_update",
-            "step_update": {"conversation_id": "c", "step_type": "agent_response", "state": "DONE"},
-        },
-        fallback.turn.result(),
-    ]
-    retained = b"".join(capture(json.dumps(e).encode()) for e in events)
-    parsed = adapter.parse(0, retained, b"")
-    assert parsed.status is InvocationStatus.SUCCEEDED
-    assert parsed.output == "done"
-    assert parsed.session_id == "c"
-    assert any("did not load hooks" in w for w in parsed.warnings)
-
-    # PreInvocation seen proves hooks loaded: missing Stop blocks and points to hooks.json.
-    mounted = run(answered=True, response="done", pre_invocation_seen=True)
-    assert mounted.stalled("idle", STOP_GRACE + 1, "")
-    assert "Stop hook never arrived" in str(mounted.turn.error)
-    assert "hooks.json" in str(mounted.turn.error)
-    blocked = adapter.parse(1, json.dumps(mounted.turn.result()).encode(), b"")
-    assert blocked.status is InvocationStatus.BLOCKED and blocked.output == "done"
-
-    # Any unmet fallback condition keeps BLOCKED while naming the unmounted-hooks race.
-    for unsafe in (
-        {"entry_intact": False},
-        {"open_tools": [100]},
-        {"background": {"c/task": 200}},
-        {"response": "   "},
-    ):
-        case = run(**{"answered": True, "response": "done", **unsafe})
-        assert case.stalled("idle", STOP_GRACE + 1, "")
-        assert "hooks did not load" in str(case.turn.error)
-        assert "hooks.json" not in str(case.turn.error)
-    footer_tasks = run(answered=True, response="done")
-    assert footer_tasks.stalled(
-        "idle", STOP_GRACE + 1, "? for shortcuts   model · 1 task(s) · /tasks"
-    )
-    assert "hooks did not load" in str(footer_tasks.turn.error)
-
-    # A Stop that left background commands running is followed by another once they end.
-    assert not run(answered=True, stop_seen=True).stalled("idle", 3600, "")
-    assert not run().stalled("busy", 3600, "")
-    unmounted_stall = run()
-    assert not unmounted_stall.stalled("unknown", 30, "")
-    assert unmounted_stall.stalled("unknown", 61, "")
-    assert "hooks did not load" in str(unmounted_stall.turn.error)
-    mounted_stall = run(pre_invocation_seen=True)
-    assert mounted_stall.stalled("idle", 61, "")
-    assert "hooks.json" in str(mounted_stall.turn.error)
-    assert run().stalled("menu", 3, "")
+@pytest.mark.parametrize(
+    "shown,steady,blocked",
+    [
+        ("idle", 30, False),
+        ("idle", 61, True),
+        ("unknown", 30, False),
+        ("unknown", 61, True),
+        ("menu", 1, False),
+        ("menu", 3, True),
+        ("busy", 3600, False),
+    ],
+)
+def test_stall_requires_native_completion(shown: str, steady: float, blocked: bool) -> None:
+    turn = Turn("c", response="partial", answered=True)
+    run = Run(cast(Terminal, None), turn, Path())
+    assert run.stalled(shown, steady, "") is blocked
+    assert bool(turn.error) is blocked
+    assert not turn.stopped and turn.response == "partial"
 
 
 @pytest.mark.parametrize("ending", ["finished", "was canceled", "failed"])
@@ -596,7 +441,6 @@ def test_background_calls_stay_open_and_the_footer_tells_who_works(
     assert shown == [
         ("tool", "ACTIVE", "run_command"),
         ("tool", "ACTIVE", "run_command"),
-        ("agent_response", "DONE", None),
         ("tool", "ACTIVE", "run_command"),
         ("thinking", "ACTIVE", None),
         ("tool", "DONE", None),
@@ -719,87 +563,198 @@ def test_multiple_tools_restore_active_after_first_finishes(
     ]
 
 
-@pytest.mark.parametrize("error", ["", "request failed"])
-@pytest.mark.parametrize("reply_before_stop", [False, True])
-def test_poll_reads_stop_and_final_reply_without_redisplaying_a_daemon(
-    error: str, reply_before_stop: bool, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_native_status_fragments_and_current_turn_gate() -> None:
+    screen = AgyScreen()
+    screen.feed(b"\x1b]7501;state=done:app=antig")
+    screen.feed(b"ravity\x07\x1b]7501;state=working:app=other\x1b\\")
+    assert screen.events == ["done"]
+    turn = Turn("resumed")
+    turn.native("working")
+    turn.native("done")
+    turn.expected = "task"
+    turn.native("done")
+    turn.user_seen = True
+    turn.response = "stale"
+    turn.answered = True
+    assert not turn.complete()
+    turn.native("working")
+    turn.background["daemon"] = 42
+    turn.row({"type": "PLANNER_RESPONSE", "content": "final", "model": "actual"})
+    turn.native("done")
+    assert not turn.complete()
+    assert turn.done_at is not None
+    assert turn.complete(turn.done_at + 5) and turn.model == "actual"
+
+
+def test_native_empty_final_does_not_reuse_previous_answer_or_model() -> None:
+    turn = Turn("c", expected="task", user_seen=True)
+    turn.row({"type": "PLANNER_RESPONSE", "content": "old", "model": "old-model"})
+    turn.row({"type": "PLANNER_RESPONSE", "content": "", "model": "new-model"})
+    turn.native("working")
+    turn.native("done")
+    assert not turn.complete()
+    assert not turn.response
+
+
+def test_native_background_reply_is_not_exposed_before_done(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    turn = Turn("c", user_seen=True)
-    turn.row(
-        {
-            "step_index": 2,
-            "type": "PLANNER_RESPONSE",
-            "source": "MODEL",
-            "tool_calls": [{"name": "run_command"}],
-        }
-    )
+    turn = Turn("c", expected="task", user_seen=True)
+    turn.native("working")
+    turn.row({"type": "PLANNER_RESPONSE", "step_index": 2, "tool_calls": [{"name": "run"}]})
     turn.row(
         {
             "type": "GENERIC",
-            "source": "MODEL",
             "status": "RUNNING",
-            "content": "Tool is running as a background task with task id: c/daemon\n",
+            "content": "running as a background task with task id: task",
         }
     )
-    turn.watch("idle")
-    turn.hook("Stop", {"conversationId": "c", "fullyIdle": False})
-    assert not turn.stopped
-    turn.watch("busy")
-    capsys.readouterr()
-    # A real poll reads hooks first, then transcript rows, then watches the footer.
-    # fullyIdle ignores daemons, so this task need not have an ending message.
-    turn.transcript = tmp_path / "transcript.jsonl"
-    turn.transcript.write_text(
-        json.dumps(
-            {"step_index": 4, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": "reply"}
-        )
-        + "\n"
-    )
-    rule = "─" * 40
-    screen = f"{rule}\n>\n{rule}\n● command running\n{rule}\n? for shortcuts · 1 task(s)"
-    terminal = cast(
-        Terminal,
-        SimpleNamespace(poll=lambda: screen, process=SimpleNamespace(pid=123, poll=lambda: None)),
-    )
-    run = Run(terminal, turn, tmp_path)
-    if reply_before_stop:
-        turn.watch(state(run.poll()))
-        assert not turn.stopped  # Text alone cannot prove this is the final reply.
-    (tmp_path / "123.1.Stop.json").write_text(
-        json.dumps({"conversationId": "c", "fullyIdle": True, "error": error})
-    )
+    turn.row({"type": "PLANNER_RESPONSE", "content": "interim", "model": "old"})
+    turn.native("done")
+    assert turn.done_at is not None
+    assert not turn.complete(turn.done_at + 2)
+    assert "interim" not in capsys.readouterr().out
+    turn.row({"type": "SYSTEM_MESSAGE", "content": 'Task id "task" finished'})
+    assert not turn.complete()
+    turn.row({"type": "PLANNER_RESPONSE", "content": "final", "model": "actual"})
+    turn.native("done")
+    assert turn.complete() and turn.model == "actual"
+    assert "final" in capsys.readouterr().out
+
+
+def test_native_question_and_error_preserve_session_and_partial_output() -> None:
+    for event, blocked in (("waiting_for_input", True), ("error", False)):
+        turn = Turn("c", expected="task", user_seen=True, response="partial")
+        turn.native("working")
+        turn.native(event)
+        result = cast(dict[str, object], turn.result()["result"])
+        assert result["conversation_id"] == "c" and result["response"] == "partial"
+        assert ("permission required" in str(result["error"])) is blocked
+
+
+def test_native_done_deadline_survives_screen_and_transcript_churn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentnave.agy_tui as agy
+
+    ticks = iter(float(i) for i in range(100))
+    monkeypatch.setattr(agy.time, "monotonic", lambda: next(ticks))
+    turn = Turn("c", expected="task", user_seen=True, active=True, done_at=0)
+    terminal = cast(Terminal, SimpleNamespace(process=SimpleNamespace(poll=lambda: None)))
+    run = Run(terminal, turn, tmp_path / "private.log")
+
+    def changing() -> str:
+        turn.offset += 1
+        return str(turn.offset)
+
+    monkeypatch.setattr(run, "poll", changing)
     run.await_stop()
-    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    expected = [
-        {
-            "conversation_id": "c",
-            "step_index": 4,
-            "step_type": "agent_response",
-            "state": "DONE",
-            "text_delta": "reply",
-        }
-    ]
-    if reply_before_stop:
-        # While still waiting for Stop, a tool update after text is valid. It must not
-        # change adapter success/error classification or duplicate the response text.
-        expected.append(
-            {
-                "conversation_id": "c",
-                "step_index": 200,
-                "step_type": "tool",
-                "state": "ACTIVE",
-                "tool_name": "run_command",
-            }
+    assert "without a final reply" in str(turn.error)
+
+
+def test_native_completion_restarts_grace_on_coalesced_working_and_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentnave.agy_tui as agy
+
+    turn = Turn("c", expected="task", user_seen=True, active=True, done_at=1)
+    screen = AgyScreen()
+    screen.events.extend(("working", "done"))
+    terminal = cast(Terminal, SimpleNamespace(poll=lambda: "", screen=screen))
+    monkeypatch.setattr(agy.time, "monotonic", lambda: 10.0)
+    Run(terminal, turn, tmp_path / "private.log").poll()
+    assert turn.done_at == 10.0
+
+
+def test_old_agy_requires_upgrade_without_starting_tui(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import agentnave.agy_tui as agy
+
+    def version(*args: object, **kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout="1.5.9")
+
+    monkeypatch.setattr(agy.subprocess, "run", version)
+    assert agy.run_main("/fake/agy", None, [], "task") == 1
+    result = json.loads(capsys.readouterr().out)["result"]
+    assert "1.5.10 or later" in result["error"]
+
+
+def test_private_logs_bind_identical_concurrent_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    ids = ["11111111-2222-3333-4444-555555555555", "aaaaaaaa-2222-3333-4444-555555555555"]
+    runs: list[Run] = []
+    for index, cid in enumerate(ids):
+        log = tmp_path / f"private-{index}.log"
+        log.write_text(f"Created conversation {cid}\n")
+        screen = AgyScreen()
+        terminal = cast(Terminal, SimpleNamespace(screen=screen, poll=lambda: ""))
+        turn = Turn(None, expected="same task")
+        run = Run(terminal, turn, log)
+        run.poll()
+        assert turn.conversation_id is None
+        transcript = (
+            tmp_path
+            / ".gemini/antigravity-cli/brain"
+            / cid
+            / ".system_generated/logs/transcript_full.jsonl"
         )
-    assert [e["step_update"] for e in events] == expected
-    assert turn.stopped and turn.background  # The Stop hook, not task count, ends the turn.
-    events.append(turn.result())
-    capture = (
-        AntigravityAdapter().prepare(InvocationRequest("antigravity", "w", tmp_path)).capture_line
+        transcript.parent.mkdir(parents=True)
+        request = {
+            "type": "USER_INPUT",
+            "source": "USER_EXPLICIT",
+            "content": "compare with: same task",
+        }
+        transcript.write_text(json.dumps(request) + "\n")
+        run.poll()
+        assert turn.conversation_id is None
+        request["content"] = "<USER_REQUEST>same task</USER_REQUEST>\n<ADDITIONAL_METADATA>"
+        transcript.write_text(json.dumps(request) + "\n")
+        run.poll()
+        assert turn.user_seen
+        runs.append(run)
+    assert [run.turn.conversation_id for run in runs] == ids
+
+
+@pytest.mark.parametrize("reply_before_done", [False, True])
+def test_native_done_can_finish_with_daemon(
+    reply_before_done: bool, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    turn = Turn("c", expected="task", user_seen=True)
+    turn.native("working")
+    turn.row({"type": "PLANNER_RESPONSE", "step_index": 2, "tool_calls": [{"name": "run_command"}]})
+    turn.row(
+        {
+            "type": "GENERIC",
+            "status": "RUNNING",
+            "content": "Tool is running as a background task with task id: c/daemon",
+        }
     )
+    final: dict[str, object] = {
+        "step_index": 4,
+        "type": "PLANNER_RESPONSE",
+        "content": "reply",
+        "model": "actual",
+    }
+    if reply_before_done:
+        turn.row(final)
+        assert not turn.complete()
+    turn.native("done")
+    if not reply_before_done:
+        assert not turn.complete()
+        turn.row(final)
+    assert not turn.complete()
+    assert turn.done_at is not None
+    assert turn.complete(turn.done_at + 5) and turn.background
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    events.append(turn.result())
+    adapter = AntigravityAdapter()
+    capture = adapter.prepare(InvocationRequest("antigravity", "w", tmp_path)).capture_line
     assert capture is not None
     retained = b"".join(capture(json.dumps(e).encode()) for e in events)
-    # run_main exits nonzero on a hook error; parse() must not apply print-mode recovery.
-    result = AntigravityAdapter().parse(1 if turn.error else 0, retained, b"")
-    assert result.status is (InvocationStatus.FAILED if error else InvocationStatus.SUCCEEDED)
-    assert result.output == "reply"
+    result = adapter.parse(0, retained, b"")
+    assert result.status is InvocationStatus.SUCCEEDED and result.output == "reply"
+    assert adapter.event_model(events[-1]) == "actual"

@@ -467,11 +467,9 @@ def _output_limit_error(
 
 
 SUBAGENT_INSTRUCTIONS = (
-    "You are an AgentNave subagent. Complete the assigned task and report back to the calling "
-    "manager. Do not call AgentNave tools or delegate through AgentNave. Report blockers. "
-    "Nobody can answer during this run: work within your authorization, and put any new "
-    "authorization or user choice you need, with your progress, in your final answer, not an "
-    "interactive question tool. Never bypass native permissions."
+    "Complete the task within the granted permissions. Do not call AgentNave tools or delegate "
+    "through AgentNave. Include blockers, decisions, and any additional authorization needed in "
+    "your final reply. Do not use interactive question tools or bypass native permissions."
 )
 READ_ONLY_INSTRUCTIONS = (
     "Read-only: do not modify files, commit, push, send messages or post comments. You may read "
@@ -860,9 +858,9 @@ class InvocationManager:
             result = await self._run(record, adapter, prepared)
             result = self._settle_session(record, result)
             outcome = result.status
-            reported = record.reported_model or adapter.session_model(
-                result.session_id, since=record.started_wall_at
-            )
+            reported = record.reported_model
+            if not reported and not prepared.model_from_result_only:
+                reported = adapter.session_model(result.session_id, since=record.started_wall_at)
             record.reported_model = reported
             return replace(result, reported_model=reported)
         except Exception:

@@ -204,7 +204,11 @@ class AntigravityAdapter(AdapterHooks):
         argv.extend(("--", *self.option_args(request)))
         prompt = json.dumps({"prompt": request.prompt}, ensure_ascii=False) + "\n"
         return PreparedCommand(
-            tuple(argv), request.cwd, prompt.encode(), capture_line=_result_capture()
+            tuple(argv),
+            request.cwd,
+            prompt.encode(),
+            capture_line=_result_capture(),
+            model_from_result_only=True,
         )
 
     def event_model(self, event: dict[str, object]) -> str | None:
