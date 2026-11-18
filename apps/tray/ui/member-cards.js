@@ -174,7 +174,7 @@
     },
     antigravity: {
       key: "antigravity_interactive",
-      tip: () => L("用终端界面驱动 Antigravity CLI，代替 -p 以省额度。会在 Antigravity 的全局 hooks.json 加一条只在 AgentNave 派发时起作用的 hook。", "Drives Antigravity CLI through its terminal UI instead of -p to save quota. Adds a hook to Antigravity’s global hooks.json that acts only in runs AgentNave starts."),
+      tip: () => L("用终端界面驱动 Antigravity CLI，代替 -p 以省额度；需要 agy 1.5.10 或更新版本。", "Drives Antigravity CLI through its terminal UI instead of -p to save quota; requires agy 1.5.10 or later."),
     },
   };
 

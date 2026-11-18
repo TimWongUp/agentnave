@@ -1,6 +1,7 @@
 # ADR-0072：Antigravity CLI 在权限放开时改用交互模式运行
 
 - 状态：部分修订
+- 原生状态事件取代全局 hooks 与共享日志绑定，见 [ADR-0102](0102-agy-native-status.md)。
 - 日期：2026-11-09
 - 信任屏确认与用户配置持久化例外修订见 [ADR-0078](0078-startup-confirmations.md)。
 - 运行活动可由屏幕状态行更新，见 [ADR-0079](0079-agy-screen-activity.md)。

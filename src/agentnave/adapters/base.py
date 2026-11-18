@@ -84,6 +84,8 @@ class PreparedCommand:
     # Create this private directory only when the invocation starts; its name is exposed to the
     # helper through this environment variable and removed after the process tree stops.
     temp_dir_env: str | None = None
+    # This command reports its model in its own result; do not consult external session logs.
+    model_from_result_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)

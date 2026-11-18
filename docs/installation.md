@@ -109,8 +109,8 @@ CLI's directory first, then the inherited `PATH`, then those directories. Deskto
 different environment from your terminal; set an explicit `PATH` in the server's host configuration
 if a CLI or its runtime lives elsewhere, or on Windows.
 AgentNave does not install providers or change their login. The App can maintain an AgentNave
-rules block in host configuration, and interactive Antigravity runs maintain the
-`agentnave-interactive` entry in `~/.gemini/config/hooks.json`. It passes each CLI's
+rules block in host configuration. Interactive Antigravity runs require agy 1.5.10 or later
+and use native terminal status events without installing hooks. It passes each CLI's
 permission tier on every dispatch (full access by default, or automatic approval when selected
 in the App) without changing the CLI's saved
 settings.
