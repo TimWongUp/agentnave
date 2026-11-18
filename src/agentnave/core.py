@@ -157,11 +157,10 @@ class _InvocationRecord:
             code = activity.blocking_error
             if code is not None and code not in self.reported_errors:
                 self.reported_errors.add(code)
-                if self.health_root is not None and (
-                    category := provider_health.classify(
-                        InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
-                    )
-                ):
+                category = provider_health.classify(
+                    InvocationStatus.BLOCKED, code, activity.message, self.reported_errors
+                )
+                if self.health_root is not None and category:
                     provider_health.record(
                         self.health_root,
                         self.request.provider,
@@ -169,11 +168,10 @@ class _InvocationRecord:
                         provider_health.model_option(self.request.provider_options),
                         adapter.quota_reset(line, b"", datetime.now(UTC)),
                     )
-                self.pending_attention.append(
-                    InvocationError(
-                        code, "CLI reported an execution blocker; inspect or cancel the invocation."
-                    )
-                )
+                message = "CLI reported an execution blocker; inspect or cancel the invocation."
+                if category == "quota":
+                    message += " " + provider_health.QUOTA_RESUME_HINT
+                self.pending_attention.append(InvocationError(code, message))
                 self.attention_event.set()
             if activity.kind == "message" and activity.public_output:
                 # Delta events append; cumulative/final message events replace the current reply.
@@ -469,11 +467,9 @@ def _output_limit_error(
 
 
 SUBAGENT_INSTRUCTIONS = (
-    "You are an AgentNave subagent. Complete the assigned task and report back to the calling "
-    "manager. Do not call AgentNave tools or delegate through AgentNave. Report blockers. "
-    "Nobody can answer during this run: work within your authorization, and put any new "
-    "authorization or user choice you need, with your progress, in your final answer, not an "
-    "interactive question tool. Never bypass native permissions."
+    "Complete the task within the granted permissions. Do not call AgentNave tools or delegate "
+    "through AgentNave. Include blockers, decisions, and any additional authorization needed in "
+    "your final reply. Do not use interactive question tools or bypass native permissions."
 )
 READ_ONLY_INSTRUCTIONS = (
     "Read-only: do not modify files, commit, push, send messages or post comments. You may read "
@@ -862,9 +858,9 @@ class InvocationManager:
             result = await self._run(record, adapter, prepared)
             result = self._settle_session(record, result)
             outcome = result.status
-            reported = record.reported_model or adapter.session_model(
-                result.session_id, since=record.started_wall_at
-            )
+            reported = record.reported_model
+            if not reported and not prepared.model_from_result_only:
+                reported = adapter.session_model(result.session_id, since=record.started_wall_at)
             record.reported_model = reported
             return replace(result, reported_model=reported)
         except Exception:

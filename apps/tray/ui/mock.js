@@ -891,11 +891,27 @@ All checks passed!
   };
   const ago = (minutes) => Date.now() - minutes * 60e3;
   const RELOADS = {
-    claude: { reason: "stale", copies: [{ kind: "daemon", since: ago(180) }, { kind: "desktop", since: ago(42), bundle: "/Applications/Claude.app" }] },
-    codex: { reason: "host_running", copies: [{ kind: "daemon", since: ago(300) }, { kind: "app", since: ago(25), bundle: "/Applications/ChatGPT.app" }] },
+    claude: {
+      reason: "stale",
+      copies: [
+        { kind: "daemon", since: ago(180) },
+        { kind: "desktop", since: ago(42), bundle: "/Applications/Claude.app" },
+        { kind: "cli", pid: 41001, since: ago(660), cwd: "/Users/me/Code/agentnave", terminal: "herdr" },
+        { kind: "cli", pid: 41002, since: ago(95), cwd: "/Users/me/Notes", terminal: "Ghostty" },
+        { kind: "cli", pid: 41003, since: ago(20) },
+      ],
+    },
+    codex: {
+      reason: "host_running",
+      copies: [
+        { kind: "daemon", since: ago(300) },
+        { kind: "app", since: ago(25), bundle: "/Applications/ChatGPT.app" },
+        { kind: "cli", pid: 42001, since: ago(140), cwd: "/Users/me/Code/api", terminal: "iTerm2" },
+      ],
+    },
     hermes: { reason: "tools", copies: [{ kind: "gateway", since: ago(1500) }] },
     workbuddy: { reason: "unverified", copies: [] },
-    pi: { reason: "config", copies: [] },
+    pi: { reason: "config", copies: [{ kind: "cli", pid: 43001, since: ago(50), cwd: "/Users/me/Code/scripts", terminal: "tmux" }] },
   };
   const hostIds = reloadScene ? ["claude", "codex", "hermes", "workbuddy", "pi"] : ["codex", "pi", "workbuddy", "hermes"];
   const hostRows = hostIds.map((id, index) => {
@@ -996,7 +1012,7 @@ All checks passed!
     },
   };
   const mockDecision = { document: null, error: null, key_set: false, key_error: null };
-  // Terminals the office started (ADR-0101): the first one's CLI is the boss of the first workspace.
+  // Terminals the office started (ADR-0103): the first one's CLI is the boss of the first workspace.
   const mockTerminals = [
     { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app" },
     { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
@@ -1140,6 +1156,12 @@ All checks passed!
       const r = RELOADS[host.id];
       if (r) r.copies = r.copies.filter((copy) => copy.kind !== body.kind);
       return { ok: true, message: body.kind === "daemon" && host.id === "claude" ? "已停止 Claude 后台服务" : `预览：已重启 ${host.label} 的${body.kind === "gateway" ? "网关" : "后台服务"}`, host: structuredClone(host) };
+    }
+    if (path.endsWith("/stop-copy")) {
+      if (q.has("copyfail")) return { ok: false, message: "该终端会话已变化或不再是旧副本，已刷新状态", host: structuredClone(host) };
+      const r = RELOADS[host.id];
+      if (r) r.copies = r.copies.filter((copy) => !(copy.kind === "cli" && copy.pid === body.pid && copy.since === body.since));
+      return { ok: true, message: "预览：已结束终端会话", host: structuredClone(host) };
     }
     if (path.endsWith("/dismiss-fault")) {
       host.fault = null;

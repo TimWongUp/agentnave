@@ -141,7 +141,10 @@ class CodexAdapter(AdapterHooks):
     name = "codex"
 
     def quota_group(self, model: str) -> str | None:
-        return "codex"
+        # Only the official Codex route shares one quota. A model reached through a third-party
+        # route (a "provider/model" slug such as trae-cn/... or google/...) bills elsewhere, so it
+        # cools by itself instead of being cooled, or cooling the others, with the official group.
+        return None if "/" in model else "codex"
 
     options_description = (
         "approve_for_me (boolean; Codex's automatic reviewer approves tool calls within the "
@@ -308,6 +311,8 @@ class CodexAdapter(AdapterHooks):
         return parse_reset(stderr.decode(errors="replace"), now)
 
     def usage_query(self, model: str | None) -> UsageQuery | None:
+        if model and "/" in model:
+            return None  # a third-party route is not billed by the official Codex account
         return UsageQuery(
             (self.executable_path(), "app-server"),
             codex_output_reset,

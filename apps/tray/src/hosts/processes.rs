@@ -8,18 +8,34 @@ use std::{
 use sysinfo::{Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 #[cfg(unix)]
 mod copies;
+#[cfg(unix)]
+pub(super) use copies::Collector as CopyCollector;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Copy {
     pub kind: &'static str,
     /// Unix milliseconds, at sysinfo's one-second resolution.
     pub since: u64,
     pub bundle: Option<String>,
+    pub pid: Option<u32>,
+    pub cwd: Option<String>,
+    pub terminal: Option<&'static str>,
 }
 impl Copy {
     pub fn into_json(self) -> serde_json::Value {
-        let mut value = serde_json::json!({"kind":self.kind,"since":self.since});
+        let mut value = serde_json::json!({"kind": self.kind, "since": self.since});
         if let Some(bundle) = self.bundle {
             value["bundle"] = serde_json::json!(bundle);
+        }
+        if self.kind == "cli" {
+            if let Some(pid) = self.pid {
+                value["pid"] = serde_json::json!(pid);
+            }
+            if let Some(cwd) = self.cwd {
+                value["cwd"] = serde_json::json!(cwd);
+            }
+            if let Some(terminal) = self.terminal {
+                value["terminal"] = serde_json::json!(terminal);
+            }
         }
         value
     }
@@ -149,17 +165,10 @@ impl Probe {
     }
 
     /// Classify only observed live relays; unknown or reused PIDs supply no copy evidence.
+    #[cfg(unix)]
     pub fn receipt_copy(&mut self, context: &Context, id: &str, pid: u32) -> Option<Copy> {
         self.refresh(context);
-        #[cfg(unix)]
-        {
-            self.copies.as_ref()?.classify(id, pid, true)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = (id, pid);
-            None
-        }
+        self.copies.as_ref()?.classify(id, pid, true)
     }
 
     pub fn old_copies(&mut self, context: &Context, id: &str, before: u64) -> Vec<Copy> {
@@ -334,10 +343,30 @@ fn observe(context: &Context) -> Option<Observation> {
         return None;
     }
     let hosts = observe_hosts(context, &system);
+    #[cfg(unix)]
+    if let Some(hosts) = &hosts {
+        let pids: Vec<sysinfo::Pid> = hosts
+            .pids
+            .values()
+            .flatten()
+            .map(|&pid| sysinfo::Pid::from_u32(pid))
+            .collect();
+        if !pids.is_empty() {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&pids),
+                false,
+                ProcessRefreshKind::nothing().with_cwd(UpdateKind::Always),
+            );
+        }
+    }
     Some(Observation {
         running: hosts.as_ref().map(|hosts| hosts.running.clone()),
         #[cfg(unix)]
-        copies: copies::Snapshot::new(&system, hosts.map(|hosts| hosts.pids).unwrap_or_default()),
+        copies: copies::Snapshot::new(
+            &system,
+            &context.home,
+            hosts.map(|hosts| hosts.pids).unwrap_or_default(),
+        ),
         // Missing executable, arguments or user information never means a PID is dead.
         processes: system
             .processes()
@@ -378,6 +407,34 @@ fn host_targets(context: &Context) -> HashMap<String, &'static str> {
     targets
 }
 
+fn is_script_runner(exe: &Path) -> bool {
+    let Some(stem) = exe.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let exe = stem.to_lowercase();
+    matches!(
+        exe.as_str(),
+        "node" | "bun" | "deno" | "python" | "python3" | "uv" | "uvx" | "npx"
+    ) || exe.starts_with("python3.")
+}
+
+#[cfg(unix)]
+fn shorten_home(path: &Path, home: &Path) -> Option<String> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    if !home.as_os_str().is_empty()
+        && let Ok(rest) = path.strip_prefix(home)
+    {
+        return Some(if rest.as_os_str().is_empty() {
+            "~".into()
+        } else {
+            format!("~/{}", rest.to_string_lossy())
+        });
+    }
+    Some(path.to_string_lossy().into_owned())
+}
+
 fn process_identity(
     process: &Process,
     targets: &HashMap<String, &'static str>,
@@ -395,12 +452,7 @@ fn process_identity(
             .first()
             .and_then(|p| identify(Path::new(p)))
             .or_else(|| {
-                let exe = process.exe()?.file_stem()?.to_str()?.to_lowercase();
-                if !matches!(
-                    exe.as_str(),
-                    "node" | "bun" | "deno" | "python" | "python3" | "uv" | "uvx" | "npx"
-                ) && !exe.starts_with("python3.")
-                {
+                if !is_script_runner(process.exe()?) {
                     return None;
                 }
                 process

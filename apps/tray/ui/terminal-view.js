@@ -1,5 +1,5 @@
 "use strict";
-// One CLI on the terminal page (ADR-0101): an xterm.js view that follows the App's output by long
+// One CLI on the terminal page (ADR-0103): an xterm.js view that follows the App's output by long
 // polling /app/terminal/output and sends keys, binary mouse reports and size changes back.
 window.TerminalView = (() => {
   const root = document.documentElement;

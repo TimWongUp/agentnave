@@ -1,6 +1,7 @@
 # ADR-0079：Antigravity 交互活动从屏幕状态行补充
 
-- 状态：已接受
+- 状态：部分修订
+- 结束判定修订见 [ADR-0102](0102-agy-native-status.md)。
 - 日期：2026-11-10
 - 修订 [ADR-0072](0072-antigravity-interactive-runtime.md) 的活动只来自 transcript 的约定。
 

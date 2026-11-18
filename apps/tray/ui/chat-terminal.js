@@ -1,5 +1,5 @@
 "use strict";
-// Terminals in the office (ADR-0101), laid out after herdr: a project's "+" starts a new agent, an
+// Terminals in the office (ADR-0103), laid out after herdr: a project's "+" starts a new agent, an
 // installed CLI in the project's folder. Its CLI is a boss; once it dispatches, its workspace is
 // listed as usual and the conversation column can show the terminal instead of the messages.
 // Until then the agent is listed on its own, its terminal in that column.

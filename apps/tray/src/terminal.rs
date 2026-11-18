@@ -1,4 +1,4 @@
-//! The embedded terminal (ADR-0101): installed CLIs the user starts from the office, each in a
+//! The embedded terminal (ADR-0103): installed CLIs the user starts from the office, each in a
 //! project's folder. They are the user's own processes and end with the App; a CLI that works
 //! through AgentNave is the boss of the workspaces it dispatched from, which the office shows it
 //! beside.

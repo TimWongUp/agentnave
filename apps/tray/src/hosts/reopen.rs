@@ -89,6 +89,62 @@ impl Hosts {
         Ok(json!({"ok":ok,"message":message,"host":self.state(host)}))
     }
 
+    pub(super) fn stop_copy(&mut self, host: &Host, payload: &Value) -> Result<Value, String> {
+        let pid = payload["pid"]
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .filter(|&pid| pid > 1)
+            .ok_or("缺少有效 pid")?;
+        let since = payload["since"]
+            .as_u64()
+            .filter(|&since| since > 0)
+            .ok_or("缺少有效启动时间")?;
+        if pid == std::process::id() {
+            return Err("不能结束应用自身".into());
+        }
+        // Re-observe live processes before validating ownership and start time.
+        self.processes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .invalidate();
+        if !self.is_current_old_cli_copy(host, pid, since) {
+            return Ok(json!({
+                "ok": false,
+                "message": "该终端会话已变化或不再是旧副本，已刷新状态",
+                "host": self.state(host),
+            }));
+        }
+        let result = terminate_process(pid);
+        self.processes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .invalidate();
+        let ok = result.is_ok();
+        let message = result.err().unwrap_or_else(|| "已结束该终端会话".into());
+        // No config, reload confirmation, Skill or rules writes, including in preview builds.
+        Ok(json!({"ok": ok, "message": message, "host": self.state(host)}))
+    }
+
+    fn is_current_old_cli_copy(&self, host: &Host, pid: u32, since: u64) -> bool {
+        if !self.has_managed_entry(host).unwrap_or(false) || !self.detect(host).0 {
+            return false;
+        }
+        let Some(token) = self.reload_token(host) else {
+            return false;
+        };
+        let reload = self.reload_state(host, &token);
+        if !matches!(reload["state"].as_str(), Some("required")) {
+            return false;
+        }
+        reload["copies"].as_array().is_some_and(|copies| {
+            copies.iter().any(|copy| {
+                copy["kind"] == "cli"
+                    && copy["pid"].as_u64() == Some(u64::from(pid))
+                    && copy["since"].as_u64() == Some(since)
+            })
+        })
+    }
+
     fn run_copy_action(
         &self,
         binary: &str,
@@ -122,4 +178,30 @@ impl Hosts {
         }
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) -> Result<(), String> {
+    let raw = libc::pid_t::try_from(pid).map_err(|_| "pid 超出范围".to_owned())?;
+    if unsafe { libc::kill(raw, libc::SIGTERM) } != 0 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Err("该终端会话已退出，已刷新状态".into());
+        }
+        return Err(format!("无法结束该终端会话：{error}"));
+    }
+    for _ in 0..20 {
+        if unsafe { libc::kill(raw, 0) } != 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    if unsafe { libc::kill(raw, 0) } != 0
+        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    {
+        return Ok(());
+    }
+    Err("已请求结束，但会话仍在运行，稍后会自动刷新".into())
 }

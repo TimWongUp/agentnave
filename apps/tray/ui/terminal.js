@@ -1,5 +1,5 @@
 "use strict";
-// The office's terminal frame (ADR-0101): the CLI named by ?session, shown beside the floor in
+// The office's terminal frame (ADR-0103): the CLI named by ?session, shown beside the floor in
 // place of the messages. The office tells it when it is shown and when preferences change.
 document.addEventListener("DOMContentLoaded", () => {
   const root = document.documentElement;

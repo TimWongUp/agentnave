@@ -18,7 +18,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import CallToolResult, InputRequiredResult, TextContent
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agentnave import __version__
+from agentnave import __version__, provider_health
 from agentnave.adapters import get_adapter
 from agentnave.conversations import (
     CommittedEntry,
@@ -732,7 +732,8 @@ def _unreceived(
                     "status": "execution_blocked",
                     "error": {
                         "code": blockers[0],
-                        "message": "CLI reported an execution blocker; wait returns it.",
+                        "message": "CLI reported an execution blocker; wait returns it."
+                        + provider_health.blocker_hint(blockers[0]),
                     },
                 }
             )

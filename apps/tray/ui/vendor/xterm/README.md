@@ -1,4 +1,4 @@
-# xterm.js（内嵌终端用，ADR-0101）
+# xterm.js（内嵌终端用，ADR-0103）
 
 从 npm 包原样复制的构建产物，只删去 `sourceMappingURL` 行：
 

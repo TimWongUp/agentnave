@@ -2021,3 +2021,9 @@ async def test_concurrent_new_task_rejects_foreign_session_without_affecting_val
         )
     finally:
         await manager.shutdown()
+
+
+def test_blocker_hint_only_for_quota_codes() -> None:
+    assert provider_health.QUOTA_RESUME_HINT in provider_health.blocker_hint("insufficient_quota")
+    assert provider_health.blocker_hint("authentication_failed") == ""
+    assert provider_health.blocker_hint("provider_failed") == ""

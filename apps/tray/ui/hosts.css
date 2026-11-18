@@ -88,6 +88,7 @@ code.path { display: inline-flex; min-width: 0; font: 11.5px/1.5 ui-monospace, "
 .hc-copies { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .hc-copy { display: grid; grid-template-columns: minmax(0, 1fr) 84px; align-items: center; gap: 12px; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--warn) 22%, transparent); }
 .hc-copy p { margin: 2px 0 0; }
+.hc-copy .hc-copy-cwd { margin-top: 2px; }
 .hc-copy .hc-since { color: var(--muted); }
 .hc-copy-act { display: flex; justify-content: flex-end; }
 @media (max-width: 600px) { .hc-reload-head { align-items: flex-start; flex-direction: column; gap: 10px; } }

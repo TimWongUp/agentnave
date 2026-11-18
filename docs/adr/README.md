@@ -75,14 +75,14 @@
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
-| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)；2026-11-14 修订（投递前等实验刷新、`PreInvocation` 探针与未挂载 hooks 保底收尾） |
+| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)、[ADR-0102](0102-agy-native-status.md) |
 | 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 已接受 | 扩展并修订 ADR-0068 |
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射、[ADR-0087](0087-decision-model-recommends-seats.md)；「不可用边界」的兜底顺序由 [ADR-0089](0089-seat-fallback-order.md) 修订；执行边界由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
 | 0076 | [权限档位缺省为完全放开](0076-full-permission-default.md) | 已接受 | 修订 ADR-0032 |
 | 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 部分修订 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限；[ADR-0082](0082-claude-long-wait-terminal-only.md)、[ADR-0084](0084-claude-terminal-default-long-wait.md) |
 | 0078 | [启动确认屏由服务自动处理](0078-startup-confirmations.md) | 已接受 | 修订 ADR-0056、ADR-0057、ADR-0072 |
-| 0079 | [Antigravity 交互活动从屏幕状态行补充](0079-agy-screen-activity.md) | 已接受 | 修订 ADR-0072 的活动来源 |
+| 0079 | [Antigravity 交互活动从屏幕状态行补充](0079-agy-screen-activity.md) | 部分修订 | 修订 ADR-0072 的活动来源；结束判定见 [ADR-0102](0102-agy-native-status.md) |
 | 0080 | [macOS 视频小人经回环 HTTP 加载](0080-tray-video-loopback-http.md) | 已接受 | — |
 | 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 已接受 | 修订 ADR-0024 的工具集合；自身的配额冷却规则于 2026-11-13 改为用量查询加一小时兜底；配额冷却粒度由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订 |
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
@@ -92,7 +92,7 @@
 | 0086 | [Windows Claude Code 使用交互模式](0086-windows-claude-interactive.md) | 已接受 | 修订 ADR-0056 的 Windows 运行方式 |
 | 0087 | [新增「决策模型」档：服务请决策模型在用户自定义的工位里选，派发仍由 boss 发起](0087-decision-model-recommends-seats.md) | 已接受 | 修订 ADR-0037、ADR-0038、ADR-0052、ADR-0068、ADR-0074 在「决策模型」档下的适用范围；扩展 ADR-0041；「候选只含真正能派的工位」的可用判断由 [ADR-0089](0089-seat-fallback-order.md) 扩展；候选可用性由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充；自定义任务工位同档候选随机选由 [ADR-0093](0093-decision-seat-random-candidates.md) 扩展；2026-11-15 自身修订：只读且带隔离的派发在可写工位里选，三档含义改为按开工时还有什么没定 |
 | 0088 | [中继记录服务子进程的非预期退出，托盘据此提示宿主连接中断](0088-relay-records-service-exit-fault.md) | 部分修订 | 扩展 ADR-0012 的托盘写入范围；沿用 ADR-0022 的观测读取约束；「消除」由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订 |
-| 0089 | [App 工位可配备选顺位，服务派发时按顺位取第一个可用](0089-seat-fallback-order.md) | 已接受 | 修订 ADR-0074「不可用边界」的兜底顺序、ADR-0087「候选只含真正能派的工位」的可用判断；扩展 ADR-0038 的工位设置套用；同类顺位与配额冷却判断由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订；「决策模型」档自定义任务工位同档候选随机选由 [ADR-0093](0093-decision-seat-random-candidates.md) 修订 |
+| 0089 | [App 工位可配备选顺位，服务派发时按顺位取第一个可用](0089-seat-fallback-order.md) | 已接受 | 修订 ADR-0074「不可用边界」的兜底顺序、ADR-0087「候选只含真正能派的工位」的可用判断；扩展 ADR-0038 的工位设置套用；同类顺位与配额冷却判断由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订；「决策模型」档自定义任务工位同档候选随机选由 [ADR-0093](0093-decision-seat-random-candidates.md) 修订；2026-11-18 自身补充：`session_id` 续接遇冷却时 boss 可显式换同 CLI 其他模型原位续接 |
 | 0090 | [配额按额度组冷却，宿主同类 CLI 按 boss 选择处理](0090-quota-group-cooldown-and-host-cli-choice.md) | 部分修订 | 修订 ADR-0081、ADR-0013、ADR-0089；补充 ADR-0087、ADR-0074；私聊同类默认方式由 [ADR-0094](0094-antigravity-host-cli-defaults-to-launch.md) 修订；三选一不再被环境变量排除项压过由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订 |
 | 0091 | [「只开会」档只用会议室，按档位互斥安装 Skill，主动开会改为默认关的开关](0091-meetings-only-skill-and-auto-meeting-switch.md) | 已接受 | 修订 ADR-0083、ADR-0068；扩展 ADR-0036 |
 | 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」 |
@@ -104,4 +104,6 @@
 | 0098 | [托盘可在仓库锁与租约协议下手动删除隔离目录](0098-tray-deletes-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的 App 清理边界；扩展 ADR-0012 |
 | 0099 | [接手改为建立关联，工作区不再转移](0099-handover-links-workspaces.md) | 已接受 | 取代 ADR-0033 的归属转移部分；修订 ADR-0017 的跨 boss 显式续接、ADR-0046 的清理计时起点 |
 | 0100 | [由 App 卸载并默认保留任务和会议记录](0100-app-uninstall.md) | 已接受 | 扩展 ADR-0012 的托盘写入边界；保留 ADR-0078 的工作区信任标记 |
-| 0101 | [办公室里开 agent，终端与它的工作区对应](0101-tray-embedded-terminal.md) | 已接受 | 修订 CONTEXT「工作区」「项目」「Tray App」并新增「agent」；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执；2026-11-18 自身修订（项目→agent→办公室模型、右栏三格、中继与托盘对应修复、Codex `--no-daemon`、Claude/Codex 续接与托盘内防重） |
+| 0101 | [托盘逐条展示并在校验后向旧终端宿主进程发送 SIGTERM](0101-tray-stops-old-cli-copies.md) | 已接受 | 扩展 ADR-0022 的重新加载引导边界 |
+| 0102 | [Antigravity 交互运行采用原生状态事件](0102-agy-native-status.md) | 已接受 | 修订 ADR-0072、ADR-0079 |
+| 0103 | [办公室里开 agent，终端与它的工作区对应](0103-tray-embedded-terminal.md) | 已接受 | 修订 CONTEXT「工作区」「项目」「Tray App」并新增「agent」；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执；2026-11-18 自身修订（项目→agent→办公室模型、右栏三格、中继与托盘对应修复、Codex `--no-daemon`、Claude/Codex 续接与托盘内防重） |

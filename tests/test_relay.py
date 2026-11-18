@@ -373,7 +373,7 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
 
 
 def test_connection_names_the_boss_chats_it_spoke_for(tmp_path: Path) -> None:
-    # The tray matches a terminal's CLI to its workspace by these keys (ADR-0101).
+    # The tray matches a terminal's CLI to its workspace by these keys (ADR-0103).
     data = tmp_path / "data"
     host = Host(
         tmp_path, env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)}

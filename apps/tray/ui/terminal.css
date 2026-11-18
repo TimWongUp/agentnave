@@ -1,4 +1,4 @@
-/* One terminal, filling the frame the office gives it beside the floor (ADR-0101). Its
+/* One terminal, filling the frame the office gives it beside the floor (ADR-0103). Its
    background follows the xterm theme in terminal-view.js. */
 html, body { height: 100%; margin: 0; }
 body.terminal-page { overflow: hidden; background: var(--term-bg, var(--bg)); }

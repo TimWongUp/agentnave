@@ -19,6 +19,7 @@ from uuid import uuid4
 from agentnave import views
 from agentnave.core import InvocationManager
 from agentnave.db import ClaimStatus, Database, Workspace
+from agentnave.follow_up import FollowUpLedger
 from agentnave.group import (
     Forwarded,
     Group,
@@ -122,7 +123,8 @@ def entry_message_id(conversation_id: str, index: int) -> str:
 def forwarded_prompt(forwarded: list[Forwarded], prompt: str) -> str:
     """Prefix a manager prompt with committed messages, labelled as data."""
     blocks = "\n\n".join(
-        f"Forwarded from {item.source} [{item.message_id}]\n{item.text}" for item in forwarded
+        f"Forwarded [#{number}] from {item.source} [{item.message_id}]\n{item.text}"
+        for number, item in enumerate(forwarded, 1)
     )
     where = (
         "this workspace or a linked workspace"
@@ -232,6 +234,7 @@ class ConversationStore(Groups):
         # them. Marked only once the reply is built, so a wait cut short delivers nothing.
         self.delivered_tasks: set[str] = set()
         self.delivered_rounds: set[str] = set()
+        self.follow_ups = FollowUpLedger()  # delivered bad ends the closing wait lists once
         # Boss chats already told that their model is unknown (said once per chat).
         self.model_warned: set[str] = set()
         self._unsaved: set[str] = set()

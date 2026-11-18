@@ -294,11 +294,12 @@ test("a private task shows one forward tag per quoted message, dead when the ori
   context.showForwards(rec, task, ctx);
   assert.equal(rec.fwd.hidden, false);
   assert.equal(rec.fwd.children.length, 2);
-  assert.deepEqual(rec.fwd.children.map(btn => btn.textContent), ["↪ 转发自 @a #1", "↪ 转发自 其他消息"]);
+  assert.deepEqual(rec.fwd.children.map(btn => btn.textContent), ["↪ #1 转发自 @a #1", "↪ #2 转发自 其他消息"]);
   assert.deepEqual(rec.fwd.children.map(btn => btn.className), ["fwd", "fwd dead"]);
   assert.deepEqual(rec.fwd.children.map(btn => btn.fwdId), ["c:t:a", null]);
   context.showForwards(rec, { forward: { message_id: "c:t:a", source: "room · 转发" } }, ctx);
   assert.equal(rec.fwd.children.length, 1, "a meeting forward still shows a single tag");
+  assert.equal(rec.fwd.children[0].textContent, "↪ 转发自 room · 转发", "a single forward keeps its unnumbered label");
   context.showForwards(rec, {}, ctx);
   assert.equal(rec.fwd.hidden, true);
 });

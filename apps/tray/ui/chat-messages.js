@@ -382,7 +382,8 @@ function showForwards(rec, m, ctx) {
     const btn = rec.fwdBtns[i];
     btn.fwdId = ctx.sources.has(f.message_id) ? f.message_id : null;
     const source = f.source && localizeSourceTime(f.source);
-    setText(btn, L(`↪ 转发自 ${source || "其他消息"}`, `↪ Forwarded from ${source || "another message"}`));
+    const ordinal = fwds.length > 1 ? `#${i + 1} ` : "";
+    setText(btn, L(`↪ ${ordinal}转发自 ${source || "其他消息"}`, `↪ ${ordinal}Forwarded from ${source || "another message"}`));
     setClass(btn, btn.fwdId ? "fwd" : "fwd dead");
     setAttr(btn, "aria-disabled", btn.fwdId ? null : "true");
     setAttr(

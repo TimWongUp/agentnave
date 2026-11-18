@@ -231,6 +231,10 @@ fn settings_asset(resource: &str) -> Response {
         "settings.js" => Response::ok("text/javascript; charset=utf-8", SETTINGS_JS.to_vec()),
         "settings.css" => Response::ok("text/css; charset=utf-8", SETTINGS_CSS.to_vec()),
         "hosts.js" => Response::ok("text/javascript; charset=utf-8", HOSTS_JS.to_vec()),
+        "host-copies.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/host-copies.js").to_vec(),
+        ),
         "hosts.css" => Response::ok("text/css; charset=utf-8", HOSTS_CSS.to_vec()),
         "skills.js" => Response::ok(
             "text/javascript; charset=utf-8",

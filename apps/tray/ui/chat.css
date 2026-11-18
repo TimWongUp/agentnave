@@ -862,7 +862,7 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .provider-health-close { flex: none; width: 24px; height: 24px; margin: 0 4px 0 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
 .provider-health-close:hover { background: color-mix(in srgb, #e9a43b 32%, var(--bg)); color: var(--ink); }
 
-/* Terminals (ADR-0101): a project's "+" starts an agent; the conversation column can show the
+/* Terminals (ADR-0103): a project's "+" starts an agent; the conversation column can show the
    terminal of a workspace's boss in place of its messages, wider while it does. */
 .gl-grp-add { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin: -3px -2px -3px 2px; border-radius: 6px; font-size: 15px; font-weight: 400; line-height: 1; color: var(--muted); }
 .gl-grp-add[hidden] { display: none; }

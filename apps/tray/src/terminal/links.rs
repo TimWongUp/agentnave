@@ -1,4 +1,4 @@
-//! Which workspaces a terminal's CLI is the boss of (ADR-0101). A boss reaches the service through
+//! Which workspaces a terminal's CLI is the boss of (ADR-0103). A boss reaches the service through
 //! a relay its CLI starts; the relay's connection file, named by the relay's pid, lists the boss
 //! chats it spoke for. A relay inside a terminal's process tree speaks for that terminal, and each
 //! chat's workspace is the one it owns in the history database.

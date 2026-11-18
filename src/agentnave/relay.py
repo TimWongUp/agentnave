@@ -288,7 +288,7 @@ class Relay:
         self.host_pending: set[str] = set()
         self.host_methods: dict[str, str] = {}
         # Boss chats this connection spoke for, latest last: the tray finds the workspace of a
-        # terminal whose CLI runs this relay (ADR-0101).
+        # terminal whose CLI runs this relay (ADR-0103).
         self.bosses: list[str] = []
         self.child_pending: set[str] = set()
         self.paused = False

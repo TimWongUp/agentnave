@@ -8,7 +8,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | --- | --- |
 | Manager（boss） | 目标解释、任务拆解、角色与模型选择、并行、重试、审核、综合、是否隔离与合入、长期任务状态 |
 | AgentNave 服务 | 启动与取消 Provider 进程树、默认值套用、活动快照与终态归一化、进程内 Invocation 句柄、会议轮次、会话历史与按用户设定天数的自动清理、隔离目录的创建、登记、只读任务无改动时的自动释放与显式释放后的删除 |
-| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、隔离目录的手动删除（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)）、用户自己开的内嵌终端（[ADR-0101](../adr/0101-tray-embedded-terminal.md)） |
+| 托盘 App | 宿主接入与 Skill 安装、组员与设置文件、历史展示、会话改名与手动清理、隔离目录的手动删除（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)）、用户自己开的内嵌终端（[ADR-0103](../adr/0103-tray-embedded-terminal.md)） |
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
@@ -20,7 +20,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - 服务运行在自己的会话里：挂起宿主时中继随之停住，不再转发调用和回执，已启动的任务继续跑。服务只在 stdin 关闭时结束，宿主进程组的信号到不了它。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）；`InvocationManager` 一边调用 Provider Adapter 准备命令与解析结果，一边经 `processes` 启动、取消 supervisor，Adapter 不拥有进程。宿主识别（`host`）与 Adapter 互不导入，按 CLI 读取原生会话记录的代码放在两者都不依赖的中性模块。
 - Claude 默认以交互模式运行：Provider 进程是服务自带的 helper，在 macOS／Linux 使用伪终端、在 Windows 使用 ConPTY 驱动 `claude`，并把 transcript 与 hooks 归一成事件；受限工具路径用 `-p`。Windows 的 helper 和后代仍归 supervisor 的 Job Object 所有。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)、[ADR-0086](../adr/0086-windows-claude-interactive.md)）。
-- Antigravity 在 macOS／Linux 且权限放开时默认以交互模式运行，形状与 Claude 相同；helper 为此在用户的全局 `~/.gemini/config/hooks.json` 维护一条只在它启动的 agy 里起作用的门控条目（[ADR-0072](../adr/0072-antigravity-interactive-runtime.md)）。
+- Antigravity 在 macOS／Linux 且权限放开时默认以交互模式运行；helper 以私有日志与原生终端状态事件关联本次会话和回合，不维护全局 hooks（[ADR-0102](../adr/0102-agy-native-status.md)）。
 - 托盘 App（`apps/tray`，Tauri 2）是独立进程：读取服务写下的视图快照与运行文件，经自定义协议提供界面，不调用 MCP 工具。运行记录失去活跃运行证据时，可在服务使用的同一会话锁下确认无人持有，重读视图并仅在展示中标记中断，不回写历史；不能确认时保留服务状态（[ADR-0060](../adr/0060-tray-detects-orphaned-running-work.md)）。
 - 服务向托盘提供运行活动及其当前状态的起始时间，供界面展示持续时间；活动变化和终态仍由服务决定。
 - 托盘 App 内的依赖方向：协议入口只按路径分发，各业务模块处理自己的路由；宿主层协调探测、规则与更新，反向不引用；业务模块共用的工具放在不依赖业务模块的底层。
@@ -103,7 +103,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 ## 托盘 App
 
 - 界面只经 `agentnave` 自定义协议提供：不开放 IPC、导航限于自身协议；除 ChatGPT 订阅登录期间仅在回环地址临时监听登录回调端口，以及 macOS 上只读提供视频包片段、带启动令牌的回环端口外，不监听端口（[ADR-0080](../adr/0080-tray-video-loopback-http.md)）。界面写操作都要求 `X-AgentNave-Action: 1`，可能刷新并保存令牌的目录请求也属于写操作。
-- 内嵌终端由托盘拥有：托盘在伪终端里启动用户选的已装 CLI（启动和续接 Codex 时传入独立参数 `--no-daemon`，避免连入共享守护进程导致 MCP 子进程脱离终端进程树），进程随 App 退出结束；托盘不为终端写会话记录、不接入服务持有的会话，终端里的 CLI 要编排就自己作为 boss 连接。中继在连接回执里记下转发过的 boss 聊天键（哈希）；当工具调用未显式传入聊天 ID 时，中继按与服务相同的顺序从自身环境取宿主会话标识再算键（显式传入空白值时不记）。托盘按回执名里的中继进程号沿进程树对应到终端，并在 App 运行期间记住每个终端已确认过的工作区（按最近确认排序，CLI 退出或中继结束后仍保留直到关闭终端），仅将最近一次确认的工作区视为该终端当前所在的聊天。托盘内按聊天单活互斥防重，不检测外部客户端占用。只有终端页的 CSP 额外允许内联样式（[ADR-0101](../adr/0101-tray-embedded-terminal.md)）。
+- 内嵌终端由托盘拥有：托盘在伪终端里启动用户选的已装 CLI（启动和续接 Codex 时传入独立参数 `--no-daemon`，避免连入共享守护进程导致 MCP 子进程脱离终端进程树），进程随 App 退出结束；托盘不为终端写会话记录、不接入服务持有的会话，终端里的 CLI 要编排就自己作为 boss 连接。中继在连接回执里记下转发过的 boss 聊天键（哈希）；当工具调用未显式传入聊天 ID 时，中继按与服务相同的顺序从自身环境取宿主会话标识再算键（显式传入空白值时不记）。托盘按回执名里的中继进程号沿进程树对应到终端，并在 App 运行期间记住每个终端已确认过的工作区（按最近确认排序，CLI 退出或中继结束后仍保留直到关闭终端），仅将最近一次确认的工作区视为该终端当前所在的聊天。托盘内按聊天单活互斥防重，不检测外部客户端占用。只有终端页的 CSP 额外允许内联样式（[ADR-0103](../adr/0103-tray-embedded-terminal.md)）。
 - 工作区所属的项目由托盘派生显示，不落服务库，服务不感知；托盘在自己的配置目录记下目录所属仓库（文件名 projects.json，托盘独写）。
 - 读：视图快照与运行文件只读打开，不调用工具或 CLI。写：只限会话改名与删除（同一把会话锁，[ADR-0012](../adr/0012-tray-conversation-cleanup.md)）、在仓库锁与租约协议下手动删除隔离目录并更新 `worktrees.db`（不执行仓库 hooks、filter 与文件监视程序，[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）、工作区交接与取消待接手标记、清空或按同一保留边界清理工作区（含被接手后已无会话的只有 boss 工作区及两端都清理后的关联记录，不取会话锁，[ADR-0033](../adr/0033-boss-workspace-handover.md)、[ADR-0099](../adr/0099-handover-links-workspaces.md)）、数据根的设置文件、小人视频选装包 `video-packs/`、语音设置 `voice.json`、语音密钥与登录令牌 `voice-keys.json`、语音缓存 `voice-cache/`、用户确认或刷新时删除 `connection-faults/` 下已确认、已恢复或无人认领的连接故障记录（[ADR-0088](../adr/0088-relay-records-service-exit-fault.md)、[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）、宿主配置与 Skill（定点编辑、先备份、写后校验，[ADR-0015](../adr/0015-app-host-integration.md)、[ADR-0036](../adr/0036-app-owns-service-skills.md)）以及全局规则中的 AgentNave 块（[ADR-0037](../adr/0037-app-writes-orchestration-rules.md)）。托盘不迁移会话库和隔离目录库的 schema：遇到旧版本的库只读展示，写操作提示先重连宿主（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。
 - 卸载由托盘 App 拥有确认与宿主清理：按登记表移除用户级接入、Skill 和规则块，删除 agy 的 AgentNave hook 并关闭开机启动；任务运行或状态无法确认时拒绝。App 退出后的独立辅助进程清理自有数据，记录数据根仅按用户开关删除；信任标记、项目级配置与仓库隔离目录保留。macOS 把当前 App 移入废纸篓，Windows 由 NSIS 删除程序文件（[ADR-0100](../adr/0100-app-uninstall.md)）。
@@ -111,7 +111,7 @@ App 与服务分别校验同一批文件；`tests/fixtures/app-files/` 中的样
 - 设置界面面向非技术用户，只提供开关、单选、下拉与档位条，不让手填（[ADR-0029](../adr/0029-settings-without-free-text.md)）；语音 API 密钥、自定义口语摘要连接信息、摘要要求及语音人设为例外（[ADR-0044](../adr/0044-meeting-voice-cloud-and-key-input.md)）。
 - 模型与档位以各 CLI 自己给出的为准，App 只探测、不猜测（[ADR-0034](../adr/0034-models-and-efforts-from-each-cli.md)）。
 - 员工页的 CLI 更新只沿该 CLI 原来的安装方式执行，不提权、不替用户安装；没装的 CLI 只给出官方安装命令（[ADR-0055](../adr/0055-app-updates-member-clis.md)）。
-- 应用内更新只访问本仓库的 GitHub Release（含公开镜像回退，经 Tauri 签名校验后安装 App，[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）；可选小人视频包同样从本仓库 GitHub Release（含同一组公开镜像回退）按需下载，不做签名校验，仅经归档与媒体像素尺寸校验后写入 `video-packs/`。App 每次启动都把服务对齐到配套版本：新版本装进独立目录，旧目录在不再使用并过宽限期后回收；连接的版本落后时，宿主卡片立即提示重连（[ADR-0047](../adr/0047-versioned-service-install.md)）。服务包随附工具名清单，App 切换安装时在自己的数据目录记下切换时间与工具名；没有可见连接的宿主进程早于切换启动、且工具名变化时，卡片提示重启（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。中继把每条连接写进数据根 `connections/` 的回执，由中继写、托盘读；回执带启动该连接的配置行身份，托盘按行判断加载状态（[ADR-0071](../adr/0071-cross-platform-host-readers-and-receipts.md)）。AgentNave 派发的组员拉起的中继在回执里标明，托盘不把它算作 boss 的连接；标记只认派发所在的进程树，从中脱离、日后可能服务 boss 的后台进程不算组员。
+- 应用内更新只访问本仓库的 GitHub Release（含公开镜像回退，经 Tauri 签名校验后安装 App，[ADR-0014](../adr/0014-tray-members-and-one-click-update.md)）；可选小人视频包同样从本仓库 GitHub Release（含同一组公开镜像回退）按需下载，不做签名校验，仅经归档与媒体像素尺寸校验后写入 `video-packs/`。App 每次启动都把服务对齐到配套版本：新版本装进独立目录，旧目录在不再使用并过宽限期后回收；连接的版本落后时，宿主卡片立即提示重连（[ADR-0047](../adr/0047-versioned-service-install.md)）。服务包随附工具名清单，App 切换安装时在自己的数据目录记下切换时间与工具名；没有可见连接的宿主进程早于切换启动、且工具名变化时，卡片提示重启（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。中继把每条连接写进数据根 `connections/` 的回执，由中继写、托盘读；回执带启动该连接的配置行身份，托盘按行判断加载状态（[ADR-0071](../adr/0071-cross-platform-host-readers-and-receipts.md)）。AgentNave 派发的组员拉起的中继在回执里标明，托盘不把它算作 boss 的连接；标记只认派发所在的进程树，从中脱离、日后可能服务 boss 的后台进程不算组员。旧的宿主终端会话副本在 Unix 上可逐条展示并在用户二次确认后由托盘向顶层宿主进程发送 `SIGTERM`；发送前必须重新观察进程并校验宿主归属、PID 与启动时间，不升级为 `SIGKILL`（[ADR-0101](../adr/0101-tray-stops-old-cli-copies.md)）。
 - 办公室拥有主窗口的播放器与会话视图；从办公室进入设置时，只以同源内嵌页覆盖内容区，主页面和播放器不卸载。收起保留设置页及未保存编辑；内嵌页的站内导航交给办公室，外观与已保存语音设置在两页间同步。独立打开的设置页仍可单独使用，内嵌不扩大页面来源范围。
 
 ## 语音播报

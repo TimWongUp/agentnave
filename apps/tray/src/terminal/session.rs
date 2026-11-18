@@ -22,7 +22,7 @@ pub(crate) struct Launch {
     pub rows: u16,
 }
 
-/// Provider-specific startup flags appended as separate argv entries (ADR-0101).
+/// Provider-specific startup flags appended as separate argv entries (ADR-0103).
 pub(super) fn cli_args(provider: &str) -> &'static [&'static str] {
     match provider {
         // Codex otherwise connects to a shared app-server daemon whose MCP sits outside this PTY tree.
