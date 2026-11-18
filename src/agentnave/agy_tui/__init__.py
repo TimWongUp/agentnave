@@ -35,8 +35,8 @@ EXPERIMENT_WAIT = 9.0
 DELIVERY_TIMEOUT = 30.0
 # A menu drawn this long is a real dialog, not a frame in the middle of a redraw.
 DIALOG_SETTLE = 2.0
-# Kept for the legacy regression tests until they are migrated to native completion events.
 STALL_LIMIT = 60.0
+TRANSCRIPT_GRACE = 5.0
 # A call agy moves to the background names its task here, and ends with that task's message.
 BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
 TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
@@ -117,7 +117,7 @@ class Turn:
     answered: bool = False
     model: str | None = None
     active: bool = False
-    done: bool = False
+    done_at: float | None = None
     stopped: bool = False
     error: str | None = None
     warnings: list[str] = field(default_factory=list[str])
@@ -256,22 +256,28 @@ class Turn:
         except FileNotFoundError:
             return
 
-    def native(self, event: str) -> None:
+    def native(self, event: str, screen: str = "") -> None:
         if not self.expected:
             return
         if event == "working":
-            self.active, self.done = True, False
+            self.active, self.done_at = True, None
         elif event == "done" and self.active:
-            self.done = True
+            self.done_at = time.monotonic()
         elif event in ("blocked", "waiting", "waiting_for_input") and self.active:
-            self.block("agy requires input during the turn")
-        elif event in ("failed", "error") and self.active:
+            self.block("agy requires input during the turn", screen)
+        elif event in ("failed", "error"):
             self.error = "agy reported a failed turn"
+            if screen:
+                self.error += f". Screen: {excerpt(screen)}"
 
-    def complete(self) -> bool:
+    def complete(self, now: float | None = None) -> bool:
         if (
             self.error is None
-            and self.done
+            and self.done_at is not None
+            and (
+                not self.background
+                or (now if now is not None else time.monotonic()) - self.done_at >= TRANSCRIPT_GRACE
+            )
             and self.user_seen
             and self.answered
             and self.response.strip()
@@ -318,14 +324,13 @@ class Run:
         events = terminal_screen.events
         terminal_screen.events = []
         if self.turn.conversation_id is None and self.turn.expected:
-            matches = _CREATED_CONVERSATION.findall(self.log_bytes())
-            if len(set(matches)) == 1:
-                candidate = matches[0].decode()
-                if first_request_matches(candidate, self.turn.expected):
-                    self.turn.start(candidate)
+            candidates = {raw.decode() for raw in _CREATED_CONVERSATION.findall(self.log_bytes())}
+            matches = [cid for cid in candidates if first_request_matches(cid, self.turn.expected)]
+            if len(matches) == 1:
+                self.turn.start(matches[0])
         self.turn.read()
         for event in events:
-            self.turn.native(event)
+            self.turn.native(event, screen)
         return screen
 
     def submitting(self, expected: str) -> None:
@@ -438,7 +443,6 @@ class Run:
 
     def await_stop(self) -> None:
         previous, since = "", time.monotonic()
-        done_at: float | None = None
         while not self.turn.stopped and self.turn.error is None:
             offset = self.turn.offset
             screen = self.poll()
@@ -450,16 +454,10 @@ class Run:
                     f"agy exited unexpectedly with status {self.terminal.process.returncode}"
                 )
                 return
-            if self.turn.done:
-                if done_at is None:
-                    done_at = now
-            else:
-                done_at = None
-            # Allow the transcript to catch up with the terminal event; the deadline does not
-            # move on redraws or transcript writes. A listed daemon need not exit after done.
-            if done_at is not None and now - done_at >= 1 and self.turn.complete():
+            done_at = self.turn.done_at
+            if done_at is not None and now - done_at >= 1 and self.turn.complete(now):
                 return
-            if done_at is not None and now - done_at >= 5:
+            if done_at is not None and now - done_at >= TRANSCRIPT_GRACE:
                 self.turn.error = "agy reported completion without a final reply after this task"
                 return
             if screen != previous or self.turn.offset != offset:
@@ -551,7 +549,7 @@ def read_prompt() -> str:
 
 
 def terminate(signum: int, _frame: object) -> None:
-    # Let finally blocks stop agy and remove the hook directory on cancellation.
+    # Let finally blocks stop agy and remove the private log directory on cancellation.
     raise SystemExit(128 + signum)
 
 

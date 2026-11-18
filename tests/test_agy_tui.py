@@ -581,7 +581,9 @@ def test_native_status_fragments_and_current_turn_gate() -> None:
     turn.background["daemon"] = 42
     turn.row({"type": "PLANNER_RESPONSE", "content": "final", "model": "actual"})
     turn.native("done")
-    assert turn.complete() and turn.model == "actual"
+    assert not turn.complete()
+    assert turn.done_at is not None
+    assert turn.complete(turn.done_at + 5) and turn.model == "actual"
 
 
 def test_native_empty_final_does_not_reuse_previous_answer_or_model() -> None:
@@ -608,7 +610,9 @@ def test_native_background_reply_is_not_exposed_before_done(
         }
     )
     turn.row({"type": "PLANNER_RESPONSE", "content": "interim", "model": "old"})
-    assert not turn.complete()
+    turn.native("done")
+    assert turn.done_at is not None
+    assert not turn.complete(turn.done_at + 2)
     assert "interim" not in capsys.readouterr().out
     turn.row({"type": "SYSTEM_MESSAGE", "content": 'Task id "task" finished'})
     assert not turn.complete()
@@ -635,7 +639,7 @@ def test_native_done_deadline_survives_screen_and_transcript_churn(
 
     ticks = iter(float(i) for i in range(100))
     monkeypatch.setattr(agy.time, "monotonic", lambda: next(ticks))
-    turn = Turn("c", expected="task", user_seen=True, active=True, done=True)
+    turn = Turn("c", expected="task", user_seen=True, active=True, done_at=0)
     terminal = cast(Terminal, SimpleNamespace(process=SimpleNamespace(poll=lambda: None)))
     run = Run(terminal, turn, tmp_path / "private.log")
 
@@ -646,6 +650,20 @@ def test_native_done_deadline_survives_screen_and_transcript_churn(
     monkeypatch.setattr(run, "poll", changing)
     run.await_stop()
     assert "without a final reply" in str(turn.error)
+
+
+def test_native_completion_restarts_grace_on_coalesced_working_and_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import agentnave.agy_tui as agy
+
+    turn = Turn("c", expected="task", user_seen=True, active=True, done_at=1)
+    screen = AgyScreen()
+    screen.events.extend(("working", "done"))
+    terminal = cast(Terminal, SimpleNamespace(poll=lambda: "", screen=screen))
+    monkeypatch.setattr(agy.time, "monotonic", lambda: 10.0)
+    Run(terminal, turn, tmp_path / "private.log").poll()
+    assert turn.done_at == 10.0
 
 
 def test_old_agy_requires_upgrade_without_starting_tui(
@@ -727,7 +745,9 @@ def test_native_done_can_finish_with_daemon(
     if not reply_before_done:
         assert not turn.complete()
         turn.row(final)
-    assert turn.complete() and turn.background
+    assert not turn.complete()
+    assert turn.done_at is not None
+    assert turn.complete(turn.done_at + 5) and turn.background
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     events.append(turn.result())
     adapter = AntigravityAdapter()
