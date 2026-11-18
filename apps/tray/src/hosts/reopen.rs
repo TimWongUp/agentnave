@@ -133,7 +133,7 @@ impl Hosts {
             return false;
         };
         let reload = self.reload_state(host, &token);
-        if !matches!(reload["state"].as_str(), Some("required" | "unverified")) {
+        if !matches!(reload["state"].as_str(), Some("required")) {
             return false;
         }
         reload["copies"].as_array().is_some_and(|copies| {
