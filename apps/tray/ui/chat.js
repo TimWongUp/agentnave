@@ -549,7 +549,6 @@ function showBlank(kind) {
       L("左侧是每个 boss 会话的工作区，进行中的排在最前面。", "Workspaces for each boss session are listed on the left, with active ones first."),
     ],
     missing: [L("找不到这个工作区", "Workspace not found"), L("它可能已被删除。", "It may have been deleted.")],
-    agent: [L("还没有派活", "No work dispatched yet"), L("它派出第一个任务后，这里会变成它的办公室。", "Once it dispatches its first task, its office appears here.")],
     loading: [L("正在读取办公室…", "Loading office…"), ""],
     error: [L("无法读取办公室", "Failed to load office"), L("正在重试，请稍候。", "Retrying, please wait.")],
   }[kind];
@@ -671,19 +670,18 @@ async function refresh() {
       return;
     }
     const selected = state.selected;
-    if (ChatTerminal.pendingId(selected) != null) {
-      showBlank("agent");
-      if (!ChatTerminal.showPending(selected)) showBlank("missing");
-      return;
-    }
     const hashKey = state.hashKey;
     const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
-    if (!state.loaded) showBlank("loading");
+    // An agent that has not dispatched has an office with only its boss, drawn here.
+    const agent = ChatTerminal.pendingId(selected) != null;
+    if (!state.loaded && !agent) showBlank("loading");
     let chat;
     try {
-      chat = await load(
-        `/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`,
-      );
+      chat = agent
+        ? ChatTerminal.office(selected)
+        : await load(
+          `/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`,
+        );
       if (selected !== state.selected || hashKey !== state.hashKey) {
         state.again = true;
         return;

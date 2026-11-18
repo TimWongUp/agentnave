@@ -863,7 +863,7 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .provider-health-close:hover { background: color-mix(in srgb, #e9a43b 32%, var(--bg)); color: var(--ink); }
 
 /* Terminals (ADR-0103): a project's "+" starts an agent; the conversation column can show the
-   terminal of a workspace's boss in place of its messages, wider while it does. */
+   terminal of a workspace's boss in place of its messages, in the same column. */
 .gl-grp-add { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin: -3px -2px -3px 2px; border-radius: 6px; font-size: 15px; font-weight: 400; line-height: 1; color: var(--muted); }
 .gl-grp-add[hidden] { display: none; }
 .gl-grp-add:hover { background: var(--card-hover); color: var(--ink); }
@@ -884,6 +884,3 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .dr-term-frame[hidden] { display: none; }
 .conv.term-mode .dr-term { display: block; }
 .conv.term-mode :is(.tl, .jump, .ro, .voice-channel) { display: none; }
-@media not all and (max-width: 860px) {
-  .app:has(> .conv.term-mode:not(.folded)) { --conv-col: clamp(480px, 50%, 920px); }
-}

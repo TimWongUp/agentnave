@@ -61,6 +61,26 @@ const ChatTerminal = (() => {
       }));
   }
 
+  // The office of an agent that has not dispatched: its boss and nothing else yet.
+  function office(group) {
+    const row = pending().find((g) => g.group === group);
+    if (!row) throw Object.assign(new Error("404"), { status: 404 });
+    return {
+      ...row,
+      title: row.title,
+      title_id: null,
+      project: row.project_label,
+      handover: null,
+      conversations: [],
+      members: [],
+      desks: [],
+      optimized: { count: 0 },
+      rooms: [],
+      messages: [],
+      isolated: [],
+    };
+  }
+
   // An agent that dispatched opens as its workspace, showing its terminal as it did.
   function follow(selected) {
     const id = pendingId(selected);
@@ -229,6 +249,16 @@ const ChatTerminal = (() => {
   }
   // After the conversation column is drawn for `group`: the switch, and the terminal if chosen.
   function column(group) {
+    const agent = byId(pendingId(group));
+    if (agent) {
+      // Nothing to read yet: the column is its terminal.
+      el.drawer.hidden = false;
+      el.drawer.classList.remove("folded");
+      state.convCollapsed = false;
+      el.convToggle.hidden = true;
+      show(agent, { pendingOnly: true });
+      return;
+    }
     const x = ofWorkspace(group);
     if (!x) {
       modes.hidden = true;
@@ -239,22 +269,11 @@ const ChatTerminal = (() => {
     show(t.terminal.get(group) ? x : null);
     modes.hidden = false;
   }
-  // An agent that has not dispatched: the column holds its terminal, the floor waits for work.
-  function showPending(group) {
-    const x = byId(pendingId(group));
-    if (!x) return false;
-    el.drawer.hidden = false;
-    el.drawer.classList.remove("folded");
-    state.convCollapsed = false;
-    el.convToggle.hidden = true;
-    show(x, { pendingOnly: true });
-    return true;
-  }
   // Theme and language changes reach the frames as they reach settings.
   addEventListener("agentnave:preferences", (event) => {
     for (const f of t.frames.values())
       f.contentWindow?.postMessage({ type: "agentnave:terminal", action: "preferences", general: event.detail }, location.origin === "null" ? "*" : location.origin);
   });
 
-  return { refresh, pending, follow, pendingId, headAction, decorate, menu, column, showPending, newAgent };
+  return { refresh, pending, follow, pendingId, headAction, decorate, menu, column, office, newAgent };
 })();
