@@ -13,12 +13,22 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 pub(super) const KEPT: usize = 1 << 20;
 const READ_CHUNK: usize = 16 * 1024;
 
-/// What to start: the CLI's executable, where, and the page's size in cells.
+/// What to start: the CLI's executable, provider-specific arguments, where, and size in cells.
 pub(crate) struct Launch {
     pub program: PathBuf,
+    pub args: &'static [&'static str],
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
+}
+
+/// Provider-specific startup flags appended as separate argv entries (ADR-0101).
+pub(super) fn cli_args(provider: &str) -> &'static [&'static str] {
+    match provider {
+        // Codex otherwise connects to a shared app-server daemon whose MCP sits outside this PTY tree.
+        "codex" => &["--no-daemon"],
+        _ => &[],
+    }
 }
 
 /// Output from `from` on: the bytes start at `start`, which is later than `from` when older
@@ -64,7 +74,7 @@ pub(crate) struct Session {
 impl Session {
     pub(crate) fn spawn(launch: &Launch) -> Result<Arc<Self>, String> {
         Self::start(
-            command(&launch.program, &launch.cwd),
+            command(&launch.program, launch.args, &launch.cwd),
             launch.cols,
             launch.rows,
         )
@@ -239,7 +249,7 @@ pub(super) fn parent_session(name: &str) -> bool {
 
 /// The CLI started through the user's login shell, as in their own terminal, so it sees the PATH
 /// and keys set in shell startup files that an app started from the Dock lacks.
-fn command(program: &Path, cwd: &Path) -> CommandBuilder {
+pub(super) fn command(program: &Path, args: &[&str], cwd: &Path) -> CommandBuilder {
     let shell = std::env::var_os("SHELL")
         .map(PathBuf::from)
         .filter(|shell| cfg!(unix) && shell.is_absolute());
@@ -253,6 +263,7 @@ fn command(program: &Path, cwd: &Path) -> CommandBuilder {
         }
         None => CommandBuilder::new(program),
     };
+    command.args(args);
     command.cwd(cwd);
     for (name, _) in std::env::vars_os() {
         if name.to_str().is_some_and(parent_session) {

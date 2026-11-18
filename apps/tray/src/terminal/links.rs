@@ -94,6 +94,14 @@ fn terminal_of(system: &System, relay: u32, terminals: &[(u64, u32)]) -> Option<
     None
 }
 
+/// Appends workspaces to what is already remembered, keeping each once with the latest last.
+pub(super) fn remember(known: &mut Vec<String>, observed: impl IntoIterator<Item = String>) {
+    for workspace in observed {
+        known.retain(|seen| *seen != workspace);
+        known.push(workspace);
+    }
+}
+
 /// The workspaces these boss chats own, in the order given. A chat saved before workspaces were
 /// recorded owns the one named by its own key.
 fn owned(connection: &rusqlite::Connection, bosses: &[String]) -> Vec<String> {
@@ -108,10 +116,7 @@ fn owned(connection: &rusqlite::Connection, bosses: &[String]) -> Vec<String> {
                 |row| row.get(0),
             )
             .ok();
-        if let Some(workspace) = found {
-            workspaces.retain(|seen| *seen != workspace);
-            workspaces.push(workspace);
-        }
+        remember(&mut workspaces, found);
     }
     workspaces
 }

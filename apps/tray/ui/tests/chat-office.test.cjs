@@ -960,3 +960,69 @@ test("cleanup respects handover_ms, pending state, and expired empty_claimed wor
   assert.equal(posts[1][1].group, "s-empty-old");
   assert.equal(typeof posts[1][1].updated_before, "number");
 });
+
+test("ChatTerminal matches only the latest confirmed workspace and keeps exited dispatched terminals out of pending", async () => {
+  const node = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [],
+    classList: { toggle() {}, remove() {} },
+    setAttribute(k, v) { this.attributes[k] = v; },
+    append(...items) { this.children.push(...items); },
+    before() {}, after() {},
+    replaceChildren(...items) { this.children = items; },
+    addEventListener() {}, remove() {},
+  });
+  const h = (tag, attributes = {}, ...children) => Object.assign(node(tag), { attributes, children });
+  let sessions = [];
+  const drawer = node("aside");
+  let modes;
+  const drAll = Object.assign(node("button"), { before(first) { modes = first; } });
+  const tl = node("div");
+  const context = vm.createContext({
+    AN: {
+      h, L: zh => zh, load: async () => ({ sessions, cwd: "/repo" }),
+      cliName: p => p, hostTile: p => node(p), href: p => p,
+    },
+    el: {
+      drawer, drAll, tl, drIco: node("span"), drTitle: node("span"), drSub: node("span"), convToggle: node("button"),
+    },
+    state: { loaded: null, groupBy: "project", convCollapsed: false },
+    Actions: { openMenu() {}, say() {} },
+    go() {},
+    setText: (el, v) => { el.textContent = v; },
+    setAttr: (el, k, v) => { el.attributes[k] = v; },
+    addEventListener() {},
+    requestAnimationFrame() {},
+    location: { origin: "null" },
+    Date,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+  const { ChatTerminal } = context;
+
+  // Term 1 confirmed ws-old then ws-new and exited; Term 2 never confirmed any workspace and exited.
+  sessions = [
+    { id: 1, provider: "codex", cwd: "/repo/a", exit: 0, active: false, workspaces: ["ws-old", "ws-new"], project_key: "/repo/a" },
+    { id: 2, provider: "claude", cwd: "/repo/b", exit: 0, active: false, workspaces: [], project_key: "/repo/b" },
+    { id: 3, provider: "claude", cwd: "/repo/c", exit: null, active: true, workspaces: ["ws-prev", "ws-curr"], project_key: "/repo/c" },
+  ];
+  await ChatTerminal.refresh();
+
+  assert.deepEqual(ChatTerminal.pending().map(x => x.group), ["term-2"]);
+
+  // ws-old and ws-prev must NOT fall back to terminals whose latest workspace moved on.
+  const recPrev = { label: node(), term: null };
+  ChatTerminal.decorate(recPrev, { group: "ws-prev" });
+  assert.equal(recPrev.term.hidden, true);
+  const recCurr = { label: node(), term: null };
+  ChatTerminal.decorate(recCurr, { group: "ws-curr" });
+  assert.equal(recCurr.term.hidden, false);
+
+  ChatTerminal.column("ws-old");
+  assert.equal(modes.hidden, true);
+  ChatTerminal.column("ws-prev");
+  assert.equal(modes.hidden, true);
+  ChatTerminal.column("ws-new");
+  assert.equal(modes.hidden, false);
+  ChatTerminal.column("ws-curr");
+  assert.equal(modes.hidden, false);
+  assert.equal(ChatTerminal.follow("term-1"), "ws-new");
+});

@@ -20,9 +20,8 @@ const ChatTerminal = (() => {
   const folder = (p) => (p || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p || "";
   const byId = (id) => t.list.find((x) => x.id === id);
   const pendingId = (group) => (group?.startsWith(PREFIX) ? Number(group.slice(PREFIX.length)) : null);
-  // The terminal whose CLI is this workspace's boss; the one that spoke for it last wins.
-  const ofWorkspace = (group) =>
-    t.list.find((x) => x.workspaces.at(-1) === group) || t.list.find((x) => x.workspaces.includes(group));
+  // The terminal whose CLI is currently in this workspace (the latest confirmed one).
+  const ofWorkspace = (group) => t.list.find((x) => x.workspaces.at(-1) === group);
 
   async function refresh() {
     try {
@@ -37,10 +36,10 @@ const ChatTerminal = (() => {
     for (const id of t.frames.keys()) if (!byId(id)) dropFrame(id);
   }
 
-  // Agents that have not dispatched yet, shaped like workspaces so the list places them.
+  // Agents that have never confirmed a workspace, shaped like workspaces so the list places them.
   function pending() {
     return t.list
-      .filter((x) => !x.workspaces.length)
+      .filter((x) => !x.workspaces?.length)
       .map((x) => ({
         group: PREFIX + x.id,
         terminal: x.id,

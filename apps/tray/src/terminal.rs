@@ -13,7 +13,7 @@ mod session;
 mod tests;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -47,13 +47,15 @@ struct Running {
     provider: String,
     cwd: PathBuf,
     session: Arc<Session>,
+    /// Workspaces this terminal's CLI has confirmed as boss, latest last. Kept after exit until close.
+    workspaces: Vec<String>,
 }
 
 impl Running {
     fn describe(&self) -> Value {
         json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
-            "workspaces": [], "project_key": crate::projects::OTHER})
+            "workspaces": self.workspaces, "project_key": crate::projects::OTHER})
     }
 }
 
@@ -114,31 +116,41 @@ impl Terminals {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// Every terminal with the workspaces its CLI is the boss of and the project of its folder.
-    fn describe(&self) -> Value {
-        let (cwd, mut open, pids) = {
+    /// Updates confirmed workspaces from active relays under `root` and snapshots every open terminal.
+    fn snapshot(&self, root: &Path) -> (Option<PathBuf>, Vec<(u64, PathBuf, Value)>) {
+        let pids: Vec<(u64, u32)> = {
             let state = self.lock();
-            let pids: Vec<(u64, u32)> = state
+            state
                 .open
                 .iter()
                 .filter(|running| running.session.exit().is_none())
                 .filter_map(|running| Some((running.id, running.session.pid()?)))
-                .collect();
-            let open: Vec<(u64, PathBuf, Value)> = state
-                .open
-                .iter()
-                .map(|running| (running.id, running.cwd.clone(), running.describe()))
-                .collect();
-            (state.cwd.clone().or_else(dirs::home_dir), open, pids)
+                .collect()
         };
-        let mut links = links::workspaces(&crate::data_files::data_root(), &pids);
+        let mut links = links::workspaces(root, &pids);
+        let mut state = self.lock();
+        for running in &mut state.open {
+            if let Some(found) = links.remove(&running.id) {
+                links::remember(&mut running.workspaces, found);
+            }
+        }
+        let open = state
+            .open
+            .iter()
+            .map(|running| (running.id, running.cwd.clone(), running.describe()))
+            .collect();
+        (state.cwd.clone().or_else(dirs::home_dir), open)
+    }
+
+    /// Every terminal with the workspaces its CLI is the boss of and the project of its folder.
+    fn describe(&self) -> Value {
+        let (cwd, mut open) = self.snapshot(&crate::data_files::data_root());
         let folders: BTreeMap<String, String> = open
             .iter()
             .map(|(id, cwd, _)| (id.to_string(), cwd.display().to_string()))
             .collect();
         let projects = crate::projects::lookup(&folders, false);
         for (id, _, value) in &mut open {
-            value["workspaces"] = json!(links.remove(id).unwrap_or_default());
             if let Some(project) = projects.get(&id.to_string()) {
                 value["project_key"] = json!(project.key);
                 value["project_label"] = json!(project.label);
@@ -172,6 +184,7 @@ impl Terminals {
         let (cols, rows) = cells(payload);
         let launch = Launch {
             program,
+            args: session::cli_args(provider),
             cwd: cwd.clone(),
             cols,
             rows,
@@ -188,6 +201,7 @@ impl Terminals {
             provider: provider.to_owned(),
             cwd,
             session,
+            workspaces: Vec::new(),
         };
         let described = running.describe();
         state.open.push(running);

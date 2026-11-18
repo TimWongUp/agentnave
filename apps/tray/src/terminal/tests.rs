@@ -1,8 +1,10 @@
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use portable_pty::CommandBuilder;
 
-use super::session::{KEPT, Output, Session, parent_session};
+use super::session::{KEPT, Output, Session, cli_args, command, parent_session};
+use super::{Running, Terminals};
 
 /// Reads until `wanted` shows up in the output or the CLI exits, within a few seconds.
 fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
@@ -132,4 +134,117 @@ fn a_relay_under_a_terminal_names_its_workspaces() {
     relay.wait().unwrap();
     assert_eq!(found.get(&7), Some(&vec!["s-handed".to_owned(), older]));
     assert_eq!(found.get(&8), None);
+}
+
+/// Confirmed workspaces stay attached to a terminal across relay exit and CLI exit (latest last)
+/// until the terminal itself is closed.
+#[cfg(unix)]
+#[test]
+fn terminal_remembers_confirmed_workspaces_until_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let db = crate::db::create(root.path());
+    let first = format!("s-{}", "1".repeat(32));
+    let second = format!("s-{}", "2".repeat(32));
+    db.execute(
+        "INSERT INTO workspaces (id, owner, owner_host) VALUES ('s-first', ?1, 'codex'), ('s-second', ?2, 'codex')",
+        [&first, &second],
+    )
+    .unwrap();
+    let session = Session::start(shell("sleep 30"), 80, 24).unwrap();
+    let cli_pid = session.pid().unwrap();
+    let terminals = Terminals::default();
+    terminals.lock().open.push(Running {
+        id: 1,
+        provider: "codex".to_owned(),
+        cwd: std::env::temp_dir(),
+        session: session.clone(),
+        workspaces: Vec::new(),
+    });
+    let connections = root.path().join("connections");
+    std::fs::create_dir_all(&connections).unwrap();
+    let receipt = connections.join(format!("{cli_pid}-x.json"));
+
+    std::fs::write(
+        &receipt,
+        serde_json::json!({"host": "codex", "bosses": [&first]}).to_string(),
+    )
+    .unwrap();
+    let (_, open) = terminals.snapshot(root.path());
+    assert_eq!(open[0].2["workspaces"], serde_json::json!(["s-first"]));
+
+    std::fs::write(
+        &receipt,
+        serde_json::json!({"host": "codex", "bosses": [&second, &first]}).to_string(),
+    )
+    .unwrap();
+    let (_, open) = terminals.snapshot(root.path());
+    assert_eq!(
+        open[0].2["workspaces"],
+        serde_json::json!(["s-second", "s-first"])
+    );
+
+    // Relay ends first, then its connection file disappears and the CLI exits: remembered stays.
+    std::fs::write(
+        &receipt,
+        serde_json::json!({"host": "codex", "bosses": [&first], "ended_ms": 1}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        terminals.snapshot(root.path()).1[0].2["workspaces"],
+        serde_json::json!(["s-second", "s-first"])
+    );
+
+    std::fs::remove_file(&receipt).unwrap();
+    session.stop();
+    assert!(exit_of(&session).is_some());
+    assert_eq!(
+        terminals.snapshot(root.path()).1[0].2["workspaces"],
+        serde_json::json!(["s-second", "s-first"])
+    );
+
+    terminals.close(Some(1));
+    assert!(terminals.snapshot(root.path()).1.is_empty());
+}
+
+#[test]
+fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
+    assert_eq!(cli_args("codex"), ["--no-daemon"]);
+    assert!(cli_args("claude").is_empty());
+    assert!(cli_args("grok").is_empty());
+
+    let codex = command(
+        Path::new("/usr/local/bin/codex"),
+        cli_args("codex"),
+        Path::new("/tmp"),
+    );
+    let argv: Vec<String> = codex
+        .get_argv()
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(argv.last().map(String::as_str), Some("--no-daemon"));
+    assert_eq!(
+        argv.get(argv.len().saturating_sub(2)).map(String::as_str),
+        Some("/usr/local/bin/codex")
+    );
+    // If wrapped in a login shell, `-c <script>` must not embed `--no-daemon` into the script string.
+    if let Some(at) = argv.iter().position(|arg| arg == "-c") {
+        assert!(!argv[at + 1].contains("--no-daemon"), "{argv:?}");
+    }
+
+    let claude = command(
+        Path::new("/usr/local/bin/claude"),
+        cli_args("claude"),
+        Path::new("/tmp"),
+    );
+    let claude_argv: Vec<String> = claude
+        .get_argv()
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        claude_argv.last().map(String::as_str),
+        Some("/usr/local/bin/claude")
+    );
+    assert!(!claude_argv.iter().any(|arg| arg == "--no-daemon"));
 }
