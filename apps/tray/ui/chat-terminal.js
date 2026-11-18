@@ -197,7 +197,8 @@ const ChatTerminal = (() => {
   const stopButton = h("button.dr-stop", { type: "button" }, L("结束", "Stop"));
   const box = h("div.dr-term");
   modes.append(toMessages, toTerminal);
-  el.drAll.before(modes, stopButton);
+  // Right of 「‹ 全部」, which comes and goes: the header is right-aligned, so these stay put.
+  el.drAll.after(modes, stopButton);
   el.tl.after(box);
   const switchTo = (on) => () => {
     if (!state.loaded) return;
@@ -206,7 +207,7 @@ const ChatTerminal = (() => {
   };
   toMessages.addEventListener("click", switchTo(false));
   toTerminal.addEventListener("click", switchTo(true));
-  stopButton.addEventListener("click", () => t.shown != null && stop(t.shown));
+  stopButton.addEventListener("click", () => t.owned != null && stop(t.owned));
 
   function frame(id) {
     let f = t.frames.get(id);
@@ -222,52 +223,50 @@ const ChatTerminal = (() => {
     t.frames.delete(id);
     if (t.shown === id) t.shown = null;
   }
-  // Shows terminal `x` in the column, or the messages when there is none.
-  function show(x, { pendingOnly = false } = {}) {
-    el.drawer.classList.toggle("term-mode", !!x);
-    modes.hidden = pendingOnly || !x;
+  // The office's terminal `x`, shown in place of the messages when `on`. The switch and the stop
+  // button depend only on the terminal, never on which side is showing, so neither moves.
+  function show(x, on) {
+    const term = x && on ? x : null;
+    el.drawer.classList.toggle("term-mode", !!term);
+    modes.hidden = !x;
     stopButton.hidden = !x || x.exit != null;
-    setAttr(toMessages, "aria-pressed", x ? "false" : "true");
-    setAttr(toTerminal, "aria-pressed", x ? "true" : "false");
-    for (const [id, f] of t.frames) f.hidden = !x || id !== x.id;
-    if (!x) {
+    t.owned = x?.id ?? null;
+    setAttr(toMessages, "aria-pressed", term ? "false" : "true");
+    setAttr(toTerminal, "aria-pressed", term ? "true" : "false");
+    for (const [id, f] of t.frames) f.hidden = !term || id !== term.id;
+    if (!term) {
       t.shown = null;
       return;
     }
-    const f = frame(x.id);
-    el.drIco.dataset.key = `term:${x.provider}`;
-    el.drIco.replaceChildren(AN.hostTile(x.provider));
-    setText(el.drTitle, AN.cliName(x.provider));
-    setText(el.drSub, x.exit == null ? folder(x.cwd) : L("已结束", "Exited"));
+    const f = frame(term.id);
+    el.drIco.dataset.key = `term:${term.provider}`;
+    el.drIco.replaceChildren(AN.hostTile(term.provider));
+    setText(el.drTitle, AN.cliName(term.provider));
+    setText(el.drSub, term.exit == null ? folder(term.cwd) : L("已结束", "Exited"));
     el.drAll.hidden = true;
-    if (t.shown !== x.id) {
-      t.shown = x.id;
+    if (t.shown !== term.id) {
+      t.shown = term.id;
       const shown = () => f.contentWindow?.postMessage({ type: "agentnave:terminal", action: "shown" }, location.origin === "null" ? "*" : location.origin);
       if (f.dataset.loaded) requestAnimationFrame(shown);
       else f.addEventListener("load", () => { f.dataset.loaded = "1"; shown(); }, { once: true });
     }
   }
-  // After the conversation column is drawn for `group`: the switch, and the terminal if chosen.
+  // After the conversation column is drawn for `group`: its terminal, shown unless the messages
+  // were asked for.
   function column(group) {
     const agent = byId(pendingId(group));
     if (agent) {
-      // Nothing to read yet: the column is its terminal.
       el.drawer.hidden = false;
       el.drawer.classList.remove("folded");
       state.convCollapsed = false;
       el.convToggle.hidden = true;
-      show(agent, { pendingOnly: true });
-      return;
     }
-    const x = ofWorkspace(group);
-    if (!x) {
-      modes.hidden = true;
-      show(null);
-      modes.hidden = true;
-      return;
-    }
-    show(t.terminal.get(group) ? x : null);
-    modes.hidden = false;
+    const x = agent || ofWorkspace(group);
+    show(x, t.terminal.get(group) ?? true);
+  }
+  // Opening a desk, a room or everything is asking to read: the column turns to the messages.
+  function readMessages() {
+    if (state.loaded) t.terminal.set(state.loaded, false);
   }
   // Theme and language changes reach the frames as they reach settings.
   addEventListener("agentnave:preferences", (event) => {
@@ -275,5 +274,5 @@ const ChatTerminal = (() => {
       f.contentWindow?.postMessage({ type: "agentnave:terminal", action: "preferences", general: event.detail }, location.origin === "null" ? "*" : location.origin);
   });
 
-  return { refresh, pending, follow, pendingId, headAction, decorate, menu, column, office, newAgent };
+  return { refresh, pending, follow, pendingId, headAction, decorate, menu, column, office, readMessages, newAgent };
 })();

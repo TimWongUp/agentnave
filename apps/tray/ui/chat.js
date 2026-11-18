@@ -39,6 +39,7 @@ function openScope(scope, opener) {
   if (opener) state.opener = opener;
   state.drawer = scope;
   state.convOpen = true;
+  ChatTerminal.readMessages();
   // picking a desk or room is asking to read it; a click inside the peeking column keeps it folded
   if (!state.convPeek) setCollapsed(false);
   if (state.chat) renderAll(state.chat);

@@ -90,7 +90,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
   const chatContext = vm.createContext({
     AN: {}, state: { loaded: "ws-a", selected: "ws-b", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
-    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {} },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {}, readMessages() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}),
     renderHead() {}, renderConv() { drawer.hidden = false; }, renderSideToggle() {}, renderTicker() {},
     renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
@@ -403,7 +403,7 @@ function refreshing() {
   const context = vm.createContext({
     AN: { voice: { ingest() { calls.voice++; } } }, state: { loaded: null, selected: "ws", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
-    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {} },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {}, readMessages() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderSideToggle() {}, renderTicker() {},
     renderOffice() { calls.all++; }, showBlank() {}, renderList() { calls.list++; }, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => tick, timeDriven: () => busy,
@@ -976,7 +976,7 @@ test("ChatTerminal matches only the latest confirmed workspace and keeps exited 
   let sessions = [];
   const drawer = node("aside");
   let modes;
-  const drAll = Object.assign(node("button"), { before(first) { modes = first; } });
+  const drAll = Object.assign(node("button"), { after(first) { modes = first; } });
   const tl = node("div");
   const context = vm.createContext({
     AN: {
