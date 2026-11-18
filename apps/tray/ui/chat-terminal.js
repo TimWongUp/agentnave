@@ -95,34 +95,40 @@ const ChatTerminal = (() => {
       })),
     );
   }
-  async function start(provider, cwd) {
-    if (!cwd) {
-      const picked = await act("/app/terminal/pick");
-      if (!picked.ok) return;
-      cwd = (await picked.json()).cwd;
-      if (!cwd) return;
-    }
-    const response = await act("/app/terminal/start", JSON.stringify({ provider, cwd, cols: 100, rows: 30 }));
+  // A failed request says why, as the office's other actions do.
+  async function reply(response) {
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      console.warn(result.error);
-      return;
+    if (!response.ok) Actions.say(result.error || L("操作失败", "Failed"), true);
+    return response.ok ? result : null;
+  }
+  async function start(provider, cwd) {
+    try {
+      if (!cwd) {
+        const picked = await reply(await act("/app/terminal/pick"));
+        cwd = picked?.cwd;
+        if (!cwd) return;
+      }
+      const result = await reply(await act("/app/terminal/start", JSON.stringify({ provider, cwd, cols: 100, rows: 30 })));
+      if (!result) return;
+      await refresh();
+      go(`/chat/${PREFIX}${result.session.id}`);
+    } catch (error) {
+      Actions.say(String(error?.message || error), true);
     }
-    await refresh();
-    go(`/chat/${PREFIX}${result.session.id}`);
   }
 
-  // The "+" on a project's header in the list; "other" has no folder, so one is picked.
+  // The "+" on a project's header in the list; "other" has no folder, so one is picked. A
+  // project's key is its whole path; the path it shows may be shortened.
   function headAction(rec) {
     if (!rec.add) {
       rec.add = h("span.gl-grp-add", { role: "button", tabindex: "0" }, "+");
-      const run = (e) => newAgent(e, rec.section?.key === "other" ? null : rec.section?.path);
+      const run = (e) => newAgent(e, rec.section?.other ? null : rec.section?.key);
       rec.add.addEventListener("click", run);
       rec.add.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && run(e));
       rec.el.append(rec.add);
     }
     const label = L("在这个项目里新开 agent", "New agent in this project");
-    rec.add.hidden = state.groupBy !== "project";
+    rec.add.hidden = state.groupBy !== "project" || !!rec.section?.pinned;
     rec.add.title = label;
     rec.add.setAttribute("aria-label", label);
   }
@@ -150,12 +156,12 @@ const ChatTerminal = (() => {
     return true;
   }
   async function stop(id) {
-    await act(`/app/terminal/stop?session=${id}`, "");
+    await reply(await act(`/app/terminal/stop?session=${id}`, ""));
     await refresh();
     refreshOffice();
   }
   async function close(id) {
-    await act(`/app/terminal/close?session=${id}`, "");
+    await reply(await act(`/app/terminal/close?session=${id}`, ""));
     await refresh();
     refreshOffice();
   }

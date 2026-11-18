@@ -547,5 +547,5 @@ const Actions = {};
 
   $("cleanup").addEventListener("click", cleanup);
 
-  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu, cancelHandover, deleteIsolated, openMenu });
+  Object.assign(Actions, { picked, pick, workspaceMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say });
 }

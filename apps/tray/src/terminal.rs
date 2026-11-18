@@ -150,12 +150,9 @@ impl Terminals {
     }
 
     fn pick(&self, app: &AppHandle) -> Response {
+        // A cancelled pick names no folder, so nothing starts.
         match crate::video_packs::picker::choose(app) {
-            Ok(Some(cwd)) => {
-                self.lock().cwd = Some(cwd);
-                Response::json(&self.describe())
-            }
-            Ok(None) => Response::json(&self.describe()),
+            Ok(cwd) => Response::json(&json!({"cwd": cwd.map(|cwd| cwd.display().to_string())})),
             Err(error) => Response::error(500, &error),
         }
     }
