@@ -182,8 +182,11 @@ const ChatTerminal = (() => {
     refreshOffice();
   }
   async function close(id) {
-    await reply(await act(`/app/terminal/close?session=${id}`, ""));
+    if (!(await reply(await act(`/app/terminal/close?session=${id}`, "")))) return;
+    const shown = pendingId(state.selected) === id;
     await refresh();
+    // The agent closed here was only its terminal, so nothing is left to show.
+    if (shown) return go("/chat/", true);
     refreshOffice();
   }
   // Continues the chat an ended terminal was the boss of, or starts its CLI afresh, in its place.
