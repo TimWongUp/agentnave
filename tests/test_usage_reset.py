@@ -279,3 +279,5 @@ def test_quota_groups_record_match_and_clear(tmp_path: Path) -> None:
     health = provider_health.active(tmp_path)
     assert provider_health.matching(health, "codex", "trae-cn/x") is not None
     assert provider_health.matching(health, "codex", "gpt-one") is None
+    # A third-party route is not billed by the official account, so it never reads its limits.
+    assert CodexAdapter().usage_query("trae-cn/x") is None

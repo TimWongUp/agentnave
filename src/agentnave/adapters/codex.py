@@ -311,6 +311,8 @@ class CodexAdapter(AdapterHooks):
         return parse_reset(stderr.decode(errors="replace"), now)
 
     def usage_query(self, model: str | None) -> UsageQuery | None:
+        if model and "/" in model:
+            return None  # a third-party route is not billed by the official Codex account
         return UsageQuery(
             (self.executable_path(), "app-server"),
             codex_output_reset,

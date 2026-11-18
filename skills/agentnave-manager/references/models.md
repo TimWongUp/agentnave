@@ -30,8 +30,8 @@
 长线程中途遇配额阻断（`execution_blocked`、`failed` 或续接被「cooling down」拒绝）时，先试同 CLI 换模型续接，再考虑跨 CLI 新开线程重交接：原会话已读的文件和上下文都在，不用重写简报。服务不会自动切换，模型由 boss 显式传入。
 
 - 先 `cancel` 仍在运行的阻断任务，再用原 `session_id` 续接并传 `provider_options.model`；`provider` 不变。
-- 候选模型只取两处：该工位 `list_members` 里同 CLI 且 `available` 的 `fallbacks` 条目；用户点名 CLI 时取 `list_members(provider=...)` 的 `default` 模型。不自己挑档次，没有候选就跨 CLI 交接。
+- 候选模型只取两处：该工位 `list_members` 里同 CLI 且 `available` 的 `fallbacks` 条目；用户点名 CLI 时从 `list_members(provider=...)` 的模型行里取另一个未冷却的模型（行上的 `default` 是会议默认，不当任务默认，见「开启编排」）。不挑更高档次，没有候选就跨 CLI 交接。
 - 同额度组的模型一起冷却：Codex 官方路由的模型（不带路由前缀，如 `gpt-*`）同组，换同组模型会被服务拒绝；经第三方路由的模型（`trae-cn/…`、`grok/…`、`google/…` 这类带前缀的）不在该组，可以换过去续接。Antigravity 只有换到另一组（Gemini 与 Claude/GPT 之间）才有意义。同组续接会被服务拒绝，不要重试。
 - 其他 CLI 服务只按单个模型记冷却，真实额度可能跨模型共享。换一次，同类阻断再出现就改走跨 CLI，不连续试。
-- 有工位的线程换模型后，之后每次续接都要重传同一个 `model`，否则服务按当前工位供模型，回到被阻断的主选；没有工位的线程沿用历史里的新模型。
+- 有工位的线程换模型后，之后每次续接都要重传同一个 `model`，否则服务按当前工位供模型，回到被阻断的主选（「决策模型」档开启同档候选随机选、且换到的是该工位候选池里的模型时，省略 `model` 仍沿用该候选）；没有工位的线程沿用历史里的新模型。
 - Devin 的可选模型随账号和会话而异，被拒时按报错里的 available 重选；ZCode 要同时传 `effort`，`model` 用 `providerId/modelId`；Pi 的 `model` 带路线前缀，用完整串。
