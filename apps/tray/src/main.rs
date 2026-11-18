@@ -70,7 +70,7 @@ const POLL: Duration = Duration::from_secs(2);
 pub const PREVIEW: bool = option_env!("AGENTNAVE_PREVIEW").is_some();
 
 /// Preview writes only its own appearance and voice data. Other exceptions move the window,
-/// re-probe CLIs in memory, check the release feed or open a rules file in the user's editor.
+/// re-probe CLIs in memory, check the release feed, open a rules file in the user's editor, or end an old CLI session the user confirmed.
 /// Header values are ASCII; the page reads this back with decodeURIComponent.
 fn percent_encode(text: &str) -> String {
     text.bytes()
@@ -88,7 +88,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
         && !(method == "POST"
-            && ((cfg!(unix) && path == "/app/hosts/reload-copy")
+            && ((cfg!(unix) && matches!(path, "/app/hosts/reload-copy" | "/app/hosts/stop-copy"))
                 || path.starts_with("/app/video-packs/")
                 || matches!(
                     path,
@@ -537,6 +537,10 @@ mod tests {
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
         assert_eq!(
             preview_refuses(true, "POST", "/app/hosts/reload-copy"),
+            !cfg!(unix)
+        );
+        assert_eq!(
+            preview_refuses(true, "POST", "/app/hosts/stop-copy"),
             !cfg!(unix)
         );
     }
