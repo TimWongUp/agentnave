@@ -20,7 +20,7 @@ const S = {
   appVersion: "",
   busy: new Map(), // host id -> "connect" | "remove"
   confirm: null, // host id whose removal is being confirmed
-  copyConfirm: null, // {id, kind} of the background copy whose stop/restart is being confirmed
+  copyConfirm: null, // {id, kind, pid?, since?, terminal?, cwd?} of the copy whose stop/restart is being confirmed
   adv: new Set(), // host ids whose 高级 panel is open
   localErr: new Map(), // host id -> message when a request itself failed
   newIds: new Set(),
@@ -140,7 +140,7 @@ function setData(data) {
   const pending = S.copyConfirm;
   const host = pending && data.hosts.find((x) => x.id === pending.id);
   if (pending && !(host && ["required", "unverified"].includes(host.reload?.state)
-    && (host.reload.copies || []).some((copy) => copy.kind === pending.kind) && copyAction(host, pending.kind)))
+    && (host.reload.copies || []).some((copy) => sameCopy(copy, pending)) && copyAction(host, pending)))
     S.copyConfirm = null;
   S.newIds = new Set(
     data.hosts
@@ -205,6 +205,15 @@ const removeEntry = (host) =>
   run(host.id, "remove", () => post("/app/hosts/remove", { id: host.id }));
 const reloadCopy = (host, kind) =>
   run(host.id, `copy-${kind}`, () => post("/app/hosts/reload-copy", { id: host.id, kind })).then((r) => {
+    if (r && !r.ok) {
+      S.localErr.set(host.id, r.message);
+      renderAll();
+    }
+    return r;
+  });
+const stopCopy = (host, copy) =>
+  run(host.id, copyAct(copy), () =>
+    post("/app/hosts/stop-copy", { id: host.id, pid: copy.pid, since: copy.since })).then((r) => {
     if (r && !r.ok) {
       S.localErr.set(host.id, r.message);
       renderAll();
@@ -634,7 +643,7 @@ function buildCard(host) {
       S.focus = { id, act: "remove" };
       renderAll();
     } else if (e.key === "Escape" && S.copyConfirm?.id === id) {
-      S.focus = { id, act: `copy-${S.copyConfirm.kind}` };
+      S.focus = { id, act: copyAct(S.copyConfirm) };
       S.copyConfirm = null;
       renderAll();
     }
@@ -694,8 +703,8 @@ function buildCard(host) {
   // Configuration changes remain visible until the host stops or a new connection is observed.
   if (["required", "unverified"].includes(host.reload?.state)) {
     main.push(reloadNote(host));
-    const pending = S.copyConfirm?.id === id && !busy && copyAction(host, S.copyConfirm.kind);
-    if (pending) main.push(copyConfirmBlock(host, S.copyConfirm.kind, pending));
+    const pending = S.copyConfirm?.id === id && !busy && copyAction(host, S.copyConfirm);
+    if (pending) main.push(copyConfirmBlock(host, S.copyConfirm, pending));
   }
   if (S.confirm === id && !busy) main.push(confirmBlock(host));
   // The 详情 button controls this wrapper, which every status renders (an orphan has no advanced part).
@@ -774,24 +783,51 @@ const COPY_ACTIONS = {
   "codex/daemon": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Codex 后台服务？", "Restart the Codex background service?"), L("正在运行的后台任务和远程任务会中断。", "Running background and remote tasks will be interrupted.")],
   "hermes/gateway": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Hermes 网关？", "Restart the Hermes gateway?"), L("消息平台上的对话会短暂中断，随后自动重连。", "Conversations on messaging platforms will briefly drop and then reconnect.")],
 };
-const copyAction = (host, kind) =>
-  (host.copy_actions || []).includes(kind) && COPY_ACTIONS[`${host.boss}/${kind}`];
+const copyAct = (copy) => (copy.kind === "cli" ? `copy-cli-${copy.pid}` : `copy-${copy.kind}`);
+const sameCopy = (a, b) =>
+  a?.kind === b?.kind && (a.kind !== "cli" || (a.pid === b.pid && a.since === b.since));
+const copyAction = (host, copy) => {
+  if (copy.kind === "cli") {
+    if (!copy.pid || !copy.since) return null;
+    const where = [copy.terminal, copy.cwd && shortPath(copy.cwd)].filter(Boolean).join(" · ");
+    const lead = where
+      ? L(`将结束 ${where} 的终端会话。`, `This will end the terminal session in ${where}. `)
+      : L("将结束这个终端会话。", "This will end this terminal session. ");
+    const resume = L("能否接回由宿主决定", "Whether it can be resumed depends on the host");
+    const consequence = host.reopen?.cli
+      ? `${lead}${resume}${L("：", ": ")}${host.reopen.cli}`
+      : `${lead}${resume}${L("。", ".")}`;
+    return [L("结束", "End"), L("结束中…", "Ending…"), L("结束这个终端会话？", "End this terminal session?"), consequence];
+  }
+  return (host.copy_actions || []).includes(copy.kind) && COPY_ACTIONS[`${host.boss}/${copy.kind}`];
+};
 const bundleName = (path) => String(path || "").split("/").pop().replace(/\.app$/i, "");
 
 // One row per old copy still holding the previous config: what it is, since when, how to reopen it.
 function copyRow(host, copy) {
   const id = host.id;
   const busy = S.busy.get(id);
-  const action = copyAction(host, copy.kind);
-  const act = `copy-${copy.kind}`;
-  const name = [COPY_KIND[copy.kind] || copy.kind, copy.bundle && bundleName(copy.bundle)].filter(Boolean).join(" · ");
+  const action = copyAction(host, copy);
+  const act = copyAct(copy);
+  const name = [
+    COPY_KIND[copy.kind] || copy.kind,
+    copy.bundle && bundleName(copy.bundle),
+    copy.kind === "cli" && copy.terminal,
+  ].filter(Boolean).join(" · ");
   const since = copy.since ? relTime(new Date(copy.since).toISOString()) : "";
   let control = null;
   if (action)
     control = busy === act
       ? spinBtn(action[1])
       : button(action[0], "", act, () => {
-          S.copyConfirm = { id, kind: copy.kind };
+          S.copyConfirm = {
+            id,
+            kind: copy.kind,
+            pid: copy.pid ?? null,
+            since: copy.since ?? null,
+            terminal: copy.terminal ?? null,
+            cwd: copy.cwd ?? null,
+          };
           S.confirm = null;
           S.focus = { id, act: "copy-cancel" };
           renderAll();
@@ -801,6 +837,7 @@ function copyRow(host, copy) {
       h("strong", {}, name, ["daemon", "gateway"].includes(copy.kind) &&
         AN.settings.settingTip(L("这是应用在后台常驻的进程，关掉窗口也不会退出；它重启后才会用上新配置。", "This is the app’s resident background process; closing the window doesn’t stop it, and it only picks up the new config after a restart."))),
       since && h("span.hc-since", {}, L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`)),
+      copy.kind === "cli" && copy.cwd && h("p.hc-copy-cwd", {}, h("code", { title: copy.cwd }, shortPath(copy.cwd))),
       host.reopen?.[copy.kind] && h("p", {}, host.reopen[copy.kind])),
     h("div.hc-copy-act", {}, control));
 }
@@ -847,10 +884,10 @@ function reloadNote(host) {
   );
 }
 
-function copyConfirmBlock(host, kind, [label, , title, consequence]) {
+function copyConfirmBlock(host, confirm, [label, , title, consequence]) {
   const cancel = () => {
     S.copyConfirm = null;
-    S.focus = { id: host.id, act: `copy-${kind}` };
+    S.focus = { id: host.id, act: copyAct(confirm) };
     renderAll();
   };
   return h(
@@ -859,7 +896,8 @@ function copyConfirmBlock(host, kind, [label, , title, consequence]) {
     h("div.msg", {}, h("strong", {}, title), consequence),
     h("div.acts", {},
       button(L("取消", "Cancel"), "", "copy-cancel", cancel),
-      button(L(`确认${label}`, `Confirm ${label.toLowerCase()}`), ".danger-solid", "copy-confirm", () => reloadCopy(host, kind)),
+      button(L(`确认${label}`, `Confirm ${label.toLowerCase()}`), ".danger-solid", "copy-confirm", () =>
+        confirm.kind === "cli" ? stopCopy(host, confirm) : reloadCopy(host, confirm.kind)),
     ),
   );
 }

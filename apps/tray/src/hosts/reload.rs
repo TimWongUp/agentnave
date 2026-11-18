@@ -127,8 +127,9 @@ impl Hosts {
         if matches!(reason, "host_running" | "tools_upgrade") {
             return probe.old_copies(&self.context, host.boss, changed_at.unwrap_or(0));
         }
-        let mut copies: BTreeMap<&str, processes::Copy> = BTreeMap::new();
+        #[cfg(unix)]
         if matches!(reason, "stale" | "tools" | "config") {
+            let mut copies = processes::CopyCollector::default();
             for (receipt, pid) in receipts.live.iter().zip(&receipts.live_pids) {
                 // A connection that started before the config change still runs the old entry.
                 let old_config = reason == "config"
@@ -142,15 +143,15 @@ impl Hosts {
                 }
                 if let Some(pid) = pid
                     && let Some(copy) = probe.receipt_copy(&self.context, host.boss, *pid)
-                    && copies
-                        .get(copy.kind)
-                        .is_none_or(|old| copy.since < old.since)
                 {
-                    copies.insert(copy.kind, copy);
+                    copies.push(copy);
                 }
             }
+            return copies.finish();
         }
-        copies.into_values().collect()
+        #[cfg(not(unix))]
+        let _ = (receipts, install);
+        Vec::new()
     }
     /// Live receipts refresh every five seconds; a relay swapping to a new install may pause
     /// that for up to 105 seconds. A relay whose host closed normally marks its receipt ended and

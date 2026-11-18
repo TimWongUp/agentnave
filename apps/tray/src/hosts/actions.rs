@@ -14,6 +14,10 @@ impl Hosts {
         if operation == "reload-copy" {
             return self.reload_copy(&host, payload);
         }
+        #[cfg(unix)]
+        if operation == "stop-copy" {
+            return self.stop_copy(&host, payload);
+        }
         if operation == "skill" {
             return self.change_skill(id, &host, payload);
         }

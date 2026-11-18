@@ -173,3 +173,155 @@ fn native_copy_actions_use_resolved_fake_clis_and_preserve_host_files() {
         400
     );
 }
+
+#[cfg(unix)]
+struct PidGuard(Vec<u32>);
+
+#[cfg(unix)]
+impl Drop for PidGuard {
+    fn drop(&mut self) {
+        for &pid in &self.0 {
+            if let Ok(raw) = libc::pid_t::try_from(pid) {
+                unsafe { libc::kill(raw, libc::SIGKILL) };
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn spawn_detached(program: &Path, args: &[&str], dir: &Path) -> u32 {
+    let output = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("exec \"$@\" >/dev/null 2>&1 & echo $!")
+        .arg("_")
+        .arg(program)
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .unwrap()
+}
+
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+    let Ok(raw) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    unsafe { libc::kill(raw, 0) == 0 }
+}
+
+#[cfg(unix)]
+#[test]
+fn stop_copy_validates_pid_and_start_time_and_terminates_only_matching_cli_copy() {
+    let (_temp, mut hosts) = fixture();
+    executable_file(&hosts.context.search[0].join("pi"), "#!/bin/sh\nexit 99\n");
+    let fake_codex = hosts.context.search[0].join("codex");
+    std::os::unix::fs::symlink("/bin/sleep", &fake_codex).unwrap();
+    let work = hosts.context.home.join("work");
+    fs::create_dir_all(&work).unwrap();
+
+    hosts.action("connect", &json!({"id":"codex"})).unwrap();
+    hosts.action("connect", &json!({"id":"pi"})).unwrap();
+    hosts.processes = Mutex::new(processes::Probe::default());
+
+    let codex_pid = spawn_detached(&fake_codex, &["60"], &work);
+    let other_pid = spawn_detached(
+        Path::new("/usr/bin/tail"),
+        &["-f", "/dev/null"],
+        &hosts.context.home,
+    );
+    let _guard = PidGuard(vec![codex_pid, other_pid]);
+
+    let h = host(&hosts, "codex");
+    let mut observed = None;
+    for _ in 0..40 {
+        hosts.processes.lock().unwrap().invalidate();
+        hosts.settings["codex"]["reload_changed"]["at_ms"] = json!(u64::MAX / 2);
+        let state = hosts.state(&h);
+        if let Some(copy) = state["reload"]["copies"]
+            .as_array()
+            .and_then(|list| {
+                list.iter()
+                    .find(|c| c["pid"].as_u64() == Some(u64::from(codex_pid)))
+            })
+            .cloned()
+        {
+            observed = Some(copy);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let copy = observed.expect("detached fake codex should be observed as a cli copy");
+    let since = copy["since"].as_u64().unwrap();
+    assert_eq!(copy["kind"], "cli");
+    assert_eq!(copy["cwd"], "~/work");
+    hosts.settings["codex"]["reload_changed"]["at_ms"] = json!(since + 1000);
+    hosts.settings["pi"]["reload_changed"]["at_ms"] = json!(since + 1000);
+
+    // Mismatched start time, unrelated PID, or wrong host must be refused without signalling.
+    let bad_since = hosts
+        .action(
+            "stop-copy",
+            &json!({"id":"codex","pid":codex_pid,"since":since + 1000}),
+        )
+        .unwrap();
+    assert_eq!(bad_since["ok"], false);
+    assert!(alive(codex_pid));
+
+    let bad_pid = hosts
+        .action(
+            "stop-copy",
+            &json!({"id":"codex","pid":other_pid,"since":since}),
+        )
+        .unwrap();
+    assert_eq!(bad_pid["ok"], false);
+    assert!(alive(other_pid));
+
+    let wrong_host = hosts
+        .action(
+            "stop-copy",
+            &json!({"id":"pi","pid":codex_pid,"since":since}),
+        )
+        .unwrap();
+    assert_eq!(wrong_host["ok"], false);
+    assert!(alive(codex_pid));
+
+    assert!(
+        hosts
+            .action("stop-copy", &json!({"id":"codex","pid":1,"since":since}))
+            .is_err()
+    );
+
+    let stopped = hosts
+        .action(
+            "stop-copy",
+            &json!({"id":"codex","pid":codex_pid,"since":since}),
+        )
+        .unwrap();
+    assert_eq!(stopped["ok"], true, "{stopped}");
+    assert!(!alive(codex_pid));
+    assert!(alive(other_pid));
+    assert!(
+        !stopped["host"]["reload"]["copies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["pid"].as_u64() == Some(u64::from(codex_pid)))
+    );
+
+    let reader = Reader::new(hosts.context.home.join(".agentnave"));
+    reader.use_hosts(hosts);
+    let path = "/app/hosts/stop-copy";
+    assert_eq!(reader.request("GET", path, None, b"").status, 405);
+    assert_eq!(reader.request("POST", path, None, b"{}").status, 403);
+    assert_eq!(
+        reader
+            .request("POST", path, Some("1"), br#"{"id":"codex"}"#)
+            .status,
+        400
+    );
+}

@@ -194,7 +194,7 @@ pub(crate) fn request(
     body: &[u8],
 ) -> Response {
     let read = path == "/app/hosts";
-    let write = (cfg!(unix) && path == "/app/hosts/reload-copy")
+    let write = (cfg!(unix) && matches!(path, "/app/hosts/reload-copy" | "/app/hosts/stop-copy"))
         || matches!(
             path,
             "/app/hosts/refresh"

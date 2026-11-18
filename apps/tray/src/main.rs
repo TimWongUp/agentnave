@@ -88,7 +88,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
     preview
         && method != "GET"
         && !(method == "POST"
-            && ((cfg!(unix) && path == "/app/hosts/reload-copy")
+            && ((cfg!(unix) && matches!(path, "/app/hosts/reload-copy" | "/app/hosts/stop-copy"))
                 || path.starts_with("/app/video-packs/")
                 || matches!(
                     path,
@@ -537,6 +537,10 @@ mod tests {
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
         assert_eq!(
             preview_refuses(true, "POST", "/app/hosts/reload-copy"),
+            !cfg!(unix)
+        );
+        assert_eq!(
+            preview_refuses(true, "POST", "/app/hosts/stop-copy"),
             !cfg!(unix)
         );
     }
