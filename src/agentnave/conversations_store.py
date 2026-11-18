@@ -122,7 +122,8 @@ def entry_message_id(conversation_id: str, index: int) -> str:
 def forwarded_prompt(forwarded: list[Forwarded], prompt: str) -> str:
     """Prefix a manager prompt with committed messages, labelled as data."""
     blocks = "\n\n".join(
-        f"Forwarded from {item.source} [{item.message_id}]\n{item.text}" for item in forwarded
+        f"Forwarded [#{number}] from {item.source} [{item.message_id}]\n{item.text}"
+        for number, item in enumerate(forwarded, 1)
     )
     where = (
         "this workspace or a linked workspace"
