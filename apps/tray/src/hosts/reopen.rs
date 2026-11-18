@@ -194,9 +194,14 @@ fn terminate_process(pid: u32) -> Result<(), String> {
         if unsafe { libc::kill(raw, 0) } != 0
             && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
         {
-            break;
+            return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
-    Ok(())
+    if unsafe { libc::kill(raw, 0) } != 0
+        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    {
+        return Ok(());
+    }
+    Err("已请求结束，但会话仍在运行，稍后会自动刷新".into())
 }

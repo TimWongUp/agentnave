@@ -5,6 +5,7 @@
 // Data comes from GET /app/hosts; every write is a POST with X-AgentNave-Action (AN.post). The page never
 // writes on its own: auto-takeover is the server's job at startup and on 刷新检测.
 const { h, $, load, post, installService, relTime, L } = AN;
+const { copyAct, sameCopy, cliCopyAction, cliCopyCwd, copyConfirmState, stopCopy } = AN.hostCopies;
 
 
 const STATUS = {
@@ -205,15 +206,6 @@ const removeEntry = (host) =>
   run(host.id, "remove", () => post("/app/hosts/remove", { id: host.id }));
 const reloadCopy = (host, kind) =>
   run(host.id, `copy-${kind}`, () => post("/app/hosts/reload-copy", { id: host.id, kind })).then((r) => {
-    if (r && !r.ok) {
-      S.localErr.set(host.id, r.message);
-      renderAll();
-    }
-    return r;
-  });
-const stopCopy = (host, copy) =>
-  run(host.id, copyAct(copy), () =>
-    post("/app/hosts/stop-copy", { id: host.id, pid: copy.pid, since: copy.since })).then((r) => {
     if (r && !r.ok) {
       S.localErr.set(host.id, r.message);
       renderAll();
@@ -783,24 +775,10 @@ const COPY_ACTIONS = {
   "codex/daemon": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Codex 后台服务？", "Restart the Codex background service?"), L("正在运行的后台任务和远程任务会中断。", "Running background and remote tasks will be interrupted.")],
   "hermes/gateway": [L("重启", "Restart"), L("重启中…", "Restarting…"), L("重启 Hermes 网关？", "Restart the Hermes gateway?"), L("消息平台上的对话会短暂中断，随后自动重连。", "Conversations on messaging platforms will briefly drop and then reconnect.")],
 };
-const copyAct = (copy) => (copy.kind === "cli" ? `copy-cli-${copy.pid}` : `copy-${copy.kind}`);
-const sameCopy = (a, b) =>
-  a?.kind === b?.kind && (a.kind !== "cli" || (a.pid === b.pid && a.since === b.since));
-const copyAction = (host, copy) => {
-  if (copy.kind === "cli") {
-    if (!copy.pid || !copy.since) return null;
-    const where = [copy.terminal, copy.cwd && shortPath(copy.cwd)].filter(Boolean).join(" · ");
-    const lead = where
-      ? L(`将结束 ${where} 的终端会话。`, `This will end the terminal session in ${where}. `)
-      : L("将结束这个终端会话。", "This will end this terminal session. ");
-    const resume = L("能否接回由宿主决定", "Whether it can be resumed depends on the host");
-    const consequence = host.reopen?.cli
-      ? `${lead}${resume}${L("：", ": ")}${host.reopen.cli}`
-      : `${lead}${resume}${L("。", ".")}`;
-    return [L("结束", "End"), L("结束中…", "Ending…"), L("结束这个终端会话？", "End this terminal session?"), consequence];
-  }
-  return (host.copy_actions || []).includes(copy.kind) && COPY_ACTIONS[`${host.boss}/${copy.kind}`];
-};
+const copyAction = (host, copy) =>
+  copy.kind === "cli"
+    ? cliCopyAction(host, copy)
+    : (host.copy_actions || []).includes(copy.kind) && COPY_ACTIONS[`${host.boss}/${copy.kind}`];
 const bundleName = (path) => String(path || "").split("/").pop().replace(/\.app$/i, "");
 
 // One row per old copy still holding the previous config: what it is, since when, how to reopen it.
@@ -820,14 +798,7 @@ function copyRow(host, copy) {
     control = busy === act
       ? spinBtn(action[1])
       : button(action[0], "", act, () => {
-          S.copyConfirm = {
-            id,
-            kind: copy.kind,
-            pid: copy.pid ?? null,
-            since: copy.since ?? null,
-            terminal: copy.terminal ?? null,
-            cwd: copy.cwd ?? null,
-          };
+          S.copyConfirm = copyConfirmState(id, copy);
           S.confirm = null;
           S.focus = { id, act: "copy-cancel" };
           renderAll();
@@ -837,7 +808,7 @@ function copyRow(host, copy) {
       h("strong", {}, name, ["daemon", "gateway"].includes(copy.kind) &&
         AN.settings.settingTip(L("这是应用在后台常驻的进程，关掉窗口也不会退出；它重启后才会用上新配置。", "This is the app’s resident background process; closing the window doesn’t stop it, and it only picks up the new config after a restart."))),
       since && h("span.hc-since", {}, L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`)),
-      copy.kind === "cli" && copy.cwd && h("p.hc-copy-cwd", {}, h("code", { title: copy.cwd }, shortPath(copy.cwd))),
+      cliCopyCwd(copy),
       host.reopen?.[copy.kind] && h("p", {}, host.reopen[copy.kind])),
     h("div.hc-copy-act", {}, control));
 }
@@ -897,7 +868,9 @@ function copyConfirmBlock(host, confirm, [label, , title, consequence]) {
     h("div.acts", {},
       button(L("取消", "Cancel"), "", "copy-cancel", cancel),
       button(L(`确认${label}`, `Confirm ${label.toLowerCase()}`), ".danger-solid", "copy-confirm", () =>
-        confirm.kind === "cli" ? stopCopy(host, confirm) : reloadCopy(host, confirm.kind)),
+        confirm.kind === "cli"
+          ? stopCopy(host, confirm, run, (hid, msg) => S.localErr.set(hid, msg), renderAll)
+          : reloadCopy(host, confirm.kind)),
     ),
   );
 }

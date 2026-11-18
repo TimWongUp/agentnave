@@ -9,6 +9,7 @@ const ENDED_SECONDS: u64 = 3600;
 #[derive(Default)]
 struct Receipts {
     live: Vec<Value>,
+    #[cfg(unix)]
     live_pids: Vec<Option<u32>>,
     lingering: bool,
     lingering_before_change: bool,
@@ -197,6 +198,7 @@ impl Hosts {
                     receipts.ended.push(ended_at(value, modified));
                 }
             } else if age <= 20 {
+                #[cfg(unix)]
                 receipts.live_pids.push(receipt_pid(&entry.path()));
                 receipts.live.push(value);
             } else {

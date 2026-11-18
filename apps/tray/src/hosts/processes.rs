@@ -165,17 +165,10 @@ impl Probe {
     }
 
     /// Classify only observed live relays; unknown or reused PIDs supply no copy evidence.
+    #[cfg(unix)]
     pub fn receipt_copy(&mut self, context: &Context, id: &str, pid: u32) -> Option<Copy> {
         self.refresh(context);
-        #[cfg(unix)]
-        {
-            self.copies.as_ref()?.classify(id, pid, true)
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = (id, pid);
-            None
-        }
+        self.copies.as_ref()?.classify(id, pid, true)
     }
 
     pub fn old_copies(&mut self, context: &Context, id: &str, before: u64) -> Vec<Copy> {

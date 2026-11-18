@@ -299,6 +299,55 @@ fn collector_preserves_multiple_cli_relays_while_deduplicating_same_session() {
 }
 
 #[test]
+fn fallback_cli_copies_omit_pid_and_cwd_and_stay_distinct_in_collector() {
+    let mut term = node(
+        100,
+        "/Applications/Terminal.app/Contents/MacOS/Terminal",
+        &["Terminal"],
+    );
+    term.parent = Some(1);
+    let mut unknown_a = node_in(1000, "/usr/local/bin/wrapper-a", &["wrapper-a"], "~/a");
+    unknown_a.parent = Some(9);
+    let mut relay_a = node(1500, "/service/1/bin/agentnave-mcp", &["agentnave-mcp"]);
+    relay_a.parent = Some(10);
+    let mut unknown_b = node_in(2000, "/usr/local/bin/wrapper-b", &["wrapper-b"], "~/b");
+    unknown_b.parent = Some(9);
+    let mut relay_b = node(2500, "/service/1/bin/agentnave-mcp", &["agentnave-mcp"]);
+    relay_b.parent = Some(20);
+
+    let snapshot = Snapshot {
+        nodes: HashMap::from([
+            (9, term),
+            (10, unknown_a),
+            (11, relay_a),
+            (20, unknown_b),
+            (21, relay_b),
+        ]),
+        hosts: HashMap::new(),
+    };
+    let copy_a = snapshot.classify("claude", 11, true).unwrap();
+    let copy_b = snapshot.classify("claude", 21, true).unwrap();
+    assert_eq!(copy_a.pid, None);
+    assert_eq!(copy_a.cwd, None);
+    assert_eq!(copy_a.terminal, Some("Terminal"));
+    assert_eq!(copy_b.pid, None);
+    assert_eq!(copy_b.cwd, None);
+
+    let mut collector = Collector::default();
+    collector.push(copy_a);
+    collector.push(copy_b);
+    let collected = collector.finish();
+    assert_eq!(collected.len(), 2);
+    assert_eq!(
+        collected
+            .iter()
+            .map(|c| (c.kind, c.pid, c.since))
+            .collect::<Vec<_>>(),
+        [("cli", None, 1000), ("cli", None, 2000)]
+    );
+}
+
+#[test]
 fn snapshot_walks_parents_and_reports_each_kind_once_at_its_earliest_start() {
     let mut relay = node(6000, "/service/1/bin/agentnave-mcp", &["agentnave-mcp"]);
     relay.parent = Some(2);

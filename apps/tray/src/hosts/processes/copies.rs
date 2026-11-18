@@ -147,7 +147,7 @@ fn copy(kind: &'static str, node: &Node, bundle: Option<String>) -> Copy {
     }
 }
 
-fn cli_copy(pid: u32, node: &Node, ancestors: &[(u32, &Node)]) -> Copy {
+fn cli_copy(pid: Option<u32>, node: &Node, ancestors: &[(u32, &Node)]) -> Copy {
     let terminal = ancestors
         .iter()
         .find_map(|(_, parent)| terminal_name(parent));
@@ -155,8 +155,8 @@ fn cli_copy(pid: u32, node: &Node, ancestors: &[(u32, &Node)]) -> Copy {
         kind: "cli",
         since: node.since,
         bundle: None,
-        pid: Some(pid),
-        cwd: node.cwd.clone(),
+        pid,
+        cwd: pid.and_then(|_| node.cwd.clone()),
         terminal,
     }
 }
@@ -303,11 +303,14 @@ fn classify(host: &str, chain: &[(u32, &Node)], host_pids: &HashSet<u32>) -> Opt
     }
     special
         .or(desktop)
-        .or_else(|| cli_match.map(|(index, pid, node)| cli_copy(pid, node, &chain[index + 1..])))
         .or_else(|| {
+            cli_match.map(|(index, pid, node)| cli_copy(Some(pid), node, &chain[index + 1..]))
+        })
+        .or_else(|| {
+            // An unrecognized relay parent is not confirmed as the host CLI, so never expose its PID.
             chain
                 .first()
-                .map(|&(pid, node)| cli_copy(pid, node, &chain[1..]))
+                .map(|&(_, node)| cli_copy(None, node, &chain[1..]))
         })
 }
 
