@@ -24,7 +24,7 @@ async def settle_follow_up(
     顺序不能反：本次回执的 updates 里已经带了这些结果，不必在同一回执里再报一遍。
     显式 ids 的 wait 只记账，不出清单。"""
     if inbox and payload["all_finished"]:
-        await _attach(conversations, payload, manager_session_id)
+        await attach_follow_up(conversations, payload, manager_session_id)
     _record(conversations, payload)
 
 
@@ -55,7 +55,7 @@ def _task_workspace(conversations: Conversations, invocation_id: str) -> str | N
     return record.state.manager_session if record is not None else None
 
 
-async def _attach(
+async def attach_follow_up(
     conversations: Conversations, payload: WaitPayload, manager_session_id: str | None
 ) -> None:
     try:
@@ -73,11 +73,25 @@ async def _attach(
             live = {item.id: item for item in listed}
         except (OSError, ValueError):
             live = None  # keep the directories queued; a later closing wait lists them
+    shown = {
+        isolation["id"] for u in payload["updates"] if (isolation := u.get("isolation")) is not None
+    }
     items: list[FollowUpPayload] = []
-    for kind, handle in mine:
-        if kind == "isolation" and live is None:
-            continue
-        del ledger.entries[(kind, handle)]
+    left = 0
+    for index, (kind, handle) in enumerate(mine):
+        if len(items) >= _MAX_ITEMS:
+            left = len(mine) - index  # still queued; the next closing wait lists them
+            break
+        if kind == "isolation":
+            if live is None:
+                continue
+            found = live.get(handle)
+            if found is not None and found.in_use:
+                continue  # leased right now; stays queued until it is free
+        if ledger.entries.pop((kind, handle), None) is None:
+            continue  # a concurrent wait already took it
+        if kind == "isolation" and handle in shown:
+            continue  # this receipt's updates already carry it
         if kind == "task":
             item = _task_item(conversations, handle)
         elif kind == "round":
@@ -87,9 +101,9 @@ async def _attach(
         if item is not None:
             items.append(item)
     if items:
-        payload["follow_up"] = items[:_MAX_ITEMS]
-        if len(items) > _MAX_ITEMS:
-            payload["follow_up_omitted"] = len(items) - _MAX_ITEMS
+        payload["follow_up"] = items
+        if left:
+            payload["follow_up_omitted"] = left
 
 
 def _task_item(conversations: Conversations, invocation_id: str) -> FollowUpPayload | None:
@@ -121,10 +135,10 @@ def _round_item(conversations: Conversations, round_id: str) -> FollowUpPayload 
         round_ = conversations.round(round_id)
     except KeyError:
         return None
+    if round_.error:  # a failed round also stops itself (cancelling), so look at the error first
+        return {"id": round_id, "kind": "round", "status": "failed", "group_id": round_.group.id}
     if round_.cancelling:
         return None
-    if round_.error:
-        return {"id": round_id, "kind": "round", "status": "failed", "group_id": round_.group.id}
     lost = [run.seat_id for run in round_.runs if run.status in _LOST_SEATS]
     if not lost:
         return None

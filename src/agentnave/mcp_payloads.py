@@ -254,7 +254,7 @@ class WaitPayload(TypedDict):
     # Only when all_finished closes an inbox wait: ends delivered by earlier waits that still need
     # the boss, and isolated directories still unreleased. Each item is listed once.
     follow_up: NotRequired[list[FollowUpPayload]]
-    follow_up_omitted: NotRequired[int]
+    follow_up_omitted: NotRequired[int]  # still queued; listed by the next closing wait
     next: NotRequired[str]
     seq: NotRequired[int]
 

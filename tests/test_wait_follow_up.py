@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -14,7 +15,11 @@ from mcp_types import CallToolResult
 
 from agentnave import mcp_runtime
 from agentnave.adapters.base import AdapterHooks
+from agentnave.conversations import Conversations
+from agentnave.follow_up import FollowUpLedger
 from agentnave.host import Host
+from agentnave.mcp_followup import attach_follow_up
+from agentnave.mcp_payloads import WaitPayload
 from agentnave.mcp_server import mcp
 
 pytestmark = pytest.mark.asyncio
@@ -175,3 +180,68 @@ async def test_the_ledger_stays_with_the_workspace_after_a_handover(tmp_path: Pa
         await _run(client, "fine", tmp_path, "chat-1")
         [item] = _items(await _inbox(client, "chat-1"))
         assert item["id"] == failed
+
+
+def _ledger_stub(rounds: dict[str, SimpleNamespace], isolated: list[SimpleNamespace] | None = None):
+    ledger = FollowUpLedger()
+    for handle in rounds:
+        ledger.add("round", handle, "w")
+    for item in isolated or []:
+        ledger.add("isolation", item.id, "w")
+
+    def workspace_id(_session: str | None) -> str:
+        return "w"
+
+    def round_(round_id: str) -> SimpleNamespace:
+        return rounds[round_id]
+
+    def list_for_workspace(_workspace: str) -> list[SimpleNamespace]:
+        return isolated or []
+
+    return SimpleNamespace(
+        follow_ups=ledger,
+        workspace_id=workspace_id,
+        round=round_,
+        isolated=SimpleNamespace(list_for_workspace=list_for_workspace),
+    )
+
+
+def _payload() -> dict[str, object]:
+    return {"updates": [], "rounds": [], "all_finished": True}
+
+
+def _failed_round(identifier: str) -> SimpleNamespace:
+    # A round that failed also stops itself, so error and cancelling come together.
+    return SimpleNamespace(
+        id=identifier,
+        error="state_write_failed",
+        cancelling=True,
+        group=SimpleNamespace(id="g"),
+        runs=[],
+    )
+
+
+async def test_a_failed_round_is_listed_and_over_the_cap_waits_for_the_next_wait() -> None:
+    rounds = {f"r{i}": _failed_round(f"r{i}") for i in range(23)}
+    conversations = _ledger_stub(rounds)
+    first = _payload()
+    await attach_follow_up(cast(Conversations, conversations), cast(WaitPayload, first), "m")
+    assert len(first["follow_up"]) == 20  # type: ignore[index]
+    assert first["follow_up"][0]["status"] == "failed"  # type: ignore[index]
+    assert first["follow_up_omitted"] == 3
+    second = _payload()
+    await attach_follow_up(cast(Conversations, conversations), cast(WaitPayload, second), "m")
+    assert len(second["follow_up"]) == 3  # type: ignore[index]
+    assert "follow_up_omitted" not in second
+
+
+async def test_a_leased_isolated_directory_stays_queued_until_it_is_free() -> None:
+    leased = SimpleNamespace(id="wt-1", in_use=True, state="ready", path="/x", branch="b")
+    conversations = _ledger_stub({}, [leased])
+    busy = _payload()
+    await attach_follow_up(cast(Conversations, conversations), cast(WaitPayload, busy), "m")
+    assert "follow_up" not in busy
+    leased.in_use = False
+    free = _payload()
+    await attach_follow_up(cast(Conversations, conversations), cast(WaitPayload, free), "m")
+    assert [item["id"] for item in free["follow_up"]] == ["wt-1"]  # type: ignore[index]
