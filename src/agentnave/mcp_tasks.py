@@ -484,7 +484,9 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
             seat,
         )
         provider_health.check(
-            _conversations(ctx).root, [(provider, provider_health.model_option(options))]
+            _conversations(ctx).root,
+            [(provider, provider_health.model_option(options))],
+            resume=session_id is not None,
         )
         request, started = await _acquire_and_start_task(
             _conversations(ctx), launch, arguments, options
