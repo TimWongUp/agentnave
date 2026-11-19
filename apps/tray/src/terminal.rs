@@ -7,20 +7,23 @@
 //! all over the `agentnave` scheme like every other page. Every route but the list names its
 //! terminal with `?session=<id>`.
 
+mod elsewhere;
 mod links;
+mod modes;
 mod session;
 #[cfg(test)]
 mod tests;
 mod theme;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
+use crate::data::boss_app::CliTitle;
 use crate::providers::PROVIDERS;
 use crate::response::{self, Response};
 use session::{Launch, Session};
@@ -50,13 +53,18 @@ struct Running {
     session: Arc<Session>,
     /// Workspaces this terminal's CLI has confirmed as boss, latest last. Kept after exit until close.
     workspaces: Vec<String>,
+    /// The CLI's own ID of the chat it holds, when the terminal chose it (Claude) or found it
+    /// (Codex), to read the chat's title from the CLI's session record.
+    native: Option<String>,
+    started: SystemTime,
 }
 
 impl Running {
     fn describe(&self) -> Value {
         json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
-            "workspaces": self.workspaces, "project_key": crate::projects::OTHER})
+            "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
+            "title": null, "title_custom": false})
     }
 }
 
@@ -70,7 +78,6 @@ pub(crate) fn request(
     let terminals = app.state::<Terminals>();
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let id = number(query, "session");
-    let light = number(query, "light") == Some(1);
     match (method, route) {
         ("GET", "/app/terminal/state") => Response::json(&terminals.describe()),
         ("GET", "/app/terminal/clis") => Response::json(&installed()),
@@ -94,7 +101,7 @@ pub(crate) fn request(
         }),
         (_, "/app/terminal/close") => response::action(method, action, || terminals.close(id)),
         (_, "/app/terminal/restart") => {
-            response::action(method, action, || terminals.restart(id, light))
+            response::action(method, action, || terminals.restart(id, &Attach::of(query)))
         }
         (_, "/app/terminal/resume") => {
             let workspace = query
@@ -102,7 +109,9 @@ pub(crate) fn request(
                 .find_map(|pair| pair.strip_prefix("workspace="))
                 .unwrap_or_default()
                 .to_owned();
-            response::action(method, action, || terminals.resume(&workspace, light))
+            response::action(method, action, || {
+                terminals.resume(&workspace, &Attach::of(query))
+            })
         }
         _ => Response::not_found(),
     }
@@ -122,6 +131,35 @@ fn number(query: &str, name: &str) -> Option<u64> {
         .and_then(|value| value.parse().ok())
 }
 
+/// How a page asks to continue a chat: in which theme, how large a screen, and whether it has
+/// confirmed the chat may be open elsewhere.
+struct Attach {
+    light: bool,
+    confirm: bool,
+    size: (u16, u16),
+}
+
+impl Attach {
+    fn of(query: &str) -> Self {
+        Self {
+            light: number(query, "light") == Some(1),
+            confirm: number(query, "confirm") == Some(1),
+            size: launch_size(number(query, "cols"), number(query, "rows")),
+        }
+    }
+}
+
+/// What `launch` starts: the CLI, where, at what size, and the chat it continues.
+struct Start<'a> {
+    provider: &'a str,
+    cwd: PathBuf,
+    size: (u16, u16),
+    /// The CLI's own ID of the chat to continue.
+    resume: Option<&'a str>,
+    workspaces: Vec<String>,
+    light: bool,
+}
+
 impl Terminals {
     pub(crate) fn cwds(&self) -> Vec<String> {
         self.lock()
@@ -137,18 +175,54 @@ impl Terminals {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// Updates confirmed workspaces from active relays under `root` and snapshots every open terminal.
-    fn snapshot(&self, root: &Path) -> (Option<PathBuf>, Vec<(u64, PathBuf, Value)>) {
-        let pids: Vec<(u64, u32)> = {
+    /// The id and CLI pid of every terminal whose CLI still runs.
+    fn live_pids(&self) -> Vec<(u64, u32)> {
+        let state = self.lock();
+        state
+            .open
+            .iter()
+            .filter(|running| running.session.exit().is_none())
+            .filter_map(|running| Some((running.id, running.session.pid()?)))
+            .collect()
+    }
+
+    /// What each terminal's chat is called in its CLI, read from the CLI's session record. A
+    /// Codex chat found by its folder is remembered so it is not looked for again.
+    fn titles(&self) -> HashMap<u64, CliTitle> {
+        let asks: Vec<_> = {
             let state = self.lock();
             state
                 .open
                 .iter()
-                .filter(|running| running.session.exit().is_none())
-                .filter_map(|running| Some((running.id, running.session.pid()?)))
+                .map(|running| {
+                    let ask = (running.provider.clone(), running.cwd.clone());
+                    (running.id, ask, running.native.clone(), running.started)
+                })
                 .collect()
         };
-        let mut links = links::workspaces(root, &pids);
+        let (mut titles, mut learned) = (HashMap::new(), Vec::new());
+        for (id, (provider, cwd), native, started) in asks {
+            let (found, title) =
+                crate::data::boss_app::terminal_title(&provider, native.as_deref(), &cwd, started);
+            if native.is_none() && found.is_some() {
+                learned.push((id, found));
+            }
+            titles.extend(title.map(|title| (id, title)));
+        }
+        if !learned.is_empty() {
+            let mut state = self.lock();
+            for (id, found) in learned {
+                if let Some(running) = state.open.iter_mut().find(|running| running.id == id) {
+                    running.native = found;
+                }
+            }
+        }
+        titles
+    }
+
+    /// Updates confirmed workspaces from active relays under `root` and snapshots every open terminal.
+    fn snapshot(&self, root: &Path) -> (Option<PathBuf>, Vec<(u64, PathBuf, Value)>) {
+        let mut links = links::workspaces(root, &self.live_pids());
         let mut state = self.lock();
         for running in &mut state.open {
             if let Some(found) = links.remove(&running.id) {
@@ -171,7 +245,12 @@ impl Terminals {
             .map(|(id, cwd, _)| (id.to_string(), cwd.display().to_string()))
             .collect();
         let projects = crate::projects::lookup(&folders, false);
+        let titles = self.titles();
         for (id, _, value) in &mut open {
+            if let Some(title) = titles.get(id) {
+                value["title"] = json!(title.text);
+                value["title_custom"] = json!(title.custom);
+            }
             if let Some(project) = projects.get(&id.to_string()) {
                 value["project_key"] = json!(project.key);
                 value["project_label"] = json!(project.label);
@@ -196,14 +275,19 @@ impl Terminals {
             return Response::error(400, "未知的 CLI");
         }
         let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
-        let (cols, rows) = cells(payload);
-        let light = payload["light"].as_bool().unwrap_or(false);
-        self.launch(provider, cwd, (cols, rows), None, Vec::new(), light)
+        self.launch(Start {
+            provider,
+            cwd,
+            size: launch_size(payload["cols"].as_u64(), payload["rows"].as_u64()),
+            resume: None,
+            workspaces: Vec::new(),
+            light: payload["light"].as_bool().unwrap_or(false),
+        })
     }
 
     /// Starts an ended terminal's CLI again in its folder, in its place: continuing the chat it
     /// was the boss of when its CLI can, else afresh as a new agent.
-    fn restart(&self, id: Option<u64>, light: bool) -> Response {
+    fn restart(&self, id: Option<u64>, attach: &Attach) -> Response {
         let (provider, cwd, workspaces) = {
             let state = self.lock();
             let Some(running) = state.open.iter().find(|running| Some(running.id) == id) else {
@@ -221,19 +305,31 @@ impl Terminals {
         let resume = workspaces
             .last()
             .filter(|_| session::resumes(&provider))
-            .map(|workspace| chat_session(workspace, &provider).map(|(id, _)| id))
+            .map(|workspace| chat_session(workspace, &provider))
             .transpose();
         let resume = match resume {
             Ok(resume) => resume,
             Err(error) => return Response::error(409, error),
         };
+        if let Some(chat) = &resume
+            && let Some(refusal) = self.unless_elsewhere(&chat.key, attach)
+        {
+            return refusal;
+        }
         // Continuing keeps the workspaces it was the boss of; a fresh start is a new agent.
         let kept = if resume.is_some() {
             workspaces
         } else {
             Vec::new()
         };
-        let reply = self.launch(&provider, cwd, (100, 30), resume.as_deref(), kept, light);
+        let reply = self.launch(Start {
+            provider: &provider,
+            cwd,
+            size: attach.size,
+            resume: resume.as_ref().map(|chat| chat.id.as_str()),
+            workspaces: kept,
+            light: attach.light,
+        });
         if reply.status == 200 {
             self.lock().open.retain(|running| Some(running.id) != id);
         }
@@ -241,8 +337,9 @@ impl Terminals {
     }
 
     /// Continues the chat of a workspace that has no terminal here, in the folder it ran in. A
-    /// chat already open in a terminal here is not started twice.
-    fn resume(&self, workspace: &str, light: bool) -> Response {
+    /// chat already open in a terminal here is not started twice, and one open elsewhere is
+    /// continued only once the page has confirmed it.
+    fn resume(&self, workspace: &str, attach: &Attach) -> Response {
         {
             let state = self.lock();
             let open = state.open.iter().find(|running| {
@@ -256,15 +353,24 @@ impl Terminals {
         let Some((host, _, _)) = links::chat(&crate::data_files::data_root(), workspace) else {
             return Response::error(404, "找不到这段聊天的记录");
         };
-        let (id, record) = match chat_session(workspace, &host) {
+        let chat = match chat_session(workspace, &host) {
             Ok(found) => found,
             Err(error) => return Response::error(409, error),
         };
-        let Some(cwd) = crate::data::boss_app::session_cwd(&record) else {
+        let Some(cwd) = crate::data::boss_app::session_cwd(&chat.record) else {
             return Response::error(409, "会话记录里没有它的文件夹");
         };
-        let workspaces = vec![workspace.to_owned()];
-        let reply = self.launch(&host, cwd, (100, 30), Some(&id), workspaces, light);
+        if let Some(refusal) = self.unless_elsewhere(&chat.key, attach) {
+            return refusal;
+        }
+        let reply = self.launch(Start {
+            provider: &host,
+            cwd,
+            size: attach.size,
+            resume: Some(&chat.id),
+            workspaces: vec![workspace.to_owned()],
+            light: attach.light,
+        });
         if reply.status == 200 {
             // An ended terminal of this chat gives way to the new one.
             let mut state = self.lock();
@@ -277,25 +383,54 @@ impl Terminals {
         reply
     }
 
-    fn launch(
-        &self,
-        provider: &str,
-        cwd: PathBuf,
-        (cols, rows): (u16, u16),
-        resume: Option<&str>,
-        workspaces: Vec<String>,
-        light: bool,
-    ) -> Response {
+    /// The conflict answer when the chat of boss `key` is open outside this App's terminals and
+    /// the page has not confirmed continuing it anyway.
+    fn unless_elsewhere(&self, key: &str, attach: &Attach) -> Option<Response> {
+        if attach.confirm {
+            return None;
+        }
+        let root = crate::data_files::data_root();
+        let found = elsewhere::find(&root, key, &self.live_pids())?;
+        let place = found.app.as_deref().unwrap_or("别的程序");
+        let state = if found.paused {
+            "已暂停"
+        } else {
+            "运行中"
+        };
+        let mut reply = Response::json(&json!({
+            "error": format!("这段聊天正在{place}里打开（{state}）"),
+            "elsewhere": {"app": found.app, "paused": found.paused},
+        }));
+        reply.status = 409;
+        Some(reply)
+    }
+
+    fn launch(&self, start: Start) -> Response {
+        let Start {
+            provider,
+            cwd,
+            size: (cols, rows),
+            resume,
+            workspaces,
+            light,
+        } = start;
         let Some(program) = installed_path(provider) else {
             return Response::error(400, "这个 CLI 没有安装");
         };
         if !cwd.is_absolute() || !cwd.is_dir() {
             return Response::error(400, "文件夹不存在");
         }
+        // Claude takes the ID of a new chat up front, which is how its session record is found
+        // before the chat has a workspace; it names nothing else.
+        let chosen = (provider == "claude" && resume.is_none()).then(session::fresh_session_id);
         let theme = theme::for_cli(provider, light);
         let launch = Launch {
             program,
-            args: [session::cli_args(provider, resume), theme.args].concat(),
+            args: [
+                session::cli_args(provider, resume, chosen.as_deref()),
+                theme.args,
+            ]
+            .concat(),
             env: theme.env,
             cwd: cwd.clone(),
             cols,
@@ -314,6 +449,8 @@ impl Terminals {
             cwd,
             session,
             workspaces,
+            native: resume.map(str::to_owned).or(chosen),
+            started: SystemTime::now(),
         };
         let described = running.describe();
         state.open.push(running);
@@ -364,14 +501,28 @@ impl Terminals {
                 "X-Terminal-Exit",
                 chunk.exit.map(|code| code.to_string()).unwrap_or_default(),
             ),
+            (
+                "X-Terminal-Appearance",
+                u8::from(chunk.appearance).to_string(),
+            ),
         ];
+        if chunk.replay {
+            reply.headers.push(("X-Terminal-Replay", "1".to_owned()));
+        }
         reply
     }
 }
 
+/// A boss chat that can be continued: its CLI's own ID, its session record and its boss key.
+struct Chat {
+    id: String,
+    record: PathBuf,
+    key: String,
+}
+
 /// The native ID and session record of a workspace's boss chat, when its CLI is `provider` and
 /// can continue it.
-fn chat_session(workspace: &str, provider: &str) -> Result<(String, PathBuf), &'static str> {
+fn chat_session(workspace: &str, provider: &str) -> Result<Chat, &'static str> {
     if !session::resumes(provider) {
         return Err("这个 CLI 还不能在 App 里续接");
     }
@@ -380,8 +531,18 @@ fn chat_session(workspace: &str, provider: &str) -> Result<(String, PathBuf), &'
     if host != provider {
         return Err("这段聊天不是这个 CLI 的");
     }
-    crate::data::boss_app::native_session(&host, &key, file.as_deref())
-        .ok_or("找不到这段聊天的会话记录")
+    let (id, record) = crate::data::boss_app::native_session(&host, &key, file.as_deref())
+        .ok_or("找不到这段聊天的会话记录")?;
+    Ok(Chat { id, record, key })
+}
+
+/// The size a CLI starts at: what the page measured, or 100 by 30 when it did not say, kept to
+/// a screen a terminal can sensibly have.
+fn launch_size(cols: Option<u64>, rows: Option<u64>) -> (u16, u16) {
+    let within = |value: Option<u64>, default: u64, least: u64, most: u64| {
+        u16::try_from(value.unwrap_or(default).clamp(least, most)).unwrap_or(u16::MAX)
+    };
+    (within(cols, 100, 20, 500), within(rows, 30, 5, 200))
 }
 
 fn cells(payload: &Value) -> (u16, u16) {

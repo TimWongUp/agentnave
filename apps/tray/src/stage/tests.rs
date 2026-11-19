@@ -232,6 +232,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
             projects: &Default::default(),
             links: &[],
             manual_projects: &[],
+            titles: &Default::default(),
         };
         let res = super::respond(
             path,
@@ -265,4 +266,51 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
 
     let chat = query("/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     assert_eq!(chat["desks"][0]["key"], "thread:other");
+    // No CLI name was read for this chat, and the title stays the conversation's own.
+    assert!(chat["cli_title"].is_null());
+    assert_eq!(chat["cli_title_custom"], false);
+
+    let titles = std::collections::HashMap::from([(
+        "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        crate::data::boss_app::CliTitle {
+            text: "Named in the CLI".to_owned(),
+            custom: true,
+        },
+    )]);
+    let places = super::Places {
+        dirs: &[],
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        titles: &titles,
+    };
+    for path in [
+        "/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/app/chats",
+    ] {
+        let res = super::respond(
+            path,
+            snapshots(),
+            true,
+            8,
+            &Default::default(),
+            &Default::default(),
+            &places,
+        );
+        let value: Value = serde_json::from_slice(&res.body).unwrap();
+        let group = if path == "/app/chats" {
+            value["groups"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|g| g["group"] == "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .unwrap()
+                .clone()
+        } else {
+            value
+        };
+        assert_eq!(group["cli_title"], "Named in the CLI", "{path}");
+        assert_eq!(group["cli_title_custom"], true, "{path}");
+        assert!(group["title"].is_string(), "{path}");
+    }
 }

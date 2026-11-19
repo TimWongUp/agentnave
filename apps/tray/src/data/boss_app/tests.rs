@@ -213,3 +213,225 @@ fn a_chat_runs_again_in_the_folder_its_record_names() {
     .unwrap();
     assert_eq!(session_cwd(&record), Some(PathBuf::from("/work/app")));
 }
+
+fn titled(kind: &str, key: &str, text: &str) -> String {
+    format!("{{\"type\":\"{kind}\",\"{key}\":\"{text}\",\"sessionId\":\"{CLAUDE_SESSION}\"}}\n")
+}
+
+/// A Claude chat is called by the name the user gave it, else by the one Claude wrote; empty
+/// names count for nothing and the latest entry of each kind wins.
+#[test]
+fn a_claude_title_prefers_the_users_own_and_the_latest_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let auto = |text| titled("ai-title", "aiTitle", text);
+    let custom = |text| titled("custom-title", "customTitle", text);
+    let named = |text: &str, custom: bool| title::CliTitle {
+        text: text.to_owned(),
+        custom,
+    };
+
+    let write_to = |name: &str, text: String| {
+        let file = dir.path().join(name);
+        fs::write(&file, text).unwrap();
+        title::claude(&file)
+    };
+    assert_eq!(write_to("none", "{\"type\":\"user\"}\n".to_owned()), None);
+    assert_eq!(
+        write_to("auto", [auto("first"), auto("second")].concat()),
+        Some(named("second", false))
+    );
+    // A name the user gave wins over anything Claude wrote, before or after it.
+    assert_eq!(
+        write_to(
+            "mine",
+            [auto("a"), custom("mine"), auto("b"), custom("")].concat()
+        ),
+        Some(named("mine", true))
+    );
+    assert_eq!(
+        write_to(
+            "newer",
+            [custom("mine"), custom("newer"), auto("b")].concat()
+        ),
+        Some(named("newer", true))
+    );
+}
+
+/// A long transcript is read from its end, and from its start only when the end names nothing.
+#[test]
+fn a_claude_title_far_from_the_end_is_still_found_at_the_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("long.jsonl");
+    let filler = format!("{{\"type\":\"user\",\"text\":\"{}\"}}\n", "x".repeat(1000));
+    let body = filler.repeat(WINDOW as usize / filler.len() + 10);
+    fs::write(
+        &file,
+        [titled("ai-title", "aiTitle", "early"), body.clone()].concat(),
+    )
+    .unwrap();
+    assert_eq!(
+        title::claude(&file).map(|t| t.text).as_deref(),
+        Some("early")
+    );
+    // The same title written again near the end is the one a tail read sees.
+    fs::write(
+        &file,
+        [
+            titled("ai-title", "aiTitle", "early"),
+            body,
+            titled("ai-title", "aiTitle", "late"),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    assert_eq!(
+        title::claude(&file).map(|t| t.text).as_deref(),
+        Some("late")
+    );
+}
+
+#[test]
+fn codex_names_come_from_its_session_index_and_the_latest_line_wins() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        &dir.path().join("session_index.jsonl"),
+        &format!(
+            "{{\"id\":\"{CODEX_SESSION}\",\"thread_name\":\"old\"}}\n\
+             {{\"id\":\"other\",\"thread_name\":\"x\"}}\n\
+             broken line\n\
+             {{\"id\":\"{CODEX_SESSION}\",\"thread_name\":\"renamed\"}}\n"
+        ),
+    );
+    let homes = vec![PathBuf::from("/missing"), dir.path().to_owned()];
+    assert_eq!(
+        title::codex(&homes, CODEX_SESSION).map(|t| (t.text, t.custom)),
+        Some(("renamed".to_owned(), false))
+    );
+    assert_eq!(title::codex(&homes, "unknown"), None);
+}
+
+/// Each workspace gets its boss chat's CLI name: Claude's from the transcript, Codex's from the
+/// index by the rollout's ID; a chat whose record is unreadable gets none.
+#[test]
+fn workspaces_are_titled_by_their_clis_names_for_the_chats() {
+    let dir = tempfile::tempdir().unwrap();
+    let (claude, codex) = (dir.path().join("claude"), dir.path().join("codex"));
+    let connection = connection();
+    let transcript = claude.join(format!("projects/p/{CLAUDE_SESSION}.jsonl"));
+    write(&transcript, &titled("ai-title", "aiTitle", "Claude chat"));
+    let rollout = codex.join(format!(
+        "sessions/2026/11/19/rollout-2026-11-19T01-00-00-{CODEX_SESSION}.jsonl"
+    ));
+    write(
+        &rollout,
+        "{\"payload\":{\"originator\":\"codex_cli_rs\"}}\n",
+    );
+    write(
+        &codex.join("session_index.jsonl"),
+        &format!("{{\"id\":\"{CODEX_SESSION}\",\"thread_name\":\"Codex chat\"}}\n"),
+    );
+    let (claude_key, codex_key) = (
+        boss_key("claude", CLAUDE_SESSION),
+        boss_key("codex", CODEX_SESSION),
+    );
+    for (workspace, key, host) in [
+        ("s-claude", &claude_key, "claude"),
+        ("s-codex", &codex_key, "codex"),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO workspaces VALUES (?1, ?2, ?3, NULL)",
+                rusqlite::params![workspace, key, host],
+            )
+            .unwrap();
+    }
+    older_chat(
+        &connection,
+        "claude",
+        "88888888-8888-8888-8888-888888888888",
+    );
+    let titles = BossApps::new().titles(&connection, || Homes {
+        claude: vec![claude],
+        codex: vec![codex],
+        desktop: Vec::new(),
+    });
+    let text = |workspace: &str| {
+        titles
+            .iter()
+            .find(|(id, _)| id == workspace)
+            .map(|(_, title)| title.text.as_str())
+    };
+    assert_eq!(text("s-claude"), Some("Claude chat"));
+    assert_eq!(text("s-codex"), Some("Codex chat"));
+    assert_eq!(titles.len(), 2);
+}
+
+/// A terminal's Claude chat is found by the ID the terminal chose, in whichever project folder
+/// Claude filed it; a Codex chat is found only when exactly one rollout in the terminal's folder
+/// began after it started.
+#[test]
+fn a_terminals_chat_title_is_found_without_a_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let (claude, codex) = (dir.path().join("claude"), dir.path().join("codex"));
+    let work = dir.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+    let homes = Homes {
+        claude: vec![claude.clone()],
+        codex: vec![codex.clone()],
+        desktop: Vec::new(),
+    };
+    let started = std::time::SystemTime::now() - Duration::from_secs(5);
+    let (found, none) = title::of_terminal(&homes, "claude", Some(CLAUDE_SESSION), &work, started);
+    assert_eq!((found.as_deref(), none), (Some(CLAUDE_SESSION), None));
+    write(
+        &claude.join(format!("projects/any/{CLAUDE_SESSION}.jsonl")),
+        &titled("ai-title", "aiTitle", "Fresh"),
+    );
+    let (_, named) = title::of_terminal(&homes, "claude", Some(CLAUDE_SESSION), &work, started);
+    assert_eq!(named.map(|t| t.text).as_deref(), Some("Fresh"));
+
+    // Codex: nothing yet, then one rollout in this folder (another folder's does not count).
+    let day = chrono::Local::now().format("%Y/%m/%d").to_string();
+    let rollout = |id: &str, folder: &Path| {
+        let path = codex.join(format!(
+            "sessions/{day}/rollout-2026-11-19T01-00-00-{id}.jsonl"
+        ));
+        write(
+            &path,
+            &format!("{{\"payload\":{{\"cwd\":\"{}\"}}}}\n", folder.display()),
+        );
+    };
+    write(
+        &codex.join("session_index.jsonl"),
+        &format!("{{\"id\":\"{CODEX_SESSION}\",\"thread_name\":\"Codex fresh\"}}\n"),
+    );
+    assert_eq!(
+        title::of_terminal(&homes, "codex", None, &work, started),
+        (None, None)
+    );
+    rollout(
+        "99999999-9999-9999-9999-999999999999",
+        Path::new("/elsewhere"),
+    );
+    rollout(CODEX_SESSION, &work);
+    let (id, named) = title::of_terminal(&homes, "codex", None, &work, started);
+    assert_eq!(id.as_deref(), Some(CODEX_SESSION));
+    assert_eq!(named.map(|t| t.text).as_deref(), Some("Codex fresh"));
+    // A second candidate makes the match ambiguous, so none is taken.
+    rollout("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", &work);
+    assert_eq!(
+        title::of_terminal(&homes, "codex", None, &work, started),
+        (None, None)
+    );
+    // One that began before the terminal started is not its chat.
+    let later = std::time::SystemTime::now() + Duration::from_secs(60);
+    assert_eq!(
+        title::of_terminal(&homes, "codex", None, &work, later),
+        (None, None)
+    );
+    // Other CLIs have no title to read.
+    assert_eq!(
+        title::of_terminal(&homes, "grok", None, &work, started),
+        (None, None)
+    );
+}

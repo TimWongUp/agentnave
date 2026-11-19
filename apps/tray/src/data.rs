@@ -44,7 +44,7 @@ type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 type CachedView = (i64, Arc<Value>);
 
 /// What identifies a route answer: snapshots, stage top-5 IDs (for single-group routes),
-/// whether the data root exists, the reuse window, running limit, handovers and boss apps.
+/// whether the data root exists, the reuse window, running limit, handovers, boss apps and CLI titles.
 type RouteKey = (
     Vec<crate::stage::SourceKey>,
     Vec<String>,
@@ -53,6 +53,7 @@ type RouteKey = (
     usize,
     Vec<(String, crate::stage::Handover)>,
     Vec<(String, &'static str)>,
+    Vec<(String, boss_app::CliTitle)>,
     Vec<crate::isolated::Dir>,
     Vec<(String, crate::projects::Project)>,
     Vec<crate::stage::WorkspaceLink>,
@@ -247,13 +248,14 @@ impl Reader {
             .as_secs()
             / ROUTE_REUSE.as_secs();
         let limit = crate::settings::max_running(&self.root) as usize;
-        let (handovers, links, apps) = match &database {
+        let (handovers, links, apps, titles) = match &database {
             Ok(Some(connection)) => (
                 handovers(connection),
                 links(connection),
                 self.boss_apps.of(connection, || self.boss_homes()),
+                self.boss_apps.titles(connection, || self.boss_homes()),
             ),
-            _ => (None, None, Vec::new()),
+            _ => (None, None, Vec::new(), Vec::new()),
         };
         // Records of directories are only forgotten when every workspace was read.
         let complete = !overview.missing
@@ -265,6 +267,7 @@ impl Reader {
         let links = links.unwrap_or_default();
         let handover_map: HashMap<_, _> = handovers.iter().cloned().collect();
         let app_map: HashMap<_, _> = apps.iter().cloned().collect();
+        let title_map: HashMap<_, _> = titles.iter().cloned().collect();
         let data_exists = self.root.is_dir();
         let mut dirs = crate::isolated::read(&self.root);
         let mut projects = crate::projects::lookup(
@@ -276,7 +279,7 @@ impl Reader {
         } else {
             Vec::new()
         };
-        let (sources, stage_ids, key_handovers, key_apps, key_links, views) =
+        let (sources, stage_ids, key_handovers, key_apps, key_titles, key_links, views) =
             if let Some(group_id) = crate::stage::requested_group(path) {
                 dirs.retain(|dir| dir.workspace == group_id);
                 projects.retain(|id, _| id == group_id);
@@ -313,11 +316,23 @@ impl Reader {
                     .into_iter()
                     .filter(|(id, _)| watched.contains(id))
                     .collect();
-                (sources, stage_ids, h, a, rel_links, views)
+                let t = titles
+                    .into_iter()
+                    .filter(|(id, _)| watched.contains(id))
+                    .collect();
+                (sources, stage_ids, h, a, t, rel_links, views)
             } else {
                 let sources = snapshots.iter().map(crate::stage::source_key).collect();
                 let views = snapshots.iter().map(|s| s.view.clone()).collect();
-                (sources, Vec::new(), handovers, apps, links.clone(), views)
+                (
+                    sources,
+                    Vec::new(),
+                    handovers,
+                    apps,
+                    titles,
+                    links.clone(),
+                    views,
+                )
             };
         let key = (
             sources,
@@ -327,6 +342,7 @@ impl Reader {
             limit,
             key_handovers,
             key_apps,
+            key_titles,
             dirs.clone(),
             projects.clone().into_iter().collect(),
             key_links,
@@ -350,6 +366,7 @@ impl Reader {
                 projects: &projects,
                 links: &links,
                 manual_projects: &manual_projects,
+                titles: &title_map,
             },
         );
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.

@@ -9,6 +9,7 @@ impl Group {
             host: None,
             handover: Handover::default(),
             app: None,
+            cli_title: None,
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
@@ -86,6 +87,8 @@ impl Group {
             "previous_label": previous_host.map(|_| previous),
             "handover_to": self.handover_to, "handover_from": self.handover_from,
             "project": self.project_name, "title": self.title,
+            "cli_title": self.cli_title.as_ref().map(|title| &title.text),
+            "cli_title_custom": self.cli_title.as_ref().is_some_and(|title| title.custom),
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated,

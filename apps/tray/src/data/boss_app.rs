@@ -26,6 +26,19 @@ const RECORD_LIMIT: u64 = 8 << 20;
 /// Retry missing transcripts periodically so sessions created slightly after workspace creation resolve.
 const NEGATIVE_TTL: Duration = Duration::from_secs(15);
 
+mod title;
+pub(crate) use title::CliTitle;
+
+/// A terminal's chat and its CLI's title for it, for a terminal with no workspace yet.
+pub(crate) fn terminal_title(
+    provider: &str,
+    native: Option<&str>,
+    cwd: &Path,
+    since: std::time::SystemTime,
+) -> (Option<String>, Option<CliTitle>) {
+    title::of_terminal(&Homes::here(), provider, native, cwd, since)
+}
+
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct Homes {
     pub claude: Vec<PathBuf>,
@@ -111,11 +124,7 @@ impl BossApps {
         let mut apps: Vec<_> = bosses
             .iter()
             .filter_map(|boss| {
-                let file = boss
-                    .file
-                    .as_ref()
-                    .filter(|file| file.is_file())
-                    .or_else(|| found.transcripts.get(&boss.key));
+                let file = transcript(boss, &found);
                 let named = file.and_then(|file| self.named_by(&boss.host, file));
                 let app = named.or_else(|| {
                     (boss.host == "claude" && found.desktop.contains(&boss.key))
@@ -126,6 +135,32 @@ impl BossApps {
             .collect();
         apps.sort_unstable();
         apps
+    }
+
+    /// The CLI's own name for each workspace's boss chat, for the workspaces whose CLI keeps one
+    /// where the App can read it (Claude Code and Codex); the rest are left out.
+    pub fn titles(
+        &self,
+        connection: &rusqlite::Connection,
+        homes: impl FnOnce() -> Homes,
+    ) -> Vec<(String, CliTitle)> {
+        let bosses = bosses(connection);
+        let homes = homes();
+        let mut found = self.found.lock().unwrap_or_else(|p| p.into_inner());
+        self.refresh(&mut found, &bosses, || homes.clone());
+        let mut titles: Vec<_> = bosses
+            .iter()
+            .filter_map(|boss| {
+                let file = transcript(boss, &found)?;
+                let title = match boss.host.as_str() {
+                    "claude" => title::claude(file),
+                    _ => title::codex(&homes.codex, &rollout_id(file)?),
+                }?;
+                Some((boss.workspace.clone(), title))
+            })
+            .collect();
+        titles.sort_unstable();
+        titles
     }
 
     /// Sweep again only for a boss not looked for yet, or whose transcript has since moved.
@@ -207,6 +242,24 @@ impl BossApps {
         lock().insert(file.to_owned(), (len, app));
         app
     }
+}
+
+/// The session record a boss chat is known by: the one its workspace saved, else the one a sweep
+/// of the session folders found.
+fn transcript<'a>(boss: &'a Boss, found: &'a Found) -> Option<&'a PathBuf> {
+    boss.file
+        .as_ref()
+        .filter(|file| file.is_file())
+        .or_else(|| found.transcripts.get(&boss.key))
+}
+
+/// The ID a Codex rollout's file name carries.
+fn rollout_id(path: &Path) -> Option<String> {
+    let name = file_name(path);
+    let stem = name
+        .strip_suffix(".jsonl.zst")
+        .or_else(|| name.strip_suffix(".jsonl"))?;
+    codex_rollout_id(stem).map(str::to_owned)
 }
 
 /// The current boss of every workspace, and of older chats saved before workspaces were

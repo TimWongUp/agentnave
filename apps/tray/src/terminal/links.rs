@@ -41,7 +41,7 @@ pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, 
 }
 
 /// The running relays and the boss chats each one spoke for.
-fn relays(dir: &Path) -> Vec<(u32, Vec<String>)> {
+pub(super) fn relays(dir: &Path) -> Vec<(u32, Vec<String>)> {
     if dir.is_symlink() {
         return Vec::new();
     }
@@ -81,7 +81,7 @@ fn boss_key(key: &str) -> bool {
         .is_some_and(|hex| hex.len() == 32 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-fn terminal_of(system: &System, relay: u32, terminals: &[(u64, u32)]) -> Option<u64> {
+pub(super) fn terminal_of(system: &System, relay: u32, terminals: &[(u64, u32)]) -> Option<u64> {
     let mut current = system.process(Pid::from_u32(relay));
     for _ in 0..DEPTH {
         let process = current?;

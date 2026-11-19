@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+use super::modes;
+
 /// The output kept for a page that attaches later: enough for a full screen and some scrollback.
 pub(super) const KEPT: usize = 1 << 20;
 const READ_CHUNK: usize = 16 * 1024;
@@ -25,15 +27,40 @@ pub(crate) struct Launch {
 
 /// The CLI's arguments, each its own argv entry (ADR-0103): Codex runs without the shared daemon,
 /// whose MCP servers sit outside this terminal's process tree, and `resume` names the chat to
-/// continue, for the CLIs that can.
-pub(super) fn cli_args(provider: &str, resume: Option<&str>) -> Vec<String> {
-    let args: Vec<&str> = match (provider, resume) {
-        ("codex", Some(id)) => vec!["resume", "--no-daemon", id],
-        ("codex", None) => vec!["--no-daemon"],
-        ("claude", Some(id)) => vec!["--resume", id],
+/// continue, for the CLIs that can. A new Claude chat may be given the ID it will have
+/// (`fresh`), so its session record can be found before the chat has a workspace.
+pub(super) fn cli_args(provider: &str, resume: Option<&str>, fresh: Option<&str>) -> Vec<String> {
+    let args: Vec<&str> = match (provider, resume, fresh) {
+        ("codex", Some(id), _) => vec!["resume", "--no-daemon", id],
+        ("codex", None, _) => vec!["--no-daemon"],
+        ("claude", Some(id), _) => vec!["--resume", id],
+        ("claude", None, Some(id)) => vec!["--session-id", id],
         _ => Vec::new(),
     };
     args.into_iter().map(str::to_owned).collect()
+}
+
+/// A random version 4 UUID in the lower-case form Claude Code names its session records by.
+pub(super) fn fresh_session_id() -> String {
+    let mut bytes = [0u8; 16];
+    if getrandom::fill(&mut bytes).is_err() {
+        // No randomness to be had: the time is unique enough for one terminal.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        bytes.copy_from_slice(&nanos.to_le_bytes());
+    }
+    bytes[6] = bytes[6] & 0x0f | 0x40;
+    bytes[8] = bytes[8] & 0x3f | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 /// Whether `cli_args` can continue a chat of this CLI.
@@ -48,6 +75,11 @@ pub(crate) struct Chunk {
     pub end: u64,
     pub bytes: Vec<u8>,
     pub exit: Option<u32>,
+    /// The bytes were already delivered to a page before, so a page replaying them must not
+    /// answer the terminal queries in them. A replay ends at the watermark, never past it.
+    pub replay: bool,
+    /// Whether the CLI currently subscribes to appearance changes (mode 2031).
+    pub appearance: bool,
 }
 
 #[derive(Default)]
@@ -57,6 +89,9 @@ pub(super) struct Output {
     pub(super) start: u64,
     exit: Option<u32>,
     wrote: Option<Instant>,
+    /// Where the output handed to a page so far ends: the watermark between replay and new.
+    delivered: u64,
+    modes: modes::Tracker,
 }
 
 impl Output {
@@ -65,10 +100,30 @@ impl Output {
     }
 
     pub(super) fn push(&mut self, bytes: &[u8]) {
+        self.modes.feed(bytes);
         self.kept.extend(bytes);
         let over = self.kept.len().saturating_sub(KEPT);
         self.kept.drain(..over);
         self.start += over as u64;
+    }
+
+    /// Output after `from`. What lies before the watermark was delivered already and comes back
+    /// as a replay that stops at it; anything after is new, and handing it over moves the watermark.
+    pub(super) fn take(&mut self, from: u64) -> Chunk {
+        let start = from.clamp(self.start, self.end());
+        let replay = start < self.delivered;
+        let end = if replay { self.delivered } else { self.end() };
+        let skip = usize::try_from(start - self.start).unwrap_or(usize::MAX);
+        let len = usize::try_from(end - start).unwrap_or(usize::MAX);
+        self.delivered = self.delivered.max(end);
+        Chunk {
+            start,
+            end,
+            bytes: self.kept.iter().skip(skip).take(len).copied().collect(),
+            exit: self.exit,
+            replay,
+            appearance: self.modes.appearance(),
+        }
     }
 }
 
@@ -159,14 +214,7 @@ impl Session {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .0;
         }
-        let start = from.clamp(output.start, output.end());
-        let skip = usize::try_from(start - output.start).unwrap_or(usize::MAX);
-        Chunk {
-            start,
-            end: output.end(),
-            bytes: output.kept.iter().skip(skip).copied().collect(),
-            exit: output.exit,
-        }
+        output.take(from)
     }
 
     /// Whether the CLI wrote anything within `span`, which the office shows as working.

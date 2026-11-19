@@ -70,6 +70,237 @@ fn old_output_is_dropped_past_the_limit() {
     assert_eq!(output.end(), KEPT as u64 + 4);
 }
 
+fn text(chunk: &super::session::Chunk) -> String {
+    String::from_utf8_lossy(&chunk.bytes).into_owned()
+}
+
+/// What a page has been handed is replay when it asks for it again, and it stops at the mark:
+/// output that arrived while no page read is new, however early in the stream the page starts.
+#[test]
+fn a_replay_stops_at_the_watermark_and_later_output_is_new() {
+    let mut output = Output::default();
+    output.push(b"screen ");
+    let first = output.take(0);
+    assert!(!first.replay);
+    assert_eq!((text(&first).as_str(), first.end), ("screen ", 7));
+
+    // The page went away and the CLI asked a question meanwhile.
+    output.push(b"query");
+    let again = output.take(0);
+    assert!(again.replay);
+    assert_eq!((text(&again).as_str(), again.end), ("screen ", 7));
+    let fresh = output.take(again.end);
+    assert!(!fresh.replay);
+    assert_eq!(text(&fresh), "query");
+
+    // Everything handed out so far replays from the start, and nothing new follows.
+    let all = output.take(0);
+    assert!(all.replay);
+    assert_eq!(text(&all), "screen query");
+    assert!(output.take(all.end).bytes.is_empty());
+}
+
+/// Dropping old output keeps the mark where it was: the kept part of what was delivered replays,
+/// what came after is new, and a mark that fell off the start leaves nothing to replay.
+#[test]
+fn the_watermark_survives_old_output_being_dropped() {
+    let mut output = Output::default();
+    output.push(&vec![b'a'; KEPT]);
+    assert!(!output.take(0).replay);
+    output.push(&[b'b'; 100]);
+    let replay = output.take(0);
+    assert!(replay.replay);
+    assert_eq!((replay.start, replay.end), (100, KEPT as u64));
+    assert_eq!(replay.bytes.len(), KEPT - 100);
+    let fresh = output.take(replay.end);
+    assert!(!fresh.replay);
+    assert_eq!(fresh.bytes, vec![b'b'; 100]);
+
+    // More output than is kept arrives before anyone reads: all of it is new.
+    output.push(&vec![b'c'; KEPT + 10]);
+    let all_new = output.take(0);
+    assert!(!all_new.replay);
+    assert_eq!(all_new.start, output.start);
+}
+
+/// The latest DECSET/DECRST 2031 counts, whether it comes alone or among other modes, and
+/// however the output is cut into reads or trimmed afterwards.
+#[test]
+fn the_appearance_subscription_follows_the_latest_mode_2031() {
+    let mut output = Output::default();
+    let subscribed = |output: &mut Output| output.take(0).appearance;
+    assert!(!subscribed(&mut output));
+    output.push(b"\x1b[?2004;2031h");
+    assert!(subscribed(&mut output));
+    output.push(b"\x1b[?2031l");
+    assert!(!subscribed(&mut output));
+    // Cut anywhere in the sequence, including inside the number.
+    for cut in 1..b"\x1b[?25;2031h".len() {
+        let sequence = b"\x1b[?25;2031h";
+        let mut split = Output::default();
+        split.push(&sequence[..cut]);
+        split.push(&sequence[cut..]);
+        assert!(subscribed(&mut split), "cut at {cut}");
+    }
+    // Other numbers, other sequences and text that merely looks alike do not count.
+    for ignored in [
+        &b"\x1b[?12031h"[..],
+        b"\x1b[?20310h",
+        b"\x1b[2031h",
+        b"\x1b[?2031$p",
+        b"\x1b[?2031 h",
+        b"2031h",
+    ] {
+        let mut other = Output::default();
+        other.push(ignored);
+        assert!(!subscribed(&mut other), "{ignored:?}");
+    }
+    // Subscribed, then far more output than is kept: the state stays.
+    output.push(b"\x1b[?2031h");
+    output.push(&vec![b'x'; KEPT * 2]);
+    assert!(subscribed(&mut output));
+}
+
+/// The output route says whether the bytes are a replay and whether the CLI subscribes to
+/// appearance changes, in headers that never touch the byte stream.
+#[cfg(unix)]
+#[test]
+fn the_output_route_marks_replays_and_the_appearance_subscription() {
+    let session =
+        Session::start(shell("printf '\\033[?2004;2031hready'; sleep 30"), 80, 24).unwrap();
+    assert!(output_until(&session, "ready").0.contains("ready"));
+    let terminals = Terminals::default();
+    terminals.lock().open.push(Running {
+        id: 1,
+        provider: "claude".to_owned(),
+        cwd: std::env::temp_dir(),
+        session: session.clone(),
+        workspaces: Vec::new(),
+        native: None,
+        started: std::time::SystemTime::now(),
+    });
+    let header = |reply: &crate::response::Response, name: &str| {
+        reply
+            .headers
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.clone())
+    };
+    // output_until read it all, so the page asking from the start is a replay that ends there.
+    let replay = terminals.output(Some(1), Some(0));
+    assert_eq!(header(&replay, "X-Terminal-Replay").as_deref(), Some("1"));
+    assert_eq!(
+        header(&replay, "X-Terminal-Appearance").as_deref(),
+        Some("1")
+    );
+    let end = header(&replay, "X-Terminal-End").unwrap();
+
+    // Whatever the CLI writes after that point is new, not a replay.
+    session.stop();
+    while session.exit().is_none() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let live = terminals.output(Some(1), Some(end.parse().unwrap()));
+    assert_eq!(header(&live, "X-Terminal-Replay"), None);
+}
+
+#[test]
+fn a_new_claude_chat_is_started_with_its_id_as_separate_arguments() {
+    let id = super::session::fresh_session_id();
+    assert_eq!(
+        cli_args("claude", None, Some(&id)),
+        ["--session-id", id.as_str()]
+    );
+    // Continuing names the chat already; other CLIs take no ID at all.
+    assert_eq!(
+        cli_args("claude", Some("old"), Some(&id)),
+        ["--resume", "old"]
+    );
+    assert_eq!(cli_args("codex", None, Some(&id)), ["--no-daemon"]);
+    assert!(cli_args("grok", None, Some(&id)).is_empty());
+    let second = super::session::fresh_session_id();
+    assert_ne!(id, second);
+    let parts: Vec<usize> = id.split('-').map(str::len).collect();
+    assert_eq!(parts, [8, 4, 4, 4, 12]);
+    assert_eq!(id.as_bytes()[14], b'4');
+    assert!(
+        id.bytes()
+            .all(|b| b == b'-' || b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    );
+}
+
+#[test]
+fn a_cli_starts_at_the_size_the_page_measured_within_sane_bounds() {
+    use super::{Attach, launch_size};
+    assert_eq!(launch_size(None, None), (100, 30));
+    assert_eq!(launch_size(Some(132), Some(41)), (132, 41));
+    assert_eq!(launch_size(Some(1), Some(1)), (20, 5));
+    assert_eq!(launch_size(Some(99_999), Some(99_999)), (500, 200));
+    let attach = Attach::of("session=3&workspace=s-a&cols=90&rows=33&light=1&confirm=1");
+    assert_eq!(
+        (attach.size, attach.light, attach.confirm),
+        ((90, 33), true, true)
+    );
+    let plain = Attach::of("workspace=s-a");
+    assert_eq!(
+        (plain.size, plain.light, plain.confirm),
+        ((100, 30), false, false)
+    );
+}
+
+/// A chat whose relay lives outside every App terminal is open elsewhere; whether its processes
+/// are stopped shows as paused. A relay under an App terminal, an ended or unrelated one is not.
+#[cfg(unix)]
+#[test]
+fn a_relay_outside_the_terminals_means_the_chat_is_open_elsewhere() {
+    let root = tempfile::tempdir().unwrap();
+    let key = format!("s-{}", "d".repeat(32));
+    let mut relay = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let connections = root.path().join("connections");
+    std::fs::create_dir_all(&connections).unwrap();
+    let receipt = connections.join(format!("{}-x.json", relay.id()));
+    let write = |ended: Option<u64>| {
+        let value = serde_json::json!({"host": "claude", "bosses": [key], "ended_ms": ended});
+        std::fs::write(&receipt, value.to_string()).unwrap();
+    };
+    write(None);
+    let find =
+        |terminals: &[(u64, u32)], key: &str| super::elsewhere::find(root.path(), key, terminals);
+
+    let found = find(&[(7, 4_000_000)], &key).expect("open outside the terminals");
+    assert!(!found.paused);
+    // A terminal whose CLI is the relay's parent holds the chat itself.
+    assert_eq!(find(&[(7, std::process::id())], &key), None);
+    assert_eq!(
+        find(&[(7, 4_000_000)], &format!("s-{}", "e".repeat(32))),
+        None
+    );
+
+    // Ctrl+Z stops it.
+    unsafe {
+        libc::kill(relay.id() as libc::pid_t, libc::SIGSTOP);
+    }
+    let stopped = (0..50).find_map(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        find(&[(7, 4_000_000)], &key).filter(|found| found.paused)
+    });
+    assert!(stopped.is_some(), "a stopped relay must show as paused");
+
+    write(Some(1));
+    assert_eq!(find(&[(7, 4_000_000)], &key), None);
+    relay.kill().unwrap();
+    relay.wait().unwrap();
+    write(None);
+    assert_eq!(
+        find(&[(7, 4_000_000)], &key),
+        None,
+        "a dead relay is no open chat"
+    );
+}
+
 #[test]
 fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
     for name in [
@@ -159,6 +390,8 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         cwd: std::env::temp_dir(),
         session: session.clone(),
         workspaces: Vec::new(),
+        native: None,
+        started: std::time::SystemTime::now(),
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -208,18 +441,18 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
 
 #[test]
 fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
-    assert_eq!(cli_args("codex", None), ["--no-daemon"]);
-    assert!(cli_args("claude", None).is_empty());
-    assert!(cli_args("grok", None).is_empty());
+    assert_eq!(cli_args("codex", None, None), ["--no-daemon"]);
+    assert!(cli_args("claude", None, None).is_empty());
+    assert!(cli_args("grok", None, None).is_empty());
     assert_eq!(
-        cli_args("codex", Some("id")),
+        cli_args("codex", Some("id"), None),
         ["resume", "--no-daemon", "id"]
     );
-    assert_eq!(cli_args("claude", Some("id")), ["--resume", "id"]);
+    assert_eq!(cli_args("claude", Some("id"), None), ["--resume", "id"]);
 
     let codex = command(
         Path::new("/usr/local/bin/codex"),
-        &cli_args("codex", None),
+        &cli_args("codex", None, None),
         Path::new("/tmp"),
     );
     let argv: Vec<String> = codex
@@ -239,7 +472,7 @@ fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
 
     let claude = command(
         Path::new("/usr/local/bin/claude"),
-        &cli_args("claude", None),
+        &cli_args("claude", None, None),
         Path::new("/tmp"),
     );
     let claude_argv: Vec<String> = claude

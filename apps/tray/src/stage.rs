@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+use crate::data::boss_app::CliTitle;
 use crate::data::snapshot::{Item, Snapshot};
 use crate::data_files::valid_id;
 use crate::isolated::{self, Dir};
@@ -325,6 +326,8 @@ struct Group {
     handover: Handover,
     /// The boss chats in Claude Desktop's Code tab: shown as its own app, still the `claude` host.
     app: Option<&'static str>,
+    /// The name the boss's CLI gives this chat in its own session record, when readable.
+    cli_title: Option<CliTitle>,
     updated: String,
     at: i64,
     title: String,
@@ -496,6 +499,8 @@ pub(crate) struct Places<'a> {
     pub projects: &'a BTreeMap<String, Project>,
     pub links: &'a [WorkspaceLink],
     pub manual_projects: &'a [ManualProject],
+    /// The CLI's own name for each workspace's boss chat.
+    pub titles: &'a HashMap<String, CliTitle>,
 }
 
 pub(crate) use origin::origin_cwds;
@@ -689,6 +694,7 @@ fn unprojected_groups(
             }
         }
         group.app = apps.get(&group.id).copied();
+        group.cli_title = places.titles.get(&group.id).cloned();
         group.project = places.projects.get(&group.id).cloned();
         let running = running_cwds(snapshots, &group.sources);
         let builders = isolated_builders(snapshots, &group.sources);
