@@ -11,6 +11,7 @@ mod links;
 mod session;
 #[cfg(test)]
 mod tests;
+mod theme;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -291,10 +292,11 @@ impl Terminals {
         if !cwd.is_absolute() || !cwd.is_dir() {
             return Response::error(400, "文件夹不存在");
         }
+        let theme = theme::for_cli(provider, light);
         let launch = Launch {
             program,
-            args: session::cli_args(provider, resume),
-            env: session::cli_env(provider, light),
+            args: [session::cli_args(provider, resume), theme.args].concat(),
+            env: theme.env,
             cwd: cwd.clone(),
             cols,
             rows,

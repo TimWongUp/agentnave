@@ -36,28 +36,6 @@ pub(super) fn cli_args(provider: &str, resume: Option<&str>) -> Vec<String> {
     args.into_iter().map(str::to_owned).collect()
 }
 
-/// Settings a CLI reads from its environment so it matches the terminal's skin: Grok paints its
-/// own background and does not ask the terminal for it, so it is told the App's light or dark
-/// theme, unless the user picked a Grok theme in its config.
-pub(super) fn cli_env(provider: &str, light: bool) -> Vec<(&'static str, &'static str)> {
-    if provider != "grok" || grok_theme_chosen() {
-        return Vec::new();
-    }
-    vec![("GROK_THEME", if light { "grok-day" } else { "grok-night" })]
-}
-
-fn grok_theme_chosen() -> bool {
-    let config = dirs::home_dir().map(|home| home.join(".grok/config.toml"));
-    let text = config.and_then(|path| std::fs::read_to_string(path).ok());
-    text.is_some_and(|text| {
-        text.lines().any(|line| {
-            line.trim_start()
-                .strip_prefix("theme")
-                .is_some_and(|rest| rest.trim_start().starts_with('='))
-        })
-    })
-}
-
 /// Whether `cli_args` can continue a chat of this CLI.
 pub(super) fn resumes(provider: &str) -> bool {
     matches!(provider, "codex" | "claude")
