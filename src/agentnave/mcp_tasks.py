@@ -763,6 +763,38 @@ def _already_waiting_payload(pending_ids: list[str]) -> WaitPayload:
     }
 
 
+def _nothing_pending_payload() -> WaitPayload:
+    return {
+        "reason": "nothing_pending",
+        "pending_ids": [],
+        "all_finished": True,
+        "updates": [],
+        "rounds": [],
+    }
+
+
+def _explicit_handles(
+    manager: InvocationManager, conversations: Conversations, ids: list[str]
+) -> tuple[list[str], list[str]]:
+    """Split explicit wait ids into task invocations and rounds, rejecting bad lists."""
+    if not ids:
+        raise ToolError("ids must list at least one handle, or be omitted for the inbox.")
+    if len(set(ids)) != len(ids):
+        raise ToolError("ids must not repeat. Correct the list and retry.")
+    invocation_ids: list[str] = []
+    round_ids: list[str] = []
+    for handle in ids:
+        if _known_invocation(manager, handle):
+            invocation_ids.append(handle)
+            continue
+        try:
+            conversations.round(handle)
+        except KeyError as exc:
+            raise _unknown_handle(handle) from exc
+        round_ids.append(handle)
+    return invocation_ids, round_ids
+
+
 async def _receive(
     ids: list[str] | None,
     include_output: bool,
@@ -786,27 +818,9 @@ async def _receive(
         if blocking_inbox and inbox_key in active_inbox_waits:
             return _already_waiting_payload([*invocation_ids, *round_ids])
         if not invocation_ids and not round_ids:
-            return {
-                "reason": "nothing_pending",
-                "pending_ids": [],
-                "all_finished": True,
-                "updates": [],
-                "rounds": [],
-            }
+            return _nothing_pending_payload()
     else:
-        if not ids:
-            raise ToolError("ids must list at least one handle, or be omitted for the inbox.")
-        if len(set(ids)) != len(ids):
-            raise ToolError("ids must not repeat. Correct the list and retry.")
-        for handle in ids:
-            if _known_invocation(manager, handle):
-                invocation_ids.append(handle)
-                continue
-            try:
-                conversations.round(handle)
-            except KeyError as exc:
-                raise _unknown_handle(handle) from exc
-            round_ids.append(handle)
+        invocation_ids, round_ids = _explicit_handles(manager, conversations, ids)
     if wait_seconds is None:
         # A long-wait session already decided this call runs in the background (ADR-0084).
         window = runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
@@ -846,13 +860,7 @@ async def _receive(
                 break
             invocation_ids, round_ids = conversations.inbox(manager_session_id)
             if not invocation_ids and not round_ids:
-                return {
-                    "reason": "nothing_pending",
-                    "pending_ids": [],
-                    "all_finished": True,
-                    "updates": [],
-                    "rounds": [],
-                }
+                return _nothing_pending_payload()
         payload = _wait_payload(
             manager,
             conversations,
