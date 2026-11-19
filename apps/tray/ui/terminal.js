@@ -3,7 +3,12 @@
 // place of the messages. The office tells it when it is shown and when preferences change.
 document.addEventListener("DOMContentLoaded", () => {
   const id = Number(new URLSearchParams(location.search).get("session"));
-  const view = new TerminalView(id);
+  const view = new TerminalView(id, (session, code) => {
+    if (window.parent && window.parent !== window) {
+      const origin = !location.origin || location.origin === "null" ? "*" : location.origin;
+      window.parent.postMessage({ type: "agentnave:terminal", action: "exited", session, code }, origin);
+    }
+  });
   AN.$("term").append(view.element);
   view.open();
   new MutationObserver(() => view.restyle()).observe(document.documentElement, {

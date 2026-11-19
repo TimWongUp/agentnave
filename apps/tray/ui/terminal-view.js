@@ -44,7 +44,12 @@ window.TerminalView = (() => {
       this.offset = 0;
       this.live = true;
       this.running = true;
+      this.replaying = false;
+      this.pendingFocus = false;
+      this.notify = false;
+      this.isLight = light();
       this.sending = Promise.resolve();
+      this.writeDone = null;
       this.element = document.createElement("div");
       this.element.className = "tm-term";
       this.term = new Terminal({
@@ -94,11 +99,20 @@ window.TerminalView = (() => {
       if (this.element.offsetWidth && this.element.offsetHeight) this.fit.fit();
     }
 
-    focus() { this.term.focus(); }
+    focus() {
+      if (this.replaying) {
+        this.pendingFocus = true;
+        return;
+      }
+      this.term.focus();
+    }
 
     blink() { this.term.options.cursorBlink = !still(); }
 
     restyle() {
+      const next = light();
+      if (next === this.isLight) return;
+      this.isLight = next;
       this.term.options.theme = theme();
       if (this.notify) this.send(scheme());
     }
@@ -107,10 +121,12 @@ window.TerminalView = (() => {
 
     // Keys go out in order; binary input (some mouse reports) keeps its bytes.
     send(data, binary = false) {
-      if (!this.running) return;
+      if (!this.running || this.replaying) return;
       const body = binary ? Uint8Array.from(data, c => c.charCodeAt(0) & 255) : data;
       this.sending = this.sending
-        .then(() => act(`/app/terminal/input?session=${this.id}`, body, "application/octet-stream"))
+        .then(() => {
+          if (this.running) return act(`/app/terminal/input?session=${this.id}`, body, "application/octet-stream");
+        })
         .catch(() => {});
     }
 
@@ -122,28 +138,59 @@ window.TerminalView = (() => {
           response = await fetch(`/app/terminal/output?session=${this.id}&from=${this.offset}`, { cache: "no-store" });
         } catch { await sleep(1000); continue; }
         if (!this.live) return;
-        if (!response.ok) { this.ended(null); return; }
+        if (response.status === 404) { this.ended(null); return; }
+        if (!response.ok) { await sleep(1000); continue; }
         const bytes = new Uint8Array(await response.arrayBuffer());
-        // A CLI replayed after the App changed appearance hears the current one once.
-        const replay = this.offset === 0;
-        if (bytes.length) this.term.write(bytes, () => { if (replay && this.notify) this.send(scheme()); });
+        if (!this.live) return;
+        const replay = response.headers.get("X-Terminal-Replay") === "1";
+        const appearance = response.headers.get("X-Terminal-Appearance");
+        if (appearance != null) this.notify = appearance === "1";
+        if (bytes.length) {
+          if (replay) this.replaying = true;
+          try {
+            await new Promise(resolve => {
+              this.writeDone = resolve;
+              this.term.write(bytes, resolve);
+            });
+          } finally {
+            this.writeDone = null;
+            if (replay) this.replaying = false;
+          }
+        }
+        if (!this.live) return;
+        if (appearance != null) this.notify = appearance === "1";
+        if (this.pendingFocus) {
+          this.pendingFocus = false;
+          this.term.focus();
+        }
         this.offset = Number(response.headers.get("X-Terminal-End"));
         const exit = response.headers.get("X-Terminal-Exit");
-        if (exit) { this.ended(exit); return; }
+        if (exit) {
+          const code = Number(exit);
+          this.ended(Number.isFinite(code) ? code : exit);
+          return;
+        }
+        if (replay && this.notify) this.send(scheme());
       }
     }
 
     ended(code) {
+      if (!this.running) return;
       this.running = false;
-      if (code != null) {
-        const note = AN.L(`已结束（退出码 ${code}）`, `Exited (code ${code})`);
+      const exitCode = code == null || code === "" ? null : Number.isFinite(Number(code)) ? Number(code) : code;
+      if (exitCode != null && exitCode !== 0) {
+        const note = AN.L(`已结束（退出码 ${exitCode}）`, `Exited (code ${exitCode})`);
         this.term.write(`\r\n\x1b[2m${note}\x1b[0m\r\n`);
       }
-      this.onExit?.(this.id);
+      this.onExit?.(this.id, exitCode);
     }
 
     dispose() {
       this.live = false;
+      this.replaying = false;
+      this.pendingFocus = false;
+      this.writeDone?.();
+      this.writeDone = null;
       this.observer?.disconnect();
       this.motion?.disconnect();
       reducedMotion.removeEventListener("change", this.blinking);
