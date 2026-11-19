@@ -32,6 +32,10 @@ window.TerminalView = (() => {
   // ignore the background, text can sit too close to it. As in VS Code's terminal, such text is
   // shifted until it reads at 4.5:1.
   const CONTRAST = 4.5;
+  // Like herdr and Ghostty, the terminal answers the light/dark query (CSI ? 996 n) and tells CLIs
+  // that subscribed with mode 2031 (Claude Code) when the App changes appearance, so they redraw
+  // in the matching theme.
+  const scheme = () => `\x1b[?997;${light() ? 2 : 1}n`;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const act = (path, body, type = "application/json") => fetch(path, {
     method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": type }, body,
@@ -63,6 +67,19 @@ window.TerminalView = (() => {
         webgl.onContextLoss(() => webgl.dispose());
         this.term.loadAddon(webgl);
       } catch { /* The DOM renderer draws the same cells. */ }
+      this.term.parser.registerCsiHandler({ prefix: "?", final: "h" }, params => {
+        if (params.includes(2031)) this.notify = true;
+        return false;
+      });
+      this.term.parser.registerCsiHandler({ prefix: "?", final: "l" }, params => {
+        if (params.includes(2031)) this.notify = false;
+        return false;
+      });
+      this.term.parser.registerCsiHandler({ prefix: "?", final: "n" }, params => {
+        if (params[0] !== 996) return false;
+        this.send(scheme());
+        return true;
+      });
       this.term.onData(data => this.send(data));
       this.term.onBinary(data => this.send(data, true));
       this.term.onResize(({ cols, rows }) => {
@@ -81,6 +98,7 @@ window.TerminalView = (() => {
 
     restyle() {
       this.term.options.theme = theme();
+      if (this.notify) this.send(scheme());
     }
 
     hasSelection() { return this.term.hasSelection(); }
@@ -104,7 +122,9 @@ window.TerminalView = (() => {
         if (!this.live) return;
         if (!response.ok) { this.ended(null); return; }
         const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.length) this.term.write(bytes);
+        // A CLI replayed after the App changed appearance hears the current one once.
+        const replay = this.offset === 0;
+        if (bytes.length) this.term.write(bytes, () => { if (replay && this.notify) this.send(scheme()); });
         this.offset = Number(response.headers.get("X-Terminal-End"));
         const exit = response.headers.get("X-Terminal-Exit");
         if (exit) { this.ended(exit); return; }

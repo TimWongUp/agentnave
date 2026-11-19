@@ -1,7 +1,8 @@
 //! Which theme a CLI starts in, so it reads well on the terminal's skin (ADR-0103). Codex, Pi,
-//! Devin and Antigravity ask the terminal for its background and follow it; these three draw
-//! their own colours and are told the App's light or dark theme instead. A theme the user chose
-//! in the CLI's own config is left alone.
+//! Devin and Antigravity ask the terminal for its background and follow it. Claude Code is put on
+//! its automatic theme, which also hears the terminal's appearance-change notice and so follows
+//! the App live. Grok and CodeBuddy draw their own colours and are told the App's light or dark
+//! theme at launch. A theme the user chose in the CLI's own config is left alone.
 
 use std::path::{Path, PathBuf};
 
@@ -34,7 +35,7 @@ pub(super) fn for_cli(provider: &str, light: bool) -> Theme {
                 home.join(".claude/settings.json"),
             ]) =>
         {
-            theme.args = settings(name);
+            theme.args = settings("auto");
         }
         "codebuddy" if !json_sets_theme(&[home.join(".codebuddy/settings.json")]) => {
             theme.args = settings(name);
