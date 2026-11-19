@@ -485,3 +485,26 @@ test("exit handling: 5xx retries, 0 omits note, non-zero writes localized note, 
   assert.deepEqual(missing.written, []);
   assert.deepEqual(JSON.parse(JSON.stringify(missing.posted[0].message)), { type: "agentnave:terminal", action: "exited", session: 42, code: null });
 });
+
+test("each TerminalView sends a distinct view id on output requests", async () => {
+  const seen = [];
+  const createWithCapture = async () => {
+    const app = createHarness({
+      transport: async path => {
+        seen.push(path);
+        return makeResponse({
+          body: "",
+          headers: { "X-Terminal-Start": 0, "X-Terminal-End": 0, "X-Terminal-Appearance": 0, "X-Terminal-Exit": "0" },
+        });
+      },
+    });
+    await app.start();
+    await flush();
+  };
+  await createWithCapture();
+  await createWithCapture();
+  assert.equal(seen.length, 2);
+  const views = seen.map(path => path.match(/[?&]view=([^&]+)/)?.[1]);
+  assert.ok(views[0] && views[1]);
+  assert.notEqual(views[0], views[1]);
+});

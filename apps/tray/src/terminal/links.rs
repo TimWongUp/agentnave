@@ -13,6 +13,22 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 /// How far up from a relay a terminal's CLI is looked for.
 const DEPTH: usize = 64;
 
+/// A live-looking connection receipt for a relay process.
+pub(super) struct Relay {
+    pub pid: u32,
+    pub started_ms: Option<u64>,
+    pub bosses: Vec<String>,
+}
+
+/// Matches `hosts/processes.rs`: a PID reused after a relay started is treated as exited,
+/// allowing two seconds of clock/resolution slack before declaring mismatch.
+pub(super) fn same_process(process: &sysinfo::Process, started_ms: Option<u64>) -> bool {
+    let at = process.start_time();
+    !(at != 0
+        && started_ms
+            .is_some_and(|started| started != 0 && at > (started / 1000).saturating_add(2)))
+}
+
 /// For each terminal (id, CLI pid), its workspaces, the one it spoke for last at the end.
 pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, Vec<String>> {
     if terminals.is_empty() || !sysinfo::IS_SUPPORTED_SYSTEM {
@@ -25,9 +41,12 @@ pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, 
     let mut system = System::new();
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     let mut chats: HashMap<u64, Vec<String>> = HashMap::new();
-    for (relay, bosses) in relays {
-        if let Some(id) = terminal_of(&system, relay, terminals) {
-            chats.entry(id).or_default().extend(bosses);
+    for relay in relays {
+        if let Some(process) = system.process(Pid::from_u32(relay.pid))
+            && same_process(process, relay.started_ms)
+            && let Some(id) = terminal_of(&system, relay.pid, terminals)
+        {
+            chats.entry(id).or_default().extend(relay.bosses);
         }
     }
     let Ok(Some(connection)) = crate::db::read(root) else {
@@ -41,11 +60,11 @@ pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, 
 }
 
 /// The running relays and the boss chats each one spoke for.
-pub(super) fn relays(dir: &Path) -> Vec<(u32, Vec<String>)> {
+pub(super) fn relays(dir: &Path) -> Vec<Relay> {
     if dir.is_symlink() {
         return Vec::new();
     }
-    let read = |path: &Path| -> Option<(u32, Vec<String>)> {
+    let read = |path: &Path| -> Option<Relay> {
         let pid = path
             .file_name()?
             .to_str()?
@@ -64,7 +83,11 @@ pub(super) fn relays(dir: &Path) -> Vec<(u32, Vec<String>)> {
             .filter(|key| boss_key(key))
             .map(str::to_owned)
             .collect();
-        (!bosses.is_empty()).then_some((pid, bosses))
+        (!bosses.is_empty()).then_some(Relay {
+            pid,
+            started_ms: value["started_ms"].as_u64(),
+            bosses,
+        })
     };
     fs::read_dir(dir)
         .into_iter()

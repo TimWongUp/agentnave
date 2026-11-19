@@ -258,36 +258,59 @@ fn a_claude_title_prefers_the_users_own_and_the_latest_entry() {
     );
 }
 
-/// A long transcript is read from its end, and from its start only when the end names nothing.
+/// A long transcript is read from its end, and from its start when the end has no user-given name.
 #[test]
 fn a_claude_title_far_from_the_end_is_still_found_at_the_start() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("long.jsonl");
     let filler = format!("{{\"type\":\"user\",\"text\":\"{}\"}}\n", "x".repeat(1000));
     let body = filler.repeat(WINDOW as usize / filler.len() + 10);
+
+    let early = dir.path().join("long-early.jsonl");
     fs::write(
-        &file,
+        &early,
         [titled("ai-title", "aiTitle", "early"), body.clone()].concat(),
     )
     .unwrap();
     assert_eq!(
-        title::claude(&file).map(|t| t.text).as_deref(),
+        title::claude(&early).map(|t| t.text).as_deref(),
         Some("early")
     );
+
     // The same title written again near the end is the one a tail read sees.
+    let late = dir.path().join("long-late.jsonl");
     fs::write(
-        &file,
+        &late,
         [
             titled("ai-title", "aiTitle", "early"),
-            body,
+            body.clone(),
             titled("ai-title", "aiTitle", "late"),
         ]
         .concat(),
     )
     .unwrap();
     assert_eq!(
-        title::claude(&file).map(|t| t.text).as_deref(),
+        title::claude(&late).map(|t| t.text).as_deref(),
         Some("late")
+    );
+
+    // A tail ai-title must not mask a user-given custom-title in the opening window.
+    let custom_then_auto = dir.path().join("long-custom-then-auto.jsonl");
+    fs::write(
+        &custom_then_auto,
+        [
+            titled("custom-title", "customTitle", "user named"),
+            body,
+            titled("ai-title", "aiTitle", "late auto"),
+        ]
+        .concat(),
+    )
+    .unwrap();
+    assert_eq!(
+        title::claude(&custom_then_auto),
+        Some(title::CliTitle {
+            text: "user named".to_owned(),
+            custom: true,
+        })
     );
 }
 
@@ -608,5 +631,70 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
     assert_eq!(
         title::of_terminal(&homes("grok"), "grok", None, &work, later),
         (None, None)
+    );
+}
+
+#[test]
+fn title_cache_throttles_rereads_of_growing_files_within_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("growing.jsonl");
+    fs::write(&file, "first\n").unwrap();
+
+    let mut reads = 0usize;
+    let first = title::cached_with(&file, Duration::from_secs(60), |_, _| {
+        reads += 1;
+        Ok(Some(title::CliTitle {
+            text: "v1".to_owned(),
+            custom: false,
+        }))
+    });
+    assert_eq!(reads, 1);
+    assert_eq!(first.as_ref().map(|t| t.text.as_str()), Some("v1"));
+
+    // File grows within the throttle window: return cached value without re-reading.
+    fs::write(&file, "first\nsecond line makes file longer\n").unwrap();
+    let throttled = title::cached_with(&file, Duration::from_secs(60), |_, _| {
+        reads += 1;
+        Ok(Some(title::CliTitle {
+            text: "v2".to_owned(),
+            custom: false,
+        }))
+    });
+    assert_eq!(reads, 1);
+    assert_eq!(throttled.as_ref().map(|t| t.text.as_str()), Some("v1"));
+
+    // Once the throttle window has elapsed, the changed file is read again.
+    let refreshed = title::cached_with(&file, Duration::ZERO, |_, _| {
+        reads += 1;
+        Ok(Some(title::CliTitle {
+            text: "v2".to_owned(),
+            custom: false,
+        }))
+    });
+    assert_eq!(reads, 2);
+    assert_eq!(refreshed.as_ref().map(|t| t.text.as_str()), Some("v2"));
+}
+
+#[test]
+fn grok_summary_titles_are_cached_and_throttled() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("grok/sessions/e/s1/chat_history.jsonl");
+    let summary = dir.path().join("grok/sessions/e/s1/summary.json");
+    write(&record, "");
+    write(&summary, "{\"generated_title\":\"Grok initial\"}");
+
+    assert_eq!(
+        other::title_of("grok", &record).map(|t| t.text).as_deref(),
+        Some("Grok initial")
+    );
+
+    // Updating summary.json immediately within the throttle window serves the cached title.
+    write(
+        &summary,
+        "{\"generated_title\":\"Grok updated much longer title\"}",
+    );
+    assert_eq!(
+        other::title_of("grok", &record).map(|t| t.text).as_deref(),
+        Some("Grok initial")
     );
 }

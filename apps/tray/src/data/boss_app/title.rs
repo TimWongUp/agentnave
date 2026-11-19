@@ -8,7 +8,7 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use super::{WINDOW, codex_rollout_id, file_name, is_uuid, session_cwd};
 
@@ -21,8 +21,18 @@ pub(crate) struct CliTitle {
 
 /// A new chat's record may be created a moment before the terminal's start time is taken.
 const CLOCK_SLACK: Duration = Duration::from_secs(2);
+/// Minimum interval between actual re-reads of a growing title file.
+const TITLE_READ_TTL: Duration = Duration::from_secs(5);
 
-type ClaudeCache = Mutex<HashMap<PathBuf, (u64, Option<CliTitle>)>>;
+#[derive(Clone)]
+struct CachedTitle {
+    len: u64,
+    modified: Option<SystemTime>,
+    read_at: Instant,
+    title: Option<CliTitle>,
+}
+
+type ClaudeCache = Mutex<HashMap<PathBuf, CachedTitle>>;
 static CLAUDE: LazyLock<ClaudeCache> = LazyLock::new(Mutex::default);
 /// Where the transcript of a Claude session ID was found, so the folders are not listed again.
 static FILES: LazyLock<Mutex<HashMap<String, PathBuf>>> = LazyLock::new(Mutex::default);
@@ -47,32 +57,47 @@ pub(super) fn pi(file: &Path) -> Option<CliTitle> {
     cached(file, |file, len| windows(file, len, pi_entries))
 }
 
-/// What `read` finds in a record, read again only when the record has grown or shrunk; records
-/// only grow, so an unchanged length needs no second read.
+/// What `read` finds in a record, read again only when the record changed and the throttle
+/// window has elapsed.
 pub(super) fn cached(
     file: &Path,
     read: impl FnOnce(&Path, u64) -> std::io::Result<Option<CliTitle>>,
 ) -> Option<CliTitle> {
-    let len = fs::metadata(file).ok()?.len();
+    cached_with(file, TITLE_READ_TTL, read)
+}
+
+pub(super) fn cached_with(
+    file: &Path,
+    ttl: Duration,
+    read: impl FnOnce(&Path, u64) -> std::io::Result<Option<CliTitle>>,
+) -> Option<CliTitle> {
+    let meta = fs::metadata(file).ok()?;
+    let (len, modified) = (meta.len(), meta.modified().ok());
     let known = CLAUDE
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .get(file)
         .cloned();
-    if let Some((seen, title)) = known
-        && seen == len
+    if let Some(entry) = known
+        && ((entry.len == len && entry.modified == modified) || entry.read_at.elapsed() < ttl)
     {
-        return title;
+        return entry.title;
     }
     let title = read(file, len).ok()?;
-    CLAUDE
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .insert(file.to_owned(), (len, title.clone()));
+    CLAUDE.lock().unwrap_or_else(|p| p.into_inner()).insert(
+        file.to_owned(),
+        CachedTitle {
+            len,
+            modified,
+            read_at: Instant::now(),
+            title: title.clone(),
+        },
+    );
     title
 }
 
-/// The title `parse` finds in the last 256 KiB of a record, else in its first 256 KiB.
+/// The title `parse` finds in the last 256 KiB of a record, checking the first 256 KiB too when
+/// the tail has no user-given name so an early `custom-title` is not masked by a later `ai-title`.
 fn windows(
     file: &Path,
     len: u64,
@@ -83,13 +108,18 @@ fn windows(
     file.seek(SeekFrom::Start(len.saturating_sub(WINDOW)))?;
     (&mut file).take(WINDOW).read_to_end(&mut chunk)?;
     let found = parse(&chunk);
-    if found.is_some() || len <= WINDOW {
+    if found.as_ref().is_some_and(|title| title.custom) || len <= WINDOW {
         return Ok(found);
     }
     chunk.clear();
     file.seek(SeekFrom::Start(0))?;
     file.take(WINDOW).read_to_end(&mut chunk)?;
-    Ok(parse(&chunk))
+    let head = parse(&chunk);
+    Ok(match (found, head) {
+        (_, Some(head)) if head.custom => Some(head),
+        (Some(tail), _) => Some(tail),
+        (None, head) => head,
+    })
 }
 
 /// The latest `session_info` name in a stretch of Pi session lines; the user gave it with /name.
@@ -196,6 +226,7 @@ fn codex_index(path: &Path) -> Option<Arc<HashMap<String, String>>> {
 /// The chat of a terminal's CLI and its title there, for a terminal that has no workspace to
 /// ask: the session `native` names, else for Codex the only rollout opened in `cwd` since the
 /// terminal started. The ID is returned so a found chat is not looked for again.
+#[cfg(test)]
 pub(crate) fn of_terminal(
     homes: &super::Homes,
     provider: &str,
@@ -203,19 +234,31 @@ pub(crate) fn of_terminal(
     cwd: &Path,
     since: SystemTime,
 ) -> (Option<String>, Option<CliTitle>) {
+    let (id, _, title) = of_terminal_located(homes, provider, native, cwd, since);
+    (id, title)
+}
+
+pub(crate) fn of_terminal_located(
+    homes: &super::Homes,
+    provider: &str,
+    native: Option<&str>,
+    cwd: &Path,
+    since: SystemTime,
+) -> (Option<String>, bool, Option<CliTitle>) {
     match provider {
         "claude" => {
-            let title = native
-                .and_then(|id| claude_file(&homes.claude, id))
-                .and_then(|file| claude(&file));
-            (native.map(str::to_owned), title)
+            let file = native.and_then(|id| claude_file(&homes.claude, id));
+            let located = native.is_none() || file.is_some();
+            let title = file.and_then(|file| claude(&file));
+            (native.map(str::to_owned), located, title)
         }
         "codex" => {
             let id = native
                 .map(str::to_owned)
                 .or_else(|| codex_started(&homes.codex, cwd, since));
+            let located = id.is_some();
             let title = id.as_deref().and_then(|id| codex(&homes.codex, id));
-            (id, title)
+            (id, located, title)
         }
         host if super::other::HOSTS.contains(&host) => {
             // These CLIs' chats have no ID to choose or look up, so the session record itself
@@ -224,12 +267,17 @@ pub(crate) fn of_terminal(
                 let home = &homes.other.iter().find(|(name, _)| name == host)?.1;
                 super::other::started(host, home, cwd, since)
             });
+            let located = record.is_some() || host == "deepseek";
             let title = record
                 .as_deref()
                 .and_then(|record| super::other::title_of(host, record));
-            (record.map(|record| record.display().to_string()), title)
+            (
+                record.map(|record| record.display().to_string()),
+                located,
+                title,
+            )
         }
-        _ => (None, None),
+        _ => (None, true, None),
     }
 }
 

@@ -779,7 +779,7 @@ function renderOffice(c, ctx, n, newGroup) {
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
   renderSides(state.bossRec, c, ctx);
-  layoutIfChanged(JSON.stringify([c.desks.length, rooms.map((r) => [r.id, r.seats.length])]));
+  layoutIfChanged(JSON.stringify([c.desks.length, !state.bossRec.meets.hidden, rooms.map((r) => [r.id, r.seats.length])]));
   walk(!newGroup && state.ready, sat);
 }
 

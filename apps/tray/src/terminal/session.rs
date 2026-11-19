@@ -82,6 +82,9 @@ pub(crate) struct Chunk {
     pub appearance: bool,
 }
 
+/// Maximum number of distinct view IDs remembered per session.
+const MAX_VIEWS: usize = 64;
+
 #[derive(Default)]
 pub(super) struct Output {
     kept: VecDeque<u8>,
@@ -91,6 +94,8 @@ pub(super) struct Output {
     wrote: Option<Instant>,
     /// Where the output handed to a page so far ends: the watermark between replay and new.
     delivered: u64,
+    /// Ordered view IDs seen so far; only the back (latest) advances `delivered`.
+    views: VecDeque<String>,
     modes: modes::Tracker,
 }
 
@@ -107,15 +112,39 @@ impl Output {
         self.start += over as u64;
     }
 
+    pub(super) fn register_view(&mut self, view: Option<&str>) {
+        let Some(id) = view.filter(|v| !v.is_empty()) else {
+            return;
+        };
+        if self.views.iter().any(|seen| seen == id) {
+            return;
+        }
+        if self.views.len() >= MAX_VIEWS {
+            self.views.pop_front();
+        }
+        self.views.push_back(id.to_owned());
+    }
+
+    fn is_current(&self, view: Option<&str>) -> bool {
+        match (view.filter(|v| !v.is_empty()), self.views.back()) {
+            (Some(id), Some(latest)) => id == latest,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
     /// Output after `from`. What lies before the watermark was delivered already and comes back
-    /// as a replay that stops at it; anything after is new, and handing it over moves the watermark.
-    pub(super) fn take(&mut self, from: u64) -> Chunk {
+    /// as a replay that stops at it; anything after is new, and handing it over to the current
+    /// view moves the watermark.
+    pub(super) fn take_for(&mut self, from: u64, view: Option<&str>) -> Chunk {
         let start = from.clamp(self.start, self.end());
         let replay = start < self.delivered;
         let end = if replay { self.delivered } else { self.end() };
         let skip = usize::try_from(start - self.start).unwrap_or(usize::MAX);
         let len = usize::try_from(end - start).unwrap_or(usize::MAX);
-        self.delivered = self.delivered.max(end);
+        if self.is_current(view) {
+            self.delivered = self.delivered.max(end);
+        }
         Chunk {
             start,
             end,
@@ -124,6 +153,11 @@ impl Output {
             replay,
             appearance: self.modes.appearance(),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn take(&mut self, from: u64) -> Chunk {
+        self.take_for(from, None)
     }
 }
 
@@ -200,9 +234,16 @@ impl Session {
     }
 
     /// Output after `from`, waiting up to `wait` for some when there is none yet.
+    #[cfg(test)]
     pub(crate) fn read(&self, from: u64, wait: Duration) -> Chunk {
+        self.read_view(from, wait, None)
+    }
+
+    /// Output after `from` for a specific page `view`; only the latest view advances the watermark.
+    pub(crate) fn read_view(&self, from: u64, wait: Duration, view: Option<&str>) -> Chunk {
         let deadline = Instant::now() + wait;
         let mut output = self.output();
+        output.register_view(view);
         while output.end() <= from && output.exit.is_none() {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -214,7 +255,7 @@ impl Session {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .0;
         }
-        output.take(from)
+        output.take_for(from, view)
     }
 
     /// Whether the CLI wrote anything within `span`, which the office shows as working.

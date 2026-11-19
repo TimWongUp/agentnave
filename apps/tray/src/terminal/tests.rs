@@ -177,6 +177,8 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         session: session.clone(),
         workspaces: Vec::new(),
         native: None,
+        title_located: false,
+        title_searched: None,
         started: std::time::SystemTime::now(),
     });
     let header = |reply: &crate::response::Response, name: &str| {
@@ -187,7 +189,7 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
             .map(|(_, value)| value.clone())
     };
     // output_until read it all, so the page asking from the start is a replay that ends there.
-    let replay = terminals.output(Some(1), Some(0));
+    let replay = terminals.output(Some(1), Some(0), Some("v1"));
     assert_eq!(header(&replay, "X-Terminal-Replay").as_deref(), Some("1"));
     assert_eq!(
         header(&replay, "X-Terminal-Appearance").as_deref(),
@@ -200,7 +202,7 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
     while session.exit().is_none() {
         std::thread::sleep(Duration::from_millis(20));
     }
-    let live = terminals.output(Some(1), Some(end.parse().unwrap()));
+    let live = terminals.output(Some(1), Some(end.parse().unwrap()), Some("v1"));
     assert_eq!(header(&live, "X-Terminal-Replay"), None);
 }
 
@@ -391,6 +393,8 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         session: session.clone(),
         workspaces: Vec::new(),
         native: None,
+        title_located: false,
+        title_searched: None,
         started: std::time::SystemTime::now(),
     });
     let connections = root.path().join("connections");
@@ -402,7 +406,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         serde_json::json!({"host": "codex", "bosses": [&first]}).to_string(),
     )
     .unwrap();
-    let (_, open) = terminals.snapshot(root.path());
+    let (_, open) = terminals.snapshot_with(root.path(), Duration::ZERO);
     assert_eq!(open[0].2["workspaces"], serde_json::json!(["s-first"]));
 
     std::fs::write(
@@ -410,7 +414,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         serde_json::json!({"host": "codex", "bosses": [&second, &first]}).to_string(),
     )
     .unwrap();
-    let (_, open) = terminals.snapshot(root.path());
+    let (_, open) = terminals.snapshot_with(root.path(), Duration::ZERO);
     assert_eq!(
         open[0].2["workspaces"],
         serde_json::json!(["s-second", "s-first"])
@@ -423,7 +427,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
     )
     .unwrap();
     assert_eq!(
-        terminals.snapshot(root.path()).1[0].2["workspaces"],
+        terminals.snapshot_with(root.path(), Duration::ZERO).1[0].2["workspaces"],
         serde_json::json!(["s-second", "s-first"])
     );
 
@@ -431,12 +435,17 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
     session.stop();
     assert!(exit_of(&session).is_some());
     assert_eq!(
-        terminals.snapshot(root.path()).1[0].2["workspaces"],
+        terminals.snapshot_with(root.path(), Duration::ZERO).1[0].2["workspaces"],
         serde_json::json!(["s-second", "s-first"])
     );
 
     terminals.close(Some(1));
-    assert!(terminals.snapshot(root.path()).1.is_empty());
+    assert!(
+        terminals
+            .snapshot_with(root.path(), Duration::ZERO)
+            .1
+            .is_empty()
+    );
 }
 
 #[test]
@@ -501,4 +510,244 @@ fn only_clis_with_a_terminal_ui_are_offered() {
         Path::new("/usr/local/bin/zcode")
     ));
     assert!(super::has_terminal_ui("codex", bundle));
+}
+
+#[test]
+fn only_the_current_view_advances_the_replay_watermark() {
+    let mut output = Output::default();
+    output.push(b"screen ");
+    output.register_view(Some("v1"));
+    let initial = output.take_for(0, Some("v1"));
+    assert!(!initial.replay);
+    assert_eq!(initial.end, 7);
+
+    // Page reloads: v2 becomes current and replays up to 7.
+    output.register_view(Some("v2"));
+    let replay = output.take_for(0, Some("v2"));
+    assert!(replay.replay);
+    assert_eq!(replay.end, 7);
+
+    // New output arrives while v1's stale poll wakes up first: v1 gets bytes without moving watermark.
+    output.push(b"\x1b[?996n");
+    let stale = output.take_for(7, Some("v1"));
+    assert!(!stale.replay);
+    assert_eq!(text(&stale), "\x1b[?996n");
+
+    // v2 reads from 7 and must still see it as new (not replay), advancing the watermark.
+    let current = output.take_for(7, Some("v2"));
+    assert!(!current.replay);
+    assert_eq!(text(&current), "\x1b[?996n");
+
+    // Even if v1 polls again later, it cannot reclaim currency or advance the watermark.
+    output.push(b"tail");
+    let stale_again = output.take_for(14, Some("v1"));
+    assert_eq!(text(&stale_again), "tail");
+    let current_tail = output.take_for(14, Some("v2"));
+    assert!(!current_tail.replay);
+    assert_eq!(text(&current_tail), "tail");
+}
+
+#[cfg(unix)]
+#[test]
+fn reused_pid_with_older_started_ms_is_treated_as_exited() {
+    let root = tempfile::tempdir().unwrap();
+    let db = crate::db::create(root.path());
+    let key = format!("s-{}", "f".repeat(32));
+    db.execute(
+        "INSERT INTO workspaces (id, owner, owner_host) VALUES ('s-reused', ?1, 'claude')",
+        [&key],
+    )
+    .unwrap();
+    let mut relay = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let connections = root.path().join("connections");
+    std::fs::create_dir_all(&connections).unwrap();
+    let receipt = connections.join(format!("{}-x.json", relay.id()));
+
+    // A stale receipt from an earlier process whose PID was later reused by `sleep`.
+    std::fs::write(
+        &receipt,
+        serde_json::json!({"host": "claude", "bosses": [&key], "started_ms": 1_000}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        super::elsewhere::find(root.path(), &key, &[(7, 4_000_000)]),
+        None
+    );
+    assert!(
+        super::links::workspaces(root.path(), &[(7, std::process::id())]).is_empty(),
+        "stale receipt with reused PID must not attach to a terminal"
+    );
+
+    // Matching current started_ms marks the same process as genuinely alive.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    std::fs::write(
+        &receipt,
+        serde_json::json!({"host": "claude", "bosses": [&key], "started_ms": now_ms}).to_string(),
+    )
+    .unwrap();
+    assert!(super::elsewhere::find(root.path(), &key, &[(7, 4_000_000)]).is_some());
+    assert_eq!(
+        super::links::workspaces(root.path(), &[(7, std::process::id())]).get(&7),
+        Some(&vec!["s-reused".to_owned()])
+    );
+    relay.kill().unwrap();
+    relay.wait().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
+    let session = Session::start(shell("sleep 30"), 80, 24).unwrap();
+    let terminals = Terminals::default();
+    {
+        let mut state = terminals.lock();
+        state.open.push(Running {
+            id: 1,
+            provider: "codex".to_owned(),
+            cwd: std::env::temp_dir(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: std::time::SystemTime::now(),
+        });
+        state.open.push(Running {
+            id: 2,
+            provider: "claude".to_owned(),
+            cwd: std::env::temp_dir(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: Some("11111111-2222-3333-4444-555555555555".to_owned()),
+            title_located: false,
+            title_searched: None,
+            started: std::time::SystemTime::now(),
+        });
+    }
+
+    let mut calls = 0usize;
+    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _| {
+        calls += 1;
+        (native.map(str::to_owned), false, None)
+    });
+    assert!(first.is_empty());
+    assert_eq!(calls, 2);
+
+    // Within the throttle window, neither unlocated terminal scans again.
+    terminals.titles_with(Duration::from_secs(60), |_, native, _, _| {
+        calls += 1;
+        (native.map(str::to_owned), false, None)
+    });
+    assert_eq!(calls, 2);
+
+    // Once the window expires and records are located, both resolve and stay unthrottled.
+    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _| {
+        calls += 1;
+        (
+            Some(format!("{provider}-id")),
+            true,
+            Some(crate::data::boss_app::CliTitle {
+                text: format!("{provider} title"),
+                custom: false,
+            }),
+        )
+    });
+    assert_eq!(calls, 4);
+    assert_eq!(resolved[&1].text, "codex title");
+    assert_eq!(resolved[&2].text, "claude title");
+
+    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _| {
+        calls += 1;
+        (
+            None,
+            true,
+            Some(crate::data::boss_app::CliTitle {
+                text: format!("{provider} title"),
+                custom: false,
+            }),
+        )
+    });
+    assert_eq!(calls, 6);
+    assert_eq!(cached[&1].text, "codex title");
+    session.stop();
+    let _ = exit_of(&session);
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fresh() {
+    let root = tempfile::tempdir().unwrap();
+    let db = crate::db::create(root.path());
+    let first = format!("s-{}", "1".repeat(32));
+    let second = format!("s-{}", "2".repeat(32));
+    let other = format!("s-{}", "3".repeat(32));
+    db.execute(
+        "INSERT INTO workspaces (id, owner, owner_host) VALUES ('s-first', ?1, 'codex'), ('s-second', ?2, 'codex')",
+        [&first, &second],
+    )
+    .unwrap();
+    let session = Session::start(shell("sleep 30"), 80, 24).unwrap();
+    let cli_pid = session.pid().unwrap();
+    let terminals = Terminals::default();
+    terminals.lock().open.push(Running {
+        id: 1,
+        provider: "codex".to_owned(),
+        cwd: std::env::temp_dir(),
+        session: session.clone(),
+        workspaces: Vec::new(),
+        native: None,
+        title_located: false,
+        title_searched: None,
+        started: std::time::SystemTime::now(),
+    });
+    let connections = root.path().join("connections");
+    std::fs::create_dir_all(&connections).unwrap();
+    let receipt = connections.join(format!("{cli_pid}-x.json"));
+    std::fs::write(
+        &receipt,
+        serde_json::json!({"host": "codex", "bosses": [&first]}).to_string(),
+    )
+    .unwrap();
+
+    // First snapshot scans and records `s-first`.
+    let (_, open) = terminals.snapshot(root.path());
+    assert_eq!(open[0].2["workspaces"], serde_json::json!(["s-first"]));
+
+    // An immediate update within LINKS_TTL is not re-scanned by snapshot().
+    std::fs::write(
+        &receipt,
+        serde_json::json!({"host": "codex", "bosses": [&second, &first]}).to_string(),
+    )
+    .unwrap();
+    let (_, open) = terminals.snapshot(root.path());
+    assert_eq!(open[0].2["workspaces"], serde_json::json!(["s-first"]));
+
+    // Elsewhere conflict detection still reads the latest connection files immediately.
+    let mut external = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    std::fs::write(
+        connections.join(format!("{}-y.json", external.id())),
+        serde_json::json!({"host": "claude", "bosses": [&other]}).to_string(),
+    )
+    .unwrap();
+    assert!(super::elsewhere::find(root.path(), &other, &[(1, cli_pid)]).is_some());
+    external.kill().unwrap();
+    external.wait().unwrap();
+
+    // Once the throttle window expires, snapshot picks up `s-second`.
+    let (_, open) = terminals.snapshot_with(root.path(), Duration::ZERO);
+    assert_eq!(
+        open[0].2["workspaces"],
+        serde_json::json!(["s-second", "s-first"])
+    );
+    session.stop();
+    let _ = exit_of(&session);
 }

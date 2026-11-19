@@ -41,6 +41,9 @@ window.TerminalView = (() => {
     constructor(id, onExit) {
       this.id = id;
       this.onExit = onExit;
+      this.view = typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
       this.offset = 0;
       this.live = true;
       this.running = true;
@@ -135,7 +138,7 @@ window.TerminalView = (() => {
       while (this.live) {
         let response;
         try {
-          response = await fetch(`/app/terminal/output?session=${this.id}&from=${this.offset}`, { cache: "no-store" });
+          response = await fetch(`/app/terminal/output?session=${this.id}&view=${encodeURIComponent(this.view)}&from=${this.offset}`, { cache: "no-store" });
         } catch { await sleep(1000); continue; }
         if (!this.live) return;
         if (response.status === 404) { this.ended(null); return; }

@@ -350,3 +350,60 @@ fn an_agents_display_title_follows_the_order_of_names() {
     assert_eq!(value["display_title"], "auto");
     assert_eq!(value["title"], "boss title");
 }
+
+#[test]
+fn untitled_dispatches_fall_back_to_first_prompt_line_before_project_name() {
+    use serde_json::{Value, json};
+
+    let make_snapshot = |id: &str, title: &str, prompt: &str, cwd: &str| {
+        let mut s = origin_snapshot(
+            id,
+            "task",
+            json!({
+                "created": "2026-11-12T00:00:00Z",
+                "tasks": [{"prompt": prompt, "cwd": cwd, "time": "2026-11-12T00:00:01Z"}],
+            }),
+        );
+        s.item.title = title.to_owned();
+        s
+    };
+    let places = super::Places {
+        dirs: &[],
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        titles: &Default::default(),
+        renamed: &Default::default(),
+    };
+    let long_prompt = format!("\n  {}  \n第二行不该出现", "a".repeat(70));
+    let res = super::respond(
+        "/app/chats",
+        vec![make_snapshot(
+            "c1",
+            "claude 任务",
+            &long_prompt,
+            "/work/proj",
+        )],
+        true,
+        8,
+        &Default::default(),
+        &Default::default(),
+        &places,
+    );
+    let body: Value = serde_json::from_slice(&res.body).unwrap();
+    let expected = format!("{}…", "a".repeat(60));
+    assert_eq!(body["groups"][0]["display_title"], expected);
+
+    // Without any prompt text, it still falls back to the project name.
+    let res_empty = super::respond(
+        "/app/chats",
+        vec![make_snapshot("c2", "claude 任务", "   \n  ", "/work/proj")],
+        true,
+        8,
+        &Default::default(),
+        &Default::default(),
+        &places,
+    );
+    let body_empty: Value = serde_json::from_slice(&res_empty.body).unwrap();
+    assert_eq!(body_empty["groups"][0]["display_title"], "proj");
+}

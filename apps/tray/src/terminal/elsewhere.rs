@@ -30,10 +30,9 @@ pub(super) fn find(root: &Path, key: &str, terminals: &[(u64, u32)]) -> Option<E
     if !sysinfo::IS_SUPPORTED_SYSTEM {
         return None;
     }
-    let relays: Vec<u32> = links::relays(&root.join("connections"))
+    let relays: Vec<links::Relay> = links::relays(&root.join("connections"))
         .into_iter()
-        .filter(|(_, bosses)| bosses.iter().any(|boss| boss == key))
-        .map(|(pid, _)| pid)
+        .filter(|relay| relay.bosses.iter().any(|boss| boss == key))
         .collect();
     if relays.is_empty() {
         return None;
@@ -46,10 +45,14 @@ pub(super) fn find(root: &Path, key: &str, terminals: &[(u64, u32)]) -> Option<E
     );
     relays
         .into_iter()
-        // A relay file whose process is gone is a crash leftover, not an open chat.
-        .filter(|relay| system.process(Pid::from_u32(*relay)).is_some())
-        .filter(|relay| links::terminal_of(&system, *relay, terminals).is_none())
-        .map(|relay| describe(&ancestry(&system, relay)))
+        // A relay file whose process is gone or whose PID was reused is a crash leftover, not an open chat.
+        .filter(|relay| {
+            system
+                .process(Pid::from_u32(relay.pid))
+                .is_some_and(|process| links::same_process(process, relay.started_ms))
+        })
+        .filter(|relay| links::terminal_of(&system, relay.pid, terminals).is_none())
+        .map(|relay| describe(&ancestry(&system, relay.pid)))
         // Prefer a running copy over a stopped one when the chat is open in several places.
         .min_by_key(|found| found.paused)
 }

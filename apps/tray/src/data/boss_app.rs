@@ -30,14 +30,14 @@ mod other;
 mod title;
 pub(crate) use title::CliTitle;
 
-/// A terminal's chat and its CLI's title for it, for a terminal with no workspace yet.
+/// A terminal's chat, whether its session record was located, and its CLI's title for it.
 pub(crate) fn terminal_title(
     provider: &str,
     native: Option<&str>,
     cwd: &Path,
     since: std::time::SystemTime,
-) -> (Option<String>, Option<CliTitle>) {
-    title::of_terminal(&Homes::here(), provider, native, cwd, since)
+) -> (Option<String>, bool, Option<CliTitle>) {
+    title::of_terminal_located(&Homes::here(), provider, native, cwd, since)
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]

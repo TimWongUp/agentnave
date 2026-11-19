@@ -338,6 +338,8 @@ struct Group {
     first_title: Option<(i64, String, String)>,
     /// The earliest conversation of all, renamed when no title names the workspace yet.
     first_id: Option<(i64, String)>,
+    /// The earliest non-empty prompt from a dispatch or meeting, used when no explicit title exists.
+    first_prompt: Option<(i64, String)>,
     /// The earliest dispatch's directory; its folder names the workspace when nothing else does.
     origin: Option<origin::Origin>,
     project_name: Option<String>,
@@ -582,8 +584,13 @@ fn meaningful_title(title: &str) -> bool {
                     | "codex"
                     | "deepseek"
                     | "devin"
+                    | "gemini"
                     | "grok"
+                    | "hermes"
+                    | "opencode"
                     | "pi"
+                    | "workbuddy"
+                    | "zcode"
             )
         )
 }

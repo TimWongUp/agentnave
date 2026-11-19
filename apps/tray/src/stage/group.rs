@@ -16,6 +16,7 @@ impl Group {
             title: String::new(),
             first_title: None,
             first_id: None,
+            first_prompt: None,
             origin: None,
             project_name: None,
             project: None,
@@ -357,10 +358,19 @@ impl Group {
         {
             self.first_title = Some((created, item.title.clone(), item.id.clone()));
         }
+        if let Some(prompt) = snapshot_first_prompt(snapshot, created)
+            && self
+                .first_prompt
+                .as_ref()
+                .is_none_or(|(c, _)| prompt.0 < *c)
+        {
+            self.first_prompt = Some(prompt);
+        }
         self.title = self
             .first_title
             .as_ref()
             .map(|(_, t, _)| t.clone())
+            .or_else(|| self.first_prompt.as_ref().map(|(_, p)| p.clone()))
             .or_else(|| self.project_name.clone())
             .unwrap_or_default();
         self.live |= snapshot.live;
@@ -900,4 +910,51 @@ fn handover_card(id: String, time: &str, text: &str, detail: Value, status: Opti
         message["status"] = json!(status);
     }
     message
+}
+
+fn prompt_title(raw: &str) -> Option<String> {
+    const LIMIT: usize = 60;
+    let line = raw.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let clean: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.is_empty() {
+        return None;
+    }
+    let mut chars = clean.chars();
+    let head: String = chars.by_ref().take(LIMIT).collect();
+    Some(if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    })
+}
+
+fn snapshot_first_prompt(snapshot: &Snapshot, fallback: i64) -> Option<(i64, String)> {
+    let director = &snapshot.view["director"];
+    let mut best: Option<(i64, String)> = None;
+    let consider = |best: &mut Option<(i64, String)>, time: &str, raw: &str| {
+        let Some(title) = prompt_title(raw) else {
+            return;
+        };
+        let at = timestamp(time).unwrap_or(fallback);
+        if best.as_ref().is_none_or(|(b, _)| at < *b) {
+            *best = Some((at, title));
+        }
+    };
+    if snapshot.item.mode == "task" {
+        for task in array(director, "tasks") {
+            consider(&mut best, text(task, "time"), text(task, "prompt"));
+        }
+    } else {
+        for entry in array(director, "messages")
+            .filter(|entry| matches!(text(entry, "kind"), "task" | "host"))
+        {
+            consider(&mut best, text(entry, "time"), text(entry, "text"));
+        }
+        if best.is_none() {
+            for entry in array(director, "instructions") {
+                consider(&mut best, text(entry, "time"), text(entry, "text"));
+            }
+        }
+    }
+    best
 }

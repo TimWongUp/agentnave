@@ -35,16 +35,23 @@ pub(super) fn title_of(host: &str, record: &Path) -> Option<CliTitle> {
 
 /// Grok's own title for a session, else the summary it keeps of it.
 fn grok(summary: &Path) -> Option<CliTitle> {
-    let summary: Value = serde_json::from_slice(&fs::read(summary).ok()?).ok()?;
-    ["generated_title", "session_summary"]
-        .iter()
-        .filter_map(|key| summary[key].as_str())
-        .map(str::trim)
-        .find(|text| !text.is_empty())
-        .map(|text| CliTitle {
-            text: text.to_owned(),
-            custom: false,
-        })
+    cached(summary, |summary, _| {
+        let bytes = fs::read(summary)?;
+        let title = serde_json::from_slice::<Value>(&bytes)
+            .ok()
+            .and_then(|summary| {
+                ["generated_title", "session_summary"]
+                    .iter()
+                    .filter_map(|key| summary[key].as_str())
+                    .map(str::trim)
+                    .find(|text| !text.is_empty())
+                    .map(|text| CliTitle {
+                        text: text.to_owned(),
+                        custom: false,
+                    })
+            });
+        Ok(title)
+    })
 }
 
 fn deepseek(record: &Path) -> Option<CliTitle> {

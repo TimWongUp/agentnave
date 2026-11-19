@@ -1575,3 +1575,93 @@ test("display_title unifies names across sidebar/office/right column, directory 
   roomCard.listeners.contextmenu({});
   assert.deepEqual(roomMenus, ["r1"]);
 });
+
+test("removing the last ended meeting recomputes boss office layout", () => {
+  const makeNode = (tag = "div") => {
+    const classSet = new Set();
+    return {
+      tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], style: {},
+      clientWidth: 560, offsetWidth: 100, isConnected: true, scrollTop: 0,
+      classList: {
+        set: classSet,
+        toggle(n, on) { const next = on === undefined ? !classSet.has(n) : Boolean(on); if (next) classSet.add(n); else classSet.delete(n); return next; },
+        contains(n) { return classSet.has(n); },
+        add(n) { classSet.add(n); },
+        remove(n) { classSet.delete(n); },
+      },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+      append(...items) { this.children.push(...items.flat()); },
+      insertBefore(child, before) { child.parentNode = this; child.nextSibling = before; },
+      replaceChildren(...items) { this.children = items.flat(); },
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      addEventListener() {},
+      remove() {},
+    };
+  };
+  const h = (tag, attrs = {}, ...children) => Object.assign(makeNode(tag), {
+    attributes: { ...attrs }, children: children.flat(Infinity).filter(x => x != null && x !== false),
+  });
+  const el = {
+    boss: makeNode("section"),
+    desks: Object.assign(makeNode("div"), { clientWidth: 560 }),
+    rooms: makeNode("div"),
+    fx: makeNode("div"),
+    deskCount: makeNode("span"),
+    office: makeNode("div"),
+    floor: makeNode("div"),
+  };
+  const state = {
+    groupsData: [],
+    bossRec: null, deskRecs: new Map(), roomRecs: new Map(), seatRecs: new Map(),
+    away: new Map(), closing: new Map(), known: new Set(), ready: true, drawer: { kind: "all" },
+  };
+  const context = vm.createContext({
+    AN: { h, L: zh => zh, at: Date.parse, ongoing: s => s, isHidden: () => false, dozing: () => false },
+    h, L: zh => zh, el, state, FIG: 100,
+    ART: { character: () => "c", figure: makeNode, head: makeNode, lid: makeNode, url: p => p, version: () => 1, canWarp: () => false },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { roomMenu() {} },
+    GROUP: { idle: ["空闲", "idle"] }, pick: () => ["空闲", "idle"], urgent: () => false,
+    activities: () => [],
+    cliOf: () => "Codex", deskChar: () => "c", deskName: d => d.model, deskParts: d => ({ name: d.model, effort: "" }),
+    fullHandle: d => d.key, relTime: () => "刚刚", fullTime: () => "2026", shownName: g => g.display_title || g.title || g.label,
+    setText: (n, v) => { n.textContent = v; },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const cls of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(cls);
+    },
+    reconcile: (p, nodes) => { p.children = nodes; },
+    openScope() {}, go() {}, window: { addEventListener() {} }, document: { documentElement: { classList: { contains: () => false } } },
+    ResizeObserver: class { observe() {} },
+    reduceMotion: { matches: false },
+    getComputedStyle: target => ({
+      getPropertyValue: () => "2",
+      columnGap: "10px",
+      gridTemplateColumns: target?.classList?.contains("stack") ? "1fr" : "1fr 225px",
+    }),
+    Date,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  const ctx = {
+    desks: new Map(), drawn: new Set(), rooms: new Map([["r1", { id: "r1" }]]),
+  };
+  const chatWithEndedRoom = {
+    group: "ws-1", host: "claude", label: "Claude Code", display_title: "t",
+    desks: [{ key: "d1", provider: "codex", model: "gpt-6.1", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" }],
+    rooms: [{ id: "r1", title: "会", status: "succeeded", seats: [], last_active: "2026-11-19T00:00:00Z" }],
+    messages: [],
+  };
+  context.renderOffice(chatWithEndedRoom, ctx, { running: 0, review: 0 }, false);
+  assert.equal(state.bossRec.meets.hidden, false);
+  assert.equal(state.bossRec.row.classList.contains("stack"), true);
+
+  // Deleting the last ended meeting leaves 0 active and 0 ended rooms, and must recompute boss layout.
+  ctx.rooms.clear();
+  context.renderOffice({ ...chatWithEndedRoom, rooms: [] }, ctx, { running: 0, review: 0 }, false);
+  assert.equal(state.bossRec.meets.hidden, true);
+  assert.equal(state.bossRec.row.classList.contains("stack"), false);
+  assert.equal(state.bossRec.scene.style.width, "334px");
+});

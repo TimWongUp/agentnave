@@ -18,7 +18,7 @@ mod theme;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
@@ -32,6 +32,10 @@ use session::{Launch, Session};
 const POLL: Duration = Duration::from_secs(20);
 /// A terminal that wrote within this long counts as working.
 const ACTIVE: Duration = Duration::from_millis(2500);
+/// Minimum interval between directory scans for a terminal whose session record is not yet located.
+const TITLE_LOOKUP_TTL: Duration = Duration::from_secs(5);
+/// Minimum interval between full connection-file + process-table scans on `/app/terminal/state`.
+const LINKS_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub(crate) struct Terminals {
@@ -44,6 +48,7 @@ struct State {
     /// The folder last picked or used, offered for the next start.
     cwd: Option<PathBuf>,
     started: u64,
+    links_checked: Option<(Instant, PathBuf)>,
 }
 
 struct Running {
@@ -56,6 +61,8 @@ struct Running {
     /// The CLI's own ID of the chat it holds, when the terminal chose it (Claude) or found it
     /// (Codex), to read the chat's title from the CLI's session record.
     native: Option<String>,
+    title_located: bool,
+    title_searched: Option<Instant>,
     started: SystemTime,
 }
 
@@ -81,7 +88,9 @@ pub(crate) fn request(
     match (method, route) {
         ("GET", "/app/terminal/state") => Response::json(&terminals.describe()),
         ("GET", "/app/terminal/clis") => Response::json(&installed()),
-        ("GET", "/app/terminal/output") => terminals.output(id, number(query, "from")),
+        ("GET", "/app/terminal/output") => {
+            terminals.output(id, number(query, "from"), param(query, "view"))
+        }
         (_, "/app/terminal/pick") => response::action(method, action, || terminals.pick(app)),
         (_, "/app/terminal/start") => {
             response::post(method, action, body, |payload| terminals.start(&payload))
@@ -124,11 +133,14 @@ pub(crate) fn shutdown(app: &AppHandle) {
     }
 }
 
-fn number(query: &str, name: &str) -> Option<u64> {
+fn param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
     query
         .split('&')
         .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
-        .and_then(|value| value.parse().ok())
+}
+
+fn number(query: &str, name: &str) -> Option<u64> {
+    param(query, name).and_then(|value| value.parse().ok())
 }
 
 /// How a page asks to continue a chat: in which theme, how large a screen, and whether it has
@@ -187,43 +199,99 @@ impl Terminals {
     }
 
     /// What each terminal's chat is called in its CLI, read from the CLI's session record. A
-    /// Codex chat found by its folder is remembered so it is not looked for again.
+    /// session record not yet found is looked for at most once every `TITLE_LOOKUP_TTL`.
     fn titles(&self) -> HashMap<u64, CliTitle> {
+        self.titles_with(TITLE_LOOKUP_TTL, crate::data::boss_app::terminal_title)
+    }
+
+    fn titles_with(
+        &self,
+        ttl: Duration,
+        mut lookup: impl FnMut(
+            &str,
+            Option<&str>,
+            &Path,
+            SystemTime,
+        ) -> (Option<String>, bool, Option<CliTitle>),
+    ) -> HashMap<u64, CliTitle> {
         let asks: Vec<_> = {
             let state = self.lock();
             state
                 .open
                 .iter()
+                .filter(|running| {
+                    running.title_located
+                        || running.title_searched.is_none_or(|at| at.elapsed() >= ttl)
+                })
                 .map(|running| {
                     let ask = (running.provider.clone(), running.cwd.clone());
                     (running.id, ask, running.native.clone(), running.started)
                 })
                 .collect()
         };
-        let (mut titles, mut learned) = (HashMap::new(), Vec::new());
+        let (mut titles, mut updates) = (HashMap::new(), Vec::new());
         for (id, (provider, cwd), native, started) in asks {
-            let (found, title) =
-                crate::data::boss_app::terminal_title(&provider, native.as_deref(), &cwd, started);
-            if native.is_none() && found.is_some() {
-                learned.push((id, found));
-            }
+            let checked = Instant::now();
+            let (found, located, title) = lookup(&provider, native.as_deref(), &cwd, started);
+            updates.push((
+                id,
+                native.is_none().then_some(found).flatten(),
+                located,
+                checked,
+            ));
             titles.extend(title.map(|title| (id, title)));
         }
-        if !learned.is_empty() {
+        if !updates.is_empty() {
             let mut state = self.lock();
-            for (id, found) in learned {
+            for (id, found, located, checked) in updates {
                 if let Some(running) = state.open.iter_mut().find(|running| running.id == id) {
-                    running.native = found;
+                    running.title_searched = Some(checked);
+                    if running.native.is_none() && found.is_some() {
+                        running.native = found;
+                    }
+                    if located {
+                        running.title_located = true;
+                    }
                 }
             }
         }
         titles
     }
 
-    /// Updates confirmed workspaces from active relays under `root` and snapshots every open terminal.
+    /// Updates confirmed workspaces from active relays under `root` (throttled across polls) and
+    /// snapshots every open terminal.
     fn snapshot(&self, root: &Path) -> (Option<PathBuf>, Vec<(u64, PathBuf, Value)>) {
-        let mut links = links::workspaces(root, &self.live_pids());
+        self.snapshot_with(root, LINKS_TTL)
+    }
+
+    fn snapshot_with(
+        &self,
+        root: &Path,
+        ttl: Duration,
+    ) -> (Option<PathBuf>, Vec<(u64, PathBuf, Value)>) {
+        let (fresh, pids): (bool, Vec<(u64, u32)>) = {
+            let state = self.lock();
+            let fresh = state
+                .links_checked
+                .as_ref()
+                .is_some_and(|(at, path)| path == root && at.elapsed() < ttl);
+            let pids = state
+                .open
+                .iter()
+                .filter(|running| running.session.exit().is_none())
+                .filter_map(|running| Some((running.id, running.session.pid()?)))
+                .collect();
+            (fresh, pids)
+        };
+        let mut links = if !fresh && !pids.is_empty() {
+            links::workspaces(root, &pids)
+        } else {
+            HashMap::new()
+        };
         let mut state = self.lock();
+        if !fresh && !pids.is_empty() {
+            state.links_checked = Some((Instant::now(), root.to_path_buf()));
+        }
         for running in &mut state.open {
             if let Some(found) = links.remove(&running.id) {
                 links::remember(&mut running.workspaces, found);
@@ -447,6 +515,7 @@ impl Terminals {
         let mut state = self.lock();
         state.started += 1;
         state.cwd = Some(cwd.clone());
+        state.links_checked = None;
         let running = Running {
             id: state.started,
             provider: provider.to_owned(),
@@ -454,6 +523,8 @@ impl Terminals {
             session,
             workspaces,
             native: resume.map(str::to_owned).or(chosen),
+            title_located: false,
+            title_searched: None,
             started: SystemTime::now(),
         };
         let described = running.describe();
@@ -492,11 +563,11 @@ impl Terminals {
     }
 
     /// Output after `from`; the bytes go as they are, with their place in the headers.
-    fn output(&self, id: Option<u64>, from: Option<u64>) -> Response {
+    fn output(&self, id: Option<u64>, from: Option<u64>, view: Option<&str>) -> Response {
         let Some(session) = self.session(id) else {
             return Response::error(404, "找不到这个终端");
         };
-        let chunk = session.read(from.unwrap_or(0), POLL);
+        let chunk = session.read_view(from.unwrap_or(0), POLL, view);
         let mut reply = Response::ok("application/octet-stream", chunk.bytes);
         reply.headers = vec![
             ("X-Terminal-Start", chunk.start.to_string()),
