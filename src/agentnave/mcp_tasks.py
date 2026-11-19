@@ -49,6 +49,7 @@ from agentnave.mcp_runtime import (
     ManagerModel,
     ManagerSessionId,
     Runtime,
+    _active_inbox_waits,
     _conversations,
     _manager,
     _review_map,
@@ -725,6 +726,8 @@ async def wait(
     review_needed requires decide_answers before waiting again. seat_lost reports a failed/blocked
     seat while peers run, once per seat, answers withheld; retry via run_round.retry_seats.
     wait_elapsed: status/activity only; wait again. nothing_pending: the inbox is empty.
+    already_waiting: a blocking inbox wait is already active for this chat; do not call wait
+    again (use wait_seconds=0 to check progress).
 
     wait_seconds=0 and include_output=false still receive ready items. Only 0 includes
     running tails (up to 1000 characters) and age, subject to include_output.
@@ -748,6 +751,17 @@ async def wait(
     return payload
 
 
+def _already_waiting_payload(pending_ids: list[str]) -> WaitPayload:
+    return {
+        "reason": "already_waiting",
+        "pending_ids": pending_ids,
+        "all_finished": False,
+        "updates": [],
+        "rounds": [],
+        "next": runtime.ALREADY_WAITING,
+    }
+
+
 async def _receive(
     ids: list[str] | None,
     include_output: bool,
@@ -759,11 +773,17 @@ async def _receive(
     conversations = _conversations(ctx)
     invocation_ids: list[str] = []
     round_ids: list[str] = []
+    inbox_key: str | None = None
+    active_inbox_waits = _active_inbox_waits(ctx)
+    blocking_inbox = ids is None and wait_seconds != 0
     if ids is None:
         try:
+            inbox_key = conversations.inbox_key(manager_session_id)
             invocation_ids, round_ids = conversations.inbox(manager_session_id)
         except ValueError as exc:
             raise ToolError(f"{exc}. Correct and retry.") from exc
+        if blocking_inbox and inbox_key in active_inbox_waits:
+            return _already_waiting_payload([*invocation_ids, *round_ids])
         if not invocation_ids and not round_ids:
             return {
                 "reason": "nothing_pending",
@@ -792,48 +812,54 @@ async def _receive(
     else:
         window = wait_seconds
     deadline = time.monotonic() + window
-    while True:
-        ready_invocations, ready_rounds = await _ready_handles(
+    if blocking_inbox:
+        active_inbox_waits.add(inbox_key)
+    try:
+        while True:
+            ready_invocations, ready_rounds = await _ready_handles(
+                manager,
+                conversations,
+                invocation_ids,
+                round_ids,
+                min(float(window), max(0.0, deadline - time.monotonic())),
+            )
+            if ids is not None:
+                break
+            # Another inbox wait may have delivered these ends while this one slept. From here to
+            # the return nothing awaits, so this wait's claim cannot be taken twice.
+            ready_invocations = {
+                handle: update
+                for handle, update in ready_invocations.items()
+                if handle not in conversations.delivered_tasks
+            }
+            ready_rounds = {
+                handle: found
+                for handle, found in ready_rounds.items()
+                if handle not in conversations.delivered_rounds
+            }
+            if ready_invocations or ready_rounds or time.monotonic() >= deadline:
+                break
+            invocation_ids, round_ids = conversations.inbox(manager_session_id)
+            if not invocation_ids and not round_ids:
+                return {
+                    "reason": "nothing_pending",
+                    "pending_ids": [],
+                    "all_finished": True,
+                    "updates": [],
+                    "rounds": [],
+                }
+        return _wait_payload(
             manager,
             conversations,
-            invocation_ids,
-            round_ids,
-            min(float(window), max(0.0, deadline - time.monotonic())),
+            _WaitResults(invocation_ids, round_ids, ready_invocations, ready_rounds),
+            ids,
+            include_output,
+            wait_seconds,
+            manager_session_id,
         )
-        if ids is not None:
-            break
-        # Another inbox wait may have delivered these ends while this one slept. From here to
-        # the return nothing awaits, so this wait's claim cannot be taken twice.
-        ready_invocations = {
-            handle: update
-            for handle, update in ready_invocations.items()
-            if handle not in conversations.delivered_tasks
-        }
-        ready_rounds = {
-            handle: found
-            for handle, found in ready_rounds.items()
-            if handle not in conversations.delivered_rounds
-        }
-        if ready_invocations or ready_rounds or time.monotonic() >= deadline:
-            break
-        invocation_ids, round_ids = conversations.inbox(manager_session_id)
-        if not invocation_ids and not round_ids:
-            return {
-                "reason": "nothing_pending",
-                "pending_ids": [],
-                "all_finished": True,
-                "updates": [],
-                "rounds": [],
-            }
-    return _wait_payload(
-        manager,
-        conversations,
-        _WaitResults(invocation_ids, round_ids, ready_invocations, ready_rounds),
-        ids,
-        include_output,
-        wait_seconds,
-        manager_session_id,
-    )
+    finally:
+        if blocking_inbox:
+            active_inbox_waits.discard(inbox_key)
 
 
 receive = wait

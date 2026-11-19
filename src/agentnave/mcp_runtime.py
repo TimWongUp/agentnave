@@ -150,6 +150,10 @@ WAIT_AGAIN = (
     "review_needed, then call wait again "
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
+ALREADY_WAITING = (
+    "An inbox wait is already running (possibly in the background) and will return the results; "
+    "do not call wait again. To check progress or collect ready results now, call wait(wait_seconds=0)."
+)
 # A seat the host's own CLI owns starts nothing, so a dispatch receipt must not send the boss to wait.
 NATIVE_SEAT_NEXT = (
     "Nothing was started, so there is nothing to wait for: run this seat with the host's "
@@ -220,6 +224,7 @@ class Runtime:
         self.manager = InvocationManager()
         self.conversations = Conversations(self.manager, data_root(), host=HOST)
         self.retention = Retention(data_root())
+        self.active_inbox_waits: set[str | None] = set()
 
 
 @asynccontextmanager
@@ -538,6 +543,10 @@ def _manager(ctx: Context[Runtime]) -> InvocationManager:
 
 def _conversations(ctx: Context[Runtime]) -> Conversations:
     return ctx.request_context.lifespan_context.conversations
+
+
+def _active_inbox_waits(ctx: Context[Runtime]) -> set[str | None]:
+    return ctx.request_context.lifespan_context.active_inbox_waits
 
 
 def _rejected(exc: Exception) -> ToolError:
@@ -908,6 +917,7 @@ __all__ = [
     "_Server",
     "_manager",
     "_conversations",
+    "_active_inbox_waits",
     "_rejected",
     "started_payload",
     "invocation_request_error",
@@ -925,6 +935,7 @@ __all__ = [
     "long_wait_enabled",
     "_restrict_wait_windows",
     "WAIT_AGAIN",
+    "ALREADY_WAITING",
     "WAIT_NEXT",
     "NATIVE_SEAT_NEXT",
     "WAIT_SECONDS",

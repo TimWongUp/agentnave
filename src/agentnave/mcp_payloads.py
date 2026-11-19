@@ -246,7 +246,7 @@ class FollowUpPayload(TypedDict):
 
 
 class WaitPayload(TypedDict):
-    reason: Literal["ready", "wait_elapsed", "nothing_pending"]
+    reason: Literal["ready", "wait_elapsed", "nothing_pending", "already_waiting"]
     pending_ids: list[str]
     all_finished: bool
     updates: list[InvocationPayload]
