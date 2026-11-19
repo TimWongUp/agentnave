@@ -212,13 +212,13 @@ function createBoss() {
   rec.meets = h("div.boss-side");
   el.boss.replaceChildren(
     h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state, AN.voice?.workspaceListen),
-    h(
+    (rec.row = h(
       "div.boss-row",
       {},
       // no speech bubble: the label below already says what the boss is waiting for
       h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.cli, rec.st)),
       rec.meets,
-    ),
+    )),
   );
   el.boss.onclick = () => {
     if (typeof ChatTerminal !== "undefined" && ChatTerminal?.openBoss?.()) return;
@@ -598,23 +598,48 @@ function updateRoom(rec, r, ctx) {
   }
   reconcile(rec.scene, nodes);
 }
-// What one desk's scene measures: read off a desk, or, with none open, worked out from the grid
-// the next desk would join (--cols follows the floor's width in CSS).
+// What one desk's scene would measure if nothing held it back: read off a desk's card (the cap set
+// below narrows only the scene inside it, so it never feeds back), or, with none open, worked out
+// from the grid the next desk would join (--cols follows the floor's width in CSS).
 const DESK_FRAME = 18; // a desk's side padding and border around its scene
+const DESK_PAD = 16; // the same padding alone, inside the card's border
 function deskSceneWidth() {
-  const scene = el.desks.querySelector(".desk > .scene");
-  if (scene) return scene.offsetWidth;
+  const desk = el.desks.querySelector(".desk");
+  if (desk) return desk.clientWidth - DESK_PAD;
   const grid = getComputedStyle(el.desks);
   const cols = parseInt(grid.getPropertyValue("--cols"), 10) || 1;
   const gap = parseFloat(grid.columnGap) || 0;
   return (el.desks.clientWidth - gap * (cols - 1)) / cols - DESK_FRAME;
 }
+// The boss is always this many desks wide, so boss and staff keep one scale on every floor.
+const BOSS_SCALE = 1.3;
+const MEETINGS_MIN = 225; // the meetings panel's narrowest width beside the boss, as in chat.css
+// How wide the boss's scene may grow: its whole row, less the meetings panel when that sits beside
+// it. When the boss would have to shrink to keep the panel beside it, the panel moves below instead.
+function bossRoom(natural) {
+  const row = state.bossRec?.row;
+  if (!row?.isConnected) return 0;
+  const width = row.clientWidth;
+  const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+  const meets = !state.bossRec.meets.hidden;
+  const fits = width - gap - MEETINGS_MIN >= natural * BOSS_SCALE;
+  row.classList.toggle("stack", meets && !fits);
+  const beside = meets && fits && getComputedStyle(row).gridTemplateColumns.trim().split(/\s+/).length > 1;
+  return width - (beside ? gap + MEETINGS_MIN : 0);
+}
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
-// The boss's scene takes a desk's size too, so it grows and shrinks with the row.
+// The boss's scene is BOSS_SCALE desks; on a floor too narrow for that the desks give way instead.
 function layoutRooms() {
   let complete = true;
-  const deskWidth = deskSceneWidth();
-  const bossWidth = deskWidth > 0 ? `${Math.round(deskWidth * 1.3)}px` : "";
+  const natural = deskSceneWidth();
+  const room = bossRoom(natural);
+  const deskWidth = natural > 0 && room > 0 ? Math.min(natural, room / BOSS_SCALE) : natural;
+  const cap = deskWidth > 0 && deskWidth < natural ? `${Math.floor(deskWidth)}px` : "";
+  if ((state.deskCap ?? "") !== cap) {
+    state.deskCap = cap;
+    el.desks.style.setProperty("--desk-scene", cap);
+  }
+  const bossWidth = deskWidth > 0 ? `${Math.round(deskWidth * BOSS_SCALE)}px` : "";
   if (state.bossRec && state.bossRec.scene.style.width !== bossWidth)
     state.bossRec.scene.style.width = bossWidth;
   // Desks scale with the floor, so seats take the size their figures have at the desks.

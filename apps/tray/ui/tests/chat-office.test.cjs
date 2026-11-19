@@ -57,7 +57,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
     ResizeObserver: class { constructor(callback) { resize = callback; } observe() {} },
     requestAnimationFrame: callback => frames.push(callback),
     getComputedStyle: () => ({ getPropertyValue: () => " 3", columnGap: "10px" }),
-    el: { floor: {}, desks: { clientWidth: 920, querySelector: selector => selector === ".desk > .scene" && deskWidth ? { offsetWidth: deskWidth } : null } },
+    el: { floor: {}, desks: { clientWidth: 920, querySelector: selector => selector === ".desk" && deskWidth ? { clientWidth: deskWidth + 16 } : null } },
     state: { bossRec: { scene: { style } }, roomRecs: new Map() },
     FIG: 100,
   });

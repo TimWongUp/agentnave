@@ -173,23 +173,25 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 
 /* ---- painted scene: chair → character → desk → laptop → lid logo, one 1536×1200 stage ---- */
 .scene { position: relative; aspect-ratio: 1536 / 1200; max-width: 250px; margin-inline: auto; }
-/* chat-office.js sets the width, 1.3 desks; 250px only holds until the first layout */
-.boss-zone .scene { width: 250px; max-width: 100%; margin-top: 10px; margin-bottom: -10px; }
+/* chat-office.js sets the width, 1.3 desks (and narrows the desks when that will not fit); 250px only holds until the first layout */
+.boss-zone .scene { width: 250px; max-width: none; margin-top: 10px; margin-bottom: -10px; }
 /* asymmetric boss office: boss desk on the left, meetings panel beside it; narrow floors stack them */
-.boss-row { display: grid; grid-template-columns: minmax(185px, 235px) minmax(225px, 380px); justify-content: center; align-items: center; gap: 16px 24px; margin-top: 4px; }
+/* the boss column is as wide as its scene, which chat-office.js keeps at 1.3 desks */
+.boss-row { display: grid; grid-template-columns: auto minmax(225px, 380px); justify-content: center; align-items: center; gap: 16px 24px; margin-top: 4px; }
 .boss-mid { min-width: 0; }
 .boss-side { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px 10px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 52%, transparent); border: 1px solid var(--line); cursor: default; }
 .boss-side[hidden] { display: none; }
-.boss-row:has(> .boss-side[hidden]) { grid-template-columns: minmax(185px, 235px); }
+.boss-row:has(> .boss-side[hidden]) { grid-template-columns: auto; }
+/* chat-office.js stacks the meetings under the boss when beside it the boss would have to shrink */
+.boss-row.stack { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.boss-row.stack .boss-side { max-width: none; }
 .side-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 3 + 4px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 @container (max-width: 600px) {
-  .boss-row { grid-template-columns: minmax(170px, 195px) minmax(0, 1fr); gap: 12px 14px; }
-  .boss-zone .scene { max-width: 195px; }
+  .boss-row { grid-template-columns: auto minmax(225px, 1fr); gap: 12px 14px; }
 }
 @container (max-width: 489px) {
   .boss-row { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 10px; }
-  .boss-mid { width: min(230px, 100%); }
-  .boss-zone .scene { max-width: 230px; }
+  .boss-mid { max-width: 100%; }
   .boss-side { max-width: none; }
 }
 .l-chair, .l-desk { position: absolute; display: block; pointer-events: none; user-select: none; -webkit-user-drag: none; }
@@ -518,7 +520,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .boss-mid { position: relative; padding-top: 0; }
 /* the scene fills its card, so figure and desk grow and shrink together with the row; the 170px
    minimum card keeps them at least the size of --fig */
-.desk > .scene { width: 100%; max-width: none; }
+.desk > .scene { width: 100%; max-width: var(--desk-scene, none); }
 
 /* ---- meeting rooms: each seat brings its own stretch of table; layoutRooms() sets --S ---- */
 .mscene { --S: var(--fig); display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-end; gap: 22px 0; margin: 28px auto 4px; }
