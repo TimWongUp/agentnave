@@ -249,12 +249,24 @@ def test_unreachable_and_slow_endpoints_are_network_errors(endpoint: _Endpoint) 
     with pytest.raises(DecisionError) as raised:
         endpoint.client(timeout=0.2).decide("task", CANDIDATES)
     assert raised.value.code == "network" and KEY not in raised.value.message
+    assert len(endpoint.requests) == 2  # one retry, then the error
     url = endpoint.url
     endpoint.server.shutdown()
     endpoint.server.server_close()
     with pytest.raises(DecisionError) as refused:
         GeminiDecisionClient(KEY, url, 1).decide("task", CANDIDATES)
     assert refused.value.code == "network" and KEY not in refused.value.message
+
+
+def test_one_network_failure_is_retried(endpoint: _Endpoint) -> None:
+    def slow_once() -> Reply:
+        if len(endpoint.requests) == 1:
+            time.sleep(1)
+        return 200, {}, json.dumps(GOOD).encode()
+
+    endpoint.reply = slow_once
+    assert endpoint.client(timeout=0.2).decide("task", CANDIDATES).choice == "b"
+    assert len(endpoint.requests) == 2
 
 
 def test_decision_keys_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
