@@ -151,8 +151,11 @@ WAIT_AGAIN = (
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
 ALREADY_WAITING = (
-    "An inbox wait is already running (possibly in the background) and will return the results; "
-    "do not call wait again. To check progress or collect ready results now, call wait(wait_seconds=0)."
+    "An earlier blocking inbox wait for this chat is still running (in the background or an "
+    "earlier exec cell) and returns its results to that call: collect them there and do not "
+    "start another blocking wait. To check progress or collect ready results without blocking, "
+    "call wait(wait_seconds=0); if that call was abandoned, read results it already took with "
+    "read_conversation."
 )
 # A seat the host's own CLI owns starts nothing, so a dispatch receipt must not send the boss to wait.
 NATIVE_SEAT_NEXT = (

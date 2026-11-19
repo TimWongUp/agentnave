@@ -570,7 +570,7 @@ async def test_blocking_inbox_wait_does_not_stack_and_releases_on_cancel(
         assert stacked["pending_ids"] == [sleeping["invocation_id"]]
         assert stacked["all_finished"] is False
         assert stacked["updates"] == [] and stacked["rounds"] == []
-        assert stacked["next"] == f"{mcp_runtime.ALREADY_WAITING} Next wait: seq=3."
+        assert stacked["next"] == mcp_runtime.ALREADY_WAITING
 
         # wait(0), explicit ids waits, and other boss chats are unaffected.
         peek = await _call(client, "wait", {"manager_session_id": "chat-stack", "wait_seconds": 0})

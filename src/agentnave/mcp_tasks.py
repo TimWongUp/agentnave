@@ -746,7 +746,8 @@ async def wait(
     )
     if seq is not None:
         payload["seq"] = seq
-        if next_step := payload.get("next"):
+        # already_waiting tells the boss not to start another wait, so it gets no next seq.
+        if (next_step := payload.get("next")) and payload["reason"] != "already_waiting":
             payload["next"] = next_step + f" Next wait: seq={seq + 1}."
     return payload
 
