@@ -48,9 +48,8 @@
 <div id="banner" class="banner" role="status" hidden data-en="Connection interrupted, retrying…">读取中断，正在重试…</div>
 <div id="app" class="app" data-view="list">
   <aside id="side" class="side" aria-label="项目列表" data-en-label="Projects">
-    <div class="side-head"><h1 data-en="Projects">项目</h1><button id="cleanup" class="side-act" type="button" title="删除很久没有动静的 agent" data-en="Clean up…" data-en-title="Delete inactive agents">清理…</button></div>
+    <div class="side-head"><h1 data-en="Projects">项目</h1><button id="add-project" class="side-add-btn" type="button" aria-label="新建项目" data-en-label="New project" title="新建项目" data-en-title="New project">＋</button><button id="cleanup" class="side-act" type="button" title="删除很久没有动静的 agent" data-en="Clean up…" data-en-title="Delete inactive agents">清理…</button></div>
     <div class="gl-wrap"><div id="list" class="gl"></div></div>
-    <div class="side-foot"><button id="add-project" class="side-add" type="button" data-en="+ Add project">＋ 添加项目</button></div>
     <div class="split split-side" data-split="side" role="separator" aria-orientation="vertical" aria-label="调整项目列表宽度" data-en-label="Resize project list" tabindex="0"></div>
   </aside>
   <main id="pane" class="floor-wrap">
@@ -80,7 +79,6 @@
     <section id="voice-actions" class="voice-channel" aria-label="语音频道" data-en-label="Voice channel" hidden></section>
     <div id="timeline" class="tl" role="log" aria-label="消息" data-en-label="Messages" tabindex="0"><div id="tl-inner" class="tl-inner"></div></div>
     <button id="jump" class="jump" type="button" hidden data-en="New messages ↓">有新消息 ↓</button>
-    <div id="ro" class="ro" data-en="Read-only">只读</div>
   </aside>
 </div>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>

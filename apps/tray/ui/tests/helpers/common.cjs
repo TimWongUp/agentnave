@@ -26,7 +26,7 @@ function common(english = false) {
     setTimeout() {},
   });
   vm.runInContext(readFileSync(`${__dirname}/../../common.js`, "utf8"), context);
-  const api = Object.fromEntries(["L", "at", "pick", "MEMBER", "chatName", "copyButton", "deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames", "dayLabel", "clock", "fullTime"]
+  const api = Object.fromEntries(["L", "at", "pick", "MEMBER", "chatName", "shownName", "copyButton", "deskName", "deskParts", "handleOf", "fullHandle", "cliOf", "modelName", "setFullModelNames", "dayLabel", "clock", "fullTime"]
     .map(key => [key, context.window.AN[key]]));
   api.copied = copied;
   // Whether the shared contextmenu listener blocks WebKit's menu for this event and selection.

@@ -41,7 +41,7 @@ const {
 } = AN;
 
 const narrow = window.matchMedia("(max-width: 760px)");
-const overlay = window.matchMedia("(max-width: 860px)"); // the conversation slides over the floor
+const overlay = window.matchMedia("(max-width: 920px)"); // the conversation slides over the floor
 const reduceMotion = AN.reducedMotion;
 const FOLD_PX = 320; // a bubble taller than this is folded behind "展开全文"
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat

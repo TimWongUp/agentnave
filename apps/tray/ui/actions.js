@@ -107,8 +107,10 @@ const Actions = {};
     return new Promise((resolve) => {
       const field = input && h("input.act-input", { type: "text", value: input.value, "aria-label": input.label });
       const error = h("p.act-error", { role: "alert", hidden: true });
+      let focusButton = null;
       const row = h("div.act-buttons", {}, buttons.map((b) => {
         const button = h(`button${b.danger ? ".danger" : ""}${b.primary ? ".primary" : ""}`, { type: "button" }, b.label);
+        if (b.focus) focusButton = button;
         button.addEventListener("click", async () => {
           if (!b.value) return finish(null);
           if (!b.check) return finish(b.value);
@@ -128,7 +130,7 @@ const Actions = {};
         if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) row.querySelector(".primary")?.click();
       });
       dialog.showModal();
-      (field || row.querySelector(".primary") || row.querySelector("button")).focus();
+      (field || focusButton || row.querySelector(".primary") || row.querySelector("button")).focus();
       if (field) field.select();
     });
   }
@@ -527,7 +529,19 @@ const Actions = {};
       if (Array.isArray(result.projects)) state.projects = result.projects;
       state.listKey = null;
       await refresh();
-      if (result.project?.key) revealProject(result.project.key);
+      if (result.project?.key) {
+        revealProject(result.project.key);
+        const rec = state.heads?.get(`project:${result.project.key}`);
+        const anchor = rec?.add || rec?.el || button;
+        const rect = anchor?.getBoundingClientRect?.();
+        const event = {
+          clientX: rect?.width ? rect.left : 160,
+          clientY: rect?.width ? rect.bottom + 4 : 96,
+          preventDefault() {},
+          stopPropagation() {},
+        };
+        if (typeof ChatTerminal !== "undefined") ChatTerminal?.newAgent?.(event, result.project.path || result.project.key);
+      }
     } catch (error) {
       say(error.message || L("未能添加项目", "Failed to add project"), true);
     } finally {
@@ -559,9 +573,11 @@ const Actions = {};
     }
     const g = state.groupsData.find((x) => x.group === id);
     if (!g) return;
+    const endedTerm = typeof ChatTerminal !== "undefined" ? ChatTerminal?.exitedOf?.(id) : null;
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("agent", "agent")) },
+      endedTerm && { label: L("关闭终端", "Close terminal"), run: () => ChatTerminal.close(endedTerm.id) },
       g.handover === "pending"
         ? g.conversations && { label: L("取消交接", "Cancel handover"), run: () => cancelHandover(id) }
         : { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },
@@ -587,5 +603,5 @@ const Actions = {};
   $("cleanup").addEventListener("click", cleanup);
   $("add-project")?.addEventListener("click", addProject);
 
-  Object.assign(Actions, { picked, pick, workspaceMenu, projectMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say });
+  Object.assign(Actions, { picked, pick, ask, workspaceMenu, projectMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say });
 }

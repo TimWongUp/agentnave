@@ -117,7 +117,7 @@ function renderHead(c, n) {
   }
   const t = state.head;
   setText(t.title, shownName(c));
-  setText(t.sub, `${L(`boss 在 ${c.label} 里`, `boss in ${c.label}`)}${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
+  setText(t.sub, c.label);
   const dirs = c.isolated?.length || 0;
   t.iso.hidden = !dirs;
   setClass(t.iso, "pill act tone-idle");
@@ -208,22 +208,38 @@ function createBoss() {
     rec.desk,
     rec.laptop,
   );
-  // boss sits in the middle; recent chats on the left, meetings on the right
-  rec.chats = h("div.boss-side");
+  // boss sits on the left; meetings sit beside it (or below on narrow floors)
   rec.meets = h("div.boss-side");
   el.boss.replaceChildren(
     h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state, AN.voice?.workspaceListen),
     h(
       "div.boss-row",
       {},
-      rec.chats,
       // no speech bubble: the label below already says what the boss is waiting for
       h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.cli, rec.st)),
       rec.meets,
     ),
   );
-  el.boss.onclick = () => openScope({ kind: "all" }, el.boss);
+  el.boss.onclick = () => {
+    if (typeof ChatTerminal !== "undefined" && ChatTerminal?.openBoss?.()) return;
+    openScope({ kind: "all" }, el.boss);
+  };
   return rec;
+}
+function drawerVisible() {
+  if (!el.drawer) return true;
+  if (el.drawer.hidden) return false;
+  if (el.drawer.classList?.contains?.("folded") && !state.convPeek) return false;
+  return true;
+}
+function activeSelection() {
+  if (!drawerVisible()) return null;
+  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.showing?.()) return { kind: "boss" };
+  if (el.drawer?.classList?.contains?.("term-mode")) return { kind: "boss" };
+  if (state.drawer.kind === "all") return { kind: "boss" };
+  if (state.drawer.kind === "desk") return { kind: "desk", key: state.drawer.key };
+  if (state.drawer.kind === "room") return { kind: "room", id: state.drawer.id };
+  return null;
 }
 function handoverParts(c) {
   const parts = [];
@@ -308,12 +324,15 @@ function updateBoss(rec, c, n) {
   const notes = renderBossState(rec, handoverParts(c), c.took_over, model);
   const zhNote = notes.length ? `${notes.join("，")}，` : "";
   const enNote = notes.length ? `${notes.join(", ")}, ` : "";
+  const hasTerm = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.hasTerminal?.(c.group));
   setAttr(
     el.boss,
     "aria-label",
-    L(`boss 办公室，${zhNote}${rec.st.textContent}，查看全部消息`, `boss office, ${enNote}${rec.st.textContent}, view all messages`),
+    hasTerm
+      ? L(`boss 办公室，${zhNote}${rec.st.textContent}，查看终端`, `boss office, ${enNote}${rec.st.textContent}, view terminal`)
+      : L(`boss 办公室，${zhNote}${rec.st.textContent}，查看全部消息`, `boss office, ${enNote}${rec.st.textContent}, view all messages`),
   );
-  el.boss.classList.toggle("sel", state.drawer.kind === "all");
+  el.boss.classList.toggle("sel", activeSelection()?.kind === "boss");
 }
 
 // Once the new boss has spoken, a different former character hangs on the wall to its left.
@@ -327,28 +346,9 @@ function hangPortrait(rec, c, former) {
 }
 
 // ---------------------------------------------------------------- beside the boss
-// Private chats, without meeting seats (running first), and meetings (in session first) beside the boss.
+// Meetings (in session first, ended kept for reopening) beside the boss.
 function sideItems(c, ctx) {
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
-  const running = (d) => activities(d).some((a) => a.status === "running");
-  const chats = c.desks
-    .filter((d) => d.kind !== "seat")
-    .sort((a, b) => Number(running(b)) - Number(running(a)) || recent(a, b))
-    .map((d) => {
-      const s = deskMood(d, ctx);
-      const status = `${cliOf(d)} · ${s.word}`;
-      // A desk with a role is told by it, with its model and effort below; one without keeps the model in the name.
-      const { name: model, effort } = deskParts(d);
-      const shownModel = d.identity?.model_source === "unknown" ? "" : model;
-      return {
-        scope: { kind: "desk", key: d.key },
-        heads: [d],
-        name: d.role || deskName(d),
-        sub: (d.role && [shownModel, effort].filter(Boolean).join(" · ")) || status,
-        tone: running(d) ? "run" : s.mood === "failed" ? "bad" : "",
-        time: relTime(d.last_active),
-      };
-    });
   const meets = [...c.rooms]
     .sort((a, b) => Number(fullRoom(b)) - Number(fullRoom(a)) || recent(a, b))
     .map((r) => ({
@@ -359,7 +359,7 @@ function sideItems(c, ctx) {
       tone: urgent(r.status) ? "run" : r.status === "failed" ? "bad" : "",
       time: r.last_active ? relTime(r.last_active) : "",
     }));
-  return { chats, meets };
+  return { meets };
 }
 function sideList(node, title, items, empty) {
   // A relative time is patched in place; it never rebuilds the list.
@@ -397,8 +397,7 @@ function sideList(node, title, items, empty) {
   list.scrollTop = top;
 }
 function renderSides(rec, c, ctx) {
-  const { chats, meets } = sideItems(c, ctx);
-  sideList(rec.chats, L("私聊", "Private chats"), chats, L("还没有私聊", "No private chats yet"));
+  const { meets } = sideItems(c, ctx);
   sideList(rec.meets, L("会议", "Meetings"), meets, L("还没有开过会", "No meetings yet"));
 }
 
@@ -460,9 +459,10 @@ function updateDesk(rec, d, ctx) {
   dress(rec, deskChar(d), rec.scene, rec.desk);
   dressLid(rec, d.provider);
   rec.el.dataset.mood = s.mood;
+  const sel = activeSelection();
   setClass(
     rec.el,
-    `desk${s.away ? " away" : ""}${d.private_allowed === false ? " only" : ""}${state.drawer.kind === "desk" && state.drawer.key === d.key ? " sel" : ""}`,
+    `desk${s.away ? " away" : ""}${d.private_allowed === false ? " only" : ""}${sel?.kind === "desk" && sel.key === d.key ? " sel" : ""}`,
   );
   setSay(rec.say, s.say);
   const { name: bare, effort } = deskParts(d);
@@ -560,9 +560,10 @@ function seatMood(r, seat, d) {
 }
 function updateRoom(rec, r, ctx) {
   const [, tone] = pick(GROUP, AN.ongoing(r.status));
+  const sel = activeSelection();
   setClass(
     rec.el,
-    `zone room${state.closing.has(r.id) ? " closing" : ""}${state.drawer.kind === "room" && state.drawer.id === r.id ? " sel" : ""}`,
+    `zone room${state.closing.has(r.id) ? " closing" : ""}${sel?.kind === "room" && sel.id === r.id ? " sel" : ""}`,
   );
   setText(rec.title, r.title);
   setText(rec.state, roundText(r));

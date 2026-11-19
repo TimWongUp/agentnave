@@ -1042,8 +1042,8 @@
   const handleOf = (who) => localizedHandle(who.identity, fullModelNames() ? who.identity?.handle : who.identity?.handle_short) || deskName(who);
   const fullHandle = (who) => localizedHandle(who.identity, who.identity?.handle) || L("未记录身份，重连宿主后更新", "Identity not recorded; reconnect the host to update");
   const cliOf = (who) => who.identity?.cli || cliName(who.provider);
-  // A workspace is named by its first dispatch's title; where it runs is the boss's CLI and project.
-  const chatName = (g) => g.title || g.project || g.label;
+  // A workspace is named by its CLI/app display title or first dispatch's title; where it runs is the boss's CLI and project.
+  const chatName = (g) => g.display_title || g.title || g.project || g.label;
   // The title a reader sees: a workspace waiting for a new boss says so until one takes it over.
   const shownName = (g) => (g.handover === "pending" ? L(`「待接手」${chatName(g)}`, `[Handover] ${chatName(g)}`) : chatName(g));
   const chatPlace = (g) => [g.label, g.project !== chatName(g) && g.project].filter(Boolean).join(" · ");

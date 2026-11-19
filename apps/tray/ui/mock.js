@@ -791,6 +791,8 @@ All checks passed!
   const mockProjects = [];
   const handoverOf = (g) => mockHandovers.has(g.group) ? mockHandovers.get(g.group) : (g.group.startsWith("s-") ? q.get("handover") || null : null);
 
+  const displayTitleOf = (g) => g.convs.find((c) => c.mode === "task")?.title || g.convs[0]?.title || "";
+
   function chats() {
     const w = world();
     const rows = w.groups
@@ -801,9 +803,10 @@ All checks passed!
         const last = msgs[msgs.length - 1];
         const conv = [...g.convs].sort((a, b) => Math.max(...b.specs.map((s) => s.end ?? w.s)) - Math.max(...a.specs.map((s) => s.end ?? w.s)))[0];
         const preview = last ? clip((last.kind === "typing" ? plain(last.text).slice(-1) : plain(last.text).slice(0, 1)).join(" "), 90) : "";
+        const display_title = displayTitleOf(g);
         return {
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
-          handover: handoverOf(g), title: conv.title, title_id: conv.id, conversations: g.convs.length, preview,
+          handover: handoverOf(g), title: conv.title, display_title, title_id: conv.id, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
           isolated_count: isolatedOf(g, w).length,
           ...placeOf(g, w), boss_key: `${g.host}|${label(g)}`,
@@ -820,9 +823,10 @@ All checks passed!
     const { members, status } = summaryOf(g, w);
     const ho = handoverOf(g);
     const place = placeOf(g, w);
+    const display_title = displayTitleOf(g);
     return {
       group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status,
-      title: g.convs[0]?.title || "", title_id: g.convs[0]?.id || null, project: place.project_label,
+      title: g.convs[0]?.title || "", display_title, title_id: g.convs[0]?.id || null, project: place.project_label,
       handover: ho,
       took_over: ho === "changed" ? `${label(g)} 接手了 Claude Code` : null,
       previous_host: ho === "changed" ? "claude" : null,
@@ -1015,18 +1019,19 @@ All checks passed!
   const mockDecision = { document: null, error: null, key_set: false, key_error: null };
   // Terminals the office started (ADR-0103): the first one's CLI is the boss of the first workspace.
   const mockTerminals = [
-    { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app" },
-    { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs" },
+    { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: null },
+    { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs", display_title: null },
   ];
   function terminalPost(path, body) {
-    const id = Number(new URLSearchParams(path.split("?")[1] || "").get("session"));
+    const query = new URLSearchParams(path.split("?")[1] || "");
+    const id = Number(query.get("session"));
     const route = path.split("?")[0];
     if (route === "/app/terminal/pick") return { cwd: "/work/app" };
     if (route === "/app/terminal/start") {
       const manual = mockProjects.find((p) => p.key === body.cwd);
       const project = PLACES.find((p) => p.project_path === body.cwd)
         || (manual ? { project_key: manual.key, project_label: manual.label, project_path: manual.path } : { project_key: "other" });
-      const session = { id: mockTerminals.length + 1, provider: body.provider, cwd: body.cwd, exit: null, active: false, workspaces: [], ...project };
+      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: body.provider, cwd: body.cwd, exit: null, active: false, workspaces: [], display_title: null, ...project };
       mockTerminals.push(session);
       return { session };
     }
@@ -1034,14 +1039,20 @@ All checks passed!
     if (route === "/app/terminal/stop" && at >= 0) mockTerminals[at].exit = 0;
     if (route === "/app/terminal/close" && at >= 0) mockTerminals.splice(at, 1);
     if (route === "/app/terminal/resume") {
-      const workspace = new URLSearchParams(path.split("?")[1] || "").get("workspace");
-      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: "claude", cwd: "/work/app", exit: null, active: false, workspaces: [workspace], project_key: "/work/app" };
+      if (q.has("elsewhere") && query.get("confirm") !== "1") {
+        throw Object.assign(new Error("这段聊天正在Ghostty里打开（运行中）"), { status: 409, elsewhere: { app: "Ghostty", paused: false } });
+      }
+      const workspace = query.get("workspace");
+      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: "claude", cwd: "/work/app", exit: null, active: false, workspaces: [workspace], project_key: "/work/app", display_title: null };
       mockTerminals.push(session);
       return { session };
     }
     if (route === "/app/terminal/restart" && at >= 0) {
       const ended = mockTerminals[at];
       const resumes = ended.workspaces.length && ["claude", "codex"].includes(ended.provider);
+      if (resumes && q.has("elsewhere") && query.get("confirm") !== "1") {
+        throw Object.assign(new Error("这段聊天正在Ghostty里打开（运行中）"), { status: 409, elsewhere: { app: "Ghostty", paused: false } });
+      }
       const session = { ...ended, id: Math.max(...mockTerminals.map((t) => t.id)) + 1, exit: null, workspaces: resumes ? ended.workspaces : [] };
       mockTerminals.splice(at, 1, session);
       return { session };
@@ -1242,7 +1253,7 @@ All checks passed!
       const value = options.method === "POST" ? await post(path, JSON.parse(options.body || "{}")) : await p3Fetch(path);
       return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), { status: error.status || 500 });
+      return new Response(JSON.stringify({ error: error.message, ...(error.elsewhere ? { elsewhere: error.elsewhere } : {}) }), { status: error.status || 500 });
     }
   };
   // Static links and links created later follow the same routing as AN.href.
