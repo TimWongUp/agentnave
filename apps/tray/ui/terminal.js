@@ -2,17 +2,10 @@
 // The office's terminal frame (ADR-0103): the CLI named by ?session, shown beside the floor in
 // place of the messages. The office tells it when it is shown and when preferences change.
 document.addEventListener("DOMContentLoaded", () => {
-  const root = document.documentElement;
   const id = Number(new URLSearchParams(location.search).get("session"));
   const view = new TerminalView(id);
   AN.$("term").append(view.element);
   view.open();
-  const themed = () => {
-    root.style.setProperty("--term-bg", TerminalView.background());
-    view.restyle();
-  };
-  themed();
-  new MutationObserver(themed).observe(root, { attributes: true, attributeFilter: ["data-theme"] });
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent || event.data?.type !== "agentnave:terminal") return;
     if (event.data.action === "shown") {

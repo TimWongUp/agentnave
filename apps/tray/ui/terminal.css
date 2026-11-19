@@ -1,7 +1,6 @@
-/* One terminal, filling the frame the office gives it beside the floor (ADR-0103). Its
-   background follows the xterm theme in terminal-view.js. */
+/* One terminal, filling the frame the office gives it beside the floor (ADR-0103). The
+   background matches the single dark skin in terminal-view.js. */
 html, body { height: 100%; margin: 0; }
-body.terminal-page { overflow: hidden; background: var(--term-bg, var(--bg)); }
-.term { box-sizing: border-box; height: 100%; padding: 8px 4px 6px 12px; }
+body.terminal-page { overflow: hidden; background: #141414; }
+.term { box-sizing: border-box; height: 100%; padding: 14px 8px 10px 16px; }
 .tm-term { width: 100%; height: 100%; }
-.tm-term .xterm-viewport { scrollbar-color: var(--scrollbar) transparent; }

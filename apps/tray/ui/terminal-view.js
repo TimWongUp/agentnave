@@ -2,29 +2,19 @@
 // One CLI on the terminal page (ADR-0103): an xterm.js view that follows the App's output by long
 // polling /app/terminal/output and sends keys, binary mouse reports and size changes back.
 window.TerminalView = (() => {
-  const root = document.documentElement;
   const FONT = '"SF Mono", Menlo, Monaco, Consolas, "Noto Sans Mono CJK SC", monospace';
-  const THEMES = {
-    dark: {
-      background: "#141517", foreground: "#e6e6e8", cursor: "#f5f5f7", cursorAccent: "#141517",
-      selectionBackground: "#ffffff38", scrollbarSliderBackground: "#ffffff26",
-      scrollbarSliderHoverBackground: "#ffffff40", scrollbarSliderActiveBackground: "#ffffff55",
-      black: "#2a2c30", red: "#ff7d6e", green: "#7fca90", yellow: "#f0b45a", blue: "#6ea8ff",
-      magenta: "#b9a4f5", cyan: "#4fd6c9", white: "#d1d1d6",
-      brightBlack: "#6b7079", brightRed: "#ff9d91", brightGreen: "#9be0aa", brightYellow: "#f7c97f",
-      brightBlue: "#93bfff", brightMagenta: "#cfbfff", brightCyan: "#7fe6dc", brightWhite: "#f5f5f7",
-    },
-    light: {
-      background: "#fbfbfd", foreground: "#1d1d1f", cursor: "#1d1d1f", cursorAccent: "#fbfbfd",
-      selectionBackground: "#0a64e033", scrollbarSliderBackground: "#00000022",
-      scrollbarSliderHoverBackground: "#00000033", scrollbarSliderActiveBackground: "#00000044",
-      black: "#1d1d1f", red: "#b83d31", green: "#2f8a49", yellow: "#a06512", blue: "#2f6fe0",
-      magenta: "#7a54e0", cyan: "#087c73", white: "#6e6e73",
-      brightBlack: "#8a8f98", brightRed: "#d6584a", brightGreen: "#3fa35b", brightYellow: "#c4862a",
-      brightBlue: "#4f8cf0", brightMagenta: "#9673ee", brightCyan: "#1d9a90", brightWhite: "#3a3a3c",
-    },
+  // One dark skin in both App themes: Grok paints its own #141414 cells and Claude Code's default
+  // theme is drawn for dark backgrounds, so a light terminal would put dark slabs in a light frame.
+  // Text sits on a few steps of grey like Grok's; the hues are the office's status colours.
+  const THEME = {
+    background: "#141414", foreground: "#e1e1e1", cursor: "#c8c8c8", cursorAccent: "#141414",
+    selectionBackground: "#ffffff2e", scrollbarSliderBackground: "#ffffff1f",
+    scrollbarSliderHoverBackground: "#ffffff33", scrollbarSliderActiveBackground: "#ffffff47",
+    black: "#262626", red: "#ff7d6e", green: "#7fca90", yellow: "#f0b45a", blue: "#6ea8ff",
+    magenta: "#b9a4f5", cyan: "#4fd6c9", white: "#c8c8c8",
+    brightBlack: "#6c6c6c", brightRed: "#ff9d91", brightGreen: "#9be0aa", brightYellow: "#f7c97f",
+    brightBlue: "#93bfff", brightMagenta: "#cfbfff", brightCyan: "#7fe6dc", brightWhite: "#f0f0f0",
   };
-  const theme = () => THEMES[root.dataset.theme === "light" ? "light" : "dark"];
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const act = (path, body, type = "application/json") => fetch(path, {
     method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": type }, body,
@@ -41,9 +31,9 @@ window.TerminalView = (() => {
       this.element = document.createElement("div");
       this.element.className = "tm-term";
       this.term = new Terminal({
-        fontFamily: FONT, fontSize: 13, lineHeight: 1.18, cursorBlink: true, cursorStyle: "bar",
-        cursorWidth: 2, scrollback: 5000, macOptionClickForcesSelection: true,
-        drawBoldTextInBrightColors: false, theme: theme(),
+        fontFamily: FONT, fontSize: 13, lineHeight: 1.3, fontWeightBold: 600, cursorBlink: true,
+        cursorStyle: "bar", cursorWidth: 2, scrollback: 5000, macOptionClickForcesSelection: true,
+        drawBoldTextInBrightColors: false, theme: THEME,
       });
       this.fit = new FitAddon.FitAddon();
       this.term.loadAddon(this.fit);
@@ -71,8 +61,6 @@ window.TerminalView = (() => {
     }
 
     focus() { this.term.focus(); }
-
-    restyle() { this.term.options.theme = theme(); }
 
     hasSelection() { return this.term.hasSelection(); }
 
@@ -117,6 +105,5 @@ window.TerminalView = (() => {
       this.term.dispose();
     }
   }
-  TerminalView.background = () => theme().background;
   return TerminalView;
 })();
