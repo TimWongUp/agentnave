@@ -124,7 +124,7 @@ function tpDirectory(c, ctx) {
       weight: awaiting ? 0 : 2,
       time: m.time,
       tag: AN.L("交接", "Handover"),
-      title: m.speaker?.label || AN.L("工作区交接", "Workspace handover"),
+      title: m.speaker?.label || AN.L("agent 交接", "Agent handover"),
       faces: [],
       meta: "",
       line: m.text,
@@ -147,6 +147,7 @@ function tpDirectory(c, ctx) {
       item.note ? handoverNote(item.note) : null,
     );
     if (item.scope) card.onclick = () => openScope(item.scope, card);
+    if (item.scope?.kind === "room") card.addEventListener?.("contextmenu", (e) => Actions.roomMenu(item.scope.id, e));
     return card;
   });
   return [...cards, ...omitted];
@@ -184,11 +185,12 @@ function renderDirectory(c, ctx) {
     el.drIco.dataset.key = head;
     el.drIco.replaceChildren(hostTile(c.app || c.host, c.label));
   }
-  setText(el.drTitle, "boss");
+  setText(el.drTitle, AN.L("全部消息", "All messages"));
   setText(el.drSub, c.label);
+  setAttr(el.drSub, "title", null);
   el.drAll.hidden = true;
   el.jump.hidden = true;
-  setAttr(el.drawer, "aria-label", AN.L("boss 的对话", "boss conversations"));
+  setAttr(el.drawer, "aria-label", AN.L("全部消息", "All messages"));
   const key = JSON.stringify([
     document.documentElement.lang, c.group, c.handover, AN.chatName(c),
     Array.isArray(c.conversations) ? c.conversations.length : Boolean(c.conversations),
@@ -258,6 +260,7 @@ function renderIsolatedDrawer(c, ctx) {
   }
   setText(el.drTitle, L("隔离目录", "Isolated directories"));
   setText(el.drSub, shownName(c));
+  setAttr(el.drSub, "title", null);
   el.drAll.hidden = false;
   el.jump.hidden = true;
   setAttr(el.drawer, "aria-label", L("隔离目录", "Isolated directories"));

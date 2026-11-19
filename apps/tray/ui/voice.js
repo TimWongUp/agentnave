@@ -35,7 +35,7 @@
     };
     return { el: button, draw };
   }
-  const workspaceListen = listenButton("收听工作区", "Listen to workspace", () => group && { group });
+  const workspaceListen = listenButton("收听 agent", "Listen to agent", () => group && { group });
   const columnListen = listenButton("收听此列消息", "Listen to this column", () => group && (roomView || privateView) && { group, room: roomView?.id, desk: privateView, shown: deskListenShown });
   actions.append(roster, columnListen.el);
   let channelContext = null;

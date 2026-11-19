@@ -46,7 +46,7 @@ fn list_keeps_pending_workspaces_beyond_the_other_workspace_limit() {
         .map(|i| super::Group::new(format!("workspace-{i}")))
         .collect();
     groups[201].handover.pending = true;
-    let response = super::list_response(groups, &[]);
+    let response = super::list_response(groups, &[], &[]);
     let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let listed = body["groups"].as_array().unwrap();
     assert_eq!(listed.len(), 201);
@@ -231,6 +231,9 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
             dirs: &[],
             projects: &Default::default(),
             links: &[],
+            manual_projects: &[],
+            titles: &Default::default(),
+            renamed: &Default::default(),
         };
         let res = super::respond(
             path,
@@ -264,4 +267,143 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
 
     let chat = query("/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     assert_eq!(chat["desks"][0]["key"], "thread:other");
+    // No CLI name was read for this chat, and the title stays the conversation's own.
+    assert!(chat["cli_title"].is_null());
+    assert_eq!(chat["cli_title_custom"], false);
+
+    let renamed = std::collections::BTreeSet::new();
+    let titles = std::collections::HashMap::from([(
+        "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        crate::data::boss_app::CliTitle {
+            text: "Named in the CLI".to_owned(),
+            custom: true,
+        },
+    )]);
+    let places = super::Places {
+        dirs: &[],
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        titles: &titles,
+        renamed: &renamed,
+    };
+    for path in [
+        "/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/app/chats",
+    ] {
+        let res = super::respond(
+            path,
+            snapshots(),
+            true,
+            8,
+            &Default::default(),
+            &Default::default(),
+            &places,
+        );
+        let value: Value = serde_json::from_slice(&res.body).unwrap();
+        let group = if path == "/app/chats" {
+            value["groups"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|g| g["group"] == "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .unwrap()
+                .clone()
+        } else {
+            value
+        };
+        assert_eq!(group["cli_title"], "Named in the CLI", "{path}");
+        assert_eq!(group["cli_title_custom"], true, "{path}");
+        assert_eq!(group["display_title"], "Named in the CLI", "{path}");
+        assert!(group["title"].is_string(), "{path}");
+    }
+}
+
+/// An agent is shown by the first of these that exists: the name the user gave it in the App, the
+/// one the user gave in the CLI, the CLI's own, then the title the chat was dispatched with.
+#[test]
+fn an_agents_display_title_follows_the_order_of_names() {
+    use crate::data::boss_app::CliTitle;
+    let cli = |text: &str, custom| {
+        Some(CliTitle {
+            text: text.to_owned(),
+            custom,
+        })
+    };
+    let group = |cli_title: Option<CliTitle>, renamed: bool| {
+        let mut group = super::Group::new("s-x".to_owned());
+        group.title = "boss title".to_owned();
+        group.cli_title = cli_title;
+        group.renamed = renamed;
+        group
+    };
+    assert_eq!(group(None, false).display_title(), "boss title");
+    assert_eq!(group(cli("auto", false), false).display_title(), "auto");
+    assert_eq!(group(cli("mine", true), false).display_title(), "mine");
+    // Renamed in the App beats both of the CLI's names.
+    assert_eq!(group(cli("mine", true), true).display_title(), "boss title");
+    assert_eq!(
+        group(cli("auto", false), true).display_title(),
+        "boss title"
+    );
+    let value = group(cli("auto", false), false).header();
+    assert_eq!(value["display_title"], "auto");
+    assert_eq!(value["title"], "boss title");
+}
+
+#[test]
+fn untitled_dispatches_fall_back_to_first_prompt_line_before_project_name() {
+    use serde_json::{Value, json};
+
+    let make_snapshot = |id: &str, title: &str, prompt: &str, cwd: &str| {
+        let mut s = origin_snapshot(
+            id,
+            "task",
+            json!({
+                "created": "2026-11-12T00:00:00Z",
+                "tasks": [{"prompt": prompt, "cwd": cwd, "time": "2026-11-12T00:00:01Z"}],
+            }),
+        );
+        s.item.title = title.to_owned();
+        s
+    };
+    let places = super::Places {
+        dirs: &[],
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        titles: &Default::default(),
+        renamed: &Default::default(),
+    };
+    let long_prompt = format!("\n  {}  \n第二行不该出现", "a".repeat(70));
+    let res = super::respond(
+        "/app/chats",
+        vec![make_snapshot(
+            "c1",
+            "claude 任务",
+            &long_prompt,
+            "/work/proj",
+        )],
+        true,
+        8,
+        &Default::default(),
+        &Default::default(),
+        &places,
+    );
+    let body: Value = serde_json::from_slice(&res.body).unwrap();
+    let expected = format!("{}…", "a".repeat(60));
+    assert_eq!(body["groups"][0]["display_title"], expected);
+
+    // Without any prompt text, it still falls back to the project name.
+    let res_empty = super::respond(
+        "/app/chats",
+        vec![make_snapshot("c2", "claude 任务", "   \n  ", "/work/proj")],
+        true,
+        8,
+        &Default::default(),
+        &Default::default(),
+        &places,
+    );
+    let body_empty: Value = serde_json::from_slice(&res_empty.body).unwrap();
+    assert_eq!(body_empty["groups"][0]["display_title"], "proj");
 }

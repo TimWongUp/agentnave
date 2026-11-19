@@ -5,12 +5,11 @@ const vm = require("node:vm");
 
 const context = vm.createContext({ window: {}, Date });
 vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
-const { other, handover, caps, capSections, capFlat, placeBack } = context.window.ChatGroups;
+const { other, handover, caps, capSections } = context.window.ChatGroups;
 // Results come from another realm; copy them so deepEqual compares plain values.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const arrange = (...args) => plain(context.window.ChatGroups.arrange(...args));
 const cap = (...args) => plain(capSections(...args));
-const flat = (...args) => plain(capFlat(...args));
 const env = { urgent: status => status === "running" || status === "review", L: zh => zh };
 const must = g => env.urgent(g.status);
 
@@ -27,7 +26,7 @@ test("projects follow their latest activity, work going on leads inside a group,
     ws("c", "/w/new", "2026-11-12T00:00:00Z"),
     ws("d", "/w/old", "2026-11-11T00:00:00Z"),
     ws("e", "/w/old", "2026-11-09T00:00:00Z", "review"),
-  ], "project", env);
+  ], env);
   assert.deepEqual(sections.map(s => s.key), ["/w/new", "/w/old", other]);
   assert.deepEqual(sections[1].items.map(g => g.group), ["b", "e", "d"]);
   assert.equal(sections[2].title, "其他");
@@ -38,17 +37,30 @@ test("projects that share a name show where they are", () => {
     ws("a", "/w/app", "2026-11-12T00:00:00Z"),
     ws("b", "/x/app", "2026-11-11T00:00:00Z"),
     ws("c", "/w/lib", "2026-11-10T00:00:00Z"),
-  ], "project", env);
+  ], env);
   assert.deepEqual(sections.map(s => s.hint), ["/w/app", "/x/app", ""]);
 });
 
-test("boss groups use the boss key and the latest label", () => {
+test("manual projects appear even when empty, share name disambiguation, and merge with active projects", () => {
+  const projects = [
+    { key: "/w/solo", label: "solo", path: "/w/solo", added_at: Date.parse("2026-11-11T12:00:00Z") },
+    { key: "/w/app", label: "app", path: "/w/app", added_at: Date.parse("2026-11-01T00:00:00Z") },
+    { key: "/y/app", label: "app", path: "/y/app", added_at: Date.parse("2026-11-10T00:00:00Z") },
+    { key: other, label: "ignored", path: "" },
+  ];
   const sections = arrange([
-    ws("a", "/w/a", "2026-11-12T00:00:00Z", "idle", { boss_key: "claude|Claude Code", label: "Claude Code" }),
-    ws("b", "/w/b", "2026-11-13T00:00:00Z"),
-    ws("c", "/w/c", "2026-11-11T00:00:00Z", "idle", { boss_key: "claude|Claude Code", label: "Claude Code" }),
-  ], "boss", env);
-  assert.deepEqual(sections.map(s => [s.title, s.items.length]), [["Codex", 1], ["Claude Code", 2]]);
+    ws("a", "/w/app", "2026-11-12T00:00:00Z"),
+    ws("b", "/x/app", "2026-11-11T00:00:00Z"),
+  ], { ...env, projects });
+  assert.deepEqual(
+    sections.map(s => [s.key, s.manual, s.items.map(g => g.group), s.hint]),
+    [
+      ["/w/app", true, ["a"], "/w/app"],
+      ["/w/solo", true, [], ""],
+      ["/x/app", false, ["b"], "/x/app"],
+      ["/y/app", true, [], "/y/app"],
+    ],
+  );
 });
 
 test("a long list keeps its first groups and first entries, and counts each group whole", () => {
@@ -56,7 +68,7 @@ test("a long list keeps its first groups and first entries, and counts each grou
   for (let p = 0; p < 12; p++)
     for (let i = 0; i < 7; i++)
       groups.push(ws(`g${p}-${i}`, `/w/p${p}`, `2026-11-${String(20 - i).padStart(2, "0")}T00:00:00Z`));
-  const sections = arrange(groups, "project", env);
+  const sections = arrange(groups, env);
   const capped = cap(sections, { groupLimit: caps.groups, itemLimit: caps.items, must });
   assert.equal(capped.sections.length, caps.groups);
   assert.equal(capped.hiddenGroups, 2);
@@ -76,78 +88,43 @@ test("a group past the limit still shows what the cap may not hide", () => {
   const idle = ["idle", "idle", "idle", "idle", "idle", "idle", "idle", "idle"];
 
   // Work going on in a group past the limit keeps the group, at its own place in the order.
-  const running = cap(arrange([...ahead, ...deep([...idle.slice(1), "running"])], "project", env),
+  const running = cap(arrange([...ahead, ...deep([...idle.slice(1), "running"])], env),
     { groupLimit: caps.groups, itemLimit: caps.items, must });
   assert.deepEqual(running.sections.at(-1).key, "/w/deep");
   assert.deepEqual(running.sections.at(-1).shown.map(g => g.group), ["deep7", "deep0", "deep1", "deep2", "deep3"]);
   assert.equal(running.hiddenGroups, 0);
 
-  // The workspace already open comes along even when it sorts past the group's first entries.
-  const opened = cap(arrange([...ahead, ...deep(idle)], "project", env),
+  // The agent already open comes along even when it sorts past the group's first entries.
+  const opened = cap(arrange([...ahead, ...deep(idle)], env),
     { groupLimit: caps.groups, itemLimit: caps.items, must: g => g.group === "deep7" });
   assert.deepEqual(opened.sections.at(-1).shown.map(g => g.group), ["deep0", "deep1", "deep2", "deep3", "deep4", "deep7"]);
   assert.equal(opened.sections.at(-1).hidden, 2);
 
   // Nothing in it to keep: the group waits behind the "more" button.
-  const hidden = cap(arrange([...ahead, ...deep(idle)], "project", env), { groupLimit: caps.groups, itemLimit: caps.items, must });
+  const hidden = cap(arrange([...ahead, ...deep(idle)], env), { groupLimit: caps.groups, itemLimit: caps.items, must });
   assert.equal(hidden.sections.length, caps.groups);
   assert.equal(hidden.hiddenGroups, 1);
 });
 
-test("the ungrouped list keeps its first entries plus the ones it must show", () => {
-  const items = Array.from({ length: 40 }, (_, i) => ws(`g${i}`, "/w/p", "2026-11-12T00:00:00Z", i === 35 ? "review" : "idle"));
-  const capped = flat(items, { limit: caps.flat, must });
-  assert.equal(capped.items.length, caps.flat + 1);
-  assert.equal(capped.items.at(-1).group, "g35");
-  assert.equal(capped.hidden, items.length - capped.items.length);
-  const wider = flat(items, { limit: caps.flat + caps.flatStep, must });
-  assert.equal(wider.items.length, items.length);
-  assert.equal(wider.hidden, 0);
-});
-
 test("pending handovers move into a pinned top section without counting against the group cap", () => {
-  assert.equal(arrange([ws("a", "/w/app", "2026-11-12T00:00:00Z")], "project", env).some(s => s.key === handover), false);
+  assert.equal(arrange([ws("a", "/w/app", "2026-11-12T00:00:00Z")], env).some(s => s.key === handover), false);
 
   const byProject = arrange([
     ws("a", "/w/app", "2026-11-10T00:00:00Z", "idle", { handover: "pending" }),
     ws("b", "/w/app", "2026-11-12T00:00:00Z"),
     ws("c", "/w/solo", "2026-11-13T00:00:00Z", "running", { handover: "pending" }),
-  ], "project", env);
+  ], env);
   assert.deepEqual(byProject.map(s => [s.key, s.title, s.items.map(g => g.group)]), [
     [handover, "待接手", ["c", "a"]],
     ["/w/app", "app", ["b"]],
   ]);
 
-  const byBoss = arrange([
-    ws("a", "/w/a", "2026-11-10T00:00:00Z", "idle", { handover: "pending", boss_key: "claude|Claude Code", label: "Claude Code" }),
-    ws("b", "/w/b", "2026-11-12T00:00:00Z"),
-  ], "boss", env);
-  assert.deepEqual(byBoss.map(s => [s.key, s.items.map(g => g.group)]), [[handover, ["a"]], ["codex|Codex", ["b"]]]);
-
   const ahead = Array.from({ length: caps.groups }, (_, p) => ws(`p${p}`, `/w/p${p}`, `2026-11-${String(20 - p).padStart(2, "0")}T00:00:00Z`));
   const pending = Array.from({ length: caps.items + 2 }, (_, i) => ws(`h${i}`, "/w/h", `2026-11-0${9 - i}T00:00:00Z`, "idle", { handover: "pending" }));
-  const capped = cap(arrange([...ahead, ...pending], "project", env), {
+  const capped = cap(arrange([...ahead, ...pending], env), {
     groupLimit: caps.groups, itemLimit: caps.items, must: g => g.handover === "pending" || must(g),
   });
   assert.equal(capped.sections.length, caps.groups + 1);
   assert.equal(capped.hiddenGroups, 0);
   assert.equal(capped.sections[0].shown.length, pending.length);
-});
-
-test("a workspace leaving the handover section goes back by recency, the rest keep their places", () => {
-  const ranked = (...pairs) => pairs.map(([id, rank]) => ({ id, rank }));
-  const back = (order, items, ids) => plain(placeBack(order, items, new Set(ids)));
-  // Newest first from the server: new, mid, old; "old" was handed over, so it sat on top.
-  const items = ranked(["new", 2], ["mid", 2], ["old", 2]);
-  assert.deepEqual(back(["old", "new", "mid"], items, ["old"]), ["new", "mid", "old"]);
-  // Work going on still leads, and the other workspaces keep the order the reader saw.
-  const busy = ranked(["run", 1], ["new", 2], ["mid", 2], ["old", 2]);
-  assert.deepEqual(back(["new", "run", "mid", "old"], busy, ["new"]), ["run", "new", "mid", "old"]);
-  assert.deepEqual(back(["mid", "run", "new"], ranked(["run", 1], ["new", 2], ["mid", 2]), ["mid"]), ["run", "new", "mid"]);
-  // The shown order may lag the server's ("c" got news but kept its slot): never above a newer one.
-  const drifted = ranked(["c", 2], ["w", 2], ["a", 2], ["b", 2]);
-  assert.deepEqual(back(["a", "b", "c"], drifted, ["w"]), ["a", "b", "c", "w"]);
-  // Two leaving at once keep their order from the server, and nothing leaving changes nothing.
-  assert.deepEqual(back(["old", "new", "mid"], items, ["old", "new"]), ["new", "mid", "old"]);
-  assert.deepEqual(back(["mid", "new", "old"], items, []), ["mid", "new", "old"]);
 });

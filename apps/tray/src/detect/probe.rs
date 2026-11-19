@@ -42,7 +42,7 @@ pub(super) fn login_command(executable: &Path, args: &[&str]) -> Command {
 
 /// How a login shell hands its arguments to `exec`: fish keeps them in `$argv`, POSIX shells put
 /// the first in `$0`. Any other shell starts the CLI directly.
-pub(super) fn login_exec(shell: &Path) -> Option<&'static str> {
+pub(crate) fn login_exec(shell: &Path) -> Option<&'static str> {
     match shell.file_name()?.to_str()? {
         "fish" => Some("exec $argv"),
         "sh" | "bash" | "zsh" | "dash" | "ksh" => Some(r#"exec "$0" "$@""#),

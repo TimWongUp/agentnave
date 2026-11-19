@@ -1,40 +1,46 @@
 "use strict";
-// How the workspace list is grouped. The projection names each workspace's project and boss; the
-// order is decided here: groups by their latest activity, "other" last, and inside a group the
-// work going on first, then the most recent. A long list is capped the same way for both shapes.
+// How the sidebar list is grouped: always by project, with pending handovers pinned at top and
+// "other" last. Manual projects also appear as empty sections until they gain an agent.
 (() => {
   const OTHER = "other";
   const HANDOVER = ":handover";
-  const MODES = ["project", "boss", "none"];
   // How much of the list is shown before the reader asks for more, and how much one ask adds.
-  const CAPS = { groups: 10, groupStep: 10, items: 5, itemStep: 5, flat: 30, flatStep: 30 };
+  const CAPS = { groups: 10, groupStep: 10, items: 5, itemStep: 5 };
   const when = (g) => Date.parse(g.updated) || 0;
   const byText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-  function arrange(groups, mode, { urgent, L }) {
-    const keyOf = mode === "boss" ? (g) => g.boss_key || `${g.host}|${g.label}` : (g) => g.project_key || OTHER;
+  function arrange(groups, { projects = [], urgent, L }) {
     const pending = [];
     const buckets = new Map();
+    const manualByKey = new Map();
+    for (const project of projects || []) {
+      if (!project?.key || project.key === OTHER) continue;
+      manualByKey.set(project.key, project);
+      if (!buckets.has(project.key)) buckets.set(project.key, []);
+    }
     for (const g of groups) {
       if (g.handover === "pending") {
         pending.push(g);
         continue;
       }
-      const key = keyOf(g);
+      const key = g.project_key || OTHER;
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push(g);
     }
     const sections = [...buckets].map(([key, items]) => {
       items.sort((a, b) => (urgent(a.status) ? 0 : 1) - (urgent(b.status) ? 0 : 1) || when(b) - when(a) || byText(a.group, b.group));
-      const other = mode === "project" && key === OTHER;
+      const other = key === OTHER;
       const named = items.find((g) => g.project_label);
+      const manual = manualByKey.get(key) || null;
+      const latest = items.length ? Math.max(...items.map(when)) : Number(manual?.added_at) || 0;
       return {
         key,
         items,
         other,
-        latest: Math.max(...items.map(when)),
-        title: other ? L("其他", "Other") : mode === "boss" ? items[0].label : named?.project_label || key,
-        path: other || mode === "boss" ? "" : items.find((g) => g.project_path)?.project_path || "",
+        manual: Boolean(manual),
+        latest,
+        title: other ? L("其他", "Other") : named?.project_label || manual?.label || key,
+        path: other ? "" : items.find((g) => g.project_path)?.project_path || manual?.path || "",
       };
     });
     sections.sort((a, b) => Number(a.other) - Number(b.other) || b.latest - a.latest || byText(a.key, b.key));
@@ -49,6 +55,7 @@
         pinned: true,
         items: pending,
         other: false,
+        manual: false,
         latest: Math.max(...pending.map(when)),
         title: L("待接手", "Awaiting handover"),
         path: "",
@@ -59,7 +66,7 @@
   }
 
   // The entries a cap keeps from one list: the first `limit`, plus every entry `must` marks as one
-  // the cap may never hide (work waiting on the reader, or the workspace already open).
+  // the cap may never hide (work waiting on the reader, or the agent already open).
   function capped(items, limit, must) {
     return items.filter((g, i) => i < limit || must(g));
   }
@@ -83,28 +90,6 @@
     }
     return { sections: kept, hiddenGroups };
   }
-  // The same cap for the ungrouped list, which has no groups to keep.
-  function capFlat(items, { limit, must }) {
-    const shown = capped(items, limit, must);
-    return { items: shown, hidden: items.length - shown.length };
-  }
 
-  // A workspace that leaves the handover section goes back below everything the newest-first order of the
-  // list (items) puts ahead of it, not to the top slot it held while it waited; the rest keep their places.
-  function placeBack(order, items, back) {
-    const rank = new Map(items.map((x) => [x.id, x.rank]));
-    const at = new Map(items.map((x, i) => [x.id, i]));
-    const placed = order.filter((id) => !back.has(id));
-    for (const { id } of items.filter((x) => back.has(x.id))) {
-      const ahead = (o) => rank.get(o) < rank.get(id) || (rank.get(o) === rank.get(id) && at.get(o) < at.get(id));
-      let after = -1;
-      placed.forEach((o, i) => {
-        if (ahead(o)) after = i;
-      });
-      placed.splice(after + 1, 0, id);
-    }
-    return placed;
-  }
-
-  window.ChatGroups = { arrange, capSections, capFlat, placeBack, caps: CAPS, modes: MODES, other: OTHER, handover: HANDOVER };
+  window.ChatGroups = { arrange, capSections, caps: CAPS, other: OTHER, handover: HANDOVER };
 })();

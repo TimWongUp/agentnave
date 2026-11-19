@@ -691,8 +691,8 @@ All checks passed!
     const ho = handoverOf(g);
     if (ho) out.push({
       id: `${g.group}:handover`, time: stamp(w, w.s - 1), conversation: "", kind: "handover",
-      speaker: { role: "system", label: "工作区交接" },
-      text: ho === "pending" ? `${label(g)} 交出工作区，等待接手` : ho === "changed" ? `${label(g)} 交出工作区，Codex 已接手` : `${label(g)} 交出工作区，已由 Codex 接手`,
+      speaker: { role: "system", label: "agent 交接" },
+      text: ho === "pending" ? `${label(g)} 交出 agent，等待接手` : ho === "changed" ? `${label(g)} 交出 agent，Codex 已接手` : `${label(g)} 交出 agent，已由 Codex 接手`,
       detail: "下一步：评审三个 PR 后统一发版。\n说明按纯文本显示：<script>alert(1)</script>\n\n" + "保留已有改动，核对 CI 与正式发布产物。\n".repeat(25),
     });
     out.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
@@ -788,7 +788,10 @@ All checks passed!
   const placeOf = (g, w) => PLACES[w.groups.indexOf(g) % PLACES.length];
 
   const mockHandovers = new Map();
+  const mockProjects = [];
   const handoverOf = (g) => mockHandovers.has(g.group) ? mockHandovers.get(g.group) : (g.group.startsWith("s-") ? q.get("handover") || null : null);
+
+  const displayTitleOf = (g) => g.convs.find((c) => c.mode === "task")?.title || g.convs[0]?.title || "";
 
   function chats() {
     const w = world();
@@ -800,16 +803,17 @@ All checks passed!
         const last = msgs[msgs.length - 1];
         const conv = [...g.convs].sort((a, b) => Math.max(...b.specs.map((s) => s.end ?? w.s)) - Math.max(...a.specs.map((s) => s.end ?? w.s)))[0];
         const preview = last ? clip((last.kind === "typing" ? plain(last.text).slice(-1) : plain(last.text).slice(0, 1)).join(" "), 90) : "";
+        const display_title = displayTitleOf(g);
         return {
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
-          handover: handoverOf(g), title: conv.title, title_id: conv.id, conversations: g.convs.length, preview,
+          handover: handoverOf(g), title: conv.title, display_title, title_id: conv.id, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
           isolated_count: isolatedOf(g, w).length,
           ...placeOf(g, w), boss_key: `${g.host}|${label(g)}`,
         };
       })
       .sort((a, b) => (a.handover === "pending" ? -1 : URGENCY[a.status] ?? 2) - (b.handover === "pending" ? -1 : URGENCY[b.status] ?? 2) || Date.parse(b.updated) - Date.parse(a.updated));
-    return { groups: rows };
+    return { groups: rows, projects: structuredClone(mockProjects) };
   }
 
   function chat(group) {
@@ -819,9 +823,10 @@ All checks passed!
     const { members, status } = summaryOf(g, w);
     const ho = handoverOf(g);
     const place = placeOf(g, w);
+    const display_title = displayTitleOf(g);
     return {
       group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status,
-      title: g.convs[0]?.title || "", title_id: g.convs[0]?.id || null, project: place.project_label,
+      title: g.convs[0]?.title || "", display_title, title_id: g.convs[0]?.id || null, project: place.project_label,
       handover: ho,
       took_over: ho === "changed" ? `${label(g)} 接手了 Claude Code` : null,
       previous_host: ho === "changed" ? "claude" : null,
@@ -1012,7 +1017,77 @@ All checks passed!
     },
   };
   const mockDecision = { document: null, error: null, key_set: false, key_error: null };
+  // Terminals the office started (ADR-0103): the first one's CLI is the boss of the first workspace.
+  const mockTerminals = [
+    { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: null },
+    { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs", display_title: null },
+  ];
+  function terminalPost(path, body) {
+    const query = new URLSearchParams(path.split("?")[1] || "");
+    const id = Number(query.get("session"));
+    const route = path.split("?")[0];
+    if (route === "/app/terminal/pick") return { cwd: "/work/app" };
+    if (route === "/app/terminal/start") {
+      const manual = mockProjects.find((p) => p.key === body.cwd);
+      const project = PLACES.find((p) => p.project_path === body.cwd)
+        || (manual ? { project_key: manual.key, project_label: manual.label, project_path: manual.path } : { project_key: "other" });
+      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: body.provider, cwd: body.cwd, exit: null, active: false, workspaces: [], display_title: null, ...project };
+      mockTerminals.push(session);
+      return { session };
+    }
+    const at = mockTerminals.findIndex((t) => t.id === id);
+    if (route === "/app/terminal/stop" && at >= 0) mockTerminals[at].exit = 0;
+    if (route === "/app/terminal/close" && at >= 0) mockTerminals.splice(at, 1);
+    if (route === "/app/terminal/resume") {
+      if (q.has("elsewhere") && query.get("confirm") !== "1") {
+        throw Object.assign(new Error("这段聊天正在Ghostty里打开（运行中）"), { status: 409, elsewhere: { app: "Ghostty", paused: false } });
+      }
+      const workspace = query.get("workspace");
+      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: "claude", cwd: "/work/app", exit: null, active: false, workspaces: [workspace], project_key: "/work/app", display_title: null };
+      mockTerminals.push(session);
+      return { session };
+    }
+    if (route === "/app/terminal/restart" && at >= 0) {
+      const ended = mockTerminals[at];
+      const resumes = ended.workspaces.length && ["claude", "codex"].includes(ended.provider);
+      if (resumes && q.has("elsewhere") && query.get("confirm") !== "1") {
+        throw Object.assign(new Error("这段聊天正在Ghostty里打开（运行中）"), { status: 409, elsewhere: { app: "Ghostty", paused: false } });
+      }
+      const session = { ...ended, id: Math.max(...mockTerminals.map((t) => t.id)) + 1, exit: null, workspaces: resumes ? ended.workspaces : [] };
+      mockTerminals.splice(at, 1, session);
+      return { session };
+    }
+    return { ok: true };
+  }
+  function projectPost(path, body) {
+    if (path === "/app/projects/pick") return { cwd: "/work/sandbox" };
+    if (path === "/app/projects/add") {
+      const cwd = String(body.cwd || body.path || "").trim();
+      if (!cwd) throw Object.assign(new Error("文件夹不存在"), { status: 400 });
+      const known = PLACES.find((p) => p.project_key === cwd || p.project_path === cwd);
+      const key = known ? known.project_key : cwd;
+      const label = known?.project_label || cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || cwd;
+      const pathShown = known?.project_path || cwd;
+      const existing = mockProjects.find((p) => p.key === key);
+      if (existing) return { project: structuredClone(existing), added: false, projects: structuredClone(mockProjects) };
+      if (chats().groups.some((g) => g.project_key === key) || mockTerminals.some((t) => t.project_key === key)) {
+        return { project: { key, label, path: pathShown, added_at: Date.now() }, added: false, projects: structuredClone(mockProjects) };
+      }
+      const entry = { key, label, path: pathShown, added_at: Date.now() };
+      mockProjects.push(entry);
+      return { project: structuredClone(entry), added: true, projects: structuredClone(mockProjects) };
+    }
+    if (path === "/app/projects/remove") {
+      const idx = mockProjects.findIndex((p) => p.key === body.key);
+      if (idx >= 0) mockProjects.splice(idx, 1);
+      return { removed: idx >= 0, projects: structuredClone(mockProjects) };
+    }
+    throw Object.assign(new Error("404"), { status: 404 });
+  }
   async function p3Fetch(path) {
+    if (path === "/app/projects") return { projects: structuredClone(mockProjects) };
+    if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
+    if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider })) };
     if (path === "/app/provider-health") return { providers: structuredClone(mockHealth) };
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
@@ -1037,6 +1112,8 @@ All checks passed!
     return mockFetch(path);
   }
   async function post(path, body = {}) {
+    if (path.startsWith("/app/projects/")) return projectPost(path, body);
+    if (path.startsWith("/app/terminal/")) return terminalPost(path, body);
     if (path === "/app/voice/player") { mockPlayer = structuredClone(body); window.dispatchEvent(new CustomEvent("agentnave:voice-player", { detail: mockPlayer })); return { ok: true }; }
     if (path === "/app/voice/player/command") { window.dispatchEvent(new CustomEvent("agentnave:voice-command", { detail: body })); return { ok: true, opening: false }; }
     if (path.split("?")[0] === "/settings/members") return p3Fetch(path);
@@ -1096,7 +1173,7 @@ All checks passed!
     if (path === "/app/storage/open") return { opened: true };
     if (path === "/app/workspaces/handover") {
       mockHandovers.set(body.group, "pending");
-      return { id: body.group, status: "waiting", message: "已标为待接手。在任意宿主开一个新聊天，请它接手这个工作区" };
+      return { id: body.group, status: "waiting", message: "已标为待接手。在任意宿主开一个新聊天，请它接手这个 agent" };
     }
     if (path === "/app/workspaces/cancel-handover") {
       if (handoverOf({ group: body.group }) !== "pending") return { id: body.group, status: "not_pending", message: "已被接手或已取消，刷新后再看" };
@@ -1176,7 +1253,7 @@ All checks passed!
       const value = options.method === "POST" ? await post(path, JSON.parse(options.body || "{}")) : await p3Fetch(path);
       return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
     } catch (error) {
-      return new Response(JSON.stringify({ error: error.message }), { status: error.status || 500 });
+      return new Response(JSON.stringify({ error: error.message, ...(error.elsewhere ? { elsewhere: error.elsewhere } : {}) }), { status: error.status || 500 });
     }
   };
   // Static links and links created later follow the same routing as AN.href.

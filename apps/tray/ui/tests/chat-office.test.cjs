@@ -57,7 +57,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
     ResizeObserver: class { constructor(callback) { resize = callback; } observe() {} },
     requestAnimationFrame: callback => frames.push(callback),
     getComputedStyle: () => ({ getPropertyValue: () => " 3", columnGap: "10px" }),
-    el: { floor: {}, desks: { clientWidth: 920, querySelector: selector => selector === ".desk > .scene" && deskWidth ? { offsetWidth: deskWidth } : null } },
+    el: { floor: {}, desks: { clientWidth: 920, querySelector: selector => selector === ".desk" && deskWidth ? { clientWidth: deskWidth + 16 } : null } },
     state: { bossRec: { scene: { style } }, roomRecs: new Map() },
     FIG: 100,
   });
@@ -90,6 +90,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
   const chatContext = vm.createContext({
     AN: {}, state: { loaded: "ws-a", selected: "ws-b", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {}, readMessages() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}),
     renderHead() {}, renderConv() { drawer.hidden = false; }, renderSideToggle() {}, renderTicker() {},
     renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
@@ -402,6 +403,7 @@ function refreshing() {
   const context = vm.createContext({
     AN: { voice: { ingest() { calls.voice++; } } }, state: { loaded: null, selected: "ws", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {}, readMessages() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderSideToggle() {}, renderTicker() {},
     renderOffice() { calls.all++; }, showBlank() {}, renderList() { calls.list++; }, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => tick, timeDriven: () => busy,
@@ -635,22 +637,36 @@ test("a folded column peeks on its button or the window edge and leaves 300ms af
   assert.equal(attrs["data-conv-peek"], false, "a drag in progress does not open the drawer");
 });
 
-test("a private chat row is told by its role, with model and effort below, and falls back without them", () => {
+test("boss office keeps only the meetings list (including ended meetings) and omits the private chat list", () => {
+  const h = (tag, attrs = {}, ...children) => ({
+    tag, attrs, children: children.flat(Infinity).filter(x => x != null && x !== false),
+    dataset: {}, style: {}, listeners: {}, textContent: "",
+    replaceChildren(...items) { this.children = items.flat(); },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+  });
+  const boss = h("section#boss");
   const context = vm.createContext({
-    AN: { at: Date.parse, dozing: () => false }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} }, state: {}, el: {}, FIG: 100, L: zh => zh,
-    activities: () => [], cliOf: () => "Codex", relTime: () => "", fullRoom: () => false,
-    deskName: d => (d.effort ? `${d.model} · ${d.effort}` : d.model),
-    deskParts: d => ({ name: d.model, effort: d.effort || "" }),
+    AN: { at: Date.parse, dozing: () => false, ongoing: s => s }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} },
+    state: { groupsData: [], drawer: { kind: "all" } }, el: { boss }, FIG: 100, L: zh => zh, h,
+    ART: { head: d => d, url: p => p, version: () => 1 }, Laptop: { create: () => h("div.laptop") },
+    deskChar: d => d.key, activities: () => [], cliOf: () => "Codex", relTime: () => "刚刚", fullRoom: r => r.status === "running",
+    urgent: s => s === "running", pick: (_m, s) => [s, s], GROUP: {},
+    setText: (n, t) => { n.textContent = t; }, setAttr: (n, k, v) => { n.attrs[k] = v; },
   });
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
-  const row = d => context.sideItems({ desks: [{ kind: "private", last_active: "2026-11-14T00:00:00Z", ...d }], rooms: [] }, {}).chats[0];
-  const identity = { model_source: "native" };
-  assert.deepEqual([row({ key: "a", role: "接手方视角", model: "gpt-6.1-sol", effort: "high", identity }).name, row({ key: "a", role: "接手方视角", model: "gpt-6.1-sol", effort: "high", identity }).sub], ["接手方视角", "gpt-6.1-sol · high"]);
-  assert.equal(row({ key: "a", role: "r", model: "m", identity }).sub, "m", "no effort shows the model alone");
-  assert.equal(row({ key: "a", role: "r", model: "未记录模型", effort: "low", identity: { model_source: "unknown" } }).sub, "low", "a placeholder model is not shown");
-  assert.equal(row({ key: "a", role: "r", model: "未记录模型", identity: { model_source: "unknown" } }).sub, "Codex · 摸鱼", "nothing to show keeps the status line");
-  const plain = row({ key: "a", model: "m", effort: "high", identity });
-  assert.deepEqual([plain.name, plain.sub], ["m · high", "Codex · 摸鱼"], "without a role the row is as before");
+  const rec = context.createBoss();
+  assert.equal(rec.chats, undefined, "private chat side list is removed");
+  assert.ok(rec.meets, "meetings side list is kept");
+  const sides = context.sideItems(
+    {
+      desks: [{ key: "d1", kind: "task", last_active: "2026-11-14T00:00:00Z" }],
+      rooms: [{ id: "r1", title: "已结束评审", status: "idle", seats: [], last_active: "2026-11-14T00:00:00Z" }],
+    },
+    { desks: new Map() },
+  );
+  assert.equal("chats" in sides, false);
+  assert.equal(sides.meets.length, 1);
+  assert.equal(sides.meets[0].name, "已结束评审");
 });
 
 test("crossing a breakpoint drops both peeks before the page is drawn again", () => {
@@ -692,8 +708,10 @@ test("a folded drawer beside the floor keeps its conversation; the overlay's clo
 
 test("the folded-column breakpoints in the stylesheet are the complements of the script's queries", () => {
   const css = readFileSync(`${__dirname}/../chat.css`, "utf8");
-  assert.doesNotMatch(css, /@media \(min-width: (761|861)px\)|@media \(min-width: 861px\) and/, "min-width leaves a gap above max-width at fractional widths");
-  assert.match(css, /@media not all and \(max-width: 860px\)/);
+  const stateJs = readFileSync(`${__dirname}/../chat-state.js`, "utf8");
+  assert.match(stateJs, /matchMedia\("\(max-width: 920px\)"\)/);
+  assert.doesNotMatch(css, /@media \(min-width: (761|921)px\)|@media \(min-width: 921px\) and/, "min-width leaves a gap above max-width at fractional widths");
+  assert.match(css, /@media not all and \(max-width: 920px\)/);
   assert.match(css, /@media not all and \(max-width: 760px\)/);
 });
 
@@ -879,7 +897,7 @@ test("linked handover workspaces keep boss character intact and render plain sta
     handover_from: [{ status: "cleaned" }],
     messages: [],
   });
-  assert.deepEqual(app.rec.state.children, ["接手自原工作区（已清理）"]);
+  assert.deepEqual(app.rec.state.children, ["接手自原 agent（已清理）"]);
 
   const en = linkedOffice(true);
   en.update({
@@ -944,7 +962,7 @@ test("cleanup respects handover_ms, pending state, and expired empty_claimed wor
   await new Promise(r => setImmediate(r));
   // 30d default: s-recent-claim (10d claim), s-pending, s-empty-pending are excluded; s-old and s-empty-old qualify.
   const countLine = dialogNode.children.find(n => n?.tag === "p.act-note" && String(n.textContent).includes("没有动静。"));
-  assert.match(countLine.textContent, /有 2 个工作区超过 30 天没有动静/);
+  assert.match(countLine.textContent, /有 2 个 agent 超过 30 天没有动静/);
   const nextBtn = dialogNode.children.at(-1).children.at(-1);
   nextBtn.listeners.click();
   await new Promise(r => setImmediate(r));
@@ -958,4 +976,692 @@ test("cleanup respects handover_ms, pending state, and expired empty_claimed wor
   assert.equal(posts[1][0], "/app/workspaces/forget");
   assert.equal(posts[1][1].group, "s-empty-old");
   assert.equal(typeof posts[1][1].updated_before, "number");
+});
+
+test("ChatTerminal matches only the latest confirmed workspace and keeps exited dispatched terminals out of pending", async () => {
+  const node = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [],
+    classList: { toggle() {}, remove() {} },
+    setAttribute(k, v) { this.attributes[k] = v; },
+    append(...items) { this.children.push(...items); },
+    before() {}, after() {},
+    replaceChildren(...items) { this.children = items; },
+    addEventListener() {}, remove() {},
+  });
+  const h = (tag, attributes = {}, ...children) => Object.assign(node(tag), { attributes, children });
+  let sessions = [];
+  const drawer = node("aside");
+  let modes;
+  const drAll = Object.assign(node("button"), { after(first) { modes = first; } });
+  const tl = node("div");
+  const context = vm.createContext({
+    AN: {
+      h, L: zh => zh, load: async () => ({ sessions, cwd: "/repo" }),
+      cliName: p => p, hostTile: p => node(p), href: p => p,
+    },
+    el: {
+      drawer, drAll, tl, drIco: node("span"), drTitle: node("span"), drSub: node("span"), convToggle: node("button"),
+    },
+    state: { loaded: null, convCollapsed: false },
+    Actions: { openMenu() {}, say() {} },
+    go() {},
+    setText: (el, v) => { el.textContent = v; },
+    setAttr: (el, k, v) => { el.attributes[k] = v; },
+    addEventListener() {},
+    requestAnimationFrame() {},
+    location: { origin: "null" },
+    Date,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+  const { ChatTerminal } = context;
+
+  // Term 1 confirmed ws-old then ws-new and exited; Term 2 never confirmed any workspace and exited.
+  sessions = [
+    { id: 1, provider: "codex", cwd: "/repo/a", exit: 0, active: false, workspaces: ["ws-old", "ws-new"], project_key: "/repo/a" },
+    { id: 2, provider: "claude", cwd: "/repo/b", exit: 0, active: false, workspaces: [], project_key: "/repo/b" },
+    { id: 3, provider: "claude", cwd: "/repo/c", exit: null, active: true, workspaces: ["ws-prev", "ws-curr"], project_key: "/repo/c" },
+  ];
+  await ChatTerminal.refresh();
+
+  assert.deepEqual(ChatTerminal.pending().map(x => x.group), ["term-2"]);
+
+  // ws-old and ws-prev must NOT fall back to terminals whose latest workspace moved on.
+  const recPrev = { label: node(), term: null };
+  ChatTerminal.decorate(recPrev, { group: "ws-prev" });
+  assert.equal(recPrev.term.hidden, true);
+  const recCurr = { label: node(), term: null };
+  ChatTerminal.decorate(recCurr, { group: "ws-curr" });
+  assert.equal(recCurr.term.hidden, false);
+
+  ChatTerminal.column("ws-old");
+  assert.equal(modes.hidden, true);
+  ChatTerminal.column("ws-prev");
+  assert.equal(modes.hidden, true);
+  ChatTerminal.column("ws-new");
+  assert.equal(modes.hidden, false);
+  ChatTerminal.column("ws-curr");
+  assert.equal(modes.hidden, false);
+  assert.equal(ChatTerminal.follow("term-1"), "ws-new");
+  const recProject = { el: node("button"), section: { key: "/repo/a", pinned: false } };
+  ChatTerminal.headAction(recProject);
+  assert.equal(recProject.add.hidden, false);
+  const recPinned = { el: node("button"), section: { key: ":handover", pinned: true } };
+  ChatTerminal.headAction(recPinned);
+  assert.equal(recPinned.add.hidden, true);
+});
+
+test("sidebar ignores legacy groupBy storage, renders empty manual projects, reveals hidden added projects, and restricts remove menu", () => {
+  const classes = (set = new Set()) => ({
+    set,
+    add: (...names) => names.forEach(n => set.add(n)),
+    remove: (...names) => names.forEach(n => set.delete(n)),
+    toggle: (name, on) => (on ? set.add(name) : set.delete(name)),
+    contains: name => set.has(name),
+  });
+  const makeNode = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [],
+    classList: classes(), listeners: {},
+    setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+    append(...items) { this.children.push(...items.flat()); },
+    replaceChildren(...items) { this.children = items.flat(); },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    scrollIntoView() {},
+    closest: () => null,
+  });
+  const h = (tag, attrs = {}, ...children) => {
+    const el = Object.assign(makeNode(tag), {
+      attributes: { ...attrs },
+      children: children.flat(Infinity).filter(x => x != null && x !== false),
+    });
+    return el;
+  };
+  const els = new Map([["app", makeNode("div")], ["list", makeNode("div")]]);
+  const storage = new Map([
+    ["agentnave.office.groupBy", "boss"],
+    ["agentnave.office.fold.project:/w/deep", "1"],
+  ]);
+  const menuCalls = [];
+  const context = vm.createContext({
+    AN: {
+      h, $: id => els.get(id) || makeNode(id), L: zh => zh,
+      load: async () => ({}), href: p => p, GROUP: { idle: ["空闲", "idle"] },
+      pick: (_map, key) => ["空闲", key || "idle"], urgent: s => s === "running",
+      avatar: () => makeNode("span"), colorClass: () => "c0", relTime: () => "刚刚",
+      clock: () => "", fullTime: () => "", dayLabel: () => "",
+      setText: (el, v) => { el.textContent = v == null ? "" : String(v); },
+      setAttr: (el, k, v) => el.setAttribute(k, v),
+      setClass: (el, v) => { el.className = v; },
+      reconcile: (parent, nodes) => { parent.children = [...nodes]; },
+      stickyOrder: items => items, poll() {}, plain: x => x,
+      art: { character: () => "c" }, hostTile: () => makeNode("span"),
+      deskName: () => "", deskParts: () => [], handleOf: () => "", fullHandle: () => "",
+      cliOf: () => "", chatName: g => g.title || g.group, shownName: g => g.title || g.group,
+      activities: () => [], ongoing: s => s || "idle",
+    },
+    localStorage: {
+      getItem: k => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, v),
+      removeItem: k => storage.delete(k),
+    },
+    window: null,
+    document: { addEventListener() {}, documentElement: { lang: "zh" } },
+    location: { search: "", pathname: "/", hash: "" },
+    history: { pushState() {}, replaceState() {} },
+    ChatTerminal: {
+      headAction(rec) { rec.add ||= makeNode("span.gl-grp-add"); },
+      decorate() {},
+      menu() { return false; },
+    },
+    Actions: {
+      picked: new Set(), pick: () => false, workspaceMenu() {},
+      projectMenu(section) { menuCalls.push(section.key); },
+    },
+    addEventListener() {},
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    Avatars: null,
+    requestAnimationFrame() {}, setTimeout, clearTimeout, Date,
+  });
+  context.window = context;
+  vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
+  vm.runInContext(
+    `${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.state = state; globalThis.renderList = renderList; globalThis.revealProject = revealProject;`,
+    context,
+  );
+
+  const agent = (group, key, updated, boss = "codex") => ({
+    group, title: group, status: "idle", updated, label: boss === "claude" ? "Claude Code" : "Codex",
+    boss_key: `${boss}|${boss}`, host: boss, project_key: key, project_label: key.split("/").pop(),
+    project_path: key, preview: "", desks_count: 0, rooms_count: 0,
+  });
+  const groups = [
+    agent("g-codex", "/w/app", "2026-11-12T10:00:00Z", "codex"),
+    agent("g-claude", "/w/app", "2026-11-12T09:00:00Z", "claude"),
+  ];
+  for (let i = 0; i < 10; i++) {
+    groups.push(agent(`g-p${i}`, `/w/p${i}`, `2026-11-${String(11 - i).padStart(2, "0")}T00:00:00Z`));
+  }
+  context.state.groupsData = groups;
+  context.state.projects = [
+    { key: "/w/app", label: "app", path: "/w/app", added_at: Date.parse("2026-11-01T00:00:00Z") },
+    { key: "/w/solo", label: "solo", path: "/w/solo", added_at: Date.parse("2026-11-12T08:00:00Z") },
+    { key: "/w/deep", label: "deep", path: "/w/deep", added_at: Date.parse("2026-10-01T00:00:00Z") },
+  ];
+  context.renderList();
+
+  // Even with boss grouping saved in storage, both bosses under /w/app stay under one project header,
+  // and empty manual /w/solo appears without rendering the empty list message.
+  const list = els.get("list");
+  assert.equal(list.children.some(n => n.tag === "div.gl-empty"), false);
+  const headTitles = list.children.filter(n => n.tag === "button.gl-grp").map(n => n.children[1].textContent);
+  assert.deepEqual(headTitles.slice(0, 2), ["app", "solo"]);
+  assert.equal(headTitles.includes("deep"), false, "project past cap waits until revealed or expanded");
+
+  // Context menu opens only on empty manual headers, never on non-empty manual, auto, or clicking '+'.
+  for (const key of ["project:/w/app", "project:/w/p0", "project:/w/solo"]) {
+    const rec = context.state.heads.get(key);
+    for (const fn of rec.el.listeners.contextmenu) fn({ target: { closest: () => null } });
+  }
+  assert.deepEqual(menuCalls, ["/w/solo"]);
+  for (const fn of context.state.heads.get("project:/w/solo").el.listeners.contextmenu) {
+    fn({ target: { closest: sel => sel === ".gl-grp-add" } });
+  }
+  assert.deepEqual(menuCalls, ["/w/solo"]);
+
+  context.revealProject("/w/deep");
+  assert.equal(storage.has("agentnave.office.fold.project:/w/deep"), false);
+  assert.equal(context.state.heads.get("project:/w/deep").el.classList.contains("flash"), true);
+});
+
+test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and empty manual project removal", async () => {
+  const h = (tag, attributes = {}, ...children) => {
+    const kids = children.flat(Infinity).filter(x => x != null && x !== false);
+    const classes = new Set();
+    return {
+      tag, attributes, children: kids, disabled: false, hidden: Boolean(attributes.hidden), style: {},
+      classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, classes },
+      listeners: {}, textContent: kids.map(k => (typeof k === "string" ? k : k.textContent || "")).join(""),
+      setAttribute(k, v) { this.attributes[k] = v; },
+      replaceChildren(...items) { this.children = items; },
+      addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+      append(...items) { this.children.push(...items); },
+      getBoundingClientRect: () => ({ width: 120, height: 40 }),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      contains: () => false,
+      focus() {},
+      remove() {},
+    };
+  };
+  const bodyChildren = [];
+  const posts = [];
+  const revealed = [];
+  const started = [];
+  let refreshes = 0;
+  let nextAddError = null;
+  const addBtn = h("button#add-project");
+  const cleanupBtn = h("button#cleanup");
+  const state = { groupsData: [], projects: [], listKey: "cached", order: [] };
+  const context = vm.createContext({
+    AN: {
+      h, $: id => (id === "add-project" ? addBtn : id === "cleanup" ? cleanupBtn : null),
+      L: zh => zh, load: async () => ({}), chatName: () => "",
+      post: async (path, body) => {
+        posts.push([path, body]);
+        if (path === "/app/projects/pick") return { cwd: "/tmp/repo/sub" };
+        if (path === "/app/projects/add") {
+          if (nextAddError) throw new Error(nextAddError);
+          const projects = [{ key: "/tmp/repo", label: "repo", path: "~/repo", added_at: 10 }];
+          return { project: projects[0], projects };
+        }
+        if (path === "/app/projects/remove") return { projects: [] };
+        return {};
+      },
+    },
+    document: {
+      body: { append(...nodes) { bodyChildren.push(...nodes); } },
+      addEventListener() {},
+      querySelectorAll: () => [],
+    },
+    window: { addEventListener() {} },
+    state,
+    refresh: async () => { refreshes++; },
+    renderList() {}, go() {}, openScope() {},
+    revealProject: key => revealed.push(key),
+    requestAnimationFrame: fn => setTimeout(fn, 0),
+    ChatTerminal: { newAgent: (_e, cwd) => started.push(cwd) },
+    setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../actions.js`, "utf8")}\nglobalThis.Actions = Actions;`, context);
+
+  const plain = v => JSON.parse(JSON.stringify(v));
+  const menu = bodyChildren.find(n => n.tag === "div.ctx");
+  const toast = bodyChildren.find(n => n.tag === "div.toast");
+  assert.ok(menu && toast);
+
+  await addBtn.listeners.click[0]();
+  assert.deepEqual(plain(posts), [
+    ["/app/projects/pick", {}],
+    ["/app/projects/add", { cwd: "/tmp/repo/sub" }],
+  ]);
+  assert.equal(state.projects.length, 1);
+  assert.equal(state.listKey, null);
+  assert.equal(refreshes, 1);
+  assert.deepEqual(plain(revealed), ["/tmp/repo"]);
+  // the CLI menu starts in the project's absolute folder, not its shortened display path
+  assert.deepEqual(plain(started), ["/tmp/repo"]);
+  assert.equal(addBtn.disabled, false);
+
+  nextAddError = "不在项目目录中";
+  await addBtn.listeners.click[0]();
+  assert.equal(addBtn.disabled, false);
+  assert.equal(toast.textContent, "不在项目目录中");
+  assert.equal(toast.classList.classes.has("bad"), true);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [{ group: "g1" }] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: false, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  assert.equal(menu.hidden, true);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.children[0].textContent, "移除项目");
+  menu.children[0].listeners.click[0]();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(plain(posts.at(-1)), ["/app/projects/remove", { key: "/tmp/repo" }]);
+  assert.deepEqual(plain(state.projects), []);
+  assert.equal(refreshes, 2);
+});
+
+test("clicking boss desk returns to terminal with focus, and at most one selection box follows the right column", async () => {
+  const makeClasses = () => {
+    const set = new Set();
+    return {
+      set,
+      add: (...n) => n.forEach(x => set.add(x)),
+      remove: (...n) => n.forEach(x => set.delete(x)),
+      toggle: (n, on) => { if (on === undefined ? !set.has(n) : on) set.add(n); else set.delete(n); },
+      contains: n => set.has(n),
+    };
+  };
+  const makeNode = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], style: {},
+    classList: makeClasses(), listeners: {},
+    setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+    append(...items) { this.children.push(...items.flat()); },
+    before() {}, after() {}, remove() {},
+    insertBefore(c, b) { c.parentNode = this; c.nextSibling = b; },
+    replaceChildren(...items) { this.children = items.flat(); },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    focus() { this.focused = true; },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ width: 100, height: 100 }),
+  });
+  const h = (tag, attrs = {}, ...children) => Object.assign(makeNode(tag), {
+    attributes: { ...attrs }, children: children.flat(Infinity).filter(x => x != null && x !== false),
+  });
+  const posted = [];
+  const drawer = makeNode("aside");
+  let modes;
+  const drAll = Object.assign(makeNode("button"), {
+    after(first) { modes = first; },
+  });
+  const frameProto = () => {
+    const f = makeNode("iframe");
+    f.dataset.loaded = "1";
+    f.contentWindow = { postMessage: (msg) => posted.push(msg) };
+    return f;
+  };
+  const el = {
+    app: makeNode("div"),
+    boss: makeNode("section#boss"),
+    desks: Object.assign(makeNode("div"), { clientWidth: 600 }),
+    rooms: makeNode("div"),
+    fx: makeNode("div"),
+    deskCount: makeNode("span"),
+    head: makeNode("header"),
+    drawer,
+    drAll,
+    tl: makeNode("div"),
+    drIco: makeNode("span"),
+    drTitle: makeNode("span"),
+    drSub: makeNode("span"),
+    convToggle: makeNode("button"),
+  };
+  const state = {
+    selected: "ws-1", loaded: "ws-1", groupsData: [], drawer: { kind: "all" },
+    bossRec: null, deskRecs: new Map(), roomRecs: new Map(), seatRecs: new Map(),
+    away: new Map(), closing: new Map(), known: new Set(), ready: true, convCollapsed: false, convPeek: false,
+  };
+  const ctxObj = {
+    c: null, seatDesk: new Map(), desks: new Map([["d1", { key: "d1", provider: "codex", model: "gpt-6.1", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" }]]),
+    drawn: new Set(["d1"]), aliases: new Map(), rooms: new Map(), fullRooms: new Set(), sources: new Set(),
+  };
+  const context = vm.createContext({
+    AN: {
+      h, L: zh => zh, at: Date.parse, dozing: () => false, ongoing: s => s,
+      load: async () => ({ sessions: [{ id: 7, provider: "claude", cwd: "/repo", exit: null, active: true, workspaces: ["ws-1"], display_title: null }], cwd: "/repo" }),
+      cliName: p => (p === "claude" ? "Claude Code" : p),
+      hostTile: p => makeNode(p), href: p => p, activities: () => [],
+      GROUP: { idle: ["空闲", "idle"] }, pick: () => ["空闲", "idle"], urgent: () => false,
+    },
+    h, L: zh => zh, el, state, FIG: 100,
+    ART: { character: () => "c", figure: makeNode, head: makeNode, lid: makeNode, url: p => p, version: () => 1, canWarp: () => false },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { openMenu() {}, say() {}, roomMenu() {} },
+    activities: () => [], cliOf: () => "Codex", deskChar: () => "c", deskName: d => d.model, deskParts: d => ({ name: d.model, effort: "" }),
+    fullHandle: d => d.key, relTime: () => "刚刚", fullTime: () => "2026", chatName: g => g.display_title || g.title || g.label,
+    shownName: g => g.display_title || g.title || g.label,
+    setText: (n, v) => { n.textContent = v; },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const cls of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(cls);
+    },
+    reconcile: (p, nodes) => { p.children = nodes; },
+    setCollapsed(on) { state.convCollapsed = on; },
+    openScope(scope) { state.drawer = scope; context.ChatTerminal.readMessages(); context.renderAll(state.chat); },
+    go() {},
+    window: { addEventListener() {} },
+    ResizeObserver: class { observe() {} },
+    getComputedStyle: () => ({ getPropertyValue: () => "2", columnGap: "10px" }),
+    requestAnimationFrame: fn => fn(),
+    addEventListener() {},
+    location: { origin: "null" },
+    Date,
+    overlay: { matches: false },
+  });
+  context.h = (tag, attrs = {}, ...children) => (tag.startsWith("iframe") ? frameProto() : h(tag, attrs, ...children));
+  context.AN.h = context.h;
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+
+  const chat = {
+    group: "ws-1", host: "claude", label: "Claude Code", display_title: "统一标题", project: "repo",
+    desks: [{ key: "d1", provider: "codex", model: "gpt-6.1", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" }],
+    rooms: [], messages: [],
+  };
+  state.chat = chat;
+  context.renderAll = (c) => {
+    context.ChatTerminal.prepare(c.group, c.host);
+    context.ChatTerminal.column(c.group, c.host);
+    context.renderOffice(c, ctxObj, { running: 0, review: 0 }, false);
+  };
+  await context.ChatTerminal.refresh();
+  context.renderAll(chat);
+
+  const deskEl = state.deskRecs.get("d1").el;
+  const selCount = () => [el.boss.classList.contains("sel"), deskEl.classList.contains("sel")].filter(Boolean).length;
+
+  assert.equal(drawer.classList.contains("term-mode"), true);
+  assert.equal(el.drTitle.textContent, "boss");
+  assert.equal(el.drSub.textContent, "Claude Code");
+  assert.equal(el.drSub.attributes.title, "/repo");
+  assert.equal(el.boss.classList.contains("sel"), true, "terminal mode highlights boss office");
+  assert.equal(selCount(), 1);
+
+  // Clicking a desk switches right column to messages and highlights ONLY that desk.
+  deskEl.listeners.click[0]();
+  assert.equal(drawer.classList.contains("term-mode"), false);
+  assert.equal(deskEl.classList.contains("sel"), true);
+  assert.equal(el.boss.classList.contains("sel"), false);
+  assert.equal(selCount(), 1);
+
+  // Switching back via mode toggle highlights boss office again, clearing desk highlight.
+  modes.children[1].listeners.click[0]();
+  assert.equal(drawer.classList.contains("term-mode"), true);
+  assert.equal(el.boss.classList.contains("sel"), true);
+  assert.equal(deskEl.classList.contains("sel"), false);
+  assert.equal(selCount(), 1);
+
+  // Clicking boss desk from messages mode returns to terminal and sends "shown" to focus it.
+  deskEl.listeners.click[0]();
+  posted.length = 0;
+  el.boss.onclick();
+  assert.equal(drawer.classList.contains("term-mode"), true);
+  assert.equal(el.boss.classList.contains("sel"), true);
+  assert.equal(selCount(), 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ type: "agentnave:terminal", action: "shown" }]);
+
+  // When drawer is hidden, 0 selection highlights show on the floor.
+  drawer.hidden = true;
+  context.renderOffice(chat, ctxObj, { running: 0, review: 0 }, false);
+  assert.equal(selCount(), 0);
+});
+
+test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and exited header updates", async () => {
+  const node = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [],
+    classList: { set: new Set(), toggle(n, on) { if (on) this.set.add(n); else this.set.delete(n); }, contains(n) { return this.set.has(n); }, remove(n) { this.set.delete(n); } },
+    setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+    append(...items) { this.children.push(...items.flat()); },
+    before() {}, after() {}, remove() {},
+    replaceChildren(...items) { this.children = items.flat(); },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    listeners: {},
+  });
+  const h = (tag, attrs = {}, ...children) => Object.assign(node(tag), {
+    attributes: { ...attrs }, children: children.flat(Infinity).filter(x => x != null && x !== false),
+    textContent: children.flat(Infinity).filter(x => typeof x === "string").join(""),
+  });
+  let sessions = [
+    { id: 1, provider: "claude", cwd: "/repo/a", exit: null, active: true, workspaces: ["ws-idle"], display_title: null },
+    { id: 2, provider: "grok", cwd: "/repo/b", exit: null, active: true, workspaces: ["ws-grok"], display_title: null },
+    { id: 3, provider: "claude", cwd: "/repo/c", exit: null, active: true, workspaces: [], display_title: null },
+    { id: 4, provider: "claude", cwd: "/repo/d", exit: null, active: true, workspaces: ["ws-busy"], display_title: null },
+  ];
+  const calls = [];
+  const asks = [];
+  let nextAnswer = null;
+  let resume409 = true;
+  const msgListeners = [];
+  let stopButton;
+  const drAll = Object.assign(node("button"), { after(_modes, stop) { stopButton = stop; } });
+  const context = vm.createContext({
+    AN: {
+      h, L: zh => zh, load: async () => ({ sessions, cwd: "/repo" }),
+      cliName: p => ({ claude: "Claude Code", grok: "Grok" }[p] || p),
+      hostTile: p => node(p), href: p => p,
+      activities: d => d.activities || [],
+    },
+    el: {
+      app: node("div"), drawer: node("aside"), drAll, tl: node("div"),
+      drIco: node("span"), drTitle: node("span"), drSub: node("span"), convToggle: node("button"),
+    },
+    state: {
+      loaded: "ws-idle", selected: "ws-idle", convCollapsed: false,
+      groupsData: [{ group: "ws-busy", status: "running" }, { group: "ws-idle", status: "idle" }],
+      chat: { group: "ws-idle", desks: [] },
+    },
+    Actions: {
+      openMenu() {}, say() {},
+      ask: async (opts) => { asks.push(opts); return nextAnswer; },
+    },
+    fetch: async (url) => {
+      calls.push(url);
+      if (url.startsWith("/app/terminal/resume") && resume409 && !url.includes("confirm=1")) {
+        return {
+          ok: false, status: 409,
+          json: async () => ({ error: "这段聊天正在Ghostty里打开（运行中）", elsewhere: { app: "Ghostty", paused: false } }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ session: { id: 9, provider: "claude", cwd: "/repo/x", exit: null, active: true, workspaces: ["ws-x"] } }) };
+    },
+    go() {}, window: { refresh() {} }, refresh() {}, document: { documentElement: { lang: "zh", dataset: {} } },
+    setText: (el, v) => { el.textContent = v; },
+    setAttr: (el, k, v) => el.setAttribute(k, v),
+    addEventListener(name, fn) { if (name === "message") msgListeners.push(fn); },
+    requestAnimationFrame() {},
+    location: { origin: "null" },
+    Date,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+  await context.ChatTerminal.refresh();
+
+  // Idle resumable claude stops directly without confirmation.
+  await context.ChatTerminal.stop(1);
+  assert.equal(asks.length, 0);
+  assert.equal(calls.at(-1), "/app/terminal/stop?session=1");
+
+  // Un-dispatched, non-resumable grok, and resumable with running members all require confirmation with Cancel focused.
+  nextAnswer = null;
+  for (const [id, expectedReason] of [[3, "还没有派过活"], [2, "暂不支持"], [4, "仍有组员在运行"]]) {
+    asks.length = 0;
+    const before = calls.length;
+    await context.ChatTerminal.stop(id);
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].buttons[0].label, "取消");
+    assert.equal(asks[0].buttons[0].focus, true);
+    assert.equal(asks[0].buttons[1].label, "结束终端");
+    assert.ok(asks[0].body.some(p => p.textContent.includes(expectedReason)));
+    assert.equal(calls.length, before, "cancelling must not stop");
+  }
+
+  // Exited postMessage updates header immediately.
+  context.ChatTerminal.column("ws-idle", "claude");
+  assert.equal(stopButton.textContent, "结束终端");
+  assert.equal(context.el.drSub.textContent, "Claude Code");
+  msgListeners[0]({ data: { type: "agentnave:terminal", action: "exited", session: 1, code: 0 } });
+  assert.equal(context.el.drSub.textContent, "Claude Code · 已结束");
+  assert.equal(stopButton.textContent, "续接");
+
+  // 409 elsewhere confirm on resume: Cancel aborts, Continue resends with confirm=1.
+  sessions = [];
+  await context.ChatTerminal.refresh();
+  context.ChatTerminal.column("ws-new-resume", "claude");
+  asks.length = 0;
+  calls.length = 0;
+  nextAnswer = null;
+  stopButton.listeners.click[0]();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  assert.equal(asks.length, 1);
+  assert.ok(asks[0].body.some(p => p.textContent.includes("Ghostty") && p.textContent.includes("运行中")));
+  assert.deepEqual(JSON.parse(JSON.stringify(asks[0].buttons.map(b => b.label))), ["取消", "仍然续接"]);
+  assert.equal(calls.length, 1);
+
+  nextAnswer = { value: "confirm" };
+  stopButton.listeners.click[0]();
+  await new Promise(r => setImmediate(r));
+  await new Promise(r => setImmediate(r));
+  assert.equal(calls.length, 3);
+  assert.match(calls[2], /confirm=1/);
+});
+
+test("display_title unifies names across sidebar/office/right column, directory shows 全部消息 with room context menu, and exited workspace terminal can close", async () => {
+  const AN = common(false);
+  assert.equal(AN.chatName({ display_title: "CLI 标题", title: "旧标题", label: "Claude Code" }), "CLI 标题");
+  assert.equal(AN.chatName({ display_title: null, title: "旧标题", label: "Claude Code" }), "旧标题");
+  assert.equal(AN.shownName({ display_title: "CLI 标题", handover: "pending" }), "「待接手」CLI 标题");
+
+  const ui = auditUI();
+  const roomMenus = [];
+  ui.context.Actions.roomMenu = id => roomMenus.push(id);
+  ui.context.document = { documentElement: { lang: "zh" } };
+  ui.context.state.nodes = new Map();
+  ui.context.el = { drIco: ui.context.h("span"), drTitle: ui.context.h("span"), drSub: ui.context.h("span"), drAll: ui.context.h("button"), jump: ui.context.h("button"), drawer: ui.context.h("aside"), inner: ui.context.h("div"), tl: { scrollTop: 0 } };
+  ui.context.hostTile = () => ui.context.h("span");
+  ui.context.clock = () => "10:00";
+  ui.context.shownName = AN.shownName;
+  const ctx = {
+    rooms: new Map([["r1", { id: "r1", title: "方案评审", status: "idle", seats: [], pending_review: 0 }]]),
+    desks: new Map(),
+  };
+  ui.context.renderDirectory({ group: "g1", host: "claude", label: "Claude Code", display_title: "统一名称", messages: [] }, ctx);
+  assert.equal(ui.context.el.drTitle.textContent, "全部消息");
+  assert.equal(ui.context.el.drSub.textContent, "Claude Code");
+  const roomCard = ui.context.el.inner.children[0];
+  roomCard.listeners.contextmenu({});
+  assert.deepEqual(roomMenus, ["r1"]);
+});
+
+test("removing the last ended meeting recomputes boss office layout", () => {
+  const makeNode = (tag = "div") => {
+    const classSet = new Set();
+    return {
+      tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], style: {},
+      clientWidth: 560, offsetWidth: 100, isConnected: true, scrollTop: 0,
+      classList: {
+        set: classSet,
+        toggle(n, on) { const next = on === undefined ? !classSet.has(n) : Boolean(on); if (next) classSet.add(n); else classSet.delete(n); return next; },
+        contains(n) { return classSet.has(n); },
+        add(n) { classSet.add(n); },
+        remove(n) { classSet.delete(n); },
+      },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+      append(...items) { this.children.push(...items.flat()); },
+      insertBefore(child, before) { child.parentNode = this; child.nextSibling = before; },
+      replaceChildren(...items) { this.children = items.flat(); },
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      addEventListener() {},
+      remove() {},
+    };
+  };
+  const h = (tag, attrs = {}, ...children) => Object.assign(makeNode(tag), {
+    attributes: { ...attrs }, children: children.flat(Infinity).filter(x => x != null && x !== false),
+  });
+  const el = {
+    boss: makeNode("section"),
+    desks: Object.assign(makeNode("div"), { clientWidth: 560 }),
+    rooms: makeNode("div"),
+    fx: makeNode("div"),
+    deskCount: makeNode("span"),
+    office: makeNode("div"),
+    floor: makeNode("div"),
+  };
+  const state = {
+    groupsData: [],
+    bossRec: null, deskRecs: new Map(), roomRecs: new Map(), seatRecs: new Map(),
+    away: new Map(), closing: new Map(), known: new Set(), ready: true, drawer: { kind: "all" },
+  };
+  const context = vm.createContext({
+    AN: { h, L: zh => zh, at: Date.parse, ongoing: s => s, isHidden: () => false, dozing: () => false },
+    h, L: zh => zh, el, state, FIG: 100,
+    ART: { character: () => "c", figure: makeNode, head: makeNode, lid: makeNode, url: p => p, version: () => 1, canWarp: () => false },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { roomMenu() {} },
+    GROUP: { idle: ["空闲", "idle"] }, pick: () => ["空闲", "idle"], urgent: () => false,
+    activities: () => [],
+    cliOf: () => "Codex", deskChar: () => "c", deskName: d => d.model, deskParts: d => ({ name: d.model, effort: "" }),
+    fullHandle: d => d.key, relTime: () => "刚刚", fullTime: () => "2026", shownName: g => g.display_title || g.title || g.label,
+    setText: (n, v) => { n.textContent = v; },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const cls of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(cls);
+    },
+    reconcile: (p, nodes) => { p.children = nodes; },
+    openScope() {}, go() {}, window: { addEventListener() {} }, document: { documentElement: { classList: { contains: () => false } } },
+    ResizeObserver: class { observe() {} },
+    reduceMotion: { matches: false },
+    getComputedStyle: target => ({
+      getPropertyValue: () => "2",
+      columnGap: "10px",
+      gridTemplateColumns: target?.classList?.contains("stack") ? "1fr" : "1fr 225px",
+    }),
+    Date,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+  const ctx = {
+    desks: new Map(), drawn: new Set(), rooms: new Map([["r1", { id: "r1" }]]),
+  };
+  const chatWithEndedRoom = {
+    group: "ws-1", host: "claude", label: "Claude Code", display_title: "t",
+    desks: [{ key: "d1", provider: "codex", model: "gpt-6.1", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" }],
+    rooms: [{ id: "r1", title: "会", status: "succeeded", seats: [], last_active: "2026-11-19T00:00:00Z" }],
+    messages: [],
+  };
+  context.renderOffice(chatWithEndedRoom, ctx, { running: 0, review: 0 }, false);
+  assert.equal(state.bossRec.meets.hidden, false);
+  assert.equal(state.bossRec.row.classList.contains("stack"), true);
+
+  // Deleting the last ended meeting leaves 0 active and 0 ended rooms, and must recompute boss layout.
+  ctx.rooms.clear();
+  context.renderOffice({ ...chatWithEndedRoom, rooms: [] }, ctx, { running: 0, review: 0 }, false);
+  assert.equal(state.bossRec.meets.hidden, true);
+  assert.equal(state.bossRec.row.classList.contains("stack"), false);
+  assert.equal(state.bossRec.scene.style.width, "334px");
 });

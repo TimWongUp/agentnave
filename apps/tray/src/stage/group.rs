@@ -9,11 +9,14 @@ impl Group {
             host: None,
             handover: Handover::default(),
             app: None,
+            cli_title: None,
+            renamed: false,
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
             first_title: None,
             first_id: None,
+            first_prompt: None,
             origin: None,
             project_name: None,
             project: None,
@@ -52,6 +55,22 @@ impl Group {
     pub(super) fn manager_label(&self) -> &str {
         boss_label(self.host.as_deref(), self.app)
     }
+    /// The name shown for this agent everywhere: the user's own in the App, else the one the
+    /// user gave in the CLI, else the CLI's own, else the title the boss dispatched with (or the
+    /// first prompt, which is what an untitled dispatch is named by).
+    pub(super) fn display_title(&self) -> &str {
+        let cli = |custom: bool| {
+            self.cli_title
+                .as_ref()
+                .filter(|title| title.custom == custom)
+                .map(|title| title.text.as_str())
+        };
+        match cli(true).or_else(|| cli(false)) {
+            Some(named) if !self.renamed => named,
+            _ => &self.title,
+        }
+    }
+
     pub(super) fn header(&self) -> Value {
         let host = match &self.handover.host {
             Some(host) if self.handover.changed => Some(host.as_str()),
@@ -86,6 +105,9 @@ impl Group {
             "previous_label": previous_host.map(|_| previous),
             "handover_to": self.handover_to, "handover_from": self.handover_from,
             "project": self.project_name, "title": self.title,
+            "display_title": self.display_title(),
+            "cli_title": self.cli_title.as_ref().map(|title| &title.text),
+            "cli_title_custom": self.cli_title.as_ref().is_some_and(|title| title.custom),
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)
                 .or(self.first_id.as_ref().map(|(_, id)| id)),
             "color": self.color, "live": self.live, "status": self.status, "updated": self.updated,
@@ -336,10 +358,19 @@ impl Group {
         {
             self.first_title = Some((created, item.title.clone(), item.id.clone()));
         }
+        if let Some(prompt) = snapshot_first_prompt(snapshot, created)
+            && self
+                .first_prompt
+                .as_ref()
+                .is_none_or(|(c, _)| prompt.0 < *c)
+        {
+            self.first_prompt = Some(prompt);
+        }
         self.title = self
             .first_title
             .as_ref()
             .map(|(_, t, _)| t.clone())
+            .or_else(|| self.first_prompt.as_ref().map(|(_, p)| p.clone()))
             .or_else(|| self.project_name.clone())
             .unwrap_or_default();
         self.live |= snapshot.live;
@@ -879,4 +910,51 @@ fn handover_card(id: String, time: &str, text: &str, detail: Value, status: Opti
         message["status"] = json!(status);
     }
     message
+}
+
+fn prompt_title(raw: &str) -> Option<String> {
+    const LIMIT: usize = 60;
+    let line = raw.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let clean: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if clean.is_empty() {
+        return None;
+    }
+    let mut chars = clean.chars();
+    let head: String = chars.by_ref().take(LIMIT).collect();
+    Some(if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    })
+}
+
+fn snapshot_first_prompt(snapshot: &Snapshot, fallback: i64) -> Option<(i64, String)> {
+    let director = &snapshot.view["director"];
+    let mut best: Option<(i64, String)> = None;
+    let consider = |best: &mut Option<(i64, String)>, time: &str, raw: &str| {
+        let Some(title) = prompt_title(raw) else {
+            return;
+        };
+        let at = timestamp(time).unwrap_or(fallback);
+        if best.as_ref().is_none_or(|(b, _)| at < *b) {
+            *best = Some((at, title));
+        }
+    };
+    if snapshot.item.mode == "task" {
+        for task in array(director, "tasks") {
+            consider(&mut best, text(task, "time"), text(task, "prompt"));
+        }
+    } else {
+        for entry in array(director, "messages")
+            .filter(|entry| matches!(text(entry, "kind"), "task" | "host"))
+        {
+            consider(&mut best, text(entry, "time"), text(entry, "text"));
+        }
+        if best.is_none() {
+            for entry in array(director, "instructions") {
+                consider(&mut best, text(entry, "time"), text(entry, "text"));
+            }
+        }
+    }
+    best
 }

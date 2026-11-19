@@ -134,7 +134,7 @@ label:has(input[type="checkbox"]), label:has(input[type="radio"]) { user-select:
 .status { white-space: nowrap; color: var(--soft); }
 .status::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 7px 2px 0; border-radius: 50%; background: var(--muted); }
 .status.running { color: var(--run); }
-.status.review { color: var(--warn); }
+.status.review { color: var(--review); }
 .status.failed, .status.blocked, .status.interrupted { color: var(--bad); }
 .status.running::before, .status.review::before, .status.failed::before, .status.blocked::before, .status.interrupted::before { background: currentColor; }
 time { white-space: nowrap; font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--soft); }

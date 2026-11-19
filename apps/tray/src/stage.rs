@@ -10,10 +10,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+use crate::data::boss_app::CliTitle;
 use crate::data::snapshot::{Item, Snapshot};
 use crate::data_files::valid_id;
 use crate::isolated::{self, Dir};
-use crate::projects::Project;
+use crate::projects::{ManualProject, Project};
 use crate::response::Response;
 use crate::time_format::{iso, timestamp};
 
@@ -325,6 +326,10 @@ struct Group {
     handover: Handover,
     /// The boss chats in Claude Desktop's Code tab: shown as its own app, still the `claude` host.
     app: Option<&'static str>,
+    /// The name the boss's CLI gives this chat in its own session record, when readable.
+    cli_title: Option<CliTitle>,
+    /// The user renamed the conversation that names this chat.
+    renamed: bool,
     updated: String,
     at: i64,
     title: String,
@@ -333,6 +338,8 @@ struct Group {
     first_title: Option<(i64, String, String)>,
     /// The earliest conversation of all, renamed when no title names the workspace yet.
     first_id: Option<(i64, String)>,
+    /// The earliest non-empty prompt from a dispatch or meeting, used when no explicit title exists.
+    first_prompt: Option<(i64, String)>,
     /// The earliest dispatch's directory; its folder names the workspace when nothing else does.
     origin: Option<origin::Origin>,
     project_name: Option<String>,
@@ -495,6 +502,11 @@ pub(crate) struct Places<'a> {
     pub dirs: &'a [Dir],
     pub projects: &'a BTreeMap<String, Project>,
     pub links: &'a [WorkspaceLink],
+    pub manual_projects: &'a [ManualProject],
+    /// The CLI's own name for each workspace's boss chat.
+    pub titles: &'a HashMap<String, CliTitle>,
+    /// The conversations the user renamed in the App.
+    pub renamed: &'a BTreeSet<String>,
 }
 
 pub(crate) use origin::origin_cwds;
@@ -555,7 +567,7 @@ pub(crate) fn respond(
     if path == "/app/stage" {
         panel_response(groups, &snapshots, &stage_ids, data_exists)
     } else {
-        list_response(groups, &snapshots)
+        list_response(groups, &snapshots, places.manual_projects)
     }
 }
 
@@ -572,8 +584,13 @@ fn meaningful_title(title: &str) -> bool {
                     | "codex"
                     | "deepseek"
                     | "devin"
+                    | "gemini"
                     | "grok"
+                    | "hermes"
+                    | "opencode"
                     | "pi"
+                    | "workbuddy"
+                    | "zcode"
             )
         )
 }
@@ -688,6 +705,11 @@ fn unprojected_groups(
             }
         }
         group.app = apps.get(&group.id).copied();
+        group.cli_title = places.titles.get(&group.id).cloned();
+        group.renamed = group
+            .first_title
+            .as_ref()
+            .is_some_and(|(_, _, id)| places.renamed.contains(id));
         group.project = places.projects.get(&group.id).cloned();
         let running = running_cwds(snapshots, &group.sources);
         let builders = isolated_builders(snapshots, &group.sources);
@@ -766,7 +788,11 @@ fn panel_response(
     )
 }
 
-fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
+fn list_response(
+    groups: Vec<Group>,
+    snapshots: &[Snapshot],
+    manual_projects: &[ManualProject],
+) -> Response {
     let mut previews = PREVIEWS.lock().unwrap_or_else(|p| p.into_inner());
     let mut kept = HashMap::new();
     let mut other_count = 0;
@@ -824,5 +850,6 @@ fn list_response(groups: Vec<Group>, snapshots: &[Snapshot]) -> Response {
         })
         .collect();
     *previews = kept;
-    Response::json(&json!({"groups": groups}))
+    let projects = crate::projects::manual::values(manual_projects);
+    Response::json(&json!({"groups": groups, "projects": projects}))
 }

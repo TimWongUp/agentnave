@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 #[cfg(target_os = "macos")]
-pub(super) fn choose(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
+/// Asks for a folder. `can_create` lets the user make a new one in the panel, which only a
+/// folder that is to hold new work (a project) wants.
+pub(crate) fn choose(app: &tauri::AppHandle, can_create: bool) -> Result<Option<PathBuf>, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         // AppKit's modal panel and all borrowed Objective-C objects stay on the main thread.
@@ -15,6 +17,7 @@ pub(super) fn choose(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> 
             let _: () = msg_send![panel, setCanChooseFiles: Bool::NO];
             let _: () = msg_send![panel, setCanChooseDirectories: Bool::YES];
             let _: () = msg_send![panel, setAllowsMultipleSelection: Bool::NO];
+            let _: () = msg_send![panel, setCanCreateDirectories: Bool::new(can_create)];
             let result: isize = msg_send![panel, runModal];
             if result == 1 {
                 let url: *mut AnyObject = msg_send![panel, URL];
@@ -40,6 +43,9 @@ pub(super) fn choose(app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> 
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(super) fn choose(_app: &tauri::AppHandle) -> Result<Option<PathBuf>, String> {
-    Err("此平台暂不支持选择视频包文件夹".into())
+pub(crate) fn choose(
+    _app: &tauri::AppHandle,
+    _can_create: bool,
+) -> Result<Option<PathBuf>, String> {
+    Err("此平台暂不支持选择文件夹".into())
 }

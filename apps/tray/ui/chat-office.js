@@ -93,8 +93,8 @@ function renderHead(c, n) {
     state.headKey = c.group;
     const back = h(
       "a.back",
-      { href: href("/chat/"), "aria-label": L("返回工作区列表", "Back to workspaces") },
-      L("‹ 工作区", "‹ Workspaces"),
+      { href: href("/chat/"), "aria-label": L("返回项目列表", "Back to projects") },
+      L("‹ 项目", "‹ Projects"),
     );
     back.addEventListener("click", (e) => {
       e.preventDefault();
@@ -117,7 +117,7 @@ function renderHead(c, n) {
   }
   const t = state.head;
   setText(t.title, shownName(c));
-  setText(t.sub, `${L(`boss 在 ${c.label} 里`, `boss in ${c.label}`)}${c.project && c.project !== chatName(c) ? ` · ${c.project}` : ""}`);
+  setText(t.sub, c.label);
   const dirs = c.isolated?.length || 0;
   t.iso.hidden = !dirs;
   setClass(t.iso, "pill act tone-idle");
@@ -208,22 +208,38 @@ function createBoss() {
     rec.desk,
     rec.laptop,
   );
-  // boss sits in the middle; recent chats on the left, meetings on the right
-  rec.chats = h("div.boss-side");
+  // boss sits on the left; meetings sit beside it (or below on narrow floors)
   rec.meets = h("div.boss-side");
   el.boss.replaceChildren(
     h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state, AN.voice?.workspaceListen),
-    h(
+    (rec.row = h(
       "div.boss-row",
       {},
-      rec.chats,
       // no speech bubble: the label below already says what the boss is waiting for
       h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.cli, rec.st)),
       rec.meets,
-    ),
+    )),
   );
-  el.boss.onclick = () => openScope({ kind: "all" }, el.boss);
+  el.boss.onclick = () => {
+    if (typeof ChatTerminal !== "undefined" && ChatTerminal?.openBoss?.()) return;
+    openScope({ kind: "all" }, el.boss);
+  };
   return rec;
+}
+function drawerVisible() {
+  if (!el.drawer) return true;
+  if (el.drawer.hidden) return false;
+  if (el.drawer.classList?.contains?.("folded") && !state.convPeek) return false;
+  return true;
+}
+function activeSelection() {
+  if (!drawerVisible()) return null;
+  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.showing?.()) return { kind: "boss" };
+  if (el.drawer?.classList?.contains?.("term-mode")) return { kind: "boss" };
+  if (state.drawer.kind === "all") return { kind: "boss" };
+  if (state.drawer.kind === "desk") return { kind: "desk", key: state.drawer.key };
+  if (state.drawer.kind === "room") return { kind: "room", id: state.drawer.id };
+  return null;
 }
 function handoverParts(c) {
   const parts = [];
@@ -234,7 +250,7 @@ function handoverParts(c) {
         group: item.group,
       });
     } else if (item.status === "cleaned") {
-      parts.push({ text: L("接手自原工作区（已清理）", "Taken over from cleaned workspace") });
+      parts.push({ text: L("接手自原 agent（已清理）", "Taken over from cleaned agent") });
     }
   }
   for (const item of c.handover_to || []) {
@@ -308,12 +324,15 @@ function updateBoss(rec, c, n) {
   const notes = renderBossState(rec, handoverParts(c), c.took_over, model);
   const zhNote = notes.length ? `${notes.join("，")}，` : "";
   const enNote = notes.length ? `${notes.join(", ")}, ` : "";
+  const hasTerm = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.hasTerminal?.(c.group));
   setAttr(
     el.boss,
     "aria-label",
-    L(`boss 办公室，${zhNote}${rec.st.textContent}，查看全部消息`, `boss office, ${enNote}${rec.st.textContent}, view all messages`),
+    hasTerm
+      ? L(`boss 办公室，${zhNote}${rec.st.textContent}，查看终端`, `boss office, ${enNote}${rec.st.textContent}, view terminal`)
+      : L(`boss 办公室，${zhNote}${rec.st.textContent}，查看全部消息`, `boss office, ${enNote}${rec.st.textContent}, view all messages`),
   );
-  el.boss.classList.toggle("sel", state.drawer.kind === "all");
+  el.boss.classList.toggle("sel", activeSelection()?.kind === "boss");
 }
 
 // Once the new boss has spoken, a different former character hangs on the wall to its left.
@@ -327,28 +346,9 @@ function hangPortrait(rec, c, former) {
 }
 
 // ---------------------------------------------------------------- beside the boss
-// Private chats, without meeting seats (running first), and meetings (in session first) beside the boss.
+// Meetings (in session first, ended kept for reopening) beside the boss.
 function sideItems(c, ctx) {
   const recent = (a, b) => AN.at(b.last_active) - AN.at(a.last_active);
-  const running = (d) => activities(d).some((a) => a.status === "running");
-  const chats = c.desks
-    .filter((d) => d.kind !== "seat")
-    .sort((a, b) => Number(running(b)) - Number(running(a)) || recent(a, b))
-    .map((d) => {
-      const s = deskMood(d, ctx);
-      const status = `${cliOf(d)} · ${s.word}`;
-      // A desk with a role is told by it, with its model and effort below; one without keeps the model in the name.
-      const { name: model, effort } = deskParts(d);
-      const shownModel = d.identity?.model_source === "unknown" ? "" : model;
-      return {
-        scope: { kind: "desk", key: d.key },
-        heads: [d],
-        name: d.role || deskName(d),
-        sub: (d.role && [shownModel, effort].filter(Boolean).join(" · ")) || status,
-        tone: running(d) ? "run" : s.mood === "failed" ? "bad" : "",
-        time: relTime(d.last_active),
-      };
-    });
   const meets = [...c.rooms]
     .sort((a, b) => Number(fullRoom(b)) - Number(fullRoom(a)) || recent(a, b))
     .map((r) => ({
@@ -359,9 +359,9 @@ function sideItems(c, ctx) {
       tone: urgent(r.status) ? "run" : r.status === "failed" ? "bad" : "",
       time: r.last_active ? relTime(r.last_active) : "",
     }));
-  return { chats, meets };
+  return { meets };
 }
-function sideList(node, title, items, empty) {
+function sideList(node, title, items) {
   // A relative time is patched in place; it never rebuilds the list.
   const key = JSON.stringify([title, items.map((item) => ({ ...item, time: Boolean(item.time) })), ART.version()]);
   if (node.dataset.key === key) {
@@ -386,7 +386,6 @@ function sideList(node, title, items, empty) {
     if (item.scope.kind === "room") row.addEventListener("contextmenu", (e) => Actions.roomMenu(item.scope.id, e));
     rows.push(row);
   }
-  if (!items.length) rows.push(h("div.td-more", {}, empty));
   // three rows show at once; the rest scroll inside the list
   const list = h("div.side-rows", {}, rows);
   const top = node.querySelector(".side-rows")?.scrollTop || 0;
@@ -397,9 +396,10 @@ function sideList(node, title, items, empty) {
   list.scrollTop = top;
 }
 function renderSides(rec, c, ctx) {
-  const { chats, meets } = sideItems(c, ctx);
-  sideList(rec.chats, L("私聊", "Private chats"), chats, L("还没有私聊", "No private chats yet"));
-  sideList(rec.meets, L("会议", "Meetings"), meets, L("还没有开过会", "No meetings yet"));
+  const { meets } = sideItems(c, ctx);
+  // an agent that never held a meeting shows the boss desk alone
+  rec.meets.hidden = !meets.length;
+  sideList(rec.meets, L("会议", "Meetings"), meets);
 }
 
 // ---------------------------------------------------------------- desks
@@ -460,9 +460,10 @@ function updateDesk(rec, d, ctx) {
   dress(rec, deskChar(d), rec.scene, rec.desk);
   dressLid(rec, d.provider);
   rec.el.dataset.mood = s.mood;
+  const sel = activeSelection();
   setClass(
     rec.el,
-    `desk${s.away ? " away" : ""}${d.private_allowed === false ? " only" : ""}${state.drawer.kind === "desk" && state.drawer.key === d.key ? " sel" : ""}`,
+    `desk${s.away ? " away" : ""}${d.private_allowed === false ? " only" : ""}${sel?.kind === "desk" && sel.key === d.key ? " sel" : ""}`,
   );
   setSay(rec.say, s.say);
   const { name: bare, effort } = deskParts(d);
@@ -560,9 +561,10 @@ function seatMood(r, seat, d) {
 }
 function updateRoom(rec, r, ctx) {
   const [, tone] = pick(GROUP, AN.ongoing(r.status));
+  const sel = activeSelection();
   setClass(
     rec.el,
-    `zone room${state.closing.has(r.id) ? " closing" : ""}${state.drawer.kind === "room" && state.drawer.id === r.id ? " sel" : ""}`,
+    `zone room${state.closing.has(r.id) ? " closing" : ""}${sel?.kind === "room" && sel.id === r.id ? " sel" : ""}`,
   );
   setText(rec.title, r.title);
   setText(rec.state, roundText(r));
@@ -596,23 +598,48 @@ function updateRoom(rec, r, ctx) {
   }
   reconcile(rec.scene, nodes);
 }
-// What one desk's scene measures: read off a desk, or, with none open, worked out from the grid
-// the next desk would join (--cols follows the floor's width in CSS).
+// What one desk's scene would measure if nothing held it back: read off a desk's card (the cap set
+// below narrows only the scene inside it, so it never feeds back), or, with none open, worked out
+// from the grid the next desk would join (--cols follows the floor's width in CSS).
 const DESK_FRAME = 18; // a desk's side padding and border around its scene
+const DESK_PAD = 16; // the same padding alone, inside the card's border
 function deskSceneWidth() {
-  const scene = el.desks.querySelector(".desk > .scene");
-  if (scene) return scene.offsetWidth;
+  const desk = el.desks.querySelector(".desk");
+  if (desk) return desk.clientWidth - DESK_PAD;
   const grid = getComputedStyle(el.desks);
   const cols = parseInt(grid.getPropertyValue("--cols"), 10) || 1;
   const gap = parseFloat(grid.columnGap) || 0;
   return (el.desks.clientWidth - gap * (cols - 1)) / cols - DESK_FRAME;
 }
+// The boss is always this many desks wide, so boss and staff keep one scale on every floor.
+const BOSS_SCALE = 1.3;
+const MEETINGS_MIN = 225; // the meetings panel's narrowest width beside the boss, as in chat.css
+// How wide the boss's scene may grow: its whole row, less the meetings panel when that sits beside
+// it. When the boss would have to shrink to keep the panel beside it, the panel moves below instead.
+function bossRoom(natural) {
+  const row = state.bossRec?.row;
+  if (!row?.isConnected) return 0;
+  const width = row.clientWidth;
+  const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+  const meets = !state.bossRec.meets.hidden;
+  const fits = width - gap - MEETINGS_MIN >= natural * BOSS_SCALE;
+  row.classList.toggle("stack", meets && !fits);
+  const beside = meets && fits && getComputedStyle(row).gridTemplateColumns.trim().split(/\s+/).length > 1;
+  return width - (beside ? gap + MEETINGS_MIN : 0);
+}
 // Seats are as large as desk figures, so a walker keeps its size; rows wrap to fit the room.
-// The boss's scene takes a desk's size too, so it grows and shrinks with the row.
+// The boss's scene is BOSS_SCALE desks; on a floor too narrow for that the desks give way instead.
 function layoutRooms() {
   let complete = true;
-  const deskWidth = deskSceneWidth();
-  const bossWidth = deskWidth > 0 ? `${Math.round(deskWidth * 1.3)}px` : "";
+  const natural = deskSceneWidth();
+  const room = bossRoom(natural);
+  const deskWidth = natural > 0 && room > 0 ? Math.min(natural, room / BOSS_SCALE) : natural;
+  const cap = deskWidth > 0 && deskWidth < natural ? `${Math.floor(deskWidth)}px` : "";
+  if ((state.deskCap ?? "") !== cap) {
+    state.deskCap = cap;
+    el.desks.style.setProperty("--desk-scene", cap);
+  }
+  const bossWidth = deskWidth > 0 ? `${Math.round(deskWidth * BOSS_SCALE)}px` : "";
   if (state.bossRec && state.bossRec.scene.style.width !== bossWidth)
     state.bossRec.scene.style.width = bossWidth;
   // Desks scale with the floor, so seats take the size their figures have at the desks.
@@ -752,7 +779,7 @@ function renderOffice(c, ctx, n, newGroup) {
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
   renderSides(state.bossRec, c, ctx);
-  layoutIfChanged(JSON.stringify([c.desks.length, rooms.map((r) => [r.id, r.seats.length])]));
+  layoutIfChanged(JSON.stringify([c.desks.length, !state.bossRec.meets.hidden, rooms.map((r) => [r.id, r.seats.length])]));
   walk(!newGroup && state.ready, sat);
 }
 

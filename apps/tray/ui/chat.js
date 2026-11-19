@@ -37,11 +37,23 @@ function measureAll() {
 // ---------------------------------------------------------------- conversation column
 function openScope(scope, opener) {
   if (opener) state.opener = opener;
+  const officeTop = el.office?.scrollTop ?? 0;
+  const floorW = el.floor?.clientWidth ?? 0;
+  const anchor = opener && el.office?.contains?.(opener) ? opener : null;
+  const anchorTop = anchor?.getBoundingClientRect?.().top ?? null;
   state.drawer = scope;
   state.convOpen = true;
+  ChatTerminal.readMessages();
   // picking a desk or room is asking to read it; a click inside the peeking column keeps it folded
   if (!state.convPeek) setCollapsed(false);
   if (state.chat) renderAll(state.chat);
+  if (el.office && el.floor) {
+    if (el.floor.clientWidth === floorW) {
+      el.office.scrollTop = officeTop;
+    } else if (anchorTop != null && anchor.isConnected) {
+      el.office.scrollTop = officeTop + (anchor.getBoundingClientRect().top - anchorTop);
+    }
+  }
   if (overlay.matches) el.tl.focus({ preventScroll: true });
 }
 function closeConv() {
@@ -78,7 +90,7 @@ el.convToggle.addEventListener("click", () => {
 function renderSideToggle() {
   const L = AN.L || ((zh) => zh);
   const shut = state.sideCollapsed;
-  const label = shut ? L("显示工作区列表", "Show workspace list") : L("隐藏工作区列表", "Hide workspace list");
+  const label = shut ? L("显示项目列表", "Show project list") : L("隐藏项目列表", "Hide project list");
   if (el.app.dataset.side !== (shut ? "off" : "on")) el.app.dataset.side = shut ? "off" : "on";
   setAttr(el.sideToggle, "aria-expanded", shut ? "false" : "true");
   setAttr(el.sideToggle, "aria-label", label);
@@ -138,42 +150,59 @@ document.addEventListener("pointermove", (e) => {
 });
 
 // Drag the borders between the three columns. Each width is a share of the window, kept between
-// a minimum and a maximum so the office in the middle never gets squeezed out.
+// a minimum and a maximum so the office in the middle never gets squeezed out. The right column
+// remembers its width separately for agents with and without a terminal.
 const SPLITS = {
   side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 200, css: "--side-w" },
-  conv: { key: "agentnave.office.conv", min: 0.22, max: 0.42, floor: 300, css: "--conv-w" },
+  conv: { key: "agentnave.office.conv", min: 0.22, floor: 300, css: "--conv-w" },
+  convTerm: { key: "agentnave.office.conv.term", min: 0.22, floor: 300, css: "--conv-term-w" },
 };
+function maxShare(name) {
+  if (name === "side") return SPLITS.side.max;
+  const appW = el.app.getBoundingClientRect().width;
+  if (!appW) return 0.72;
+  const sideW = state.sideCollapsed ? 0 : (el.app.querySelector(".side")?.getBoundingClientRect().width || 248);
+  return Math.max(SPLITS[name].min, (appW - sideW - 350) / appW);
+}
 function applySplit(name, share) {
   const s = SPLITS[name];
-  const handle = el.app.querySelector(`[data-split="${name}"]`);
+  const handle = el.app.querySelector(`[data-split="${name === "side" ? "side" : "conv"}"]`);
   if (share == null) {
     el.app.style.removeProperty(s.css);
     handle.removeAttribute("aria-valuenow");
     return;
   }
-  const clamped = Math.min(s.max, Math.max(s.min, share));
-  el.app.style.setProperty(s.css, `max(${s.floor}px, ${(clamped * 100).toFixed(2)}%)`);
+  const clamped = Math.min(maxShare(name), Math.max(s.min, share));
+  if (name === "side") {
+    el.app.style.setProperty(s.css, `max(${s.floor}px, ${(clamped * 100).toFixed(2)}%)`);
+  } else {
+    el.app.style.setProperty(s.css, `min(max(${s.floor}px, ${(clamped * 100).toFixed(2)}%), calc(100vw - var(--side-used, 248px) - 350px))`);
+  }
   handle.setAttribute("aria-valuenow", String(Math.round(clamped * 100)));
   return clamped;
 }
 for (const [name, s] of Object.entries(SPLITS)) {
-  const handle = el.app.querySelector(`[data-split="${name}"]`);
-  handle.setAttribute("aria-valuemin", String(s.min * 100));
-  handle.setAttribute("aria-valuemax", String(s.max * 100));
   const saved = Number(stored(s.key));
   if (saved) applySplit(name, saved);
+}
+for (const slot of ["side", "conv"]) {
+  const handle = el.app.querySelector(`[data-split="${slot}"]`);
+  const activeName = () => (slot === "side" ? "side" : el.app.dataset.hasTerm === "1" ? "convTerm" : "conv");
+  handle.setAttribute("aria-valuemin", String(SPLITS[slot].min * 100));
+  handle.setAttribute("aria-valuemax", String(slot === "side" ? SPLITS.side.max * 100 : 75));
   const shareAt = (x) => {
     const r = el.app.getBoundingClientRect();
-    return (name === "side" ? x - r.left : r.right - x) / r.width;
+    return (slot === "side" ? x - r.left : r.right - x) / r.width;
   };
   const current = () => {
-    const col = name === "side" ? handle.parentElement : el.drawer;
+    const col = slot === "side" ? handle.parentElement : el.drawer;
     return col.getBoundingClientRect().width / el.app.getBoundingClientRect().width;
   };
-  const save = (share) => store(s.key, share == null ? null : share.toFixed(4));
+  const save = (name, share) => store(SPLITS[name].key, share == null ? null : share.toFixed(4));
   handle.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
+    const name = activeName();
     handle.setPointerCapture(e.pointerId);
     el.app.classList.add("resizing");
     let last = null;
@@ -181,18 +210,23 @@ for (const [name, s] of Object.entries(SPLITS)) {
     const end = () => {
       handle.removeEventListener("pointermove", move);
       el.app.classList.remove("resizing");
-      if (last != null) save(last);
+      if (last != null) save(name, last);
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("lostpointercapture", end, { once: true });
   });
   // Double-click returns to the default width.
-  handle.addEventListener("dblclick", () => { applySplit(name, null); save(null); });
+  handle.addEventListener("dblclick", () => {
+    const name = activeName();
+    applySplit(name, null);
+    save(name, null);
+  });
   handle.addEventListener("keydown", (e) => {
     const step = { ArrowLeft: -0.01, ArrowRight: 0.01 }[e.key];
     if (!step) return;
     e.preventDefault();
-    save(applySplit(name, current() + (name === "side" ? step : -step)));
+    const name = activeName();
+    save(name, applySplit(name, current() + (slot === "side" ? step : -step)));
   });
 }
 el.drAll.addEventListener("click", () => openScope({ kind: "all" }));
@@ -343,6 +377,7 @@ function renderConv(c, ctx) {
   }
   setText(el.drTitle, head.title);
   setText(el.drSub, head.sub);
+  setAttr(el.drSub, "title", null);
   el.drAll.hidden = state.drawer.kind === "all";
   setAttr(el.drawer, "aria-label", L(`${head.title} 的对话`, `${head.title} conversation`));
   renderConversationMessages(shown, ctx, reset);
@@ -541,14 +576,14 @@ function showBlank(kind) {
   state.drawer = { kind: "all" };
   const text = {
     nogroups: [
-      L("还没有工作区", "No workspaces yet"),
+      L("还没有 agent", "No agents yet"),
       L("在 boss（Claude Code、Codex CLI 等宿主里的 Agent）里派出任务或开始会议，对应的办公室会自动出现在这里。", "Dispatch a task or start a meeting from boss (your agent in Claude Code, Codex CLI, or another host) and its office will appear here automatically."),
     ],
     pick: [
-      L("选一个工作区开始查看", "Select a workspace"),
-      L("左侧是每个 boss 会话的工作区，进行中的排在最前面。", "Workspaces for each boss session are listed on the left, with active ones first."),
+      L("选一个 agent 开始查看", "Select an agent"),
+      L("左侧按项目列出每个 boss 会话的 agent，进行中的排在最前面。", "Agents for each boss session are listed by project on the left, with active ones first."),
     ],
-    missing: [L("找不到这个工作区", "Workspace not found"), L("它可能已被删除。", "It may have been deleted.")],
+    missing: [L("找不到这个 agent", "Agent not found"), L("它可能已被删除。", "It may have been deleted.")],
     loading: [L("正在读取办公室…", "Loading office…"), ""],
     error: [L("无法读取办公室", "Failed to load office"), L("正在重试，请稍候。", "Retrying, please wait.")],
   }[kind];
@@ -557,7 +592,7 @@ function showBlank(kind) {
       h("strong", {}, text[0]),
       h("p", {}, text[1]),
       kind === "missing" &&
-        h("a.blank-link", { href: href("/chat/") }, L("回到工作区列表", "Back to workspaces")),
+        h("a.blank-link", { href: href("/chat/") }, L("回到项目列表", "Back to projects")),
     ].filter(Boolean),
   );
   el.jump.hidden = true;
@@ -600,7 +635,9 @@ function renderAll(c, newGroup = false) {
   followAlias(c, ctx);
   const n = counts(c);
   renderHead(c, n);
+  ChatTerminal.prepare?.(c.group, c.host);
   renderConv(c, ctx);
+  ChatTerminal.column(c.group, c.host);
   renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);
@@ -645,15 +682,22 @@ async function refresh() {
       return;
     }
     el.banner.hidden = true;
-    state.groupsData = chats.groups;
+    await ChatTerminal.refresh();
+    state.projects = chats.projects || [];
+    state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
+    const followed = ChatTerminal.follow(state.selected);
+    if (followed !== state.selected) {
+      state.selected = followed;
+      history.replaceState({}, "", href(`/chat/${followed}`));
+    }
     if (
       state.auto &&
       !narrow.matches &&
-      !chats.groups.some((g) => g.group === state.selected)
+      !state.groupsData.some((g) => g.group === state.selected)
     )
-      state.selected = chats.groups[0]?.group ?? null;
+      state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([chats.groups, state.selected, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, state.projects, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();
@@ -665,12 +709,16 @@ async function refresh() {
     const selected = state.selected;
     const hashKey = state.hashKey;
     const focus = hashKey?.startsWith("conv:") ? hashKey.slice(5) : null;
-    if (!state.loaded) showBlank("loading");
+    // An agent that has not dispatched has an office with only its boss, drawn here.
+    const agent = ChatTerminal.pendingId(selected) != null;
+    if (!state.loaded && !agent) showBlank("loading");
     let chat;
     try {
-      chat = await load(
-        `/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`,
-      );
+      chat = agent
+        ? ChatTerminal.office(selected)
+        : await load(
+          `/app/chats/${encodeURIComponent(selected)}${focus ? `/focus/${encodeURIComponent(focus)}` : ""}`,
+        );
       if (selected !== state.selected || hashKey !== state.hashKey) {
         state.again = true;
         return;
@@ -709,6 +757,9 @@ async function refresh() {
       state.tickId = null;
       if (state.wantIsolated === chat.group) {
         state.drawer = { kind: "isolated" };
+        state.convOpen = true;
+        setCollapsed(false);
+      } else if (ChatTerminal.consumeOpen?.(chat.group)) {
         state.convOpen = true;
         setCollapsed(false);
       }

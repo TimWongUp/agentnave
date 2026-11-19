@@ -28,7 +28,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, cast
@@ -54,6 +54,9 @@ _FAULT_RETENTION_SECONDS = 86400.0
 _HOST_EOF_GRACE_SECONDS = 1.0
 # A relay killed between writing and replacing leaves its staging file; pruning finds it by name.
 _STAGING_PREFIX = ".tmp-"
+_BOSSES_KEPT = 8
+# Must stay aligned with host.NATIVE_SESSION_ENV; kept here so the relay imports only stdlib + lease.
+_NATIVE_SESSION_ENV = {"claude": "CLAUDE_CODE_SESSION_ID"}
 SESSION_ENV = "AGENTNAVE_MANAGER_SESSION"
 STARTED_ENV = "AGENTNAVE_MANAGER_STARTED_AT"
 # 2026-07-28 and later hosts skip initialize; every request carries this envelope instead.
@@ -202,6 +205,25 @@ def _key(value: object) -> str:
     return json.dumps(value)
 
 
+def _host_session_id(host: str | None, env: Mapping[str, str]) -> str | None:
+    """Same fallback order as host.host_session_id when a tool call omits manager_session_id."""
+    injected = env.get("AGENTNAVE_HOST_SESSION_ID")
+    if injected is not None:
+        return injected
+    name = _NATIVE_SESSION_ENV.get(host or "")
+    if name is None:
+        return None
+    return env.get(name, "").strip() or None
+
+
+def _boss_key(host: str | None, session_id: object) -> str | None:
+    """The key a boss chat's workspace is owned by, as native_sessions.boss_key computes it."""
+    if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 200:
+        return None
+    identity = json.dumps([host, session_id], ensure_ascii=False).encode()
+    return "s-" + hashlib.sha256(identity).hexdigest()[:32]
+
+
 def _version(result: Message | None) -> str | None:
     result = result or {}
     meta = _object(result.get("_meta")) or {}
@@ -265,6 +287,9 @@ class Relay:
         self.left = threading.Event()
         self.host_pending: set[str] = set()
         self.host_methods: dict[str, str] = {}
+        # Boss chats this connection spoke for, latest last: the tray finds the workspace of a
+        # terminal whose CLI runs this relay (ADR-0103).
+        self.bosses: list[str] = []
         self.child_pending: set[str] = set()
         self.paused = False
         self.held: list[bytes] = []
@@ -414,6 +439,8 @@ class Relay:
                 payload["ended_ms"] = ended_ms
             if self.dispatched:
                 payload["dispatched"] = True
+            if self.bosses:
+                payload["bosses"] = self.bosses
         path = self.connection_path
         body = json.dumps(payload).encode()
         try:
@@ -507,6 +534,20 @@ class Relay:
                 self.initialize = message
             elif method == "notifications/initialized":
                 self.initialized = line
+            elif method == "tools/call":
+                arguments = _object((_object(message.get("params")) or {}).get("arguments")) or {}
+                self._note_boss(arguments.get("manager_session_id"))
+
+    def _note_boss(self, session_id: object) -> None:
+        if session_id is None:
+            env = self.env if self.env is not None else os.environ
+            session_id = _host_session_id(self.host, env)
+        key = _boss_key(self.host, session_id)
+        if key is None or (self.bosses and self.bosses[-1] == key):
+            return
+        with contextlib.suppress(ValueError):
+            self.bosses.remove(key)
+        self.bosses = [*self.bosses, key][-_BOSSES_KEPT:]
 
     # Child -> host
 

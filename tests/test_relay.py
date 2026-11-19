@@ -17,6 +17,9 @@ import pytest
 
 from agentnave import relay as launcher
 from agentnave.db import Database
+from agentnave.host import Host as HostModel
+from agentnave.host import host_session_id
+from agentnave.native_sessions import boss_key
 
 # A stand-in MCP server: refuses calls before the handshake, reports its pid and session, is busy
 # while the file named in argv[1] exists, and fails to start while argv[1] + ".broken" exists.
@@ -367,6 +370,91 @@ def test_relay_observes_delivered_interfaces_across_updates_and_reconnects(
     (ended,) = data.glob("connections/*.json")
     assert json.loads(ended.read_bytes())["host_tools_hash"] == refreshed["host_tools_hash"]
     assert json.loads(ended.read_bytes()).get("dispatched", False) is dispatched
+
+
+def test_connection_names_the_boss_chats_it_spoke_for(tmp_path: Path) -> None:
+    # The tray matches a terminal's CLI to its workspace by these keys (ADR-0103).
+    data = tmp_path / "data"
+    host = Host(
+        tmp_path, env={**os.environ, "AGENTNAVE_HOST": "codex", "AGENTNAVE_DATA_DIR": str(data)}
+    )
+    try:
+        host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        host.call("tools/list")
+        for chat in ("chat-1", "chat-2", "chat-1"):
+            host.call("tools/call", {"name": "whoami", "arguments": {"manager_session_id": chat}})
+        host.relay._publish_connection()  # pyright: ignore[reportPrivateUsage]
+        (path,) = data.glob("connections/*.json")
+        bosses = json.loads(path.read_bytes())["bosses"]
+    finally:
+        host.writer.close()
+        host.thread.join(10)
+    assert bosses == [boss_key("codex", "chat-2"), boss_key("codex", "chat-1")]
+
+
+def test_connection_boss_falls_back_to_host_env_like_the_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def call_and_read(sub: str, env: dict[str, str], arguments: dict[str, Any]) -> dict[str, Any]:
+        work = tmp_path / sub
+        data = work / "data"
+        work.mkdir()
+        host = Host(work, env={**os.environ, **env, "AGENTNAVE_DATA_DIR": str(data)})
+        try:
+            host.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+            host.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            host.call("tools/list")
+            host.call("tools/call", {"name": "whoami", "arguments": arguments})
+            host.relay._publish_connection()  # pyright: ignore[reportPrivateUsage]
+            (path,) = data.glob("connections/*.json")
+            return json.loads(path.read_bytes())
+        finally:
+            host.writer.close()
+            host.thread.join(10)
+
+    # AGENTNAVE_HOST_SESSION_ID wins over CLAUDE_CODE_SESSION_ID.
+    monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "injected-chat")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "claude-native")
+    receipt = call_and_read(
+        "injected",
+        {
+            "AGENTNAVE_HOST": "claude",
+            "AGENTNAVE_HOST_SESSION_ID": "injected-chat",
+            "CLAUDE_CODE_SESSION_ID": "claude-native",
+        },
+        {},
+    )
+    expected = host_session_id(HostModel("claude"))
+    assert expected == "injected-chat"
+    assert receipt["bosses"] == [boss_key("claude", expected)]
+
+    # Without AGENTNAVE_HOST_SESSION_ID, Claude falls back to stripped CLAUDE_CODE_SESSION_ID.
+    monkeypatch.delenv("AGENTNAVE_HOST_SESSION_ID")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "  claude-native  ")
+    receipt = call_and_read(
+        "claude-native",
+        {"AGENTNAVE_HOST": "claude", "CLAUDE_CODE_SESSION_ID": "  claude-native  "},
+        {},
+    )
+    expected = host_session_id(HostModel("claude"))
+    assert expected == "claude-native"
+    assert receipt["bosses"] == [boss_key("claude", expected)]
+
+    # Codex does not use CLAUDE_CODE_SESSION_ID, and explicit blank values do not fall back.
+    codex_receipt = call_and_read(
+        "codex-none",
+        {"AGENTNAVE_HOST": "codex", "CLAUDE_CODE_SESSION_ID": "claude-native"},
+        {},
+    )
+    assert "bosses" not in codex_receipt
+
+    blank_receipt = call_and_read(
+        "explicit-blank",
+        {"AGENTNAVE_HOST": "claude", "AGENTNAVE_HOST_SESSION_ID": "injected-chat"},
+        {"manager_session_id": "   "},
+    )
+    assert "bosses" not in blank_receipt
 
 
 def test_empty_data_root_matches_service_default(

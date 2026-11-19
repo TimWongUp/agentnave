@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-09
 - 修订：[ADR-0040](0040-boss-app-from-session-records.md) 中 Windows 不发现 Claude 桌面端的限制
+- 连接回执的字段由 [ADR-0103](0103-tray-embedded-terminal.md) 修订：另记转发过的 boss 聊天键，供托盘对应终端与工作区
 
 ## 背景
 

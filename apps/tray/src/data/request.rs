@@ -18,6 +18,101 @@ impl Reader {
             .unwrap_or_else(Response::not_found)
     }
 
+    pub(crate) fn projects_request(
+        &self,
+        app: Option<&tauri::AppHandle>,
+        method: &str,
+        path: &str,
+        action: Option<&str>,
+        body: &[u8],
+    ) -> Response {
+        match (method, path) {
+            ("GET", "/app/projects") => Response::json(&json!({
+                "projects": crate::projects::manual::values(&crate::projects::manual::list(&self.projects_dir))
+            })),
+            (_, "/app/projects/pick") => crate::response::action(method, action, || {
+                let Some(app) = app else {
+                    return Response::error(500, "无法打开文件夹选择器");
+                };
+                match crate::video_packs::picker::choose(app, true) {
+                    Ok(cwd) => {
+                        Response::json(&json!({"cwd": cwd.map(|cwd| cwd.display().to_string())}))
+                    }
+                    Err(error) => Response::error(500, &error),
+                }
+            }),
+            (_, "/app/projects/add") => crate::response::post(method, action, body, |payload| {
+                self.add_project(app, &payload)
+            }),
+            (_, "/app/projects/remove") => crate::response::post(method, action, body, |payload| {
+                self.remove_project(&payload)
+            }),
+            _ => Response::not_found(),
+        }
+    }
+
+    fn add_project(&self, app: Option<&tauri::AppHandle>, payload: &Value) -> Response {
+        let cwd = payload["cwd"]
+            .as_str()
+            .or_else(|| payload["path"].as_str())
+            .unwrap_or_default()
+            .trim();
+        let dir = Path::new(cwd);
+        if !dir.is_absolute() || !dir.is_dir() {
+            return Response::error(400, "文件夹不存在");
+        }
+        let project = crate::projects::classify_dir(dir);
+        let database = crate::db::read(&self.root);
+        let (_, snapshots) = self.scan_with(&database);
+        let handovers = database
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .and_then(handovers)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let mut cwds: Vec<String> = crate::stage::origin_cwds(&snapshots, &handovers)
+            .into_values()
+            .collect();
+        if let Some(app) = app {
+            use tauri::Manager;
+            cwds.extend(app.state::<crate::terminal::Terminals>().cwds());
+        }
+        let existing = crate::projects::resolve_all(cwds);
+        match crate::projects::manual::add(&self.projects_dir, project, &existing) {
+            Ok((entry, added, projects)) => {
+                self.routes
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove("/app/chats");
+                Response::json(&json!({
+                    "project": entry.value(),
+                    "added": added,
+                    "projects": crate::projects::manual::values(&projects)
+                }))
+            }
+            Err((status, message)) => Response::error(status, &message),
+        }
+    }
+
+    fn remove_project(&self, payload: &Value) -> Response {
+        let key = payload["key"].as_str().unwrap_or_default().trim();
+        match crate::projects::manual::remove(&self.projects_dir, key) {
+            Ok((removed, projects)) => {
+                self.routes
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove("/app/chats");
+                Response::json(&json!({
+                    "removed": removed,
+                    "projects": crate::projects::manual::values(&projects)
+                }))
+            }
+            Err((status, message)) => Response::error(status, &message),
+        }
+    }
+
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
     pub fn request(&self, method: &str, path: &str, action: Option<&str>, body: &[u8]) -> Response {
         if self.uninstalling() && method != "GET" {
@@ -26,6 +121,9 @@ impl Reader {
         // Live protocol requests pass `Some(app)` for the native picker; headless callers reach here.
         if path == "/app/video-packs" || path.starts_with("/app/video-packs/") {
             return self.video_packs_request(None, method, path, action, body);
+        }
+        if path == "/app/projects" || path.starts_with("/app/projects/") {
+            return self.projects_request(None, method, path, action, body);
         }
         if path == "/app/voice" || path.starts_with("/app/voice/") {
             return crate::voice::request(&self.root, path, method, action, body);
@@ -102,7 +200,14 @@ impl Reader {
                 | "/app/workspaces/cancel-handover"
                 | "/app/workspaces/forget"
         ) {
-            return crate::manage::request(&self.root, method, path, action, body);
+            return crate::manage::request(
+                &self.root,
+                &self.projects_dir,
+                method,
+                path,
+                action,
+                body,
+            );
         }
         if matches!(path, "/app/isolated/inspect" | "/app/isolated/delete") {
             return crate::isolated::request(&self.root, method, path, action, body);

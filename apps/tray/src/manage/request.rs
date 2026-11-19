@@ -5,6 +5,7 @@ use std::path::Path;
 
 pub(crate) fn request(
     root: &Path,
+    config: &Path,
     method: &str,
     path: &str,
     action: Option<&str>,
@@ -18,7 +19,12 @@ pub(crate) fn request(
             ) else {
                 return Response::error(400, "需要有效的会话 ID 与标题");
             };
-            Response::json(&crate::manage::rename(root, id, title))
+            let result = crate::manage::rename(root, id, title);
+            if result["status"] == "renamed" {
+                // The mark is only a display preference; a rename that stuck stays done without it.
+                let _ = crate::manage::renamed::mark(config, id);
+            }
+            Response::json(&result)
         });
     }
     if path == "/app/workspaces/forget" {

@@ -265,11 +265,11 @@ test("listen buttons remain pure listening controls", async () => {
   await app.command("unlisten");
   app.AN.setLanguage("en");
   await app.voice.refresh();
-  assert.equal(workspace.children[0].textContent, "Listen to workspace");
+  assert.equal(workspace.children[0].textContent, "Listen to agent");
   assert.equal(column.children[0].textContent, "Listen to this column");
   app.AN.setLanguage("zh-CN");
   await app.voice.refresh();
-  assert.equal(workspace.children[0].textContent, "收听工作区");
+  assert.equal(workspace.children[0].textContent, "收听 agent");
   assert.equal(column.children[0].textContent, "收听此列消息");
 });
 

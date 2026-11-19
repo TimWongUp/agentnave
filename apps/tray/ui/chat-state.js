@@ -41,14 +41,13 @@ const {
 } = AN;
 
 const narrow = window.matchMedia("(max-width: 760px)");
-const overlay = window.matchMedia("(max-width: 860px)"); // the conversation slides over the floor
+const overlay = window.matchMedia("(max-width: 920px)"); // the conversation slides over the floor
 const reduceMotion = AN.reducedMotion;
 const FOLD_PX = 320; // a bubble taller than this is folded behind "展开全文"
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
 const MAX_FLIGHTS = 8; // more new messages than this between two polls are not animated
 const COLLAPSED_KEY = "agentnave.office.convCollapsed";
 const SIDE_COLLAPSED_KEY = "agentnave.office.sideCollapsed";
-const GROUP_BY_KEY = "agentnave.office.groupBy";
 const FOLD_KEY = "agentnave.office.fold";
 // Layout preferences survive restarts; storage may be unavailable, which only loses them.
 function stored(key) {
@@ -102,26 +101,21 @@ const el = {
   blank: $("blank"),
   jump: $("jump"),
   banner: $("banner"),
-  count: $("side-count"),
-  groupBy: $("group-by"),
 };
 const state = {
-  selected: null, // workspace id shown in the middle
-  auto: false, // selected by default (no workspace in the URL), not by the user
+  selected: null, // agent id shown in the middle
+  auto: false, // selected by default (no agent in the URL), not by the user
   groupsData: [],
+  projects: [], // manually added projects
   order: [],
   items: new Map(),
   sections: {},
-  heads: new Map(), // group header buttons by mode and group key
-  folded: new Map(), // the same keys: whether the reader folded the group
-  groupBy: ChatGroups.modes.includes(stored(GROUP_BY_KEY)) ? stored(GROUP_BY_KEY) : "project",
+  heads: new Map(), // project header buttons by key
+  folded: new Map(), // the same keys: whether the reader folded the project
   // A long list shows only its head until the reader asks for more; the amount is not stored.
-  moreGroups: 0, // extra groups the reader asked for
-  moreItems: new Map(), // "mode:key" -> extra entries that group shows
-  moreFlat: 0, // extra entries the ungrouped list shows
+  moreGroups: 0, // extra projects the reader asked for
+  moreItems: new Map(), // "project:key" -> extra entries that project shows
   moreNodes: new Map(), // the "show more" buttons by id, reused across renders
-  flatOrder: [], // the ungrouped order over every workspace, shown or not
-  flatPending: new Set(), // workspaces the ungrouped order last placed in the handover section
   liveMore: new Set(), // the "show more" buttons this render put in the list
   chat: null,
   ctx: null, // last payload and its lookup tables
@@ -209,8 +203,6 @@ window.addEventListener("hashchange", () => {
   sync();
   refresh();
 });
-el.groupBy.value = state.groupBy;
-el.groupBy.addEventListener("change", () => setGroupBy(el.groupBy.value));
 for (const query of [narrow, overlay])
   query.addEventListener("change", () => {
     // a breakpoint changes which columns can peek: start from the settled state
@@ -235,9 +227,6 @@ function createItem(g) {
     presence: h("i.presence"),
     label: h("b.gi-label"),
     meta: h("span.gi-meta"),
-    time: h("time"),
-    prev: h("span.gi-prev"),
-    pill: h("span.pill"),
     iso: h("span.pill.tone-idle.act", { role: "button", tabindex: "0" }),
     tileKey: null,
   };
@@ -248,9 +237,11 @@ function createItem(g) {
     h(
       "span.gi-body",
       {},
-      h("span.gi-top", {}, rec.label, rec.time),
+      // an agent shows its title; a handover and isolated directories still waiting to be released
+      // are the only things it adds
+      h("span.gi-top", {}, rec.label),
       rec.meta,
-      h("span.gi-bottom", {}, rec.prev, rec.iso, rec.pill),
+      (rec.bottom = h("span.gi-bottom", {}, rec.iso)),
     ),
   );
   rec.el.addEventListener("click", (e) => {
@@ -267,7 +258,7 @@ function createItem(g) {
   };
   rec.iso.addEventListener("click", openIsolated);
   rec.iso.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && openIsolated(e));
-  rec.el.addEventListener("contextmenu", (e) => Actions.workspaceMenu(rec.id, e));
+  rec.el.addEventListener("contextmenu", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e));
   return rec;
 }
 function updateItem(rec, g) {
@@ -290,46 +281,43 @@ function updateItem(rec, g) {
     rec.tileKey = tileKey;
     rec.tile.replaceChildren(hostTile(g.app || g.host, g.label));
   }
+  // the dot appears only while something runs
+  rec.presence.hidden = !g.live;
   setClass(rec.presence, g.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", g.live ? L("有任务在运行", "Tasks running") : null);
   setText(rec.label, chatName(g));
-  setText(
-    rec.meta,
-    L(`${handoverWord(g)}${place} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`, `${handoverWord(g)}${place} · ${g.desks_count ?? 0} desks · ${g.rooms_count ?? 0} rooms`),
-  );
-  setText(rec.time, relTime(g.updated));
-  setText(rec.prev, g.preview);
-  rec.iso.hidden = !g.isolated_count;
+  // the avatar already names the boss; the line is left for a handover the user should know about
+  const handover = g.handover === "pending" || g.handover === "changed";
+  rec.meta.hidden = !handover;
+  setText(rec.meta, handover ? `${handoverWord(g)}${place}` : "");
+  rec.bottom.hidden = rec.iso.hidden = !g.isolated_count;
   setText(rec.iso, isolatedCount(g.isolated_count));
-  rec.pill.hidden = shown === "idle";
-  setClass(rec.pill, `pill tone-${tone}`);
-  setText(rec.pill, word);
+  ChatTerminal.decorate(rec, g);
 }
-// The boss, then the project unless the list is already grouped by it or it repeats the title.
+// The boss, then the project when the item is pinned under awaiting handover.
 function itemPlace(g) {
-  const project = state.groupBy === "project" && g.handover !== "pending" ? "" : g.project_label;
+  const project = g.handover === "pending" ? g.project_label : "";
   return [g.label, project !== chatName(g) && project].filter(Boolean).join(" · ");
 }
 // Isolated directories nobody works in any more still wait for boss to release them.
 function isolatedCount(n) {
   return L(`${n} 个隔离目录`, `${n} isolated dirs`);
 }
-// A workspace taken over by another boss (ADR-0033).
+// An agent taken over by another boss (ADR-0033).
 function handoverWord(g) {
   return g.handover === "changed" ? L("boss 已更换 · ", "boss changed · ") : "";
 }
 function renderList() {
   const groups = state.groupsData;
-  setText(el.count, groups.length ? String(groups.length) : "");
   const by = new Map(groups.map((g) => [g.group, g]));
   for (const id of state.items.keys()) if (!by.has(id)) state.items.delete(id);
   state.liveMore.clear();
-  const nodes = state.groupBy === "none" ? flatNodes(groups, by) : groupedNodes(groups);
+  const nodes = groupedNodes(groups);
   for (const id of state.moreNodes.keys()) if (!state.liveMore.has(id)) state.moreNodes.delete(id);
-  if (!groups.length) nodes.push(h("div.gl-empty", {}, L("还没有工作区", "No workspaces yet")));
+  if (!nodes.length) nodes.push(h("div.gl-empty", {}, L("还没有 agent", "No agents yet")));
   reconcile(el.list, nodes);
 }
-// The cap may never hide a pending handover, work waiting on the reader, or the workspace already open.
+// The cap may never hide a pending handover, work waiting on the reader, or the agent already open.
 function mustShow(g) {
   return g.handover === "pending" || urgent(g.status) || g.group === state.selected;
 }
@@ -355,44 +343,6 @@ function itemNode(g, folded) {
   setAttr(rec.el, "data-folded", folded ? "true" : null);
   return rec.el;
 }
-const flatRank = (g) => (g.handover === "pending" ? 0 : urgent(g.status) ? 1 : 2);
-// Awaiting handover first, then work going on, then the most recent.
-function flatNodes(groups, by) {
-  // The order covers every workspace, so opening up more of the list does not reshuffle the rest.
-  const ranked = groups.map((g) => ({ id: g.group, rank: flatRank(g) }));
-  const back = new Set(ranked.filter((x) => x.rank !== 0 && state.flatPending.has(x.id)).map((x) => x.id));
-  state.flatPending = new Set(ranked.filter((x) => x.rank === 0).map((x) => x.id));
-  state.flatOrder = ChatGroups.placeBack(stickyOrder(state.flatOrder, ranked), ranked, back);
-  const { items, hidden } = ChatGroups.capFlat(
-    state.flatOrder.map((id) => by.get(id)),
-    { limit: ChatGroups.caps.flat + state.moreFlat, must: mustShow },
-  );
-  const nodes = [];
-  let section = -1;
-  state.order = items.map((g) => g.group);
-  for (const g of items) {
-    const rank = flatRank(g);
-    if (rank !== section) {
-      section = rank;
-      nodes.push(
-        rank === 0
-          ? sectionEl("handover", L("待接手", "Awaiting handover"))
-          : rank === 1
-            ? sectionEl("hot", L("进行中", "Active"))
-            : sectionEl("rest", L("最近", "Recent")),
-      );
-    }
-    nodes.push(itemNode(g, false));
-  }
-  if (hidden)
-    nodes.push(
-      moreNode("none:flat", L(`再显示 ${ChatGroups.caps.flatStep} 条`, `Show ${ChatGroups.caps.flatStep} more`), () => {
-        state.moreFlat += ChatGroups.caps.flatStep;
-        renderList();
-      }),
-    );
-  return nodes;
-}
 function isFolded(id) {
   if (!state.folded.has(id)) state.folded.set(id, stored(`${FOLD_KEY}.${id}`) === "1");
   return state.folded.get(id);
@@ -404,12 +354,16 @@ function toggleFold(id) {
   renderList();
 }
 function headNode(section) {
-  const id = `${state.groupBy}:${section.key}`;
+  const id = `project:${section.key}`;
   let rec = state.heads.get(id);
   if (!rec) {
     rec = { name: h("span.gl-grp-name"), hint: h("span.gl-grp-hint"), count: h("span.gl-grp-n") };
     rec.el = h("button.gl-grp", { type: "button" }, h("span.gl-grp-caret", { "aria-hidden": "true" }), rec.name, rec.hint, rec.count);
     rec.el.addEventListener("click", () => toggleFold(id));
+    rec.el.addEventListener("contextmenu", (e) => {
+      if (e.target.closest?.(".gl-grp-add")) return;
+      if (rec.section?.manual && !rec.section.items.length) Actions.projectMenu(rec.section, e);
+    });
     state.heads.set(id, rec);
   }
   setAttr(rec.el, "aria-expanded", isFolded(id) ? "false" : "true");
@@ -417,6 +371,8 @@ function headNode(section) {
   setText(rec.name, section.title);
   setText(rec.hint, section.hint);
   setText(rec.count, String(section.items.length));
+  rec.section = section;
+  ChatTerminal.headAction(rec);
   return rec.el;
 }
 // Folded groups stay in the list (the narrow rail has no headers to open them) but are not shown.
@@ -425,14 +381,14 @@ function groupedNodes(groups) {
   const nodes = [];
   const order = [];
   const live = new Set();
-  const sections = ChatGroups.arrange(groups, state.groupBy, { urgent, L });
+  const sections = ChatGroups.arrange(groups, { projects: state.projects, urgent, L });
   const { sections: kept, hiddenGroups } = ChatGroups.capSections(sections, {
     groupLimit: ChatGroups.caps.groups + state.moreGroups,
-    itemLimit: (s) => ChatGroups.caps.items + (state.moreItems.get(`${state.groupBy}:${s.key}`) || 0),
+    itemLimit: (s) => ChatGroups.caps.items + (state.moreItems.get(`project:${s.key}`) || 0),
     must: mustShow,
   });
   for (const section of kept) {
-    const id = `${state.groupBy}:${section.key}`;
+    const id = `project:${section.key}`;
     live.add(id);
     const folded = isFolded(id);
     nodes.push(headNode(section));
@@ -453,10 +409,8 @@ function groupedNodes(groups) {
   if (hiddenGroups)
     nodes.push(
       moreNode(
-        `groups:${state.groupBy}`,
-        state.groupBy === "boss"
-          ? L(`更多 boss`, `More bosses`)
-          : L(`更多项目`, `More projects`),
+        "groups:project",
+        L("更多项目", "More projects"),
         () => {
           state.moreGroups += ChatGroups.caps.groupStep;
           renderList();
@@ -467,15 +421,30 @@ function groupedNodes(groups) {
   state.order = order;
   return nodes;
 }
-function setGroupBy(mode) {
-  if (!ChatGroups.modes.includes(mode) || mode === state.groupBy) return;
-  state.groupBy = mode;
-  // How much the reader opened up belongs to the shape of the list, so a new shape starts closed.
-  state.moreGroups = 0;
-  state.moreItems.clear();
-  state.moreFlat = 0;
-  store(GROUP_BY_KEY, mode);
-  renderList();
+function revealProject(key) {
+  if (!key) return;
+  const id = `project:${key}`;
+  let dirty = false;
+  if (isFolded(id)) {
+    state.folded.set(id, false);
+    store(`${FOLD_KEY}.${id}`, null);
+    dirty = true;
+  }
+  const sections = ChatGroups.arrange(state.groupsData, { projects: state.projects, urgent, L });
+  const regularIndex = sections.filter((s) => !s.pinned).findIndex((s) => s.key === key);
+  if (regularIndex >= 0 && regularIndex >= ChatGroups.caps.groups + state.moreGroups) {
+    const needed = regularIndex + 1 - ChatGroups.caps.groups;
+    state.moreGroups += Math.ceil(needed / ChatGroups.caps.groupStep) * ChatGroups.caps.groupStep;
+    dirty = true;
+  }
+  if (dirty || !state.heads.has(id)) renderList();
+  const head = state.heads.get(id)?.el;
+  if (!head) return;
+  head.scrollIntoView?.({ block: "nearest" });
+  head.focus?.({ preventScroll: true });
+  head.classList?.remove("flash");
+  void head.offsetWidth;
+  head.classList?.add("flash");
 }
 
 // ---------------------------------------------------------------- what everyone is doing

@@ -917,3 +917,35 @@ fn retention_preview_skips_unreadable_owners_and_ids_without_losing_healthy_coun
         assert_eq!(count(root.path(), "conversations", "healthy"), 1);
     }
 }
+
+/// A rename the App made is remembered in the App's own config, a failed one is not, and nothing
+/// of it reaches the service's database beyond the title itself.
+#[test]
+fn an_app_rename_is_marked_in_the_tray_config_only_when_it_succeeds() {
+    let root = tempfile::tempdir().unwrap();
+    let config = tempfile::tempdir().unwrap();
+    fixture(root.path(), "named");
+    let rename_request = |id: &str, title: &str| {
+        let body = json!({"id": id, "title": title}).to_string();
+        request(
+            root.path(),
+            config.path(),
+            "POST",
+            "/app/conversations/rename",
+            Some("1"),
+            body.as_bytes(),
+        )
+    };
+    assert_eq!(rename_request("gone", "x").status, 200);
+    assert!(renamed::list(config.path()).is_empty());
+    assert_eq!(rename_request("named", " ").status, 200);
+    assert!(renamed::list(config.path()).is_empty());
+    assert_eq!(rename_request("named", "新标题").status, 200);
+    assert_eq!(
+        renamed::list(config.path()).into_iter().collect::<Vec<_>>(),
+        ["named"]
+    );
+    // Marking again keeps one entry.
+    renamed::mark(config.path(), "named").unwrap();
+    assert_eq!(renamed::list(config.path()).len(), 1);
+}
