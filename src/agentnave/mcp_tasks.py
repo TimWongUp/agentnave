@@ -726,8 +726,8 @@ async def wait(
     review_needed requires decide_answers before waiting again. seat_lost reports a failed/blocked
     seat while peers run, once per seat, answers withheld; retry via run_round.retry_seats.
     wait_elapsed: status/activity only; wait again. nothing_pending: the inbox is empty.
-    already_waiting: a blocking inbox wait is already active for this chat; do not call wait
-    again (use wait_seconds=0 to check progress).
+    already_waiting: another blocking inbox wait is active; results return to that call (use
+    wait_seconds=0 for progress).
 
     wait_seconds=0 and include_output=false still receive ready items. Only 0 includes
     running tails (up to 1000 characters) and age, subject to include_output.
@@ -746,8 +746,8 @@ async def wait(
     )
     if seq is not None:
         payload["seq"] = seq
-        # already_waiting tells the boss not to start another wait, so it gets no next seq.
-        if (next_step := payload.get("next")) and payload["reason"] != "already_waiting":
+        # ALREADY_WAITING tells the boss not to start another wait, so it gets no next seq.
+        if (next_step := payload.get("next")) and next_step != runtime.ALREADY_WAITING:
             payload["next"] = next_step + f" Next wait: seq={seq + 1}."
     return payload
 
@@ -817,12 +817,16 @@ async def _receive(
         active_inbox_waits.add(inbox_key)
     try:
         while True:
+            timeout = min(float(window), max(0.0, deadline - time.monotonic()))
+            if blocking_inbox:
+                # Re-check the inbox periodically so tasks dispatched mid-wait are received here.
+                timeout = min(timeout, float(runtime.INBOX_WAIT_SLICE_SECONDS))
             ready_invocations, ready_rounds = await _ready_handles(
                 manager,
                 conversations,
                 invocation_ids,
                 round_ids,
-                min(float(window), max(0.0, deadline - time.monotonic())),
+                timeout,
             )
             if ids is not None:
                 break
@@ -849,7 +853,7 @@ async def _receive(
                     "updates": [],
                     "rounds": [],
                 }
-        return _wait_payload(
+        payload = _wait_payload(
             manager,
             conversations,
             _WaitResults(invocation_ids, round_ids, ready_invocations, ready_rounds),
@@ -858,6 +862,14 @@ async def _receive(
             wait_seconds,
             manager_session_id,
         )
+        if (
+            ids is None
+            and wait_seconds == 0
+            and "next" in payload
+            and inbox_key in active_inbox_waits
+        ):
+            payload["next"] = runtime.ALREADY_WAITING
+        return payload
     finally:
         if blocking_inbox:
             active_inbox_waits.discard(inbox_key)
