@@ -488,15 +488,17 @@ fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
 }
 
 #[test]
-fn zcode_desktop_bundle_is_told_where_its_provider_config_lives() {
-    let bundle = std::path::Path::new("/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs");
-    let env = super::session::cli_env("zcode", bundle);
-    assert!(env.iter().any(|(name, value)| *name == "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE"
-        && value == "/Applications/ZCode.app/Contents/Resources/config/provider/zcode-builtin.json")
-        || std::env::var_os("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE").is_some());
-    // An installed `zcode` command and other CLIs find their own config.
-    assert!(
-        super::session::cli_env("zcode", std::path::Path::new("/usr/local/bin/zcode")).is_empty()
-    );
-    assert!(super::session::cli_env("codex", bundle).is_empty());
+fn only_clis_with_a_terminal_ui_are_offered() {
+    use std::path::Path;
+    assert!(!super::has_terminal_ui(
+        "deepseek",
+        Path::new("/usr/local/bin/dsh")
+    ));
+    let bundle = Path::new("/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs");
+    assert!(!super::has_terminal_ui("zcode", bundle));
+    assert!(super::has_terminal_ui(
+        "zcode",
+        Path::new("/usr/local/bin/zcode")
+    ));
+    assert!(super::has_terminal_ui("codex", bundle));
 }

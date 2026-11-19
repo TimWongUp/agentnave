@@ -19,7 +19,7 @@ const READ_CHUNK: usize = 16 * 1024;
 pub(crate) struct Launch {
     pub program: PathBuf,
     pub args: Vec<String>,
-    pub env: Vec<(&'static str, String)>,
+    pub env: Vec<(&'static str, &'static str)>,
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
@@ -38,34 +38,6 @@ pub(super) fn cli_args(provider: &str, resume: Option<&str>, fresh: Option<&str>
         _ => Vec::new(),
     };
     args.into_iter().map(str::to_owned).collect()
-}
-
-/// Environment a CLI needs to start at all. ZCode's Desktop bundle, which runs when no `zcode`
-/// command is installed, cannot find its built-in provider config on its own; the service's ZCode
-/// adapter points it there the same way.
-pub(super) fn cli_env(provider: &str, program: &Path) -> Vec<(&'static str, String)> {
-    let bundle = program.ends_with("Contents/Resources/glm/zcode.cjs");
-    let (true, Some(resources), Some(home)) = (
-        provider == "zcode" && bundle,
-        program.parent().and_then(Path::parent),
-        dirs::home_dir(),
-    ) else {
-        return Vec::new();
-    };
-    [
-        (
-            "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE",
-            resources.join("config/provider/zcode-builtin.json"),
-        ),
-        (
-            "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE",
-            home.join(".zcode/v2/provider_config.json"),
-        ),
-    ]
-    .into_iter()
-    .filter(|(name, _)| std::env::var_os(name).is_none())
-    .map(|(name, path)| (name, path.to_string_lossy().into_owned()))
-    .collect()
 }
 
 /// A random version 4 UUID in the lower-case form Claude Code names its session records by.

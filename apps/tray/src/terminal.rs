@@ -275,9 +275,6 @@ impl Terminals {
         if !PROVIDERS.contains(&provider) {
             return Response::error(400, "未知的 CLI");
         }
-        if NO_TERMINAL_UI.contains(&provider) {
-            return Response::error(400, "这个 CLI 没有终端界面");
-        }
         let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
         self.launch(Start {
             provider,
@@ -421,6 +418,9 @@ impl Terminals {
         let Some(program) = installed_path(provider) else {
             return Response::error(400, "这个 CLI 没有安装");
         };
+        if !has_terminal_ui(provider, &program) {
+            return Response::error(400, "这个 CLI 没有终端界面");
+        }
         if !cwd.is_absolute() || !cwd.is_dir() {
             return Response::error(400, "文件夹不存在");
         }
@@ -428,12 +428,6 @@ impl Terminals {
         // before the chat has a workspace; it names nothing else.
         let chosen = (provider == "claude" && resume.is_none()).then(session::fresh_session_id);
         let theme = theme::for_cli(provider, light);
-        let env = theme
-            .env
-            .into_iter()
-            .map(|(name, value)| (name, value.to_owned()))
-            .chain(session::cli_env(provider, &program))
-            .collect();
         let launch = Launch {
             program,
             args: [
@@ -441,7 +435,7 @@ impl Terminals {
                 theme.args,
             ]
             .concat(),
-            env,
+            env: theme.env,
             cwd: cwd.clone(),
             cols,
             rows,
@@ -566,17 +560,27 @@ fn cells(payload: &Value) -> (u16, u16) {
 }
 
 /// The CLIs detection found on this machine, in the App's usual order.
-/// CLIs with nothing to run in a terminal: DeepSeek Harness ships only its ACP, headless, SDK and
-/// web profiles (and the Desktop app's own), none of them an interactive terminal UI.
-const NO_TERMINAL_UI: &[&str] = &["deepseek"];
+/// Whether the installed CLI has an interactive terminal UI to run. DeepSeek Harness ships only
+/// its ACP, headless, SDK and web profiles (and the Desktop app's own). ZCode's Desktop app bundles
+/// its CLI without the TUI package, so only a separately installed `zcode` command opens one.
+fn has_terminal_ui(provider: &str, program: &Path) -> bool {
+    match provider {
+        "deepseek" => false,
+        "zcode" => !program.ends_with("Contents/Resources/glm/zcode.cjs"),
+        _ => true,
+    }
+}
 
 fn installed() -> Value {
     let detected = crate::detect::detected(false, crate::members::codex_source);
     let clis: Vec<Value> = PROVIDERS
         .iter()
-        .filter(|provider| !NO_TERMINAL_UI.contains(provider))
         .filter(|provider| detected[**provider]["installed"] == true)
-        .filter(|provider| detected[**provider]["path"].is_string())
+        .filter(|provider| {
+            detected[**provider]["path"]
+                .as_str()
+                .is_some_and(|path| has_terminal_ui(provider, Path::new(path)))
+        })
         .map(|provider| json!({"provider": provider}))
         .collect();
     json!({"clis": clis})
