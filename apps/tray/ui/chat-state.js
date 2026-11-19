@@ -227,9 +227,6 @@ function createItem(g) {
     presence: h("i.presence"),
     label: h("b.gi-label"),
     meta: h("span.gi-meta"),
-    time: h("time"),
-    prev: h("span.gi-prev"),
-    pill: h("span.pill"),
     iso: h("span.pill.tone-idle.act", { role: "button", tabindex: "0" }),
     tileKey: null,
   };
@@ -240,9 +237,11 @@ function createItem(g) {
     h(
       "span.gi-body",
       {},
-      h("span.gi-top", {}, rec.label, rec.time),
+      // an agent shows its title and its boss; isolated directories still waiting to be released
+      // are the one thing it asks of the user
+      h("span.gi-top", {}, rec.label),
       rec.meta,
-      h("span.gi-bottom", {}, rec.prev, rec.iso, rec.pill),
+      (rec.bottom = h("span.gi-bottom", {}, rec.iso)),
     ),
   );
   rec.el.addEventListener("click", (e) => {
@@ -285,17 +284,9 @@ function updateItem(rec, g) {
   setClass(rec.presence, g.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", g.live ? L("有任务在运行", "Tasks running") : null);
   setText(rec.label, chatName(g));
-  setText(
-    rec.meta,
-    L(`${handoverWord(g)}${place} · ${g.desks_count ?? 0} 工位 · ${g.rooms_count ?? 0} 会议室`, `${handoverWord(g)}${place} · ${g.desks_count ?? 0} desks · ${g.rooms_count ?? 0} rooms`),
-  );
-  setText(rec.time, relTime(g.updated));
-  setText(rec.prev, g.preview);
-  rec.iso.hidden = !g.isolated_count;
+  setText(rec.meta, `${handoverWord(g)}${place}`);
+  rec.bottom.hidden = rec.iso.hidden = !g.isolated_count;
   setText(rec.iso, isolatedCount(g.isolated_count));
-  rec.pill.hidden = shown === "idle";
-  setClass(rec.pill, `pill tone-${tone}`);
-  setText(rec.pill, word);
   ChatTerminal.decorate(rec, g);
 }
 // The boss, then the project when the item is pinned under awaiting handover.
