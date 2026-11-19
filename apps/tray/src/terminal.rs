@@ -275,6 +275,9 @@ impl Terminals {
         if !PROVIDERS.contains(&provider) {
             return Response::error(400, "未知的 CLI");
         }
+        if NO_TERMINAL_UI.contains(&provider) {
+            return Response::error(400, "这个 CLI 没有终端界面");
+        }
         let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
         self.launch(Start {
             provider,
@@ -425,6 +428,12 @@ impl Terminals {
         // before the chat has a workspace; it names nothing else.
         let chosen = (provider == "claude" && resume.is_none()).then(session::fresh_session_id);
         let theme = theme::for_cli(provider, light);
+        let env = theme
+            .env
+            .into_iter()
+            .map(|(name, value)| (name, value.to_owned()))
+            .chain(session::cli_env(provider, &program))
+            .collect();
         let launch = Launch {
             program,
             args: [
@@ -432,7 +441,7 @@ impl Terminals {
                 theme.args,
             ]
             .concat(),
-            env: theme.env,
+            env,
             cwd: cwd.clone(),
             cols,
             rows,
@@ -557,10 +566,15 @@ fn cells(payload: &Value) -> (u16, u16) {
 }
 
 /// The CLIs detection found on this machine, in the App's usual order.
+/// CLIs with nothing to run in a terminal: DeepSeek Harness ships only its ACP, headless, SDK and
+/// web profiles (and the Desktop app's own), none of them an interactive terminal UI.
+const NO_TERMINAL_UI: &[&str] = &["deepseek"];
+
 fn installed() -> Value {
     let detected = crate::detect::detected(false, crate::members::codex_source);
     let clis: Vec<Value> = PROVIDERS
         .iter()
+        .filter(|provider| !NO_TERMINAL_UI.contains(provider))
         .filter(|provider| detected[**provider]["installed"] == true)
         .filter(|provider| detected[**provider]["path"].is_string())
         .map(|provider| json!({"provider": provider}))
