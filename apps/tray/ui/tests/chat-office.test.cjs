@@ -1195,6 +1195,7 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
   const bodyChildren = [];
   const posts = [];
   const revealed = [];
+  const started = [];
   let refreshes = 0;
   let nextAddError = null;
   const addBtn = h("button#add-project");
@@ -1209,7 +1210,7 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
         if (path === "/app/projects/pick") return { cwd: "/tmp/repo/sub" };
         if (path === "/app/projects/add") {
           if (nextAddError) throw new Error(nextAddError);
-          const projects = [{ key: "/tmp/repo", label: "repo", path: "/tmp/repo", added_at: 10 }];
+          const projects = [{ key: "/tmp/repo", label: "repo", path: "~/repo", added_at: 10 }];
           return { project: projects[0], projects };
         }
         if (path === "/app/projects/remove") return { projects: [] };
@@ -1226,6 +1227,8 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
     refresh: async () => { refreshes++; },
     renderList() {}, go() {}, openScope() {},
     revealProject: key => revealed.push(key),
+    requestAnimationFrame: fn => setTimeout(fn, 0),
+    ChatTerminal: { newAgent: (_e, cwd) => started.push(cwd) },
     setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
   });
   vm.runInContext(`${readFileSync(`${__dirname}/../actions.js`, "utf8")}\nglobalThis.Actions = Actions;`, context);
@@ -1244,6 +1247,8 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
   assert.equal(state.listKey, null);
   assert.equal(refreshes, 1);
   assert.deepEqual(plain(revealed), ["/tmp/repo"]);
+  // the CLI menu starts in the project's absolute folder, not its shortened display path
+  assert.deepEqual(plain(started), ["/tmp/repo"]);
   assert.equal(addBtn.disabled, false);
 
   nextAddError = "不在项目目录中";

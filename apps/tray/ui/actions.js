@@ -531,6 +531,8 @@ const Actions = {};
       await refresh();
       if (result.project?.key) {
         revealProject(result.project.key);
+        // bringing the new project into view scrolls the list a frame later, and a scroll closes menus
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         const rec = state.heads?.get(`project:${result.project.key}`);
         const anchor = rec?.add || rec?.el || button;
         const rect = anchor?.getBoundingClientRect?.();
@@ -540,7 +542,7 @@ const Actions = {};
           preventDefault() {},
           stopPropagation() {},
         };
-        if (typeof ChatTerminal !== "undefined") ChatTerminal?.newAgent?.(event, result.project.path || result.project.key);
+        if (typeof ChatTerminal !== "undefined") ChatTerminal?.newAgent?.(event, result.project.key);
       }
     } catch (error) {
       say(error.message || L("未能添加项目", "Failed to add project"), true);
