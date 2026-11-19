@@ -43,12 +43,12 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gl-more[data-folded="true"] { display: none; }
 .gi[data-folded="true"] { display: none; }
 .gl-empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 12.5px; }
-.gi { position: relative; display: flex; gap: 11px; padding: 10px 10px 10px 16px; margin-bottom: 2px; border-radius: 11px; color: var(--ink); content-visibility: auto; contain-intrinsic-size: auto 66px; }
+.gi { position: relative; display: flex; gap: 11px; padding: 10px 10px 10px 16px; margin-bottom: 2px; border-radius: 11px; color: var(--ink); content-visibility: auto; contain-intrinsic-size: auto 50px; }
 .gi::before { content: ""; position: absolute; left: 5px; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: var(--mc); opacity: 0.55; }
 .gi.hot::before, .gi.on::before { opacity: 1; }
 .gi:hover { background: var(--hover); }
 .gi.on { background: color-mix(in srgb, var(--mc) 12%, var(--card)); }
-.gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 11.5px; color: var(--muted); }
 .gi-label { min-width: 0; font-size: 12.5px; font-weight: 650; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gi-meta { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -64,6 +64,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 @keyframes pulse { from { transform: scale(1); opacity: 1; } to { transform: scale(3); opacity: 0; } }
 .presence { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--solid); box-shadow: inset 0 0 0 1.5px var(--idle); }
 .presence.on { background: var(--done); box-shadow: 0 0 0 2px var(--solid); }
+.presence[hidden] { display: none; }
 
 
 /* ---- three columns: workspaces · office floor · conversation ---- */

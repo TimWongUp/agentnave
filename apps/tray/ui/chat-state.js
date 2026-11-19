@@ -237,8 +237,8 @@ function createItem(g) {
     h(
       "span.gi-body",
       {},
-      // an agent shows its title and its boss; isolated directories still waiting to be released
-      // are the one thing it asks of the user
+      // an agent shows its title; a handover and isolated directories still waiting to be released
+      // are the only things it adds
       h("span.gi-top", {}, rec.label),
       rec.meta,
       (rec.bottom = h("span.gi-bottom", {}, rec.iso)),
@@ -281,10 +281,15 @@ function updateItem(rec, g) {
     rec.tileKey = tileKey;
     rec.tile.replaceChildren(hostTile(g.app || g.host, g.label));
   }
+  // the dot appears only while something runs
+  rec.presence.hidden = !g.live;
   setClass(rec.presence, g.live ? "presence on" : "presence");
   setAttr(rec.presence, "title", g.live ? L("有任务在运行", "Tasks running") : null);
   setText(rec.label, chatName(g));
-  setText(rec.meta, `${handoverWord(g)}${place}`);
+  // the avatar already names the boss; the line is left for a handover the user should know about
+  const handover = g.handover === "pending" || g.handover === "changed";
+  rec.meta.hidden = !handover;
+  setText(rec.meta, handover ? `${handoverWord(g)}${place}` : "");
   rec.bottom.hidden = rec.iso.hidden = !g.isolated_count;
   setText(rec.iso, isolatedCount(g.isolated_count));
   ChatTerminal.decorate(rec, g);

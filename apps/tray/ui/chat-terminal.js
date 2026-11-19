@@ -218,7 +218,6 @@ const ChatTerminal = (() => {
     }
     const x = g.terminal != null ? byId(g.terminal) : ofWorkspace(g.group);
     rec.term.hidden = !x || x.exit != null;
-    if (g.terminal != null) setText(rec.meta, g.label);
     rec.term.title = L("boss 在终端里运行", "boss runs in a terminal");
   }
   function menu(id, e) {
