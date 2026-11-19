@@ -58,7 +58,7 @@ async def recommend_seat(
     subagent (with random candidates enabled, native/model/effort only preview the first
     usable choice in order; follow the start_agent receipt). Errors start with a code:
     not_enabled, config_error, no_key, no_candidates, network, rate_limited, auth, rejected
-    or bad_response; only a dropped connection or timeout was retried once, and nothing is
+    or bad_response; only a network failure was retried once, and nothing is
     replaced: choose a seat from list_members yourself.
     """
     found = await recommend_or_raise(task, access)

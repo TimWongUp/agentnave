@@ -171,7 +171,7 @@ async def start_agents(
     (status not_started, reason native_seat, the seat, provider/model/effort and a message for
     the host's built-in subagent), with error.code native_seat kept. A decision that
     fails as a whole (not_enabled, config_error, no_key, network, rate_limited, auth, rejected,
-    bad_response) starts nothing; only a dropped connection or timeout was retried once, and no
+    bad_response) starts nothing; only a network failure was retried once, and no
     other seat replaces it. With two or more
     access=write tasks the service gives each its own new isolated directory, as if it had
     passed isolation (a task's own isolation wins; read tasks and a lone writer get none);
