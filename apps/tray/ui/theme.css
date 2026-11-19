@@ -43,6 +43,7 @@
   --floor-dot: #ffffff12;
   --wall: #ffffff07;
   --im-bg: #111214;
+  --term-bg: #141414;
   --im-member: #2c2c2e;
   --im-member-ink: #e8e8ea;
   --im-boss: #2f7f52;
@@ -90,6 +91,7 @@
   --floor-dot: #00000010;
   --wall: #0000000a;
   --im-bg: #ededed;
+  --term-bg: #eeeeee;
   --im-member: #ffffff;
   --im-member-ink: #1d1d1f;
   --im-boss: #95ec69;
@@ -138,6 +140,7 @@
     --floor-dot: #00000010;
     --wall: #0000000a;
     --im-bg: #ededed;
+  --term-bg: #eeeeee;
     --im-member: #ffffff;
     --im-member-ink: #1d1d1f;
     --im-boss: #95ec69;

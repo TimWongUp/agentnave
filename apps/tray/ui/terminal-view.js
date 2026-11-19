@@ -3,18 +3,30 @@
 // polling /app/terminal/output and sends keys, binary mouse reports and size changes back.
 window.TerminalView = (() => {
   const FONT = '"SF Mono", Menlo, Monaco, Consolas, "Noto Sans Mono CJK SC", monospace';
-  // One dark skin in both App themes: Grok paints its own #141414 cells and Claude Code's default
-  // theme is drawn for dark backgrounds, so a light terminal would put dark slabs in a light frame.
-  // Text sits on a few steps of grey like Grok's; the hues are the office's status colours.
-  const THEME = {
-    background: "#141414", foreground: "#e1e1e1", cursor: "#c8c8c8", cursorAccent: "#141414",
-    selectionBackground: "#ffffff2e", scrollbarSliderBackground: "#ffffff1f",
-    scrollbarSliderHoverBackground: "#ffffff33", scrollbarSliderActiveBackground: "#ffffff47",
-    black: "#262626", red: "#ff7d6e", green: "#7fca90", yellow: "#f0b45a", blue: "#6ea8ff",
-    magenta: "#b9a4f5", cyan: "#4fd6c9", white: "#c8c8c8",
-    brightBlack: "#6c6c6c", brightRed: "#ff9d91", brightGreen: "#9be0aa", brightYellow: "#f7c97f",
-    brightBlue: "#93bfff", brightMagenta: "#cfbfff", brightCyan: "#7fe6dc", brightWhite: "#f0f0f0",
+  // Text sits on a few steps of grey like Grok's; the hues are the office's status colours. The
+  // background is --term-bg, so it follows the App's theme with the frame around it.
+  const THEMES = {
+    dark: {
+      background: "#141414", foreground: "#e1e1e1", cursor: "#c8c8c8", cursorAccent: "#141414",
+      selectionBackground: "#ffffff2e", scrollbarSliderBackground: "#ffffff1f",
+      scrollbarSliderHoverBackground: "#ffffff33", scrollbarSliderActiveBackground: "#ffffff47",
+      black: "#262626", red: "#ff7d6e", green: "#7fca90", yellow: "#f0b45a", blue: "#6ea8ff",
+      magenta: "#b9a4f5", cyan: "#4fd6c9", white: "#c8c8c8",
+      brightBlack: "#6c6c6c", brightRed: "#ff9d91", brightGreen: "#9be0aa", brightYellow: "#f7c97f",
+      brightBlue: "#93bfff", brightMagenta: "#cfbfff", brightCyan: "#7fe6dc", brightWhite: "#f0f0f0",
+    },
+    light: {
+      background: "#eeeeee", foreground: "#1f1f1f", cursor: "#3a3a3a", cursorAccent: "#eeeeee",
+      selectionBackground: "#0000001f", scrollbarSliderBackground: "#00000017",
+      scrollbarSliderHoverBackground: "#00000029", scrollbarSliderActiveBackground: "#0000003d",
+      black: "#1f1f1f", red: "#b83d31", green: "#3d9a56", yellow: "#a96f12", blue: "#2f6fe0",
+      magenta: "#7a5fd0", cyan: "#087c73", white: "#6e6e73",
+      brightBlack: "#8e8e93", brightRed: "#d6584a", brightGreen: "#4aa863", brightYellow: "#c4862a",
+      brightBlue: "#4f8cf0", brightMagenta: "#9673ee", brightCyan: "#1d9a90", brightWhite: "#3a3a3c",
+    },
   };
+  const root = document.documentElement;
+  const theme = () => THEMES[root.dataset.theme === "light" ? "light" : "dark"];
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const act = (path, body, type = "application/json") => fetch(path, {
     method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": type }, body,
@@ -33,7 +45,7 @@ window.TerminalView = (() => {
       this.term = new Terminal({
         fontFamily: FONT, fontSize: 13, lineHeight: 1.3, fontWeightBold: 600, cursorBlink: true,
         cursorStyle: "bar", cursorWidth: 2, scrollback: 5000, macOptionClickForcesSelection: true,
-        drawBoldTextInBrightColors: false, theme: THEME,
+        drawBoldTextInBrightColors: false, theme: theme(),
       });
       this.fit = new FitAddon.FitAddon();
       this.term.loadAddon(this.fit);
@@ -61,6 +73,8 @@ window.TerminalView = (() => {
     }
 
     focus() { this.term.focus(); }
+
+    restyle() { this.term.options.theme = theme(); }
 
     hasSelection() { return this.term.hasSelection(); }
 

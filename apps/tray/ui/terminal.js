@@ -6,6 +6,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const view = new TerminalView(id);
   AN.$("term").append(view.element);
   view.open();
+  new MutationObserver(() => view.restyle()).observe(document.documentElement, {
+    attributes: true, attributeFilter: ["data-theme"],
+  });
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent || event.data?.type !== "agentnave:terminal") return;
     if (event.data.action === "shown") {

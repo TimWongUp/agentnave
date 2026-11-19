@@ -19,6 +19,8 @@ const ChatTerminal = (() => {
   };
   const act = (path, body = "{}") =>
     fetch(path, { method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": "application/json" }, body });
+  // Grok paints its own background, so it starts in the theme the App shows.
+  const light = () => document.documentElement.dataset.theme === "light";
   const folder = (p) => (p || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p || "";
   const byId = (id) => t.list.find((x) => x.id === id);
   const pendingId = (group) => (group?.startsWith(PREFIX) ? Number(group.slice(PREFIX.length)) : null);
@@ -129,7 +131,7 @@ const ChatTerminal = (() => {
         cwd = picked?.cwd;
         if (!cwd) return;
       }
-      const result = await reply(await act("/app/terminal/start", JSON.stringify({ provider, cwd, cols: 100, rows: 30 })));
+      const result = await reply(await act("/app/terminal/start", JSON.stringify({ provider, cwd, cols: 100, rows: 30, light: light() })));
       if (!result) return;
       await refresh();
       go(`/chat/${PREFIX}${result.session.id}`);
@@ -191,7 +193,7 @@ const ChatTerminal = (() => {
   }
   // Continues the chat an ended terminal was the boss of, or starts its CLI afresh, in its place.
   async function restart(id) {
-    const result = await reply(await act(`/app/terminal/restart?session=${id}`, ""));
+    const result = await reply(await act(`/app/terminal/restart?session=${id}&light=${Number(light())}`, ""));
     if (!result) return;
     await refresh();
     if (state.loaded) t.terminal.set(state.loaded, true);
@@ -200,7 +202,7 @@ const ChatTerminal = (() => {
   }
   // Continues a workspace's chat in a new terminal, in the folder it ran in.
   async function resume(group) {
-    const result = await reply(await act(`/app/terminal/resume?workspace=${encodeURIComponent(group)}`, ""));
+    const result = await reply(await act(`/app/terminal/resume?workspace=${encodeURIComponent(group)}&light=${Number(light())}`, ""));
     if (!result) return;
     t.terminal.set(group, true);
     await refresh();

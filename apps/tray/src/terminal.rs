@@ -69,6 +69,7 @@ pub(crate) fn request(
     let terminals = app.state::<Terminals>();
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let id = number(query, "session");
+    let light = number(query, "light") == Some(1);
     match (method, route) {
         ("GET", "/app/terminal/state") => Response::json(&terminals.describe()),
         ("GET", "/app/terminal/clis") => Response::json(&installed()),
@@ -91,14 +92,16 @@ pub(crate) fn request(
             })
         }),
         (_, "/app/terminal/close") => response::action(method, action, || terminals.close(id)),
-        (_, "/app/terminal/restart") => response::action(method, action, || terminals.restart(id)),
+        (_, "/app/terminal/restart") => {
+            response::action(method, action, || terminals.restart(id, light))
+        }
         (_, "/app/terminal/resume") => {
             let workspace = query
                 .split('&')
                 .find_map(|pair| pair.strip_prefix("workspace="))
                 .unwrap_or_default()
                 .to_owned();
-            response::action(method, action, || terminals.resume(&workspace))
+            response::action(method, action, || terminals.resume(&workspace, light))
         }
         _ => Response::not_found(),
     }
@@ -193,12 +196,13 @@ impl Terminals {
         }
         let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
         let (cols, rows) = cells(payload);
-        self.launch(provider, cwd, (cols, rows), None, Vec::new())
+        let light = payload["light"].as_bool().unwrap_or(false);
+        self.launch(provider, cwd, (cols, rows), None, Vec::new(), light)
     }
 
     /// Starts an ended terminal's CLI again in its folder, in its place: continuing the chat it
     /// was the boss of when its CLI can, else afresh as a new agent.
-    fn restart(&self, id: Option<u64>) -> Response {
+    fn restart(&self, id: Option<u64>, light: bool) -> Response {
         let (provider, cwd, workspaces) = {
             let state = self.lock();
             let Some(running) = state.open.iter().find(|running| Some(running.id) == id) else {
@@ -228,7 +232,7 @@ impl Terminals {
         } else {
             Vec::new()
         };
-        let reply = self.launch(&provider, cwd, (100, 30), resume.as_deref(), kept);
+        let reply = self.launch(&provider, cwd, (100, 30), resume.as_deref(), kept, light);
         if reply.status == 200 {
             self.lock().open.retain(|running| Some(running.id) != id);
         }
@@ -237,7 +241,7 @@ impl Terminals {
 
     /// Continues the chat of a workspace that has no terminal here, in the folder it ran in. A
     /// chat already open in a terminal here is not started twice.
-    fn resume(&self, workspace: &str) -> Response {
+    fn resume(&self, workspace: &str, light: bool) -> Response {
         {
             let state = self.lock();
             let open = state.open.iter().find(|running| {
@@ -258,7 +262,8 @@ impl Terminals {
         let Some(cwd) = crate::data::boss_app::session_cwd(&record) else {
             return Response::error(409, "会话记录里没有它的文件夹");
         };
-        let reply = self.launch(&host, cwd, (100, 30), Some(&id), vec![workspace.to_owned()]);
+        let workspaces = vec![workspace.to_owned()];
+        let reply = self.launch(&host, cwd, (100, 30), Some(&id), workspaces, light);
         if reply.status == 200 {
             // An ended terminal of this chat gives way to the new one.
             let mut state = self.lock();
@@ -278,6 +283,7 @@ impl Terminals {
         (cols, rows): (u16, u16),
         resume: Option<&str>,
         workspaces: Vec<String>,
+        light: bool,
     ) -> Response {
         let Some(program) = installed_path(provider) else {
             return Response::error(400, "这个 CLI 没有安装");
@@ -288,6 +294,7 @@ impl Terminals {
         let launch = Launch {
             program,
             args: session::cli_args(provider, resume),
+            env: session::cli_env(provider, light),
             cwd: cwd.clone(),
             cols,
             rows,
