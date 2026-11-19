@@ -28,9 +28,10 @@ window.TerminalView = (() => {
   const root = document.documentElement;
   const light = () => root.dataset.theme === "light";
   const theme = () => THEMES[light() ? "light" : "dark"];
-  // Some CLIs keep text meant for a dark background, near white, on the light skin. As in VS Code's
-  // terminal, such text is darkened until it reads at 4.5:1; the dark skin draws CLIs as they are.
-  const contrast = () => (light() ? 4.5 : 1);
+  // A CLI picks its colours when it starts, so after the App changes appearance, or for CLIs that
+  // ignore the background, text can sit too close to it. As in VS Code's terminal, such text is
+  // shifted until it reads at 4.5:1.
+  const CONTRAST = 4.5;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const act = (path, body, type = "application/json") => fetch(path, {
     method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": type }, body,
@@ -49,7 +50,7 @@ window.TerminalView = (() => {
       this.term = new Terminal({
         fontFamily: FONT, fontSize: 13, lineHeight: 1.3, fontWeightBold: 600, cursorBlink: true,
         cursorStyle: "bar", cursorWidth: 2, scrollback: 5000, macOptionClickForcesSelection: true,
-        drawBoldTextInBrightColors: false, theme: theme(), minimumContrastRatio: contrast(),
+        drawBoldTextInBrightColors: false, theme: theme(), minimumContrastRatio: CONTRAST,
       });
       this.fit = new FitAddon.FitAddon();
       this.term.loadAddon(this.fit);
@@ -80,7 +81,6 @@ window.TerminalView = (() => {
 
     restyle() {
       this.term.options.theme = theme();
-      this.term.options.minimumContrastRatio = contrast();
     }
 
     hasSelection() { return this.term.hasSelection(); }
