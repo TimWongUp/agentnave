@@ -233,12 +233,6 @@ impl Session {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    /// Output after `from`, waiting up to `wait` for some when there is none yet.
-    #[cfg(test)]
-    pub(crate) fn read(&self, from: u64, wait: Duration) -> Chunk {
-        self.read_view(from, wait, None)
-    }
-
     /// Output after `from` for a specific page `view`; only the latest view advances the watermark.
     pub(crate) fn read_view(&self, from: u64, wait: Duration, view: Option<&str>) -> Chunk {
         let deadline = Instant::now() + wait;

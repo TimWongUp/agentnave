@@ -213,6 +213,17 @@ fn a_chat_runs_again_in_the_folder_its_record_names() {
     )
     .unwrap();
     assert_eq!(session_cwd(&record), Some(PathBuf::from("/work/app")));
+
+    let windows_record = dir.path().join("win.jsonl");
+    fs::write(
+        &windows_record,
+        "{\"type\":\"session\",\"cwd\": \"C:\\\\Users\\\\Tim\\\\app\"}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        session_cwd(&windows_record),
+        Some(PathBuf::from(r"C:\Users\Tim\app"))
+    );
 }
 
 fn titled(kind: &str, key: &str, text: &str) -> String {
@@ -424,7 +435,10 @@ fn a_terminals_chat_title_is_found_without_a_workspace() {
         ));
         write(
             &path,
-            &format!("{{\"payload\":{{\"cwd\":\"{}\"}}}}\n", folder.display()),
+            &format!(
+                "{}\n",
+                serde_json::json!({"payload": {"cwd": folder.display().to_string()}})
+            ),
         );
     };
     write(
@@ -580,7 +594,9 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
         write(
             &dir.path().join(format!("pi/sessions/{name}.jsonl")),
             &format!(
-                "{{\"type\":\"session\",\"cwd\":\"{folder}\"}}\n{{\"type\":\"session_info\",\"name\":\"{name}\"}}\n"
+                "{}\n{}\n",
+                serde_json::json!({"type": "session", "cwd": folder}),
+                serde_json::json!({"type": "session_info", "name": name}),
             ),
         );
     };
@@ -594,7 +610,7 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
     assert!(
         found
             .as_deref()
-            .is_some_and(|path| path.ends_with("p/mine.jsonl"))
+            .is_some_and(|path| Path::new(path).ends_with("p/mine.jsonl"))
     );
     assert_eq!(named.map(|t| t.text).as_deref(), Some("p/mine"));
     // Once found, the record itself is asked for, whatever else appears.
@@ -610,7 +626,7 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
     // Grok keeps the folder in summary.json.
     write(
         &dir.path().join("grok/sessions/e/s1/summary.json"),
-        &format!("{{\"info\":{{\"cwd\":\"{cwd}\"}},\"generated_title\":\"Grok new\"}}"),
+        &serde_json::json!({"info": {"cwd": cwd}, "generated_title": "Grok new"}).to_string(),
     );
     let (_, named) = title::of_terminal(&homes("grok"), "grok", None, &work, started);
     assert_eq!(named.map(|t| t.text).as_deref(), Some("Grok new"));
@@ -619,7 +635,8 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
     write(
         &dir.path().join("codebuddy/projects/p/z.jsonl"),
         &format!(
-            "{{\"cwd\":\"{cwd}\"}}\n{}",
+            "{}\n{}",
+            serde_json::json!({"cwd": cwd}),
             titled("ai-title", "aiTitle", "Buddy new")
         ),
     );

@@ -1,17 +1,23 @@
 use std::path::Path;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
 use portable_pty::CommandBuilder;
 
-use super::session::{KEPT, Output, Session, cli_args, command, parent_session};
+#[cfg(unix)]
+use super::session::Session;
+use super::session::{KEPT, Output, cli_args, command, parent_session};
+#[cfg(unix)]
 use super::{Running, Terminals};
 
 /// Reads until `wanted` shows up in the output or the CLI exits, within a few seconds.
+#[cfg(unix)]
 fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
     let deadline = Instant::now() + Duration::from_secs(10);
     let (mut text, mut from) = (String::new(), 0);
     while Instant::now() < deadline {
-        let chunk = session.read(from, Duration::from_millis(200));
+        let chunk = session.read_view(from, Duration::from_millis(200), None);
         text.push_str(&String::from_utf8_lossy(&chunk.bytes));
         from = chunk.end;
         if text.contains(wanted) || chunk.exit.is_some() {
@@ -22,10 +28,12 @@ fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
 }
 
 /// Waits for the CLI to exit, reading whatever it still writes.
+#[cfg(unix)]
 fn exit_of(session: &Session) -> Option<u32> {
     output_until(session, "\u{0}").1
 }
 
+#[cfg(unix)]
 fn shell(script: &str) -> CommandBuilder {
     let mut command = CommandBuilder::new("/bin/sh");
     command.args(["-c", script]);
@@ -43,7 +51,7 @@ fn a_cli_reads_keys_and_its_output_and_exit_are_kept() {
     assert!(text.contains("got:keys"), "{text:?}");
     assert_eq!(exit_of(&session), Some(0));
     // A page that attaches later replays from the start.
-    let replay = session.read(0, Duration::ZERO);
+    let replay = session.read_view(0, Duration::ZERO, None);
     assert_eq!(replay.start, 0);
     assert!(String::from_utf8_lossy(&replay.bytes).contains("got:keys"));
 }

@@ -493,7 +493,29 @@ pub(crate) fn session_cwd(path: &Path) -> Option<PathBuf> {
         .take(WINDOW)
         .read_to_end(&mut chunk)
         .ok()?;
-    value_of(&chunk, b"\"cwd\":\"", false).map(PathBuf::from)
+    json_string_field(&chunk, b"\"cwd\":").map(PathBuf::from)
+}
+
+fn json_string_field(chunk: &[u8], key: &[u8]) -> Option<String> {
+    let mut offset = 0;
+    while let Some(pos) = chunk[offset..]
+        .windows(key.len())
+        .position(|window| window == key)
+    {
+        let mut cursor = offset + pos + key.len();
+        while cursor < chunk.len() && chunk[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if chunk.get(cursor) == Some(&b'"')
+            && let Some(Ok(value)) = serde_json::Deserializer::from_slice(&chunk[cursor..])
+                .into_iter::<String>()
+                .next()
+        {
+            return Some(value);
+        }
+        offset += pos + key.len();
+    }
+    None
 }
 
 /// A boss chat's key: the service's `_boss`, which hashes `json.dumps([host, session])`.
