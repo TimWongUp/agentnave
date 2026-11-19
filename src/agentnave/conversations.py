@@ -441,13 +441,17 @@ class Conversations(ConversationStore):
                     found[run.invocation_id] = owner(round_.group.id)
         return found
 
+    def inbox_key(self, manager_session_id: str | None) -> str | None:
+        """Normalized workspace key used to scope inbox waits for this boss chat."""
+        return self._manager_session(manager_session_id, strict=False)
+
     def inbox(self, manager_session_id: str | None) -> tuple[list[str], list[str]]:
         """This server's task invocations and rounds whose end no caller has received yet.
 
         With a boss identity (argument or host_session_id) only that boss's
         conversations count; without one, every handle of this server. Oldest first.
         """
-        session = self._manager_session(manager_session_id, strict=False)
+        session = self.inbox_key(manager_session_id)
 
         def mine(conversation_id: str) -> bool:
             if session is None:

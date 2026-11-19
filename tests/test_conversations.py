@@ -469,15 +469,19 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
             "start_agent",
             {"provider": "claude", "prompt": "hi", "cwd": str(tmp_path), "manager_session_id": "b"},
         )
-        # Two inbox waits at once: the end reaches exactly one of them.
+        # Two inbox waits at once: the second returns immediately instead of stacking.
         both = await asyncio.gather(
             *(_call(client, "wait", {"manager_session_id": "b"}) for _ in range(2))
         )
-        assert sorted(str(item["reason"]) for item in both) == ["nothing_pending", "ready"]
-        assert all(item["pending_ids"] == [] and item["all_finished"] is True for item in both)
+        assert sorted(str(item["reason"]) for item in both) == ["already_waiting", "ready"]
         theirs = next(item for item in both if item["reason"] == "ready")
+        assert theirs["pending_ids"] == [] and theirs["all_finished"] is True
         updates = cast(list[dict[str, object]], theirs["updates"])
         assert [update["invocation_id"] for update in updates] == [other["invocation_id"]]
+        stacked = next(item for item in both if item["reason"] == "already_waiting")
+        assert stacked["all_finished"] is False
+        assert stacked["updates"] == [] and stacked["rounds"] == []
+        assert stacked["next"] == mcp_runtime.ALREADY_WAITING
         waited = await _call(
             client,
             "start_agent",
@@ -511,6 +515,197 @@ async def test_wait_returns_whichever_task_or_round_is_ready(tmp_path: Path) -> 
         empty = await _call(client, "wait", {})
         assert empty["reason"] == "nothing_pending" and "next" not in empty
         assert empty["pending_ids"] == [] and empty["all_finished"] is True
+
+
+@pytest.mark.asyncio
+async def test_blocking_inbox_wait_does_not_stack_and_releases_on_cancel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_tasks
+
+    original_ready = mcp_tasks._ready_handles
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def tracked_ready(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        try:
+            return await original_ready(*args, **kwargs)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(mcp_tasks, "_ready_handles", tracked_ready)
+
+    async with Client(mcp) as client:
+        sleeping = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "Private instruction for you only:\nSLEEP",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-stack",
+            },
+        )
+        other_chat = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "hi",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-other",
+            },
+        )
+        first = asyncio.create_task(
+            _call(client, "wait", {"manager_session_id": "chat-stack", "seq": 1})
+        )
+        await entered.wait()
+
+        # A second blocking inbox wait for the same chat returns immediately without claiming.
+        stacked = await _call(client, "wait", {"manager_session_id": "chat-stack", "seq": 2})
+        assert stacked["reason"] == "already_waiting"
+        assert stacked["seq"] == 2
+        assert stacked["pending_ids"] == [sleeping["invocation_id"]]
+        assert stacked["all_finished"] is False
+        assert stacked["updates"] == [] and stacked["rounds"] == []
+        assert stacked["next"] == mcp_runtime.ALREADY_WAITING
+
+        # wait(0), explicit ids waits, and other boss chats are unaffected; wait(0) keeps
+        # next pointing to the existing wait without suggesting a next seq.
+        peek = await _call(
+            client, "wait", {"manager_session_id": "chat-stack", "wait_seconds": 0, "seq": 2}
+        )
+        assert peek["reason"] == "wait_elapsed"
+        assert peek["seq"] == 2
+        assert peek["pending_ids"] == [sleeping["invocation_id"]]
+        assert peek["next"] == mcp_runtime.ALREADY_WAITING
+
+        explicit_peek = await _call(
+            client, "wait", {"ids": [sleeping["invocation_id"]], "wait_seconds": 0}
+        )
+        assert explicit_peek["reason"] == "wait_elapsed"
+        assert explicit_peek["pending_ids"] == [sleeping["invocation_id"]]
+
+        quick_same = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "hi",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-stack",
+            },
+        )
+        explicit_blocking = await _call(client, "wait", {"ids": [quick_same["invocation_id"]]})
+        assert explicit_blocking["reason"] == "ready"
+        assert [
+            u["invocation_id"] for u in cast(list[dict[str, object]], explicit_blocking["updates"])
+        ] == [quick_same["invocation_id"]]
+
+        other_inbox = await _call(client, "wait", {"manager_session_id": "chat-other"})
+        assert other_inbox["reason"] == "ready"
+        assert [
+            u["invocation_id"] for u in cast(list[dict[str, object]], other_inbox["updates"])
+        ] == [other_chat["invocation_id"]]
+
+        # Cancelling the active blocking wait releases the slot for the next wait.
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+
+        entered.clear()
+        second = asyncio.create_task(
+            _call(client, "wait", {"manager_session_id": "chat-stack", "seq": 3})
+        )
+        await entered.wait()
+        await _cancel(client, sleeping["invocation_id"])
+        finished = await second
+        assert finished["reason"] == "nothing_pending" and finished["seq"] == 3
+
+        # After normal completion, a new task's blocking inbox wait works normally.
+        follow_up = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "done",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-stack",
+            },
+        )
+        final = await _call(client, "wait", {"manager_session_id": "chat-stack"})
+        assert final["reason"] == "ready"
+        assert [u["invocation_id"] for u in cast(list[dict[str, object]], final["updates"])] == [
+            follow_up["invocation_id"]
+        ]
+
+
+@pytest.mark.asyncio
+async def test_blocking_inbox_wait_receives_mid_wait_dispatch_on_slice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_tasks
+
+    original_ready = mcp_tasks._ready_handles
+    entered = asyncio.Event()
+
+    async def tracked_ready(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        return await original_ready(*args, **kwargs)
+
+    monkeypatch.setattr(mcp_tasks, "_ready_handles", tracked_ready)
+    monkeypatch.setattr(mcp_runtime, "INBOX_WAIT_SLICE_SECONDS", 0.05)
+
+    async with Client(mcp) as client:
+        sleeping = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "Private instruction for you only:\nSLEEP",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-slice",
+            },
+        )
+        first = asyncio.create_task(
+            _call(client, "wait", {"manager_session_id": "chat-slice", "seq": 1})
+        )
+        await entered.wait()
+
+        # While wait #1 is active, wait(0) reports ALREADY_WAITING without Next wait seq.
+        peek = await _call(
+            client, "wait", {"manager_session_id": "chat-slice", "wait_seconds": 0, "seq": 2}
+        )
+        assert peek["reason"] == "wait_elapsed"
+        assert peek["seq"] == 2
+        assert peek["next"] == mcp_runtime.ALREADY_WAITING
+
+        # Dispatching a fast task while wait #1 is waiting on sleeping is picked up next slice.
+        later = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "quick",
+                "cwd": str(tmp_path),
+                "manager_session_id": "chat-slice",
+            },
+        )
+        result = await asyncio.wait_for(first, timeout=5.0)
+        assert result["reason"] == "ready"
+        assert result["seq"] == 1
+        assert [u["invocation_id"] for u in cast(list[dict[str, object]], result["updates"])] == [
+            later["invocation_id"]
+        ]
+        assert result["pending_ids"] == [sleeping["invocation_id"]]
+        assert result["all_finished"] is False
+
+        await _cancel(client, sleeping["invocation_id"])
+        empty = await _call(client, "wait", {"manager_session_id": "chat-slice"})
+        assert empty["reason"] == "nothing_pending"
 
 
 @pytest.mark.asyncio

@@ -126,6 +126,7 @@ def _read_excluded_providers() -> frozenset[str]:
 
 WAIT_SECONDS = 270
 LONG_WAIT_SECONDS = 1500
+INBOX_WAIT_SLICE_SECONDS = 2.0
 LONG_WAIT_SENTENCE = (
     "In the Claude Code terminal interactive session, omitting waits up to 1500s (25 minutes) "
     "instead; pass 270 for the short window. "
@@ -149,6 +150,13 @@ WAIT_AGAIN = (
     "Still pending: reply to any new user message first, and handle any prompt_pending or "
     "review_needed, then call wait again "
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
+)
+ALREADY_WAITING = (
+    "An earlier blocking inbox wait for this chat is still running (in the background or an "
+    "earlier exec cell) and returns its results to that call: collect them there and do not "
+    "start another blocking wait. To check progress or collect ready results without blocking, "
+    "call wait(wait_seconds=0); if that call was abandoned, read results it already took with "
+    "read_conversation."
 )
 # A seat the host's own CLI owns starts nothing, so a dispatch receipt must not send the boss to wait.
 NATIVE_SEAT_NEXT = (
@@ -220,6 +228,7 @@ class Runtime:
         self.manager = InvocationManager()
         self.conversations = Conversations(self.manager, data_root(), host=HOST)
         self.retention = Retention(data_root())
+        self.active_inbox_waits: set[str | None] = set()
 
 
 @asynccontextmanager
@@ -538,6 +547,10 @@ def _manager(ctx: Context[Runtime]) -> InvocationManager:
 
 def _conversations(ctx: Context[Runtime]) -> Conversations:
     return ctx.request_context.lifespan_context.conversations
+
+
+def _active_inbox_waits(ctx: Context[Runtime]) -> set[str | None]:
+    return ctx.request_context.lifespan_context.active_inbox_waits
 
 
 def _rejected(exc: Exception) -> ToolError:
@@ -908,6 +921,7 @@ __all__ = [
     "_Server",
     "_manager",
     "_conversations",
+    "_active_inbox_waits",
     "_rejected",
     "started_payload",
     "invocation_request_error",
@@ -925,10 +939,12 @@ __all__ = [
     "long_wait_enabled",
     "_restrict_wait_windows",
     "WAIT_AGAIN",
+    "ALREADY_WAITING",
     "WAIT_NEXT",
     "NATIVE_SEAT_NEXT",
     "WAIT_SECONDS",
     "LONG_WAIT_SECONDS",
+    "INBOX_WAIT_SLICE_SECONDS",
     "EXCLUDED_PROVIDERS",
     "PROVIDER_SELECTION",
     "ACCESS",
