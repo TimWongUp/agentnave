@@ -51,7 +51,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.on { background: color-mix(in srgb, var(--mc) 12%, var(--card)); }
 .gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 11.5px; color: var(--muted); }
-.gi-label { min-width: 0; font-size: 12.5px; font-weight: 650; color: color-mix(in srgb, var(--mc) 70%, var(--ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gi-label { min-width: 0; font-size: 12.5px; font-weight: 650; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gi-meta { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gi-top time { margin-left: auto; flex: none; font-size: 11px; color: var(--faint); }
 .gi-bottom { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -152,6 +152,8 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 /* Reserve the inner scrollers' width even at the overflow boundary. html's gutter does
    not apply here; changing this width resizes the painted scenes and message lines. */
 .office, .tl, .gl-wrap, .side-rows, .optimized-rows { scrollbar-gutter: stable; }
+/* The office page never scrolls itself: manage.css's root gutter would paint a strip at its right edge. */
+html:has(body.chat-page) { scrollbar-gutter: auto; }
 /* one column: boss office, meetings in session, open desks. --fig is the character size everywhere */
 .floor { --fig: 100px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; padding: 10px 20px 20px; }
 /* Zones space themselves, so an ended room can fold its own gap away as it closes. */
@@ -160,7 +162,7 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 .zone { position: relative; min-width: 0; border-radius: 16px; background: color-mix(in srgb, var(--surface) 84%, transparent); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
 .desks-zone { cursor: default; }
 .zone.sel { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
-.zone-h { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; color: var(--faint); }
+.zone-h { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; color: var(--muted); }
 .zone-h .r { margin-left: auto; letter-spacing: 0; font-weight: 550; }
 .zone-h .r.run { color: var(--run); }
 .boss-zone .zone-h .r { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -205,7 +207,7 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
 .lid > * { width: 100% !important; height: 100% !important; border-radius: 3px !important; box-shadow: none !important; font-size: 7px !important; }
 .say { position: absolute; top: 2px; right: 4px; z-index: 6; max-width: 70%; padding: 3px 8px; border-radius: 10px 10px 10px 3px; background: var(--card-hover); color: var(--muted); font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .say:empty { display: none; }
-[data-mood="speaking"] > .say, [data-mood="working"] > .say { background: var(--run); color: var(--bg); }
+[data-mood="speaking"] > .say, [data-mood="working"] > .say { background: var(--say-bg); color: var(--say-ink); }
 [data-mood="failed"] .say { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
 .say .dots { display: inline-flex; gap: 3px; margin-left: 3px; vertical-align: middle; }
 .say .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: dot 1.2s infinite; }
@@ -503,7 +505,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .optimized-h b { font-weight: 650; color: var(--faint); }
 .optimized-h .r { margin-left: auto; font-weight: 500; color: var(--faint); }
 .optimized-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 6 + 10px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
-.desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: var(--wall); border: 1px solid transparent; padding: 32px 8px 3px; text-align: center; cursor: pointer; transition: background 0.2s; }
+.desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: transparent; border: 1px solid transparent; padding: 32px 8px 3px; text-align: center; cursor: pointer; transition: background 0.2s; }
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .desk.away .scene > .fig { opacity: 0; }
@@ -536,7 +538,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .seat.empty .plate, .seat.empty .seat-nm { opacity: 0.6; }
 
 /* ---- ticker and envelopes ---- */
-.ticker { flex: none; display: flex; align-items: center; gap: 10px; box-sizing: border-box; height: var(--foot-h); padding: 0 20px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--solid) 88%, transparent); font-size: 12px; color: var(--soft); }
+.ticker { flex: none; display: flex; align-items: center; gap: 10px; box-sizing: border-box; height: var(--foot-h); padding: 0 20px; border-top: 1px solid var(--line); background: var(--solid); font-size: 12px; color: var(--soft); }
 .ticker .lbl { flex: none; font-size: 11px; font-weight: 650; color: var(--faint); letter-spacing: 0.04em; }
 .tick { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tick.new { animation: tick-in 0.4s ease-out; }
@@ -575,7 +577,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 
 /* ---- timeline: one reading line per message, "who 对 @whom 做什么" ---- */
 .tl { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; outline: none; overscroll-behavior: contain; }
-.tl-inner { padding: 4px 14px 20px; display: flex; flex-direction: column; }
+.tl-inner { padding: 4px 14px 20px 16px; display: flex; flex-direction: column; }
 .sep { display: flex; align-items: center; gap: 10px; margin: 18px 0 2px; font-size: 11px; font-weight: 650; color: var(--faint); }
 .sep::before, .sep::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .msg { margin-top: 12px; min-width: 0; border-radius: 10px; }
@@ -606,6 +608,8 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .at .head { border-radius: 27%; background: center / cover; }
 .bub .at, .bub .at.who, .bub .at.boss, .bub .at.all { padding: 0; background: none; border: 0; border-radius: 0; font-size: inherit; color: var(--accent); }
 .bub .at.all { color: var(--run); }
+/* in the boss's bubble a mention reads in the bubble's own text colour */
+.tp-im .msg.boss .bub :is(.at, .at.all, .at.boss) { color: inherit; font-weight: 650; }
 .at.boss { padding-left: 8px; background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); color: var(--accent); }
 .at.all { padding-left: 8px; background: color-mix(in srgb, var(--run) 12%, transparent); border-color: color-mix(in srgb, var(--run) 30%, transparent); color: var(--run); }
 .bub { position: relative; min-width: 0; margin: 5px 0 0 28px; padding: 8px 11px; border-radius: 10px; background: var(--card-hover); font-size: 12.5px; line-height: 1.6; color: var(--soft); overflow-wrap: anywhere; }
@@ -663,7 +667,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .blank-link { margin-top: 14px; color: var(--accent); font-weight: 600; }
 
 /* avatars (official model icons and local overrides) */
-.avatar { flex: none; width: 30px; height: 30px; border-radius: 9px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; overflow: hidden; }
+.avatar { flex: none; width: 30px; height: 30px; border-radius: 9px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; font-size: 12px; font-weight: 700; color: #fff; overflow: hidden; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .gi:focus-visible { outline-offset: -2px; }
 
@@ -767,8 +771,8 @@ dialog.act::backdrop { background: #0006; }
 @container (max-width: 340px) { .voice-more, .voice-person:nth-child(n+4):not([data-speaking="true"], [data-preparing="true"]) { display: none; } }
 /* ---- new conversation reading (chat-topics.js) ---- */
 .tp-badge { flex: none; padding: 0 6px; border-radius: 4px; font-size: 10.5px; font-weight: 650; line-height: 17px; color: var(--tone, var(--muted)); background: color-mix(in srgb, var(--tone, var(--muted)) 14%, transparent); }
-.chat-page .tp-card { display: flex; flex-direction: column; gap: 5px; width: 100%; margin-top: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--card); text-align: left; cursor: pointer; }
-.chat-page button.tp-card:hover { background: var(--card-hover); }
+.chat-page .tp-card { display: flex; flex-direction: column; gap: 5px; width: 100%; margin-top: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); text-align: left; cursor: pointer; }
+.chat-page button.tp-card:hover { background: color-mix(in srgb, var(--ink) 6%, var(--surface)); }
 .chat-page div.tp-card { cursor: default; }
 .tp-card-top { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; }
 .tp-card-top b { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 650; color: var(--ink); }
@@ -831,11 +835,11 @@ dialog.act::backdrop { background: #0006; }
 /* a desk's effort: the harder it tries, the warmer the tag */
 .tag-effort { --effort: var(--idle); color: var(--effort); border-color: color-mix(in srgb, var(--effort) 45%, transparent); background: color-mix(in srgb, var(--effort) 14%, transparent); }
 .tag-effort:is([data-effort="minimal"], [data-effort="low"]) { --effort: var(--done); }
-.tag-effort[data-effort="medium"] { --effort: var(--m0); }
+.tag-effort[data-effort="medium"] { --effort: var(--task); }
 .tag-effort[data-effort="high"] { --effort: var(--review); }
-.tag-effort[data-effort="xhigh"] { --effort: var(--m4); }
+.tag-effort[data-effort="xhigh"] { --effort: var(--warn); }
 .tag-effort[data-effort="max"] { --effort: var(--bad); }
-.tag-effort[data-effort="ultra"] { --effort: var(--m1); }
+.tag-effort[data-effort="ultra"] { --effort: var(--show); }
 
 .tp-im .voice-read { color: inherit; opacity: .7; }
 .tp-im .voice-read:not(:disabled):hover, .tp-im .voice-read[aria-pressed="true"] { opacity: 1; }
@@ -845,7 +849,7 @@ dialog.act::backdrop { background: #0006; }
 .office-settings[hidden] { display: none; }
 button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .pill.act { cursor: pointer; }
-.iso-card { display: grid; gap: 4px; margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); font-size: 12.5px; color: var(--soft); user-select: text; }
+.iso-card { display: grid; gap: 4px; margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; color: var(--soft); user-select: text; }
 .iso-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
 .iso-top-end { flex: none; display: inline-flex; align-items: center; gap: 6px; }
 .iso-del { flex: none; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 11px; line-height: 18px; color: var(--bad); cursor: pointer; }
@@ -856,27 +860,27 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .iso-line.iso-warn { color: var(--warn); }
 .iso-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; user-select: text; }
 
-.provider-health-alert { display: flex; align-items: center; gap: 6px; flex: none; margin: 4px 12px; border: 1px solid #b87518; border-radius: 8px; background: color-mix(in srgb, #e9a43b 22%, var(--bg)); color: var(--ink); font-size: 12px; font-weight: 600; }
+.provider-health-alert { display: flex; align-items: center; gap: 6px; flex: none; margin: 4px 12px; border: 1px solid var(--warn); border-radius: 8px; background: color-mix(in srgb, var(--warn) 18%, var(--bg)); color: var(--ink); font-size: 12px; font-weight: 600; }
 .provider-health-alert[hidden] { display: none; }
 .provider-health-lines { flex: 1; min-width: 0; padding: 7px 0 7px 10px; color: inherit; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .provider-health-lines:hover { text-decoration: underline; }
 .provider-health-close { flex: none; width: 24px; height: 24px; margin: 0 4px 0 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
-.provider-health-close:hover { background: color-mix(in srgb, #e9a43b 32%, var(--bg)); color: var(--ink); }
+.provider-health-close:hover { background: color-mix(in srgb, var(--warn) 30%, var(--bg)); color: var(--ink); }
 
 /* Terminals (ADR-0103): a project's "+" starts an agent; the conversation column can show the
    terminal of a workspace's boss in place of its messages, in the same column. */
 .gl-grp-add { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin: -3px -2px -3px 2px; border-radius: 6px; font-size: 15px; font-weight: 400; line-height: 1; color: var(--muted); }
 .gl-grp-add[hidden] { display: none; }
 .gl-grp-add:hover { background: var(--card-hover); color: var(--ink); }
-.gi-term { flex: none; padding: 0 4px; border-radius: 4px; font: 600 10px/15px ui-monospace, "SF Mono", Menlo, monospace; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.gi-term { flex: none; padding: 0 4px; border-radius: 4px; font: 600 10px/15px var(--mono); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .gi-term[hidden] { display: none; }
 .ctx-cli { display: flex; align-items: center; gap: 8px; }
 .ctx-cli .avatar, .ctx-cli .host-letter { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; }
-.dr-mode { flex: none; display: flex; padding: 2px; border-radius: 9px; background: var(--card); }
+.dr-mode { flex: none; display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--hover); }
 .dr-mode[hidden] { display: none; }
-.dr-mode button { padding: 3px 10px; border-radius: 7px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.dr-mode button { padding: 3px 10px; border-radius: 6px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
 .dr-mode button:hover { color: var(--ink); }
-.dr-mode button[aria-pressed="true"] { background: var(--card-hover); color: var(--ink); box-shadow: 0 1px 2px #0003; }
+.dr-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
 .dr-stop { flex: none; padding: 4px 10px; border-radius: 99px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
 .dr-stop[hidden] { display: none; }
 .dr-stop:hover { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }

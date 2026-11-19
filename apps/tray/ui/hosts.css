@@ -4,7 +4,7 @@
 #notice.error { color: var(--bad); }
 
 /* avatars: official model icons and local overrides. */
-.avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px #ffffff1a; display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
+.avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
 
 /* ---- page chrome ---- */
 .hosts-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 6px 0 2px; flex-wrap: wrap; }

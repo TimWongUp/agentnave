@@ -27,10 +27,13 @@
   --review: #f0b45a;
   --done: #7fca90;
   --idle: #7a808a;
-  --warn: #ff9f0a;
+  --warn: #e8975a;
   --bad: #ff7d6e;
   --show: #b9a4f5;
   --task: #6cc3f0;
+  /* the filled "answering / working" bubble: as striking on either ground */
+  --say-bg: #3cc4b8;
+  --say-ink: #06201d;
   /* eight manager colours (identity only; status is always a dot plus a word) */
   --m0: #6ea8ff;
   --m1: #a88bff;
@@ -42,13 +45,38 @@
   --m7: #42c7e6;
   --floor-dot: #ffffff12;
   --wall: #ffffff07;
-  --im-bg: #111214;
+  /* the reading ground: messages and the terminal share it */
   --term-bg: #141414;
-  --im-member: #2c2c2e;
+  --im-bg: var(--term-bg);
+  --im-member: var(--surface);
   --im-member-ink: #e8e8ea;
-  --im-boss: #2f7f52;
-  --im-boss-ink: #f2f7f3;
-  --im-aside: #27533b;
+  --im-boss: #1f3b39;
+  --im-boss-ink: #eaf5f3;
+  --im-aside: #192d2b;
+  /* terminal skin: text on a few steps of grey like Grok's, hues from the status colours */
+  --term-fg: #e1e1e1;
+  --term-cursor: #c8c8c8;
+  --term-cursor-accent: #141414;
+  --term-selection: #ffffff2e;
+  --term-scroll: #ffffff1f;
+  --term-scroll-hover: #ffffff33;
+  --term-scroll-active: #ffffff47;
+  --term-black: #262626;
+  --term-red: #ff7d6e;
+  --term-green: #7fca90;
+  --term-yellow: #f0b45a;
+  --term-blue: #6ea8ff;
+  --term-magenta: #b9a4f5;
+  --term-cyan: #4fd6c9;
+  --term-white: #c8c8c8;
+  --term-bright-black: #6c6c6c;
+  --term-bright-red: #ff9d91;
+  --term-bright-green: #9be0aa;
+  --term-bright-yellow: #f7c97f;
+  --term-bright-blue: #93bfff;
+  --term-bright-magenta: #cfbfff;
+  --term-bright-cyan: #7fe6dc;
+  --term-bright-white: #f0f0f0;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 :root[data-theme="light"] {
@@ -72,14 +100,17 @@
   --knob-on: #fff;
   --boss-crown: #c99a1e;
   --scrollbar: #c7c7cc;
-  --run: #087c73;
-  --review: #c4862a;
-  --done: #3d9a56;
+  --run: #08786f;
+  --review: #90621f;
+  --done: #307944;
   --idle: #8a8f98;
-  --warn: #c45500;
+  --warn: #b24d00;
   --bad: #b83d31;
-  --show: #7a5fd0;
-  --task: #247aa8;
+  --show: #7356cd;
+  --task: #22729d;
+  --say-bg: #05645c;
+  --say-ink: #fff;
+  /* eight manager colours (identity only; status is always a dot plus a word) */
   --m0: #2f6fe0;
   --m1: #7a54e0;
   --m2: #b83fa6;
@@ -90,13 +121,36 @@
   --m7: #1d89a8;
   --floor-dot: #00000010;
   --wall: #0000000a;
-  --im-bg: #ededed;
+  /* the reading ground: messages and the terminal share it */
   --term-bg: #eeeeee;
-  --im-member: #ffffff;
   --im-member-ink: #1d1d1f;
-  --im-boss: #95ec69;
+  --im-boss: #cfe9e5;
   --im-boss-ink: #1d1d1f;
-  --im-aside: #d6f7c2;
+  --im-aside: #e0f0ed;
+  /* terminal skin: the 16 colours read at 4.5:1 or more on --term-bg without the renderer's help */
+  --term-fg: #1f1f1f;
+  --term-cursor: #3a3a3a;
+  --term-cursor-accent: #eeeeee;
+  --term-selection: #0000001f;
+  --term-scroll: #00000017;
+  --term-scroll-hover: #00000029;
+  --term-scroll-active: #0000003d;
+  --term-black: #1f1f1f;
+  --term-red: #9e342a;
+  --term-green: #286539;
+  --term-yellow: #7a500d;
+  --term-blue: #1b54b8;
+  --term-magenta: #5e3ec6;
+  --term-cyan: #06645d;
+  --term-white: #66666b;
+  --term-bright-black: #6b6b70;
+  --term-bright-red: #c33a2c;
+  --term-bright-green: #2b7a40;
+  --term-bright-yellow: #95600b;
+  --term-bright-blue: #1a63e4;
+  --term-bright-magenta: #7354d4;
+  --term-bright-cyan: #057970;
+  --term-bright-white: #3a3a3c;
 }
 /* System appearance is correct before the shared script runs. */
 @media (prefers-color-scheme: light) {
@@ -121,14 +175,17 @@
     --knob-on: #fff;
     --boss-crown: #c99a1e;
     --scrollbar: #c7c7cc;
-    --run: #087c73;
-    --review: #c4862a;
-    --done: #3d9a56;
+    --run: #08786f;
+    --review: #90621f;
+    --done: #307944;
     --idle: #8a8f98;
-    --warn: #c45500;
+    --warn: #b24d00;
     --bad: #b83d31;
-    --show: #7a5fd0;
-    --task: #247aa8;
+    --show: #7356cd;
+    --task: #22729d;
+    --say-bg: #05645c;
+    --say-ink: #fff;
+    /* eight manager colours (identity only; status is always a dot plus a word) */
     --m0: #2f6fe0;
     --m1: #7a54e0;
     --m2: #b83fa6;
@@ -139,13 +196,36 @@
     --m7: #1d89a8;
     --floor-dot: #00000010;
     --wall: #0000000a;
-    --im-bg: #ededed;
-  --term-bg: #eeeeee;
-    --im-member: #ffffff;
+    /* the reading ground: messages and the terminal share it */
+    --term-bg: #eeeeee;
     --im-member-ink: #1d1d1f;
-    --im-boss: #95ec69;
+    --im-boss: #cfe9e5;
     --im-boss-ink: #1d1d1f;
-    --im-aside: #d6f7c2;
+    --im-aside: #e0f0ed;
+    /* terminal skin: the 16 colours read at 4.5:1 or more on --term-bg without the renderer's help */
+    --term-fg: #1f1f1f;
+    --term-cursor: #3a3a3a;
+    --term-cursor-accent: #eeeeee;
+    --term-selection: #0000001f;
+    --term-scroll: #00000017;
+    --term-scroll-hover: #00000029;
+    --term-scroll-active: #0000003d;
+    --term-black: #1f1f1f;
+    --term-red: #9e342a;
+    --term-green: #286539;
+    --term-yellow: #7a500d;
+    --term-blue: #1b54b8;
+    --term-magenta: #5e3ec6;
+    --term-cyan: #06645d;
+    --term-white: #66666b;
+    --term-bright-black: #6b6b70;
+    --term-bright-red: #c33a2c;
+    --term-bright-green: #2b7a40;
+    --term-bright-yellow: #95600b;
+    --term-bright-blue: #1a63e4;
+    --term-bright-magenta: #7354d4;
+    --term-bright-cyan: #057970;
+    --term-bright-white: #3a3a3c;
   }
 }
 

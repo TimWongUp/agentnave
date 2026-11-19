@@ -3,31 +3,27 @@
 // polling /app/terminal/output and sends keys, binary mouse reports and size changes back.
 window.TerminalView = (() => {
   const FONT = '"SF Mono", Menlo, Monaco, Consolas, "Noto Sans Mono CJK SC", monospace';
-  // Text sits on a few steps of grey like Grok's; the hues are the office's status colours. The
-  // background is --term-bg, so it follows the App's theme with the frame around it.
-  const THEMES = {
-    dark: {
-      background: "#141414", foreground: "#e1e1e1", cursor: "#c8c8c8", cursorAccent: "#141414",
-      selectionBackground: "#ffffff2e", scrollbarSliderBackground: "#ffffff1f",
-      scrollbarSliderHoverBackground: "#ffffff33", scrollbarSliderActiveBackground: "#ffffff47",
-      black: "#262626", red: "#ff7d6e", green: "#7fca90", yellow: "#f0b45a", blue: "#6ea8ff",
-      magenta: "#b9a4f5", cyan: "#4fd6c9", white: "#c8c8c8",
-      brightBlack: "#6c6c6c", brightRed: "#ff9d91", brightGreen: "#9be0aa", brightYellow: "#f7c97f",
-      brightBlue: "#93bfff", brightMagenta: "#cfbfff", brightCyan: "#7fe6dc", brightWhite: "#f0f0f0",
-    },
-    light: {
-      background: "#eeeeee", foreground: "#1f1f1f", cursor: "#3a3a3a", cursorAccent: "#eeeeee",
-      selectionBackground: "#0000001f", scrollbarSliderBackground: "#00000017",
-      scrollbarSliderHoverBackground: "#00000029", scrollbarSliderActiveBackground: "#0000003d",
-      black: "#1f1f1f", red: "#b83d31", green: "#3d9a56", yellow: "#a96f12", blue: "#2f6fe0",
-      magenta: "#7a5fd0", cyan: "#087c73", white: "#6e6e73",
-      brightBlack: "#8e8e93", brightRed: "#d6584a", brightGreen: "#4aa863", brightYellow: "#c4862a",
-      brightBlue: "#4f8cf0", brightMagenta: "#9673ee", brightCyan: "#1d9a90", brightWhite: "#3a3a3c",
-    },
+  // The skin is the --term-* tokens in theme.css (text on a few steps of grey like Grok's, hues
+  // from the office's status colours), read as resolved so it follows the App's theme with the
+  // frame around it.
+  const SKIN = {
+    background: "bg", foreground: "fg", cursor: "cursor", cursorAccent: "cursor-accent",
+    selectionBackground: "selection", scrollbarSliderBackground: "scroll",
+    scrollbarSliderHoverBackground: "scroll-hover", scrollbarSliderActiveBackground: "scroll-active",
   };
+  for (const name of ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]) {
+    SKIN[name] = name;
+    SKIN[`bright${name[0].toUpperCase()}${name.slice(1)}`] = `bright-${name}`;
+  }
   const root = document.documentElement;
   const light = () => root.dataset.theme === "light";
-  const theme = () => THEMES[light() ? "light" : "dark"];
+  const theme = () => {
+    const style = getComputedStyle(root);
+    return Object.fromEntries(Object.entries(SKIN).map(([name, token]) => [name, style.getPropertyValue(`--term-${token}`).trim()]));
+  };
+  // The cursor stops blinking with "reduce motion", as the App's own animations do.
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const still = () => root.dataset.motion === "reduce" || (root.dataset.motion !== "full" && reducedMotion.matches);
   // A CLI picks its colours when it starts, so after the App changes appearance, or for CLIs that
   // ignore the background, text can sit too close to it. As in VS Code's terminal, such text is
   // shifted until it reads at 4.5:1.
@@ -52,7 +48,7 @@ window.TerminalView = (() => {
       this.element = document.createElement("div");
       this.element.className = "tm-term";
       this.term = new Terminal({
-        fontFamily: FONT, fontSize: 13, lineHeight: 1.3, fontWeightBold: 600, cursorBlink: true,
+        fontFamily: FONT, fontSize: 13, lineHeight: 1.3, fontWeightBold: 600, cursorBlink: !still(),
         cursorStyle: "bar", cursorWidth: 2, scrollback: 5000, macOptionClickForcesSelection: true,
         drawBoldTextInBrightColors: false, theme: theme(), minimumContrastRatio: CONTRAST,
       });
@@ -87,6 +83,10 @@ window.TerminalView = (() => {
       });
       this.observer = new ResizeObserver(() => this.layout());
       this.observer.observe(this.element);
+      this.motion = new MutationObserver(() => this.blink());
+      this.motion.observe(root, { attributes: true, attributeFilter: ["data-motion"] });
+      this.blinking = () => this.blink();
+      reducedMotion.addEventListener("change", this.blinking);
       this.pump();
     }
 
@@ -95,6 +95,8 @@ window.TerminalView = (() => {
     }
 
     focus() { this.term.focus(); }
+
+    blink() { this.term.options.cursorBlink = !still(); }
 
     restyle() {
       this.term.options.theme = theme();
@@ -143,6 +145,8 @@ window.TerminalView = (() => {
     dispose() {
       this.live = false;
       this.observer?.disconnect();
+      this.motion?.disconnect();
+      reducedMotion.removeEventListener("change", this.blinking);
       this.term.dispose();
     }
   }
