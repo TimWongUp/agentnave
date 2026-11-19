@@ -33,7 +33,7 @@ INSTRUCTIONS = (
     "specialty rather than another specialty; when the missing one lies between two that are "
     "offered, take the lower of the two."
 )
-TIMEOUT_SECONDS = 10
+TIMEOUT_SECONDS = 20
 _MAX_RESPONSE_BYTES = 1_000_000
 _MAX_DETAIL = 200
 
@@ -145,7 +145,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class GeminiDecisionClient:
-    """One POST per decision: stdlib only, no redirects, no retry."""
+    """One POST per decision: stdlib only, no redirects, one retry after a network failure."""
 
     def __init__(
         self,
@@ -164,10 +164,25 @@ class GeminiDecisionClient:
         return parse_batch_response(self._post(build_batch_request(questions)), questions)
 
     def _post(self, document: dict[str, Any]) -> object:
+        data = json.dumps(document).encode()
+        try:
+            raw = self._send(data)
+        except DecisionError as exc:
+            # A timeout or dropped connection is often momentary; refusals are not retried.
+            if exc.code != "network":
+                raise
+            raw = self._send(data)
+        try:
+            body: object = json.loads(raw)
+        except (ValueError, RecursionError):
+            raise DecisionError("bad_response", "The decision model reply is not JSON.") from None
+        return body
+
+    def _send(self, data: bytes) -> bytes:
         try:
             request = urllib.request.Request(
                 self._endpoint,
-                data=json.dumps(document).encode(),
+                data=data,
                 headers={"content-type": "application/json", "x-goog-api-key": self._key},
                 method="POST",
             )
@@ -187,11 +202,7 @@ class GeminiDecisionClient:
             raise DecisionError(
                 "network", "The decision model request could not be sent."
             ) from None
-        try:
-            body: object = json.loads(raw)
-        except (ValueError, RecursionError):
-            raise DecisionError("bad_response", "The decision model reply is not JSON.") from None
-        return body
+        return raw
 
     def _http_error(self, exc: urllib.error.HTTPError) -> DecisionError:
         try:
