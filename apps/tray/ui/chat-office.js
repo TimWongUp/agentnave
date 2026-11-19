@@ -361,7 +361,7 @@ function sideItems(c, ctx) {
     }));
   return { meets };
 }
-function sideList(node, title, items, empty) {
+function sideList(node, title, items) {
   // A relative time is patched in place; it never rebuilds the list.
   const key = JSON.stringify([title, items.map((item) => ({ ...item, time: Boolean(item.time) })), ART.version()]);
   if (node.dataset.key === key) {
@@ -386,7 +386,6 @@ function sideList(node, title, items, empty) {
     if (item.scope.kind === "room") row.addEventListener("contextmenu", (e) => Actions.roomMenu(item.scope.id, e));
     rows.push(row);
   }
-  if (!items.length) rows.push(h("div.td-more", {}, empty));
   // three rows show at once; the rest scroll inside the list
   const list = h("div.side-rows", {}, rows);
   const top = node.querySelector(".side-rows")?.scrollTop || 0;
@@ -398,7 +397,9 @@ function sideList(node, title, items, empty) {
 }
 function renderSides(rec, c, ctx) {
   const { meets } = sideItems(c, ctx);
-  sideList(rec.meets, L("会议", "Meetings"), meets, L("还没有开过会", "No meetings yet"));
+  // an agent that never held a meeting shows the boss desk alone
+  rec.meets.hidden = !meets.length;
+  sideList(rec.meets, L("会议", "Meetings"), meets);
 }
 
 // ---------------------------------------------------------------- desks
