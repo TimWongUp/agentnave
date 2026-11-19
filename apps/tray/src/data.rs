@@ -5,7 +5,7 @@ mod assets;
 mod orphaned;
 mod request;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -44,7 +44,7 @@ type Cached = (SystemTime, u64, u64, Option<Arc<Value>>);
 type CachedView = (i64, Arc<Value>);
 
 /// What identifies a route answer: snapshots, stage top-5 IDs (for single-group routes),
-/// whether the data root exists, the reuse window, running limit, handovers, boss apps and CLI titles.
+/// whether the data root exists, the reuse window, running limit, handovers, boss apps, CLI titles and the titles the user renamed.
 type RouteKey = (
     Vec<crate::stage::SourceKey>,
     Vec<String>,
@@ -53,7 +53,7 @@ type RouteKey = (
     usize,
     Vec<(String, crate::stage::Handover)>,
     Vec<(String, &'static str)>,
-    Vec<(String, boss_app::CliTitle)>,
+    (Vec<(String, boss_app::CliTitle)>, BTreeSet<String>),
     Vec<crate::isolated::Dir>,
     Vec<(String, crate::projects::Project)>,
     Vec<crate::stage::WorkspaceLink>,
@@ -268,6 +268,7 @@ impl Reader {
         let handover_map: HashMap<_, _> = handovers.iter().cloned().collect();
         let app_map: HashMap<_, _> = apps.iter().cloned().collect();
         let title_map: HashMap<_, _> = titles.iter().cloned().collect();
+        let renamed = crate::manage::renamed_titles(&self.projects_dir);
         let data_exists = self.root.is_dir();
         let mut dirs = crate::isolated::read(&self.root);
         let mut projects = crate::projects::lookup(
@@ -342,7 +343,7 @@ impl Reader {
             limit,
             key_handovers,
             key_apps,
-            key_titles,
+            (key_titles, renamed.clone()),
             dirs.clone(),
             projects.clone().into_iter().collect(),
             key_links,
@@ -367,6 +368,7 @@ impl Reader {
                 links: &links,
                 manual_projects: &manual_projects,
                 titles: &title_map,
+                renamed: &renamed,
             },
         );
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.

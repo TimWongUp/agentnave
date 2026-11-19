@@ -34,7 +34,7 @@ impl Reader {
                 let Some(app) = app else {
                     return Response::error(500, "无法打开文件夹选择器");
                 };
-                match crate::video_packs::picker::choose(app) {
+                match crate::video_packs::picker::choose(app, true) {
                     Ok(cwd) => {
                         Response::json(&json!({"cwd": cwd.map(|cwd| cwd.display().to_string())}))
                     }
@@ -200,7 +200,14 @@ impl Reader {
                 | "/app/workspaces/cancel-handover"
                 | "/app/workspaces/forget"
         ) {
-            return crate::manage::request(&self.root, method, path, action, body);
+            return crate::manage::request(
+                &self.root,
+                &self.projects_dir,
+                method,
+                path,
+                action,
+                body,
+            );
         }
         if matches!(path, "/app/isolated/inspect" | "/app/isolated/delete") {
             return crate::isolated::request(&self.root, method, path, action, body);

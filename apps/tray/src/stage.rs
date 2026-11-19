@@ -328,6 +328,8 @@ struct Group {
     app: Option<&'static str>,
     /// The name the boss's CLI gives this chat in its own session record, when readable.
     cli_title: Option<CliTitle>,
+    /// The user renamed the conversation that names this chat.
+    renamed: bool,
     updated: String,
     at: i64,
     title: String,
@@ -501,6 +503,8 @@ pub(crate) struct Places<'a> {
     pub manual_projects: &'a [ManualProject],
     /// The CLI's own name for each workspace's boss chat.
     pub titles: &'a HashMap<String, CliTitle>,
+    /// The conversations the user renamed in the App.
+    pub renamed: &'a BTreeSet<String>,
 }
 
 pub(crate) use origin::origin_cwds;
@@ -695,6 +699,10 @@ fn unprojected_groups(
         }
         group.app = apps.get(&group.id).copied();
         group.cli_title = places.titles.get(&group.id).cloned();
+        group.renamed = group
+            .first_title
+            .as_ref()
+            .is_some_and(|(_, _, id)| places.renamed.contains(id));
         group.project = places.projects.get(&group.id).cloned();
         let running = running_cwds(snapshots, &group.sources);
         let builders = isolated_builders(snapshots, &group.sources);

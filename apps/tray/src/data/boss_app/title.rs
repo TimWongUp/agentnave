@@ -39,18 +39,32 @@ static CODEX: LazyLock<Mutex<HashMap<PathBuf, Index>>> = LazyLock::new(Mutex::de
 /// transcript repeats its title entries as it grows, so the last 256 KiB hold the latest ones;
 /// the first 256 KiB are looked at only when those have none.
 pub(crate) fn claude(file: &Path) -> Option<CliTitle> {
+    cached(file, |file, len| windows(file, len, claude_entries))
+}
+
+/// The name a Pi session was given (`session_info`), by the same windows of the session file.
+pub(super) fn pi(file: &Path) -> Option<CliTitle> {
+    cached(file, |file, len| windows(file, len, pi_entries))
+}
+
+/// What `read` finds in a record, read again only when the record has grown or shrunk; records
+/// only grow, so an unchanged length needs no second read.
+pub(super) fn cached(
+    file: &Path,
+    read: impl FnOnce(&Path, u64) -> std::io::Result<Option<CliTitle>>,
+) -> Option<CliTitle> {
     let len = fs::metadata(file).ok()?.len();
-    let cached = CLAUDE
+    let known = CLAUDE
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .get(file)
         .cloned();
-    if let Some((seen, title)) = cached
+    if let Some((seen, title)) = known
         && seen == len
     {
         return title;
     }
-    let title = claude_unread(file, len).ok()?;
+    let title = read(file, len).ok()?;
     CLAUDE
         .lock()
         .unwrap_or_else(|p| p.into_inner())
@@ -58,19 +72,44 @@ pub(crate) fn claude(file: &Path) -> Option<CliTitle> {
     title
 }
 
-fn claude_unread(file: &Path, len: u64) -> std::io::Result<Option<CliTitle>> {
+/// The title `parse` finds in the last 256 KiB of a record, else in its first 256 KiB.
+fn windows(
+    file: &Path,
+    len: u64,
+    parse: impl Fn(&[u8]) -> Option<CliTitle>,
+) -> std::io::Result<Option<CliTitle>> {
     let mut file = fs::File::open(file)?;
     let mut chunk = Vec::new();
     file.seek(SeekFrom::Start(len.saturating_sub(WINDOW)))?;
     (&mut file).take(WINDOW).read_to_end(&mut chunk)?;
-    let found = claude_entries(&chunk);
+    let found = parse(&chunk);
     if found.is_some() || len <= WINDOW {
         return Ok(found);
     }
     chunk.clear();
     file.seek(SeekFrom::Start(0))?;
     file.take(WINDOW).read_to_end(&mut chunk)?;
-    Ok(claude_entries(&chunk))
+    Ok(parse(&chunk))
+}
+
+/// The latest `session_info` name in a stretch of Pi session lines; the user gave it with /name.
+fn pi_entries(chunk: &[u8]) -> Option<CliTitle> {
+    let mut named = None;
+    for line in chunk.split(|&byte| byte == b'\n') {
+        if !line.windows(12).any(|window| window == b"session_info") {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        if entry["type"] == "session_info"
+            && let Some(name) = entry["name"].as_str().map(str::trim)
+            && !name.is_empty()
+        {
+            named = Some(name.to_owned());
+        }
+    }
+    named.map(|text| CliTitle { text, custom: true })
 }
 
 /// The latest `custom-title` and `ai-title` entries in a stretch of transcript lines.
@@ -177,6 +216,18 @@ pub(crate) fn of_terminal(
                 .or_else(|| codex_started(&homes.codex, cwd, since));
             let title = id.as_deref().and_then(|id| codex(&homes.codex, id));
             (id, title)
+        }
+        host if super::other::HOSTS.contains(&host) => {
+            // These CLIs' chats have no ID to choose or look up, so the session record itself
+            // stands for the chat once found: a path where the others keep an ID.
+            let record = native.map(PathBuf::from).or_else(|| {
+                let home = &homes.other.iter().find(|(name, _)| name == host)?.1;
+                super::other::started(host, home, cwd, since)
+            });
+            let title = record
+                .as_deref()
+                .and_then(|record| super::other::title_of(host, record));
+            (record.map(|record| record.display().to_string()), title)
         }
         _ => (None, None),
     }

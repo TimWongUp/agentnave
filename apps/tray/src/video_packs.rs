@@ -319,7 +319,7 @@ fn import(
         download::import_dir(shared, tier, Path::new(path))?;
         return Ok(status(shared));
     }
-    let chosen = picker::choose(app.ok_or("无法打开文件夹选择器")?)?;
+    let chosen = picker::choose(app.ok_or("无法打开文件夹选择器")?, false)?;
     if let Some(chosen) = chosen {
         download::import_dir(shared, tier, &chosen)?;
         Ok(status(shared))

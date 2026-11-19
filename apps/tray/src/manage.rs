@@ -1,7 +1,9 @@
 //! Tray-only cleanup and renaming in the conversation database (ADR-0012, ADR-0026). Every
 //! change happens under the conversation's OS lock, the same one its writing server holds.
 
+mod renamed;
 mod request;
+pub(crate) use renamed::list as renamed_titles;
 pub(crate) use request::request;
 
 use std::fs::{self, File, OpenOptions, TryLockError};

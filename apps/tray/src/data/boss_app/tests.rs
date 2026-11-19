@@ -104,6 +104,7 @@ fn chats_without_a_saved_path_are_found_by_their_session_id() {
         claude: vec![claude],
         codex: vec![Path::new("/missing").to_owned(), codex],
         desktop: Vec::new(),
+        other: Vec::new(),
     };
     assert_eq!(
         BossApps::new().of(&connection, homes),
@@ -354,6 +355,7 @@ fn workspaces_are_titled_by_their_clis_names_for_the_chats() {
         claude: vec![claude],
         codex: vec![codex],
         desktop: Vec::new(),
+        other: Vec::new(),
     });
     let text = |workspace: &str| {
         titles
@@ -379,6 +381,7 @@ fn a_terminals_chat_title_is_found_without_a_workspace() {
         claude: vec![claude.clone()],
         codex: vec![codex.clone()],
         desktop: Vec::new(),
+        other: Vec::new(),
     };
     let started = std::time::SystemTime::now() - Duration::from_secs(5);
     let (found, none) = title::of_terminal(&homes, "claude", Some(CLAUDE_SESSION), &work, started);
@@ -432,6 +435,178 @@ fn a_terminals_chat_title_is_found_without_a_workspace() {
     // Other CLIs have no title to read.
     assert_eq!(
         title::of_terminal(&homes, "grok", None, &work, started),
+        (None, None)
+    );
+}
+
+/// Each other CLI's chat name is read from the session record a workspace saved.
+#[test]
+fn other_clis_name_their_chats_in_their_own_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |name: &str| dir.path().join(name);
+    // CodeBuddy and WorkBuddy write Claude's title entries.
+    write(
+        &at("cb/projects/p/x.jsonl"),
+        &titled("ai-title", "aiTitle", "Buddy auto"),
+    );
+    write(
+        &at("wb/projects/p/y.jsonl"),
+        &[
+            titled("ai-title", "aiTitle", "a"),
+            titled("custom-title", "customTitle", "WB mine"),
+        ]
+        .concat(),
+    );
+    // Grok: the title it generated, else the summary; the record is the chat history beside it.
+    write(
+        &at("grok/sessions/e/s1/summary.json"),
+        "{\"info\":{\"id\":\"s1\",\"cwd\":\"/w\"},\"generated_title\":\"Grok title\",\"session_summary\":\"sum\"}",
+    );
+    write(&at("grok/sessions/e/s1/chat_history.jsonl"), "");
+    write(
+        &at("grok/sessions/e/s2/summary.json"),
+        "{\"info\":{\"id\":\"s2\"},\"generated_title\":\"\",\"session_summary\":\"Only summary\"}",
+    );
+    write(&at("grok/sessions/e/s2/chat_history.jsonl"), "");
+    // Pi: the name the user gave with /name, the latest one.
+    write(
+        &at("pi/sessions/p/2026_id.jsonl"),
+        "{\"type\":\"session\",\"id\":\"id\",\"cwd\":\"/w\"}\n\
+         {\"type\":\"session_info\",\"name\":\"old name\"}\n\
+         {\"type\":\"message\",\"text\":\"session_info is not a name\"}\n\
+         {\"type\":\"session_info\",\"name\":\"Pi name\"}\n",
+    );
+    // DeepSeek: the logged title event, in a zstd-packed session or a plain one.
+    let events = "{\"type\":\"user/message\"}\n\
+        {\"type\":\"session/title-llm-request\",\"data\":{}}\n\
+        {\"type\":\"session/title\",\"seq\":13,\"data\":{\"title\":\"DeepSeek title\"}}\n";
+    write(&at("dsh/sessions/e/session-1/session.v4.jsonl"), events);
+    let packed_path = at("dsh/sessions/e/session-2/session.v4.jsonl.zstd");
+    fs::create_dir_all(packed_path.parent().unwrap()).unwrap();
+    fs::write(&packed_path, packed(events.as_bytes())).unwrap();
+
+    let name =
+        |host: &str, record: &str| other::title_of(host, &at(record)).map(|t| (t.text, t.custom));
+    let some = |text: &str, custom| Some((text.to_owned(), custom));
+    assert_eq!(
+        name("codebuddy", "cb/projects/p/x.jsonl"),
+        some("Buddy auto", false)
+    );
+    assert_eq!(
+        name("workbuddy", "wb/projects/p/y.jsonl"),
+        some("WB mine", true)
+    );
+    assert_eq!(
+        name("grok", "grok/sessions/e/s1/chat_history.jsonl"),
+        some("Grok title", false)
+    );
+    assert_eq!(
+        name("grok", "grok/sessions/e/s2/chat_history.jsonl"),
+        some("Only summary", false)
+    );
+    assert_eq!(
+        name("pi", "pi/sessions/p/2026_id.jsonl"),
+        some("Pi name", true)
+    );
+    assert_eq!(
+        name("deepseek", "dsh/sessions/e/session-1/session.v4.jsonl"),
+        some("DeepSeek title", false)
+    );
+    assert_eq!(
+        name("deepseek", "dsh/sessions/e/session-2/session.v4.jsonl.zstd"),
+        some("DeepSeek title", false)
+    );
+    // A record that is missing, or a CLI whose records are not read, has no name.
+    assert_eq!(name("pi", "pi/missing.jsonl"), None);
+    assert_eq!(name("devin", "cb/projects/p/x.jsonl"), None);
+
+    // And through the workspace's saved record.
+    let connection = connection();
+    for (workspace, host, record) in [
+        ("w-grok", "grok", "grok/sessions/e/s1/chat_history.jsonl"),
+        ("w-pi", "pi", "pi/sessions/p/2026_id.jsonl"),
+        ("w-claude-only", "devin", "cb/projects/p/x.jsonl"),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO workspaces VALUES (?1, 'k', ?2, ?3)",
+                rusqlite::params![workspace, host, at(record).display().to_string()],
+            )
+            .unwrap();
+    }
+    let titles = BossApps::new().titles(&connection, Homes::default);
+    let ids: Vec<&str> = titles.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["w-grok", "w-pi"]);
+}
+
+/// A terminal's chat in another CLI is the one record started in its folder since it started.
+#[test]
+fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+    let cwd = work.display().to_string();
+    let started = std::time::SystemTime::now() - Duration::from_secs(5);
+    let homes = |host: &str| Homes {
+        other: vec![(host.to_owned(), dir.path().join(host))],
+        ..Homes::default()
+    };
+
+    // Pi: a record in another folder does not count, one in this folder does.
+    let pi_record = |name: &str, folder: &str| {
+        write(
+            &dir.path().join(format!("pi/sessions/{name}.jsonl")),
+            &format!(
+                "{{\"type\":\"session\",\"cwd\":\"{folder}\"}}\n{{\"type\":\"session_info\",\"name\":\"{name}\"}}\n"
+            ),
+        );
+    };
+    pi_record("p/other", "/elsewhere");
+    assert_eq!(
+        title::of_terminal(&homes("pi"), "pi", None, &work, started),
+        (None, None)
+    );
+    pi_record("p/mine", &cwd);
+    let (found, named) = title::of_terminal(&homes("pi"), "pi", None, &work, started);
+    assert!(
+        found
+            .as_deref()
+            .is_some_and(|path| path.ends_with("p/mine.jsonl"))
+    );
+    assert_eq!(named.map(|t| t.text).as_deref(), Some("p/mine"));
+    // Once found, the record itself is asked for, whatever else appears.
+    pi_record("p/second", &cwd);
+    let (kept, _) = title::of_terminal(&homes("pi"), "pi", found.as_deref(), &work, started);
+    assert_eq!(kept, found);
+    // A second candidate makes a new search ambiguous.
+    assert_eq!(
+        title::of_terminal(&homes("pi"), "pi", None, &work, started),
+        (None, None)
+    );
+
+    // Grok keeps the folder in summary.json.
+    write(
+        &dir.path().join("grok/sessions/e/s1/summary.json"),
+        &format!("{{\"info\":{{\"cwd\":\"{cwd}\"}},\"generated_title\":\"Grok new\"}}"),
+    );
+    let (_, named) = title::of_terminal(&homes("grok"), "grok", None, &work, started);
+    assert_eq!(named.map(|t| t.text).as_deref(), Some("Grok new"));
+
+    // CodeBuddy's records name the folder like Claude's.
+    write(
+        &dir.path().join("codebuddy/projects/p/z.jsonl"),
+        &format!(
+            "{{\"cwd\":\"{cwd}\"}}\n{}",
+            titled("ai-title", "aiTitle", "Buddy new")
+        ),
+    );
+    let (_, named) = title::of_terminal(&homes("codebuddy"), "codebuddy", None, &work, started);
+    assert_eq!(named.map(|t| t.text).as_deref(), Some("Buddy new"));
+
+    // Nothing started before the terminal counts.
+    let later = std::time::SystemTime::now() + Duration::from_secs(60);
+    assert_eq!(
+        title::of_terminal(&homes("grok"), "grok", None, &work, later),
         (None, None)
     );
 }

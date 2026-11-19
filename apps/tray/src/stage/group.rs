@@ -10,6 +10,7 @@ impl Group {
             handover: Handover::default(),
             app: None,
             cli_title: None,
+            renamed: false,
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
@@ -53,6 +54,22 @@ impl Group {
     pub(super) fn manager_label(&self) -> &str {
         boss_label(self.host.as_deref(), self.app)
     }
+    /// The name shown for this agent everywhere: the user's own in the App, else the one the
+    /// user gave in the CLI, else the CLI's own, else the title the boss dispatched with (or the
+    /// first prompt, which is what an untitled dispatch is named by).
+    pub(super) fn display_title(&self) -> &str {
+        let cli = |custom: bool| {
+            self.cli_title
+                .as_ref()
+                .filter(|title| title.custom == custom)
+                .map(|title| title.text.as_str())
+        };
+        match cli(true).or_else(|| cli(false)) {
+            Some(named) if !self.renamed => named,
+            _ => &self.title,
+        }
+    }
+
     pub(super) fn header(&self) -> Value {
         let host = match &self.handover.host {
             Some(host) if self.handover.changed => Some(host.as_str()),
@@ -87,6 +104,7 @@ impl Group {
             "previous_label": previous_host.map(|_| previous),
             "handover_to": self.handover_to, "handover_from": self.handover_from,
             "project": self.project_name, "title": self.title,
+            "display_title": self.display_title(),
             "cli_title": self.cli_title.as_ref().map(|title| &title.text),
             "cli_title_custom": self.cli_title.as_ref().is_some_and(|title| title.custom),
             "title_id": self.first_title.as_ref().map(|(_, _, id)| id)

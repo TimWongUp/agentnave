@@ -64,7 +64,7 @@ impl Running {
         json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
-            "title": null, "title_custom": false})
+            "title": null, "title_custom": false, "display_title": null})
     }
 }
 
@@ -250,6 +250,7 @@ impl Terminals {
             if let Some(title) = titles.get(id) {
                 value["title"] = json!(title.text);
                 value["title_custom"] = json!(title.custom);
+                value["display_title"] = json!(title.text);
             }
             if let Some(project) = projects.get(&id.to_string()) {
                 value["project_key"] = json!(project.key);
@@ -263,7 +264,7 @@ impl Terminals {
 
     fn pick(&self, app: &AppHandle) -> Response {
         // A cancelled pick names no folder, so nothing starts.
-        match crate::video_packs::picker::choose(app) {
+        match crate::video_packs::picker::choose(app, false) {
             Ok(cwd) => Response::json(&json!({"cwd": cwd.map(|cwd| cwd.display().to_string())})),
             Err(error) => Response::error(500, &error),
         }

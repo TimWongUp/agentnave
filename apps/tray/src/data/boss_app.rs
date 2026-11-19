@@ -26,6 +26,7 @@ const RECORD_LIMIT: u64 = 8 << 20;
 /// Retry missing transcripts periodically so sessions created slightly after workspace creation resolve.
 const NEGATIVE_TTL: Duration = Duration::from_secs(15);
 
+mod other;
 mod title;
 pub(crate) use title::CliTitle;
 
@@ -45,6 +46,8 @@ pub(crate) struct Homes {
     pub codex: Vec<PathBuf>,
     /// Claude Desktop's data folders, its third-party mode's included.
     pub desktop: Vec<PathBuf>,
+    /// Where the other CLIs whose chat names can be read keep their sessions, by host.
+    pub other: Vec<(String, PathBuf)>,
 }
 
 impl Homes {
@@ -63,6 +66,10 @@ impl Homes {
         Self {
             claude: home("CLAUDE_CONFIG_DIR", ".claude"),
             codex: home("CODEX_HOME", ".codex"),
+            other: other::HOSTS
+                .iter()
+                .filter_map(|host| Some(((*host).to_owned(), other::home_of(host)?)))
+                .collect(),
             ..Self::desktop_data()
         }
     }
@@ -159,6 +166,7 @@ impl BossApps {
                 Some((boss.workspace.clone(), title))
             })
             .collect();
+        titles.extend(other_titles(connection));
         titles.sort_unstable();
         titles
     }
@@ -242,6 +250,28 @@ impl BossApps {
         lock().insert(file.to_owned(), (len, app));
         app
     }
+}
+
+/// The names of the other CLIs' chats, from the session record each workspace saved.
+fn other_titles(connection: &rusqlite::Connection) -> Vec<(String, CliTitle)> {
+    let hosts = other::HOSTS.map(|host| format!("'{host}'")).join(", ");
+    let sql = format!(
+        "SELECT id, owner_host, owner_file FROM workspaces \
+         WHERE owner_host IN ({hosts}) AND owner_file IS NOT NULL"
+    );
+    let rows: Vec<(String, String, String)> = connection
+        .prepare(&sql)
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect()
+        })
+        .unwrap_or_default();
+    rows.into_iter()
+        .filter_map(|(workspace, host, file)| {
+            Some((workspace, other::title_of(&host, Path::new(&file))?))
+        })
+        .collect()
 }
 
 /// The session record a boss chat is known by: the one its workspace saved, else the one a sweep

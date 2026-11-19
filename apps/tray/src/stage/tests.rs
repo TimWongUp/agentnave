@@ -233,6 +233,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
             links: &[],
             manual_projects: &[],
             titles: &Default::default(),
+            renamed: &Default::default(),
         };
         let res = super::respond(
             path,
@@ -270,6 +271,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
     assert!(chat["cli_title"].is_null());
     assert_eq!(chat["cli_title_custom"], false);
 
+    let renamed = std::collections::BTreeSet::new();
     let titles = std::collections::HashMap::from([(
         "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
         crate::data::boss_app::CliTitle {
@@ -283,6 +285,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
         links: &[],
         manual_projects: &[],
         titles: &titles,
+        renamed: &renamed,
     };
     for path in [
         "/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -311,6 +314,39 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
         };
         assert_eq!(group["cli_title"], "Named in the CLI", "{path}");
         assert_eq!(group["cli_title_custom"], true, "{path}");
+        assert_eq!(group["display_title"], "Named in the CLI", "{path}");
         assert!(group["title"].is_string(), "{path}");
     }
+}
+
+/// An agent is shown by the first of these that exists: the name the user gave it in the App, the
+/// one the user gave in the CLI, the CLI's own, then the title the chat was dispatched with.
+#[test]
+fn an_agents_display_title_follows_the_order_of_names() {
+    use crate::data::boss_app::CliTitle;
+    let cli = |text: &str, custom| {
+        Some(CliTitle {
+            text: text.to_owned(),
+            custom,
+        })
+    };
+    let group = |cli_title: Option<CliTitle>, renamed: bool| {
+        let mut group = super::Group::new("s-x".to_owned());
+        group.title = "boss title".to_owned();
+        group.cli_title = cli_title;
+        group.renamed = renamed;
+        group
+    };
+    assert_eq!(group(None, false).display_title(), "boss title");
+    assert_eq!(group(cli("auto", false), false).display_title(), "auto");
+    assert_eq!(group(cli("mine", true), false).display_title(), "mine");
+    // Renamed in the App beats both of the CLI's names.
+    assert_eq!(group(cli("mine", true), true).display_title(), "boss title");
+    assert_eq!(
+        group(cli("auto", false), true).display_title(),
+        "boss title"
+    );
+    let value = group(cli("auto", false), false).header();
+    assert_eq!(value["display_title"], "auto");
+    assert_eq!(value["title"], "boss title");
 }
