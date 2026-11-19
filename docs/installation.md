@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.15.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.16.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.15.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.16.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -614,15 +614,13 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.15.0
+### Upgrading to v1.16.0
 
-Update the App and reconnect or reopen hosts as prompted. For a manual installation, reinstall the runtime and Skills from `@v1.15.0` and reconnect MCP. Replace the full Skill directory to pick up the updated instructions.
+Update or replace the App and reconnect hosts as prompted. For a manual installation, reinstall the runtime and Skills from `@v1.16.0` and reconnect MCP. This release has no database schema changes.
 
-v1.15 adds an uninstall flow to the App; see [Uninstall](#uninstall). On Windows, the uninstaller of v1.15 and later asks the App to confirm before removing the program. Uninstalling v1.14 or earlier from Windows Settings still removes only the program files, so update to v1.15 first, or use the manual steps below to clean up hosts.
+Upgrading from v1.14 or earlier still requires the applicable earlier upgrade instructions, including the one-way database migrations described in [v1.14.0](releases/v1.14.0.md) and [v1.13.0](releases/v1.13.0.md).
 
-Upgrading from v1.13 or earlier still applies the one-way schema migrations of `agentnave.db` described in [the v1.14.0 release notes](releases/v1.14.0.md) and [the v1.13.0 release notes](releases/v1.13.0.md); read them before the new service first opens the database.
-
-See [v1.15.0 release notes](releases/v1.15.0.md). Earlier upgrade instructions remain in [the release archive](releases/v1.14.0.md).
+See [v1.16.0 release notes](releases/v1.16.0.md). Earlier upgrade instructions remain in [the release archive](releases/v1.15.0.md).
 
 ## Uninstall
 
