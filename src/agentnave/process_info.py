@@ -6,6 +6,7 @@ import ctypes
 import errno
 import os
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,4 +121,42 @@ def read_process_argv(pid: int) -> Sequence[str]:
         return _macos_argv(pid)
     if sys.platform.startswith("linux"):
         return _linux_argv(pid)
+    raise OSError(f"unsupported process platform: {sys.platform}")
+
+
+class _ProcBsdInfo(ctypes.Structure):
+    # PROC_PIDTBSDINFO, from sys/proc_info.h.
+    _fields_ = [
+        ("header", ctypes.c_uint32 * 12),
+        ("comm", ctypes.c_char * 16),
+        ("name", ctypes.c_char * 32),
+        ("tail", ctypes.c_uint32 * 6),
+        ("start_sec", ctypes.c_uint64),
+        ("start_usec", ctypes.c_uint64),
+    ]
+
+
+def read_process_started(pid: int) -> float:
+    """Return a live process's start time in Unix seconds, or raise if unavailable."""
+    if sys.platform == "darwin":
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_pidinfo.argtypes = (
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        )
+        libproc.proc_pidinfo.restype = ctypes.c_int
+        info = _ProcBsdInfo()
+        size = ctypes.sizeof(info)
+        if libproc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), size) != size:
+            error = ctypes.get_errno() or errno.EIO
+            raise OSError(error, os.strerror(error))
+        return info.start_sec + info.start_usec / 1_000_000
+    if sys.platform.startswith("linux"):
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[-1].split()
+        # CLOCK_BOOTTIME includes suspend, as does /proc/<pid>/stat starttime.
+        boot = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
+        return boot + int(fields[19]) / os.sysconf("SC_CLK_TCK")
     raise OSError(f"unsupported process platform: {sys.platform}")
