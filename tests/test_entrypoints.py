@@ -3918,6 +3918,10 @@ async def _finish(client: Client, results: Sequence[Mapping[str, object]]) -> No
 async def test_start_agents_chooses_every_seat_in_one_decision_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
 ) -> None:
+    def can_push(_root: Path, _provider: str | None) -> bool:
+        return True
+
+    monkeypatch.setattr(mcp_runtime, "app_can_push", can_push)
     _install_fake_claude(tmp_path, monkeypatch)
     _write_own_seats(
         [
@@ -3980,7 +3984,7 @@ async def test_start_agents_chooses_every_seat_in_one_decision_request(
         ] == [["medium", "hard"], ["easy", "medium"], ["hard", "medium"]]
         assert all(one["decision_model_called"] is True for one in picked)
         assert [item["access"] for item in results] == ["write", "read", "write"]
-        assert "next" in payload
+        assert payload["next"] == mcp_runtime.PUSH_NEXT
         await _finish(client, results)
 
 

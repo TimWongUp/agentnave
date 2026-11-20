@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-use super::modes;
+use super::{input_gate, modes, status};
 
 /// The output kept for a page that attaches later: enough for a full screen and some scrollback.
 pub(super) const KEPT: usize = 1 << 20;
@@ -98,6 +98,7 @@ pub(super) struct Output {
     /// Ordered view IDs seen so far; only the back (latest) advances `delivered`.
     views: VecDeque<String>,
     modes: modes::Tracker,
+    status: status::Tracker,
 }
 
 impl Output {
@@ -162,6 +163,13 @@ impl Output {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum WakeupOutcome {
+    Delivered,
+    Blocked,
+    Failed,
+}
+
 pub(crate) struct Session {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -169,6 +177,9 @@ pub(crate) struct Session {
     pid: Option<u32>,
     output: Mutex<Output>,
     changed: Condvar,
+    gate: Mutex<input_gate::Gate>,
+    #[cfg(test)]
+    writes: Mutex<Option<Vec<Vec<u8>>>>,
 }
 
 impl Session {
@@ -206,6 +217,9 @@ impl Session {
             writer: Mutex::new(writer),
             output: Mutex::default(),
             changed: Condvar::new(),
+            gate: Mutex::default(),
+            #[cfg(test)]
+            writes: Mutex::default(),
         });
         let pump = session.clone();
         thread::spawn(move || pump.pump(reader, child));
@@ -218,9 +232,13 @@ impl Session {
         // macOS reports the closed terminal as an error rather than end of file.
         while let Ok(read @ 1..) = reader.read(&mut buffer) {
             let mut output = self.output();
+            let queries = output.status.feed(&buffer[..read]);
             output.push(&buffer[..read]);
             output.wrote = Some(Instant::now());
             drop(output);
+            for _ in 0..queries {
+                let _ = self.write(status::REPLY);
+            }
             self.changed.notify_all();
         }
         let code = child.wait().map_or(1, |status| status.exit_code());
@@ -273,7 +291,113 @@ impl Session {
         writer
             .write_all(bytes)
             .and_then(|()| writer.flush())
-            .map_err(|error| format!("无法写入终端：{error}"))
+            .map_err(|error| format!("无法写入终端：{error}"))?;
+        #[cfg(test)]
+        if let Some(record) = &mut *self.writes.lock().unwrap_or_else(|p| p.into_inner()) {
+            record.push(bytes.to_vec());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn user_input(&self, bytes: &[u8], paste: bool) -> Result<(), String> {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+        if gate.input(bytes, paste) {
+            Ok(())
+        } else {
+            self.write(bytes)
+        }
+    }
+
+    /// Hold user input until the prompt is submitted or cleared.
+    pub(super) fn begin_wakeup(&self, text: &str) -> Result<Option<()>, String> {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+        let output = self.output();
+        if output.exit.is_some()
+            || output
+                .status
+                .state
+                .as_deref()
+                .is_none_or(|s| s == "blocked")
+            || !gate.ready()
+        {
+            return Ok(None);
+        }
+        // A hint after the user's draft is set apart from it by a space.
+        let text = if gate.has_draft() {
+            format!(" {text}")
+        } else {
+            text.to_owned()
+        };
+        let bytes = if output.modes.paste() {
+            format!("\x1b[200~{text}\x1b[201~")
+        } else {
+            text.clone()
+        };
+        self.write(bytes.as_bytes())?;
+        gate.hold(text.chars().count());
+        Ok(Some(()))
+    }
+
+    pub(super) fn finish_wakeup(&self) -> WakeupOutcome {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+        let output = self.output();
+        let commit = output.exit.is_none()
+            && output
+                .status
+                .state
+                .as_deref()
+                .is_some_and(|s| s != "blocked");
+        let (chars, held) = gate.release(commit);
+        let mut bytes = if commit {
+            vec![b'\r']
+        } else {
+            vec![0x7f; chars]
+        };
+        bytes.extend(held);
+        if self.write(&bytes).is_err() {
+            WakeupOutcome::Failed
+        } else if commit {
+            WakeupOutcome::Delivered
+        } else if output.exit.is_none() && output.status.state.as_deref() == Some("blocked") {
+            WakeupOutcome::Blocked
+        } else {
+            WakeupOutcome::Failed
+        }
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn is_holding(&self) -> bool {
+        self.gate
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_holding()
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn record_writes(&self) {
+        *self.writes.lock().unwrap_or_else(|p| p.into_inner()) = Some(Vec::new());
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn recorded_writes(&self) -> Vec<Vec<u8>> {
+        self.writes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .unwrap_or_default()
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn set_draft_wait(&self, delay: Duration) {
+        self.gate
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .set_draft_wait(delay);
+    }
+
+    #[cfg(all(test, unix))]
+    pub(super) fn program_state(&self) -> Option<String> {
+        self.output().status.state.clone()
     }
 
     pub(crate) fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {

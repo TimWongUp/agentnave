@@ -748,7 +748,9 @@ def test_native_done_can_finish_with_daemon(
         turn.row(final)
     assert not turn.complete()
     assert turn.done_at is not None
-    assert turn.complete(turn.done_at + 5) and turn.background
+    turn.done_at = 63.372722445  # The monotonic value observed in the failing Linux CI run.
+    assert not turn.complete(turn.done_at + 4.99)
+    assert turn.complete(turn.done_at + 5.01) and turn.background
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     events.append(turn.result())
     adapter = AntigravityAdapter()
