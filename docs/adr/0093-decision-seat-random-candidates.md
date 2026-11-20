@@ -1,6 +1,7 @@
 # ADR-0093：「决策模型」档自定义任务工位支持同档可用候选随机选
 
-- 状态：已接受
+- 状态：部分修订
+- 随机避重的在用候选按 `(provider, account, model)` 追踪，由 [ADR-0106](0106-multi-account-isolation.md) 修订。
 - 日期：2026-11-14
 - 修订 [ADR-0089](0089-seat-fallback-order.md) 在「决策模型」档自定义任务工位上的「按顺位取第一个可用」与回执含义，以及 [ADR-0038](0038-role-applies-app-seat.md)「2026-11-11 续接模型修订」在该类工位开启同档候选随机选时的「工位的模型仍优先」；扩展 [ADR-0087](0087-decision-model-recommends-seats.md) 的自定义工位文件与派发选择。
 - 不改变：[ADR-0089](0089-seat-fallback-order.md) 在固定编排工位、评审工位与生图工位上的顺位切换，以及显式指定 CLI／模型、用 `session_id` 续接原生会话时不重新切换、全部不可用时的报错与兜底；[ADR-0038](0038-role-applies-app-seat.md) 在其余工位、开关关闭、续接换用不同工位或历史模型已不在该工位候选时的「工位的模型仍优先」；[ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的额度组冷却与宿主同类 CLI 处理；`list_members` 仍确定性展示首个可用顺位。

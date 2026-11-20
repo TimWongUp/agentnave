@@ -53,7 +53,7 @@ _Avoid_: 副账号、自定义环境变量预设
 
 ## 托管目录（Managed Directory）
 
-App 为具名账号在数据根外固定位置（`~/.agentnave-accounts/<provider>/<id>`）自动创建并维护的账号配置目录；App 只向其中同步 AgentNave 接入与 Skill，不同步个人配置，卸载时默认保留。
+App 为具名账号在数据根外固定位置（`~/.agentnave-accounts/<provider>/<id>`）自动创建并维护的账号配置目录；App 只向其中同步 AgentNave 接入与 Skill，不同步个人配置，卸载时不删除。
 _Avoid_: 数据根子目录、外部关联目录
 
 ## 额度组（Quota Group）

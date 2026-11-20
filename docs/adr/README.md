@@ -96,7 +96,7 @@
 | 0090 | [配额按额度组冷却，宿主同类 CLI 按 boss 选择处理](0090-quota-group-cooldown-and-host-cli-choice.md) | 部分修订 | 修订 ADR-0081、ADR-0013、ADR-0089；补充 ADR-0087、ADR-0074；私聊同类默认方式由 [ADR-0094](0094-antigravity-host-cli-defaults-to-launch.md) 修订；三选一不再被环境变量排除项压过由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订；同 CLI 同账号判定与按账号冷却由 [ADR-0106](0106-multi-account-isolation.md) 修订 |
 | 0091 | [「只开会」档只用会议室，按档位互斥安装 Skill，主动开会改为默认关的开关](0091-meetings-only-skill-and-auto-meeting-switch.md) | 已接受 | 修订 ADR-0083、ADR-0068；扩展 ADR-0036 |
 | 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」 |
-| 0093 | [「决策模型」档自定义任务工位支持同档可用候选随机选](0093-decision-seat-random-candidates.md) | 已接受 | 修订 ADR-0089 在「决策模型」档自定义任务工位上的顺位挑选与回执含义、ADR-0038 在该类工位开启随机选时的续接模型优先级；扩展 ADR-0087；2026-11-20 自身修订：优先避开本进程该工位运行中的候选模型 |
+| 0093 | [「决策模型」档自定义任务工位支持同档可用候选随机选](0093-decision-seat-random-candidates.md) | 部分修订 | 修订 ADR-0089 在「决策模型」档自定义任务工位上的顺位挑选与回执含义、ADR-0038 在该类工位开启随机选时的续接模型优先级；扩展 ADR-0087；2026-11-20 自身修订：优先避开本进程该工位运行中的候选模型；在用候选按账号维度追踪由 [ADR-0106](0106-multi-account-isolation.md) 修订 |
 | 0094 | [Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动](0094-antigravity-host-cli-defaults-to-launch.md) | 已接受 | 修订 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的私聊同类默认值 |
 | 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049 |
 | 0096 | [清除宿主自身的遗留排除项，重连后消除连接中断提示](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) | 已接受 | 修订 ADR-0015、ADR-0088、ADR-0090；扩展 ADR-0012；已结束连接的范围由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 补充 |
@@ -109,4 +109,4 @@
 | 0103 | [办公室里开 agent，终端与它的工作区对应](0103-tray-embedded-terminal.md) | 部分修订 | 修订 CONTEXT「工作区」「项目」「Tray App」并新增「agent」；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执；2026-11-18 自身修订（项目→agent→办公室模型、右栏三格、中继与托盘对应修复、Codex `--no-daemon`、Claude/Codex 续接与托盘内防重）；2026-11-19 自身修订（别处打开时先确认再续接、agent 显示名取 CLI 会话名、启动主题参数、重放不应答、「结束终端」按条件确认）；Unix Codex `--no-daemon` 由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订；多账号终端选择、续接与独立登录终端由 [ADR-0106](0106-multi-account-isolation.md) 修订 |
 | 0104 | [App 内 boss 由 App 提示收件](0104-in-app-boss-push.md) | 部分修订 | 修订 ADR-0007、ADR-0064 的推送边界；Codex 排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订 |
 | 0105 | [Codex 内嵌终端改用私有 app-server 与结构化推送](0105-codex-app-server-terminal-push.md) | 已接受 | 修订 ADR-0103、ADR-0104 |
-| 0106 | [支持按账号隔离运行，第一期开放 Claude](0106-multi-account-isolation.md) | 已接受 | 修订 ADR-0029、ADR-0056、ADR-0062、ADR-0078、ADR-0081、ADR-0089、ADR-0090、ADR-0100、ADR-0103；扩展 ADR-0048 |
+| 0106 | [支持按账号隔离运行，第一期开放 Claude](0106-multi-account-isolation.md) | 已接受 | 修订 ADR-0029、ADR-0056、ADR-0062、ADR-0078、ADR-0081、ADR-0089、ADR-0090、ADR-0093、ADR-0100、ADR-0103；扩展 ADR-0048 |
