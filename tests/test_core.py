@@ -176,7 +176,7 @@ async def test_spawn_stagger_and_cancel(tmp_path: Path, monkeypatch: pytest.Monk
     try:
         first = start("claude", "pass # first")
         await asyncio.wait_for(first_started.wait(), 2)
-        await manager.wait(first, 5)
+        # Queue behind the first spawn at once, so a slow runner cannot outlast the interval.
         cancelled = start("claude", "pass # cancelled")
         second = start("claude", "pass # second")
         other = start("codex", "pass # other")
