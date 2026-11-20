@@ -163,6 +163,13 @@ impl Output {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum WakeupOutcome {
+    Delivered,
+    Blocked,
+    Failed,
+}
+
 pub(crate) struct Session {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -331,7 +338,7 @@ impl Session {
         Ok(Some(()))
     }
 
-    pub(super) fn finish_wakeup(&self) -> bool {
+    pub(super) fn finish_wakeup(&self) -> WakeupOutcome {
         let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
         let output = self.output();
         let commit = output.exit.is_none()
@@ -347,7 +354,15 @@ impl Session {
             vec![0x7f; chars]
         };
         bytes.extend(held);
-        self.write(&bytes).is_ok() && commit
+        if self.write(&bytes).is_err() {
+            WakeupOutcome::Failed
+        } else if commit {
+            WakeupOutcome::Delivered
+        } else if output.exit.is_none() && output.status.state.as_deref() == Some("blocked") {
+            WakeupOutcome::Blocked
+        } else {
+            WakeupOutcome::Failed
+        }
     }
 
     #[cfg(test)]

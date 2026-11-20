@@ -1,14 +1,15 @@
 //! App presence and background inbox delivery.
-use super::{Terminals, links};
+use super::{Terminals, links, session::WakeupOutcome};
 use serde::Deserialize;
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::Read,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::{AppHandle, Manager};
@@ -69,15 +70,46 @@ pub(super) fn shutdown() {
             .join(format!("{}.json", std::process::id())),
     );
 }
+fn read_inbox(path: &Path, process: &sysinfo::Process) -> Option<Inbox> {
+    if fs::symlink_metadata(path).ok()?.file_type().is_symlink() {
+        return None;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let millis = metadata
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let millis = u64::try_from(millis).ok()?;
+    if process.start_time() == 0 || !links::same_process(process, Some(millis)) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 fn inboxes(root: &Path) -> HashMap<String, Vec<Item>> {
+    let dir = root.join("inbox");
+    if dir.is_symlink() {
+        return HashMap::new();
+    }
     let mut system = System::new();
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
     let mut bosses: HashMap<String, Vec<Item>> = HashMap::new();
-    for entry in fs::read_dir(root.join("inbox"))
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
         let Some(pid) = path
             .file_stem()
@@ -86,15 +118,13 @@ fn inboxes(root: &Path) -> HashMap<String, Vec<Item>> {
         else {
             continue;
         };
-        if path.extension().is_none_or(|s| s != "json")
-            || system.process(Pid::from_u32(pid)).is_none()
-        {
+        if path.extension().is_none_or(|s| s != "json") {
             continue;
         }
-        let Some(inbox) = fs::read(&path)
-            .ok()
-            .and_then(|s| serde_json::from_slice::<Inbox>(&s).ok())
-        else {
+        let Some(process) = system.process(Pid::from_u32(pid)) else {
+            continue;
+        };
+        let Some(inbox) = read_inbox(&path, process) else {
             continue;
         };
         if inbox.version != 1 || inbox.pid != pid {
@@ -108,6 +138,7 @@ fn inboxes(root: &Path) -> HashMap<String, Vec<Item>> {
     }
     bosses
 }
+
 pub(super) fn scan(
     terminals: &Terminals,
     root: &Path,
@@ -147,18 +178,19 @@ pub(super) fn scan(
             .count();
         pending.insert(id, count);
         let mut unique = HashSet::new();
-        let items: Vec<_> = items
-            .into_iter()
+        let selected: Vec<_> = items
+            .iter()
             .filter(|i| !attempted.contains(&i.key) && unique.insert(i.key.clone()))
+            .cloned()
             .collect();
-        if items.is_empty() {
+        if selected.is_empty() {
             continue;
         }
-        let started = match session.begin_wakeup(&message(&items)) {
+        let started = match session.begin_wakeup(&message(&selected)) {
             Ok(None) => continue,
             result => {
                 // A failed write may have written a prefix, so it must not be retried.
-                for item in &items {
+                for item in &selected {
                     attempted.insert(item.key.clone());
                 }
                 match result {
@@ -168,21 +200,46 @@ pub(super) fn scan(
                 }
             }
         };
-        let delivered = if started {
+        let outcome = if started {
             thread::sleep(Duration::from_millis(300));
             session.finish_wakeup()
         } else {
-            false
+            WakeupOutcome::Failed
         };
-        if !delivered {
-            for item in &items {
-                failed.insert(item.key.clone());
-            }
-            pending.insert(id, count + items.len());
-        }
+        update_attempts(&selected, outcome, attempted, failed);
+        let count = items
+            .iter()
+            .filter(|i| {
+                failed.contains(&i.key)
+                    || (!attempted.contains(&i.key)
+                        && seen[&i.key].elapsed() >= Duration::from_secs(60))
+            })
+            .count();
+        pending.insert(id, count);
     }
     for running in &mut terminals.lock().open {
         running.pending = pending.get(&running.id).copied().unwrap_or(0);
+    }
+}
+fn update_attempts(
+    items: &[Item],
+    outcome: WakeupOutcome,
+    attempted: &mut HashSet<String>,
+    failed: &mut HashSet<String>,
+) {
+    for item in items {
+        match outcome {
+            WakeupOutcome::Delivered => {
+                failed.remove(&item.key);
+            }
+            WakeupOutcome::Blocked => {
+                attempted.remove(&item.key);
+                failed.insert(item.key.clone());
+            }
+            WakeupOutcome::Failed => {
+                failed.insert(item.key.clone());
+            }
+        }
     }
 }
 fn clean(s: &str) -> String {
@@ -235,6 +292,75 @@ fn message(items: &[Item]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_write_stays_attempted_but_clean_blocked_cancel_can_retry() {
+        let item = Item {
+            key: "one".into(),
+            kind: "task_end".into(),
+            role: None,
+            status: None,
+        };
+        let mut attempted = HashSet::from(["one".to_owned()]);
+        let mut failed = HashSet::new();
+        update_attempts(
+            std::slice::from_ref(&item),
+            WakeupOutcome::Failed,
+            &mut attempted,
+            &mut failed,
+        );
+        assert!(attempted.contains("one") && failed.contains("one"));
+        update_attempts(
+            std::slice::from_ref(&item),
+            WakeupOutcome::Blocked,
+            &mut attempted,
+            &mut failed,
+        );
+        assert!(!attempted.contains("one") && failed.contains("one"));
+        attempted.insert("one".to_owned());
+        update_attempts(
+            &[item],
+            WakeupOutcome::Delivered,
+            &mut attempted,
+            &mut failed,
+        );
+        assert!(attempted.contains("one") && !failed.contains("one"));
+    }
+
+    #[test]
+    fn ignores_stale_and_symlinked_inbox_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("inbox");
+        fs::create_dir(&dir).unwrap();
+        let pid = std::process::id();
+        let path = dir.join(format!("{pid}.json"));
+        let document = json!({"version":1,"pid":pid,"bosses":{"boss":{"waiting":false,"items":[{"key":"one","kind":"task_end"}]}}});
+        fs::write(&path, document.to_string()).unwrap();
+        assert!(inboxes(temp.path()).contains_key("boss"));
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let start = system.process(Pid::from_u32(pid)).unwrap().start_time();
+        let old = UNIX_EPOCH + Duration::from_secs(start.saturating_sub(10));
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(!inboxes(temp.path()).contains_key("boss"));
+        #[cfg(unix)]
+        {
+            let target = temp.path().join("target.json");
+            fs::write(&target, document.to_string()).unwrap();
+            fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(&target, &path).unwrap();
+            assert!(!inboxes(temp.path()).contains_key("boss"));
+        }
+    }
+
     #[test]
     fn prompt_precedes_results_and_role_is_sanitized() {
         let result = Item {
