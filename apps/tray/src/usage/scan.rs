@@ -182,10 +182,10 @@ pub(super) fn file(
         .min(i64::MAX as u128) as i64;
     let name = path.to_string_lossy();
     let mut c = db::cursor(conn, &name)?.unwrap_or_default();
-    let changed_head = !c.head.is_empty() && head(path, c.size as u64)? != c.head;
-    if c.size == size && c.mtime == mtime && !changed_head {
+    if c.size == size && c.mtime == mtime {
         return Ok(());
     }
+    let changed_head = !c.head.is_empty() && head(path, c.size as u64)? != c.head;
     if size < c.size || changed_head {
         c = db::Cursor::default();
     }

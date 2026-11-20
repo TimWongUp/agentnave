@@ -6,7 +6,7 @@
   const NS = "http://www.w3.org/2000/svg";
   const KEY = "agentnave.usage";
   const DAYS = { today: 1, "7d": 7, "30d": 30 };
-  const state = { view: "overall", range: "7d", metric: "cost", data: null, error: false, grace: 0, sig: "", open: new Set(), redraw: null, drawnWidth: 0 };
+  const state = { view: "overall", range: "7d", metric: "cost", data: null, error: false, manual: false, grace: 0, sig: "", open: new Set(), redraw: null, drawnWidth: 0 };
   let timer = 0, seq = 0;
 
   // ---- formats -----------------------------------------------------------------------
@@ -66,27 +66,32 @@
       state.data = data;
       state.error = false;
       state.grace = data.scanning ? 0 : Math.max(0, state.grace - 1);
+      if (!data.scanning && state.grace === 0) state.manual = false;
     } catch {
       if (mine !== seq) return;
       state.error = true;
+      state.manual = false;
     }
     render();
     schedule();
   }
+  const hasUsageData = data => Boolean(data && (num(data.overall?.total_tokens) > 0 || (data.providers || []).length > 0));
+  const showScanning = () => Boolean(state.data?.scanning && (state.manual || !hasUsageData(state.data)));
   function schedule() {
     clearTimeout(timer);
     if (AN.isHidden()) return;
-    const quick = state.data?.scanning || state.grace > 0;
-    timer = setTimeout(fetchUsage, quick ? 1500 : 30000);
+    const quick = showScanning() || (state.manual && state.grace > 0);
+    timer = setTimeout(fetchUsage, quick ? 1500 : 60000);
   }
   async function refresh() {
     const button = document.getElementById("u-refresh");
     if (button.dataset.busy === "true") return;
+    state.manual = true;
     button.dataset.busy = "true";
     try {
       await AN.post("/app/usage/refresh");
       state.grace = 4;
-    } catch { state.error = true; }
+    } catch { state.error = true; state.manual = false; }
     await fetchUsage();
   }
 
@@ -322,11 +327,11 @@
   // ---- page --------------------------------------------------------------------------
   function renderSync() {
     const data = state.data, label = document.getElementById("u-updated"), button = document.getElementById("u-refresh");
-    const scanning = Boolean(data?.scanning);
-    button.dataset.busy = String(scanning || state.grace > 0);
+    const busy = showScanning() || (state.manual && state.grace > 0);
+    button.dataset.busy = String(busy);
     label.classList.toggle("error", state.error);
     if (state.error) label.textContent = L("读取失败，稍后重试", "Couldn't read usage, retrying");
-    else if (scanning) label.textContent = L("扫描中…", "Scanning…");
+    else if (busy) label.textContent = L("扫描中…", "Scanning…");
     else if (data?.updated_at) label.textContent = L(`更新于 ${AN.relTime(new Date(data.updated_at).toISOString())}`, `Updated ${AN.relTime(new Date(data.updated_at).toISOString())}`);
     else label.textContent = "";
   }

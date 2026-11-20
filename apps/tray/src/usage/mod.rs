@@ -48,9 +48,12 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+const MIN_REFRESH_MS: i64 = 10_000;
+const BACKGROUND_POLL: Duration = Duration::from_secs(600);
+
 fn refresh(force: bool) {
     pricing_refresh::maybe_refresh();
-    if !force && now() - UPDATED.load(Ordering::Relaxed) < 60_000 {
+    if !force && now() - UPDATED.load(Ordering::Relaxed) < MIN_REFRESH_MS {
         return;
     }
     if SCANNING
@@ -73,7 +76,7 @@ pub(crate) fn start() {
         std::thread::sleep(Duration::from_secs(5));
         loop {
             refresh(false);
-            std::thread::sleep(Duration::from_secs(60));
+            std::thread::sleep(BACKGROUND_POLL);
         }
     });
 }

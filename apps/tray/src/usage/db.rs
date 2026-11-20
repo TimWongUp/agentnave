@@ -23,8 +23,14 @@ pub(super) fn open(root: &Path) -> rusqlite::Result<Connection> {
         CREATE TABLE IF NOT EXISTS usage_events(event_key TEXT PRIMARY KEY, provider TEXT NOT NULL, session_id TEXT NOT NULL, root_session_id TEXT NOT NULL, thread_hash TEXT NOT NULL, ts_ms INTEGER NOT NULL, model TEXT NOT NULL, fresh_input INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write_5m INTEGER NOT NULL, cache_write_1h INTEGER NOT NULL, output INTEGER NOT NULL, cache_unknown INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS usage_ts ON usage_events(ts_ms);
         CREATE INDEX IF NOT EXISTS usage_thread ON usage_events(thread_hash);
-        CREATE INDEX IF NOT EXISTS usage_session ON usage_events(session_id);
-        DELETE FROM usage_events WHERE fresh_input = 0 AND cache_read = 0 AND cache_write_5m = 0 AND cache_write_1h = 0 AND output = 0;")?;
+        CREATE INDEX IF NOT EXISTS usage_session ON usage_events(session_id);")?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version < 1 {
+        db.execute_batch(
+            "DELETE FROM usage_events WHERE fresh_input = 0 AND cache_read = 0 AND cache_write_5m = 0 AND cache_write_1h = 0 AND output = 0;
+             PRAGMA user_version = 1;",
+        )?;
+    }
     Ok(db)
 }
 
