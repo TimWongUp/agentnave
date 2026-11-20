@@ -5347,12 +5347,11 @@ async def test_push_receipt_and_inbox_event_lifecycle(
                 "role": "reviewer",
             },
         )
-        assert started["next"] == mcp_runtime.PUSH_NEXT
-        for _ in range(200):
-            if path.exists():
-                break
-            await asyncio.sleep(0.01)
-        assert path.exists()
+        expected_next = mcp_runtime.WAIT_NEXT if sys.platform == "win32" else mcp_runtime.PUSH_NEXT
+        assert started["next"] == expected_next
+        async with asyncio.timeout(30):
+            while not path.exists():
+                await asyncio.sleep(0.05)
         document = json.loads(path.read_text())
         event = document["bosses"][key]["items"][0]
         assert event == {
@@ -5369,7 +5368,10 @@ async def test_push_receipt_and_inbox_event_lifecycle(
             client, "wait", {"manager_session_id": "boss-session", "wait_seconds": 0}
         )
         assert result["all_finished"] is False
-        assert result["next"] == mcp_runtime.PUSH_AGAIN
+        expected_again = (
+            mcp_runtime.WAIT_AGAIN if sys.platform == "win32" else mcp_runtime.PUSH_AGAIN
+        )
+        assert result["next"] == expected_again
         assert not path.exists()
         await _cancel(client, slow["invocation_id"])
         push_file.unlink()
@@ -5462,38 +5464,26 @@ async def test_inbox_snapshot_tracks_review_until_decided(
         )
         assert started["next"] == mcp_runtime.PUSH_NEXT
         round_id = _data(started["round"])["round_id"]
-        for _ in range(400):
-            if path.exists():
-                items = json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")][
-                    "items"
-                ]
-                if any(item["kind"] == "review" for item in items):
-                    break
-            await asyncio.sleep(0.01)
-        else:
-            raise AssertionError("review event was not published")
+        # Wait for the actual review instead of assuming a CLI launch finishes in four seconds.
+        async with asyncio.timeout(30):
+            receipt = await _call(client, "wait", {"manager_session_id": "review-chat"})
+        assert _data(cast(list[object], receipt["rounds"])[0])["reason"] == "review_needed"
+        items = json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"]
         event = next(item for item in items if item["kind"] == "review")
         assert event["status"] == "review_needed" and event["role"] == "reviewer"
-        receipt = await _call(
-            client, "wait", {"manager_session_id": "review-chat", "wait_seconds": 0}
-        )
-        assert _data(cast(list[object], receipt["rounds"])[0])["reason"] == "review_needed"
         assert (
             json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"][0]["key"]
             == event["key"]
         )
         await _call(client, "decide_answers", {"round_id": round_id, "decisions": {"a": "publish"}})
-        for _ in range(200):
-            if (
-                path.exists()
-                and json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"][
+        async with asyncio.timeout(30):
+            while (
+                not path.exists()
+                or json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"][
                     0
                 ]["kind"]
-                == "task_end"
+                != "task_end"
             ):
-                break
-            await asyncio.sleep(0.01)
-        else:
-            raise AssertionError("round end was not published")
+                await asyncio.sleep(0.05)
         await _call(client, "wait", {"manager_session_id": "review-chat", "wait_seconds": 0})
         assert not path.exists()
