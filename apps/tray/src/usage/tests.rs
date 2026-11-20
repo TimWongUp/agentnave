@@ -2,6 +2,8 @@ use super::*;
 use serde_json::json;
 use std::path::Path;
 
+mod regression;
+
 fn parse_all(
     provider: &str,
     path: &str,
@@ -132,7 +134,7 @@ fn compressed_log_is_incremental_and_preview_path_is_separate() {
         ),
     )
     .unwrap();
-    let mut db = db::open(root).unwrap();
+    let mut db = db::open_at(&root.join("usage.db")).unwrap();
     scan::file(&mut db, "codex", &file).unwrap();
     scan::file(&mut db, "codex", &file).unwrap();
     let rows = db::events(&db, 0, i64::MAX).unwrap();
@@ -258,7 +260,7 @@ fn partial_lines_and_rewritten_heads_do_not_advance_or_duplicate() {
     };
     let first = row(1);
     std::fs::write(&path, &first).unwrap();
-    let mut conn = db::open(root).unwrap();
+    let mut conn = db::open_at(&root.join("usage.db")).unwrap();
     scan::file(&mut conn, "claude", &path).unwrap();
     assert!(db::events(&conn, 0, i64::MAX).unwrap().is_empty());
     std::fs::write(&path, format!("{first}\n")).unwrap();
@@ -335,7 +337,7 @@ fn oversized_line_is_skipped_without_losing_neighbors() {
     bytes.push(b'\n');
     bytes.extend(format!("{second}\n").as_bytes());
     std::fs::write(&file, bytes).unwrap();
-    let mut conn = db::open(temp.path()).unwrap();
+    let mut conn = db::open_at(&temp.path().join("usage.db")).unwrap();
     scan::file(&mut conn, "claude", &file).unwrap();
     let rows = db::events(&conn, 0, i64::MAX).unwrap();
     assert_eq!(rows.len(), 2);
@@ -466,7 +468,7 @@ fn codebuddy_subtracts_cache_and_replaces_by_message_id() {
     let last = parse("codebuddy", path, line(9), &mut state).unwrap();
     assert_eq!((first.key.as_str(), last.output), ("codebuddy:reply", 9));
     let temp = tempfile::tempdir().unwrap();
-    let conn = db::open(temp.path()).unwrap();
+    let conn = db::open_at(&temp.path().join("usage.db")).unwrap();
     db::save(&conn, &first).unwrap();
     db::save(&conn, &last).unwrap();
     let rows = db::events(&conn, 0, i64::MAX).unwrap();
@@ -508,7 +510,7 @@ fn deepseek_reads_zstd_frames_skips_seed_and_marks_unknown_cache() {
     ]);
     bytes.extend(zstd_frame(&[reply(2, false)]));
     std::fs::write(&file, &bytes).unwrap();
-    let mut conn = db::open(temp.path()).unwrap();
+    let mut conn = db::open_at(&temp.path().join("usage.db")).unwrap();
     scan::file(&mut conn, "deepseek", &file).unwrap();
     bytes.extend(zstd_frame(&[reply(3, true)]));
     bytes.extend_from_slice(&[0x28, 0xb5, 0x2f, 0xfd, 1]);
@@ -614,7 +616,7 @@ fn zcode_reads_database_incrementally_without_copies_or_errors() {
         );
         put("m4", "root", json!({"role":"user","time":{"created":now}}));
     }
-    let mut conn = db::open(temp.path()).unwrap();
+    let mut conn = db::open_at(&temp.path().join("usage.db")).unwrap();
     zcode::scan(&mut conn, &path).unwrap();
     let rows = db::events(&conn, 0, i64::MAX).unwrap();
     assert_eq!(rows.len(), 1);

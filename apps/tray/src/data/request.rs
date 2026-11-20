@@ -244,7 +244,7 @@ impl Reader {
         }
         crate::members::mark_prepared();
     }
-    pub(super) fn boss_homes(&self) -> boss_app::Homes {
+    pub(crate) fn boss_homes(&self) -> boss_app::Homes {
         // A host refresh holds the lock for seconds; only then does the last snapshot stand in
         // for the registry, which can change on its own (Claude Desktop installed or removed).
         let free = match self.hosts.try_lock() {

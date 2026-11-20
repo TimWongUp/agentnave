@@ -11,12 +11,53 @@ mod tests;
 mod zcode;
 
 use crate::{data::Reader, response::Response};
-use serde_json::json;
+use serde_json::{Value, json};
+use std::io::Read;
+use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
+pub(crate) const COVERED_PROVIDERS: [&str; 8] = [
+    "claude",
+    "codex",
+    "antigravity",
+    "pi",
+    "codebuddy",
+    "deepseek",
+    "grok",
+    "zcode",
+];
+
+const MAX_META_JSON: u64 = 1024 * 1024;
+
 static SCANNING: AtomicBool = AtomicBool::new(false);
 static UPDATED: AtomicI64 = AtomicI64::new(0);
+
+struct ScanningGuard;
+
+impl Drop for ScanningGuard {
+    fn drop(&mut self) {
+        SCANNING.store(false, Ordering::Release);
+    }
+}
+
+pub(super) fn read_small_json(path: &Path) -> Option<Value> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_META_JSON + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_META_JSON {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
 
 #[derive(Clone, Debug, Default)]
 struct Event {
@@ -37,10 +78,13 @@ struct Event {
 
 impl Event {
     fn prompt(&self) -> i64 {
-        self.fresh + self.read + self.write5 + self.write1
+        self.fresh
+            .saturating_add(self.read)
+            .saturating_add(self.write5)
+            .saturating_add(self.write1)
     }
     fn total(&self) -> i64 {
-        self.prompt() + self.output
+        self.prompt().saturating_add(self.output)
     }
 }
 
@@ -51,7 +95,7 @@ fn now() -> i64 {
 const MIN_REFRESH_MS: i64 = 10_000;
 const BACKGROUND_POLL: Duration = Duration::from_secs(600);
 
-fn refresh(force: bool) {
+fn refresh(force: bool, homes: impl FnOnce() -> crate::data::boss_app::Homes) {
     pricing_refresh::maybe_refresh();
     if !force && now() - UPDATED.load(Ordering::Relaxed) < MIN_REFRESH_MS {
         return;
@@ -62,20 +106,21 @@ fn refresh(force: bool) {
     {
         return;
     }
-    std::thread::spawn(|| {
-        if let Err(error) = scan::run(&crate::data_files::data_root()) {
+    let homes = homes();
+    std::thread::spawn(move || {
+        let _guard = ScanningGuard;
+        if let Err(error) = scan::run(&crate::data_files::data_root(), &homes) {
             eprintln!("用量扫描失败：{error}");
         }
         UPDATED.store(now(), Ordering::Relaxed);
-        SCANNING.store(false, Ordering::Release);
     });
 }
 
-pub(crate) fn start() {
-    std::thread::spawn(|| {
+pub(crate) fn start(reader: Arc<Reader>) {
+    std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(5));
         loop {
-            refresh(false);
+            refresh(false, || reader.boss_homes());
             std::thread::sleep(BACKGROUND_POLL);
         }
     });
@@ -90,7 +135,7 @@ pub(crate) fn request(
 ) -> Response {
     if path == "/app/usage/refresh" {
         return crate::response::action(method, action, || {
-            refresh(true);
+            refresh(true, || reader.boss_homes());
             Response::json(&json!({"ok": true, "scanning": true}))
         });
     }
@@ -114,7 +159,7 @@ pub(crate) fn request(
     if !matches!(range, "today" | "7d" | "30d") {
         return Response::error(400, "无效的时间范围");
     }
-    refresh(false);
+    refresh(false, || reader.boss_homes());
     match query::respond(reader, range) {
         Ok(v) => Response::json(&v),
         Err(e) => Response::error(500, &e.to_string()),

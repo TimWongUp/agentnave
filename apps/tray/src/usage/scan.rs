@@ -1,5 +1,7 @@
 use super::{db, frames, now, parsers, zcode};
+use crate::data::boss_app::Homes;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -8,34 +10,100 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const MAX_LINE: u64 = 4 * 1024 * 1024;
 const DAY: i64 = 86_400_000;
 
-fn roots() -> Vec<(&'static str, PathBuf, usize)> {
-    let home = dirs::home_dir().unwrap_or_default();
-    let env = |key: &str, fallback: PathBuf| {
-        std::env::var_os(key)
-            .filter(|v| !v.is_empty())
-            .map_or(fallback, PathBuf::from)
-    };
-    let claude = env("CLAUDE_CONFIG_DIR", home.join(".claude"));
-    let codex = env("CODEX_HOME", home.join(".codex"));
-    let agy = env("ANTIGRAVITY_CLI_HOME", home.join(".gemini/antigravity-cli"));
-    let pi = env("PI_CODING_AGENT_DIR", home.join(".pi/agent"));
-    let codebuddy = env("CODEBUDDY_CONFIG_DIR", home.join(".codebuddy"));
-    let deepseek = env("DSH_HOME", home.join(".dsh"));
-    let grok = env("GROK_HOME", home.join(".grok"));
-    let desktop_agy = home.join(".gemini/antigravity");
-    let mut dirs = vec![
-        ("claude", claude.join("projects"), 4),
-        ("codex", codex.join("sessions"), 5),
-        ("codex", codex.join("archived_sessions"), 2),
-        ("antigravity", agy.join("brain"), 5),
-        ("pi", pi.join("sessions"), 2),
-        ("codebuddy", codebuddy.join("projects"), 4),
-        ("deepseek", deepseek.join("sessions"), 3),
-        ("grok", grok.join("sessions"), 3),
-    ];
-    if desktop_agy != agy {
-        dirs.push(("antigravity", desktop_agy.join("brain"), 5));
+fn env_dir(key: &str, fallback: PathBuf) -> PathBuf {
+    std::env::var_os(key)
+        .filter(|v| !v.is_empty())
+        .map_or(fallback, PathBuf::from)
+}
+
+fn push_unique(
+    dirs: &mut Vec<(&'static str, PathBuf, usize)>,
+    seen: &mut HashSet<(&'static str, PathBuf)>,
+    provider: &'static str,
+    path: PathBuf,
+    depth: usize,
+) {
+    if seen.insert((provider, path.clone())) {
+        dirs.push((provider, path, depth));
     }
+}
+
+pub(super) fn roots(homes: &Homes) -> Vec<(&'static str, PathBuf, usize)> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut dirs = Vec::new();
+    let mut seen = HashSet::new();
+
+    let claude = if homes.claude.is_empty() {
+        vec![env_dir("CLAUDE_CONFIG_DIR", home.join(".claude"))]
+    } else {
+        homes.claude.clone()
+    };
+    for root in claude {
+        push_unique(&mut dirs, &mut seen, "claude", root.join("projects"), 4);
+    }
+
+    let codex = if homes.codex.is_empty() {
+        vec![env_dir("CODEX_HOME", home.join(".codex"))]
+    } else {
+        homes.codex.clone()
+    };
+    for root in codex {
+        push_unique(&mut dirs, &mut seen, "codex", root.join("sessions"), 5);
+        push_unique(
+            &mut dirs,
+            &mut seen,
+            "codex",
+            root.join("archived_sessions"),
+            2,
+        );
+    }
+
+    for (provider, var, default, sub, depth) in [
+        ("pi", "PI_CODING_AGENT_DIR", ".pi/agent", "sessions", 2),
+        (
+            "codebuddy",
+            "CODEBUDDY_CONFIG_DIR",
+            ".codebuddy",
+            "projects",
+            4,
+        ),
+        ("deepseek", "DSH_HOME", ".dsh", "sessions", 3),
+        ("grok", "GROK_HOME", ".grok", "sessions", 3),
+    ] {
+        let found: Vec<PathBuf> = homes
+            .other
+            .iter()
+            .filter(|(host, _)| host == provider)
+            .map(|(_, path)| path.clone())
+            .collect();
+        let bases = if found.is_empty() {
+            vec![env_dir(var, home.join(default))]
+        } else {
+            found
+        };
+        for root in bases {
+            push_unique(&mut dirs, &mut seen, provider, root.join(sub), depth);
+        }
+    }
+
+    for (_, root) in homes.other.iter().filter(|(host, _)| host == "antigravity") {
+        push_unique(&mut dirs, &mut seen, "antigravity", root.join("brain"), 5);
+    }
+    push_unique(
+        &mut dirs,
+        &mut seen,
+        "antigravity",
+        env_dir("ANTIGRAVITY_CLI_HOME", home.join(".gemini/antigravity-cli")).join("brain"),
+        5,
+    );
+    push_unique(
+        &mut dirs,
+        &mut seen,
+        "antigravity",
+        home.join(".gemini/antigravity/brain"),
+        5,
+    );
+
     dirs
 }
 
@@ -54,6 +122,12 @@ fn recent(modified: SystemTime) -> bool {
 fn latest_deepseek(dir: &Path, out: &mut Found) {
     let mut best: Option<(u32, SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if !kind.is_file() {
+            continue;
+        }
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let Some(rest) = name.strip_prefix("session") else {
@@ -129,9 +203,9 @@ pub(super) fn discover(dir: &Path, provider: &'static str, depth: usize, out: &m
     }
 }
 
-pub(super) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn run(root: &Path, homes: &Homes) -> Result<(), Box<dyn std::error::Error>> {
     let mut files = Vec::new();
-    for (provider, path, depth) in roots() {
+    for (provider, path, depth) in roots(homes) {
         discover(&path, provider, depth, &mut files);
     }
     files.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1)));

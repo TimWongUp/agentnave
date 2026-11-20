@@ -5,8 +5,13 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime};
 
 const MAX_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_RATE: f64 = 1_000_000.0;
 const RETRY_MS: i64 = 30 * 60 * 1000;
 static LAST_ATTEMPT: AtomicI64 = AtomicI64::new(0);
+
+fn valid_rate(v: f64) -> bool {
+    v.is_finite() && (0.0..=MAX_RATE).contains(&v)
+}
 
 pub(super) fn cache_path(root: &Path, preview: bool) -> PathBuf {
     if preview {
@@ -102,7 +107,7 @@ fn prices(cost: &Value) -> Map<String, Value> {
         ("cache_read", "cache_read"),
         ("cache_write", "cache_write_5m"),
     ] {
-        if let Some(number) = cost[source].as_f64().filter(|v| v.is_finite() && *v >= 0.0) {
+        if let Some(number) = cost[source].as_f64().filter(|v| valid_rate(*v)) {
             result.insert(target.into(), json!(number));
         }
     }
@@ -192,11 +197,9 @@ pub(super) fn valid_cache(cache: &Value) -> bool {
         models.len() >= 20
             && models.iter().all(|(name, price)| {
                 !name.is_empty()
-                    && ["input", "output"].iter().all(|key| {
-                        price[*key]
-                            .as_f64()
-                            .is_some_and(|n| n.is_finite() && n >= 0.0)
-                    })
+                    && ["input", "output"]
+                        .iter()
+                        .all(|key| price[*key].as_f64().is_some_and(valid_rate))
                     && valid_rates(price)
                     && price.get("tiers").is_none_or(|tiers| {
                         tiers.as_array().is_some_and(|tiers| {
@@ -221,6 +224,6 @@ fn valid_rates(price: &Value) -> bool {
     .all(|key| {
         price
             .get(*key)
-            .is_none_or(|value| value.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
+            .is_none_or(|value| value.as_f64().is_some_and(valid_rate))
     })
 }

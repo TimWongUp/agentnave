@@ -15,18 +15,18 @@
 - **所有权与单一数据源**：用量统计完全由托盘 App（Rust 端）拥有，以本机各 CLI 原生会话日志为单一数据源。不修改 Python 服务核心、MCP 协议或服务管理的 `agentnave.db` schema；不接入 Magpie 网关接口或账本，避免双源去重复杂度与外部依赖。
 - **存储、卸载与预览版边界**：正式版在数据根写入独立的 `usage.db` 与 `pricing-cache.json`（跟随 `AGENTNAVE_DATA_DIR`，卸载时随 [ADR-0100](0100-app-uninstall.md) 的「保留／删除记录数据根」开关一并处理），服务不读取这些文件。`AGENTNAVE_PREVIEW` 预览版将自己的统计库、解析游标与价表缓存写入独立应用数据目录，绝不触碰正式版文件与游标。
 - **Token 归一化与缓存命中率口径**：各 CLI 日志中的 Token 消耗统一归一化为 5 个互斥量——`fresh_input`、`cache_read`、`cache_write_5m`、`cache_write_1h`、`output`（含推理）——并附带 `cache_unknown` 标记。缓存命中率按 `Σcache_read / Σ(fresh_input + cache_read + cache_write)` 计算（其中 `cache_write` 为 `cache_write_5m` 与 `cache_write_1h` 之和），并排除带 `cache_unknown` 标记的记录。
-- **「折算花费」与价表边界**：金额统一称「折算花费」，表示按公开 API 单价折算的参考值，而非订阅套餐的真实扣款。内置裁剪版 `models.dev` 静态价表（Anthropic、OpenAI、Google 及 xAI、DeepSeek、智谱、Moonshot、阿里、火山引擎、MiniMax、StepFun 等官方价优先，同名模型保留先收录的官方价，订阅套餐的零价不算价格）作为离线兜底，托盘后台低频只读访问 `https://models.dev/api.json` 刷新本地精简价表缓存 `pricing-cache.json`；失败或离线时无缝回退内置表。外联不上传本地用量或元数据，也不提供手填价格表单（遵守 [ADR-0029](0029-settings-without-free-text.md)）。支持按单次请求上下文量判断阶梯价；模型名按原样、再逐层去掉路由前缀（如 `magpie/trae-cn/` 或 `opencode-go/`）后查表；未定价模型保留 Token 与缓存命中率统计，并在汇总中标明未定价占比。
+- **「折算花费」与价表边界**：金额统一称「折算花费」，表示按公开 API 单价折算的参考值，而非订阅套餐的真实扣款。内置静态价表离线兜底（官方价优先、同名保留先收录者、订阅套餐零价不作价），托盘后台低频只读访问 `https://models.dev/api.json` 刷新本地精简价表缓存 `pricing-cache.json`；失败或离线时无缝回退内置表。外联不上传本地用量或元数据，也不提供手填价格表单（遵守 [ADR-0029](0029-settings-without-free-text.md)）。查表支持去路由前缀与按请求上下文量匹配阶梯价；未定价模型保留 Token 与缓存命中率统计，并在汇总中标明未定价占比。
 - **双视角、覆盖范围与零服务改动归因**：
   - 顶层展示「总体消耗」（整台主机已覆盖 CLI 的总用量），同时支持按项目拆解每个项目下的「boss 消耗」与「员工消耗」。
-  - 覆盖 8 家有原生逐调用 Token 日志的 CLI：Claude Code、Codex CLI（含原地 `.jsonl.zst` 压缩档）、Antigravity CLI、Pi、CodeBuddy Code、DeepSeek Harness（`.jsonl` 与多帧 `.jsonl.zstd`，同目录只读最新版本）、Grok CLI（一轮多模型展开为多条）与 ZCode（只读打开其 SQLite 会话库）。各家字段语义以本机真实日志核对：Pi、DeepSeek Harness 的 `input` 不含缓存，CodeBuddy、Grok、ZCode 的输入含缓存，入库时扣除读写缓存；DeepSeek Harness 缺缓存字段的记录标 `cache_unknown`；fork 继承的记录（Pi、Grok 的早于会话起点者，DeepSeek Harness 的 seed，ZCode 的消息副本）不重复计入。
-  - Devin CLI 的 `sessions.db` 没有逐调用 Token，暂不支持，仍在面板脚注中标为未覆盖。
-  - 项目内归因仅复用托盘现有的只读视图快照与 `projects.json`：员工私聊用视图现成的 `thread` 哈希配合任务执行时间窗（`[time, time + elapsed_ms + 宽限]`）匹配对应回合，防止时间重叠双算与外部手动续接混入；boss 用视图的 `manager_session`（`boss_key` 哈希）匹配；会议室席位因当前视图无 `thread`，留待 P2 补充最小只读投影后再纳入。
+  - 覆盖 8 家有原生逐调用 Token 日志的 CLI：Claude Code、Codex CLI、Antigravity CLI、Pi、CodeBuddy Code、DeepSeek Harness、Grok CLI 与 ZCode。各家按各自原生格式（含压缩归档与自有 SQLite 会话库）归一化并按事件键去重，排除 fork 继承与消息副本；缺缓存明细时标为 `cache_unknown`，不猜测补零。
+  - Devin CLI 的会话库缺少逐调用 Token 明细，暂不支持，仍在面板脚注中标为未覆盖。
+  - 项目内归因仅复用托盘现有的只读视图快照与 `projects.json`：托盘按服务同一公式从原生会话 ID 派生 `thread` 与 `boss_key` 哈希，员工私聊用 `thread` 哈希配合任务执行时间窗匹配对应回合，防止时间重叠双算与外部手动续接混入；boss 用 `boss_key` 哈希匹配；会议室席位因当前视图无 `thread`，留待 P2 补充最小只读投影后再纳入。
   - 用户删除工作区后，主机层面的「总体消耗」保持不变，已删除部分不再计入项目归因，也不在统计库另存已删工作区名或路径。
 - **界面入口与内嵌导航**：顶栏主导航在「办公室 / 设置」旁新增「用量」（`/usage/`），复用同源内嵌覆盖机制，切换时不卸载办公室与语音播放器。
 
 ## 取舍
 
-- **由托盘 Rust 端直接解析原生日志，而非改动 Python 服务与 `agentnave.db`**：无需触动服务核心、MCP 协议和会话库迁移，同时天然覆盖未经过 AgentNave 的本机原生 CLI 对话。代价是托盘需在 Rust 侧维护各 CLI 日志及 `.jsonl.zst` 等格式的解析器，随 CLI 上游演进跟进适配；ZCode 不是日志文件而是 SQLite 库，只以只读（必要时不可变快照）方式打开，不会阻塞其写入。
+- **由托盘 Rust 端直接解析原生日志，而非改动 Python 服务与 `agentnave.db`**：无需触动服务核心、MCP 协议和会话库迁移，同时天然覆盖未经过 AgentNave 的本机原生 CLI 对话。代价是托盘需在 Rust 侧维护各 CLI 日志与压缩档解析器并随上游演进适配；对自有 SQLite 会话库的 CLI 严格以只读方式打开，不阻塞其写入。
 - **不接入 Magpie 网关接口或账本**：以本机 CLI 原生会话日志作为单一数据源，省去网关与本地日志双源对账、去重的复杂度，也不依赖本机是否运行或配置 Magpie；代价是无法直接反映按订阅包月或网关侧折扣后的实际结算金额。
 - **内置价表兜底并低频只读更新、不提供手填表单**：遵循 [ADR-0029](0029-settings-without-free-text.md) 不让用户手填配置，低频联网更新减少新模型和价格变动对发版的依赖；代价是增加只读外联与缓存维护，离线或失败时仍保留内置价表及未定价占比。
 - **归一化为 5 个互斥量并用 `cache_unknown` 排除命中率**：避免不同 CLI 把缓存命中或推理 Token 折叠进总输入导致的重复计费与口径失真；对于无法拆分缓存明细的历史或 CLI 记录，宁可在命中率计算中剔除，也不以零缓存拉偏整体命中率。

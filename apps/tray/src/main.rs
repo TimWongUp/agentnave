@@ -380,7 +380,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             update::resume(&resumer);
         }
     });
-    usage::start();
+    usage::start(reader.clone());
     alerts::start(handle.clone(), reader.clone());
     thread::spawn(move || poll(handle, reader, overview));
     Ok(())

@@ -10,9 +10,7 @@ const DAY: i64 = 86_400_000;
 /// ZCode's session database, or the one `config.json` points to.
 pub(super) fn database() -> PathBuf {
     let base = dirs::home_dir().unwrap_or_default().join(".zcode/cli");
-    std::fs::read(base.join("config.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    super::read_small_json(&base.join("config.json"))
         .and_then(|config| {
             config["storage"]["sessionDbPath"]
                 .as_str()
@@ -28,36 +26,56 @@ pub(super) fn database() -> PathBuf {
         )
 }
 
+fn is_readonly_or_perm(err: &rusqlite::Error) -> bool {
+    matches!(
+        err,
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::CannotOpen
+                    | rusqlite::ErrorCode::ReadOnly
+                    | rusqlite::ErrorCode::PermissionDenied,
+                ..
+            },
+            _,
+        )
+    )
+}
+
 /// Opens ZCode's database without ever writing to it, so the app is never blocked.
-/// A database in WAL mode with no `-wal` file left cannot be opened plain read-only,
-/// and is then read as an immutable snapshot, which a changed fingerprint refreshes.
-fn open(path: &Path) -> rusqlite::Result<Connection> {
+/// Only permission/read-only errors fall back to an immutable snapshot; lock contention
+/// (`SQLITE_BUSY` / `SQLITE_LOCKED`) returns an error so the next scan retries safely.
+pub(super) fn open_with(
+    path: &Path,
+    busy_timeout: std::time::Duration,
+) -> rusqlite::Result<Connection> {
     let probe = |db: Connection| {
-        db.busy_timeout(std::time::Duration::from_secs(2))?;
+        db.busy_timeout(busy_timeout)?;
         db.query_row("SELECT COUNT(*) FROM sqlite_master", [], |_| Ok(()))?;
         Ok(db)
     };
-    let plain = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(probe);
-    if plain.is_ok() {
-        return plain;
-    }
-    let mut uri = String::from("file:");
-    let text = path.to_string_lossy().replace('\\', "/");
-    if !text.starts_with('/') {
-        uri.push('/');
-    }
-    for c in text.chars() {
-        match c {
-            '%' | '?' | '#' | ' ' => uri.push_str(&format!("%{:02X}", c as u32)),
-            _ => uri.push(c),
+    match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(probe) {
+        Ok(db) => Ok(db),
+        Err(err) if is_readonly_or_perm(&err) => {
+            let mut uri = String::from("file:");
+            let text = path.to_string_lossy().replace('\\', "/");
+            if !text.starts_with('/') {
+                uri.push('/');
+            }
+            for c in text.chars() {
+                match c {
+                    '%' | '?' | '#' | ' ' => uri.push_str(&format!("%{:02X}", c as u32)),
+                    _ => uri.push(c),
+                }
+            }
+            uri.push_str("?immutable=1");
+            Connection::open_with_flags(
+                uri,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+            )
+            .and_then(probe)
         }
+        Err(err) => Err(err),
     }
-    uri.push_str("?immutable=1");
-    Connection::open_with_flags(
-        uri,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .and_then(probe)
 }
 
 /// Size and newest mtime of the database and its WAL: a change in either means new rows.
@@ -121,13 +139,21 @@ fn event(db: &Connection, id: &str, session: &str, root: &str, data: &Value) -> 
     let mut e = parsers::event("zcode", session, root, ts, model, format!("zcode:{id}"));
     e.read = count(&tokens["cache"]["read"]);
     e.write5 = count(&tokens["cache"]["write"]);
-    e.fresh = count(&tokens["input"]).saturating_sub(e.read + e.write5);
+    e.fresh = count(&tokens["input"]).saturating_sub(e.read.saturating_add(e.write5));
     e.output = count(&tokens["output"]);
     (e.total() > 0).then_some(e)
 }
 
 /// Reads messages written since the last scan into the usage database.
 pub(super) fn scan(conn: &mut Connection, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    scan_with_timeout(conn, path, std::time::Duration::from_secs(2))
+}
+
+pub(super) fn scan_with_timeout(
+    conn: &mut Connection,
+    path: &Path,
+    busy_timeout: std::time::Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
     let Some((size, mtime)) = fingerprint(path) else {
         return Ok(());
     };
@@ -136,7 +162,7 @@ pub(super) fn scan(conn: &mut Connection, path: &Path) -> Result<(), Box<dyn std
     if cursor.size == size && cursor.mtime == mtime {
         return Ok(());
     }
-    let source = open(path)?;
+    let source = open_with(path, busy_timeout)?;
     let newest: i64 = source.query_row(
         "SELECT COALESCE(MAX(time_updated), 0) FROM message",
         [],
@@ -153,31 +179,32 @@ pub(super) fn scan(conn: &mut Connection, path: &Path) -> Result<(), Box<dyn std
         let (id, parent) = row?;
         parents.insert(id, parent);
     }
-    let mut stmt = source.prepare(
-        "SELECT id, session_id, time_updated, data FROM message WHERE time_updated >= ?1 ORDER BY time_updated",
-    )?;
-    let rows = stmt
-        .query_map(params![since], |r| {
+    let tx = conn.transaction()?;
+    let mut watermark = cursor.offset;
+    {
+        let mut stmt = source.prepare(
+            "SELECT id, session_id, time_updated, data FROM message WHERE time_updated >= ?1 ORDER BY time_updated",
+        )?;
+        let mut rows = stmt.query_map(params![since], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, i64>(2)?,
                 r.get::<_, String>(3)?,
             ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let tx = conn.transaction()?;
-    let mut watermark = cursor.offset;
-    for (id, session, updated, data) in rows {
-        watermark = watermark.max(updated);
-        let Ok(data) = serde_json::from_str::<Value>(&data) else {
-            continue;
-        };
-        if let Some(e) = event(&source, &id, &session, &root(&parents, &session), &data)
-            && e.ts >= now() - 31 * DAY
-            && e.ts <= now() + DAY
-        {
-            super::db::save(&tx, &e)?;
+        })?;
+        while let Some(row) = rows.next().transpose()? {
+            let (id, session, updated, data) = row;
+            watermark = watermark.max(updated);
+            let Ok(data) = serde_json::from_str::<Value>(&data) else {
+                continue;
+            };
+            if let Some(e) = event(&source, &id, &session, &root(&parents, &session), &data)
+                && e.ts >= now() - 31 * DAY
+                && e.ts <= now() + DAY
+            {
+                super::db::save(&tx, &e)?;
+            }
         }
     }
     cursor.size = size;

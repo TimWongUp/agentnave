@@ -10,14 +10,13 @@ fn summary(path: &Path, state: &mut Value) -> Option<()> {
     if state["summary"] == true {
         return Some(());
     }
-    let summary: Value =
-        serde_json::from_slice(&std::fs::read(path.parent()?.join("summary.json")).ok()?).ok()?;
+    let summary: Value = crate::usage::read_small_json(&path.parent()?.join("summary.json"))?;
     state["summary"] = json!(true);
     state["model"] = json!(string(&summary, "current_model_id"));
     let parent = string(&summary, "parent_session_id");
     if !parent.is_empty() {
         let began = chrono::DateTime::parse_from_rfc3339(string(&summary, "created_at"))
-            .map_or(0, |t| t.timestamp() * 1000);
+            .map_or(0, |t| t.timestamp_millis());
         state["since"] = json!(began);
         if string(&summary, "session_kind").starts_with("subagent") {
             state["root"] = json!(parent);
@@ -79,7 +78,7 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Vec<Event> {
             );
             e.read = number(usage, "cachedReadTokens");
             e.write5 = number(usage, "cacheCreationTokens");
-            e.fresh = number(usage, "inputTokens").saturating_sub(e.read + e.write5);
+            e.fresh = number(usage, "inputTokens").saturating_sub(e.read.saturating_add(e.write5));
             e.output = number(usage, "outputTokens");
             (e.total() > 0).then_some(e)
         })

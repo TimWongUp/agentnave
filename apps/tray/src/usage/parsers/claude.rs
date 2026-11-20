@@ -35,9 +35,12 @@ pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
     let creation = &usage["cache_creation"];
     e.write5 = number(creation, "ephemeral_5m_input_tokens");
     e.write1 = number(creation, "ephemeral_1h_input_tokens");
-    if e.write5 + e.write1 == 0 {
+    if e.write5.saturating_add(e.write1) == 0 {
         e.write5 = number(usage, "cache_creation_input_tokens");
     }
     e.output = number(usage, "output_tokens");
+    if e.total() == 0 {
+        return None;
+    }
     Some(e)
 }

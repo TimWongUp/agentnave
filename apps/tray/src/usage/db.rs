@@ -11,7 +11,10 @@ pub(super) fn path(root: &Path, preview: bool) -> PathBuf {
 }
 
 pub(super) fn open(root: &Path) -> rusqlite::Result<Connection> {
-    let path = path(root, crate::PREVIEW);
+    open_at(&path(root, crate::PREVIEW))
+}
+
+pub(super) fn open_at(path: &Path) -> rusqlite::Result<Connection> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -54,25 +57,31 @@ pub(super) fn save_cursor(
     c: &Cursor,
 ) -> rusqlite::Result<()> {
     db.execute(
-        "INSERT OR REPLACE INTO source_cursors VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        "INSERT OR REPLACE INTO source_cursors(source_path, provider, file_size, mtime_ns, byte_offset, head_hash_4k, parser_state) VALUES (?1,?2,?3,?4,?5,?6,?7)",
         params![path, provider, c.size, c.mtime, c.offset, c.head, c.state],
     )?;
     Ok(())
 }
 
 pub(super) fn save(db: &Connection, e: &Event) -> rusqlite::Result<()> {
-    let previous: Option<i64> = db
-        .query_row(
-            "SELECT ts_ms FROM usage_events WHERE event_key=?1",
-            [&e.key],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if previous.is_some_and(|ts| ts > e.ts) {
-        return Ok(());
-    }
     db.execute(
-        "INSERT OR REPLACE INTO usage_events VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        "INSERT INTO usage_events (
+            event_key, provider, session_id, root_session_id, thread_hash,
+            ts_ms, model, fresh_input, cache_read, cache_write_5m, cache_write_1h, output, cache_unknown
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        ON CONFLICT(event_key) DO UPDATE SET
+            session_id = CASE WHEN usage_events.session_id = '' THEN excluded.session_id ELSE usage_events.session_id END,
+            root_session_id = CASE WHEN usage_events.root_session_id = '' THEN excluded.root_session_id ELSE usage_events.root_session_id END,
+            thread_hash = CASE WHEN usage_events.thread_hash = '' THEN excluded.thread_hash ELSE usage_events.thread_hash END,
+            ts_ms = excluded.ts_ms,
+            model = excluded.model,
+            fresh_input = excluded.fresh_input,
+            cache_read = excluded.cache_read,
+            cache_write_5m = excluded.cache_write_5m,
+            cache_write_1h = excluded.cache_write_1h,
+            output = excluded.output,
+            cache_unknown = excluded.cache_unknown
+        WHERE excluded.ts_ms >= usage_events.ts_ms",
         params![
             e.key, e.provider, e.session, e.root, e.thread, e.ts, e.model, e.fresh, e.read,
             e.write5, e.write1, e.output, e.unknown

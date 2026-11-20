@@ -131,12 +131,11 @@ pub(super) fn cost(e: &Event) -> Option<f64> {
         e.write1,
         price("cache_write_1h").or_else(|| (e.provider == "claude").then_some(2.0 * input)),
     )?;
-    Some(
-        (e.fresh as f64 * input
-            + e.read as f64 * read
-            + e.write5 as f64 * write5
-            + e.write1 as f64 * write1
-            + e.output as f64 * price("output")?)
-            / 1_000_000.0,
-    )
+    let total = (e.fresh as f64 * input
+        + e.read as f64 * read
+        + e.write5 as f64 * write5
+        + e.write1 as f64 * write1
+        + e.output as f64 * price("output")?)
+        / 1_000_000.0;
+    Some(total).filter(|v| v.is_finite() && *v >= 0.0)
 }

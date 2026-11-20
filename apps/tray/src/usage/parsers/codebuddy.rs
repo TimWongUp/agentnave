@@ -7,10 +7,13 @@ fn cached(usage: &Value) -> i64 {
     ["inputTokensDetails", "input_tokens_details"]
         .iter()
         .map(|key| match &usage[*key] {
-            Value::Array(items) => items.iter().map(|d| number(d, "cached_tokens")).sum(),
+            Value::Array(items) => items
+                .iter()
+                .map(|d| number(d, "cached_tokens"))
+                .fold(0i64, i64::saturating_add),
             details => number(details, "cached_tokens"),
         })
-        .sum()
+        .fold(0i64, i64::saturating_add)
 }
 
 fn either(usage: &Value, key: &str, old: &str) -> i64 {
@@ -50,7 +53,7 @@ pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
     let input = either(usage, "inputTokens", "input_tokens");
     e.read = cached(usage);
     e.write5 = either(usage, "cacheCreationTokens", "cache_creation_input_tokens");
-    e.fresh = input.saturating_sub(e.read + e.write5);
+    e.fresh = input.saturating_sub(e.read.saturating_add(e.write5));
     e.output = either(usage, "outputTokens", "output_tokens");
     (e.total() > 0).then_some(e)
 }

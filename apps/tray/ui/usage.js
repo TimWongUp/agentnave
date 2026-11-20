@@ -315,7 +315,7 @@
     const rows = [...(project.by_provider || [])].sort((a, b) => num(b.cost_usd) - num(a.cost_usd) || num(b.total_tokens) - num(a.total_tokens)).map(p =>
       h("div.u-prow", {}, h("span.u-name", {}, tile(p.provider), span("", providerName(p.provider))),
         splitBar(p.boss_tokens, p.worker_tokens),
-        h("span.num", {}, costText({ ...p, unpriced_tokens: 0 })), h("span.num", {}, compact(p.total_tokens)),
+        h(`span.num${unpricedAll(p) ? ".u-num-dim" : ""}`, {}, costText(p)), h("span.num", {}, compact(p.total_tokens)),
         h("span.num", {}, compact(p.boss_tokens)), h("span.num", {}, compact(p.worker_tokens))));
     return h("div.u-pdetail", {}, head, ...rows);
   }
@@ -354,7 +354,7 @@
   }
   function renderBody() {
     const data = state.data, body = document.getElementById("u-body");
-    const sig = `${state.view}|${state.range}|${document.documentElement.lang}|${JSON.stringify(data)}`;
+    const sig = `${state.view}|${state.range}|${document.documentElement.lang}|${Boolean(AN.fullModelNames?.())}|${JSON.stringify(data)}`;
     if (sig === state.sig) return;
     state.sig = sig;
     state.redraw = null;
@@ -401,6 +401,7 @@
     }).observe(document.getElementById("u-body"));
   }
   AN.onVisibility(() => { if (AN.isHidden()) clearTimeout(timer); else fetchUsage(); });
+  window.addEventListener("agentnave:model-names", renderBody);
   render();
   fetchUsage();
 }

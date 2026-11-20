@@ -22,31 +22,35 @@ pub(super) struct Aggregate {
 }
 impl Aggregate {
     pub(super) fn add(&mut self, e: &Event) {
-        self.calls += 1;
-        self.fresh += e.fresh;
-        self.read += e.read;
-        self.write5 += e.write5;
-        self.write1 += e.write1;
-        self.output += e.output;
+        self.calls = self.calls.saturating_add(1);
+        self.fresh = self.fresh.saturating_add(e.fresh);
+        self.read = self.read.saturating_add(e.read);
+        self.write5 = self.write5.saturating_add(e.write5);
+        self.write1 = self.write1.saturating_add(e.write1);
+        self.output = self.output.saturating_add(e.output);
         if !e.unknown {
-            self.known += e.prompt();
-            self.known_read += e.read;
+            self.known = self.known.saturating_add(e.prompt());
+            self.known_read = self.known_read.saturating_add(e.read);
         }
         if let Some(cost) = pricing::cost(e) {
             self.cost += cost;
         } else {
-            self.unpriced += e.total();
-            self.unpriced_calls += 1;
+            self.unpriced = self.unpriced.saturating_add(e.total());
+            self.unpriced_calls = self.unpriced_calls.saturating_add(1);
         }
     }
     fn tokens(&self) -> i64 {
-        self.fresh + self.read + self.write5 + self.write1 + self.output
+        self.fresh
+            .saturating_add(self.read)
+            .saturating_add(self.write5)
+            .saturating_add(self.write1)
+            .saturating_add(self.output)
     }
     pub(super) fn rate(&self) -> Option<f64> {
         (self.known > 0).then(|| self.known_read as f64 / self.known as f64)
     }
     fn value(&self) -> Value {
-        json!({"cost_usd":self.cost,"unpriced_tokens":self.unpriced,"total_tokens":self.tokens(),"fresh_input":self.fresh,"cache_read":self.read,"cache_write":self.write5+self.write1,"output":self.output,"cache_hit_rate":self.rate(),"calls":self.calls})
+        json!({"cost_usd":self.cost,"unpriced_tokens":self.unpriced,"total_tokens":self.tokens(),"fresh_input":self.fresh,"cache_read":self.read,"cache_write":self.write5.saturating_add(self.write1),"output":self.output,"cache_hit_rate":self.rate(),"calls":self.calls})
     }
     fn overall(&self) -> Value {
         let mut v = self.value();
@@ -72,7 +76,7 @@ pub(super) struct Boss {
     project: Project,
 }
 #[derive(Default)]
-struct ProjectAgg {
+pub(super) struct ProjectAgg {
     project: Option<Project>,
     boss: Aggregate,
     workers: Aggregate,
@@ -155,7 +159,7 @@ pub(super) fn assign<'a>(
         .map(|b| (&b.project, false))
 }
 
-fn add_project(
+pub(super) fn add_project(
     projects: &mut BTreeMap<String, ProjectAgg>,
     project: &Project,
     worker: bool,
@@ -171,26 +175,39 @@ fn add_project(
     let entry = p.providers.entry(e.provider.clone()).or_default();
     entry.0.add(e);
     if worker {
-        entry.2 += e.total()
+        entry.2 = entry.2.saturating_add(e.total());
     } else {
-        entry.1 += e.total()
+        entry.1 = entry.1.saturating_add(e.total());
     }
 }
 
-fn project_value(p: ProjectAgg) -> Value {
+pub(super) fn project_value(p: ProjectAgg) -> Value {
     let mut total = p.boss.clone();
     total.cost += p.workers.cost;
-    total.unpriced += p.workers.unpriced;
-    total.calls += p.workers.calls;
-    total.fresh += p.workers.fresh;
-    total.read += p.workers.read;
-    total.write5 += p.workers.write5;
-    total.write1 += p.workers.write1;
-    total.output += p.workers.output;
-    total.known += p.workers.known;
-    total.known_read += p.workers.known_read;
+    total.unpriced = total.unpriced.saturating_add(p.workers.unpriced);
+    total.calls = total.calls.saturating_add(p.workers.calls);
+    total.fresh = total.fresh.saturating_add(p.workers.fresh);
+    total.read = total.read.saturating_add(p.workers.read);
+    total.write5 = total.write5.saturating_add(p.workers.write5);
+    total.write1 = total.write1.saturating_add(p.workers.write1);
+    total.output = total.output.saturating_add(p.workers.output);
+    total.known = total.known.saturating_add(p.workers.known);
+    total.known_read = total.known_read.saturating_add(p.workers.known_read);
     let project = p.project.unwrap_or_else(Project::other);
-    let providers:Vec<Value>=p.providers.into_iter().map(|(name,(a,b,w))| json!({"provider":name,"cost_usd":a.cost,"total_tokens":a.tokens(),"boss_tokens":b,"worker_tokens":w})).collect();
+    let providers: Vec<Value> = p
+        .providers
+        .into_iter()
+        .map(|(name, (a, b, w))| {
+            json!({
+                "provider": name,
+                "cost_usd": a.cost,
+                "unpriced_tokens": a.unpriced,
+                "total_tokens": a.tokens(),
+                "boss_tokens": b,
+                "worker_tokens": w
+            })
+        })
+        .collect();
     json!({"key":project.key,"label":project.label,"path":project.path,"total":total.value(),"boss":p.boss.value(),"workers":p.workers.value(),"by_provider":providers})
 }
 
@@ -206,12 +223,20 @@ fn dates(range: &str) -> Vec<chrono::NaiveDate> {
         .filter_map(|n| today.checked_sub_days(Days::new(n)))
         .collect()
 }
-fn start(date: chrono::NaiveDate) -> i64 {
-    Local
-        .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-        .earliest()
+pub(super) fn start_in<T: TimeZone>(tz: &T, date: chrono::NaiveDate) -> i64 {
+    (0..24)
+        .filter_map(|hour| date.and_hms_opt(hour, 0, 0))
+        .find_map(|naive| tz.from_local_datetime(&naive).earliest())
         .map(|d| d.timestamp_millis())
-        .unwrap_or(0)
+        .unwrap_or_else(|| {
+            date.and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp_millis()
+        })
+}
+fn start(date: chrono::NaiveDate) -> i64 {
+    start_in(&Local, date)
 }
 
 pub(super) fn bucket_keys(range: &str, days: &[chrono::NaiveDate]) -> Vec<String> {
@@ -300,7 +325,7 @@ pub(super) fn respond(reader: &Reader, range: &str) -> Result<Value, Box<dyn std
         .collect();
     let granularity = if range == "today" { "hour" } else { "day" };
     Ok(
-        json!({"range":range,"granularity":granularity,"updated_at":UPDATED.load(Ordering::Relaxed),"scanning":SCANNING.load(Ordering::Acquire),"covered_providers":["claude","codex","antigravity","pi","codebuddy","deepseek","grok","zcode"],"uncovered_installed":reader.usage_uncovered(),"overall":overall.overall(),"daily":daily,"providers":providers,"projects":by_project.into_values().map(project_value).collect::<Vec<_>>() }),
+        json!({"range":range,"granularity":granularity,"updated_at":UPDATED.load(Ordering::Relaxed),"scanning":SCANNING.load(Ordering::Acquire),"covered_providers":super::COVERED_PROVIDERS,"uncovered_installed":reader.usage_uncovered(),"overall":overall.overall(),"daily":daily,"providers":providers,"projects":by_project.into_values().map(project_value).collect::<Vec<_>>() }),
     )
 }
 
