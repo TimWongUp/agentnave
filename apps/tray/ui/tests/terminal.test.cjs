@@ -228,8 +228,16 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, tran
     sendParentMessage: data => {
       for (const fn of winListeners.message || []) fn({ source: parent, data });
     },
+    focusWindow: () => { for (const fn of winListeners.focus || []) fn(); },
   };
 }
+
+test("terminal window focus notifies the office", async () => {
+  const app = createHarness({ transport: async () => makeResponse({ status: 404 }) });
+  await app.start();
+  app.focusWindow();
+  assert.deepEqual(JSON.parse(JSON.stringify(app.posted.at(-1).message)), { type: "agentnave:terminal", action: "focus" });
+});
 
 test("new session first packet answers queries once without duplicate 997 using vendored xterm.js", async () => {
   let step = 0;
