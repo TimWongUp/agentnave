@@ -28,12 +28,13 @@ const CUSTOM_KIND: &str = "custom";
 /// The kind of an image generation seat: write access, no difficulty, one card per seat.
 const IMAGE_KIND: &str = "image";
 const DIFFICULTIES: [&str; 3] = ["easy", "medium", "hard"];
-const SEAT_FIELDS: [&str; 10] = [
+const SEAT_FIELDS: [&str; 11] = [
     "id",
     "kind",
     "role",
     "description",
     "provider",
+    "account",
     "model",
     "effort",
     "fallbacks",
@@ -175,6 +176,7 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     {
         return Err(format!("{what} 的 effort 必须为字符串"));
     }
+    crate::members::validate_account(fields, what)?;
     crate::members::validate_fallbacks(fields, what)?;
     if !matches!(text("access"), Some("read" | "write")) {
         return Err(format!("{what} 的读写类型必须为 read 或 write"));
@@ -198,8 +200,8 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
 }
 
 /// decision-seats.json: `{"version": 1, "decision_model": "gemini-decision-1",
-/// "random_candidates"?: bool, "seats": [{id, kind, role, description, provider, model, effort?,
-/// fallbacks?, access, difficulty}]}`, one seat per difficulty of a card: `kind` is a group of the
+/// "random_candidates"?: bool, "seats": [{id, kind, role, description, provider, account?, model,
+/// effort?, fallbacks?, access, difficulty}]}`, one seat per difficulty of a card: `kind` is a group of the
 /// role catalog, "custom" or "image". An image seat is a card of one seat, write access and no
 /// difficulty.
 pub fn validate(document: &Value) -> Result<(), String> {

@@ -28,7 +28,8 @@ impl Hosts {
                 || !host.root.confirmed
                 || self.settings_error.is_some()
                 || (self.shell.as_ref().is_some_and(Result::is_err)
-                    && !self.manual_roots.contains(host.id))
+                    && !self.manual_roots.contains(host.id)
+                    && !split::is_account_row(host.id))
             {
                 continue;
             }

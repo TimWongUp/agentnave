@@ -2,6 +2,7 @@ use super::*;
 use crate::data::Reader;
 use tempfile::TempDir;
 
+mod accounts;
 mod decision_seats;
 mod faults;
 mod meeting_skill;

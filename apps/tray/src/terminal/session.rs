@@ -463,7 +463,7 @@ const PARENT_SESSION: [&str; 21] = [
     "TERM_PROGRAM_VERSION",
 ];
 
-pub(super) fn parent_session(name: &str) -> bool {
+pub(crate) fn parent_session(name: &str) -> bool {
     name.starts_with("CLAUDE_CODE_")
         || name.starts_with("ANTIGRAVITY_")
         || PARENT_SESSION.contains(&name)

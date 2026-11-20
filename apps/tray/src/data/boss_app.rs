@@ -38,8 +38,10 @@ pub(crate) fn terminal_title(
     cwd: &Path,
     since: std::time::SystemTime,
     exclude: &HashSet<String>,
+    claude_home: Option<&Path>,
 ) -> (Option<String>, bool, Option<CliTitle>) {
-    title::of_terminal_located(&Homes::here(), provider, native, cwd, since, exclude)
+    let homes = Homes::here().with_claude(claude_home);
+    title::of_terminal_located(&homes, provider, native, cwd, since, exclude)
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -53,6 +55,14 @@ pub(crate) struct Homes {
 }
 
 impl Homes {
+    /// These homes, with Claude's replaced by a named account's folder.
+    fn with_claude(mut self, folder: Option<&Path>) -> Self {
+        if let Some(folder) = folder {
+            self.claude = vec![folder.to_owned()];
+        }
+        self
+    }
+
     /// Before the hosts page has probed the login shell, only the app's own variables are known.
     pub(super) fn here() -> Self {
         if cfg!(test) {
@@ -523,12 +533,23 @@ fn codex_rollout_id(stem: &str) -> Option<&str> {
 /// terminal (ADR-0103): from the record its workspace names, else from a sweep of the session
 /// folders. Only an ID whose key matches is returned, so a file name with more than one ID cannot
 /// pick another chat.
+#[cfg(test)]
 pub(crate) fn native_session(
     host: &str,
     key: &str,
     file: Option<&Path>,
 ) -> Option<(String, PathBuf)> {
-    native_session_in(&Homes::here(), host, key, file)
+    native_session_as(host, key, file, None)
+}
+
+/// The same for a chat of a named Claude account, whose records are in that account's folder.
+pub(crate) fn native_session_as(
+    host: &str,
+    key: &str,
+    file: Option<&Path>,
+    claude_home: Option<&Path>,
+) -> Option<(String, PathBuf)> {
+    native_session_in(&Homes::here().with_claude(claude_home), host, key, file)
 }
 
 pub(crate) fn native_session_in(

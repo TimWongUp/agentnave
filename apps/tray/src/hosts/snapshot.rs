@@ -7,10 +7,12 @@ impl Hosts {
         if host.id.starts_with("codex@") {
             return clients;
         }
+        // A named Claude account is read by the CLI alone; the desktop app keeps its own folder.
+        let desktop_reads = !split::is_account_row(host.id);
         let live_profile = dirs::home_dir().as_deref() == Some(&self.context.home);
         let separate_desktop =
             host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
-        let desktop = if separate_desktop {
+        let desktop = if separate_desktop || !desktop_reads {
             None
         } else {
             installed::desktop(&self.context, host.boss)
@@ -62,6 +64,7 @@ impl Hosts {
         // An extra Codex home is read by the CLI alone; desktop apps keep the default one.
         if !separate_desktop
             && !host.id.starts_with("codex@")
+            && !split::is_account_row(host.id)
             && let Some((source, path)) = installed::desktop(&self.context, host.boss)
         {
             return (true, source, path);
@@ -188,7 +191,8 @@ impl Hosts {
             Some(error_attention(error, "root_unconfirmed"))
         } else if !host.root.confirmed
             || (self.shell.as_ref().is_some_and(Result::is_err)
-                && !self.manual_roots.contains(host.id))
+                && !self.manual_roots.contains(host.id)
+                && !split::is_account_row(host.id))
         {
             Some(attention(
                 "root_unconfirmed",
