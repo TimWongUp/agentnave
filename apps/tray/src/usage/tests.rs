@@ -190,6 +190,64 @@ fn attribution_prioritizes_earliest_window_and_excludes_external_resume() {
 }
 
 #[test]
+fn workspace_splits_boss_workers_and_excludes_other_groups() {
+    let group = query::boss_key("codex", "boss-session");
+    let other = query::boss_key("codex", "other-session");
+    let item = |session: &str| crate::data::snapshot::Item {
+        id: session.into(),
+        title: String::new(),
+        mode: "task".into(),
+        host: Some("codex".into()),
+        manager_session: Some(session.into()),
+        status: String::new(),
+        updated: String::new(),
+    };
+    let view = |thread: &str| json!({"director":{"tasks":[{"thread":thread,"time":"2026-11-20T00:00:00Z","elapsed_ms":1000}]}});
+    let snapshots = vec![
+        crate::data::snapshot::Snapshot {
+            item: item(&group),
+            view: std::sync::Arc::new(view("abc")),
+            live: false,
+            live_updated: None,
+        },
+        crate::data::snapshot::Snapshot {
+            item: item(&other),
+            view: std::sync::Arc::new(view("zzz")),
+            live: false,
+            live_updated: None,
+        },
+    ];
+    let start = chrono::DateTime::parse_from_rfc3339("2026-11-20T00:00:00Z")
+        .unwrap()
+        .timestamp_millis();
+    let event = |root: &str, thread: &str, ts: i64, fresh: i64, output: i64| Event {
+        provider: "codex".into(),
+        root: root.into(),
+        thread: thread.into(),
+        ts,
+        fresh,
+        output,
+        ..Default::default()
+    };
+    let events = [
+        event("boss-session", "boss-thread", start, 100, 10),
+        event("worker", "abc", start + 500, 50, 5),
+        event("other-session", "other-thread", start, 900, 90),
+        event("other-worker", "zzz", start + 500, 800, 80),
+        event("outside", "abc", start + 10_000, 700, 70),
+    ];
+    let value = query::workspace_of(&snapshots, &events, &group);
+    assert_eq!(value["group"], group);
+    assert_eq!(value["has_data"], true);
+    assert_eq!(value["boss"]["calls"], 1);
+    assert_eq!(value["boss"]["total_tokens"], 110);
+    assert_eq!(value["workers"]["calls"], 1);
+    assert_eq!(value["workers"]["total_tokens"], 55);
+    assert_eq!(value["total"]["calls"], 2);
+    assert_eq!(value["total"]["total_tokens"], 165);
+}
+
+#[test]
 fn partial_lines_and_rewritten_heads_do_not_advance_or_duplicate() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

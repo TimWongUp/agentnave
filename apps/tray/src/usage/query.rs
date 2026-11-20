@@ -90,8 +90,8 @@ fn at(s: &str) -> Option<i64> {
         .map(|t| t.timestamp_millis())
 }
 
-pub(super) fn attribution(
-    snapshots: &[Snapshot],
+pub(super) fn attribution<'a>(
+    snapshots: impl IntoIterator<Item = &'a Snapshot>,
     projects: &BTreeMap<String, Project>,
 ) -> (Vec<Window>, Vec<Boss>) {
     let mut windows = Vec::new();
@@ -302,4 +302,35 @@ pub(super) fn respond(reader: &Reader, range: &str) -> Result<Value, Box<dyn std
     Ok(
         json!({"range":range,"granularity":granularity,"updated_at":UPDATED.load(Ordering::Relaxed),"scanning":SCANNING.load(Ordering::Acquire),"covered_providers":["claude","codex","antigravity","pi","codebuddy","deepseek","grok","zcode"],"uncovered_installed":reader.usage_uncovered(),"overall":overall.overall(),"daily":daily,"providers":providers,"projects":by_project.into_values().map(project_value).collect::<Vec<_>>() }),
     )
+}
+
+pub(super) fn workspace(reader: &Reader, group: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let events = db::events(&db::open(&crate::data_files::data_root())?, 0, i64::MAX)?;
+    Ok(workspace_of(&reader.usage_views().0, &events, group))
+}
+
+pub(super) fn workspace_of(snapshots: &[Snapshot], events: &[Event], group: &str) -> Value {
+    let (windows, bosses) = attribution(
+        snapshots
+            .iter()
+            .filter(|s| crate::stage::chat_group(&s.item).as_deref() == Some(group)),
+        &BTreeMap::new(),
+    );
+    let mut total = Aggregate::default();
+    let mut boss = Aggregate::default();
+    let mut workers = Aggregate::default();
+    for e in events {
+        match assign(e, &windows, &bosses) {
+            Some((_, true)) => {
+                workers.add(e);
+                total.add(e);
+            }
+            Some((_, false)) => {
+                boss.add(e);
+                total.add(e);
+            }
+            None => {}
+        }
+    }
+    json!({"group":group,"has_data":total.calls>0,"total":total.value(),"boss":boss.value(),"workers":workers.value()})
 }

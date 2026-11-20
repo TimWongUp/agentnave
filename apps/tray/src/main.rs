@@ -439,7 +439,7 @@ impl ProtocolRequest {
             _ if path == "/app/projects" || path.starts_with("/app/projects/") => {
                 reader.projects_request(Some(app), method, path, action, self.request.body())
             }
-            _ if path == "/app/usage" || path == "/app/usage/refresh" => {
+            _ if path == "/app/usage" || path.starts_with("/app/usage/") => {
                 usage::request(reader, method, path, self.request.uri().query(), action)
             }
             ("GET", "/app/status") => response::Response::json(&update::status(app)),

@@ -97,6 +97,15 @@ pub(crate) fn request(
     if method != "GET" {
         return Response::error(405, "此路由只接受 GET");
     }
+    if path == "/app/usage/workspace" {
+        let Some(group) = query_group(query) else {
+            return Response::error(400, "缺少工作区");
+        };
+        return match query::workspace(reader, &group) {
+            Ok(v) => Response::json(&v),
+            Err(e) => Response::error(500, &e.to_string()),
+        };
+    }
     let range = query
         .unwrap_or("")
         .split('&')
@@ -110,4 +119,40 @@ pub(crate) fn request(
         Ok(v) => Response::json(&v),
         Err(e) => Response::error(500, &e.to_string()),
     }
+}
+
+fn query_group(query: Option<&str>) -> Option<String> {
+    let raw = query?
+        .split('&')
+        .find_map(|part| part.strip_prefix("group="))?;
+    let group = percent_decode(raw)?;
+    (!group.is_empty()).then_some(group)
+}
+
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return None;
+            }
+            out.push((hex(bytes[i + 1])? << 4) | hex(bytes[i + 2])?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    Some(match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => return None,
+    })
 }
