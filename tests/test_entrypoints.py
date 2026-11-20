@@ -3918,6 +3918,10 @@ async def _finish(client: Client, results: Sequence[Mapping[str, object]]) -> No
 async def test_start_agents_chooses_every_seat_in_one_decision_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
 ) -> None:
+    def can_push(_root: Path, _provider: str | None) -> bool:
+        return True
+
+    monkeypatch.setattr(mcp_runtime, "app_can_push", can_push)
     _install_fake_claude(tmp_path, monkeypatch)
     _write_own_seats(
         [
@@ -3980,7 +3984,7 @@ async def test_start_agents_chooses_every_seat_in_one_decision_request(
         ] == [["medium", "hard"], ["easy", "medium"], ["hard", "medium"]]
         assert all(one["decision_model_called"] is True for one in picked)
         assert [item["access"] for item in results] == ["write", "read", "write"]
-        assert "next" in payload
+        assert payload["next"] == mcp_runtime.PUSH_NEXT
         await _finish(client, results)
 
 
@@ -5003,3 +5007,184 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
             "start_agent", {"cwd": str(tmp_path), "seat": "write-mix", "prompt": "fail"}
         )
         assert exhausted.is_error and "auth" in str(exhausted.content)
+
+
+@pytest.mark.asyncio
+async def test_decision_random_candidates_avoids_in_use_and_keeps_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    from agentnave import seat_fallbacks
+
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    def installed_claude(adapter: AdapterHooks) -> bool:
+        return adapter.name == "claude"
+
+    monkeypatch.setattr(AdapterHooks, "is_installed", installed_claude)
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    _write_decision_key()
+    read_mix = _own_seat(
+        "read-mix",
+        "claude",
+        "read",
+        fallbacks=[
+            {"provider": "claude", "model": "alt-1"},
+            {"provider": "claude", "model": "alt-2"},
+        ],
+    )
+    read_other = _own_seat("read-other", "claude", "read", difficulty="hard")
+    read_other["model"] = "model-read-mix"
+    _write_own_seats([read_mix, read_other], random_candidates=True)
+    draw_index = 0
+
+    def pick_draw_index(_count: int) -> int:
+        return draw_index
+
+    monkeypatch.setattr(seat_fallbacks, "choose_index", pick_draw_index)
+
+    async with Client(mcp) as client:
+        # Running the same model under another seat does not mark it in use for read-mix.
+        other_running = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "cwd": str(tmp_path),
+                        "seat": "read-other",
+                        "prompt": "sleep",
+                        "manager_session_id": "boss-1",
+                    },
+                )
+            ).structured_content
+        )
+
+        # start_agents with the same seat sequentially registers each started task as in use,
+        # spreading the batch across distinct models even when choose_index always returns 0.
+        decision.answers = [Decision("read-mix", {"read-mix": 0.9}, confidence=0.9)] * 3
+        batch = _payload(
+            (
+                await client.call_tool(
+                    "start_agents",
+                    {
+                        "cwd": str(tmp_path),
+                        "manager_session_id": "boss-1",
+                        "tasks": [
+                            {"access": "read", "prompt": "sleep"},
+                            {"access": "read", "prompt": "sleep"},
+                            {"access": "read", "prompt": "sleep"},
+                        ],
+                    },
+                )
+            ).structured_content
+        )
+        batch_results = [_payload(item) for item in cast(list[object], batch["results"])]
+        assert [item["model"] for item in batch_results] == ["model-read-mix", "alt-1", "alt-2"]
+        assert all(_payload(item["seat_fallback"])["random"] is True for item in batch_results)
+
+        # When every usable candidate is running in read-mix, selection falls back to all usable.
+        draw_index = 1
+        fourth = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="read-mix",
+            prompt="ok",
+            manager_session_id="boss-1",
+        )
+        assert fourth["model"] == "alt-1"
+        assert _payload(fourth["seat_fallback"]) == {"position": 1, "skipped": [], "random": True}
+
+        # Resuming an existing thread still keeps its historical model even while alt-1 is in use.
+        resumed = await _start_and_wait(
+            client,
+            session_id="session-e2e",
+            prompt="resume",
+            manager_session_id="boss-1",
+        )
+        assert resumed["model"] == "alt-1" and "seat_fallback" not in resumed
+
+        for item in (other_running, *batch_results):
+            await client.call_tool("cancel", {"id": item["invocation_id"]})
+
+
+@pytest.mark.asyncio
+async def test_decision_random_candidates_reserves_during_concurrent_isolation_and_releases_on_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    from agentnave import seat_fallbacks
+
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    def installed_claude(adapter: AdapterHooks) -> bool:
+        return adapter.name == "claude"
+
+    monkeypatch.setattr(AdapterHooks, "is_installed", installed_claude)
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    _write_decision_key()
+    write_mix = _own_seat(
+        "write-mix",
+        "claude",
+        "write",
+        fallbacks=[
+            {"provider": "claude", "model": "alt-1"},
+            {"provider": "claude", "model": "alt-2"},
+        ],
+    )
+    _write_own_seats([write_mix], random_candidates=True)
+
+    def pick_zero(_count: int) -> int:
+        return 0
+
+    monkeypatch.setattr(seat_fallbacks, "choose_index", pick_zero)
+    repo = _light_repo(tmp_path / "repo")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    async with Client(mcp) as client:
+        # Startup failure during async isolation setup must release the reservation so the next
+        # draw can still pick position 0.
+        failed = await client.call_tool(
+            "start_agent",
+            {
+                "cwd": str(plain),
+                "seat": "write-mix",
+                "prompt": "ok",
+                "isolation": {},
+                "manager_session_id": "boss-1",
+            },
+        )
+        assert failed.is_error
+
+        # Two concurrent start_agent calls overlapping on isolation setup reserve their picks
+        # immediately, so they receive distinct models even when choose_index always returns 0.
+        first_call, second_call = await asyncio.gather(
+            client.call_tool(
+                "start_agent",
+                {
+                    "cwd": str(repo),
+                    "seat": "write-mix",
+                    "prompt": "sleep",
+                    "isolation": {},
+                    "manager_session_id": "boss-1",
+                },
+            ),
+            client.call_tool(
+                "start_agent",
+                {
+                    "cwd": str(repo),
+                    "seat": "write-mix",
+                    "prompt": "sleep",
+                    "isolation": {},
+                    "manager_session_id": "boss-1",
+                },
+            ),
+        )
+        assert not first_call.is_error, first_call.content
+        assert not second_call.is_error, second_call.content
+        first = _payload(first_call.structured_content)
+        second = _payload(second_call.structured_content)
+        assert {first["model"], second["model"]} == {"model-write-mix", "alt-1"}
+
+        for item in (first, second):
+            await client.call_tool("cancel", {"id": item["invocation_id"]})

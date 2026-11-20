@@ -20,11 +20,16 @@ enum State {
 pub(super) struct Tracker {
     state: State,
     subscribed: bool,
+    paste: bool,
 }
 
 impl Tracker {
     pub(super) fn appearance(&self) -> bool {
         self.subscribed
+    }
+
+    pub(super) fn paste(&self) -> bool {
+        self.paste
     }
 
     pub(super) fn feed(&mut self, bytes: &[u8]) {
@@ -45,6 +50,9 @@ impl Tracker {
             (State::Modes(modes), b'h' | b'l') => {
                 if modes.split(|&b| b == b';').any(|mode| mode == APPEARANCE) {
                     self.subscribed = byte == b'h';
+                }
+                if modes.split(|&b| b == b';').any(|mode| mode == b"2004") {
+                    self.paste = byte == b'h';
                 }
                 State::Ground
             }

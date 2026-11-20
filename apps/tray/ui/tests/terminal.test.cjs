@@ -21,7 +21,7 @@ function makeResponse({ status = 200, body = "", headers = {} } = {}) {
   };
 }
 
-function createFakeTerminalClass(written) {
+function createFakeTerminalClass(written, deferWrite = false) {
   return class FakeTerminal {
     constructor(options) {
       let themeValue = options.theme;
@@ -54,6 +54,7 @@ function createFakeTerminalClass(written) {
     write(data, cb) {
       const text = typeof data === "string" ? data : decoder.decode(data);
       written.push(text);
+      if (deferWrite) { this.pendingWrite = cb; return; }
       queueMicrotask(() => {
         if (text.includes("\x1b[c")) this.emitData("\x1b[?1;2c");
         if (text.includes("\x1b]10;?")) this.emitData("\x1b]10;rgb:eeee/eeee/eeee\x1b\\");
@@ -73,13 +74,14 @@ function createFakeTerminalClass(written) {
   };
 }
 
-function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, transport } = {}) {
+function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, deferWrite = false, transport } = {}) {
   const docListeners = {};
   const winListeners = {};
   const observers = [];
   const written = [];
   const posted = [];
   const inputs = [];
+  const inputPaths = [];
   const resizes = [];
   const timeouts = [];
   const root = { lang, dataset: { theme, motion: "full" } };
@@ -137,7 +139,7 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, tran
       }
     };
   } else {
-    TerminalClass = createFakeTerminalClass(written);
+    TerminalClass = createFakeTerminalClass(written, deferWrite);
   }
 
   let latestTerm;
@@ -194,6 +196,7 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, tran
           ? options.body
           : decoder.decode(options.body);
         inputs.push(body);
+        inputPaths.push(path);
         return makeResponse({ status: 200, body: '{"ok":true}' });
       }
       if (path.startsWith("/app/terminal/resize")) {
@@ -213,6 +216,7 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, tran
     written,
     posted,
     inputs,
+    inputPaths,
     resizes,
     timeouts,
     term: () => latestTerm,
@@ -231,6 +235,34 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, tran
     focusWindow: () => { for (const fn of winListeners.focus || []) fn(); },
   };
 }
+
+test("IME input during output parsing is human while known replies stay automatic", async () => {
+  let release;
+  let step = 0;
+  const app = createHarness({ deferWrite: true, transport: async () => {
+    if (++step === 1) return makeResponse({ body: "output", headers: { "X-Terminal-End": 6 } });
+    return new Promise(resolve => { release = resolve; });
+  }});
+  await app.start();
+  const term = app.term();
+  assert.ok(term.pendingWrite);
+  const reports = ["\x1b[1;2R", "\x1b[?1;2R", "\x1b[?1;2c", "\x1b[>0;276;0c",
+    "\x1b[0n", "\x1b[?997;1n", "\x1b]10;rgb:eeee/eeee/eeee\x1b\\", "\x1b]11;rgb:0000/0000/0000\x07",
+    "\x1b[I", "\x1b[O", "\x1b[<0;2;3M", "\x1b[M !!", "\x1b[?2004;1$y", "\x1b[8;24;80t", "\x1bP1$r0m\x1b\\"];
+  term.emitData("中文");
+  for (const report of reports) term.emitData(report);
+  term.emitData("\x1b[A");
+  term.emitBinary("x");
+  await flush();
+  assert.match(app.inputPaths[0], /source=paste$/);
+  assert.ok(app.inputPaths.slice(1, reports.length + 1).every(path => path.endsWith("source=auto")));
+  assert.match(app.inputPaths[reports.length + 1], /source=user$/);
+  assert.match(app.inputPaths[reports.length + 2], /source=user$/);
+  term.pendingWrite();
+  await flush();
+  release(makeResponse({ headers: { "X-Terminal-End": 6, "X-Terminal-Exit": "0" } }));
+  await flush();
+});
 
 test("terminal window focus notifies the office", async () => {
   const app = createHarness({ transport: async () => makeResponse({ status: 404 }) });
@@ -515,4 +547,26 @@ test("each TerminalView sends a distinct view id on output requests", async () =
   const views = seen.map(path => path.match(/[?&]view=([^&]+)/)?.[1]);
   assert.ok(views[0] && views[1]);
   assert.notEqual(views[0], views[1]);
+});
+
+test("on the light skin Claude Code's pale message bar is drawn dark", async () => {
+  for (const theme of ["light", "dark"]) {
+    let sent = false;
+    const app = createHarness({
+      theme,
+      transport: async () => {
+        if (sent) return new Promise(() => {});
+        sent = true;
+        return makeResponse({
+          body: "\x1b[48;2;240;240;240m❯ hi\x1b[49m",
+          headers: { "X-Terminal-Start": 0, "X-Terminal-End": 9, "X-Terminal-Appearance": 0 },
+        });
+      },
+    });
+    await app.start();
+    await flush();
+    const out = app.written.join("");
+    assert.equal(out.includes("\x1b[48;2;55;55;55m❯ hi"), theme === "light", theme);
+    assert.equal(out.includes("\x1b[48;2;240;240;240m"), theme === "dark", theme);
+  }
 });

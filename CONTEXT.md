@@ -45,6 +45,16 @@ _Avoid_: 模型系列、整个 CLI
 
 调用 AgentNave 的 CLI 或应用，其身份与当前使用的模型无关。宿主身份用于会话归属及识别私聊中的同类 Provider；同类 CLI 的处理由用户按 boss 选择。App 设置中按其中的 boss 称呼：分区名「boss」，单个宿主称「应用」。
 
+## App 内 boss（In-App Boss）
+
+运行在 AgentNave App 内嵌终端中的 boss CLI。
+_Avoid_: 任意安装了 App 的 boss、App 外终端
+
+## App 外 boss（External Boss）
+
+运行在其他终端或桌面应用中的 boss。
+_Avoid_: App 内嵌终端中的 boss
+
 ## 组员（Member）
 
 由 Provider CLI 与模型组成的配置身份，即 `(provider, model)`；同名模型在不同 CLI 下是不同组员。组员共享配置包含默认参数、努力档位范围与用途说明。工作区内的运行身份是工位。App 设置中称员工。

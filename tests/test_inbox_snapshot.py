@@ -1,0 +1,27 @@
+import json
+from pathlib import Path
+
+from agentnave.inbox_snapshot import BossInbox, InboxSnapshot
+
+
+def test_snapshot_changes_only_when_state_changes(tmp_path: Path) -> None:
+    snapshot = InboxSnapshot(tmp_path, 123)
+    bosses: dict[str, BossInbox] = {
+        "s-boss": {
+            "waiting": False,
+            "items": [{"key": "end:1", "kind": "task_end", "role": None, "status": "succeeded"}],
+        }
+    }
+    snapshot.publish(bosses)
+    before = snapshot.path.stat().st_mtime_ns
+    assert json.loads(snapshot.path.read_text())["bosses"] == bosses
+    snapshot.publish(bosses)
+    assert snapshot.path.stat().st_mtime_ns == before
+    bosses["s-boss"]["items"].clear()
+    snapshot.publish(bosses)
+    assert not snapshot.path.exists()
+    bosses["s-boss"]["waiting"] = True
+    snapshot.publish(bosses)
+    assert snapshot.path.exists()
+    snapshot.close()
+    assert not snapshot.path.exists()

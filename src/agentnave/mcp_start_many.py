@@ -212,7 +212,7 @@ async def start_agents(
     if any(item["status"] != "not_started" for item in results):
         if unreceived := _unreceived(conversations, manager_session_id):
             payload["unreceived"] = unreceived
-        payload["next"] = runtime.WAIT_NEXT
+        payload["next"] = runtime.wait_guidance()
     return payload
 
 
