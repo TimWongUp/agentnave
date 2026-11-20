@@ -8,7 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast, get_args
 
-from agentnave import provider_health
+from agentnave import accounts, provider_health
+from agentnave.adapters import get_adapter
 from agentnave.decision_seats import custom_seat, random_candidates_enabled
 from agentnave.host import Host
 from agentnave.host_choice import host_cli_mode
@@ -137,6 +138,44 @@ def check_foreign_session(
     raise _foreign_session_error(session_id, owner)
 
 
+def check_session_account(
+    records: Iterable[Record],
+    session_id: str,
+    provider: ProviderName | None,
+    account: str | None,
+) -> None:
+    """Reject resuming a native session as an account whose configuration directory is not the
+    one it was recorded in: each directory keeps its own sessions (ADR-0106)."""
+    recorded: set[tuple[str, str | None]] = set()
+    for record in records:
+        state = record.state
+        if state.kind == "task":
+            recorded.update(
+                (task.provider, task.account)
+                for task in state.tasks
+                if task.session_id == session_id
+            )
+        else:
+            by_seat = {seat.id: seat for seat in state.seats}
+            recorded.update(
+                (seat.provider, seat.account)
+                for seat_id, saved in state.sessions.items()
+                if saved.session_id == session_id and (seat := by_seat.get(seat_id)) is not None
+            )
+    for bound_provider, bound_account in recorded:
+        if provider is not None and bound_provider != provider:
+            continue
+        if not accounts.same_home(get_adapter(bound_provider), bound_account, account):
+            raise ValueError(
+                f"Native session {session_id} was started as "
+                f"{'account ' + repr(bound_account) if bound_account else 'the default account'} "
+                "and cannot be resumed as "
+                f"{'account ' + repr(account) if account else 'the default account'}: each "
+                "account keeps its sessions in its own configuration directory. Omit account, "
+                "or start a new thread and use forward to carry prior results"
+            )
+
+
 def latest_session_task(
     records: Iterable[Record],
     session_id: str,
@@ -227,11 +266,14 @@ class StartArguments:
     history: dict[str, str] = field(default_factory=lambda: {})
     selected: ReviewSeat | None = None
     resumed_task: TaskRecord | None = None
+    account: str | None = None  # a registered account of the provider; None: the default one
 
     def inherit(self, task: TaskRecord) -> None:
         self.provider = self._inherited(
             self.provider, cast(ProviderName, task.provider), "provider"
         )
+        # The thread's session lives in its account's directory, so it keeps that account.
+        self.account = self._inherited(self.account, task.account, "account")
         self.cwd = self._inherited(self.cwd, task.cwd, "cwd")
         role = (self.role or "").strip()
         self.role = self._inherited(self.role, task.role, "role")
@@ -280,16 +322,21 @@ class StartArguments:
             assert seat is not None
             self.provider = seat.provider
             self.defaults.append(f"provider ({name} seat)")
+            if self.account is None and seat.account is not None:
+                self.account = seat.account
+                self.defaults.append(f"account ({name} seat)")
         custom = custom_seat(name, host)
         # The seat's access is only a default: a declared one stands, even when it differs.
         implied = custom.access if custom is not None else role_access(name)
         if implied is not None and self.access is None:
             self.access = implied
             self.defaults.append(f"access ({name} seat)")
-        if is_image_seat(name, custom) and self.provider == host.provider:
+        accounts.check_choice(self.provider, self.account)
+        own = accounts.is_host_account(host, self.provider, self.account)
+        if is_image_seat(name, custom) and own:
             raise ValueError(IMAGE_HOST_CLI_REASON)
         choice = host_cli_mode(host)
-        if seat is not None and seat.provider == host.provider and choice == "subagent":
+        if seat is not None and own and choice == "subagent":
             options, _ = apply_seat(seat, seat.provider, provider_options or {})
             model = options.get("model", seat.model)
             effort = options.get("effort", "")
@@ -305,9 +352,14 @@ class StartArguments:
                 check_cli_model(
                     document.clis.get(seat.provider) if document else None, seat.provider, model
                 )
-            provider_health.check(data_root(), [(seat.provider, model)])
-            raise NativeSeat(name, ReviewSeat(provider=seat.provider, model=model, effort=effort))
-        if self.provider == host.provider and choice == "skip":
+            provider_health.check(data_root(), [(seat.provider, self.account, model)])
+            raise NativeSeat(
+                name,
+                ReviewSeat(
+                    provider=seat.provider, model=model, effort=effort, account=self.account
+                ),
+            )
+        if own and choice == "skip":
             raise ValueError("CLI is the host's own CLI")
 
 
@@ -357,6 +409,9 @@ def resolve_start(
         raise ValueError("cwd is required for a new task; pass an absolute existing directory")
     if session_id is not None:
         reject_foreign_seat(explicit_seat, arguments.provider, arguments.resumed_task, host)
+        check_session_account(
+            conversations.records.values(), session_id, arguments.provider, arguments.account
+        )
     arguments.resolve_seat(host, provider_options)
     if arguments.access == "read":
         arguments.defaults.append(READ_ONLY_APPLIED)
@@ -381,9 +436,9 @@ def effective_seat(
     ):
         return next(
             (
-                ReviewSeat(provider=c.provider, model=c.model, effort=c.effort)
+                c.alone()
                 for c in [configured, *configured.fallbacks]
-                if c.provider == arguments.provider and c.model == arguments.history["model"]
+                if c.key() == (arguments.provider, arguments.account, arguments.history["model"])
             ),
             configured,
         )

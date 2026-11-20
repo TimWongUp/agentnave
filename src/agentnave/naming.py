@@ -67,6 +67,8 @@ class MemberName:
     reported: str | None = None
     role: str | None = None
     ordinal: int = 1
+    # The display name of a non-default account, which tells same-CLI members apart (ADR-0106).
+    account: str | None = None
 
     def identity(self, peers: list[MemberName]) -> MemberIdentity:
         model = self.reported or self.requested or ""
@@ -109,7 +111,8 @@ class MemberName:
         }
 
     def _handle(self, model: str, cli: str) -> str:
-        return f"@{model}·{cli}" + (f"·{self.role}" if self.role else "")
+        account = f"（{self.account}）" if self.account else ""
+        return f"@{model}·{cli}{account}" + (f"·{self.role}" if self.role else "")
 
     def _handles(self) -> tuple[str, str]:
         model = self.reported or self.requested or UNKNOWN_MODEL

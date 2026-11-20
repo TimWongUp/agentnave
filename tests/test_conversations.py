@@ -3565,7 +3565,7 @@ async def test_failed_seat_wakes_once_and_retries_into_the_same_round(
         provider_health.record(data_root, "grok", "auth")
         cleared = await client.call_tool("clear_provider_cooldown", {"provider": "claude"})
         assert not cleared.is_error
-        assert set(provider_health.active(data_root)) == {("grok", None)}
+        assert set(provider_health.active(data_root)) == {("grok", None, None)}
         retried = await _run(client, {"group_id": group_id, "retry_seats": ["a"]})
         assert retried["round_id"] == round_id and retried["round"] == 1
         assert all("output" not in run for run in _seats(retried))

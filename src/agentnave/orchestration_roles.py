@@ -21,8 +21,9 @@ from pydantic import (
     model_validator,
 )
 
+from agentnave.accounts import check_choice
 from agentnave.host import Host
-from agentnave.models import ProviderOption
+from agentnave.models import ACCOUNT_ID, ProviderOption
 
 type ProviderName = Literal[
     "antigravity",
@@ -109,6 +110,22 @@ class SeatChoice(StrictModel):
     provider: ProviderName
     model: str = Field(pattern=r"\S")
     effort: str = ""
+    # A registered account of the CLI; None is the default account. Whether it is registered is
+    # known only at dispatch, so a file naming a missing one stays valid.
+    account: str | None = Field(default=None, pattern=ACCOUNT_ID, exclude_if=lambda v: v is None)
+
+    @model_validator(mode="after")
+    def account_provider(self) -> SeatChoice:
+        check_choice(self.provider, self.account)
+        return self
+
+    def alone(self) -> ReviewSeat:
+        """This choice as a seat of its own, without fallbacks; every field it has comes along."""
+        return ReviewSeat(**{name: getattr(self, name) for name in SeatChoice.model_fields})
+
+    def key(self) -> tuple[str, str | None, str]:
+        """What makes a choice the same one: CLI, account and model."""
+        return self.provider, self.account, self.model
 
 
 class ReviewSeat(SeatChoice):
@@ -120,9 +137,11 @@ class ReviewSeat(SeatChoice):
 
     @model_validator(mode="after")
     def unique_choices(self) -> ReviewSeat:
-        choices = [(choice.provider, choice.model) for choice in [self, *self.fallbacks]]
+        choices = [choice.key() for choice in [self, *self.fallbacks]]
         if len(choices) != len(set(choices)):
-            raise ValueError("seat choices must have unique provider and model pairs")
+            raise ValueError(
+                "seat choices must have unique provider, account and model combinations"
+            )
         return self
 
 
@@ -182,6 +201,7 @@ class CustomSeat(StrictModel):
     provider: ProviderName
     model: str = Field(pattern=r"\S")
     effort: str = ""
+    account: str | None = Field(default=None, pattern=ACCOUNT_ID, exclude_if=lambda v: v is None)
     fallbacks: list[SeatChoice] = Field(
         default_factory=list[SeatChoice], max_length=3, exclude_if=lambda value: not value
     )
@@ -211,6 +231,7 @@ class CustomSeat(StrictModel):
 
     @model_validator(mode="after")
     def group_access(self) -> CustomSeat:
+        check_choice(self.provider, self.account)
         self.review_seat()  # Validate uniqueness of the configured choices.
         group = next((role for role in role_catalog() if role.group == self.kind), None)
         if group is not None and group.access != self.access:
@@ -224,7 +245,11 @@ class CustomSeat(StrictModel):
 
     def review_seat(self) -> ReviewSeat:
         return ReviewSeat(
-            provider=self.provider, model=self.model, effort=self.effort, fallbacks=self.fallbacks
+            provider=self.provider,
+            model=self.model,
+            effort=self.effort,
+            account=self.account,
+            fallbacks=self.fallbacks,
         )
 
 
@@ -359,6 +384,7 @@ class ReviewSeatStatus(StrictModel):
     provider: ProviderName
     model: str
     effort: str | None = None
+    account: str | None = Field(default=None, exclude_if=lambda v: v is None)
     available: Literal[False] | None = None
     reason: str | None = None
     fallback_position: int | None = None

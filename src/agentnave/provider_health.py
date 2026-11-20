@@ -1,4 +1,4 @@
-"""Best-effort, CLI and model circuit breaker for recent account blockers."""
+"""Best-effort, CLI, account and model circuit breaker for recent account blockers."""
 
 from __future__ import annotations
 
@@ -105,50 +105,71 @@ def _entry(item: object, now: datetime) -> Health | None:
     return result
 
 
-def _active(document: dict[str, Any] | None, now: datetime) -> dict[tuple[str, str | None], Health]:
+# Active records by (provider, account, model): account None is the default account; the model
+# is None for a whole account, a model, or "\0group:<group>" for a quota group.
+type Key = tuple[str, str | None, str | None]
+
+
+def _level(
+    item: dict[str, Any], provider: str, account: str | None, now: datetime
+) -> dict[Key, Health]:
+    """One account's records: the provider object itself for the default account, or the
+    object under its `accounts.<id>`."""
+    result: dict[Key, Health] = {}
+    # Version 1 previously stored a single CLI-wide record.
+    if legacy := _entry(item, now):
+        result[provider, account, None] = legacy
+    if default := _entry(item.get("default"), now):
+        result[provider, account, None] = default
+    models = item.get("models")
+    if isinstance(models, dict):
+        for model, value in cast(dict[str, object], models).items():
+            if model and (health := _entry(value, now)):
+                result[provider, account, model] = health
+    groups = item.get("groups")
+    if isinstance(groups, dict):
+        for group, value in cast(dict[str, object], groups).items():
+            if group and (health := _entry(value, now)):
+                result[provider, account, "\0group:" + group] = health
+    return result
+
+
+def _active(document: dict[str, Any] | None, now: datetime) -> dict[Key, Health]:
     if document is None or type(document.get("version")) is not int:
         return {}
     if document["version"] != 1 or not isinstance(document.get("providers"), dict):
         return {}
-    result: dict[tuple[str, str | None], Health] = {}
+    result: dict[Key, Health] = {}
     for provider, item in cast(dict[str, Any], document["providers"]).items():
         if not provider or not isinstance(item, dict):
             continue
         item = cast(dict[str, Any], item)
-        # Version 1 previously stored a single CLI-wide record.
-        if legacy := _entry(item, now):
-            result[provider, None] = legacy
-        if default := _entry(item.get("default"), now):
-            result[provider, None] = default
-        models = item.get("models")
-        if isinstance(models, dict):
-            for model, value in cast(dict[str, object], models).items():
-                if model and (health := _entry(value, now)):
-                    result[provider, model] = health
-        groups = item.get("groups")
-        if isinstance(groups, dict):
-            for group, value in cast(dict[str, object], groups).items():
-                if group and (health := _entry(value, now)):
-                    result[provider, "\0group:" + group] = health
+        result.update(_level(item, provider, None, now))
+        named = item.get("accounts")
+        if isinstance(named, dict):
+            for account, level in cast(dict[str, object], named).items():
+                if account and isinstance(level, dict):
+                    result.update(_level(cast(dict[str, Any], level), provider, account, now))
     return result
 
 
-def active(root: Path | None = None) -> dict[tuple[str, str | None], Health]:
+def active(root: Path | None = None) -> dict[Key, Health]:
     return _active(_read(_root(root) / "provider-health.json"), datetime.now(UTC))
 
 
 def matching(
-    health: dict[tuple[str, str | None], Health], provider: str, model: str | None
+    health: dict[Key, Health], provider: str, model: str | None, account: str | None = None
 ) -> tuple[str | None, Health] | None:
-    if (entry := health.get((provider, None))) is not None:
+    """The record that cools this account's model down, and what it names (None: the account)."""
+    if (entry := health.get((provider, account, None))) is not None:
         return None, entry
     if (
         model
         and (group := quota_group(provider, model))
-        and (entry := health.get((provider, "\0group:" + group))) is not None
+        and (entry := health.get((provider, account, "\0group:" + group))) is not None
     ):
         return group, entry
-    if model and (entry := health.get((provider, model))) is not None:
+    if model and (entry := health.get((provider, account, model))) is not None:
         return model, entry
     return None
 
@@ -177,8 +198,19 @@ def blocker_hint(code: str) -> str:
     return ""
 
 
-def reason(provider: str, health: Health, model: str | None = None, *, resume: bool = False) -> str:
-    target = f"{provider} CLI" + (f" model {model}" if model else "")
+def reason(
+    provider: str,
+    health: Health,
+    model: str | None = None,
+    *,
+    resume: bool = False,
+    account: str | None = None,
+) -> str:
+    target = (
+        f"{provider} CLI"
+        + (f" account {account}" if account else "")
+        + (f" model {model}" if model else "")
+    )
     duration = f"until {health['until']}" if health["until"] else "until cleared"
     # 续接的是原生会话：换 CLI 会丢上下文，所以不指向 list_members 的跨 CLI replacement。
     next_step = (
@@ -200,11 +232,14 @@ def model_option(options: dict[str, Any] | Any) -> str | None:
     return model if isinstance(model, str) and model else None
 
 
-def check(root: Path, providers: Iterable[tuple[str, str | None]], *, resume: bool = False) -> None:
+def check(
+    root: Path, targets: Iterable[tuple[str, str | None, str | None]], *, resume: bool = False
+) -> None:
+    """Refuse a dispatch to a cooling target: (provider, account, model) each."""
     health = active(root)
-    for provider, model in providers:
-        if match := matching(health, provider, model):
-            raise ValueError(reason(provider, match[1], match[0], resume=resume))
+    for provider, account, model in targets:
+        if match := matching(health, provider, model, account):
+            raise ValueError(reason(provider, match[1], match[0], resume=resume, account=account))
 
 
 def record(
@@ -213,21 +248,35 @@ def record(
     code: Code,
     model: str | None = None,
     reset: datetime | None = None,
+    *,
+    account: str | None = None,
 ) -> None:
-    _update(_root(root), provider, code, model, reset)
+    # A named account is one login: when it fails to authenticate, no model of it can run.
+    # The default account may route models to different providers, so it keeps its per-model
+    # records (ADR-0081).
+    if code == "auth" and account is not None:
+        model = None
+    _update(_root(root), provider, account, code, model, reset)
 
 
 def clear(
-    root: Path | None, provider: str, model: str | None = None, *, all_models: bool = True
+    root: Path | None,
+    provider: str,
+    model: str | None = None,
+    *,
+    all_models: bool = True,
+    account: str | None = None,
 ) -> bool:
+    """Clear records of one account (the default one unless named); with no model, all of them."""
     return _update(
-        _root(root), provider, None, model, None, all_models=all_models and model is None
+        _root(root), provider, account, None, model, None, all_models=all_models and model is None
     )
 
 
 def _update(
     root: Path,
     provider: str,
+    account: str | None,
     code: Code | None,
     model: str | None,
     reset: datetime | None,
@@ -242,7 +291,7 @@ def _update(
     except (OSError, ValueError):
         return False
     try:
-        return _update_locked(path, provider, code, model, reset, all_models)
+        return _update_locked(path, provider, account, code, model, reset, all_models)
     except OSError:
         return False
     finally:
@@ -253,6 +302,7 @@ def _update(
 def _update_locked(
     path: Path,
     provider: str,
+    account: str | None,
     code: Code | None,
     model: str | None,
     reset: datetime | None,
@@ -272,73 +322,108 @@ def _update_locked(
         return False
     providers = cast(dict[str, Any], providers)
     raw = providers.get(provider)
-    if code is None and all_models:
-        if provider not in providers:
-            return True
-        del providers[provider]
+    container = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+    # Keep old CLI-wide records as the default account's default when adding other records.
+    if "code" in container:
+        legacy = {key: container[key] for key in ("code", "until", "reset") if key in container}
+        container = {
+            "default": legacy,
+            **({"accounts": container["accounts"]} if "accounts" in container else {}),
+        }
+    named = container.get("accounts")
+    named = cast(dict[str, Any], named) if isinstance(named, dict) else {}
+    # The default account's records are the provider object itself, a named account's the object
+    # under accounts.<id>; each is edited alone and the other is kept as it was.
+    if account is None:
+        item = {key: value for key, value in container.items() if key != "accounts"}
     else:
-        if code is None and not isinstance(raw, dict):
+        level = named.get(account)
+        item = cast(dict[str, Any], level) if isinstance(level, dict) else {}
+    if code is None and all_models:
+        if not item:
             return True
-        item = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
-        # Keep old CLI-wide records as a default when adding model-specific records.
-        if "code" in item:
-            item = {"default": item}
-        models = item.get("models")
-        if not isinstance(models, dict):
-            models = {}
-        models = cast(dict[str, Any], models)
-        groups = item.get("groups")
-        if not isinstance(groups, dict):
-            groups = {}
-        groups = cast(dict[str, Any], groups)
-        group = quota_group(provider, model) if model else None
-        target = groups if code == "quota" and group else models
-        key = group if code == "quota" and group else model
-        previous = _entry(target.get(key) if key else item.get("default"), datetime.now(UTC))
-        if code is None:
-            if model:
-                removed = models.pop(model, None) is not None
-                removed_group = group is not None and groups.pop(group, None) is not None
-                removed_default = item.pop("default", None) is not None
-                if not removed and not removed_group and not removed_default:
-                    return True
-            else:
-                if "default" not in item:
-                    return True
-                del item["default"]
-        else:
-            now = datetime.now(UTC)
-            if code == "quota":
-                if reset is None:
-                    if previous is not None:
-                        return True  # an active record stands; a repeat does not extend it
-                    until = now + _QUOTA_GUESS
-                elif reset.tzinfo is None or reset <= now:
-                    return True
-                else:
-                    until = min(reset.astimezone(UTC), now + _MAX_TTL)
-            else:
-                until = now + timedelta(minutes=30) if code == "billing" else None
-            entry = _merged_health(previous, code, until, reset)
-            if entry == previous:
-                return True
-            if key:
-                target[key] = dict(entry)
-            else:
-                item["default"] = dict(entry)
-        if models:
-            item["models"] = models
-        else:
-            item.pop("models", None)
-        if groups:
-            item["groups"] = groups
-        else:
-            item.pop("groups", None)
+        item.clear()
+    elif not _edit_level(item, provider, code, model, reset):
+        return True
+    if account is None:
+        container = {**item, **({"accounts": named} if named else {})}
+    else:
         if item:
-            providers[provider] = item
+            named[account] = item
         else:
-            providers.pop(provider, None)
+            named.pop(account, None)
+        container = {key: value for key, value in container.items() if key != "accounts"}
+        if named:
+            container["accounts"] = named
+    if container:
+        providers[provider] = container
+    else:
+        providers.pop(provider, None)
     write_file(path, json.dumps(document).encode())
+    return True
+
+
+def _edit_level(
+    item: dict[str, Any],
+    provider: str,
+    code: Code | None,
+    model: str | None,
+    reset: datetime | None,
+) -> bool:
+    """Add or remove one record of an account's level; False when nothing needs writing."""
+    if code is None and not item:
+        return False
+    models = item.get("models")
+    if not isinstance(models, dict):
+        models = {}
+    models = cast(dict[str, Any], models)
+    groups = item.get("groups")
+    if not isinstance(groups, dict):
+        groups = {}
+    groups = cast(dict[str, Any], groups)
+    group = quota_group(provider, model) if model else None
+    target = groups if code == "quota" and group else models
+    key = group if code == "quota" and group else model
+    previous = _entry(target.get(key) if key else item.get("default"), datetime.now(UTC))
+    if code is None:
+        if model:
+            removed = models.pop(model, None) is not None
+            removed_group = group is not None and groups.pop(group, None) is not None
+            removed_default = item.pop("default", None) is not None
+            if not removed and not removed_group and not removed_default:
+                return False
+        else:
+            if "default" not in item:
+                return False
+            del item["default"]
+    else:
+        now = datetime.now(UTC)
+        if code == "quota":
+            if reset is None:
+                if previous is not None:
+                    return False  # an active record stands; a repeat does not extend it
+                until = now + _QUOTA_GUESS
+            elif reset.tzinfo is None or reset <= now:
+                return False
+            else:
+                until = min(reset.astimezone(UTC), now + _MAX_TTL)
+        else:
+            until = now + timedelta(minutes=30) if code == "billing" else None
+        entry = _merged_health(previous, code, until, reset)
+        if entry == previous:
+            return False
+        if key:
+            target[key] = dict(entry)
+        else:
+            item["default"] = dict(entry)
+    if models:
+        item["models"] = models
+    else:
+        item.pop("models", None)
+    if groups:
+        item["groups"] = groups
+    else:
+        item.pop("groups", None)
     return True
 
 
@@ -437,10 +522,12 @@ def observe_result(
     reported_errors: Iterable[str],
     model: str | None = None,
     reset: datetime | None = None,
+    *,
+    account: str | None = None,
 ) -> InvocationResult:
     if root is not None:
         if result.status is InvocationStatus.SUCCEEDED:
-            clear(root, result.provider, model, all_models=False)
+            clear(root, result.provider, model, all_models=False, account=account)
         elif category := blocker(result, error_message, reported_errors):
-            record(root, result.provider, category, model, reset)
+            record(root, result.provider, category, model, reset, account=account)
     return result

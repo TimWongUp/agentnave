@@ -6,7 +6,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime
 from typing import cast
@@ -59,6 +59,28 @@ def _denied_tools(event: dict[str, object]) -> list[str]:
 
 _MODES = frozenset({"auto", "bypassPermissions"})
 
+# A Claude Code session exports these to what it launches; a claude started with them acts as part
+# of that session (its id, messaging socket and token, effort). Dispatched Claude never keeps
+# them, on every path: interactive, `--print` and the usage query (ADR-0056, ADR-0106).
+HOST_SESSION_ENV = (
+    "CLAUDECODE",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_HOST_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_DESKTOP_APP_VERSION",
+    "CLAUDE_EFFORT",
+    "CLAUDE_PID",
+    "CLAUDE_AGENT_SDK_VERSION",
+)
+# Variables that may make Claude Code bill or log in some other way than the account's stored
+# login; they stay (ADR-0058) and the receipt says so.
+_LOGIN_OVERRIDES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+_DEFAULT_BASE_URL = "https://api.anthropic.com"
+
 
 def _result_capture() -> Callable[[bytes], bytes]:
     last_session: str | None = None
@@ -90,6 +112,9 @@ class ClaudeAdapter(AdapterHooks):
     name = "claude"
     options_description = "permission_mode, permission_fallback (auto or bypassPermissions; set by the permission tier), agent, fallback_model, max_budget_usd, interactive (boolean; interactive Claude runtime), restricted_tools (boolean; restricted tools)"
     executable = "claude"
+    account_env: str | None = "CLAUDE_CONFIG_DIR"
+    account_home = "~/.claude"
+    host_session_env: tuple[str, ...] = HOST_SESSION_ENV
     # Claude-only extras: the interactive runtime and the permission tier's fallback mode.
     _supports_interactive = True
     restricted_extra_options = frozenset({"interactive"})
@@ -159,6 +184,7 @@ class ClaudeAdapter(AdapterHooks):
                 (json.dumps({"prompt": request.prompt}, ensure_ascii=False) + "\n").encode(),
                 capture_line=_result_capture(),
                 keep_stdin_open=True,
+                unset_env=self.host_session_env,
                 temp_dir_env="AGENTNAVE_CLAUDE_TMP" if os.name == "nt" else None,
             )
         argv = [
@@ -191,7 +217,11 @@ class ClaudeAdapter(AdapterHooks):
                 *argv,
             ]
         return PreparedCommand(
-            tuple(argv), request.cwd, request.prompt.encode(), capture_line=_result_capture()
+            tuple(argv),
+            request.cwd,
+            request.prompt.encode(),
+            capture_line=_result_capture(),
+            unset_env=self.host_session_env,
         )
 
     def prompt_event(self, event: dict[str, object]) -> NativePrompt | None:
@@ -351,7 +381,23 @@ class ClaudeAdapter(AdapterHooks):
         return UsageQuery(
             (self.executable_path(), "-p", "/usage", "--no-session-persistence"),
             lambda output, now: claude_reset(output.decode(errors="replace"), model, now),
+            unset_env=self.host_session_env,
         )
+
+    def account_warnings(self, environment: Mapping[str, str]) -> list[str]:
+        if self.account_env is None:
+            return []
+        names = [name for name in _LOGIN_OVERRIDES if environment.get(name, "").strip()]
+        base_url = environment.get("ANTHROPIC_BASE_URL", "").strip()
+        if base_url and base_url.rstrip("/") != _DEFAULT_BASE_URL:
+            names.append("ANTHROPIC_BASE_URL")
+        if not names:
+            return []
+        return [
+            f"{', '.join(names)} {'is' if len(names) == 1 else 'are'} set in the environment, "
+            "so Claude Code may use it instead of this account's stored login and bill that "
+            "channel; unset it for the account's own subscription"
+        ]
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         stdout_text = stdout.decode(errors="replace").strip()

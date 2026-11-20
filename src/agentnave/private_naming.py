@@ -16,7 +16,16 @@ from agentnave.store import Conversation, Record
 
 def _facts(state: Conversation) -> tuple[tuple[object, ...], ...]:
     return tuple(
-        (t.id, t.time, t.provider, t.session_id, t.model, t.reported_model, t.role)
+        (
+            t.id,
+            t.time,
+            t.provider,
+            t.session_id,
+            t.model,
+            t.reported_model,
+            t.role,
+            t.account_label or t.account,
+        )
         for t in state.tasks
     )
 

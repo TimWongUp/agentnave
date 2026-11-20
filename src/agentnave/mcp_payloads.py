@@ -91,6 +91,7 @@ class InvocationFields(TypedDict):
     identity: NotRequired[ReplyIdentity]
     elapsed_ms: NotRequired[int]
     provider: NotRequired[str]
+    account: NotRequired[str]  # a named account's id; the default account has none
     model: NotRequired[str]
     effort: NotRequired[str]
     defaults_applied: NotRequired[list[str]]
@@ -179,6 +180,7 @@ class GroupSeatPayload(TypedDict):
     identity: NotRequired[ReplyIdentity]
     id: str
     provider: str
+    account: NotRequired[str]
     cwd: str
     model: NotRequired[str | None]
     effort: NotRequired[str | None]

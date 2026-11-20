@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import IO, cast
 from uuid import uuid4
 
-from agentnave import provider_health
+from agentnave import accounts, provider_health
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import PreparedCommand
 from agentnave.conversations_store import (
@@ -57,6 +57,7 @@ from agentnave.locks import release_and_remove
 from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, InvocationStatus, RoundOrder
+from agentnave.orchestration_roles import SeatChoice
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -124,13 +125,10 @@ class Conversations(ConversationStore):
             # Own seat directories make restricted profiles possible and keep seats apart.
             cwd = directory
             seats = [
-                GroupSeat(
-                    seat.id,
-                    seat.provider,
-                    {**seat.provider_options, "restricted_tools": True},
-                    directory / seat.id,
-                    seat.role,
-                    seat.access,
+                replace(
+                    seat,
+                    provider_options={**seat.provider_options, "restricted_tools": True},
+                    cwd=directory / seat.id,
                 )
                 for seat in seats
             ]
@@ -155,6 +153,8 @@ class Conversations(ConversationStore):
                         id=seat.id,
                         provider=seat.provider,
                         provider_options=dict(seat.provider_options),
+                        account=seat.account,
+                        account_label=accounts.label_of(seat.account),
                         cwd=str(seat.cwd),
                         role=seat.role,
                         access=normalize_access(seat.access),
@@ -192,6 +192,8 @@ class Conversations(ConversationStore):
                         Path(seat.cwd),
                         seat.role,
                         seat.access,
+                        seat.account,
+                        seat.account_label,
                     )
                     for seat in state.seats
                 },
@@ -245,7 +247,11 @@ class Conversations(ConversationStore):
             provider_health.check(
                 self.root,
                 (
-                    (seat.provider, provider_health.model_option(seat.provider_options))
+                    (
+                        seat.provider,
+                        seat.account,
+                        provider_health.model_option(seat.provider_options),
+                    )
                     for seat in state.seats
                     if seat.id in seat_ids
                 ),
@@ -298,7 +304,11 @@ class Conversations(ConversationStore):
             provider_health.check(
                 self.root,
                 (
-                    (seat.provider, provider_health.model_option(seat.provider_options))
+                    (
+                        seat.provider,
+                        seat.account,
+                        provider_health.model_option(seat.provider_options),
+                    )
                     for seat in state.seats
                     if seat.id in seat_ids
                 ),
@@ -442,17 +452,17 @@ class Conversations(ConversationStore):
         return found
 
     def reserve_seat_model(
-        self, seat_name: str, provider: str, model: str
-    ) -> tuple[str, str, str] | None:
+        self, seat_name: str, choice: SeatChoice
+    ) -> tuple[str, str, str | None, str] | None:
         """Hold a drawn candidate in memory until start_task runs or startup fails."""
         target = seat_name.strip()
         if not target:
             return None
-        key = (target, provider, model)
+        key = (target, choice.provider, choice.account, choice.model)
         self._seat_model_claims[key] = self._seat_model_claims.get(key, 0) + 1
         return key
 
-    def release_seat_model(self, claim: tuple[str, str, str] | None) -> None:
+    def release_seat_model(self, claim: tuple[str, str, str | None, str] | None) -> None:
         if claim is None:
             return
         remaining = self._seat_model_claims.get(claim, 0) - 1
@@ -461,15 +471,15 @@ class Conversations(ConversationStore):
         else:
             self._seat_model_claims.pop(claim, None)
 
-    def running_seat_models(self, seat_name: str) -> set[tuple[str, str]]:
-        """(provider, model) pairs active or reserved in this server for seat_name."""
+    def running_seat_models(self, seat_name: str) -> set[tuple[str, str | None, str]]:
+        """(provider, account, model) triples active or reserved in this server for seat_name."""
         target = seat_name.strip()
         if not target:
             return set()
         active = self.manager.active_ids()
         in_use = {
-            (provider, model)
-            for (seat, provider, model), count in self._seat_model_claims.items()
+            (provider, account, model)
+            for (seat, provider, account, model), count in self._seat_model_claims.items()
             if seat == target and count > 0
         }
         for task_id, invocation_id in self.running_tasks.items():
@@ -483,7 +493,7 @@ class Conversations(ConversationStore):
                 continue
             task = next((item for item in record.state.tasks if item.id == task_id), None)
             if task is not None and (task.seat or "").strip() == target:
-                in_use.add((task.provider, task.model))
+                in_use.add((task.provider, task.account, task.model))
         return in_use
 
     def inbox_key(self, manager_session_id: str | None) -> str | None:
@@ -794,6 +804,8 @@ class Conversations(ConversationStore):
             effort=str(request.provider_options["effort"])
             if "effort" in request.provider_options
             else None,
+            account=request.account,
+            account_label=accounts.label_of(request.account),
             cwd=str(request.cwd),
             prompt=prompt,
             manager_host=self.host.name,

@@ -58,6 +58,7 @@ from agentnave.members import (
     visible_role_groups,
 )
 from agentnave.models import (
+    ACCOUNT_ID,
     InvocationError,
     InvocationRequest,
     InvocationResult,
@@ -217,6 +218,14 @@ class GroupSeatSpec(BaseModel):
 
     id: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
     provider: ProviderName
+    account: str | None = Field(
+        default=None,
+        pattern=ACCOUNT_ID,
+        description=(
+            "Named account id of the CLI from list_members(accounts); only claude takes one; "
+            "omitted is the default account. A seat keeps its account for the whole meeting."
+        ),
+    )
     provider_options: dict[str, ProviderOption] = Field(
         default_factory=lambda: {},
         description=("CLI options; omitted keys use discussion member defaults."),
@@ -615,6 +624,8 @@ def started_payload(
         payload["effort"] = str(request.provider_options["effort"])
     if "model" in request.provider_options:
         payload["model"] = str(request.provider_options["model"])
+    if request.account is not None:
+        payload["account"] = request.account
     return payload
 
 

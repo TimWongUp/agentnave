@@ -9,6 +9,7 @@ from typing import Any, cast, get_args
 import pytest
 from pydantic import ValidationError
 
+from agentnave.accounts import AccountsFile
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import AdapterHooks
 from agentnave.decision_seats import DecisionSeatsFileError, custom_seats, decision_seats_for
@@ -48,8 +49,17 @@ from agentnave.task_start import role_access
 
 APP_FILES = Path(__file__).parent / "fixtures" / "app-files"
 APP_MODELS: dict[
-    str, type[MemberFile | ReviewFile | OrchestrationFile | PermissionFile | DecisionSeatsFile]
+    str,
+    type[
+        MemberFile
+        | ReviewFile
+        | OrchestrationFile
+        | PermissionFile
+        | DecisionSeatsFile
+        | AccountsFile
+    ],
 ] = {
+    "accounts": AccountsFile,
     "members": MemberFile,
     "decision-seats": DecisionSeatsFile,
     "review": ReviewFile,
@@ -345,6 +355,96 @@ def test_app_file_samples_agree_with_the_tray(
     else:
         with pytest.raises((ValidationError, SettingsFileError)):
             check()
+
+
+def test_named_accounts_are_chosen_cooled_and_hosted_apart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+    from agentnave.seat_fallbacks import select
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(AdapterHooks, "is_installed", _installed_cli)
+    work, personal = tmp_path / "work-home", tmp_path / "personal-home"
+    (tmp_path / "accounts.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "accounts": [
+                    {
+                        "id": "work",
+                        "provider": "claude",
+                        "label": "工作",
+                        "dir": str(work),
+                        "managed": True,
+                    },
+                    {
+                        "id": "a2",
+                        "provider": "claude",
+                        "label": "个人",
+                        "dir": str(personal),
+                        "managed": False,
+                    },
+                ],
+            }
+        )
+    )
+    seat = {
+        "provider": "claude",
+        "model": "opus",
+        "account": "ghost",  # a valid file may name an account that is not registered
+        "fallbacks": [
+            {"provider": "claude", "model": "opus", "account": "work"},
+            {"provider": "claude", "model": "opus", "account": "a2"},
+            {"provider": "claude", "model": "opus"},
+        ],
+    }
+    (tmp_path / "review.json").write_text(
+        json.dumps({"version": 1, "seats": {"security-reviewer": seat}})
+    )
+    host = Host("codex", "env")
+    listed = list_members(frozenset(), host)
+    # Only an id and a display name are listed; never the directory.
+    assert [(a.id, a.label) for a in listed.accounts] == [("work", "工作"), ("a2", "个人")]
+    assert "dir" not in listed.model_dump_json() and str(work) not in listed.model_dump_json()
+    status = listed.review["security-reviewer"]
+    assert status.fallback_position == 1 and status.account == "work"
+    assert [(c.account, c.available) for c in status.fallbacks] == [
+        ("work", True),
+        ("a2", True),
+        (None, True),
+    ]
+    configured = role_seat("security-reviewer", host)
+    assert configured is not None
+    chosen, receipt = select(configured, host, frozenset())
+    assert (chosen.account, chosen.alone().fallbacks) == ("work", [])
+    assert receipt is not None and receipt["skipped"][0]["reason"].startswith("Account 'ghost'")
+
+    # Cooling one account takes only that account's choice out.
+    provider_health.record(tmp_path, "claude", "auth", "opus", account="work")
+    chosen, receipt = select(configured, host, frozenset())
+    assert chosen.account == "a2" and receipt is not None and receipt["position"] == 2
+    # The same model under another account is a seat in use of its own.
+    random_pick, _ = select(
+        configured,
+        host,
+        frozenset(),
+        randomize=True,
+        in_use={("claude", "a2", "opus")},
+        randrange=lambda _n: 0,
+    )
+    assert random_pick.account is None
+
+    # A seat is the host's own only for the host's own account (decided by the inherited
+    # configuration directory); the default account inherits what the host runs as.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(work))
+    claude = Host("claude", "env")
+    provider_health.clear(tmp_path, "claude", account="work")
+    mine = list_members(frozenset(), claude).review["security-reviewer"]
+    assert mine.account == "work" and mine.native is True
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(personal))
+    other = list_members(frozenset(), claude).review["security-reviewer"]
+    assert other.account == "work" and other.native is None
 
 
 def test_member_structure_references_and_effective_overrides() -> None:
@@ -1151,7 +1251,7 @@ def test_cooling_clis_disable_seats_and_filter_replacements(
     result = list_members(frozenset(), host)
     cooled = result.review["correctness-reviewer"]
     assert cooled.available is False and "quota" in (cooled.reason or "")
-    until = provider_health.active(tmp_path)[("grok", "shared")]["until"]
+    until = provider_health.active(tmp_path)[("grok", None, "shared")]["until"]
     assert until is not None and until in (cooled.reason or "")
     assert cooled.alternatives == []
     assert cooled.replacement is not None and cooled.replacement.provider == "codebuddy"
@@ -1663,7 +1763,7 @@ def test_decision_random_candidates_flag_and_selection(
         host,
         frozenset({"codex"}),
         randomize=True,
-        in_use={("claude", "shared")},
+        in_use={("claude", None, "shared")},
         randrange=lambda _n: 99,
     )
     assert idle_only.model == "c-2" and idle_receipt is not None
@@ -1675,7 +1775,7 @@ def test_decision_random_candidates_flag_and_selection(
         host,
         frozenset({"codex"}),
         randomize=True,
-        in_use={("claude", "shared"), ("claude", "c-2")},
+        in_use={("claude", None, "shared"), ("claude", None, "c-2")},
         randrange=lambda n: (seen_all.append(n), 0)[1],
     )
     all_busy_1, all_busy_1_receipt = select(
@@ -1683,7 +1783,7 @@ def test_decision_random_candidates_flag_and_selection(
         host,
         frozenset({"codex"}),
         randomize=True,
-        in_use={("claude", "shared"), ("claude", "c-2")},
+        in_use={("claude", None, "shared"), ("claude", None, "c-2")},
         randrange=lambda n: (seen_all.append(n), 1)[1],
     )
     assert seen_all == [2, 2]

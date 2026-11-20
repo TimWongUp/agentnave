@@ -198,6 +198,8 @@ class Turn:
 
 class Transcript:
     def __init__(self, session_id: str) -> None:
+        # This process is one task's own child: its environment carries that task's account
+        # (CLAUDE_CONFIG_DIR) or, for the default account, what the service inherited.
         root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
         self.pattern = str(root / "*" / (glob.escape(session_id) + ".jsonl"))
         self.path = self.find()
@@ -238,6 +240,16 @@ def blocked(turn: Turn, reason: str, screen: str = "") -> None:
     turn.error = f"permission required: Claude interactive runtime blocked: {reason}"
     if excerpt:
         turn.error += f". Screen: {excerpt}"
+
+
+def unauthenticated(turn: Turn) -> None:
+    """The login screen: this account has no stored login. Worded so that the run is blocked on
+    authentication and the account cools down, as a `-p` run that reports it would."""
+    turn.error = (
+        "authentication required: Claude Code is not logged in for this account (the login "
+        "screen was shown); sign in with `claude auth login` using this account's "
+        "configuration directory"
+    )
 
 
 def drop_empty_session(transcript: Transcript) -> bool:

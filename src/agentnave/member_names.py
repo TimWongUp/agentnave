@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 
 from agentnave.naming import MemberIdentity, MemberName, thread
 from agentnave.store import Conversation, TaskRecord
@@ -11,6 +12,18 @@ from agentnave.store import Conversation, TaskRecord
 def private_key(state: Conversation, task: TaskRecord) -> str:
     native = thread(task.provider, task.session_id)
     return f"thread:{native}" if native else f"task:{state.id}:{task.id}"
+
+
+def _task_name(key: str, task: TaskRecord, ordinal: int) -> MemberName:
+    return MemberName(
+        key,
+        task.provider,
+        task.model,
+        task.reported_model,
+        task.role,
+        ordinal,
+        task.account_label or task.account,
+    )
 
 
 def private_members(states: Iterable[Conversation]) -> list[MemberName]:
@@ -23,12 +36,7 @@ def private_members(states: Iterable[Conversation]) -> list[MemberName]:
     for ordinal, (key, records) in enumerate(ordered, 1):
         # Historical names remain peers after a thread changes model or role. The stable
         # key excludes all names of this same thread from self-collision checks.
-        members.extend(
-            dict.fromkeys(
-                MemberName(key, task.provider, task.model, task.reported_model, task.role, ordinal)
-                for _, task in records
-            )
-        )
+        members.extend(dict.fromkeys(_task_name(key, task, ordinal) for _, task in records))
     return members
 
 
@@ -38,9 +46,7 @@ def task_identity(
     peers = peers if peers is not None else private_members([state])
     key = private_key(state, task)
     ordinal = next((p.ordinal for p in peers if p.key == key), 1)
-    return MemberName(
-        key, task.provider, task.model, task.reported_model, task.role, ordinal
-    ).identity(peers)
+    return _task_name(key, task, ordinal).identity(peers)
 
 
 def meeting_members(state: Conversation, number: int | None = None) -> list[MemberName]:
@@ -61,6 +67,7 @@ def meeting_members(state: Conversation, number: int | None = None) -> list[Memb
             reported.get(seat.id),
             seat.role,
             ordinal,
+            seat.account_label or seat.account,
         )
         for ordinal, seat in enumerate(state.seats, 1)
     ]
@@ -78,7 +85,5 @@ def seat_identity(
     key = f"seat:{state.id}:{seat_id}"
     member = next((p for p in peers if p.key == key), MemberName(key, ""))
     if not current:
-        member = MemberName(
-            member.key, member.provider, member.requested, reported, member.role, member.ordinal
-        )
+        member = replace(member, reported=reported)
     return member.identity(peers)

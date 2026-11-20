@@ -17,6 +17,10 @@ class CodeBuddyAdapter(ClaudeAdapter):
         "permission_mode, agent, fallback_model, restricted_tools (boolean; restricted tools)"
     )
     executable = "codebuddy"
+    # Its own variables, none of Claude Code's.
+    account_env: str | None = None
+    account_home = ""
+    host_session_env = ()
     _supports_interactive = False
     restricted_extra_options = frozenset()
     _options = {
@@ -49,6 +53,7 @@ class CodeBuddyAdapter(ClaudeAdapter):
         return replace(
             prepared,
             unset_env=(
+                *prepared.unset_env,
                 "ACC_PRODUCT_CONFIG",
                 "ACC_PRODUCT_CONFIG_V2",
                 "ACC_PRODUCT_CONFIG_V3",

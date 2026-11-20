@@ -101,7 +101,7 @@ def custom_orchestration_status(
     host: Host,
     installed: Callable[[str], bool],
     document: MemberFile | None,
-    active_health: dict[tuple[str, str | None], provider_health.Health],
+    active_health: dict[provider_health.Key, provider_health.Health],
 ) -> OrchestrationStatus:
     """The user's own seats instead of the fixed groups and the fixed image seat."""
     statuses = _review_status(

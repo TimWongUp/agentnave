@@ -110,7 +110,7 @@ def test_a_reset_time_replaces_the_earlier_one_hour_guess(tmp_path: Path) -> Non
     provider_health.record(tmp_path, "claude", "quota", "m")
     soon = datetime.now(UTC) + timedelta(minutes=5)
     provider_health.record(tmp_path, "claude", "quota", "m", soon)
-    until = provider_health.active(tmp_path)[("claude", "m")]["until"]
+    until = provider_health.active(tmp_path)[("claude", None, "m")]["until"]
     assert until is not None and abs(datetime.fromisoformat(until) - soon) < timedelta(seconds=1)
 
 
@@ -251,13 +251,47 @@ async def test_quota_failure_without_reset_asks_the_usage_query(
         await manager.shutdown()
     assert result is not None and result.status is InvocationStatus.FAILED
     assert asked == ["test"]
-    until = provider_health.active(tmp_path)[("claude", "test")]["until"]
+    until = provider_health.active(tmp_path)[("claude", None, "test")]["until"]
     assert until is not None
     if known:
         assert abs(datetime.fromisoformat(until) - reset) < timedelta(seconds=1)
     else:
         # No reset time from the query either: the model rests for an hour.
         assert timedelta(minutes=59) < datetime.fromisoformat(until) - datetime.now(UTC)
+
+
+@pytest.mark.asyncio
+async def test_a_named_accounts_quota_query_runs_as_that_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home, seen = tmp_path / "work-home", tmp_path / "seen"
+    data = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    data.mkdir(parents=True)
+    account = {"id": "work", "provider": "claude", "label": "W", "dir": str(home), "managed": True}
+    (data / "accounts.json").write_text(json.dumps({"version": 1, "accounts": [account]}))
+    reset = datetime.now(UTC) + timedelta(hours=3)
+    code = f"import os; open({str(seen)!r}, 'w').write(os.environ['CLAUDE_CONFIG_DIR']); print('usage')"
+
+    def query(_adapter: ClaudeAdapter, _model: str | None) -> UsageQuery:
+        return UsageQuery(_script(code), lambda _out, _now: reset)
+
+    monkeypatch.setattr(ClaudeAdapter, "usage_query", query)
+    event = {"type": "result", "is_error": True, "errors": ["weekly limit reached"]}
+    manager = InvocationManager()
+    manager.health_root = tmp_path
+    try:
+        invocation = manager.start(
+            InvocationRequest(
+                "claude", "work", tmp_path, provider_options={"model": "test"}, account="work"
+            ),
+            prepared=PreparedCommand(_script(f"print({json.dumps(event)!r})"), tmp_path),
+        )
+        result = await manager.wait(invocation)
+    finally:
+        await manager.shutdown()
+    assert result is not None and result.status is InvocationStatus.FAILED
+    assert seen.read_text() == str(home)
+    assert set(provider_health.active(tmp_path)) == {("claude", "work", "test")}
 
 
 def test_quota_groups_record_match_and_clear(tmp_path: Path) -> None:

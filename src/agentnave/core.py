@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import IO
 
-from agentnave import provider_health
+from agentnave import accounts, provider_health
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, parse_json_object
 from agentnave.locks import lock_file, release_and_remove
@@ -169,6 +169,7 @@ class _InvocationRecord:
                         category,
                         provider_health.model_option(self.request.provider_options),
                         adapter.quota_reset(line, b"", datetime.now(UTC)),
+                        account=self.request.account,
                     )
                 message = "CLI reported an execution blocker; inspect or cancel the invocation."
                 if category == "quota":
@@ -513,9 +514,16 @@ class InvocationManager:
             instructions += f" {READ_ONLY_INSTRUCTIONS}"
         if request.extra_instructions:
             instructions += f" {request.extra_instructions}"
-        return get_adapter(request.provider).prepare(
+        adapter = get_adapter(request.provider)
+        prepared = adapter.prepare(
             replace(request, prompt=f"{instructions}{TASK_SEPARATOR}{request.prompt}")
         )
+        # A named account's directory goes to the child alone, through the whole command chain
+        # (the permission-mode fallback and the interactive runtime run inside it); this
+        # process's own environment is never touched.
+        if account_env := accounts.env_for(adapter, request.account):
+            return replace(prepared, extra_env={**prepared.extra_env, **account_env})
+        return prepared
 
     def start(
         self,
@@ -921,9 +929,21 @@ class InvocationManager:
         ):
             query = adapter.usage_query(model)
             if query is not None:
-                reset = await run_usage_query(query, now)
+                try:
+                    # The query asks the same account that ran out of quota.
+                    env = accounts.env_for(adapter, record.request.account)
+                except ValueError:
+                    env = None  # the account was unregistered meanwhile: no answer to ask for
+                if env is not None:
+                    reset = await run_usage_query(query, now, env)
         return provider_health.observe_result(
-            self.health_root, result, error_message, record.reported_errors, model, reset
+            self.health_root,
+            result,
+            error_message,
+            record.reported_errors,
+            model,
+            reset,
+            account=record.request.account,
         )
 
     async def _run(
@@ -945,9 +965,14 @@ class InvocationManager:
                     prepared.argv,
                     prepared.cwd,
                     unset_env=prepared.unset_env,
-                    extra_env={prepared.temp_dir_env: scratch}
-                    if prepared.temp_dir_env and scratch
-                    else None,
+                    extra_env={
+                        **prepared.extra_env,
+                        **(
+                            {prepared.temp_dir_env: scratch}
+                            if prepared.temp_dir_env and scratch
+                            else {}
+                        ),
+                    },
                 )
                 self._last_spawn[record.request.provider] = time.monotonic()
             finally:
