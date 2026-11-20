@@ -610,6 +610,9 @@ async def test_wait_timeout_does_not_cancel_invocation(tmp_path: Path, fake_adap
     invocation_id = manager.start(InvocationRequest("claude", "sleep", tmp_path))
 
     assert await manager.wait(invocation_id, 0.01) is None
+    # Cancel a started process: one cancelled before spawning never reports a session.
+    while manager.snapshot(invocation_id).phase is not InvocationPhase.RUNNING:
+        await asyncio.sleep(0.01)
     result = await manager.cancel(invocation_id)
 
     assert result.status is InvocationStatus.CANCELLED
