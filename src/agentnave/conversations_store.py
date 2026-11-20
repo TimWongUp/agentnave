@@ -221,6 +221,9 @@ class ConversationStore(Groups):
         self.running_tasks: dict[str, str] = {}  # task id -> invocation id
         # invocation id -> (conversation id, task id), for message ids in wait receipts.
         self.task_invocations: dict[str, tuple[str, str]] = {}
+        # (seat, provider, model) -> count of starts that drew this candidate and have not
+        # reached start_task yet; covers async yields like isolation setup.
+        self._seat_model_claims: dict[tuple[str, str, str], int] = {}
         manager.on_forget = self._forget_invocation
         manager.on_prompt_change = self._save_prompts
         self.collectors: set[asyncio.Task[None]] = set()
