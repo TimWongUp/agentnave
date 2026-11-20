@@ -26,6 +26,7 @@ from agentnave.core import (
     _RETRY_STALL_SECONDS,  # pyright: ignore[reportPrivateUsage]
     READ_ONLY_INSTRUCTIONS,
     SUBAGENT_INSTRUCTIONS,
+    TASK_SEPARATOR,
     InvocationManager,
     _InvocationRecord,  # pyright: ignore[reportPrivateUsage]
     _read_limited,  # pyright: ignore[reportPrivateUsage]
@@ -152,13 +153,52 @@ async def test_cancelled_run_keeps_the_session_named_at_launch(tmp_path: Path) -
         await manager.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_spawn_stagger_and_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = InvocationManager()
+    manager.spawn_interval = (0.3, 0.3)
+    original_spawn = core.spawn_process
+    spawned: list[tuple[str, float]] = []
+    first_started = asyncio.Event()
+
+    async def tracked_spawn(*args: Any, **kwargs: Any) -> Any:
+        spawned.append((args[0][-1], time.monotonic()))
+        first_started.set()
+        return await original_spawn(*args, **kwargs)
+
+    monkeypatch.setattr(core, "spawn_process", tracked_spawn)
+
+    def start(provider: str, label: str) -> str:
+        request = InvocationRequest(provider, label, tmp_path)
+        command = PreparedCommand((sys.executable, "-c", label), tmp_path)
+        return manager.start(request, prepared=command)
+
+    try:
+        first = start("claude", "pass # first")
+        await asyncio.wait_for(first_started.wait(), 2)
+        await manager.wait(first, 5)
+        cancelled = start("claude", "pass # cancelled")
+        second = start("claude", "pass # second")
+        other = start("codex", "pass # other")
+        await asyncio.sleep(0.03)
+        result = await asyncio.wait_for(manager.cancel(cancelled), 0.2)
+        assert result.status is InvocationStatus.CANCELLED
+        await asyncio.gather(*(manager.wait(item, 5) for item in (first, second, other)))
+        times = dict(spawned)
+        assert "pass # cancelled" not in times
+        assert times["pass # second"] - times["pass # first"] >= 0.3
+        assert times["pass # other"] < times["pass # second"]
+    finally:
+        await manager.shutdown()
+
+
 class FakeAdapter(ClaudeAdapter):
     name = "claude"
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request = replace(
             request,
-            prompt=request.prompt.removeprefix(f"{SUBAGENT_INSTRUCTIONS}\n\nAssigned task:\n"),
+            prompt=request.prompt.removeprefix(f"{SUBAGENT_INSTRUCTIONS}{TASK_SEPARATOR}"),
         )
         seconds = "30" if request.prompt == "sleep" else "0"
         if request.prompt == "child_holds_pipes":
@@ -1109,7 +1149,7 @@ for line in sys.stdin:
         thought = True
     elif method == 'session/send':
         assert selected and thought
-        assert 'Do not call AgentNave tools' in p['content']
+        assert 'AgentNave tools' in p['content']
     print(json.dumps({'id':m['id'],'result':result}), flush=True)
     if method == 'session/send':
         failed = 'fail-task' in p['content']
@@ -1294,7 +1334,7 @@ def test_read_only_tasks_get_the_read_only_instruction(
     manager = InvocationManager()
     manager.prepare(InvocationRequest("codex", "task", tmp_path, read_only=True))
     manager.prepare(InvocationRequest("codex", "task", tmp_path))
-    assert READ_ONLY_INSTRUCTIONS in prompts[0] and prompts[0].endswith("Assigned task:\ntask")
+    assert READ_ONLY_INSTRUCTIONS in prompts[0] and prompts[0].endswith(f"{TASK_SEPARATOR}task")
     assert READ_ONLY_INSTRUCTIONS not in prompts[1] and SUBAGENT_INSTRUCTIONS in prompts[1]
 
 
@@ -1886,10 +1926,10 @@ def test_prepare_appends_extra_instructions_after_read_only_rules(
         InvocationRequest("claude", "edit file", tmp_path, extra_instructions="Extra rule.")
     )
     assert writable.stdin is not None
-    prefix, body = writable.stdin.decode("utf-8").split("\n\nAssigned task:\n", 1)
+    prefix, body = writable.stdin.decode("utf-8").split(TASK_SEPARATOR, 1)
     assert body == "edit file"
     assert prefix.endswith("Extra rule.")
-    assert "Read-only:" not in prefix
+    assert READ_ONLY_INSTRUCTIONS not in prefix
 
     readonly = manager.prepare(
         InvocationRequest(
@@ -1897,8 +1937,8 @@ def test_prepare_appends_extra_instructions_after_read_only_rules(
         )
     )
     assert readonly.stdin is not None
-    ro_prefix = readonly.stdin.decode("utf-8").split("\n\nAssigned task:\n", 1)[0]
-    assert ro_prefix.index("Read-only: do not modify files") < ro_prefix.index("Extra rule.")
+    ro_prefix = readonly.stdin.decode("utf-8").split(TASK_SEPARATOR, 1)[0]
+    assert ro_prefix.index(READ_ONLY_INSTRUCTIONS) < ro_prefix.index("Extra rule.")
 
 
 @pytest.mark.asyncio

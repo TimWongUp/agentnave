@@ -19,6 +19,7 @@ from mcp_types import CallToolResult, TextContent
 
 from agentnave import __version__, mcp_runtime, mcp_server, seat_recommendation
 from agentnave.adapters.base import AdapterHooks
+from agentnave.core import SUBAGENT_INSTRUCTIONS, TASK_SEPARATOR
 from agentnave.decision_model import Decision, DecisionError, DecisionQuestion
 from agentnave.host import Host
 from agentnave.mcp_projection import without_empty_fields
@@ -72,9 +73,8 @@ def _install_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
         "prompt = sys.stdin.read()\n"
-        "assert prompt.startswith('Complete the task within the granted permissions')\n"
-        "assert 'Do not call AgentNave tools' in prompt\n"
-        "prompt = prompt.split('\\n\\nAssigned task:\\n', 1)[1]\n"
+        f"assert prompt.startswith({SUBAGENT_INSTRUCTIONS!r})\n"
+        f"prompt = prompt.split({TASK_SEPARATOR!r}, 1)[1]\n"
         "if prompt == 'finish':\n"
         "    for _ in range(8):\n"
         "        print(json.dumps({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'working '}}}), flush=True)\n"

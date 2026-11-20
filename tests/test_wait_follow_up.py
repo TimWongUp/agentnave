@@ -16,6 +16,7 @@ from mcp_types import CallToolResult
 from agentnave import mcp_runtime
 from agentnave.adapters.base import AdapterHooks
 from agentnave.conversations import Conversations
+from agentnave.core import TASK_SEPARATOR
 from agentnave.follow_up import FollowUpLedger
 from agentnave.host import Host
 from agentnave.mcp_followup import attach_follow_up
@@ -43,7 +44,7 @@ def fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         bin_dir,
         "claude",
         "import json, sys\n"
-        "prompt = sys.stdin.read().split('\\n\\nAssigned task:\\n', 1)[1]\n"
+        f"prompt = sys.stdin.read().split({TASK_SEPARATOR!r}, 1)[1]\n"
         "print(json.dumps({'type': 'result', 'result': 'boom' if prompt == 'FAIL' else 'ok', "
         "'session_id': 'sess-f' if prompt in ('FAIL', 'RESUME') else 'sess-' + prompt, "
         "'num_turns': 1, "
