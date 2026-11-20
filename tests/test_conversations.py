@@ -658,6 +658,7 @@ async def test_blocking_inbox_wait_receives_mid_wait_dispatch_on_slice(
 
     monkeypatch.setattr(mcp_tasks, "_ready_handles", tracked_ready)
     monkeypatch.setattr(mcp_runtime, "INBOX_WAIT_SLICE_SECONDS", 0.05)
+    monkeypatch.setattr(InvocationManager, "spawn_interval", (0.0, 0.0))
 
     async with Client(mcp) as client:
         sleeping = await _call(
@@ -3907,6 +3908,16 @@ async def test_native_prompt_inbox_validation_ownership_and_audit(
             },
         )
         invocation = start["invocation_id"]
+        from agentnave.native_sessions import boss_key
+
+        inbox_path = data_root / "inbox" / f"{os.getpid()}.json"
+        for _ in range(400):
+            if inbox_path.exists():
+                break
+            await asyncio.sleep(0.01)
+        event = json.loads(inbox_path.read_text())["bosses"][boss_key(None, "owner")]["items"][0]
+        assert event["kind"] == "prompt" and event["status"] == "prompt_pending"
+        assert event["key"] == f"prompt:{invocation}:{'c' * 32}"
         update = _data(
             cast(
                 list[object],
@@ -3914,6 +3925,7 @@ async def test_native_prompt_inbox_validation_ownership_and_audit(
             )[0]
         )
         assert update["reason"] == "prompt_pending"
+        assert not inbox_path.exists()
         prompt = _data(cast(list[object], update["prompts"])[0])
         assert prompt["content_source"] == "subagent_data"
         assert prompt["tool_input"] == "{}"
@@ -5285,3 +5297,203 @@ async def test_untouched_write_task_keeps_its_isolated_directory(
         assert Path(hold.info.path).is_dir()
     finally:
         await studio.close()
+
+
+@pytest.mark.asyncio
+async def test_push_receipt_and_inbox_event_lifecycle(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import push_capability
+    from agentnave.host import Host
+    from agentnave.native_sessions import boss_key
+
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("grok", "env"))
+    monkeypatch.setattr(push_capability.os, "getppid", lambda: 4242)
+
+    def parent(_pid: int) -> int:
+        return 1
+
+    def started_at(_pid: int) -> float:
+        return 1.0
+
+    monkeypatch.setattr(push_capability, "read_process_parent", parent)
+    monkeypatch.setattr(push_capability, "read_process_started", started_at)
+    push_dir = data_root / "push"
+    push_dir.mkdir(parents=True)
+    push_file = push_dir / "4242.json"
+    push_file.write_text(json.dumps({"version": 1, "pid": 4242, "providers": ["grok"]}))
+    key = boss_key("grok", "boss-session")
+    path = data_root / "inbox" / f"{os.getpid()}.json"
+    monkeypatch.setattr(InvocationManager, "spawn_interval", (0.0, 0.0))
+    async with Client(mcp) as client:
+        slow = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "Private instruction for you only:\nSLEEP",
+                "cwd": str(tmp_path),
+                "manager_session_id": "boss-session",
+            },
+        )
+        started = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "hello",
+                "cwd": str(tmp_path),
+                "manager_session_id": "boss-session",
+                "role": "reviewer",
+            },
+        )
+        assert started["next"] == mcp_runtime.PUSH_NEXT
+        for _ in range(200):
+            if path.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert path.exists()
+        document = json.loads(path.read_text())
+        event = document["bosses"][key]["items"][0]
+        assert event == {
+            "key": f"task_end:{started['invocation_id']}",
+            "kind": "task_end",
+            "role": "reviewer",
+            "status": "succeeded",
+        }
+        before = path.stat().st_mtime_ns
+        await asyncio.sleep(0.05)
+        assert json.loads(path.read_text())["bosses"][key]["items"][0]["key"] == event["key"]
+        assert path.stat().st_mtime_ns == before
+        result = await _call(
+            client, "wait", {"manager_session_id": "boss-session", "wait_seconds": 0}
+        )
+        assert result["all_finished"] is False
+        assert result["next"] == mcp_runtime.PUSH_AGAIN
+        assert not path.exists()
+        await _cancel(client, slow["invocation_id"])
+        push_file.unlink()
+        fallback = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "Private instruction for you only:\nSLEEP",
+                "cwd": str(tmp_path),
+                "manager_session_id": "boss-session",
+            },
+        )
+        assert fallback["next"] == mcp_runtime.WAIT_NEXT
+        await _cancel(client, fallback["invocation_id"])
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_inbox_snapshot_tracks_blocking_wait(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_tasks
+    from agentnave.native_sessions import boss_key
+
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+    original = mcp_tasks._ready_handles
+
+    async def tracked(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        try:
+            return await original(*args, **kwargs)
+        except asyncio.CancelledError:
+            stopped.set()
+            raise
+
+    monkeypatch.setattr(mcp_tasks, "_ready_handles", tracked)
+    path = data_root / "inbox" / f"{os.getpid()}.json"
+    async with Client(mcp) as client:
+        sleeping = await _call(
+            client,
+            "start_agent",
+            {
+                "provider": "claude",
+                "prompt": "Private instruction for you only:\nSLEEP",
+                "cwd": str(tmp_path),
+                "manager_session_id": "waiting-chat",
+            },
+        )
+        task = asyncio.create_task(_call(client, "wait", {"manager_session_id": "waiting-chat"}))
+        await asyncio.wait_for(entered.wait(), 2)
+        document = json.loads(path.read_text())
+        assert document["bosses"][boss_key(None, "waiting-chat")] == {"waiting": True, "items": []}
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(stopped.wait(), 2)
+        assert not path.exists()
+        await _cancel(client, sleeping["invocation_id"])
+
+
+@pytest.mark.asyncio
+async def test_inbox_snapshot_tracks_review_until_decided(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.native_sessions import boss_key
+
+    def can_push(_root: Path, _provider: str | None) -> bool:
+        return True
+
+    monkeypatch.setattr(mcp_runtime, "app_can_push", can_push)
+    path = data_root / "inbox" / f"{os.getpid()}.json"
+    async with Client(mcp) as client:
+        started = await _call(
+            client,
+            "run_round",
+            {
+                "title": "Review",
+                "cwd": str(tmp_path),
+                "review": True,
+                "members": [
+                    {"id": "a", "provider": "claude", "role": "reviewer"},
+                    {"id": "b", "provider": "claude"},
+                ],
+                "seats": ["a"],
+                "prompt": "hello",
+                "manager_session_id": "review-chat",
+            },
+        )
+        assert started["next"] == mcp_runtime.PUSH_NEXT
+        round_id = _data(started["round"])["round_id"]
+        for _ in range(400):
+            if path.exists():
+                items = json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")][
+                    "items"
+                ]
+                if any(item["kind"] == "review" for item in items):
+                    break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("review event was not published")
+        event = next(item for item in items if item["kind"] == "review")
+        assert event["status"] == "review_needed" and event["role"] == "reviewer"
+        receipt = await _call(
+            client, "wait", {"manager_session_id": "review-chat", "wait_seconds": 0}
+        )
+        assert _data(cast(list[object], receipt["rounds"])[0])["reason"] == "review_needed"
+        assert (
+            json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"][0]["key"]
+            == event["key"]
+        )
+        await _call(client, "decide_answers", {"round_id": round_id, "decisions": {"a": "publish"}})
+        for _ in range(200):
+            if (
+                path.exists()
+                and json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"][
+                    0
+                ]["kind"]
+                == "task_end"
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("round end was not published")
+        await _call(client, "wait", {"manager_session_id": "review-chat", "wait_seconds": 0})
+        assert not path.exists()
