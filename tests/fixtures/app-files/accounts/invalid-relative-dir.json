@@ -1,0 +1,1 @@
+{ "version": 1, "accounts": [ { "id": "a1", "provider": "claude", "label": "A", "dir": "~/.claude_x", "managed": false } ] }

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "accounts": [
+    { "id": "work", "provider": "claude", "label": "A", "dir": "/a", "managed": true },
+    { "id": "work", "provider": "claude", "label": "B", "dir": "/b", "managed": true }
+  ]
+}
