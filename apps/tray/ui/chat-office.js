@@ -210,8 +210,14 @@ function createBoss() {
   );
   // boss sits on the left; meetings sit beside it (or below on narrow floors)
   rec.meets = h("div.boss-side");
+  // Clicking the boss may open its terminal; this always opens every message of the workspace.
+  const allMessages = h("button.boss-all", { type: "button" }, L("全部消息", "All messages"));
+  allMessages.addEventListener("click", (e) => {
+    e?.stopPropagation?.();
+    openScope({ kind: "all" }, el.boss);
+  });
   el.boss.replaceChildren(
-    h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state, AN.voice?.workspaceListen),
+    h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state, allMessages, AN.voice?.workspaceListen),
     (rec.row = h(
       "div.boss-row",
       {},

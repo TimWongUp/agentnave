@@ -665,7 +665,9 @@ test("boss office keeps only the meetings list (including ended meetings) and om
     addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
   });
   const boss = h("section#boss");
+  const opened = [];
   const context = vm.createContext({
+    openScope: (scope, opener) => opened.push([scope.kind, opener]),
     AN: { at: Date.parse, dozing: () => false, ongoing: s => s }, window: { addEventListener() {} }, ResizeObserver: class { observe() {} },
     state: { groupsData: [], drawer: { kind: "all" } }, el: { boss }, FIG: 100, L: zh => zh, h,
     ART: { head: d => d, url: p => p, version: () => 1 }, Laptop: { create: () => h("div.laptop") },
@@ -676,6 +678,11 @@ test("boss office keeps only the meetings list (including ended meetings) and om
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
   const rec = context.createBoss();
   assert.equal(rec.chats, undefined, "private chat side list is removed");
+  const allButton = boss.children[0].children.find(x => x.tag === "button.boss-all");
+  let stopped = false;
+  allButton.listeners.click[0]({ stopPropagation() { stopped = true; } });
+  assert.deepEqual(opened, [["all", boss]], "the header button opens every message even when the boss opens a terminal");
+  assert.equal(stopped, true);
   assert.ok(rec.meets, "meetings side list is kept");
   const sides = context.sideItems(
     {
