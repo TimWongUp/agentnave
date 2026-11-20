@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-use super::modes;
+use super::{input_gate, modes, status};
 
 /// The output kept for a page that attaches later: enough for a full screen and some scrollback.
 pub(super) const KEPT: usize = 1 << 20;
@@ -98,6 +98,7 @@ pub(super) struct Output {
     /// Ordered view IDs seen so far; only the back (latest) advances `delivered`.
     views: VecDeque<String>,
     modes: modes::Tracker,
+    status: status::Tracker,
 }
 
 impl Output {
@@ -169,6 +170,7 @@ pub(crate) struct Session {
     pid: Option<u32>,
     output: Mutex<Output>,
     changed: Condvar,
+    gate: Mutex<input_gate::Gate>,
 }
 
 impl Session {
@@ -206,6 +208,7 @@ impl Session {
             writer: Mutex::new(writer),
             output: Mutex::default(),
             changed: Condvar::new(),
+            gate: Mutex::default(),
         });
         let pump = session.clone();
         thread::spawn(move || pump.pump(reader, child));
@@ -218,9 +221,13 @@ impl Session {
         // macOS reports the closed terminal as an error rather than end of file.
         while let Ok(read @ 1..) = reader.read(&mut buffer) {
             let mut output = self.output();
+            let queries = output.status.feed(&buffer[..read]);
             output.push(&buffer[..read]);
             output.wrote = Some(Instant::now());
             drop(output);
+            for _ in 0..queries {
+                let _ = self.write(status::REPLY);
+            }
             self.changed.notify_all();
         }
         let code = child.wait().map_or(1, |status| status.exit_code());
@@ -274,6 +281,56 @@ impl Session {
             .write_all(bytes)
             .and_then(|()| writer.flush())
             .map_err(|error| format!("无法写入终端：{error}"))
+    }
+
+    pub(crate) fn user_input(&self, bytes: &[u8], paste: bool) -> Result<(), String> {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+        if gate.input(bytes, paste) {
+            Ok(())
+        } else {
+            self.write(bytes)
+        }
+    }
+
+    /// Hold user input until the prompt is submitted or cleared.
+    pub(super) fn begin_wakeup(&self, text: &str) -> Result<Option<()>, String> {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+        let output = self.output();
+        if output.exit.is_some()
+            || output
+                .status
+                .state
+                .as_deref()
+                .is_none_or(|s| s == "blocked")
+            || !gate.ready()
+        {
+            return Ok(None);
+        }
+        let bytes = if output.modes.paste() {
+            format!("\x1b[200~{text}\x1b[201~")
+        } else {
+            text.to_owned()
+        };
+        gate.hold();
+        if let Err(error) = self.write(bytes.as_bytes()) {
+            gate.release();
+            return Err(error);
+        }
+        Ok(Some(()))
+    }
+
+    pub(super) fn finish_wakeup(&self) -> bool {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+        let output = self.output();
+        let commit = output.exit.is_none()
+            && output
+                .status
+                .state
+                .as_deref()
+                .is_some_and(|s| s != "blocked");
+        let mut bytes = vec![if commit { b'\r' } else { 0x15 }];
+        bytes.extend(gate.release());
+        self.write(&bytes).is_ok() && commit
     }
 
     pub(crate) fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {

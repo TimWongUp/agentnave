@@ -188,6 +188,7 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
     });
     let header = |reply: &crate::response::Response, name: &str| {
         reply
@@ -426,6 +427,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -653,6 +655,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_located: false,
             title_searched: None,
             started: std::time::SystemTime::now(),
+            pending: 0,
         });
         state.open.push(Running {
             id: 2,
@@ -664,6 +667,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_located: false,
             title_searched: None,
             started: std::time::SystemTime::now(),
+            pending: 0,
         });
     }
 
@@ -736,6 +740,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_located: true,
             title_searched: None,
             started: now - Duration::from_secs(20),
+            pending: 0,
         });
         state.open.push(Running {
             id: 2,
@@ -747,6 +752,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_located: false,
             title_searched: None,
             started: now - Duration::from_secs(15),
+            pending: 0,
         });
         state.open.push(Running {
             id: 3,
@@ -758,6 +764,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_located: false,
             title_searched: None,
             started: now,
+            pending: 0,
         });
     }
 
@@ -817,6 +824,7 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -862,4 +870,72 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
     );
     session.stop();
     let _ = exit_of(&session);
+}
+
+#[cfg(unix)]
+#[test]
+fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
+    let run = |blocked: bool| {
+        let change = if blocked {
+            "sleep 0.3; printf '\\033]7501;state=blocked\\007blocked';"
+        } else {
+            ""
+        };
+        let script = format!(
+            "stty raw -echo; printf '\\033]7501;state=working\\007ready'; {change} dd bs=1 count=10 2>/dev/null | od -An -t u1; printf done"
+        );
+        let session = Session::start(shell(&script), 80, 24).unwrap();
+        assert!(output_until(&session, "ready").0.contains("ready"));
+        assert!(session.begin_wakeup("notice").unwrap().is_some());
+        session.user_input(b"xy", false).unwrap();
+        session.user_input(b"z", false).unwrap();
+        if blocked {
+            assert!(output_until(&session, "blocked").0.contains("blocked"));
+        }
+        assert_eq!(session.finish_wakeup(), !blocked);
+        let (text, _) = output_until(&session, "done");
+        let expected = if blocked {
+            "110 111 116 105 99 101 21 120 121 122"
+        } else {
+            "110 111 116 105 99 101 13 120 121 122"
+        };
+        let actual: Vec<_> = text
+            .split_whitespace()
+            .filter_map(|s| s.parse::<u8>().ok())
+            .collect();
+        let expected: Vec<_> = expected
+            .split_whitespace()
+            .map(|s| s.parse::<u8>().unwrap())
+            .collect();
+        assert!(
+            actual
+                .windows(expected.len())
+                .any(|window| window == expected),
+            "{text:?}"
+        );
+        assert!(session.begin_wakeup("another").unwrap().is_none());
+        session.stop();
+    };
+    run(false);
+    run(true);
+}
+
+#[cfg(unix)]
+#[test]
+fn status_probe_is_answered_once_even_when_output_is_replayed() {
+    let script = format!(
+        "stty -echo -icanon min 1 time 0; printf '\\033]7501;?\\033\\\\'; dd bs=1 count={} 2>/dev/null | wc -c; printf ready; dd bs=1 count=1 2>/dev/null | od -An -t u1; printf done",
+        super::status::REPLY.len()
+    );
+    let session = Session::start(shell(&script), 80, 24).unwrap();
+    let (first, _) = output_until(&session, "ready");
+    assert!(
+        first.contains(&super::status::REPLY.len().to_string()),
+        "{first:?}"
+    );
+    let replay = session.read_view(0, Duration::ZERO, None);
+    assert!(replay.replay);
+    session.write(b"z").unwrap();
+    let (text, _) = output_until(&session, "done");
+    assert!(text.contains("122"), "{text:?}");
 }
