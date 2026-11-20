@@ -4,20 +4,37 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use base64::Engine;
 
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(4);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(4);
 
 pub(super) struct WebSocketReader {
     stream: BufReader<UnixStream>,
     writer: Arc<Mutex<UnixStream>>,
 }
 
-pub(super) fn connect(path: &Path) -> Result<(WebSocketReader, Arc<Mutex<UnixStream>>), String> {
+pub(super) fn connect_with(
+    path: &Path,
+    register_shutdown: impl FnOnce(UnixStream) -> Result<(), String>,
+) -> Result<(WebSocketReader, Arc<Mutex<UnixStream>>), String> {
     let mut stream = UnixStream::connect(path).map_err(|e| format!("connect {path:?}: {e}"))?;
+    stream
+        .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+        .map_err(|e| format!("set_read_timeout: {e}"))?;
+    stream
+        .set_write_timeout(Some(WRITE_TIMEOUT))
+        .map_err(|e| format!("set_write_timeout: {e}"))?;
+    let shutdown = stream
+        .try_clone()
+        .map_err(|e| format!("clone shutdown stream: {e}"))?;
+    register_shutdown(shutdown)?;
+
     let mut key_bytes = [0u8; 16];
     getrandom::fill(&mut key_bytes).map_err(|e| format!("random key: {e}"))?;
     let key = base64::engine::general_purpose::STANDARD.encode(key_bytes);
@@ -37,6 +54,11 @@ pub(super) fn connect(path: &Path) -> Result<(WebSocketReader, Arc<Mutex<UnixStr
     );
     let headers = read_http_headers(&mut reader)?;
     verify_handshake(&headers, &key)?;
+    // Reader loop blocks waiting for server notifications indefinitely until socket closes/shuts down.
+    reader
+        .get_ref()
+        .set_read_timeout(None)
+        .map_err(|e| format!("clear read_timeout: {e}"))?;
 
     let writer = Arc::new(Mutex::new(stream));
     Ok((

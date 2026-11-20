@@ -1,10 +1,10 @@
 //! Private per-terminal Codex `app-server` launcher and WebSocket-over-UDS client (ADR-0105).
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 mod ws;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use super::session::Session;
 use crate::data::boss_app::boss_key;
 
-const RPC_TIMEOUT: Duration = Duration::from_secs(15);
+const RPC_TIMEOUT: Duration = Duration::from_secs(4);
 const CONNECT_POLL: Duration = Duration::from_millis(100);
 
 /// Runs a private `codex app-server` in the terminal's own process tree, waits for its Unix
@@ -50,6 +50,7 @@ pub(super) enum ThreadStatus {
     Active { waiting_on_approval: bool },
     NotLoaded,
     SystemError,
+    Unknown,
 }
 
 impl ThreadStatus {
@@ -68,7 +69,7 @@ impl ThreadStatus {
                     waiting_on_approval,
                 }
             }
-            _ => Self::NotLoaded,
+            _ => Self::Unknown,
         }
     }
 
@@ -98,10 +99,13 @@ pub(super) enum Delivery {
 struct ClientState {
     connected: bool,
     closed: bool,
+    generation: u64,
     next_id: u64,
+    thread_seq: u64,
     writer: Option<Arc<Mutex<UnixStream>>>,
+    shutdown: Option<UnixStream>,
     pending: HashMap<u64, mpsc::Sender<Value>>,
-    threads: HashMap<String, ThreadStatus>,
+    threads: HashMap<String, (ThreadStatus, u64)>,
     #[cfg(test)]
     last_error: Option<String>,
 }
@@ -185,21 +189,43 @@ impl Client {
     }
 
     fn try_connect(&self) -> Result<(), String> {
-        let (reader, writer) = ws::connect(&self.sock)?;
-        {
+        let gen_id = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             if state.closed {
-                let _ = writer
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .shutdown(Shutdown::Both);
+                return Err("closed".to_owned());
+            }
+            state.generation += 1;
+            state.connected = false;
+            state.writer = None;
+            state.pending.clear();
+            state.threads.clear();
+            state.generation
+        };
+
+        let (reader, writer) = ws::connect_with(&self.sock, |shutdown_stream| {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.closed || state.generation != gen_id {
+                let _ = shutdown_stream.shutdown(Shutdown::Both);
+                return Err("closed".to_owned());
+            }
+            state.shutdown = Some(shutdown_stream);
+            Ok(())
+        })?;
+
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.closed || state.generation != gen_id {
+                let old_shutdown = state.shutdown.take();
+                drop(state);
+                if let Some(s) = old_shutdown {
+                    let _ = s.shutdown(Shutdown::Both);
+                }
                 return Err("closed".to_owned());
             }
             state.writer = Some(writer);
-            state.connected = false;
         }
         let state_ref = self.state.clone();
-        thread::spawn(move || read_loop(reader, state_ref));
+        thread::spawn(move || read_loop(reader, state_ref, gen_id));
 
         let init = self.request(
             "initialize",
@@ -215,47 +241,53 @@ impl Client {
             })),
         );
         if !matches!(init, Ok(Ok(_))) {
-            self.disconnect();
+            self.disconnect_generation(gen_id);
             return Err("initialize failed".to_owned());
         }
         if self.notify("initialized", None).is_err() {
-            self.disconnect();
+            self.disconnect_generation(gen_id);
             return Err("initialized notify failed".to_owned());
         }
         {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if !state.closed {
-                state.connected = true;
+            if state.closed || state.generation != gen_id {
+                return Err("stale connection".to_owned());
             }
+            state.connected = true;
         }
         self.refresh_threads();
         Ok(())
     }
 
-    fn disconnect(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state.connected = false;
-        if let Some(writer) = state.writer.take() {
-            let _ = writer
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .shutdown(Shutdown::Both);
+    fn disconnect_generation(&self, gen_id: u64) {
+        let shutdown = {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.generation != gen_id {
+                return;
+            }
+            state.connected = false;
+            state.writer = None;
+            state.pending.clear();
+            state.threads.clear();
+            state.shutdown.take()
+        };
+        if let Some(stream) = shutdown {
+            let _ = stream.shutdown(Shutdown::Both);
         }
-        state.pending.clear();
     }
 
     pub(super) fn close(&self) {
-        {
+        let shutdown = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
             state.closed = true;
             state.connected = false;
-            if let Some(writer) = state.writer.take() {
-                let _ = writer
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .shutdown(Shutdown::Both);
-            }
+            state.writer = None;
             state.pending.clear();
+            state.threads.clear();
+            state.shutdown.take()
+        };
+        if let Some(stream) = shutdown {
+            let _ = stream.shutdown(Shutdown::Both);
         }
         let _ = fs::remove_file(&self.sock);
     }
@@ -306,7 +338,7 @@ impl Client {
             .unwrap_or_else(|p| p.into_inner())
             .threads
             .get(tid)
-            .cloned()
+            .map(|(status, _)| status.clone())
     }
 
     fn notify(&self, method: &str, params: Option<Value>) -> Result<(), String> {
@@ -375,20 +407,32 @@ impl Client {
             .filter_map(Value::as_str)
             .map(str::to_owned)
             .collect();
+        let loaded: HashSet<&str> = tids.iter().map(String::as_str).collect();
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            state.threads.retain(|tid, _| loaded.contains(tid.as_str()));
+        }
         for tid in tids {
+            let seq_before = self
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .threads
+                .get(&tid)
+                .map(|(_, seq)| *seq);
             let status = match self.request(
                 "thread/read",
                 Some(json!({"threadId": &tid, "includeTurns": false})),
             ) {
-                Ok(Ok(res)) => Some(ThreadStatus::from_value(&res["thread"]["status"])),
-                // A fresh thread before its first turn has no rollout yet, so treat it as idle.
-                _ => None,
+                Ok(Ok(res)) => ThreadStatus::from_value(&res["thread"]["status"]),
+                _ => ThreadStatus::Unknown,
             };
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(status) = status {
-                state.threads.entry(tid).or_insert(status);
-            } else {
-                state.threads.entry(tid).or_insert(ThreadStatus::Idle);
+            // Do not clobber a newer status notification received while `thread/read` was in flight.
+            if state.threads.get(&tid).map(|(_, seq)| *seq) == seq_before {
+                state.thread_seq += 1;
+                let seq = state.thread_seq;
+                state.threads.insert(tid, (status, seq));
             }
         }
     }
@@ -399,7 +443,7 @@ impl Client {
             if !state.connected {
                 return None;
             }
-            if let Some((tid, status)) = state
+            if let Some((tid, (status, _))) = state
                 .threads
                 .iter()
                 .find(|(tid, _)| boss_key("codex", tid) == target_boss_key)
@@ -413,7 +457,7 @@ impl Client {
             .threads
             .iter()
             .find(|(tid, _)| boss_key("codex", tid) == target_boss_key)
-            .map(|(tid, status)| (tid.clone(), status.clone()))
+            .map(|(tid, (status, _))| (tid.clone(), status.clone()))
     }
 
     pub(super) fn deliver(
@@ -446,7 +490,7 @@ impl Client {
                     .unwrap_or_else(|p| p.into_inner())
                     .threads
                     .get(&tid)
-                    .is_some_and(ThreadStatus::is_idle);
+                    .is_some_and(|(s, _)| s.is_idle());
                 if !current_idle {
                     return Delivery::NotReady;
                 }
@@ -463,7 +507,7 @@ impl Client {
     }
 }
 
-fn read_loop(mut reader: ws::WebSocketReader, state: Arc<Mutex<ClientState>>) {
+fn read_loop(mut reader: ws::WebSocketReader, state: Arc<Mutex<ClientState>>, gen_id: u64) {
     while let Ok(Some(text)) = reader.read_text() {
         let Ok(msg) = serde_json::from_str::<Value>(&text) else {
             continue;
@@ -487,31 +531,36 @@ fn read_loop(mut reader: ws::WebSocketReader, state: Arc<Mutex<ClientState>>) {
                     let status = if msg["params"]["thread"]["status"].is_object() {
                         ThreadStatus::from_value(&msg["params"]["thread"]["status"])
                     } else {
-                        ThreadStatus::Idle
+                        ThreadStatus::Unknown
                     };
-                    state
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .threads
-                        .entry(tid.to_owned())
-                        .or_insert(status);
+                    let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+                    if guard.generation == gen_id && !guard.threads.contains_key(tid) {
+                        guard.thread_seq += 1;
+                        let seq = guard.thread_seq;
+                        guard.threads.insert(tid.to_owned(), (status, seq));
+                    }
                 }
             }
             Some("thread/status/changed") => {
                 if let Some(tid) = msg["params"]["threadId"].as_str() {
                     let status = ThreadStatus::from_value(&msg["params"]["status"]);
-                    state
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .threads
-                        .insert(tid.to_owned(), status);
+                    let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+                    if guard.generation == gen_id {
+                        guard.thread_seq += 1;
+                        let seq = guard.thread_seq;
+                        guard.threads.insert(tid.to_owned(), (status, seq));
+                    }
                 }
             }
             _ => {}
         }
     }
     let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
-    guard.connected = false;
-    guard.writer = None;
-    guard.pending.clear();
+    if guard.generation == gen_id {
+        guard.connected = false;
+        guard.writer = None;
+        guard.shutdown = None;
+        guard.pending.clear();
+        guard.threads.clear();
+    }
 }

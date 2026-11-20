@@ -286,7 +286,7 @@ pub(super) fn scan(
                     }
                     Delivery::Failed => {
                         for item in &selected {
-                            attempted.insert(item.key.clone());
+                            attempted.remove(&item.key);
                             failed.insert(item.key.clone());
                         }
                         true
@@ -487,5 +487,133 @@ mod tests {
             }]),
             "k1"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_failed_delivery_retries_until_sent_then_deduplicates() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::SystemTime;
+
+        let temp = tempfile::tempdir().unwrap();
+        let sock = temp.path().join("wakeup-retry.sock");
+        fs::create_dir(temp.path().join("connections")).unwrap();
+        fs::create_dir(temp.path().join("inbox")).unwrap();
+
+        let tid = "019a0000-0000-7000-8000-000000000099";
+        let boss_key = crate::data::boss_app::boss_key("codex", tid);
+        let turn_attempts = Arc::new(AtomicUsize::new(0));
+        let attempts = turn_attempts.clone();
+
+        let codex = super::super::codex_server::tests::connect_to_mock(
+            &sock,
+            move |msg, stream| {
+                let id = msg.get("id").and_then(serde_json::Value::as_u64);
+                match msg.get("method").and_then(serde_json::Value::as_str) {
+                Some("initialize") => super::super::codex_server::tests::write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
+                ),
+                Some("thread/loaded/list") => {
+                    super::super::codex_server::tests::write_server_frame(
+                        stream,
+                        &json!({"jsonrpc": "2.0", "id": id, "result": {"data": [tid]}}).to_string(),
+                    )
+                }
+                Some("thread/read") => super::super::codex_server::tests::write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {"thread": {"id": tid, "status": {"type": "idle"}}}}).to_string(),
+                ),
+                Some("thread/queue/add") => super::super::codex_server::tests::write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "unsupported"}}).to_string(),
+                ),
+                Some("turn/start") => {
+                    let count = attempts.fetch_add(1, Ordering::SeqCst);
+                    let reply = if count == 0 {
+                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "transient"}})
+                    } else {
+                        json!({"jsonrpc": "2.0", "id": id, "result": {"turn": {"id": "t1"}}})
+                    };
+                    super::super::codex_server::tests::write_server_frame(stream, &reply.to_string());
+                }
+                _ => {}
+            }
+            },
+        );
+
+        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+        command.args(["-c", "sleep 30"]);
+        command.cwd(temp.path());
+        let session = Session::start(command, 80, 24).unwrap();
+        let pid = session.pid().unwrap();
+        fs::write(
+            temp.path()
+                .join("connections")
+                .join(format!("{pid}-test.json")),
+            json!({"bosses": [&boss_key]}).to_string(),
+        )
+        .unwrap();
+        let current = std::process::id();
+        fs::write(
+            temp.path().join("inbox").join(format!("{current}.json")),
+            json!({"version": 1, "pid": current, "bosses": {&boss_key: {"waiting": false, "items": [{"key": "evt-retry", "kind": "task_end"}]}}}).to_string(),
+        )
+        .unwrap();
+
+        let terminals = Terminals::default();
+        terminals.lock().open.push(super::super::Running {
+            id: 1,
+            provider: "codex".into(),
+            cwd: temp.path().into(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: SystemTime::now(),
+            pending: 0,
+            codex: Some(codex.clone()),
+        });
+
+        let (mut attempted, mut seen, mut failed) =
+            (HashSet::new(), HashMap::new(), HashSet::new());
+
+        // First scan: fallback turn/start fails -> stays unattempted, marked failed/pending, retries next scan.
+        scan(
+            &terminals,
+            temp.path(),
+            &mut attempted,
+            &mut seen,
+            &mut failed,
+        );
+        assert!(!attempted.contains("evt-retry"));
+        assert!(failed.contains("evt-retry"));
+        assert_eq!(terminals.lock().open[0].pending, 1);
+
+        // Second scan: retries and succeeds -> marked attempted, cleared from failed/pending.
+        scan(
+            &terminals,
+            temp.path(),
+            &mut attempted,
+            &mut seen,
+            &mut failed,
+        );
+        assert!(attempted.contains("evt-retry"));
+        assert!(!failed.contains("evt-retry"));
+        assert_eq!(terminals.lock().open[0].pending, 0);
+
+        // Third scan: already attempted -> must not duplicate.
+        scan(
+            &terminals,
+            temp.path(),
+            &mut attempted,
+            &mut seen,
+            &mut failed,
+        );
+        assert_eq!(turn_attempts.load(Ordering::SeqCst), 2);
+
+        codex.close();
+        session.stop();
     }
 }

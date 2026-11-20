@@ -147,12 +147,27 @@ pub(crate) fn start_wakeup(app: AppHandle) {
 /// Ends every CLI when the App quits.
 pub(crate) fn shutdown(app: &AppHandle) {
     wakeup::shutdown();
-    for running in &app.state::<Terminals>().lock().open {
-        #[cfg(unix)]
-        if let Some(codex) = &running.codex {
-            codex.close();
-        }
-        running.session.stop();
+    let terminals = app.state::<Terminals>();
+    #[cfg(unix)]
+    let (sessions, codex_clients): (Vec<_>, Vec<_>) = {
+        let state = terminals.lock();
+        state
+            .open
+            .iter()
+            .map(|r| (r.session.clone(), r.codex.clone()))
+            .unzip()
+    };
+    #[cfg(not(unix))]
+    let sessions: Vec<_> = {
+        let state = terminals.lock();
+        state.open.iter().map(|r| r.session.clone()).collect()
+    };
+    #[cfg(unix)]
+    for codex in codex_clients.into_iter().flatten() {
+        codex.close();
+    }
+    for session in sessions {
+        session.stop();
     }
 }
 
@@ -445,7 +460,19 @@ impl Terminals {
             light: attach.light,
         });
         if reply.status == 200 {
-            self.lock().open.retain(|running| Some(running.id) != id);
+            let mut state = self.lock();
+            let mut removed = Vec::new();
+            let mut kept = Vec::with_capacity(state.open.len());
+            for running in state.open.drain(..) {
+                if Some(running.id) == id {
+                    removed.push(running);
+                } else {
+                    kept.push(running);
+                }
+            }
+            state.open = kept;
+            drop(state);
+            drop(removed);
         }
         reply
     }
@@ -489,10 +516,20 @@ impl Terminals {
             // An ended terminal of this chat gives way to the new one.
             let mut state = self.lock();
             let latest = state.started;
-            state.open.retain(|running| {
-                running.id == latest
+            let mut removed = Vec::new();
+            let mut kept = Vec::with_capacity(state.open.len());
+            for running in state.open.drain(..) {
+                if running.id == latest
                     || running.workspaces.last().map(String::as_str) != Some(workspace)
-            });
+                {
+                    kept.push(running);
+                } else {
+                    removed.push(running);
+                }
+            }
+            state.open = kept;
+            drop(state);
+            drop(removed);
         }
         reply
     }
@@ -644,11 +681,13 @@ impl Terminals {
 
     /// Ends the terminal's CLI if it still runs and forgets the terminal.
     fn close(&self, id: Option<u64>) -> Response {
-        let mut state = self.lock();
-        let Some(at) = state.open.iter().position(|running| Some(running.id) == id) else {
-            return Response::error(404, "找不到这个终端");
+        let removed = {
+            let mut state = self.lock();
+            let Some(at) = state.open.iter().position(|running| Some(running.id) == id) else {
+                return Response::error(404, "找不到这个终端");
+            };
+            state.open.remove(at)
         };
-        let removed = state.open.remove(at);
         #[cfg(unix)]
         if let Some(codex) = &removed.codex {
             codex.close();
