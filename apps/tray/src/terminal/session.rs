@@ -310,11 +310,8 @@ impl Session {
         } else {
             text.to_owned()
         };
+        self.write(bytes.as_bytes())?;
         gate.hold();
-        if let Err(error) = self.write(bytes.as_bytes()) {
-            gate.release();
-            return Err(error);
-        }
         Ok(Some(()))
     }
 

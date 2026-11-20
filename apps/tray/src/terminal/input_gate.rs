@@ -34,14 +34,17 @@ impl Gate {
     }
 
     pub fn ready(&self) -> bool {
+        let quiet = if self.draft == 0 { 3 } else { 300 };
         self.held.is_none()
-            && self.draft == 0
             && self
                 .last
-                .is_none_or(|at| at.elapsed() >= Duration::from_secs(3))
+                .is_none_or(|at| at.elapsed() >= Duration::from_secs(quiet))
     }
 
     pub fn hold(&mut self) {
+        // The existing draft is submitted with the wakeup or cleared on cancellation.
+        // Subsequent user input belongs to the next draft.
+        self.draft = 0;
         self.held = Some(Vec::new());
     }
     pub fn release(&mut self) -> Vec<u8> {
@@ -217,6 +220,32 @@ mod tests {
         g.input(b"x\x03", false);
         assert_eq!(g.draft, 0);
     }
+    #[test]
+    fn draft_waits_five_minutes_since_latest_user_input() {
+        let mut g = Gate::default();
+        g.input(b"draft", false);
+        g.last = Some(Instant::now() - Duration::from_secs(299));
+        assert!(!g.ready());
+        g.last = Some(Instant::now() - Duration::from_secs(300));
+        assert!(g.ready());
+        g.input(b"x", false);
+        assert!(!g.ready());
+        g.last = Some(Instant::now() - Duration::from_secs(299));
+        assert!(!g.ready());
+        g.last = Some(Instant::now() - Duration::from_secs(300));
+        assert!(g.ready());
+        g.hold();
+        assert!(!g.ready());
+        g.input(b"new", false);
+        assert_eq!(g.release(), b"new");
+        assert_eq!(g.draft, 3);
+        g.input(b"\r", false);
+        g.last = Some(Instant::now() - Duration::from_secs(2));
+        assert!(!g.ready());
+        g.last = Some(Instant::now() - Duration::from_secs(3));
+        assert!(g.ready());
+    }
+
     #[test]
     fn tracks_csi_u_and_win32_only_when_keys_type() {
         let mut g = Gate::default();
