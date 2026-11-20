@@ -845,8 +845,7 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
         title::of_terminal(&homes("antigravity"), "antigravity", None, &work, started),
         (None, None)
     );
-    // Excluding CODEX_SESSION leaves CLAUDE_SESSION as the sole match, while a `before` bound
-    // earlier than the record rejects it.
+    // Excluding CODEX_SESSION leaves CLAUDE_SESSION as the sole match.
     let exclude = std::collections::HashSet::from([CODEX_SESSION.to_owned()]);
     let (only_first, _, _) = title::of_terminal_located(
         &homes("antigravity"),
@@ -855,19 +854,8 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
         &work,
         started,
         &exclude,
-        None,
     );
     assert_eq!(only_first.as_deref(), Some(CLAUDE_SESSION));
-    let (too_late, _, _) = title::of_terminal_located(
-        &homes("antigravity"),
-        "antigravity",
-        None,
-        &work,
-        started,
-        &exclude,
-        Some(started),
-    );
-    assert_eq!(too_late, None);
 
     // CodeBuddy's records name the folder like Claude's.
     write(
@@ -955,14 +943,15 @@ fn grok_summary_titles_are_cached_and_throttled() {
 }
 
 #[test]
-fn antigravity_summaries_tolerate_nulls_avoid_creating_shm_and_decode_windows_uris() {
+fn antigravity_summaries_tolerate_nulls_read_uncheckpointed_wal_and_decode_windows_uris() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("antigravity-cli");
-    fs::create_dir_all(&root).unwrap();
-    let db_path = root.join("conversation_summaries.db");
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let src_root = dir.path().join("src");
+    fs::create_dir_all(&src_root).unwrap();
+    let src_db = src_root.join("conversation_summaries.db");
+    let conn = rusqlite::Connection::open(&src_db).unwrap();
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
+         PRAGMA wal_autocheckpoint=0;
          CREATE TABLE conversation_summaries (
             conversation_id TEXT PRIMARY KEY,
             title TEXT,
@@ -976,23 +965,27 @@ fn antigravity_summaries_tolerate_nulls_avoid_creating_shm_and_decode_windows_ur
         [CLAUDE_SESSION],
     )
     .unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+
+    // Write a new record that remains uncheckpointed in `-wal`, then copy `.db` and `-wal`
+    // without `-shm` to verify standard read-only mode recovers `-wal` frames.
     conn.execute(
-        "INSERT INTO conversation_summaries VALUES (?1, 'Int time', '[\"file:///work/int\"]', 1763614627)",
+        "INSERT INTO conversation_summaries VALUES (?1, 'Wal new title', '[\"file:///work/wal\"]', 1763614627)",
         [CODEX_SESSION],
     )
     .unwrap();
-    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-        .unwrap();
-    drop(conn);
 
-    // Simulate `-wal` present without `-shm`: reading must not create `-shm`.
-    let wal_path = root.join("conversation_summaries.db-wal");
-    let shm_path = root.join("conversation_summaries.db-shm");
-    if !wal_path.exists() {
-        fs::write(&wal_path, b"").unwrap();
-    }
-    let _ = fs::remove_file(&shm_path);
-    assert!(!shm_path.exists());
+    let root = dir.path().join("antigravity-cli");
+    fs::create_dir_all(&root).unwrap();
+    fs::copy(&src_db, root.join("conversation_summaries.db")).unwrap();
+    fs::copy(
+        src_root.join("conversation_summaries.db-wal"),
+        root.join("conversation_summaries.db-wal"),
+    )
+    .unwrap();
+    drop(conn);
+    assert!(!root.join("conversation_summaries.db-shm").exists());
 
     assert_eq!(antigravity::title_for_id(&root, CLAUDE_SESSION), None);
     assert_eq!(
@@ -1003,9 +996,12 @@ fn antigravity_summaries_tolerate_nulls_avoid_creating_shm_and_decode_windows_ur
         antigravity::title_for_id(&root, CODEX_SESSION)
             .map(|t| t.text)
             .as_deref(),
-        Some("Int time")
+        Some("Wal new title")
     );
-    assert!(!shm_path.exists(), "read-only open must not create -shm");
+    assert_eq!(
+        antigravity::cwd_for_id(&root, CODEX_SESSION),
+        Some(PathBuf::from("/work/wal"))
+    );
 
     // URI decoding for both POSIX and Windows forms.
     assert_eq!(

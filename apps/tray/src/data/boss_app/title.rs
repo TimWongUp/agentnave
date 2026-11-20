@@ -234,8 +234,7 @@ pub(crate) fn of_terminal(
     cwd: &Path,
     since: SystemTime,
 ) -> (Option<String>, Option<CliTitle>) {
-    let (id, _, title) =
-        of_terminal_located(homes, provider, native, cwd, since, &HashSet::new(), None);
+    let (id, _, title) = of_terminal_located(homes, provider, native, cwd, since, &HashSet::new());
     (id, title)
 }
 
@@ -246,7 +245,6 @@ pub(crate) fn of_terminal_located(
     cwd: &Path,
     since: SystemTime,
     exclude: &HashSet<String>,
-    before: Option<SystemTime>,
 ) -> (Option<String>, bool, Option<CliTitle>) {
     match provider {
         "claude" => {
@@ -258,7 +256,7 @@ pub(crate) fn of_terminal_located(
         "codex" => {
             let id = native
                 .map(str::to_owned)
-                .or_else(|| codex_started(&homes.codex, cwd, since, exclude, before));
+                .or_else(|| codex_started(&homes.codex, cwd, since, exclude));
             let located = id.is_some();
             let title = id.as_deref().and_then(|id| codex(&homes.codex, id));
             (id, located, title)
@@ -270,9 +268,7 @@ pub(crate) fn of_terminal_located(
                     .other
                     .iter()
                     .filter(|(host, _)| host == "grok")
-                    .find_map(|(_, home)| {
-                        super::other::started("grok", home, cwd, since, exclude, before)
-                    }),
+                    .find_map(|(_, home)| super::other::started("grok", home, cwd, since, exclude)),
             };
             let id = native.map(str::to_owned).or_else(|| {
                 summary
@@ -288,14 +284,14 @@ pub(crate) fn of_terminal_located(
         }
         "antigravity" => {
             let roots = super::antigravity::roots(homes);
-            super::antigravity::terminal_title(&roots, native, cwd, since, exclude, before)
+            super::antigravity::terminal_title(&roots, native, cwd, since, exclude)
         }
         host if super::other::HOSTS.contains(&host) => {
             // These CLIs' chats have no ID to choose or look up, so the session record itself
             // stands for the chat once found: a path where the others keep an ID.
             let record = native.map(PathBuf::from).or_else(|| {
                 let home = &homes.other.iter().find(|(name, _)| name == host)?.1;
-                super::other::started(host, home, cwd, since, exclude, before)
+                super::other::started(host, home, cwd, since, exclude)
             });
             let located = record.is_some() || host == "deepseek";
             let title = record
@@ -366,7 +362,6 @@ pub(crate) fn codex_started(
     cwd: &Path,
     since: SystemTime,
     exclude: &HashSet<String>,
-    before: Option<SystemTime>,
 ) -> Option<String> {
     let folder = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
     let mut found: Vec<String> = Vec::new();
@@ -380,12 +375,7 @@ pub(crate) fn codex_started(
                 .strip_suffix(".jsonl")
                 .and_then(codex_rollout_id)
                 .filter(|id| !exclude.contains(*id))
-                .filter(|_| {
-                    created.is_some_and(|at| {
-                        at + CLOCK_SLACK >= since
-                            && before.is_none_or(|peer| at + CLOCK_SLACK < peer)
-                    })
-                })
+                .filter(|_| created.is_some_and(|at| at + CLOCK_SLACK >= since))
                 .filter(|_| {
                     session_cwd(path)
                         .is_some_and(|there| fs::canonicalize(&there).unwrap_or(there) == folder)

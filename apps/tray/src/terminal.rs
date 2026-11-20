@@ -213,31 +213,17 @@ impl Terminals {
             &Path,
             SystemTime,
             &HashSet<String>,
-            Option<SystemTime>,
         ) -> (Option<String>, bool, Option<CliTitle>),
     ) -> HashMap<u64, CliTitle> {
-        let canonical = |cwd: &Path| std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
-        let (asks, mut claimed, live_unlocated): (
-            Vec<_>,
-            HashMap<String, HashSet<String>>,
-            Vec<_>,
-        ) = {
+        let (asks, mut claimed): (Vec<_>, HashMap<String, HashSet<String>>) = {
             let state = self.lock();
             let mut claimed: HashMap<String, HashSet<String>> = HashMap::new();
-            let mut live_unlocated = Vec::new();
             for running in &state.open {
                 if let Some(id) = &running.native {
                     claimed
                         .entry(running.provider.clone())
                         .or_default()
                         .insert(id.clone());
-                } else if running.session.exit().is_none() {
-                    live_unlocated.push((
-                        running.id,
-                        running.provider.clone(),
-                        canonical(&running.cwd),
-                        running.started,
-                    ));
                 }
             }
             let asks = state
@@ -252,31 +238,15 @@ impl Terminals {
                     (running.id, ask, running.native.clone(), running.started)
                 })
                 .collect();
-            (asks, claimed, live_unlocated)
+            (asks, claimed)
         };
         let empty = HashSet::new();
         let (mut titles, mut updates) = (HashMap::new(), Vec::new());
         for (id, (provider, cwd), native, started) in asks {
             let checked = Instant::now();
-            let mut before = None;
-            if native.is_none() {
-                let folder = canonical(&cwd);
-                let peers = live_unlocated.iter().filter(|(pid, pprov, pcwd, _)| {
-                    *pid != id && pprov == &provider && pcwd == &folder
-                });
-                if peers.clone().any(|(pid, _, _, pstarted)| {
-                    *pstarted < started || (*pstarted == started && *pid < id)
-                }) {
-                    updates.push((id, None, false, checked));
-                    continue;
-                }
-                before = peers
-                    .filter_map(|(_, _, _, pstarted)| (*pstarted > started).then_some(*pstarted))
-                    .min();
-            }
             let exclude = claimed.get(&provider).unwrap_or(&empty);
             let (found, located, title) =
-                lookup(&provider, native.as_deref(), &cwd, started, exclude, before);
+                lookup(&provider, native.as_deref(), &cwd, started, exclude);
             if native.is_none()
                 && let Some(found_id) = &found
             {

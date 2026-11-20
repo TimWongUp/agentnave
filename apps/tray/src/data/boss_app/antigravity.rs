@@ -195,7 +195,6 @@ pub(super) fn terminal_title(
     cwd: &Path,
     since: SystemTime,
     exclude: &HashSet<String>,
-    before: Option<SystemTime>,
 ) -> (Option<String>, bool, Option<CliTitle>) {
     if let Some(id) = native {
         let mut located = false;
@@ -229,7 +228,7 @@ pub(super) fn terminal_title(
                 continue;
             };
             let canonical = fs::canonicalize(&there).unwrap_or(there);
-            if canonical == folder && started_between(root, id, row, since, before) {
+            if canonical == folder && started_since(root, id, row, since) {
                 found.push((root.clone(), id.clone()));
             }
         }
@@ -250,23 +249,14 @@ fn non_empty_title(row: &SummaryRow) -> Option<CliTitle> {
     })
 }
 
-fn started_between(
-    root: &Path,
-    id: &str,
-    row: &SummaryRow,
-    since: SystemTime,
-    before: Option<SystemTime>,
-) -> bool {
-    let within = |at: SystemTime| {
-        at + CLOCK_SLACK >= since && before.is_none_or(|peer| at + CLOCK_SLACK < peer)
-    };
+fn started_since(root: &Path, id: &str, row: &SummaryRow, since: SystemTime) -> bool {
     let conv_db = root.join("conversations").join(format!("{id}.db"));
     if let Ok(meta) = fs::metadata(conv_db)
         && let Ok(at) = meta.created().or_else(|_| meta.modified())
     {
-        return within(at);
+        return at + CLOCK_SLACK >= since;
     }
-    parse_time(&row.last_modified_time).is_some_and(within)
+    parse_time(&row.last_modified_time).is_some_and(|at| at + CLOCK_SLACK >= since)
 }
 
 fn parse_time(raw: &str) -> Option<SystemTime> {
@@ -464,8 +454,7 @@ fn open_read_only(db_path: &Path) -> Option<Connection> {
         return None;
     }
     let wal = db_path.with_file_name("conversation_summaries.db-wal");
-    let shm = db_path.with_file_name("conversation_summaries.db-shm");
-    let conn = if wal.exists() && shm.exists() {
+    let conn = if wal.exists() {
         Connection::open_with_flags(
             db_path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,

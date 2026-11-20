@@ -101,7 +101,6 @@ pub(super) fn started(
     cwd: &Path,
     since: SystemTime,
     exclude: &HashSet<String>,
-    before: Option<SystemTime>,
 ) -> Option<PathBuf> {
     let folder = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
     let (root, depth) = match host {
@@ -122,7 +121,7 @@ pub(super) fn started(
             exclude.contains(&record.display().to_string())
         };
         if !excluded
-            && created_between(record, since, before)
+            && created_since(record, since)
             && cwd_of(host, record).is_some_and(|there| there == folder)
         {
             found.push(record.to_owned());
@@ -153,12 +152,10 @@ fn visit(dir: &Path, depth: usize, since: SystemTime, each: &mut dyn FnMut(&Path
     }
 }
 
-fn created_between(record: &Path, since: SystemTime, before: Option<SystemTime>) -> bool {
+fn created_since(record: &Path, since: SystemTime) -> bool {
     fs::metadata(record)
         .and_then(|meta| meta.created().or(meta.modified()))
-        .is_ok_and(|at| {
-            at + CLOCK_SLACK >= since && before.is_none_or(|peer| at + CLOCK_SLACK < peer)
-        })
+        .is_ok_and(|at| at + CLOCK_SLACK >= since)
 }
 
 /// The folder a session record says it ran in.

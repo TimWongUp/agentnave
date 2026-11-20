@@ -668,7 +668,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     }
 
     let mut calls = 0usize;
-    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
+    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
@@ -676,14 +676,14 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(calls, 2);
 
     // Within the throttle window, neither unlocated terminal scans again.
-    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
+    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
     assert_eq!(calls, 2);
 
     // Once the window expires and records are located, both resolve and stay unthrottled.
-    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _, _| {
+    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _| {
         calls += 1;
         (
             Some(format!("{provider}-id")),
@@ -698,7 +698,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(resolved[&1].text, "codex title");
     assert_eq!(resolved[&2].text, "claude title");
 
-    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _, _| {
+    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _| {
         calls += 1;
         (
             None,
@@ -717,7 +717,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
 
 #[cfg(unix)]
 #[test]
-fn concurrent_unlocated_terminals_do_not_claim_each_others_session() {
+fn claimed_native_session_ids_are_excluded_for_other_terminals() {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join("work");
     std::fs::create_dir_all(&work).unwrap();
@@ -761,14 +761,14 @@ fn concurrent_unlocated_terminals_do_not_claim_each_others_session() {
         });
     }
 
-    // Terminal 1's `s1` is passed in `exclude`; Terminal 2 gets `before = Some(T3.started)`, and
-    // Terminal 3 skips lookup while earlier live unlocated Terminal 2 exists in the same folder.
-    let mut seen: Vec<(Option<String>, Vec<String>, Option<std::time::SystemTime>)> = Vec::new();
-    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude, before| {
+    // Terminal 1's `s1` is passed in `exclude`; Terminal 2 claims `s2` and adds it to `exclude`
+    // immediately so Terminal 3 sees both `s1` and `s2` excluded in the same pass.
+    let mut seen: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude| {
         let mut ex: Vec<String> = exclude.iter().cloned().collect();
         ex.sort();
-        seen.push((native.map(str::to_owned), ex, before));
-        if native.is_none() {
+        seen.push((native.map(str::to_owned), ex));
+        if native.is_none() && !exclude.contains("s2") {
             (
                 Some("s2".to_owned()),
                 true,
@@ -778,27 +778,14 @@ fn concurrent_unlocated_terminals_do_not_claim_each_others_session() {
                 }),
             )
         } else {
-            (None, true, None)
+            (None, false, None)
         }
     });
-    assert_eq!(seen.len(), 2);
+    assert_eq!(seen.len(), 3);
     assert_eq!(seen[0].0.as_deref(), Some("s1"));
-    assert_eq!(seen[1].0, None);
-    assert_eq!(seen[1].1, vec!["s1".to_owned()]);
-    assert_eq!(seen[1].2, Some(now));
+    assert_eq!(seen[1], (None, vec!["s1".to_owned()]));
+    assert_eq!(seen[2], (None, vec!["s1".to_owned(), "s2".to_owned()]));
     assert_eq!(titles.get(&2).map(|t| t.text.as_str()), Some("T2"));
-
-    // Terminal 2 has now claimed `s2`; Terminal 3 runs and excludes both `s1` and `s2`.
-    let mut third_exclude = Vec::new();
-    terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude, before| {
-        if native.is_none() {
-            third_exclude = exclude.iter().cloned().collect();
-            third_exclude.sort();
-            assert_eq!(before, None);
-        }
-        (None, false, None)
-    });
-    assert_eq!(third_exclude, vec!["s1".to_owned(), "s2".to_owned()]);
 
     session.stop();
     let _ = exit_of(&session);
