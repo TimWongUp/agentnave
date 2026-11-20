@@ -19,15 +19,15 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* ---- group list ---- */
 .side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); background: var(--solid); }
-.side-head { display: flex; align-items: center; gap: 6px; padding: 14px 12px 8px 18px; }
+.side-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px 6px 18px; }
 .side-head h1 { font-size: 16px; letter-spacing: -0.01em; font-weight: 650; margin: 0; }
 .side-add-btn { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; font-size: 16px; font-weight: 400; line-height: 1; color: var(--muted); cursor: pointer; }
 .side-add-btn:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
 .side-add-btn:disabled { opacity: 0.45; cursor: default; }
 .gl { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 0 8px 14px; scrollbar-width: thin; }
-.gl-sec { padding: 12px 10px 5px; font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em; color: var(--faint); }
+.gl-sec { padding: 8px 10px 3px; font-size: 10.5px; font-weight: 650; letter-spacing: 0.1em; color: var(--faint); }
 .gl-grp.flash { border-radius: 7px; animation: flash 1.6s ease-out; }
-.gl-grp { display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 8px 4px; border: 0; background: transparent; text-align: left; font-size: 12px; font-weight: 650; color: var(--ink); cursor: pointer; }
+.gl-grp { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; padding: 5px 8px 3px; border: 0; background: transparent; text-align: left; font-size: 12px; font-weight: 650; color: var(--ink); cursor: pointer; }
 .gl-grp:hover .gl-grp-name { color: var(--accent); }
 .gl-grp:focus-visible { outline-offset: -2px; border-radius: 7px; }
 .gl-grp-caret { flex: none; width: 5px; height: 5px; margin: 0 3px 2px 1px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); transition: transform 0.15s; }
@@ -43,8 +43,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gl-more[data-folded="true"] { display: none; }
 .gi[data-folded="true"] { display: none; }
 .gl-empty { padding: 40px 12px; text-align: center; color: var(--muted); font-size: 12.5px; }
-.gi { position: relative; display: flex; gap: 11px; padding: 10px 10px 10px 16px; margin-bottom: 2px; border-radius: 11px; color: var(--ink); content-visibility: auto; contain-intrinsic-size: auto 50px; }
-.gi::before { content: ""; position: absolute; left: 5px; top: 11px; bottom: 11px; width: 3px; border-radius: 3px; background: var(--mc); opacity: 0.55; }
+.gi { position: relative; display: flex; gap: 11px; min-height: 44px; padding: 5px 10px 5px 16px; margin-bottom: 1px; border-radius: 11px; color: var(--ink); content-visibility: auto; contain-intrinsic-size: auto 44px; }
+.gi::before { content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px; width: 3px; border-radius: 3px; background: var(--mc); opacity: 0.55; }
 .gi.hot::before, .gi.on::before { opacity: 1; }
 .gi:hover { background: var(--hover); }
 .gi.on { background: color-mix(in srgb, var(--mc) 12%, var(--card)); }
@@ -109,7 +109,7 @@ body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
   .app[data-side="off"] .gl-more { display: block; padding: 5px 8px; text-align: left; font-size: 11.5px; }
   .app[data-side="off"] .gl-more::after { content: none; }
   .app[data-side="off"] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
-  .app[data-side="off"] .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
+  .app[data-side="off"] .gi { justify-content: flex-start; padding: 5px 10px 5px 16px; }
   .app[data-side="off"] .gi::before { left: 5px; }
 }
 @media not all and (max-width: 920px) {
@@ -695,7 +695,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gl-more { display: block; padding: 5px 8px; text-align: left; font-size: 11.5px; }
   .gl-more::after { content: none; }
   .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }
-  .gi { justify-content: flex-start; padding: 10px 10px 10px 16px; }
+  .gi { justify-content: flex-start; padding: 5px 10px 5px 16px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }

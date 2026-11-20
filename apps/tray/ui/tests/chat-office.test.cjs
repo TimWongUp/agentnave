@@ -17,7 +17,7 @@ test("typing status measures the current activity and formats minutes", () => {
   assert.equal(context.typingStatus({ doing: "tool:" }), "使用工具中");
 });
 
-function office(character = (_host, model) => model || "default") {
+function office(character = (_host, model) => model || "default", terminal = undefined) {
   const node = () => ({
     dataset: {}, classList: { toggle() {} }, children: [],
     replaceChildren(...children) { this.children = children; },
@@ -32,12 +32,25 @@ function office(character = (_host, model) => model || "default") {
     L: zh => zh, cliName: host => host,
     setText: (element, text) => { element.textContent = text; },
     setAttr: (element, key, value) => { element[key] = value; },
+    ChatTerminal: terminal,
   });
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
   const rec = Object.fromEntries(["lid", "scene", "desk", "chair", "open", "closed", "portrait", "cli", "st", "state"].map(key => [key, node()]));
   rec.laptop = { laptop: { dress(set) { rec.laptop.set = set; } } };
-  return { rec, update: c => context.updateBoss(rec, c, { running: 0, review: 0 }) };
+  return { rec, boss: context.el.boss, update: c => context.updateBoss(rec, c, { running: 0, review: 0 }) };
 }
+
+test("a boss whose terminal CLI runs shows as working", () => {
+  let open = true;
+  const { rec, boss, update } = office(undefined, { running: group => open && group === "ws" });
+  update({ group: "ws", host: "claude", label: "Claude Code", messages: [] });
+  assert.equal(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "工作中");
+  open = false;
+  update({ group: "ws", host: "claude", label: "Claude Code", messages: [] });
+  assert.notEqual(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "空闲");
+});
 
 const speech = (provider, model, time) => ({ kind: "prompt", time, speaker: { role: "manager", provider, model } });
 const old = speech("claude", "claude-opus-5-5", "2026-11-04T13:30:00Z");
@@ -90,7 +103,7 @@ test("office resizing ignores height feedback and still lays out changed desks a
   const chatContext = vm.createContext({
     AN: {}, state: { loaded: "ws-a", selected: "ws-b", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
-    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {}, readMessages() {} },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, displayState: () => null, column() {}, readMessages() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}),
     renderHead() {}, renderConv() { drawer.hidden = false; }, renderSideToggle() {}, renderTicker() {},
     renderOffice() { measuredWithDrawerHidden = drawer.hidden; },
@@ -399,11 +412,11 @@ function refreshing() {
   const source = readFileSync(`${__dirname}/../chat.js`, "utf8");
   const start = source.indexOf("function renderAll(");
   const calls = { list: 0, all: 0, voice: 0 };
-  let groups = [{ group: "ws", updated: "2026-11-10T00:00:00Z" }], chat = { group: "ws", rooms: [], desks: [], messages: [] }, tick = 1, busy = false;
+  let groups = [{ group: "ws", updated: "2026-11-10T00:00:00Z" }], chat = { group: "ws", rooms: [], desks: [], messages: [] }, tick = 1, busy = false, terminal = null;
   const context = vm.createContext({
     AN: { voice: { ingest() { calls.voice++; } } }, state: { loaded: null, selected: "ws", groupsData: [], auto: false },
     narrow: { matches: false }, el: { banner: {}, app: { dataset: {} } },
-    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, column() {}, readMessages() {} },
+    ChatTerminal: { refresh: async () => {}, pending: () => [], follow: (group) => group, pendingId: () => null, displayState: () => terminal, column() {}, readMessages() {} },
     contextOf: c => c, followAlias() {}, counts: () => ({}), renderHead() {}, renderConv() {}, renderSideToggle() {}, renderTicker() {},
     renderOffice() { calls.all++; }, showBlank() {}, renderList() { calls.list++; }, ingest() {},
     ART: { version: () => 1 }, document: { documentElement: { lang: "zh" } }, tickOf: () => tick, timeDriven: () => busy,
@@ -413,7 +426,7 @@ function refreshing() {
   return {
     calls, refresh: () => context.refresh(),
     change: patch => { chat = { ...chat, ...patch }; }, rename: () => { groups = [{ ...groups[0], preview: "new" }]; },
-    tick: () => { tick++; }, busy: on => { busy = on; },
+    tick: () => { tick++; }, busy: on => { busy = on; }, terminal: value => { terminal = value; },
   };
 }
 
@@ -436,6 +449,13 @@ test("a poll draws the workspace list once, and an unchanged poll draws nothing 
   app.busy(true);
   await app.refresh();
   assert.equal(app.calls.all, 4, "a desk holding its done frame is drawn every poll");
+  app.busy(false);
+  for (const value of [[1, false], [1, true], [2, true], null]) {
+    const before = app.calls.all;
+    app.terminal(value);
+    await app.refresh();
+    assert.equal(app.calls.all, before + 1, "terminal appearance, exit, replacement and removal redraw the office");
+  }
 });
 
 test("an unfocused window polls every five seconds and refreshes the moment it returns", async () => {
@@ -1024,6 +1044,17 @@ test("ChatTerminal matches only the latest confirmed workspace and keeps exited 
   await ChatTerminal.refresh();
 
   assert.deepEqual(ChatTerminal.pending().map(x => x.group), ["term-2"]);
+  assert.equal(ChatTerminal.pending()[0].status, "idle");
+  sessions[1].exit = null;
+  await ChatTerminal.refresh();
+  assert.equal(ChatTerminal.pending()[0].status, "running");
+  assert.equal(ChatTerminal.pending()[0].live, true);
+  sessions[1].exit = 0;
+  await ChatTerminal.refresh();
+  assert.equal(ChatTerminal.pending()[0].live, false);
+  assert.equal(ChatTerminal.bossOpensTerminal("ws-new"), false);
+  assert.equal(ChatTerminal.bossOpensTerminal("term-2"), true);
+  assert.equal(ChatTerminal.bossOpensTerminal("ws-curr"), true);
 
   // ws-old and ws-prev must NOT fall back to terminals whose latest workspace moved on.
   const recPrev = { label: node(), term: null };
@@ -1032,6 +1063,9 @@ test("ChatTerminal matches only the latest confirmed workspace and keeps exited 
   const recCurr = { label: node(), term: null };
   ChatTerminal.decorate(recCurr, { group: "ws-curr" });
   assert.equal(recCurr.term.hidden, false);
+  assert.equal(ChatTerminal.running("ws-curr"), true);
+  assert.equal(ChatTerminal.running("ws-prev"), false);
+  assert.equal(ChatTerminal.running("ws-new"), false);
 
   ChatTerminal.column("ws-old");
   assert.equal(modes.hidden, true);
@@ -1423,6 +1457,11 @@ test("clicking boss desk returns to terminal with focus, and at most one selecti
   assert.equal(el.boss.classList.contains("sel"), true);
   assert.equal(selCount(), 1);
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ type: "agentnave:terminal", action: "shown" }]);
+  assert.equal(state.drawer.kind, "all");
+  modes.children[0].listeners.click[0]();
+  assert.equal(state.drawer.kind, "all");
+  assert.equal(el.boss.classList.contains("sel"), true);
+  assert.equal(deskEl.classList.contains("sel"), false);
 
   // When drawer is hidden, 0 selection highlights show on the floor.
   drawer.hidden = true;
