@@ -314,17 +314,24 @@ function updateBoss(rec, c, n) {
   dressBossSet(rec, c.host);
   dressLid(rec, c.app || c.host);
   hangPortrait(rec, c, holder.former);
-  const mood = n.running || n.review ? "working" : recentlyActive(c) ? "idle" : "sleep";
+  const inTerminal = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.running?.(c.group));
+  const mood = n.running || n.review || inTerminal ? "working" : recentlyActive(c) ? "idle" : "sleep";
   el.boss.dataset.mood = mood;
   setText(rec.cli, c.label);
   setText(
     rec.st,
-    n.running ? L(`等 ${n.running} 个回复`, `Waiting on ${n.running}`) : n.review ? L("会议进行中", "In meeting") : L("空闲", "Idle"),
+    n.running
+      ? L(`等 ${n.running} 个回复`, `Waiting on ${n.running}`)
+      : n.review
+        ? L("会议进行中", "In meeting")
+        : inTerminal
+          ? L("工作中", "Working")
+          : L("空闲", "Idle"),
   );
   const notes = renderBossState(rec, handoverParts(c), c.took_over, model);
   const zhNote = notes.length ? `${notes.join("，")}，` : "";
   const enNote = notes.length ? `${notes.join(", ")}, ` : "";
-  const hasTerm = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.hasTerminal?.(c.group));
+  const hasTerm = typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.bossOpensTerminal?.(c.group));
   setAttr(
     el.boss,
     "aria-label",

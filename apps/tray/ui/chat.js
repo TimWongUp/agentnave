@@ -741,7 +741,7 @@ async function refresh() {
     state.loaded = chat.group;
     // The same payload within the same tick draws the same office; only things that move with
     // the clock or wait for this load need a fresh pass.
-    const chatKey = JSON.stringify([selected, hashKey, chat, tickOf(), ART.version(), document.documentElement.lang]);
+    const chatKey = JSON.stringify([selected, hashKey, chat, ChatTerminal.displayState(selected), tickOf(), ART.version(), document.documentElement.lang]);
     const unchanged = state.ready && !newGroup && chatKey === state.chatKey && !state.locate
       && !(state.hashKey && !state.focused) && !timeDriven();
     // The voice player keeps following the workspace and reloads its own settings sparingly.
@@ -793,7 +793,10 @@ addEventListener("agentnave:model-names", () => {
   refresh();
 });
 addEventListener("agentnave:voice", () => {
-  if (state.chat) renderConv(state.chat, state.ctx);
+  if (state.chat) {
+    renderConv(state.chat, state.ctx);
+    ChatTerminal.column(state.chat.group, state.chat.host);
+  }
 });
 sync();
 poll(refresh);

@@ -102,8 +102,8 @@ const ChatTerminal = (() => {
         label: AN.cliName(x.provider),
         display_title: x.display_title ?? null,
         title: x.display_title || L("新 agent", "New agent"),
-        status: x.exit == null && x.active ? "running" : "idle",
-        live: x.exit == null && x.active,
+        status: x.exit == null ? "running" : "idle",
+        live: x.exit == null,
         updated: t.since.get(x.id),
         project_key: x.project_key,
         project_label: x.project_label || folder(x.cwd),
@@ -452,6 +452,20 @@ const ChatTerminal = (() => {
     return true;
   }
   const hasTerminal = (group) => Boolean(byId(pendingId(group)) || ofWorkspace(group));
+  const displayState = (group) => {
+    const x = byId(pendingId(group)) || ofWorkspace(group);
+    return x ? [x.id, x.exit != null] : null;
+  };
+  const bossOpensTerminal = (group) => {
+    const agent = byId(pendingId(group));
+    const workspace = ofWorkspace(group);
+    return Boolean(agent || (workspace && workspace.exit == null));
+  };
+  // The CLI in this workspace's terminal is still running.
+  const running = (group) => {
+    const x = byId(pendingId(group)) || ofWorkspace(group);
+    return Boolean(x && x.exit == null);
+  };
   const showing = () => Boolean(t.shown != null && el.drawer?.classList?.contains?.("term-mode"));
   const exitedOf = (group) => {
     const x = ofWorkspace(group);
@@ -460,9 +474,10 @@ const ChatTerminal = (() => {
   function openBoss() {
     if (!state.loaded) return false;
     const x = byId(pendingId(state.loaded)) || ofWorkspace(state.loaded);
-    if (!x) return false;
+    if (!x || !bossOpensTerminal(state.loaded)) return false;
     const alreadyShown = t.shown === x.id;
     t.terminal.set(state.loaded, true);
+    state.drawer = { kind: "all" };
     state.opener = el.boss;
     state.convOpen = true;
     if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
@@ -492,5 +507,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, pending, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, consumeOpen, hasTerminal, showing, exitedOf, openBoss, close, stop };
+  return { refresh, pending, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, exitedOf, openBoss, close, stop };
 })();
