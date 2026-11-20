@@ -1,11 +1,23 @@
 {
-  "_source": "models.dev snapshot bundled by Magpie internal/catalog/bundled/api.json.gz; extracted 2026-11-20; USD per million tokens",
+  "_source": "models.dev/api.json (anthropic, openai, google); fetched 2026-11-20; USD per million tokens",
   "models": {
-    "claude-sonnet-5": {
-      "input": 2,
-      "output": 10,
+    "claude-fable-5": {
+      "input": 10,
+      "output": 50,
+      "cache_read": 1,
+      "cache_write_5m": 12.5
+    },
+    "claude-fable-5-1": {
+      "input": 10,
+      "output": 50,
+      "cache_read": 0.25,
+      "cache_write_5m": 12.5
+    },
+    "claude-fable-5-2": {
+      "input": 8,
+      "output": 40,
       "cache_read": 0.2,
-      "cache_write_5m": 2.5
+      "cache_write_5m": 10
     },
     "claude-haiku-4-5": {
       "input": 1,
@@ -13,17 +25,11 @@
       "cache_read": 0.1,
       "cache_write_5m": 1.25
     },
-    "claude-sonnet-5-5": {
-      "input": 2,
-      "output": 10,
+    "claude-haiku-4-5-20251001": {
+      "input": 1,
+      "output": 5,
       "cache_read": 0.1,
-      "cache_write_5m": 2.5
-    },
-    "claude-opus-5-5": {
-      "input": 4,
-      "output": 20,
-      "cache_read": 0.2,
-      "cache_write_5m": 5
+      "cache_write_5m": 1.25
     },
     "claude-haiku-5-5": {
       "input": 0.1,
@@ -40,31 +46,13 @@
         }
       ]
     },
-    "claude-fable-5": {
-      "input": 10,
-      "output": 50,
-      "cache_read": 1,
-      "cache_write_5m": 12.5
-    },
-    "claude-opus-4-8": {
+    "claude-opus-4-5": {
       "input": 5,
       "output": 25,
       "cache_read": 0.5,
       "cache_write_5m": 6.25
     },
-    "claude-fable-5-2": {
-      "input": 8,
-      "output": 40,
-      "cache_read": 0.2,
-      "cache_write_5m": 10
-    },
-    "claude-sonnet-4-5": {
-      "input": 3,
-      "output": 15,
-      "cache_read": 0.3,
-      "cache_write_5m": 3.75
-    },
-    "claude-opus-4-7": {
+    "claude-opus-4-5-20251101": {
       "input": 5,
       "output": 25,
       "cache_read": 0.5,
@@ -76,41 +64,17 @@
       "cache_read": 0.5,
       "cache_write_5m": 6.25
     },
-    "claude-sonnet-4-5-20250929": {
-      "input": 3,
-      "output": 15,
-      "cache_read": 0.3,
-      "cache_write_5m": 3.75
-    },
-    "claude-haiku-4-5-20251001": {
-      "input": 1,
-      "output": 5,
-      "cache_read": 0.1,
-      "cache_write_5m": 1.25
-    },
-    "claude-opus-4-5-20251101": {
+    "claude-opus-4-7": {
       "input": 5,
       "output": 25,
       "cache_read": 0.5,
       "cache_write_5m": 6.25
     },
-    "claude-opus-4-5": {
+    "claude-opus-4-8": {
       "input": 5,
       "output": 25,
       "cache_read": 0.5,
       "cache_write_5m": 6.25
-    },
-    "claude-sonnet-4-6": {
-      "input": 3,
-      "output": 15,
-      "cache_read": 0.3,
-      "cache_write_5m": 3.75
-    },
-    "claude-fable-5-1": {
-      "input": 10,
-      "output": 50,
-      "cache_read": 0.25,
-      "cache_write_5m": 12.5
     },
     "claude-opus-5": {
       "input": 5,
@@ -118,14 +82,141 @@
       "cache_read": 0.5,
       "cache_write_5m": 6.25
     },
-    "text-embedding-3-small": {
-      "input": 0.02,
-      "output": 0
+    "claude-opus-5-5": {
+      "input": 4,
+      "output": 20,
+      "cache_read": 0.2,
+      "cache_write_5m": 5
+    },
+    "claude-sonnet-4-5": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3,
+      "cache_write_5m": 3.75
+    },
+    "claude-sonnet-4-5-20250929": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3,
+      "cache_write_5m": 3.75
+    },
+    "claude-sonnet-4-6": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3,
+      "cache_write_5m": 3.75
+    },
+    "claude-sonnet-5": {
+      "input": 2,
+      "output": 10,
+      "cache_read": 0.2,
+      "cache_write_5m": 2.5
+    },
+    "claude-sonnet-5-5": {
+      "input": 2,
+      "output": 10,
+      "cache_read": 0.1,
+      "cache_write_5m": 2.5
+    },
+    "chatgpt-image-latest": {
+      "input": 5,
+      "output": 10,
+      "cache_read": 1.25
+    },
+    "gpt-3.5-turbo": {
+      "input": 0.5,
+      "output": 1.5,
+      "cache_read": 0
+    },
+    "gpt-4": {
+      "input": 30,
+      "output": 60
+    },
+    "gpt-4-turbo": {
+      "input": 10,
+      "output": 30
+    },
+    "gpt-4.1": {
+      "input": 2,
+      "output": 8,
+      "cache_read": 0.5
+    },
+    "gpt-4.1-mini": {
+      "input": 0.4,
+      "output": 1.6,
+      "cache_read": 0.1
+    },
+    "gpt-4.1-nano": {
+      "input": 0.1,
+      "output": 0.4,
+      "cache_read": 0.025
+    },
+    "gpt-4o": {
+      "input": 2.5,
+      "output": 10,
+      "cache_read": 1.25
+    },
+    "gpt-4o-2024-05-13": {
+      "input": 5,
+      "output": 15
     },
     "gpt-4o-2024-08-06": {
       "input": 2.5,
       "output": 10,
       "cache_read": 1.25
+    },
+    "gpt-4o-2024-11-20": {
+      "input": 2.5,
+      "output": 10,
+      "cache_read": 1.25
+    },
+    "gpt-4o-mini": {
+      "input": 0.15,
+      "output": 0.6,
+      "cache_read": 0.075
+    },
+    "gpt-5": {
+      "input": 1.25,
+      "output": 10,
+      "cache_read": 0.125
+    },
+    "gpt-5-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cache_read": 0.025
+    },
+    "gpt-5-nano": {
+      "input": 0.05,
+      "output": 0.4,
+      "cache_read": 0.005
+    },
+    "gpt-5-pro": {
+      "input": 15,
+      "output": 120
+    },
+    "gpt-5.1": {
+      "input": 1.25,
+      "output": 10,
+      "cache_read": 0.125
+    },
+    "gpt-5.2": {
+      "input": 1.75,
+      "output": 14,
+      "cache_read": 0.175
+    },
+    "gpt-5.2-pro": {
+      "input": 21,
+      "output": 168
+    },
+    "gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cache_read": 0.175
+    },
+    "gpt-5.3-codex-spark": {
+      "input": 1.75,
+      "output": 14,
+      "cache_read": 0.175
     },
     "gpt-5.4": {
       "input": 2.5,
@@ -140,51 +231,17 @@
         }
       ]
     },
-    "gpt-4o-2024-05-13": {
-      "input": 5,
-      "output": 15
+    "gpt-5.4-mini": {
+      "input": 0.75,
+      "output": 4.5,
+      "cache_read": 0.075
     },
-    "gpt-4.1": {
-      "input": 2,
-      "output": 8,
-      "cache_read": 0.5
+    "gpt-5.4-nano": {
+      "input": 0.2,
+      "output": 1.25,
+      "cache_read": 0.02
     },
-    "gpt-4.1-mini": {
-      "input": 0.4,
-      "output": 1.6,
-      "cache_read": 0.1
-    },
-    "gpt-5.3-codex-spark": {
-      "input": 1.75,
-      "output": 14,
-      "cache_read": 0.175
-    },
-    "o4-mini": {
-      "input": 1.1,
-      "output": 4.4,
-      "cache_read": 0.275
-    },
-    "gpt-6.1-terra": {
-      "input": 1,
-      "output": 5,
-      "cache_read": 0.05,
-      "cache_write_5m": 1.25,
-      "tiers": [
-        {
-          "above": 272000,
-          "input": 2,
-          "output": 7.5,
-          "cache_read": 0.1,
-          "cache_write_5m": 2.5
-        }
-      ]
-    },
-    "o1": {
-      "input": 15,
-      "output": 60,
-      "cache_read": 7.5
-    },
-    "gpt-5.5-pro": {
+    "gpt-5.4-pro": {
       "input": 30,
       "output": 180,
       "tiers": [
@@ -194,10 +251,6 @@
           "output": 270
         }
       ]
-    },
-    "o3-pro": {
-      "input": 20,
-      "output": 80
     },
     "gpt-5.5": {
       "input": 5,
@@ -212,47 +265,14 @@
         }
       ]
     },
-    "gpt-5": {
-      "input": 1.25,
-      "output": 10,
-      "cache_read": 0.125
-    },
-    "gpt-6-luna": {
-      "input": 0.1,
-      "output": 0.5,
-      "cache_read": 0.01,
-      "cache_write_5m": 0.125,
+    "gpt-5.5-pro": {
+      "input": 30,
+      "output": 180,
       "tiers": [
         {
           "above": 272000,
-          "input": 0.2,
-          "output": 0.75,
-          "cache_read": 0.02,
-          "cache_write_5m": 0.25
-        }
-      ]
-    },
-    "gpt-4-turbo": {
-      "input": 10,
-      "output": 30
-    },
-    "gpt-4o-mini": {
-      "input": 0.15,
-      "output": 0.6,
-      "cache_read": 0.075
-    },
-    "gpt-5.6-luna": {
-      "input": 0.2,
-      "output": 1.2,
-      "cache_read": 0.02,
-      "cache_write_5m": 0.25,
-      "tiers": [
-        {
-          "above": 272000,
-          "input": 0.4,
-          "output": 1.8,
-          "cache_read": 0.04,
-          "cache_write_5m": 0.5
+          "input": 60,
+          "output": 270
         }
       ]
     },
@@ -271,85 +291,20 @@
         }
       ]
     },
-    "text-embedding-ada-002": {
-      "input": 0.1,
-      "output": 0
-    },
-    "o3-mini": {
-      "input": 1.1,
-      "output": 4.4,
-      "cache_read": 0.55
-    },
-    "text-embedding-3-large": {
-      "input": 0.13,
-      "output": 0
-    },
-    "gpt-5-mini": {
-      "input": 0.25,
-      "output": 2,
-      "cache_read": 0.025
-    },
-    "gpt-6.1-sol": {
-      "input": 2,
-      "output": 10,
-      "cache_read": 0.1,
-      "cache_write_5m": 2.5,
+    "gpt-5.6-luna": {
+      "input": 0.2,
+      "output": 1.2,
+      "cache_read": 0.02,
+      "cache_write_5m": 0.25,
       "tiers": [
         {
           "above": 272000,
-          "input": 4,
-          "output": 15,
-          "cache_read": 0.2,
-          "cache_write_5m": 5
+          "input": 0.4,
+          "output": 1.8,
+          "cache_read": 0.04,
+          "cache_write_5m": 0.5
         }
       ]
-    },
-    "o1-pro": {
-      "input": 150,
-      "output": 600
-    },
-    "gpt-5.6-terra": {
-      "input": 2,
-      "output": 12,
-      "cache_read": 0.2,
-      "cache_write_5m": 2.5,
-      "tiers": [
-        {
-          "above": 272000,
-          "input": 4,
-          "output": 18,
-          "cache_read": 0.4,
-          "cache_write_5m": 5
-        }
-      ]
-    },
-    "gpt-image-2": {
-      "input": 5,
-      "output": 30,
-      "cache_read": 1.25
-    },
-    "gpt-5.1": {
-      "input": 1.25,
-      "output": 10,
-      "cache_read": 0.125
-    },
-    "gpt-5.2-pro": {
-      "input": 21,
-      "output": 168
-    },
-    "gpt-4o-2024-11-20": {
-      "input": 2.5,
-      "output": 10,
-      "cache_read": 1.25
-    },
-    "gpt-5-pro": {
-      "input": 15,
-      "output": 120
-    },
-    "gpt-5.3-codex": {
-      "input": 1.75,
-      "output": 14,
-      "cache_read": 0.175
     },
     "gpt-5.6-sol": {
       "input": 4,
@@ -366,41 +321,16 @@
         }
       ]
     },
-    "gpt-daybreak-red-latest": {
-      "input": 12.5,
-      "output": 75,
-      "cache_read": 1.25,
-      "cache_write_5m": 15.625
-    },
-    "gpt-4o": {
-      "input": 2.5,
-      "output": 10,
-      "cache_read": 1.25
-    },
-    "gpt-5.2": {
-      "input": 1.75,
-      "output": 14,
-      "cache_read": 0.175
-    },
-    "gpt-3.5-turbo": {
-      "input": 0.5,
-      "output": 1.5,
-      "cache_read": 0
-    },
-    "gpt-4": {
-      "input": 30,
-      "output": 60
-    },
-    "gpt-6-sol": {
+    "gpt-5.6-terra": {
       "input": 2,
-      "output": 10,
+      "output": 12,
       "cache_read": 0.2,
       "cache_write_5m": 2.5,
       "tiers": [
         {
           "above": 272000,
           "input": 4,
-          "output": 15,
+          "output": 18,
           "cache_read": 0.4,
           "cache_write_5m": 5
         }
@@ -421,15 +351,95 @@
         }
       ]
     },
-    "gpt-5.4-mini": {
-      "input": 0.75,
-      "output": 4.5,
-      "cache_read": 0.075
+    "gpt-6-luna": {
+      "input": 0.1,
+      "output": 0.5,
+      "cache_read": 0.01,
+      "cache_write_5m": 0.125,
+      "tiers": [
+        {
+          "above": 272000,
+          "input": 0.2,
+          "output": 0.75,
+          "cache_read": 0.02,
+          "cache_write_5m": 0.25
+        }
+      ]
     },
-    "o3": {
+    "gpt-6-sol": {
       "input": 2,
-      "output": 8,
-      "cache_read": 0.5
+      "output": 10,
+      "cache_read": 0.2,
+      "cache_write_5m": 2.5,
+      "tiers": [
+        {
+          "above": 272000,
+          "input": 4,
+          "output": 15,
+          "cache_read": 0.4,
+          "cache_write_5m": 5
+        }
+      ]
+    },
+    "gpt-6.1-sol": {
+      "input": 2,
+      "output": 10,
+      "cache_read": 0.1,
+      "cache_write_5m": 2.5,
+      "tiers": [
+        {
+          "above": 272000,
+          "input": 4,
+          "output": 15,
+          "cache_read": 0.2,
+          "cache_write_5m": 5
+        }
+      ]
+    },
+    "gpt-6.1-terra": {
+      "input": 1,
+      "output": 5,
+      "cache_read": 0.05,
+      "cache_write_5m": 1.25,
+      "tiers": [
+        {
+          "above": 272000,
+          "input": 2,
+          "output": 7.5,
+          "cache_read": 0.1,
+          "cache_write_5m": 2.5
+        }
+      ]
+    },
+    "gpt-6.2-astra": {
+      "input": 8,
+      "output": 40,
+      "cache_read": 0.4,
+      "cache_write_5m": 10,
+      "tiers": [
+        {
+          "above": 272000,
+          "input": 16,
+          "output": 60,
+          "cache_read": 0.8,
+          "cache_write_5m": 20
+        }
+      ]
+    },
+    "gpt-6.2-sol": {
+      "input": 2,
+      "output": 10,
+      "cache_read": 0.1,
+      "cache_write_5m": 2.5,
+      "tiers": [
+        {
+          "above": 272000,
+          "input": 4,
+          "output": 15,
+          "cache_read": 0.2,
+          "cache_write_5m": 5
+        }
+      ]
     },
     "gpt-daybreak-blue-latest": {
       "input": 4,
@@ -446,36 +456,61 @@
         }
       ]
     },
-    "gpt-5.4-pro": {
-      "input": 30,
-      "output": 180,
-      "tiers": [
-        {
-          "above": 272000,
-          "input": 60,
-          "output": 270
-        }
-      ]
+    "gpt-daybreak-red-latest": {
+      "input": 12.5,
+      "output": 75,
+      "cache_read": 1.25,
+      "cache_write_5m": 15.625
     },
-    "gpt-5.4-nano": {
-      "input": 0.2,
-      "output": 1.25,
-      "cache_read": 0.02
-    },
-    "gpt-4.1-nano": {
-      "input": 0.1,
-      "output": 0.4,
-      "cache_read": 0.025
-    },
-    "gpt-5-nano": {
-      "input": 0.05,
-      "output": 0.4,
-      "cache_read": 0.005
+    "gpt-image-1.5": {
+      "input": 5,
+      "output": 10,
+      "cache_read": 1.25
     },
     "gpt-realtime-2.1": {
       "input": 4,
       "output": 24,
       "cache_read": 0.4
+    },
+    "o1": {
+      "input": 15,
+      "output": 60,
+      "cache_read": 7.5
+    },
+    "o1-pro": {
+      "input": 150,
+      "output": 600
+    },
+    "o3": {
+      "input": 2,
+      "output": 8,
+      "cache_read": 0.5
+    },
+    "o3-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cache_read": 0.55
+    },
+    "o3-pro": {
+      "input": 20,
+      "output": 80
+    },
+    "o4-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cache_read": 0.275
+    },
+    "text-embedding-3-large": {
+      "input": 0.13,
+      "output": 0
+    },
+    "text-embedding-3-small": {
+      "input": 0.02,
+      "output": 0
+    },
+    "text-embedding-ada-002": {
+      "input": 0.1,
+      "output": 0
     },
     "deep-research-max-preview-04-2026": {
       "input": 2,
@@ -489,51 +524,6 @@
           "cache_read": 0.4
         }
       ]
-    },
-    "gemini-flash-latest": {
-      "input": 0.75,
-      "output": 3.75,
-      "cache_read": 0.075
-    },
-    "lyria-3-clip-preview": {
-      "input": 0,
-      "output": 0
-    },
-    "gemini-2.5-flash-preview-tts": {
-      "input": 0.5,
-      "output": 10
-    },
-    "gemini-embedding-001": {
-      "input": 0.15,
-      "output": 0
-    },
-    "gemini-2.5-flash-image": {
-      "input": 0.3,
-      "output": 30,
-      "cache_read": 0.075
-    },
-    "gemini-pro-latest": {
-      "input": 2,
-      "output": 12,
-      "cache_read": 0.2,
-      "tiers": [
-        {
-          "above": 200000,
-          "input": 4,
-          "output": 18,
-          "cache_read": 0.4
-        }
-      ]
-    },
-    "gemini-3-flash-preview": {
-      "input": 0.5,
-      "output": 3,
-      "cache_read": 0.05
-    },
-    "gemini-2.5-flash-lite": {
-      "input": 0.1,
-      "output": 0.4,
-      "cache_read": 0.01
     },
     "deep-research-preview-04-2026": {
       "input": 2,
@@ -550,120 +540,26 @@
     },
     "gemini-2.5-computer-use-preview-10-2025": {
       "input": 1.25,
-      "output": 10,
-      "tiers": [
-        {
-          "above": 200000,
-          "input": 2.5,
-          "output": 15
-        }
-      ]
-    },
-    "lyria-3-pro-preview": {
-      "input": 0,
-      "output": 0
-    },
-    "gemini-3.1-flash-tts-preview": {
-      "input": 1,
-      "output": 20
-    },
-    "gemini-3.1-flash-live-preview": {
-      "input": 0.75,
-      "output": 4.5
-    },
-    "gemini-3.5-flash": {
-      "input": 1.5,
-      "output": 9,
-      "cache_read": 0.15
-    },
-    "gemini-2.5-pro-preview-tts": {
-      "input": 1,
-      "output": 20
-    },
-    "gemini-3.1-flash-lite": {
-      "input": 0.25,
-      "output": 1.5,
-      "cache_read": 0.025
-    },
-    "gemini-3.5-live-translate-preview": {
-      "input": 3.5,
-      "output": 21
-    },
-    "gemini-3.1-pro-preview-customtools": {
-      "input": 2,
-      "output": 12,
-      "cache_read": 0.2,
-      "tiers": [
-        {
-          "above": 200000,
-          "input": 4,
-          "output": 18,
-          "cache_read": 0.4
-        }
-      ]
-    },
-    "gemini-3.6-flash": {
-      "input": 0.75,
-      "output": 3.75,
-      "cache_read": 0.075
-    },
-    "gemini-3.7-flash": {
-      "input": 0.75,
-      "output": 3.75,
-      "cache_read": 0.075
-    },
-    "gemini-embedding-2": {
-      "input": 0.2,
-      "output": 0
+      "output": 10
     },
     "gemini-2.5-flash": {
       "input": 0.3,
       "output": 2.5,
       "cache_read": 0.03
     },
-    "gemini-omni-flash-preview": {
-      "input": 1.5,
-      "output": 17.5
-    },
-    "gemini-3.8-flash": {
-      "input": 0.75,
-      "output": 3.75,
-      "cache_read": 0.075
-    },
-    "gemini-3-pro-image": {
-      "input": 2,
-      "output": 120
-    },
-    "gemini-3.1-pro-preview": {
-      "input": 2,
-      "output": 12,
-      "cache_read": 0.2,
-      "tiers": [
-        {
-          "above": 200000,
-          "input": 4,
-          "output": 18,
-          "cache_read": 0.4
-        }
-      ]
-    },
-    "gemini-4-argon": {
-      "input": 2,
-      "output": 10,
-      "cache_read": 0.1
-    },
-    "gemini-3.1-flash-image": {
-      "input": 0.5,
-      "output": 60
-    },
-    "gemini-flash-lite-latest": {
+    "gemini-2.5-flash-image": {
       "input": 0.3,
       "output": 2.5,
-      "cache_read": 0.03
+      "cache_read": 0.075
     },
-    "gemini-3.1-flash-lite-image": {
-      "input": 0.25,
-      "output": 30
+    "gemini-2.5-flash-lite": {
+      "input": 0.1,
+      "output": 0.4,
+      "cache_read": 0.01
+    },
+    "gemini-2.5-flash-preview-tts": {
+      "input": 0.5,
+      "output": 10
     },
     "gemini-2.5-pro": {
       "input": 1.25,
@@ -678,15 +574,170 @@
         }
       ]
     },
-    "gemini-3.5-flash-lite": {
-      "input": 0.3,
-      "output": 2.5,
-      "cache_read": 0.03
+    "gemini-2.5-pro-preview-tts": {
+      "input": 1,
+      "output": 20
+    },
+    "gemini-3-flash-preview": {
+      "input": 0.5,
+      "output": 3,
+      "cache_read": 0.05
+    },
+    "gemini-3-pro-image": {
+      "input": 2,
+      "output": 12
+    },
+    "gemini-3.1-flash-image": {
+      "input": 0.5,
+      "output": 3
+    },
+    "gemini-3.1-flash-lite": {
+      "input": 0.25,
+      "output": 1.5,
+      "cache_read": 0.025
+    },
+    "gemini-3.1-flash-lite-image": {
+      "input": 0.25,
+      "output": 1.5
     },
     "gemini-3.1-flash-lite-preview": {
       "input": 0.25,
       "output": 1.5,
       "cache_read": 0.025
+    },
+    "gemini-3.1-flash-live-preview": {
+      "input": 0.75,
+      "output": 4.5
+    },
+    "gemini-3.1-flash-tts-preview": {
+      "input": 1,
+      "output": 20
+    },
+    "gemini-3.1-pro-preview": {
+      "input": 2,
+      "output": 12,
+      "cache_read": 0.2,
+      "tiers": [
+        {
+          "above": 200000,
+          "input": 4,
+          "output": 18,
+          "cache_read": 0.4
+        }
+      ]
+    },
+    "gemini-3.1-pro-preview-customtools": {
+      "input": 2,
+      "output": 12,
+      "cache_read": 0.2,
+      "tiers": [
+        {
+          "above": 200000,
+          "input": 4,
+          "output": 18,
+          "cache_read": 0.4
+        }
+      ]
+    },
+    "gemini-3.5-flash": {
+      "input": 1.5,
+      "output": 9,
+      "cache_read": 0.15
+    },
+    "gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5,
+      "cache_read": 0.03
+    },
+    "gemini-3.5-live-translate-preview": {
+      "input": 3.5,
+      "output": 21
+    },
+    "gemini-3.6-flash": {
+      "input": 0.75,
+      "output": 3.75,
+      "cache_read": 0.075
+    },
+    "gemini-3.7-flash": {
+      "input": 0.75,
+      "output": 3.75,
+      "cache_read": 0.075
+    },
+    "gemini-3.8-flash": {
+      "input": 0.75,
+      "output": 3.75,
+      "cache_read": 0.075
+    },
+    "gemini-4-argon": {
+      "input": 2,
+      "output": 10,
+      "cache_read": 0.1
+    },
+    "gemini-4-carbon": {
+      "input": 2,
+      "output": 10,
+      "cache_read": 0.1
+    },
+    "gemini-4-hydrogen": {
+      "input": 1.5,
+      "output": 7.5,
+      "cache_read": 0.075
+    },
+    "gemini-4-neon": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.15
+    },
+    "gemini-embedding-001": {
+      "input": 0.15,
+      "output": 0
+    },
+    "gemini-embedding-2": {
+      "input": 0.2,
+      "output": 0
+    },
+    "gemini-flash-latest": {
+      "input": 0.75,
+      "output": 3.75,
+      "cache_read": 0.075
+    },
+    "gemini-flash-lite-latest": {
+      "input": 0.3,
+      "output": 2.5,
+      "cache_read": 0.03
+    },
+    "gemini-omni-flash-preview": {
+      "input": 1.5,
+      "output": 17.5
+    },
+    "gemini-pro-latest": {
+      "input": 2,
+      "output": 12,
+      "cache_read": 0.2,
+      "tiers": [
+        {
+          "above": 200000,
+          "input": 4,
+          "output": 18,
+          "cache_read": 0.4
+        }
+      ]
+    },
+    "gemma-4-26b-a4b-it": {
+      "input": 0,
+      "output": 0
+    },
+    "gemma-4-31b-it": {
+      "input": 0,
+      "output": 0
+    },
+    "lyria-3-clip-preview": {
+      "input": 0,
+      "output": 0
+    },
+    "lyria-3-pro-preview": {
+      "input": 0,
+      "output": 0
     }
   }
 }

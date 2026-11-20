@@ -223,6 +223,37 @@ fn boss_hash_matches_service_and_claude_one_hour_price() {
         ..e
     };
     assert!((price - 2.0 * pricing::cost(&input).unwrap()).abs() < 1e-9);
+    for model in [
+        "gemini-3.8-flash-medium",
+        "gemini-4-hydrogen-high",
+        "gemini-4-hydrogen-tiered-high",
+        "gemini-4-neon-xhigh",
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
+    ] {
+        let item = Event {
+            provider: "antigravity".into(),
+            model: model.into(),
+            fresh: 1_000_000,
+            ..Default::default()
+        };
+        assert!(pricing::cost(&item).is_some(), "expected price for {model}");
+    }
+}
+
+#[test]
+fn antigravity_skips_zero_token_steps() {
+    let path = std::path::Path::new("/tmp/brain/sid/.system_generated/logs/transcript_full.jsonl");
+    let line = json!({"source":"MODEL","step_index":1,"created_at":"2026-11-20T10:00:00Z"});
+    assert!(
+        parsers::parse(
+            "antigravity",
+            path,
+            line.to_string().as_bytes(),
+            &mut parsers::initial()
+        )
+        .is_none()
+    );
 }
 
 #[test]

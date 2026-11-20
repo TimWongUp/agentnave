@@ -20,6 +20,9 @@ pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
     e.fresh = number(v, "input_tokens");
     e.read = number(v, "cache_read_tokens");
     e.output = number(v, "output_tokens");
+    if e.total() == 0 {
+        return None;
+    }
     e.unknown = v.get("cache_read_tokens").is_none();
     Some(e)
 }

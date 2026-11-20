@@ -36,6 +36,18 @@ fn lookup(model: &str) -> Option<&'static Value> {
     if let Some(v) = table.get(&name) {
         return Some(v);
     }
+    loop {
+        let stripped = ["-xhigh", "-high", "-medium", "-low", "-max", "-tiered"]
+            .into_iter()
+            .find_map(|suffix| name.strip_suffix(suffix));
+        let Some(base) = stripped else {
+            break;
+        };
+        name = base.to_owned();
+        if let Some(v) = table.get(&name) {
+            return Some(v);
+        }
+    }
     let alias = match name.as_str() {
         "sonnet" => "claude-sonnet-4-5",
         "opus" => "claude-opus-4-5",
