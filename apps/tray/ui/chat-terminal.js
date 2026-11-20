@@ -90,6 +90,9 @@ const ChatTerminal = (() => {
     for (const id of t.frames.keys()) if (!byId(id)) dropFrame(id);
   }
 
+  // The CLI's name, with the named account it runs as after it.
+  const cliLabel = (x) => AN.cliName(x.provider) + (x.account_label ? L(`（${x.account_label}）`, ` (${x.account_label})`) : "");
+
   // Agents that have never confirmed a workspace, shaped like workspaces so the list places them.
   function pending() {
     return t.list
@@ -99,7 +102,7 @@ const ChatTerminal = (() => {
         terminal: x.id,
         host: x.provider,
         app: x.provider,
-        label: AN.cliName(x.provider),
+        label: cliLabel(x),
         display_title: x.display_title ?? null,
         title: x.display_title || L("新 agent", "New agent"),
         status: x.exit == null ? "running" : "idle",
@@ -148,7 +151,7 @@ const ChatTerminal = (() => {
 
   // ---------------------------------------------------------------- new agents
   async function clis() {
-    if (!t.clis) t.clis = (await AN.load("/app/terminal/clis")).clis.map((c) => c.provider);
+    if (!t.clis) t.clis = (await AN.load("/app/terminal/clis")).clis;
     return t.clis;
   }
   // Pick a CLI to start in `cwd`, or in a folder picked first when there is none.
@@ -161,12 +164,16 @@ const ChatTerminal = (() => {
       Actions.openMenu(position, [{ label: L("没有检测到已安装的 CLI", "No installed CLI found"), run() {} }]);
       return;
     }
+    // A CLI with named accounts offers each as its own entry after the default one.
     Actions.openMenu(
       position,
-      found.map((provider) => ({
-        label: h("span.ctx-cli", {}, AN.hostTile(provider), AN.cliName(provider)),
-        run: () => start(provider, cwd),
-      })),
+      found.flatMap(({ provider, accounts }) => [
+        { label: h("span.ctx-cli", {}, AN.hostTile(provider), AN.cliName(provider)), run: () => start(provider, cwd) },
+        ...(accounts || []).map((account) => ({
+          label: h("span.ctx-cli", {}, AN.hostTile(provider), L(`${AN.cliName(provider)}（${account.label}）`, `${AN.cliName(provider)} (${account.label})`)),
+          run: () => start(provider, cwd, account.id),
+        })),
+      ]),
     );
   }
   // A failed request says why, as the office's other actions do.
@@ -175,7 +182,7 @@ const ChatTerminal = (() => {
     if (!response.ok) Actions.say(result.error || L("操作失败", "Failed"), true);
     return response.ok ? result : null;
   }
-  async function start(provider, cwd) {
+  async function start(provider, cwd, account) {
     try {
       if (!cwd) {
         const picked = await reply(await act("/app/terminal/pick"));
@@ -183,7 +190,7 @@ const ChatTerminal = (() => {
         if (!cwd) return;
       }
       const { cols, rows } = measureSize();
-      const result = await reply(await act("/app/terminal/start", JSON.stringify({ provider, cwd, cols, rows, light: light() })));
+      const result = await reply(await act("/app/terminal/start", JSON.stringify({ provider, account, cwd, cols, rows, light: light() })));
       if (!result) return;
       t.openOnce = PREFIX + result.session.id;
       await refresh();
@@ -423,7 +430,7 @@ const ChatTerminal = (() => {
     el.drIco.dataset.key = `term:${term.provider}`;
     el.drIco.replaceChildren(AN.hostTile(term.provider));
     setText(el.drTitle, "boss");
-    const cli = AN.cliName(term.provider);
+    const cli = cliLabel(term);
     setText(el.drSub, term.pending_results ? L(`${term.pending_results} 项结果待 boss 收取`, `${term.pending_results} results waiting for boss`) : term.exit == null ? cli : L(`${cli} · 已结束`, `${cli} · Exited`));
     setAttr(el.drSub, "title", term.cwd || null);
     el.drAll.hidden = true;

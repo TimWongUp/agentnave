@@ -54,7 +54,7 @@ fn old_database_displays_views_but_all_mutations_require_the_service_upgrade() {
 fn future_schema_is_rejected_for_reading_and_writing() {
     let dir = tempfile::tempdir().unwrap();
     let connection = create(dir.path());
-    connection.pragma_update(None, "user_version", 5).unwrap();
+    connection.pragma_update(None, "user_version", 6).unwrap();
     assert!(read(dir.path()).is_err());
     assert!(write(dir.path()).is_err());
 }

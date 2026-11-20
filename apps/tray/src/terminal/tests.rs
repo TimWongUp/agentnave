@@ -189,6 +189,7 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -430,6 +431,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -666,6 +668,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_searched: None,
             started: std::time::SystemTime::now(),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -680,13 +683,14 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_searched: None,
             started: std::time::SystemTime::now(),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
     }
 
     let mut calls = 0usize;
-    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
+    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
@@ -694,14 +698,14 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(calls, 2);
 
     // Within the throttle window, neither unlocated terminal scans again.
-    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
+    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
     assert_eq!(calls, 2);
 
     // Once the window expires and records are located, both resolve and stay unthrottled.
-    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _| {
+    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _, _| {
         calls += 1;
         (
             Some(format!("{provider}-id")),
@@ -716,7 +720,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(resolved[&1].text, "codex title");
     assert_eq!(resolved[&2].text, "claude title");
 
-    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _| {
+    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _, _| {
         calls += 1;
         (
             None,
@@ -755,6 +759,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now - Duration::from_secs(20),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -769,6 +774,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now - Duration::from_secs(15),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -783,6 +789,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now,
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -791,7 +798,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
     // Terminal 1's `s1` is passed in `exclude`; Terminal 2 claims `s2` and adds it to `exclude`
     // immediately so Terminal 3 sees both `s1` and `s2` excluded in the same pass.
     let mut seen: Vec<(Option<String>, Vec<String>)> = Vec::new();
-    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude| {
+    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude, _| {
         let mut ex: Vec<String> = exclude.iter().cloned().collect();
         ex.sort();
         seen.push((native.map(str::to_owned), ex));
@@ -845,6 +852,7 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -988,6 +996,7 @@ fn blocked_wakeup_is_retried_once_unblocked() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -1053,3 +1062,5 @@ fn status_probe_is_answered_once_even_when_output_is_replayed() {
 
 #[cfg(unix)]
 mod live;
+
+mod accounts;

@@ -35,27 +35,51 @@ fn filter_active(mut providers: Value, now: chrono::DateTime<chrono::Utc>) -> Va
         let Some(object) = entry.as_object_mut() else {
             return false;
         };
-        if object
-            .get("default")
-            .is_some_and(|record| !is_active(record, now))
-        {
-            object.remove("default");
-        }
-        for key in ["models", "groups"] {
-            if let Some(records) = object.get_mut(key).and_then(Value::as_object_mut) {
-                records.retain(|_, record| is_active(record, now));
-                if records.is_empty() {
-                    object.remove(key);
-                }
-            } else {
-                object.remove(key);
+        prune(object, now);
+        // A named account keeps its own records under `accounts.<id>`, shaped like the CLI's.
+        if let Some(accounts) = object.get_mut("accounts").and_then(Value::as_object_mut) {
+            accounts.retain(|_, account| {
+                let Some(account) = account.as_object_mut() else {
+                    return false;
+                };
+                prune(account, now);
+                holds_records(account)
+            });
+            if accounts.is_empty() {
+                object.remove("accounts");
             }
+        } else {
+            object.remove("accounts");
         }
-        object.contains_key("default")
-            || object.contains_key("models")
-            || object.contains_key("groups")
+        holds_records(object) || object.contains_key("accounts")
     });
     Value::Object(providers.clone())
+}
+
+/// Drops what no longer blocks dispatch from a `default` / `models` / `groups` object.
+fn prune(object: &mut serde_json::Map<String, Value>, now: chrono::DateTime<chrono::Utc>) {
+    if object
+        .get("default")
+        .is_some_and(|record| !is_active(record, now))
+    {
+        object.remove("default");
+    }
+    for key in ["models", "groups"] {
+        if let Some(records) = object.get_mut(key).and_then(Value::as_object_mut) {
+            records.retain(|_, record| is_active(record, now));
+            if records.is_empty() {
+                object.remove(key);
+            }
+        } else {
+            object.remove(key);
+        }
+    }
+}
+
+fn holds_records(object: &serde_json::Map<String, Value>) -> bool {
+    ["default", "models", "groups"]
+        .iter()
+        .any(|key| object.contains_key(*key))
 }
 
 fn is_active(record: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
@@ -85,7 +109,7 @@ fn same_file(_file: &File, path: &Path) -> bool {
     path.exists()
 }
 
-/// What one clear removes: the CLI's own record, one model's, or one quota group's.
+/// What one clear removes: the account's or CLI's own record, one model's, or one quota group's.
 #[derive(Clone, Copy)]
 pub enum Scope<'a> {
     Cli,
@@ -93,7 +117,13 @@ pub enum Scope<'a> {
     Group(&'a str),
 }
 
-pub fn clear(root: &Path, provider: &str, scope: Scope) -> Result<(), String> {
+/// `account` names a named account's records under the CLI; None is the default account's.
+pub fn clear(
+    root: &Path,
+    provider: &str,
+    account: Option<&str>,
+    scope: Scope,
+) -> Result<(), String> {
     let lock_path = root.join("locks/provider-health.lock");
     fs::create_dir_all(lock_path.parent().unwrap()).map_err(|e| e.to_string())?;
     for _ in 0..5 {
@@ -115,7 +145,7 @@ pub fn clear(root: &Path, provider: &str, scope: Scope) -> Result<(), String> {
         if !same_file(&lock, &lock_path) {
             continue;
         }
-        let result = clear_locked(root, provider, scope);
+        let result = clear_locked(root, provider, account, scope);
         #[cfg(unix)]
         let _ = fs::remove_file(&lock_path);
         drop(lock);
@@ -126,7 +156,12 @@ pub fn clear(root: &Path, provider: &str, scope: Scope) -> Result<(), String> {
     Err("CLI 冷却状态正忙，请重试".into())
 }
 
-fn clear_locked(root: &Path, provider: &str, scope: Scope) -> Result<(), String> {
+fn clear_locked(
+    root: &Path,
+    provider: &str,
+    account: Option<&str>,
+    scope: Scope,
+) -> Result<(), String> {
     let bytes = match fs::read(root.join(FILE)) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -140,7 +175,10 @@ fn clear_locked(root: &Path, provider: &str, scope: Scope) -> Result<(), String>
         .as_object_mut()
         .ok_or("冷却文件格式错误")?;
     let changed = match providers.get_mut(provider) {
-        Some(item) => clear_item(item, scope),
+        Some(item) => match account {
+            Some(account) => clear_account(item, account, scope),
+            None => clear_item(item, scope),
+        },
         None => false,
     };
     if changed && providers.get(provider).is_some_and(is_empty_record) {
@@ -152,6 +190,27 @@ fn clear_locked(root: &Path, provider: &str, scope: Scope) -> Result<(), String>
     Ok(())
 }
 
+/// Take the scope's record out of one named account's entry; true when something was removed.
+/// The CLI's own records and the other accounts' stay as they are.
+fn clear_account(item: &mut Value, account: &str, scope: Scope) -> bool {
+    let Some(accounts) = item.get_mut("accounts").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let Some(entry) = accounts.get_mut(account) else {
+        return false;
+    };
+    let changed = clear_item(entry, scope);
+    if changed && is_empty_record(entry) {
+        accounts.remove(account);
+    }
+    if accounts.is_empty()
+        && let Some(object) = item.as_object_mut()
+    {
+        object.remove("accounts");
+    }
+    changed
+}
+
 /// Take the scope's record out of one provider's entry; true when something was removed.
 fn clear_item(item: &mut Value, scope: Scope) -> bool {
     // A version 1 record is the CLI's own and has no models or groups.
@@ -159,7 +218,11 @@ fn clear_item(item: &mut Value, scope: Scope) -> bool {
         if !matches!(scope, Scope::Cli) {
             return false;
         }
+        let accounts = item.get("accounts").cloned();
         *item = json!({});
+        if let Some(accounts) = accounts {
+            item["accounts"] = accounts;
+        }
         return true;
     }
     let Some(object) = item.as_object_mut() else {
@@ -213,13 +276,21 @@ pub(crate) fn request(
         if !payload["group"].is_null() && payload["group"].as_str().is_none_or(str::is_empty) {
             return Response::error(400, "需要有效的额度组");
         }
+        if !payload["account"].is_null()
+            && !payload["account"]
+                .as_str()
+                .is_some_and(crate::accounts::valid_id)
+        {
+            return Response::error(400, "需要有效的账号");
+        }
+        let account = payload["account"].as_str();
         let scope = match (payload["model"].as_str(), payload["group"].as_str()) {
             (Some(_), Some(_)) => return Response::error(400, "模型与额度组只能选一个"),
             (Some(model), None) => Scope::Model(model),
             (None, Some(group)) => Scope::Group(group),
             (None, None) => Scope::Cli,
         };
-        match crate::provider_health::clear(root, provider, scope) {
+        match crate::provider_health::clear(root, provider, account, scope) {
             Ok(()) => Response::json(&json!({"cleared": true})),
             Err(error) => Response::error(400, &error),
         }
@@ -258,7 +329,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(FILE);
         fs::write(&path, r#"{"version":1,"providers":{"claude":{"models":{"a":{"code":"auth","until":null},"b":{"code":"billing","until":"future"}}}}}"#).unwrap();
-        clear(root.path(), "claude", Scope::Model("a")).unwrap();
+        clear(root.path(), "claude", None, Scope::Model("a")).unwrap();
         assert!(read(root.path())["claude"]["models"].get("a").is_none());
         assert_eq!(
             read(root.path())["claude"]["models"]["b"]["code"],
@@ -280,7 +351,7 @@ mod tests {
             shown["antigravity"]["groups"]["Gemini Models"]["reset"],
             "a"
         );
-        clear(root.path(), "antigravity", Scope::Model("m")).unwrap();
+        clear(root.path(), "antigravity", None, Scope::Model("m")).unwrap();
         assert!(read(root.path())["antigravity"].get("models").is_none());
         assert_eq!(
             read(root.path())["antigravity"]["groups"]
@@ -289,7 +360,13 @@ mod tests {
                 .len(),
             2
         );
-        clear(root.path(), "antigravity", Scope::Group("Gemini Models")).unwrap();
+        clear(
+            root.path(),
+            "antigravity",
+            None,
+            Scope::Group("Gemini Models"),
+        )
+        .unwrap();
         let left = read(root.path());
         assert!(left["antigravity"]["groups"].get("Gemini Models").is_none());
         assert_eq!(
@@ -299,6 +376,7 @@ mod tests {
         clear(
             root.path(),
             "antigravity",
+            None,
             Scope::Group("Claude and GPT models"),
         )
         .unwrap();
@@ -309,12 +387,60 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(FILE);
         fs::write(&path, r#"{"version":1,"providers":{"claude":{"code":"auth","until":"future"},"grok":{"code":"quota","until":"future"}}}"#).unwrap();
-        clear(root.path(), "claude", Scope::Cli).unwrap();
+        clear(root.path(), "claude", None, Scope::Cli).unwrap();
         assert!(read(root.path()).get("claude").is_none());
         assert_eq!(read(root.path())["grok"]["code"], "quota");
         let future = r#"{"version":2,"providers":{"grok":{}}}"#;
         fs::write(&path, future).unwrap();
-        assert!(clear(root.path(), "grok", Scope::Cli).is_err());
+        assert!(clear(root.path(), "grok", None, Scope::Cli).is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), future);
+    }
+    #[test]
+    fn a_named_account_is_filtered_and_cleared_on_its_own() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(FILE);
+        let now = chrono::Utc::now();
+        let live = |hours: i64| json!({"code": "quota", "until": (now + chrono::Duration::hours(hours)).to_rfc3339()});
+        let expired =
+            json!({"code": "quota", "until": (now - chrono::Duration::hours(1)).to_rfc3339()});
+        let document = json!({"version": 1, "providers": {"claude": {
+            "default": {"code": "auth", "until": null},
+            "accounts": {
+                "a1": {"default": {"code": "auth", "until": null}, "models": {"opus": live(1)}},
+                "a2": {"default": expired}
+            }
+        }}});
+        fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let active = filter_active(read(root.path()), now);
+        assert_eq!(active["claude"]["default"]["code"], "auth");
+        assert_eq!(
+            active["claude"]["accounts"]["a1"]["default"]["code"],
+            "auth"
+        );
+        assert!(active["claude"]["accounts"].get("a2").is_none());
+
+        clear(root.path(), "claude", Some("a1"), Scope::Cli).unwrap();
+        let left = read(root.path());
+        assert_eq!(left["claude"]["default"]["code"], "auth");
+        assert!(left["claude"]["accounts"]["a1"].get("default").is_none());
+        assert!(
+            left["claude"]["accounts"]["a1"]["models"]
+                .get("opus")
+                .is_some()
+        );
+
+        // Clearing the default account keeps every named account's records.
+        clear(root.path(), "claude", None, Scope::Cli).unwrap();
+        let left = read(root.path());
+        assert!(left["claude"].get("default").is_none());
+        assert!(
+            left["claude"]["accounts"]["a1"]["models"]
+                .get("opus")
+                .is_some()
+        );
+
+        clear(root.path(), "claude", Some("a1"), Scope::Model("opus")).unwrap();
+        clear(root.path(), "claude", Some("a2"), Scope::Cli).unwrap();
+        assert!(read(root.path())["claude"]["accounts"].get("a1").is_none());
     }
 }
