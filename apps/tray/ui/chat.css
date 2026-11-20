@@ -88,8 +88,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .bar-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .bar-toggle .pane { fill: currentColor; stroke: none; opacity: 0; }
 .bar-toggle[aria-expanded="true"] .pane { opacity: 0.3; }
-/* settings covers the office; the buttons keep their places so the bar does not shift */
-body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
+/* settings and usage cover the office; the buttons keep their places so the bar does not shift */
+body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visibility: hidden; }
 /* The queries below are the exact complements of chat-state.js's `narrow` and `overlay`, so no fractional width falls in a gap.
    Folded columns leave the grid (--side-col, --conv-col are their tracks) and wait off to the side.
    Hovering the button or the window edge lays one over the office; the dragged --side-w stays on
@@ -852,8 +852,8 @@ dialog.act::backdrop { background: #0006; }
 .tp-im .voice-read:not(:disabled):hover, .tp-im .voice-read[aria-pressed="true"] { opacity: 1; }
 
 
-.office-settings { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
-.office-settings[hidden] { display: none; }
+:is(.office-settings, .office-usage) { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
+:is(.office-settings, .office-usage)[hidden] { display: none; }
 button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .pill.act { cursor: pointer; }
 .iso-card { display: grid; gap: 4px; margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; color: var(--soft); user-select: text; }
