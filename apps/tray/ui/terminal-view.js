@@ -32,6 +32,8 @@ window.TerminalView = (() => {
   // that subscribed with mode 2031 (Claude Code) when the App changes appearance, so they redraw
   // in the matching theme.
   const scheme = () => `\x1b[?997;${light() ? 2 : 1}n`;
+  // xterm emits these protocol reports through the same callbacks as keyboard input.
+  const automatic = data => /^(?:\x1b\[(?:\??\d+;\d+R|[?>]?\d*(?:;\d+)*c|0n|\?997;[12]n|[IO]|\??\d+;[0-4]\$y|[468];\d+;\d+t|<\d+;\d+;\d+[Mm]|\d+;\d+;\d+M)|\x1b\[M[\s\S]{3}|\x1b\](?:4;\d+|1[012]);rgb:[0-9a-fA-F/]+(?:\x07|\x1b\\)|\x1bP[01]\$r[\s\S]*\x1b\\)$/.test(data);
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const act = (path, body, type = "application/json") => fetch(path, {
     method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": type }, body,
@@ -84,10 +86,10 @@ window.TerminalView = (() => {
         this.send(scheme(), false, true);
         return true;
       });
-      this.term.onData(data => this.send(data, false, /^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data) || (this.parsing && !this.userEvent), this.userEvent === "paste"));
-      this.term.onBinary(data => this.send(data, true, true));
-      this.element.addEventListener?.("keydown", () => { this.userEvent = "key"; queueMicrotask(() => { this.userEvent = false; }); }, true);
-      this.element.addEventListener?.("paste", () => { this.userEvent = "paste"; queueMicrotask(() => { this.userEvent = false; }); }, true);
+      this.term.onData(data => this.send(data, false, automatic(data),
+        this.pasting || data.startsWith("\x1b[200~") || (data.length > 1 && !data.startsWith("\x1b"))));
+      this.term.onBinary(data => this.send(data, true, automatic(data)));
+      this.element.addEventListener?.("paste", () => { this.pasting = true; queueMicrotask(() => { this.pasting = false; }); }, true);
       this.term.onResize(({ cols, rows }) => {
         if (this.running) act(`/app/terminal/resize?session=${this.id}`, JSON.stringify({ cols, rows })).catch(() => {});
       });
@@ -155,8 +157,7 @@ window.TerminalView = (() => {
           try {
             await new Promise(resolve => {
               this.writeDone = resolve;
-              this.parsing = true;
-              this.term.write(bytes, () => { this.parsing = false; resolve(); });
+              this.term.write(bytes, resolve);
             });
           } finally {
             this.writeDone = null;

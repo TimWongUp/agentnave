@@ -791,7 +791,14 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
         if blocked {
             assert!(output_until(&session, "blocked").0.contains("blocked"));
         }
-        assert_eq!(session.finish_wakeup(), !blocked);
+        assert_eq!(
+            session.finish_wakeup(),
+            if blocked {
+                super::session::WakeupOutcome::Blocked
+            } else {
+                super::session::WakeupOutcome::Delivered
+            }
+        );
         let (text, _) = output_until(&session, "done");
         let expected = if blocked {
             "111 108 100 233 128 154 231 159 165 127 127 120 121 122"
@@ -817,6 +824,80 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
     };
     run(false);
     run(true);
+}
+
+#[cfg(unix)]
+#[test]
+fn blocked_wakeup_is_retried_once_unblocked() {
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("connections")).unwrap();
+    std::fs::create_dir(temp.path().join("inbox")).unwrap();
+    let session = Session::start(shell("stty raw -echo; printf '\\033]7501;state=working\\007ready'; dd bs=1 count=1 of=/dev/null 2>/dev/null; printf '\\033]7501;state=blocked\\007blocked'; sleep 1; printf '\\033]7501;state=idle\\007idle'; sleep 30"), 80, 24).unwrap();
+    assert!(output_until(&session, "ready").0.contains("ready"));
+    let pid = session.pid().unwrap();
+    let key = "s-11111111111111111111111111111111";
+    std::fs::write(
+        temp.path()
+            .join("connections")
+            .join(format!("{pid}-test.json")),
+        json!({"bosses":[key]}).to_string(),
+    )
+    .unwrap();
+    let current = std::process::id();
+    std::fs::write(temp.path().join("inbox").join(format!("{current}.json")), json!({"version":1,"pid":current,"bosses":{key:{"waiting":false,"items":[{"key":"item","kind":"task_end"}]}}}).to_string()).unwrap();
+    let terminals = Terminals::default();
+    terminals.lock().open.push(Running {
+        id: 1,
+        provider: "claude".into(),
+        cwd: temp.path().into(),
+        session: session.clone(),
+        workspaces: Vec::new(),
+        native: None,
+        title_located: false,
+        title_searched: None,
+        started: std::time::SystemTime::now(),
+        pending: 0,
+    });
+    let (mut attempted, mut seen, mut failed) = (HashSet::new(), HashMap::new(), HashSet::new());
+    session.record_writes();
+    super::wakeup::scan(
+        &terminals,
+        temp.path(),
+        &mut attempted,
+        &mut seen,
+        &mut failed,
+    );
+    assert!(!attempted.contains("item"));
+    assert!(failed.contains("item"));
+    assert!(output_until(&session, "idle").0.contains("idle"));
+    super::wakeup::scan(
+        &terminals,
+        temp.path(),
+        &mut attempted,
+        &mut seen,
+        &mut failed,
+    );
+    assert!(attempted.contains("item"));
+    assert!(!failed.contains("item"));
+    super::wakeup::scan(
+        &terminals,
+        temp.path(),
+        &mut attempted,
+        &mut seen,
+        &mut failed,
+    );
+    let writes = session.recorded_writes();
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|b| b.windows(11).any(|w| w == b"[AgentNave]"))
+            .count(),
+        2
+    );
+    assert_eq!(writes.iter().filter(|b| b.as_slice() == b"\r").count(), 1);
+    session.stop();
 }
 
 #[cfg(unix)]
