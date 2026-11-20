@@ -1,5 +1,5 @@
 use super::Event;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::sync::{LazyLock, RwLock};
 
 static TABLE: LazyLock<RwLock<Value>> = LazyLock::new(|| {
@@ -13,16 +13,17 @@ static TABLE: LazyLock<RwLock<Value>> = LazyLock::new(|| {
 pub(super) fn merged(cache: Option<&Value>) -> Value {
     let mut bundled: Value =
         serde_json::from_str(include_str!("pricing_bundled.json")).expect("bundled usage prices");
+    let models = bundled["models"].as_object_mut().expect("bundled models");
     if let Some(cache) = cache.filter(|v| super::pricing_refresh::valid_cache(v)) {
-        bundled["models"]
-            .as_object_mut()
-            .expect("bundled models")
-            .extend(
-                cache["models"]
-                    .as_object()
-                    .expect("validated models")
-                    .clone(),
-            );
+        models.extend(
+            cache["models"]
+                .as_object()
+                .expect("validated models")
+                .clone(),
+        );
+    }
+    for (name, price) in models.clone() {
+        models.entry(squash(&name)).or_insert(price);
     }
     bundled
 }
@@ -31,18 +32,22 @@ pub(super) fn update(cache: &Value) {
     *TABLE.write().unwrap_or_else(|e| e.into_inner()) = merged(Some(cache));
 }
 
-fn lookup<'a>(table: &'a Value, model: &str) -> Option<&'a Value> {
-    let table = table["models"].as_object()?;
-    let mut name = model.to_ascii_lowercase();
-    if let Some(v) = table.get(&name) {
-        return Some(v);
-    }
-    for prefix in ["anthropic/", "openai/", "google/"] {
-        if let Some(s) = name.strip_prefix(prefix) {
-            name = s.to_owned();
-            break;
+/// The name without a trailing `-YYMMDD` or `-YYYYMMDD` stamp, `.` written as `-`:
+/// the spelling providers' own model lists disagree on.
+fn squash(name: &str) -> String {
+    let base = match name.rsplit_once('-') {
+        Some((base, stamp))
+            if matches!(stamp.len(), 6 | 8) && stamp.bytes().all(|c| c.is_ascii_digit()) =>
+        {
+            base
         }
-    }
+        _ => name,
+    };
+    base.replace('.', "-")
+}
+
+fn lookup_name<'a>(table: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
+    let mut name = name.to_owned();
     if let Some(v) = table.get(&name) {
         return Some(v);
     }
@@ -62,9 +67,19 @@ fn lookup<'a>(table: &'a Value, model: &str) -> Option<&'a Value> {
         return Some(v);
     }
     loop {
-        let stripped = ["-xhigh", "-high", "-medium", "-low", "-max", "-tiered"]
-            .into_iter()
-            .find_map(|suffix| name.strip_suffix(suffix));
+        let stripped = [
+            "-xhigh",
+            "-high",
+            "-medium",
+            "-low",
+            "-max",
+            "-tiered",
+            "-build-fast",
+            "-build",
+            "-free",
+        ]
+        .into_iter()
+        .find_map(|suffix| name.strip_suffix(suffix));
         let Some(base) = stripped else {
             break;
         };
@@ -79,7 +94,20 @@ fn lookup<'a>(table: &'a Value, model: &str) -> Option<&'a Value> {
         "haiku" => "claude-haiku-4-5",
         _ => &name,
     };
-    table.get(alias)
+    table.get(alias).or_else(|| table.get(&squash(alias)))
+}
+
+/// A model is looked up by its name as written, then without each leading routing
+/// segment (`magpie/trae-cn/glm-5.3-flash-max` ends at `glm-5.3-flash-max`).
+fn lookup<'a>(table: &'a Value, model: &str) -> Option<&'a Value> {
+    let table = table["models"].as_object()?;
+    let mut name = model.to_ascii_lowercase();
+    loop {
+        if let Some(v) = lookup_name(table, &name) {
+            return Some(v);
+        }
+        name = name.split_once('/')?.1.to_owned();
+    }
 }
 
 pub(super) fn cost(e: &Event) -> Option<f64> {

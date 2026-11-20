@@ -1,5 +1,6 @@
 //! Local CLI usage, owned entirely by the tray.
 mod db;
+mod frames;
 mod parsers;
 mod pricing;
 mod pricing_refresh;
@@ -7,6 +8,7 @@ mod query;
 mod scan;
 #[cfg(test)]
 mod tests;
+mod zcode;
 
 use crate::{data::Reader, response::Response};
 use serde_json::json;

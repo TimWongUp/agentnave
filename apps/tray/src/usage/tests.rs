@@ -2,13 +2,22 @@ use super::*;
 use serde_json::json;
 use std::path::Path;
 
+fn parse_all(
+    provider: &str,
+    path: &str,
+    v: serde_json::Value,
+    state: &mut serde_json::Value,
+) -> Vec<Event> {
+    parsers::parse(provider, Path::new(path), v.to_string().as_bytes(), state)
+}
+
 fn parse(
     provider: &str,
     path: &str,
     v: serde_json::Value,
     state: &mut serde_json::Value,
 ) -> Option<Event> {
-    parsers::parse(provider, Path::new(path), v.to_string().as_bytes(), state)
+    parse_all(provider, path, v, state).into_iter().next()
 }
 
 #[test]
@@ -252,7 +261,7 @@ fn antigravity_skips_zero_token_steps() {
             line.to_string().as_bytes(),
             &mut parsers::initial()
         )
-        .is_none()
+        .is_empty()
     );
 }
 
@@ -357,4 +366,236 @@ fn invalid_pricing_does_not_replace_cache_and_preview_is_isolated() {
         crate::preferences::dir().join("pricing-cache.json")
     );
     assert_ne!(pricing_refresh::cache_path(dir.path(), true), path);
+}
+
+#[test]
+fn pi_filters_fork_inheritance_and_keeps_input_uncached() {
+    let mut state = json!({});
+    let path = "/sessions/proj/2026-11-20T10-00-00-000Z_child.jsonl";
+    let header = json!({"type":"session","id":"child","timestamp":"2026-11-20T10:00:00.000Z","parentSession":"parent.jsonl"});
+    assert!(parse("pi", path, header, &mut state).is_none());
+    let change = json!({"type":"model_change","id":"m1","timestamp":"2026-11-20T10:00:00.100Z","provider":"p","modelId":"glm-5.3"});
+    assert!(parse("pi", path, change, &mut state).is_none());
+    let message = |id: &str, at: &str, input: i64| json!({"type":"message","id":id,"timestamp":at,"message":{"role":"assistant","model":"glm-5.3","usage":{"input":input,"output":7,"cacheRead":30,"cacheWrite":5}}});
+    let old = message("e1", "2026-11-20T09:59:59.000Z", 10);
+    assert!(parse("pi", path, old, &mut state).is_none());
+    let call = message("e2", "2026-11-20T10:00:05.250Z", 100);
+    let e = parse("pi", path, call, &mut state).unwrap();
+    assert_eq!(
+        (e.fresh, e.read, e.write5, e.output, e.session.as_str()),
+        (100, 30, 5, 7, "child")
+    );
+    assert!(e.key.starts_with("pi:e2:"));
+    let usage = json!({"type":"usage","id":"u1","timestamp":"2026-11-20T10:00:06.000Z","provider":"p","model":"deepseek-v4-flash","usage":{"input":4,"output":1,"cacheRead":0,"cacheWrite":0}});
+    assert_eq!(
+        parse("pi", path, usage, &mut state).unwrap().model,
+        "deepseek-v4-flash"
+    );
+    let empty = json!({"type":"compaction","id":"c1","timestamp":"2026-11-20T10:00:07.000Z","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}});
+    assert!(parse("pi", path, empty, &mut state).is_none());
+}
+
+#[test]
+fn codebuddy_subtracts_cache_and_replaces_by_message_id() {
+    let path = "/projects/proj/parent/subagents/agent-1.jsonl";
+    let line = |output: i64| json!({"id":"line","timestamp":1_795_000_000_000_i64,"sessionId":"child","providerData":{"messageId":"reply","model":"glm-5.3-flash","usage":{"inputTokens":1000,"outputTokens":output,"inputTokensDetails":[{"cached_tokens":300}],"cacheCreationTokens":100}}});
+    let mut state = json!({});
+    let first = parse("codebuddy", path, line(5), &mut state).unwrap();
+    assert_eq!(
+        (first.fresh, first.read, first.write5, first.root.as_str()),
+        (600, 300, 100, "parent")
+    );
+    let last = parse("codebuddy", path, line(9), &mut state).unwrap();
+    assert_eq!((first.key.as_str(), last.output), ("codebuddy:reply", 9));
+    let temp = tempfile::tempdir().unwrap();
+    let conn = db::open(temp.path()).unwrap();
+    db::save(&conn, &first).unwrap();
+    db::save(&conn, &last).unwrap();
+    let rows = db::events(&conn, 0, i64::MAX).unwrap();
+    assert_eq!((rows.len(), rows[0].output), (1, 9));
+}
+
+fn zstd_frame(lines: &[serde_json::Value]) -> Vec<u8> {
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    ruzstd::encoding::compress_to_vec(
+        text.as_bytes(),
+        ruzstd::encoding::CompressionLevel::Uncompressed,
+    )
+}
+
+#[test]
+fn deepseek_reads_zstd_frames_skips_seed_and_marks_unknown_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("sessions/proj/session-b");
+    std::fs::create_dir_all(&dir).unwrap();
+    let old = dir.join("session.v3.jsonl.zstd");
+    std::fs::write(
+        &old,
+        zstd_frame(&[json!({"type":"session","version":3,"id":"session-b"})]),
+    )
+    .unwrap();
+    let file = dir.join("session.v4.jsonl.zstd");
+    let now = chrono::Utc::now().timestamp_millis();
+    let reply = |seq: i64, cache: bool| {
+        let mut usage = json!({"inputTokens":50,"outputTokens":3});
+        if cache {
+            usage["cacheReadTokens"] = json!(40);
+        }
+        json!({"type":"assistant/message","seq":seq,"time":now,"data":{"usage":usage,"message":{"source":{"model":"deepseek-flash","provider":"x"}}}})
+    };
+    let mut bytes = zstd_frame(&[
+        json!({"type":"session","version":4,"id":"session-b","isSeeded":true,"delegationDepth":1,"parentSession":"session-a"}),
+        reply(0, true),
+        json!({"type":"session/end-seed","seq":1,"time":now,"data":{"inherited":true}}),
+    ]);
+    bytes.extend(zstd_frame(&[reply(2, false)]));
+    std::fs::write(&file, &bytes).unwrap();
+    let mut conn = db::open(temp.path()).unwrap();
+    scan::file(&mut conn, "deepseek", &file).unwrap();
+    bytes.extend(zstd_frame(&[reply(3, true)]));
+    bytes.extend_from_slice(&[0x28, 0xb5, 0x2f, 0xfd, 1]);
+    std::fs::write(&file, &bytes).unwrap();
+    scan::file(&mut conn, "deepseek", &file).unwrap();
+    let rows = db::events(&conn, 0, i64::MAX).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].unknown && !rows[1].unknown);
+    assert_eq!(
+        (rows[1].fresh, rows[1].read, rows[1].root.as_str()),
+        (50, 40, "session-a")
+    );
+    let mut found = Vec::new();
+    scan::discover(&temp.path().join("sessions"), "deepseek", 3, &mut found);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].1, file);
+}
+
+#[test]
+fn grok_expands_models_and_skips_fork_copy() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("cwd/sid");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("summary.json"),
+        json!({"created_at":"2026-11-20T10:00:00.900Z","current_model_id":"grok-4.7","parent_session_id":"p","session_kind":"fork"}).to_string(),
+    )
+    .unwrap();
+    let path = dir.join("updates.jsonl");
+    let turn = |seconds: i64, usage: serde_json::Value| json!({"timestamp":seconds,"params":{"_meta":{"eventId":"sid-1"},"update":{"sessionUpdate":"turn_completed","prompt_id":format!("p-{seconds}"),"usage":usage}}});
+    let mut state = json!({});
+    let two = json!({"inputTokens":300,"outputTokens":30,"modelUsage":{
+        "grok-4.7-build":{"inputTokens":200,"outputTokens":20,"cachedReadTokens":150,"cacheCreationTokens":10},
+        "grok-4.7-build-fast":{"inputTokens":100,"outputTokens":10,"cachedReadTokens":0}}});
+    let copied = turn(1_795_168_800 - 3600, two.clone());
+    assert!(parse_all("grok", path.to_str().unwrap(), copied, &mut state).is_empty());
+    let events = parse_all(
+        "grok",
+        path.to_str().unwrap(),
+        turn(1_795_168_800 + 5, two),
+        &mut state,
+    );
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].key, "grok:sid:sid-1:grok-4.7-build");
+    assert_eq!(
+        (events[0].fresh, events[0].read, events[0].write5),
+        (40, 150, 10)
+    );
+    assert_eq!(events[1].fresh, 100);
+    let single = turn(
+        1_795_168_900,
+        json!({"inputTokens":9,"outputTokens":1,"cachedReadTokens":4}),
+    );
+    let e = parse_all("grok", path.to_str().unwrap(), single, &mut state);
+    assert_eq!(
+        (e[0].model.as_str(), e[0].fresh, e[0].read),
+        ("grok-4.7", 5, 4)
+    );
+}
+
+#[test]
+fn zcode_reads_database_incrementally_without_copies_or_errors() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("db.sqlite");
+    let now = chrono::Utc::now().timestamp_millis();
+    {
+        let source = rusqlite::Connection::open(&path).unwrap();
+        source
+            .execute_batch(
+                "PRAGMA journal_mode=WAL;
+                CREATE TABLE session(id TEXT PRIMARY KEY, parent_id TEXT);
+                CREATE TABLE message(id TEXT PRIMARY KEY, session_id TEXT, time_updated INTEGER, data TEXT);
+                INSERT INTO session VALUES ('root', NULL), ('child', 'root');",
+            )
+            .unwrap();
+        let put = |id: &str, session: &str, data: serde_json::Value| {
+            source
+                .execute(
+                    "INSERT INTO message VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![id, session, now, data.to_string()],
+                )
+                .unwrap();
+        };
+        let tokens =
+            json!({"input":1000,"output":20,"reasoning":5,"cache":{"read":400,"write":100}});
+        let reply = |extra: serde_json::Value| {
+            let mut data = json!({"role":"assistant","modelId":"GLM-5.3","time":{"completed":now},"tokens":tokens});
+            data.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            data
+        };
+        put("m1", "child", reply(json!({})));
+        put(
+            "m2",
+            "child",
+            reply(json!({"metadata":{"forkOrigin":{"messageId":"m1"}}})),
+        );
+        put(
+            "m3",
+            "root",
+            reply(json!({"tokens":{"input":0,"output":0},"error":{"name":"APIError"}})),
+        );
+        put("m4", "root", json!({"role":"user","time":{"created":now}}));
+    }
+    let mut conn = db::open(temp.path()).unwrap();
+    zcode::scan(&mut conn, &path).unwrap();
+    let rows = db::events(&conn, 0, i64::MAX).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (
+            rows[0].key.as_str(),
+            rows[0].fresh,
+            rows[0].read,
+            rows[0].write5,
+            rows[0].output,
+            rows[0].root.as_str()
+        ),
+        ("zcode:m1", 500, 400, 100, 20, "root")
+    );
+    let source = rusqlite::Connection::open(&path).unwrap();
+    source
+        .execute(
+            "INSERT INTO message VALUES ('m5', 'root', ?1, ?2)",
+            rusqlite::params![now + 1, json!({"role":"assistant","model":{"id":"glm-5.3"},"time":{"created":now},"tokens":{"input":10,"output":2,"cache":{"read":0,"write":0}}}).to_string()],
+        )
+        .unwrap();
+    drop(source);
+    zcode::scan(&mut conn, &path).unwrap();
+    assert_eq!(db::events(&conn, 0, i64::MAX).unwrap().len(), 2);
+}
+
+#[test]
+fn routing_prefixes_and_variant_suffixes_are_priced() {
+    let cost = |model: &str| {
+        pricing::cost(&Event {
+            model: model.into(),
+            fresh: 1_000_000,
+            ..Default::default()
+        })
+    };
+    let flash = cost("glm-5.3-flash").unwrap();
+    assert_eq!(cost("magpie/trae-cn/glm-5.3-flash-max"), Some(flash));
+    assert_eq!(cost("opencode-go/glm-5.3-flash"), Some(flash));
+    assert_eq!(cost("x-ai/grok-4.7-build-fast"), cost("grok-4.7"));
+    assert!(cost("trae-cn/Doubao-Seed-2.1-Turbo").is_some());
+    assert!(cost("trae-cn/not-a-model").is_none());
 }

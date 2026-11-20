@@ -1,4 +1,4 @@
-use super::{db, now, parsers};
+use super::{db, frames, now, parsers, zcode};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
@@ -18,12 +18,20 @@ fn roots() -> Vec<(&'static str, PathBuf, usize)> {
     let claude = env("CLAUDE_CONFIG_DIR", home.join(".claude"));
     let codex = env("CODEX_HOME", home.join(".codex"));
     let agy = env("ANTIGRAVITY_CLI_HOME", home.join(".gemini/antigravity-cli"));
+    let pi = env("PI_CODING_AGENT_DIR", home.join(".pi/agent"));
+    let codebuddy = env("CODEBUDDY_CONFIG_DIR", home.join(".codebuddy"));
+    let deepseek = env("DSH_HOME", home.join(".dsh"));
+    let grok = env("GROK_HOME", home.join(".grok"));
     let desktop_agy = home.join(".gemini/antigravity");
     let mut dirs = vec![
         ("claude", claude.join("projects"), 4),
         ("codex", codex.join("sessions"), 5),
         ("codex", codex.join("archived_sessions"), 2),
         ("antigravity", agy.join("brain"), 5),
+        ("pi", pi.join("sessions"), 2),
+        ("codebuddy", codebuddy.join("projects"), 4),
+        ("deepseek", deepseek.join("sessions"), 3),
+        ("grok", grok.join("sessions"), 3),
     ];
     if desktop_agy != agy {
         dirs.push(("antigravity", desktop_agy.join("brain"), 5));
@@ -31,14 +39,60 @@ fn roots() -> Vec<(&'static str, PathBuf, usize)> {
     dirs
 }
 
-fn discover(
-    dir: &Path,
-    provider: &'static str,
-    depth: usize,
-    out: &mut Vec<(&'static str, PathBuf, SystemTime)>,
-) {
+type Found = Vec<(&'static str, PathBuf, SystemTime)>;
+
+fn recent(modified: SystemTime) -> bool {
+    modified
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+        >= now() - 31 * DAY
+}
+
+/// DeepSeek Harness keeps older format files beside the newest one: only the highest
+/// `session[.vN].jsonl[.zstd]` of a session folder is read, the later written of two kinds.
+fn latest_deepseek(dir: &Path, out: &mut Found) {
+    let mut best: Option<(u32, SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(rest) = name.strip_prefix("session") else {
+            continue;
+        };
+        let Some(rest) = rest
+            .strip_suffix(".jsonl.zstd")
+            .or_else(|| rest.strip_suffix(".jsonl"))
+        else {
+            continue;
+        };
+        let version = match rest.strip_prefix(".v") {
+            Some(n) => n.parse().ok(),
+            None => rest.is_empty().then_some(0),
+        };
+        let (Some(version), Ok(modified)) = (version, entry.metadata().and_then(|m| m.modified()))
+        else {
+            continue;
+        };
+        if best
+            .as_ref()
+            .is_none_or(|(v, m, _)| (version, modified) > (*v, *m))
+        {
+            best = Some((version, modified, entry.path()));
+        }
+    }
+    if let Some((_, modified, path)) = best
+        && recent(modified)
+    {
+        out.push(("deepseek", path, modified));
+    }
+}
+
+pub(super) fn discover(dir: &Path, provider: &'static str, depth: usize, out: &mut Found) {
     if depth == 0 {
         return;
+    }
+    if provider == "deepseek" && depth == 1 {
+        return latest_deepseek(dir, out);
     }
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let Ok(kind) = entry.file_type() else {
@@ -55,7 +109,8 @@ fn discover(
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let valid = match provider {
-            "claude" => name.ends_with(".jsonl"),
+            "claude" | "pi" | "codebuddy" => name.ends_with(".jsonl"),
+            "grok" => name == "updates.jsonl",
             "codex" => {
                 (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
                     && (name.starts_with("rollout-")
@@ -67,11 +122,7 @@ fn discover(
         };
         if valid
             && let Ok(modified) = entry.metadata().and_then(|m| m.modified())
-            && modified
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64
-                >= now() - 31 * DAY
+            && recent(modified)
         {
             out.push((provider, path, modified));
         }
@@ -90,6 +141,10 @@ pub(super) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("用量日志 {}：{e}", path.display());
         }
     }
+    let database = zcode::database();
+    if let Err(e) = zcode::scan(&mut conn, &database) {
+        eprintln!("用量日志 {}：{e}", database.display());
+    }
     Ok(())
 }
 
@@ -103,10 +158,10 @@ fn head(path: &Path, len: u64) -> io::Result<String> {
 
 fn reader(path: &Path, offset: u64) -> io::Result<Box<dyn Read>> {
     let mut f = File::open(path)?;
-    if path.extension().is_some_and(|x| x == "zst") {
-        let mut decoder = ruzstd::decoding::StreamingDecoder::new(f).map_err(io::Error::other)?;
-        io::copy(&mut decoder.by_ref().take(offset), &mut io::sink())?;
-        Ok(Box::new(decoder))
+    if path.extension().is_some_and(|x| x == "zst" || x == "zstd") {
+        let mut frames = frames::Frames::new(f);
+        io::copy(&mut frames.by_ref().take(offset), &mut io::sink())?;
+        Ok(Box::new(frames))
     } else {
         f.seek(SeekFrom::Start(offset))?;
         Ok(Box::new(f))
@@ -138,11 +193,10 @@ pub(super) fn file(
     let input = reader(path, c.offset as u64)?;
     let tx = conn.transaction()?;
     let offset = lines(input, c.offset as u64, |line| {
-        if let Some(e) = parsers::parse(provider, path, line, &mut state)
-            && e.ts >= now() - 31 * DAY
-            && e.ts <= now() + DAY
-        {
-            db::save(&tx, &e)?;
+        for e in parsers::parse(provider, path, line, &mut state) {
+            if e.ts >= now() - 31 * DAY && e.ts <= now() + DAY {
+                db::save(&tx, &e)?;
+            }
         }
         Ok(())
     })?;

@@ -142,15 +142,40 @@ fn model_price(cost: &Value) -> Option<Value> {
     Some(Value::Object(result))
 }
 
+/// Providers read from models.dev, official first: a model name already priced by an
+/// earlier provider keeps that price. Plan variants and regional mirrors come last.
+const PROVIDERS: [&str; 18] = [
+    "anthropic",
+    "openai",
+    "google",
+    "xai",
+    "deepseek",
+    "zhipuai",
+    "moonshotai",
+    "alibaba",
+    "volcengine",
+    "minimax",
+    "stepfun",
+    "bytedance",
+    "zai",
+    "alibaba-cn",
+    "moonshotai-cn",
+    "minimax-cn",
+    "zhipuai-coding-plan",
+    "zai-coding-plan",
+];
+
 pub(super) fn extract(source: &Value) -> Result<Value, String> {
     let mut models = Map::new();
-    for provider in ["anthropic", "openai", "google"] {
+    for provider in PROVIDERS {
         if let Some(entries) = source[provider]["models"].as_object() {
             for (name, model) in entries {
                 if !name.is_empty()
                     && let Some(price) = model_price(&model["cost"])
+                    // a plan subscription lists a zero price: that is no price at all
+                    && (!provider.ends_with("-plan") || price["output"].as_f64() > Some(0.0))
                 {
-                    models.insert(name.to_ascii_lowercase(), price);
+                    models.entry(name.to_ascii_lowercase()).or_insert(price);
                 }
             }
         }

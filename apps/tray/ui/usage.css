@@ -14,6 +14,7 @@
 [data-p="pi"] { --pc: var(--m5); }
 [data-p="deepseek"] { --pc: var(--m3); }
 [data-p="devin"] { --pc: var(--m2); }
+[data-p="zcode"] { --pc: var(--m2); }
 .u-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--pc); }
 
 /* Controls */

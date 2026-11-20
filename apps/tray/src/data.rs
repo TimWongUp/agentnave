@@ -149,8 +149,17 @@ impl Reader {
             .into_iter()
             .flatten()
             .filter(|(name, entry)| {
-                !matches!(name.as_str(), "claude" | "codex" | "antigravity")
-                    && entry["installed"] == true
+                !matches!(
+                    name.as_str(),
+                    "claude"
+                        | "codex"
+                        | "antigravity"
+                        | "pi"
+                        | "codebuddy"
+                        | "deepseek"
+                        | "grok"
+                        | "zcode"
+                ) && entry["installed"] == true
             })
             .map(|(name, _)| name.clone())
             .collect()

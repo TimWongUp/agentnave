@@ -1,6 +1,10 @@
 mod antigravity;
 mod claude;
+mod codebuddy;
 mod codex;
+mod deepseek;
+mod grok;
+mod pi;
 
 use super::Event;
 use serde_json::{Value, json};
@@ -21,7 +25,14 @@ fn timestamp(v: &Value, key: &str) -> Option<i64> {
         .ok()
         .map(|t| t.timestamp_millis())
 }
-fn event(provider: &str, session: &str, root: &str, ts: i64, model: &str, key: String) -> Event {
+pub(super) fn event(
+    provider: &str,
+    session: &str,
+    root: &str,
+    ts: i64,
+    model: &str,
+    key: String,
+) -> Event {
     Event {
         key,
         provider: provider.to_owned(),
@@ -34,14 +45,27 @@ fn event(provider: &str, session: &str, root: &str, ts: i64, model: &str, key: S
     }
 }
 
-pub(super) fn parse(provider: &str, path: &Path, line: &[u8], state: &mut Value) -> Option<Event> {
-    let v: Value = serde_json::from_slice(line).ok()?;
-    match provider {
+/// Seconds or milliseconds since the epoch, as a millisecond timestamp.
+fn epoch_millis(v: &Value, key: &str) -> Option<i64> {
+    let n = v[key].as_i64().filter(|n| *n > 0)?;
+    Some(if n > 100_000_000_000 { n } else { n * 1000 })
+}
+
+pub(super) fn parse(provider: &str, path: &Path, line: &[u8], state: &mut Value) -> Vec<Event> {
+    let Ok(v) = serde_json::from_slice::<Value>(line) else {
+        return Vec::new();
+    };
+    let one = match provider {
         "claude" => claude::parse(path, &v),
         "codex" => codex::parse(path, &v, state),
         "antigravity" => antigravity::parse(path, &v),
+        "pi" => pi::parse(path, &v, state),
+        "codebuddy" => codebuddy::parse(path, &v),
+        "deepseek" => deepseek::parse(path, &v, state),
+        "grok" => return grok::parse(path, &v, state),
         _ => None,
-    }
+    };
+    one.into_iter().collect()
 }
 
 fn stem(path: &Path) -> &str {

@@ -279,6 +279,6 @@ pub(super) fn respond(reader: &Reader, range: &str) -> Result<Value, Box<dyn std
         })
         .collect();
     Ok(
-        json!({"range":range,"updated_at":UPDATED.load(Ordering::Relaxed),"scanning":SCANNING.load(Ordering::Acquire),"covered_providers":["claude","codex","antigravity"],"uncovered_installed":reader.usage_uncovered(),"overall":overall.overall(),"daily":daily,"providers":providers,"projects":by_project.into_values().map(project_value).collect::<Vec<_>>() }),
+        json!({"range":range,"updated_at":UPDATED.load(Ordering::Relaxed),"scanning":SCANNING.load(Ordering::Acquire),"covered_providers":["claude","codex","antigravity","pi","codebuddy","deepseek","grok","zcode"],"uncovered_installed":reader.usage_uncovered(),"overall":overall.overall(),"daily":daily,"providers":providers,"projects":by_project.into_values().map(project_value).collect::<Vec<_>>() }),
     )
 }
