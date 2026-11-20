@@ -226,16 +226,20 @@ fn boss_hash_matches_service_and_claude_one_hour_price() {
 }
 
 #[test]
-fn oversized_line_rolls_back_its_file_transaction() {
+fn oversized_line_is_skipped_without_losing_neighbors() {
     let temp = tempfile::tempdir().unwrap();
     let file = temp.path().join("rollout-large.jsonl");
     let date = chrono::Utc::now().to_rfc3339();
-    let row = json!({"timestamp":date,"sessionId":"s","message":{"id":"m","model":"claude-opus-4-5","usage":{"input_tokens":10}}});
-    let mut bytes = format!("{row}\n").into_bytes();
-    bytes.extend(vec![b'x'; 4 * 1024 * 1024 + 1]);
+    let first = json!({"timestamp":date,"sessionId":"s","message":{"id":"m1","model":"claude-opus-4-5","usage":{"input_tokens":10}}});
+    let second = json!({"timestamp":date,"sessionId":"s","message":{"id":"m2","model":"claude-opus-4-5","usage":{"input_tokens":20}}});
+    let mut bytes = format!("{first}\n").into_bytes();
+    bytes.extend(vec![b'x'; 4 * 1024 * 1024 + 128]);
     bytes.push(b'\n');
+    bytes.extend(format!("{second}\n").as_bytes());
     std::fs::write(&file, bytes).unwrap();
     let mut conn = db::open(temp.path()).unwrap();
-    assert!(scan::file(&mut conn, "claude", &file).is_err());
-    assert!(db::events(&conn, 0, i64::MAX).unwrap().is_empty());
+    scan::file(&mut conn, "claude", &file).unwrap();
+    let rows = db::events(&conn, 0, i64::MAX).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.iter().map(|r| r.fresh).sum::<i64>(), 30);
 }

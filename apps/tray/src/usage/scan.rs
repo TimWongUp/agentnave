@@ -18,12 +18,17 @@ fn roots() -> Vec<(&'static str, PathBuf, usize)> {
     let claude = env("CLAUDE_CONFIG_DIR", home.join(".claude"));
     let codex = env("CODEX_HOME", home.join(".codex"));
     let agy = env("ANTIGRAVITY_CLI_HOME", home.join(".gemini/antigravity-cli"));
-    vec![
+    let desktop_agy = home.join(".gemini/antigravity");
+    let mut dirs = vec![
         ("claude", claude.join("projects"), 4),
         ("codex", codex.join("sessions"), 5),
         ("codex", codex.join("archived_sessions"), 2),
         ("antigravity", agy.join("brain"), 5),
-    ]
+    ];
+    if desktop_agy != agy {
+        dirs.push(("antigravity", desktop_agy.join("brain"), 5));
+    }
+    dirs
 }
 
 fn discover(
@@ -134,7 +139,7 @@ pub(super) fn file(
     let tx = conn.transaction()?;
     let offset = lines(input, c.offset as u64, |line| {
         if let Some(e) = parsers::parse(provider, path, line, &mut state)
-            && e.ts >= now() - 30 * DAY
+            && e.ts >= now() - 31 * DAY
             && e.ts <= now() + DAY
         {
             db::save(&tx, &e)?;
@@ -167,7 +172,26 @@ fn lines(
             break;
         }
         if count as u64 > MAX_LINE {
-            return Err("日志单行超过 4 MiB".into());
+            let mut skipped = count as u64;
+            if line.last() != Some(&b'\n') {
+                let mut discard = Vec::new();
+                loop {
+                    discard.clear();
+                    let n = input
+                        .by_ref()
+                        .take(65_536)
+                        .read_until(b'\n', &mut discard)?;
+                    if n == 0 {
+                        return Ok(offset);
+                    }
+                    skipped += n as u64;
+                    if discard.last() == Some(&b'\n') {
+                        break;
+                    }
+                }
+            }
+            offset += skipped;
+            continue;
         }
         if line.last() != Some(&b'\n') {
             break;
