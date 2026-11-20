@@ -3,14 +3,14 @@
 //! under `~/.gemini/antigravity/` are rejected for terminal resume because the desktop app has no
 //! terminal resume entry.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde_json::Value;
 
 use super::title::CliTitle;
@@ -18,6 +18,7 @@ use super::{boss_key, file_name, is_uuid};
 
 /// A new chat's record may be created a moment before the terminal's start time is taken.
 const CLOCK_SLACK: Duration = Duration::from_secs(2);
+const BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
 struct SummaryRow {
@@ -193,6 +194,8 @@ pub(super) fn terminal_title(
     native: Option<&str>,
     cwd: &Path,
     since: SystemTime,
+    exclude: &HashSet<String>,
+    before: Option<SystemTime>,
 ) -> (Option<String>, bool, Option<CliTitle>) {
     if let Some(id) = native {
         let mut located = false;
@@ -219,14 +222,14 @@ pub(super) fn terminal_title(
             continue;
         };
         for (id, row) in rows.iter() {
-            if !is_uuid(id) {
+            if !is_uuid(id) || exclude.contains(id) {
                 continue;
             }
             let Some(there) = first_cwd(&row.workspace_uris) else {
                 continue;
             };
             let canonical = fs::canonicalize(&there).unwrap_or(there);
-            if canonical == folder && started_since(root, id, row, since) {
+            if canonical == folder && started_between(root, id, row, since, before) {
                 found.push((root.clone(), id.clone()));
             }
         }
@@ -247,14 +250,23 @@ fn non_empty_title(row: &SummaryRow) -> Option<CliTitle> {
     })
 }
 
-fn started_since(root: &Path, id: &str, row: &SummaryRow, since: SystemTime) -> bool {
+fn started_between(
+    root: &Path,
+    id: &str,
+    row: &SummaryRow,
+    since: SystemTime,
+    before: Option<SystemTime>,
+) -> bool {
+    let within = |at: SystemTime| {
+        at + CLOCK_SLACK >= since && before.is_none_or(|peer| at + CLOCK_SLACK < peer)
+    };
     let conv_db = root.join("conversations").join(format!("{id}.db"));
     if let Ok(meta) = fs::metadata(conv_db)
         && let Ok(at) = meta.created().or_else(|_| meta.modified())
     {
-        return at + CLOCK_SLACK >= since;
+        return within(at);
     }
-    parse_time(&row.last_modified_time).is_some_and(|at| at + CLOCK_SLACK >= since)
+    parse_time(&row.last_modified_time).is_some_and(within)
 }
 
 fn parse_time(raw: &str) -> Option<SystemTime> {
@@ -287,33 +299,65 @@ fn first_cwd(workspace_uris: &str) -> Option<PathBuf> {
 }
 
 pub(super) fn decode_file_uri(uri: &str) -> Option<PathBuf> {
+    decode_file_uri_for(uri, cfg!(windows))
+}
+
+pub(super) fn decode_file_uri_for(uri: &str, windows: bool) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
-    let slash = rest.find('/')?;
-    let (host, raw_path) = (&rest[..slash], &rest[slash..]);
-    let decoded = percent_decode(raw_path)?;
-    if decoded.is_empty() {
-        return None;
-    }
-    if cfg!(windows) {
-        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
-            return Some(PathBuf::from(format!(
-                "\\\\{host}{}",
-                decoded.replace('/', "\\")
+    let (host, raw_path) = match rest.find('/') {
+        Some(slash) => (&rest[..slash], &rest[slash..]),
+        None => (rest, ""),
+    };
+    if windows {
+        let host_decoded = percent_decode(host)?;
+        if let Some(drive) = windows_drive(&host_decoded) {
+            let tail = percent_decode(raw_path)?;
+            return Some(PathBuf::from(windows_drive_path(drive, &tail)));
+        }
+        let decoded = percent_decode(raw_path)?;
+        if !host_decoded.is_empty() && !host_decoded.eq_ignore_ascii_case("localhost") {
+            return (!decoded.is_empty()).then(|| {
+                PathBuf::from(format!("\\\\{host_decoded}{}", decoded.replace('/', "\\")))
+            });
+        }
+        if let Some(rest_after_slash) = decoded.strip_prefix('/')
+            && let Some(drive) = windows_drive_prefix(rest_after_slash)
+        {
+            return Some(PathBuf::from(windows_drive_path(
+                drive,
+                &rest_after_slash[2..],
             )));
         }
-        let bytes = decoded.as_bytes();
-        let path = if bytes.len() >= 3 && bytes[0] == b'/' && bytes[2] == b':' {
-            let drive = (bytes[1] as char).to_ascii_uppercase();
-            format!("{drive}{}", &decoded[2..])
-        } else {
-            decoded
-        };
-        return Some(PathBuf::from(path.replace('/', "\\")));
+        return (!decoded.is_empty()).then(|| PathBuf::from(decoded.replace('/', "\\")));
     }
-    if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+    if raw_path.is_empty() || (!host.is_empty() && !host.eq_ignore_ascii_case("localhost")) {
         return None;
     }
-    Some(PathBuf::from(decoded))
+    let decoded = percent_decode(raw_path)?;
+    (!decoded.is_empty()).then(|| PathBuf::from(decoded))
+}
+
+fn windows_drive(text: &str) -> Option<char> {
+    let bytes = text.as_bytes();
+    (bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+        .then(|| (bytes[0] as char).to_ascii_uppercase())
+}
+
+fn windows_drive_prefix(text: &str) -> Option<char> {
+    let bytes = text.as_bytes();
+    (bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes.len() == 2 || bytes[2] == b'/'))
+        .then(|| (bytes[0] as char).to_ascii_uppercase())
+}
+
+fn windows_drive_path(drive: char, tail: &str) -> String {
+    if tail.is_empty() || tail == "/" {
+        format!("{drive}:\\")
+    } else {
+        format!("{drive}:{}", tail.replace('/', "\\"))
+    }
 }
 
 fn percent_decode(input: &str) -> Option<String> {
@@ -385,21 +429,34 @@ fn read_summaries(db_path: &Path) -> Option<HashMap<String, SummaryRow>> {
         .ok()?;
     let mapped = stmt
         .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
+            let id = col_string(row, 0);
+            if id.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some((
+                id,
                 SummaryRow {
-                    title: row.get(1)?,
-                    workspace_uris: row.get(2)?,
-                    last_modified_time: row.get(3)?,
+                    title: col_string(row, 1),
+                    workspace_uris: col_string(row, 2),
+                    last_modified_time: col_string(row, 3),
                 },
-            ))
+            )))
         })
         .ok()?;
     let mut out = HashMap::new();
-    for entry in mapped.flatten() {
+    for entry in mapped.flatten().flatten() {
         out.insert(entry.0, entry.1);
     }
     Some(out)
+}
+
+fn col_string(row: &rusqlite::Row<'_>, index: usize) -> String {
+    match row.get_ref(index) {
+        Ok(ValueRef::Text(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
+        Ok(ValueRef::Integer(number)) => number.to_string(),
+        Ok(ValueRef::Real(number)) => number.to_string(),
+        _ => String::new(),
+    }
 }
 
 fn open_read_only(db_path: &Path) -> Option<Connection> {
@@ -407,21 +464,22 @@ fn open_read_only(db_path: &Path) -> Option<Connection> {
         return None;
     }
     let wal = db_path.with_file_name("conversation_summaries.db-wal");
-    if !wal.exists()
-        && let Some(uri) = immutable_uri(db_path)
-    {
+    let shm = db_path.with_file_name("conversation_summaries.db-shm");
+    let conn = if wal.exists() && shm.exists() {
+        Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .ok()?
+    } else {
+        let uri = immutable_uri(db_path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_URI;
-        if let Ok(conn) = Connection::open_with_flags(uri, flags) {
-            return Some(conn);
-        }
-    }
-    Connection::open_with_flags(
-        db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()
+        Connection::open_with_flags(uri, flags).ok()?
+    };
+    let _ = conn.busy_timeout(BUSY_TIMEOUT);
+    Some(conn)
 }
 
 fn immutable_uri(path: &Path) -> Option<String> {

@@ -37,8 +37,18 @@ pub(crate) fn terminal_title(
     native: Option<&str>,
     cwd: &Path,
     since: std::time::SystemTime,
+    exclude: &HashSet<String>,
+    before: Option<std::time::SystemTime>,
 ) -> (Option<String>, bool, Option<CliTitle>) {
-    title::of_terminal_located(&Homes::here(), provider, native, cwd, since)
+    title::of_terminal_located(
+        &Homes::here(),
+        provider,
+        native,
+        cwd,
+        since,
+        exclude,
+        before,
+    )
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]

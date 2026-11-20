@@ -336,6 +336,7 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "CLAUDE_CODE_SESSION_ID",
         "CODEX_THREAD_ID",
         "GROK_SESSION_ID",
+        "GROK_SANDBOX",
         "ANTIGRAVITY_CONVERSATION_ID",
         "ANTIGRAVITY_LS_ADDRESS",
         "ANTIGRAVITY_CSRF_TOKEN",
@@ -667,7 +668,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     }
 
     let mut calls = 0usize;
-    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _| {
+    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
@@ -675,14 +676,14 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(calls, 2);
 
     // Within the throttle window, neither unlocated terminal scans again.
-    terminals.titles_with(Duration::from_secs(60), |_, native, _, _| {
+    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
     assert_eq!(calls, 2);
 
     // Once the window expires and records are located, both resolve and stay unthrottled.
-    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _| {
+    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _, _| {
         calls += 1;
         (
             Some(format!("{provider}-id")),
@@ -697,7 +698,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(resolved[&1].text, "codex title");
     assert_eq!(resolved[&2].text, "claude title");
 
-    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _| {
+    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _, _| {
         calls += 1;
         (
             None,
@@ -710,6 +711,95 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     });
     assert_eq!(calls, 6);
     assert_eq!(cached[&1].text, "codex title");
+    session.stop();
+    let _ = exit_of(&session);
+}
+
+#[cfg(unix)]
+#[test]
+fn concurrent_unlocated_terminals_do_not_claim_each_others_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let session = Session::start(shell("sleep 30"), 80, 24).unwrap();
+    let now = std::time::SystemTime::now();
+    let terminals = Terminals::default();
+    {
+        let mut state = terminals.lock();
+        state.open.push(Running {
+            id: 1,
+            provider: "antigravity".to_owned(),
+            cwd: work.clone(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: Some("s1".to_owned()),
+            title_located: true,
+            title_searched: None,
+            started: now - Duration::from_secs(20),
+        });
+        state.open.push(Running {
+            id: 2,
+            provider: "antigravity".to_owned(),
+            cwd: work.clone(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: now - Duration::from_secs(15),
+        });
+        state.open.push(Running {
+            id: 3,
+            provider: "antigravity".to_owned(),
+            cwd: work.clone(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: now,
+        });
+    }
+
+    // Terminal 1's `s1` is passed in `exclude`; Terminal 2 gets `before = Some(T3.started)`, and
+    // Terminal 3 skips lookup while earlier live unlocated Terminal 2 exists in the same folder.
+    let mut seen: Vec<(Option<String>, Vec<String>, Option<std::time::SystemTime>)> = Vec::new();
+    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude, before| {
+        let mut ex: Vec<String> = exclude.iter().cloned().collect();
+        ex.sort();
+        seen.push((native.map(str::to_owned), ex, before));
+        if native.is_none() {
+            (
+                Some("s2".to_owned()),
+                true,
+                Some(crate::data::boss_app::CliTitle {
+                    text: "T2".to_owned(),
+                    custom: false,
+                }),
+            )
+        } else {
+            (None, true, None)
+        }
+    });
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].0.as_deref(), Some("s1"));
+    assert_eq!(seen[1].0, None);
+    assert_eq!(seen[1].1, vec!["s1".to_owned()]);
+    assert_eq!(seen[1].2, Some(now));
+    assert_eq!(titles.get(&2).map(|t| t.text.as_str()), Some("T2"));
+
+    // Terminal 2 has now claimed `s2`; Terminal 3 runs and excludes both `s1` and `s2`.
+    let mut third_exclude = Vec::new();
+    terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude, before| {
+        if native.is_none() {
+            third_exclude = exclude.iter().cloned().collect();
+            third_exclude.sort();
+            assert_eq!(before, None);
+        }
+        (None, false, None)
+    });
+    assert_eq!(third_exclude, vec!["s1".to_owned(), "s2".to_owned()]);
+
     session.stop();
     let _ = exit_of(&session);
 }

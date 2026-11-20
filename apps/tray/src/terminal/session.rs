@@ -314,7 +314,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 /// that session's child (Claude Code then stops saving its transcript) or for one AgentNave
 /// dispatched. The terminal starts a session of its own, like a new terminal window; the login
 /// shell sets the user's own variables again.
-const PARENT_SESSION: [&str; 20] = [
+const PARENT_SESSION: [&str; 21] = [
     "CLAUDECODE",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
@@ -324,6 +324,7 @@ const PARENT_SESSION: [&str; 20] = [
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "GROK_SESSION_ID",
+    "GROK_SANDBOX",
     "AGENTNAVE_HOST",
     "AGENTNAVE_HOST_APP",
     "AGENTNAVE_HOST_SESSION_ID",

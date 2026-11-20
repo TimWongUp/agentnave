@@ -4,6 +4,7 @@
 //! `session/title` event. Devin and ZCode keep sessions in a shared database or a binary format,
 //! so their chats have no name here; Antigravity CLI (`agy`) is read by `super::antigravity`.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -94,7 +95,14 @@ fn deepseek_entries(text: &[u8]) -> Option<CliTitle> {
 }
 
 /// A session record started by a terminal, whose path stands in for the chat's ID.
-pub(super) fn started(host: &str, home: &Path, cwd: &Path, since: SystemTime) -> Option<PathBuf> {
+pub(super) fn started(
+    host: &str,
+    home: &Path,
+    cwd: &Path,
+    since: SystemTime,
+    exclude: &HashSet<String>,
+    before: Option<SystemTime>,
+) -> Option<PathBuf> {
     let folder = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
     let (root, depth) = match host {
         "codebuddy" | "workbuddy" => ("projects", 1),
@@ -104,7 +112,18 @@ pub(super) fn started(host: &str, home: &Path, cwd: &Path, since: SystemTime) ->
     };
     let mut found: Vec<PathBuf> = Vec::new();
     let mut look = |record: &Path| {
-        if created_since(record, since) && cwd_of(host, record).is_some_and(|there| there == folder)
+        let excluded = if host == "grok" {
+            record
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .is_some_and(|id| exclude.contains(id))
+        } else {
+            exclude.contains(&record.display().to_string())
+        };
+        if !excluded
+            && created_between(record, since, before)
+            && cwd_of(host, record).is_some_and(|there| there == folder)
         {
             found.push(record.to_owned());
         }
@@ -134,10 +153,12 @@ fn visit(dir: &Path, depth: usize, since: SystemTime, each: &mut dyn FnMut(&Path
     }
 }
 
-fn created_since(record: &Path, since: SystemTime) -> bool {
+fn created_between(record: &Path, since: SystemTime, before: Option<SystemTime>) -> bool {
     fs::metadata(record)
         .and_then(|meta| meta.created().or(meta.modified()))
-        .is_ok_and(|at| at + CLOCK_SLACK >= since)
+        .is_ok_and(|at| {
+            at + CLOCK_SLACK >= since && before.is_none_or(|peer| at + CLOCK_SLACK < peer)
+        })
 }
 
 /// The folder a session record says it ran in.

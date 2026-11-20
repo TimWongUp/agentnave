@@ -3,7 +3,7 @@
 //! named the chat itself) entries to the transcript; Codex lists each chat's `thread_name` in
 //! `session_index.jsonl`. Anything unreadable is simply no title.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -234,7 +234,8 @@ pub(crate) fn of_terminal(
     cwd: &Path,
     since: SystemTime,
 ) -> (Option<String>, Option<CliTitle>) {
-    let (id, _, title) = of_terminal_located(homes, provider, native, cwd, since);
+    let (id, _, title) =
+        of_terminal_located(homes, provider, native, cwd, since, &HashSet::new(), None);
     (id, title)
 }
 
@@ -244,6 +245,8 @@ pub(crate) fn of_terminal_located(
     native: Option<&str>,
     cwd: &Path,
     since: SystemTime,
+    exclude: &HashSet<String>,
+    before: Option<SystemTime>,
 ) -> (Option<String>, bool, Option<CliTitle>) {
     match provider {
         "claude" => {
@@ -255,7 +258,7 @@ pub(crate) fn of_terminal_located(
         "codex" => {
             let id = native
                 .map(str::to_owned)
-                .or_else(|| codex_started(&homes.codex, cwd, since));
+                .or_else(|| codex_started(&homes.codex, cwd, since, exclude, before));
             let located = id.is_some();
             let title = id.as_deref().and_then(|id| codex(&homes.codex, id));
             (id, located, title)
@@ -267,7 +270,9 @@ pub(crate) fn of_terminal_located(
                     .other
                     .iter()
                     .filter(|(host, _)| host == "grok")
-                    .find_map(|(_, home)| super::other::started("grok", home, cwd, since)),
+                    .find_map(|(_, home)| {
+                        super::other::started("grok", home, cwd, since, exclude, before)
+                    }),
             };
             let id = native.map(str::to_owned).or_else(|| {
                 summary
@@ -283,14 +288,14 @@ pub(crate) fn of_terminal_located(
         }
         "antigravity" => {
             let roots = super::antigravity::roots(homes);
-            super::antigravity::terminal_title(&roots, native, cwd, since)
+            super::antigravity::terminal_title(&roots, native, cwd, since, exclude, before)
         }
         host if super::other::HOSTS.contains(&host) => {
             // These CLIs' chats have no ID to choose or look up, so the session record itself
             // stands for the chat once found: a path where the others keep an ID.
             let record = native.map(PathBuf::from).or_else(|| {
                 let home = &homes.other.iter().find(|(name, _)| name == host)?.1;
-                super::other::started(host, home, cwd, since)
+                super::other::started(host, home, cwd, since, exclude, before)
             });
             let located = record.is_some() || host == "deepseek";
             let title = record
@@ -356,7 +361,13 @@ fn grok_summary(homes: &super::Homes, id: &str) -> Option<PathBuf> {
 
 /// The ID of the Codex session a terminal started in `cwd` has opened, when exactly one rollout
 /// there was created since `since`; two terminals in one folder cannot tell theirs apart.
-pub(crate) fn codex_started(homes: &[PathBuf], cwd: &Path, since: SystemTime) -> Option<String> {
+pub(crate) fn codex_started(
+    homes: &[PathBuf],
+    cwd: &Path,
+    since: SystemTime,
+    exclude: &HashSet<String>,
+    before: Option<SystemTime>,
+) -> Option<String> {
     let folder = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
     let mut found: Vec<String> = Vec::new();
     for home in homes {
@@ -368,7 +379,13 @@ pub(crate) fn codex_started(homes: &[PathBuf], cwd: &Path, since: SystemTime) ->
             let id = name
                 .strip_suffix(".jsonl")
                 .and_then(codex_rollout_id)
-                .filter(|_| created.is_some_and(|at| at + CLOCK_SLACK >= since))
+                .filter(|id| !exclude.contains(*id))
+                .filter(|_| {
+                    created.is_some_and(|at| {
+                        at + CLOCK_SLACK >= since
+                            && before.is_none_or(|peer| at + CLOCK_SLACK < peer)
+                    })
+                })
                 .filter(|_| {
                     session_cwd(path)
                         .is_some_and(|there| fs::canonicalize(&there).unwrap_or(there) == folder)

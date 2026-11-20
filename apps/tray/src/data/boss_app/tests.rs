@@ -845,6 +845,29 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
         title::of_terminal(&homes("antigravity"), "antigravity", None, &work, started),
         (None, None)
     );
+    // Excluding CODEX_SESSION leaves CLAUDE_SESSION as the sole match, while a `before` bound
+    // earlier than the record rejects it.
+    let exclude = std::collections::HashSet::from([CODEX_SESSION.to_owned()]);
+    let (only_first, _, _) = title::of_terminal_located(
+        &homes("antigravity"),
+        "antigravity",
+        None,
+        &work,
+        started,
+        &exclude,
+        None,
+    );
+    assert_eq!(only_first.as_deref(), Some(CLAUDE_SESSION));
+    let (too_late, _, _) = title::of_terminal_located(
+        &homes("antigravity"),
+        "antigravity",
+        None,
+        &work,
+        started,
+        &exclude,
+        Some(started),
+    );
+    assert_eq!(too_late, None);
 
     // CodeBuddy's records name the folder like Claude's.
     write(
@@ -928,5 +951,93 @@ fn grok_summary_titles_are_cached_and_throttled() {
     assert_eq!(
         other::title_of("grok", &record).map(|t| t.text).as_deref(),
         Some("Grok initial")
+    );
+}
+
+#[test]
+fn antigravity_summaries_tolerate_nulls_avoid_creating_shm_and_decode_windows_uris() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("antigravity-cli");
+    fs::create_dir_all(&root).unwrap();
+    let db_path = root.join("conversation_summaries.db");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT,
+            workspace_uris TEXT,
+            last_modified_time
+        );",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, NULL, '[\"file:///work/null%20title\"]', NULL)",
+        [CLAUDE_SESSION],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, 'Int time', '[\"file:///work/int\"]', 1763614627)",
+        [CODEX_SESSION],
+    )
+    .unwrap();
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .unwrap();
+    drop(conn);
+
+    // Simulate `-wal` present without `-shm`: reading must not create `-shm`.
+    let wal_path = root.join("conversation_summaries.db-wal");
+    let shm_path = root.join("conversation_summaries.db-shm");
+    if !wal_path.exists() {
+        fs::write(&wal_path, b"").unwrap();
+    }
+    let _ = fs::remove_file(&shm_path);
+    assert!(!shm_path.exists());
+
+    assert_eq!(antigravity::title_for_id(&root, CLAUDE_SESSION), None);
+    assert_eq!(
+        antigravity::cwd_for_id(&root, CLAUDE_SESSION),
+        Some(PathBuf::from("/work/null title"))
+    );
+    assert_eq!(
+        antigravity::title_for_id(&root, CODEX_SESSION)
+            .map(|t| t.text)
+            .as_deref(),
+        Some("Int time")
+    );
+    assert!(!shm_path.exists(), "read-only open must not create -shm");
+
+    // URI decoding for both POSIX and Windows forms.
+    assert_eq!(
+        antigravity::decode_file_uri_for("file:///work/space%20one", false),
+        Some(PathBuf::from("/work/space one"))
+    );
+    assert_eq!(
+        antigravity::decode_file_uri_for("file://remote/work/a", false),
+        None
+    );
+    assert_eq!(
+        antigravity::decode_file_uri_for("file:///C:/Users/Tim/app", true),
+        Some(PathBuf::from(r"C:\Users\Tim\app"))
+    );
+    assert_eq!(
+        antigravity::decode_file_uri_for("file:///c%3A/Users/Tim", true),
+        Some(PathBuf::from(r"C:\Users\Tim"))
+    );
+    assert_eq!(
+        antigravity::decode_file_uri_for("file:///C:", true),
+        Some(PathBuf::from(r"C:\"))
+    );
+    assert_eq!(
+        antigravity::decode_file_uri_for("file://C:/Users/Tim/app", true),
+        Some(PathBuf::from(r"C:\Users\Tim\app"))
+    );
+    assert_eq!(
+        antigravity::decode_file_uri_for("file://C:", true),
+        Some(PathBuf::from(r"C:\"))
+    );
+    assert_eq!(
+        antigravity::decode_file_uri_for("file://file%20server/share/dir%201", true),
+        Some(PathBuf::from(r"\\file server\share\dir 1"))
     );
 }
