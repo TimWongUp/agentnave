@@ -188,6 +188,7 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
     });
     let header = |reply: &crate::response::Response, name: &str| {
         reply
@@ -404,6 +405,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -625,6 +627,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_located: false,
             title_searched: None,
             started: std::time::SystemTime::now(),
+            pending: 0,
         });
         state.open.push(Running {
             id: 2,
@@ -636,6 +639,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_located: false,
             title_searched: None,
             started: std::time::SystemTime::now(),
+            pending: 0,
         });
     }
 
@@ -713,6 +717,7 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -758,4 +763,70 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
     );
     session.stop();
     let _ = exit_of(&session);
+}
+
+#[cfg(unix)]
+#[test]
+fn wakeup_gates_input_and_commits_in_two_steps() {
+    let session = Session::start(
+        shell("printf '\\033]7501;state=working\\007ready'; read line; echo got:$line; sleep 1"),
+        80,
+        24,
+    )
+    .unwrap();
+    assert!(output_until(&session, "ready").0.contains("ready"));
+    let generation = session
+        .begin_wakeup("notice")
+        .unwrap()
+        .expect("working terminal accepts notice");
+    assert!(session.finish_wakeup(generation));
+    assert!(
+        output_until(&session, "got:notice")
+            .0
+            .contains("got:notice")
+    );
+    session.stop();
+
+    let blocked = Session::start(
+        shell("printf '\\033]7501;state=blocked\\007ready'; sleep 30"),
+        80,
+        24,
+    )
+    .unwrap();
+    assert!(output_until(&blocked, "ready").0.contains("ready"));
+    assert!(blocked.begin_wakeup("notice").unwrap().is_none());
+    blocked.stop();
+
+    let changed = Session::start(
+        shell("printf '\\033]7501;state=idle\\007ready'; sleep 30"),
+        80,
+        24,
+    )
+    .unwrap();
+    assert!(output_until(&changed, "ready").0.contains("ready"));
+    let generation = changed.begin_wakeup("notice").unwrap().unwrap();
+    changed.user_input(b"x", false).unwrap();
+    assert!(!changed.finish_wakeup(generation));
+    assert!(changed.begin_wakeup("another").unwrap().is_none());
+    changed.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn status_probe_is_answered_once_even_when_output_is_replayed() {
+    let script = format!(
+        "stty -echo -icanon min 1 time 0; printf '\\033]7501;?\\033\\\\'; dd bs=1 count={} 2>/dev/null | wc -c; printf ready; dd bs=1 count=1 2>/dev/null | od -An -t u1; printf done",
+        super::status::REPLY.len()
+    );
+    let session = Session::start(shell(&script), 80, 24).unwrap();
+    let (first, _) = output_until(&session, "ready");
+    assert!(
+        first.contains(&super::status::REPLY.len().to_string()),
+        "{first:?}"
+    );
+    let replay = session.read_view(0, Duration::ZERO, None);
+    assert!(replay.replay);
+    session.write(b"z").unwrap();
+    let (text, _) = output_until(&session, "done");
+    assert!(text.contains("122"), "{text:?}");
 }

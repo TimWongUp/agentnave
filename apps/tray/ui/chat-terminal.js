@@ -424,7 +424,7 @@ const ChatTerminal = (() => {
     el.drIco.replaceChildren(AN.hostTile(term.provider));
     setText(el.drTitle, "boss");
     const cli = AN.cliName(term.provider);
-    setText(el.drSub, term.exit == null ? cli : L(`${cli} · 已结束`, `${cli} · Exited`));
+    setText(el.drSub, term.pending_results ? L(`${term.pending_results} 项结果待 boss 收取`, `${term.pending_results} results waiting for boss`) : term.exit == null ? cli : L(`${cli} · 已结束`, `${cli} · Exited`));
     setAttr(el.drSub, "title", term.cwd || null);
     el.drAll.hidden = true;
     setAttr(el.drawer, "aria-label", L("boss 终端", "boss terminal"));

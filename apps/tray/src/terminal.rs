@@ -8,12 +8,15 @@
 //! terminal with `?session=<id>`.
 
 mod elsewhere;
+mod input_gate;
 mod links;
 mod modes;
 mod session;
+mod status;
 #[cfg(test)]
 mod tests;
 mod theme;
+mod wakeup;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -64,6 +67,7 @@ struct Running {
     title_located: bool,
     title_searched: Option<Instant>,
     started: SystemTime,
+    pending: usize,
 }
 
 impl Running {
@@ -71,7 +75,7 @@ impl Running {
         json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
-            "title": null, "title_custom": false, "display_title": null})
+            "title": null, "title_custom": false, "display_title": null, "pending_results": self.pending})
     }
 }
 
@@ -96,7 +100,13 @@ pub(crate) fn request(
             response::post(method, action, body, |payload| terminals.start(&payload))
         }
         (_, "/app/terminal/input") => response::action(method, action, || {
-            terminals.with_session(id, |session| session.write(body))
+            terminals.with_session(id, |session| {
+                if param(query, "source") == Some("auto") {
+                    session.write(body)
+                } else {
+                    session.user_input(body, param(query, "source") == Some("paste"))
+                }
+            })
         }),
         (_, "/app/terminal/resize") => response::post(method, action, body, |payload| {
             let (cols, rows) = cells(&payload);
@@ -126,8 +136,13 @@ pub(crate) fn request(
     }
 }
 
+pub(crate) fn start_wakeup(app: AppHandle) {
+    wakeup::start(app);
+}
+
 /// Ends every CLI when the App quits.
 pub(crate) fn shutdown(app: &AppHandle) {
+    wakeup::shutdown();
     for running in &app.state::<Terminals>().lock().open {
         running.session.stop();
     }
@@ -495,7 +510,12 @@ impl Terminals {
         // Claude takes the ID of a new chat up front, which is how its session record is found
         // before the chat has a workspace; it names nothing else.
         let chosen = (provider == "claude" && resume.is_none()).then(session::fresh_session_id);
-        let theme = theme::for_cli(provider, light);
+        let mut theme = theme::for_cli(provider, light);
+        match provider {
+            "antigravity" => theme.env.push(("AGY_CLI_OSC7501", "on")),
+            "pi" => theme.env.push(("PI_PROGRAM_STATUS", "1")),
+            _ => {}
+        }
         let launch = Launch {
             program,
             args: [
@@ -526,6 +546,7 @@ impl Terminals {
             title_located: false,
             title_searched: None,
             started: SystemTime::now(),
+            pending: 0,
         };
         let described = running.describe();
         state.open.push(running);

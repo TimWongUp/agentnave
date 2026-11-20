@@ -81,11 +81,13 @@ window.TerminalView = (() => {
       });
       this.term.parser.registerCsiHandler({ prefix: "?", final: "n" }, params => {
         if (params[0] !== 996) return false;
-        this.send(scheme());
+        this.send(scheme(), false, true);
         return true;
       });
-      this.term.onData(data => this.send(data));
-      this.term.onBinary(data => this.send(data, true));
+      this.term.onData(data => this.send(data, false, /^\x1b\[<\d+;\d+;\d+[Mm]$/.test(data) || (this.parsing && !this.userEvent), this.userEvent === "paste"));
+      this.term.onBinary(data => this.send(data, true, true));
+      this.element.addEventListener?.("keydown", () => { this.userEvent = "key"; queueMicrotask(() => { this.userEvent = false; }); }, true);
+      this.element.addEventListener?.("paste", () => { this.userEvent = "paste"; queueMicrotask(() => { this.userEvent = false; }); }, true);
       this.term.onResize(({ cols, rows }) => {
         if (this.running) act(`/app/terminal/resize?session=${this.id}`, JSON.stringify({ cols, rows })).catch(() => {});
       });
@@ -117,18 +119,18 @@ window.TerminalView = (() => {
       if (next === this.isLight) return;
       this.isLight = next;
       this.term.options.theme = theme();
-      if (this.notify) this.send(scheme());
+      if (this.notify) this.send(scheme(), false, true);
     }
 
     hasSelection() { return this.term.hasSelection(); }
 
     // Keys go out in order; binary input (some mouse reports) keeps its bytes.
-    send(data, binary = false) {
+    send(data, binary = false, automatic = false, paste = false) {
       if (!this.running || this.replaying) return;
       const body = binary ? Uint8Array.from(data, c => c.charCodeAt(0) & 255) : data;
       this.sending = this.sending
         .then(() => {
-          if (this.running) return act(`/app/terminal/input?session=${this.id}`, body, "application/octet-stream");
+          if (this.running) return act(`/app/terminal/input?session=${this.id}&source=${automatic ? "auto" : paste ? "paste" : "user"}`, body, "application/octet-stream");
         })
         .catch(() => {});
     }
@@ -153,7 +155,8 @@ window.TerminalView = (() => {
           try {
             await new Promise(resolve => {
               this.writeDone = resolve;
-              this.term.write(bytes, resolve);
+              this.parsing = true;
+              this.term.write(bytes, () => { this.parsing = false; resolve(); });
             });
           } finally {
             this.writeDone = null;
@@ -173,7 +176,7 @@ window.TerminalView = (() => {
           this.ended(Number.isFinite(code) ? code : exit);
           return;
         }
-        if (replay && this.notify) this.send(scheme());
+        if (replay && this.notify) this.send(scheme(), false, true);
       }
     }
 
