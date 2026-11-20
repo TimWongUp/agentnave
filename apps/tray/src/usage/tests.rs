@@ -599,3 +599,20 @@ fn routing_prefixes_and_variant_suffixes_are_priced() {
     assert!(cost("trae-cn/Doubao-Seed-2.1-Turbo").is_some());
     assert!(cost("trae-cn/not-a-model").is_none());
 }
+
+#[test]
+fn today_range_buckets_into_twenty_four_local_hours() {
+    use chrono::{Local, TimeZone};
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 20).unwrap();
+    let keys = query::bucket_keys("today", &[day]);
+    assert_eq!(keys.len(), 24);
+    assert_eq!(keys[0], "00:00");
+    assert_eq!(keys[23], "23:00");
+    let afternoon = Local
+        .from_local_datetime(&day.and_hms_opt(14, 35, 0).unwrap())
+        .earliest()
+        .unwrap()
+        .timestamp_millis();
+    assert_eq!(query::bucket_of("today", afternoon), "14:00");
+    assert_eq!(query::bucket_of("7d", afternoon), "2026-11-20");
+}

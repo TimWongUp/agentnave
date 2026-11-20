@@ -178,10 +178,13 @@
 
   // ---- daily trend -------------------------------------------------------------------
   const pad = value => String(value).padStart(2, "0");
-  function dayList(range, daily) {
+  const isHourly = data => data?.granularity === "hour" || data?.range === "today";
+  function slotList(data) {
+    const daily = data.daily || [];
+    if (isHourly(data)) return Array.from({ length: 24 }, (_, hour) => `${pad(hour)}:00`);
     const now = new Date(), today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     const last = [today, ...daily.map(d => String(d.date).slice(0, 10))].sort().at(-1);
-    const [y, m, d] = last.split("-").map(Number), n = DAYS[range] || 7;
+    const [y, m, d] = last.split("-").map(Number), n = DAYS[data.range] || 7;
     return Array.from({ length: n }, (_, i) => new Date(Date.UTC(y, m - 1, d - (n - 1 - i))).toISOString().slice(0, 10));
   }
   function niceMax(value) {
@@ -189,14 +192,20 @@
     const unit = 10 ** Math.floor(Math.log10(value)), n = value / unit;
     return unit * (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10);
   }
-  const dayText = date => {
-    const [, m, d] = date.split("-").map(Number);
+  const slotText = (slot, hourly) => {
+    if (hourly) return slot;
+    const [, m, d] = slot.split("-").map(Number);
     return L(`${m}/${d}`, new Date(Date.UTC(2000, m - 1, d)).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }));
+  };
+  const tipTitle = (slot, hourly) => {
+    if (!hourly) return slotText(slot, false);
+    const hour = Number(slot.slice(0, 2));
+    return Number.isFinite(hour) ? `${pad(hour)}:00–${pad(hour + 1)}:00` : slot;
   };
   const metricKey = () => state.metric === "cost" ? "cost_usd" : "total_tokens";
   const axisText = value => state.metric === "cost" ? `$${compact(value)}` : compact(value);
-  function tipRows(day, order) {
-    const rows = [h("b", {}, dayText(day.date)),
+  function tipRows(day, order, hourly) {
+    const rows = [h("b", {}, tipTitle(day.date, hourly)),
       h("div", {}, span("", L("折算花费", "Cost")), span("", costText(day))),
       h("div", {}, span("", "Token"), span("", compact(day.total_tokens))),
       h("div", {}, span("", L("缓存命中率", "Cache hit rate")), span("", pct(day.cache_hit_rate)))];
@@ -212,15 +221,17 @@
   function drawChart(box, tip, data) {
     const width = Math.max(320, box.clientWidth), height = 210, left = 46, top = 8, bottom = 24;
     state.drawnWidth = box.clientWidth;
-    const order = providerOrder(data), known = new Map((data.daily || []).map(d => [String(d.date).slice(0, 10), d]));
-    const days = dayList(data.range, data.daily || []).map(date => ({ date, ...(known.get(date) || {}), empty: !known.has(date) }));
+    const hourly = isHourly(data);
+    const order = providerOrder(data), known = new Map((data.daily || []).map(d => [hourly ? String(d.date).slice(0, 5) : String(d.date).slice(0, 10), d]));
+    const days = slotList(data).map(date => ({ date, ...(known.get(date) || {}), empty: !known.has(date) }));
     const key = metricKey();
     const stack = day => order.map(p => [p, num(day.by_provider?.[p]?.[key])]).filter(([, v]) => v > 0);
     const totalOf = day => stack(day).reduce((sum, [, v]) => sum + v, 0) || num(day[key]);
     const max = niceMax(Math.max(0, ...days.map(totalOf)));
     const plot = height - top - bottom, band = (width - left) / days.length, barW = Math.min(band * 0.6, 44);
     const y = value => top + plot * (1 - value / max);
-    const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": L("每日趋势", "Daily trend") });
+    const label = hourly ? L("今日时段趋势", "Hourly trend") : L("每日趋势", "Daily trend");
+    const svg = el("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "img", "aria-label": label });
     for (const value of [0, max / 2, max]) {
       svg.append(el("line", { class: "u-grid", x1: left, x2: width, y1: y(value), y2: y(value) }));
       const text = el("text", { class: "u-tick", x: left - 8, y: y(value) + 4, "text-anchor": "end" });
@@ -239,12 +250,12 @@
       }
       if (i % every === 0 || days.length === 1) {
         const text = el("text", { class: "u-tick", x: cx, y: height - 6, "text-anchor": "middle" });
-        text.textContent = dayText(day.date);
+        text.textContent = slotText(day.date, hourly);
         svg.append(text);
       }
       const column = el("rect", { class: "u-col", x: left + band * i, y: top, width: band, height: plot });
       const show = () => {
-        tip.replaceChildren(...tipRows(day, order));
+        tip.replaceChildren(...tipRows(day, order, hourly));
         tip.hidden = false;
         const room = box.clientWidth - tip.offsetWidth - 4;
         tip.style.left = `${Math.max(0, Math.min(cx + 12, room))}px`;
@@ -278,7 +289,8 @@
     state.redraw = draw;
     queueMicrotask(draw);
     const legend = h("div.u-legend", {}, ...providerOrder(data).map(p => h("span", {}, dot(p), providerName(p))));
-    return h("section.u-card", {}, h("div.u-head", {}, h("h2", {}, L("每日趋势", "Daily trend")), metricSwitch(draw)), box, legend);
+    const heading = isHourly(data) ? L("今日时段趋势", "Hourly trend") : L("每日趋势", "Daily trend");
+    return h("section.u-card", {}, h("div.u-head", {}, h("h2", {}, heading), metricSwitch(draw)), box, legend);
   }
 
   // ---- projects view -----------------------------------------------------------------

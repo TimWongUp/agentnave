@@ -1,7 +1,7 @@
 use super::{Event, SCANNING, UPDATED, db, now, parsers, pricing};
 use crate::data::{Reader, snapshot::Snapshot};
 use crate::projects::Project;
-use chrono::{Days, Local, TimeZone};
+use chrono::{Days, Local, TimeZone, Timelike};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -214,6 +214,27 @@ fn start(date: chrono::NaiveDate) -> i64 {
         .unwrap_or(0)
 }
 
+pub(super) fn bucket_keys(range: &str, days: &[chrono::NaiveDate]) -> Vec<String> {
+    if range == "today" {
+        (0..24).map(|hour| format!("{hour:02}:00")).collect()
+    } else {
+        days.iter().map(ToString::to_string).collect()
+    }
+}
+
+pub(super) fn bucket_of(range: &str, ts_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ts_ms)
+        .map(|t| {
+            let local = t.with_timezone(&Local);
+            if range == "today" {
+                format!("{:02}:00", local.hour())
+            } else {
+                local.date_naive().to_string()
+            }
+        })
+        .unwrap_or_default()
+}
+
 pub(super) fn respond(reader: &Reader, range: &str) -> Result<Value, Box<dyn std::error::Error>> {
     let days = dates(range);
     let from = start(days[0]);
@@ -222,18 +243,17 @@ pub(super) fn respond(reader: &Reader, range: &str) -> Result<Value, Box<dyn std
     let (snapshots, projects) = reader.usage_views();
     let (windows, bosses) = attribution(&snapshots, &projects);
     let mut overall = Aggregate::default();
-    let mut daily: BTreeMap<String, (Aggregate, BTreeMap<String, Aggregate>)> = days
-        .iter()
-        .map(|d| (d.to_string(), Default::default()))
-        .collect();
+    let mut daily: BTreeMap<String, (Aggregate, BTreeMap<String, Aggregate>)> =
+        bucket_keys(range, &days)
+            .into_iter()
+            .map(|key| (key, Default::default()))
+            .collect();
     let mut providers: BTreeMap<String, (Aggregate, BTreeMap<String, Aggregate>)> = BTreeMap::new();
     let mut by_project = BTreeMap::new();
     for e in &events {
         overall.add(e);
-        let date = chrono::DateTime::from_timestamp_millis(e.ts)
-            .map(|t| t.with_timezone(&Local).date_naive().to_string())
-            .unwrap_or_default();
-        if let Some((a, p)) = daily.get_mut(&date) {
+        let bucket = bucket_of(range, e.ts);
+        if let Some((a, p)) = daily.get_mut(&bucket) {
             a.add(e);
             p.entry(e.provider.clone()).or_default().add(e);
         }
@@ -278,7 +298,8 @@ pub(super) fn respond(reader: &Reader, range: &str) -> Result<Value, Box<dyn std
             v
         })
         .collect();
+    let granularity = if range == "today" { "hour" } else { "day" };
     Ok(
-        json!({"range":range,"updated_at":UPDATED.load(Ordering::Relaxed),"scanning":SCANNING.load(Ordering::Acquire),"covered_providers":["claude","codex","antigravity","pi","codebuddy","deepseek","grok","zcode"],"uncovered_installed":reader.usage_uncovered(),"overall":overall.overall(),"daily":daily,"providers":providers,"projects":by_project.into_values().map(project_value).collect::<Vec<_>>() }),
+        json!({"range":range,"granularity":granularity,"updated_at":UPDATED.load(Ordering::Relaxed),"scanning":SCANNING.load(Ordering::Acquire),"covered_providers":["claude","codex","antigravity","pi","codebuddy","deepseek","grok","zcode"],"uncovered_installed":reader.usage_uncovered(),"overall":overall.overall(),"daily":daily,"providers":providers,"projects":by_project.into_values().map(project_value).collect::<Vec<_>>() }),
     )
 }
