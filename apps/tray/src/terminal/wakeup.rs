@@ -1,5 +1,7 @@
 //! App presence and background inbox delivery.
-use super::{Terminals, links, session::WakeupOutcome};
+#[cfg(unix)]
+use super::codex_server::{Client as CodexClient, Delivery};
+use super::{Terminals, links, session::Session, session::WakeupOutcome};
 use serde::Deserialize;
 use serde_json::json;
 use std::{
@@ -7,7 +9,10 @@ use std::{
     fs,
     io::Read,
     path::Path,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -15,6 +20,9 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::{AppHandle, Manager};
 
 static STOP: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
+const PROVIDERS: &[&str] = &["claude", "grok", "antigravity", "pi", "codex"];
+#[cfg(not(unix))]
 const PROVIDERS: &[&str] = &["claude", "grok", "antigravity", "pi"];
 #[derive(Clone, Deserialize)]
 struct Item {
@@ -139,6 +147,75 @@ fn inboxes(root: &Path) -> HashMap<String, Vec<Item>> {
     bosses
 }
 
+struct Candidate {
+    id: u64,
+    provider: String,
+    session: Arc<Session>,
+    boss_key: String,
+    items: Vec<Item>,
+    #[cfg(unix)]
+    codex: Option<Arc<CodexClient>>,
+}
+
+fn pending_count(
+    items: &[Item],
+    attempted: &HashSet<String>,
+    seen: &HashMap<String, Instant>,
+    failed: &HashSet<String>,
+) -> usize {
+    items
+        .iter()
+        .filter(|i| {
+            failed.contains(&i.key)
+                || (!attempted.contains(&i.key)
+                    && seen[&i.key].elapsed() >= Duration::from_secs(60))
+        })
+        .count()
+}
+
+#[cfg(any(unix, test))]
+fn event_key(selected: &[Item]) -> String {
+    if selected.len() == 1 {
+        selected[0].key.clone()
+    } else {
+        selected
+            .iter()
+            .map(|i| i.key.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn deliver_pty(
+    session: &Session,
+    selected: &[Item],
+    attempted: &mut HashSet<String>,
+    failed: &mut HashSet<String>,
+) -> bool {
+    let started = match session.begin_wakeup(&message(selected)) {
+        Ok(None) => return false,
+        result => {
+            // A failed write may have written a prefix, so it must not be retried.
+            for item in selected {
+                attempted.insert(item.key.clone());
+            }
+            match result {
+                Ok(Some(())) => true,
+                Err(_) => false,
+                Ok(None) => unreachable!(),
+            }
+        }
+    };
+    let outcome = if started {
+        thread::sleep(Duration::from_millis(300));
+        session.finish_wakeup()
+    } else {
+        WakeupOutcome::Failed
+    };
+    update_attempts(selected, outcome, attempted, failed);
+    true
+}
+
 pub(super) fn scan(
     terminals: &Terminals,
     root: &Path,
@@ -155,30 +232,32 @@ pub(super) fn scan(
             .iter()
             .filter(|r| PROVIDERS.contains(&r.provider.as_str()))
             .filter_map(|r| {
-                Some((
-                    r.id,
-                    r.session.clone(),
-                    inboxes.get(links.get(&r.id)?)?.clone(),
-                ))
+                let boss_key = links.get(&r.id)?.clone();
+                let items = inboxes.get(&boss_key)?.clone();
+                Some(Candidate {
+                    id: r.id,
+                    provider: r.provider.clone(),
+                    session: r.session.clone(),
+                    boss_key,
+                    items,
+                    #[cfg(unix)]
+                    codex: r.codex.clone(),
+                })
             })
             .collect()
     };
     let mut pending = HashMap::new();
-    for (id, session, items) in candidates {
-        for item in &items {
+    for candidate in candidates {
+        for item in &candidate.items {
             seen.entry(item.key.clone()).or_insert_with(Instant::now);
         }
-        let count = items
-            .iter()
-            .filter(|i| {
-                failed.contains(&i.key)
-                    || (!attempted.contains(&i.key)
-                        && seen[&i.key].elapsed() >= Duration::from_secs(60))
-            })
-            .count();
-        pending.insert(id, count);
+        pending.insert(
+            candidate.id,
+            pending_count(&candidate.items, attempted, seen, failed),
+        );
         let mut unique = HashSet::new();
-        let selected: Vec<_> = items
+        let selected: Vec<_> = candidate
+            .items
             .iter()
             .filter(|i| !attempted.contains(&i.key) && unique.insert(i.key.clone()))
             .cloned()
@@ -186,36 +265,48 @@ pub(super) fn scan(
         if selected.is_empty() {
             continue;
         }
-        let started = match session.begin_wakeup(&message(&selected)) {
-            Ok(None) => continue,
-            result => {
-                // A failed write may have written a prefix, so it must not be retried.
-                for item in &selected {
-                    attempted.insert(item.key.clone());
-                }
-                match result {
-                    Ok(Some(())) => true,
-                    Err(_) => false,
-                    Ok(None) => unreachable!(),
+        let handled = if candidate.provider == "codex" {
+            #[cfg(unix)]
+            {
+                let Some(codex) = &candidate.codex else {
+                    continue;
+                };
+                match codex.deliver(
+                    &candidate.boss_key,
+                    &event_key(&selected),
+                    &message(&selected),
+                ) {
+                    Delivery::NotReady => false,
+                    Delivery::Sent => {
+                        for item in &selected {
+                            attempted.insert(item.key.clone());
+                            failed.remove(&item.key);
+                        }
+                        true
+                    }
+                    Delivery::Failed => {
+                        for item in &selected {
+                            attempted.insert(item.key.clone());
+                            failed.insert(item.key.clone());
+                        }
+                        true
+                    }
                 }
             }
-        };
-        let outcome = if started {
-            thread::sleep(Duration::from_millis(300));
-            session.finish_wakeup()
+            #[cfg(not(unix))]
+            {
+                let _ = (&candidate.boss_key, &candidate.provider);
+                false
+            }
         } else {
-            WakeupOutcome::Failed
+            deliver_pty(&candidate.session, &selected, attempted, failed)
         };
-        update_attempts(&selected, outcome, attempted, failed);
-        let count = items
-            .iter()
-            .filter(|i| {
-                failed.contains(&i.key)
-                    || (!attempted.contains(&i.key)
-                        && seen[&i.key].elapsed() >= Duration::from_secs(60))
-            })
-            .count();
-        pending.insert(id, count);
+        if handled {
+            pending.insert(
+                candidate.id,
+                pending_count(&candidate.items, attempted, seen, failed),
+            );
+        }
     }
     for running in &mut terminals.lock().open {
         running.pending = pending.get(&running.id).copied().unwrap_or(0);
@@ -379,5 +470,22 @@ mod tests {
         assert!(text.starts_with("[AgentNave] 1 个待你处理的请求"));
         assert!(text.contains("重构危险（成功）"));
         assert!(!text.contains('\n'));
+    }
+
+    #[test]
+    fn push_providers_include_codex_only_on_unix() {
+        #[cfg(unix)]
+        assert!(PROVIDERS.contains(&"codex"));
+        #[cfg(not(unix))]
+        assert!(!PROVIDERS.contains(&"codex"));
+        assert_eq!(
+            event_key(&[Item {
+                key: "k1".into(),
+                kind: "task_end".into(),
+                role: None,
+                status: None,
+            }]),
+            "k1"
+        );
     }
 }

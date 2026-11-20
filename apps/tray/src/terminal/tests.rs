@@ -189,6 +189,8 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        #[cfg(unix)]
+        codex: None,
     });
     let header = |reply: &crate::response::Response, name: &str| {
         reply
@@ -428,6 +430,8 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        #[cfg(unix)]
+        codex: None,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -481,7 +485,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
 }
 
 #[test]
-fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
+fn codex_terminal_passes_no_daemon_for_cli_args_and_other_clis_do_not() {
     assert_eq!(cli_args("codex", None, None), ["--no-daemon"]);
     assert!(cli_args("claude", None, None).is_empty());
     assert!(cli_args("grok", None, None).is_empty());
@@ -497,24 +501,30 @@ fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
         ["--conversation", "id"]
     );
 
-    let codex = command(
-        Path::new("/usr/local/bin/codex"),
-        &cli_args("codex", None, None),
-        Path::new("/tmp"),
-    );
-    let argv: Vec<String> = codex
-        .get_argv()
-        .iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(argv.last().map(String::as_str), Some("--no-daemon"));
-    assert_eq!(
-        argv.get(argv.len().saturating_sub(2)).map(String::as_str),
-        Some("/usr/local/bin/codex")
-    );
-    // If wrapped in a login shell, `-c <script>` must not embed `--no-daemon` into the script string.
-    if let Some(at) = argv.iter().position(|arg| arg == "-c") {
-        assert!(!argv[at + 1].contains("--no-daemon"), "{argv:?}");
+    #[cfg(unix)]
+    {
+        let sock = super::codex_server::socket_path(42);
+        let (program, args) = super::codex_server::launch_args(
+            Path::new("/usr/local/bin/codex"),
+            &sock,
+            Path::new("/tmp"),
+            None,
+            &[],
+        );
+        let codex = command(&program, &args, Path::new("/tmp"));
+        let argv: Vec<String> = codex
+            .get_argv()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            argv.iter()
+                .any(|arg| arg == sock.to_string_lossy().as_ref())
+        );
+        assert!(
+            argv.iter()
+                .any(|arg| arg.contains("app-server") && arg.contains("--remote"))
+        );
     }
 
     let claude = command(
@@ -656,6 +666,8 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_searched: None,
             started: std::time::SystemTime::now(),
             pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
         state.open.push(Running {
             id: 2,
@@ -668,6 +680,8 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_searched: None,
             started: std::time::SystemTime::now(),
             pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
     }
 
@@ -741,6 +755,8 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now - Duration::from_secs(20),
             pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
         state.open.push(Running {
             id: 2,
@@ -753,6 +769,8 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now - Duration::from_secs(15),
             pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
         state.open.push(Running {
             id: 3,
@@ -765,6 +783,8 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now,
             pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
     }
 
@@ -825,6 +845,8 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        #[cfg(unix)]
+        codex: None,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -966,6 +988,8 @@ fn blocked_wakeup_is_retried_once_unblocked() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        #[cfg(unix)]
+        codex: None,
     });
     let (mut attempted, mut seen, mut failed) = (HashSet::new(), HashMap::new(), HashSet::new());
     session.record_writes();
