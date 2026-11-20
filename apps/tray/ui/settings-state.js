@@ -110,6 +110,8 @@
   let reviewError = null;
   let permissionTiers = null; // permissions.json tiers by CLI; a CLI not in it runs "full".
   let permissionsError = null;
+  let accounts = []; // Named accounts from accounts.json: { id, label, dir, managed }.
+  let accountsError = null;
   let reviewSaves = 0; // Seats or tiers saved so far; a probe answered before a save carries old ones.
   let docVersion = 0; // Monotonic counter for save race detection
   // Keep unfinished option edits across drawer/mode changes without writing invalid values.
@@ -125,6 +127,8 @@
     if (!res.ok) throw new Error(L(`获取成员配置失败（${res.status}）`, `Failed to load employee settings (${res.status})`));
     const data = await res.json();
     permissionKeys = data.permission_keys && typeof data.permission_keys === "object" ? data.permission_keys : null;
+    accounts = data.accounts?.accounts || [];
+    accountsError = data.accounts?.error || null;
     renderProviderHealth(data.provider_health || {});
     return data;
   }
@@ -135,16 +139,18 @@
     const active = AN.providerHealth.rows(providers);
     const section = $("provider-health-section");
     if (section) section.hidden = !active.length;
-    box.replaceChildren(...active.map(({ provider, model, item, quotaGroup }) => el("div", { className: "setting-row" },
-      el("span", {}, [PROVIDER_NAMES[provider] || provider, model || quotaGroup, AN.providerHealth.reason(item, L), AN.providerHealth.recovery(item, L)].filter(Boolean).join(" · ")),
-      el("button", { type: "button", onClick: async () => {
-        try {
-          const res = await fetch("/app/provider-health/clear", { method: "POST", headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" }, body: JSON.stringify({ provider, model, group: quotaGroup }) });
-          const data = await res.json();
-          if (!res.ok || data.error) throw new Error(data.error || res.status);
-          await apiGetMembers();
-        } catch (error) { showNotice(L(`解除失败：${error.message}`, `Could not clear cooldown: ${error.message}`), true); }
-      } }, L("立即恢复", "Resume now")))));
+    const labels = Object.fromEntries(accounts.map((account) => [account.id, account.label]));
+    const resume = async ({ provider, account, model, quotaGroup }) => {
+      try {
+        const res = await fetch("/app/provider-health/clear", { method: "POST", headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" }, body: JSON.stringify({ provider, account, model, group: quotaGroup }) });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || res.status);
+        await apiGetMembers();
+      } catch (error) { showNotice(L(`解除失败：${error.message}`, `Could not clear cooldown: ${error.message}`), true); }
+    };
+    box.replaceChildren(...active.map((row) => el("div", { className: "setting-row" },
+      el("span", {}, [AN.providerHealth.name(row, labels), row.model || row.quotaGroup, AN.providerHealth.reason(row.item, L), AN.providerHealth.recovery(row.item, L)].filter(Boolean).join(" · ")),
+      el("button", { type: "button", onClick: () => resume(row) }, L("立即恢复", "Resume now")))));
   }
 
   async function apiPostReview(doc) {
@@ -699,6 +705,8 @@
     reviewError: [() => reviewError],
     permissionTiers: [() => permissionTiers],
     permissionsError: [() => permissionsError],
+    accounts: [() => accounts, (v) => { accounts = v; }],
+    accountsError: [() => accountsError, (v) => { accountsError = v; }],
     reviewSaves: [() => reviewSaves, (v) => { reviewSaves = v; }],
     operatedControl: [() => operatedControl, (v) => { operatedControl = v; }],
     pendingDisable: [() => pendingDisable, (v) => { pendingDisable = v; }],

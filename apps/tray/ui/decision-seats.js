@@ -35,7 +35,7 @@
   const catalogEntry = (kind) => S.roleCatalog().find((entry) => entry.group === kind);
   const levelsOf = () => DIFFICULTIES.map(([difficulty]) => difficulty);
   const seatsOfCard = (card) => (card.kind === IMAGE ? card.rows.map((row) => row.seat).filter(Boolean) : Object.values(card.seats));
-  const bareSeat = ({ id, provider, model, effort, fallbacks, description }) => ({ id, provider, model, ...(effort ? { effort } : {}), ...(fallbacks?.length ? { fallbacks } : {}), ...(description ? { description } : {}) });
+  const bareSeat = ({ id, provider, account, model, effort, fallbacks, description }) => ({ id, provider, ...(account ? { account } : {}), model, ...(effort ? { effort } : {}), ...(fallbacks?.length ? { fallbacks } : {}), ...(description ? { description } : {}) });
   const accessOf = (card) => catalogEntry(card.kind)?.access || (card.kind === IMAGE ? "write" : card.access);
 
   function toCards(seats) {
@@ -63,19 +63,19 @@
     return cards.flatMap((card) => {
       if (card.kind === IMAGE) {
         return card.rows.filter((row) => row.seat).map(({ role, loadedRole, description, seat }) => ({
-          id: seat.id, kind: IMAGE, role: role.trim(), description: role.trim() === loadedRole ? description : role.trim(), provider: seat.provider, model: seat.model,
+          id: seat.id, kind: IMAGE, role: role.trim(), description: role.trim() === loadedRole ? description : role.trim(), provider: seat.provider, ...(seat.account ? { account: seat.account } : {}), model: seat.model,
           ...(seat.effort ? { effort: seat.effort } : {}), ...(seat.fallbacks?.length ? { fallbacks: seat.fallbacks } : {}), access: "write",
         }));
       }
       return levelsOf().filter((level) => card.seats[level]).map((level) => {
-        const { id, provider, model, effort, fallbacks, description } = card.seats[level];
+        const { id, provider, account, model, effort, fallbacks, description } = card.seats[level];
         const role = card.role.trim();
         const group = catalogEntry(card.kind);
         // A custom seat's own description goes back as it was while its specialty is the one it was read with.
         const kept = card.kind === CUSTOM && role === card.loadedRole ? description || card.description : "";
         return {
           id, kind: card.kind, role, description: group?.scope_zh || (card.kind === CUSTOM ? kept || role : card.description || role),
-          provider, model, ...(effort ? { effort } : {}), ...(fallbacks?.length ? { fallbacks } : {}), access: accessOf(card), difficulty: level,
+          provider, ...(account ? { account } : {}), model, ...(effort ? { effort } : {}), ...(fallbacks?.length ? { fallbacks } : {}), access: accessOf(card), difficulty: level,
         };
       });
     });
@@ -83,7 +83,7 @@
 
   // The saved file in the order and shape the page writes, to compare with the cards.
   const canon = (seats) => [...seats].sort((a, b) => (a.id < b.id ? -1 : 1)).map((seat) => ({
-    id: seat.id, kind: seat.kind, role: seat.role, description: seat.description, provider: seat.provider, model: seat.model,
+    id: seat.id, kind: seat.kind, role: seat.role, description: seat.description, provider: seat.provider, ...(seat.account ? { account: seat.account } : {}), model: seat.model,
     ...(seat.effort ? { effort: seat.effort } : {}), ...(seat.fallbacks?.length ? { fallbacks: seat.fallbacks } : {}), access: seat.access, ...(seat.difficulty ? { difficulty: seat.difficulty } : {}),
   }));
   // The saved cards are made once per loaded file, so a card keeps its handle between draws.
@@ -128,7 +128,7 @@
       if (!seat?.provider || !seat?.model) return null;
       const id = freshId(taken);
       taken.add(id);
-      return { id, provider: seat.provider, model: seat.model, ...(seat.effort ? { effort: seat.effort } : {}) };
+      return { id, provider: seat.provider, ...(seat.account ? { account: seat.account } : {}), model: seat.model, ...(seat.effort ? { effort: seat.effort } : {}) };
     };
     const made = S.roleCatalog().filter((entry) => S.liveSeats(doc).some(({ role }) => role === entry.group)).map((entry) => newCard(entry.group, {
       seats: Object.fromEntries(["easy", "medium", "hard"].map((difficulty) => [difficulty, bound(S.orchestrationSeat(doc, entry.group, difficulty))]).filter(([, seat]) => seat)),

@@ -17,7 +17,13 @@
   if (!enabled()) return;
 
   const mockHealth = q.has("health") ? { antigravity: { models: { "gemini-3.8-flash-high": { code: "quota", until: new Date(Date.now() + 3600000).toISOString() } } } } : {};
+  // Named Claude accounts, shown with `?accounts`.
+  const mockAccounts = q.has("accounts") ? [
+    { id: "a1", provider: "claude", label: "工作", dir: "/Users/preview/.agentnave-accounts/claude/a1", managed: true },
+    { id: "a2", provider: "claude", label: "个人 2", dir: "/Users/preview/.claude_personal", managed: false },
+  ] : [];
   const mockMembersData = {
+    accounts: { accounts: mockAccounts, error: null },
     provider_health: mockHealth,
     review: { version: 1, seats: { "security-reviewer": { provider: "codex", model: "gpt-6.1-sol", effort: "high", fallbacks: [{ provider: "claude", model: "claude-3-7-sonnet" }, { provider: "codex", model: "gpt-5.4-turbo", effort: "low" }] } } },
     permissions: { version: 1, clis: { codex: "auto", claude: "full" } },
@@ -1031,7 +1037,8 @@ All checks passed!
       const manual = mockProjects.find((p) => p.key === body.cwd);
       const project = PLACES.find((p) => p.project_path === body.cwd)
         || (manual ? { project_key: manual.key, project_label: manual.label, project_path: manual.path } : { project_key: "other" });
-      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: body.provider, cwd: body.cwd, exit: null, active: false, workspaces: [], display_title: null, ...project };
+      const account = mockAccounts.find((a) => a.id === body.account);
+      const session = { id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: body.provider, account: account?.id ?? null, account_label: account?.label ?? null, cwd: body.cwd, exit: null, active: false, workspaces: [], display_title: null, ...project };
       mockTerminals.push(session);
       return { session };
     }
@@ -1087,8 +1094,15 @@ All checks passed!
   async function p3Fetch(path) {
     if (path === "/app/projects") return { projects: structuredClone(mockProjects) };
     if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
-    if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider })) };
-    if (path === "/app/provider-health") return { providers: structuredClone(mockHealth) };
+    if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider, accounts: provider === "claude" ? mockAccounts.map(({ id, label }) => ({ id, label })) : [] })) };
+    if (path === "/app/accounts") return { accounts: structuredClone(mockAccounts), error: null };
+    if (path === "/app/accounts/scan") return { folders: [{ dir: "/Users/preview/.claude_free", name: ".claude_free" }] };
+    if (path.startsWith("/app/accounts/status")) {
+      const id = new URLSearchParams(path.split("?")[1]).get("id");
+      return id === "a2" ? { logged_in: false, method: "none", email: null, plan: null, error: null }
+        : { logged_in: true, method: "claude.ai", email: id === "a1" ? "work@example.com" : "me@example.com", plan: "max", error: null };
+    }
+    if (path === "/app/provider-health") return { providers: structuredClone(mockHealth), accounts: Object.fromEntries(mockAccounts.map((a) => [a.id, a.label])) };
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
     if (path === "/app/decision-seats") return structuredClone(mockDecision);
@@ -1111,9 +1125,27 @@ All checks passed!
     if (path === "/app/status" && installedState) return { ...status(), service: installedState };
     return mockFetch(path);
   }
+  function accountPost(path, body) {
+    const state = () => ({ accounts: structuredClone(mockAccounts), error: null });
+    const route = path.split("?")[0];
+    const at = mockAccounts.findIndex((a) => a.id === body.id);
+    if (route === "/app/accounts/create" || route === "/app/accounts/link") {
+      const id = `a${Math.max(0, ...mockAccounts.map((a) => Number(a.id.slice(1)))) + 1}`;
+      const managed = route.endsWith("create");
+      const dir = managed ? `/Users/preview/.agentnave-accounts/claude/${id}` : body.dir || "/Users/preview/.claude_picked";
+      const account = { id, provider: "claude", label: body.label || dir.split("/").pop().replace(/^\./, ""), dir, managed };
+      mockAccounts.push(account);
+      return { account, sync: { ok: true, message: "" }, shared_sessions: 0, state: state() };
+    }
+    if (route === "/app/accounts/rename" && at >= 0) { mockAccounts[at].label = body.label; return { state: state() }; }
+    if (route === "/app/accounts/remove" && at >= 0) { mockAccounts.splice(at, 1); return { state: state(), deleted: Boolean(body.delete_dir), delete_error: null, unsync_error: null }; }
+    if (route === "/app/accounts/login" && at >= 0) return { session: 99 };
+    throw Object.assign(new Error("404"), { status: 404 });
+  }
   async function post(path, body = {}) {
     if (path.startsWith("/app/projects/")) return projectPost(path, body);
     if (path.startsWith("/app/terminal/")) return terminalPost(path, body);
+    if (path.startsWith("/app/accounts/")) return accountPost(path, body);
     if (path === "/app/voice/player") { mockPlayer = structuredClone(body); window.dispatchEvent(new CustomEvent("agentnave:voice-player", { detail: mockPlayer })); return { ok: true }; }
     if (path === "/app/voice/player/command") { window.dispatchEvent(new CustomEvent("agentnave:voice-command", { detail: body })); return { ok: true, opening: false }; }
     if (path.split("?")[0] === "/settings/members") return p3Fetch(path);

@@ -708,23 +708,38 @@
     return usable;
   }
 
-  // A seat saves the level it runs at, as a member does.
-  function seatPick(next, model, scene) {
+  // A seat saves the level it runs at, as a member does; a named account is saved by its id, and
+  // the default account by nothing.
+  function seatPick(next, model, scene, account) {
     const effort = savedEffort(next, model, sceneEffort(scene, next, model));
-    return effort ? { provider: next, model, effort } : { provider: next, model };
+    return { provider: next, ...(account ? { account } : {}), model, ...(effort ? { effort } : {}) };
   }
   const withFallbacks = (pick, list) => (list?.length ? { ...pick, fallbacks: list } : pick);
-  const pairKey = (provider, model) => `${provider}\u0000${model}`;
+  // What tells two picks apart: effort does not, an account does.
+  const pairKey = (provider, model, account) => `${provider}\u0000${account || ""}\u0000${model}`;
+  const pickKey = (pick) => pairKey(pick.provider, pick.model, pick.account);
+  // The accounts a CLI can run as, the default one (null) first; only Claude has named ones.
+  const accountsOf = (provider) => [null, ...(provider === "claude" ? S.accounts.map((account) => account.id) : [])];
+  const accountLabel = (id) => S.accounts.find((account) => account.id === id)?.label;
+  // A CLI and account as one menu value; the default account is the CLI alone.
+  const cliValue = (provider, account) => (account ? `${provider}@${account}` : provider);
+  const parseCli = (value) => {
+    const [provider, account = null] = value.split("@");
+    return { provider, account };
+  };
   const MAX_FALLBACKS = 3;
 
-  // The first CLI and model no pick of the seat has taken, a CLI other than the seat's own first.
+  // The first CLI, account and model no pick of the seat has taken, a CLI other than the seat's own
+  // first.
   function freshPick(scene, taken, own) {
     const usable = cliUsable(scene);
     for (const provider of PROVIDERS.filter(usable).sort((a, b) => (a === own) - (b === own))) {
-      const free = seatModels(provider).filter((model) => !taken.has(pairKey(provider, model)));
-      if (!free.length) continue;
-      const preferred = slot(scene, provider).model || nativeDefault(provider).model;
-      return seatPick(provider, free.includes(preferred) ? preferred : free[0], scene);
+      for (const account of accountsOf(provider)) {
+        const free = seatModels(provider).filter((model) => !taken.has(pairKey(provider, model, account)));
+        if (!free.length) continue;
+        const preferred = slot(scene, provider).model || nativeDefault(provider).model;
+        return seatPick(provider, free.includes(preferred) ? preferred : free[0], scene, account);
+      }
     }
     return null;
   }
@@ -739,7 +754,7 @@
       const { fallbacks, ...rest } = seat;
       onSet(next.length ? { ...rest, fallbacks: next } : rest);
     };
-    const takenBy = (skip) => new Set([seat, ...list.filter((_, i) => i !== skip)].map((pick) => pairKey(pick.provider, pick.model)));
+    const takenBy = (skip) => new Set([seat, ...list.filter((_, i) => i !== skip)].map(pickKey));
     if (list.length < MAX_FALLBACKS) {
       const fresh = freshPick(scene, takenBy(-1), seat.provider);
       row.appendChild(el("button", {
@@ -761,14 +776,27 @@
   }
 
   // A seat's CLI, then one of that CLI's models, then an effort or the member's default.
-  function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`), scene = "task", taken = new Set((seat?.fallbacks || []).map((pick) => pairKey(pick.provider, pick.model)))) {
+  function seatSelects(key, name, seat, onSet, unset = AN.L("自动", "Auto"), modelLabel = AN.L(`${name}的模型`, `Model for ${name}`), scene = "task", taken = new Set((seat?.fallbacks || []).map(pickKey))) {
     const provider = seat?.provider || "";
     const usable = cliUsable(scene);
     const note = (p) => !usable(p) ? AN.L("（员工里已停用）", " (disabled in Employees)")
       : seatModels(p).length ? "" : AN.L("（没有可选模型）", " (no models available)");
-    const free = (p) => seatModels(p).filter((m) => !taken.has(pairKey(p, m)));
-    const clis = PROVIDERS.filter((p) => usable(p) || p === provider)
-      .map((p) => [p, PROVIDER_NAMES[p] + note(p), (Boolean(note(p)) || !free(p).length) && p !== provider]);
+    const free = (p, account) => seatModels(p).filter((m) => !taken.has(pairKey(p, m, account)));
+    // A meeting seat names only its CLI; a task seat also names the account of a CLI that has some.
+    const named = scene === "task";
+    const clis = PROVIDERS.filter((p) => usable(p) || p === provider).flatMap((p) => {
+      const accounts = named ? accountsOf(p) : [null];
+      return accounts.map((account) => {
+        const current = p === provider && (account || null) === (seat?.account || null);
+        const name = PROVIDER_NAMES[p] + (account ? AN.L(`（${accountLabel(account)}）`, ` (${accountLabel(account)})`) : "");
+        return [cliValue(p, account), name + note(p), (Boolean(note(p)) || !free(p, account).length) && !current];
+      });
+    });
+    // A seat that names an account since removed keeps showing it, so the file is never changed unseen.
+    if (named && seat?.account && !accountLabel(seat.account)) {
+      clis.push([cliValue(provider, seat.account), AN.L(`${PROVIDER_NAMES[provider]}（已移除的账号）`, `${PROVIDER_NAMES[provider]} (removed account)`), true]);
+    }
+    const shownCli = seat ? cliValue(provider, seat.account) : "";
     // A meeting seat stores only its CLI and shows what Employees sets for it in that scene.
     if (scene === "discussion") {
       // As the server runs it: nothing while 开会 has the CLI off, and a model list needs a default.
@@ -787,21 +815,22 @@
     if (seat?.model && !excluded && !models.includes(seat.model)) models.unshift(seat.model);
     const levels = seat?.model ? effortLevels(provider, seat.model) : [];
     if (seat?.effort && !levels.includes(seat.effort)) levels.push(seat.effort);
-    const seatModel = (next, model) => withFallbacks(seatPick(next, model, scene), seat?.fallbacks);
-    const pickCli = (next) => {
-      if (!next) return onSet(null);
-      const ids = free(next);
+    const seatModel = (next, model, account) => withFallbacks(seatPick(next, model, scene, account), seat?.fallbacks);
+    const pickCli = (value) => {
+      if (!value) return onSet(null);
+      const { provider: next, account } = parseCli(value);
+      const ids = free(next, account);
       const preferred = slot(scene, next).model || nativeDefault(next).model;
-      onSet(seatModel(next, ids.includes(preferred) ? preferred : ids[0]));
+      onSet(seatModel(next, ids.includes(preferred) ? preferred : ids[0], account));
     };
-    const pickModel = (model) => onSet(seatModel(provider, model));
+    const pickModel = (model) => onSet(seatModel(provider, model, seat?.account));
     const pickEffort = (effort) => onSet({ ...seat, effort });
     const efforts = !seat || !levels.length ? [["", "—"]]
       : [...(seat.effort ? [] : [["", AN.L("选一个档位", "Choose effort"), true]]), ...levels.map((l) => [l, l])];
     return [
-      reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), provider, [...(unset === null ? [] : [["", unset]]), ...clis], pickCli),
+      reviewSelect(`${key}/cli`, AN.L(`${name}的 CLI`, `CLI for ${name}`), shownCli, [...(unset === null ? [] : [["", unset]]), ...clis], pickCli),
       reviewSelect(`${key}/model`, modelLabel, seat?.model || "",
-        seat ? [...(excluded ? [[seat.model, AN.L(`${seat.model}（不在可用模型里）`, `${seat.model} (not available)`), true]] : []), ...models.map((m) => [m, m, taken.has(pairKey(provider, m)) && m !== seat.model])] : [["", "—"]], pickModel, !seat),
+        seat ? [...(excluded ? [[seat.model, AN.L(`${seat.model}（不在可用模型里）`, `${seat.model} (not available)`), true]] : []), ...models.map((m) => [m, m, taken.has(pairKey(provider, m, seat.account)) && m !== seat.model])] : [["", "—"]], pickModel, !seat),
       reviewSelect(`${key}/effort`, AN.L(`${name}的思考档位`, `Effort for ${name}`), seat?.effort || "", efforts, pickEffort, !seat || !levels.length),
     ];
   }

@@ -278,6 +278,7 @@
       if (provider === "deepseek" && enabled) for (const row of deepSeekRouteRows()) card.appendChild(row);
       const runtime = renderInteractive(provider);
       if (runtime) card.appendChild(runtime);
+      if (provider === "claude" && info.installed) card.appendChild(S.renderAccounts());
       if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
       card.appendChild(renderCliUpdateError(provider));
       cards.appendChild(card);

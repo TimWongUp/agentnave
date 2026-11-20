@@ -300,6 +300,19 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .member-picker-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .member-picker-actions button { font: inherit; }
 .member-card > .disable-confirm { margin: 0 -18px; border-top: 1px solid var(--line); }
+/* The accounts block of the Claude card: the account, its sign-in line, and two buttons in fixed columns. */
+.account-box { display: flex; flex-direction: column; gap: 8px; }
+.account-row { display: grid; grid-template-columns: minmax(96px, 168px) minmax(0, 1fr) 112px 72px; align-items: center; gap: 12px; padding-left: 30px; }
+.account-row > button { white-space: nowrap; }
+.account-row > .badge { justify-self: start; }
+.account-row > .account-label, .account-row > .account-link { width: 100%; min-width: 0; }
+.account-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.account-status > .member-muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-delete { flex: 1 1 100%; display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
+.account-box > .disable-confirm { margin: 0 -18px; border-top: 1px solid var(--line); }
+dialog.account-login { width: min(780px, 94vw); height: min(540px, 86vh); max-height: none; }
+dialog.account-login > h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
+.account-login-frame { flex: 1; min-height: 0; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 @media (max-width: 1000px) {
   .member-card { --member-cols: 96px minmax(0, 1fr) minmax(0, 1fr); }
   .member-title { grid-column: 1 / -1; }
@@ -308,6 +321,9 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
   .member-efforts > .segment-btn { flex: 1 0 auto; min-width: max-content; padding-left: 8px; padding-right: 8px; }
 }
 @media (max-width: 700px) {
+  .account-row { grid-template-columns: minmax(0, 1fr) auto auto; padding-left: 0; gap: 8px; }
+  .account-row > :nth-child(2) { grid-column: 1 / -1; order: 3; }
+  .account-box > .disable-confirm { margin: 0 -14px; }
   .member-card { --member-cols: minmax(0, 1fr); padding: 12px 14px; }
   .member-head, .member-row { padding-left: 0; gap: 8px; }
   .member-title { margin-left: 0; }

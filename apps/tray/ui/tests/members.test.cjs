@@ -1551,6 +1551,40 @@ test("a seat gains up to three ordered fallbacks that never repeat it, and keeps
   app.run("discardAdvanced()");
 });
 
+test("a Claude seat can run as a named account, which dedupes by CLI, account and model", () => {
+  const app = advancedEditor();
+  app.run(`
+    detected.claude = { installed: true, models: [{ id: "opus" }] };
+    AN.settings.accounts = [{ id: "a1", label: "工作", dir: "/a1", managed: true }];
+    reviewSeats = { "security-reviewer": { provider: "claude", model: "opus", account: "a1" } };
+    renderReviewSeats();
+    function findKey(nodes, key) {
+      for (const node of [nodes].flat(Infinity)) {
+        if (!node || typeof node !== "object") continue;
+        if (node.dataset?.focusKey === key) return node;
+        const found = findKey(node.children, key);
+        if (found) return found;
+      }
+      return null;
+    }
+    const review = () => $("review-seats").children;
+    const seat = () => seatsShown()["security-reviewer"];
+  `);
+  const seat = () => JSON.parse(app.run("JSON.stringify(seat())"));
+  const find = (key) => app.run(`findKey(review(), ${JSON.stringify(key)})`);
+  const clis = find("security-reviewer/cli").children.flat().map((option) => option.attrs.value);
+  assert.ok(clis.includes("claude") && clis.includes("claude@a1"));
+  find("security-reviewer/fb-add").listeners.click();
+  const [fallback] = seat().fallbacks;
+  assert.notDeepEqual([fallback.provider, fallback.account ?? null], ["claude", "a1"], "never the seat's own account and model");
+  find("security-reviewer/cli").listeners.change({ target: { value: "claude" } });
+  assert.equal(seat().account, undefined, "the default account carries no field");
+  find("security-reviewer/cli").listeners.change({ target: { value: "claude@a1" } });
+  assert.equal(seat().account, "a1");
+  assert.equal(seat().model, "opus", "the model stays when the account changes");
+  app.run("discardAdvanced()");
+});
+
 test("a catalog seat's fallbacks come back as saved, and the add button sits in the row's last column", async () => {
   const fallbacks = [{ provider: "codex", model: "m2", effort: "low" }];
   const seat = { id: "w-1", kind: "worker", role: "通用执行", description: "改代码", provider: "codex", model: "chat-model", access: "write", difficulty: "easy", fallbacks };
