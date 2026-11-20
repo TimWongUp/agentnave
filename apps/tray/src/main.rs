@@ -96,6 +96,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                 || matches!(
                     path,
                     "/app/preferences"
+                        | "/app/usage/refresh"
                         | "/app/uninstall/cancel"
                         | "/app/alerts/test"
                         | "/settings/members"
@@ -527,6 +528,7 @@ mod tests {
         }
         for path in [
             "/app/preferences",
+            "/app/usage/refresh",
             "/app/alerts/test",
             "/settings/members",
             "/app/voice",
