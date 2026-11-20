@@ -458,66 +458,80 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     seat_applied: list[str] = []
     fallback = None
     conversations = _conversations(ctx)
+    claim: tuple[str, str, str] | None = None
     try:
-        arguments = StartArguments(provider, cwd, role, requested, access)
-        arguments.selected, fallback = _select_fallback(
-            requested or review_role(role),
-            session_id,
-            provider,
-            provider_options,
-            conversations,
-        )
-        arguments = resolve_start(
-            arguments,
-            conversations,
-            runtime.HOST,
-            session_id,
-            manager_session_id,
-            provider_options,
-        )
-    except NativeSeat as exc:
-        return native_seat_payload(
-            exc.name, exc.seat.provider, exc.seat.model, exc.seat.effort, fallback=fallback
-        )
-    except (ValueError, OSError) as exc:
-        raise ToolError(str(exc)) from exc
-    provider = arguments.provider
-    assert provider is not None
-    role, chosen_seat, access = arguments.role, arguments.seat, arguments.access
-    seat_name = chosen_seat or review_role(role)
-    try:
-        seat = effective_seat(arguments, seat_name, runtime.HOST)
-        options, seat_applied = apply_seat(seat, provider, provider_options or {})
-        options = arguments.apply_history(options)
-        options, defaults_applied = apply_task_defaults(
-            provider,
-            seat_name,
-            options,
-            seat_applied,
-            runtime.task_excluded_providers(),
-            runtime.HOST,
-            seat,
-        )
-        provider_health.check(
-            _conversations(ctx).root,
-            [(provider, provider_health.model_option(options))],
-            resume=session_id is not None,
-        )
-        request, started = await _acquire_and_start_task(
-            _conversations(ctx), launch, arguments, options
-        )
-    except KeyError as exc:
-        raise ToolError("Unknown conversation_id; use list.") from exc
-    except ValueError as exc:
-        error = invocation_request_error(provider, exc)
-        if seat_applied:
-            raise ToolError(
-                f"{error} App defaults applied: {(seat_name or '').strip()!r} seat "
-                f"({', '.join(seat_applied)})."
-            ) from exc
-        raise error from exc
-    except OSError as exc:
-        raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
+        try:
+            arguments = StartArguments(provider, cwd, role, requested, access)
+            seat_key = requested or review_role(role)
+            arguments.selected, fallback = _select_fallback(
+                seat_key,
+                session_id,
+                provider,
+                provider_options,
+                conversations,
+            )
+            if (
+                arguments.selected is not None
+                and fallback is not None
+                and fallback.get("random") is True
+                and seat_key
+            ):
+                claim = conversations.reserve_seat_model(
+                    seat_key, arguments.selected.provider, arguments.selected.model
+                )
+            arguments = resolve_start(
+                arguments,
+                conversations,
+                runtime.HOST,
+                session_id,
+                manager_session_id,
+                provider_options,
+            )
+        except NativeSeat as exc:
+            return native_seat_payload(
+                exc.name, exc.seat.provider, exc.seat.model, exc.seat.effort, fallback=fallback
+            )
+        except (ValueError, OSError) as exc:
+            raise ToolError(str(exc)) from exc
+        provider = arguments.provider
+        assert provider is not None
+        role, chosen_seat, access = arguments.role, arguments.seat, arguments.access
+        seat_name = chosen_seat or review_role(role)
+        try:
+            seat = effective_seat(arguments, seat_name, runtime.HOST)
+            options, seat_applied = apply_seat(seat, provider, provider_options or {})
+            options = arguments.apply_history(options)
+            options, defaults_applied = apply_task_defaults(
+                provider,
+                seat_name,
+                options,
+                seat_applied,
+                runtime.task_excluded_providers(),
+                runtime.HOST,
+                seat,
+            )
+            provider_health.check(
+                conversations.root,
+                [(provider, provider_health.model_option(options))],
+                resume=session_id is not None,
+            )
+            request, started = await _acquire_and_start_task(
+                conversations, launch, arguments, options
+            )
+        except KeyError as exc:
+            raise ToolError("Unknown conversation_id; use list.") from exc
+        except ValueError as exc:
+            error = invocation_request_error(provider, exc)
+            if seat_applied:
+                raise ToolError(
+                    f"{error} App defaults applied: {(seat_name or '').strip()!r} seat "
+                    f"({', '.join(seat_applied)})."
+                ) from exc
+            raise error from exc
+        except OSError as exc:
+            raise ToolError(f"Unable to prepare or save the task: {exc}.") from exc
+    finally:
+        conversations.release_seat_model(claim)
     payload = await _task_start_payload(
         ctx, manager, request, started, access, [*defaults_applied, *arguments.defaults]
     )

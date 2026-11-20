@@ -441,13 +441,37 @@ class Conversations(ConversationStore):
                     found[run.invocation_id] = owner(round_.group.id)
         return found
 
+    def reserve_seat_model(
+        self, seat_name: str, provider: str, model: str
+    ) -> tuple[str, str, str] | None:
+        """Hold a drawn candidate in memory until start_task runs or startup fails."""
+        target = seat_name.strip()
+        if not target:
+            return None
+        key = (target, provider, model)
+        self._seat_model_claims[key] = self._seat_model_claims.get(key, 0) + 1
+        return key
+
+    def release_seat_model(self, claim: tuple[str, str, str] | None) -> None:
+        if claim is None:
+            return
+        remaining = self._seat_model_claims.get(claim, 0) - 1
+        if remaining > 0:
+            self._seat_model_claims[claim] = remaining
+        else:
+            self._seat_model_claims.pop(claim, None)
+
     def running_seat_models(self, seat_name: str) -> set[tuple[str, str]]:
-        """(provider, model) pairs of active private tasks in this server for seat_name."""
+        """(provider, model) pairs active or reserved in this server for seat_name."""
         target = seat_name.strip()
         if not target:
             return set()
         active = self.manager.active_ids()
-        in_use: set[tuple[str, str]] = set()
+        in_use = {
+            (provider, model)
+            for (seat, provider, model), count in self._seat_model_claims.items()
+            if seat == target and count > 0
+        }
         for task_id, invocation_id in self.running_tasks.items():
             if invocation_id not in active:
                 continue

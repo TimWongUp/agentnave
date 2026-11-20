@@ -5101,3 +5101,86 @@ async def test_decision_random_candidates_avoids_in_use_and_keeps_resume(
 
         for item in (other_running, *batch_results):
             await client.call_tool("cancel", {"id": item["invocation_id"]})
+
+
+@pytest.mark.asyncio
+async def test_decision_random_candidates_reserves_during_concurrent_isolation_and_releases_on_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    from agentnave import seat_fallbacks
+
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    def installed_claude(adapter: AdapterHooks) -> bool:
+        return adapter.name == "claude"
+
+    monkeypatch.setattr(AdapterHooks, "is_installed", installed_claude)
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    _write_decision_key()
+    write_mix = _own_seat(
+        "write-mix",
+        "claude",
+        "write",
+        fallbacks=[
+            {"provider": "claude", "model": "alt-1"},
+            {"provider": "claude", "model": "alt-2"},
+        ],
+    )
+    _write_own_seats([write_mix], random_candidates=True)
+
+    def pick_zero(_count: int) -> int:
+        return 0
+
+    monkeypatch.setattr(seat_fallbacks, "choose_index", pick_zero)
+    repo = _light_repo(tmp_path / "repo")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    async with Client(mcp) as client:
+        # Startup failure during async isolation setup must release the reservation so the next
+        # draw can still pick position 0.
+        failed = await client.call_tool(
+            "start_agent",
+            {
+                "cwd": str(plain),
+                "seat": "write-mix",
+                "prompt": "ok",
+                "isolation": {},
+                "manager_session_id": "boss-1",
+            },
+        )
+        assert failed.is_error
+
+        # Two concurrent start_agent calls overlapping on isolation setup reserve their picks
+        # immediately, so they receive distinct models even when choose_index always returns 0.
+        first_call, second_call = await asyncio.gather(
+            client.call_tool(
+                "start_agent",
+                {
+                    "cwd": str(repo),
+                    "seat": "write-mix",
+                    "prompt": "sleep",
+                    "isolation": {},
+                    "manager_session_id": "boss-1",
+                },
+            ),
+            client.call_tool(
+                "start_agent",
+                {
+                    "cwd": str(repo),
+                    "seat": "write-mix",
+                    "prompt": "sleep",
+                    "isolation": {},
+                    "manager_session_id": "boss-1",
+                },
+            ),
+        )
+        assert not first_call.is_error, first_call.content
+        assert not second_call.is_error, second_call.content
+        first = _payload(first_call.structured_content)
+        second = _payload(second_call.structured_content)
+        assert {first["model"], second["model"]} == {"model-write-mix", "alt-1"}
+
+        for item in (first, second):
+            await client.call_tool("cancel", {"id": item["invocation_id"]})
