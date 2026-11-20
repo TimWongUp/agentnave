@@ -882,11 +882,17 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
             ""
         };
         let script = format!(
-            "stty raw -echo; printf '\\033]7501;state=working\\007ready'; {change} dd bs=1 count=10 2>/dev/null | od -An -t u1; printf done"
+            "stty raw -echo; printf '\\033]7501;state=working\\007ready'; {change} dd bs=1 count={} 2>/dev/null | od -An -t u1; printf done",
+            if blocked { 14 } else { 10 }
         );
         let session = Session::start(shell(&script), 80, 24).unwrap();
         assert!(output_until(&session, "ready").0.contains("ready"));
-        assert!(session.begin_wakeup("notice").unwrap().is_some());
+        if blocked {
+            session.set_draft_wait(Duration::ZERO);
+            session.user_input(b"old", false).unwrap();
+        }
+        let notice = if blocked { "通知" } else { "notice" };
+        assert!(session.begin_wakeup(notice).unwrap().is_some());
         session.user_input(b"xy", false).unwrap();
         session.user_input(b"z", false).unwrap();
         if blocked {
@@ -895,7 +901,7 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
         assert_eq!(session.finish_wakeup(), !blocked);
         let (text, _) = output_until(&session, "done");
         let expected = if blocked {
-            "110 111 116 105 99 101 21 120 121 122"
+            "111 108 100 233 128 154 231 159 165 127 127 120 121 122"
         } else {
             "110 111 116 105 99 101 13 120 121 122"
         };
@@ -939,3 +945,6 @@ fn status_probe_is_answered_once_even_when_output_is_replayed() {
     let (text, _) = output_until(&session, "done");
     assert!(text.contains("122"), "{text:?}");
 }
+
+#[cfg(unix)]
+mod live;
