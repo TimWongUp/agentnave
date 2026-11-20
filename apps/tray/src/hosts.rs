@@ -410,14 +410,16 @@ impl Hosts {
         let stale = !same_path(&current, &expected);
         json!({"stale":stale,"expected":expected.to_string_lossy(),"current":current})
     }
-    /// Where this machine's Claude, Codex and Grok keep their sessions, every row's folder included.
+    /// Where this machine's CLIs keep their sessions, every row's folder included.
     pub(crate) fn boss_homes(&self) -> crate::data::boss_app::Homes {
         let mut homes = crate::data::boss_app::Homes::desktop_data();
         for host in self.registry() {
             match host.boss {
                 "claude" => homes.claude.push(host.root.path),
                 "codex" => homes.codex.push(host.root.path),
-                "grok" => homes.other.push(("grok".to_owned(), host.root.path)),
+                "codebuddy" | "workbuddy" | "grok" | "pi" | "deepseek" => {
+                    homes.other.push((host.boss.to_owned(), host.root.path));
+                }
                 _ => {}
             }
         }

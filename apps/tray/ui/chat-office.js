@@ -216,13 +216,14 @@ function createBoss() {
     e?.stopPropagation?.();
     openScope({ kind: "all" }, el.boss);
   });
+  const usage = typeof ChatUsage !== "undefined" ? ChatUsage.mount() : null;
   el.boss.replaceChildren(
     h("h2.zone-h", {}, L("boss 办公室", "boss office"), rec.state, allMessages, AN.voice?.workspaceListen),
     (rec.row = h(
       "div.boss-row",
       {},
       // no speech bubble: the label below already says what the boss is waiting for
-      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.cli, rec.st)),
+      h("div.boss-mid", {}, rec.scene, h("div.label", {}, rec.cli, rec.st), usage),
       rec.meets,
     )),
   );
@@ -346,6 +347,7 @@ function updateBoss(rec, c, n) {
       : L(`boss 办公室，${zhNote}${rec.st.textContent}，查看全部消息`, `boss office, ${enNote}${rec.st.textContent}, view all messages`),
   );
   el.boss.classList.toggle("sel", activeSelection()?.kind === "boss");
+  if (typeof ChatUsage !== "undefined") ChatUsage.show(c.group);
 }
 
 // Once the new boss has spoken, a different former character hangs on the wall to its left.

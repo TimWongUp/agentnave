@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title data-en="Usage · AgentNave">用量 · AgentNave</title>
+<link rel="stylesheet" href="/manage/theme.css">
+<link rel="stylesheet" href="/manage/manage.css">
+<link rel="stylesheet" href="./usage.css">
+<script src="/chat/appearance.js" defer></script>
+<script src="/settings/settings-frame.js" defer></script>
+<script src="/chat/common.js" defer></script>
+<script src="./usage.js" defer></script>
+</head>
+<body class="usage-page">
+<header class="bar">
+  <a draggable="false" class="brand" href="/chat/"><span class="mark"><svg viewBox="0 0 44 44" aria-hidden="true"><path class="stem" d="M10 35V10L32 35V20"/><ellipse class="drop" cx="32" cy="10" rx="4" ry="4"/></svg></span>AgentNave</a>
+  <nav class="nav" aria-label="主导航" data-en-label="Main navigation">
+    <a draggable="false" href="/chat/" data-en="Office">办公室</a>
+    <a draggable="false" href="/usage/" aria-current="page" data-en="Usage">用量</a>
+    <a draggable="false" href="/settings/" data-en="Settings">设置</a>
+  </nav>
+</header>
+<main class="u-main">
+  <div class="u-controls">
+    <div class="u-seg" id="u-view" role="radiogroup" aria-label="视角" data-en-label="View">
+      <button type="button" role="radio" data-view="overall" data-en="Overall">总体消耗</button>
+      <button type="button" role="radio" data-view="projects" data-en="By project">按项目</button>
+    </div>
+    <div class="u-seg" id="u-range" role="radiogroup" aria-label="时间范围" data-en-label="Time range">
+      <button type="button" role="radio" data-range="today" data-en="Today">今天</button>
+      <button type="button" role="radio" data-range="7d" data-en="7 days">近 7 天</button>
+      <button type="button" role="radio" data-range="30d" data-en="30 days">近 30 天</button>
+    </div>
+    <div class="u-sync">
+      <span id="u-updated" class="u-updated" role="status"></span>
+      <button id="u-refresh" class="u-refresh" type="button" aria-label="刷新" title="刷新" data-en-label="Refresh" data-en-title="Refresh"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.5 10a6.5 6.5 0 1 1-2-4.7M16.5 3.5v3.3h-3.3"/></svg></button>
+    </div>
+  </div>
+  <div id="u-body" class="u-body" aria-live="polite"></div>
+  <p id="u-foot" class="u-foot" hidden></p>
+</main>
+</body>
+</html>

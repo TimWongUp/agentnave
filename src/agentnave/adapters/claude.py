@@ -61,7 +61,7 @@ _MODES = frozenset({"auto", "bypassPermissions"})
 
 # A Claude Code session exports these to what it launches; a claude started with them acts as part
 # of that session (its id, messaging socket and token, effort). Dispatched Claude never keeps
-# them, on every path: interactive, `--print` and the usage query (ADR-0056, ADR-0106).
+# them, on every path: interactive, `--print` and the usage query (ADR-0056, ADR-0107).
 HOST_SESSION_ENV = (
     "CLAUDECODE",
     "CLAUDE_CODE_SESSION_ID",

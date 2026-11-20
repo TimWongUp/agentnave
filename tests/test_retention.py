@@ -546,7 +546,7 @@ def test_v2_to_v4_migrations_upgrade_to_v5_and_preserve_workspace(tmp_path: Path
         assert db.execute("SELECT count(*) FROM workspace_links").fetchone()[0] == 0
         db.execute("ALTER TABLE workspaces DROP COLUMN owner_account")
         db.execute("PRAGMA user_version = 4")
-    # The owner account (ADR-0106) arrives with v5; a workspace before it is the default account's.
+    # The owner account (ADR-0107) arrives with v5; a workspace before it is the default account's.
     last = Database(tmp_path)
     try:
         before = last.workspace(_WORKSPACE)

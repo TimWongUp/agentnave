@@ -1,6 +1,6 @@
 "use strict";
 {
-  // Settings -> 员工 -> Claude Code card: the named accounts (ADR-0106). Each one is a folder with
+  // Settings -> 员工 -> Claude Code card: the named accounts (ADR-0107). Each one is a folder with
   // its own sign-in; the default account is Claude Code as the machine has it. The sign-in state
   // (e-mail, plan) is read on the spot, shown here and kept nowhere.
 

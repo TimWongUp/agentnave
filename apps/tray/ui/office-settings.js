@@ -1,13 +1,22 @@
 "use strict";
-// Settings borrows the office's content area; the office and its player stay mounted.
+// Settings and Usage borrow the office's content area, one at a time; the office, its terminals and its player stay mounted.
 {
-  let frame = null, receiving = false, loaded = false, pendingSection = null, pendingUninstall = false;
+  const pages = [
+    { prefix: "/settings/", cls: "office-settings", zh: "设置", en: "Settings" },
+    { prefix: "/usage/", cls: "office-usage", zh: "用量", en: "Usage" },
+  ].map(page => ({ ...page, frame: null, loaded: false, language: "", pendingSection: null, pendingUninstall: false }));
+  const settings = pages[0];
+  let receiving = false;
   const header = document.querySelector("header.bar");
   const origin = location.origin === "null" ? "*" : location.origin;
-  const send = data => frame?.contentWindow?.postMessage({ type: "agentnave:settings", ...data }, origin);
-  const frameVisible = () => Boolean(frame && !frame.hidden && !document.hidden && document.documentElement?.dataset?.windowHidden !== "true");
-  const syncVisible = () => send({ action: "visible", visible: frameVisible() });
+  const send = (page, data) => page.frame?.contentWindow?.postMessage({ type: "agentnave:settings", ...data }, origin);
+  const broadcast = (data, except) => pages.forEach(page => { if (page !== except) send(page, data); });
+  const shown = page => Boolean(page.frame && !page.frame.hidden);
+  const current = () => pages.find(shown) || null;
+  const frameVisible = page => Boolean(shown(page) && !document.hidden && document.documentElement?.dataset?.windowHidden !== "true");
+  const syncVisible = () => pages.forEach(page => send(page, { action: "visible", visible: frameVisible(page) }));
   const refreshVoice = () => AN.voice?.refresh();
+  const pageOf = path => pages.find(page => path.startsWith(page.prefix));
   function targetOf(path) {
     const url = new URL(path, location.href);
     if (url.protocol !== location.protocol || url.host !== location.host) return null;
@@ -17,50 +26,62 @@
     }
     return url;
   }
-  function highlight(open) {
+  function highlight() {
+    const active = current()?.prefix || "/chat/";
     for (const link of header.querySelectorAll("nav a")) {
-      const settings = targetOf(link.href)?.pathname.startsWith("/settings/");
-      if (settings === open) link.setAttribute("aria-current", "page");
+      if (targetOf(link.href)?.pathname.startsWith(active)) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     }
   }
+  function deliverPending(page) {
+    if (page.pendingSection) { send(page, { action: "section", hash: page.pendingSection }); page.pendingSection = null; }
+    if (page.pendingUninstall) { send(page, { action: "uninstall" }); page.pendingUninstall = false; }
+  }
+  function hide(page) {
+    if (!shown(page)) return;
+    send(page, { action: "visible", visible: false });
+    page.frame.hidden = true;
+    if (page === settings) refreshVoice();
+  }
   function open(path = "/settings/") {
-    const target = targetOf(path);
-    if (!target?.pathname.startsWith("/settings/")) return false;
-    if (target.hash) pendingSection = target.hash;
-    const uninstall = target.searchParams.has("uninstall");
-    if (!frame) {
-      frame = AN.h("iframe.office-settings", { title: AN.L("设置", "Settings"), hidden: true });
+    const target = targetOf(path), page = target && pageOf(target.pathname);
+    if (!page) return false;
+    if (target.hash) page.pendingSection = target.hash;
+    pages.filter(other => other !== page).forEach(hide);
+    if (!page.frame) {
+      page.frame = AN.h(`iframe.${page.cls}`, { title: AN.L(page.zh, page.en), hidden: true });
       const source = new URL(AN.href(target.pathname + target.search + target.hash), location.href);
       source.searchParams.set("embedded", "1");
-      frame.src = source.href;
-      document.body.append(frame);
+      page.frame.src = source.href;
+      document.body.append(page.frame);
     } else {
-      if (uninstall) pendingUninstall = true;
-      if (loaded) {
-        if (pendingSection) { send({ action: "section", hash: pendingSection }); pendingSection = null; }
-        if (pendingUninstall) { send({ action: "uninstall" }); pendingUninstall = false; }
+      if (target.searchParams.has("uninstall")) page.pendingUninstall = true;
+      if (page.loaded) {
+        if (page.language && page.language !== document.documentElement.lang) {
+          page.language = document.documentElement.lang;
+          send(page, { action: "language", language: page.language });
+        }
+        deliverPending(page);
       }
     }
-    frame.hidden = false;
+    page.frame.hidden = false;
     document.getElementById("app").inert = true;
-    highlight(true);
+    highlight();
     syncVisible();
     return true;
   }
   function close() {
-    if (!frame || frame.hidden) return;
-    send({ action: "visible", visible: false });
-    frame.hidden = true;
+    const page = current();
+    if (!page) return;
+    hide(page);
     document.getElementById("app").inert = false;
-    highlight(false);
-    refreshVoice();
+    highlight();
   }
   function navigate(path) {
     const target = targetOf(path);
     if (!target) return false;
-    if (target.pathname.startsWith("/settings/")) return open(path);
-    // The update dialog opens over whichever page is showing; settings stays where it is.
+    if (pageOf(target.pathname)) return open(path);
+    // The update dialog opens over whichever page is showing; the overlay stays where it is.
     if (target.pathname.startsWith("/chat/") && target.searchParams.has("check-update")) { AN.updateFlow?.(); return true; }
     close();
     if (target.pathname.startsWith("/chat/")) {
@@ -75,33 +96,38 @@
     const link = event.target.closest("a[href]");
     if (!link || event.button) return;
     const target = targetOf(link.href);
-    if (!target || !["/settings/", "/chat/"].some(prefix => target.pathname.startsWith(prefix))) return;
+    if (!target || !(pageOf(target.pathname) || target.pathname.startsWith("/chat/"))) return;
     event.preventDefault();
     navigate(link.href);
   }, true);
   window.addEventListener("message", event => {
-    if (event.source !== frame?.contentWindow || event.data?.type !== "agentnave:settings") return;
+    const page = pages.find(item => item.frame && event.source === item.frame.contentWindow);
+    if (!page || event.data?.type !== "agentnave:settings") return;
     const data = event.data;
     if (data.action === "navigate") navigate(data.path);
     else if (data.action === "changed") { refreshVoice(); AN.art?.loadVideoPacks?.(); }
-    else if (data.action === "loading") loaded = false;
+    else if (data.action === "loading") page.loaded = false;
     else if (data.action === "ready") {
-      loaded = true;
-      if (pendingSection) { send({ action: "section", hash: pendingSection }); pendingSection = null; }
-      if (pendingUninstall) { send({ action: "uninstall" }); pendingUninstall = false; }
-      if (typeof data.language === "string") AN.setLanguage?.(data.language);
+      page.loaded = true;
+      deliverPending(page);
+      if (typeof data.language === "string") {
+        page.language = data.language;
+        if (page === settings) AN.setLanguage?.(data.language);
+      }
       if (typeof data.choice === "string") document.documentElement.dataset.lang = data.choice;
-      send({ action: "preferences", general: window.ANAppearance?.preferences() });
+      send(page, { action: "preferences", general: window.ANAppearance?.preferences() });
       syncVisible();
       refreshVoice();
     } else if (data.action === "preferences") {
       receiving = true;
       window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail: data.general }));
       receiving = false;
+      broadcast({ action: "preferences", general: data.general }, page);
     } else if (data.action === "model-names") {
       receiving = true;
       AN.setFullModelNames(data.full === true);
       receiving = false;
+      broadcast({ action: "model-names", full: data.full === true }, page);
     }
   });
   document.addEventListener("visibilitychange", syncVisible);
@@ -109,10 +135,10 @@
     new MutationObserver(syncVisible).observe(document.documentElement, { attributes: true, attributeFilter: ["data-window-hidden"] });
   }
   window.addEventListener("agentnave:preferences", event => {
-    if (!receiving) send({ action: "preferences", general: event.detail });
+    if (!receiving) broadcast({ action: "preferences", general: event.detail });
   });
   window.addEventListener("agentnave:model-names", event => {
-    if (!receiving) send({ action: "model-names", full: event.detail.full });
+    if (!receiving) broadcast({ action: "model-names", full: event.detail.full });
   });
   AN.officeSettings = { open, close };
   AN.navigate = navigate;

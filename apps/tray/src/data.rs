@@ -118,6 +118,44 @@ impl Reader {
         }
     }
 
+    /// Current read-only workspace snapshots for tray-owned usage attribution.
+    pub(crate) fn usage_views(
+        &self,
+    ) -> (
+        Vec<Snapshot>,
+        std::collections::BTreeMap<String, crate::projects::Project>,
+    ) {
+        let database = crate::db::read(&self.root);
+        let (_, snapshots) = self.scan_with(&database);
+        let handovers = database
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .and_then(handovers)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let origins = crate::stage::origin_cwds(&snapshots, &handovers);
+        let projects = crate::projects::lookup(&origins, false);
+        (snapshots, projects)
+    }
+
+    /// Installed CLI names from the existing prepared members view.
+    pub(crate) fn usage_uncovered(&self) -> Vec<String> {
+        let response = self.members(false);
+        let value: Value = serde_json::from_slice(&response.body).unwrap_or_default();
+        value["detected"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(name, entry)| {
+                !crate::usage::COVERED_PROVIDERS.contains(&name.as_str())
+                    && entry["installed"] == true
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     pub fn overview(&self) -> Overview {
         self.scan().0
     }

@@ -1,4 +1,4 @@
-//! The named accounts of a CLI (ADR-0106): `accounts.json` in the data root, which the App writes
+//! The named accounts of a CLI (ADR-0107): `accounts.json` in the data root, which the App writes
 //! and the service only reads. A named account is one folder the CLI keeps its sign-in, settings
 //! and chats in (`CLAUDE_CONFIG_DIR` for Claude); the default account is no row here. The shared
 //! samples in `tests/fixtures/app-files/accounts` pin what a valid file is.

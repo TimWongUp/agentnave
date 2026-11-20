@@ -3,7 +3,7 @@
 - 状态：部分修订
 - 私聊同类三选一不再被环境变量排除项压过的条款由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订：与当前宿主相同的排除项不起作用。
 - 私聊同类 CLI 一律默认交给宿主自带子代理的条款由 [ADR-0094](0094-antigravity-host-cli-defaults-to-launch.md) 修订：默认值按宿主能力决定，Antigravity 默认由 AgentNave 启动，其他宿主仍默认交给宿主自带子代理。
-- 同类宿主判定与按账号冷却由 [ADR-0106](0106-multi-account-isolation.md) 修订：私聊同类宿主判定收紧为「同 CLI 且同账号」，同 CLI 不同账号由服务直接启动；配额冷却按账号独立记录在 `accounts.<id>` 下。
+- 同类宿主判定与按账号冷却由 [ADR-0107](0107-multi-account-isolation.md) 修订：私聊同类宿主判定收紧为「同 CLI 且同账号」，同 CLI 不同账号由服务直接启动；配额冷却按账号独立记录在 `accounts.<id>` 下。
 - 日期：2026-11-14
 - 修订 [ADR-0081](0081-account-cooldown-duration.md) 的「冷却仍按请求的模型记录」：配额失败优先按额度组冷却；修订 [ADR-0013](0013-members-defaults-and-host-identity.md) 的单任务排除宿主同类 Provider、[ADR-0089](0089-seat-fallback-order.md) 的同类顺位一律交还 boss 及配额冷却可用性判断。补充 [ADR-0087](0087-decision-model-recommends-seats.md) 的候选可用性和 [ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) 的执行边界。
 - 不改变：[ADR-0081](0081-account-cooldown-duration.md) 的认证、计费冷却规则；[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md) 使用宿主原生子代理时的同系列别名规则；[ADR-0031](0031-prompt-only-orchestration.md)、[ADR-0043](0043-service-prompt-instructions.md) 的派发说明与单向编排约定；会议席位及生图工位的宿主同类边界。
