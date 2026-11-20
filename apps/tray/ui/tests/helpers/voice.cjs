@@ -54,7 +54,7 @@ async function office(listening = true, synthesize = async () => ({}), loadRoom 
   let now = 0, timerId = 0;
   const rooms = new Map();
   const { h, document } = surface;
-  const navLinks = [h("a.office-nav", { href: "http://agentnave.localhost/chat/" }), h("a.settings-nav", { href: "http://agentnave.localhost/settings/" })];
+  const navLinks = [h("a.office-nav", { href: "http://agentnave.localhost/chat/" }), h("a.usage-nav", { href: "http://agentnave.localhost/usage/" }), h("a.settings-nav", { href: "http://agentnave.localhost/settings/" })];
   class Audio {
     constructor(src) { this.text = decodeURIComponent(src.slice(5)); this.currentTime = 0; this.paused = true; this.plays = 0; sounds.push(this); }
     play() { this.paused = false; this.plays++; playbacks.push({ text: this.text, time: this.currentTime }); return Promise.resolve(); }

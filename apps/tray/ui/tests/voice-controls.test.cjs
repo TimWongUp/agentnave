@@ -496,7 +496,7 @@ test("settings anchors reuse the retained frame and an unrelated window cannot s
 
 test("office navigation highlights settings, then the brand or Office returns to the same office", async () => {
   const app = await office(false);
-  const [officeLink, settingsLink] = app.navLinks;
+  const [officeLink, , settingsLink] = app.navLinks;
   app.clickLink(settingsLink);
   const frame = node(app, "iframe.office-settings");
   assert.equal(frame.hidden, false);
@@ -582,4 +582,27 @@ test("panel listening commands work while the retained settings frame remains op
   assert.equal(app.sounds[0].paused, true);
   await app.command("toggle");
   assert.equal(app.sounds[0].paused, false);
+});
+
+test("usage and settings share the office area one at a time and keep their frames", async () => {
+  const app = await office(false);
+  const [officeLink, usageLink, settingsLink] = app.navLinks;
+  app.clickLink(settingsLink);
+  const settings = node(app, "iframe.office-settings");
+  app.clickLink(usageLink);
+  const usage = node(app, "iframe.office-usage");
+  assert.match(usage.src, /\/usage\/\?embedded=1$/);
+  assert.equal(usage.hidden, false);
+  assert.equal(settings.hidden, true);
+  assert.equal(usageLink.attributes["aria-current"], "page");
+  assert.equal(settingsLink.attributes["aria-current"], undefined);
+  app.clickLink(settingsLink);
+  assert.equal(usage.hidden, true);
+  assert.equal(node(app, "iframe.office-settings"), settings);
+  app.clickLink(usageLink);
+  assert.equal(node(app, "iframe.office-usage"), usage, "the usage frame is retained");
+  app.clickLink(officeLink);
+  assert.equal(usage.hidden, true);
+  assert.equal(officeLink.attributes["aria-current"], "page");
+  assert.equal(app.navigations.length, 0);
 });

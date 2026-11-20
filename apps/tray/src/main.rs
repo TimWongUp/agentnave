@@ -34,6 +34,7 @@ mod time_format;
 mod tool_dirs;
 mod uninstall;
 mod update;
+mod usage;
 mod video_packs;
 mod voice;
 mod window;
@@ -96,6 +97,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                 || matches!(
                     path,
                     "/app/preferences"
+                        | "/app/usage/refresh"
                         | "/app/uninstall/cancel"
                         | "/app/alerts/test"
                         | "/settings/members"
@@ -378,6 +380,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
             update::resume(&resumer);
         }
     });
+    usage::start(reader.clone());
     alerts::start(handle.clone(), reader.clone());
     thread::spawn(move || poll(handle, reader, overview));
     Ok(())
@@ -436,6 +439,9 @@ impl ProtocolRequest {
             }
             _ if path == "/app/projects" || path.starts_with("/app/projects/") => {
                 reader.projects_request(Some(app), method, path, action, self.request.body())
+            }
+            _ if path == "/app/usage" || path.starts_with("/app/usage/") => {
+                usage::request(reader, method, path, self.request.uri().query(), action)
             }
             ("GET", "/app/status") => response::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),
@@ -528,6 +534,7 @@ mod tests {
         }
         for path in [
             "/app/preferences",
+            "/app/usage/refresh",
             "/app/alerts/test",
             "/settings/members",
             "/app/voice",

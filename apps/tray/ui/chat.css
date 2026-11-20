@@ -88,8 +88,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .bar-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .bar-toggle .pane { fill: currentColor; stroke: none; opacity: 0; }
 .bar-toggle[aria-expanded="true"] .pane { opacity: 0.3; }
-/* settings covers the office; the buttons keep their places so the bar does not shift */
-body:has(.office-settings:not([hidden])) .bar-toggle { visibility: hidden; }
+/* settings and usage cover the office; the buttons keep their places so the bar does not shift */
+body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visibility: hidden; }
 /* The queries below are the exact complements of chat-state.js's `narrow` and `overlay`, so no fractional width falls in a gap.
    Folded columns leave the grid (--side-col, --conv-col are their tracks) and wait off to the side.
    Hovering the button or the window edge lays one over the office; the dragged --side-w stays on
@@ -469,6 +469,11 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .boss-portrait .head { position: absolute; left: 16.5%; top: 15.5%; width: 67%; height: 69%; display: block; background: var(--wall) center / cover; }
 .boss-portrait::after { content: ""; position: absolute; inset: 0; background: url("/art/office/portrait-frame.png") center / contain no-repeat; pointer-events: none; }
 .boss-zone .label { position: relative; z-index: 6; text-align: center; margin-top: 0; }
+.boss-usage { display: flex; align-items: center; justify-content: center; gap: 5px; max-width: 250px; margin: 4px auto 0; padding: 0; font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--faint); line-height: 1.2; cursor: default; z-index: 6; position: relative; }
+.boss-usage[hidden] { display: none; }
+.boss-usage-refresh { flex: none; display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.boss-usage-refresh:hover { color: var(--muted); background: var(--hover); }
+.boss-usage-refresh svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .boss-zone { padding-top: 8px; padding-bottom: 4px; }
 .label { text-align: center; margin-top: 4px; min-width: 0; }
 .label .nm { font-size: 12px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -852,8 +857,8 @@ dialog.act::backdrop { background: #0006; }
 .tp-im .voice-read:not(:disabled):hover, .tp-im .voice-read[aria-pressed="true"] { opacity: 1; }
 
 
-.office-settings { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
-.office-settings[hidden] { display: none; }
+:is(.office-settings, .office-usage) { position: fixed; z-index: 150; top: 48px; left: 0; width: 100%; height: calc(100vh - 48px); border: 0; background: var(--bg); }
+:is(.office-settings, .office-usage)[hidden] { display: none; }
 button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .pill.act { cursor: pointer; }
 .iso-card { display: grid; gap: 4px; margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; color: var(--soft); user-select: text; }

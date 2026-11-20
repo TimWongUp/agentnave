@@ -100,6 +100,9 @@ impl Reader {
         if let ["settings", resource] = parts.as_slice() {
             return settings_asset(resource);
         }
+        if let ["usage", resource] = parts.as_slice() {
+            return usage_asset(resource);
+        }
         if let ["manage", resource] = parts.as_slice() {
             return match *resource {
                 "manage.css" => Response::ok("text/css; charset=utf-8", MANAGE_CSS.to_vec()),
@@ -121,6 +124,21 @@ impl Reader {
             [""] => page(CHAT_HTML),
             _ => Response::not_found(),
         }
+    }
+}
+
+fn usage_asset(resource: &str) -> Response {
+    match resource {
+        "" => page(include_bytes!("../../ui/usage.html")),
+        "usage.css" => Response::ok(
+            "text/css; charset=utf-8",
+            include_bytes!("../../ui/usage.css").to_vec(),
+        ),
+        "usage.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/usage.js").to_vec(),
+        ),
+        _ => Response::not_found(),
     }
 }
 
@@ -278,6 +296,10 @@ fn chat_asset(resource: &str) -> Response {
         "laptop.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/laptop.js").to_vec(),
+        ),
+        "chat-usage.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-usage.js").to_vec(),
         ),
         "chat-office.js" => Response::ok(
             "text/javascript; charset=utf-8",
