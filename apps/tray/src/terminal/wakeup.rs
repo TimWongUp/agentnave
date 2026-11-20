@@ -108,7 +108,7 @@ fn inboxes(root: &Path) -> HashMap<String, Vec<Item>> {
     }
     bosses
 }
-fn scan(
+pub(super) fn scan(
     terminals: &Terminals,
     root: &Path,
     attempted: &mut HashSet<String>,

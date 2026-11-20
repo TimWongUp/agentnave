@@ -1,18 +1,35 @@
 //! Tracks human drafts and holds user input while a wakeup is being submitted.
 use std::time::{Duration, Instant};
 
+struct Held {
+    chars: usize,
+    inputs: Vec<(Vec<u8>, bool)>,
+}
+
 #[derive(Default)]
 pub(super) struct Gate {
     last: Option<Instant>,
     draft: usize,
     sequence: Vec<u8>,
     pasting: bool,
-    held: Option<Vec<u8>>,
+    held: Option<Held>,
+    #[cfg(test)]
+    draft_wait: Option<Duration>,
 }
 
 impl Gate {
     pub fn input(&mut self, bytes: &[u8], paste: bool) -> bool {
         self.last = Some(Instant::now());
+        if let Some(held) = &mut self.held {
+            held.inputs.push((bytes.to_vec(), paste));
+            true
+        } else {
+            self.track_input(bytes, paste);
+            false
+        }
+    }
+
+    fn track_input(&mut self, bytes: &[u8], paste: bool) {
         if paste
             && !self.pasting
             && self.sequence.is_empty()
@@ -25,30 +42,55 @@ impl Gate {
         } else {
             self.track(bytes);
         }
-        if let Some(held) = &mut self.held {
-            held.extend_from_slice(bytes);
-            true
-        } else {
-            false
-        }
     }
 
     pub fn ready(&self) -> bool {
-        let quiet = if self.draft == 0 { 3 } else { 300 };
-        self.held.is_none()
-            && self
-                .last
-                .is_none_or(|at| at.elapsed() >= Duration::from_secs(quiet))
+        let quiet = if self.draft == 0 {
+            Duration::from_secs(3)
+        } else {
+            self.draft_delay()
+        };
+        self.held.is_none() && self.last.is_none_or(|at| at.elapsed() >= quiet)
     }
 
-    pub fn hold(&mut self) {
-        // The existing draft is submitted with the wakeup or cleared on cancellation.
-        // Subsequent user input belongs to the next draft.
-        self.draft = 0;
-        self.held = Some(Vec::new());
+    fn draft_delay(&self) -> Duration {
+        #[cfg(test)]
+        if let Some(delay) = self.draft_wait {
+            return delay;
+        }
+        Duration::from_secs(300)
     }
-    pub fn release(&mut self) -> Vec<u8> {
-        self.held.take().unwrap_or_default()
+
+    #[cfg(test)]
+    pub fn set_draft_wait(&mut self, delay: Duration) {
+        self.draft_wait = Some(delay);
+    }
+
+    #[cfg(test)]
+    pub fn is_holding(&self) -> bool {
+        self.held.is_some()
+    }
+
+    pub fn hold(&mut self, chars: usize) {
+        self.held = Some(Held {
+            chars,
+            inputs: Vec::new(),
+        });
+    }
+
+    pub fn release(&mut self, commit: bool) -> (usize, Vec<u8>) {
+        let Some(held) = self.held.take() else {
+            return (0, Vec::new());
+        };
+        if commit {
+            self.draft = 0;
+        }
+        let mut bytes = Vec::new();
+        for (input, paste) in held.inputs {
+            self.track_input(&input, paste);
+            bytes.extend(input);
+        }
+        (held.chars, bytes)
     }
 
     fn key(&mut self, code: u32, modifiers: u32) {
@@ -234,16 +276,32 @@ mod tests {
         assert!(!g.ready());
         g.last = Some(Instant::now() - Duration::from_secs(300));
         assert!(g.ready());
-        g.hold();
+        g.hold(1);
         assert!(!g.ready());
         g.input(b"new", false);
-        assert_eq!(g.release(), b"new");
+        assert_eq!(g.release(true).1, b"new");
         assert_eq!(g.draft, 3);
         g.input(b"\r", false);
         g.last = Some(Instant::now() - Duration::from_secs(2));
         assert!(!g.ready());
         g.last = Some(Instant::now() - Duration::from_secs(3));
         assert!(g.ready());
+    }
+
+    #[test]
+    fn cancelled_wakeup_retains_old_draft_and_applies_held_edits() {
+        let mut gate = Gate::default();
+        gate.input(b"old", false);
+        gate.hold(2);
+        gate.input(b"\x7fxy", false);
+        let (chars, held) = gate.release(false);
+        assert_eq!(chars, 2);
+        assert_eq!(held, b"\x7fxy");
+        assert_eq!(gate.draft, 4);
+        gate.hold(2);
+        gate.input(b"z", false);
+        assert_eq!(gate.release(true).1, b"z");
+        assert_eq!(gate.draft, 1);
     }
 
     #[test]

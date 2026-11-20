@@ -170,6 +170,8 @@ pub(crate) struct Session {
     output: Mutex<Output>,
     changed: Condvar,
     gate: Mutex<input_gate::Gate>,
+    #[cfg(test)]
+    writes: Mutex<Option<Vec<Vec<u8>>>>,
 }
 
 impl Session {
@@ -208,6 +210,8 @@ impl Session {
             output: Mutex::default(),
             changed: Condvar::new(),
             gate: Mutex::default(),
+            #[cfg(test)]
+            writes: Mutex::default(),
         });
         let pump = session.clone();
         thread::spawn(move || pump.pump(reader, child));
@@ -279,7 +283,12 @@ impl Session {
         writer
             .write_all(bytes)
             .and_then(|()| writer.flush())
-            .map_err(|error| format!("无法写入终端：{error}"))
+            .map_err(|error| format!("无法写入终端：{error}"))?;
+        #[cfg(test)]
+        if let Some(record) = &mut *self.writes.lock().unwrap_or_else(|p| p.into_inner()) {
+            record.push(bytes.to_vec());
+        }
+        Ok(())
     }
 
     pub(crate) fn user_input(&self, bytes: &[u8], paste: bool) -> Result<(), String> {
@@ -311,7 +320,7 @@ impl Session {
             text.to_owned()
         };
         self.write(bytes.as_bytes())?;
-        gate.hold();
+        gate.hold(text.chars().count());
         Ok(Some(()))
     }
 
@@ -324,9 +333,49 @@ impl Session {
                 .state
                 .as_deref()
                 .is_some_and(|s| s != "blocked");
-        let mut bytes = vec![if commit { b'\r' } else { 0x15 }];
-        bytes.extend(gate.release());
+        let (chars, held) = gate.release(commit);
+        let mut bytes = if commit {
+            vec![b'\r']
+        } else {
+            vec![0x7f; chars]
+        };
+        bytes.extend(held);
         self.write(&bytes).is_ok() && commit
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_holding(&self) -> bool {
+        self.gate
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_holding()
+    }
+
+    #[cfg(test)]
+    pub(super) fn record_writes(&self) {
+        *self.writes.lock().unwrap_or_else(|p| p.into_inner()) = Some(Vec::new());
+    }
+
+    #[cfg(test)]
+    pub(super) fn recorded_writes(&self) -> Vec<Vec<u8>> {
+        self.writes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_draft_wait(&self, delay: Duration) {
+        self.gate
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .set_draft_wait(delay);
+    }
+
+    #[cfg(test)]
+    pub(super) fn program_state(&self) -> Option<String> {
+        self.output().status.state.clone()
     }
 
     pub(crate) fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
