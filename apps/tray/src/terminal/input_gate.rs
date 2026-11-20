@@ -53,6 +53,10 @@ impl Gate {
         self.held.is_none() && self.last.is_none_or(|at| at.elapsed() >= quiet)
     }
 
+    pub fn has_draft(&self) -> bool {
+        self.draft > 0
+    }
+
     fn draft_delay(&self) -> Duration {
         #[cfg(test)]
         if let Some(delay) = self.draft_wait {

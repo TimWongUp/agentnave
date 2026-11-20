@@ -883,7 +883,7 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
         };
         let script = format!(
             "stty raw -echo; printf '\\033]7501;state=working\\007ready'; {change} dd bs=1 count={} 2>/dev/null | od -An -t u1; printf done",
-            if blocked { 14 } else { 10 }
+            if blocked { 16 } else { 10 }
         );
         let session = Session::start(shell(&script), 80, 24).unwrap();
         assert!(output_until(&session, "ready").0.contains("ready"));
@@ -901,7 +901,7 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
         assert_eq!(session.finish_wakeup(), !blocked);
         let (text, _) = output_until(&session, "done");
         let expected = if blocked {
-            "111 108 100 233 128 154 231 159 165 127 127 120 121 122"
+            "111 108 100 32 233 128 154 231 159 165 127 127 127 120 121 122"
         } else {
             "110 111 116 105 99 101 13 120 121 122"
         };

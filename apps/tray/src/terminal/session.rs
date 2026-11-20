@@ -315,10 +315,16 @@ impl Session {
         {
             return Ok(None);
         }
+        // A hint after the user's draft is set apart from it by a space.
+        let text = if gate.has_draft() {
+            format!(" {text}")
+        } else {
+            text.to_owned()
+        };
         let bytes = if output.modes.paste() {
             format!("\x1b[200~{text}\x1b[201~")
         } else {
-            text.to_owned()
+            text.clone()
         };
         self.write(bytes.as_bytes())?;
         gate.hold(text.chars().count());
