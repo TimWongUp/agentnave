@@ -107,3 +107,4 @@
 | 0101 | [托盘逐条展示并在校验后向旧终端宿主进程发送 SIGTERM](0101-tray-stops-old-cli-copies.md) | 已接受 | 扩展 ADR-0022 的重新加载引导边界 |
 | 0102 | [Antigravity 交互运行采用原生状态事件](0102-agy-native-status.md) | 已接受 | 修订 ADR-0072、ADR-0079 |
 | 0103 | [办公室里开 agent，终端与它的工作区对应](0103-tray-embedded-terminal.md) | 已接受 | 修订 CONTEXT「工作区」「项目」「Tray App」并新增「agent」；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执；2026-11-18 自身修订（项目→agent→办公室模型、右栏三格、中继与托盘对应修复、Codex `--no-daemon`、Claude/Codex 续接与托盘内防重）；2026-11-19 自身修订（别处打开时先确认再续接、agent 显示名取 CLI 会话名、启动主题参数、重放不应答、「结束终端」按条件确认） |
+| 0104 | [托盘拥有本机 CLI 用量统计与折算花费面板](0104-tray-usage-panel.md) | 已接受 | 扩展 ADR-0012 的托盘数据根写入边界；保持 ADR-0026、ADR-0048 的服务与会话库隔离；遵守 ADR-0029；复用 ADR-0100 卸载开关与 ADR-0103 预览版及内嵌页约定；同步更新 CONTEXT「Tray App」 |
