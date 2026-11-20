@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-15
+- 推送边界由 [ADR-0104](0104-in-app-boss-push.md) 修订：App 内可推送的 boss 可由 App 提示收件，App 外保持原等待方式。
 - 修订：2026-11-03 补记，见文末「修订：工作区收件箱」。
 - 修订：2026-11-05 收紧无身份的收件箱调用，见文末。
 - `wait_any`、`wait_agent` 与 `wait_round` 工具名由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 取代：合并为 `wait`，就绪子集语义不变。

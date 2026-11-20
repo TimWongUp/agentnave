@@ -168,6 +168,7 @@ fn main() {
         // Like any regular app, launching it shows the main window. Opening it once the event
         // loop runs keeps its first requests from stalling behind start-up.
         RunEvent::Ready => {
+            terminal::start_wakeup(app.clone());
             let args: Vec<_> = std::env::args().collect();
             if !uninstall::forwarded(app, &args, true)
                 && preferences::general::current()["open_on_start"] == true

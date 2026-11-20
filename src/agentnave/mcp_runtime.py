@@ -29,6 +29,8 @@ from agentnave.core import InvocationManager
 from agentnave.decision_seats import custom_seats
 from agentnave.group import Round
 from agentnave.host import detect_host, host_session_id
+from agentnave.inbox_events import inbox_events
+from agentnave.inbox_snapshot import InboxSnapshot
 from agentnave.isolated import ChangeSummary
 from agentnave.manager_identity import SESSION_ID_DESCRIPTIONS, session_id_hint
 from agentnave.mcp_payloads import (
@@ -64,6 +66,7 @@ from agentnave.models import (
 from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import NativePrompt
 from agentnave.orchestration_roles import AUTO_SEAT, role_catalog, seat_role
+from agentnave.push_capability import PUSH_AGAIN, PUSH_NEXT, app_can_push
 from agentnave.retention import Retention
 from agentnave.store import Review
 
@@ -141,7 +144,7 @@ def long_wait_enabled() -> bool:
     return HOST.name == "claude" and os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli"
 
 
-# Ends are never pushed (ADR-0007), so receipts say what to call before the turn ends (ADR-0064).
+# App-capable connections may end the turn; all others retain the original wait guidance.
 WAIT_NEXT = (
     "Ends are not pushed: before ending your turn, call wait (omit ids, same "
     "manager_session_id) until all_finished."
@@ -151,6 +154,14 @@ WAIT_AGAIN = (
     "review_needed, then call wait again "
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
+
+
+def wait_guidance(*, again: bool = False) -> str:
+    if app_can_push(data_root(), HOST.provider):
+        return PUSH_AGAIN if again else PUSH_NEXT
+    return WAIT_AGAIN if again else WAIT_NEXT
+
+
 ALREADY_WAITING = (
     "An earlier blocking inbox wait for this chat is still running (in the background or an "
     "earlier exec cell) and returns its results to that call: collect them there and do not "
@@ -229,6 +240,38 @@ class Runtime:
         self.conversations = Conversations(self.manager, data_root(), host=HOST)
         self.retention = Retention(data_root())
         self.active_inbox_waits: set[str | None] = set()
+        self.cancelling: set[str] = set()
+        self.inbox_snapshot = InboxSnapshot(data_root(), os.getpid())
+        self._inbox_scheduled: asyncio.Handle | None = None
+        self._inbox_closed = False
+        self.manager.on_inbox_change = self.schedule_inbox
+        self.conversations.on_inbox_change = self.schedule_inbox
+        self.refresh_inbox()
+
+    def schedule_inbox(self) -> None:
+        if self._inbox_closed or self._inbox_scheduled is not None:
+            return
+        self._inbox_scheduled = asyncio.get_running_loop().call_soon(self.refresh_inbox)
+
+    def refresh_inbox(self) -> None:
+        self._inbox_scheduled = None
+        if self._inbox_closed:
+            return
+        try:
+            self.inbox_snapshot.publish(
+                inbox_events(self.conversations, self.active_inbox_waits, self.cancelling)
+            )
+        except (OSError, ValueError, KeyError):
+            logging.getLogger(__name__).warning("Could not publish inbox state", exc_info=True)
+
+    def close_inbox(self) -> None:
+        self._inbox_closed = True
+        if self._inbox_scheduled is not None:
+            self._inbox_scheduled.cancel()
+        try:
+            self.inbox_snapshot.close()
+        except OSError:
+            logging.getLogger(__name__).warning("Could not remove inbox state", exc_info=True)
 
 
 @asynccontextmanager
@@ -241,6 +284,7 @@ async def _lifespan(_server: MCPServer[Runtime]) -> AsyncGenerator[Runtime]:
     try:
         yield runtime
     finally:
+        runtime.close_inbox()
         try:
             await runtime.retention.close()
             await runtime.conversations.shutdown()

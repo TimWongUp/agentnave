@@ -614,7 +614,7 @@ async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
     if not wait_now:
         if unreceived := _unreceived(conversations, manager_session_id):
             payload["unreceived"] = unreceived
-        payload["next"] = runtime.WAIT_NEXT
+        payload["next"] = runtime.wait_guidance()
         return payload
     waited = await receive(
         ids=[handle],
@@ -626,7 +626,7 @@ async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
     if unreceived := _unreceived(conversations, manager_session_id):
         payload["unreceived"] = unreceived
     if not waited["all_finished"] or any(conversations.inbox(manager_session_id)):
-        payload["next"] = runtime.WAIT_AGAIN
+        payload["next"] = runtime.wait_guidance(again=True)
     return payload
 
 
@@ -759,8 +759,8 @@ async def wait(
     wait_seconds=0 and include_output=false still receive ready items. Only 0 includes
     running tails (up to 1000 characters) and age, subject to include_output.
     Inbox ends and round answers arrive once; output_returned means use read_conversation.
-    Unknown/expired/duplicate ids reject the whole call. Ends are never pushed: wait after
-    dispatch or independent work; receive every terminal result before ending your turn.
+    Unknown/expired/duplicate ids reject the whole call. Follow receipt next: the App may
+    prompt an in-app boss when results are ready; otherwise wait before ending the turn.
     """
     if wait_seconds == 1500 and not runtime.long_wait_enabled():
         raise ToolError(
@@ -856,6 +856,7 @@ async def _receive(
     deadline = time.monotonic() + window
     if blocking_inbox:
         active_inbox_waits.add(inbox_key)
+        ctx.request_context.lifespan_context.refresh_inbox()
     try:
         while True:
             timeout = min(float(window), max(0.0, deadline - time.monotonic()))
@@ -897,6 +898,8 @@ async def _receive(
             wait_seconds,
             manager_session_id,
         )
+        if ids is None and "next" in payload:
+            payload["next"] = runtime.wait_guidance(again=True)
         if (
             ids is None
             and wait_seconds == 0
@@ -908,6 +911,7 @@ async def _receive(
     finally:
         if blocking_inbox:
             active_inbox_waits.discard(inbox_key)
+        ctx.request_context.lifespan_context.refresh_inbox()
 
 
 receive = wait
@@ -1010,26 +1014,33 @@ async def cancel(
     answers stay private. CLI side effects are not undone.
     """
     manager = _manager(ctx)
-    if _known_invocation(manager, id):
-        result = await manager.cancel(id)
-        _conversations(ctx).delivered_tasks.add(id)
-        return {"invocation": update_payload(_manager(ctx), _conversations(ctx), id, result)}
-    conversations = _conversations(ctx)
+    state = ctx.request_context.lifespan_context
+    state.cancelling.add(id)
+    state.refresh_inbox()
     try:
-        round_ = await conversations.cancel(id)
-    except KeyError as exc:
-        raise _unknown_handle(id) from exc
-    conversations.delivered_rounds.add(id)
-    return {
-        "round": round_payload(
-            round_,
-            conversations.manager,
-            "finished",
-            reviews=_review_map(conversations, round_),
-            identities=conversations.round_identities(round_),
-            entries=conversations.committed_entries(round_.group.id, round_.number),
-        )
-    }
+        if _known_invocation(manager, id):
+            result = await manager.cancel(id)
+            _conversations(ctx).delivered_tasks.add(id)
+            return {"invocation": update_payload(manager, _conversations(ctx), id, result)}
+        conversations = _conversations(ctx)
+        try:
+            round_ = await conversations.cancel(id)
+        except KeyError as exc:
+            raise _unknown_handle(id) from exc
+        conversations.delivered_rounds.add(id)
+        return {
+            "round": round_payload(
+                round_,
+                conversations.manager,
+                "finished",
+                reviews=_review_map(conversations, round_),
+                identities=conversations.round_identities(round_),
+                entries=conversations.committed_entries(round_.group.id, round_.number),
+            )
+        }
+    finally:
+        state.cancelling.discard(id)
+        state.refresh_inbox()
 
 
 def _invocation_items(manager: InvocationManager) -> list[InvocationListItem]:

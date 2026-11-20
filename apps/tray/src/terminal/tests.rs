@@ -188,6 +188,9 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
+        #[cfg(unix)]
+        codex: None,
     });
     let header = |reply: &crate::response::Response, name: &str| {
         reply
@@ -426,6 +429,9 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
+        #[cfg(unix)]
+        codex: None,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -479,7 +485,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
 }
 
 #[test]
-fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
+fn codex_terminal_passes_no_daemon_for_cli_args_and_other_clis_do_not() {
     assert_eq!(cli_args("codex", None, None), ["--no-daemon"]);
     assert!(cli_args("claude", None, None).is_empty());
     assert!(cli_args("grok", None, None).is_empty());
@@ -495,24 +501,30 @@ fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
         ["--conversation", "id"]
     );
 
-    let codex = command(
-        Path::new("/usr/local/bin/codex"),
-        &cli_args("codex", None, None),
-        Path::new("/tmp"),
-    );
-    let argv: Vec<String> = codex
-        .get_argv()
-        .iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(argv.last().map(String::as_str), Some("--no-daemon"));
-    assert_eq!(
-        argv.get(argv.len().saturating_sub(2)).map(String::as_str),
-        Some("/usr/local/bin/codex")
-    );
-    // If wrapped in a login shell, `-c <script>` must not embed `--no-daemon` into the script string.
-    if let Some(at) = argv.iter().position(|arg| arg == "-c") {
-        assert!(!argv[at + 1].contains("--no-daemon"), "{argv:?}");
+    #[cfg(unix)]
+    {
+        let sock = super::codex_server::socket_path(42);
+        let (program, args) = super::codex_server::launch_args(
+            Path::new("/usr/local/bin/codex"),
+            &sock,
+            Path::new("/tmp"),
+            None,
+            &[],
+        );
+        let codex = command(&program, &args, Path::new("/tmp"));
+        let argv: Vec<String> = codex
+            .get_argv()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            argv.iter()
+                .any(|arg| arg == sock.to_string_lossy().as_ref())
+        );
+        assert!(
+            argv.iter()
+                .any(|arg| arg.contains("app-server") && arg.contains("--remote"))
+        );
     }
 
     let claude = command(
@@ -653,6 +665,9 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_located: false,
             title_searched: None,
             started: std::time::SystemTime::now(),
+            pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
         state.open.push(Running {
             id: 2,
@@ -664,6 +679,9 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_located: false,
             title_searched: None,
             started: std::time::SystemTime::now(),
+            pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
     }
 
@@ -736,6 +754,9 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_located: true,
             title_searched: None,
             started: now - Duration::from_secs(20),
+            pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
         state.open.push(Running {
             id: 2,
@@ -747,6 +768,9 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_located: false,
             title_searched: None,
             started: now - Duration::from_secs(15),
+            pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
         state.open.push(Running {
             id: 3,
@@ -758,6 +782,9 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_located: false,
             title_searched: None,
             started: now,
+            pending: 0,
+            #[cfg(unix)]
+            codex: None,
         });
     }
 
@@ -817,6 +844,9 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
         title_located: false,
         title_searched: None,
         started: std::time::SystemTime::now(),
+        pending: 0,
+        #[cfg(unix)]
+        codex: None,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -863,3 +893,163 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
     session.stop();
     let _ = exit_of(&session);
 }
+
+#[cfg(unix)]
+#[test]
+fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
+    let run = |blocked: bool| {
+        let change = if blocked {
+            "sleep 0.3; printf '\\033]7501;state=blocked\\007blocked';"
+        } else {
+            ""
+        };
+        let script = format!(
+            "stty raw -echo; printf '\\033]7501;state=working\\007ready'; {change} dd bs=1 count={} 2>/dev/null | od -An -t u1; printf done",
+            if blocked { 16 } else { 10 }
+        );
+        let session = Session::start(shell(&script), 80, 24).unwrap();
+        assert!(output_until(&session, "ready").0.contains("ready"));
+        if blocked {
+            session.set_draft_wait(Duration::ZERO);
+            session.user_input(b"old", false).unwrap();
+        }
+        let notice = if blocked { "通知" } else { "notice" };
+        assert!(session.begin_wakeup(notice).unwrap().is_some());
+        session.user_input(b"xy", false).unwrap();
+        session.user_input(b"z", false).unwrap();
+        if blocked {
+            assert!(output_until(&session, "blocked").0.contains("blocked"));
+        }
+        assert_eq!(
+            session.finish_wakeup(),
+            if blocked {
+                super::session::WakeupOutcome::Blocked
+            } else {
+                super::session::WakeupOutcome::Delivered
+            }
+        );
+        let (text, _) = output_until(&session, "done");
+        let expected = if blocked {
+            "111 108 100 32 233 128 154 231 159 165 127 127 127 120 121 122"
+        } else {
+            "110 111 116 105 99 101 13 120 121 122"
+        };
+        let actual: Vec<_> = text
+            .split_whitespace()
+            .filter_map(|s| s.parse::<u8>().ok())
+            .collect();
+        let expected: Vec<_> = expected
+            .split_whitespace()
+            .map(|s| s.parse::<u8>().unwrap())
+            .collect();
+        assert!(
+            actual
+                .windows(expected.len())
+                .any(|window| window == expected),
+            "{text:?}"
+        );
+        assert!(session.begin_wakeup("another").unwrap().is_none());
+        session.stop();
+    };
+    run(false);
+    run(true);
+}
+
+#[cfg(unix)]
+#[test]
+fn blocked_wakeup_is_retried_once_unblocked() {
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("connections")).unwrap();
+    std::fs::create_dir(temp.path().join("inbox")).unwrap();
+    let session = Session::start(shell("stty raw -echo; printf '\\033]7501;state=working\\007ready'; dd bs=1 count=1 of=/dev/null 2>/dev/null; printf '\\033]7501;state=blocked\\007blocked'; sleep 1; printf '\\033]7501;state=idle\\007idle'; sleep 30"), 80, 24).unwrap();
+    assert!(output_until(&session, "ready").0.contains("ready"));
+    let pid = session.pid().unwrap();
+    let key = "s-11111111111111111111111111111111";
+    std::fs::write(
+        temp.path()
+            .join("connections")
+            .join(format!("{pid}-test.json")),
+        json!({"bosses":[key]}).to_string(),
+    )
+    .unwrap();
+    let current = std::process::id();
+    std::fs::write(temp.path().join("inbox").join(format!("{current}.json")), json!({"version":1,"pid":current,"bosses":{key:{"waiting":false,"items":[{"key":"item","kind":"task_end"}]}}}).to_string()).unwrap();
+    let terminals = Terminals::default();
+    terminals.lock().open.push(Running {
+        id: 1,
+        provider: "claude".into(),
+        cwd: temp.path().into(),
+        session: session.clone(),
+        workspaces: Vec::new(),
+        native: None,
+        title_located: false,
+        title_searched: None,
+        started: std::time::SystemTime::now(),
+        pending: 0,
+        #[cfg(unix)]
+        codex: None,
+    });
+    let (mut attempted, mut seen, mut failed) = (HashSet::new(), HashMap::new(), HashSet::new());
+    session.record_writes();
+    super::wakeup::scan(
+        &terminals,
+        temp.path(),
+        &mut attempted,
+        &mut seen,
+        &mut failed,
+    );
+    assert!(!attempted.contains("item"));
+    assert!(failed.contains("item"));
+    assert!(output_until(&session, "idle").0.contains("idle"));
+    super::wakeup::scan(
+        &terminals,
+        temp.path(),
+        &mut attempted,
+        &mut seen,
+        &mut failed,
+    );
+    assert!(attempted.contains("item"));
+    assert!(!failed.contains("item"));
+    super::wakeup::scan(
+        &terminals,
+        temp.path(),
+        &mut attempted,
+        &mut seen,
+        &mut failed,
+    );
+    let writes = session.recorded_writes();
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|b| b.windows(11).any(|w| w == b"[AgentNave]"))
+            .count(),
+        2
+    );
+    assert_eq!(writes.iter().filter(|b| b.as_slice() == b"\r").count(), 1);
+    session.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn status_probe_is_answered_once_even_when_output_is_replayed() {
+    let script = format!(
+        "stty -echo -icanon min 1 time 0; printf '\\033]7501;?\\033\\\\'; dd bs=1 count={} 2>/dev/null | wc -c; printf ready; dd bs=1 count=1 2>/dev/null | od -An -t u1; printf done",
+        super::status::REPLY.len()
+    );
+    let session = Session::start(shell(&script), 80, 24).unwrap();
+    let (first, _) = output_until(&session, "ready");
+    assert!(
+        first.contains(&super::status::REPLY.len().to_string()),
+        "{first:?}"
+    );
+    let replay = session.read_view(0, Duration::ZERO, None);
+    assert!(replay.replay);
+    session.write(b"z").unwrap();
+    let (text, _) = output_until(&session, "done");
+    assert!(text.contains("122"), "{text:?}");
+}
+
+#[cfg(unix)]
+mod live;

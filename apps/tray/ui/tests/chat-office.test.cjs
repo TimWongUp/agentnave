@@ -534,6 +534,45 @@ test("an unfocused window polls every five seconds and refreshes the moment it r
   assert.equal(focusEvents, 1, "coming back to the front is the focus event");
 });
 
+test("terminal focus resumes the office while native window blur still wins", () => {
+  const timers = [], listeners = {}, classes = {}, frameWindow = {};
+  let observer;
+  const root = { lang: "zh", dataset: { idleBlur: "", windowBlurred: "true" }, classList: { toggle: (name, on) => { classes[name] = on; } } };
+  const document = { documentElement: root, hidden: false, activeElement: null, hasFocus: () => false,
+    querySelectorAll: () => [], querySelector: () => null, addEventListener() {} };
+  const window = { ANAppearance: { applyTheme() {}, reducedMotion: { matches: false } },
+    addEventListener: (name, fn) => { (listeners[name] ||= []).push(fn); },
+    dispatchEvent: event => (listeners[event.type] || []).forEach(fn => fn(event)) };
+  const context = vm.createContext({ document, window, location: { protocol: "agentnave:" },
+    localStorage: { getItem: () => null, setItem() {} }, fetch: async () => ({ ok: false }),
+    MutationObserver: class { constructor(fn) { this.fn = fn; } observe(_root, options) { if (options.attributeFilter?.includes("data-window-blurred")) observer = this.fn; } },
+    setInterval() {}, setTimeout: fn => timers.push(fn), clearTimeout() {}, Event });
+  vm.runInContext(readFileSync(`${__dirname}/../common.js`, "utf8"), context);
+  const emit = (name, event) => (listeners[name] || []).forEach(fn => fn(event));
+  const flush = () => timers.splice(0).forEach(fn => fn());
+  assert.equal(classes.blurred, true);
+  document.activeElement = { tagName: "IFRAME", contentWindow: frameWindow };
+  emit("message", { source: frameWindow, data: { type: "agentnave:terminal", action: "focus" } });
+  flush();
+  assert.equal(classes.blurred, true, "native blur overrides focus inside the frame");
+  delete root.dataset.windowBlurred;
+  observer();
+  assert.equal(classes.blurred, false, "native focus resumes even if the parent document reports no focus");
+  root.dataset.windowBlurred = "true";
+  observer();
+  delete root.dataset.windowBlurred;
+  document.activeElement = null;
+  observer();
+  assert.equal(classes.blurred, true);
+  document.activeElement = { tagName: "IFRAME", contentWindow: frameWindow };
+  emit("message", { source: {}, data: { type: "agentnave:terminal", action: "focus" } });
+  flush();
+  assert.equal(classes.blurred, true, "a different frame cannot trigger a recheck");
+  emit("message", { source: frameWindow, data: { type: "agentnave:terminal", action: "focus" } });
+  flush();
+  assert.equal(classes.blurred, false, "terminal focus triggers the settled recheck");
+});
+
 test("walking, flights and folds are drawn in place while the window is hidden or paused for being unfocused", () => {
   const classes = new Set();
   let hidden = false;

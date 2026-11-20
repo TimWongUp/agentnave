@@ -45,6 +45,16 @@ _Avoid_: 模型系列、整个 CLI
 
 调用 AgentNave 的 CLI 或应用，其身份与当前使用的模型无关。宿主身份用于会话归属及识别私聊中的同类 Provider；同类 CLI 的处理由用户按 boss 选择。App 设置中按其中的 boss 称呼：分区名「boss」，单个宿主称「应用」。
 
+## App 内 boss（In-App Boss）
+
+运行在 AgentNave App 内嵌终端中的 boss CLI。
+_Avoid_: 任意安装了 App 的 boss、App 外终端
+
+## App 外 boss（External Boss）
+
+运行在其他终端或桌面应用中的 boss。
+_Avoid_: App 内嵌终端中的 boss
+
 ## 组员（Member）
 
 由 Provider CLI 与模型组成的配置身份，即 `(provider, model)`；同名模型在不同 CLI 下是不同组员。组员共享配置包含默认参数、努力档位范围与用途说明。工作区内的运行身份是工位。App 设置中称员工。
@@ -189,7 +199,7 @@ Manager 在会议中的公开身份。主持人发言由不带席位的 `run_rou
 
 ## Tray App
 
-按「项目 → agent → 办公室 + 右栏终端/消息」结构展示数据根中的会话（工位、会议室、可展开的消息列表与工位历史）、改名与清理会话记录、维护用户组员配置的应用，视图只读。左栏只按项目分组；界面把工作区及新开未派活对话统称为 agent。只可改名空闲的会话，只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具；编排档位选定后写入已接入宿主全局规则文件中 AgentNave 标记的一段，块外不动（[ADR-0037](adr/0037-app-writes-orchestration-rules.md)）。另可在项目里开 agent 或对已有 agent 原地续接：托管用户自己开的终端，运行本机已装的 CLI；托盘不为它写会话记录，它派活后就是那个工作区的 boss，办公室右栏可在终端与消息间切换，一个 agent 同时最多一个活终端（[ADR-0103](adr/0103-tray-embedded-terminal.md)）。另展示本机 CLI 用量与折算花费面板：只读原生会话日志与现有视图，在托盘侧汇总总体消耗及按项目的 boss／员工归因，不改动服务与会话库（[ADR-0104](docs/adr/0104-tray-usage-panel.md)）。
+按「项目 → agent → 办公室 + 右栏终端/消息」结构展示数据根中的会话（工位、会议室、可展开的消息列表与工位历史）、改名与清理会话记录、维护用户组员配置的应用，视图只读。左栏只按项目分组；界面把工作区及新开未派活对话统称为 agent。只可改名空闲的会话，只可删除空闲且无待审回答的会话记录，保留席位文件，不调用工具；编排档位选定后写入已接入宿主全局规则文件中 AgentNave 标记的一段，块外不动（[ADR-0037](adr/0037-app-writes-orchestration-rules.md)）。另可在项目里开 agent 或对已有 agent 原地续接：托管用户自己开的终端，运行本机已装的 CLI；托盘不为它写会话记录，它派活后就是那个工作区的 boss，办公室右栏可在终端与消息间切换，一个 agent 同时最多一个活终端（[ADR-0103](adr/0103-tray-embedded-terminal.md)）。另展示本机 CLI 用量与折算花费面板：只读原生会话日志与现有视图，在托盘侧汇总总体消耗及按项目的 boss／员工归因，不改动服务与会话库（[ADR-0106](docs/adr/0106-tray-usage-panel.md)）。
 _Avoid_: 控制台（指操作 AgentNave 会话的界面）、桌面客户端
 
 ## 语音播报

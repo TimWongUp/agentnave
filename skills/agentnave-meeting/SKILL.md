@@ -81,10 +81,10 @@ description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude 
 
 ## 等待与收尾
 
-终态和阻塞不会主动推送，只能由 `wait` 收取，结束本轮前必须收齐全部终态；要先问用户时也先收齐或 `cancel`。
+以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取。终态和阻塞仍由 `wait` 收取。
 
-1. **怎么等**：`run_round` 保持默认 `wait=false`，拿到 `round_id` 后单独 `wait`。常规用收件箱：省略 `ids`、带上相同的 `manager_session_id`，`seq` 从 1 起每次加 1；省略 `wait_seconds`，`wait_elapsed` 后直接再等，到终态或显式取消为止，不另加总时限。宿主专属做法见 [Claude Code](references/claude.md)、[Codex CLI](references/codex.md)。回执带 `unreceived` 或 `next` 时先照做。
-2. **先处理再等**：任一就绪即返回，先处理 `prompt_pending`、`review_needed` 和 `seat_lost`，再继续等到 `all_finished=true`（只表示没有待收终态，不代表全部成功）；收口回执带 `follow_up` 时，它列的是早先已交付、仍有失败或缺席席位的轮次（每项只报一次），汇报前逐项处理或写进结论，没带则无需另查。`wait(wait_seconds=0)` 只在用户询问进展时用，它返回的运行中 `output` 只是最新公开正文尾部，不凭此判定卡死。
+1. **怎么等**：`run_round` 保持默认 `wait=false`，拿到 `round_id` 后按回执 `next` 收取。常规用收件箱：省略 `ids`、带上相同的 `manager_session_id`，`seq` 从 1 起每次加 1；省略 `wait_seconds`，`wait_elapsed` 后直接再等，到终态或显式取消为止，不另加总时限。宿主专属做法见 [Claude Code](references/claude.md)、[Codex CLI](references/codex.md)。回执带 `unreceived` 或 `next` 时先照做。
+2. **先处理再等**：任一就绪即返回，先处理 `prompt_pending`、`review_needed` 和 `seat_lost`，再继续等到 `all_finished=true`（只表示没有待收终态，不代表全部成功）；收口回执带 `follow_up` 时，它列的是早先已交付、仍有失败或缺席席位的轮次（每项只报一次），汇报前逐项处理或写进结论，没带则无需另查。收到 App 提示或用户询问进展时可用 `wait(wait_seconds=0)`，它返回的运行中 `output` 只是最新公开正文尾部，不凭此判定卡死。
 3. **验收答案**：加了收尾行的轮次先看每席的收尾行，归为「部分」「未做」，或含糊、三行缺任一行（含「待决定」），按未完成看待并在总结里注明；结论核对出处，推测不当作事实。席位失败、补跑和取消按[会话与审核](references/studio.md)处理，不另开私聊顶替。
 4. **总结**：两轮 `parallel` 后由 boss 综合，按[会话与审核](references/studio.md)的「会议总结」写入会议并回复用户；席位列出的待决定项写进总结，随总结交给用户，需要席位补做时下一轮点名。仍有实质分歧时列出分歧和各方理由，交用户决定。
 

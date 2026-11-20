@@ -341,7 +341,9 @@
   const BLURRED_POLL = 5000;
   let blurred = false, away = false;
   function syncBlurred() {
-    const nextAway = root.dataset?.idleBlur !== undefined && (root.dataset.windowBlurred === "true" || !document.hasFocus());
+    // The native window focus is authoritative when WebKit leaves focus in an embedded frame.
+    const frameFocused = document.activeElement?.tagName === "IFRAME" && inApp();
+    const nextAway = root.dataset?.idleBlur !== undefined && (root.dataset.windowBlurred === "true" || (!document.hasFocus() && !frameFocused));
     const next = nextAway && (root.dataset.pauseUnfocused !== "false" || (root.dataset.onBattery === "true" && root.dataset.batteryStill === "true"));
     if (next !== blurred) {
       blurred = next;
@@ -357,6 +359,10 @@
   const checkBlurred = () => setTimeout(syncBlurred, 0);
   window.addEventListener("blur", checkBlurred);
   window.addEventListener("focus", checkBlurred);
+  window.addEventListener("message", (event) => {
+    if (event.data?.type === "agentnave:terminal" && event.data.action === "focus" &&
+        event.source === document.activeElement?.contentWindow) checkBlurred();
+  });
   if (typeof MutationObserver === "function") {
     new MutationObserver(syncBlurred).observe(root, { attributes: true, attributeFilter: ["data-window-blurred", "data-pause-unfocused", "data-on-battery", "data-battery-still"] });
   }

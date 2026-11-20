@@ -18,6 +18,7 @@ pub(super) struct Relay {
     pub pid: u32,
     pub started_ms: Option<u64>,
     pub bosses: Vec<String>,
+    modified: Option<std::time::SystemTime>,
 }
 
 /// Matches `hosts/processes.rs`: a PID reused after a relay started is treated as exited,
@@ -59,6 +60,25 @@ pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, 
         .collect()
 }
 
+/// Current boss chat keys by live terminal, before translating them into workspaces.
+pub(super) fn bosses(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, String> {
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let mut found = HashMap::new();
+    let mut active = relays(&root.join("connections"));
+    active.sort_by_key(|relay| relay.modified);
+    for relay in active {
+        if let Some(process) = system.process(Pid::from_u32(relay.pid))
+            && same_process(process, relay.started_ms)
+            && let Some(id) = terminal_of(&system, relay.pid, terminals)
+            && let Some(key) = relay.bosses.last()
+        {
+            found.insert(id, key.clone());
+        }
+    }
+    found
+}
+
 /// The running relays and the boss chats each one spoke for.
 pub(super) fn relays(dir: &Path) -> Vec<Relay> {
     if dir.is_symlink() {
@@ -87,6 +107,7 @@ pub(super) fn relays(dir: &Path) -> Vec<Relay> {
             pid,
             started_ms: value["started_ms"].as_u64(),
             bosses,
+            modified: fs::metadata(path).and_then(|m| m.modified()).ok(),
         })
     };
     fs::read_dir(dir)

@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
@@ -118,6 +119,7 @@ class SeatRun:
     prompts: list[NativePrompt] = field(default_factory=list[NativePrompt])
     reported_prompts: set[str] = field(default_factory=set[str])
     reported_lost: bool = False
+    attempt: int = 0
     output_returned: bool = False
 
 
@@ -145,6 +147,7 @@ class Round:
     error: str | None = None
     task: asyncio.Task[None] | None = None
     changed: asyncio.Event = field(default_factory=asyncio.Event)
+    on_inbox_change: Callable[[], None] | None = None
     outputs_persisted: bool = False
     # Parallel only: one task per launch; a retried seat adds another.
     finishing: list[asyncio.Task[None]] = field(default_factory=lambda: [])
@@ -166,6 +169,8 @@ class Round:
         # Replace the event so each waiter observes exactly the changes after it looked.
         self.changed.set()
         self.changed = asyncio.Event()
+        if self.on_inbox_change is not None:
+            self.on_inbox_change()
 
     def unreported_lost(self) -> list[SeatRun]:
         """Seats lost while others still work and no wait has said so. Once the others have
@@ -203,6 +208,7 @@ class Groups:
         self._seat_claims: dict[tuple[str, str], ClaimedIsolation | Exception] = {}
         self._groups: dict[str, Group] = {}
         self._rounds: dict[str, Round] = {}
+        self.on_inbox_change: Callable[[], None] | None = None
 
     def open(self, cwd: Path, seats: list[GroupSeat], group_id: str | None = None) -> Group:
         if not cwd.is_absolute() or not cwd.is_dir():
@@ -324,12 +330,17 @@ class Groups:
                 manager_reported_model=manager_reported_model,
             )
         )
+        round_.on_inbox_change = self.on_inbox_change
         group.active = round_
         self._rounds[round_.id] = round_
         # Launch synchronously so returned invocation ids are cancellable at once.
         for run in round_.runs if order == "parallel" else round_.runs[:1]:
             self._launch(round_, run, len(group.entries))
         round_.task = asyncio.create_task(self._drive(round_))
+        if self.on_inbox_change is not None:
+            round_.task.add_done_callback(
+                lambda _: round_.on_inbox_change and round_.on_inbox_change()
+            )
         return round_
 
     def _validate_retry(
@@ -369,6 +380,7 @@ class Groups:
             run.output_returned = False
             self._launch(round_, run, run.snapshot)
             round_.finishing.append(asyncio.create_task(self._finish(round_, run)))
+        round_.notify()
         return round_
 
     async def wait(self, round_id: str, timeout_seconds: float) -> tuple[Round, str | None]:
@@ -562,6 +574,7 @@ class Groups:
             return False
         seat = round_.group.seats[run.seat_id]
         state = round_.group.states[run.seat_id]
+        run.attempt += 1
         run.snapshot = snapshot
         # Record the launch before the native session can change.
         run.status = "running"

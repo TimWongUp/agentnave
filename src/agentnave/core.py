@@ -139,6 +139,7 @@ class _InvocationRecord:
     start_seq: int = 0
     end_seq: int | None = None
     session_id: str | None = None
+    on_inbox_change: Callable[[], None] | None = None
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -174,6 +175,8 @@ class _InvocationRecord:
                     message += " " + provider_health.QUOTA_RESUME_HINT
                 self.pending_attention.append(InvocationError(code, message))
                 self.attention_event.set()
+                if self.on_inbox_change is not None:
+                    self.on_inbox_change()
             if activity.kind == "message" and activity.public_output:
                 # Delta events append; cumulative/final message events replace the current reply.
                 if activity.message_delta and self.output_event_type == activity.event_type:
@@ -484,7 +487,7 @@ TASK_SEPARATOR = "\n\nHere's the task:\n"
 class InvocationManager:
     """Own active child processes only for this Python process lifetime."""
 
-    spawn_interval: tuple[float, float] = (2.0, 5.0)
+    spawn_interval: tuple[float, float] = (1.0, 3.0)
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
@@ -492,6 +495,7 @@ class InvocationManager:
         self._closed = False
         self.on_forget: Callable[[str], None] | None = None
         self.on_prompt_change: Callable[[str], None] | None = None
+        self.on_inbox_change: Callable[[], None] | None = None
         # Lock directory shared by every server on one data root; None claims in-process only.
         self.session_locks: Path | None = None
         self.health_root: Path | None = None
@@ -534,6 +538,7 @@ class InvocationManager:
                 health_root=self.health_root,
                 start_seq=self._next_seq(),
                 session_id=request.session_id or prepared.session_id,
+                on_inbox_change=self.on_inbox_change,
             )
             if prepared.keep_stdin_open:
                 record.prompts.encode = adapter.encode_prompt_answer
@@ -550,6 +555,8 @@ class InvocationManager:
             held = claim
             record.task.add_done_callback(lambda _: release_and_remove(held, Path(held.name)))
         record.task.add_done_callback(lambda _: self._schedule_cleanup(invocation_id))
+        if self.on_inbox_change is not None:
+            record.task.add_done_callback(lambda _: self.on_inbox_change and self.on_inbox_change())
         return invocation_id
 
     def reserve(self, request: InvocationRequest) -> IO[bytes] | None:
@@ -739,6 +746,8 @@ class InvocationManager:
         return record.reported_model if record is not None else None
 
     def _prompts_changed(self, invocation_id: str) -> None:
+        if self.on_inbox_change is not None:
+            self.on_inbox_change()
         self._record(invocation_id).update_doing(time.monotonic())
         if self.on_prompt_change is not None:
             self.on_prompt_change(invocation_id)

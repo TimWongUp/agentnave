@@ -629,7 +629,7 @@ fn json_string_field(chunk: &[u8], key: &[u8]) -> Option<String> {
 }
 
 /// A boss chat's key: the service's `_boss`, which hashes `json.dumps([host, session])`.
-fn boss_key(host: &str, session: &str) -> String {
+pub(crate) fn boss_key(host: &str, session: &str) -> String {
     let digest = Sha256::digest(format!("[\"{host}\", \"{session}\"]"));
     format!("s-{}", &format!("{digest:x}")[..32])
 }
