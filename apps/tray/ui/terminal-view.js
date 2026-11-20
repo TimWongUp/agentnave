@@ -32,6 +32,29 @@ window.TerminalView = (() => {
   // that subscribed with mode 2031 (Claude Code) when the App changes appearance, so they redraw
   // in the matching theme.
   const scheme = () => `\x1b[?997;${light() ? 2 : 1}n`;
+  // Claude Code's light theme marks the user's messages with a grey too pale to see; on the light
+  // skin they take the dark bar its dark theme draws, and the contrast rule lightens their text.
+  const ascii = text => Uint8Array.from(text, c => c.charCodeAt(0));
+  const PALE_BAR = ascii("\x1b[48;2;240;240;240m");
+  const DARK_BAR = ascii("\x1b[48;2;55;55;55m");
+  function recolor(bytes) {
+    if (!light()) return bytes;
+    const parts = [];
+    let from = 0;
+    for (let i = bytes.indexOf(0x1b); i !== -1 && i <= bytes.length - PALE_BAR.length; i = bytes.indexOf(0x1b, i + 1)) {
+      if (PALE_BAR.every((b, k) => bytes[i + k] === b)) {
+        parts.push(bytes.subarray(from, i), DARK_BAR);
+        from = i + PALE_BAR.length;
+        i = from - 1;
+      }
+    }
+    if (!parts.length) return bytes;
+    parts.push(bytes.subarray(from));
+    const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+    let at = 0;
+    for (const part of parts) { out.set(part, at); at += part.length; }
+    return out;
+  }
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const act = (path, body, type = "application/json") => fetch(path, {
     method: "POST", headers: { "X-AgentNave-Action": "1", "Content-Type": type }, body,
@@ -153,7 +176,7 @@ window.TerminalView = (() => {
           try {
             await new Promise(resolve => {
               this.writeDone = resolve;
-              this.term.write(bytes, resolve);
+              this.term.write(recolor(bytes), resolve);
             });
           } finally {
             this.writeDone = null;
