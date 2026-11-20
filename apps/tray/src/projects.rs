@@ -11,7 +11,7 @@ mod env;
 mod git;
 pub(crate) mod manual;
 mod memory;
-mod path;
+pub(crate) mod path;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;

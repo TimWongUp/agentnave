@@ -214,7 +214,7 @@ pub(super) fn terminal_title(
         }
         return (Some(id.to_owned()), located, None);
     }
-    let folder = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
+    let folder = normalize_folder(cwd);
     let mut found: Vec<(PathBuf, String)> = Vec::new();
     for root in roots {
         let Some(rows) = summaries(root) else {
@@ -227,8 +227,7 @@ pub(super) fn terminal_title(
             let Some(there) = first_cwd(&row.workspace_uris) else {
                 continue;
             };
-            let canonical = fs::canonicalize(&there).unwrap_or(there);
-            if canonical == folder && started_since(root, id, row, since) {
+            if normalize_folder(&there) == folder && started_since(root, id, row, since) {
                 found.push((root.clone(), id.clone()));
             }
         }
@@ -239,6 +238,24 @@ pub(super) fn terminal_title(
     let (root, id) = found.remove(0);
     let title = title_for_id(&root, &id);
     (Some(id), true, title)
+}
+
+fn normalize_folder(path: &Path) -> PathBuf {
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    plain_folder_for(&resolved, cfg!(windows))
+}
+
+pub(super) fn plain_folder_for(path: &Path, windows: bool) -> PathBuf {
+    if !windows {
+        return path.to_path_buf();
+    }
+    let plain = crate::projects::path::plain_windows(&path.to_string_lossy());
+    let bytes = plain.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        let drive = (bytes[0] as char).to_ascii_uppercase();
+        return PathBuf::from(format!("{drive}{}", &plain[1..]));
+    }
+    PathBuf::from(plain)
 }
 
 fn non_empty_title(row: &SummaryRow) -> Option<CliTitle> {

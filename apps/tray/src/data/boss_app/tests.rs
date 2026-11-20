@@ -788,7 +788,7 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
     // Antigravity: unique session in cwd resolves title (empty title -> None, never preview).
     let agy_root = dir.path().join("antigravity");
     fs::create_dir_all(&agy_root).unwrap();
-    let agy_uri = format!("file://{}", fs::canonicalize(&work).unwrap().display());
+    let agy_uri = file_uri(&work);
     let agy_conn = rusqlite::Connection::open(agy_root.join("conversation_summaries.db")).unwrap();
     agy_conn
         .execute_batch(
@@ -942,6 +942,18 @@ fn grok_summary_titles_are_cached_and_throttled() {
     );
 }
 
+fn file_uri(path: &Path) -> String {
+    let real = crate::projects::path::plain(&fs::canonicalize(path).unwrap());
+    let text = real.to_string_lossy().replace('\\', "/");
+    if let Some(unc) = text.strip_prefix("//") {
+        format!("file://{unc}")
+    } else if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
 #[test]
 fn antigravity_summaries_tolerate_nulls_read_uncheckpointed_wal_and_decode_windows_uris() {
     let dir = tempfile::tempdir().unwrap();
@@ -1035,5 +1047,17 @@ fn antigravity_summaries_tolerate_nulls_read_uncheckpointed_wal_and_decode_windo
     assert_eq!(
         antigravity::decode_file_uri_for("file://file%20server/share/dir%201", true),
         Some(PathBuf::from(r"\\file server\share\dir 1"))
+    );
+    assert_eq!(
+        antigravity::plain_folder_for(Path::new(r"\\?\c:\Users\Tim\app"), true),
+        PathBuf::from(r"C:\Users\Tim\app")
+    );
+    assert_eq!(
+        antigravity::plain_folder_for(Path::new(r"c:\Users\Tim\app"), true),
+        PathBuf::from(r"C:\Users\Tim\app")
+    );
+    assert_eq!(
+        antigravity::plain_folder_for(Path::new(r"\\?\UNC\srv\share\app"), true),
+        PathBuf::from(r"\\srv\share\app")
     );
 }
