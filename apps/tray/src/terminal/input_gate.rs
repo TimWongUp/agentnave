@@ -65,12 +65,12 @@ impl Gate {
         Duration::from_secs(300)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn set_draft_wait(&mut self, delay: Duration) {
         self.draft_wait = Some(delay);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn is_holding(&self) -> bool {
         self.held.is_some()
     }

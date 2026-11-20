@@ -365,7 +365,7 @@ impl Session {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn is_holding(&self) -> bool {
         self.gate
             .lock()
@@ -373,12 +373,12 @@ impl Session {
             .is_holding()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn record_writes(&self) {
         *self.writes.lock().unwrap_or_else(|p| p.into_inner()) = Some(Vec::new());
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn recorded_writes(&self) -> Vec<Vec<u8>> {
         self.writes
             .lock()
@@ -387,7 +387,7 @@ impl Session {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn set_draft_wait(&self, delay: Duration) {
         self.gate
             .lock()
@@ -395,7 +395,7 @@ impl Session {
             .set_draft_wait(delay);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn program_state(&self) -> Option<String> {
         self.output().status.state.clone()
     }

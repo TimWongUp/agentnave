@@ -154,7 +154,7 @@ def read_process_started(pid: int) -> float:
             error = ctypes.get_errno() or errno.EIO
             raise OSError(error, os.strerror(error))
         return info.start_sec + info.start_usec / 1_000_000
-    if sys.platform.startswith("linux"):
+    if sys.platform == "linux":
         fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[-1].split()
         # CLOCK_BOOTTIME includes suspend, as does /proc/<pid>/stat starttime.
         boot = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
