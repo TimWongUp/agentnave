@@ -154,7 +154,7 @@ fn scan(
         if items.is_empty() {
             continue;
         }
-        let generation = match session.begin_wakeup(&message(&items)) {
+        let started = match session.begin_wakeup(&message(&items)) {
             Ok(None) => continue,
             result => {
                 // A failed write may have written a prefix, so it must not be retried.
@@ -162,15 +162,15 @@ fn scan(
                     attempted.insert(item.key.clone());
                 }
                 match result {
-                    Ok(Some(generation)) => Some(generation),
-                    Err(_) => None,
+                    Ok(Some(())) => true,
+                    Err(_) => false,
                     Ok(None) => unreachable!(),
                 }
             }
         };
-        let delivered = if let Some(generation) = generation {
+        let delivered = if started {
             thread::sleep(Duration::from_millis(300));
-            session.finish_wakeup(generation)
+            session.finish_wakeup()
         } else {
             false
         };

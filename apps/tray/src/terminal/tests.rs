@@ -767,48 +767,50 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
 
 #[cfg(unix)]
 #[test]
-fn wakeup_gates_input_and_commits_in_two_steps() {
-    let session = Session::start(
-        shell("printf '\\033]7501;state=working\\007ready'; read line; echo got:$line; sleep 1"),
-        80,
-        24,
-    )
-    .unwrap();
-    assert!(output_until(&session, "ready").0.contains("ready"));
-    let generation = session
-        .begin_wakeup("notice")
-        .unwrap()
-        .expect("working terminal accepts notice");
-    assert!(session.finish_wakeup(generation));
-    assert!(
-        output_until(&session, "got:notice")
-            .0
-            .contains("got:notice")
-    );
-    session.stop();
-
-    let blocked = Session::start(
-        shell("printf '\\033]7501;state=blocked\\007ready'; sleep 30"),
-        80,
-        24,
-    )
-    .unwrap();
-    assert!(output_until(&blocked, "ready").0.contains("ready"));
-    assert!(blocked.begin_wakeup("notice").unwrap().is_none());
-    blocked.stop();
-
-    let changed = Session::start(
-        shell("printf '\\033]7501;state=idle\\007ready'; sleep 30"),
-        80,
-        24,
-    )
-    .unwrap();
-    assert!(output_until(&changed, "ready").0.contains("ready"));
-    let generation = changed.begin_wakeup("notice").unwrap().unwrap();
-    changed.user_input(b"x", false).unwrap();
-    assert!(!changed.finish_wakeup(generation));
-    assert!(changed.begin_wakeup("another").unwrap().is_none());
-    changed.stop();
+fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
+    let run = |blocked: bool| {
+        let change = if blocked {
+            "sleep 0.3; printf '\\033]7501;state=blocked\\007blocked';"
+        } else {
+            ""
+        };
+        let script = format!(
+            "stty raw -echo; printf '\\033]7501;state=working\\007ready'; {change} dd bs=1 count=10 2>/dev/null | od -An -t u1; printf done"
+        );
+        let session = Session::start(shell(&script), 80, 24).unwrap();
+        assert!(output_until(&session, "ready").0.contains("ready"));
+        assert!(session.begin_wakeup("notice").unwrap().is_some());
+        session.user_input(b"xy", false).unwrap();
+        session.user_input(b"z", false).unwrap();
+        if blocked {
+            assert!(output_until(&session, "blocked").0.contains("blocked"));
+        }
+        assert_eq!(session.finish_wakeup(), !blocked);
+        let (text, _) = output_until(&session, "done");
+        let expected = if blocked {
+            "110 111 116 105 99 101 21 120 121 122"
+        } else {
+            "110 111 116 105 99 101 13 120 121 122"
+        };
+        let actual: Vec<_> = text
+            .split_whitespace()
+            .filter_map(|s| s.parse::<u8>().ok())
+            .collect();
+        let expected: Vec<_> = expected
+            .split_whitespace()
+            .map(|s| s.parse::<u8>().unwrap())
+            .collect();
+        assert!(
+            actual
+                .windows(expected.len())
+                .any(|window| window == expected),
+            "{text:?}"
+        );
+        assert!(session.begin_wakeup("another").unwrap().is_none());
+        session.stop();
+    };
+    run(false);
+    run(true);
 }
 
 #[cfg(unix)]

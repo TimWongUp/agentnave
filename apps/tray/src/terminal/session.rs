@@ -284,13 +284,16 @@ impl Session {
 
     pub(crate) fn user_input(&self, bytes: &[u8], paste: bool) -> Result<(), String> {
         let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
-        gate.input(bytes, paste);
-        self.write(bytes)
+        if gate.input(bytes, paste) {
+            Ok(())
+        } else {
+            self.write(bytes)
+        }
     }
 
-    /// Write the prompt under the input gate, then return the input generation for the commit.
-    pub(super) fn begin_wakeup(&self, text: &str) -> Result<Option<u64>, String> {
-        let gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+    /// Hold user input until the prompt is submitted or cleared.
+    pub(super) fn begin_wakeup(&self, text: &str) -> Result<Option<()>, String> {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
         let output = self.output();
         if output.exit.is_some()
             || output
@@ -307,21 +310,26 @@ impl Session {
         } else {
             text.to_owned()
         };
-        self.write(bytes.as_bytes())?;
-        Ok(Some(gate.generation()))
+        gate.hold();
+        if let Err(error) = self.write(bytes.as_bytes()) {
+            gate.release();
+            return Err(error);
+        }
+        Ok(Some(()))
     }
 
-    pub(super) fn finish_wakeup(&self, generation: u64) -> bool {
-        let gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+    pub(super) fn finish_wakeup(&self) -> bool {
+        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
         let output = self.output();
-        let commit = gate.generation() == generation
-            && output.exit.is_none()
+        let commit = output.exit.is_none()
             && output
                 .status
                 .state
                 .as_deref()
                 .is_some_and(|s| s != "blocked");
-        self.write(if commit { b"\r" } else { b"\x15" }).is_ok() && commit
+        let mut bytes = vec![if commit { b'\r' } else { 0x15 }];
+        bytes.extend(gate.release());
+        self.write(&bytes).is_ok() && commit
     }
 
     pub(crate) fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
