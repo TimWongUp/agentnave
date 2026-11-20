@@ -10,7 +10,7 @@ import pytest
 
 from agentnave.adapters import codex
 from agentnave.adapters.antigravity import write_restricted_profile
-from agentnave.core import InvocationManager
+from agentnave.core import TASK_SEPARATOR, InvocationManager
 from agentnave.group import Groups, GroupSeat
 from agentnave.isolated import IsolatedDirs
 from agentnave.mcp_server import round_payload
@@ -618,7 +618,7 @@ async def test_group_seat_claims_and_releases_isolated_directory_lease(
         f"gate = pathlib.Path({str(gate)!r})\n"
         "while not gate.exists():\n"
         "    time.sleep(0.02)\n"
-        "print(json.dumps({'type': 'result', 'result': prompt.split('Assigned task:\\n', 1)[1], "
+        f"print(json.dumps({{'type': 'result', 'result': prompt.split({TASK_SEPARATOR!r}, 1)[1], "
         "'session_id': 's1', 'num_turns': 1, 'is_error': False}))\n",
     )
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")

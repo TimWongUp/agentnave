@@ -20,7 +20,7 @@ from agentnave import mcp_history, mcp_runtime, mcp_server, views
 from agentnave.adapters.base import PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.conversations import Conversations
-from agentnave.core import InvocationManager
+from agentnave.core import SUBAGENT_INSTRUCTIONS, TASK_SEPARATOR, InvocationManager
 from agentnave.db import Database
 from agentnave.group import Groups, GroupSeat, SeatRun
 from agentnave.mcp_server import mcp
@@ -57,8 +57,8 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "#!/usr/bin/env python3\n"
         "import json, os, sys, time, uuid\n"
         "prompt = sys.stdin.buffer.read().decode('utf-8')\n"
-        "assert prompt.startswith('Complete the task within the granted permissions')\n"
-        "assert 'Do not call AgentNave tools' in prompt.split('\\n\\nAssigned task:\\n', 1)[0]\n"
+        f"assert prompt.startswith({SUBAGENT_INSTRUCTIONS!r})\n"
+        f"assert prompt.split({TASK_SEPARATOR!r}, 1)[0].startswith({SUBAGENT_INSTRUCTIONS!r})\n"
         "if 'Private instruction for you only:\\nSLEEP' in prompt:\n"
         "    time.sleep(30)\n"
         "if 'FAIL_ONCE' in prompt and not os.path.exists('failed-once'):\n"

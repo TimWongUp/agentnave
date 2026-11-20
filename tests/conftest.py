@@ -13,6 +13,12 @@ from mcp_types import CallToolResult, InputRequiredResult, TextContent
 
 from agentnave import mcp_server, members
 from agentnave.adapters import base, codex
+from agentnave.core import InvocationManager
+
+
+@pytest.fixture(autouse=True)
+def no_spawn_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(InvocationManager, "spawn_interval", (0.0, 0.0))
 
 
 @pytest.fixture(autouse=True)

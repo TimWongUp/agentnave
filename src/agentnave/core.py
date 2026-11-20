@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import tempfile
@@ -467,19 +468,23 @@ def _output_limit_error(
 
 
 SUBAGENT_INSTRUCTIONS = (
-    "Complete the task within the granted permissions. Do not call AgentNave tools or delegate "
-    "through AgentNave. Include blockers, decisions, and any additional authorization needed in "
-    "your final reply. Do not use interactive question tools or bypass native permissions."
+    "Please take care of this within the permissions you've been given. Work on it yourself, "
+    "without calling AgentNave tools or passing it on through AgentNave. In your final reply, "
+    "let me know about any blockers, decisions, or additional authorization needed. Please "
+    "avoid interactive question tools and respect the native permissions."
 )
 READ_ONLY_INSTRUCTIONS = (
-    "Read-only: do not modify files, commit, push, send messages or post comments. You may read "
-    "files and run read-only commands and tests, including the caches and temporary files they "
-    "create."
+    "This is a read-only task, so please leave files unchanged and don't commit, push, send "
+    "messages, or post comments. Feel free to read files and run read-only commands and tests, "
+    "including any caches and temporary files they create."
 )
+TASK_SEPARATOR = "\n\nHere's the task:\n"
 
 
 class InvocationManager:
     """Own active child processes only for this Python process lifetime."""
+
+    spawn_interval: tuple[float, float] = (2.0, 5.0)
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
@@ -490,6 +495,8 @@ class InvocationManager:
         # Lock directory shared by every server on one data root; None claims in-process only.
         self.session_locks: Path | None = None
         self.health_root: Path | None = None
+        self._spawn_locks: dict[str, asyncio.Lock] = {}
+        self._last_spawn: dict[str, float] = {}
 
     def _next_seq(self) -> int:
         self._seq += 1
@@ -503,7 +510,7 @@ class InvocationManager:
         if request.extra_instructions:
             instructions += f" {request.extra_instructions}"
         return get_adapter(request.provider).prepare(
-            replace(request, prompt=f"{instructions}\n\nAssigned task:\n{request.prompt}")
+            replace(request, prompt=f"{instructions}{TASK_SEPARATOR}{request.prompt}")
         )
 
     def start(
@@ -918,16 +925,24 @@ class InvocationManager:
         tasks: list[asyncio.Task[object]] = []
         scratch = None
         try:
-            if prepared.temp_dir_env:
-                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
-            supervised = await spawn_process(
-                prepared.argv,
-                prepared.cwd,
-                unset_env=prepared.unset_env,
-                extra_env={prepared.temp_dir_env: scratch}
-                if prepared.temp_dir_env and scratch
-                else None,
-            )
+            if not await self._wait_to_spawn(record):
+                return _cancelled_before_spawn(record, prepared)
+            try:
+                if record.cancel_event.is_set():
+                    return _cancelled_before_spawn(record, prepared)
+                if prepared.temp_dir_env:
+                    scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
+                supervised = await spawn_process(
+                    prepared.argv,
+                    prepared.cwd,
+                    unset_env=prepared.unset_env,
+                    extra_env={prepared.temp_dir_env: scratch}
+                    if prepared.temp_dir_env and scratch
+                    else None,
+                )
+                self._last_spawn[record.request.provider] = time.monotonic()
+            finally:
+                self._spawn_locks[record.request.provider].release()
             process = supervised.process
             record.process = process
             if prepared.keep_stdin_open:
@@ -939,60 +954,7 @@ class InvocationManager:
             io = _start_run_io(record, adapter, prepared, supervised)
             tasks.extend(io.tasks)
 
-            done, _ = await asyncio.wait(
-                (
-                    io.completion_task,
-                    io.cancel_task,
-                    io.exceeded_task,
-                    io.stall_task,
-                    io.terminal_task,
-                ),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            terminal, error, provider_returncode = _run_outcome(record, io, done)
-
-            record.phase = InvocationPhase.STOPPING
-            await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
-            stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
-            terminal, error = _drained_limit(terminal, error, stdout, stderr, io)
-            parse_returncode = provider_returncode
-            if parse_returncode is None:
-                parse_returncode = process.returncode if process.returncode is not None else 1
-            parsed = adapter.parse_prepared(prepared, parse_returncode, stdout.data, stderr.data)
-
-            # Without a final answer, an interrupted run keeps the reply text seen so far.
-            partial = parsed.output or record.output_tail
-            if terminal is not None:
-                result = InvocationResult(
-                    terminal,
-                    record.request.provider,
-                    partial,
-                    parsed.session_id or prepared.session_id or record.request.session_id,
-                    _duration_ms(started),
-                    error,
-                )
-                return await self._observe(
-                    record, adapter, result, parsed.error_message, stdout.data, stderr.data
-                )
-
-            if provider_returncode is None:
-                raise RuntimeError("provider completion did not include an exit status")
-            parsed_error = None
-            if parsed.error_message is not None:
-                details = stderr.data.decode(errors="replace")[-_MAX_ERROR_DETAILS:] or None
-                parsed_error = InvocationError("provider_error", parsed.error_message, details)
-            result = InvocationResult(
-                parsed.status,
-                record.request.provider,
-                parsed.output if parsed.status is InvocationStatus.SUCCEEDED else partial,
-                parsed.session_id or prepared.session_id,
-                _duration_ms(started),
-                parsed_error,
-                warnings=parsed.warnings,
-            )
-            return await self._observe(
-                record, adapter, result, parsed.error_message, stdout.data, stderr.data
-            )
+            return await self._collect_run(record, adapter, prepared, process, io)
         except (OSError, ValueError) as exc:
             return InvocationResult(
                 InvocationStatus.FAILED,
@@ -1026,6 +988,112 @@ class InvocationManager:
                     record.process = None
                     record.tool_names.clear()
                     record.prompts.close()
+
+    async def _collect_run(
+        self,
+        record: _InvocationRecord,
+        adapter: ProviderAdapter,
+        prepared: PreparedCommand,
+        process: asyncio.subprocess.Process,
+        io: _RunIO,
+    ) -> InvocationResult:
+        started = record.started_at
+        done, _ = await asyncio.wait(
+            (
+                io.completion_task,
+                io.cancel_task,
+                io.exceeded_task,
+                io.stall_task,
+                io.terminal_task,
+            ),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        terminal, error, provider_returncode = _run_outcome(record, io, done)
+
+        record.phase = InvocationPhase.STOPPING
+        await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
+        stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
+        terminal, error = _drained_limit(terminal, error, stdout, stderr, io)
+        parse_returncode = provider_returncode
+        if parse_returncode is None:
+            parse_returncode = process.returncode if process.returncode is not None else 1
+        parsed = adapter.parse_prepared(prepared, parse_returncode, stdout.data, stderr.data)
+
+        # Without a final answer, an interrupted run keeps the reply text seen so far.
+        partial = parsed.output or record.output_tail
+        if terminal is not None:
+            result = InvocationResult(
+                terminal,
+                record.request.provider,
+                partial,
+                parsed.session_id or prepared.session_id or record.request.session_id,
+                _duration_ms(started),
+                error,
+            )
+            return await self._observe(
+                record, adapter, result, parsed.error_message, stdout.data, stderr.data
+            )
+
+        if provider_returncode is None:
+            raise RuntimeError("provider completion did not include an exit status")
+        parsed_error = None
+        if parsed.error_message is not None:
+            details = stderr.data.decode(errors="replace")[-_MAX_ERROR_DETAILS:] or None
+            parsed_error = InvocationError("provider_error", parsed.error_message, details)
+        result = InvocationResult(
+            parsed.status,
+            record.request.provider,
+            parsed.output if parsed.status is InvocationStatus.SUCCEEDED else partial,
+            parsed.session_id or prepared.session_id,
+            _duration_ms(started),
+            parsed_error,
+            warnings=parsed.warnings,
+        )
+        return await self._observe(
+            record, adapter, result, parsed.error_message, stdout.data, stderr.data
+        )
+
+    async def _wait_to_spawn(self, record: _InvocationRecord) -> bool:
+        """Hold the provider lock through spawn; cancellation never reserves a slot."""
+        provider = record.request.provider
+        lock = self._spawn_locks.setdefault(provider, asyncio.Lock())
+        acquire = asyncio.create_task(lock.acquire())
+        cancelled = asyncio.create_task(record.cancel_event.wait())
+        handed_off = False
+        try:
+            await asyncio.wait((acquire, cancelled), return_when=asyncio.FIRST_COMPLETED)
+            if record.cancel_event.is_set():
+                return False
+            last = self._last_spawn.get(provider)
+            if last is not None:
+                delay = max(0.0, last + random.uniform(*self.spawn_interval) - time.monotonic())
+                if delay:
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(record.cancel_event.wait(), delay)
+            if record.cancel_event.is_set():
+                return False
+            handed_off = True  # The caller owns the lock through spawn.
+            return True
+        finally:
+            if not acquire.done():
+                acquire.cancel()
+            cancelled.cancel()
+            await asyncio.gather(acquire, cancelled, return_exceptions=True)
+            if not handed_off and not acquire.cancelled() and acquire.result():
+                lock.release()
+
+
+def _cancelled_before_spawn(
+    record: _InvocationRecord, prepared: PreparedCommand
+) -> InvocationResult:
+    return InvocationResult(
+        InvocationStatus.CANCELLED,
+        record.request.provider,
+        "",
+        prepared.session_id or record.request.session_id,
+        _duration_ms(record.started_at),
+        InvocationError("cancelled", "invocation was cancelled"),
+    )
 
 
 def _drained_limit(
