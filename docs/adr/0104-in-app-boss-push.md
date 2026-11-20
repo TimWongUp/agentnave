@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-20
 - 修订：[ADR-0007](0007-wait-any-ready-subset.md)、[ADR-0064](0064-dispatch-receipts-steer-to-wait.md) 的推送边界。
+- 修订：Codex 暂不推送的排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订（Unix 改走私有 `app-server` 结构化投递，Windows 维持不推送）。
 
 ## 背景
 

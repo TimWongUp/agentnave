@@ -19,14 +19,14 @@ const READ_CHUNK: usize = 16 * 1024;
 pub(crate) struct Launch {
     pub program: PathBuf,
     pub args: Vec<String>,
-    pub env: Vec<(&'static str, &'static str)>,
+    pub env: Vec<(String, String)>,
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
 }
 
-/// The CLI's arguments, each its own argv entry (ADR-0103): Codex runs without the shared daemon,
-/// whose MCP servers sit outside this terminal's process tree, and `resume` names the chat to
+/// The CLI's arguments, each its own argv entry (ADR-0103): Windows Codex runs without the
+/// shared daemon (Unix Codex launches via `codex_server`), and `resume` names the chat to
 /// continue, for the CLIs that can. A new Claude or Grok chat may be given the ID it will have
 /// (`fresh`), so its session record can be found before the chat has a workspace.
 pub(super) fn cli_args(provider: &str, resume: Option<&str>, fresh: Option<&str>) -> Vec<String> {

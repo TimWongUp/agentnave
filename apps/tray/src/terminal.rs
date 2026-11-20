@@ -7,6 +7,8 @@
 //! all over the `agentnave` scheme like every other page. Every route but the list names its
 //! terminal with `?session=<id>`.
 
+#[cfg(unix)]
+mod codex_server;
 mod elsewhere;
 mod input_gate;
 mod links;
@@ -68,6 +70,8 @@ struct Running {
     title_searched: Option<Instant>,
     started: SystemTime,
     pending: usize,
+    #[cfg(unix)]
+    codex: Option<Arc<codex_server::Client>>,
 }
 
 impl Running {
@@ -143,8 +147,27 @@ pub(crate) fn start_wakeup(app: AppHandle) {
 /// Ends every CLI when the App quits.
 pub(crate) fn shutdown(app: &AppHandle) {
     wakeup::shutdown();
-    for running in &app.state::<Terminals>().lock().open {
-        running.session.stop();
+    let terminals = app.state::<Terminals>();
+    #[cfg(unix)]
+    let (sessions, codex_clients): (Vec<_>, Vec<_>) = {
+        let state = terminals.lock();
+        state
+            .open
+            .iter()
+            .map(|r| (r.session.clone(), r.codex.clone()))
+            .unzip()
+    };
+    #[cfg(not(unix))]
+    let sessions: Vec<_> = {
+        let state = terminals.lock();
+        state.open.iter().map(|r| r.session.clone()).collect()
+    };
+    #[cfg(unix)]
+    for codex in codex_clients.into_iter().flatten() {
+        codex.close();
+    }
+    for session in sessions {
+        session.stop();
     }
 }
 
@@ -437,7 +460,19 @@ impl Terminals {
             light: attach.light,
         });
         if reply.status == 200 {
-            self.lock().open.retain(|running| Some(running.id) != id);
+            let mut state = self.lock();
+            let mut removed = Vec::new();
+            let mut kept = Vec::with_capacity(state.open.len());
+            for running in state.open.drain(..) {
+                if Some(running.id) == id {
+                    removed.push(running);
+                } else {
+                    kept.push(running);
+                }
+            }
+            state.open = kept;
+            drop(state);
+            drop(removed);
         }
         reply
     }
@@ -481,10 +516,20 @@ impl Terminals {
             // An ended terminal of this chat gives way to the new one.
             let mut state = self.lock();
             let latest = state.started;
-            state.open.retain(|running| {
-                running.id == latest
+            let mut removed = Vec::new();
+            let mut kept = Vec::with_capacity(state.open.len());
+            for running in state.open.drain(..) {
+                if running.id == latest
                     || running.workspaces.last().map(String::as_str) != Some(workspace)
-            });
+                {
+                    kept.push(running);
+                } else {
+                    removed.push(running);
+                }
+            }
+            state.open = kept;
+            drop(state);
+            drop(removed);
         }
         reply
     }
@@ -512,6 +557,15 @@ impl Terminals {
     }
 
     fn launch(&self, start: Start) -> Response {
+        self.launch_with_extra(start, &[], &[])
+    }
+
+    fn launch_with_extra(
+        &self,
+        start: Start,
+        extra_args: &[String],
+        extra_env: &[(&str, &str)],
+    ) -> Response {
         let Start {
             provider,
             cwd,
@@ -529,6 +583,11 @@ impl Terminals {
         if !cwd.is_absolute() || !cwd.is_dir() {
             return Response::error(400, "文件夹不存在");
         }
+        let id = {
+            let mut state = self.lock();
+            state.started += 1;
+            state.started
+        };
         // Claude and Grok take the ID of a new chat up front, which is how their session record
         // is found before the chat has a workspace; it names nothing else.
         let chosen = (matches!(provider, "claude" | "grok") && resume.is_none())
@@ -539,14 +598,34 @@ impl Terminals {
             "pi" => theme.env.push(("PI_PROGRAM_STATUS", "1")),
             _ => {}
         }
+        #[cfg(unix)]
+        let codex_sock = (provider == "codex").then(|| codex_server::socket_path(id));
+        #[cfg(unix)]
+        let (launch_program, launch_args) = if let Some(sock) = &codex_sock {
+            let (prog, args) = codex_server::launch_args(&program, sock, &cwd, resume, extra_args);
+            (prog, [args, theme.args].concat())
+        } else {
+            let mut args = session::cli_args(provider, resume, chosen.as_deref());
+            args.extend(extra_args.iter().cloned());
+            args.extend(theme.args);
+            (program, args)
+        };
+        #[cfg(not(unix))]
+        let (launch_program, launch_args) = {
+            let mut args = session::cli_args(provider, resume, chosen.as_deref());
+            args.extend(extra_args.iter().cloned());
+            args.extend(theme.args);
+            (program, args)
+        };
         let launch = Launch {
-            program,
-            args: [
-                session::cli_args(provider, resume, chosen.as_deref()),
-                theme.args,
-            ]
-            .concat(),
-            env: theme.env,
+            program: launch_program,
+            args: launch_args,
+            env: theme
+                .env
+                .into_iter()
+                .chain(extra_env.iter().copied())
+                .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                .collect(),
             cwd: cwd.clone(),
             cols,
             rows,
@@ -555,12 +634,14 @@ impl Terminals {
             Ok(session) => session,
             Err(error) => return Response::error(500, &error),
         };
+        #[cfg(unix)]
+        let codex = codex_sock
+            .map(|sock| codex_server::Client::connect_in_background(sock, session.clone()));
         let mut state = self.lock();
-        state.started += 1;
         state.cwd = Some(cwd.clone());
         state.links_checked = None;
         let running = Running {
-            id: state.started,
+            id,
             provider: provider.to_owned(),
             cwd,
             session,
@@ -570,6 +651,8 @@ impl Terminals {
             title_searched: None,
             started: SystemTime::now(),
             pending: 0,
+            #[cfg(unix)]
+            codex,
         };
         let described = running.describe();
         state.open.push(running);
@@ -598,11 +681,18 @@ impl Terminals {
 
     /// Ends the terminal's CLI if it still runs and forgets the terminal.
     fn close(&self, id: Option<u64>) -> Response {
-        let mut state = self.lock();
-        let Some(at) = state.open.iter().position(|running| Some(running.id) == id) else {
-            return Response::error(404, "找不到这个终端");
+        let removed = {
+            let mut state = self.lock();
+            let Some(at) = state.open.iter().position(|running| Some(running.id) == id) else {
+                return Response::error(404, "找不到这个终端");
+            };
+            state.open.remove(at)
         };
-        state.open.remove(at).session.stop();
+        #[cfg(unix)]
+        if let Some(codex) = &removed.codex {
+            codex.close();
+        }
+        removed.session.stop();
         Response::json(&json!({"ok": true}))
     }
 
