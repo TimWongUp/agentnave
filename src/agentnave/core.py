@@ -487,7 +487,7 @@ TASK_SEPARATOR = "\n\nHere's the task:\n"
 class InvocationManager:
     """Own active child processes only for this Python process lifetime."""
 
-    spawn_interval: tuple[float, float] = (2.0, 5.0)
+    spawn_interval: tuple[float, float] = (1.0, 3.0)
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
