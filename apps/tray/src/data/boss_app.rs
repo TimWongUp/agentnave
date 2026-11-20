@@ -26,6 +26,7 @@ const RECORD_LIMIT: u64 = 8 << 20;
 /// Retry missing transcripts periodically so sessions created slightly after workspace creation resolve.
 const NEGATIVE_TTL: Duration = Duration::from_secs(15);
 
+mod antigravity;
 mod other;
 mod title;
 pub(crate) use title::CliTitle;
@@ -63,13 +64,17 @@ impl Homes {
                 .into_iter()
                 .collect(),
         };
+        let mut other: Vec<(String, PathBuf)> = other::HOSTS
+            .iter()
+            .filter_map(|host| Some(((*host).to_owned(), other::home_of(host)?)))
+            .collect();
+        if let Some(path) = antigravity::home() {
+            other.push(("antigravity".to_owned(), path));
+        }
         Self {
             claude: home("CLAUDE_CONFIG_DIR", ".claude"),
             codex: home("CODEX_HOME", ".codex"),
-            other: other::HOSTS
-                .iter()
-                .filter_map(|host| Some(((*host).to_owned(), other::home_of(host)?)))
-                .collect(),
+            other,
             ..Self::desktop_data()
         }
     }
@@ -166,7 +171,7 @@ impl BossApps {
                 Some((boss.workspace.clone(), title))
             })
             .collect();
-        titles.extend(other_titles(connection));
+        titles.extend(other_titles(connection, &homes));
         titles.sort_unstable();
         titles
     }
@@ -252,8 +257,9 @@ impl BossApps {
     }
 }
 
-/// The names of the other CLIs' chats, from the session record each workspace saved.
-fn other_titles(connection: &rusqlite::Connection) -> Vec<(String, CliTitle)> {
+/// The names of the other CLIs' chats, from the session record each workspace saved (or from a
+/// sweep / summary DB for Grok and Antigravity CLI when `owner_file` is absent).
+fn other_titles(connection: &rusqlite::Connection, homes: &Homes) -> Vec<(String, CliTitle)> {
     let hosts = other::HOSTS.map(|host| format!("'{host}'")).join(", ");
     let sql = format!(
         "SELECT id, owner_host, owner_file FROM workspaces \
@@ -267,11 +273,53 @@ fn other_titles(connection: &rusqlite::Connection) -> Vec<(String, CliTitle)> {
                 .collect()
         })
         .unwrap_or_default();
-    rows.into_iter()
+    let mut titles: Vec<(String, CliTitle)> = rows
+        .into_iter()
         .filter_map(|(workspace, host, file)| {
             Some((workspace, other::title_of(&host, Path::new(&file))?))
         })
-        .collect()
+        .collect();
+
+    let missing_grok: Vec<(String, String)> = connection
+        .prepare(
+            "SELECT id, owner FROM workspaces WHERE owner_host = 'grok' AND owner_file IS NULL",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect()
+        })
+        .unwrap_or_default();
+    if !missing_grok.is_empty() {
+        let swept = sweep(homes);
+        for (workspace, owner) in missing_grok {
+            if let Some(record) = swept.transcripts.get(&owner)
+                && let Some(title) = other::title_of("grok", record)
+            {
+                titles.push((workspace, title));
+            }
+        }
+    }
+
+    let agy_rows: Vec<(String, String, Option<String>)> = connection
+        .prepare("SELECT id, owner, owner_file FROM workspaces WHERE owner_host = 'antigravity'")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect()
+        })
+        .unwrap_or_default();
+    if !agy_rows.is_empty() {
+        let roots = antigravity::roots(homes);
+        for (workspace, owner, file) in agy_rows {
+            if let Some(title) =
+                antigravity::title_for_workspace(&roots, &owner, file.as_deref().map(Path::new))
+            {
+                titles.push((workspace, title));
+            }
+        }
+    }
+    titles
 }
 
 /// The session record a boss chat is known by: the one its workspace saved, else the one a sweep
@@ -354,6 +402,21 @@ fn sweep(homes: &Homes) -> Found {
         };
         files_at(&codex.join("sessions"), 3, &mut rollout);
         files_at(&codex.join("archived_sessions"), 0, &mut rollout);
+    }
+    for (host, home) in &homes.other {
+        if host == "grok" {
+            files_at(&home.join("sessions"), 2, &mut |path| {
+                if file_name(path) == "summary.json"
+                    && let Some(id) = path
+                        .parent()
+                        .and_then(Path::file_name)
+                        .and_then(|name| name.to_str())
+                        .filter(|id| is_uuid(id))
+                {
+                    keep_newest(&mut found.transcripts, boss_key("grok", id), path);
+                }
+            });
+        }
     }
     for data in &homes.desktop {
         for kind in ["claude-code-sessions", "local-agent-mode-sessions"] {
@@ -464,6 +527,28 @@ pub(crate) fn native_session(
     key: &str,
     file: Option<&Path>,
 ) -> Option<(String, PathBuf)> {
+    native_session_in(&Homes::here(), host, key, file)
+}
+
+pub(crate) fn native_session_in(
+    homes: &Homes,
+    host: &str,
+    key: &str,
+    file: Option<&Path>,
+) -> Option<(String, PathBuf)> {
+    if host == "antigravity" {
+        if let Some(path) = file {
+            if antigravity::is_desktop_record(path) {
+                return None;
+            }
+            if let Some(id) = antigravity::id_from_path(path)
+                && boss_key("antigravity", &id) == key
+            {
+                return Some((id, path.to_owned()));
+            }
+        }
+        return antigravity::find_by_key(&antigravity::roots(homes), key);
+    }
     let id_of = |path: &Path| -> Option<(String, PathBuf)> {
         let name = file_name(path);
         let id = match host {
@@ -472,16 +557,40 @@ pub(crate) fn native_session(
                 .strip_suffix(".jsonl.zst")
                 .or_else(|| name.strip_suffix(".jsonl"))
                 .and_then(codex_rollout_id),
+            "grok" if matches!(name, "chat_history.jsonl" | "summary.json") => path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|dir| dir.to_str())
+                .filter(|id| is_uuid(id)),
             _ => None,
         }?;
         (boss_key(host, id) == key).then(|| (id.to_owned(), path.to_owned()))
     };
     file.and_then(id_of).or_else(|| {
-        sweep(&Homes::here())
+        sweep(homes)
             .transcripts
             .get(key)
             .and_then(|path| id_of(path))
     })
+}
+
+/// The folder a boss chat ran in, read according to the CLI's session format.
+pub(crate) fn session_cwd_of(host: &str, record: &Path, id: &str) -> Option<PathBuf> {
+    match host {
+        "grok" => {
+            let summary = if file_name(record) == "summary.json" {
+                record.to_owned()
+            } else {
+                record.parent()?.join("summary.json")
+            };
+            other::cwd_of("grok", &summary)
+        }
+        "antigravity" => {
+            let root = antigravity::root_from_record(record).or_else(antigravity::home)?;
+            antigravity::cwd_for_id(&root, id)
+        }
+        _ => session_cwd(record),
+    }
 }
 
 /// The folder a boss chat ran in, from the start of its session record: Claude Code and Codex

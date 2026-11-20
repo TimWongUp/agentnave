@@ -181,6 +181,7 @@ fn a_startup_miss_is_retried_when_probed_roots_arrive() {
 /// chat's own.
 #[test]
 fn a_chat_is_continued_by_the_id_whose_key_matches() {
+    let dir = tempfile::tempdir().unwrap();
     let id = "01a1ef3a-944a-7fc1-b936-694b4760a644";
     let key = boss_key("codex", id);
     let rollout =
@@ -200,7 +201,95 @@ fn a_chat_is_continued_by_the_id_whose_key_matches() {
             .as_deref(),
         Some(id)
     );
-    assert_eq!(native_session("grok", &claude, Some(&transcript)), None);
+    assert_eq!(native_session("pi", &claude, Some(&transcript)), None);
+
+    // Grok: matches by owner_file (chat_history.jsonl) and falls back to sweeping summary.json.
+    let grok_key = boss_key("grok", id);
+    let grok_home = dir.path().join("grok");
+    let grok_chat = grok_home.join(format!("sessions/e/{id}/chat_history.jsonl"));
+    let grok_summary = grok_home.join(format!("sessions/e/{id}/summary.json"));
+    write(&grok_chat, "");
+    write(
+        &grok_summary,
+        &serde_json::json!({"info": {"id": id, "cwd": "/work/grok"}}).to_string(),
+    );
+    assert_eq!(
+        native_session("grok", &grok_key, Some(&grok_chat))
+            .map(|found| found.0)
+            .as_deref(),
+        Some(id)
+    );
+    assert_eq!(native_session("grok", "s-other", Some(&grok_chat)), None);
+    let grok_homes = Homes {
+        other: vec![("grok".to_owned(), grok_home)],
+        ..Homes::default()
+    };
+    assert_eq!(
+        native_session_in(&grok_homes, "grok", &grok_key, None)
+            .map(|found| found.0)
+            .as_deref(),
+        Some(id)
+    );
+
+    // Antigravity CLI: resumes CLI records, rejects desktop app records.
+    let agy_key = boss_key("antigravity", id);
+    let agy_cli_home = dir.path().join("antigravity-cli");
+    let agy_cli_transcript = agy_cli_home.join(format!(
+        "brain/{id}/.system_generated/logs/transcript_full.jsonl"
+    ));
+    write(&agy_cli_transcript, "");
+    assert_eq!(
+        native_session("antigravity", &agy_key, Some(&agy_cli_transcript))
+            .map(|found| found.0)
+            .as_deref(),
+        Some(id)
+    );
+    assert_eq!(
+        native_session("antigravity", "s-other", Some(&agy_cli_transcript)),
+        None
+    );
+    let agy_desktop_transcript = dir.path().join(format!(
+        "antigravity/brain/{id}/.system_generated/logs/transcript_full.jsonl"
+    ));
+    write(&agy_desktop_transcript, "");
+    let agy_homes = Homes {
+        other: vec![("antigravity".to_owned(), agy_cli_home.clone())],
+        ..Homes::default()
+    };
+    assert_eq!(
+        native_session_in(
+            &agy_homes,
+            "antigravity",
+            &agy_key,
+            Some(&agy_desktop_transcript)
+        ),
+        None
+    );
+
+    // Fallback to conversation_summaries.db when owner_file is missing.
+    let agy_db = agy_cli_home.join("conversation_summaries.db");
+    let conn = rusqlite::Connection::open(&agy_db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL DEFAULT '',
+            workspace_uris TEXT NOT NULL DEFAULT '[]',
+            last_modified_time TEXT NOT NULL DEFAULT ''
+        );",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, 'Agy title', '[\"file:///work/agy\"]', '2026-11-20 04:00:00+00:00')",
+        [id],
+    )
+    .unwrap();
+    drop(conn);
+    assert_eq!(
+        native_session_in(&agy_homes, "antigravity", &agy_key, None)
+            .map(|found| found.0)
+            .as_deref(),
+        Some(id)
+    );
 }
 
 #[test]
@@ -223,6 +312,63 @@ fn a_chat_runs_again_in_the_folder_its_record_names() {
     assert_eq!(
         session_cwd(&windows_record),
         Some(PathBuf::from(r"C:\Users\Tim\app"))
+    );
+
+    // Grok reads info.cwd from summary.json even when owner_file points to chat_history.jsonl.
+    let grok_dir = dir
+        .path()
+        .join("grok/sessions/e/11111111-2222-3333-4444-555555555555");
+    fs::create_dir_all(&grok_dir).unwrap();
+    let work = dir.path().join("work-grok");
+    fs::create_dir_all(&work).unwrap();
+    let work_canonical = fs::canonicalize(&work).unwrap();
+    let chat_history = grok_dir.join("chat_history.jsonl");
+    fs::write(&chat_history, "{\"type\":\"system\",\"content\":\"hi\"}\n").unwrap();
+    fs::write(
+        grok_dir.join("summary.json"),
+        serde_json::json!({"info": {"cwd": work.display().to_string()}}).to_string(),
+    )
+    .unwrap();
+    assert_eq!(
+        session_cwd_of(
+            "grok",
+            &chat_history,
+            "11111111-2222-3333-4444-555555555555"
+        ),
+        Some(work_canonical)
+    );
+
+    // Antigravity reads workspace_uris from conversation_summaries.db and returns None when empty.
+    let agy_root = dir.path().join("antigravity-cli");
+    fs::create_dir_all(&agy_root).unwrap();
+    let agy_conn = rusqlite::Connection::open(agy_root.join("conversation_summaries.db")).unwrap();
+    agy_conn
+        .execute_batch(
+            "CREATE TABLE conversation_summaries (
+                conversation_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                workspace_uris TEXT NOT NULL DEFAULT '[]',
+                last_modified_time TEXT NOT NULL DEFAULT ''
+            );",
+        )
+        .unwrap();
+    agy_conn
+        .execute(
+            "INSERT INTO conversation_summaries VALUES (?1, 'T', '[\"file:///work/space%20one\"]', '2026-11-20 04:00:00+00:00'), (?2, 'NoCwd', '[]', '2026-11-20 04:00:00+00:00')",
+            [CLAUDE_SESSION, CODEX_SESSION],
+        )
+        .unwrap();
+    drop(agy_conn);
+    let agy_transcript = agy_root.join(format!(
+        "brain/{CLAUDE_SESSION}/.system_generated/logs/transcript_full.jsonl"
+    ));
+    assert_eq!(
+        session_cwd_of("antigravity", &agy_transcript, CLAUDE_SESSION),
+        Some(PathBuf::from("/work/space one"))
+    );
+    assert_eq!(
+        session_cwd_of("antigravity", &agy_transcript, CODEX_SESSION),
+        None
     );
 }
 
@@ -623,13 +769,82 @@ fn a_terminals_other_cli_chat_is_the_only_record_started_in_its_folder() {
         (None, None)
     );
 
-    // Grok keeps the folder in summary.json.
+    // Grok keeps the folder in summary.json; pre-assigned IDs disambiguate two terminals in one folder.
     write(
         &dir.path().join("grok/sessions/e/s1/summary.json"),
         &serde_json::json!({"info": {"cwd": cwd}, "generated_title": "Grok new"}).to_string(),
     );
-    let (_, named) = title::of_terminal(&homes("grok"), "grok", None, &work, started);
+    write(
+        &dir.path().join("grok/sessions/e/s2/summary.json"),
+        &serde_json::json!({"info": {"cwd": cwd}, "generated_title": "Grok second"}).to_string(),
+    );
+    let (_, named) = title::of_terminal(&homes("grok"), "grok", Some("s1"), &work, started);
     assert_eq!(named.map(|t| t.text).as_deref(), Some("Grok new"));
+    assert_eq!(
+        title::of_terminal(&homes("grok"), "grok", None, &work, started),
+        (None, None)
+    );
+
+    // Antigravity: unique session in cwd resolves title (empty title -> None, never preview).
+    let agy_root = dir.path().join("antigravity");
+    fs::create_dir_all(&agy_root).unwrap();
+    let agy_uri = format!("file://{}", fs::canonicalize(&work).unwrap().display());
+    let agy_conn = rusqlite::Connection::open(agy_root.join("conversation_summaries.db")).unwrap();
+    agy_conn
+        .execute_batch(
+            "CREATE TABLE conversation_summaries (
+                conversation_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                preview TEXT NOT NULL DEFAULT '',
+                workspace_uris TEXT NOT NULL DEFAULT '[]',
+                last_modified_time TEXT NOT NULL DEFAULT ''
+            );",
+        )
+        .unwrap();
+    let now_rfc = chrono::Utc::now().to_rfc3339();
+    agy_conn
+        .execute(
+            "INSERT INTO conversation_summaries VALUES (?1, '', 'Should not use preview', ?2, ?3)",
+            rusqlite::params![
+                CLAUDE_SESSION,
+                serde_json::json!([agy_uri]).to_string(),
+                now_rfc
+            ],
+        )
+        .unwrap();
+    let (agy_id, agy_none) =
+        title::of_terminal(&homes("antigravity"), "antigravity", None, &work, started);
+    assert_eq!(agy_id.as_deref(), Some(CLAUDE_SESSION));
+    assert_eq!(agy_none, None);
+    agy_conn
+        .execute(
+            "UPDATE conversation_summaries SET title = 'Agy generated' WHERE conversation_id = ?1",
+            [CLAUDE_SESSION],
+        )
+        .unwrap();
+    let (_, agy_named) = title::of_terminal(
+        &homes("antigravity"),
+        "antigravity",
+        Some(CLAUDE_SESSION),
+        &work,
+        started,
+    );
+    assert_eq!(agy_named.map(|t| t.text).as_deref(), Some("Agy generated"));
+    // Two matching Antigravity candidates make fresh lookup ambiguous.
+    agy_conn
+        .execute(
+            "INSERT INTO conversation_summaries VALUES (?1, 'Second', '', ?2, ?3)",
+            rusqlite::params![
+                CODEX_SESSION,
+                serde_json::json!([agy_uri]).to_string(),
+                now_rfc
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        title::of_terminal(&homes("antigravity"), "antigravity", None, &work, started),
+        (None, None)
+    );
 
     // CodeBuddy's records name the folder like Claude's.
     write(

@@ -260,6 +260,31 @@ pub(crate) fn of_terminal_located(
             let title = id.as_deref().and_then(|id| codex(&homes.codex, id));
             (id, located, title)
         }
+        "grok" => {
+            let summary = match native {
+                Some(id) => grok_summary(homes, id),
+                None => homes
+                    .other
+                    .iter()
+                    .filter(|(host, _)| host == "grok")
+                    .find_map(|(_, home)| super::other::started("grok", home, cwd, since)),
+            };
+            let id = native.map(str::to_owned).or_else(|| {
+                summary
+                    .as_deref()?
+                    .parent()?
+                    .file_name()?
+                    .to_str()
+                    .map(str::to_owned)
+            });
+            let located = summary.is_some();
+            let title = summary.as_deref().and_then(super::other::grok);
+            (id, located, title)
+        }
+        "antigravity" => {
+            let roots = super::antigravity::roots(homes);
+            super::antigravity::terminal_title(&roots, native, cwd, since)
+        }
         host if super::other::HOSTS.contains(&host) => {
             // These CLIs' chats have no ID to choose or look up, so the session record itself
             // stands for the chat once found: a path where the others keep an ID.
@@ -301,6 +326,31 @@ pub(crate) fn claude_file(homes: &[PathBuf], id: &str) -> Option<PathBuf> {
             .find(|path| path.is_file())
     })?;
     known.insert(id.to_owned(), found.clone());
+    Some(found)
+}
+
+fn grok_summary(homes: &super::Homes, id: &str) -> Option<PathBuf> {
+    if id.is_empty() || id.contains(['/', '\\']) || id == "." || id == ".." {
+        return None;
+    }
+    let cache_key = format!("grok:{id}");
+    let mut known = FILES.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(path) = known.get(&cache_key).filter(|path| path.is_file()) {
+        return Some(path.clone());
+    }
+    let found = homes
+        .other
+        .iter()
+        .filter(|(host, _)| host == "grok")
+        .find_map(|(_, home)| {
+            fs::read_dir(home.join("sessions"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|folder| folder.path().join(id).join("summary.json"))
+                .find(|path| path.is_file())
+        })?;
+    known.insert(cache_key, found.clone());
     Some(found)
 }
 

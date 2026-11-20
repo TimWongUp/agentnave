@@ -221,13 +221,30 @@ fn a_new_claude_chat_is_started_with_its_id_as_separate_arguments() {
         cli_args("claude", None, Some(&id)),
         ["--session-id", id.as_str()]
     );
-    // Continuing names the chat already; other CLIs take no ID at all.
+    assert_eq!(
+        cli_args("grok", None, Some(&id)),
+        ["--session-id", id.as_str()]
+    );
+    // Continuing names the chat already; other CLIs take no fresh ID at all.
     assert_eq!(
         cli_args("claude", Some("old"), Some(&id)),
         ["--resume", "old"]
     );
+    assert_eq!(
+        cli_args("grok", Some("old"), Some(&id)),
+        ["--resume", "old"]
+    );
+    assert_eq!(
+        cli_args("antigravity", Some("old"), Some(&id)),
+        ["--conversation", "old"]
+    );
+    assert!(cli_args("antigravity", None, Some(&id)).is_empty());
     assert_eq!(cli_args("codex", None, Some(&id)), ["--no-daemon"]);
-    assert!(cli_args("grok", None, Some(&id)).is_empty());
+    assert!(cli_args("pi", None, Some(&id)).is_empty());
+    for provider in ["claude", "codex", "grok", "antigravity"] {
+        assert!(super::session::resumes(provider), "{provider}");
+    }
+    assert!(!super::session::resumes("pi"));
     let second = super::session::fresh_session_id();
     assert_ne!(id, second);
     let parts: Vec<usize> = id.split('-').map(str::len).collect();
@@ -318,6 +335,10 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "CLAUDE_CODE_CHILD_SESSION",
         "CLAUDE_CODE_SESSION_ID",
         "CODEX_THREAD_ID",
+        "GROK_SESSION_ID",
+        "ANTIGRAVITY_CONVERSATION_ID",
+        "ANTIGRAVITY_LS_ADDRESS",
+        "ANTIGRAVITY_CSRF_TOKEN",
         "AGENTNAVE_HOST_SESSION_ID",
         "TERM_PROGRAM",
     ] {
@@ -461,11 +482,17 @@ fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
     assert_eq!(cli_args("codex", None, None), ["--no-daemon"]);
     assert!(cli_args("claude", None, None).is_empty());
     assert!(cli_args("grok", None, None).is_empty());
+    assert!(cli_args("antigravity", None, None).is_empty());
     assert_eq!(
         cli_args("codex", Some("id"), None),
         ["resume", "--no-daemon", "id"]
     );
     assert_eq!(cli_args("claude", Some("id"), None), ["--resume", "id"]);
+    assert_eq!(cli_args("grok", Some("id"), None), ["--resume", "id"]);
+    assert_eq!(
+        cli_args("antigravity", Some("id"), None),
+        ["--conversation", "id"]
+    );
 
     let codex = command(
         Path::new("/usr/local/bin/codex"),

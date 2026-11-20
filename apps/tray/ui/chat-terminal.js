@@ -7,7 +7,7 @@ const ChatTerminal = (() => {
   const { h, L } = AN;
   const PREFIX = "term-";
   // CLIs whose ended terminal can continue its chat (the App's cli_args).
-  const RESUMES = new Set(["claude", "codex"]);
+  const RESUMES = new Set(["claude", "codex", "grok", "antigravity"]);
   const t = {
     list: [],
     clis: null,

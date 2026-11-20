@@ -426,7 +426,7 @@ impl Terminals {
             Ok(found) => found,
             Err(error) => return Response::error(409, error),
         };
-        let Some(cwd) = crate::data::boss_app::session_cwd(&chat.record) else {
+        let Some(cwd) = crate::data::boss_app::session_cwd_of(&host, &chat.record, &chat.id) else {
             return Response::error(409, "会话记录里没有它的文件夹");
         };
         if let Some(refusal) = self.unless_elsewhere(&chat.key, attach) {
@@ -492,9 +492,10 @@ impl Terminals {
         if !cwd.is_absolute() || !cwd.is_dir() {
             return Response::error(400, "文件夹不存在");
         }
-        // Claude takes the ID of a new chat up front, which is how its session record is found
-        // before the chat has a workspace; it names nothing else.
-        let chosen = (provider == "claude" && resume.is_none()).then(session::fresh_session_id);
+        // Claude and Grok take the ID of a new chat up front, which is how their session record
+        // is found before the chat has a workspace; it names nothing else.
+        let chosen = (matches!(provider, "claude" | "grok") && resume.is_none())
+            .then(session::fresh_session_id);
         let theme = theme::for_cli(provider, light);
         let launch = Launch {
             program,

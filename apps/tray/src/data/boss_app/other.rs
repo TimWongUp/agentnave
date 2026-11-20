@@ -1,8 +1,8 @@
 //! Chat names of the other CLIs, read where magpie reads them: CodeBuddy and WorkBuddy write the
 //! same `custom-title` and `ai-title` entries as Claude Code, Grok keeps `generated_title` in a
 //! session's `summary.json`, Pi's `/name` is a `session_info` entry, and DeepSeek logs a
-//! `session/title` event. Devin, ZCode and Antigravity keep sessions in a shared database or a
-//! binary format, so their chats have no name here.
+//! `session/title` event. Devin and ZCode keep sessions in a shared database or a binary format,
+//! so their chats have no name here; Antigravity CLI (`agy`) is read by `super::antigravity`.
 
 use std::fs;
 use std::io::Read;
@@ -34,7 +34,7 @@ pub(super) fn title_of(host: &str, record: &Path) -> Option<CliTitle> {
 }
 
 /// Grok's own title for a session, else the summary it keeps of it.
-fn grok(summary: &Path) -> Option<CliTitle> {
+pub(super) fn grok(summary: &Path) -> Option<CliTitle> {
     cached(summary, |summary, _| {
         let bytes = fs::read(summary)?;
         let title = serde_json::from_slice::<Value>(&bytes)
@@ -141,7 +141,7 @@ fn created_since(record: &Path, since: SystemTime) -> bool {
 }
 
 /// The folder a session record says it ran in.
-fn cwd_of(host: &str, record: &Path) -> Option<PathBuf> {
+pub(super) fn cwd_of(host: &str, record: &Path) -> Option<PathBuf> {
     let cwd = if host == "grok" {
         let summary: Value = serde_json::from_slice(&fs::read(record).ok()?).ok()?;
         PathBuf::from(summary["info"]["cwd"].as_str()?)

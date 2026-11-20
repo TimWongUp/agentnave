@@ -27,14 +27,15 @@ pub(crate) struct Launch {
 
 /// The CLI's arguments, each its own argv entry (ADR-0103): Codex runs without the shared daemon,
 /// whose MCP servers sit outside this terminal's process tree, and `resume` names the chat to
-/// continue, for the CLIs that can. A new Claude chat may be given the ID it will have
+/// continue, for the CLIs that can. A new Claude or Grok chat may be given the ID it will have
 /// (`fresh`), so its session record can be found before the chat has a workspace.
 pub(super) fn cli_args(provider: &str, resume: Option<&str>, fresh: Option<&str>) -> Vec<String> {
     let args: Vec<&str> = match (provider, resume, fresh) {
         ("codex", Some(id), _) => vec!["resume", "--no-daemon", id],
         ("codex", None, _) => vec!["--no-daemon"],
-        ("claude", Some(id), _) => vec!["--resume", id],
-        ("claude", None, Some(id)) => vec!["--session-id", id],
+        ("claude" | "grok", Some(id), _) => vec!["--resume", id],
+        ("claude" | "grok", None, Some(id)) => vec!["--session-id", id],
+        ("antigravity", Some(id), _) => vec!["--conversation", id],
         _ => Vec::new(),
     };
     args.into_iter().map(str::to_owned).collect()
@@ -65,7 +66,7 @@ pub(super) fn fresh_session_id() -> String {
 
 /// Whether `cli_args` can continue a chat of this CLI.
 pub(super) fn resumes(provider: &str) -> bool {
-    matches!(provider, "codex" | "claude")
+    matches!(provider, "codex" | "claude" | "grok" | "antigravity")
 }
 
 /// Output from `from` on: the bytes start at `start`, which is later than `from` when older
@@ -313,7 +314,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 /// that session's child (Claude Code then stops saving its transcript) or for one AgentNave
 /// dispatched. The terminal starts a session of its own, like a new terminal window; the login
 /// shell sets the user's own variables again.
-const PARENT_SESSION: [&str; 19] = [
+const PARENT_SESSION: [&str; 20] = [
     "CLAUDECODE",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
@@ -322,6 +323,7 @@ const PARENT_SESSION: [&str; 19] = [
     "CODEX_THREAD_ID",
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
+    "GROK_SESSION_ID",
     "AGENTNAVE_HOST",
     "AGENTNAVE_HOST_APP",
     "AGENTNAVE_HOST_SESSION_ID",
@@ -337,7 +339,9 @@ const PARENT_SESSION: [&str; 19] = [
 ];
 
 pub(super) fn parent_session(name: &str) -> bool {
-    name.starts_with("CLAUDE_CODE_") || PARENT_SESSION.contains(&name)
+    name.starts_with("CLAUDE_CODE_")
+        || name.starts_with("ANTIGRAVITY_")
+        || PARENT_SESSION.contains(&name)
 }
 
 /// The CLI started through the user's login shell, as in their own terminal, so it sees the PATH
