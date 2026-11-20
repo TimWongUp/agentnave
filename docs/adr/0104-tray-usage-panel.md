@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-20
-- 关系：扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘数据根写入边界（新增由托盘独占写入、服务不读取的 `usage.db`）；保持 [ADR-0026](0026-sqlite-conversation-store.md) 与 [ADR-0048](0048-sqlite-schema-evolution.md) 的 `agentnave.db` 及服务核心只读隔离边界；遵守 [ADR-0029](0029-settings-without-free-text.md) 的无手填设置约束；复用 [ADR-0100](0100-app-uninstall.md) 的数据根卸载开关与 [ADR-0103](0103-tray-embedded-terminal.md) 的预览版目录隔离及内嵌覆盖约定；同步更新 [CONTEXT.md](../../CONTEXT.md)「Tray App」。
+- 关系：扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘数据根写入边界（新增由托盘独占写入、服务不读取的 `usage.db` 与 `pricing-cache.json`）；保持 [ADR-0026](0026-sqlite-conversation-store.md) 与 [ADR-0048](0048-sqlite-schema-evolution.md) 的 `agentnave.db` 及服务核心只读隔离边界；遵守 [ADR-0029](0029-settings-without-free-text.md) 的无手填设置约束；复用 [ADR-0100](0100-app-uninstall.md) 的数据根卸载开关与 [ADR-0103](0103-tray-embedded-terminal.md) 的预览版目录隔离及内嵌覆盖约定；同步更新 [CONTEXT.md](../../CONTEXT.md)「Tray App」。
 
 ## 背景
 
@@ -13,9 +13,9 @@
 ## 决定
 
 - **所有权与单一数据源**：用量统计完全由托盘 App（Rust 端）拥有，以本机各 CLI 原生会话日志为单一数据源。不修改 Python 服务核心、MCP 协议或服务管理的 `agentnave.db` schema；不接入 Magpie 网关接口或账本，避免双源去重复杂度与外部依赖。
-- **存储、卸载与预览版边界**：正式版在数据根写入独立的 `usage.db`（跟随 `AGENTNAVE_DATA_DIR`，卸载时随 [ADR-0100](0100-app-uninstall.md) 的「保留／删除记录数据根」开关一并处理），服务不读取该文件。`AGENTNAVE_PREVIEW` 预览版将自己的 `usage.db` 与解析游标写入独立应用数据目录，绝不触碰正式版文件与游标。
+- **存储、卸载与预览版边界**：正式版在数据根写入独立的 `usage.db` 与 `pricing-cache.json`（跟随 `AGENTNAVE_DATA_DIR`，卸载时随 [ADR-0100](0100-app-uninstall.md) 的「保留／删除记录数据根」开关一并处理），服务不读取这些文件。`AGENTNAVE_PREVIEW` 预览版将自己的统计库、解析游标与价表缓存写入独立应用数据目录，绝不触碰正式版文件与游标。
 - **Token 归一化与缓存命中率口径**：各 CLI 日志中的 Token 消耗统一归一化为 5 个互斥量——`fresh_input`、`cache_read`、`cache_write_5m`、`cache_write_1h`、`output`（含推理）——并附带 `cache_unknown` 标记。缓存命中率按 `Σcache_read / Σ(fresh_input + cache_read + cache_write)` 计算（其中 `cache_write` 为 `cache_write_5m` 与 `cache_write_1h` 之和），并排除带 `cache_unknown` 标记的记录。
-- **「折算花费」与静态价表边界**：金额统一称「折算花费」，表示按公开 API 单价折算的参考值，而非订阅套餐的真实扣款。价表随 App 发版内置裁剪自 `models.dev` 的静态数据，支持按单次请求上下文量判断阶梯价；P1 不联网拉取价表，也不提供手填价格表单（遵守 [ADR-0029](0029-settings-without-free-text.md)）。未定价模型保留 Token 与缓存命中率统计，并在汇总中标明未定价占比。
+- **「折算花费」与价表边界**：金额统一称「折算花费」，表示按公开 API 单价折算的参考值，而非订阅套餐的真实扣款。内置裁剪版 `models.dev` 静态价表作为离线兜底，托盘后台低频只读访问 `https://models.dev/api.json` 刷新本地精简价表缓存 `pricing-cache.json`；失败或离线时无缝回退内置表。外联不上传本地用量或元数据，也不提供手填价格表单（遵守 [ADR-0029](0029-settings-without-free-text.md)）。支持按单次请求上下文量判断阶梯价；未定价模型保留 Token 与缓存命中率统计，并在汇总中标明未定价占比。
 - **双视角、覆盖范围与零服务改动归因**：
   - 顶层展示「总体消耗」（整台主机已覆盖 CLI 的总用量），同时支持按项目拆解每个项目下的「boss 消耗」与「员工消耗」。
   - P1 覆盖 Claude Code、Codex CLI（含原地 `.jsonl.zst` 压缩档）与 Antigravity CLI（JSONL）。
@@ -27,7 +27,7 @@
 
 - **由托盘 Rust 端直接解析原生日志，而非改动 Python 服务与 `agentnave.db`**：无需触动服务核心、MCP 协议和会话库迁移，同时天然覆盖未经过 AgentNave 的本机原生 CLI 对话。代价是托盘需在 Rust 侧维护各 CLI 日志及 `.jsonl.zst` 等格式的解析器，随 CLI 上游演进跟进适配。
 - **不接入 Magpie 网关接口或账本**：以本机 CLI 原生会话日志作为单一数据源，省去网关与本地日志双源对账、去重的复杂度，也不依赖本机是否运行或配置 Magpie；代价是无法直接反映按订阅包月或网关侧折扣后的实际结算金额。
-- **内置静态价表、不联网更新、不提供手填表单**：遵循 [ADR-0029](0029-settings-without-free-text.md) 不让非技术用户手填配置，也避免在核心统计链路引入静默联网请求；代价是新发布模型或单价变动须等 App 发版同步价表，过渡期内用保留 Token 与标明未定价占比维持口径透明。
+- **内置价表兜底并低频只读更新、不提供手填表单**：遵循 [ADR-0029](0029-settings-without-free-text.md) 不让用户手填配置，低频联网更新减少新模型和价格变动对发版的依赖；代价是增加只读外联与缓存维护，离线或失败时仍保留内置价表及未定价占比。
 - **归一化为 5 个互斥量并用 `cache_unknown` 排除命中率**：避免不同 CLI 把缓存命中或推理 Token 折叠进总输入导致的重复计费与口径失真；对于无法拆分缓存明细的历史或 CLI 记录，宁可在命中率计算中剔除，也不以零缓存拉偏整体命中率。
 - **仅靠现有只读视图与时间窗归因、不持久保存已删工作区**：坚持零服务改动前提下，员工私聊通过 `thread` 哈希与执行时间窗避免同一线程被外部续接后错误划归项目；会议室席位因现有视图尚未暴露 `thread` 而延后到 P2 补最小只读投影；工作区删除后不保留其名字与路径，以遵守既有会话删除语义，代价是已删工作区的历史用量只留在主机「总体消耗」中。
 - **独立 `usage.db` 与预览版目录隔离**：使服务与 `agentnave.db` 继续对托盘统计无感知，正式版卸载直接跟随数据根开关；预览版独立存放 `usage.db` 与游标，确保实验性解析不会破坏正式版统计与断点进度。

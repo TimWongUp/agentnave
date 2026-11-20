@@ -274,3 +274,87 @@ fn oversized_line_is_skipped_without_losing_neighbors() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows.iter().map(|r| r.fresh).sum::<i64>(), 30);
 }
+
+#[test]
+fn pricing_extracts_context_tiers_and_preserves_bundled_models() {
+    let mut models = serde_json::Map::new();
+    for i in 0..20 {
+        models.insert(
+            format!("new-model-{i}"),
+            json!({"cost":{"input":1,"output":2}}),
+        );
+    }
+    models.insert(
+        "new-model-0".into(),
+        json!({"cost": {
+            "input":1,"output":2,"cache_write":3,
+            "tiers":[{"tier":{"type":"context","size":123456},"input":4,"cache_write":5}],
+            "context_over_200k":{"input":99}
+        }}),
+    );
+    models.insert(
+        "new-model-1".into(),
+        json!({"cost": {
+            "input":1,"output":2,"context_over_200k":{"input":6,"output":7}
+        }}),
+    );
+    let source = json!({"openai":{"models":models},"other":{"models":{"ignored":{"cost":{"input":1,"output":2}}}}});
+    let cache = pricing_refresh::extract(&source).unwrap();
+    let mut corrupt = cache.clone();
+    corrupt["models"]["new-model-0"]["tiers"] = json!("invalid");
+    assert!(!pricing_refresh::valid_cache(&corrupt));
+    assert_eq!(cache["models"]["new-model-0"]["tiers"][0]["above"], 123456);
+    assert_eq!(
+        cache["models"]["new-model-0"]["tiers"][0]["cache_write_5m"],
+        5.0
+    );
+    assert_eq!(cache["models"]["new-model-1"]["tiers"][0]["above"], 200000);
+    assert!(cache["models"].get("ignored").is_none());
+    let merged = pricing::merged(Some(&cache));
+    assert_eq!(merged["models"]["new-model-0"]["input"], 1.0);
+    assert!(merged["models"].get("claude-opus-4-5").is_some());
+    let mut override_cache = cache.clone();
+    override_cache["models"]["claude-opus-4-5"] = json!({"input": 42, "output": 43});
+    assert_eq!(
+        pricing::merged(Some(&override_cache))["models"]["claude-opus-4-5"]["input"],
+        42
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pricing-cache.json");
+    pricing_refresh::save(&path, source.to_string().as_bytes()).unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(saved, cache);
+    let event = Event {
+        model: "new-model-0".into(),
+        fresh: 1_000_000,
+        ..Default::default()
+    };
+    assert_eq!(pricing::cost(&event), Some(4.0));
+}
+
+#[test]
+fn invalid_pricing_does_not_replace_cache_and_preview_is_isolated() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = pricing_refresh::cache_path(dir.path(), false);
+    std::fs::write(&path, b"original").unwrap();
+    assert!(pricing_refresh::save(&path, b"{").is_err());
+    assert!(
+        pricing_refresh::save(
+            &path,
+            br#"{"openai":{"models":{"few":{"cost":{"input":1,"output":2}}}}}"#
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"original");
+    assert!(
+        pricing::merged(Some(&json!({"models": {"bad": {}}})))["models"]
+            .get("claude-opus-4-5")
+            .is_some()
+    );
+    assert_eq!(path, dir.path().join("pricing-cache.json"));
+    assert_eq!(
+        pricing_refresh::cache_path(dir.path(), true),
+        crate::preferences::dir().join("pricing-cache.json")
+    );
+    assert_ne!(pricing_refresh::cache_path(dir.path(), true), path);
+}

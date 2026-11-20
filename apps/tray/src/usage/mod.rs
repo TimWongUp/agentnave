@@ -2,6 +2,7 @@
 mod db;
 mod parsers;
 mod pricing;
+mod pricing_refresh;
 mod query;
 mod scan;
 #[cfg(test)]
@@ -46,6 +47,7 @@ fn now() -> i64 {
 }
 
 fn refresh(force: bool) {
+    pricing_refresh::maybe_refresh();
     if !force && now() - UPDATED.load(Ordering::Relaxed) < 60_000 {
         return;
     }

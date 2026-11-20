@@ -1,13 +1,38 @@
 use super::Event;
 use serde_json::Value;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, RwLock};
 
-static TABLE: LazyLock<Value> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("pricing_bundled.json")).expect("bundled usage prices")
+static TABLE: LazyLock<RwLock<Value>> = LazyLock::new(|| {
+    let path = super::pricing_refresh::cache_path(&crate::data_files::data_root(), crate::PREVIEW);
+    let cache = std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    RwLock::new(merged(cache.as_ref()))
 });
 
-fn lookup(model: &str) -> Option<&'static Value> {
-    let table = TABLE["models"].as_object()?;
+pub(super) fn merged(cache: Option<&Value>) -> Value {
+    let mut bundled: Value =
+        serde_json::from_str(include_str!("pricing_bundled.json")).expect("bundled usage prices");
+    if let Some(cache) = cache.filter(|v| super::pricing_refresh::valid_cache(v)) {
+        bundled["models"]
+            .as_object_mut()
+            .expect("bundled models")
+            .extend(
+                cache["models"]
+                    .as_object()
+                    .expect("validated models")
+                    .clone(),
+            );
+    }
+    bundled
+}
+
+pub(super) fn update(cache: &Value) {
+    *TABLE.write().unwrap_or_else(|e| e.into_inner()) = merged(Some(cache));
+}
+
+fn lookup<'a>(table: &'a Value, model: &str) -> Option<&'a Value> {
+    let table = table["models"].as_object()?;
     let mut name = model.to_ascii_lowercase();
     if let Some(v) = table.get(&name) {
         return Some(v);
@@ -58,7 +83,8 @@ fn lookup(model: &str) -> Option<&'static Value> {
 }
 
 pub(super) fn cost(e: &Event) -> Option<f64> {
-    let base = lookup(&e.model)?;
+    let table = TABLE.read().unwrap_or_else(|e| e.into_inner());
+    let base = lookup(&table, &e.model)?;
     let tier = base["tiers"]
         .as_array()
         .into_iter()
