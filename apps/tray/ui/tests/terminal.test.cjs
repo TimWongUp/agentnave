@@ -508,3 +508,25 @@ test("each TerminalView sends a distinct view id on output requests", async () =
   assert.ok(views[0] && views[1]);
   assert.notEqual(views[0], views[1]);
 });
+
+test("on the light skin Claude Code's pale message bar is drawn dark", async () => {
+  for (const theme of ["light", "dark"]) {
+    let sent = false;
+    const app = createHarness({
+      theme,
+      transport: async () => {
+        if (sent) return new Promise(() => {});
+        sent = true;
+        return makeResponse({
+          body: "\x1b[48;2;240;240;240m❯ hi\x1b[49m",
+          headers: { "X-Terminal-Start": 0, "X-Terminal-End": 9, "X-Terminal-Appearance": 0 },
+        });
+      },
+    });
+    await app.start();
+    await flush();
+    const out = app.written.join("");
+    assert.equal(out.includes("\x1b[48;2;55;55;55m❯ hi"), theme === "light", theme);
+    assert.equal(out.includes("\x1b[48;2;240;240;240m"), theme === "dark", theme);
+  }
+});

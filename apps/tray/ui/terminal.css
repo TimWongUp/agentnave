@@ -1,5 +1,8 @@
 /* One terminal, filling the frame the office gives it beside the floor (ADR-0103). Its
    background is --term-bg, which terminal-view.js hands to xterm with the rest of the --term-* skin. */
+/* Claude Code's light theme marks the user's messages with #f0f0f0, which only shows on white. */
+:root[data-theme="light"] { --term-bg: #ffffff; }
+@media (prefers-color-scheme: light) { :root[data-theme="system"] { --term-bg: #ffffff; } }
 html, body { height: 100%; margin: 0; }
 body.terminal-page { overflow: hidden; background: var(--term-bg); }
 .term { box-sizing: border-box; height: 100%; padding: 14px 8px 10px 16px; }
