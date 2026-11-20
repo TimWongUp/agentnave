@@ -1,9 +1,10 @@
 //! Chat names of the other CLIs, read where magpie reads them: CodeBuddy and WorkBuddy write the
 //! same `custom-title` and `ai-title` entries as Claude Code, Grok keeps `generated_title` in a
 //! session's `summary.json`, Pi's `/name` is a `session_info` entry, and DeepSeek logs a
-//! `session/title` event. Devin, ZCode and Antigravity keep sessions in a shared database or a
-//! binary format, so their chats have no name here.
+//! `session/title` event. Devin and ZCode keep sessions in a shared database or a binary format,
+//! so their chats have no name here; Antigravity CLI (`agy`) is read by `super::antigravity`.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -34,7 +35,7 @@ pub(super) fn title_of(host: &str, record: &Path) -> Option<CliTitle> {
 }
 
 /// Grok's own title for a session, else the summary it keeps of it.
-fn grok(summary: &Path) -> Option<CliTitle> {
+pub(super) fn grok(summary: &Path) -> Option<CliTitle> {
     cached(summary, |summary, _| {
         let bytes = fs::read(summary)?;
         let title = serde_json::from_slice::<Value>(&bytes)
@@ -94,7 +95,13 @@ fn deepseek_entries(text: &[u8]) -> Option<CliTitle> {
 }
 
 /// A session record started by a terminal, whose path stands in for the chat's ID.
-pub(super) fn started(host: &str, home: &Path, cwd: &Path, since: SystemTime) -> Option<PathBuf> {
+pub(super) fn started(
+    host: &str,
+    home: &Path,
+    cwd: &Path,
+    since: SystemTime,
+    exclude: &HashSet<String>,
+) -> Option<PathBuf> {
     let folder = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_owned());
     let (root, depth) = match host {
         "codebuddy" | "workbuddy" => ("projects", 1),
@@ -104,7 +111,18 @@ pub(super) fn started(host: &str, home: &Path, cwd: &Path, since: SystemTime) ->
     };
     let mut found: Vec<PathBuf> = Vec::new();
     let mut look = |record: &Path| {
-        if created_since(record, since) && cwd_of(host, record).is_some_and(|there| there == folder)
+        let excluded = if host == "grok" {
+            record
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .is_some_and(|id| exclude.contains(id))
+        } else {
+            exclude.contains(&record.display().to_string())
+        };
+        if !excluded
+            && created_since(record, since)
+            && cwd_of(host, record).is_some_and(|there| there == folder)
         {
             found.push(record.to_owned());
         }
@@ -141,7 +159,7 @@ fn created_since(record: &Path, since: SystemTime) -> bool {
 }
 
 /// The folder a session record says it ran in.
-fn cwd_of(host: &str, record: &Path) -> Option<PathBuf> {
+pub(super) fn cwd_of(host: &str, record: &Path) -> Option<PathBuf> {
     let cwd = if host == "grok" {
         let summary: Value = serde_json::from_slice(&fs::read(record).ok()?).ok()?;
         PathBuf::from(summary["info"]["cwd"].as_str()?)

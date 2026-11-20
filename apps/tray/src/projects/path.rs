@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 /// Windows spellings of one place: `\\?\C:\x` and `\\?\UNC\srv\share\x` become the plain forms
 /// and the drive letter is upper case. Other text is returned unchanged.
-pub(super) fn plain_windows(text: &str) -> String {
+pub(crate) fn plain_windows(text: &str) -> String {
     let rest = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
     } else if let Some(rest) = text.strip_prefix(r"\\?\") {
@@ -24,7 +24,7 @@ pub(super) fn plain_windows(text: &str) -> String {
 }
 
 /// The path without Windows verbatim prefixes.
-pub(super) fn plain(path: &Path) -> PathBuf {
+pub(crate) fn plain(path: &Path) -> PathBuf {
     if cfg!(windows) {
         PathBuf::from(plain_windows(&path.to_string_lossy()))
     } else {

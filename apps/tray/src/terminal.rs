@@ -15,7 +15,7 @@ mod session;
 mod tests;
 mod theme;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
@@ -212,11 +212,21 @@ impl Terminals {
             Option<&str>,
             &Path,
             SystemTime,
+            &HashSet<String>,
         ) -> (Option<String>, bool, Option<CliTitle>),
     ) -> HashMap<u64, CliTitle> {
-        let asks: Vec<_> = {
+        let (asks, mut claimed): (Vec<_>, HashMap<String, HashSet<String>>) = {
             let state = self.lock();
-            state
+            let mut claimed: HashMap<String, HashSet<String>> = HashMap::new();
+            for running in &state.open {
+                if let Some(id) = &running.native {
+                    claimed
+                        .entry(running.provider.clone())
+                        .or_default()
+                        .insert(id.clone());
+                }
+            }
+            let asks = state
                 .open
                 .iter()
                 .filter(|running| {
@@ -227,12 +237,24 @@ impl Terminals {
                     let ask = (running.provider.clone(), running.cwd.clone());
                     (running.id, ask, running.native.clone(), running.started)
                 })
-                .collect()
+                .collect();
+            (asks, claimed)
         };
+        let empty = HashSet::new();
         let (mut titles, mut updates) = (HashMap::new(), Vec::new());
         for (id, (provider, cwd), native, started) in asks {
             let checked = Instant::now();
-            let (found, located, title) = lookup(&provider, native.as_deref(), &cwd, started);
+            let exclude = claimed.get(&provider).unwrap_or(&empty);
+            let (found, located, title) =
+                lookup(&provider, native.as_deref(), &cwd, started, exclude);
+            if native.is_none()
+                && let Some(found_id) = &found
+            {
+                claimed
+                    .entry(provider)
+                    .or_default()
+                    .insert(found_id.clone());
+            }
             updates.push((
                 id,
                 native.is_none().then_some(found).flatten(),
@@ -426,7 +448,7 @@ impl Terminals {
             Ok(found) => found,
             Err(error) => return Response::error(409, error),
         };
-        let Some(cwd) = crate::data::boss_app::session_cwd(&chat.record) else {
+        let Some(cwd) = crate::data::boss_app::session_cwd_of(&host, &chat.record, &chat.id) else {
             return Response::error(409, "会话记录里没有它的文件夹");
         };
         if let Some(refusal) = self.unless_elsewhere(&chat.key, attach) {
@@ -492,9 +514,10 @@ impl Terminals {
         if !cwd.is_absolute() || !cwd.is_dir() {
             return Response::error(400, "文件夹不存在");
         }
-        // Claude takes the ID of a new chat up front, which is how its session record is found
-        // before the chat has a workspace; it names nothing else.
-        let chosen = (provider == "claude" && resume.is_none()).then(session::fresh_session_id);
+        // Claude and Grok take the ID of a new chat up front, which is how their session record
+        // is found before the chat has a workspace; it names nothing else.
+        let chosen = (matches!(provider, "claude" | "grok") && resume.is_none())
+            .then(session::fresh_session_id);
         let theme = theme::for_cli(provider, light);
         let launch = Launch {
             program,

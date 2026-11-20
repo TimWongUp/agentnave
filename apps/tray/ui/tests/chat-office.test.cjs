@@ -1486,9 +1486,11 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   });
   let sessions = [
     { id: 1, provider: "claude", cwd: "/repo/a", exit: null, active: true, workspaces: ["ws-idle"], display_title: null },
-    { id: 2, provider: "grok", cwd: "/repo/b", exit: null, active: true, workspaces: ["ws-grok"], display_title: null },
+    { id: 2, provider: "pi", cwd: "/repo/b", exit: null, active: true, workspaces: ["ws-pi"], display_title: null },
     { id: 3, provider: "claude", cwd: "/repo/c", exit: null, active: true, workspaces: [], display_title: null },
     { id: 4, provider: "claude", cwd: "/repo/d", exit: null, active: true, workspaces: ["ws-busy"], display_title: null },
+    { id: 5, provider: "grok", cwd: "/repo/e", exit: null, active: true, workspaces: ["ws-idle"], display_title: null },
+    { id: 6, provider: "antigravity", cwd: "/repo/f", exit: null, active: true, workspaces: ["ws-idle"], display_title: null },
   ];
   const calls = [];
   const asks = [];
@@ -1500,7 +1502,7 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   const context = vm.createContext({
     AN: {
       h, L: zh => zh, load: async () => ({ sessions, cwd: "/repo" }),
-      cliName: p => ({ claude: "Claude Code", grok: "Grok" }[p] || p),
+      cliName: p => ({ claude: "Claude Code", grok: "Grok", antigravity: "Antigravity", pi: "Pi" }[p] || p),
       hostTile: p => node(p), href: p => p,
       activities: d => d.activities || [],
     },
@@ -1538,12 +1540,14 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
   await context.ChatTerminal.refresh();
 
-  // Idle resumable claude stops directly without confirmation.
-  await context.ChatTerminal.stop(1);
-  assert.equal(asks.length, 0);
-  assert.equal(calls.at(-1), "/app/terminal/stop?session=1");
+  // Idle resumable claude, grok, and antigravity stop directly without confirmation.
+  for (const id of [1, 5, 6]) {
+    await context.ChatTerminal.stop(id);
+    assert.equal(asks.length, 0);
+    assert.equal(calls.at(-1), `/app/terminal/stop?session=${id}`);
+  }
 
-  // Un-dispatched, non-resumable grok, and resumable with running members all require confirmation with Cancel focused.
+  // Un-dispatched, non-resumable pi, and resumable with running members all require confirmation with Cancel focused.
   nextAnswer = null;
   for (const [id, expectedReason] of [[3, "还没有派过活"], [2, "暂不支持"], [4, "仍有组员在运行"]]) {
     asks.length = 0;
@@ -1568,6 +1572,11 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   // 409 elsewhere confirm on resume: Cancel aborts, Continue resends with confirm=1.
   sessions = [];
   await context.ChatTerminal.refresh();
+  for (const host of ["claude", "grok", "antigravity"]) {
+    context.ChatTerminal.column("ws-new-resume", host);
+    assert.equal(stopButton.hidden, false);
+    assert.equal(stopButton.textContent, "续接");
+  }
   context.ChatTerminal.column("ws-new-resume", "claude");
   asks.length = 0;
   calls.length = 0;

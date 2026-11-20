@@ -1049,7 +1049,7 @@ All checks passed!
     }
     if (route === "/app/terminal/restart" && at >= 0) {
       const ended = mockTerminals[at];
-      const resumes = ended.workspaces.length && ["claude", "codex"].includes(ended.provider);
+      const resumes = ended.workspaces.length && ["claude", "codex", "grok", "antigravity"].includes(ended.provider);
       if (resumes && q.has("elsewhere") && query.get("confirm") !== "1") {
         throw Object.assign(new Error("这段聊天正在Ghostty里打开（运行中）"), { status: 409, elsewhere: { app: "Ghostty", paused: false } });
       }

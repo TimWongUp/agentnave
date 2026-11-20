@@ -221,13 +221,30 @@ fn a_new_claude_chat_is_started_with_its_id_as_separate_arguments() {
         cli_args("claude", None, Some(&id)),
         ["--session-id", id.as_str()]
     );
-    // Continuing names the chat already; other CLIs take no ID at all.
+    assert_eq!(
+        cli_args("grok", None, Some(&id)),
+        ["--session-id", id.as_str()]
+    );
+    // Continuing names the chat already; other CLIs take no fresh ID at all.
     assert_eq!(
         cli_args("claude", Some("old"), Some(&id)),
         ["--resume", "old"]
     );
+    assert_eq!(
+        cli_args("grok", Some("old"), Some(&id)),
+        ["--resume", "old"]
+    );
+    assert_eq!(
+        cli_args("antigravity", Some("old"), Some(&id)),
+        ["--conversation", "old"]
+    );
+    assert!(cli_args("antigravity", None, Some(&id)).is_empty());
     assert_eq!(cli_args("codex", None, Some(&id)), ["--no-daemon"]);
-    assert!(cli_args("grok", None, Some(&id)).is_empty());
+    assert!(cli_args("pi", None, Some(&id)).is_empty());
+    for provider in ["claude", "codex", "grok", "antigravity"] {
+        assert!(super::session::resumes(provider), "{provider}");
+    }
+    assert!(!super::session::resumes("pi"));
     let second = super::session::fresh_session_id();
     assert_ne!(id, second);
     let parts: Vec<usize> = id.split('-').map(str::len).collect();
@@ -318,6 +335,11 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "CLAUDE_CODE_CHILD_SESSION",
         "CLAUDE_CODE_SESSION_ID",
         "CODEX_THREAD_ID",
+        "GROK_SESSION_ID",
+        "GROK_SANDBOX",
+        "ANTIGRAVITY_CONVERSATION_ID",
+        "ANTIGRAVITY_LS_ADDRESS",
+        "ANTIGRAVITY_CSRF_TOKEN",
         "AGENTNAVE_HOST_SESSION_ID",
         "TERM_PROGRAM",
     ] {
@@ -461,11 +483,17 @@ fn codex_terminal_passes_no_daemon_as_separate_argv_and_other_clis_do_not() {
     assert_eq!(cli_args("codex", None, None), ["--no-daemon"]);
     assert!(cli_args("claude", None, None).is_empty());
     assert!(cli_args("grok", None, None).is_empty());
+    assert!(cli_args("antigravity", None, None).is_empty());
     assert_eq!(
         cli_args("codex", Some("id"), None),
         ["resume", "--no-daemon", "id"]
     );
     assert_eq!(cli_args("claude", Some("id"), None), ["--resume", "id"]);
+    assert_eq!(cli_args("grok", Some("id"), None), ["--resume", "id"]);
+    assert_eq!(
+        cli_args("antigravity", Some("id"), None),
+        ["--conversation", "id"]
+    );
 
     let codex = command(
         Path::new("/usr/local/bin/codex"),
@@ -640,7 +668,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     }
 
     let mut calls = 0usize;
-    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _| {
+    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
@@ -648,14 +676,14 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(calls, 2);
 
     // Within the throttle window, neither unlocated terminal scans again.
-    terminals.titles_with(Duration::from_secs(60), |_, native, _, _| {
+    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
     assert_eq!(calls, 2);
 
     // Once the window expires and records are located, both resolve and stay unthrottled.
-    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _| {
+    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _| {
         calls += 1;
         (
             Some(format!("{provider}-id")),
@@ -670,7 +698,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(resolved[&1].text, "codex title");
     assert_eq!(resolved[&2].text, "claude title");
 
-    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _| {
+    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _| {
         calls += 1;
         (
             None,
@@ -683,6 +711,82 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     });
     assert_eq!(calls, 6);
     assert_eq!(cached[&1].text, "codex title");
+    session.stop();
+    let _ = exit_of(&session);
+}
+
+#[cfg(unix)]
+#[test]
+fn claimed_native_session_ids_are_excluded_for_other_terminals() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let session = Session::start(shell("sleep 30"), 80, 24).unwrap();
+    let now = std::time::SystemTime::now();
+    let terminals = Terminals::default();
+    {
+        let mut state = terminals.lock();
+        state.open.push(Running {
+            id: 1,
+            provider: "antigravity".to_owned(),
+            cwd: work.clone(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: Some("s1".to_owned()),
+            title_located: true,
+            title_searched: None,
+            started: now - Duration::from_secs(20),
+        });
+        state.open.push(Running {
+            id: 2,
+            provider: "antigravity".to_owned(),
+            cwd: work.clone(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: now - Duration::from_secs(15),
+        });
+        state.open.push(Running {
+            id: 3,
+            provider: "antigravity".to_owned(),
+            cwd: work.clone(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: now,
+        });
+    }
+
+    // Terminal 1's `s1` is passed in `exclude`; Terminal 2 claims `s2` and adds it to `exclude`
+    // immediately so Terminal 3 sees both `s1` and `s2` excluded in the same pass.
+    let mut seen: Vec<(Option<String>, Vec<String>)> = Vec::new();
+    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude| {
+        let mut ex: Vec<String> = exclude.iter().cloned().collect();
+        ex.sort();
+        seen.push((native.map(str::to_owned), ex));
+        if native.is_none() && !exclude.contains("s2") {
+            (
+                Some("s2".to_owned()),
+                true,
+                Some(crate::data::boss_app::CliTitle {
+                    text: "T2".to_owned(),
+                    custom: false,
+                }),
+            )
+        } else {
+            (None, false, None)
+        }
+    });
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[0].0.as_deref(), Some("s1"));
+    assert_eq!(seen[1], (None, vec!["s1".to_owned()]));
+    assert_eq!(seen[2], (None, vec!["s1".to_owned(), "s2".to_owned()]));
+    assert_eq!(titles.get(&2).map(|t| t.text.as_str()), Some("T2"));
+
     session.stop();
     let _ = exit_of(&session);
 }
