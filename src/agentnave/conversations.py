@@ -441,6 +441,27 @@ class Conversations(ConversationStore):
                     found[run.invocation_id] = owner(round_.group.id)
         return found
 
+    def running_seat_models(self, seat_name: str) -> set[tuple[str, str]]:
+        """(provider, model) pairs of active private tasks in this server for seat_name."""
+        target = seat_name.strip()
+        if not target:
+            return set()
+        active = self.manager.active_ids()
+        in_use: set[tuple[str, str]] = set()
+        for task_id, invocation_id in self.running_tasks.items():
+            if invocation_id not in active:
+                continue
+            location = self.task_invocations.get(invocation_id)
+            if location is None:
+                continue
+            record = self.records.get(location[0])
+            if record is None:
+                continue
+            task = next((item for item in record.state.tasks if item.id == task_id), None)
+            if task is not None and (task.seat or "").strip() == target:
+                in_use.add((task.provider, task.model))
+        return in_use
+
     def inbox_key(self, manager_session_id: str | None) -> str | None:
         """Normalized workspace key used to scope inbox waits for this boss chat."""
         return self._manager_session(manager_session_id, strict=False)

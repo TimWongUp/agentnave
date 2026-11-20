@@ -1656,6 +1656,41 @@ def test_decision_random_candidates_flag_and_selection(
     assert second_receipt is not None and second_receipt.get("random") is True
     assert second_receipt["position"] == 2
 
+    # In-use candidates on the same seat are skipped while idle ones exist; once all usable
+    # candidates are in use, selection falls back to drawing across every usable candidate.
+    idle_only, idle_receipt = select(
+        configured,
+        host,
+        frozenset({"codex"}),
+        randomize=True,
+        in_use={("claude", "shared")},
+        randrange=lambda _n: 99,
+    )
+    assert idle_only.model == "c-2" and idle_receipt is not None
+    assert idle_receipt["position"] == 2 and idle_receipt.get("random") is True
+
+    seen_all: list[int] = []
+    all_busy_0, all_busy_0_receipt = select(
+        configured,
+        host,
+        frozenset({"codex"}),
+        randomize=True,
+        in_use={("claude", "shared"), ("claude", "c-2")},
+        randrange=lambda n: (seen_all.append(n), 0)[1],
+    )
+    all_busy_1, all_busy_1_receipt = select(
+        configured,
+        host,
+        frozenset({"codex"}),
+        randomize=True,
+        in_use={("claude", "shared"), ("claude", "c-2")},
+        randrange=lambda n: (seen_all.append(n), 1)[1],
+    )
+    assert seen_all == [2, 2]
+    assert all_busy_0.model == "shared" and all_busy_1.model == "c-2"
+    assert all_busy_0_receipt is not None and all_busy_0_receipt.get("random") is True
+    assert all_busy_1_receipt is not None and all_busy_1_receipt.get("random") is True
+
     # Only one usable candidate left: no random draw, so random is omitted.
     provider_health.record(tmp_path, "claude", "auth", "shared")
     sole, sole_receipt = select(

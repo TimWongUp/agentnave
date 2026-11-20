@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from agentnave import provider_health
@@ -90,6 +90,7 @@ def select(
     *,
     image: bool = False,
     randomize: bool = False,
+    in_use: Collection[tuple[str, str]] = (),
     randrange: Callable[[int], int] | None = None,
 ) -> tuple[ReviewSeat, SeatFallback | None]:
     """Pick a usable configured choice; leave failures to the existing dispatch path."""
@@ -139,5 +140,7 @@ def select(
     if len(usable) == 1:
         index, choice = usable[0]
         return choice, SeatFallback(position=index, skipped=skipped) if index else None
-    index, choice = usable[(randrange or choose_index)(len(usable))]
+    busy = set(in_use)
+    pool = [item for item in usable if (item[1].provider, item[1].model) not in busy] or usable
+    index, choice = pool[0] if len(pool) == 1 else pool[(randrange or choose_index)(len(pool))]
     return choice, SeatFallback(position=index, skipped=skipped, random=True)

@@ -333,6 +333,7 @@ def _select_fallback(
     session_id: str | None,
     provider: ProviderName | None,
     provider_options: dict[str, ProviderOption] | None,
+    conversations: Conversations | None = None,
 ) -> tuple[ReviewSeat | None, SeatFallback | None]:
     if session_id is not None or provider is not None or "model" in (provider_options or {}):
         return None, None
@@ -343,12 +344,19 @@ def _select_fallback(
     from agentnave.seat_fallbacks import select
 
     custom = custom_seat(seat_name or "", runtime.HOST)
+    randomize = uses_random_candidates(seat_name, runtime.HOST)
+    in_use = (
+        conversations.running_seat_models(seat_name)
+        if randomize and conversations is not None and seat_name
+        else ()
+    )
     return select(
         configured,
         runtime.HOST,
         runtime.task_excluded_providers(),
         image=is_image_seat(seat_name, custom),
-        randomize=uses_random_candidates(seat_name, runtime.HOST),
+        randomize=randomize,
+        in_use=in_use,
     )
 
 
@@ -449,14 +457,19 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     manager_session_id = launch.manager_session_id
     seat_applied: list[str] = []
     fallback = None
+    conversations = _conversations(ctx)
     try:
         arguments = StartArguments(provider, cwd, role, requested, access)
         arguments.selected, fallback = _select_fallback(
-            requested or review_role(role), session_id, provider, provider_options
+            requested or review_role(role),
+            session_id,
+            provider,
+            provider_options,
+            conversations,
         )
         arguments = resolve_start(
             arguments,
-            _conversations(ctx),
+            conversations,
             runtime.HOST,
             session_id,
             manager_session_id,

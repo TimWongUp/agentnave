@@ -5003,3 +5003,101 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
             "start_agent", {"cwd": str(tmp_path), "seat": "write-mix", "prompt": "fail"}
         )
         assert exhausted.is_error and "auth" in str(exhausted.content)
+
+
+@pytest.mark.asyncio
+async def test_decision_random_candidates_avoids_in_use_and_keeps_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    from agentnave import seat_fallbacks
+
+    _install_fake_claude(tmp_path, monkeypatch)
+
+    def installed_claude(adapter: AdapterHooks) -> bool:
+        return adapter.name == "claude"
+
+    monkeypatch.setattr(AdapterHooks, "is_installed", installed_claude)
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    _write_decision_key()
+    read_mix = _own_seat(
+        "read-mix",
+        "claude",
+        "read",
+        fallbacks=[
+            {"provider": "claude", "model": "alt-1"},
+            {"provider": "claude", "model": "alt-2"},
+        ],
+    )
+    read_other = _own_seat("read-other", "claude", "read", difficulty="hard")
+    read_other["model"] = "model-read-mix"
+    _write_own_seats([read_mix, read_other], random_candidates=True)
+    draw_index = 0
+
+    def pick_draw_index(_count: int) -> int:
+        return draw_index
+
+    monkeypatch.setattr(seat_fallbacks, "choose_index", pick_draw_index)
+
+    async with Client(mcp) as client:
+        # Running the same model under another seat does not mark it in use for read-mix.
+        other_running = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "cwd": str(tmp_path),
+                        "seat": "read-other",
+                        "prompt": "sleep",
+                        "manager_session_id": "boss-1",
+                    },
+                )
+            ).structured_content
+        )
+
+        # start_agents with the same seat sequentially registers each started task as in use,
+        # spreading the batch across distinct models even when choose_index always returns 0.
+        decision.answers = [Decision("read-mix", {"read-mix": 0.9}, confidence=0.9)] * 3
+        batch = _payload(
+            (
+                await client.call_tool(
+                    "start_agents",
+                    {
+                        "cwd": str(tmp_path),
+                        "manager_session_id": "boss-1",
+                        "tasks": [
+                            {"access": "read", "prompt": "sleep"},
+                            {"access": "read", "prompt": "sleep"},
+                            {"access": "read", "prompt": "sleep"},
+                        ],
+                    },
+                )
+            ).structured_content
+        )
+        batch_results = [_payload(item) for item in cast(list[object], batch["results"])]
+        assert [item["model"] for item in batch_results] == ["model-read-mix", "alt-1", "alt-2"]
+        assert all(_payload(item["seat_fallback"])["random"] is True for item in batch_results)
+
+        # When every usable candidate is running in read-mix, selection falls back to all usable.
+        draw_index = 1
+        fourth = await _start_and_wait(
+            client,
+            cwd=str(tmp_path),
+            seat="read-mix",
+            prompt="ok",
+            manager_session_id="boss-1",
+        )
+        assert fourth["model"] == "alt-1"
+        assert _payload(fourth["seat_fallback"]) == {"position": 1, "skipped": [], "random": True}
+
+        # Resuming an existing thread still keeps its historical model even while alt-1 is in use.
+        resumed = await _start_and_wait(
+            client,
+            session_id="session-e2e",
+            prompt="resume",
+            manager_session_id="boss-1",
+        )
+        assert resumed["model"] == "alt-1" and "seat_fallback" not in resumed
+
+        for item in (other_running, *batch_results):
+            await client.call_tool("cancel", {"id": item["invocation_id"]})
