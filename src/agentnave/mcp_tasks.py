@@ -529,16 +529,6 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
         seat_name = chosen_seat or review_role(role)
         try:
             seat = effective_seat(arguments, seat_name, runtime.HOST)
-            if (
-                arguments.account is None
-                and arguments.resumed_task is None
-                and seat is not None
-                and seat.provider == provider
-                and seat.account is not None
-            ):
-                # The seat's account goes with its CLI unless the caller named one.
-                arguments.account = seat.account
-                arguments.defaults.append(f"account ({(seat_name or '').strip()} seat)")
             accounts.resolve(provider, arguments.account)
             options, seat_applied = apply_seat(seat, provider, provider_options or {})
             options = arguments.apply_history(options)

@@ -445,6 +445,22 @@ def test_named_accounts_are_chosen_cooled_and_hosted_apart(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(personal))
     other = list_members(frozenset(), claude).review["security-reviewer"]
     assert other.account == "work" and other.native is None
+    # An image seat of another account of the same CLI is not the host drawing for itself.
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
+    _write_decision_seats(
+        tmp_path,
+        [
+            {**_image_seat("draw-work", "claude", "写实"), "account": "work"},
+            _image_seat("draw-own", "claude", "漫画"),
+        ],
+    )
+    assert list(decision_seats_for(claude) or {}) == ["draw-work"]
+    # Naming the CLI with that seat starts it as the seat's account, not the host's own.
+    from agentnave.task_start import StartArguments
+
+    arguments = StartArguments("claude", str(tmp_path), None, "draw-work", None)
+    arguments.resolve_seat(claude)
+    assert arguments.account == "work" and "account (draw-work seat)" in arguments.defaults
 
 
 def test_member_structure_references_and_effective_overrides() -> None:

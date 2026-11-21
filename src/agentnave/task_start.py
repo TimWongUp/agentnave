@@ -325,6 +325,13 @@ class StartArguments:
             if self.account is None and seat.account is not None:
                 self.account = seat.account
                 self.defaults.append(f"account ({name} seat)")
+        elif name and self.account is None and self.resumed_task is None:
+            # The seat's account goes with its CLI unless the caller named one; settled before
+            # telling whether the seat is the host's own account.
+            chosen = effective_seat(self, name, host)
+            if chosen is not None and chosen.provider == self.provider and chosen.account:
+                self.account = chosen.account
+                self.defaults.append(f"account ({name.strip()} seat)")
         custom = custom_seat(name, host)
         # The seat's access is only a default: a declared one stands, even when it differs.
         implied = custom.access if custom is not None else role_access(name)
