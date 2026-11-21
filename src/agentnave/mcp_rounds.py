@@ -310,6 +310,7 @@ async def run_round(
         payload, round_id = await _retry_seats(
             conversations, group_id, retry_seats, manager_session_id
         )
+        ctx.request_context.lifespan_context.refresh_inbox()
         return await waited_dispatch(payload, round_id, wait, manager_session_id, ctx)
     new = group_id is None
     if new:
@@ -468,6 +469,7 @@ async def decide_answers(
         error = live.error if live is not None else saved.error
         if error:
             receipt["error"] = error
+        ctx.request_context.lifespan_context.refresh_inbox()
         return receipt
     except KeyError as exc:
         raise ToolError("Unknown round_id; read_conversation lists saved rounds.") from exc

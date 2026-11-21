@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+from collections import Counter
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -249,6 +250,7 @@ class Runtime:
         self.conversations = Conversations(self.manager, data_root(), host=HOST)
         self.retention = Retention(data_root())
         self.active_inbox_waits: set[str | None] = set()
+        self.active_waits: Counter[str | None] = Counter()
         self.cancelling: set[str] = set()
         self.inbox_snapshot = InboxSnapshot(data_root(), os.getpid())
         self._inbox_scheduled: asyncio.Handle | None = None
@@ -267,9 +269,10 @@ class Runtime:
         if self._inbox_closed:
             return
         try:
-            self.inbox_snapshot.publish(
-                inbox_events(self.conversations, self.active_inbox_waits, self.cancelling)
-            )
+            waiting = self.active_inbox_waits | {
+                ws for ws, count in self.active_waits.items() if count > 0
+            }
+            self.inbox_snapshot.publish(inbox_events(self.conversations, waiting, self.cancelling))
         except (OSError, ValueError, KeyError):
             logging.getLogger(__name__).warning("Could not publish inbox state", exc_info=True)
 
@@ -595,6 +598,10 @@ def _conversations(ctx: Context[Runtime]) -> Conversations:
 
 def _active_inbox_waits(ctx: Context[Runtime]) -> set[str | None]:
     return ctx.request_context.lifespan_context.active_inbox_waits
+
+
+def _active_waits(ctx: Context[Runtime]) -> Counter[str | None]:
+    return ctx.request_context.lifespan_context.active_waits
 
 
 def _rejected(exc: Exception) -> ToolError:
@@ -968,6 +975,7 @@ __all__ = [
     "_manager",
     "_conversations",
     "_active_inbox_waits",
+    "_active_waits",
     "_rejected",
     "started_payload",
     "invocation_request_error",

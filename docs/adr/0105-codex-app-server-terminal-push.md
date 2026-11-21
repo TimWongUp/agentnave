@@ -19,3 +19,5 @@
 - **依赖 experimental 接口与降级。** `thread/queue/add` 属于 `experimentalApi`，支持在回合进行中排队并用 `clientUserMessageId` 去重，避免草稿和并发冲突；代价是接口随 Codex 版本演进可能变化或被关闭，因此实验接口报错时仅在线程空闲时降级到稳定 `turn/start`，忙时不注入以免被当成 steer 并入当前回合。
 - **wrapper 与进程组。** 由托盘在终端进程树外直接拉起 `app-server` 会使 MCP 中继脱离终端进程树并导致 `links` 与 `app_can_push` 失效；用 PTY 内 wrapper 依次拉起 `app-server` 与 `--remote` TUI 维持了单一终端进程树，代价是关闭 PTY master 本身未必带走双进程，必须依赖整组清理及 wrapper 退出清理。
 - **Windows 不做。** Windows 缺少本次验证过的 UDS 传输与服务端 `app_can_push` 支持，维持 `--no-daemon` 与无推送以控制跨平台风险。
+
+2026-11-21 已读撤回与缩容修订：投递前在解析目标线程之后复查 `inbox`，确认未读且 boss 未阻塞等待再发送；`thread/queue/add` 成功返回的 `queuedSubmission.id` 随对应事件键列表保存在托盘内存中。每轮扫描在投递前按最新原始 `inbox` 对账：该条排队唤醒对应的事件全部离开 `inbox` 时调用 `thread/queue/delete` 撤回；仅部分离开且仍有未读事件时调用 `thread/queue/update` 将排队正文缩减为剩余事件。`thread/queue/delete` 与 `thread/queue/update` 同属 `experimentalApi`；若已出队、返回 `deleted: false`、实验接口报错或此前已降级走 `turn/start`，仅移除本地追踪，不发送 `turn/interrupt` 强行中断回合，也不计入失败或未送达标记。上文「托盘通过 WebSocket over UDS 结构化投递」与「依赖 experimental 接口与降级」就此补充，其余不变。

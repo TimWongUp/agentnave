@@ -44,4 +44,5 @@ async def answer_prompt(
         )
     except (KeyError, ValueError, OSError) as exc:
         raise ToolError(f"Unable to answer native prompt: {exc}.") from exc
+    ctx.request_context.lifespan_context.refresh_inbox()
     return {"invocation_id": invocation_id, "prompt_id": prompt_id, "status": "answered"}

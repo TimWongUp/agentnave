@@ -43,6 +43,30 @@ struct Inbox {
     bosses: HashMap<String, Boss>,
 }
 
+#[derive(Default)]
+struct RawBoss {
+    waiting: bool,
+    items: Vec<Item>,
+}
+
+#[cfg(unix)]
+struct QueuedWake {
+    terminal_id: u64,
+    boss_key: String,
+    thread_id: String,
+    submission_id: String,
+    item_keys: Vec<String>,
+}
+
+#[derive(Default)]
+pub(super) struct WakeupState {
+    pub(super) attempted: HashSet<String>,
+    pub(super) seen: HashMap<String, Instant>,
+    pub(super) failed: HashSet<String>,
+    #[cfg(unix)]
+    queued: Vec<QueuedWake>,
+}
+
 pub(super) fn start(app: AppHandle) {
     STOP.store(false, Ordering::SeqCst);
     let root = crate::data_files::data_root();
@@ -56,16 +80,9 @@ pub(super) fn start(app: AppHandle) {
         return;
     }
     thread::spawn(move || {
-        let (mut attempted, mut seen, mut failed) =
-            (HashSet::new(), HashMap::new(), HashSet::new());
+        let mut state = WakeupState::default();
         while !STOP.load(Ordering::SeqCst) {
-            scan(
-                &app.state::<Terminals>(),
-                &root,
-                &mut attempted,
-                &mut seen,
-                &mut failed,
-            );
+            scan(&app.state::<Terminals>(), &root, &mut state);
             thread::sleep(Duration::from_millis(500));
         }
     });
@@ -109,14 +126,14 @@ fn read_inbox(path: &Path, process: &sysinfo::Process) -> Option<Inbox> {
     serde_json::from_slice(&bytes).ok()
 }
 
-fn inboxes(root: &Path) -> HashMap<String, Vec<Item>> {
+fn inboxes(root: &Path) -> HashMap<String, RawBoss> {
     let dir = root.join("inbox");
     if dir.is_symlink() {
         return HashMap::new();
     }
     let mut system = System::new();
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let mut bosses: HashMap<String, Vec<Item>> = HashMap::new();
+    let mut bosses: HashMap<String, RawBoss> = HashMap::new();
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
         let Some(pid) = path
@@ -139,12 +156,111 @@ fn inboxes(root: &Path) -> HashMap<String, Vec<Item>> {
             continue;
         }
         for (key, boss) in inbox.bosses {
-            if !boss.waiting {
-                bosses.entry(key).or_default().extend(boss.items);
-            }
+            let entry = bosses.entry(key).or_default();
+            entry.waiting |= boss.waiting;
+            entry.items.extend(boss.items);
         }
     }
     bosses
+}
+
+fn prune_state(raw: &HashMap<String, RawBoss>, state: &mut WakeupState) {
+    let live_keys: HashSet<&str> = raw
+        .values()
+        .flat_map(|boss| boss.items.iter().map(|i| i.key.as_str()))
+        .collect();
+    state.attempted.retain(|k| live_keys.contains(k.as_str()));
+    state.seen.retain(|k, _| live_keys.contains(k.as_str()));
+    state.failed.retain(|k| live_keys.contains(k.as_str()));
+    for boss in raw.values().filter(|b| b.waiting) {
+        for item in &boss.items {
+            state.seen.remove(&item.key);
+        }
+    }
+}
+
+fn fresh_unattempted(root: &Path, boss_key: &str, attempted: &HashSet<String>) -> Vec<Item> {
+    let raw = inboxes(root);
+    let Some(boss) = raw.get(boss_key) else {
+        return Vec::new();
+    };
+    if boss.waiting {
+        return Vec::new();
+    }
+    let mut unique = HashSet::new();
+    boss.items
+        .iter()
+        .filter(|i| !attempted.contains(&i.key) && unique.insert(i.key.clone()))
+        .cloned()
+        .collect()
+}
+
+fn has_any_live_unwaiting(root: &Path, boss_key: &str, selected: &[Item]) -> bool {
+    let raw = inboxes(root);
+    let Some(boss) = raw.get(boss_key) else {
+        return false;
+    };
+    if boss.waiting {
+        return false;
+    }
+    let live: HashSet<&str> = boss.items.iter().map(|i| i.key.as_str()).collect();
+    selected.iter().any(|i| live.contains(i.key.as_str()))
+}
+
+#[cfg(unix)]
+fn reconcile_codex_queued(
+    terminals: &Terminals,
+    links: &HashMap<u64, String>,
+    raw: &HashMap<String, RawBoss>,
+    state: &mut WakeupState,
+) {
+    if state.queued.is_empty() {
+        return;
+    }
+    let open_codex: HashMap<u64, Arc<CodexClient>> = {
+        let guard = terminals.lock();
+        guard
+            .open
+            .iter()
+            .filter_map(|r| Some((r.id, r.codex.clone()?)))
+            .collect()
+    };
+    let mut kept = Vec::new();
+    for mut q in std::mem::take(&mut state.queued) {
+        let Some(codex) = open_codex.get(&q.terminal_id) else {
+            continue;
+        };
+        if let Some(current_boss) = links.get(&q.terminal_id)
+            && current_boss != &q.boss_key
+        {
+            continue;
+        }
+        if !links.contains_key(&q.terminal_id) || !codex.is_connected() {
+            kept.push(q);
+            continue;
+        }
+        let raw_items = raw.get(&q.boss_key).map_or(&[][..], |b| b.items.as_slice());
+        let mut by_key: HashMap<&str, &Item> = HashMap::new();
+        for item in raw_items {
+            by_key.entry(item.key.as_str()).or_insert(item);
+        }
+        let remaining: Vec<Item> = q
+            .item_keys
+            .iter()
+            .filter_map(|k| by_key.get(k.as_str()).copied().cloned())
+            .collect();
+        if remaining.is_empty() {
+            let _ = codex.delete_queued(&q.thread_id, &q.submission_id);
+        } else if remaining.len() < q.item_keys.len() {
+            if codex.update_queued(&q.thread_id, &q.submission_id, &message(&remaining)) {
+                q.item_keys = remaining.into_iter().map(|i| i.key).collect();
+                kept.push(q);
+            }
+        } else {
+            kept.push(q);
+        }
+    }
+    state.queued = kept;
 }
 
 struct Candidate {
@@ -168,7 +284,9 @@ fn pending_count(
         .filter(|i| {
             failed.contains(&i.key)
                 || (!attempted.contains(&i.key)
-                    && seen[&i.key].elapsed() >= Duration::from_secs(60))
+                    && seen
+                        .get(&i.key)
+                        .is_some_and(|t| t.elapsed() >= Duration::from_secs(60)))
         })
         .count()
 }
@@ -186,17 +304,75 @@ fn event_key(selected: &[Item]) -> String {
     }
 }
 
+#[cfg(unix)]
+fn deliver_codex(root: &Path, candidate: &Candidate, state: &mut WakeupState) -> bool {
+    let Some(codex) = &candidate.codex else {
+        return false;
+    };
+    let mut delivered = Vec::new();
+    let outcome = codex.deliver_if_fresh(&candidate.boss_key, || {
+        let fresh = fresh_unattempted(root, &candidate.boss_key, &state.attempted);
+        if fresh.is_empty() {
+            return None;
+        }
+        let key = event_key(&fresh);
+        let msg = message(&fresh);
+        delivered = fresh;
+        Some((key, msg))
+    });
+    match outcome {
+        Delivery::NotReady => false,
+        Delivery::Queued {
+            thread_id,
+            submission_id,
+        } => {
+            let item_keys: Vec<String> = delivered.iter().map(|i| i.key.clone()).collect();
+            for key in &item_keys {
+                state.attempted.insert(key.clone());
+                state.failed.remove(key);
+            }
+            state.queued.push(QueuedWake {
+                terminal_id: candidate.id,
+                boss_key: candidate.boss_key.clone(),
+                thread_id,
+                submission_id,
+                item_keys,
+            });
+            true
+        }
+        Delivery::Started => {
+            for item in &delivered {
+                state.attempted.insert(item.key.clone());
+                state.failed.remove(&item.key);
+            }
+            true
+        }
+        Delivery::Failed => {
+            for item in &delivered {
+                state.attempted.remove(&item.key);
+                state.failed.insert(item.key.clone());
+            }
+            true
+        }
+    }
+}
+
 fn deliver_pty(
+    root: &Path,
+    boss_key: &str,
     session: &Session,
-    selected: &[Item],
     attempted: &mut HashSet<String>,
     failed: &mut HashSet<String>,
 ) -> bool {
-    let started = match session.begin_wakeup(&message(selected)) {
+    let selected = fresh_unattempted(root, boss_key, attempted);
+    if selected.is_empty() {
+        return false;
+    }
+    let started = match session.begin_wakeup(&message(&selected)) {
         Ok(None) => return false,
         result => {
             // A failed write may have written a prefix, so it must not be retried.
-            for item in selected {
+            for item in &selected {
                 attempted.insert(item.key.clone());
             }
             match result {
@@ -208,38 +384,38 @@ fn deliver_pty(
     };
     let outcome = if started {
         thread::sleep(Duration::from_millis(300));
-        session.finish_wakeup()
+        let still_needed = has_any_live_unwaiting(root, boss_key, &selected);
+        session.finish_wakeup(still_needed)
     } else {
         WakeupOutcome::Failed
     };
-    update_attempts(selected, outcome, attempted, failed);
+    update_attempts(&selected, outcome, attempted, failed);
     true
 }
 
-pub(super) fn scan(
-    terminals: &Terminals,
-    root: &Path,
-    attempted: &mut HashSet<String>,
-    seen: &mut HashMap<String, Instant>,
-    failed: &mut HashSet<String>,
-) {
+pub(super) fn scan(terminals: &Terminals, root: &Path, state: &mut WakeupState) {
     let links = links::bosses(root, &terminals.live_pids());
-    let inboxes = inboxes(root);
+    let raw = inboxes(root);
+    prune_state(&raw, state);
+    #[cfg(unix)]
+    reconcile_codex_queued(terminals, &links, &raw, state);
     let candidates: Vec<_> = {
-        let state = terminals.lock();
-        state
-            .open
+        let open = terminals.lock();
+        open.open
             .iter()
             .filter(|r| PROVIDERS.contains(&r.provider.as_str()))
             .filter_map(|r| {
                 let boss_key = links.get(&r.id)?.clone();
-                let items = inboxes.get(&boss_key)?.clone();
+                let boss = raw.get(&boss_key)?;
+                if boss.waiting || boss.items.is_empty() {
+                    return None;
+                }
                 Some(Candidate {
                     id: r.id,
                     provider: r.provider.clone(),
                     session: r.session.clone(),
                     boss_key,
-                    items,
+                    items: boss.items.clone(),
                     #[cfg(unix)]
                     codex: r.codex.clone(),
                 })
@@ -249,49 +425,31 @@ pub(super) fn scan(
     let mut pending = HashMap::new();
     for candidate in candidates {
         for item in &candidate.items {
-            seen.entry(item.key.clone()).or_insert_with(Instant::now);
+            state
+                .seen
+                .entry(item.key.clone())
+                .or_insert_with(Instant::now);
         }
         pending.insert(
             candidate.id,
-            pending_count(&candidate.items, attempted, seen, failed),
+            pending_count(
+                &candidate.items,
+                &state.attempted,
+                &state.seen,
+                &state.failed,
+            ),
         );
-        let mut unique = HashSet::new();
-        let selected: Vec<_> = candidate
+        if candidate
             .items
             .iter()
-            .filter(|i| !attempted.contains(&i.key) && unique.insert(i.key.clone()))
-            .cloned()
-            .collect();
-        if selected.is_empty() {
+            .all(|i| state.attempted.contains(&i.key))
+        {
             continue;
         }
         let handled = if candidate.provider == "codex" {
             #[cfg(unix)]
             {
-                let Some(codex) = &candidate.codex else {
-                    continue;
-                };
-                match codex.deliver(
-                    &candidate.boss_key,
-                    &event_key(&selected),
-                    &message(&selected),
-                ) {
-                    Delivery::NotReady => false,
-                    Delivery::Sent => {
-                        for item in &selected {
-                            attempted.insert(item.key.clone());
-                            failed.remove(&item.key);
-                        }
-                        true
-                    }
-                    Delivery::Failed => {
-                        for item in &selected {
-                            attempted.remove(&item.key);
-                            failed.insert(item.key.clone());
-                        }
-                        true
-                    }
-                }
+                deliver_codex(root, &candidate, state)
             }
             #[cfg(not(unix))]
             {
@@ -299,12 +457,23 @@ pub(super) fn scan(
                 false
             }
         } else {
-            deliver_pty(&candidate.session, &selected, attempted, failed)
+            deliver_pty(
+                root,
+                &candidate.boss_key,
+                &candidate.session,
+                &mut state.attempted,
+                &mut state.failed,
+            )
         };
         if handled {
+            let latest = inboxes(root);
+            let latest_items = latest
+                .get(&candidate.boss_key)
+                .filter(|b| !b.waiting)
+                .map_or(&[][..], |b| b.items.as_slice());
             pending.insert(
                 candidate.id,
-                pending_count(&candidate.items, attempted, seen, failed),
+                pending_count(latest_items, &state.attempted, &state.seen, &state.failed),
             );
         }
     }
@@ -326,6 +495,10 @@ fn update_attempts(
             WakeupOutcome::Blocked => {
                 attempted.remove(&item.key);
                 failed.insert(item.key.clone());
+            }
+            WakeupOutcome::Cancelled => {
+                attempted.remove(&item.key);
+                failed.remove(&item.key);
             }
             WakeupOutcome::Failed => {
                 failed.insert(item.key.clone());
@@ -381,240 +554,4 @@ fn message(items: &[Item]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn failed_write_stays_attempted_but_clean_blocked_cancel_can_retry() {
-        let item = Item {
-            key: "one".into(),
-            kind: "task_end".into(),
-            role: None,
-            status: None,
-        };
-        let mut attempted = HashSet::from(["one".to_owned()]);
-        let mut failed = HashSet::new();
-        update_attempts(
-            std::slice::from_ref(&item),
-            WakeupOutcome::Failed,
-            &mut attempted,
-            &mut failed,
-        );
-        assert!(attempted.contains("one") && failed.contains("one"));
-        update_attempts(
-            std::slice::from_ref(&item),
-            WakeupOutcome::Blocked,
-            &mut attempted,
-            &mut failed,
-        );
-        assert!(!attempted.contains("one") && failed.contains("one"));
-        attempted.insert("one".to_owned());
-        update_attempts(
-            &[item],
-            WakeupOutcome::Delivered,
-            &mut attempted,
-            &mut failed,
-        );
-        assert!(attempted.contains("one") && !failed.contains("one"));
-    }
-
-    #[test]
-    fn ignores_stale_and_symlinked_inbox_files() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir = temp.path().join("inbox");
-        fs::create_dir(&dir).unwrap();
-        let pid = std::process::id();
-        let path = dir.join(format!("{pid}.json"));
-        let document = json!({"version":1,"pid":pid,"bosses":{"boss":{"waiting":false,"items":[{"key":"one","kind":"task_end"}]}}});
-        fs::write(&path, document.to_string()).unwrap();
-        assert!(inboxes(temp.path()).contains_key("boss"));
-        let mut system = System::new();
-        system.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing(),
-        );
-        let start = system.process(Pid::from_u32(pid)).unwrap().start_time();
-        let old = UNIX_EPOCH + Duration::from_secs(start.saturating_sub(10));
-        fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
-        assert!(!inboxes(temp.path()).contains_key("boss"));
-        #[cfg(unix)]
-        {
-            let target = temp.path().join("target.json");
-            fs::write(&target, document.to_string()).unwrap();
-            fs::remove_file(&path).unwrap();
-            std::os::unix::fs::symlink(&target, &path).unwrap();
-            assert!(!inboxes(temp.path()).contains_key("boss"));
-        }
-    }
-
-    #[test]
-    fn prompt_precedes_results_and_role_is_sanitized() {
-        let result = Item {
-            key: "1".into(),
-            kind: "task_end".into(),
-            role: Some("重构\n危险".into()),
-            status: Some("succeeded".into()),
-        };
-        let prompt = Item {
-            key: "2".into(),
-            kind: "prompt".into(),
-            role: None,
-            status: None,
-        };
-        let text = message(&[result, prompt]);
-        assert!(text.starts_with("[AgentNave] 1 个待你处理的请求"));
-        assert!(text.contains("重构危险（成功）"));
-        assert!(!text.contains('\n'));
-    }
-
-    #[test]
-    fn push_providers_include_codex_only_on_unix() {
-        #[cfg(unix)]
-        assert!(PROVIDERS.contains(&"codex"));
-        #[cfg(not(unix))]
-        assert!(!PROVIDERS.contains(&"codex"));
-        assert_eq!(
-            event_key(&[Item {
-                key: "k1".into(),
-                kind: "task_end".into(),
-                role: None,
-                status: None,
-            }]),
-            "k1"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn codex_failed_delivery_retries_until_sent_then_deduplicates() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::time::SystemTime;
-
-        let temp = tempfile::tempdir().unwrap();
-        let sock = temp.path().join("wakeup-retry.sock");
-        fs::create_dir(temp.path().join("connections")).unwrap();
-        fs::create_dir(temp.path().join("inbox")).unwrap();
-
-        let tid = "019a0000-0000-7000-8000-000000000099";
-        let boss_key = crate::data::boss_app::boss_key("codex", tid);
-        let turn_attempts = Arc::new(AtomicUsize::new(0));
-        let attempts = turn_attempts.clone();
-
-        let codex = super::super::codex_server::tests::connect_to_mock(
-            &sock,
-            move |msg, stream| {
-                let id = msg.get("id").and_then(serde_json::Value::as_u64);
-                match msg.get("method").and_then(serde_json::Value::as_str) {
-                Some("initialize") => super::super::codex_server::tests::write_server_frame(
-                    stream,
-                    &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
-                ),
-                Some("thread/loaded/list") => {
-                    super::super::codex_server::tests::write_server_frame(
-                        stream,
-                        &json!({"jsonrpc": "2.0", "id": id, "result": {"data": [tid]}}).to_string(),
-                    )
-                }
-                Some("thread/read") => super::super::codex_server::tests::write_server_frame(
-                    stream,
-                    &json!({"jsonrpc": "2.0", "id": id, "result": {"thread": {"id": tid, "status": {"type": "idle"}}}}).to_string(),
-                ),
-                Some("thread/queue/add") => super::super::codex_server::tests::write_server_frame(
-                    stream,
-                    &json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "unsupported"}}).to_string(),
-                ),
-                Some("turn/start") => {
-                    let count = attempts.fetch_add(1, Ordering::SeqCst);
-                    let reply = if count == 0 {
-                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "transient"}})
-                    } else {
-                        json!({"jsonrpc": "2.0", "id": id, "result": {"turn": {"id": "t1"}}})
-                    };
-                    super::super::codex_server::tests::write_server_frame(stream, &reply.to_string());
-                }
-                _ => {}
-            }
-            },
-        );
-
-        let mut command = portable_pty::CommandBuilder::new("/bin/sh");
-        command.args(["-c", "sleep 30"]);
-        command.cwd(temp.path());
-        let session = Session::start(command, 80, 24).unwrap();
-        let pid = session.pid().unwrap();
-        fs::write(
-            temp.path()
-                .join("connections")
-                .join(format!("{pid}-test.json")),
-            json!({"bosses": [&boss_key]}).to_string(),
-        )
-        .unwrap();
-        let current = std::process::id();
-        fs::write(
-            temp.path().join("inbox").join(format!("{current}.json")),
-            json!({"version": 1, "pid": current, "bosses": {&boss_key: {"waiting": false, "items": [{"key": "evt-retry", "kind": "task_end"}]}}}).to_string(),
-        )
-        .unwrap();
-
-        let terminals = Terminals::default();
-        terminals.lock().open.push(super::super::Running {
-            id: 1,
-            provider: "codex".into(),
-            cwd: temp.path().into(),
-            session: session.clone(),
-            workspaces: Vec::new(),
-            native: None,
-            title_located: false,
-            title_searched: None,
-            started: SystemTime::now(),
-            pending: 0,
-            account: None,
-            codex: Some(codex.clone()),
-        });
-
-        let (mut attempted, mut seen, mut failed) =
-            (HashSet::new(), HashMap::new(), HashSet::new());
-
-        // First scan: fallback turn/start fails -> stays unattempted, marked failed/pending, retries next scan.
-        scan(
-            &terminals,
-            temp.path(),
-            &mut attempted,
-            &mut seen,
-            &mut failed,
-        );
-        assert!(!attempted.contains("evt-retry"));
-        assert!(failed.contains("evt-retry"));
-        assert_eq!(terminals.lock().open[0].pending, 1);
-
-        // Second scan: retries and succeeds -> marked attempted, cleared from failed/pending.
-        scan(
-            &terminals,
-            temp.path(),
-            &mut attempted,
-            &mut seen,
-            &mut failed,
-        );
-        assert!(attempted.contains("evt-retry"));
-        assert!(!failed.contains("evt-retry"));
-        assert_eq!(terminals.lock().open[0].pending, 0);
-
-        // Third scan: already attempted -> must not duplicate.
-        scan(
-            &terminals,
-            temp.path(),
-            &mut attempted,
-            &mut seen,
-            &mut failed,
-        );
-        assert_eq!(turn_attempts.load(Ordering::SeqCst), 2);
-
-        codex.close();
-        session.stop();
-    }
-}
+mod tests;

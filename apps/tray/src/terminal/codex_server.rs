@@ -94,7 +94,11 @@ impl ThreadStatus {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Delivery {
-    Sent,
+    Queued {
+        thread_id: String,
+        submission_id: String,
+    },
+    Started,
     NotReady,
     Failed,
 }
@@ -300,7 +304,7 @@ impl Client {
         self.state.lock().unwrap_or_else(|p| p.into_inner()).closed
     }
 
-    fn is_connected(&self) -> bool {
+    pub(super) fn is_connected(&self) -> bool {
         self.state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -464,11 +468,22 @@ impl Client {
             .map(|(tid, (status, _))| (tid.clone(), status.clone()))
     }
 
+    #[cfg(test)]
     pub(super) fn deliver(
         &self,
         target_boss_key: &str,
         event_key: &str,
         message: &str,
+    ) -> Delivery {
+        self.deliver_if_fresh(target_boss_key, || {
+            Some((event_key.to_owned(), message.to_owned()))
+        })
+    }
+
+    pub(super) fn deliver_if_fresh(
+        &self,
+        target_boss_key: &str,
+        fresh: impl FnOnce() -> Option<(String, String)>,
     ) -> Delivery {
         let Some((tid, status)) = self.resolve_thread(target_boss_key) else {
             return Delivery::NotReady;
@@ -476,6 +491,9 @@ impl Client {
         if !status.is_deliverable() {
             return Delivery::NotReady;
         }
+        let Some((event_key, message)) = fresh() else {
+            return Delivery::NotReady;
+        };
         let input = json!([{"type": "text", "text": message, "text_elements": []}]);
         let queue_res = self.request(
             "thread/queue/add",
@@ -486,7 +504,19 @@ impl Client {
             })),
         );
         match queue_res {
-            Ok(Ok(_)) => Delivery::Sent,
+            Ok(Ok(res)) => {
+                if let Some(submission_id) = res["queuedSubmission"]["id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                {
+                    Delivery::Queued {
+                        thread_id: tid,
+                        submission_id: submission_id.to_owned(),
+                    }
+                } else {
+                    Delivery::Started
+                }
+            }
             Ok(Err(_)) => {
                 let current_idle = self
                     .state
@@ -502,12 +532,45 @@ impl Client {
                     "turn/start",
                     Some(json!({"threadId": &tid, "input": input})),
                 ) {
-                    Ok(Ok(_)) => Delivery::Sent,
+                    Ok(Ok(_)) => Delivery::Started,
                     Ok(Err(_)) | Err(_) => Delivery::Failed,
                 }
             }
             Err(_) => Delivery::NotReady,
         }
+    }
+
+    pub(super) fn delete_queued(&self, thread_id: &str, submission_id: &str) -> bool {
+        matches!(
+            self.request(
+                "thread/queue/delete",
+                Some(json!({
+                    "threadId": thread_id,
+                    "queuedSubmissionId": submission_id,
+                })),
+            ),
+            Ok(Ok(res)) if res["deleted"].as_bool() == Some(true)
+        )
+    }
+
+    pub(super) fn update_queued(
+        &self,
+        thread_id: &str,
+        submission_id: &str,
+        message: &str,
+    ) -> bool {
+        let input = json!([{"type": "text", "text": message, "text_elements": []}]);
+        matches!(
+            self.request(
+                "thread/queue/update",
+                Some(json!({
+                    "threadId": thread_id,
+                    "queuedSubmissionId": submission_id,
+                    "input": input,
+                })),
+            ),
+            Ok(Ok(_))
+        )
     }
 }
 
