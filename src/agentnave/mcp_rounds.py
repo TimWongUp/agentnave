@@ -284,7 +284,7 @@ async def run_round(
     sessions across rounds/restarts and automatically share committed entries.
     New: title/members required; add prompt/seats to run round 1, omit prompt to only create.
     Existing: omit creation-only arguments. One active round per meeting; wait on round_id.
-    entries contains committed message_ids.
+    entries contains committed message_ids; unreceived flags ends/blockers/reviews for wait.
     At meeting close, post the summary you give the user as a prompt with no seats.
     """
     conversations = _conversations(ctx)
