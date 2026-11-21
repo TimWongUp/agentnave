@@ -2021,6 +2021,63 @@ test("add account wizard creates a managed account in step 1 and runs in-dialog 
   assert.ok(calls.some(([u]) => u === "/app/terminal/close?session=77"));
 });
 
+test("an emptied display name falls back on blur and clears its flag", async () => {
+  const app = accountCardsEditor(async () => ({ ok: true, json: async () => ({ logged_in: false, method: "none" }) }));
+  app.run(`
+    AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+    findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click();
+    globalThis.__flagRefreshes = 0;
+    AN.settings.refreshClaudeFlags = () => { globalThis.__flagRefreshes += 1; };
+  `);
+  await new Promise(setImmediate);
+  const input = app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")');
+  input.value = "";
+  input.listeners.input({ target: input });
+  const before = app.run("__flagRefreshes");
+  input.listeners.blur({ target: input });
+  await new Promise(setImmediate);
+  assert.equal(input.value, "工作");
+  assert.equal(app.run("__flagRefreshes"), before + 1);
+  assert.equal(app.run("AN.settings.accountHasError()"), false);
+});
+
+test("a sign-in terminal that starts after the wizard closed is closed too", async () => {
+  const calls = [];
+  let started;
+  const app = accountCardsEditor(async (url, options = {}) => {
+    calls.push(url);
+    if (url === "/app/accounts/create") {
+      const account = { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true };
+      return { ok: true, json: async () => ({ account, sync: { ok: true }, state: { accounts: [account], error: null } }) };
+    }
+    if (url === "/app/accounts/login") {
+      return new Promise((resolve) => { started = () => resolve({ ok: true, json: async () => ({ session: 88 }) }); });
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await new Promise(setImmediate);
+  const nameInput = app.run('findKey(__dialogs[0].children, "claude/accounts/new")');
+  nameInput.value = "工作";
+  nameInput.listeners.input({ target: nameInput });
+  app.run('__dialogs[0].children[2].children[0].listeners.submit({ preventDefault() {} })');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.ok(started, "the sign-in terminal was requested");
+  app.run('findKey(__dialogs[0].children, "claude/accounts/wizard-finish").listeners.click()');
+  assert.equal(app.run("__dialogs[0].open"), false);
+  started();
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.ok(calls.includes("/app/terminal/close?session=88"));
+});
+
 test("account removal confirmation shows folder deletion only for managed accounts", async () => {
   const calls = [];
   const app = accountCardsEditor(async (url, options = {}) => {

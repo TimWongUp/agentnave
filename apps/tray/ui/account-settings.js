@@ -199,7 +199,8 @@
     if (!label || label === account.label) {
       renameDraft = null;
       input.value = account.label;
-      if (!fromBlur) S.renderCards();
+      if (fromBlur) S.refreshClaudeFlags?.();
+      else S.renderCards();
       return;
     }
     if (busy) return;
@@ -242,12 +243,16 @@
     return frame;
   }
 
+  function closeTerminal(session) {
+    fetch(`/app/terminal/close?session=${session}`, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
+  }
+
   // ------------------------------------------------------------------ standalone sign-in dialog
   function closeLogin() {
     if (!login) return;
     const { dialog, session, id } = login;
     login = null;
-    fetch(`/app/terminal/close?session=${session}`, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
+    closeTerminal(session);
     if (dialog.open) dialog.close();
     dialog.remove();
     void readState(id, true);
@@ -328,7 +333,7 @@
     if (pollTimer && typeof clearTimeout === "function") clearTimeout(pollTimer);
     addDialog = null;
     if (session != null) {
-      fetch(`/app/terminal/close?session=${session}`, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
+      closeTerminal(session);
     }
     if (dialog.open) dialog.close();
     dialog.remove();
@@ -361,7 +366,11 @@
 
     try {
       const data = await post("/app/accounts/login", { id: account.id, cols: 96, rows: 22 });
-      if (!addDialog || addDialog.account?.id !== account.id) return;
+      // The wizard was closed while the terminal was starting: nothing shows it, so it ends here.
+      if (!addDialog || addDialog.account?.id !== account.id) {
+        closeTerminal(data.session);
+        return;
+      }
       addDialog.session = data.session;
       frameSlot.replaceChildren(createLoginFrame(data.session, account.label));
       scheduleWizardPoll(account.id);
