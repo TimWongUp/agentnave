@@ -268,6 +268,7 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .member-list-item { position: relative; display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 11px 14px; border: 0; border-radius: 0; background: transparent; text-align: left; white-space: normal; color: var(--ink); transition: background-color .12s ease, opacity .12s ease; }
 .member-list-item + .member-list-item { border-top: 1px solid var(--line); }
 .member-list-item:first-child { border-top-left-radius: 9px; }
+.member-list-item:last-child { border-bottom-left-radius: 9px; }
 .member-list-item:hover:enabled { background: var(--hover); border-color: var(--line); }
 .member-list-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .member-list-item.is-off { opacity: 0.65; }
@@ -289,10 +290,6 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .member-status-dot.tone-warn { background: var(--warn); }
 .member-status-dot.tone-bad { background: var(--bad); }
 .member-status-dot.tone-muted { background: var(--idle); }
-.members-list-footer { border-top: 1px solid var(--line); }
-.members-add-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 11px 14px; border: 0; border-radius: 0 0 0 9px; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 550; text-align: left; }
-.members-add-btn:hover:enabled { background: var(--hover); color: var(--ink); border-color: transparent; }
-.members-add-plus { display: inline-grid; place-items: center; width: 22px; font-size: 15px; font-weight: 500; line-height: 1; }
 
 .members-detail-pane { min-width: 0; display: flex; flex-direction: column; }
 .detail-panel { display: flex; flex-direction: column; flex: 1; min-width: 0; }
@@ -338,12 +335,32 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .member-picker-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .member-picker-actions button { font: inherit; }
 
-/* Named Claude accounts: detail controls and add/sign-in dialogs. */
-.account-detail-status { grid-column: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: var(--control-height); min-width: 0; }
+/* Named Claude accounts: compact accordion inside Claude Code detail and add/sign-in dialogs. */
+.accounts-group { grid-column: 2; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.accounts-list { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: color-mix(in srgb, var(--ink) 2%, transparent); }
+.account-item + .account-item { border-top: 1px solid var(--line); }
+.account-item-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 0; background: transparent; color: var(--ink); text-align: left; font-size: 12.5px; }
+.account-item-toggle:hover:enabled { background: var(--hover); border-color: transparent; }
+.account-item-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.account-item.is-expanded > .account-item-toggle { background: color-mix(in srgb, var(--ink) 4.5%, transparent); }
+.account-item-name { min-width: 0; flex: 1; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-item-meta { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 62%; font-size: 12px; color: var(--muted); }
+.account-item-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-item-chevron { flex: none; margin-left: 2px; }
+.account-item.is-expanded > .account-item-toggle .account-item-chevron { transform: rotate(45deg); }
+.account-item-body { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-top: 1px solid var(--line); background: var(--surface); }
+.account-field-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 6px 12px; min-width: 0; }
+.account-field-label { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.account-field-control { display: flex; align-items: center; min-width: 0; }
+.account-detail-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: var(--control-height); min-width: 0; }
 .account-status { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; flex-wrap: wrap; }
 .account-status > .member-muted { min-width: 0; overflow-wrap: anywhere; }
-.account-action-login { min-width: 96px; }
+.account-action-login, .account-action-remove { min-width: 96px; }
 .account-detail-input { width: 100%; max-width: 340px; }
+.account-item-actions { display: flex; justify-content: flex-end; }
+.account-item-body > .disable-confirm { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.accounts-group-actions { display: flex; align-items: center; }
+.accounts-add-btn { min-height: var(--control-height); padding: 0 12px; font-size: 12px; }
 .account-delete { flex: 1 1 100%; display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
 dialog.account-add-dialog { width: min(440px, 92vw); }
 .account-add-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
@@ -367,21 +384,23 @@ dialog.account-login > h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650;
   .members-split { grid-template-columns: minmax(0, 1fr); }
   .members-list-pane { border-right: 0; border-bottom: 1px solid var(--line); border-radius: 10px 10px 0 0; }
   .member-list-item:first-child { border-top-right-radius: 9px; }
-  .members-add-btn { border-radius: 0; }
+  .member-list-item:last-child { border-bottom-left-radius: 0; }
 }
 @media (max-width: 600px) {
   .member-list-item { padding: 9px 12px; }
-  .members-add-btn { padding: 9px 12px; }
   .detail-head { padding: 12px 14px; flex-wrap: wrap; }
   .detail-rows { padding: 14px; gap: 10px; }
   .detail-foot-actions { padding: 10px 14px; }
   .member-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .member-scene { min-height: 0; }
-  .member-row > .member-line, .member-row > :nth-child(3), .member-row > .member-list, .member-row > .member-model, .member-interactive, .account-detail-status { grid-column: auto; max-width: none; }
+  .member-row > .member-line, .member-row > :nth-child(3), .member-row > .member-list, .member-row > .member-model, .member-interactive, .accounts-group { grid-column: auto; max-width: none; }
   .member-row > .member-line > .member-model, .account-detail-input { max-width: none; }
   .member-error, .member-note { padding-left: 0; }
   .member-picker { margin-left: 0; grid-template-columns: minmax(0, 1fr); }
   .member-interactive > .setting-tip::after { left: auto; right: 0; }
+  .account-item-toggle { padding: 8px 10px; gap: 8px; }
+  .account-item-meta { max-width: 56%; }
+  .account-field-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .account-detail-status { flex-wrap: wrap; }
 }
 /* Every pane shares one column in the middle of the window, and its tabs start on that column's edge. */

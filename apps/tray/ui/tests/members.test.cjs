@@ -1715,7 +1715,7 @@ function accountCardsEditor(fetch) {
   return app;
 }
 
-test("employees render as a compact left list plus right detail for CLIs and named Claude accounts", async () => {
+test("employees render as a compact left CLI list, with Claude named accounts expanding in place inside Claude Code detail", async () => {
   const app = accountCardsEditor(async (url) => {
     if (url.startsWith("/app/accounts/status?id=a1")) {
       return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "w@x.com", plan: "max", error: null }) };
@@ -1726,6 +1726,36 @@ test("employees render as a compact left list plus right detail for CLIs and nam
     return { ok: true, json: async () => ({}) };
   });
   app.run(`
+    AN.settings.accounts = [];
+    renderCards();
+  `);
+
+  // Left list lists CLIs only, with no Add account button in the list pane.
+  const listItems = app.run('collectByClass($("cli-cards").children, "member-list-item")');
+  assert.deepEqual(Array.from(listItems, (c) => c.dataset.memberKey), ["cli:codex", "cli:claude"]);
+  for (const item of listItems) {
+    assert.equal(app.run(`((n) => JSON.stringify(n))`)(item).includes('"select"'), false, "left list rows have no selects");
+    const buttons = app.run(`((node) => { const out = []; const walk = (n) => { if (!n || typeof n !== "object") return; if (n.tag === "button" || n.tagName === "button") out.push(n); for (const c of n.children || []) walk(c); }; for (const c of node.children || []) walk(c); return out.length; })`)(item);
+    assert.equal(buttons, 0, "left list rows have no nested buttons");
+  }
+  assert.equal(app.run('findKey(collectByClass($("cli-cards").children, "members-list-pane"), "claude/accounts/add")'), null);
+
+  // Default selection is the first row (codex); Remove sits in detail footer, not in header.
+  assert.equal(listItems[0].attrs["aria-pressed"], "true");
+  const codexDetail = app.run('collectByClass($("cli-cards").children, "detail-panel")[0]');
+  assert.equal(codexDetail.dataset.provider, "codex");
+  assert.equal(app.run('findKey(collectByClass($("cli-cards").children, "detail-head"), "codex/membership")'), null);
+  assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "detail-foot"), "codex/membership")'));
+  assert.equal(app.run('collectByClass(collectByClass($("cli-cards").children, "detail-panel")[0], "claude-accounts-row").length'), 0);
+
+  // Selecting Claude Code with no accounts shows only the Add account button in the Accounts row.
+  app.run('findKey($("cli-cards").children, "select/cli:claude").listeners.click()');
+  assert.equal(app.run('collectByClass($("cli-cards").children, "claude-accounts-row").length'), 1);
+  assert.equal(app.run('collectByClass($("cli-cards").children, "accounts-list").length'), 0);
+  assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "claude-accounts-row")[0], "claude/accounts/add")'));
+
+  // With named accounts, Claude Code detail lists them compactly (all collapsed initially, no row buttons).
+  app.run(`
     AN.settings.accounts = [
       { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true },
       { id: "a2", provider: "claude", label: "个人", dir: "/ext/p", managed: false },
@@ -1734,48 +1764,49 @@ test("employees render as a compact left list plus right detail for CLIs and nam
   `);
   await new Promise(setImmediate);
 
-  const listItems = app.run('collectByClass($("cli-cards").children, "member-list-item")');
-  assert.deepEqual(Array.from(listItems, (c) => c.dataset.memberKey), [
-    "cli:codex",
-    "cli:claude",
-    "account:a1",
-    "account:a2",
-  ]);
-  for (const item of listItems) {
-    assert.equal(app.run(`((n) => JSON.stringify(n))`)(item).includes('"select"'), false, "left list rows have no selects");
-    const buttons = app.run(`((node) => { const out = []; const walk = (n) => { if (!n || typeof n !== "object") return; if (n.tag === "button" || n.tagName === "button") out.push(n); for (const c of n.children || []) walk(c); }; for (const c of node.children || []) walk(c); return out.length; })`)(item);
-    assert.equal(buttons, 0, "left list rows have no nested buttons");
-  }
+  const leftAfter = app.run('collectByClass($("cli-cards").children, "member-list-item")');
+  assert.deepEqual(Array.from(leftAfter, (c) => c.dataset.memberKey), ["cli:codex", "cli:claude"]);
 
-  // Default selection is the first row (codex); Remove sits in detail footer, not in header.
-  assert.equal(listItems[0].attrs["aria-pressed"], "true");
-  const codexDetail = app.run('collectByClass($("cli-cards").children, "detail-panel")[0]');
-  assert.equal(codexDetail.dataset.provider, "codex");
-  assert.equal(app.run('findKey(collectByClass($("cli-cards").children, "detail-head"), "codex/membership")'), null);
-  assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "detail-foot"), "codex/membership")'));
-  assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "members-list-footer"), "claude/accounts/add")'), "list footer has Add account button");
+  const claudeDetail = app.run('collectByClass($("cli-cards").children, "detail-panel")[0]');
+  assert.ok(claudeDetail);
+  const detailRows = app.run('collectByClass($("cli-cards").children, "detail-rows")[0]');
+  assert.equal(detailRows.children.at(-2).className, "member-row claude-accounts-row", "Accounts group sits after settings items and before footer");
 
-  // Selecting Claude account a1 shows status, plan, editable display name, login, and remove only.
-  app.run('findKey($("cli-cards").children, "select/account:a1").listeners.click()');
-  const a1Detail = app.run('collectByClass($("cli-cards").children, "detail-panel")[0]');
-  const a1Json = JSON.stringify(a1Detail);
-  assert.match(a1Json, /Claude Code（工作）/);
+  const accountItems = app.run('collectByClass($("cli-cards").children, "account-item")');
+  assert.equal(accountItems.length, 2);
+  assert.equal(app.run('collectByClass($("cli-cards").children, "account-item-body").length'), 0);
+  assert.match(JSON.stringify(accountItems[0]), /已登录 · max/);
+  assert.match(JSON.stringify(accountItems[1]), /未登录/);
+
+  // Clicking account a1 expands it in place; clicking a2 collapses a1 and expands a2.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), "a1");
+  const a1Bodies = app.run('collectByClass($("cli-cards").children, "account-item-body")');
+  assert.equal(a1Bodies.length, 1);
+  const a1Json = JSON.stringify(a1Bodies[0]);
+  assert.match(a1Json, /显示名/);
+  assert.match(a1Json, /登录状态/);
   assert.match(a1Json, /已登录/);
   assert.match(a1Json, /max/);
   assert.match(a1Json, /重新登录/);
-  assert.match(a1Json, /显示名/);
   assert.match(a1Json, /移除/);
-  assert.doesNotMatch(a1Json, /可用模型|单独干活|开会|权限|交互模式/);
+  assert.doesNotMatch(a1Json, /托管|由谁管理/);
 
-  // Selecting account a2 shows unauthenticated state and Login button.
-  app.run('findKey($("cli-cards").children, "select/account:a2").listeners.click()');
-  const a2Json = JSON.stringify(app.run('collectByClass($("cli-cards").children, "detail-panel")[0]'));
-  assert.match(a2Json, /Claude Code（个人）/);
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), "a2");
+  const a2Bodies = app.run('collectByClass($("cli-cards").children, "account-item-body")');
+  assert.equal(a2Bodies.length, 1);
+  const a2Json = JSON.stringify(a2Bodies[0]);
   assert.match(a2Json, /未登录/);
   assert.match(a2Json, /"登录"/);
+
+  // Clicking the expanded row again collapses it.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), null);
+  assert.equal(app.run('collectByClass($("cli-cards").children, "account-item-body").length'), 0);
 });
 
-test("left list reflects cooldown, update available, unsaved changes, and validation errors", async () => {
+test("left list reflects cooldown, update available, unsaved changes, and account/CLI validation errors on CLI rows", async () => {
   const app = accountCardsEditor(async (url) => {
     if (url.startsWith("/app/accounts/status?id=a1")) {
       return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "w@x.com", plan: "Pro", error: null }) };
@@ -1788,22 +1819,38 @@ test("left list reflects cooldown, update available, unsaved changes, and valida
     cliUpdates = { clis: { codex: { update: true, latest: "0.162.0", version: "0.161.0" } } };
     providerHealth = { claude: { accounts: { a1: { default: { code: "quota", until: ${JSON.stringify(until)} } } } } };
     renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
   `);
   await new Promise(setImmediate);
 
   const codexRow = () => app.run('findKey($("cli-cards").children, "select/cli:codex")');
   const claudeRow = () => app.run('findKey($("cli-cards").children, "select/cli:claude")');
-  const a1Row = () => app.run('findKey($("cli-cards").children, "select/account:a1")');
   assert.match(JSON.stringify(codexRow()), /有更新/);
-  assert.match(JSON.stringify(a1Row()), /冷却中/);
+  const a1Toggle = app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle")');
+  assert.match(JSON.stringify(a1Toggle), /冷却中/);
 
-  // Making an unsaved edit and clearing the pool marks the corresponding CLI row with dirty & error flags.
+  // Unsaved rename draft and invalid empty rename draft mark the Claude Code row in the left list.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click()');
+  const labelInput = app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")');
+  labelInput.listeners.input({ target: { value: "新工作" } });
+  app.run("renderCards()");
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-dirty").length'), 1);
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 0);
+
+  labelInput.listeners.input({ target: { value: "   " } });
+  app.run("renderCards()");
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 1);
+
+  labelInput.listeners.input({ target: { value: "工作" } });
+  app.run("renderCards()");
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-dirty").length'), 0);
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 0);
+
+  // Making an unsaved pool edit and clearing the pool also marks the Claude CLI row with dirty & error flags.
   app.run('writePool("claude", [])');
-  assert.ok(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-dirty").length === 1'));
-  assert.ok(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length === 1'));
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-dirty").length'), 1);
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 1);
   assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:codex"), "is-dirty").length'), 0);
-  // Detail pane for Claude shows the validation error clearly.
-  app.run('findKey($("cli-cards").children, "select/cli:claude").listeners.click()');
   assert.match(JSON.stringify(app.run('collectByClass($("cli-cards").children, "detail-panel")[0]')), /至少选一个模型/);
   assert.ok(claudeRow());
 });
@@ -1821,7 +1868,8 @@ test("account detail display name edits directly and commits rename on Enter", a
   app.run(`
     AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
     renderCards();
-    findKey($("cli-cards").children, "select/account:a1").listeners.click();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+    findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click();
   `);
   await new Promise(setImmediate);
 
@@ -1834,11 +1882,10 @@ test("account detail display name edits directly and commits rename on Enter", a
   await new Promise(setImmediate);
   await new Promise(setImmediate);
   assert.deepEqual(calls, [{ id: "a1", label: "公司" }]);
-  assert.match(JSON.stringify(app.run('findKey($("cli-cards").children, "select/account:a1")')), /Claude Code（公司）/);
-  assert.match(JSON.stringify(app.run('collectByClass($("cli-cards").children, "detail-head")[0]')), /Claude Code（公司）/);
+  assert.match(JSON.stringify(app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle")')), /公司/);
 });
 
-test("add account dialog creates a managed account and opens the login dialog, and supports linking scanned folders", async () => {
+test("add account dialog creates a managed account, opens login, and expands the new account inside Claude Code detail", async () => {
   const calls = [];
   const app = accountCardsEditor(async (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : null;
@@ -1859,7 +1906,10 @@ test("add account dialog creates a managed account and opens the login dialog, a
     }
     return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
   });
-  app.run("renderCards()");
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
   app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
   await new Promise(setImmediate);
 
@@ -1886,7 +1936,9 @@ test("add account dialog creates a managed account and opens the login dialog, a
     ["/app/accounts/login", { id: "a1", cols: 96, rows: 22 }],
   ]);
   assert.equal(addDlg().open, false);
-  assert.equal(app.run("selectedMember"), "account:a1");
+  assert.equal(app.run("selectedMember"), "cli:claude");
+  assert.equal(app.run("expandedAccountId"), "a1");
+  assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")'));
   const loginDlg = app.run("__dialogs[1]");
   assert.equal(loginDlg.open, true);
   assert.match(loginDlg.className, /account-login/);
@@ -1903,7 +1955,9 @@ test("add account dialog creates a managed account and opens the login dialog, a
   const linkCall = calls.find(([u]) => u === "/app/accounts/link");
   assert.deepEqual(linkCall, ["/app/accounts/link", { dir: "/home/.claude_free" }]);
   assert.match(app.run('$("notice").textContent'), /2 个相同的会话 ID/);
-  assert.equal(app.run("selectedMember"), "account:a2");
+  assert.equal(app.run("selectedMember"), "cli:claude");
+  assert.equal(app.run("expandedAccountId"), "a2");
+  assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/a2/label-input")'));
 });
 
 test("account removal confirmation shows folder deletion only for managed accounts", async () => {
@@ -1921,7 +1975,8 @@ test("account removal confirmation shows folder deletion only for managed accoun
       { id: "a2", provider: "claude", label: "个人", dir: "/ext/p", managed: false },
     ];
     renderCards();
-    findKey($("cli-cards").children, "select/account:a2").listeners.click();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+    findKey($("cli-cards").children, "claude/accounts/a2/toggle").listeners.click();
   `);
   await new Promise(setImmediate);
 
@@ -1932,12 +1987,13 @@ test("account removal confirmation shows folder deletion only for managed accoun
   await new Promise(setImmediate);
   await new Promise(setImmediate);
   assert.deepEqual(calls[0], { id: "a2", delete_dir: false });
+  assert.equal(app.run("expandedAccountId"), null);
 
   // Managed account: has delete-dir checkbox, defaults to false, passes true when checked.
   app.run(`
     AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
     renderCards();
-    findKey($("cli-cards").children, "select/account:a1").listeners.click();
+    findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click();
   `);
   app.run('findKey($("cli-cards").children, "claude/accounts/a1/remove").listeners.click()');
   const checkbox = app.run('findKey($("cli-cards").children, "claude/accounts/a1/delete-dir")');

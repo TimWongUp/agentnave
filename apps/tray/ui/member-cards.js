@@ -11,7 +11,7 @@
     showNotice, shownPool, slot, takeReview, textNode, unlisted, writePool
   } = S;
 
-  let selectedMember = null; // "cli:<provider>" | "account:<id>"
+  let selectedMember = null; // "cli:<provider>"
 
   function slotRows(provider, scene, split) {
     const current = slot(scene || "task", provider);
@@ -260,29 +260,26 @@
   }
 
   function renderListRow(item, selected) {
-    const isCli = item.kind === "cli";
-    const provider = isCli ? item.provider : "claude";
-    const name = isCli ? (PROVIDER_NAMES[provider] || provider)
-      : L(`${PROVIDER_NAMES.claude || "Claude Code"}（${item.account.label}）`, `${PROVIDER_NAMES.claude || "Claude Code"} (${item.account.label})`);
-    const version = isCli ? (S.cliListVersion?.(provider, item.info) || "") : "";
-    const status = isCli ? cliStatus(provider, item.info, item.enabled)
-      : (S.accountListStatus?.(item.account) || { text: L("读取中…", "Reading…"), tone: "muted" });
-    const dimmed = isCli && !item.enabled && !selected;
+    const provider = item.provider;
+    const name = PROVIDER_NAMES[provider] || provider;
+    const version = S.cliListVersion?.(provider, item.info) || "";
+    const status = cliStatus(provider, item.info, item.enabled);
+    const dimmed = !item.enabled && !selected;
 
     return el("button", {
       type: "button",
-      className: `member-list-item${selected ? " is-selected" : ""}${dimmed ? " is-off" : ""}${isCli ? "" : " is-account"}`,
+      className: `member-list-item${selected ? " is-selected" : ""}${dimmed ? " is-off" : ""}`,
       "aria-pressed": String(selected),
       dataset: {
         focusKey: `select/${item.key}`,
         memberKey: item.key,
         provider,
-        ...(isCli ? {} : { account: item.account.id }),
       },
       onClick: () => {
         if (selectedMember === item.key) return;
         selectedMember = item.key;
         S.pendingDisable = null;
+        S.clearAccountPending?.();
         S.renderCards();
       },
     },
@@ -296,6 +293,46 @@
       el("span", { className: "member-item-status" },
         el("span", { className: `member-status-dot tone-${status.tone}`, "aria-hidden": "true" }),
         el("span", { className: "member-item-status-text", title: status.text }, status.text))));
+  }
+
+  function refreshClaudeFlags() {
+    if (typeof document.querySelector !== "function") return;
+    const row = document.querySelector('[data-member-key="cli:claude"]');
+    if (!row) return;
+    const info = S.detected.claude || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
+    const saved = confirmScenes(JSON.parse(S.savedSnapshot || JSON.stringify(S.currentDoc)));
+    const current = confirmScenes(structuredClone(S.currentDoc));
+    const hasError = cliErrors("claude", info).length > 0
+      || Boolean(S.cliUpdateErrors?.claude)
+      || Boolean(S.accountHasError?.());
+    const isDirty = providerDirty("claude", current, saved)
+      || Boolean(S.accountHasDirty?.());
+    const top = row.querySelector(".member-item-top");
+    if (top) {
+      let errFlag = top.querySelector(".is-error");
+      if (hasError && !errFlag) {
+        errFlag = el("span", { className: "member-item-flag is-error", title: L("有配置错误", "Configuration error"), "aria-label": L("有配置错误", "Configuration error") }, "!");
+        top.appendChild(errFlag);
+      } else if (!hasError && errFlag) {
+        errFlag.remove();
+      }
+      let dirtyFlag = top.querySelector(".is-dirty");
+      if (isDirty && !dirtyFlag) {
+        dirtyFlag = el("span", { className: "member-item-flag is-dirty", title: L("有未保存的修改", "Unsaved changes"), "aria-label": L("有未保存的修改", "Unsaved changes") });
+        top.appendChild(dirtyFlag);
+      } else if (!isDirty && dirtyFlag) {
+        dirtyFlag.remove();
+      }
+    }
+    const title = document.querySelector('.detail-panel[data-provider="claude"] .detail-head .member-title');
+    if (title) {
+      let badge = title.querySelector(".badge-warning");
+      if (isDirty && !badge) {
+        title.appendChild(el("span", { className: "badge badge-warning" }, L("未保存", "Unsaved")));
+      } else if (!isDirty && badge) {
+        badge.remove();
+      }
+    }
   }
 
   function renderCliDetail({ provider, info, enabled, isDirty }) {
@@ -334,6 +371,7 @@
       ...(provider === "deepseek" && enabled ? deepSeekRouteRows() : []),
       renderPermission(provider),
       renderInteractive(provider),
+      provider === "claude" ? S.renderClaudeAccountsSection?.() : null,
       renderCliUpdateError(provider));
 
     const confirm = S.pendingDisable === provider
@@ -354,7 +392,8 @@
     }, head, rows, foot);
   }
 
-  // Left compact list + right detail for CLIs and Claude named accounts; uninstalled CLIs fold below.
+  // Left compact CLI list + right detail (with Claude named accounts inside Claude Code's detail);
+  // uninstalled CLIs fold below.
   function renderCards() {
     const container = $("cli-cards");
     // Build off-screen: emptying the live list first clamps the document scroll position.
@@ -363,6 +402,8 @@
     const active = S.operatedControl?.isConnected ? S.operatedControl : document.activeElement;
     const focusKey = active?.dataset.focusKey;
     const anchorTop = focusKey ? active.getBoundingClientRect().top : null;
+    const selectionRange = typeof active?.selectionStart === "number"
+      ? [active.selectionStart, active.selectionEnd] : null;
     const cards = document.createDocumentFragment();
     const missing = [];
     cards.appendChild(renderCliUpdateSummary());
@@ -372,52 +413,37 @@
     const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
     const items = [];
     const accounts = S.accounts || [];
-    const addAccountItems = () => {
-      for (const account of accounts) {
-        items.push({
-          kind: "account",
-          key: `account:${account.id}`,
-          account,
-          hasError: Boolean(S.accountsError),
-          isDirty: false,
-        });
-      }
-    };
 
-    let claudePlaced = false;
     for (const provider of [...PROVIDERS].sort((a, b) => hired(b) - hired(a))) {
       const info = S.detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
       const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
       const listed = known(provider, saved);
-      if (!info.installed && !listed) {
+      if (!info.installed && !listed && !(provider === "claude" && accounts.length)) {
         missing.push(provider);
         continue;
       }
       const errors = cliErrors(provider, info);
-      const hasError = errors.length > 0 || Boolean(S.cliUpdateErrors?.[provider]) || (provider === "codex" && codexSourceUnavailable());
-      const isDirty = providerDirty(provider, current, saved);
+      const hasError = errors.length > 0
+        || Boolean(S.cliUpdateErrors?.[provider])
+        || (provider === "codex" && codexSourceUnavailable())
+        || (provider === "claude" && Boolean(S.accountHasError?.()));
+      const isDirty = providerDirty(provider, current, saved)
+        || (provider === "claude" && Boolean(S.accountHasDirty?.()));
       items.push({ kind: "cli", key: `cli:${provider}`, provider, info, enabled, hasError, isDirty });
-      if (provider === "claude") {
-        claudePlaced = true;
-        addAccountItems();
-      }
     }
-    if (!claudePlaced && accounts.length) addAccountItems();
 
     if (!items.some((item) => item.key === selectedMember)) {
       selectedMember = items[0]?.key || null;
     }
     const selectedItem = items.find((item) => item.key === selectedMember) || null;
-    const showAddAccount = Boolean(S.detected.claude?.installed || accounts.length);
 
-    if (items.length || showAddAccount) {
+    if (items.length) {
       const listPane = el("div", { className: "members-list-pane" },
         el("div", { className: "members-list-items", role: "listbox", "aria-label": L("员工列表", "Employees") },
-          ...items.map((item) => renderListRow(item, item.key === selectedMember))),
-        showAddAccount ? el("div", { className: "members-list-footer" }, S.renderAddAccountButton?.()) : null);
+          ...items.map((item) => renderListRow(item, item.key === selectedMember))));
 
       const detailContent = selectedItem
-        ? (selectedItem.kind === "cli" ? renderCliDetail(selectedItem) : S.renderAccountDetail?.(selectedItem.account))
+        ? renderCliDetail(selectedItem)
         : el("div", { className: "detail-empty member-muted" }, L("暂无可用员工", "No employees available"));
 
       const detailPane = el("div", { className: "members-detail-pane" }, detailContent);
@@ -434,6 +460,9 @@
         || (focusKey.endsWith("-disable") ? controls.find((control) => control.dataset.focusKey === `${focusKey.split("/")[0]}/both/model`) : null);
       if (replacement && !replacement.disabled) {
         replacement.focus({ preventScroll: true });
+        if (selectionRange && typeof replacement.setSelectionRange === "function") {
+          try { replacement.setSelectionRange(selectionRange[0], selectionRange[1]); } catch (_) {}
+        }
         // A confirmation button returns focus to the switch, not its screen position.
         if (replacement.dataset.focusKey === focusKey) {
           window.scrollBy(0, replacement.getBoundingClientRect().top - anchorTop);
@@ -618,7 +647,7 @@
 
   Object.assign(S, {
     slotRows, poolSummary, poolRows, poolConflicts, renderInteractive, deepSeekRouteRows, renderCards, saveMembers,
-    renderErrorBanner, refreshDetection, probeWhenStale, loadMembers
+    renderErrorBanner, refreshDetection, probeWhenStale, loadMembers, refreshClaudeFlags
   });
   S.share({
     selectedMember: [() => selectedMember, (v) => { selectedMember = v; }],

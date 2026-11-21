@@ -1,8 +1,7 @@
 "use strict";
 {
-  // Settings -> 员工 -> Claude Code named accounts (ADR-0107): each account is a compact row
-  // in the employee list after Claude Code and opens its own detail view on selection. Sign-in
-  // state is read on demand and never written to disk.
+  // Settings -> 员工 -> Claude Code named accounts (ADR-0107): managed inside the Claude Code
+  // detail view as an expandable compact list. Sign-in state is read on demand and never written to disk.
 
   const S = AN.settings ||= {};
   const { $, L, el, textNode } = S;
@@ -12,6 +11,7 @@
   const states = new Map();
   let folders = null; // Scanned candidate folders; null until loaded.
   let foldersLoading = false;
+  let expandedAccountId = null; // Only one named account expands in place at a time.
   let renameDraft = null; // { id, value } while the user is typing in the display-name field.
   let removing = null; // { id, deleteDir } while the removal confirmation is open in detail.
   let busy = false;
@@ -152,6 +152,7 @@
     const { deleteDir } = removing;
     const data = await act(() => post("/app/accounts/remove", { id: account.id, delete_dir: deleteDir }), L("移除失败：", "Could not remove: "));
     if (!data) return;
+    if (expandedAccountId === account.id) expandedAccountId = null;
     removing = null;
     renameDraft = null;
     states.delete(account.id);
@@ -256,7 +257,9 @@
     }
     take(created);
     sync(created);
-    S.selectedMember = `account:${created.account.id}`;
+    S.selectedMember = "cli:claude";
+    expandedAccountId = created.account.id;
+    removing = null;
     addDialog.dialogBusy = false;
     closeAddDialog();
     S.renderCards();
@@ -284,7 +287,9 @@
     }
     take(data);
     sync(data);
-    S.selectedMember = `account:${data.account.id}`;
+    S.selectedMember = "cli:claude";
+    expandedAccountId = data.account.id;
+    removing = null;
     addDialog.dialogBusy = false;
     closeAddDialog();
     S.renderCards();
@@ -356,7 +361,25 @@
     void readFolders();
   }
 
-  // ------------------------------------------------------------------ detail & footer controls
+  // ------------------------------------------------------------------ Claude detail accounts group
+  function accountHasDirty() {
+    if (!renameDraft) return false;
+    const account = (S.accounts || []).find((a) => a.id === renameDraft.id);
+    if (!account) return false;
+    const trimmed = renameDraft.value.trim();
+    return Boolean(trimmed) && trimmed !== account.label;
+  }
+
+  function accountHasError() {
+    if (S.accountsError) return true;
+    if (!renameDraft) return false;
+    return renameDraft.value.trim() === "";
+  }
+
+  function clearAccountPending() {
+    removing = null;
+  }
+
   function confirmRemoval(account) {
     const folder = account.managed
       ? el("label", { className: "account-delete" },
@@ -379,25 +402,48 @@
   function renderAddAccountButton() {
     return el("button", {
       type: "button",
-      className: "members-add-btn",
+      className: "accounts-add-btn",
       disabled: busy || Boolean(S.accountsError),
       dataset: { focusKey: `${PROVIDER}/accounts/add` },
       onClick: openAddDialog,
-    }, el("span", { className: "members-add-plus", "aria-hidden": "true" }, "+"), textNode(L("添加账号", "Add account")));
+    }, L("添加账号", "Add account"));
   }
 
-  function renderAccountDetail(account) {
-    void readState(account.id);
-    const cliTitle = S.PROVIDER_NAMES?.[PROVIDER] || "Claude Code";
-    const displayTitle = L(`${cliTitle}（${account.label}）`, `${cliTitle} (${account.label})`);
+  function renderAccountItem(account) {
+    const expanded = expandedAccountId === account.id;
+    const status = accountListStatus(account);
+    const toggle = el("button", {
+      type: "button",
+      className: "account-item-toggle",
+      "aria-expanded": String(expanded),
+      dataset: {
+        focusKey: `${PROVIDER}/accounts/${account.id}/toggle`,
+        account: account.id,
+      },
+      onClick: () => {
+        if (expanded) {
+          expandedAccountId = null;
+          if (removing?.id === account.id) removing = null;
+        } else {
+          expandedAccountId = account.id;
+          removing = null;
+        }
+        S.renderCards();
+      },
+    },
+    el("span", { className: "account-item-name", title: account.label }, account.label),
+    el("span", { className: "account-item-meta" },
+      el("span", { className: `member-status-dot tone-${status.tone}`, "aria-hidden": "true" }),
+      el("span", { className: "account-item-status", title: status.text }, status.text),
+      el("span", { className: "cli-chevron account-item-chevron", "aria-hidden": "true" })));
+
+    if (!expanded) {
+      return el("div", { className: "account-item", dataset: { account: account.id } }, toggle);
+    }
+
     const signedIn = states.get(account.id)?.state?.logged_in;
     const inputId = `account-label-${account.id}`;
     const value = renameDraft?.id === account.id ? renameDraft.value : account.label;
-
-    const head = el("div", { className: "detail-head" },
-      el("div", { className: "member-title" },
-        el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(PROVIDER, cliTitle)),
-        el("span", { className: "cli-name", title: displayTitle }, displayTitle)));
 
     const loginBtn = el("button", {
       type: "button",
@@ -416,7 +462,10 @@
       value,
       disabled: busy,
       dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/label-input` },
-      onInput: (event) => { renameDraft = { id: account.id, value: event.target.value }; },
+      onInput: (event) => {
+        renameDraft = { id: account.id, value: event.target.value };
+        S.refreshClaudeFlags?.();
+      },
       onKeydown: (event) => {
         if (event.key === "Enter") {
           event.preventDefault();
@@ -425,37 +474,60 @@
           event.preventDefault();
           renameDraft = null;
           event.target.value = account.label;
+          S.refreshClaudeFlags?.();
           event.target.blur?.();
         }
       },
       onBlur: (event) => { void commitRename(account, event.target, true); },
     });
 
-    const rows = el("div", { className: "detail-rows" },
-      el("div", { className: "member-row" },
-        el("span", { className: "member-scene" }, L("登录状态", "Sign-in status")),
+    const removeBtn = el("button", {
+      type: "button",
+      className: "member-toggle account-action-remove",
+      disabled: busy || removing !== null,
+      dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/remove` },
+      onClick: () => { removing = { id: account.id, deleteDir: false }; S.renderCards(); },
+    }, L("移除", "Remove"));
+
+    const body = el("div", { className: "account-item-body" },
+      el("div", { className: "account-field-row" },
+        el("label", { className: "account-field-label", htmlFor: inputId }, L("显示名", "Display name")),
+        el("div", { className: "account-field-control" }, nameInput)),
+      el("div", { className: "account-field-row" },
+        el("span", { className: "account-field-label" }, L("登录状态", "Sign-in status")),
         el("div", { className: "account-detail-status" }, statusLine(account.id), loginBtn)),
-      el("div", { className: "member-row" },
-        el("label", { className: "member-scene", htmlFor: inputId }, L("显示名", "Display name")),
-        el("div", { className: "member-line" }, nameInput)),
-      S.accountsError ? el("p", { className: "member-error" }, S.accountsError) : null);
-
-    const foot = el("div", { className: "detail-foot" },
       removing?.id === account.id ? confirmRemoval(account) : null,
-      el("div", { className: "detail-foot-actions" },
-        el("button", {
-          type: "button",
-          className: "member-toggle account-action-remove",
-          disabled: busy || removing !== null,
-          dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/remove` },
-          onClick: () => { removing = { id: account.id, deleteDir: false }; S.renderCards(); },
-        }, L("移除", "Remove"))));
+      el("div", { className: "account-item-actions" }, removeBtn));
 
-    return el("div", {
-      className: "detail-panel account-detail",
-      dataset: { provider: PROVIDER, account: account.id },
-    }, head, rows, foot);
+    return el("div", { className: "account-item is-expanded", dataset: { account: account.id } }, toggle, body);
   }
 
-  Object.assign(S, { renderAddAccountButton, renderAccountDetail, accountListStatus, openAddDialog });
+  function renderClaudeAccountsSection() {
+    const accounts = S.accounts || [];
+    if (expandedAccountId && !accounts.some((account) => account.id === expandedAccountId)) {
+      expandedAccountId = null;
+    }
+    if (removing && !accounts.some((account) => account.id === removing.id)) {
+      removing = null;
+    }
+    const content = [
+      accounts.length ? el("div", { className: "accounts-list" }, ...accounts.map(renderAccountItem)) : null,
+      el("div", { className: "accounts-group-actions" }, renderAddAccountButton()),
+    ];
+    return el("div", { className: "member-row claude-accounts-row" },
+      el("span", { className: "member-scene" }, L("账号", "Accounts")),
+      el("div", { className: "accounts-group" }, ...content));
+  }
+
+  Object.assign(S, {
+    renderClaudeAccountsSection,
+    accountHasDirty,
+    accountHasError,
+    clearAccountPending,
+    accountListStatus,
+    openAddDialog,
+  });
+  S.share({
+    expandedAccountId: [() => expandedAccountId, (v) => { expandedAccountId = v; }],
+  });
 }
