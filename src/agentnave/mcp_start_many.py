@@ -166,10 +166,8 @@ async def start_agents(
     nothing is checked first and a bad task rejects the whole call. results follow the order
     of tasks: a started one is start_agent's receipt (invocation_id goes to wait); one that did
     not start says why in error.code (no_candidates, bad_response, native_seat, start_failed)
-    and, when a seat was chosen, in recommendation; the others are unaffected. A task whose
-    seat is native to this host starts nothing either and answers like start_agent does
-    (status not_started, reason native_seat, the seat, provider/model/effort and a message for
-    the host's built-in subagent), with error.code native_seat kept. A decision that
+    and, when a seat was chosen, in recommendation; the others are unaffected. Native seats
+    return not_started as in start_agent (keeping error.code native_seat). A decision that
     fails as a whole (not_enabled, config_error, no_key, network, rate_limited, auth, rejected,
     bad_response) starts nothing; only a network failure was retried once, and no
     other seat replaces it. With two or more
