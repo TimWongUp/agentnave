@@ -29,7 +29,7 @@ fn desktop_chat_is_refused_for_resume_and_handed_over_with_selected_cli() {
     .unwrap();
     let workspace = crate::data::boss_app::boss_key("claude", id);
     let db = crate::db::create(root.path());
-    db.execute("INSERT INTO workspaces (id, owner, owner_host, owner_file, title, note, released) VALUES (?1, ?1, 'claude', ?2, 'test', 'keep', 'old')", rusqlite::params![workspace, record.to_str().unwrap()]).unwrap();
+    db.execute("INSERT INTO workspaces (id, owner, owner_host, owner_file, title, note, released, pending) VALUES (?1, ?1, 'claude', ?2, 'test', 'keep', 'old', 1)", rusqlite::params![workspace, record.to_str().unwrap()]).unwrap();
     let error = super::chat_session_in(root.path(), &workspace, "claude", None)
         .err()
         .unwrap();

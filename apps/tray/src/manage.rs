@@ -378,10 +378,6 @@ pub fn forget_before(root: &Path, group: &str, cutoff: i64) -> Value {
 /// Mark a workspace as waiting for another boss (ADR-0033). Its boss keeps it until a new chat
 /// takes it over, so this needs no conversation lock.
 pub fn handover(root: &Path, group: &str) -> Value {
-    handover_with_note(root, group, false)
-}
-
-pub(crate) fn handover_with_note(root: &Path, group: &str, preserve_note: bool) -> Value {
     let connection = match crate::db::write(root) {
         Ok(Some(connection)) => connection,
         Ok(None) => return result(group, "missing", "工作区已不存在"),
@@ -402,11 +398,11 @@ pub(crate) fn handover_with_note(root: &Path, group: &str, preserve_note: bool) 
              VALUES (?1, ?1, (SELECT host FROM conversations WHERE manager_session = ?1 \
              ORDER BY created DESC, id DESC LIMIT 1), 1, strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now')) \
              ON CONFLICT (id) DO UPDATE SET pending = 1, \
-             note = CASE WHEN ?2 OR workspaces.pending = 1 OR workspaces.released IS NULL \
+             note = CASE WHEN workspaces.pending = 1 OR workspaces.released IS NULL \
              THEN workspaces.note ELSE NULL END, \
              released = excluded.released, \
              owner_host = coalesce(workspaces.owner_host, excluded.owner_host)",
-            rusqlite::params![group, preserve_note],
+            [group],
         )?;
         Ok(true)
     })();

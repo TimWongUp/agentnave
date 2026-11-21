@@ -559,7 +559,7 @@ impl Terminals {
         if !available(provider) {
             return Response::error(400, "这个 CLI 没有安装或没有终端界面");
         }
-        let marked = crate::manage::handover_with_note(root, workspace, true);
+        let marked = crate::manage::handover(root, workspace);
         if marked["status"] != "waiting" {
             return Response::error(409, marked["message"].as_str().unwrap_or("转交失败"));
         }
