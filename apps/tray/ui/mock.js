@@ -7,8 +7,9 @@
 // &update=available|installing|failed &service=older|upgrading|done|failed &at=<seconds into live>
 // &fail=download|service|app (the update stops at that step)
 // &restart (reset the scenario clock; it is shared between pages through localStorage).
-// Hosts page: &hosts=typical|fresh|reload (reload: every boss waiting on a reload; &copyfail fails
-// the one-click stop/restart).
+// Hosts page: &hosts=typical|fresh|reload|mixed (reload: every boss waiting on a reload; mixed: some
+// waiting on a reload, one failing, one not connected; &copyfail fails the one-click stop/restart).
+// &theme=light|dark picks the appearance.
 (function () {
   const q = new URLSearchParams(location.search);
   const hostScene = q.get("hosts") || "typical";
@@ -938,6 +939,8 @@ All checks passed!
   let serviceReady = !freshHosts, installedState = null;
   // hosts=reload: every boss is connected and waiting on a reload, with the old copies the App found.
   const reloadScene = hostScene === "reload";
+  const mixedScene = hostScene === "mixed";
+  const reloadIds = reloadScene ? ["claude", "codex", "hermes", "workbuddy", "pi"] : mixedScene ? ["claude", "hermes"] : [];
   const REOPEN = {
     claude: { daemon: "停止 Claude 后台服务，释放预热会话的旧连接；这会结束后台会话", desktop: "完全退出 Claude 桌面端后重开，或结束并重开其中的 Code 会话", cli: "退出当前 Claude Code 会话后重开，可用 claude --continue 接回" },
     codex: { daemon: "重启 Codex 后台服务；正在运行的后台或远程任务会中断", app: "完全退出 Codex 或 ChatGPT 桌面端后重开", ide: "在编辑器命令面板运行 Developer: Reload Window，或完全退出并重开编辑器", cli: "退出当前 Codex 会话后重开，可用 codex resume 接回" },
@@ -969,13 +972,13 @@ All checks passed!
     workbuddy: { reason: "unverified", copies: [] },
     pi: { reason: "config", copies: [{ kind: "cli", pid: 43001, since: ago(50), cwd: "/Users/me/Code/scripts", terminal: "tmux" }] },
   };
-  const hostIds = reloadScene ? ["claude", "codex", "hermes", "workbuddy", "pi"] : ["codex", "pi", "workbuddy", "hermes"];
+  const hostIds = reloadScene || mixedScene ? ["claude", "codex", "hermes", "workbuddy", "pi"] : ["codex", "pi", "workbuddy", "hermes"];
   const hostRows = hostIds.map((id, index) => {
     const root = `/preview/${id}`;
     const label = HOSTS[id] || ({ workbuddy: "WorkBuddy 桌面", hermes: "Hermes" })[id] || id;
     const reload = id === "codex" ? "完整退出并重启 Codex 应用" : id === "workbuddy" ? "重启 WorkBuddy" : `重启 ${label}`;
-    const connected = reloadScene || (!freshHosts && index === 0);
-    const orphan = !reloadScene && !freshHosts && id === "hermes";
+    const connected = reloadScene || (mixedScene ? ["claude", "codex", "hermes"].includes(id) : !freshHosts && index === 0);
+    const orphan = !reloadScene && !mixedScene && !freshHosts && id === "hermes";
     return { id, label, installed: !orphan, detect_source: orphan ? "config" : "path",
       status: orphan ? "orphaned" : connected ? "connected" : "available", entry: connected || orphan ? "agentnave" : null,
       command: connected || orphan ? "/preview/bin/agentnave-mcp" : null, command_state: connected ? "present" : null,
@@ -986,7 +989,7 @@ All checks passed!
       skill: { state: connected ? "app" : "missing", path: `${root}/skills/agentnave-manager`, version: connected ? mockVersion : null },
       skills: { "agentnave-review": { state: "missing", path: `${root}/skills/agentnave-review`, version: null, enabled: false } } };
   });
-  if (hostScene === "typical" && !reloadScene) {
+  if ((hostScene === "typical" || mixedScene) && !reloadScene) {
     const warning = hostRows.find((host) => host.id === "workbuddy");
     Object.assign(warning, { status: "needs_attention", entry: "agentnave", command: "/missing/agentnave-mcp", command_state: "missing", attention: { code: "command_missing", message: "条目的命令不存在或不可执行" } });
     warning.layers[0].has_entry = true;
@@ -998,7 +1001,7 @@ All checks passed!
   if (!mockToolsSynced) setTimeout(() => { mockToolsSynced = true; }, 12000);
   const hostView = () => ({ absent: [{ mark: "zcode", label: "ZCode" }, { mark: "grok", label: "Grok CLI" }, { mark: "deepseek", label: "DeepSeek Harness" }, { mark: "devin", label: "Devin" }], service: { installed: serviceReady, launcher: serviceReady ? "/Users/me/.agentnave/service/bin/agentnave-mcp" : null, skills: serviceReady ? "/Users/me/.agentnave/service/lib/python3.12/site-packages/agentnave/skills" : null, version: serviceReady ? mockVersion : null, command: `uv tool install --force --python 3.12 "git+https://github.com/TimWongUp/agentnave.git@v${mockVersion}"` }, hosts: hostRows.map((host) => {
     const token = `${host.id}:${host.root.path}`;
-    if (reloadScene) {
+    if (reloadIds.includes(host.id)) {
       const r = RELOADS[host.id];
       const done = confirmedReloads.get(host.id) === token;
       return { ...host, reload: { state: done ? "confirmed" : "required", reason: r.reason, connections: r.reason === "unverified" ? 0 : 1, token, copies: done ? [] : structuredClone(r.copies) } };
@@ -1009,7 +1012,7 @@ All checks passed!
   }), backups: { dir: "/preview/backups", config: 0, skill: 0 } });
   const mockPrefs = {
     general: {
-      theme: "system",
+      theme: q.get("theme") || "system",
       motion: "system",
       scale: 100,
       autostart: false,
