@@ -181,6 +181,8 @@ label.s-label { cursor: pointer; }
 .detail-rows > .host-more { padding-top: 4px; padding-bottom: 4px; border-top: 1px solid var(--line); }
 .detail-foot { margin-top: auto; border-top: 1px solid var(--line); }
 .detail-foot > .disable-confirm { border-top: 0; border-bottom: 1px solid var(--line); }
+/* The detail pane draws no lines between its rows; spacing alone separates them. */
+.members-detail-pane :is(.detail-head, .detail-account-bar, .detail-foot, .detail-foot > *, .detail-rows > *, .s-row, .host-copies, .hc-adv) { border-top: 0; border-bottom: 0; }
 .detail-foot-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 12px var(--row-pad); }
 .detail-empty { padding: 36px 20px; text-align: center; }
 
