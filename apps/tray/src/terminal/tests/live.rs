@@ -1,5 +1,4 @@
 //! Opt-in integration with an authenticated Claude CLI; never uses the real data root.
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -164,7 +163,7 @@ fn claude_wakeup_live() {
         account: None,
         codex: None,
     });
-    let (mut attempted, mut seen, mut failed) = (HashSet::new(), HashMap::new(), HashSet::new());
+    let mut state = wakeup::WakeupState::default();
     wait_for_ready(&session);
     assert!(
         wait_state(
@@ -176,9 +175,9 @@ fn claude_wakeup_live() {
     );
     thread::sleep(Duration::from_secs(4));
     inbox(&root, &["one"]);
-    wakeup::scan(&terminals, &root, &mut attempted, &mut seen, &mut failed);
+    wakeup::scan(&terminals, &root, &mut state);
     assert!(
-        attempted.contains("one") && !failed.contains("one"),
+        state.attempted.contains("one") && !state.failed.contains("one"),
         "first scan did not deliver"
     );
     assert!(
@@ -198,11 +197,17 @@ fn claude_wakeup_live() {
     session.user_input(b"Reply briefly. ", false).unwrap();
     inbox(&root, &["one", "two"]);
     thread::sleep(Duration::from_secs(3));
-    wakeup::scan(&terminals, &root, &mut attempted, &mut seen, &mut failed);
-    assert!(!attempted.contains("two"), "draft delivered at 3 seconds");
+    wakeup::scan(&terminals, &root, &mut state);
+    assert!(
+        !state.attempted.contains("two"),
+        "draft delivered at 3 seconds"
+    );
     thread::sleep(Duration::from_secs(7));
-    wakeup::scan(&terminals, &root, &mut attempted, &mut seen, &mut failed);
-    assert!(!attempted.contains("two"), "draft delivered at 10 seconds");
+    wakeup::scan(&terminals, &root, &mut state);
+    assert!(
+        !state.attempted.contains("two"),
+        "draft delivered at 10 seconds"
+    );
     println!("(b) draft blocked delivery at 3s and 10s");
     session.set_draft_wait(Duration::from_secs(2));
     let held = session.clone();
@@ -214,10 +219,10 @@ fn claude_wakeup_live() {
         assert!(held.is_holding(), "wakeup never entered holding state");
         held.user_input(b"HELD123", false).unwrap();
     });
-    wakeup::scan(&terminals, &root, &mut attempted, &mut seen, &mut failed);
+    wakeup::scan(&terminals, &root, &mut state);
     inject.join().unwrap();
     assert!(
-        attempted.contains("two") && !failed.contains("two"),
+        state.attempted.contains("two") && !state.failed.contains("two"),
         "draft scan did not deliver"
     );
     assert!(
@@ -417,10 +422,10 @@ fn codex_wakeup_live() {
     }
 
     write_inbox(&["codex-evt-1"]);
-    let (mut attempted, mut seen, mut failed) = (HashSet::new(), HashMap::new(), HashSet::new());
-    wakeup::scan(&terminals, &root, &mut attempted, &mut seen, &mut failed);
+    let mut state = wakeup::WakeupState::default();
+    wakeup::scan(&terminals, &root, &mut state);
     assert!(
-        attempted.contains("codex-evt-1") && !failed.contains("codex-evt-1"),
+        state.attempted.contains("codex-evt-1") && !state.failed.contains("codex-evt-1"),
         "codex wakeup scan did not deliver"
     );
 
@@ -444,11 +449,11 @@ fn codex_wakeup_live() {
     assert!(saw_idle_after_active, "Codex turn did not complete");
 
     // Re-scanning with the same event must not re-deliver; same clientUserMessageId also deduplicates.
-    wakeup::scan(&terminals, &root, &mut attempted, &mut seen, &mut failed);
-    assert_eq!(
+    wakeup::scan(&terminals, &root, &mut state);
+    assert!(matches!(
         codex.deliver(&boss_key, "codex-evt-1", "[AgentNave] duplicate check"),
-        codex_server::Delivery::Sent
-    );
+        codex_server::Delivery::Queued { .. } | codex_server::Delivery::Started
+    ));
     thread::sleep(Duration::from_secs(2));
     answer_codex_queries(&session, &mut from, &mut screen, &mut answered);
     assert!(

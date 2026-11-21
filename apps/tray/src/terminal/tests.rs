@@ -1028,7 +1028,7 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
             assert!(output_until(&session, "blocked").0.contains("blocked"));
         }
         assert_eq!(
-            session.finish_wakeup(),
+            session.finish_wakeup(true),
             if blocked {
                 super::session::WakeupOutcome::Blocked
             } else {
@@ -1066,7 +1066,6 @@ fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
 #[test]
 fn blocked_wakeup_is_retried_once_unblocked() {
     use serde_json::json;
-    use std::collections::{HashMap, HashSet};
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("connections")).unwrap();
     std::fs::create_dir(temp.path().join("inbox")).unwrap();
@@ -1099,34 +1098,16 @@ fn blocked_wakeup_is_retried_once_unblocked() {
         #[cfg(unix)]
         codex: None,
     });
-    let (mut attempted, mut seen, mut failed) = (HashSet::new(), HashMap::new(), HashSet::new());
+    let mut state = super::wakeup::WakeupState::default();
     session.record_writes();
-    super::wakeup::scan(
-        &terminals,
-        temp.path(),
-        &mut attempted,
-        &mut seen,
-        &mut failed,
-    );
-    assert!(!attempted.contains("item"));
-    assert!(failed.contains("item"));
+    super::wakeup::scan(&terminals, temp.path(), &mut state);
+    assert!(!state.attempted.contains("item"));
+    assert!(state.failed.contains("item"));
     assert!(output_until(&session, "idle").0.contains("idle"));
-    super::wakeup::scan(
-        &terminals,
-        temp.path(),
-        &mut attempted,
-        &mut seen,
-        &mut failed,
-    );
-    assert!(attempted.contains("item"));
-    assert!(!failed.contains("item"));
-    super::wakeup::scan(
-        &terminals,
-        temp.path(),
-        &mut attempted,
-        &mut seen,
-        &mut failed,
-    );
+    super::wakeup::scan(&terminals, temp.path(), &mut state);
+    assert!(state.attempted.contains("item"));
+    assert!(!state.failed.contains("item"));
+    super::wakeup::scan(&terminals, temp.path(), &mut state);
     let writes = session.recorded_writes();
     assert_eq!(
         writes

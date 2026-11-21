@@ -167,6 +167,7 @@ impl Output {
 pub(super) enum WakeupOutcome {
     Delivered,
     Blocked,
+    Cancelled,
     Failed,
 }
 
@@ -338,15 +339,16 @@ impl Session {
         Ok(Some(()))
     }
 
-    pub(super) fn finish_wakeup(&self) -> WakeupOutcome {
+    pub(super) fn finish_wakeup(&self, should_commit: bool) -> WakeupOutcome {
         let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
         let output = self.output();
-        let commit = output.exit.is_none()
+        let can_commit = output.exit.is_none()
             && output
                 .status
                 .state
                 .as_deref()
                 .is_some_and(|s| s != "blocked");
+        let commit = should_commit && can_commit;
         let (chars, held) = gate.release(commit);
         let mut bytes = if commit {
             vec![b'\r']
@@ -358,6 +360,8 @@ impl Session {
             WakeupOutcome::Failed
         } else if commit {
             WakeupOutcome::Delivered
+        } else if !should_commit {
+            WakeupOutcome::Cancelled
         } else if output.exit.is_none() && output.status.state.as_deref() == Some("blocked") {
             WakeupOutcome::Blocked
         } else {

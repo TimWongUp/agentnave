@@ -202,7 +202,13 @@ fn delivers_via_queue_add_and_skips_waiting_on_approval() {
             99,
         ),
     );
-    assert_eq!(client.deliver(&key, "evt-1", "hello"), Delivery::Sent);
+    assert_eq!(
+        client.deliver(&key, "evt-1", "hello"),
+        Delivery::Queued {
+            thread_id: tid.to_owned(),
+            submission_id: "q1".to_owned(),
+        }
+    );
 
     let sent = recorded
         .lock()
@@ -271,7 +277,7 @@ fn falls_back_to_turn_start_only_when_idle() {
         .insert(tid.to_owned(), (ThreadStatus::Idle, 99));
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(2)
-        && client.deliver(&key, "evt-2", "msg") != Delivery::Sent
+        && client.deliver(&key, "evt-2", "msg") != Delivery::Started
     {
         thread::sleep(Duration::from_millis(20));
     }
@@ -380,7 +386,13 @@ fn refresh_overwrites_stale_status_removes_unloaded_and_handles_unknown_read_fai
         client.thread_status_for_test(tid),
         Some(ThreadStatus::Unknown)
     );
-    assert_eq!(client.deliver(&key, "e2", "hi"), Delivery::Sent);
+    assert_eq!(
+        client.deliver(&key, "e2", "hi"),
+        Delivery::Queued {
+            thread_id: tid.to_owned(),
+            submission_id: "q".to_owned(),
+        }
+    );
 
     // Phase 3: Unknown + queue/add error does NOT fall back to turn/start.
     phase.store(3, Ordering::SeqCst);
@@ -456,4 +468,67 @@ fn close_unblocks_stalled_handshake_promptly() {
         "close() should unblock stalled handshake immediately"
     );
     let _ = server.join();
+}
+
+#[test]
+fn deliver_if_fresh_skips_stale_and_queue_delete_update_send_expected_params() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("queue-ops.sock");
+    let tid = "019a0000-0000-7000-8000-000000000006";
+    let key = boss_key("codex", tid);
+    let recorded: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let rec = recorded.clone();
+    let client = connect_to_mock(&sock, move |msg, stream| {
+        rec.lock().unwrap().push(msg.clone());
+        let id = msg.get("id").and_then(Value::as_u64);
+        match msg.get("method").and_then(Value::as_str) {
+            Some("initialize") => write_server_frame(
+                stream,
+                &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
+            ),
+            Some("thread/loaded/list") => write_server_frame(
+                stream,
+                &json!({"jsonrpc": "2.0", "id": id, "result": {"data": [tid]}}).to_string(),
+            ),
+            Some("thread/read") => write_server_frame(
+                stream,
+                &json!({"jsonrpc": "2.0", "id": id, "result": {"thread": {"id": tid, "status": {"type": "active", "activeFlags": []}}}}).to_string(),
+            ),
+            Some("thread/queue/update") => write_server_frame(
+                stream,
+                &json!({"jsonrpc": "2.0", "id": id, "result": {"queuedSubmission": {"id": "q9", "clientUserMessageId": "k", "input": []}}}).to_string(),
+            ),
+            Some("thread/queue/delete") => write_server_frame(
+                stream,
+                &json!({"jsonrpc": "2.0", "id": id, "result": {"deleted": true}}).to_string(),
+            ),
+            _ => {}
+        }
+    });
+
+    assert_eq!(client.deliver_if_fresh(&key, || None), Delivery::NotReady);
+    assert!(
+        !recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m["method"] == "thread/queue/add")
+    );
+    assert!(client.update_queued(tid, "q9", "updated"));
+    assert!(client.delete_queued(tid, "q9"));
+
+    let msgs = recorded.lock().unwrap();
+    let update = msgs
+        .iter()
+        .find(|m| m["method"] == "thread/queue/update")
+        .unwrap();
+    assert_eq!(update["params"]["threadId"], tid);
+    assert_eq!(update["params"]["queuedSubmissionId"], "q9");
+    assert_eq!(update["params"]["input"][0]["text"], "updated");
+    let delete = msgs
+        .iter()
+        .find(|m| m["method"] == "thread/queue/delete")
+        .unwrap();
+    assert_eq!(delete["params"]["threadId"], tid);
+    assert_eq!(delete["params"]["queuedSubmissionId"], "q9");
 }

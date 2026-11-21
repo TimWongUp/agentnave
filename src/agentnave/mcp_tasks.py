@@ -50,6 +50,7 @@ from agentnave.mcp_runtime import (
     ManagerSessionId,
     Runtime,
     _active_inbox_waits,
+    _active_waits,
     _conversations,
     _manager,
     _review_map,
@@ -856,6 +857,37 @@ def _explicit_handles(
     return invocation_ids, round_ids
 
 
+def _explicit_wait_workspaces(
+    conversations: Conversations,
+    invocation_ids: list[str],
+    round_ids: list[str],
+    manager_session_id: str | None,
+) -> set[str | None]:
+    workspaces: set[str | None] = set()
+    try:
+        key = conversations.inbox_key(manager_session_id)
+    except ValueError:
+        key = None
+    if key is not None:
+        workspaces.add(key)
+    for handle in invocation_ids:
+        entry = conversations.task_invocations.get(handle)
+        if entry is None:
+            continue
+        record = conversations.records.get(entry[0])
+        if record is not None:
+            workspaces.add(record.state.manager_session)
+    for handle in round_ids:
+        try:
+            round_ = conversations.round(handle)
+        except KeyError:
+            continue
+        record = conversations.records.get(round_.group.id)
+        if record is not None:
+            workspaces.add(record.state.manager_session)
+    return workspaces
+
+
 async def _receive(
     ids: list[str] | None,
     include_output: bool,
@@ -869,7 +901,9 @@ async def _receive(
     round_ids: list[str] = []
     inbox_key: str | None = None
     active_inbox_waits = _active_inbox_waits(ctx)
+    active_waits = _active_waits(ctx)
     blocking_inbox = ids is None and wait_seconds != 0
+    explicit_wait_keys: set[str | None] = set()
     if ids is None:
         try:
             inbox_key = conversations.inbox_key(manager_session_id)
@@ -882,6 +916,10 @@ async def _receive(
             return _nothing_pending_payload()
     else:
         invocation_ids, round_ids = _explicit_handles(manager, conversations, ids)
+        if wait_seconds != 0:
+            explicit_wait_keys = _explicit_wait_workspaces(
+                conversations, invocation_ids, round_ids, manager_session_id
+            )
     if wait_seconds is None:
         # A long-wait session already decided this call runs in the background (ADR-0084).
         window = runtime.LONG_WAIT_SECONDS if runtime.long_wait_enabled() else runtime.WAIT_SECONDS
@@ -890,6 +928,10 @@ async def _receive(
     deadline = time.monotonic() + window
     if blocking_inbox:
         active_inbox_waits.add(inbox_key)
+        ctx.request_context.lifespan_context.refresh_inbox()
+    elif explicit_wait_keys:
+        for workspace in explicit_wait_keys:
+            active_waits[workspace] += 1
         ctx.request_context.lifespan_context.refresh_inbox()
     try:
         while True:
@@ -945,6 +987,10 @@ async def _receive(
     finally:
         if blocking_inbox:
             active_inbox_waits.discard(inbox_key)
+        for workspace in explicit_wait_keys:
+            active_waits[workspace] -= 1
+            if active_waits[workspace] <= 0:
+                del active_waits[workspace]
         ctx.request_context.lifespan_context.refresh_inbox()
 
 
