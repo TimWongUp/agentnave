@@ -1,6 +1,6 @@
 # ADR-0069：专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型
 
-- 状态：已接受
+- 状态：部分修订；同时符合多个专项时的默认选工位做法由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订。
 - 日期：2026-11-09
 - 修订 [ADR-0052](0052-orchestration-specialty-seats.md) 中「界面位没设时沿用 Worker 同难度的工位，App 在空位上显示沿用的是哪个」的条款；修订 [ADR-0065](0065-predefined-specialist-roles.md) 中「既有界面工位未绑定时沿用 Worker 同档」的条款，「除生图外各组有独立的简单、困难两档」在设置页上的呈现方式，以及预置专项清单。保留的分组键、seat 名与服务读取方式不变，`orchestration.json` 不再接受已删除的 `worker_code`、`worker_data`。
 

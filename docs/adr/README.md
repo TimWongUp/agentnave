@@ -46,7 +46,7 @@
 | 0040 | [工作区按会话记录显示 boss 的入口，接入按配置文件划分](0040-boss-app-from-session-records.md) | 部分修订 | [ADR-0071](0071-cross-platform-host-readers-and-receipts.md) |
 | 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | [ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0042 | [组员模型带档位，服务每次传模型与档位](0042-pass-cli-default-effort.md) | 已接受 | — |
-| 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分取代 | [ADR-0062](0062-service-owned-member-names.md) |
+| 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分修订 | [ADR-0062](0062-service-owned-member-names.md)、[ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) |
 | 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 已接受 | — |
 | 0045 | [去掉浏览器看板](0045-remove-browser-dashboard.md) | 已接受 | [ADR-0046](0046-service-history-retention.md) |
 | 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 部分修订 | 清理计时起点由 [ADR-0099](0099-handover-links-workspaces.md) 修订 |
@@ -72,11 +72,11 @@
 | 0066 | [统一十分钟等待窗口，用序号区分连续等待](0066-unified-wait-window-and-call-sequence.md) | 部分取代 | 修订 ADR-0007、ADR-0015；[ADR-0067](0067-wait-270s-window-and-host-background-limits.md) |
 | 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 部分修订 | 修订 ADR-0007、ADR-0015、ADR-0066；[ADR-0077](0077-claude-long-wait.md) |
 | 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 部分修订 | 修订 ADR-0037、ADR-0051、ADR-0065；[ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)、[ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) |
-| 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
+| 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 部分修订 | 修订 ADR-0052、ADR-0065；跨专项选工位由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
 | 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)、[ADR-0102](0102-agy-native-status.md) |
-| 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 已接受 | 扩展并修订 ADR-0068 |
+| 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 部分修订 | 扩展并修订 ADR-0068；固定档专项不再排除在小事外由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订 |
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射、[ADR-0087](0087-decision-model-recommends-seats.md)；「不可用边界」的兜底顺序由 [ADR-0089](0089-seat-fallback-order.md) 修订；执行边界由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
 | 0076 | [权限档位缺省为完全放开](0076-full-permission-default.md) | 已接受 | 修订 ADR-0032 |
@@ -110,3 +110,4 @@
 | 0104 | [App 内 boss 由 App 提示收件](0104-in-app-boss-push.md) | 部分修订 | 修订 ADR-0007、ADR-0064 的推送边界；Codex 排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订 |
 | 0105 | [Codex 内嵌终端改用私有 app-server 与结构化推送](0105-codex-app-server-terminal-push.md) | 已接受 | 修订 ADR-0103、ADR-0104 |
 | 0106 | [托盘拥有本机 CLI 用量统计与折算花费面板](0106-tray-usage-panel.md) | 已接受 | 扩展 ADR-0012 的托盘数据根写入边界；保持 ADR-0026、ADR-0048 的服务与会话库隔离；遵守 ADR-0029；复用 ADR-0100 卸载开关与 ADR-0103 预览版及内嵌页约定；同步更新 CONTEXT「Tray App」 |
+| 0107 | [固定档专项不再排除在小事边界外，收尾改为服务语义汇报，顺位回执自带说明](0107-specialist-scope-closing-and-fallback-note.md) | 已接受 | 修订 ADR-0073、ADR-0069；扩展 ADR-0043；补充 ADR-0089、ADR-0093 |
