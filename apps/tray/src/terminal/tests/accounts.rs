@@ -75,7 +75,7 @@ fn a_sign_in_terminal_is_no_agent_of_the_office() {
     std::fs::create_dir_all(&dir).unwrap();
     let terminals = super::super::Terminals::default();
     let id = terminals
-        .login("a1", &dir, &cli, temp.path(), (100, 30))
+        .login("a1", Some(&dir), &cli, temp.path(), (100, 30))
         .unwrap();
     let session = terminals.session(Some(id)).unwrap();
     let wanted = format!("login:auth login:{}", dir.display());
@@ -86,6 +86,21 @@ fn a_sign_in_terminal_is_no_agent_of_the_office() {
     assert_eq!(terminals.lock().logins.len(), 1);
     assert_eq!(terminals.close(Some(id)).status, 200);
     assert!(terminals.session(Some(id)).is_none());
+
+    // The default account runs `claude auth login` in the default environment and also stays out
+    // of the office.
+    let default_id = terminals
+        .login("default", None, &cli, temp.path(), (100, 30))
+        .unwrap();
+    let default_session = terminals.session(Some(default_id)).unwrap();
+    let (default_text, _) = super::output_until(&default_session, "login:auth login:");
+    assert!(
+        default_text.contains("login:auth login:"),
+        "{default_text:?}"
+    );
+    assert!(terminals.lock().open.is_empty());
+    assert_eq!(terminals.lock().logins.len(), 1);
+    assert_eq!(terminals.close(Some(default_id)).status, 200);
 }
 
 #[test]

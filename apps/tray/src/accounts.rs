@@ -6,7 +6,6 @@
 mod auth;
 mod remove;
 mod request;
-mod scan;
 #[cfg(test)]
 mod tests;
 
@@ -285,25 +284,6 @@ pub(crate) fn create(root: &Path, home: &Path, label: &str) -> Result<Account, S
         return Err(error);
     }
     let _ = fs::write(managed.join(LAST_ID), id.trim_start_matches('a'));
-    Ok(account)
-}
-
-/// Registers an existing folder as an account the App does not manage.
-pub(crate) fn link(root: &Path, home: &Path, dir: &Path, label: &str) -> Result<Account, String> {
-    let label = clean_label(label)?;
-    let _writing = writing();
-    let mut accounts = read(root)?;
-    let managed = managed_root(home);
-    let id = next_id(&accounts, &managed);
-    let account = Account {
-        id: id.clone(),
-        label,
-        dir: dir.to_owned(),
-        managed: false,
-    };
-    accounts.push(account.clone());
-    save(root, &accounts)?;
-    let _ = fs::create_dir_all(&managed).and_then(|()| fs::write(managed.join(LAST_ID), &id[1..]));
     Ok(account)
 }
 

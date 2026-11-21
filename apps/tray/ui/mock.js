@@ -22,6 +22,51 @@
     { id: "a1", provider: "claude", label: "工作", dir: "/Users/preview/.agentnave-accounts/claude/a1", managed: true },
     { id: "a2", provider: "claude", label: "个人 2", dir: "/Users/preview/.claude_personal", managed: false },
   ] : [];
+  const mockAccountStates = new Map([
+    ["default", q.get("default") === "out"
+      ? { logged_in: false, method: "none", email: null, plan: null, error: null }
+      : { logged_in: true, method: "claude.ai", email: "tim@example.com", plan: "max", error: null }],
+    ["a1", { logged_in: true, method: "claude.ai", email: "work@example.com", plan: "pro", error: null }],
+    ["a2", { logged_in: false, method: "none", email: null, plan: null, error: null }],
+  ]);
+  const mockLoginAccounts = new Map();
+  let nextLoginSession = 99;
+  AN.onMockTerminalFrame = (frame, session, label) => {
+    const accountId = mockLoginAccounts.get(session);
+    const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+    const bg = theme === "light" ? "#f7f7f8" : "#14161a";
+    const fg = theme === "light" ? "#1c2026" : "#e6eaf2";
+    const muted = theme === "light" ? "#5f6875" : "#9aa4b2";
+    const btnBg = theme === "light" ? "#1f6feb" : "#3b82f6";
+    frame.removeAttribute("src");
+    frame.srcdoc = `<!doctype html><html><body style="margin:0;padding:16px;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;background:${bg};color:${fg};display:flex;flex-direction:column;justify-content:space-between;min-height:100vh;box-sizing:border-box;">
+      <div>
+        <div style="color:${muted}">$ claude auth login  # ${String(label || accountId || "default").replace(/[<>&]/g, "")}</div>
+        <div style="margin-top:8px">Opening browser to authenticate with Claude.ai…</div>
+        <div style="margin-top:4px;color:${muted}">Waiting for browser callback…</div>
+      </div>
+      <div>
+        <button id="mock-complete" type="button" style="padding:6px 12px;border:0;border-radius:6px;background:${btnBg};color:#fff;font:12px/1.4 sans-serif;cursor:pointer;">模拟登录成功</button>
+      </div>
+      <script>
+        document.getElementById("mock-complete").addEventListener("click", () => {
+          window.parent.postMessage({ type: "agentnave:mock-login-complete", session: ${Number(session)}, id: ${JSON.stringify(accountId || "default")} }, "*");
+        });
+      </script>
+    </body></html>`;
+  };
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== "agentnave:mock-login-complete") return;
+    const id = event.data.id || "default";
+    mockAccountStates.set(id, {
+      logged_in: true,
+      method: "claude.ai",
+      email: id === "default" ? "tim@example.com" : `${id}@example.com`,
+      plan: "max",
+      error: null,
+    });
+    window.postMessage({ type: "agentnave:terminal", action: "exited", session: event.data.session, code: 0 }, "*");
+  });
   const mockMembersData = {
     accounts: { accounts: mockAccounts, error: null },
     provider_health: mockHealth,
@@ -1098,11 +1143,9 @@ All checks passed!
     if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
     if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider, accounts: provider === "claude" ? mockAccounts.map(({ id, label }) => ({ id, label })) : [] })) };
     if (path === "/app/accounts") return { accounts: structuredClone(mockAccounts), error: null };
-    if (path === "/app/accounts/scan") return { folders: [{ dir: "/Users/preview/.claude_free", name: ".claude_free" }] };
     if (path.startsWith("/app/accounts/status")) {
       const id = new URLSearchParams(path.split("?")[1]).get("id");
-      return id === "a2" ? { logged_in: false, method: "none", email: null, plan: null, error: null }
-        : { logged_in: true, method: "claude.ai", email: id === "a1" ? "work@example.com" : "me@example.com", plan: "max", error: null };
+      return structuredClone(mockAccountStates.get(id) || { logged_in: false, method: "none", email: null, plan: null, error: null });
     }
     if (path === "/app/provider-health") return { providers: structuredClone(mockHealth), accounts: Object.fromEntries(mockAccounts.map((a) => [a.id, a.label])) };
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
@@ -1131,17 +1174,25 @@ All checks passed!
     const state = () => ({ accounts: structuredClone(mockAccounts), error: null });
     const route = path.split("?")[0];
     const at = mockAccounts.findIndex((a) => a.id === body.id);
-    if (route === "/app/accounts/create" || route === "/app/accounts/link") {
+    if (route === "/app/accounts/create") {
       const id = `a${Math.max(0, ...mockAccounts.map((a) => Number(a.id.slice(1)))) + 1}`;
-      const managed = route.endsWith("create");
-      const dir = managed ? `/Users/preview/.agentnave-accounts/claude/${id}` : body.dir || "/Users/preview/.claude_picked";
-      const account = { id, provider: "claude", label: body.label || dir.split("/").pop().replace(/^\./, ""), dir, managed };
+      const dir = `/Users/preview/.agentnave-accounts/claude/${id}`;
+      const account = { id, provider: "claude", label: body.label, dir, managed: true };
       mockAccounts.push(account);
-      return { account, sync: { ok: true, message: "" }, shared_sessions: 0, state: state() };
+      mockAccountStates.set(id, { logged_in: false, method: "none", email: null, plan: null, error: null });
+      return { account, sync: { ok: true, message: "" }, state: state() };
     }
     if (route === "/app/accounts/rename" && at >= 0) { mockAccounts[at].label = body.label; return { state: state() }; }
-    if (route === "/app/accounts/remove" && at >= 0) { mockAccounts.splice(at, 1); return { state: state(), deleted: Boolean(body.delete_dir), delete_error: null, unsync_error: null }; }
-    if (route === "/app/accounts/login" && at >= 0) return { session: 99 };
+    if (route === "/app/accounts/remove" && at >= 0) {
+      mockAccountStates.delete(body.id);
+      mockAccounts.splice(at, 1);
+      return { state: state(), deleted: Boolean(body.delete_dir), delete_error: null, unsync_error: null };
+    }
+    if (route === "/app/accounts/login" && (body.id === "default" || at >= 0)) {
+      const session = nextLoginSession++;
+      mockLoginAccounts.set(session, body.id);
+      return { session };
+    }
     throw Object.assign(new Error("404"), { status: 404 });
   }
   async function post(path, body = {}) {

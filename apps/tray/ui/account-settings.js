@@ -1,22 +1,23 @@
 "use strict";
 {
-  // Settings -> 员工 -> Claude Code named accounts (ADR-0107): managed inside the Claude Code
-  // detail view as an expandable compact list. Sign-in state is read on demand and never written to disk.
+  // Settings -> 员工 -> Claude Code accounts (ADR-0107): default account status at top of
+  // Claude Code detail, expandable account list (default + named accounts), and a 2-step add
+  // wizard (name -> in-dialog sign-in). Sign-in state is read on demand and never saved to disk.
 
   const S = AN.settings ||= {};
-  const { $, L, el, textNode } = S;
+  const { $, L, el } = S;
   const PROVIDER = "claude";
+  const DEFAULT_ID = "default";
 
   // Where the sign-in states stand: id -> { loading } | { state } | { error }.
   const states = new Map();
-  let folders = null; // Scanned candidate folders; null until loaded.
-  let foldersLoading = false;
-  let expandedAccountId = null; // Only one named account expands in place at a time.
+  const revealedEmails = new Set(); // Account IDs whose email is currently unmasked in the UI.
+  let expandedAccountId = null; // Only one account row expands in place at a time.
   let renameDraft = null; // { id, value } while the user is typing in the display-name field.
   let removing = null; // { id, deleteDir } while the removal confirmation is open in detail.
   let busy = false;
   let login = null; // The open sign-in dialog: { dialog, session, id }.
-  let addDialog = null; // The open add-account dialog state.
+  let addDialog = null; // The open 2-step add-account wizard dialog state.
 
   const post = async (path, body = {}) => {
     const res = await fetch(path, {
@@ -35,22 +36,104 @@
     oauth_token: "OAuth Token",
   });
 
-  function statusLine(id) {
+  function maskEmail(email) {
+    const text = String(email || "").trim();
+    if (!text) return "";
+    const at = text.lastIndexOf("@");
+    if (at <= 0) {
+      const keep = text.slice(0, text.length > 2 ? 2 : 1);
+      return `${keep}***`;
+    }
+    const local = text.slice(0, at);
+    const domain = text.slice(at + 1);
+    const localShown = local.slice(0, local.length > 2 ? 2 : 1);
+    const dot = domain.lastIndexOf(".");
+    const domainMasked = dot > 0 ? `***${domain.slice(dot)}` : "***";
+    return `${localShown}***@${domainMasked}`;
+  }
+
+  function statusTag(state) {
+    return state?.plan || (state?.method && state.method !== "claude.ai"
+      ? METHODS()[state.method] || state.method : null);
+  }
+
+  function emailToggleButton(id, email, focusKey) {
+    const value = String(email || "").trim();
+    if (!value) return null;
+    const revealed = revealedEmails.has(id);
+    const label = revealed ? L("点击隐藏邮箱", "Click to hide email") : L("点击显示邮箱", "Click to reveal email");
+    return el("button", {
+      type: "button",
+      className: `account-email-toggle${revealed ? " is-revealed" : ""}`,
+      "aria-pressed": String(revealed),
+      "aria-label": label,
+      title: label,
+      dataset: focusKey ? { focusKey } : undefined,
+      onClick: () => {
+        if (revealedEmails.has(id)) revealedEmails.delete(id);
+        else revealedEmails.add(id);
+        S.renderCards();
+        renderWizardStatus();
+      },
+    }, revealed ? value : maskEmail(value));
+  }
+
+  function statusLine(id, focusKey) {
     const entry = states.get(id);
     if (!entry || entry.loading) return el("span", { className: "member-muted" }, L("读取中…", "Reading…"));
     if (entry.error) return el("span", { className: "member-muted" }, L("无法读取登录状态", "Could not read the sign-in state"));
-    const { logged_in: signedIn, method, email, plan } = entry.state;
+    const { logged_in: signedIn, email } = entry.state;
     if (!signedIn) return el("span", { className: "badge badge-warning" }, L("未登录", "Not signed in"));
-    const detail = [METHODS()[method] || method, email, plan].filter(Boolean).join(" · ");
+    const tag = statusTag(entry.state);
     return el("span", { className: "account-status" },
       el("span", { className: "badge badge-run" }, L("已登录", "Signed in")),
-      detail ? el("span", { className: "member-muted", title: detail }, detail) : null);
+      emailToggleButton(id, email, focusKey),
+      tag ? el("span", { className: "member-muted" }, `· ${tag}`) : null);
+  }
+
+  function claudeDefaultListStatus(info) {
+    if (!info?.installed) return null;
+    void readState(DEFAULT_ID);
+    const entry = states.get(DEFAULT_ID);
+    if (!entry || entry.loading) return { text: L("读取中…", "Reading…"), tone: "muted" };
+    if (entry.error) return { text: L("无法读取状态", "Status unavailable"), tone: "bad" };
+    if (!entry.state.logged_in) return { text: L("未登录", "Not signed in"), tone: "warn" };
+    const tag = statusTag(entry.state);
+    return { text: tag ? L(`已登录 · ${tag}`, `Signed in · ${tag}`) : L("已登录", "Signed in"), tone: "run" };
+  }
+
+  function renderClaudeTopStatus(info) {
+    if (!info?.installed) return null;
+    void readState(DEFAULT_ID);
+    const entry = states.get(DEFAULT_ID);
+    if (!entry || entry.loading) {
+      return el("div", { className: "detail-account-bar", dataset: { status: "loading" } },
+        el("span", { className: "member-status-dot tone-muted", "aria-hidden": "true" }),
+        el("span", { className: "member-muted" }, L("读取中…", "Reading…")));
+    }
+    if (entry.error) {
+      return el("div", { className: "detail-account-bar", dataset: { status: "error" } },
+        el("span", { className: "member-status-dot tone-bad", "aria-hidden": "true" }),
+        el("span", { className: "member-muted" }, L("无法读取登录状态", "Could not read the sign-in state")));
+    }
+    if (!entry.state.logged_in) {
+      return el("div", { className: "detail-account-bar", dataset: { status: "signed-out" } },
+        el("span", { className: "member-status-dot tone-warn", "aria-hidden": "true" }),
+        el("span", { className: "detail-account-text" }, L("未登录", "Not signed in")));
+    }
+    const tag = statusTag(entry.state);
+    const emailBtn = emailToggleButton(DEFAULT_ID, entry.state.email, "claude/default-email");
+    return el("div", { className: "detail-account-bar", dataset: { status: "signed-in" } },
+      el("span", { className: "member-status-dot tone-run", "aria-hidden": "true" }),
+      el("span", { className: "detail-account-text" }, L("已登录", "Signed in")),
+      emailBtn,
+      tag ? el("span", { className: "detail-account-plan" }, `· ${tag}`) : null);
   }
 
   function accountListStatus(account) {
     void readState(account.id);
     const healthRows = (AN.providerHealth?.rows?.(S.providerHealth || {}) || [])
-      .filter((row) => row.provider === PROVIDER && row.account === account.id);
+      .filter((row) => row.provider === PROVIDER && (account.isDefault ? !row.account : row.account === account.id));
     const entry = states.get(account.id);
     if (healthRows.length) {
       const plan = entry?.state?.logged_in ? entry.state.plan : null;
@@ -59,9 +142,10 @@
     if (!entry || entry.loading) return { text: L("读取中…", "Reading…"), tone: "muted" };
     if (entry.error) return { text: L("无法读取状态", "Status unavailable"), tone: "bad" };
     if (!entry.state.logged_in) return { text: L("未登录", "Not signed in"), tone: "warn" };
-    const tag = entry.state.plan || (entry.state.method && entry.state.method !== "claude.ai"
-      ? METHODS()[entry.state.method] || entry.state.method : null);
-    return { text: tag ? L(`已登录 · ${tag}`, `Signed in · ${tag}`) : L("已登录", "Signed in"), tone: "run" };
+    const email = entry.state.email ? (revealedEmails.has(account.id) ? entry.state.email : maskEmail(entry.state.email)) : null;
+    const tag = statusTag(entry.state);
+    const parts = [email || L("已登录", "Signed in"), tag].filter(Boolean);
+    return { text: parts.join(" · "), tone: "run" };
   }
 
   async function readState(id, force = false) {
@@ -74,19 +158,7 @@
       states.set(id, { error: String(error?.message || error) });
     }
     S.renderCards();
-  }
-
-  async function readFolders() {
-    foldersLoading = true;
-    renderDialogFolders();
-    try {
-      folders = (await (await fetch("/app/accounts/scan", { cache: "no-store" })).json()).folders || [];
-    } catch {
-      folders = [];
-    } finally {
-      foldersLoading = false;
-      renderDialogFolders();
-    }
+    renderWizardStatus();
   }
 
   function take(data) {
@@ -94,7 +166,6 @@
       S.accounts = data.state.accounts || [];
       S.accountsError = data.state.error || null;
     }
-    folders = null;
   }
 
   function sync(data) {
@@ -156,11 +227,22 @@
     removing = null;
     renameDraft = null;
     states.delete(account.id);
+    revealedEmails.delete(account.id);
     take(data);
     if (data.delete_error) S.showNotice(L(`账号已移除，但目录没有删除：${data.delete_error}`, `Account removed, but its folder was not deleted: ${data.delete_error}`), true);
   }
 
-  // ------------------------------------------------------------------ sign-in dialog
+  function createLoginFrame(session, label) {
+    const frame = el("iframe", {
+      className: "account-login-frame",
+      src: `/terminal/?session=${session}`,
+      title: L(`${label} 的登录终端`, `Sign-in terminal of ${label}`),
+    });
+    AN.onMockTerminalFrame?.(frame, session, label);
+    return frame;
+  }
+
+  // ------------------------------------------------------------------ standalone sign-in dialog
   function closeLogin() {
     if (!login) return;
     const { dialog, session, id } = login;
@@ -173,7 +255,7 @@
 
   function openLogin(account, session) {
     closeLogin();
-    const frame = el("iframe", { className: "account-login-frame", src: `/terminal/?session=${session}`, title: L(`${account.label} 的登录终端`, `Sign-in terminal of ${account.label}`) });
+    const frame = createLoginFrame(session, account.label);
     const done = el("button", { type: "button", className: "primary", onClick: closeLogin }, L("完成", "Done"));
     const dialog = el("dialog", { className: "upd account-login", "aria-label": L(`登录 ${account.label}`, `Sign in ${account.label}`) },
       el("h2", {}, account.label), frame, el("div", { className: "upd-row" }, done));
@@ -185,44 +267,52 @@
 
   // The login CLI ends by itself once the browser step is done; the state is read again then.
   window.addEventListener("message", (event) => {
-    if (event.data?.type !== "agentnave:terminal" || event.data.action !== "exited" || !login) return;
-    if (event.data.session === login.session) void readState(login.id, true);
+    if (event.data?.type !== "agentnave:terminal" || event.data.action !== "exited") return;
+    if (login && event.data.session === login.session) {
+      void readState(login.id, true);
+    }
+    if (addDialog?.step === 2 && addDialog.account && event.data.session === addDialog.session) {
+      void readState(addDialog.account.id, true);
+    }
   });
 
-  // ------------------------------------------------------------------ add-account dialog
-  function renderDialogFolders() {
-    if (!addDialog) return;
-    const { linkBox, dialogBusy } = addDialog;
-    if (!linkBox?.replaceChildren) return;
-    if (foldersLoading && folders === null) {
-      linkBox.replaceChildren(el("span", { className: "member-muted" }, L("扫描中…", "Scanning…")));
-      return;
+  // ------------------------------------------------------------------ 2-step add-account wizard dialog
+  function renderWizardStatus() {
+    if (!addDialog || addDialog.step !== 2 || !addDialog.account) return;
+    const { account, statusBox, finishBtn } = addDialog;
+    const entry = states.get(account.id);
+    const signedIn = Boolean(entry?.state?.logged_in);
+    if (statusBox?.replaceChildren) {
+      statusBox.replaceChildren(statusLine(account.id, `claude/accounts/${account.id}/wizard-email`));
     }
-    const items = (folders || []).map((folder) => el("button", {
-      type: "button",
-      disabled: dialogBusy,
-      title: folder.dir,
-      dataset: { focusKey: `${PROVIDER}/accounts/link-folder` },
-      onClick: () => void linkFromDialog(folder.dir),
-    }, folder.name));
-    const pick = el("button", {
-      type: "button",
-      disabled: dialogBusy,
-      dataset: { focusKey: `${PROVIDER}/accounts/link-pick` },
-      onClick: () => void linkFromDialog("pick"),
-    }, L("选择文件夹…", "Choose a folder…"));
-    linkBox.replaceChildren(...items, pick);
+    if (finishBtn) {
+      finishBtn.replaceChildren(signedIn ? L("完成", "Done") : L("稍后登录", "Sign in later"));
+      finishBtn.className = signedIn ? "primary" : "";
+    }
+  }
+
+  function scheduleWizardPoll(accountId) {
+    if (!addDialog || addDialog.step !== 2 || addDialog.account?.id !== accountId) return;
+    if (typeof setTimeout !== "function") return;
+    if (addDialog.pollTimer) clearTimeout(addDialog.pollTimer);
+    addDialog.pollTimer = setTimeout(async () => {
+      if (!addDialog || addDialog.step !== 2 || addDialog.account?.id !== accountId) return;
+      if (states.get(accountId)?.state?.logged_in) return;
+      await readState(accountId, true);
+      if (addDialog && addDialog.step === 2 && !states.get(accountId)?.state?.logged_in) {
+        scheduleWizardPoll(accountId);
+      }
+    }, 3000);
   }
 
   function setDialogBusy(nextBusy) {
-    if (!addDialog) return;
+    if (!addDialog || addDialog.step !== 1) return;
     addDialog.dialogBusy = nextBusy;
     const { input, submit, cancel } = addDialog;
     input.disabled = nextBusy;
     cancel.disabled = nextBusy;
     submit.disabled = nextBusy || !input.value.trim();
-    submit.textContent = nextBusy ? L("创建中…", "Creating…") : L("下一步", "Continue");
-    renderDialogFolders();
+    submit.replaceChildren(nextBusy ? L("创建中…", "Creating…") : L("下一步", "Continue"));
   }
 
   function setDialogError(message) {
@@ -234,14 +324,56 @@
 
   function closeAddDialog() {
     if (!addDialog || addDialog.dialogBusy) return;
-    const { dialog } = addDialog;
+    const { dialog, session, account, pollTimer } = addDialog;
+    if (pollTimer && typeof clearTimeout === "function") clearTimeout(pollTimer);
     addDialog = null;
+    if (session != null) {
+      fetch(`/app/terminal/close?session=${session}`, { method: "POST", headers: { "X-AgentNave-Action": "1" } }).catch(() => {});
+    }
     if (dialog.open) dialog.close();
     dialog.remove();
+    if (account) void readState(account.id, true);
+  }
+
+  async function enterWizardLoginStep(account) {
+    if (!addDialog) return;
+    addDialog.step = 2;
+    addDialog.account = account;
+    addDialog.dialogBusy = false;
+    addDialog.dialog.className = "upd account-add-dialog is-login-step";
+    addDialog.step1Badge.className = "account-wizard-step is-done";
+    addDialog.step2Badge.className = "account-wizard-step is-active";
+
+    const statusBox = el("div", { className: "account-wizard-status" });
+    const frameSlot = el("div", { className: "account-wizard-frame-slot" });
+    const finishBtn = el("button", {
+      type: "button",
+      dataset: { focusKey: `${PROVIDER}/accounts/wizard-finish` },
+      onClick: closeAddDialog,
+    }, L("稍后登录", "Sign in later"));
+
+    addDialog.statusBox = statusBox;
+    addDialog.finishBtn = finishBtn;
+    addDialog.stepBody.replaceChildren(statusBox, frameSlot);
+    addDialog.footer.replaceChildren(finishBtn);
+    setDialogError("");
+    renderWizardStatus();
+
+    try {
+      const data = await post("/app/accounts/login", { id: account.id, cols: 96, rows: 22 });
+      if (!addDialog || addDialog.account?.id !== account.id) return;
+      addDialog.session = data.session;
+      frameSlot.replaceChildren(createLoginFrame(data.session, account.label));
+      scheduleWizardPoll(account.id);
+    } catch (error) {
+      if (!addDialog || addDialog.account?.id !== account.id) return;
+      setDialogError(`${L("无法打开登录终端：", "Could not open the sign-in terminal: ")}${error.message}`);
+    }
+    void readState(account.id, true);
   }
 
   async function createFromDialog() {
-    if (!addDialog || addDialog.dialogBusy || busy) return;
+    if (!addDialog || addDialog.step !== 1 || addDialog.dialogBusy || busy) return;
     const label = addDialog.input.value.trim();
     if (!label) return;
     setDialogError("");
@@ -260,48 +392,21 @@
     S.selectedMember = "cli:claude";
     expandedAccountId = created.account.id;
     removing = null;
-    addDialog.dialogBusy = false;
-    closeAddDialog();
     S.renderCards();
-    void readState(created.account.id, true);
-    await act(() => startLogin(created.account), L("无法打开登录终端：", "Could not open the sign-in terminal: "));
-  }
-
-  async function linkFromDialog(value) {
-    if (!addDialog || addDialog.dialogBusy || busy) return;
-    const dir = value === "pick" ? undefined : value;
-    const label = addDialog.input.value.trim();
-    setDialogError("");
-    setDialogBusy(true);
-    let data;
-    try {
-      data = await post("/app/accounts/link", { ...(dir ? { dir } : {}), ...(label ? { label } : {}) });
-    } catch (error) {
-      setDialogBusy(false);
-      setDialogError(`${L("关联失败：", "Could not link: ")}${error.message}`);
-      return;
-    }
-    if (data.cancelled) {
-      setDialogBusy(false);
-      return;
-    }
-    take(data);
-    sync(data);
-    S.selectedMember = "cli:claude";
-    expandedAccountId = data.account.id;
-    removing = null;
-    addDialog.dialogBusy = false;
-    closeAddDialog();
-    S.renderCards();
-    if (data.shared_sessions) {
-      S.showNotice(L(`已关联。这个目录与已有账号有 ${data.shared_sessions} 个相同的会话 ID，续接它们可能串到另一个账号`, `Linked. This folder shares ${data.shared_sessions} session IDs with another account; continuing them may cross accounts`), true);
-    }
-    void readState(data.account.id, true);
+    await enterWizardLoginStep(created.account);
   }
 
   function openAddDialog() {
     if (busy || S.accountsError) return;
     if (addDialog) return;
+    const step1Badge = el("span", { className: "account-wizard-step is-active" },
+      el("span", { className: "account-wizard-num" }, "1"),
+      L("显示名", "Display name"));
+    const step2Badge = el("span", { className: "account-wizard-step" },
+      el("span", { className: "account-wizard-num" }, "2"),
+      L("登录", "Sign in"));
+    const steps = el("div", { className: "account-wizard-steps", "aria-hidden": "true" }, step1Badge, step2Badge);
+
     const input = el("input", {
       id: "account-add-name",
       type: "text",
@@ -323,13 +428,10 @@
         void createFromDialog();
       },
     }, el("div", { className: "account-add-field" },
-      el("label", { htmlFor: "account-add-name" }, L("账号名称", "Account name")),
+      el("label", { htmlFor: "account-add-name" }, L("显示名", "Display name")),
       input));
+    const stepBody = el("div", { className: "account-wizard-body" }, form);
     const errorEl = el("p", { className: "member-error account-add-error", role: "status", hidden: true });
-    const linkBox = el("div", { className: "account-link-body" });
-    const linkSection = el("details", { className: "account-link-section" },
-      el("summary", {}, L("关联已有目录", "Link existing folder")),
-      linkBox);
     const cancel = el("button", {
       type: "button",
       onClick: closeAddDialog,
@@ -341,24 +443,28 @@
       disabled: true,
       dataset: { focusKey: `${PROVIDER}/accounts/create` },
     }, L("下一步", "Continue"));
+    const footer = el("div", { className: "upd-row" }, cancel, submit);
     const dialog = el("dialog", {
       className: "upd account-add-dialog",
       "aria-labelledby": "account-add-title",
     },
     el("h2", { id: "account-add-title", className: "upd-title" }, L("添加账号", "Add account")),
-    form,
+    steps,
+    stepBody,
     errorEl,
-    linkSection,
-    el("div", { className: "upd-row" }, cancel, submit));
+    footer);
     dialog.addEventListener("cancel", (event) => {
       event.preventDefault();
       closeAddDialog();
     });
-    addDialog = { dialog, input, submit, cancel, linkBox, errorEl, dialogBusy: false };
+    addDialog = {
+      dialog, step: 1, input, submit, cancel, stepBody, footer, errorEl,
+      step1Badge, step2Badge, dialogBusy: false, account: null, session: null,
+      statusBox: null, finishBtn: null, pollTimer: null,
+    };
     document.body.appendChild(dialog);
     dialog.showModal();
     input.focus?.({ preventScroll: true });
-    void readFolders();
   }
 
   // ------------------------------------------------------------------ Claude detail accounts group
@@ -442,9 +548,6 @@
     }
 
     const signedIn = states.get(account.id)?.state?.logged_in;
-    const inputId = `account-label-${account.id}`;
-    const value = renameDraft?.id === account.id ? renameDraft.value : account.label;
-
     const loginBtn = el("button", {
       type: "button",
       className: "member-toggle account-action-login",
@@ -453,6 +556,20 @@
       onClick: () => void act(() => startLogin(account), L("无法打开登录终端：", "Could not open the sign-in terminal: ")),
     }, signedIn ? L("重新登录", "Sign in again") : L("登录", "Sign in"));
 
+    const statusRow = el("div", { className: "account-field-row" },
+      el("span", { className: "account-field-label" }, L("登录状态", "Sign-in status")),
+      el("div", { className: "account-detail-status" },
+        statusLine(account.id, `${PROVIDER}/accounts/${account.id}/email`),
+        loginBtn));
+
+    if (account.isDefault) {
+      return el("div", { className: "account-item is-expanded is-default", dataset: { account: account.id } },
+        toggle,
+        el("div", { className: "account-item-body" }, statusRow));
+    }
+
+    const inputId = `account-label-${account.id}`;
+    const value = renameDraft?.id === account.id ? renameDraft.value : account.label;
     const nameInput = el("input", {
       id: inputId,
       type: "text",
@@ -493,9 +610,7 @@
       el("div", { className: "account-field-row" },
         el("label", { className: "account-field-label", htmlFor: inputId }, L("显示名", "Display name")),
         el("div", { className: "account-field-control" }, nameInput)),
-      el("div", { className: "account-field-row" },
-        el("span", { className: "account-field-label" }, L("登录状态", "Sign-in status")),
-        el("div", { className: "account-detail-status" }, statusLine(account.id), loginBtn)),
+      statusRow,
       removing?.id === account.id ? confirmRemoval(account) : null,
       el("div", { className: "account-item-actions" }, removeBtn));
 
@@ -504,23 +619,27 @@
 
   function renderClaudeAccountsSection() {
     const accounts = S.accounts || [];
-    if (expandedAccountId && !accounts.some((account) => account.id === expandedAccountId)) {
+    if (expandedAccountId && expandedAccountId !== DEFAULT_ID && !accounts.some((account) => account.id === expandedAccountId)) {
       expandedAccountId = null;
     }
     if (removing && !accounts.some((account) => account.id === removing.id)) {
       removing = null;
     }
-    const content = [
-      accounts.length ? el("div", { className: "accounts-list" }, ...accounts.map(renderAccountItem)) : null,
-      el("div", { className: "accounts-group-actions" }, renderAddAccountButton()),
+    const items = [
+      { id: DEFAULT_ID, label: L("默认", "Default"), isDefault: true },
+      ...accounts,
     ];
     return el("div", { className: "member-row claude-accounts-row" },
       el("span", { className: "member-scene" }, L("账号", "Accounts")),
-      el("div", { className: "accounts-group" }, ...content));
+      el("div", { className: "accounts-group" },
+        el("div", { className: "accounts-list" }, ...items.map(renderAccountItem)),
+        el("div", { className: "accounts-group-actions" }, renderAddAccountButton())));
   }
 
   Object.assign(S, {
     renderClaudeAccountsSection,
+    renderClaudeTopStatus,
+    claudeDefaultListStatus,
     accountHasDirty,
     accountHasError,
     clearAccountPending,

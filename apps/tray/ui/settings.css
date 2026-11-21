@@ -296,6 +296,13 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); min-height: 56px; }
 .detail-head > .member-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; margin-left: 0; }
 .detail-head > .cli-update-slot { justify-content: flex-end; }
+.detail-account-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 9px 20px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 1.5%, transparent); font-size: 12.5px; color: var(--soft); }
+.detail-account-text { font-weight: 550; color: var(--ink); }
+.detail-account-plan { color: var(--muted); }
+.account-email-toggle { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 5px; border: 0; border-radius: 5px; background: color-mix(in srgb, var(--ink) 5%, transparent); font: 12px/1.4 var(--mono); color: var(--soft); cursor: pointer; }
+.account-email-toggle:hover:enabled { background: var(--hover); color: var(--ink); }
+.account-email-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.account-email-toggle.is-revealed { color: var(--ink); }
 .detail-rows { display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; flex: 1; min-width: 0; }
 .detail-rows > .cli-installations { padding-left: 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .detail-foot { margin-top: auto; border-top: 1px solid var(--line); }
@@ -363,19 +370,22 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .accounts-add-btn { min-height: var(--control-height); padding: 0 12px; font-size: 12px; }
 .account-delete { flex: 1 1 100%; display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
 dialog.account-add-dialog { width: min(440px, 92vw); }
+dialog.account-add-dialog.is-login-step { width: min(780px, 94vw); height: min(560px, 86vh); max-height: none; }
+.account-wizard-steps { display: flex; align-items: center; gap: 16px; margin-top: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.account-wizard-step { display: inline-flex; align-items: center; gap: 6px; }
+.account-wizard-num { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); font-size: 11px; font-weight: 600; color: var(--muted); }
+.account-wizard-step.is-active { color: var(--ink); font-weight: 580; }
+.account-wizard-step.is-active .account-wizard-num { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.account-wizard-step.is-done { color: var(--run); }
+.account-wizard-step.is-done .account-wizard-num { border-color: var(--run); color: var(--run); }
+.account-wizard-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.account-wizard-status { display: flex; align-items: center; min-height: 28px; margin: 12px 0 8px; }
+.account-wizard-frame-slot { display: flex; flex: 1; min-height: 0; }
 .account-add-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
 .account-add-field { display: flex; flex-direction: column; gap: 6px; }
 .account-add-field > label { font-size: 12.5px; font-weight: 550; color: var(--soft); }
 .account-add-field > input { width: 100%; }
 .account-add-error { padding-left: 0; margin-top: 10px; }
-.account-link-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-.account-link-section > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); user-select: none; -webkit-user-select: none; list-style: none; display: inline-flex; align-items: center; gap: 6px; }
-.account-link-section > summary::-webkit-details-marker { display: none; }
-.account-link-section > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
-.account-link-section[open] > summary::before { transform: rotate(45deg); }
-.account-link-section > summary:hover { color: var(--ink); }
-.account-link-body { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.account-link-body > button { font-size: 12.5px; padding: 5px 11px; }
 dialog.account-login { width: min(780px, 94vw); height: min(540px, 86vh); max-height: none; }
 dialog.account-login > h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
 .account-login-frame { flex: 1; min-height: 0; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
@@ -389,6 +399,7 @@ dialog.account-login > h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650;
 @media (max-width: 600px) {
   .member-list-item { padding: 9px 12px; }
   .detail-head { padding: 12px 14px; flex-wrap: wrap; }
+  .detail-account-bar { padding: 8px 14px; }
   .detail-rows { padding: 14px; gap: 10px; }
   .detail-foot-actions { padding: 10px 14px; }
   .member-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }

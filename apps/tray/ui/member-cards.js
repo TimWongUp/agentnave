@@ -256,6 +256,10 @@
     if (info.error || updateErr) return { text: L("读取失败", "Error"), tone: "bad" };
     if (!enabled) return { text: hasUpdate ? L("已停用 · 有更新", "Disabled · Update available") : L("已停用", "Disabled"), tone: hasUpdate ? "warn" : "muted" };
     if (hasUpdate) return { text: L("有更新", "Update available"), tone: "warn" };
+    if (provider === "claude") {
+      const auth = S.claudeDefaultListStatus?.(info);
+      if (auth) return auth;
+    }
     return { text: L("已启用", "Enabled"), tone: "run" };
   }
 
@@ -389,7 +393,7 @@
     return el("div", {
       className: `detail-panel${enabled ? "" : " off"}`,
       dataset: { provider },
-    }, head, rows, foot);
+    }, head, provider === "claude" ? S.renderClaudeTopStatus?.(info) : null, rows, foot);
   }
 
   // Left compact CLI list + right detail (with Claude named accounts inside Claude Code's detail);

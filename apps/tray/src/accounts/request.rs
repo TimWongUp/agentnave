@@ -1,7 +1,7 @@
-//! The accounts page's routes: list, sign-in state, scan, create, link, rename, sign in and
-//! remove. Every write answers with the accounts as they are afterwards.
+//! The accounts page's routes: list, sign-in state, create, rename, sign in and remove. Every
+//! write answers with the accounts as they are afterwards.
 
-use super::{Account, auth, remove, scan};
+use super::{Account, auth, remove};
 use crate::hosts::Hosts;
 use crate::response::{self, Response};
 use serde_json::{Value, json};
@@ -30,12 +30,8 @@ pub(crate) fn request(
     match (method, route) {
         ("GET", "/app/accounts") => Response::json(&super::state(ctx.root)),
         ("GET", "/app/accounts/status") => status(ctx, query),
-        ("GET", "/app/accounts/scan") => scan_folders(ctx),
         (_, "/app/accounts/create") => {
             response::post(method, action, body, |payload| create(ctx, &payload))
-        }
-        (_, "/app/accounts/link") => {
-            response::post(method, action, body, |payload| link(ctx, app, &payload))
         }
         (_, "/app/accounts/rename") => {
             response::post(method, action, body, |payload| rename(ctx, &payload))
@@ -89,15 +85,6 @@ fn status(ctx: &Context, query: &str) -> Response {
     Response::json(&state)
 }
 
-fn scan_folders(ctx: &Context) -> Response {
-    match super::read(ctx.root) {
-        Ok(accounts) => Response::json(&json!({
-            "folders": scan::candidates(&ctx.home, &default_dir(ctx), &accounts)
-        })),
-        Err(error) => Response::error(409, &error),
-    }
-}
-
 /// The sync's outcome as the page tells it; the account is registered either way.
 fn sync(ctx: &Context, id: &str) -> Value {
     match crate::hosts::sync_account(ctx.root, ctx.hosts, id) {
@@ -118,51 +105,6 @@ fn create(ctx: &Context, payload: &Value) -> Response {
     }))
 }
 
-/// The folder's own name as a first label, which the user may change.
-fn folder_label(dir: &Path) -> String {
-    let name = dir.file_name().unwrap_or_default().to_string_lossy();
-    let name = name.trim_start_matches('.');
-    name.chars().take(super::LABEL_MAX).collect()
-}
-
-fn link(ctx: &Context, app: Option<&AppHandle>, payload: &Value) -> Response {
-    let dir = match payload["dir"].as_str() {
-        Some(dir) => PathBuf::from(dir),
-        None => {
-            let Some(app) = app else {
-                return Response::error(500, "无法打开文件夹选择器");
-            };
-            match crate::video_packs::picker::choose(app, false) {
-                Ok(Some(dir)) => dir,
-                Ok(None) => return Response::json(&json!({"cancelled": true})),
-                Err(error) => return Response::error(500, &error),
-            }
-        }
-    };
-    let accounts = match super::read(ctx.root) {
-        Ok(accounts) => accounts,
-        Err(error) => return Response::error(409, &error),
-    };
-    let default_dir = default_dir(ctx);
-    let dir = match scan::check(&dir, &default_dir, &accounts) {
-        Ok(dir) => super::real(&dir),
-        Err(error) => return Response::error(400, &error),
-    };
-    let shared = scan::shared_sessions(&dir, &default_dir, &accounts);
-    let label = payload["label"]
-        .as_str()
-        .map_or_else(|| folder_label(&dir), str::to_owned);
-    let account = match super::link(ctx.root, &ctx.home, &dir, &label) {
-        Ok(account) => account,
-        Err(error) => return Response::error(400, &error),
-    };
-    let sync = sync(ctx, &account.id);
-    Response::json(&json!({
-        "account": account.value(), "sync": sync, "shared_sessions": shared,
-        "state": super::state(ctx.root)
-    }))
-}
-
 fn rename(ctx: &Context, payload: &Value) -> Response {
     let id = payload["id"].as_str().unwrap_or_default();
     let label = payload["label"].as_str().unwrap_or_default();
@@ -176,15 +118,20 @@ fn login(ctx: &Context, app: Option<&AppHandle>, payload: &Value) -> Response {
     let Some(app) = app else {
         return Response::error(500, "无法打开终端");
     };
-    let account = match registered(ctx, payload["id"].as_str().unwrap_or_default()) {
-        Ok(account) => account,
-        Err(reply) => return reply,
+    let id = payload["id"].as_str().unwrap_or_default();
+    let (account_id, dir) = if id == "default" {
+        ("default".to_owned(), None)
+    } else {
+        match registered(ctx, id) {
+            Ok(account) => (account.id, Some(account.dir)),
+            Err(reply) => return reply,
+        }
     };
     let Some(program) = auth::program() else {
         return Response::error(400, "这个 CLI 没有安装");
     };
     let size = (payload["cols"].as_u64(), payload["rows"].as_u64());
-    match crate::terminal::open_login(app, &account.id, &account.dir, &program, &ctx.home, size) {
+    match crate::terminal::open_login(app, &account_id, dir.as_deref(), &program, &ctx.home, size) {
         Ok(session) => Response::json(&json!({"session": session})),
         Err(error) => Response::error(500, &error),
     }

@@ -251,21 +251,26 @@ impl Terminals {
     fn login(
         &self,
         account: &str,
-        dir: &Path,
+        dir: Option<&Path>,
         program: &Path,
         home: &Path,
         (cols, rows): (u16, u16),
     ) -> Result<u64, String> {
-        if !home.is_dir() || !dir.is_dir() {
+        if !home.is_dir() || dir.is_some_and(|dir| !dir.is_dir()) {
             return Err("账号目录不存在".into());
         }
-        let active = Active {
-            id: account.to_owned(),
-            label: String::new(),
-            dir: dir.to_owned(),
-        };
         let args = vec!["auth".to_owned(), "login".to_owned()];
-        let (program, args, env) = account::launch_as(&active, program.to_owned(), args);
+        let (program, args, env) = match dir {
+            Some(dir) => {
+                let active = Active {
+                    id: account.to_owned(),
+                    label: String::new(),
+                    dir: dir.to_owned(),
+                };
+                account::launch_as(&active, program.to_owned(), args)
+            }
+            None => (program.to_owned(), args, Vec::new()),
+        };
         let session = Session::spawn(&Launch {
             program,
             args,
@@ -1052,12 +1057,13 @@ pub(crate) fn account_in_use(app: &AppHandle, id: &str) -> bool {
         .any(|login| login.session.exit().is_none() && login.account == id)
 }
 
-/// Starts `claude auth login` for the named account in a terminal of its own and returns the
-/// terminal's id; the page shows it in a dialog and closes it when the sign-in is done.
+/// Starts `claude auth login` for one account (or the default environment when `dir` is None) in
+/// a terminal of its own and returns the terminal's id; the page shows it in a dialog and closes
+/// it when the sign-in is done.
 pub(crate) fn open_login(
     app: &AppHandle,
     account: &str,
-    dir: &Path,
+    dir: Option<&Path>,
     program: &Path,
     home: &Path,
     size: (Option<u64>, Option<u64>),

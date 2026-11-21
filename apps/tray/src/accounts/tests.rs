@@ -97,69 +97,6 @@ fn renaming_changes_only_the_label() {
 }
 
 #[test]
-fn a_linked_folder_may_not_be_the_default_or_a_registered_one() {
-    let temp = tempfile::tempdir().unwrap();
-    let base = temp.path().canonicalize().unwrap();
-    let (default, work, free) = (
-        base.join(".claude"),
-        base.join(".claude-work"),
-        base.join(".claude-free"),
-    );
-    for dir in [&default, &work, &free] {
-        fs::create_dir_all(dir.join("projects")).unwrap();
-    }
-    let registered = [account("a1", &work, false)];
-    assert!(scan::check(&default, &default, &registered).is_err());
-    assert!(scan::check(&work, &default, &registered).is_err());
-    // A folder holding or inside another would share its chats.
-    assert!(scan::check(&default.join("projects"), &default, &registered).is_err());
-    assert!(scan::check(&base, &default, &registered).is_err());
-    assert!(scan::check(&base.join("missing"), &default, &registered).is_err());
-    assert_eq!(scan::check(&free, &default, &registered).unwrap(), free);
-}
-
-#[test]
-fn scanning_offers_unregistered_claude_folders_only() {
-    let temp = tempfile::tempdir().unwrap();
-    let home = temp.path().canonicalize().unwrap();
-    for name in [
-        ".claude",
-        ".claude-work",
-        ".claude_free",
-        "claude-empty",
-        ".other",
-    ] {
-        fs::create_dir_all(home.join(name)).unwrap();
-    }
-    for name in [".claude", ".claude-work", ".claude_free", ".other"] {
-        fs::write(home.join(name).join("settings.json"), "{}").unwrap();
-    }
-    let registered = [account("a1", &home.join(".claude-work"), false)];
-    let found = scan::candidates(&home, &home.join(".claude"), &registered);
-    let names: Vec<_> = found.iter().map(|f| f["name"].as_str().unwrap()).collect();
-    assert_eq!(names, [".claude_free"]);
-}
-
-#[test]
-fn linking_reports_chats_both_folders_hold() {
-    let temp = tempfile::tempdir().unwrap();
-    let base = temp.path();
-    let (default, other) = (base.join("default"), base.join("other"));
-    let id = "11111111-1111-4111-8111-111111111111";
-    for dir in [&default, &other] {
-        fs::create_dir_all(dir.join("projects/p")).unwrap();
-        fs::write(dir.join("projects/p").join(format!("{id}.jsonl")), "").unwrap();
-    }
-    fs::write(
-        other.join("projects/p/22222222-2222-4222-8222-222222222222.jsonl"),
-        "",
-    )
-    .unwrap();
-    assert_eq!(scan::shared_sessions(&other, &default, &[]), 1);
-    assert_eq!(scan::shared_sessions(&base.join("none"), &default, &[]), 0);
-}
-
-#[test]
 fn only_the_folder_the_app_made_for_a_managed_account_is_deleted() {
     let (root, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let made = create(root.path(), home.path(), "工作").unwrap();
@@ -260,23 +197,66 @@ fn deleting_the_folder_waits_for_running_work() {
 }
 
 #[test]
-fn linking_through_the_page_registers_the_folder_without_touching_it() {
+fn existing_external_accounts_stay_readable_renamable_and_unbind_without_deleting_their_folder() {
     let (root, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = home.path().join(".claude_personal");
     fs::create_dir_all(folder.join("projects")).unwrap();
-    let body = json!({"dir": folder.display().to_string()});
-    let link = |body: Value| post(root.path(), home.path(), "/app/accounts/link", body);
-    let (status, linked) = link(body.clone());
-    assert_eq!(status, 200, "{linked}");
-    assert_eq!(linked["account"]["managed"], false);
-    assert_eq!(linked["account"]["label"], "claude_personal");
-    // The same folder is refused the second time.
-    assert_eq!(link(body).0, 400);
-    // Unbinding a linked folder never deletes it, whatever the page asks.
-    let remove = json!({"id": "a1", "delete_dir": true});
-    let (status, _) = post(root.path(), home.path(), "/app/accounts/remove", remove);
+    let doc = json!({
+        "version": 1,
+        "accounts": [{
+            "id": "a1",
+            "provider": "claude",
+            "label": "个人",
+            "dir": folder.display().to_string(),
+            "managed": false
+        }]
+    });
+    fs::write(root.path().join(FILE), doc.to_string()).unwrap();
+
+    let (_, renamed) = post(
+        root.path(),
+        home.path(),
+        "/app/accounts/rename",
+        json!({"id": "a1", "label": "外部个人"}),
+    );
+    assert_eq!(renamed["state"]["accounts"][0]["label"], "外部个人");
+    assert_eq!(renamed["state"]["accounts"][0]["managed"], false);
+
+    // Unbinding an existing external folder never deletes it, whatever the page asks.
+    let (status, _) = post(
+        root.path(),
+        home.path(),
+        "/app/accounts/remove",
+        json!({"id": "a1", "delete_dir": true}),
+    );
     assert_eq!(status, 409);
+    let (status, removed) = post(
+        root.path(),
+        home.path(),
+        "/app/accounts/remove",
+        json!({"id": "a1", "delete_dir": false}),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(removed["state"]["accounts"], json!([]));
     assert!(folder.is_dir());
+
+    // Retired link and scan routes return 404.
+    assert_eq!(
+        post(root.path(), home.path(), "/app/accounts/link", json!({})).0,
+        404
+    );
+    let hosts = Mutex::new(None);
+    let idle = || Ok(());
+    let ctx = Context {
+        root: root.path(),
+        home: home.path().to_owned(),
+        hosts: &hosts,
+        idle: &idle,
+    };
+    assert_eq!(
+        request(&ctx, None, "GET", "/app/accounts/scan", None, &[]).status,
+        404
+    );
 }
 
 #[cfg(unix)]

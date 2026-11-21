@@ -1715,10 +1715,24 @@ function accountCardsEditor(fetch) {
   return app;
 }
 
-test("employees render as a compact left CLI list, with Claude named accounts expanding in place inside Claude Code detail", async () => {
-  const app = accountCardsEditor(async (url) => {
+test("employees render as a compact left CLI list, with Claude default status at top and accounts expanding in place inside Claude Code detail", async () => {
+  let defaultSignedIn = true;
+  const loginCalls = [];
+  const app = accountCardsEditor(async (url, options = {}) => {
+    if (url === "/app/accounts/login") {
+      loginCalls.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ session: 55 }) };
+    }
+    if (url.startsWith("/app/accounts/status?id=default")) {
+      return {
+        ok: true,
+        json: async () => defaultSignedIn
+          ? { logged_in: true, method: "claude.ai", email: "tim@example.com", plan: "max", error: null }
+          : { logged_in: false, method: "none", email: null, plan: null, error: null },
+      };
+    }
     if (url.startsWith("/app/accounts/status?id=a1")) {
-      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "w@x.com", plan: "max", error: null }) };
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "work@example.com", plan: "pro", error: null }) };
     }
     if (url.startsWith("/app/accounts/status?id=a2")) {
       return { ok: true, json: async () => ({ logged_in: false, method: "none", email: null, plan: null, error: null }) };
@@ -1729,8 +1743,9 @@ test("employees render as a compact left CLI list, with Claude named accounts ex
     AN.settings.accounts = [];
     renderCards();
   `);
+  await new Promise(setImmediate);
 
-  // Left list lists CLIs only, with no Add account button in the list pane.
+  // Left list lists CLIs only, with no Add account button in the list pane; Claude shows sign-in status without email.
   const listItems = app.run('collectByClass($("cli-cards").children, "member-list-item")');
   assert.deepEqual(Array.from(listItems, (c) => c.dataset.memberKey), ["cli:codex", "cli:claude"]);
   for (const item of listItems) {
@@ -1739,6 +1754,9 @@ test("employees render as a compact left CLI list, with Claude named accounts ex
     assert.equal(buttons, 0, "left list rows have no nested buttons");
   }
   assert.equal(app.run('findKey(collectByClass($("cli-cards").children, "members-list-pane"), "claude/accounts/add")'), null);
+  const claudeListJson = JSON.stringify(listItems[1]);
+  assert.match(claudeListJson, /已登录 · max/);
+  assert.doesNotMatch(claudeListJson, /tim@example\.com|ti\*\*\*/);
 
   // Default selection is the first row (codex); Remove sits in detail footer, not in header.
   assert.equal(listItems[0].attrs["aria-pressed"], "true");
@@ -1748,13 +1766,27 @@ test("employees render as a compact left CLI list, with Claude named accounts ex
   assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "detail-foot"), "codex/membership")'));
   assert.equal(app.run('collectByClass(collectByClass($("cli-cards").children, "detail-panel")[0], "claude-accounts-row").length'), 0);
 
-  // Selecting Claude Code with no accounts shows only the Add account button in the Accounts row.
+  // Selecting Claude Code shows default account status bar at top and Default row in Accounts list even with 0 named accounts.
   app.run('findKey($("cli-cards").children, "select/cli:claude").listeners.click()');
+  const topBar = () => app.run('collectByClass($("cli-cards").children, "detail-account-bar")[0]');
+  assert.ok(topBar());
+  assert.match(JSON.stringify(topBar()), /已登录/);
+  assert.match(JSON.stringify(topBar()), /ti\*\*\*@\*\*\*\.com/);
+  assert.match(JSON.stringify(topBar()), /max/);
+  assert.doesNotMatch(JSON.stringify(topBar()), /tim@example\.com/);
+
+  // Clicking the masked email toggles reveal/hide.
+  app.run('findKey($("cli-cards").children, "claude/default-email").listeners.click()');
+  assert.match(JSON.stringify(topBar()), /tim@example\.com/);
+  app.run('findKey($("cli-cards").children, "claude/default-email").listeners.click()');
+  assert.match(JSON.stringify(topBar()), /ti\*\*\*@\*\*\*\.com/);
+
   assert.equal(app.run('collectByClass($("cli-cards").children, "claude-accounts-row").length'), 1);
-  assert.equal(app.run('collectByClass($("cli-cards").children, "accounts-list").length'), 0);
+  assert.equal(app.run('collectByClass($("cli-cards").children, "account-item").length'), 1);
+  assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/default/toggle")'));
   assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "claude-accounts-row")[0], "claude/accounts/add")'));
 
-  // With named accounts, Claude Code detail lists them compactly (all collapsed initially, no row buttons).
+  // With named accounts, Default sits first, followed by named accounts (all collapsed initially).
   app.run(`
     AN.settings.accounts = [
       { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true },
@@ -1767,18 +1799,29 @@ test("employees render as a compact left CLI list, with Claude named accounts ex
   const leftAfter = app.run('collectByClass($("cli-cards").children, "member-list-item")');
   assert.deepEqual(Array.from(leftAfter, (c) => c.dataset.memberKey), ["cli:codex", "cli:claude"]);
 
-  const claudeDetail = app.run('collectByClass($("cli-cards").children, "detail-panel")[0]');
-  assert.ok(claudeDetail);
   const detailRows = app.run('collectByClass($("cli-cards").children, "detail-rows")[0]');
   assert.equal(detailRows.children.at(-2).className, "member-row claude-accounts-row", "Accounts group sits after settings items and before footer");
 
   const accountItems = app.run('collectByClass($("cli-cards").children, "account-item")');
-  assert.equal(accountItems.length, 2);
+  assert.equal(accountItems.length, 3);
   assert.equal(app.run('collectByClass($("cli-cards").children, "account-item-body").length'), 0);
-  assert.match(JSON.stringify(accountItems[0]), /已登录 · max/);
-  assert.match(JSON.stringify(accountItems[1]), /未登录/);
+  assert.match(JSON.stringify(accountItems[0]), /默认/);
+  assert.match(JSON.stringify(accountItems[0]), /ti\*\*\*@\*\*\*\.com · max/);
+  assert.match(JSON.stringify(accountItems[1]), /wo\*\*\*@\*\*\*\.com · pro/);
+  assert.match(JSON.stringify(accountItems[2]), /未登录/);
 
-  // Clicking account a1 expands it in place; clicking a2 collapses a1 and expands a2.
+  // Expanding Default shows only Sign-in status + Sign in again (no display name input, no remove button).
+  app.run('findKey($("cli-cards").children, "claude/accounts/default/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), "default");
+  assert.equal(app.run('findKey($("cli-cards").children, "claude/accounts/default/label-input")'), null);
+  assert.equal(app.run('findKey($("cli-cards").children, "claude/accounts/default/remove")'), null);
+  const defaultLoginBtn = app.run('findKey($("cli-cards").children, "claude/accounts/default/login")');
+  assert.ok(defaultLoginBtn);
+  defaultLoginBtn.listeners.click();
+  await new Promise(setImmediate);
+  assert.deepEqual(loginCalls[0], { id: "default", cols: 96, rows: 22 });
+
+  // Clicking account a1 collapses default and expands a1; clicking a2 collapses a1 and expands a2.
   app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click()');
   assert.equal(app.run('expandedAccountId'), "a1");
   const a1Bodies = app.run('collectByClass($("cli-cards").children, "account-item-body")');
@@ -1787,7 +1830,8 @@ test("employees render as a compact left CLI list, with Claude named accounts ex
   assert.match(a1Json, /显示名/);
   assert.match(a1Json, /登录状态/);
   assert.match(a1Json, /已登录/);
-  assert.match(a1Json, /max/);
+  assert.match(a1Json, /wo\*\*\*@\*\*\*\.com/);
+  assert.match(a1Json, /pro/);
   assert.match(a1Json, /重新登录/);
   assert.match(a1Json, /移除/);
   assert.doesNotMatch(a1Json, /托管|由谁管理/);
@@ -1804,10 +1848,23 @@ test("employees render as a compact left CLI list, with Claude named accounts ex
   app.run('findKey($("cli-cards").children, "claude/accounts/a2/toggle").listeners.click()');
   assert.equal(app.run('expandedAccountId'), null);
   assert.equal(app.run('collectByClass($("cli-cards").children, "account-item-body").length'), 0);
+
+  // When default is signed out, both top status and left list show 未登录.
+  defaultSignedIn = false;
+  app.run('findKey($("cli-cards").children, "claude/accounts/default/toggle").listeners.click()');
+  // Re-reading via mock message for session 55 triggers readState("default", true).
+  app.listeners.message({ data: { type: "agentnave:terminal", action: "exited", session: 55, code: 0 } });
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.match(JSON.stringify(topBar()), /未登录/);
+  assert.match(JSON.stringify(app.run('findKey($("cli-cards").children, "select/cli:claude")')), /未登录/);
 });
 
 test("left list reflects cooldown, update available, unsaved changes, and account/CLI validation errors on CLI rows", async () => {
   const app = accountCardsEditor(async (url) => {
+    if (url.startsWith("/app/accounts/status?id=default")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "tim@example.com", plan: "max", error: null }) };
+    }
     if (url.startsWith("/app/accounts/status?id=a1")) {
       return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "w@x.com", plan: "Pro", error: null }) };
     }
@@ -1885,14 +1942,12 @@ test("account detail display name edits directly and commits rename on Enter", a
   assert.match(JSON.stringify(app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle")')), /公司/);
 });
 
-test("add account dialog creates a managed account, opens login, and expands the new account inside Claude Code detail", async () => {
+test("add account wizard creates a managed account in step 1 and runs in-dialog login in step 2", async () => {
   const calls = [];
+  let signedIn = false;
   const app = accountCardsEditor(async (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : null;
     calls.push([url, body]);
-    if (url === "/app/accounts/scan") {
-      return { ok: true, json: async () => ({ folders: [{ dir: "/home/.claude_free", name: ".claude_free" }] }) };
-    }
     if (url === "/app/accounts/create") {
       const account = { id: "a1", provider: "claude", label: body.label, dir: "/m/a1", managed: true };
       return { ok: true, json: async () => ({ account, sync: { ok: true }, state: { accounts: [account], error: null } }) };
@@ -1900,9 +1955,16 @@ test("add account dialog creates a managed account, opens login, and expands the
     if (url === "/app/accounts/login") {
       return { ok: true, json: async () => ({ session: 77 }) };
     }
-    if (url === "/app/accounts/link") {
-      const account = { id: "a2", provider: "claude", label: "claude_free", dir: body.dir || "/picked", managed: false };
-      return { ok: true, json: async () => ({ account, sync: { ok: true }, shared_sessions: 2, state: { accounts: [account], error: null } }) };
+    if (url.startsWith("/app/accounts/status?id=a1")) {
+      return {
+        ok: true,
+        json: async () => signedIn
+          ? { logged_in: true, method: "claude.ai", email: "work@example.com", plan: "max", error: null }
+          : { logged_in: false, method: "none", email: null, plan: null, error: null },
+      };
+    }
+    if (url.startsWith("/app/accounts/status?id=default")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "tim@example.com", plan: "max", error: null }) };
     }
     return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
   });
@@ -1916,9 +1978,7 @@ test("add account dialog creates a managed account, opens login, and expands the
   const addDlg = () => app.run("__dialogs[0]");
   assert.equal(addDlg().open, true);
   assert.match(JSON.stringify(addDlg()), /添加账号/);
-  assert.match(JSON.stringify(addDlg()), /关联已有目录/);
-  assert.match(JSON.stringify(addDlg()), /\.claude_free/);
-  assert.match(JSON.stringify(addDlg()), /选择文件夹/);
+  assert.doesNotMatch(JSON.stringify(addDlg()), /关联已有目录|选择文件夹|扫描|\.agentnave-accounts|\/m\//);
 
   const nameInput = app.run('findKey(__dialogs[0].children, "claude/accounts/new")');
   const submitBtn = app.run('findKey(__dialogs[0].children, "claude/accounts/create")');
@@ -1927,37 +1987,40 @@ test("add account dialog creates a managed account, opens login, and expands the
   nameInput.listeners.input({ target: nameInput });
   assert.equal(submitBtn.disabled, false);
 
-  app.run('findKey(__dialogs[0].children, "claude/accounts/new") && __dialogs[0].children[1].listeners.submit({ preventDefault() {} })');
+  app.run('findKey(__dialogs[0].children, "claude/accounts/new") && findKey(__dialogs[0].children, "claude/accounts/new").value && __dialogs[0].children[2].children[0].listeners.submit({ preventDefault() {} })');
   await new Promise(setImmediate);
   await new Promise(setImmediate);
   assert.deepEqual(calls.filter(([u]) => !u.startsWith("/app/accounts/status")).map(([u, b]) => [u, b]), [
-    ["/app/accounts/scan", null],
     ["/app/accounts/create", { label: "工作" }],
     ["/app/accounts/login", { id: "a1", cols: 96, rows: 22 }],
   ]);
-  assert.equal(addDlg().open, false);
+
+  // Same dialog transitions to Step 2 with embedded login terminal and "稍后登录".
+  assert.equal(app.run("__dialogs.length"), 1);
+  assert.equal(addDlg().open, true);
+  assert.match(addDlg().className, /is-login-step/);
+  assert.match(JSON.stringify(addDlg()), /\/terminal\/\?session=77/);
   assert.equal(app.run("selectedMember"), "cli:claude");
   assert.equal(app.run("expandedAccountId"), "a1");
   assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")'));
-  const loginDlg = app.run("__dialogs[1]");
-  assert.equal(loginDlg.open, true);
-  assert.match(loginDlg.className, /account-login/);
-  assert.match(JSON.stringify(loginDlg), /\/terminal\/\?session=77/);
+  const finishBtn = () => app.run('findKey(__dialogs[0].children, "claude/accounts/wizard-finish")');
+  assert.equal(finishBtn().children[0], "稍后登录");
+  assert.equal(finishBtn().className, "");
 
-  // Close login dialog and test linking an existing folder via secondary option.
-  app.run("__dialogs[1].children[2].children[0].listeners.click()");
-  app.run("__dialogs.length = 0");
-  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
-  await new Promise(setImmediate);
-  app.run('findKey(__dialogs[0].children, "claude/accounts/link-folder").listeners.click()');
+  // When sign-in finishes, button turns into primary "完成" and masked email is shown.
+  signedIn = true;
+  app.listeners.message({ data: { type: "agentnave:terminal", action: "exited", session: 77, code: 0 } });
   await new Promise(setImmediate);
   await new Promise(setImmediate);
-  const linkCall = calls.find(([u]) => u === "/app/accounts/link");
-  assert.deepEqual(linkCall, ["/app/accounts/link", { dir: "/home/.claude_free" }]);
-  assert.match(app.run('$("notice").textContent'), /2 个相同的会话 ID/);
-  assert.equal(app.run("selectedMember"), "cli:claude");
-  assert.equal(app.run("expandedAccountId"), "a2");
-  assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/a2/label-input")'));
+  assert.equal(finishBtn().children[0], "完成");
+  assert.equal(finishBtn().className, "primary");
+  assert.match(JSON.stringify(addDlg()), /wo\*\*\*@\*\*\*\.com/);
+
+  // Closing the wizard closes the login terminal session.
+  finishBtn().listeners.click();
+  await new Promise(setImmediate);
+  assert.equal(addDlg().open, false);
+  assert.ok(calls.some(([u]) => u === "/app/terminal/close?session=77"));
 });
 
 test("account removal confirmation shows folder deletion only for managed accounts", async () => {
