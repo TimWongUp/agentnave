@@ -212,6 +212,7 @@ fn antigravity_apps_follow_records_and_cached_cli_lookup() {
         ("desktop".to_owned(), ANTIGRAVITY_DESKTOP),
         ("found".to_owned(), ANTIGRAVITY_CLI),
         ("found-desktop".to_owned(), ANTIGRAVITY_DESKTOP),
+        ("other".to_owned(), ANTIGRAVITY_CLI),
     ];
     assert_eq!(apps.of(&connection, homes), expected);
     fs::remove_dir_all(root.join("conversations")).unwrap();

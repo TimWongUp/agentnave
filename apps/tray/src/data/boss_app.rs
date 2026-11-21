@@ -142,22 +142,11 @@ impl BossApps {
             .iter()
             .filter_map(|boss| {
                 if boss.host == "antigravity" {
+                    // The service records an agy chat's file from the desktop app or the CLI only.
                     let app = match boss.file.as_deref() {
                         Some(file) if antigravity::is_desktop_record(file) => ANTIGRAVITY_DESKTOP,
-                        Some(file)
-                            if file
-                                .components()
-                                .collect::<Vec<_>>()
-                                .windows(2)
-                                .any(|pair| {
-                                    pair[0].as_os_str() == ".gemini"
-                                        && pair[1].as_os_str() == "antigravity-cli"
-                                }) =>
-                        {
-                            ANTIGRAVITY_CLI
-                        }
+                        Some(_) => ANTIGRAVITY_CLI,
                         None => *found.antigravity.get(&boss.key)?,
-                        _ => return None,
                     };
                     return Some((boss.workspace.clone(), app));
                 }
