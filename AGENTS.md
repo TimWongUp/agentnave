@@ -49,6 +49,8 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 ## Version releases
 
 - 用户明确要求更新本项目版本时，按完整发布任务执行：同一任务完成版本 PR、审查、合并，并等待对应 tag 与 GitHub Release 发布成功；用户明确限制交付范围时遵从该限制。
+- 本机正式版（`/Applications/AgentNave.app` 及其内嵌服务）只装已评审并合并到 `origin/main` 的代码；没合并的改动只用预览版给用户看。
+- 发版可以晚于本机安装，但发布的内容必须和本机正式版在用的一致：合并后先把 main 装到本机试用，发版时核对版本 PR 合并后的 main 和本机安装的代码是否一致（版本元数据除外），不一致就先重编重装。
 
 - 版本 PR 同步更新版本（`pyproject.toml`、`src/agentnave/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档、`README.md` 与 `README.en.md` 中的配套版本和 `docs/releases/v<version>.md`；安装文档只保留当前版本的升级说明，替换上一版的说明，历史升级说明留在 `docs/releases/`。
 - 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release，并附上签名的 macOS 托盘安装包、更新包与 `latest.json`（需仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`）；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
