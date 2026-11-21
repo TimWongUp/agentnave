@@ -1,6 +1,7 @@
 # ADR-0093：「决策模型」档自定义任务工位支持同档可用候选随机选
 
-- 状态：已接受
+- 状态：部分修订
+- 随机避重的在用候选按 `(provider, account, model)` 追踪，由 [ADR-0108](0108-multi-account-isolation.md) 修订。
 - 回执 `seat_fallback` 增加自描述 `note` 字段，由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 补充。
 - 日期：2026-11-14
 - 修订 [ADR-0089](0089-seat-fallback-order.md) 在「决策模型」档自定义任务工位上的「按顺位取第一个可用」与回执含义，以及 [ADR-0038](0038-role-applies-app-seat.md)「2026-11-11 续接模型修订」在该类工位开启同档候选随机选时的「工位的模型仍优先」；扩展 [ADR-0087](0087-decision-model-recommends-seats.md) 的自定义工位文件与派发选择。

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "seats": {
+    "security-reviewer": {
+      "provider": "claude",
+      "model": "opus",
+      "account": "work",
+      "fallbacks": [
+        {
+          "provider": "claude",
+          "model": "opus",
+          "account": null
+        },
+        {
+          "provider": "claude",
+          "model": "opus",
+          "account": "a2"
+        }
+      ]
+    }
+  }
+}

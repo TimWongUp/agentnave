@@ -40,7 +40,11 @@ const WRAPPER_SCRIPT: &str = concat!(
     "if [ -n \"$resume_id\" ]; then\n",
     "  \"$codex\" resume --remote \"unix://$sock\" -C \"$cwd\" -c check_for_update_on_startup=false \"$@\" \"$resume_id\"\n",
     "else\n",
-    "  \"$codex\" --remote \"unix://$sock\" -C \"$cwd\" -c check_for_update_on_startup=false \"$@\"\n",
+    "  if [ -n \"${AGENTNAVE_HANDOVER_PROMPT:-}\" ]; then\n",
+    "    \"$codex\" --remote \"unix://$sock\" -C \"$cwd\" -c check_for_update_on_startup=false \"$@\" \"$AGENTNAVE_HANDOVER_PROMPT\"\n",
+    "  else\n",
+    "    \"$codex\" --remote \"unix://$sock\" -C \"$cwd\" -c check_for_update_on_startup=false \"$@\"\n",
+    "  fi\n",
     "fi\n",
 );
 

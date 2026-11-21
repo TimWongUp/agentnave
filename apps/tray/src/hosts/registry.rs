@@ -177,11 +177,12 @@ impl Hosts {
             {
                 root.path = profile;
             }
-            if self.manual_roots.contains(id) {
+            // A named account's folder is the user's own choice, so there is nothing to confirm.
+            if self.manual_roots.contains(id) || split::is_account_row(id) {
                 root.confirmed = true;
             }
             let mut paths = vec![root.path.join(file)];
-            if boss == "claude" && root.source == "default" {
+            if matches!(id, "claude" | "claude-desktop") && root.source == "default" {
                 paths = vec![h.join(".claude.json")];
             }
             let mut unique = HashSet::new();

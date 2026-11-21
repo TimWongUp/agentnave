@@ -7,6 +7,7 @@
 //! all over the `agentnave` scheme like every other page. Every route but the list names its
 //! terminal with `?session=<id>`.
 
+mod account;
 #[cfg(unix)]
 mod codex_server;
 mod elsewhere;
@@ -31,6 +32,8 @@ use tauri::{AppHandle, Manager};
 use crate::data::boss_app::CliTitle;
 use crate::providers::PROVIDERS;
 use crate::response::{self, Response};
+use account::{Active, Login};
+pub(crate) use session::parent_session;
 use session::{Launch, Session};
 
 /// How long an output request waits for new output before answering empty.
@@ -50,6 +53,8 @@ pub(crate) struct Terminals {
 #[derive(Default)]
 struct State {
     open: Vec<Running>,
+    /// Sign-in terminals, kept apart so nothing that lists or wakes the open ones sees them.
+    logins: Vec<Login>,
     /// The folder last picked or used, offered for the next start.
     cwd: Option<PathBuf>,
     started: u64,
@@ -70,6 +75,8 @@ struct Running {
     title_searched: Option<Instant>,
     started: SystemTime,
     pending: usize,
+    /// The named account it runs as; None for the default account.
+    account: Option<Active>,
     #[cfg(unix)]
     codex: Option<Arc<codex_server::Client>>,
 }
@@ -79,6 +86,8 @@ impl Running {
         json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
+            "account": self.account.as_ref().map(|account| &account.id),
+            "account_label": self.account.as_ref().map(|account| &account.label),
             "title": null, "title_custom": false, "display_title": null, "pending_results": self.pending})
     }
 }
@@ -102,6 +111,9 @@ pub(crate) fn request(
         (_, "/app/terminal/pick") => response::action(method, action, || terminals.pick(app)),
         (_, "/app/terminal/start") => {
             response::post(method, action, body, |payload| terminals.start(&payload))
+        }
+        (_, "/app/terminal/handover") => {
+            response::post(method, action, body, |payload| terminals.handover(&payload))
         }
         (_, "/app/terminal/input") => response::action(method, action, || {
             terminals.with_session(id, |session| {
@@ -169,6 +181,15 @@ pub(crate) fn shutdown(app: &AppHandle) {
     for session in sessions {
         session.stop();
     }
+    let logins: Vec<_> = terminals
+        .lock()
+        .logins
+        .iter()
+        .map(|login| login.session.clone())
+        .collect();
+    for session in logins {
+        session.stop();
+    }
 }
 
 fn param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
@@ -208,6 +229,8 @@ struct Start<'a> {
     resume: Option<&'a str>,
     workspaces: Vec<String>,
     light: bool,
+    /// The named account to run as; None for the default account.
+    account: Option<Active>,
 }
 
 impl Terminals {
@@ -223,6 +246,57 @@ impl Terminals {
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    fn login(
+        &self,
+        account: &str,
+        dir: Option<&Path>,
+        program: &Path,
+        home: &Path,
+        (cols, rows): (u16, u16),
+    ) -> Result<u64, String> {
+        if !home.is_dir() || dir.is_some_and(|dir| !dir.is_dir()) {
+            return Err("账号目录不存在".into());
+        }
+        let args = vec!["auth".to_owned(), "login".to_owned()];
+        let (program, args, env) = match dir {
+            Some(dir) => {
+                let active = Active {
+                    id: account.to_owned(),
+                    label: String::new(),
+                    dir: dir.to_owned(),
+                };
+                account::launch_as(&active, program.to_owned(), args)
+            }
+            None => (program.to_owned(), args, Vec::new()),
+        };
+        let session = Session::spawn(&Launch {
+            program,
+            args,
+            env,
+            cwd: home.to_owned(),
+            cols,
+            rows,
+        })?;
+        let mut state = self.lock();
+        // One sign-in per account: an earlier terminal of it gives way.
+        let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut state.logins)
+            .into_iter()
+            .partition(|login| login.account == account);
+        state.logins = kept;
+        state.started += 1;
+        let id = state.started;
+        state.logins.push(Login {
+            id,
+            account: account.to_owned(),
+            session,
+        });
+        drop(state);
+        for login in gone {
+            login.session.stop();
+        }
+        Ok(id)
     }
 
     /// The id and CLI pid of every terminal whose CLI still runs.
@@ -251,6 +325,7 @@ impl Terminals {
             &Path,
             SystemTime,
             &HashSet<String>,
+            Option<&Path>,
         ) -> (Option<String>, bool, Option<CliTitle>),
     ) -> HashMap<u64, CliTitle> {
         let (asks, mut claimed): (Vec<_>, HashMap<String, HashSet<String>>) = {
@@ -273,18 +348,31 @@ impl Terminals {
                 })
                 .map(|running| {
                     let ask = (running.provider.clone(), running.cwd.clone());
-                    (running.id, ask, running.native.clone(), running.started)
+                    let home = running.account.as_ref().map(|account| account.dir.clone());
+                    (
+                        running.id,
+                        ask,
+                        running.native.clone(),
+                        running.started,
+                        home,
+                    )
                 })
                 .collect();
             (asks, claimed)
         };
         let empty = HashSet::new();
         let (mut titles, mut updates) = (HashMap::new(), Vec::new());
-        for (id, (provider, cwd), native, started) in asks {
+        for (id, (provider, cwd), native, started, home) in asks {
             let checked = Instant::now();
             let exclude = claimed.get(&provider).unwrap_or(&empty);
-            let (found, located, title) =
-                lookup(&provider, native.as_deref(), &cwd, started, exclude);
+            let (found, located, title) = lookup(
+                &provider,
+                native.as_deref(),
+                &cwd,
+                started,
+                exclude,
+                home.as_deref(),
+            );
             if native.is_none()
                 && let Some(found_id) = &found
             {
@@ -403,6 +491,11 @@ impl Terminals {
         if !PROVIDERS.contains(&provider) {
             return Response::error(400, "未知的 CLI");
         }
+        let account =
+            match account::requested(payload).and_then(|id| account::resolve(provider, id)) {
+                Ok(account) => account,
+                Err(error) => return Response::error(400, &error),
+            };
         let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
         self.launch(Start {
             provider,
@@ -411,13 +504,114 @@ impl Terminals {
             resume: None,
             workspaces: Vec::new(),
             light: payload["light"].as_bool().unwrap_or(false),
+            account,
         })
+    }
+
+    fn handover(&self, payload: &Value) -> Response {
+        if crate::PREVIEW {
+            return Response::error(403, "预览版不能转交工作区");
+        }
+        self.handover_in(
+            &crate::data_files::data_root(),
+            payload,
+            |provider| {
+                installed_path(provider).is_some_and(|path| has_terminal_ui(provider, &path))
+            },
+            |start, args, env| self.launch_with_extra(start, args, env),
+        )
+    }
+
+    fn handover_in(
+        &self,
+        root: &Path,
+        payload: &Value,
+        available: impl FnOnce(&str) -> bool,
+        launch: impl FnOnce(Start<'_>, &[String], &[(&str, &str)]) -> Response,
+    ) -> Response {
+        let Some(workspace) = payload["workspace"]
+            .as_str()
+            .filter(|id| crate::data_files::valid_id(id))
+        else {
+            return Response::error(400, "需要有效的工作区 ID");
+        };
+        let provider = payload["provider"].as_str().unwrap_or_default();
+        if !matches!(provider, "claude" | "codex") {
+            return Response::error(400, "这个 CLI 暂不支持自动接手");
+        }
+        let account = match account::requested(payload)
+            .and_then(|id| account::resolve_in(root, provider, id))
+        {
+            Ok(account) => account,
+            Err(error) => return Response::error(400, &error),
+        };
+        let Some((host, key, file)) = links::chat(root, workspace) else {
+            return Response::error(404, "找不到这段聊天的记录");
+        };
+        let owner = links::owner_account(root, workspace);
+        let source_account = match account::resolve_in(root, &host, owner.as_deref()) {
+            Ok(account) => account,
+            Err(error) => {
+                return Response::error(
+                    409,
+                    account::chat_refusal(&error, "这段聊天的账号已被移除"),
+                );
+            }
+        };
+        let home = source_account.as_ref().map(|account| account.dir.as_path());
+        let Some((id, record)) =
+            crate::data::boss_app::desktop_session(&host, &key, file.as_deref(), home)
+        else {
+            return Response::error(409, "找不到桌面端聊天的会话记录");
+        };
+        let Some(cwd) = crate::data::boss_app::session_cwd_of(&host, &record, &id)
+            .filter(|path| path.is_absolute() && path.is_dir())
+        else {
+            return Response::error(409, "会话的文件夹不存在或无法确定");
+        };
+        if !available(provider) {
+            return Response::error(400, "这个 CLI 没有安装或没有终端界面");
+        }
+        let marked = crate::manage::handover(root, workspace);
+        if marked["status"] != "waiting" {
+            return Response::error(409, marked["message"].as_str().unwrap_or("转交失败"));
+        }
+        let prompt = format!("接手工作区 {workspace}");
+        let args = if provider == "claude" || !cfg!(unix) {
+            vec![prompt.clone()]
+        } else {
+            Vec::new()
+        };
+        let env = if provider == "codex" && cfg!(unix) {
+            vec![("AGENTNAVE_HANDOVER_PROMPT", prompt.as_str())]
+        } else {
+            Vec::new()
+        };
+        let reply = launch(
+            Start {
+                provider,
+                cwd,
+                size: launch_size(payload["cols"].as_u64(), payload["rows"].as_u64()),
+                resume: None,
+                workspaces: Vec::new(),
+                light: payload["light"].as_bool().unwrap_or(false),
+                account,
+            },
+            &args,
+            &env,
+        );
+        if reply.status != 200 {
+            let error: Value = serde_json::from_slice(&reply.body).unwrap_or_default();
+            let detail = error["error"].as_str().unwrap_or("启动终端失败");
+            return Response::error(reply.status, &format!("工作区已标为待接手，但{detail}"));
+        }
+        reply
     }
 
     /// Starts an ended terminal's CLI again in its folder, in its place: continuing the chat it
     /// was the boss of when its CLI can, else afresh as a new agent.
     fn restart(&self, id: Option<u64>, attach: &Attach) -> Response {
-        let (provider, cwd, workspaces) = {
+        let (provider, cwd, workspaces, account) = {
             let state = self.lock();
             let Some(running) = state.open.iter().find(|running| Some(running.id) == id) else {
                 return Response::error(404, "找不到这个终端");
@@ -429,12 +623,13 @@ impl Terminals {
                 running.provider.clone(),
                 running.cwd.clone(),
                 running.workspaces.clone(),
+                running.account.clone(),
             )
         };
         let resume = workspaces
             .last()
             .filter(|_| session::resumes(&provider))
-            .map(|workspace| chat_session(workspace, &provider))
+            .map(|workspace| chat_session(workspace, &provider, account.as_ref()))
             .transpose();
         let resume = match resume {
             Ok(resume) => resume,
@@ -458,6 +653,7 @@ impl Terminals {
             resume: resume.as_ref().map(|chat| chat.id.as_str()),
             workspaces: kept,
             light: attach.light,
+            account,
         });
         if reply.status == 200 {
             let mut state = self.lock();
@@ -494,7 +690,16 @@ impl Terminals {
         let Some((host, _, _)) = links::chat(&crate::data_files::data_root(), workspace) else {
             return Response::error(404, "找不到这段聊天的记录");
         };
-        let chat = match chat_session(workspace, &host) {
+        // A chat goes on as the account that began it; a removed account cannot be stood in for.
+        let owner = links::owner_account(&crate::data_files::data_root(), workspace);
+        let account = match account::resolve(&host, owner.as_deref()) {
+            Ok(account) => account,
+            Err(error) => {
+                let refusal = account::chat_refusal(&error, "这段聊天的账号已被移除，无法续接");
+                return Response::error(409, refusal);
+            }
+        };
+        let chat = match chat_session(workspace, &host, account.as_ref()) {
             Ok(found) => found,
             Err(error) => return Response::error(409, error),
         };
@@ -511,6 +716,7 @@ impl Terminals {
             resume: Some(&chat.id),
             workspaces: vec![workspace.to_owned()],
             light: attach.light,
+            account,
         });
         if reply.status == 200 {
             // An ended terminal of this chat gives way to the new one.
@@ -573,6 +779,7 @@ impl Terminals {
             resume,
             workspaces,
             light,
+            account,
         } = start;
         let Some(program) = installed_path(provider) else {
             return Response::error(400, "这个 CLI 没有安装");
@@ -617,15 +824,25 @@ impl Terminals {
             args.extend(theme.args);
             (program, args)
         };
+        let mut env: Vec<(String, String)> = theme
+            .env
+            .into_iter()
+            .chain(extra_env.iter().copied())
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let (launch_program, launch_args) = match &account {
+            Some(account) => {
+                let (program, args, more) =
+                    account::launch_as(account, launch_program, launch_args);
+                env.extend(more);
+                (program, args)
+            }
+            None => (launch_program, launch_args),
+        };
         let launch = Launch {
             program: launch_program,
             args: launch_args,
-            env: theme
-                .env
-                .into_iter()
-                .chain(extra_env.iter().copied())
-                .map(|(k, v)| (k.to_owned(), v.to_owned()))
-                .collect(),
+            env,
             cwd: cwd.clone(),
             cols,
             rows,
@@ -651,6 +868,7 @@ impl Terminals {
             title_searched: None,
             started: SystemTime::now(),
             pending: 0,
+            account,
             #[cfg(unix)]
             codex,
         };
@@ -661,8 +879,15 @@ impl Terminals {
 
     fn session(&self, id: Option<u64>) -> Option<Arc<Session>> {
         let state = self.lock();
-        let running = state.open.iter().find(|running| Some(running.id) == id)?;
-        Some(running.session.clone())
+        let found = state
+            .open
+            .iter()
+            .find(|running| Some(running.id) == id)
+            .map(|running| running.session.clone());
+        found.or_else(|| {
+            let login = state.logins.iter().find(|login| Some(login.id) == id)?;
+            Some(login.session.clone())
+        })
     }
 
     fn with_session(
@@ -683,6 +908,12 @@ impl Terminals {
     fn close(&self, id: Option<u64>) -> Response {
         let removed = {
             let mut state = self.lock();
+            if let Some(at) = state.logins.iter().position(|login| Some(login.id) == id) {
+                let login = state.logins.remove(at);
+                drop(state);
+                login.session.stop();
+                return Response::json(&json!({"ok": true}));
+            }
             let Some(at) = state.open.iter().position(|running| Some(running.id) == id) else {
                 return Response::error(404, "找不到这个终端");
             };
@@ -730,18 +961,39 @@ struct Chat {
 }
 
 /// The native ID and session record of a workspace's boss chat, when its CLI is `provider` and
-/// can continue it.
-fn chat_session(workspace: &str, provider: &str) -> Result<Chat, &'static str> {
+/// can continue it. A chat of a named account is looked for in that account's folder.
+fn chat_session(
+    workspace: &str,
+    provider: &str,
+    account: Option<&Active>,
+) -> Result<Chat, &'static str> {
+    chat_session_in(
+        &crate::data_files::data_root(),
+        workspace,
+        provider,
+        account,
+    )
+}
+
+fn chat_session_in(
+    root: &Path,
+    workspace: &str,
+    provider: &str,
+    account: Option<&Active>,
+) -> Result<Chat, &'static str> {
     if !session::resumes(provider) {
         return Err("这个 CLI 还不能在 App 里续接");
     }
-    let (host, key, file) =
-        links::chat(&crate::data_files::data_root(), workspace).ok_or("找不到这段聊天的记录")?;
+    let (host, key, file) = links::chat(root, workspace).ok_or("找不到这段聊天的记录")?;
     if host != provider {
         return Err("这段聊天不是这个 CLI 的");
     }
-    let (id, record) = crate::data::boss_app::native_session(&host, &key, file.as_deref())
+    let home = account.map(|account| account.dir.as_path());
+    let (id, record) = crate::data::boss_app::native_session_as(&host, &key, file.as_deref(), home)
         .ok_or("找不到这段聊天的会话记录")?;
+    if crate::data::boss_app::desktop_session(&host, &key, Some(&record), home).is_some() {
+        return Err("桌面端聊天不能在这里续接，请转交到终端");
+    }
     Ok(Chat { id, record, key })
 }
 
@@ -778,6 +1030,7 @@ fn has_terminal_ui(provider: &str, program: &Path) -> bool {
 
 fn installed() -> Value {
     let detected = crate::detect::detected(false, crate::members::codex_source);
+    let accounts = crate::accounts::read(&crate::data_files::data_root()).unwrap_or_default();
     let clis: Vec<Value> = PROVIDERS
         .iter()
         .filter(|provider| detected[**provider]["installed"] == true)
@@ -786,9 +1039,49 @@ fn installed() -> Value {
                 .as_str()
                 .is_some_and(|path| has_terminal_ui(provider, Path::new(path)))
         })
-        .map(|provider| json!({"provider": provider}))
+        .map(|provider| {
+            // Only a CLI with named accounts offers a choice; the default account is no entry.
+            let named: Vec<Value> = accounts
+                .iter()
+                .filter(|_| *provider == crate::accounts::PROVIDER)
+                .map(|account| json!({"id": account.id, "label": account.label}))
+                .collect();
+            json!({"provider": provider, "accounts": named})
+        })
         .collect();
     json!({"clis": clis})
+}
+
+/// Whether a terminal of this account still runs here: an agent, or its sign-in.
+pub(crate) fn account_in_use(app: &AppHandle, id: &str) -> bool {
+    let state = app.state::<Terminals>();
+    let state = state.lock();
+    state.open.iter().any(|running| {
+        running.session.exit().is_none()
+            && running
+                .account
+                .as_ref()
+                .is_some_and(|account| account.id == id)
+    }) || state
+        .logins
+        .iter()
+        .any(|login| login.session.exit().is_none() && login.account == id)
+}
+
+/// Starts `claude auth login` for one account (or the default environment when `dir` is None) in
+/// a terminal of its own and returns the terminal's id; the page shows it in a dialog and closes
+/// it when the sign-in is done.
+pub(crate) fn open_login(
+    app: &AppHandle,
+    account: &str,
+    dir: Option<&Path>,
+    program: &Path,
+    home: &Path,
+    size: (Option<u64>, Option<u64>),
+) -> Result<u64, String> {
+    let (cols, rows) = launch_size(size.0, size.1);
+    app.state::<Terminals>()
+        .login(account, dir, program, home, (cols, rows))
 }
 
 fn installed_path(provider: &str) -> Option<PathBuf> {

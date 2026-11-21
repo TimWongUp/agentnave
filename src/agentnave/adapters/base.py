@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
@@ -81,6 +81,8 @@ class PreparedCommand:
     session_id: str | None = None
     keep_stdin_open: bool = False
     unset_env: tuple[str, ...] = ()
+    # Set in the child only, after the inherited environment is built.
+    extra_env: Mapping[str, str] = field(default_factory=lambda: {})
     # Create this private directory only when the invocation starts; its name is exposed to the
     # helper through this environment variable and removed after the process tree stops.
     temp_dir_env: str | None = None
@@ -99,6 +101,8 @@ class UsageQuery:
     stdin: bytes | None = None
     # With a command that keeps running, whether the output so far holds the answer.
     complete: Callable[[bytes], bool] | None = None
+    # Inherited environment the command must not see, as for a dispatch.
+    unset_env: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +121,10 @@ class ProviderAdapter(Protocol):
     default_host_cli_mode: Literal["subagent", "launch"]
     restricted_extra_options: frozenset[str]
     paired_options: Mapping[str, frozenset[str]]
+    # The environment variable holding a named account's configuration directory (ADR-0108),
+    # and where the default account keeps it; None when the CLI takes no named account.
+    account_env: str | None
+    account_home: str
 
     def unmodeled_options(
         self, options: Mapping[str, ProviderOption]
@@ -154,6 +162,8 @@ class ProviderAdapter(Protocol):
 
     def prepare_seat(self, directory: Path) -> None: ...
 
+    def account_warnings(self, environment: Mapping[str, str]) -> list[str]: ...
+
 
 class AdapterHooks:
     """What most CLIs do not need: the defaults of the optional ProviderAdapter hooks."""
@@ -165,6 +175,8 @@ class AdapterHooks:
     default_host_cli_mode: Literal["subagent", "launch"] = "subagent"
     restricted_extra_options: frozenset[str] = frozenset()
     paired_options: Mapping[str, frozenset[str]] = {}
+    account_env: str | None = None
+    account_home = ""
 
     def unmodeled_options(self, options: Mapping[str, ProviderOption]) -> dict[str, ProviderOption]:
         """Saved model options that still apply when the CLI chooses the model itself."""
@@ -220,6 +232,10 @@ class AdapterHooks:
 
     def prepare_seat(self, directory: Path) -> None:
         """Prepare a dedicated, empty seat directory before restricted runs use it."""
+
+    def account_warnings(self, environment: Mapping[str, str]) -> list[str]:
+        """What in the inherited environment may decide the login instead of the account's."""
+        return []
 
 
 def brief(value: object, limit: int = 512) -> str | None:

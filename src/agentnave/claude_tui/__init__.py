@@ -71,6 +71,7 @@ from agentnave.claude_tui.turn import (
     is_user_prompt,
     object_dict,
     transcript_event,
+    unauthenticated,
 )
 
 # One import path for the adapter and tests.
@@ -115,6 +116,7 @@ __all__ = [
     "spawned_groups",
     "tier_consent",
     "transcript_event",
+    "unauthenticated",
     "with_mode",
     "write_line",
     "write_settings",
@@ -151,7 +153,6 @@ def read_initial_prompt() -> str:
 
 BLOCKING_SCREENS = {
     "summary": "summary resume selection is not supported",
-    "login": "handle login or the API key prompt in Claude Code",
     "mode_consent": "permission tier confirmation dialog is still shown",
     "permission": "unexpected startup permission dialog; handle it in Claude Code",
 }
@@ -194,6 +195,9 @@ class Startup:
         settled = now - self.stable_since >= SETTLE and not self.terminal.outgoing
         if not settled:
             return None  # Half-drawn frames can show any text.
+        if kind == "login":
+            unauthenticated(self.turn)
+            return False
         if kind in BLOCKING_SCREENS:
             blocked(self.turn, BLOCKING_SCREENS[kind])
             return False

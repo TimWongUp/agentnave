@@ -18,6 +18,44 @@ impl Reader {
             .unwrap_or_else(Response::not_found)
     }
 
+    pub(crate) fn accounts_request(
+        &self,
+        app: Option<&tauri::AppHandle>,
+        method: &str,
+        path: &str,
+        action: Option<&str>,
+        body: &[u8],
+    ) -> Response {
+        let idle = || self.tasks_idle();
+        let ctx = crate::accounts::Context {
+            root: &self.root,
+            home: dirs::home_dir().unwrap_or_default(),
+            hosts: &self.hosts,
+            idle: &idle,
+        };
+        let response = crate::accounts::request(&ctx, app, method, path, action, body);
+        if method == "POST" {
+            // The account's folder joins or leaves the places chats are looked for.
+            let hosts = self.hosts.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(hosts) = hosts.as_ref() {
+                self.update_boss_homes(hosts);
+            }
+        }
+        response
+    }
+
+    /// Whether no task or meeting runs, or why one does.
+    fn tasks_idle(&self) -> Result<(), String> {
+        let overview = self.overview();
+        if overview.count("running") + overview.count("review") > 0 {
+            return Err("还有任务在跑，结束之后才能删除账号目录".into());
+        }
+        if overview.running_uncertain() {
+            return Err("无法确认运行状态，请恢复数据读取后重试".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn projects_request(
         &self,
         app: Option<&tauri::AppHandle>,
@@ -139,6 +177,9 @@ impl Reader {
             }
             return response;
         }
+        if path == "/app/accounts" || path.starts_with("/app/accounts/") {
+            return self.accounts_request(None, method, path, action, body);
+        }
         if path == "/app/skills" {
             return crate::hosts::skill_request(method);
         }
@@ -162,7 +203,16 @@ impl Reader {
         }
         if path == "/app/provider-health" {
             return if method == "GET" {
-                Response::json(&json!({"providers": crate::provider_health::active(&self.root)}))
+                // The names the page shows beside each account's cooldown.
+                let names: serde_json::Map<String, Value> = crate::accounts::read(&self.root)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|account| (account.id, json!(account.label)))
+                    .collect();
+                Response::json(&json!({
+                    "providers": crate::provider_health::active(&self.root),
+                    "accounts": names,
+                }))
             } else {
                 Response::error(405, "此路由只接受 GET")
             };

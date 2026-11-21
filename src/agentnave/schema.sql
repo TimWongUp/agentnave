@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
     previous_file TEXT,
     title TEXT,
     cwd TEXT,
-    origin TEXT
+    origin TEXT,
+    owner_account TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS workspaces_owner ON workspaces (owner);
 -- A boss that passed on a workspace it had taken over: it stays refused, as the creator is by

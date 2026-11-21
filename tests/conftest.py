@@ -46,6 +46,8 @@ def manager_chat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("AGENTNAVE_HOST_SESSION_ID", "test-chat")
     # Running the suite inside Claude Code must not hand tests that chat's native identity.
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    # Nor the configuration directory it runs under: it decides which account the host is.
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     # Nor, inside any host or dispatched CLI, its connection identity and real data root: a
     # relay under test would otherwise leave receipts and faults in ~/.agentnave.
     for name in (

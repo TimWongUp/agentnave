@@ -54,7 +54,7 @@
       });
       control.append(btn);
     }
-    root.replaceChildren(h("div.setting-row", {}, h("h2", {}, label), control));
+    root.replaceChildren(h("div.s-row", {}, h("span.s-label", {}, label), control));
   }
 
   async function refresh() {

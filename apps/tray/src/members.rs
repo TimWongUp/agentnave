@@ -244,11 +244,15 @@ pub fn validate_review(document: &Value) -> Result<(), String> {
     Ok(())
 }
 
-/// One picked CLI and model, with an optional effort and up to three fallbacks (ADR-0089);
-/// shared by review and orchestration seats.
+/// One picked CLI and model, with an optional account, effort and up to three fallbacks
+/// (ADR-0089, ADR-0108); shared by review and orchestration seats.
 fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     let fields = object(seat, what)?;
-    only(fields, &["provider", "model", "effort", "fallbacks"], what)?;
+    only(
+        fields,
+        &["provider", "account", "model", "effort", "fallbacks"],
+        what,
+    )?;
     validate_pick(fields, what)?;
     validate_fallbacks(fields, what)
 }
@@ -275,14 +279,30 @@ fn validate_pick(fields: &Map<String, Value>, what: &str) -> Result<(), String> 
     {
         return Err(format!("{what} 的 effort 必须为字符串"));
     }
+    validate_account(fields, what)
+}
+
+/// The optional `account` of a pick: the id of a named account, which only Claude has. The file
+/// stays valid when no such account is registered; the service then skips that pick.
+pub(crate) fn validate_account(fields: &Map<String, Value>, what: &str) -> Result<(), String> {
+    // `null` is no account, as the service reads it.
+    let Some(account) = fields.get("account").filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    if !account.as_str().is_some_and(crate::accounts::valid_id) {
+        return Err(format!("{what} 的账号无效"));
+    }
+    if fields.get("provider").and_then(Value::as_str) != Some(crate::accounts::PROVIDER) {
+        return Err(format!("{what} 的账号只能用于 Claude Code"));
+    }
     Ok(())
 }
 
 const MAX_FALLBACKS: usize = 3;
 
-/// The seat's `fallbacks`: at most three picks of the same shape in order, none the same CLI and
-/// model as the seat or as an earlier one (effort does not tell them apart). The seat's own
-/// provider and model must already have passed `validate_pick`.
+/// The seat's `fallbacks`: at most three picks of the same shape in order, none the same CLI,
+/// account and model as the seat or as an earlier one (effort does not tell them apart). The
+/// seat's own provider and model must already have passed `validate_pick`.
 pub(crate) fn validate_fallbacks(fields: &Map<String, Value>, what: &str) -> Result<(), String> {
     let Some(list) = fields.get("fallbacks") else {
         return Ok(());
@@ -294,14 +314,21 @@ pub(crate) fn validate_fallbacks(fields: &Map<String, Value>, what: &str) -> Res
         return Err(format!("{what} 的备选最多 {MAX_FALLBACKS} 个"));
     }
     let pair = |fields: &Map<String, Value>| {
-        let text = |key: &str| fields[key].as_str().unwrap_or_default().trim().to_owned();
-        (text("provider"), text("model"))
+        let text = |key: &str| {
+            fields
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_owned()
+        };
+        (text("provider"), text("account"), text("model"))
     };
     let mut taken = vec![pair(fields)];
     for (index, item) in list.iter().enumerate() {
         let what = format!("{what}.fallbacks[{index}]");
         let item = object(item, &what)?;
-        only(item, &["provider", "model", "effort"], &what)?;
+        only(item, &["provider", "account", "model", "effort"], &what)?;
         validate_pick(item, &what)?;
         let picked = pair(item);
         if taken.contains(&picked) {
@@ -729,6 +756,7 @@ pub fn state(root: &Path, refresh: bool) -> Value {
         "permission_keys": permission_keys(),
         "detected": detected,
         "provider_health": crate::provider_health::read(root),
+        "accounts": crate::accounts::state(root),
     })
 }
 

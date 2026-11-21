@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import get_args
 
-from agentnave import provider_health
+from agentnave import accounts, provider_health
 from agentnave.host import Host
 from agentnave.members import (
     MemberFile,
@@ -68,7 +68,10 @@ def decision_seats_for(host: Host) -> dict[str, CustomSeat] | None:
             seat.id: seat
             for seat in document.seats
             if seat.kind != IMAGE_KIND
-            or any(choice.provider != host.provider for choice in [seat, *seat.fallbacks])
+            or any(
+                not accounts.is_host_account(host, choice.provider, choice.account)
+                for choice in [seat, *seat.fallbacks]
+            )
         }
     )
 
@@ -101,7 +104,7 @@ def custom_orchestration_status(
     host: Host,
     installed: Callable[[str], bool],
     document: MemberFile | None,
-    active_health: dict[tuple[str, str | None], provider_health.Health],
+    active_health: dict[provider_health.Key, provider_health.Health],
 ) -> OrchestrationStatus:
     """The user's own seats instead of the fixed groups and the fixed image seat."""
     statuses = _review_status(

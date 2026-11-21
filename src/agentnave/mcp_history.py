@@ -10,8 +10,8 @@ from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
+from agentnave import accounts, provider_health, views
 from agentnave import mcp_runtime as runtime
-from agentnave import provider_health, views
 from agentnave.conversations import (
     Conversations,
 )
@@ -45,6 +45,7 @@ from agentnave.members import (
     read_members,
 )
 from agentnave.members import list_members as read_member_list
+from agentnave.models import ACCOUNT_ID
 from agentnave.native_sessions import shared_session_id
 from agentnave.store import Conversation, Record
 
@@ -214,6 +215,8 @@ async def list_members(
     default is true or a list of default modes. error checks Adapter options and installation,
     not authentication or model availability; install the CLI or pick another for "CLI is not
     installed", otherwise repair invalid files in App or by hand.
+    accounts lists the registered named accounts (id, label) that start_agent, run_round seats
+    and seat choices may name; each account is its own login, cooldown and session home.
     Missing members leave modes unrestricted; disabled orchestration supplies no defaults.
     With orchestration on, members lists discussion rows only and names no task default.
     Omitted available means usable; recent quota/auth/billing blockers also mark seats
@@ -249,16 +252,31 @@ async def clear_provider_cooldown(
     provider: Annotated[ProviderName, Field(description="CLI whose cooldown should be cleared.")],
     model: Annotated[
         str | None,
-        Field(min_length=1, description="Model to clear; omit to clear all records for this CLI."),
+        Field(
+            min_length=1,
+            description="Model to clear; omit to clear all records of the account for this CLI.",
+        ),
+    ] = None,
+    account: Annotated[
+        str | None,
+        Field(
+            pattern=ACCOUNT_ID,
+            description="Named account id whose cooldown to clear; omit for the default account only.",
+        ),
     ] = None,
     *,
     ctx: Context[Runtime],
 ) -> dict[str, bool]:
-    """Clear CLI and model cooldown only when the user explicitly requests it in this conversation,
-    for example after signing in again or adding credits.
+    """Clear CLI, account and model cooldown only when the user explicitly requests it in this
+    conversation, for example after signing in again or adding credits. Each account cools down
+    on its own: without account only the default account is cleared.
     """
     root = _conversations(ctx).root
-    if not provider_health.clear(root, provider, model):
+    try:
+        accounts.check_choice(provider, account)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    if not provider_health.clear(root, provider, model, account=account):
         raise ToolError(
             "Could not clear cooldown; check the health file or retry when it is not busy."
         )

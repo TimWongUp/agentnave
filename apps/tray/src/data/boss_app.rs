@@ -40,8 +40,10 @@ pub(crate) fn terminal_title(
     cwd: &Path,
     since: std::time::SystemTime,
     exclude: &HashSet<String>,
+    claude_home: Option<&Path>,
 ) -> (Option<String>, bool, Option<CliTitle>) {
-    title::of_terminal_located(&Homes::here(), provider, native, cwd, since, exclude)
+    let homes = Homes::here().with_claude(claude_home);
+    title::of_terminal_located(&homes, provider, native, cwd, since, exclude)
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -55,6 +57,14 @@ pub(crate) struct Homes {
 }
 
 impl Homes {
+    /// These homes, with Claude's replaced by a named account's folder.
+    fn with_claude(mut self, folder: Option<&Path>) -> Self {
+        if let Some(folder) = folder {
+            self.claude = vec![folder.to_owned()];
+        }
+        self
+    }
+
     /// Before the hosts page has probed the login shell, only the app's own variables are known.
     pub(super) fn here() -> Self {
         if cfg!(test) {
@@ -458,6 +468,13 @@ fn sweep(homes: &Homes) -> Found {
             });
         }
     }
+    found.desktop = desktop_keys(homes);
+    found
+}
+
+/// The keys of the Claude chats Claude Desktop's own records count as its chats.
+fn desktop_keys(homes: &Homes) -> HashSet<String> {
+    let mut keys = HashSet::new();
     for data in &homes.desktop {
         for kind in ["claude-code-sessions", "local-agent-mode-sessions"] {
             files_at(&data.join(kind), 2, &mut |path| {
@@ -468,7 +485,7 @@ fn sweep(homes: &Homes) -> Found {
                     && let Ok(text) = fs::read_to_string(path)
                     && let Ok(record) = serde_json::from_str::<Value>(&text)
                 {
-                    found.desktop.extend(
+                    keys.extend(
                         desktop_session_ids(&record)
                             .into_iter()
                             .map(|id| boss_key("claude", id)),
@@ -477,7 +494,7 @@ fn sweep(homes: &Homes) -> Found {
             });
         }
     }
-    found
+    keys
 }
 
 /// The CLI sessions Claude Desktop counts as one of its chats.
@@ -562,12 +579,71 @@ fn codex_rollout_id(stem: &str) -> Option<&str> {
 /// terminal (ADR-0103): from the record its workspace names, else from a sweep of the session
 /// folders. Only an ID whose key matches is returned, so a file name with more than one ID cannot
 /// pick another chat.
+#[cfg(test)]
 pub(crate) fn native_session(
     host: &str,
     key: &str,
     file: Option<&Path>,
 ) -> Option<(String, PathBuf)> {
-    native_session_in(&Homes::here(), host, key, file)
+    native_session_as(host, key, file, None)
+}
+
+/// The same for a chat of a named Claude account, whose records are in that account's folder.
+pub(crate) fn native_session_as(
+    host: &str,
+    key: &str,
+    file: Option<&Path>,
+    claude_home: Option<&Path>,
+) -> Option<(String, PathBuf)> {
+    native_session_in(&Homes::here().with_claude(claude_home), host, key, file)
+}
+
+/// Locate a desktop record for handover without allowing it to be resumed. A chat counts as the
+/// desktop app's by the same records `BossApps::of` reads: a Claude transcript's latest
+/// `entrypoint`, else Claude Desktop's own records; an Antigravity record's folder, else, with no
+/// record saved, a chat found by key only in the desktop app's data.
+pub(crate) fn desktop_session(
+    host: &str,
+    key: &str,
+    file: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<(String, PathBuf)> {
+    desktop_session_in(&Homes::here().with_claude(home), host, key, file)
+}
+
+pub(crate) fn desktop_session_in(
+    homes: &Homes,
+    host: &str,
+    key: &str,
+    file: Option<&Path>,
+) -> Option<(String, PathBuf)> {
+    if host == "antigravity" {
+        let Some(path) = file else {
+            let cli_roots = antigravity::roots(homes);
+            if antigravity::find_by_key(&cli_roots, key).is_some() {
+                return None;
+            }
+            return antigravity::find_by_key(&antigravity::desktop_roots(&cli_roots), key);
+        };
+        if !antigravity::is_desktop_record(path) {
+            return None;
+        }
+        if let Some(id) = antigravity::id_from_path(path) {
+            return (boss_key(host, &id) == key).then(|| (id, path.to_owned()));
+        }
+        let root = antigravity::root_from_record(path)?;
+        return antigravity::find_by_key(&[root], key);
+    }
+    if host != "claude" {
+        return None;
+    }
+    let (id, path) = native_session_in(homes, host, key, file)?;
+    let app = match claude_entrypoint(&path).ok()? {
+        Some(entrypoint) => claude_app(&entrypoint),
+        None if desktop_keys(homes).contains(key) => CLAUDE_DESKTOP,
+        None => CLAUDE_CLI,
+    };
+    (app == CLAUDE_DESKTOP).then_some((id, path))
 }
 
 pub(crate) fn native_session_in(

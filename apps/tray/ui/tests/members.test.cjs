@@ -143,18 +143,17 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
     return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
   });
   await app.run("loadOrchestration()");
-  const row = () => app.run('$("orchestration-roles").children.at(-1)');
-  const pick = (value) => row().children[1].listeners.change({ target: { value } });
+  const row = () => app.run('$("orchestration-roles").children.at(-1)').children[0].children[0];
+  const pick = (value) => row().children[1].children[0].listeners.change({ target: { value } });
   const seat = { provider: "codex", model: "chat-model" };
 
-  assert.equal(row().children[0].children[0].children[0], "生图（可选）");
-  assert.equal(row().children[0].children.length, 1);
-  assert.equal(row().children[1].children[0].children[0], "未配置");
-  assert.equal(row().children[2].attrs["aria-label"], "生图的对话模型");
+  assert.equal(row().children[0].children[0], "生图（可选）");
+  assert.equal(row().children[1].children[0].children[0].children[0], "未配置");
+  assert.equal(row().children[1].children[1].attrs["aria-label"], "生图的对话模型");
   app.run('viewMode("off")');
   assert.equal(app.run('$("orchestration-roles").hidden'), false);
   assert.equal(app.run('$("orchestration-roles").children.length'), 1);
-  assert.equal(row().children[0].children[0].children[0], "生图（可选）");
+  assert.equal(row().children[0].children[0], "生图（可选）");
   app.run('viewMode("split")');
 
   assert.equal(app.run('orchestrationPresetText("split")'), "rule");
@@ -174,13 +173,13 @@ test("the optional image seat picks, clears, discards, saves and reloads as one 
   assert.equal(JSON.stringify(saved.image_generation), JSON.stringify(seat));
   assert.ok(members.clis.codex.models["chat-model"]);
   await app.run("loadOrchestration()");
-  assert.equal(row().children[2].children.find((option) => option.attrs.value === "chat-model").attrs.selected, "");
+  assert.equal(row().children[1].children[1].children.find((option) => option.attrs.value === "chat-model").attrs.selected, "");
 
   pick("");
   await app.run("saveOrchestration()");
   assert.equal(Object.hasOwn(saved, "image_generation"), false);
   app.run('delete currentDoc.modes.task.codex; renderOrchestration()');
-  assert.ok(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled),
+  assert.ok(row().children[1].children[0].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled),
     "orchestration can use a confirmed CLI even when solo tasks are off");
   app.run('delete currentDoc.modes.discussion.codex; renderOrchestration()');
   assert.equal(row().children[1].children.some(option => option.attrs.value === "codex" && !option.attrs.disabled), false,
@@ -231,11 +230,11 @@ function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../
     else state.members = body;
     return { ok: true, json: async () => ({ saved: true, files: [], bosses: [] }) };
   });
-  const sections = () => app.run('$("orchestration-roles").children').filter((box) => box.className === "orchestration-section");
-  const groups = () => sections().flatMap((box) => box.children.slice(1));
-  const group = (name) => groups().find((box) => box.children[0].children[0].children[1].children[0] === name);
-  const toggle = (name, checked) => group(name).children[0].children[0].children[0].listeners.change({ target: { checked } });
-  const split = (name, checked) => group(name).children[0].children[1].children[0].listeners.change({ target: { checked } });
+  const sections = () => app.run('$("orchestration-roles").children').filter((box) => box.className === "s-group" && box.children[0].className === "s-title");
+  const groups = () => sections().flatMap((box) => box.children[1].children);
+  const group = (name) => groups().find((box) => box.children[0].children[0].children[0] === name);
+  const toggle = (name, checked) => group(name).children[0].children[1].listeners.change({ target: { checked } });
+  const split = (name, checked) => group(name).children[1].children[1].listeners.change({ target: { checked } });
   return { app, state, sections, groups, group, toggle, split };
 }
 
@@ -278,11 +277,10 @@ test("role switches default like old files, round-trip through save, and keep bi
   assert.equal(groups().length, 7);
   assert.equal(group("通用探索").children.length, 4);
   assert.equal(group("写作").children.length, 1, "a new role starts off with its seats out of sight");
-  assert.equal(group("写作").children[0].children.length, 1, "and without its difficulty switch");
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend");
 
   toggle("写作", true);
-  assert.equal(group("写作").children.length, 4, "turning a role on shows its seats, split while only one is set");
+  assert.equal(group("写作").children.length, 5, "turning a role on shows its difficulty switch and its seats, split while only one is set");
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend\nworker_writing");
   assert.equal(app.run("orchestrationChanged()"), true);
   toggle("写作", false);
@@ -331,7 +329,7 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   await app.run("loadOrchestration()");
   const rows = () => app.run('$("orchestration-meeting").children');
   const size = (n) => rows()[0].children[1].children[n - 2].listeners.click();
-  const pick = (seat, value) => rows()[1 + seat].children[1].listeners.change({ target: { value } });
+  const pick = (seat, value) => rows()[1 + seat].children[1].children[0].listeners.change({ target: { value } });
   const wanted = () => JSON.stringify(app.run("orchestrationWanted().meeting"));
   const preview = (mode) => app.run(`orchestrationPresetText("${mode}")`);
   const name = app.run("PROVIDER_NAMES.codex");
@@ -340,13 +338,13 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   assert.equal(app.run('$("orchestration-meeting").hidden'), false);
   assert.equal(rows().length, 4);
   assert.equal(rows()[1].children[0].children[0], "席位 1");
-  assert.equal(rows()[1].children[1].children[0].children[0], "由 boss 选");
+  assert.equal(rows()[1].children[1].children[0].children[0].children[0], "由 boss 选");
   assert.equal(preview("meetings"), "H\nT");
 
   pick(0, "codex");
   assert.equal(wanted(), JSON.stringify({ count: 3, seats: [{ provider: "codex" }] }));
-  assert.equal(rows()[1].children[2].attrs.disabled, "", "the model follows Employees and is read-only");
-  assert.equal(rows()[1].children[3].attrs.disabled, "", "so does the effort");
+  assert.equal(rows()[1].children[1].children[1].attrs.disabled, "", "the model follows Employees and is read-only");
+  assert.equal(rows()[1].children[1].children[2].attrs.disabled, "", "so does the effort");
   assert.equal(preview("meetings"), `H\nS3:${one}\nT`);
   app.run('viewMode("split")');
   assert.equal(app.run('$("orchestration-meeting").hidden'), false);
@@ -397,14 +395,14 @@ test("general and specialist roles are grouped, and no role borrows another role
   app.run('currentDoc.clis.codex = { allowed_models: ["chat-model"], models: {} }');
 
   const title = (box) => box.children[0].children[0];
-  const name = (box) => box.children[0].children[0].children[1].children[0];
+  const name = (box) => box.children[0].children[0].children[0];
   assert.deepEqual(Array.from(sections(), title), ["通用", "专项"]);
-  assert.deepEqual(Array.from(sections()[0].children.slice(1), name), ["通用探索", "通用执行"]);
-  assert.equal(sections()[1].children.slice(1).map(name).includes("界面制作"), true);
-  const unset = (row) => row.children[1].children[0].children[0];
-  assert.equal(group("通用执行").children[0].children.length, 1, "general roles have no difficulty switch");
-  assert.equal(group("界面制作").children.length, 2, "an unset specialist shows one shared row");
-  assert.equal(unset(group("界面制作").children[1]), "未配置", "the interface role no longer borrows");
+  assert.deepEqual(Array.from(sections()[0].children[1].children, name), ["通用探索", "通用执行"]);
+  assert.equal(sections()[1].children[1].children.map(name).includes("界面制作"), true);
+  const unset = (row) => row.children[1].children[0].children[0].children[0];
+  assert.equal(group("通用执行").children.length, 4, "general roles have no difficulty switch");
+  assert.equal(group("界面制作").children.length, 3, "an unset specialist shows its difficulty switch and one shared row");
+  assert.equal(unset(group("界面制作").children[2]), "未配置", "the interface role no longer borrows");
 
   assert.equal(app.run("seatConflicts().length"), 0, "a role turned off keeps a stale binding quietly");
   toggle("网页调研", true);
@@ -419,21 +417,21 @@ test("a specialist picks one seat for both difficulties until it is split", asyn
   const { app, group, split } = rolesEditor({ version: 1, preset: "split", enabled_roles: ["worker_writing"] });
   await app.run("loadOrchestration()");
   const seats = () => JSON.parse(app.run("JSON.stringify(orchestrationWanted().worker_writing ?? null)"));
-  const pick = (row, value) => group("写作").children[row].children[1].listeners.change({ target: { value } });
+  const pick = (row, value) => group("写作").children[row + 1].children[1].children[0].listeners.change({ target: { value } });
   const shared = { provider: "codex", model: "chat-model" };
 
   pick(1, "codex");
   assert.deepEqual(seats(), { easy: shared, hard: shared });
-  assert.equal(group("写作").children.length, 2, "the same seat on both stays one row");
+  assert.equal(group("写作").children.length, 3, "the same seat on both stays one row");
 
   split("写作", true);
-  assert.equal(group("写作").children.length, 4);
+  assert.equal(group("写作").children.length, 5);
   assert.equal(app.run("orchestrationChanged()"), true);
   pick(1, "");
   assert.deepEqual(seats(), { hard: shared });
   split("写作", false);
   assert.deepEqual(seats(), { easy: shared, hard: shared }, "joining keeps the hard seat");
-  assert.equal(group("写作").children.length, 2);
+  assert.equal(group("写作").children.length, 3);
 
   split("写作", true);
   pick(3, "");
@@ -456,10 +454,10 @@ test("one review model fills only the review roles left unset, and follows until
   const app = advancedEditor();
   app.run('reviewSeats = { "security-reviewer": { provider: "codex", model: "own" } }; renderReviewSeats()');
   const shown = () => JSON.parse(app.run("JSON.stringify(seatsShown())"));
-  const pick = (value) => app.run('$("review-seats").children[0]').children[1].listeners.change({ target: { value } });
+  const pick = (value) => app.run('$("review-seats").children[0]').children[1].children[0].listeners.change({ target: { value } });
   const uniform = { provider: "codex", model: "chat-model" };
 
-  assert.equal(app.run('$("review-seats").children[0].children[0].children[0].children[0]'), "统一评审模型");
+  assert.equal(app.run('$("review-seats").children[0].children[0].children[0]'), "统一评审模型");
   pick("codex");
   assert.deepEqual(shown()["security-reviewer"], { provider: "codex", model: "own" }, "a role set on its own is kept");
   assert.deepEqual(shown()["correctness-reviewer"], uniform);
@@ -606,19 +604,19 @@ function runtimeEditor(fetch, os) {
 
 test("runtime switches show only where each provider supports them", async () => {
   const app = runtimeEditor(async () => ({ ok: true, json: async () => ({ settings: { version: 1, max_running: 8 } }) }));
-  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  assert.equal(app.run("renderInteractive('claude').children[1].attrs.disabled"), true);
   await app.run("loadLimit()");
   assert.equal(app.run("renderInteractive('codex')"), null);
-  assert.equal(app.run("renderInteractive('antigravity').children[0].children[0].attrs.checked"), false);
+  assert.equal(app.run("renderInteractive('antigravity').children[1].attrs.checked"), false);
   const row = app.run("renderInteractive('claude')");
-  assert.equal(row.attrs.className, "member-row member-runtime");
-  const label = row.children[0], input = label.children[0];
+  assert.equal(row.attrs.className, "s-row member-runtime");
+  const label = row.children[0], input = row.children[1];
   assert.equal(label.tag, "label");
-  assert.equal(label.children[1], "交互模式运行");
+  assert.equal(label.children[0], "交互模式运行");
   assert.equal(input.attrs.checked, false);
   assert.equal(input.attrs.disabled, false);
   const windows = runtimeEditor(undefined, "windows");
-  assert.equal(windows.run("renderInteractive('claude').attrs.className"), "member-row member-runtime");
+  assert.equal(windows.run("renderInteractive('claude').attrs.className"), "s-row member-runtime");
   assert.equal(windows.run("renderInteractive('antigravity')"), null);
 });
 
@@ -634,11 +632,11 @@ test("runtime saves immediately without changing other settings or the unsaved l
     return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, history_retention_days: 90, claude_interactive: true } }) };
   });
   await app.run("loadLimit()");
-  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.checked"), true);
+  assert.equal(app.run("renderInteractive('claude').children[1].attrs.checked"), true);
   app.run("$('max-running').value = '3'; refreshDirty()");
-  await app.run("renderInteractive('claude').children[0].children[0].attrs.onChange({ target: { checked: false } })");
+  await app.run("renderInteractive('claude').children[1].attrs.onChange({ target: { checked: false } })");
   assert.deepEqual(calls, [{ version: 1, claude_interactive: false }]);
-  await app.run("renderInteractive('antigravity').children[0].children[0].attrs.onChange({ target: { checked: true } })");
+  await app.run("renderInteractive('antigravity').children[1].attrs.onChange({ target: { checked: true } })");
   assert.deepEqual(calls[1], { version: 1, antigravity_interactive: true });
   calls.pop();
   assert.equal(app.run("limitChanged()"), true);
@@ -654,10 +652,10 @@ test("failed writes restore the runtime switch and report preview refusals", asy
   const app = runtimeEditor(() => new Promise(resolve => { finish = resolve; }));
   app.run("limitDoc = { version: 1, max_running: 8, claude_interactive: false }");
   const saving = app.run("setInteractive('claude_interactive', true)");
-  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  assert.equal(app.run("renderInteractive('claude').children[1].attrs.disabled"), true);
   finish({ ok: false, json: async () => ({ error: "预览版不修改正式数据" }) });
   await saving;
-  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.checked"), false);
+  assert.equal(app.run("renderInteractive('claude').children[1].attrs.checked"), false);
   assert.equal(app.run("busy"), false);
   assert.match(app.run("$('notice').textContent"), /预览版不修改正式数据/);
 });
@@ -674,13 +672,13 @@ test("broken settings keep the switch disabled until the existing settings save 
     return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8, claude_interactive: true }, error: "claude_interactive 必须为布尔值" }) };
   });
   await app.run("loadLimit()");
-  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  assert.equal(app.run("renderInteractive('claude').children[1].attrs.disabled"), true);
   await app.run("setInteractive('claude_interactive', true)");
   assert.equal(posts, 0);
   assert.match(app.run("$('notice').textContent"), /claude_interactive/);
   app.run("$('max-running').value = '3'");
   await app.run("saveLimit()");
-  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), false);
+  assert.equal(app.run("renderInteractive('claude').children[1].attrs.disabled"), false);
 });
 
 test("a settings read started before a runtime save cannot restore its old value", async () => {
@@ -705,7 +703,7 @@ test("a failed settings read cannot make a limit save reset other runtime settin
     return { ok: true, json: async () => ({ saved: true }) };
   });
   await app.run("loadLimit()");
-  assert.equal(app.run("renderInteractive('claude').children[0].children[0].attrs.disabled"), true);
+  assert.equal(app.run("renderInteractive('claude').children[1].attrs.disabled"), true);
   app.run("$('max-running').value = '3'");
   await app.run("saveLimit()");
   assert.deepEqual(sent, { version: 1, max_running: 3 });
@@ -1019,18 +1017,17 @@ test("each boss is named by its own saved orchestration mode", () => {
   const app = poolEditor();
   app.run(`orchestration = { error: null, files: [], document: { version: 1, preset: "off", apps: { codex: "split" } }, bosses: [
     { keys: ["codex"], labels: ["Codex CLI"] }, { keys: ["grok"], labels: ["Grok CLI"] },
-  ] }; renderTaskScope();`);
-  assert.equal(app.run('$("task-scope").hidden'), false);
-  assert.match(app.run('$("task-scope").textContent'), /^Codex CLI 已启用编排.*单独干活只提供给未启用编排的 boss/);
-  app.run('orchestration.document.apps = {}; renderTaskScope()');
-  assert.equal(app.run('$("task-scope").hidden'), true);
+  ] }; `);
+  assert.match(app.run("taskScopeNote()"), /^Codex CLI 已启用编排.*单独干活只提供给未启用编排的 boss/);
+  app.run('orchestration.document.apps = {}');
+  assert.equal(app.run("taskScopeNote()"), "");
 });
 
 test("meetings mode saves its opt-in switch and previews both branches", async () => {
   const { app, state } = rolesEditor({ version: 1, preset: "meetings" });
   await app.run("loadOrchestration()");
   app.run('orchestration.presets.meetings_parts.meetings_asked = "\\nasked"; orchestration.presets.meetings_parts.meetings_own = "\\nown"');
-  const toggle = () => app.run('$("orchestration-split").children[0].children[0]');
+  const toggle = () => app.run('$("orchestration-split").children[0].children[1]');
   assert.equal(app.run('orchestrationPresetText("meetings")'), "H\nasked\nT");
   toggle().listeners.change({ target: { checked: true } });
   assert.equal(app.run('orchestrationPresetText("meetings")'), "H\nown\nT");
@@ -1042,7 +1039,7 @@ test("split work lets the boss call meetings only when its switch is on", async 
   const { app } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
   await app.run("loadOrchestration()");
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked");
-  const meetings = () => app.run('$("orchestration-split").children[0].children[0]');
+  const meetings = () => app.run('$("orchestration-split").children[0].children[1]');
   meetings().listeners.change({ target: { checked: true } });
   assert.equal(app.run("JSON.stringify(orchestrationWanted().split_options)"), '{"meetings":true}');
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nown");
@@ -1064,7 +1061,7 @@ test("the orchestration-only switch rewrites its line in split and parallel only
   app.run(`orchestration.presets.split_parts.base = "base\\nlead-asked";
     orchestration.presets.parallel_base = "par\\nlead-asked";
     orchestration.presets.lead = { asked: "lead-asked", always: "lead-always" }; renderOrchestration()`);
-  const lead = () => app.run('$("orchestration-split").children[1].children[0]');
+  const lead = () => app.run('$("orchestration-split").children[1].children[1]');
   lead().listeners.change({ target: { checked: true } });
   assert.equal(app.run("orchestrationWanted().lead_only"), true);
   assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-always\nasked");
@@ -1082,7 +1079,7 @@ test("a switch put back to what is saved keeps the saved form of its key", async
     split_options: { meetings: false }, parallel_options: {} };
   const { app } = rolesEditor(saved);
   await app.run("loadOrchestration()");
-  const [meetings, lead] = [0, 1].map((i) => () => app.run(`$("orchestration-split").children[${i}].children[0]`));
+  const [meetings, lead] = [0, 1].map((i) => () => app.run(`$("orchestration-split").children[${i}].children[1]`));
   for (const [switchOf, key] of [[meetings, "split_options"], [lead, "lead_only"]]) {
     switchOf().listeners.change({ target: { checked: true } });
     assert.equal(app.run("orchestrationChanged()"), true);
@@ -1140,7 +1137,9 @@ const NO_FILE = { document: null, error: null, key_set: false, key_error: null }
 const boss = (app) => app.run("AN.settings.orchestration.bosses[0]");
 
 const seatsOf = (app) => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)"));
-const cardsOf = (app) => roleChildren(app)[0].children[4].children;
+// The catalog panel is the first group (picture, key, switch), one group per card, then the add menu.
+const cardsOf = (app) => roleChildren(app)[0].children.slice(1, -1).map((group) => group.children[0]);
+const cardHead = (card) => { const [label, control] = card.children[0].children; return [label.children[0], ...control.children]; };
 
 test("a boss put into the decision mode makes the first catalog from the fixed seats once", async () => {
   const { app, decision } = decisionEditor("split", NO_FILE);
@@ -1196,7 +1195,7 @@ test("only the decision mode's page shows the catalog, its options and the key, 
   await decision((d) => d.load());
   const kinds = () => Array.from(roleChildren(app)).map((child) => child.className);
   const options = () => app.run('$("orchestration-split")').children;
-  const fixed = ["orchestration-section", "orchestration-section", "review-row"];
+  const fixed = ["s-group", "s-group", "s-group"];
   app.run('$("custom-text").value = "我的规则"');
   // Another mode's page is what it was: fixed seats, its own two switches, nothing of the catalog.
   assert.deepEqual(kinds(), fixed);
@@ -1208,20 +1207,21 @@ test("only the decision mode's page shows the catalog, its options and the key, 
   }
   app.run('viewMode("decision")');
   // The catalog sits where the fixed seats were, and the fixed image seat is gone; three switches.
-  assert.deepEqual(kinds(), ["orchestration-section decision-seats"]);
+  assert.deepEqual(kinds(), ["s-wrap decision-seats"]);
   assert.equal(options().length, 3);
-  assert.equal(roleChildren(app)[0].children[0].tagName, "figure");
-  // Under the picture, four who-does-what captions and one line saying what the decision model never does.
-  const figure = roleChildren(app)[0].children[0];
-  const [image, captions, footnote] = figure.children;
+  const keyRow = roleChildren(app)[0].children[0].children[0].children[1];
+  const figure = roleChildren(app)[0].children[0].children[0].children[0].children[0];
+  assert.equal(figure.tagName, "figure");
+  // Under the picture, four who-does-what captions; what the decision model never does sits in the key's hint.
+  const [image, captions] = figure.children;
   assert.equal(captions.children.length, 4);
   assert.ok(captions.children.every((cell) => cell.children[0].tagName === "strong" && cell.children[1].tagName === "span"));
   const text = JSON.stringify(captions);
   for (const part of ["boss", "写好任务，交给服务", "筛出现在能派的工位", "决策模型", "只回答选哪个工位", "启动选中的工位，把选了谁告诉 boss"]) assert.ok(text.includes(part), part);
-  assert.match(JSON.stringify(footnote), /决策模型不接触 CLI，也不改任务内容；任务跑完后，boss 照常自己去收结果。/);
+  assert.match(JSON.stringify(keyRow), /决策模型不接触 CLI，也不改任务内容；任务跑完后，boss 照常自己去收结果。/);
   assert.equal(image.tagName, "img");
-  assert.match(JSON.stringify(roleChildren(app)[0].children[1]), /发给 Google/);
-  assert.match(app.run('$("orchestration-effect")').textContent, /决策模型/);
+  assert.match(JSON.stringify(keyRow), /发给 Google/);
+  assert.match(app.run('$("orchestration-effect")').attrs["aria-label"], /决策模型/);
   app.run('viewMode("split")');
   assert.deepEqual(kinds(), fixed);
 });
@@ -1230,7 +1230,7 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   const { app, decision } = decisionEditor("decision", NO_FILE);
   await decision((d) => d.load());
   const add = (what) => app.run(`window.AgentNaveDecisionSeats.addCard(${JSON.stringify(what)})`);
-  const pick = (row, provider) => row.children[1].listeners.change({ target: { value: provider } });
+  const pick = (row, provider) => row.children[1].children[0].listeners.change({ target: { value: provider } });
   const fill = (input, text) => input.listeners.input({ target: { value: text } });
   add("worker_writing");
   add("worker_writing");
@@ -1241,7 +1241,7 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.equal(cardsOf(app).length, 3);
   // The menu lists general seats, specialist seats, custom seats and image seats; a group or the image
   // card already on the page is disabled, custom stays open.
-  const menu = roleChildren(app)[0].children[5];
+  const menu = roleChildren(app)[0].children.at(-1).children[0].children[0].children[1];
   const groups = menu.children.filter((child) => child.tagName === "optgroup");
   assert.deepEqual(Array.from(groups.map((one) => one.attrs.label)), ["通用工位", "专业工位", "自定义工位", "生图工位"]);
   const option = (value) => groups.flatMap((one) => one.children).find((one) => one.attrs.value === value);
@@ -1251,36 +1251,35 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.equal(option("custom").disabled, false);
   assert.equal(option("image").disabled, true);
   const [group, custom, image] = Array.from(cardsOf(app));
-  const head = (card) => card.children[0].children;
+  const head = cardHead;
   // A group's card is named and fixed: its title and access are text; a custom card takes a specialty and
-  // an access; the image card is titled and writable. The head always has name, access, tiers and delete.
-  assert.deepEqual([group, custom, image].map((card) => head(card).length), [4, 4, 4]);
+  // an access; the image card is titled and writable. The head has name, access, tiers (not on the image card) and delete.
+  assert.deepEqual([group, custom, image].map((card) => head(card).length), [4, 4, 3]);
   assert.deepEqual([group, custom, image].map((card) => head(card)[0].tagName), ["strong", "input", "strong"]);
   assert.deepEqual([group, custom, image].map((card) => head(card)[1].tagName), ["span", "select", "span"]);
   assert.match(JSON.stringify(head(image)[0]), /生图工位/);
   assert.match(JSON.stringify(head(image)[1]), /可写/);
   // A group says what it is for (the text the decision model gets); custom and image cards have none.
-  assert.match(JSON.stringify(group.children[1]), /写文章/);
-  assert.match(group.children[1].className, /fine/);
+  assert.match(JSON.stringify(group.children[0].children[0]), /写文章/);
   // Three level rows on a group or custom card, one row and an add button on the image card.
-  assert.deepEqual([group, custom, image].map((card) => card.children.length), [5, 4, 3]);
+  assert.deepEqual([group, custom, image].map((card) => card.children.length), [4, 4, 3]);
   assert.match(JSON.stringify(image.children[2]), /添加方向/);
   // Tiers set, beside the access: none is flagged, then the count follows the levels bound.
   assert.match(JSON.stringify(head(group)[2]), /未设置/);
   assert.match(head(group)[2].className, /unset/);
   assert.match(decision((d) => d.problem()), /第 1 张卡片.*至少要绑定一档/);
-  pick(group.children[3], "codex");
+  pick(group.children[2], "codex");
   assert.match(JSON.stringify(head(Array.from(cardsOf(app))[0])[2]), /已设 1 档/);
-  assert.doesNotMatch(Array.from(cardsOf(app))[0].children[0].children[2].className, /unset/);
+  assert.doesNotMatch(head(Array.from(cardsOf(app))[0])[2].className, /unset/);
   assert.equal(decision((d) => d.problem()), "第 2 张卡片缺少专业");
-  fill(custom.children[0].children[0], "数据库迁移");
+  fill(head(custom)[0], "数据库迁移");
   assert.match(decision((d) => d.problem()), /第 2 张卡片（数据库迁移）至少要绑定一档/);
   pick(custom.children[3], "codex");
   // The image card: its rows are checked one by one.
   const imageRow = (n) => Array.from(cardsOf(app))[2].children[n];
-  assert.equal(imageRow(1).children.length, 5);
+  assert.equal(imageRow(1).children.length, 2);
   assert.equal(decision((d) => d.problem()), "生图工位第 1 行缺少专业");
-  fill(imageRow(1).children[0], "漫画风格");
+  fill(imageRow(1).children[0].children[0], "漫画风格");
   assert.match(decision((d) => d.problem()), /生图工位第 1 行（漫画风格）还没选 CLI 和模型/);
   pick(imageRow(1), "codex");
   assert.equal(decision((d) => d.problem()), null);
@@ -1293,44 +1292,44 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.ok(seatsOf(app).every((seat) => seat.provider === "codex" && seat.model === "chat-model"));
   // A second specialty is a second row of the same card, saved as one more image seat; the same
   // specialty twice is refused.
-  Array.from(cardsOf(app))[2].children[2].listeners.click();
+  Array.from(cardsOf(app))[2].children[2].children[0].listeners.click();
   assert.equal(cardsOf(app).length, 3);
   assert.equal(Array.from(cardsOf(app))[2].children.length, 4);
   assert.equal(decision((d) => d.problem()), "生图工位第 2 行缺少专业");
-  fill(imageRow(2).children[0], "漫画风格");
+  fill(imageRow(2).children[0].children[0], "漫画风格");
   assert.match(decision((d) => d.problem()), /生图工位第 2 行（漫画风格）还没选 CLI 和模型/);
   pick(imageRow(2), "codex");
   assert.equal(decision((d) => d.problem()), "生图工位第 2 行的专业“漫画风格”与前面重复");
-  fill(imageRow(2).children[0], "写实");
+  fill(imageRow(2).children[0].children[0], "写实");
   assert.equal(decision((d) => d.problem()), null);
   const images = seatsOf(app).filter((seat) => seat.kind === "image");
   assert.deepEqual(images.map((seat) => seat.role), ["漫画风格", "写实"]);
   assert.equal(new Set(images.map((seat) => seat.id)).size, 2);
   assert.ok(images.every((seat) => !("difficulty" in seat)));
   // A row goes with its own delete button; with none left the card cannot be saved.
-  imageRow(1).children.at(-1).listeners.click();
+  imageRow(1).children[1].children.at(-1).listeners.click();
   assert.deepEqual(seatsOf(app).filter((seat) => seat.kind === "image").map((seat) => seat.role), ["写实"]);
-  imageRow(1).children.at(-1).listeners.click();
+  imageRow(1).children[1].children.at(-1).listeners.click();
   assert.equal(decision((d) => d.problem()), "生图工位至少要有一行");
-  Array.from(cardsOf(app))[2].children[1].listeners.click();
-  fill(imageRow(1).children[0], "写实");
+  Array.from(cardsOf(app))[2].children[1].children[0].listeners.click();
+  fill(imageRow(1).children[0].children[0], "写实");
   pick(imageRow(1), "codex");
   assert.equal(decision((d) => d.problem()), null);
   // Two custom cards may not share a specialty.
   add("custom");
-  fill(Array.from(cardsOf(app))[3].children[0].children[0], "数据库迁移");
+  fill(head(Array.from(cardsOf(app))[3])[0], "数据库迁移");
   pick(Array.from(cardsOf(app))[3].children[1], "codex");
   assert.match(decision((d) => d.problem()), /两张自定义卡片的专业都是“数据库迁移”/);
   // A custom card's access is its own to set.
-  Array.from(cardsOf(app))[3].children[0].children[1].listeners.change({ target: { value: "read" } });
+  head(Array.from(cardsOf(app))[3])[1].listeners.change({ target: { value: "read" } });
   assert.equal(seatsOf(app).at(-1).access, "read");
   // Taking a level off a card leaves its other levels, and a card goes with its delete button.
   pick(Array.from(cardsOf(app))[1].children[3], "");
   assert.equal(seatsOf(app).filter((seat) => seat.kind === "custom" && seat.role === "数据库迁移").length, 1);
-  Array.from(cardsOf(app))[3].children[0].children[3].listeners.click();
+  head(Array.from(cardsOf(app))[3]).at(-1).listeners.click();
   assert.equal(cardsOf(app).length, 3);
   // The image card may be added again once it is gone, with its one empty row.
-  Array.from(cardsOf(app))[2].children[0].children[3].listeners.click();
+  head(Array.from(cardsOf(app))[2]).at(-1).listeners.click();
   add("image");
   assert.equal(Array.from(cardsOf(app)).at(-1).children.length, 3);
 });
@@ -1346,7 +1345,7 @@ test("the saved image seats come back as one card with a row for each, in the fi
   assert.equal(cards.length, 2);
   const rows = cards[0].children.slice(1, -1);
   assert.equal(rows.length, 2);
-  assert.deepEqual(Array.from(rows.map((row) => row.children[0].attrs.value)), ["漫画风格", "写实"]);
+  assert.deepEqual(Array.from(rows.map((row) => row.children[0].children[0].attrs.value)), ["漫画风格", "写实"]);
   assert.equal(decision((d) => d.changed()), false);
   assert.deepEqual(Array.from(seatsOf(app).map((one) => one.id)), ["img-a", "img-b", "w-1"]);
   assert.equal(seatsOf(app)[1].effort, "high");
@@ -1355,7 +1354,7 @@ test("the saved image seats come back as one card with a row for each, in the fi
 test("the decision options are saved with the orchestration and shape its rules text", async () => {
   const { app, decision } = decisionEditor("decision", NO_FILE);
   await decision((d) => d.load());
-  const toggle = (index, on) => app.run('$("orchestration-split")').children[index].children[0].listeners.change({ target: { checked: on } });
+  const toggle = (index, on) => app.run('$("orchestration-split")').children[index].children[1].listeners.change({ target: { checked: on } });
   const text = () => app.run('orchestrationPresetText("decision")');
   assert.equal(text(), "BASE|LEAD-ASKED|PW-ASKED|M-ASKED|");
   toggle(0, true);
@@ -1392,15 +1391,15 @@ test("a card read from the file goes back unchanged, and a changed specialty tak
   assert.equal(decision((d) => d.changed()), false);
   // A new specialty names its own seats; putting the old one back restores what the file said.
   const card = () => Array.from(cardsOf(app))[0];
-  card().children[0].children[0].listeners.input({ target: { value: "数据迁移" } });
+  cardHead(card())[0].listeners.input({ target: { value: "数据迁移" } });
   assert.deepEqual(Array.from(seatsOf(app).filter((one) => one.kind === "custom").map((one) => one.description)), ["数据迁移", "数据迁移"]);
-  card().children[0].children[0].listeners.input({ target: { value: "数据库迁移" } });
+  cardHead(card())[0].listeners.input({ target: { value: "数据库迁移" } });
   assert.equal(decision((d) => d.changed()), false);
   // A card made now has its role for a description.
   app.run('window.AgentNaveDecisionSeats.addCard("custom")');
   const fresh = Array.from(cardsOf(app)).at(-1);
-  fresh.children[0].children[0].listeners.input({ target: { value: "写作" } });
-  fresh.children[1].children[1].listeners.change({ target: { value: "codex" } });
+  cardHead(fresh)[0].listeners.input({ target: { value: "写作" } });
+  fresh.children[1].children[1].children[0].listeners.change({ target: { value: "codex" } });
   assert.equal(seatsOf(app).find((one) => one.role === "写作").description, "写作");
 });
 
@@ -1433,11 +1432,11 @@ test("saving sends the flat catalog on its own, without any boss switch", async 
 test("the random-candidates switch defaults to off, writes random_candidates when on, and omits it when off", async () => {
   const { app, calls, decision } = decisionEditor("decision", NO_FILE);
   await decision((d) => d.load());
-  const row = () => roleChildren(app)[0].children[3];
-  const input = () => row().children[0];
-  assert.equal(row().className, "orchestration-switch");
+  const row = () => roleChildren(app)[0].children[0].children[0].children[2];
+  const input = () => row().children[1];
+  assert.equal(row().className, "s-row");
   assert.equal(row().children.length, 2);
-  assert.deepEqual(Array.from(row().children[1].children), ["同一档的候选随机选，分摊额度"]);
+  assert.deepEqual(Array.from(row().children[0].children), ["同一档的候选随机选，分摊额度"]);
   assert.equal(input().checked, false);
   assert.equal(decision((d) => d.changed()), false);
 
@@ -1491,20 +1490,19 @@ test("the seat catalog is saved before the modes, and the modes wait when it fai
 test("the key goes out once and the page afterwards only knows that one is set", async () => {
   const { app, calls, decision } = decisionEditor("decision", NO_FILE);
   await decision((d) => d.load());
-  const rows = () => roleChildren(app)[0].children;
-  const keyRow = () => rows()[2];
-  const [input, save, clear] = keyRow().children[1].children;
-  assert.match(JSON.stringify(rows()[1]), /发给 Google/);
+  const keyRow = () => roleChildren(app)[0].children[0].children[0].children[1];
+  const [input, save, clear] = keyRow().children[1].children[0].children;
+  assert.match(JSON.stringify(keyRow()), /发给 Google/);
   assert.equal(clear.disabled, true);
   input.listeners.input({ target: { value: "AIza-secret" } });
   await save.listeners.click();
   const sent = calls.filter((call) => call.url === "/app/decision-key");
   assert.deepEqual(sent.map((call) => call.body), [{ key: "AIza-secret" }]);
-  assert.ok(!JSON.stringify(rows()).includes("AIza-secret"));
+  assert.ok(!JSON.stringify(roleChildren(app)).includes("AIza-secret"));
   assert.match(JSON.stringify(keyRow()), /已保存，粘贴新密钥可替换/);
-  assert.equal(keyRow().children[1].children[2].disabled, false);
+  assert.equal(keyRow().children[1].children[0].children[2].disabled, false);
   // Clearing sends an empty key.
-  await keyRow().children[1].children[2].listeners.click();
+  await keyRow().children[1].children[0].children[2].listeners.click();
   assert.deepEqual(calls.filter((call) => call.url === "/app/decision-key").at(-1).body, { key: "" });
 });
 
@@ -1551,6 +1549,40 @@ test("a seat gains up to three ordered fallbacks that never repeat it, and keeps
   app.run("discardAdvanced()");
 });
 
+test("a Claude seat can run as a named account, which dedupes by CLI, account and model", () => {
+  const app = advancedEditor();
+  app.run(`
+    detected.claude = { installed: true, models: [{ id: "opus" }] };
+    AN.settings.accounts = [{ id: "a1", label: "工作", dir: "/a1", managed: true }];
+    reviewSeats = { "security-reviewer": { provider: "claude", model: "opus", account: "a1" } };
+    renderReviewSeats();
+    function findKey(nodes, key) {
+      for (const node of [nodes].flat(Infinity)) {
+        if (!node || typeof node !== "object") continue;
+        if (node.dataset?.focusKey === key) return node;
+        const found = findKey(node.children, key);
+        if (found) return found;
+      }
+      return null;
+    }
+    const review = () => $("review-seats").children;
+    const seat = () => seatsShown()["security-reviewer"];
+  `);
+  const seat = () => JSON.parse(app.run("JSON.stringify(seat())"));
+  const find = (key) => app.run(`findKey(review(), ${JSON.stringify(key)})`);
+  const clis = find("security-reviewer/cli").children.flat().map((option) => option.attrs.value);
+  assert.ok(clis.includes("claude") && clis.includes("claude@a1"));
+  find("security-reviewer/fb-add").listeners.click();
+  const [fallback] = seat().fallbacks;
+  assert.notDeepEqual([fallback.provider, fallback.account ?? null], ["claude", "a1"], "never the seat's own account and model");
+  find("security-reviewer/cli").listeners.change({ target: { value: "claude" } });
+  assert.equal(seat().account, undefined, "the default account carries no field");
+  find("security-reviewer/cli").listeners.change({ target: { value: "claude@a1" } });
+  assert.equal(seat().account, "a1");
+  assert.equal(seat().model, "opus", "the model stays when the account changes");
+  app.run("discardAdvanced()");
+});
+
 test("a catalog seat's fallbacks come back as saved, and the add button sits in the row's last column", async () => {
   const fallbacks = [{ provider: "codex", model: "m2", effort: "low" }];
   const seat = { id: "w-1", kind: "worker", role: "通用执行", description: "改代码", provider: "codex", model: "chat-model", access: "write", difficulty: "easy", fallbacks };
@@ -1560,9 +1592,9 @@ test("a catalog seat's fallbacks come back as saved, and the add button sits in 
   assert.equal(decision((d) => d.changed()), false);
   assert.deepEqual(JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)")), [seat]);
   const card = cardsOf(app)[0];
-  const rows = card.children.filter((child) => child.className === "seat-block");
+  const rows = card.children.filter((child) => child.className === "s-wrap");
   assert.equal(rows.length, 1, "only the easy level has a fallback line");
-  assert.equal(rows[0].children[1].className, "fallback-row");
+  assert.equal(rows[0].children[1].className, "s-row is-sub");
   assert.equal(rows[0].children[0].children.at(-1).tagName, "button");
 });
 
@@ -1574,14 +1606,520 @@ test("an image seat row adds and removes fallbacks, with the delete button kept 
   await decision((d) => d.load());
   const imageRow = () => cardsOf(app)[0].children[1];
   const fallbacks = () => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats[0].fallbacks || null)"));
-  const [add, remove] = [imageRow().children.at(-2), imageRow().children.at(-1)];
+  const [add, remove] = [imageRow().children.at(-1), imageRow().children[1].children.at(-1)];
   assert.equal(add.children[0], "添加备选");
   assert.equal(remove.children[0], "删除");
   add.listeners.click();
   assert.deepEqual(fallbacks(), [{ provider: "codex", model: "m2" }]);
   const block = cardsOf(app)[0].children[1];
-  assert.equal(block.className, "seat-block");
-  assert.equal(block.children[0].children.at(-1).children[0], "删除");
-  block.children[1].children.at(-1).listeners.click();
+  assert.equal(block.className, "s-wrap");
+  assert.equal(block.children[0].children[1].children.at(-1).children[0], "删除");
+  block.children[1].children[1].children.at(-1).listeners.click();
   assert.equal(fallbacks(), null, "no fallback left, no field");
+});
+
+function accountCardsEditor(fetch) {
+  const app = editor(fetch);
+  app.run(`
+    AN.L = (zh) => zh;
+    AN.cliName = (p) => ({ claude: "Claude Code", codex: "Codex" }[p] || p);
+    AN.hostTile = (p) => AN.settings.el("span", { className: "host-tile", dataset: { provider: p } });
+    AN.settings.L = AN.L;
+    AN.settings.renderLeaveConfirm = () => {};
+    AN.settings.renderAdvancedBar = () => {};
+    AN.settings.renderReviewSeats = () => {};
+    AN.settings.seatConflicts = () => [];
+    AN.settings.seatConflictText = () => "";
+    AN.settings.memberSaveErrors = () => [];
+    const nodes = new Map();
+    const dialogs = [];
+    const makeNode = (tag) => {
+      const n = {
+        tag, tagName: tag, attrs: {}, children: [], dataset: {}, listeners: {}, options: [], value: "",
+        classList: { toggle() {} },
+        setAttribute(k, v) { this.attrs[k] = v; if (k === "value") this.value = v; },
+        removeAttribute(k) { delete this.attrs[k]; },
+        addEventListener(type, fn) { this.listeners[type] = fn; },
+        appendChild(child) {
+          if (child == null) return;
+          if (child.tag === "fragment") this.children.push(...child.children);
+          else this.children.push(child);
+        },
+        append(...kids) {
+          for (const k of kids.flat(Infinity)) this.appendChild(k);
+        },
+        replaceChildren(...kids) {
+          this.children = [];
+          this.append(...kids);
+        },
+        querySelectorAll: () => [],
+        querySelector: () => null,
+        getBoundingClientRect: () => ({ top: 0 }),
+        focus() {},
+        blur() {},
+        showModal() { this.open = true; },
+        close() { this.open = false; },
+        remove() { this.removed = true; },
+      };
+      return n;
+    };
+    document.createElement = makeNode;
+    document.createDocumentFragment = () => makeNode("fragment");
+    document.createTextNode = (text) => text;
+    document.getElementById = (id) => nodes.get(id) || nodes.set(id, makeNode("div")).get(id);
+    document.querySelector = () => null;
+    document.body = {
+      children: dialogs,
+      appendChild(child) { dialogs.push(child); },
+    };
+    globalThis.__dialogs = dialogs;
+    function findKey(nodes, key) {
+      for (const node of [nodes].flat(Infinity)) {
+        if (!node || typeof node !== "object") continue;
+        if (node.dataset?.focusKey === key || node.attrs?.dataset?.focusKey === key) return node;
+        const found = findKey(node.children, key);
+        if (found) return found;
+      }
+      return null;
+    }
+    function collectByClass(nodes, cls, out = []) {
+      for (const node of [nodes].flat(Infinity)) {
+        if (!node || typeof node !== "object") continue;
+        const cn = node.className || node.attrs?.className || "";
+        if (cn.split(/\\s+/).includes(cls)) out.push(node);
+        collectByClass(node.children, cls, out);
+      }
+      return out;
+    }
+    globalThis.findKey = findKey;
+    globalThis.collectByClass = collectByClass;
+    detected = {
+      claude: { installed: true, version: "2.1.0", models: [{ id: "sonnet" }], efforts: [] },
+      codex: { installed: true, version: "0.161.0", models: [{ id: "gpt-6.1-sol" }], efforts: [] },
+    };
+    currentDoc = {
+      version: 1,
+      clis: {},
+      modes: {
+        task: { claude: { models: [], overrides: {} }, codex: { models: [], overrides: {} } },
+        discussion: { claude: { models: [], overrides: {} }, codex: { models: [], overrides: {} } },
+      },
+    };
+    markSaved();
+  `);
+  app.load("member-updates.js");
+  app.load("account-settings.js");
+  app.load("member-cards.js");
+  return app;
+}
+
+test("employees render as a compact left CLI list, with Claude default status at top and accounts expanding in place inside Claude Code detail", async () => {
+  let defaultSignedIn = true;
+  const loginCalls = [];
+  const app = accountCardsEditor(async (url, options = {}) => {
+    if (url === "/app/accounts/login") {
+      loginCalls.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ session: 55 }) };
+    }
+    if (url.startsWith("/app/accounts/status?id=default")) {
+      return {
+        ok: true,
+        json: async () => defaultSignedIn
+          ? { logged_in: true, method: "claude.ai", email: "tim@example.com", plan: "max", error: null }
+          : { logged_in: false, method: "none", email: null, plan: null, error: null },
+      };
+    }
+    if (url.startsWith("/app/accounts/status?id=a1")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "work@example.com", plan: "pro", error: null }) };
+    }
+    if (url.startsWith("/app/accounts/status?id=a2")) {
+      return { ok: true, json: async () => ({ logged_in: false, method: "none", email: null, plan: null, error: null }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  });
+  app.run(`
+    AN.settings.accounts = [];
+    renderCards();
+  `);
+  await new Promise(setImmediate);
+
+  // Left list lists CLIs only, with no Add account button in the list pane; Claude shows sign-in status without email.
+  const listItems = app.run('collectByClass($("cli-cards").children, "member-list-item")');
+  assert.deepEqual(Array.from(listItems, (c) => c.dataset.memberKey), ["cli:codex", "cli:claude"]);
+  for (const item of listItems) {
+    assert.equal(app.run(`((n) => JSON.stringify(n))`)(item).includes('"select"'), false, "left list rows have no selects");
+    const buttons = app.run(`((node) => { const out = []; const walk = (n) => { if (!n || typeof n !== "object") return; if (n.tag === "button" || n.tagName === "button") out.push(n); for (const c of n.children || []) walk(c); }; for (const c of node.children || []) walk(c); return out.length; })`)(item);
+    assert.equal(buttons, 0, "left list rows have no nested buttons");
+  }
+  assert.equal(app.run('findKey(collectByClass($("cli-cards").children, "members-list-pane"), "claude/accounts/add")'), null);
+  const claudeListJson = JSON.stringify(listItems[1]);
+  assert.match(claudeListJson, /已登录 · max/);
+  assert.doesNotMatch(claudeListJson, /tim@example\.com|ti\*\*\*/);
+
+  // Default selection is the first row (codex); Remove sits in detail footer, not in header.
+  assert.equal(listItems[0].attrs["aria-pressed"], "true");
+  const codexDetail = app.run('collectByClass($("cli-cards").children, "detail-panel")[0]');
+  assert.equal(codexDetail.dataset.provider, "codex");
+  assert.equal(app.run('findKey(collectByClass($("cli-cards").children, "detail-head"), "codex/membership")'), null);
+  assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "detail-foot"), "codex/membership")'));
+  assert.equal(app.run('collectByClass(collectByClass($("cli-cards").children, "detail-panel")[0], "claude-accounts-row").length'), 0);
+
+  // Selecting Claude Code shows default account status bar at top and Default row in Accounts list even with 0 named accounts.
+  app.run('findKey($("cli-cards").children, "select/cli:claude").listeners.click()');
+  const topBar = () => app.run('collectByClass($("cli-cards").children, "detail-account-bar")[0]');
+  assert.ok(topBar());
+  assert.match(JSON.stringify(topBar()), /已登录/);
+  assert.match(JSON.stringify(topBar()), /ti\*\*\*@\*\*\*\.com/);
+  assert.match(JSON.stringify(topBar()), /max/);
+  assert.doesNotMatch(JSON.stringify(topBar()), /tim@example\.com/);
+
+  // Clicking the masked email toggles reveal/hide.
+  app.run('findKey($("cli-cards").children, "claude/default-email").listeners.click()');
+  assert.match(JSON.stringify(topBar()), /tim@example\.com/);
+  app.run('findKey($("cli-cards").children, "claude/default-email").listeners.click()');
+  assert.match(JSON.stringify(topBar()), /ti\*\*\*@\*\*\*\.com/);
+
+  assert.equal(app.run('collectByClass($("cli-cards").children, "claude-accounts-row").length'), 1);
+  assert.equal(app.run('collectByClass($("cli-cards").children, "account-item").length'), 1);
+  assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/default/toggle")'));
+  assert.ok(app.run('findKey(collectByClass($("cli-cards").children, "claude-accounts-row")[0], "claude/accounts/add")'));
+
+  // With named accounts, Default sits first, followed by named accounts (all collapsed initially).
+  app.run(`
+    AN.settings.accounts = [
+      { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true },
+      { id: "a2", provider: "claude", label: "个人", dir: "/ext/p", managed: false },
+    ];
+    renderCards();
+  `);
+  await new Promise(setImmediate);
+
+  const leftAfter = app.run('collectByClass($("cli-cards").children, "member-list-item")');
+  assert.deepEqual(Array.from(leftAfter, (c) => c.dataset.memberKey), ["cli:codex", "cli:claude"]);
+
+  const detailRows = app.run('collectByClass($("cli-cards").children, "detail-rows")[0]');
+  assert.equal(detailRows.children.at(-2).className, "s-row claude-accounts-row", "Accounts group sits after settings items and before footer");
+
+  const accountItems = app.run('collectByClass($("cli-cards").children, "account-item")');
+  assert.equal(accountItems.length, 3);
+  assert.equal(app.run('collectByClass($("cli-cards").children, "account-item-body").length'), 0);
+  assert.match(JSON.stringify(accountItems[0]), /默认/);
+  assert.match(JSON.stringify(accountItems[0]), /ti\*\*\*@\*\*\*\.com · max/);
+  assert.match(JSON.stringify(accountItems[1]), /wo\*\*\*@\*\*\*\.com · pro/);
+  assert.match(JSON.stringify(accountItems[2]), /未登录/);
+
+  // Expanding Default shows only Sign-in status + Sign in again (no display name input, no remove button).
+  app.run('findKey($("cli-cards").children, "claude/accounts/default/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), "default");
+  assert.equal(app.run('findKey($("cli-cards").children, "claude/accounts/default/label-input")'), null);
+  assert.equal(app.run('findKey($("cli-cards").children, "claude/accounts/default/remove")'), null);
+  const defaultLoginBtn = app.run('findKey($("cli-cards").children, "claude/accounts/default/login")');
+  assert.ok(defaultLoginBtn);
+  defaultLoginBtn.listeners.click();
+  await new Promise(setImmediate);
+  assert.deepEqual(loginCalls[0], { id: "default", cols: 96, rows: 22 });
+
+  // Clicking account a1 collapses default and expands a1; clicking a2 collapses a1 and expands a2.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), "a1");
+  const a1Bodies = app.run('collectByClass($("cli-cards").children, "account-item-body")');
+  assert.equal(a1Bodies.length, 1);
+  const a1Json = JSON.stringify(a1Bodies[0]);
+  assert.match(a1Json, /显示名/);
+  assert.match(a1Json, /登录状态/);
+  assert.match(a1Json, /已登录/);
+  assert.match(a1Json, /wo\*\*\*@\*\*\*\.com/);
+  assert.match(a1Json, /pro/);
+  assert.match(a1Json, /重新登录/);
+  assert.match(a1Json, /移除/);
+  assert.doesNotMatch(a1Json, /托管|由谁管理/);
+
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), "a2");
+  const a2Bodies = app.run('collectByClass($("cli-cards").children, "account-item-body")');
+  assert.equal(a2Bodies.length, 1);
+  const a2Json = JSON.stringify(a2Bodies[0]);
+  assert.match(a2Json, /未登录/);
+  assert.match(a2Json, /"登录"/);
+
+  // Clicking the expanded row again collapses it.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/toggle").listeners.click()');
+  assert.equal(app.run('expandedAccountId'), null);
+  assert.equal(app.run('collectByClass($("cli-cards").children, "account-item-body").length'), 0);
+
+  // When default is signed out, both top status and left list show 未登录.
+  defaultSignedIn = false;
+  app.run('findKey($("cli-cards").children, "claude/accounts/default/toggle").listeners.click()');
+  // Re-reading via mock message for session 55 triggers readState("default", true).
+  app.listeners.message({ data: { type: "agentnave:terminal", action: "exited", session: 55, code: 0 } });
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.match(JSON.stringify(topBar()), /未登录/);
+  assert.match(JSON.stringify(app.run('findKey($("cli-cards").children, "select/cli:claude")')), /未登录/);
+});
+
+test("left list reflects cooldown, update available, unsaved changes, and account/CLI validation errors on CLI rows", async () => {
+  const app = accountCardsEditor(async (url) => {
+    if (url.startsWith("/app/accounts/status?id=default")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "tim@example.com", plan: "max", error: null }) };
+    }
+    if (url.startsWith("/app/accounts/status?id=a1")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "w@x.com", plan: "Pro", error: null }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  });
+  const until = new Date(Date.now() + 60000).toISOString();
+  app.run(`
+    AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
+    cliUpdates = { clis: { codex: { update: true, latest: "0.162.0", version: "0.161.0" } } };
+    providerHealth = { claude: { accounts: { a1: { default: { code: "quota", until: ${JSON.stringify(until)} } } } } };
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  await new Promise(setImmediate);
+
+  const codexRow = () => app.run('findKey($("cli-cards").children, "select/cli:codex")');
+  const claudeRow = () => app.run('findKey($("cli-cards").children, "select/cli:claude")');
+  assert.match(JSON.stringify(codexRow()), /有更新/);
+  const a1Toggle = app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle")');
+  assert.match(JSON.stringify(a1Toggle), /冷却中/);
+
+  // Unsaved rename draft and invalid empty rename draft mark the Claude Code row in the left list.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click()');
+  const labelInput = app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")');
+  labelInput.listeners.input({ target: { value: "新工作" } });
+  app.run("renderCards()");
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-dirty").length'), 1);
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 0);
+
+  labelInput.listeners.input({ target: { value: "   " } });
+  app.run("renderCards()");
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 1);
+
+  labelInput.listeners.input({ target: { value: "工作" } });
+  app.run("renderCards()");
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-dirty").length'), 0);
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 0);
+
+  // Making an unsaved pool edit and clearing the pool also marks the Claude CLI row with dirty & error flags.
+  app.run('writePool("claude", [])');
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-dirty").length'), 1);
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:claude"), "is-error").length'), 1);
+  assert.equal(app.run('collectByClass(findKey($("cli-cards").children, "select/cli:codex"), "is-dirty").length'), 0);
+  assert.match(JSON.stringify(app.run('collectByClass($("cli-cards").children, "detail-panel")[0]')), /至少选一个模型/);
+  assert.ok(claudeRow());
+});
+
+test("account detail display name edits directly and commits rename on Enter", async () => {
+  const calls = [];
+  const app = accountCardsEditor(async (url, options) => {
+    if (url === "/app/accounts/rename") {
+      const body = JSON.parse(options.body);
+      calls.push(body);
+      return { ok: true, json: async () => ({ state: { accounts: [{ id: "a1", provider: "claude", label: body.label, dir: "/m/a1", managed: true }], error: null } }) };
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run(`
+    AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+    findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click();
+  `);
+  await new Promise(setImmediate);
+
+  const input = app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")');
+  assert.ok(input);
+  assert.equal(input.value, "工作");
+
+  input.value = "公司";
+  input.listeners.keydown({ key: "Enter", target: input, preventDefault() {} });
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [{ id: "a1", label: "公司" }]);
+  assert.match(JSON.stringify(app.run('findKey($("cli-cards").children, "claude/accounts/a1/toggle")')), /公司/);
+});
+
+test("add account wizard creates a managed account in step 1 and runs in-dialog login in step 2", async () => {
+  const calls = [];
+  let signedIn = false;
+  const app = accountCardsEditor(async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push([url, body]);
+    if (url === "/app/accounts/create") {
+      const account = { id: "a1", provider: "claude", label: body.label, dir: "/m/a1", managed: true };
+      return { ok: true, json: async () => ({ account, sync: { ok: true }, state: { accounts: [account], error: null } }) };
+    }
+    if (url === "/app/accounts/login") {
+      return { ok: true, json: async () => ({ session: 77 }) };
+    }
+    if (url.startsWith("/app/accounts/status?id=a1")) {
+      return {
+        ok: true,
+        json: async () => signedIn
+          ? { logged_in: true, method: "claude.ai", email: "work@example.com", plan: "max", error: null }
+          : { logged_in: false, method: "none", email: null, plan: null, error: null },
+      };
+    }
+    if (url.startsWith("/app/accounts/status?id=default")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "tim@example.com", plan: "max", error: null }) };
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await new Promise(setImmediate);
+
+  const addDlg = () => app.run("__dialogs[0]");
+  assert.equal(addDlg().open, true);
+  assert.match(JSON.stringify(addDlg()), /添加账号/);
+  assert.doesNotMatch(JSON.stringify(addDlg()), /关联已有目录|选择文件夹|扫描|\.agentnave-accounts|\/m\//);
+
+  const nameInput = app.run('findKey(__dialogs[0].children, "claude/accounts/new")');
+  const submitBtn = app.run('findKey(__dialogs[0].children, "claude/accounts/create")');
+  assert.equal(submitBtn.disabled, true);
+  nameInput.value = "工作";
+  nameInput.listeners.input({ target: nameInput });
+  assert.equal(submitBtn.disabled, false);
+
+  app.run('findKey(__dialogs[0].children, "claude/accounts/new") && findKey(__dialogs[0].children, "claude/accounts/new").value && __dialogs[0].children[2].children[0].listeners.submit({ preventDefault() {} })');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls.filter(([u]) => !u.startsWith("/app/accounts/status")).map(([u, b]) => [u, b]), [
+    ["/app/accounts/create", { label: "工作" }],
+    ["/app/accounts/login", { id: "a1", cols: 96, rows: 22 }],
+  ]);
+
+  // Same dialog transitions to Step 2 with embedded login terminal and "稍后登录".
+  assert.equal(app.run("__dialogs.length"), 1);
+  assert.equal(addDlg().open, true);
+  assert.match(addDlg().className, /is-login-step/);
+  assert.match(JSON.stringify(addDlg()), /\/terminal\/\?session=77/);
+  assert.equal(app.run("selectedMember"), "cli:claude");
+  assert.equal(app.run("expandedAccountId"), "a1");
+  assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")'));
+  const finishBtn = () => app.run('findKey(__dialogs[0].children, "claude/accounts/wizard-finish")');
+  assert.equal(finishBtn().children[0], "稍后登录");
+  assert.equal(finishBtn().className, "");
+
+  // When sign-in finishes, button turns into primary "完成" and masked email is shown.
+  signedIn = true;
+  app.listeners.message({ data: { type: "agentnave:terminal", action: "exited", session: 77, code: 0 } });
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.equal(finishBtn().children[0], "完成");
+  assert.equal(finishBtn().className, "primary");
+  assert.match(JSON.stringify(addDlg()), /wo\*\*\*@\*\*\*\.com/);
+
+  // Closing the wizard closes the login terminal session.
+  finishBtn().listeners.click();
+  await new Promise(setImmediate);
+  assert.equal(addDlg().open, false);
+  assert.ok(calls.some(([u]) => u === "/app/terminal/close?session=77"));
+});
+
+test("an emptied display name falls back on blur and clears its flag", async () => {
+  const app = accountCardsEditor(async () => ({ ok: true, json: async () => ({ logged_in: false, method: "none" }) }));
+  app.run(`
+    AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+    findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click();
+    globalThis.__flagRefreshes = 0;
+    AN.settings.refreshClaudeFlags = () => { globalThis.__flagRefreshes += 1; };
+  `);
+  await new Promise(setImmediate);
+  const input = app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")');
+  input.value = "";
+  input.listeners.input({ target: input });
+  const before = app.run("__flagRefreshes");
+  input.listeners.blur({ target: input });
+  await new Promise(setImmediate);
+  assert.equal(input.value, "工作");
+  assert.equal(app.run("__flagRefreshes"), before + 1);
+  assert.equal(app.run("AN.settings.accountHasError()"), false);
+});
+
+test("a sign-in terminal that starts after the wizard closed is closed too", async () => {
+  const calls = [];
+  let started;
+  const app = accountCardsEditor(async (url, options = {}) => {
+    calls.push(url);
+    if (url === "/app/accounts/create") {
+      const account = { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true };
+      return { ok: true, json: async () => ({ account, sync: { ok: true }, state: { accounts: [account], error: null } }) };
+    }
+    if (url === "/app/accounts/login") {
+      return new Promise((resolve) => { started = () => resolve({ ok: true, json: async () => ({ session: 88 }) }); });
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await new Promise(setImmediate);
+  const nameInput = app.run('findKey(__dialogs[0].children, "claude/accounts/new")');
+  nameInput.value = "工作";
+  nameInput.listeners.input({ target: nameInput });
+  app.run('__dialogs[0].children[2].children[0].listeners.submit({ preventDefault() {} })');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.ok(started, "the sign-in terminal was requested");
+  app.run('findKey(__dialogs[0].children, "claude/accounts/wizard-finish").listeners.click()');
+  assert.equal(app.run("__dialogs[0].open"), false);
+  started();
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.ok(calls.includes("/app/terminal/close?session=88"));
+});
+
+test("account removal confirmation shows folder deletion only for managed accounts", async () => {
+  const calls = [];
+  const app = accountCardsEditor(async (url, options = {}) => {
+    if (url === "/app/accounts/remove") {
+      calls.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ state: { accounts: [], error: null }, deleted: false }) };
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run(`
+    AN.settings.accounts = [
+      { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true },
+      { id: "a2", provider: "claude", label: "个人", dir: "/ext/p", managed: false },
+    ];
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+    findKey($("cli-cards").children, "claude/accounts/a2/toggle").listeners.click();
+  `);
+  await new Promise(setImmediate);
+
+  // Linked account: no delete-dir checkbox.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/remove").listeners.click()');
+  assert.equal(app.run('findKey($("cli-cards").children, "claude/accounts/a2/delete-dir")'), null);
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/confirm-remove").listeners.click()');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls[0], { id: "a2", delete_dir: false });
+  assert.equal(app.run("expandedAccountId"), null);
+
+  // Managed account: has delete-dir checkbox, defaults to false, passes true when checked.
+  app.run(`
+    AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
+    renderCards();
+    findKey($("cli-cards").children, "claude/accounts/a1/toggle").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/remove").listeners.click()');
+  const checkbox = app.run('findKey($("cli-cards").children, "claude/accounts/a1/delete-dir")');
+  assert.ok(checkbox);
+  assert.equal(checkbox.checked, false);
+  checkbox.listeners.change({ target: { checked: true } });
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/confirm-remove").listeners.click()');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls[1], { id: "a1", delete_dir: true });
 });

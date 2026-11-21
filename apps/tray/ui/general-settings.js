@@ -1,7 +1,9 @@
 "use strict";
 {
   const { h, $, L, load, post, shellOS } = AN;
-  const root = $("general-prefs");
+  // Each group of rows fills the card the page gives it.
+  const roots = { main: $("general-main"), motion: $("general-motion"), launch: $("general-launch") };
+  const root = roots.main;
   let data = null;
   let busy = false;
   let generation = 0;
@@ -23,6 +25,7 @@
   const ITEMS = [
     {
       key: "theme",
+      group: "main",
       label: () => L("主题", "Theme"),
       choices: () => [
         ["system", L("跟随系统", "System")],
@@ -32,6 +35,7 @@
     },
     {
       key: "motion",
+      group: "main",
       label: () => L("减少动效", "Reduce motion"),
       choices: () => [
         ["system", L("跟随系统", "System")],
@@ -41,16 +45,19 @@
     },
     {
       key: "battery_still",
+      group: "motion",
       label: () => L("用电池时小人不动", "Still characters on battery"),
       kind: "switch",
     },
     {
       key: "pause_unfocused",
+      group: "motion",
       label: () => L("窗口失焦时小人暂停", "Pause characters when unfocused"),
       kind: "switch",
     },
     {
       key: "scale",
+      group: "main",
       label: () => L("界面大小", "Interface scale"),
       choices: () => [
         [90, "90%"],
@@ -60,16 +67,19 @@
     },
     {
       key: "autostart",
+      group: "launch",
       label: () => L("开机启动", "Launch at login"),
       kind: "switch",
     },
     {
       key: "open_on_start",
+      group: "launch",
       label: () => L("启动时打开主窗口", "Open main window on launch"),
       kind: "switch",
     },
     {
       key: "tray_click",
+      group: "launch",
       label: () => L("点托盘图标打开", "Clicking tray icon opens"),
       choices: () => [
         ["panel", L("托盘面板", "Tray panel")],
@@ -78,6 +88,7 @@
     },
     {
       key: "tray_count",
+      group: "launch",
       macOnly: true,
       label: () => L("菜单栏显示工作人数", "Show active count in menu bar"),
       choices: () => [
@@ -87,6 +98,7 @@
     },
     {
       key: "tray_font",
+      group: "launch",
       macOnly: true,
       label: () => L("菜单栏数字字体", "Menu bar count font"),
       choices: () => [
@@ -98,6 +110,7 @@
     },
     {
       key: "keep_awake",
+      group: "launch",
       label: () => L("员工工作时不让电脑睡眠", "Prevent sleep while working"),
       kind: "switch",
     },
@@ -196,10 +209,12 @@
 
   function render() {
     if (!root || !data) return;
-    root.replaceChildren(
-      // Only the macOS menu bar shows the count beside the icon.
-      ...ITEMS.filter((item) => !item.macOnly || shellOS() === "macos").map((item) => h("div.setting-row", {}, h("h2", {}, item.label()), renderControl(item))),
-    );
+    // Only the macOS menu bar shows the count beside the icon.
+    const shown = ITEMS.filter((item) => !item.macOnly || shellOS() === "macos");
+    for (const [name, box] of Object.entries(roots)) {
+      box?.replaceChildren(...shown.filter((item) => item.group === name)
+        .map((item) => h("div.s-row", {}, h("span.s-label", {}, item.label()), renderControl(item))));
+    }
   }
 
   async function refresh() {

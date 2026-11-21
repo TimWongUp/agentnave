@@ -12,8 +12,8 @@ from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import AfterValidator, Field, ValidatorFunctionWrapHandler, WrapValidator
 
+from agentnave import accounts, provider_health
 from agentnave import mcp_runtime as runtime
-from agentnave import provider_health
 from agentnave.conversations import (
     Conversations,
     TaskStart,
@@ -70,6 +70,7 @@ from agentnave.members import (
     validate_provider_options,
 )
 from agentnave.models import (
+    ACCOUNT_ID,
     InvocationError,
     InvocationRequest,
     InvocationResult,
@@ -151,6 +152,17 @@ async def start_agent(
                 "supplying a model, pass an explicit model listed for that CLI by list_members; "
                 "a * row allows omitting model or passing a concrete unlisted model, never the literal *."
             )
+        ),
+    ] = None,
+    account: Annotated[
+        str | None,
+        Field(
+            pattern=ACCOUNT_ID,
+            description=(
+                "Named account id of the CLI from list_members(accounts); only claude takes one. "
+                "Omit for the default account (the seat's account when a seat chooses one); "
+                "a resumed thread keeps its own account."
+            ),
         ),
     ] = None,
     conversation_id: Annotated[
@@ -247,6 +259,7 @@ async def start_agent(
             cwd=cwd,
             session_id=session_id,
             provider_options=provider_options,
+            account=account,
             conversation_id=conversation_id,
             title=title,
             role=role,
@@ -289,6 +302,7 @@ class TaskLaunch:
     manager_model: str | None
     manager_session_id: str | None
     isolation_auto: bool = False  # isolation the service added itself, not the boss's request
+    account: str | None = None  # explicit; the seat's or the resumed thread's otherwise
 
 
 # defaults_applied entry of a task whose isolated directory the service asked for.
@@ -301,6 +315,7 @@ def native_seat_payload(
     model: str | None,
     effort: str | None,
     *,
+    account: str | None = None,
     recommendation: Recommendation | None = None,
     fallback: SeatFallback | None = None,
     error: str | None = None,
@@ -315,6 +330,8 @@ def native_seat_payload(
     }
     if provider is not None:
         payload["provider"] = provider
+    if account is not None:
+        payload["account"] = account
     if model:
         payload["model"] = model
     if effort:
@@ -334,8 +351,14 @@ def _select_fallback(
     provider: ProviderName | None,
     provider_options: dict[str, ProviderOption] | None,
     conversations: Conversations | None = None,
+    account: str | None = None,
 ) -> tuple[ReviewSeat | None, SeatFallback | None]:
-    if session_id is not None or provider is not None or "model" in (provider_options or {}):
+    if (
+        session_id is not None
+        or provider is not None
+        or account is not None
+        or "model" in (provider_options or {})
+    ):
         return None, None
     configured = role_seat(seat_name, runtime.HOST)
     if not configured or not configured.fallbacks:
@@ -395,6 +418,7 @@ async def _acquire_and_start_task(
             session_id=launch.session_id,
             provider_options=options,
             read_only=access == "read",
+            account=arguments.account,
         )
         validate_provider_options(request)
         if resumed_acquired is not None:
@@ -458,10 +482,12 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     seat_applied: list[str] = []
     fallback = None
     conversations = _conversations(ctx)
-    claim: tuple[str, str, str] | None = None
+    claim: tuple[str, str, str | None, str] | None = None
     try:
         try:
-            arguments = StartArguments(provider, cwd, role, requested, access)
+            arguments = StartArguments(
+                provider, cwd, role, requested, access, account=launch.account
+            )
             seat_key = requested or review_role(role)
             arguments.selected, fallback = _select_fallback(
                 seat_key,
@@ -469,6 +495,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
                 provider,
                 provider_options,
                 conversations,
+                launch.account,
             )
             if (
                 arguments.selected is not None
@@ -476,9 +503,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
                 and fallback.get("random") is True
                 and seat_key
             ):
-                claim = conversations.reserve_seat_model(
-                    seat_key, arguments.selected.provider, arguments.selected.model
-                )
+                claim = conversations.reserve_seat_model(seat_key, arguments.selected)
             arguments = resolve_start(
                 arguments,
                 conversations,
@@ -489,7 +514,12 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
             )
         except NativeSeat as exc:
             return native_seat_payload(
-                exc.name, exc.seat.provider, exc.seat.model, exc.seat.effort, fallback=fallback
+                exc.name,
+                exc.seat.provider,
+                exc.seat.model,
+                exc.seat.effort,
+                account=exc.seat.account,
+                fallback=fallback,
             )
         except (ValueError, OSError) as exc:
             raise ToolError(str(exc)) from exc
@@ -499,6 +529,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
         seat_name = chosen_seat or review_role(role)
         try:
             seat = effective_seat(arguments, seat_name, runtime.HOST)
+            accounts.resolve(provider, arguments.account)
             options, seat_applied = apply_seat(seat, provider, provider_options or {})
             options = arguments.apply_history(options)
             options, defaults_applied = apply_task_defaults(
@@ -512,7 +543,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
             )
             provider_health.check(
                 conversations.root,
-                [(provider, provider_health.model_option(options))],
+                [(provider, arguments.account, provider_health.model_option(options))],
                 resume=session_id is not None,
             )
             request, started = await _acquire_and_start_task(
@@ -575,6 +606,9 @@ async def _task_start_payload(
         )
     )
     warnings.extend(started.warnings)
+    warnings.extend(
+        accounts.dispatch_warnings(conversations.host, [(request.provider, request.account)])
+    )
     if started.isolation is not None:
         warnings.extend(started.isolation.warnings)
         if not started.isolation.instructions_applied:

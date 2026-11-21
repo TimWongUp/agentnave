@@ -1,0 +1,1 @@
+{ "version": 1, "accounts": [ { "id": "Work Account", "provider": "claude", "label": "A", "dir": "/a", "managed": true } ] }

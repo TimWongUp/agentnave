@@ -141,6 +141,57 @@ fn desktop_records_name_chats_whose_transcript_is_gone() {
     assert!(!found.iter().any(|(workspace, _)| *workspace == unknown));
 }
 
+/// Handover and the refusal to resume take a chat as the desktop app's by the same records the
+/// boss page shows.
+#[test]
+fn desktop_chats_for_handover_match_the_boss_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("Claude");
+    write(
+        &data.join("claude-code-sessions/account/org/local_x.json"),
+        &format!("{{\"sessionId\":\"local_x\",\"cliSessionId\":\"{CLAUDE_SESSION}\"}}"),
+    );
+    let transcript = dir
+        .path()
+        .join(format!("projects/p/{CLAUDE_SESSION}.jsonl"));
+    write(&transcript, "{\"type\":\"user\"}\n");
+    let homes = Homes {
+        desktop: vec![data],
+        ..Homes::default()
+    };
+    let key = boss_key("claude", CLAUDE_SESSION);
+    let desktop = |homes: &Homes| desktop_session_in(homes, "claude", &key, Some(&transcript));
+    assert_eq!(
+        desktop(&homes).map(|found| found.0).as_deref(),
+        Some(CLAUDE_SESSION)
+    );
+    assert_eq!(desktop(&Homes::default()), None);
+    write(&transcript, "{\"entrypoint\":\"cli\"}\n");
+    assert_eq!(desktop(&homes), None);
+
+    let cli_root = dir.path().join(".gemini/antigravity-cli");
+    write(
+        &cli_root.join(format!("conversations/{CODEX_SESSION}.db")),
+        "",
+    );
+    write(
+        &dir.path().join(format!(
+            ".gemini/antigravity/conversations/{CLAUDE_SESSION}.db"
+        )),
+        "",
+    );
+    let agy = Homes {
+        other: vec![("antigravity".to_owned(), cli_root)],
+        ..Homes::default()
+    };
+    let agy_desktop = |id: &str| {
+        desktop_session_in(&agy, "antigravity", &boss_key("antigravity", id), None)
+            .map(|found| found.0)
+    };
+    assert_eq!(agy_desktop(CLAUDE_SESSION).as_deref(), Some(CLAUDE_SESSION));
+    assert_eq!(agy_desktop(CODEX_SESSION), None);
+}
+
 #[test]
 fn only_known_codex_entries_are_named() {
     for (originator, app) in [

@@ -22,11 +22,13 @@ const S = {
   busy: new Map(), // host id -> "connect" | "remove"
   confirm: null, // host id whose removal is being confirmed
   copyConfirm: null, // {id, kind, pid?, since?, terminal?, cwd?} of the copy whose stop/restart is being confirmed
-  adv: new Set(), // host ids whose 高级 panel is open
+  adv: new Set(), // host ids whose 更多信息 rows are open
+  sel: null, // host id shown in the detail pane (the first row when unset or gone)
+  othersOpen: false, // the 未安装的 boss fold
   localErr: new Map(), // host id -> message when a request itself failed
   newIds: new Set(),
   seen: new Set(),
-  firstRun: false, // nothing was ever seen: no per-card "新检测到" badges, the callout covers it
+  firstRun: false, // nothing was ever seen: no per-host "新检测到" badges, the callout covers it
   refreshing: false,
   batch: false,
   install: { busy: false, error: null },
@@ -44,6 +46,30 @@ const say = (text, bad = false) => {
 };
 const shortPath = (p) =>
   String(p || "").replace(/^(\/Users|\/home)\/[^/]+/, "~");
+const reloadPending = (host) => ["required", "unverified"].includes(host.reload?.state);
+// Connected bosses first; the rest keep their order below them.
+const chosen = (host) => (host.layers || []).some((l) => l.has_entry && l.scope !== "project");
+const orderedHosts = () => [...S.data.hosts].sort((a, b) => chosen(b) - chosen(a));
+const selectedHost = () => {
+  const hosts = orderedHosts();
+  return hosts.find((x) => x.id === S.sel) || hosts[0];
+};
+// Picking another row drops a confirmation that belonged to the one left behind.
+function selectHost(id) {
+  if (selectedHost()?.id !== id) {
+    S.confirm = null;
+    S.copyConfirm = null;
+  }
+  S.sel = id;
+  S.focus = { id, act: "select" };
+  renderAll();
+}
+function showHost(match) {
+  const host = orderedHosts().find(match);
+  if (!host) return;
+  selectHost(host.id);
+  $("host-cards").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
 function copyButton(text, label = L("复制", "Copy")) {
   const b = h(
     "button.link-btn",
@@ -272,31 +298,31 @@ function renderBanner() {
   const el = $("svc-banner");
   const svc = S.data.service;
   el.hidden = false;
-  el.className = "banner service";
+  el.className = "s-alert is-warn";
   el.setAttribute("role", "status");
   if (S.install.busy) {
-    el.classList.add("busy");
+    el.classList.replace("is-warn", "is-run");
     el.replaceChildren(
       h(
-        "div.banner-content",
+        "div.s-alert-body",
         {},
         h("strong", {}, L("正在安装本机服务…", "Installing local service…")),
         h("p", {}, L("从 GitHub 安装，约需一分钟。可以先看看下面检测到的应用。", "Installing from GitHub (~1 min). You can check the detected apps below in the meantime.")),
       ),
-      h("div.banner-actions", {}, spinBtn(L("安装中…", "Installing…"), ".primary")),
+      h("div.s-alert-actions", {}, spinBtn(L("安装中…", "Installing…"), ".primary")),
     );
   } else if (S.install.error) {
-    el.className = "banner error";
+    el.className = "s-alert is-bad";
     el.setAttribute("role", "alert");
     el.replaceChildren(
       h(
-        "div.banner-content",
+        "div.s-alert-body",
         {},
         h("strong", {}, L("安装本机服务失败", "Failed to install local service")),
         h("p", {}, S.install.error),
       ),
       h(
-        "div.banner-actions",
+        "div.s-alert-actions",
         {},
         copyButton(S.data.service.command, L("复制命令", "Copy command")),
         button(L("重试", "Retry"), "", "install", installSvc),
@@ -306,9 +332,9 @@ function renderBanner() {
     const title = L("请安装或更新本机服务", "Install or update local service");
     const desc = L("boss 统一通过 agentnave-mcp 启动 AgentNave，保存任务与协作历史。旧版服务需要先升级。", "Bosses start AgentNave via agentnave-mcp to save task and collaboration history. Older services must be upgraded first.");
     el.replaceChildren(
-      h("div.banner-content", {}, h("strong", {}, title), h("p", {}, desc)),
+      h("div.s-alert-body", {}, h("strong", {}, title), h("p", {}, desc)),
       h(
-        "div.banner-actions",
+        "div.s-alert-actions",
         {},
         copyButton(S.data.service.command, L("复制命令", "Copy command")),
         button(
@@ -340,7 +366,7 @@ function renderCallout() {
       ? untested
         ? L("它还没有经过真实接入验证，仍可接入。", "It has not been verified with a live connection yet, but can still be connected.")
         : L("统一接入 AgentNave，已有条目的其他字段保留。", "Connect to AgentNave; other fields in existing entries are preserved.")
-      : L(`${names}${untested ? `；其中 ${untested} 个未实测，需在各自卡片上单独接入` : ""}`, `${names}${untested ? `; ${untested} untested (connect individually on each card)` : ""}`);
+      : L(`${names}${untested ? `；其中 ${untested} 个未实测，需在各自详情里单独接入` : ""}`, `${names}${untested ? `; ${untested} untested (connect individually in each detail)` : ""}`);
   const targets = fresh.length === 1 ? fresh : tested;
   const go = targets.length
     ? button(fresh.length === 1 ? L(`接入 ${fresh[0].label}`, `Connect ${fresh[0].label}`) : L(`接入其中 ${tested.length} 个已实测的`, `Connect ${tested.length} tested`), ".primary", "new-connect", () => connectAll(targets.map((x) => x.id)), S.batch || S.refreshing)
@@ -356,8 +382,8 @@ function renderCallout() {
     S.batch,
   );
   el.replaceChildren(
-    h("div.callout-text", {}, h("strong", {}, title), h("small", {}, sub)),
-    h("div.banner-actions", {}, go, ignore),
+    h("div.s-alert-body", {}, h("strong", {}, title), h("small", {}, sub)),
+    h("div.s-alert-actions", {}, go, ignore),
   );
 }
 
@@ -378,33 +404,21 @@ function renderSummary() {
     const b = h(
       "button.sum-chip",
       { type: "button" },
-      L(`${attention} 需要处理 ↓`, `${attention} needs attention ↓`),
+      L(`${attention} 需要处理`, `${attention} needs attention`),
     );
-    b.addEventListener("click", () => {
-      const card = document.querySelector(".hc.tone-warn");
-      card?.scrollIntoView({ block: "center", behavior: "smooth" });
-      card
-        ?.querySelector("button:not(:disabled)")
-        ?.focus({ preventScroll: true });
-    });
+    b.addEventListener("click", () => showHost((x) => x.status === "needs_attention"));
     kids.push(b);
   }
   const reloads = hosts.filter((x) => ["required", "unverified"].includes(x.reload?.state)).length;
   if (reloads) {
-    const b = h("button.sum-chip", { type: "button" }, L(`${reloads} 待生效 ↓`, `${reloads} pending reload ↓`));
-    b.addEventListener("click", () => {
-      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector(".hc-reload:not([data-fault])"));
-      card?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
+    const b = h("button.sum-chip", { type: "button" }, L(`${reloads} 待生效`, `${reloads} pending reload`));
+    b.addEventListener("click", () => showHost(reloadPending));
     kids.push(b);
   }
   const faults = hosts.filter((x) => x.fault).length;
   if (faults) {
-    const b = h("button.sum-chip", { type: "button" }, L(`${faults} 连接中断 ↓`, `${faults} connection lost ↓`));
-    b.addEventListener("click", () => {
-      const card = [...document.querySelectorAll(".hc")].find((c) => c.querySelector("[data-fault]"));
-      card?.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
+    const b = h("button.sum-chip", { type: "button" }, L(`${faults} 连接中断`, `${faults} connection lost`));
+    b.addEventListener("click", () => showHost((x) => x.fault));
     kids.push(b);
   }
   if (n("orphaned"))
@@ -435,20 +449,18 @@ function renderSummary() {
 function renderBackups() {
   const b = S.data.backups;
   $("backups-line").replaceChildren(
-    h(
-      "span",
-      {},
-      b.config || b.skill
-        ? L(`备份：配置文件 ${b.config} 份、Skill 文件 ${b.skill} 份`, `Backups: ${b.config} config, ${b.skill} Skill`)
-        : L("备份：还没有", "Backups: None yet"),
-    ),
-    h("span.sep", { "aria-hidden": "true" }, "·"),
-    pathRow(b.dir),
-    button(L("打开备份目录", "Open backup folder"), "", "reveal", async () => { try { const r = await post("/app/hosts/reveal-backups"); say(r.message, !r.ok); } catch { say(L("无法打开备份目录", "Failed to open backup folder"), true); } }),
-  );
+    h("div.s-row", {},
+      h("span.s-label", {}, L("备份", "Backups")),
+      h("div.s-control", {},
+        h("span.s-value", {},
+          b.config || b.skill
+            ? L(`配置文件 ${b.config} 份、Skill 文件 ${b.skill} 份`, `${b.config} config, ${b.skill} Skill`)
+            : L("还没有", "None yet")),
+        pathRow(b.dir),
+        button(L("打开备份目录", "Open backup folder"), "", "reveal", async () => { try { const r = await post("/app/hosts/reveal-backups"); say(r.message, !r.ok); } catch { say(L("无法打开备份目录", "Failed to open backup folder"), true); } }))));
 }
 
-// ---------------------------------------------------------------- host card
+// ---------------------------------------------------------------- host list and detail
 // The App installs and updates the Skill with every connection, start, update and refresh, so a
 // connected app only shows the version, or why it could not be installed.
 function skillNode(host) {
@@ -478,48 +490,32 @@ function entryNode(host) {
   return h("span", {}, ...kids);
 }
 
-function advPanel(host) {
+// One aligned row: the label in the left column, what it holds on the right.
+function detailRow(label, ...content) {
+  return h("div.s-row.host-row", {},
+    h("span.s-label", {}, label),
+    h("div.s-control", {}, ...content.filter(Boolean)));
+}
+
+function advRows(host) {
   const id = host.id;
   const busy = S.busy.has(id);
   // The root is detected; a path typed in an earlier version can only be dropped again.
   const saveRoot = (path) => run(id, "root", () => post("/app/hosts/root", { id, path })).then((r) => { if (r?.ok) renderAll(); });
-  const rootEditor = h("div.root-editor", {},
-    h("span", {}, L("配置根目录", "Config root")), pathRow(host.root.path),
-    h("span.fine", {}, L(`来源：${({ user: "之前手动指定", env: "App 环境变量", shell: "登录 shell", default: "默认目录" })[host.root.source] || host.root.source}`, `Source: ${({ user: "Manual (legacy)", env: "App environment", shell: "Login shell", default: "Default directory" })[host.root.source] || host.root.source}`)),
-    host.root.source === "user" && h("div.adv-actions", {}, button(L("恢复自动", "Reset to auto"), "", "root-auto", () => saveRoot(null), busy)));
-  const kv = [
-    [
-      L("命令", "Command"),
-      host.command ? pathRow(host.command) : h("span.dim", {}, L("尚未写入", "Not written yet")),
-    ],
-    [
-      "AGENTNAVE_HOST",
-      host.has_host_env
-        ? h("span", {}, L(`已设置（${host.boss}）`, `Set (${host.boss})`))
-        : h(
-            "span.dim",
-            {},
-            host.status === "available" ? L("接入时写入", "Written on connect") : L("未设置", "Not set"),
-          ),
-    ],
-    [
-      L("Skill 目录", "Skill directory"),
-      host.skill.path
-        ? pathRow(host.skill.path)
-        : h("span.dim", {}, L("未确定，无法自动安装", "Undetermined; cannot auto-install")),
-    ],
-    [L("检测来源", "Detected via"), h("span", {}, host.detect_source === "app" ? L(`应用：${host.app_path || "已安装"}`, `App: ${host.app_path || "Installed"}`) : sourceText(host.detect_source))],
-  ];
-  return h(
-    "div.hc-adv",
-    { id: `adv-${id}` },
-    rootEditor,
-    h("div.fine", {}, (host.layers || []).filter((l) => l.has_entry).map((l) => L(`${l.scope === "project" ? "项目（只读）" : "用户层"}：${shortPath(l.path)}`, `${l.scope === "project" ? "Project (read-only)" : "User"}: ${shortPath(l.path)}`)).join(L("；", "; "))),
-    h(
-      "dl.adv-kv",
-      {},
-      kv.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]),
-    ),
+  const sources = { user: L("之前手动指定", "Manual (legacy)"), env: L("App 环境变量", "App environment"), shell: L("登录 shell", "Login shell"), default: L("默认目录", "Default directory") };
+  const layers = (host.layers || []).filter((l) => l.has_entry);
+  return h("div.hc-adv.detail-rows-group", { id: `adv-${id}` },
+    detailRow(L("配置根目录", "Config root"), pathRow(host.root.path)),
+    detailRow(L("根目录来源", "Root source"), h("span.host-text", {}, sources[host.root.source] || host.root.source),
+      host.root.source === "user" && button(L("恢复自动", "Reset to auto"), "", "root-auto", () => saveRoot(null), busy)),
+    layers.length > 0 && detailRow(L("已写入的配置", "Written configs"), h("div.host-stack", {},
+      layers.map((l) => h("span.host-text", {}, `${l.scope === "project" ? L("项目（只读）", "Project (read-only)") : L("用户层", "User")}：${shortPath(l.path)}`)))),
+    detailRow(L("命令", "Command"), host.command ? pathRow(host.command) : h("span.host-text.dim", {}, L("尚未写入", "Not written yet"))),
+    detailRow("AGENTNAVE_HOST", host.has_host_env
+      ? h("span.host-text", {}, L(`已设置（${host.boss}）`, `Set (${host.boss})`))
+      : h("span.host-text.dim", {}, host.status === "available" ? L("接入时写入", "Written on connect") : L("未设置", "Not set"))),
+    detailRow(L("Skill 目录", "Skill directory"), host.skill.path ? pathRow(host.skill.path) : h("span.host-text.dim", {}, L("未确定，无法自动安装", "Undetermined; cannot auto-install"))),
+    detailRow(L("检测来源", "Detected via"), h("span.host-text", {}, host.detect_source === "app" ? L(`应用：${host.app_path || "已安装"}`, `App: ${host.app_path || "Installed"}`) : sourceText(host.detect_source))),
   );
 }
 
@@ -532,10 +528,10 @@ function confirmBlock(host) {
     ? L(`将删除 ${where}（写入前会备份），并摘掉不再使用的 AgentNave 规则块${host.id === "antigravity" ? "和交互 hook" : ""}${skill ? `；${skill}` : ""}。${host.label} 本身不会受影响。`, `Removes ${where} (backed up before writing), unused AgentNave rules blocks${host.id === "antigravity" ? " and the interactive hook" : ""}${skill ? `; ${skill}` : ""}. ${host.label} itself is unaffected.`)
     : L(`将删除 ${where}（写入前会备份），并摘掉不再使用的 AgentNave 规则块${host.id === "antigravity" ? "和交互 hook" : ""}${skill ? `；${skill}` : ""}。之后可以随时重新接入。`, `Removes ${where} (backed up before writing), unused AgentNave rules blocks${host.id === "antigravity" ? " and the interactive hook" : ""}${skill ? `; ${skill}` : ""}. You can reconnect anytime.`);
   return h(
-    "div.hc-confirm",
+    "div.disable-confirm",
     { role: "group", "aria-label": L(`确认移除 ${host.label}`, `Confirm removing ${host.label}`) },
     h(
-      "div.msg",
+      "p",
       {},
       h(
         "strong",
@@ -547,7 +543,7 @@ function confirmBlock(host) {
       msg,
     ),
     h(
-      "div.acts",
+      "div.btn-group",
       {},
       button(L("取消", "Cancel"), "", "cancel", () => {
         S.confirm = null;
@@ -564,21 +560,12 @@ function confirmBlock(host) {
   );
 }
 
-// The row's own buttons: what can be done to this host now.
-function actionButtons(host) {
+// The detail head's one forward action: what can be done to this host now. Removal lives in the foot.
+function primaryAction(host) {
   const id = host.id;
   const busy = S.busy.get(id);
   const svcOk = S.data.service.installed;
   const dis = !!busy;
-  const askRemove = (label) =>
-    busy === "remove"
-      ? spinBtn(L("移除中…", "Removing…"))
-      : button(label, ".danger", "remove", () => {
-          S.confirm = id;
-          S.copyConfirm = null;
-          S.focus = { id, act: "cancel" };
-          renderAll();
-        }, dis);
   const out = [];
   if (host.status === "available") {
     if (!svcOk) out.push(h("span.fine", {}, S.install.busy ? L("正在安装本机服务…", "Installing local service…") : L("需先安装本机服务", "Install local service first")));
@@ -586,50 +573,118 @@ function actionButtons(host) {
       ? spinBtn(L("接入中…", "Connecting…"), ".primary")
       : button(L("接入", "Connect"), ".primary", "connect", () => connect(host), dis || !svcOk || S.batch));
   } else if (host.status === "needs_attention") {
-    out.push(askRemove(L("移除", "Remove")));
     out.push(busy === "connect"
       ? spinBtn(L("重试中…", "Retrying…"), ".primary")
       : button(L("重试接入", "Retry"), ".primary", "connect", () => connect(host), dis || !svcOk));
-  } else {
+  } else if (host.status === "connected" && host.launcher?.stale && svcOk) {
     // A connected host whose entry names another launcher is still writable: the same connect
     // path rewrites just the command and keeps the rest of the entry.
-    if (host.status === "connected" && host.launcher?.stale && svcOk)
-      out.push(busy === "connect"
-        ? spinBtn(L("切换中…", "Switching…"), ".primary")
-        : button(L("改用新启动器", "Use new launcher"), ".primary", "connect", () => connect(host), dis));
-    out.push(askRemove(host.status === "connected" ? L("移除", "Remove") : L("移除条目", "Remove entry")));
+    out.push(busy === "connect"
+      ? spinBtn(L("切换中…", "Switching…"), ".primary")
+      : button(L("改用新启动器", "Use new launcher"), ".primary", "connect", () => connect(host), dis));
   }
   return out;
 }
 
-// One line under the name: the state, then what matters most about it.
-function subLine(host, word) {
-  const bits = [h("span.hc-status", {}, h("i.dot", { "aria-hidden": "true" }), word)];
-  const readers = [...new Set((host.clients || []).map((client) => client.kind))];
-  if (readers.length) bits.push(h("span.hc-fact", {}, L("发现 ", "Found ") + readers.map((kind) => kind === "desktop" ? L("桌面端", "Desktop") : "CLI").join(" · ")));
-  if (host.status === "connected") {
-    // A Skill is only mentioned when it could not be installed.
-    const s = host.skill;
-    const current = s.state === "app" && (!S.appVersion || s.version === S.appVersion);
-    if (!current) bits.push(h("span.hc-fact.warn-text", {}, ["blocked", "manual"].includes(s.state) ? L("Skill 无法安装", "Skill cannot be installed") : L("Skill 未能安装", "Skill not installed")));
-  } else if (host.status === "available") {
-    bits.push(h("span.hc-fact", {}, L("本机已安装，还没有接入 AgentNave", "Installed locally, not connected to AgentNave yet")));
-  }
-  return h("p.hc-sub", {}, ...bits);
+function removeButton(host) {
+  const id = host.id;
+  const busy = S.busy.get(id);
+  if (busy === "remove") return spinBtn(L("移除中…", "Removing…"));
+  const label = host.status === "connected" || host.status === "needs_attention" ? L("移除", "Remove") : L("移除条目", "Remove entry");
+  return button(label, ".danger", "remove", () => {
+    S.confirm = id;
+    S.copyConfirm = null;
+    S.focus = { id, act: "cancel" };
+    renderAll();
+  }, !!busy || S.confirm === id);
 }
 
-function buildCard(host) {
-  const id = host.id;
+// What the list row and the detail's status row say: the state, then anything still pending.
+function hostState(host) {
+  const busy = S.busy.get(host.id);
   const [word, tone] = STATUS[host.status] || [host.status, "idle"];
+  const pending = [];
+  if (host.fault) pending.push(L("连接中断", "Connection lost"));
+  if (host.reload?.state === "required") pending.push(L("待重开", "Reload pending"));
+  else if (host.reload?.state === "unverified") pending.push(L("待确认生效", "Pending verification"));
+  const failed = host.status === "needs_attention" || Boolean(S.localErr.get(host.id) || (host.last_action && !host.last_action.ok) || host.attention);
+  if (busy) return { text: { connect: L("接入中…", "Connecting…"), remove: L("移除中…", "Removing…") }[busy] || L("处理中…", "Working…"), tone: "run", busy: true, flag: null };
+  return {
+    text: [word, ...pending].join(" · "),
+    tone: failed ? "bad" : pending.length ? "warn" : { ok: "run", info: "muted", warn: "warn", idle: "muted" }[tone] || "muted",
+    busy: false,
+    flag: failed ? "error" : pending.length ? "pending" : null,
+  };
+}
+
+function readersText(host) {
+  const readers = [...new Set((host.clients || []).map((client) => client.kind))];
+  return readers.map((kind) => (kind === "desktop" ? L("桌面端", "Desktop") : "CLI")).join(" · ");
+}
+
+function listRow(host, selected) {
+  const state = hostState(host);
+  const flagTitle = state.flag === "error" ? L("需要处理", "Needs attention") : L("有待处理事项", "Pending actions");
+  const readers = readersText(host);
+  const row = h(
+    "button.member-list-item" + (selected ? ".is-selected" : "") + (host.status === "orphaned" && !selected ? ".is-off" : ""),
+    { type: "button", "data-host": host.id, "data-act": "select", "aria-pressed": String(selected) },
+    h("span.cli-icon", { "aria-hidden": "true" }, AN.hostTile(host.mark || host.id, host.label)),
+    h("span.member-item-body", {},
+      h("span.member-item-top", {},
+        h("span.member-item-name", { title: host.label }, host.label),
+        readers && h("span.member-item-version.host-readers", {}, readers),
+        state.flag && h("span.member-item-flag." + (state.flag === "error" ? "is-error" : "is-dirty"), { title: flagTitle, "aria-label": flagTitle }, state.flag === "error" ? "!" : null)),
+      h("span.member-item-status" + (state.busy ? ".is-busy" : ""), {},
+        h("span.member-status-dot.tone-" + state.tone, { "aria-hidden": "true" }),
+        h("span.member-item-status-text", { title: state.text }, state.text))));
+  row.addEventListener("click", () => {
+    if (!selected) selectHost(host.id);
+  });
+  return row;
+}
+
+// A note above the rows: something this host needs from the user.
+function notes(host) {
+  const id = host.id;
   const busy = S.busy.get(id);
   const orphan = host.status === "orphaned";
+  const out = [];
+  const local = S.localErr.get(id);
+  const last = host.last_action;
+  if (local) out.push(h("div.hc-note.error", { role: "alert" }, local));
+  else if (last && !last.ok)
+    out.push(h("div.hc-note.error", { role: "alert" }, last.message,
+      h("small", {}, `${relTime(last.at)}${host.status === "needs_attention" ? L(" · 修好后点“重试接入”", " · Click “Retry” after fixing") : ""}`)));
+  else if (host.attention) out.push(h("div.hc-note.error", { role: "alert" }, host.attention.message));
+  if (host.fault) out.push(faultNote(host));
+  // Configuration changes remain visible until the host stops or a new connection is observed.
+  if (reloadPending(host)) {
+    out.push(reloadNote(host), copiesGroup(host));
+    const pending = S.copyConfirm?.id === id && !busy && copyAction(host, S.copyConfirm);
+    if (pending) out.push(copyConfirmBlock(host, S.copyConfirm, pending));
+  }
+  if (orphan)
+    out.push(h("div.hc-note.info", {}, L(`本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`, `${host.label} is no longer detected locally, but its config still has the agentnave entry. Leaving it is harmless; remove it if no longer needed.`)));
+  if (host.shadowed_by)
+    out.push(h("div.hc-note.info", {}, L("项目级配置 ", "Project config "), h("code", {}, shortPath(host.shadowed_by)), L(" 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。", " also has an agentnave entry, which takes precedence in that project. The App never modifies project configs.")));
+  if (host.launcher?.stale)
+    out.push(h("div.hc-note.info", {},
+      L("配置里的启动器仍是旧的 ", "Configured launcher is still the old "), h("code", {}, shortPath(host.launcher.current || "")),
+      L("；重新接入会把 command 改为 ", "; reconnecting updates command to "), h("code", {}, shortPath(host.launcher.expected || ""))));
+  return out.filter(Boolean);
+}
+
+function detailPanel(host) {
+  const id = host.id;
+  const busy = S.busy.get(id);
+  const orphan = host.status === "orphaned";
+  const state = hostState(host);
   const isNew = !S.firstRun && S.newIds.has(id);
   const open = S.adv.has(id);
-  const card = h(
-    "article.hc.tone-" + tone + (busy ? ".is-busy" : "") + (orphan ? ".is-orphan" : ""),
-    { "data-host": id, "aria-labelledby": `name-${id}`, "aria-busy": busy ? "true" : null },
-  );
-  card.addEventListener("keydown", (e) => {
+  const last = host.last_action;
+  const panel = h("div.detail-panel.host-detail", { "data-host": id, "aria-labelledby": `name-${id}`, "aria-busy": busy ? "true" : null });
+  panel.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && S.confirm === id) {
       S.confirm = null;
       S.focus = { id, act: "remove" };
@@ -640,76 +695,47 @@ function buildCard(host) {
       renderAll();
     }
   });
-  // Only a host not yet connected can be untested: once its entry works it has been tried.
-  const badges = [
-    host.reload?.state === "required" && h("span.badge.badge-warning", {}, L("需要重新加载", "Reload required")),
-    host.reload?.state === "unverified" && h("span.badge", {}, L("待确认生效", "Pending verification")),
-    host.fault && h("span.badge.badge-warning", {}, L("连接已中断", "Connection lost")),
-    !host.tested && host.status === "available" &&
-      h("span.badge.badge-muted", { title: L("还没有经过真实接入验证：写入逻辑按官方文档实现，遇到问题请反馈。", "Not verified with a live connection yet: implemented per official docs; please report any issues.") }, L("未实测", "Untested")),
-    isNew && h("span.badge.badge-accent", {}, L("新检测到", "New")),
-  ];
-  const details = h(
-    "button.adv-btn",
-    { type: "button", "data-act": "adv", "aria-expanded": String(open), "aria-controls": `details-${id}` },
-    h("i.chev", { "aria-hidden": "true" }),
-    L("详情", "Details"),
-  );
-  details.addEventListener("click", () => {
+  const head = h("div.detail-head", {},
+    h("div.member-title", {},
+      h("span.cli-icon", { "aria-hidden": "true" }, AN.hostTile(host.mark || id, host.label)),
+      h("h3.cli-name", { id: `name-${id}`, title: host.label }, host.label),
+      // Only a host not yet connected can be untested: once its entry works it has been tried.
+      !host.tested && host.status === "available" &&
+        h("span.badge.badge-muted", { title: L("还没有经过真实接入验证：写入逻辑按官方文档实现，遇到问题请反馈。", "Not verified with a live connection yet: implemented per official docs; please report any issues.") }, L("未实测", "Untested")),
+      isNew && h("span.badge.badge-accent", {}, L("新检测到", "New"))),
+    h("div.host-head-act", {}, ...primaryAction(host)));
+
+  const more = h("button.cli-missing-toggle", { type: "button", "data-act": "adv", "aria-expanded": String(open), "aria-controls": `adv-${id}` },
+    h("span.cli-chevron", { "aria-hidden": "true" }), L("更多信息", "More info"));
+  more.addEventListener("click", () => {
     if (open) S.adv.delete(id);
     else S.adv.add(id);
     S.focus = { id, act: "adv" };
     renderAll();
   });
-  const main = [
-    h(
-      "div.hc-line",
-      {},
-      h("span.hc-icon", { "aria-hidden": "true" }, AN.hostTile(host.mark || id, host.label)),
-      h("div.hc-id", {},
-        h("div.hc-title", {}, h("h3.hc-name", { id: `name-${id}` }, host.label), ...badges),
-        subLine(host, word)),
-      h("div.hc-acts", {}, ...(S.confirm === id && !busy ? [] : actionButtons(host)), details),
-    ),
-  ];
-  const hostCli = hostCliRow(host);
-  if (hostCli) main.push(hostCli);
-  if (orphan)
-    main.push(h("p.hc-orphan", {}, L(`本机已检测不到 ${host.label}，但它的配置里还留着 agentnave 条目。留着不影响使用；不再需要时可以移除。`, `${host.label} is no longer detected locally, but its config still has the agentnave entry. Leaving it is harmless; remove it if no longer needed.`)));
-  if (host.shadowed_by)
-    main.push(h("div.hc-note.info", {}, L("项目级配置 ", "Project config "), h("code", {}, shortPath(host.shadowed_by)), L(" 里也有 agentnave 条目，在那个项目里会优先使用它。App 只看不改项目级配置。", " also has an agentnave entry, which takes precedence in that project. The App never modifies project configs.")));
-  if (host.launcher?.stale)
-    main.push(h("div.hc-note.info", {},
-      L("配置里的启动器仍是旧的 ", "Configured launcher is still the old "), h("code", {}, shortPath(host.launcher.current || "")),
-      L("；重新接入会把 command 改为 ", "; reconnecting updates command to "), h("code", {}, shortPath(host.launcher.expected || ""))));
-  const local = S.localErr.get(id);
-  const last = host.last_action;
-  if (local) main.push(h("div.hc-note.error", { role: "alert" }, local));
-  else if (last && !last.ok)
-    main.push(h("div.hc-note.error", { role: "alert" }, last.message,
-      h("small", {}, `${relTime(last.at)}${host.status === "needs_attention" ? L(" · 修好后点“重试接入”", " · Click “Retry” after fixing") : ""}`)));
-  else if (host.attention) main.push(h("div.hc-note.error", { role: "alert" }, host.attention.message));
-  else if (last && open)
-    main.push(h("p.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`));
-  if (host.fault) main.push(faultNote(host));
-  // Configuration changes remain visible until the host stops or a new connection is observed.
-  if (["required", "unverified"].includes(host.reload?.state)) {
-    main.push(reloadNote(host));
-    const pending = S.copyConfirm?.id === id && !busy && copyAction(host, S.copyConfirm);
-    if (pending) main.push(copyConfirmBlock(host, S.copyConfirm, pending));
-  }
-  if (S.confirm === id && !busy) main.push(confirmBlock(host));
-  // The 详情 button controls this wrapper, which every status renders (an orphan has no advanced part).
-  if (open)
-    main.push(h("div.hc-details", { id: `details-${id}` },
-      h("dl.hc-facts", {},
-        h("div", {}, h("dt", {}, L("入口", "Entry")), h("dd", {}, entryNode(host))),
-        h("div", {}, h("dt", {}, "Skill"), h("dd", {}, skillNode(host))),
-        h("div.wide", {}, h("dt", {}, host.status === "available" ? L("配置文件（接入时写入）", "Config file (written on connect)") : L("配置文件", "Config file")), h("dd", {}, pathRow(host.config_path))),
-      ),
-      !orphan && advPanel(host)));
-  card.append(h("div.hc-main", {}, ...main));
-  return card;
+  const statusExtra = host.status === "available" ? L("本机已安装，还没有接入 AgentNave", "Installed locally, not connected to AgentNave yet") : "";
+  const readers = readersText(host);
+  const rows = h("div.detail-rows", {},
+    ...notes(host),
+    detailRow(L("状态", "Status"),
+      h("span.hc-status.tone-" + state.tone + (busy ? ".is-busy" : ""), {}, h("i.dot", { "aria-hidden": "true" }), state.text),
+      statusExtra && h("span.host-text.dim", {}, statusExtra)),
+    readers && detailRow(L("发现", "Found"), h("span.host-text", {}, readers)),
+    hostCliRow(host),
+    detailRow(L("入口", "Entry"), entryNode(host)),
+    detailRow("Skill", skillNode(host)),
+    detailRow(L("配置文件", "Config file"), pathRow(host.config_path), host.status === "available" && h("span.host-text.dim", {}, L("接入时写入", "Written on connect"))),
+    open && last && last.ok && detailRow(L("最近操作", "Last action"), h("span.host-text.hc-last", {}, h("span.tick", { "aria-hidden": "true" }, "✓"), `${last.message} · ${relTime(last.at)}`)),
+    !orphan && h("div.host-more", {}, more),
+    open && !orphan && advRows(host));
+
+  panel.append(head, rows);
+  const removable = host.status !== "available";
+  if (removable)
+    panel.append(h("div.detail-foot", {},
+      S.confirm === id && !busy && confirmBlock(host),
+      h("div.detail-foot-actions", {}, removeButton(host))));
+  return panel;
 }
 
 // What a connected boss does with a task whose CLI is its own; a choice equal to the host's
@@ -731,7 +757,7 @@ function hostCliRow(host) {
     "工位或员工用的 CLI 和这个 boss 相同时（比如在 Claude Code 里派给 Claude 的任务）怎么执行。用 boss 自己的子代理：boss 用自带的子代理完成，不经过 AgentNave。由 AgentNave 另开：另启动一个同款 CLI，和 boss 共用账号额度。改用其他 CLI：跳过它，换用备选或其他员工。开会不受影响。",
     "How a task runs when its seat or employee uses the same CLI as this boss (say, a Claude task sent from Claude Code). Boss's own subagent: the boss finishes it with its built-in subagent, without AgentNave. Started by AgentNave: another copy of the CLI starts, sharing the boss's account quota. Use another CLI: it is skipped for a fallback or another employee. Meetings are not affected.",
   );
-  const select = h("select", { "aria-label": label, "data-act": "host-cli", disabled: Boolean(S.busy.get(host.id)) },
+  const select = h("select.member-model", { "aria-label": label, "data-act": "host-cli", disabled: Boolean(S.busy.get(host.id)) },
     HOST_CLI_CHOICES.map(([value, text]) => h("option", { value, selected: value === choice }, text)));
   select.addEventListener("change", async () => {
     S.focus = { id: host.id, act: "host-cli" };
@@ -745,9 +771,9 @@ function hostCliRow(host) {
     }
     renderAll();
   });
-  return h("div.hc-hostcli", {},
-    h("span.hc-hostcli-label", {}, label, h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tip }, "?")),
-    select);
+  return h("div.s-row.host-row.hc-hostcli", {},
+    h("span.s-label", {}, label, h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tip }, "?")),
+    h("div.s-control", {}, select));
 }
 
 // Why a reload is required; the per-copy instructions below the title say how to reopen.
@@ -787,11 +813,7 @@ function copyRow(host, copy) {
   const busy = S.busy.get(id);
   const action = copyAction(host, copy);
   const act = copyAct(copy);
-  const name = [
-    COPY_KIND[copy.kind] || copy.kind,
-    copy.bundle && bundleName(copy.bundle),
-    copy.kind === "cli" && copy.terminal,
-  ].filter(Boolean).join(" · ");
+  const which = [copy.bundle && bundleName(copy.bundle), copy.kind === "cli" && copy.terminal].filter(Boolean).join(" · ");
   const since = copy.since ? relTime(new Date(copy.since).toISOString()) : "";
   let control = null;
   if (action)
@@ -803,14 +825,18 @@ function copyRow(host, copy) {
           S.focus = { id, act: "copy-cancel" };
           renderAll();
         }, Boolean(busy) || S.updating || S.copyConfirm?.id === id);
-  return h("li.hc-copy", {},
-    h("div", {},
-      h("strong", {}, name, ["daemon", "gateway"].includes(copy.kind) &&
-        AN.settings.settingTip(L("这是应用在后台常驻的进程，关掉窗口也不会退出；它重启后才会用上新配置。", "This is the app’s resident background process; closing the window doesn’t stop it, and it only picks up the new config after a restart."))),
-      since && h("span.hc-since", {}, L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`)),
-      cliCopyCwd(copy),
-      host.reopen?.[copy.kind] && h("p", {}, host.reopen[copy.kind])),
-    h("div.hc-copy-act", {}, control));
+  const label = h("span.s-label", {}, COPY_KIND[copy.kind] || copy.kind,
+    ["daemon", "gateway"].includes(copy.kind) &&
+      AN.settings.settingTip(L("这是应用在后台常驻的进程，关掉窗口也不会退出；它重启后才会用上新配置。", "This is the app’s resident background process; closing the window doesn’t stop it, and it only picks up the new config after a restart.")));
+  return h("div.s-row.host-row.host-copy-row", {},
+    label,
+    h("div.s-control", {},
+      h("div.host-copy-body", {},
+        (which || since) && h("p.host-text", {}, which && h("strong", {}, which),
+          since && h("span.hc-since", {}, which ? L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`) : L(`${since}${/\d$/.test(since) ? " " : ""}启动`, `started ${since}`))),
+        cliCopyCwd(copy),
+        host.reopen?.[copy.kind] && h("p.host-text.dim", {}, host.reopen[copy.kind])),
+      h("div.hc-copy-act", {}, control)));
 }
 
 // The service died while the host was still connected; the user's confirmation or a newer healthy
@@ -848,11 +874,15 @@ function reloadNote(host) {
         run(id, "confirm-reload", () => post("/app/hosts/confirm-reload", { id, token: host.reload.token })),
         Boolean(busy) || S.updating || host.status !== "connected"),
     ),
-    copies.length
-      ? h("ul.hc-copies", {}, copies.map((copy) => copyRow(host, copy)))
-      : fallback && h("p.hc-reopen", {}, fallback),
+    !copies.length && fallback && h("p.hc-reopen", {}, fallback),
     host.trust && h("p.hc-trust", {}, host.trust),
   );
+}
+
+// The old copies of a host whose reload is pending, one aligned row each.
+function copiesGroup(host) {
+  const copies = host.reload.copies || [];
+  return copies.length ? h("div.host-copies", {}, ...copies.map((copy) => copyRow(host, copy))) : null;
 }
 
 function copyConfirmBlock(host, confirm, [label, , title, consequence]) {
@@ -888,12 +918,17 @@ function renderCards() {
     );
     return;
   }
-  // Connected bosses first; the rest keep their order below them.
-  const chosen = (host) => (host.layers || []).some((l) => l.has_entry && l.scope !== "project");
-  box.replaceChildren(...[...S.data.hosts].sort((a, b) => chosen(b) - chosen(a)).map(buildCard));
+  const hosts = orderedHosts();
+  const current = selectedHost();
+  box.replaceChildren(
+    h("div.members-split", {},
+      h("div.members-list-pane", {},
+        h("div.members-list-items", { role: "group", "aria-label": L("boss 列表", "Bosses") },
+          ...hosts.map((host) => listRow(host, host.id === current.id)))),
+      h("div.members-detail-pane", {}, detailPanel(current))));
 }
 
-// Below the cards: supported bosses not installed here, and a prompt any other MCP agent can follow.
+// Below the list: supported bosses not installed here, and a prompt any other MCP agent can follow.
 function renderOthers() {
   const absent = S.data.absent || [];
   const { launcher, skills } = S.data.service;
@@ -909,16 +944,26 @@ function renderOthers() {
   const copy = copyButton(prompt, L("复制接入提示词", "Copy setup prompt"));
   copy.setAttribute("aria-label", L("复制接入提示词", "Copy setup prompt")); // not the whole prompt
   copy.disabled = !launcher;
+  copy.className = "";
+  const toggle = h("button.cli-missing-toggle", { type: "button", "data-act": "others", "aria-expanded": String(S.othersOpen) },
+    h("span.cli-chevron", { "aria-hidden": "true" }),
+    absent.length ? L(`未安装的 boss（${absent.length}）`, `Uninstalled bosses (${absent.length})`) : L("其他 boss", "Other bosses"));
+  toggle.addEventListener("click", () => {
+    S.othersOpen = !S.othersOpen;
+    S.focus = { act: "others" };
+    renderAll();
+  });
   $("host-others").replaceChildren(
-    absent.length && h("div.others-row", {},
-      h("span.others-name", {}, L(`未安装（${absent.length}）`, `Not installed (${absent.length})`)),
-      h("span.others-list", {}, ...absent.map((x) => h("span.others-item", {}, h("span.others-icon", {}, AN.hostTile(x.mark, x.label)), x.label)))),
-    h("div.others-row", {},
-      h("span.others-name", {}, L("其他支持 MCP 的 Agent", "Other MCP agents")),
-      h("span.others-acts", {},
-        !launcher && h("span.fine", {}, S.install.busy ? L("正在安装本机服务…", "Installing local service…") : L("需先安装本机服务", "Install local service first")),
-        copy)),
-  );
+    h("div.cli-missing", {}, toggle,
+      S.othersOpen && h("div.s-card.host-others-list", {},
+        absent.length > 0 && h("div.s-row.host-row", {},
+          h("span.s-label", {}, L("未安装", "Not installed")),
+          h("div.s-control.others-list", {}, ...absent.map((x) => h("span.others-item", {}, h("span.others-icon", {}, AN.hostTile(x.mark, x.label)), x.label)))),
+        h("div.s-row.host-row", {},
+          h("span.s-label", {}, L("其他支持 MCP 的 Agent", "Other MCP agents")),
+          h("div.s-control", {},
+            !launcher && h("span.fine", {}, S.install.busy ? L("正在安装本机服务…", "Installing local service…") : L("需先安装本机服务", "Install local service first")),
+            copy)))));
 }
 
 function renderAll() {
@@ -933,13 +978,18 @@ function renderAll() {
   if (S.focus) {
     const { id, act } = S.focus;
     S.focus = null;
+    const within = id ? `[data-host="${id}"]` : "#host-others";
     document
-      .querySelector(`.hc[data-host="${id}"] [data-act="${act}"]`)
+      .querySelector(`${within}[data-act="${act}"], ${within} [data-act="${act}"]`)
       ?.focus({ preventScroll: true });
   }
 }
 
 $("refresh-hosts").addEventListener("click", refreshAll);
+$("reload-notice").querySelector?.("a")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  showHost(reloadPending);
+});
 setInterval(() => {
   const hidden = AN.isHidden ? AN.isHidden() : document.hidden;
   if (!hidden && !$("pane-hosts").hidden && !S.refreshing) reload();

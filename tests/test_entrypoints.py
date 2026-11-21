@@ -2324,7 +2324,7 @@ async def test_cooldown_only_blocks_selected_model(
         args["provider_options"] = {"model": "b"}
         started = await client.call_tool("start_agent", args)
         assert not started.is_error
-        assert ("claude", "a") in provider_health.active(root)
+        assert ("claude", None, "a") in provider_health.active(root)
         cleared = await client.call_tool(
             "clear_provider_cooldown", {"provider": "claude", "model": "a"}
         )
@@ -2416,13 +2416,162 @@ async def test_unmodelled_failure_blocks_followup_even_when_cli_reports_model(
         assert not started.is_error
         invocation_id = _payload(started.structured_content)["invocation_id"]
         await client.call_tool("wait", {"ids": [invocation_id]})
-        assert set(provider_health.active(root)) == {("claude", None)}
+        assert set(provider_health.active(root)) == {("claude", None, None)}
         blocked = await client.call_tool("start_agent", args)
         assert blocked.is_error and "cooling down" in str(blocked.content)
         cleared = await client.call_tool(
             "clear_provider_cooldown", {"provider": "claude", "model": "reported"}
         )
         assert not cleared.is_error and provider_health.active(root) == {}
+
+
+@pytest.mark.asyncio
+async def test_named_account_runs_apart_with_its_own_home_cooldown_and_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import provider_health
+
+    root = tmp_path / "data"
+    root.mkdir()
+    homes = {"work": tmp_path / "work-home", "a2": tmp_path / "personal-home"}
+    (root / "accounts.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "accounts": [
+                    {
+                        "id": name,
+                        "provider": "claude",
+                        "label": label,
+                        "dir": str(home),
+                        "managed": True,
+                    }
+                    for (name, home), label in zip(homes.items(), ("工作", "个人"), strict=True)
+                ],
+            }
+        )
+    )
+    write_fake_cli(
+        tmp_path,
+        "claude",
+        "import json, os, sys\n"
+        "prompt = sys.stdin.read()\n"
+        "if prompt.endswith('login'):\n"
+        "    print(json.dumps({'type': 'result', 'is_error': True, 'errors': ['not logged in']}))\n"
+        "else:\n"
+        "    seen = {k: os.environ.get(k) for k in ('CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_MESSAGING_TOKEN')}\n"
+        "    session = 'session-' + os.path.basename(seen['CLAUDE_CONFIG_DIR'])\n"
+        "    print(json.dumps({'type': 'result', 'result': json.dumps(seen), 'session_id': session}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "boss-home"))
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "boss-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key-in-env")
+
+    async def run(
+        client: Client, **arguments: object
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        arguments = {"provider": "claude", "prompt": "ok", "cwd": str(tmp_path), **arguments}
+        started = await client.call_tool("start_agent", arguments)
+        assert not started.is_error, started.content
+        receipt = _payload(started.structured_content)
+        update = _first(await client.call_tool("wait", {"ids": [receipt["invocation_id"]]}))
+        return receipt, update
+
+    async def refused(client: Client, **arguments: object) -> str:
+        result = await client.call_tool(
+            "start_agent", {"provider": "claude", "prompt": "ok", "cwd": str(tmp_path), **arguments}
+        )
+        assert result.is_error
+        return str(result.content)
+
+    async with Client(mcp) as client:
+        receipt, update = await run(client, account="work")
+        assert receipt["account"] == "work"
+        # An API key in the environment stays (ADR-0058) and the receipt says it may win; the
+        # default account's dispatch is unchanged.
+        warnings = " ".join(cast(list[str], receipt["warnings"]))
+        assert "ANTHROPIC_API_KEY" in warnings and "key-in-env" not in warnings
+        # The account's directory reaches the child, the boss's session variables do not, and
+        # this process's own environment stays as it was.
+        seen = json.loads(str(update["output"]))
+        assert seen == {
+            "CLAUDE_CONFIG_DIR": str(homes["work"]),
+            "CLAUDE_CODE_MESSAGING_TOKEN": None,
+        }
+        assert os.environ["CLAUDE_CONFIG_DIR"] == str(tmp_path / "boss-home")
+        assert "（工作）" in str(_payload(update["identity"])["handle"])
+        # The default account takes the inherited directory untouched, and shows no account.
+        receipt, update = await run(client)
+        assert "account" not in receipt and "warnings" not in receipt
+        assert json.loads(str(update["output"]))["CLAUDE_CONFIG_DIR"] == str(tmp_path / "boss-home")
+
+        # A thread keeps its account: the session lives in that account's directory.
+        resumed_receipt, resumed = await run(client, prompt="again", session_id="session-work-home")
+        assert resumed_receipt["account"] == "work"
+        assert json.loads(str(resumed["output"]))["CLAUDE_CONFIG_DIR"] == str(homes["work"])
+        assert "cannot be resumed as account 'a2'" in await refused(
+            client, prompt="again", session_id="session-work-home", account="a2"
+        )
+        assert "not registered" in await refused(client, account="ghost")
+        assert "does not take an account" in await refused(client, provider="codex", account="work")
+
+        # A failed login cools only that account, whatever model it asked for.
+        await run(client, account="a2", prompt="login")
+        assert set(provider_health.active(root)) == {("claude", "a2", None)}
+        assert "account a2" in await refused(client, account="a2")
+        await run(client, account="work")
+        cleared = await client.call_tool("clear_provider_cooldown", {"provider": "claude"})
+        assert not cleared.is_error and ("claude", "a2", None) in provider_health.active(root)
+        cleared = await client.call_tool(
+            "clear_provider_cooldown", {"provider": "claude", "account": "a2"}
+        )
+        assert not cleared.is_error and provider_health.active(root) == {}
+        # A meeting seat keeps its account for the whole meeting and runs in its directory.
+        opened = await client.call_tool(
+            "run_round",
+            {
+                "title": "Accounts",
+                "cwd": str(tmp_path),
+                "members": [
+                    {"id": "a", "provider": "claude", "account": "work"},
+                    {"id": "b", "provider": "claude"},
+                ],
+                "seats": ["a"],
+                "prompt": "compare",
+            },
+        )
+        assert not opened.is_error, opened.content
+        content = _payload(opened.structured_content)
+        members = cast(list[dict[str, object]], content["members"])
+        assert [m.get("account") for m in members] == ["work", None]
+        assert "（工作）" in str(_payload(members[0]["identity"])["handle"])
+        assert "（" not in str(_payload(members[1]["identity"])["handle"])
+        round_id = _payload(content["round"])["round_id"]
+        async with asyncio.timeout(10):
+            while (waited := _first(await client.call_tool("wait", {"ids": [round_id]}), "rounds"))[
+                "status"
+            ] == "running":
+                pass
+        seat = cast(list[dict[str, object]], waited["seats"])[0]
+        assert json.loads(str(seat["output"]))["CLAUDE_CONFIG_DIR"] == str(homes["work"])
+        rejected = await client.call_tool(
+            "run_round",
+            {
+                "title": "Bad",
+                "cwd": str(tmp_path),
+                "members": [
+                    {"id": "a", "provider": "codex", "account": "work"},
+                    {"id": "b", "provider": "claude"},
+                ],
+            },
+        )
+        assert rejected.is_error and "does not take an account" in str(rejected.content)
+        listed = _payload((await client.call_tool("list_members", {})).structured_content)
+        assert listed["accounts"] == [
+            {"id": "work", "provider": "claude", "label": "工作"},
+            {"id": "a2", "provider": "claude", "label": "个人"},
+        ]
 
 
 def _init_git_repo(repo: Path) -> str:

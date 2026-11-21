@@ -1618,6 +1618,13 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   // 409 elsewhere confirm on resume: Cancel aborts, Continue resends with confirm=1.
   sessions = [];
   await context.ChatTerminal.refresh();
+  for (const app of ["claude-desktop", "antigravity-desktop"]) {
+    context.ChatTerminal.column("ws-desktop", app === "claude-desktop" ? "claude" : "antigravity", app);
+    assert.equal(stopButton.textContent, "转交到终端");
+    assert.equal(stopButton.hidden, false);
+  }
+  context.ChatTerminal.column("ws-cli", "claude", "claude-cli");
+  assert.equal(stopButton.textContent, "续接");
   for (const host of ["claude", "grok", "antigravity"]) {
     context.ChatTerminal.column("ws-new-resume", host);
     assert.equal(stopButton.hidden, false);

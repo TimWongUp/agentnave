@@ -186,3 +186,28 @@ pub(super) fn chat(root: &Path, workspace: &str) -> Option<(String, String, Opti
         .ok()
         .and_then(|(host, key, file)| Some((host?, key, file.map(PathBuf::from))))
 }
+
+/// The account the workspace's boss chat runs as: the `owner_account` the service recorded, None
+/// for the default account or before the history knows the column (schema 5).
+pub(super) fn owner_account(root: &Path, workspace: &str) -> Option<String> {
+    let connection = crate::db::read(root).ok()??;
+    let known: bool = connection
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('workspaces') WHERE name = 'owner_account')",
+            [],
+            |row| row.get(0),
+        )
+        .ok()?;
+    if !known {
+        return None;
+    }
+    connection
+        .query_row(
+            "SELECT owner_account FROM workspaces WHERE id = ?1",
+            [workspace],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+        .filter(|account| !account.is_empty())
+}

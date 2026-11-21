@@ -10,22 +10,25 @@
     sameJson, saveLimit, savedEffort, sceneEffort, setDeepSeekRoute, setInteractive, setProviderEnabled, setSplit, settingTip,
     showNotice, shownPool, slot, takeReview, textNode, unlisted, writePool
   } = S;
+
+  let selectedMember = null; // "cli:<provider>"
+
   function slotRows(provider, scene, split) {
     const current = slot(scene || "task", provider);
     const key = `${provider}/${scene || "both"}`;
     const native = nativeDefault(provider);
     const all = getAllModelIds(provider);
     const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
-    const tip = scene === "discussion" ? null : settingTip(L("单独干活只用于没开编排的 boss，开会始终按这里设置。分开设置可以给两者选不同的默认模型和档位，或只停用其中一个。", "Solo tasks only serve bosses without orchestration; meetings always use these settings. Separate lets the two use different default models and efforts, or turns off just one."));
-    // The last scene keeps the tip beside it when the narrow column wraps the label.
-    const label = el("span", { className: "member-scene" }, split ? [SCENES[scene], tip]
-      : [L(`${SCENES.task}、`, `${SCENES.task}, `), el("span", { className: "nowrap" }, SCENES.discussion, tip)]);
+    const scope = S.taskScopeNote?.();
+    const tip = scene === "discussion" ? null : settingTip(L("单独干活只用于没开编排的 boss，开会始终按这里设置。分开设置可以给两者选不同的默认模型和档位，或只停用其中一个。", "Solo tasks only serve bosses without orchestration; meetings always use these settings. Separate lets the two use different default models and efforts, or turns off just one.") + (scope ? ` ${scope}` : ""));
+    const label = el("span", { className: "s-label" }, split ? [SCENES[scene], tip]
+      : [L(`${SCENES.task}、${SCENES.discussion}`, `${SCENES.task}, ${SCENES.discussion}`), tip]);
     const pick = (change) => changeSlot(provider, scene, change);
     // Turning a CLI off for both scenes asks first when it drops settings.
     const off = () => (scene ? pick({ enabled: false }) : setProviderEnabled(provider, false));
 
     if (!current.enabled) {
-      return [el("div", { className: "member-row" }, label, el("div", { className: "member-line" },
+      return [el("div", { className: "s-row" }, label, el("div", { className: "s-control" },
         el("select", {
           className: "member-model",
           dataset: { focusKey: `${key}/model` },
@@ -44,7 +47,7 @@
       ...(model && !offered.includes(model) ? [el("option", { value: model, selected: true, disabled: true }, L(`${model}（不在可用模型里）`, `${model} (not available)`))] : []),
       ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? L(`${m}（CLI 当前设置）`, `${m} (CLI current)`) : m)),
     ];
-    const modelLine = el("div", { className: "member-line" },
+    const modelLine = el("div", { className: "s-control" },
       el("select", {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
@@ -67,7 +70,7 @@
         }, "↺")
         : el("span", { className: "member-reset-slot" }));
 
-    return [el("div", { className: "member-row" }, label, modelLine, slotEffortLine({ provider, scene, current, model, key, pick }))];
+    return [el("div", { className: "s-row" }, label, modelLine, slotEffortLine({ provider, scene, current, model, key, pick }))];
   }
 
   // What the pool row reads: scenes of an older file can still hold lists of their own.
@@ -94,8 +97,8 @@
     // Hidden and no longer listed models neither count nor survive an edit of the list.
     const chosen = pool?.filter((id) => all.includes(id));
     const open = S.pickerOpen === key;
-    const rows = [el("div", { className: "member-row" },
-      el("span", { className: "member-scene" }, L("可用模型", "Available models")),
+    const rows = [el("div", { className: "s-row" },
+      el("span", { className: "s-label" }, L("可用模型", "Available models")),
       el("button", {
         type: "button",
         className: "member-list",
@@ -181,17 +184,17 @@
   function renderInteractive(provider) {
     const runtime = INTERACTIVE[provider];
     if (!runtime || (provider === "antigravity" && AN.shellOS?.() === "windows")) return null;
-    return el("div", { className: "member-row member-runtime" },
-      el("label", { className: "member-interactive" },
-        el("input", {
-          type: "checkbox",
-          className: "switch-input",
-          dataset: { focusKey: `${provider}/interactive` },
-          checked: S.limitDoc?.[runtime.key] === true,
-          disabled: S.busy || !S.limitDoc || Boolean(S.limitError),
-          onChange: (e) => setInteractive(runtime.key, e.target.checked),
-        }), textNode(L("交互模式运行", "Run interactively")),
-        settingTip(runtime.tip())));
+    return el("div", { className: "s-row member-runtime" },
+      el("label", { className: "s-label", htmlFor: `${provider}-interactive` }, textNode(L("交互模式运行", "Run interactively")), settingTip(runtime.tip())),
+      el("input", {
+        type: "checkbox",
+        id: `${provider}-interactive`,
+        className: "switch-input",
+        dataset: { focusKey: `${provider}/interactive` },
+        checked: S.limitDoc?.[runtime.key] === true,
+        disabled: S.busy || !S.limitDoc || Boolean(S.limitError),
+        onChange: (e) => setInteractive(runtime.key, e.target.checked),
+      }));
   }
 
   function deepSeekRouteRows() {
@@ -204,8 +207,8 @@
           : !Object.hasOwn(options, "provider") && !Object.hasOwn(options, "stored_credentials") ? "default" : "custom";
         const label = L(`${model} 的连接方式`, `Connection for ${model}`);
         const tip = L("仅指定此模型时生效，适用于任务、会议和工位；场景自定义参数或调用方显式参数优先。账号方式使用 DeepSeek Harness 已登录的账号。", "Applies when this model is selected for tasks, meetings and seats. Scene overrides and explicit call options take precedence. Account uses the signed-in DeepSeek Harness account.");
-        return el("div", { className: "member-row" },
-          el("span", { className: "member-scene" }, label, settingTip(tip)),
+        return el("div", { className: "s-row" },
+          el("span", { className: "s-label" }, label, settingTip(tip)),
           el("select", { className: "member-model", dataset: { focusKey: `deepseek/route/${model}` },
             "aria-label": label, onChange: (e) => setDeepSeekRoute(model, e.target.value) },
             el("option", { value: "default", selected: route === "default" }, L("沿用 CLI 设置", "Follow CLI settings")),
@@ -219,7 +222,182 @@
       "After signing in to DeepSeek Harness, select “Signed-in account” for the chosen model and save settings; “Official API key” uses the official API route; “Follow CLI settings” leaves routing unchanged. Applies only when that model is selected."))];
   }
 
-  // One card per CLI: one row for both scenes, or one row each once split.
+  function codexSourceUnavailable() {
+    const selected = S.currentDoc.clis?.codex?.executable_source || "auto";
+    if (selected === "auto") return false;
+    const installs = S.cliUpdates?.clis?.codex?.installations || [];
+    return !installs.some((install) => install.id === selected);
+  }
+
+  function providerDirty(provider, currentDoc, saved) {
+    if (!sameJson(currentDoc.clis?.[provider] ?? null, saved.clis?.[provider] ?? null)) return true;
+    return SCENE_IDS.some((s) => !sameJson(currentDoc.modes?.[s]?.[provider] ?? null, saved.modes?.[s]?.[provider] ?? null));
+  }
+
+  function cliErrors(provider, info) {
+    const conflicts = poolConflicts(provider);
+    const config = (S.configurationErrors?.() || [])
+      .filter((e) => e.provider === provider && !/不在可用模型里|Not in the available models/.test(e.message))
+      .map((e) => el("p", { className: "member-error" }, e.message));
+    const listErr = info.error ? [el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`))] : [];
+    const accountsErr = provider === "claude" && S.accountsError ? [el("p", { className: "member-error" }, S.accountsError)] : [];
+    return [...conflicts, ...config, ...listErr, ...accountsErr];
+  }
+
+  function cliStatus(provider, info, enabled) {
+    const healthRows = (AN.providerHealth?.rows?.(S.providerHealth || {}) || [])
+      .filter((row) => row.provider === provider && !row.account);
+    const updating = S.isCliUpdating?.(provider) || false;
+    const hasUpdate = S.hasCliUpdate?.(provider) || false;
+    const updateErr = Boolean(S.cliUpdateErrors?.[provider]);
+    if (!info.installed) return { text: L("未安装", "Not installed"), tone: "bad" };
+    if (updating) return { text: L("更新中…", "Updating…"), tone: "run" };
+    if (healthRows.length) return { text: L("冷却中", "Cooldown"), tone: "warn" };
+    if (info.error || updateErr) return { text: L("读取失败", "Error"), tone: "bad" };
+    if (!enabled) return { text: hasUpdate ? L("已停用 · 有更新", "Disabled · Update available") : L("已停用", "Disabled"), tone: hasUpdate ? "warn" : "muted" };
+    if (hasUpdate) return { text: L("有更新", "Update available"), tone: "warn" };
+    if (provider === "claude") {
+      const auth = S.claudeDefaultListStatus?.(info);
+      if (auth) return auth;
+    }
+    return { text: L("已启用", "Enabled"), tone: "run" };
+  }
+
+  function renderListRow(item, selected) {
+    const provider = item.provider;
+    const name = PROVIDER_NAMES[provider] || provider;
+    const version = S.cliListVersion?.(provider, item.info) || "";
+    const status = cliStatus(provider, item.info, item.enabled);
+    const dimmed = !item.enabled && !selected;
+
+    return el("button", {
+      type: "button",
+      className: `member-list-item${selected ? " is-selected" : ""}${dimmed ? " is-off" : ""}`,
+      "aria-pressed": String(selected),
+      dataset: {
+        focusKey: `select/${item.key}`,
+        memberKey: item.key,
+        provider,
+      },
+      onClick: () => {
+        if (selectedMember === item.key) return;
+        selectedMember = item.key;
+        S.pendingDisable = null;
+        S.clearAccountPending?.();
+        S.renderCards();
+      },
+    },
+    el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
+    el("span", { className: "member-item-body" },
+      el("span", { className: "member-item-top" },
+        el("span", { className: "member-item-name", title: name }, name),
+        version ? el("span", { className: "member-item-version" }, version) : null,
+        item.hasError ? el("span", { className: "member-item-flag is-error", title: L("有配置错误", "Configuration error"), "aria-label": L("有配置错误", "Configuration error") }, "!") : null,
+        item.isDirty ? el("span", { className: "member-item-flag is-dirty", title: L("有未保存的修改", "Unsaved changes"), "aria-label": L("有未保存的修改", "Unsaved changes") }) : null),
+      el("span", { className: "member-item-status" },
+        el("span", { className: `member-status-dot tone-${status.tone}`, "aria-hidden": "true" }),
+        el("span", { className: "member-item-status-text", title: status.text }, status.text))));
+  }
+
+  function refreshClaudeFlags() {
+    if (typeof document.querySelector !== "function") return;
+    const row = document.querySelector('[data-member-key="cli:claude"]');
+    if (!row) return;
+    const info = S.detected.claude || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
+    const saved = confirmScenes(JSON.parse(S.savedSnapshot || JSON.stringify(S.currentDoc)));
+    const current = confirmScenes(structuredClone(S.currentDoc));
+    const hasError = cliErrors("claude", info).length > 0
+      || Boolean(S.cliUpdateErrors?.claude)
+      || Boolean(S.accountHasError?.());
+    const isDirty = providerDirty("claude", current, saved)
+      || Boolean(S.accountHasDirty?.());
+    const top = row.querySelector(".member-item-top");
+    if (top) {
+      let errFlag = top.querySelector(".is-error");
+      if (hasError && !errFlag) {
+        errFlag = el("span", { className: "member-item-flag is-error", title: L("有配置错误", "Configuration error"), "aria-label": L("有配置错误", "Configuration error") }, "!");
+        top.appendChild(errFlag);
+      } else if (!hasError && errFlag) {
+        errFlag.remove();
+      }
+      let dirtyFlag = top.querySelector(".is-dirty");
+      if (isDirty && !dirtyFlag) {
+        dirtyFlag = el("span", { className: "member-item-flag is-dirty", title: L("有未保存的修改", "Unsaved changes"), "aria-label": L("有未保存的修改", "Unsaved changes") });
+        top.appendChild(dirtyFlag);
+      } else if (!isDirty && dirtyFlag) {
+        dirtyFlag.remove();
+      }
+    }
+    const title = document.querySelector('.detail-panel[data-provider="claude"] .detail-head .member-title');
+    if (title) {
+      let badge = title.querySelector(".badge-warning");
+      if (isDirty && !badge) {
+        title.appendChild(el("span", { className: "badge badge-warning" }, L("未保存", "Unsaved")));
+      } else if (!isDirty && badge) {
+        badge.remove();
+      }
+    }
+  }
+
+  function renderCliDetail({ provider, info, enabled, isDirty }) {
+    const name = PROVIDER_NAMES[provider] || provider;
+    const split = enabled && isSplit(provider);
+    const head = el("div", { className: "detail-head" },
+      el("div", { className: "member-title" },
+        el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
+        el("span", { className: "cli-name", title: name }, name),
+        renderCliVersion(provider, info),
+        info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed")),
+        isDirty ? el("span", { className: "badge badge-warning" }, L("未保存", "Unsaved")) : null),
+      renderCliUpdate(provider));
+
+    const splitRow = enabled ? el("div", { className: "s-row" },
+      el("span", { className: "s-label" }, L("场景设置", "Scenes")),
+      el("div", { className: "s-control" },
+        el("div", { className: "segment-control", role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`) },
+          [[false, L("一起设置", "Together")], [true, L("分开设置", "Separate")]].map(([value, text]) => el("button", {
+            type: "button",
+            role: "radio",
+            className: `segment-btn${value === split ? " active" : ""}`,
+            "aria-checked": String(value === split),
+            dataset: { focusKey: `${provider}/split/${value}` },
+            onClick: () => value !== split && setSplit(provider, value),
+          }, text))))) : null;
+
+    const slotList = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
+    const rows = el("div", { className: "detail-rows" },
+      renderCliInstallations(provider),
+      provider === "codex" ? renderCodexSource() : null,
+      splitRow,
+      ...poolRows(provider),
+      ...slotList,
+      ...cliErrors(provider, info),
+      ...(provider === "deepseek" && enabled ? deepSeekRouteRows() : []),
+      renderPermission(provider),
+      renderInteractive(provider),
+      provider === "claude" ? S.renderClaudeAccountsSection?.() : null,
+      renderCliUpdateError(provider));
+
+    const confirm = S.pendingDisable === provider
+      ? el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
+        el("p", {}, L(`移除会清除 ${name} 的默认模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
+        el("div", { className: "btn-group" },
+          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { S.pendingDisable = null; S.renderCards(); } }, L("保留", "Keep")),
+          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove"))))
+      : null;
+
+    const foot = el("div", { className: "detail-foot" },
+      confirm,
+      el("div", { className: "detail-foot-actions" }, renderMembership(provider, enabled)));
+
+    return el("div", {
+      className: `detail-panel${enabled ? "" : " off"}`,
+      dataset: { provider },
+    }, head, provider === "claude" ? S.renderClaudeTopStatus?.(info) : null, rows, foot);
+  }
+
+  // Left compact CLI list + right detail (with Claude named accounts inside Claude Code's detail);
+  // uninstalled CLIs fold below.
   function renderCards() {
     const container = $("cli-cards");
     // Build off-screen: emptying the live list first clamps the document scroll position.
@@ -228,59 +406,52 @@
     const active = S.operatedControl?.isConnected ? S.operatedControl : document.activeElement;
     const focusKey = active?.dataset.focusKey;
     const anchorTop = focusKey ? active.getBoundingClientRect().top : null;
+    const selectionRange = typeof active?.selectionStart === "number"
+      ? [active.selectionStart, active.selectionEnd] : null;
     const cards = document.createDocumentFragment();
-    // Not installed and named by no scene or default: only in the folded list at the end.
     const missing = [];
-    cards.appendChild(renderCliUpdateSummary());
-    // Employees as last saved come first; a card stays put while its switch is being changed.
+    $("cli-update-info").replaceChildren(renderCliUpdateSummary());
+
     const saved = confirmScenes(JSON.parse(S.savedSnapshot || JSON.stringify(S.currentDoc)));
+    const current = confirmScenes(structuredClone(S.currentDoc));
     const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
+    const items = [];
+    const accounts = S.accounts || [];
 
     for (const provider of [...PROVIDERS].sort((a, b) => hired(b) - hired(a))) {
       const info = S.detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
       const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
       const listed = known(provider, saved);
-      if (!info.installed && !listed) {
+      if (!info.installed && !listed && !(provider === "claude" && accounts.length)) {
         missing.push(provider);
         continue;
       }
-      const name = PROVIDER_NAMES[provider] || provider;
-      const split = enabled && isSplit(provider);
-      const head = el("div", { className: "member-head" },
-        el("div", { className: "member-title" },
-          el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
-          el("span", { className: "cli-name", title: name }, name),
-          renderCliVersion(provider, info),
-          renderCliUpdate(provider),
-          info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed"))),
-        el("div", { className: "member-end" },
-          el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`), "aria-hidden": enabled ? null : "true" },
-            [[false, L("一起设置", "Together")], [true, L("分开设置", "Separate")]].map(([value, text]) => el("button", {
-              type: "button",
-              role: "radio",
-              className: `segment-btn${value === split ? " active" : ""}`,
-              "aria-checked": String(value === split),
-              dataset: { focusKey: `${provider}/split/${value}` },
-              onClick: () => value !== split && setSplit(provider, value),
-            }, text))),
-          el("div", { className: "member-tail" }, renderPermission(provider) || el("span"), renderMembership(provider, enabled))));
-      const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head, renderCliInstallations(provider));
-      if (S.pendingDisable === provider) {
-        card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
-          el("p", {}, L(`移除会清除 ${name} 的默认模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
-          el("div", { className: "btn-group" },
-            el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { S.pendingDisable = null; S.renderCards(); } }, L("保留", "Keep")),
-            el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove")))));
-      }
-      const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
-      if (provider === "codex") card.appendChild(renderCodexSource());
-      for (const row of [...poolRows(provider), ...rows, ...poolConflicts(provider)]) card.appendChild(row);
-      if (provider === "deepseek" && enabled) for (const row of deepSeekRouteRows()) card.appendChild(row);
-      const runtime = renderInteractive(provider);
-      if (runtime) card.appendChild(runtime);
-      if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
-      card.appendChild(renderCliUpdateError(provider));
-      cards.appendChild(card);
+      const errors = cliErrors(provider, info);
+      const hasError = errors.length > 0
+        || Boolean(S.cliUpdateErrors?.[provider])
+        || (provider === "codex" && codexSourceUnavailable())
+        || (provider === "claude" && Boolean(S.accountHasError?.()));
+      const isDirty = providerDirty(provider, current, saved)
+        || (provider === "claude" && Boolean(S.accountHasDirty?.()));
+      items.push({ kind: "cli", key: `cli:${provider}`, provider, info, enabled, hasError, isDirty });
+    }
+
+    if (!items.some((item) => item.key === selectedMember)) {
+      selectedMember = items[0]?.key || null;
+    }
+    const selectedItem = items.find((item) => item.key === selectedMember) || null;
+
+    if (items.length) {
+      const listPane = el("div", { className: "members-list-pane" },
+        el("div", { className: "members-list-items", role: "listbox", "aria-label": L("员工列表", "Employees") },
+          ...items.map((item) => renderListRow(item, item.key === selectedMember))));
+
+      const detailContent = selectedItem
+        ? renderCliDetail(selectedItem)
+        : el("div", { className: "detail-empty member-muted" }, L("暂无可用员工", "No employees available"));
+
+      const detailPane = el("div", { className: "members-detail-pane" }, detailContent);
+      cards.appendChild(el("div", { className: "members-split" }, listPane, detailPane));
     }
 
     if (missing.length) cards.appendChild(renderMissingClis(missing));
@@ -293,6 +464,9 @@
         || (focusKey.endsWith("-disable") ? controls.find((control) => control.dataset.focusKey === `${focusKey.split("/")[0]}/both/model`) : null);
       if (replacement && !replacement.disabled) {
         replacement.focus({ preventScroll: true });
+        if (selectionRange && typeof replacement.setSelectionRange === "function") {
+          try { replacement.setSelectionRange(selectionRange[0], selectionRange[1]); } catch (_) {}
+        }
         // A confirmation button returns focus to the switch, not its screen position.
         if (replacement.dataset.focusKey === focusKey) {
           window.scrollBy(0, replacement.getBoundingClientRect().top - anchorTop);
@@ -448,7 +622,7 @@
     else if (levels.length === 1) effortLine = el("span", { className: "member-muted" }, L(`只有 ${levels[0]} 一档`, `Only ${levels[0]}`));
     else if (levels.length > 1) {
       const shown = current.effort || (levels.includes(cli) ? cli : null);
-      effortLine = el("div", { className: "member-line" },
+      effortLine = el("div", { className: "s-control" },
         el("div", { className: "segment-control member-efforts", role: "radiogroup", "aria-label": L("思考档位", "Effort") },
           levels.map((level) => el("button", {
             type: "button",
@@ -477,6 +651,9 @@
 
   Object.assign(S, {
     slotRows, poolSummary, poolRows, poolConflicts, renderInteractive, deepSeekRouteRows, renderCards, saveMembers,
-    renderErrorBanner, refreshDetection, probeWhenStale, loadMembers
+    renderErrorBanner, refreshDetection, probeWhenStale, loadMembers, refreshClaudeFlags
+  });
+  S.share({
+    selectedMember: [() => selectedMember, (v) => { selectedMember = v; }],
   });
 }

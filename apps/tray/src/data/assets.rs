@@ -23,6 +23,7 @@ const COMMON_JS: &[u8] = concat!(
 .as_bytes();
 const HOSTS_JS: &[u8] = include_bytes!("../../ui/hosts.js");
 const HOSTS_CSS: &[u8] = include_bytes!("../../ui/hosts.css");
+const LAYOUT_CSS: &[u8] = include_bytes!("../../ui/settings-layout.css");
 
 impl Reader {
     /// Serve one path of the `agentnave` scheme: the tray assets and saved conversation views.
@@ -219,6 +220,10 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/advanced.js").to_vec(),
         ),
+        "account-settings.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/account-settings.js").to_vec(),
+        ),
         "decision-seats.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/decision-seats.js").to_vec(),
@@ -259,6 +264,7 @@ fn settings_asset(resource: &str) -> Response {
             include_bytes!("../../ui/host-copies.js").to_vec(),
         ),
         "hosts.css" => Response::ok("text/css; charset=utf-8", HOSTS_CSS.to_vec()),
+        "settings-layout.css" => Response::ok("text/css; charset=utf-8", LAYOUT_CSS.to_vec()),
         "skills.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/skills.js").to_vec(),

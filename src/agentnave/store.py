@@ -45,6 +45,10 @@ class SeatRecord(BaseModel):
     id: str
     provider: str
     provider_options: dict[str, ProviderOption] = Field(default_factory=lambda: {})
+    # The named account the seat's CLI runs as (None: the default account), and its display name
+    # when the seat was opened; a seat never changes account, so its session stays in one home.
+    account: str | None = None
+    account_label: str | None = None
     cwd: str
     role: str | None = None
     access: Literal["read", "write"] | None = None  # declared, never enforced
@@ -111,6 +115,9 @@ class TaskRecord(BaseModel):
     provider: str
     model: str
     effort: str | None = None
+    # As on a seat: a resumed thread keeps its account, whose directory holds the session.
+    account: str | None = None
+    account_label: str | None = None
     reported_model: str | None = None
     cwd: str
     prompt: str

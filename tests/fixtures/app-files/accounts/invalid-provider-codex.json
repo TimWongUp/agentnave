@@ -1,0 +1,1 @@
+{ "version": 1, "accounts": [ { "id": "a1", "provider": "codex", "label": "A", "dir": "/a", "managed": true } ] }

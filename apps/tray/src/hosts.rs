@@ -1,7 +1,9 @@
 //! App-owned host integration: scoped optimistic edits, no host CLI writes.
+mod accounts;
 mod actions;
 mod request;
 mod uninstall;
+pub(crate) use accounts::{default_claude_dir, sync_account, unsync_account};
 pub(crate) use request::{orchestration_request, request, skill_request, sync_orchestration};
 mod config;
 mod decision;

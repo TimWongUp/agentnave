@@ -509,7 +509,7 @@ def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> No
         finally:
             database.close()
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         columns = {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
         assert {"title", "cwd", "origin"} <= columns
         for table in ["entries", "rounds", "tasks", "former_bosses", "workspace_links"]:
@@ -518,7 +518,7 @@ def test_first_open_migrates_v1_history_once(tmp_path: Path, missing: str) -> No
     assert list((tmp_path / "seats").iterdir()) == []
 
 
-def test_v2_and_v3_migrations_upgrade_to_v4_and_preserve_workspace(tmp_path: Path) -> None:
+def test_v2_to_v4_migrations_upgrade_to_v5_and_preserve_workspace(tmp_path: Path) -> None:
     fixture(tmp_path, "modern")
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
         db.execute("INSERT INTO workspaces (id, owner) VALUES (?, ?)", (_WORKSPACE, _WORKSPACE))
@@ -530,7 +530,7 @@ def test_v2_and_v3_migrations_upgrade_to_v4_and_preserve_workspace(tmp_path: Pat
     assert row is not None and row.origin is None
     database.close()
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         assert "origin" in {row[1] for row in db.execute("PRAGMA table_info(workspaces)")}
         assert db.execute("SELECT count(*) FROM workspace_links").fetchone()[0] == 0
         db.execute("DROP TABLE workspace_links")
@@ -542,8 +542,22 @@ def test_v2_and_v3_migrations_upgrade_to_v4_and_preserve_workspace(tmp_path: Pat
     finally:
         reopened.close()
     with sqlite3.connect(tmp_path / "agentnave.db") as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         assert db.execute("SELECT count(*) FROM workspace_links").fetchone()[0] == 0
+        db.execute("ALTER TABLE workspaces DROP COLUMN owner_account")
+        db.execute("PRAGMA user_version = 4")
+    # The owner account (ADR-0108) arrives with v5; a workspace before it is the default account's.
+    last = Database(tmp_path)
+    try:
+        before = last.workspace(_WORKSPACE)
+        assert before is not None and before.owner == _WORKSPACE and before.owner_account is None
+        last.register(_WORKSPACE, _WORKSPACE, "claude", None, "work")
+        after = last.workspace(_WORKSPACE)
+        assert after is not None and after.owner_account == "work"
+    finally:
+        last.close()
+    with sqlite3.connect(tmp_path / "agentnave.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_v1_migration_preserves_busy_history_and_retries_after_unlock(tmp_path: Path) -> None:

@@ -23,7 +23,7 @@
 
 - 工位 `available` 省略即可用。新派发默认由服务按主选和备选顺位取第一个可用（「决策模型」档开启同档候选随机选时，自定义任务工位改为在当前可用候选中随机挑一个，优先避开本服务进程里该工位当前运行中的模型，见 [决策模型档](decision.md)），只在启动前挑选，任务启动后才失败的不重试；`available=false` 只在全部顺位都不可用时出现。派发被拒绝、因 CLI 未安装启动失败或全部顺位不可用时，按主文件「CLI 与模型」用 `reason` 和 `replacement` 处理。`list_members` 始终确定性展示首个可用顺位：生效的是备选时工位带 `fallback_position`，`fallbacks` 列出用户配置的全部备选及各自的 `available` 和 `reason`。
 - CLI 或模型在冷却时该顺位不可用，同额度组的模型一起冷却：认证冷却持续到解除，配额按重置时间冷却（最长 8 天，取不到时冷却 1 小时），计费冷却 30 分钟。
-- 用户可在 App 解除冷却；仅当用户在当前对话明确要求解除时，调 `clear_provider_cooldown(provider=..., model=...)`，省略 `model` 解除该 CLI 全部冷却。
+- 用户可在 App 解除冷却；仅当用户在当前对话明确要求解除时，调 `clear_provider_cooldown(provider=..., model=..., account=...)`，省略 `model` 解除该账号全部冷却；每个账号独立冷却，具名账号用 `list_members` 的 `accounts` 里的 id 指定，省略 `account` 只作用于默认账号。
 
 ## 配额阻断后的同 CLI 换模型续接
 

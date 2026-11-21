@@ -12,7 +12,8 @@ from typing import Any, Literal, cast, get_args
 
 from pydantic import BaseModel, Field, model_validator
 
-from agentnave import provider_health
+from agentnave import accounts, provider_health
+from agentnave.accounts import AccountListing
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import restricted_options
 from agentnave.host import Host, HostName, HostSource
@@ -802,6 +803,9 @@ class MemberList(StrictModel):
     # The App permission tier of each CLI that has one, "full" unless the user picked "auto".
     permissions: dict[ProviderName, PermissionTier] = {}
     permissions_error: str | None = None
+    # The named accounts a seat or dispatch may use by id; the default account is not listed.
+    accounts: list[AccountListing] = []
+    accounts_error: str | None = None
 
 
 def _member_modes(
@@ -1013,6 +1017,12 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 # A CLI whose auto is full access runs full whatever is saved.
                 tiers = PERMISSION_TIERS[provider]
                 permissions[provider] = "full" if tiers["auto"] == tiers["full"] else tier
+    listed: list[AccountListing] = []
+    accounts_error = None
+    try:
+        listed = accounts.listing()
+    except accounts.AccountsFileError as exc:
+        accounts_error = str(exc)
     if enabled:
         modes["task"] = ModeStatus(restricted=True, members=[])
     return MemberList(
@@ -1027,6 +1037,8 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
         orchestration_error=orchestration_error,
         permissions=permissions,
         permissions_error=permissions_error,
+        accounts=listed,
+        accounts_error=accounts_error,
     )
 
 
@@ -1037,7 +1049,7 @@ def single_review_status[Role: str](
     host: Host,
     installed: Callable[[str], bool],
     document: MemberFile | None,
-    active_health: dict[tuple[str, str | None], provider_health.Health],
+    active_health: dict[provider_health.Key, provider_health.Health],
 ) -> dict[Role, ReviewSeatStatus]:
     task = mode.members
     seats: dict[Role, ReviewSeatStatus] = {}
@@ -1046,7 +1058,7 @@ def single_review_status[Role: str](
             (m for m in task if m.provider == seat.provider and m.model in (seat.model, "*")),
             None,
         )
-        same_host = seat.provider == host.provider
+        same_host = accounts.is_host_account(host, seat.provider, seat.account)
         host_choice = host_cli_mode(host) if same_host else None
         native = same_host and host_choice == "subagent"
         pool_error = None
@@ -1056,12 +1068,21 @@ def single_review_status[Role: str](
             )
         except ValueError as exc:
             pool_error = str(exc)
+        account_error = None
+        try:
+            accounts.resolve(seat.provider, seat.account)
+        except ValueError as exc:
+            account_error = str(exc)
         if pool_error is not None:
             reason = pool_error
+        elif account_error is not None:
+            reason = account_error
         elif same_host and host_choice == "skip":
             reason = "CLI is the host's own CLI"
-        elif match := provider_health.matching(active_health, seat.provider, seat.model):
-            reason = provider_health.reason(seat.provider, match[1], match[0])
+        elif match := provider_health.matching(
+            active_health, seat.provider, seat.model, seat.account
+        ):
+            reason = provider_health.reason(seat.provider, match[1], match[0], account=seat.account)
         elif native:
             reason = None
         elif seat.provider in excluded:
@@ -1087,6 +1108,7 @@ def single_review_status[Role: str](
             provider=seat.provider,
             model=seat.model,
             effort=seat.effort or None,
+            account=seat.account,
             available=False if reason is not None else None,
             reason=reason,
             native=True if native else None,
@@ -1111,7 +1133,7 @@ def _seat_replacement(
     alternatives: list[ProviderName],
     task: list[MemberStatus],
     *,
-    unhealthy: dict[tuple[str, str | None], provider_health.Health],
+    unhealthy: dict[provider_health.Key, provider_health.Health],
     image: bool = False,
 ) -> SeatReplacement | None:
     """The same model on another CLI, else another CLI's App default model."""

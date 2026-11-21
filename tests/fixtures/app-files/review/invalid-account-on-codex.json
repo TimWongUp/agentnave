@@ -1,0 +1,1 @@
+{ "version": 1, "seats": { "security-reviewer": { "provider": "codex", "model": "gpt-6.1-sol", "account": "work" } } }

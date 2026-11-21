@@ -111,6 +111,26 @@ def test_startup_trust_checks_displayed_directory(
     assert not terminal.outgoing
 
 
+def test_login_screen_blocks_as_unauthenticated_and_cools_the_account() -> None:
+    from agentnave import provider_health
+
+    terminal = SimpleNamespace(outgoing=bytearray())
+    turn = tui.Turn("sid")
+    screen = "Select login method:\n❯ 1. Claude account with subscription\n  2. Anthropic Console"
+    startup = tui.Startup(cast(tui.Terminal, terminal), turn, previous=screen, stable_since=0)
+    assert startup.step(screen) is False
+    parsed = ClaudeAdapter().parse(1, json.dumps(turn.result()).encode(), b"")
+    assert parsed.status is InvocationStatus.BLOCKED
+    # Not the permission wording, which would keep an unlogged account from cooling down.
+    assert "permission required" not in str(parsed.error_message)
+    assert (
+        provider_health.classify(
+            parsed.status, "provider_error", parsed.error_message, ["provider_failed"]
+        )
+        == "auth"
+    )
+
+
 @pytest.mark.parametrize(
     "screen",
     [
@@ -303,6 +323,38 @@ def test_child_environment_only_changes_the_interactive_child(
     assert env["PATH"].split(os.pathsep) == ["/provider/bin", "/usr/bin"]
     assert env["CLAUDE_CONFIG_DIR"] == "/custom/config" and env["TERM"] == "xterm-256color"
     assert os.environ["CLAUDE_CODE_CHILD_SESSION"] == "host-value"
+
+
+def test_every_path_strips_the_same_host_session_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.adapters.claude import HOST_SESSION_ENV
+
+    # The interactive child, `--print`, the fallback wrapper and the usage query all drop them.
+    assert set(HOST_SESSION_ENV) <= set(tui.STRIP_ENV)
+    assert {
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+        "CLAUDE_CODE_ACCOUNT_UUID",
+    } <= set(HOST_SESSION_ENV)
+
+    # An absolute path, as when the CLI is installed.
+    def installed(_self: ClaudeAdapter) -> str:
+        return sys.executable
+
+    monkeypatch.setattr(ClaudeAdapter, "executable_path", installed)
+    adapter = ClaudeAdapter()
+    for options in (
+        {},
+        {"permission_mode": "auto", "permission_fallback": "bypassPermissions"},
+        {"interactive": True},
+    ):
+        prepared = adapter.prepare(
+            InvocationRequest("claude", "w", tmp_path, provider_options=options)
+        )
+        assert set(HOST_SESSION_ENV) <= set(prepared.unset_env)
+    query = adapter.usage_query(None)
+    assert query is not None and set(HOST_SESSION_ENV) <= set(query.unset_env)
 
 
 FAKE_CLAUDE = r"""

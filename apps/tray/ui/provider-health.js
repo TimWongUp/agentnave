@@ -11,19 +11,32 @@
     devin: "Devin CLI",
     zcode: "ZCode",
   };
+  // Each record of one CLI's entry, or of one named account's, which has the same shape; `account`
+  // is the account's id and is absent for the default account.
+  function collect(result, provider, group, account) {
+    const at = account ? { account } : {};
+    if (group?.default) result.push({ provider, ...at, item: group.default });
+    for (const [model, item] of Object.entries(group?.models || {})) result.push({ provider, ...at, model, item });
+    for (const [quotaGroup, item] of Object.entries(group?.groups || {})) result.push({ provider, ...at, quotaGroup, item });
+  }
   function rows(providers) {
     const result = [];
     for (const [provider, group] of Object.entries(providers || {})) {
       if (group?.code) result.push({ provider, item: group });
-      if (group?.default) result.push({ provider, item: group.default });
-      for (const [model, item] of Object.entries(group?.models || {})) result.push({ provider, model, item });
-      for (const [quotaGroup, item] of Object.entries(group?.groups || {})) result.push({ provider, quotaGroup, item });
+      collect(result, provider, group);
+      for (const [account, entry] of Object.entries(group?.accounts || {})) collect(result, provider, entry, account);
     }
     return result.filter(({ item }) => {
       if (item?.code === "auth" && item.until == null) return true;
       const end = Date.parse(item?.until), now = Date.now();
       return ["auth", "billing", "quota"].includes(item?.code) && end > now && end <= now + 8 * 86400000;
     });
+  }
+  // The CLI's name, with the account's after it when the record is a named account's; `labels`
+  // maps an account id to the name its owner gave it.
+  function name(row, labels) {
+    const base = PROVIDER_NAMES[row.provider] || row.provider;
+    return row.account ? `${base}（${labels?.[row.account] || row.account}）` : base;
   }
   function reason(item, L) {
     return { quota: L("额度用完", "Quota exhausted"), billing: L("余额不足或欠费", "Insufficient balance or unpaid bill"), auth: L("未登录或登录失效", "Not signed in or session expired") }[item.code];
@@ -55,7 +68,7 @@
       if (!response.ok) return;
       const data = await response.json(), L = AN.L || ((zh) => zh), grouped = new Map();
       for (const row of rows(data.providers)) {
-        const key = JSON.stringify([row.provider, row.item.code, row.item.until]);
+        const key = JSON.stringify([row.provider, row.account, row.item.code, row.item.until]);
         if (!grouped.has(key)) grouped.set(key, []);
         grouped.get(key).push(row);
       }
@@ -65,7 +78,7 @@
         const affected = [models ? L(`${models} 个模型暂停派活`, `${models} model${models === 1 ? "" : "s"} paused`) : "", ...scopes.map(name => L(`${name} 暂停派活`, `${name} paused`))];
         if (group.some(row => !row.model && !row.quotaGroup)) affected.unshift(L("暂停派活", "Dispatch paused"));
         const comma = L("，", ", ");
-        return `${PROVIDER_NAMES[first.provider] || first.provider} ${reason(first.item, L)}${comma}${affected.filter(Boolean).join(L("、", ", "))}${comma}${recovery(first.item, L)}`;
+        return `${name(first, data.accounts)} ${reason(first.item, L)}${comma}${affected.filter(Boolean).join(L("、", ", "))}${comma}${recovery(first.item, L)}`;
       });
       // One line only: the first warning, then how many more; the full list is the tooltip.
       const list = box.querySelector(".provider-health-lines") || box;
@@ -78,5 +91,5 @@
       box.hidden = !texts.length || box.dataset.key === dismissed();
     } catch { /* Keep the previous warning when a refresh fails. */ }
   }
-  AN.providerHealth = { names: PROVIDER_NAMES, rows, reason, recovery, refresh };
+  AN.providerHealth = { names: PROVIDER_NAMES, rows, name, reason, recovery, refresh };
 }

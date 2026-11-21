@@ -87,21 +87,22 @@
     const standalone = install.id === "standalone";
     const note = standalone ? "" : L("随桌面应用更新", "Updates with the desktop app");
     const source = provider === "codex" ? S.currentDoc.clis?.codex?.executable_source : null;
-    return el("div", { className: "cli-installation", title: [note, install.path].filter(Boolean).join("\n") },
-      el("span", { className: "cli-installation-name" }, cliInstallationName(install)),
-      el("span", { className: "cli-version" }, install.version || ""),
-      el("span", { className: "cli-installation-active" },
-        (source ? install.id === source : install.active) ? el("span", { className: "badge badge-accent" }, L("当前使用", "In use")) : null),
-      el("span", { className: "cli-update-slot" }, standalone ? renderCliUpdateButton(provider, install.id, install) : null));
+    const active = source ? install.id === source : install.active;
+    return el("div", { className: "s-row cli-installation", title: [note, install.path].filter(Boolean).join("\n") },
+      el("span", { className: "s-label" }, cliInstallationName(install)),
+      el("div", { className: "s-control" },
+        el("span", { className: "cli-version" }, install.version || ""),
+        active ? el("span", { className: "badge badge-accent" }, L("当前使用", "In use")) : null,
+        standalone ? renderCliUpdateButton(provider, install.id, install) : null));
   }
 
   function renderCodexSource() {
     const selected = S.currentDoc.clis?.codex?.executable_source || "auto";
     const installs = cliUpdates.clis?.codex?.installations || [];
     const available = selected === "auto" || installs.some((install) => install.id === selected);
-    return el("div", { className: "member-row" },
-      el("label", { className: "member-scene", htmlFor: "codex-executable-source" }, L("运行来源", "CLI source")),
-      el("div", { className: "member-line" },
+    return el("div", { className: "s-row" },
+      el("label", { className: "s-label", htmlFor: "codex-executable-source" }, L("运行来源", "CLI source")),
+      el("div", { className: "s-control" },
         el("select", { id: "codex-executable-source", className: "member-model", dataset: { focusKey: "codex/source" },
           onChange: (event) => {
             S.currentDoc.clis ||= {};
@@ -118,7 +119,7 @@
   function renderCliInstallations(provider) {
     const installations = cliInstallations(provider);
     if (!installations.length) return null;
-    return el("div", { className: "cli-installations" }, installations.map((install) => renderCliInstallation(provider, install)));
+    return el("div", { className: "s-wrap" }, installations.map((install) => renderCliInstallation(provider, install)));
   }
 
   function renderCliUpdateError(provider) {
@@ -140,6 +141,27 @@
     return updatableClis().filter(({ provider, target }) => !cliUpdating.has(cliKey(provider, target)));
   }
 
+  function cliListVersion(provider, info) {
+    if (!info?.installed) return "";
+    const installs = cliInstallations(provider);
+    const source = provider === "codex" ? S.currentDoc.clis?.codex?.executable_source : null;
+    const active = installs.find((i) => (source ? i.id === source : i.active));
+    return cliUpdates.clis?.[provider]?.version || active?.version || info.version || "";
+  }
+
+  function hasCliUpdate(provider) {
+    const installs = cliInstallations(provider);
+    if (installs.length) return installs.some((i) => i.id === "standalone" && i.update);
+    return Boolean(cliUpdates.clis?.[provider]?.update);
+  }
+
+  function isCliUpdating(provider) {
+    for (const key of cliUpdating) {
+      if (key === provider || key.startsWith(`${provider}/`)) return true;
+    }
+    return false;
+  }
+
   function renderCliUpdateSummary() {
     const targets = updatableClis();
     const visible = targets.length >= 2 || cliBatch || cliSummary;
@@ -151,7 +173,7 @@
     } else if (!text && targets.length >= 2) {
       text = L(`${targets.length} 个 CLI 有新版本`, `${targets.length} CLIs have updates`);
     }
-    return el("div", { className: `cli-update-summary${visible ? "" : " member-hidden"}`, role: "status" },
+    return el("div", { className: "cli-update-summary", role: "status", hidden: !visible },
       el("span", {}, text),
       targets.length >= 2 ? el("button", { type: "button", disabled: !!cliBatch || !waitingClis().length,
         onClick: updateAllClis }, L("全部更新", "Update all")) : null);
@@ -257,12 +279,12 @@
       }, el("span", { className: "cli-chevron", "aria-hidden": "true" }),
       textNode(L(`未安装的 CLI（${missing.length}）`, `Uninstalled CLIs (${missing.length})`))));
     if (!missingOpen) return box;
-    const list = el("div", { className: "cli-missing-list" });
+    const list = el("div", { className: "s-card cli-missing-list" });
     let hasNpm = false;
     for (const provider of missing) {
       const commands = cliInstallCommands[provider] || [];
-      const row = el("div", { className: "cli-install-row" },
-        el("span", { className: "cli-install-name" }, PROVIDER_NAMES[provider] || provider));
+      const row = el("div", { className: "s-row cli-install-row" },
+        el("span", { className: "s-label" }, PROVIDER_NAMES[provider] || provider));
       const methods = el("div", { className: "cli-install-methods" });
       for (const entry of commands) {
         hasNpm ||= entry.label === "npm";
@@ -275,14 +297,16 @@
       row.appendChild(methods);
       list.appendChild(row);
     }
-    if (hasNpm) list.appendChild(el("p", {}, L("npm 命令需要先装 Node.js。", "Install Node.js before using npm commands.")));
-    list.appendChild(el("p", {}, L("装好后点「刷新模型列表」。", "After installing, click “Refresh models”.")));
+    list.appendChild(el("div", { className: "s-row is-stack" },
+      ...(hasNpm ? [el("p", { className: "s-muted" }, L("npm 命令需要先装 Node.js。", "Install Node.js before using npm commands."))] : []),
+      el("p", { className: "s-muted" }, L("装好后点「刷新模型列表」。", "After installing, click “Refresh models”."))));
     box.appendChild(list);
     return box;
   }
 
   Object.assign(S, {
-    cliUpdating, cliBusy, loadCliInstallCommands, loadCliUpdates, renderCliUpdate, renderCliVersion,
+    cliUpdating, cliUpdateErrors, cliBusy, loadCliInstallCommands, loadCliUpdates, renderCliUpdate, renderCliVersion,
+    cliListVersion, hasCliUpdate, isCliUpdating,
     renderCodexSource, renderCliInstallations, renderCliUpdateError, updatableClis, renderCliUpdateSummary,
     updateSingleCli, updateAllClis, renderMissingClis
   });

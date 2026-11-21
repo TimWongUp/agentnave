@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="./settings.css">
 <link rel="stylesheet" href="./hosts.css">
+<link rel="stylesheet" href="./settings-layout.css">
 <script src="/avatars.js" defer></script>
 <script src="/chat/appearance.js" defer></script>
 <script src="./settings-frame.js" defer></script>
@@ -26,6 +27,7 @@
 <script src="./settings-state.js" defer></script>
 <script src="./member-models.js" defer></script>
 <script src="./member-updates.js" defer></script>
+<script src="./account-settings.js" defer></script>
 <script src="./member-cards.js" defer></script>
 <script src="./advanced.js" defer></script>
 <script src="./decision-seats.js" defer></script>
@@ -63,8 +65,8 @@
 
   <div id="notice" role="status" aria-live="polite" data-en="Loading settings…">正在读取设置…</div>
 
-  <div id="error-banner" class="banner error" hidden>
-    <div class="banner-content">
+  <div id="error-banner" class="s-alert is-bad" hidden>
+    <div class="s-alert-body">
       <strong id="error-title" data-en="Configuration file error">配置文件存在错误</strong>
       <p id="error-desc"></p>
     </div>
@@ -72,33 +74,29 @@
 
   <!-- 分区：员工与模型 -->
   <section id="pane-members" class="tab-pane" hidden aria-labelledby="nav-members">
-    <div class="model-names setting-row running-limit">
-      <div class="setting-copy">
-        <h2><label for="max-running" data-en="Max concurrent employees">同时工作的员工上限</label></h2>
-        <p class="setting-example" data-en="Once reached, boss waits for an employee to finish before dispatching more work">到上限后，boss 要等有员工做完才能再派任务</p>
-      </div>
-      <select id="max-running"></select>
+    <div class="s-tools">
+      <div id="cli-update-info" class="s-tools-info" aria-live="polite"></div>
+      <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务。回到设置页时也会自动检测" data-en="Refresh models" data-en-title="Re-scan local tools and models without starting AI tasks. Also runs automatically when returning to Settings">刷新模型列表</button>
     </div>
 
-    <section id="provider-health-section" hidden><h2 data-en="Dispatch paused">暂停派活</h2><div id="provider-health" aria-live="polite"></div></section>
+    <div class="s-group"><div class="s-card"><div class="s-row">
+      <label class="s-label" for="max-running" data-en="Max concurrent employees">同时工作的员工上限<span class="setting-tip" tabindex="0" role="note" aria-label="到上限后，boss 要等有员工做完才能再派任务" data-en-label="Once reached, boss waits for an employee to finish before dispatching more work">?</span></label>
+      <select id="max-running"></select>
+    </div></div></div>
 
-    <p id="task-scope" class="member-muted member-scope" hidden></p>
+    <div id="provider-health-section" class="s-group" hidden><h2 class="s-title" data-en="Dispatch paused">暂停派活</h2><div id="provider-health" class="s-card" aria-live="polite"></div></div>
 
-    <!-- 6 个 Provider 卡片容器 -->
-    <div id="cli-cards" class="cli-cards"></div>
+    <div id="cli-cards"></div>
 
-
-    <!-- 底部固定保存条 -->
-    <aside class="sticky-save-bar">
+    <aside class="s-bar">
       <div id="leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" data-en-label="Leave settings" hidden></div>
-      <div class="save-bar-inner">
-        <div class="save-bar-info">
+      <div class="s-bar-body">
+        <div class="s-bar-info">
           <span id="dirty-text" class="dirty-label"></span>
           <span id="permission-summary" class="permission-summary-tag" hidden></span>
           <span id="save-feedback" class="save-feedback"></span>
         </div>
-        <div class="save-bar-actions">
-          <button id="refresh-detection" type="button" title="重新查找本机工具与模型列表；不会发起 AI 任务。回到设置页时也会自动检测" data-en="Refresh models" data-en-title="Re-scan local tools and models without starting AI tasks. Also runs automatically when returning to Settings">刷新模型列表</button>
+        <div class="s-bar-actions">
           <button id="save-btn" class="primary" type="button" disabled data-en="Save settings">保存设置</button>
         </div>
       </div>
@@ -110,19 +108,20 @@
   </section>
 
   <section id="pane-general" class="tab-pane" hidden aria-labelledby="nav-general">
-    <div id="general-language"></div>
-    <div id="general-prefs"></div>
-    <div id="alerts-settings"></div>
-    <div class="model-names setting-row">
-      <div class="setting-copy">
-        <h2 data-en="Model names">模型名称</h2>
-        <p id="model-names-example" class="setting-example"></p>
+    <div class="s-group"><div class="s-card">
+      <div id="general-language" class="s-wrap"></div>
+      <div id="general-main" class="s-wrap"></div>
+      <div class="s-row">
+        <span class="s-label" data-en="Model names">模型名称<span id="model-names-example" class="setting-tip" tabindex="0" role="note" aria-label="">?</span></span>
+        <div class="segment-control" role="radiogroup" aria-label="模型名称" data-en-label="Model names">
+          <button id="model-names-short" class="segment-btn" role="radio" type="button" data-en="Short">简短</button>
+          <button id="model-names-full" class="segment-btn" role="radio" type="button" data-en="Full">完整</button>
+        </div>
       </div>
-      <div class="segment-control" role="radiogroup" aria-label="模型名称" data-en-label="Model names">
-        <button id="model-names-short" class="segment-btn" role="radio" type="button" data-en="Short">简短</button>
-        <button id="model-names-full" class="segment-btn" role="radio" type="button" data-en="Full">完整</button>
-      </div>
-    </div>
+    </div></div>
+    <div class="s-group"><h2 class="s-title" data-en="Characters">小人</h2><div id="general-motion" class="s-card"></div></div>
+    <div class="s-group"><h2 class="s-title" data-en="Startup & tray">启动与托盘</h2><div id="general-launch" class="s-card"></div></div>
+    <div class="s-group"><h2 class="s-title" data-en="Notifications">提醒</h2><div id="alerts-settings" class="s-card"></div></div>
   </section>
 
   <section id="pane-storage" class="tab-pane" hidden aria-labelledby="nav-storage">
@@ -134,9 +133,9 @@
   </section>
 
   <section id="pane-orchestration" class="tab-pane" hidden aria-labelledby="nav-orchestration">
-    <div class="updates-panel">
-      <div class="updates-card">
-        <h2 data-en="Orchestration">编排</h2>
+    <div class="s-group"><div class="s-card">
+      <div class="s-row">
+        <span class="s-label" data-en="Preset">档位<span id="orchestration-effect" class="setting-tip" tabindex="0" role="note" aria-label="">?</span></span>
         <div id="orchestration-presets" class="segment-control" role="radiogroup" aria-label="编排档位" data-en-label="Orchestration preset">
           <button class="segment-btn" role="radio" type="button" data-preset="off" data-en="Off">关闭</button>
           <button class="segment-btn" role="radio" type="button" data-preset="meetings" data-en="Meetings only">只开会</button>
@@ -145,91 +144,81 @@
           <button class="segment-btn" role="radio" type="button" data-preset="decision"><span data-en="Decision model">决策模型</span><span class="mode-tag" data-en="Experimental">实验</span></button>
           <button class="segment-btn" role="radio" type="button" data-preset="custom" data-en="Custom">自定义</button>
         </div>
-        <p id="orchestration-effect" class="fine orchestration-effect"></p>
-        <div id="orchestration-split" class="orchestration-split" hidden></div>
-        <div id="orchestration-meeting" class="orchestration-meeting" hidden></div>
-        <h3 class="orchestration-apply" data-en="Apply to">应用到</h3>
-        <div id="orchestration-bosses" class="skill-chips orchestration-bosses"></div>
-        <div id="orchestration-roles" class="review-grid orchestration-roles" hidden></div>
-        <pre id="orchestration-text" class="orchestration-template" hidden></pre>
-        <div id="orchestration-custom" class="orchestration-custom" hidden>
-          <textarea id="custom-text" aria-label="自定义编排规则" data-en-label="Custom orchestration rules" spellcheck="false"></textarea>
-        </div>
       </div>
-    </div>
-    <div class="updates-panel">
-      <div class="updates-card">
-        <h2 data-en="boss global rules files">boss 全局规则文件<span class="setting-tip" tabindex="0" role="note" aria-label="App 只改这些文件里 AgentNave 标记之间的一段，其他内容原样保留，改写前先备份。" data-en-label="The App only edits the section between the AgentNave markers in these files, leaves everything else as it is, and backs up before rewriting.">?</span></h2>
-        <ul id="rule-files" class="rule-files"></ul>
-      </div>
+      <div id="orchestration-split" class="s-wrap" hidden></div>
+      <div id="orchestration-meeting" class="s-wrap" hidden></div>
+    </div></div>
+    <div class="s-group"><h2 class="s-title" data-en="Apply to">应用到</h2><div class="s-card"><div class="s-row is-stack"><div id="orchestration-bosses" class="skill-chips"></div></div></div></div>
+    <div id="orchestration-roles" class="s-wrap" hidden></div>
+    <pre id="orchestration-text" class="s-group s-card is-pre" hidden></pre>
+    <div id="orchestration-custom" class="s-group" hidden><div class="s-card"><textarea id="custom-text" aria-label="自定义编排规则" data-en-label="Custom orchestration rules" spellcheck="false"></textarea></div></div>
+    <div class="s-group">
+      <h2 class="s-title" data-en="boss global rules files">boss 全局规则文件<span class="setting-tip" tabindex="0" role="note" aria-label="App 只改这些文件里 AgentNave 标记之间的一段，其他内容原样保留，改写前先备份。" data-en-label="The App only edits the section between the AgentNave markers in these files, leaves everything else as it is, and backs up before rewriting.">?</span></h2>
+      <div id="rule-files" class="s-card"></div>
     </div>
   </section>
 
   <section id="pane-advanced" class="tab-pane" hidden aria-labelledby="nav-advanced">
-    <div class="updates-panel">
-      <div class="updates-card">
-        <h2 data-en="Skills">技能</h2>
-        <div id="skill-list" class="skill-list" aria-live="polite"></div>
-      </div>
-    </div>
+    <div id="skill-list" aria-live="polite"></div>
   </section>
 
   <section id="pane-hosts" class="tab-pane" hidden aria-labelledby="nav-hosts">
-    <div id="svc-banner" class="banner" hidden></div>
-
-    <div id="reload-notice" class="banner reload-notice" role="note" hidden>
-      <div class="banner-content">
-        <strong data-en="Connection changes pending">有接入配置待生效</strong>
-        <p data-en=" to restart or reconnect; this notice clears automatically once done."><a href="#host-cards" data-en="Follow the instructions on the cards below">按下方卡片的提示</a>重开或重连，完成后提示自动消除。</p>
+    <div class="s-tools">
+      <div id="hosts-summary" class="s-tools-info" aria-live="polite"></div>
+      <div class="s-tools-actions">
+        <span id="refresh-result" class="s-muted" role="status"></span>
+        <button id="refresh-hosts" type="button" data-en="Refresh detection">刷新检测</button>
       </div>
     </div>
 
-    <div id="new-callout" class="callout" hidden></div>
+    <div id="svc-banner" class="s-alert" hidden></div>
 
-    <div class="hosts-toolbar">
-      <div id="hosts-summary" class="hosts-summary" aria-live="polite"></div>
-      <span id="refresh-result" class="fine" role="status"></span>
-      <button id="refresh-hosts" type="button" data-en="Refresh detection">刷新检测</button>
+    <div id="reload-notice" class="s-alert is-warn" role="note" hidden>
+      <div class="s-alert-body">
+        <strong data-en="Connection changes pending">有接入配置待生效</strong>
+        <p data-en=" to restart or reconnect; this notice clears automatically once done."><a href="#host-cards" data-en="Follow the instructions in the details below">按下方详情里的提示</a>重开或重连，完成后提示自动消除。</p>
+      </div>
     </div>
-    <div id="backups-line" class="backups-line"></div>
+
+    <div id="new-callout" class="s-alert is-info" hidden></div>
+
     <div id="host-cards" class="host-cards"></div>
     <div id="host-others" class="host-others"></div>
+    <div class="s-group"><div id="backups-line" class="s-card"></div></div>
   </section>
 
   <section id="pane-about" class="tab-pane" hidden aria-labelledby="nav-about">
-    <div class="updates-panel">
-      <div class="updates-card">
-        <h2 data-en="Version & updates">版本与更新</h2>
-        <div class="status-grid">
-          <div class="status-item">
-            <span class="status-label" data-en="AgentNave tray app">AgentNave 托盘应用</span>
-            <div class="status-val-wrap">
-              <strong id="app-version" class="status-value">—</strong>
-              <span id="app-badge" class="tag" hidden></span>
-            </div>
-          </div>
-          <div class="status-item">
-            <span class="status-label" data-en="Local service (agentnave)">本机服务 (agentnave)</span>
-            <div class="status-val-wrap">
-              <strong id="service-version" class="status-value">—</strong>
-              <span id="service-badge" class="tag" hidden></span>
-            </div>
-            <p id="service-msg" class="status-desc" hidden></p>
-          </div>
-          <div class="status-item full-width">
-            <span class="status-label" data-en="Last checked">上次检查</span>
-            <span id="last-checked" class="status-value status-time">—</span>
+    <div class="s-group">
+      <h2 class="s-title" data-en="Version & updates">版本与更新</h2>
+      <div class="s-card">
+        <div class="s-row">
+          <span class="s-label" data-en="AgentNave tray app">AgentNave 托盘应用</span>
+          <div class="s-control">
+            <strong id="app-version" class="s-value is-mono">—</strong>
+            <span id="app-badge" class="tag" hidden></span>
           </div>
         </div>
-
-        <div id="update-auto-check" class="update-auto-check"></div>
-
-        <div id="update-action-area" class="update-action-area">
-          <div class="btn-group">
-            <button id="btn-apply-update" class="primary" type="button" hidden data-en="Update all">全部更新</button>
-            <button id="btn-check-update" type="button" data-en="Check now">立即检查</button>
+        <div class="s-row">
+          <span class="s-label" data-en="Local service (agentnave)">本机服务 (agentnave)</span>
+          <div class="s-control">
+            <strong id="service-version" class="s-value is-mono">—</strong>
+            <span id="service-badge" class="tag" hidden></span>
+            <span id="service-msg" class="s-muted" hidden></span>
           </div>
-          <p id="update-hint" class="field-hint" hidden></p>
+        </div>
+        <div class="s-row">
+          <span class="s-label" data-en="Last checked">上次检查</span>
+          <div class="s-control">
+            <span id="last-checked" class="s-value">—</span>
+            <div class="btn-group">
+              <button id="btn-apply-update" class="primary" type="button" hidden data-en="Update all">全部更新</button>
+              <button id="btn-check-update" type="button" data-en="Check now">立即检查</button>
+            </div>
+          </div>
+        </div>
+        <div id="update-auto-check" class="s-row"></div>
+        <div id="update-action-area" class="s-row is-stack">
+          <p id="update-hint" class="s-muted" hidden></p>
           <div id="update-progress-box" class="progress-box" hidden>
             <span class="spinner-dot"></span>
             <span id="update-progress-text" data-en="Checking for updates…">正在检查更新…</span>
@@ -240,22 +229,22 @@
           </div>
         </div>
       </div>
-      <div class="setting-row uninstall-entry">
-        <h2 data-en="Uninstall AgentNave">卸载 AgentNave</h2>
-        <button id="btn-uninstall" class="danger" type="button" data-en="Uninstall">卸载</button>
-      </div>
     </div>
+    <div class="s-group"><div class="s-card"><div class="s-row">
+      <span class="s-label" data-en="Uninstall AgentNave">卸载 AgentNave</span>
+      <button id="btn-uninstall" class="danger" type="button" data-en="Uninstall">卸载</button>
+    </div></div></div>
   </section>
 
-  <!-- One save bar for the orchestration and advanced sections: their edits save together. -->
-  <aside id="advanced-bar" class="sticky-save-bar" hidden>
+  <!-- One save bar for the orchestration and Skills sections: their edits save together. -->
+  <aside id="advanced-bar" class="s-bar" hidden>
     <div id="advanced-leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" data-en-label="Leave settings" hidden></div>
-    <div class="save-bar-inner">
-      <div class="save-bar-info">
+    <div class="s-bar-body">
+      <div class="s-bar-info">
         <span id="advanced-dirty" class="dirty-label"></span>
         <span id="advanced-feedback" class="save-feedback"></span>
       </div>
-      <div class="save-bar-actions">
+      <div class="s-bar-actions">
         <button id="advanced-discard" type="button" disabled data-en="Discard changes">放弃修改</button>
         <button id="advanced-save" class="primary" type="button" disabled data-en="Save settings">保存设置</button>
       </div>

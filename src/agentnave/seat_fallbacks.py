@@ -6,7 +6,7 @@ import random
 from collections.abc import Callable, Collection
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
-from agentnave import provider_health
+from agentnave import accounts, provider_health
 from agentnave.host import Host
 from agentnave.orchestration_roles import FallbackStatus, ProviderName, ReviewSeat, ReviewSeatStatus
 
@@ -28,6 +28,7 @@ class SkippedChoice(TypedDict):
     provider: str
     model: str
     reason: str
+    account: NotRequired[str]
 
 
 class SeatFallback(TypedDict):
@@ -49,7 +50,7 @@ def statuses[Role: str](
     host: Host,
     installed: Callable[[str], bool],
     document: MemberFile | None,
-    health: dict[tuple[str, str | None], provider_health.Health],
+    health: dict[provider_health.Key, provider_health.Health],
     *,
     image_roles: frozenset[str] = frozenset(),
 ) -> dict[Role, ReviewSeatStatus]:
@@ -57,10 +58,7 @@ def statuses[Role: str](
 
     result: dict[Role, ReviewSeatStatus] = {}
     for role, seat in seats.items():
-        choices = [
-            ReviewSeat(provider=c.provider, model=c.model, effort=c.effort)
-            for c in [seat, *seat.fallbacks]
-        ]
+        choices = [c.alone() for c in [seat, *seat.fallbacks]]
         items = [
             single_review_status({role: choice}, mode, excluded, host, installed, document, health)[
                 role
@@ -69,7 +67,7 @@ def statuses[Role: str](
         ]
         if role == "image-generator" or role in image_roles:
             for choice, item in zip(choices, items, strict=True):
-                if choice.provider == host.provider:
+                if accounts.is_host_account(host, choice.provider, choice.account):
                     item.available = False
                     item.reason = IMAGE_HOST_CLI_REASON
                     item.native = None
@@ -81,6 +79,7 @@ def statuses[Role: str](
                 provider=c.provider,
                 model=c.model,
                 effort=c.effort,
+                account=c.account,
                 available=item.reason is None,
                 reason=item.reason,
             )
@@ -98,7 +97,7 @@ def select(
     *,
     image: bool = False,
     randomize: bool = False,
-    in_use: Collection[tuple[str, str]] = (),
+    in_use: Collection[tuple[str, str | None, str]] = (),
     randrange: Callable[[int], int] | None = None,
 ) -> tuple[ReviewSeat, SeatFallback | None]:
     """Pick a usable configured choice; leave failures to the existing dispatch path."""
@@ -122,17 +121,14 @@ def select(
         "task"
     ]
     health = provider_health.active(data_root())
-    choices = [
-        ReviewSeat(provider=c.provider, model=c.model, effort=c.effort)
-        for c in [seat, *seat.fallbacks]
-    ]
+    choices = [c.alone() for c in [seat, *seat.fallbacks]]
     skipped: list[SkippedChoice] = []
     usable: list[tuple[int, ReviewSeat]] = []
     for index, choice in enumerate(choices):
         status = single_review_status(
             {"seat": choice}, mode, excluded, host, installed, document, health
         )["seat"]
-        if image and choice.provider == host.provider:
+        if image and accounts.is_host_account(host, choice.provider, choice.account):
             status.reason = IMAGE_HOST_CLI_REASON
         if status.reason is None:
             if not randomize:
@@ -144,9 +140,10 @@ def select(
                 return choice, receipt
             usable.append((index, choice))
         else:
-            skipped.append(
-                {"provider": choice.provider, "model": choice.model, "reason": status.reason}
-            )
+            skip = SkippedChoice(provider=choice.provider, model=choice.model, reason=status.reason)
+            if choice.account is not None:
+                skip["account"] = choice.account
+            skipped.append(skip)
     if not usable:
         return seat, None
     if len(usable) == 1:
@@ -158,7 +155,7 @@ def select(
             else None,
         )
     busy = set(in_use)
-    pool = [item for item in usable if (item[1].provider, item[1].model) not in busy] or usable
+    pool = [item for item in usable if item[1].key() not in busy] or usable
     index, choice = pool[0] if len(pool) == 1 else pool[(randrange or choose_index)(len(pool))]
     return choice, SeatFallback(
         position=index, skipped=skipped, random=True, note=RANDOM_CANDIDATE_NOTE

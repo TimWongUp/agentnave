@@ -34,13 +34,13 @@ function appearance({ saved = {}, systemReduce = false, failWrite = false, trans
     return node;
   }
   function settings() {
-    nodes.set("general-prefs", h("div", {}));
+    for (const id of ["general-main", "general-motion", "general-launch"]) nodes.set(id, h("div", {}));
     nodes.set("pane-general", { hidden: false });
     context.AN = { h, $: id => nodes.get(id), L: (zh, en) => en, shellOS: () => "macos",
       load: async path => (await context.fetch(path)).json(),
       post: async (path, body) => (await context.fetch(path, { method: "POST", headers: {}, body: JSON.stringify(body) })).json() };
     vm.runInNewContext(readFileSync(`${__dirname}/../general-settings.js`, "utf8"), context);
-    return nodes.get("general-prefs");
+    return nodes.get("general-main");
   }
   return { api: context.window.ANAppearance, root, emit, requests, saved, buttons, h, settings };
 
@@ -244,10 +244,15 @@ test("settings.html scripts load in declared order and language switch respects 
   // Trigger an unsaved edit in Advanced (custom text edited).
   context.AN.settings.setTab("advanced");
   await new Promise(r => setImmediate(r));
+  // The boss list picks which host the detail pane shows.
   const selectedHostCli = (hostId) => {
-    const card = getEl("host-cards").children.find(c => c.getAttribute("data-host") === hostId);
-    const row = card.children[0].children.find(c => c.className === "hc-hostcli");
-    const select = row.children[1];
+    const [listPane, detailPane] = getEl("host-cards").children[0].children;
+    const item = listPane.children[0].children.find(c => c.getAttribute("data-host") === hostId);
+    if (item.getAttribute("aria-pressed") !== "true") item.listeners.click[0]();
+    const panel = getEl("host-cards").children[0].children[1].children[0];
+    assert.equal(panel.getAttribute("data-host"), hostId);
+    const row = panel.children[1].children.find(c => c.className?.includes("hc-hostcli"));
+    const select = row.children[1].children[0];
     return select.options.find(o => o.getAttribute("selected") !== null)?.getAttribute("value");
   };
   assert.equal(selectedHostCli("antigravity"), "launch");

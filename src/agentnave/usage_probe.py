@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -20,10 +21,15 @@ _MAX_OUTPUT = 1 << 20
 _DRAIN_SECONDS = 2.0
 
 
-async def run_usage_query(query: UsageQuery, now: datetime) -> datetime | None:
+async def run_usage_query(
+    query: UsageQuery, now: datetime, env: Mapping[str, str] | None = None
+) -> datetime | None:
+    """env is added to the child's environment, so the query asks the account that ran out."""
     with tempfile.TemporaryDirectory(prefix="agentnave-usage-", ignore_cleanup_errors=True) as cwd:
         try:
-            supervised = await spawn_process(query.argv, Path(cwd))
+            supervised = await spawn_process(
+                query.argv, Path(cwd), unset_env=query.unset_env, extra_env=dict(env or {})
+            )
         except (OSError, ValueError):
             return None
         process = supervised.process

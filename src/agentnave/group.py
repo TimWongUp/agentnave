@@ -57,6 +57,9 @@ class GroupSeat:
     cwd: Path
     role: str | None = None
     access: str | None = None  # declared desk access tier
+    # A registered account of the CLI (None: the default account) and the name shown for it.
+    account: str | None = None
+    account_label: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -613,6 +616,7 @@ class Groups:
                 state.session_id,
                 seat.provider_options,
                 read_only=seat.access == "read",
+                account=seat.account,
             )
             run.invocation_id = (
                 self.manager.start(req, on_settled=on_settled)
@@ -677,6 +681,7 @@ class Groups:
                 str(seat.provider_options.get("model", "")),
                 role=seat.role,
                 ordinal=index,
+                account=seat.account_label or seat.account,
             )
             for index, seat in enumerate(group.seats.values(), 1)
         ]

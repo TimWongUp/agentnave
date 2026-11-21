@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
+
+# What an account id looks like; the App creates them and never reuses one (see accounts.py).
+ACCOUNT_ID = r"^[a-z0-9][a-z0-9-]{0,31}$"
+# The App's name for the default account, so no named account may take it. Pydantic's regex
+# engine has no look-ahead, so it is refused beside the pattern rather than in it.
+RESERVED_ACCOUNT_ID = "default"
 
 type HostName = Literal[
     "codex",
@@ -97,11 +104,15 @@ class InvocationRequest:
     provider_options: Mapping[str, ProviderOption] = field(default_factory=lambda: {})
     read_only: bool = False  # Adds the read-only instruction; native permissions stay as they are.
     extra_instructions: str | None = None  # Appended after the shared instructions.
+    # A registered named account of the provider; None runs the default account (ADR-0108).
+    account: str | None = None
 
     def __post_init__(self) -> None:
         provider, cwd = validate_invocation_inputs(
             self.provider, self.prompt, self.cwd, self.session_id
         )
+        if self.account is not None and not re.fullmatch(ACCOUNT_ID, self.account):
+            raise ValueError("account must be an account id")
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "cwd", cwd)
         object.__setattr__(self, "provider_options", MappingProxyType(dict(self.provider_options)))

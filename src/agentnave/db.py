@@ -17,7 +17,9 @@ from typing import Literal, NamedTuple
 from agentnave.locks import locked_conversations, remove_seats
 from agentnave.store import Conversation, EntryRecord, RoundRecord, TaskRecord, now
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+# Where the migrations before the owner_account column end; the last step adds it.
+_V4 = 4
 NAME = "agentnave.db"
 
 type ClaimStatus = Literal["claimed", "withdrawn", "yours"]
@@ -125,6 +127,9 @@ class Database:
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version == 3:
                     _migrate_v3(connection)
+                    version = connection.execute("PRAGMA user_version").fetchone()[0]
+                if version == _V4:
+                    _migrate_v4(connection)
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
                 if version != SCHEMA_VERSION:
                     raise sqlite3.DatabaseError(
@@ -283,16 +288,27 @@ class Database:
             raise OSError(str(exc)) from exc
         return [_row(row) for row in rows]
 
-    def register(self, workspace_id: str, boss: str, host: str | None, file: str | None) -> None:
-        """Record the boss that created a conversation, and its transcript once it is known."""
+    def register(
+        self,
+        workspace_id: str,
+        boss: str,
+        host: str | None,
+        file: str | None,
+        account: str | None = None,
+    ) -> None:
+        """Record the boss that created a conversation, its transcript once it is known, and the
+        named account it runs as (None: the default account)."""
         with self._write() as connection:
             connection.execute(
-                "INSERT INTO workspaces (id, owner, origin, owner_host, owner_file) VALUES (?, ?, ?, ?, ?) "
+                "INSERT INTO workspaces (id, owner, origin, owner_host, owner_file, owner_account) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (id) DO UPDATE SET owner_host = excluded.owner_host, "
-                "owner_file = coalesce(excluded.owner_file, owner_file) "
+                "owner_file = coalesce(excluded.owner_file, owner_file), "
+                "owner_account = excluded.owner_account "
                 "WHERE owner = excluded.owner AND (owner_host IS NOT excluded.owner_host OR "
-                "coalesce(excluded.owner_file, owner_file) IS NOT owner_file)",
-                (workspace_id, boss, boss, host, file),
+                "coalesce(excluded.owner_file, owner_file) IS NOT owner_file OR "
+                "owner_account IS NOT excluded.owner_account)",
+                (workspace_id, boss, boss, host, file, account),
             )
 
     def release(
@@ -305,19 +321,20 @@ class Database:
         released: str,
         title: str | None = None,
         cwd: str | None = None,
+        account: str | None = None,
     ) -> None:
         """Mark the boss's own workspace as waiting for another boss."""
         with self._write() as connection:
             cursor = connection.execute(
                 "INSERT INTO workspaces (id, owner, origin, owner_host, owner_file, pending, note, "
-                "released, title, cwd) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?) "
+                "released, title, cwd, owner_account) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (id) DO UPDATE SET "
                 "pending = 1, note = excluded.note, released = excluded.released, "
-                "owner_host = excluded.owner_host, "
+                "owner_host = excluded.owner_host, owner_account = excluded.owner_account, "
                 "owner_file = coalesce(excluded.owner_file, owner_file), "
                 "title = coalesce(excluded.title, title), cwd = coalesce(excluded.cwd, cwd) "
                 "WHERE owner = excluded.owner",
-                (workspace_id, boss, boss, host, file, note, released, title, cwd),
+                (workspace_id, boss, boss, host, file, note, released, title, cwd, account),
             )
             if cursor.rowcount != 1:
                 raise ValueError("this workspace was just taken over by another boss")
@@ -332,6 +349,7 @@ class Database:
         host: str | None,
         file: str | None,
         claimed_at: str | None = None,
+        account: str | None = None,
     ) -> tuple[Workspace, Workspace, ClaimStatus]:
         """Link a waiting workspace (or withdraw one's own); the row before, after, and status."""
         with self._write() as connection:
@@ -345,8 +363,9 @@ class Database:
                 connection.execute(
                     "UPDATE workspaces SET note = CASE pending WHEN 1 THEN NULL ELSE note END, "
                     "released = CASE pending WHEN 1 THEN NULL ELSE released END, pending = 0, "
-                    "owner_host = ?, owner_file = coalesce(?, owner_file) WHERE id = ?",
-                    (host, file, workspace_id),
+                    "owner_host = ?, owner_file = coalesce(?, owner_file), owner_account = ? "
+                    "WHERE id = ?",
+                    (host, file, account, workspace_id),
                 )
                 status: ClaimStatus = "withdrawn" if before.pending else "yours"
             else:
@@ -479,6 +498,8 @@ class Workspace(NamedTuple):
     title: str | None
     cwd: str | None
     origin: str | None
+    # The named account the owner boss runs as; None is the default account (ADR-0108).
+    owner_account: str | None
 
 
 class WorkspaceLink(NamedTuple):
@@ -525,7 +546,7 @@ def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version == SCHEMA_VERSION:
+                if version >= _V4:
                     return  # Another new server finished while this one acquired the locks.
                 if version != 1 or _legacy_ids(connection) != ids:
                     raise OSError("History changed during migration; reconnect the host to retry")
@@ -537,7 +558,7 @@ def _migrate_v1(connection: sqlite3.Connection, root: Path) -> None:
                     if column not in columns:
                         connection.execute(f"ALTER TABLE workspaces ADD COLUMN {column} TEXT")
                 remove_conversations(connection, ids)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.execute(f"PRAGMA user_version = {_V4}")
                 connection.commit()
                 remove_seats(root, ids)
             finally:
@@ -559,7 +580,7 @@ def _migrate_v2(connection: sqlite3.Connection) -> None:
             connection.execute("ALTER TABLE workspaces ADD COLUMN origin TEXT")
             for statement in _LINKS_SCHEMA:
                 connection.execute(statement)
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            connection.execute(f"PRAGMA user_version = {_V4}")
         connection.commit()
     finally:
         if connection.in_transaction:
@@ -574,6 +595,23 @@ def _migrate_v3(connection: sqlite3.Connection) -> None:
         if version == 3:
             for statement in _LINKS_SCHEMA:
                 connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {_V4}")
+        connection.commit()
+    finally:
+        if connection.in_transaction:
+            connection.rollback()
+
+
+def _migrate_v4(connection: sqlite3.Connection) -> None:
+    """Add the workspace's owner account (ADR-0108) and advance the version in one transaction."""
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == _V4:
+            # A database made by the v1 step already has it from the current schema.
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
+            if "owner_account" not in columns:
+                connection.execute("ALTER TABLE workspaces ADD COLUMN owner_account TEXT")
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         connection.commit()
     finally:

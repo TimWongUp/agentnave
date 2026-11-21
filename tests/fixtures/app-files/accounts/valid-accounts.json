@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "accounts": [
+    {
+      "id": "work",
+      "provider": "claude",
+      "label": "工作",
+      "dir": "/Users/example/.agentnave-accounts/claude/work",
+      "managed": true
+    },
+    {
+      "id": "a2",
+      "provider": "claude",
+      "label": "个人 2",
+      "dir": "/Users/example/.claude_personal",
+      "managed": false
+    }
+  ]
+}

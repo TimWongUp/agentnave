@@ -18,7 +18,7 @@
     control.append(button);
     return [hours, button];
   });
-  root.replaceChildren(h("span.update-auto-label", {}, label), control);
+  root.replaceChildren(h("span.s-label", {}, label), control);
 
   function render() {
     for (const [hours, button] of buttons) {

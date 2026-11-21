@@ -11,6 +11,102 @@ use super::session::{KEPT, Output, cli_args, command, parent_session};
 #[cfg(unix)]
 use super::{Running, Terminals};
 
+#[test]
+fn desktop_chat_is_refused_for_resume_and_handed_over_with_selected_cli() {
+    use serde_json::json;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("project");
+    std::fs::create_dir(&cwd).unwrap();
+    let id = "01234567-89ab-4cde-8fab-0123456789ab";
+    let record = root.path().join(format!("{id}.jsonl"));
+    std::fs::write(
+        &record,
+        format!(
+            "{{\"entrypoint\":\"claude-desktop-3p\",\"cwd\":{}}}",
+            json!(cwd)
+        ),
+    )
+    .unwrap();
+    let workspace = crate::data::boss_app::boss_key("claude", id);
+    let db = crate::db::create(root.path());
+    db.execute("INSERT INTO workspaces (id, owner, owner_host, owner_file, title, note, released, pending) VALUES (?1, ?1, 'claude', ?2, 'test', 'keep', 'old', 1)", rusqlite::params![workspace, record.to_str().unwrap()]).unwrap();
+    let error = super::chat_session_in(root.path(), &workspace, "claude", None)
+        .err()
+        .unwrap();
+    assert!(error.contains("不能在这里续接"));
+    let account_dir = root.path().join("account");
+    std::fs::create_dir(&account_dir).unwrap();
+    std::fs::write(root.path().join("accounts.json"), json!({"version":1,"accounts":[{"id":"work","provider":"claude","label":"工作","dir":account_dir,"managed":false}]}).to_string()).unwrap();
+    for provider in ["claude", "codex"] {
+        let payload = json!({"workspace": workspace, "provider": provider, "account": if provider == "claude" { Some("work") } else { None }, "cols": 91, "rows": 27});
+        let reply = super::Terminals::default().handover_in(
+            root.path(),
+            &payload,
+            |_| true,
+            |start, args, env| {
+                assert_eq!(start.provider, provider);
+                assert_eq!(start.cwd, cwd);
+                assert_eq!(start.size, (91, 27));
+                assert!(start.resume.is_none());
+                assert_eq!(
+                    start.account.as_ref().map(|a| a.id.as_str()),
+                    (provider == "claude").then_some("work")
+                );
+                let prompt = format!("接手工作区 {workspace}");
+                if provider == "claude" || !cfg!(unix) {
+                    assert_eq!(args, [prompt]);
+                } else {
+                    assert_eq!(env, [("AGENTNAVE_HANDOVER_PROMPT", prompt.as_str())]);
+                }
+                crate::response::Response::json(&json!({"ok":true}))
+            },
+        );
+        assert_eq!(reply.status, 200);
+        let (pending, note): (bool, String) = db
+            .query_row(
+                "SELECT pending, note FROM workspaces WHERE id = ?1",
+                [&workspace],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(pending);
+        assert_eq!(note, "keep");
+    }
+
+    let refused = |payload: serde_json::Value| {
+        let reply = super::Terminals::default().handover_in(
+            root.path(),
+            &payload,
+            |_| true,
+            |_, _, _| panic!("nothing starts"),
+        );
+        let body: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+        (
+            reply.status,
+            body["error"].as_str().unwrap_or_default().to_owned(),
+        )
+    };
+    // An account that is not a name is refused, not taken for the default account.
+    let odd = json!({"workspace": workspace, "provider": "claude", "account": 7});
+    assert_eq!(refused(odd).0, 400);
+    // Only an account that is gone is told as removed; a broken accounts file says so itself.
+    let _ = db.execute("ALTER TABLE workspaces ADD COLUMN owner_account TEXT", []);
+    db.execute(
+        "UPDATE workspaces SET owner_account = 'gone' WHERE id = ?1",
+        [&workspace],
+    )
+    .unwrap();
+    let plain = json!({"workspace": workspace, "provider": "codex"});
+    assert_eq!(
+        refused(plain.clone()),
+        (409, "这段聊天的账号已被移除".to_owned())
+    );
+    std::fs::write(root.path().join("accounts.json"), "{").unwrap();
+    let (status, error) = refused(plain);
+    assert_eq!(status, 409);
+    assert!(error.contains("accounts.json"), "{error}");
+}
+
 /// Reads until `wanted` shows up in the output or the CLI exits, within a few seconds.
 #[cfg(unix)]
 fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {
@@ -189,6 +285,7 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -337,6 +434,9 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "CLAUDECODE",
         "CLAUDE_CODE_CHILD_SESSION",
         "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+        "CLAUDE_CODE_ACCOUNT_UUID",
         "CODEX_THREAD_ID",
         "GROK_SESSION_ID",
         "GROK_SANDBOX",
@@ -430,6 +530,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -666,6 +767,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_searched: None,
             started: std::time::SystemTime::now(),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -680,13 +782,14 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             title_searched: None,
             started: std::time::SystemTime::now(),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
     }
 
     let mut calls = 0usize;
-    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
+    let first = terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
@@ -694,14 +797,14 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(calls, 2);
 
     // Within the throttle window, neither unlocated terminal scans again.
-    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _| {
+    terminals.titles_with(Duration::from_secs(60), |_, native, _, _, _, _| {
         calls += 1;
         (native.map(str::to_owned), false, None)
     });
     assert_eq!(calls, 2);
 
     // Once the window expires and records are located, both resolve and stay unthrottled.
-    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _| {
+    let resolved = terminals.titles_with(Duration::ZERO, |provider, _, _, _, _, _| {
         calls += 1;
         (
             Some(format!("{provider}-id")),
@@ -716,7 +819,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
     assert_eq!(resolved[&1].text, "codex title");
     assert_eq!(resolved[&2].text, "claude title");
 
-    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _| {
+    let cached = terminals.titles_with(Duration::from_secs(60), |provider, _, _, _, _, _| {
         calls += 1;
         (
             None,
@@ -755,6 +858,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now - Duration::from_secs(20),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -769,6 +873,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now - Duration::from_secs(15),
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -783,6 +888,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             title_searched: None,
             started: now,
             pending: 0,
+            account: None,
             #[cfg(unix)]
             codex: None,
         });
@@ -791,7 +897,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
     // Terminal 1's `s1` is passed in `exclude`; Terminal 2 claims `s2` and adds it to `exclude`
     // immediately so Terminal 3 sees both `s1` and `s2` excluded in the same pass.
     let mut seen: Vec<(Option<String>, Vec<String>)> = Vec::new();
-    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude| {
+    let titles = terminals.titles_with(Duration::ZERO, |_, native, _, _, exclude, _| {
         let mut ex: Vec<String> = exclude.iter().cloned().collect();
         ex.sort();
         seen.push((native.map(str::to_owned), ex));
@@ -845,6 +951,7 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -988,6 +1095,7 @@ fn blocked_wakeup_is_retried_once_unblocked() {
         title_searched: None,
         started: std::time::SystemTime::now(),
         pending: 0,
+        account: None,
         #[cfg(unix)]
         codex: None,
     });
@@ -1053,3 +1161,5 @@ fn status_probe_is_answered_once_even_when_output_is_replayed() {
 
 #[cfg(unix)]
 mod live;
+
+mod accounts;

@@ -1,8 +1,9 @@
 # ADR-0078：启动确认屏由服务自动处理
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-10
 - 修订 [ADR-0056](0056-claude-interactive-runtime.md) 的启动信任、[ADR-0057](0057-boss-answers-native-prompts.md) 的按键与持久放行边界，以及 [ADR-0072](0072-antigravity-interactive-runtime.md) 的信任与用户配置边界。
+- 具名 Claude 账号的确认写入位置由 [ADR-0108](0108-multi-account-isolation.md) 修订：确认写入对应 `CLAUDE_CONFIG_DIR` 内的 `.claude.json`，而非 `~/.claude.json`。
 
 ## 决定
 

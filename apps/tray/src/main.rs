@@ -1,6 +1,7 @@
 //! AgentNave tray: view and clean up this machine's saved Studio conversations.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod accounts;
 mod alerts;
 mod avatars;
 mod badge;
@@ -93,7 +94,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
             && ((cfg!(unix) && matches!(path, "/app/hosts/reload-copy" | "/app/hosts/stop-copy"))
                 || path.starts_with("/app/video-packs/")
                 // The embedded terminal runs the user's own CLI and writes no App data.
-                || path.starts_with("/app/terminal/")
+                || (path.starts_with("/app/terminal/") && path != "/app/terminal/handover")
                 || matches!(
                     path,
                     "/app/preferences"
@@ -243,11 +244,15 @@ fn register_protocol(
         let app = ctx.app_handle().clone();
         let path = match request.uri().path() {
             // These routes read their query.
-            path if path == "/app/storage/preview" || path.starts_with("/app/terminal/") => request
-                .uri()
-                .path_and_query()
-                .map_or(path, |path| path.as_str())
-                .to_owned(),
+            path if matches!(path, "/app/storage/preview" | "/app/accounts/status")
+                || path.starts_with("/app/terminal/") =>
+            {
+                request
+                    .uri()
+                    .path_and_query()
+                    .map_or(path, |path| path.as_str())
+                    .to_owned()
+            }
             path => path.to_owned(),
         };
         let label = ctx.webview_label().to_owned();
@@ -437,6 +442,9 @@ impl ProtocolRequest {
             _ if path.starts_with("/app/terminal/") => {
                 terminal::request(app, method, path, action, self.request.body())
             }
+            _ if path == "/app/accounts" || path.starts_with("/app/accounts/") => {
+                reader.accounts_request(Some(app), method, path, action, self.request.body())
+            }
             _ if path == "/app/projects" || path.starts_with("/app/projects/") => {
                 reader.projects_request(Some(app), method, path, action, self.request.body())
             }
@@ -517,6 +525,10 @@ mod tests {
             ("POST", "/app/decision-seats"),
             ("POST", "/app/decision-key"),
             ("POST", "/app/provider-health/clear"),
+            ("POST", "/app/accounts/create"),
+            ("POST", "/app/accounts/rename"),
+            ("POST", "/app/accounts/login"),
+            ("POST", "/app/accounts/remove"),
             ("POST", "/app/settings"),
             ("POST", "/app/characters/gpt"),
             ("POST", "/app/service/install"),
@@ -550,6 +562,8 @@ mod tests {
         }
         assert!(preview_refuses(true, "POST", "/app/voice/unknown"));
         assert!(!preview_refuses(true, "GET", "/settings/members"));
+        assert!(!preview_refuses(true, "GET", "/app/accounts"));
+        assert!(!preview_refuses(true, "GET", "/app/accounts/status?id=a1"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
         assert!(!preview_refuses(true, "POST", "/app/window/minimize"));
         assert!(!preview_refuses(true, "POST", "/app/window/close"));
@@ -564,6 +578,7 @@ mod tests {
         ));
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
         assert!(!preview_refuses(true, "POST", "/app/terminal/start"));
+        assert!(preview_refuses(true, "POST", "/app/terminal/handover"));
         assert!(!preview_refuses(true, "POST", "/app/terminal/input"));
         assert!(!preview_refuses(true, "POST", "/app/projects/pick"));
         assert!(!preview_refuses(true, "POST", "/app/projects/add"));

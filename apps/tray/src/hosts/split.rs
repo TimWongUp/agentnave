@@ -2,7 +2,8 @@
 //! connecting one would not reach the other. Claude Desktop drops `CLAUDE_CONFIG_DIR` from the
 //! login shell's variables, so its Code tab stays on the default folder while the terminal follows
 //! the variable. Codex Desktop inherits them, so only a further Codex folder, one per account and
-//! chosen per command, needs a row.
+//! chosen per command, needs a row. A named Claude account (ADR-0108) has a row of its own too:
+//! its folder is the `CLAUDE_CONFIG_DIR` its connection is read from.
 use super::{Context, Format, Host, Spec};
 use std::{
     collections::{BTreeSet, HashSet},
@@ -138,5 +139,24 @@ pub(super) fn rows(context: &Context, hosts: &[Host], codex_homes: &[PathBuf]) -
             "mcp_servers",
         ));
     }
+    let claude_label = claude.map_or("Claude", |host| host.label);
+    // An unreadable accounts file adds no row; the accounts page names the problem.
+    for account in crate::accounts::read(&context.data).unwrap_or_default() {
+        rows.push((
+            interned(format!("claude@{}", account.id)),
+            interned(format!("{claude_label}（{}）", account.label)),
+            "claude",
+            None,
+            account.dir,
+            ".claude.json",
+            Format::Json,
+            "mcpServers",
+        ));
+    }
     rows
+}
+
+/// Whether the row is a named account's: its folder is chosen by the user, not found by the app.
+pub(super) fn is_account_row(id: &str) -> bool {
+    id.starts_with("claude@")
 }

@@ -1478,7 +1478,7 @@ def test_provider_health_cooldown_keeps_deadline_and_clears_success(tmp_path: Pa
     now = datetime.now(UTC)
     # A quota failure that names no reset time cools the model for an hour; a repeat keeps it.
     provider_health.record(tmp_path, "claude", "quota", "a")
-    guess = provider_health.active(tmp_path)[("claude", "a")]
+    guess = provider_health.active(tmp_path)[("claude", None, "a")]
     assert guess["until"] is not None
     assert (
         timedelta(minutes=59)
@@ -1486,9 +1486,9 @@ def test_provider_health_cooldown_keeps_deadline_and_clears_success(tmp_path: Pa
         <= timedelta(hours=1, seconds=1)
     )
     provider_health.record(tmp_path, "claude", "quota", "a")
-    assert provider_health.active(tmp_path)[("claude", "a")] == guess
+    assert provider_health.active(tmp_path)[("claude", None, "a")] == guess
     provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(days=20))
-    health = provider_health.active(tmp_path)[("claude", "a")]
+    health = provider_health.active(tmp_path)[("claude", None, "a")]
     assert health["until"] is not None
     assert (
         timedelta(days=7, hours=23)
@@ -1496,19 +1496,22 @@ def test_provider_health_cooldown_keeps_deadline_and_clears_success(tmp_path: Pa
         <= timedelta(days=8, seconds=1)
     )
     provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(days=20))
-    assert provider_health.active(tmp_path)[("claude", "a")] == health
-    provider_health.check(tmp_path, [("claude", "b")])
+    assert provider_health.active(tmp_path)[("claude", None, "a")] == health
+    provider_health.check(tmp_path, [("claude", None, "b")])
     with pytest.raises(ValueError):
-        provider_health.check(tmp_path, [("claude", "a")])
+        provider_health.check(tmp_path, [("claude", None, "a")])
     provider_health.record(tmp_path, "claude", "auth", "a")
     provider_health.record(tmp_path, "claude", "billing", "b")
-    assert provider_health.active(tmp_path)[("claude", "a")] == {"code": "auth", "until": None}
-    billing = provider_health.active(tmp_path)[("claude", "b")]["until"]
+    assert provider_health.active(tmp_path)[("claude", None, "a")] == {
+        "code": "auth",
+        "until": None,
+    }
+    billing = provider_health.active(tmp_path)[("claude", None, "b")]["until"]
     assert billing is not None and timedelta(minutes=29) < datetime.fromisoformat(
         billing
     ) - now <= timedelta(minutes=30, seconds=1)
     provider_health.clear(tmp_path, "claude", "a")
-    assert set(provider_health.active(tmp_path)) == {("claude", "b")}
+    assert set(provider_health.active(tmp_path)) == {("claude", None, "b")}
     provider_health.clear(tmp_path, "claude")
     assert provider_health.active(tmp_path) == {}
 
@@ -1517,12 +1520,12 @@ def test_provider_quota_extends_only_for_later_explicit_reset(tmp_path: Path) ->
     # Claude names no quota group, so its quota stays on the model.
     now = datetime.now(UTC)
     provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(hours=1))
-    first = provider_health.active(tmp_path)[("claude", "a")]
+    first = provider_health.active(tmp_path)[("claude", None, "a")]
     provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(minutes=30))
     provider_health.record(tmp_path, "claude", "quota", "a")
-    assert provider_health.active(tmp_path)[("claude", "a")] == first
+    assert provider_health.active(tmp_path)[("claude", None, "a")] == first
     provider_health.record(tmp_path, "claude", "quota", "a", now + timedelta(hours=2))
-    assert provider_health.active(tmp_path)[("claude", "a")]["until"] != first["until"]
+    assert provider_health.active(tmp_path)[("claude", None, "a")]["until"] != first["until"]
 
 
 def test_adapters_parse_explicit_quota_resets() -> None:
@@ -1553,7 +1556,7 @@ def test_billing_quota_merge_preserves_longer_deadline(tmp_path: Path, first: st
     order = ("quota", "billing") if first == "quota" else ("billing", "quota")
     for category in order:
         provider_health.record(tmp_path, "claude", cast(provider_health.Code, category), "x", reset)
-    entry = provider_health.active(tmp_path)[("claude", "x")]
+    entry = provider_health.active(tmp_path)[("claude", None, "x")]
     assert entry["code"] == "billing" and entry["until"] is not None
     assert datetime.fromisoformat(entry["until"]) == reset
     assert "reset" not in entry
@@ -1567,8 +1570,8 @@ def test_clear_model_also_clears_cli_default(tmp_path: Path, legacy: bool) -> No
     path.write_text(json.dumps({"version": 1, "providers": {"claude": item}}))
     assert provider_health.clear(tmp_path, "claude", "chosen")
     health = provider_health.active(tmp_path)
-    assert ("claude", None) not in health
-    assert (("claude", "other") in health) is not legacy
+    assert ("claude", None, None) not in health
+    assert (("claude", None, "other") in health) is not legacy
 
 
 def test_success_clears_cli_default_and_matching_model(tmp_path: Path) -> None:
@@ -1577,7 +1580,37 @@ def test_success_clears_cli_default_and_matching_model(tmp_path: Path) -> None:
     provider_health.record(tmp_path, "claude", "auth", "other")
     result = core.InvocationResult(InvocationStatus.SUCCEEDED, "claude", "ok", None, 0)
     provider_health.observe_result(tmp_path, result, None, [], "chosen")
-    assert set(provider_health.active(tmp_path)) == {("claude", "other")}
+    assert set(provider_health.active(tmp_path)) == {("claude", None, "other")}
+
+
+def test_each_account_cools_down_on_its_own_and_clears_apart(tmp_path: Path) -> None:
+    path = tmp_path / "provider-health.json"
+    legacy = {"code": "auth", "until": None}
+    path.write_text(json.dumps({"version": 1, "providers": {"claude": legacy}}))
+    # A named account that cannot sign in is out for every model; the default one is untouched.
+    provider_health.record(tmp_path, "claude", "auth", "opus", account="work")
+    provider_health.record(tmp_path, "claude", "quota", "opus", account="a2")
+    health = provider_health.active(tmp_path)
+    assert set(health) == {
+        ("claude", None, None),
+        ("claude", "work", None),
+        ("claude", "a2", "opus"),
+    }
+    assert provider_health.matching(health, "claude", "sonnet", "work") is not None
+    assert provider_health.matching(health, "claude", "sonnet", "a2") is None
+    with pytest.raises(ValueError, match="account work"):
+        provider_health.check(tmp_path, [("claude", "work", "sonnet")])
+    provider_health.check(tmp_path, [("claude", "a2", "sonnet")])
+    # Clearing the default account keeps the named ones, and clearing a named one the rest.
+    assert provider_health.clear(tmp_path, "claude")
+    document = json.loads(path.read_text())["providers"]["claude"]
+    assert "default" not in document and set(document["accounts"]) == {"work", "a2"}
+    assert provider_health.clear(tmp_path, "claude", account="work")
+    assert set(json.loads(path.read_text())["providers"]["claude"]["accounts"]) == {"a2"}
+    # A run that succeeds as an account clears that account's records only.
+    result = core.InvocationResult(InvocationStatus.SUCCEEDED, "claude", "ok", None, 0)
+    provider_health.observe_result(tmp_path, result, None, [], "opus", account="a2")
+    assert provider_health.active(tmp_path) == {}
 
 
 def test_recent_tools_count_each_call_once_and_keep_five(tmp_path: Path) -> None:
@@ -1630,7 +1663,7 @@ def test_stream_blocker_without_model_records_cli_cooldown(tmp_path: Path) -> No
     assert record.reported_model == "reported"
     event = {"type": "system", "subtype": "api_retry", "error": "authentication_failed"}
     record.observe_event(json.dumps(event).encode(), adapter)
-    assert provider_health.active(tmp_path)[("claude", None)]["code"] == "auth"
+    assert provider_health.active(tmp_path)[("claude", None, None)]["code"] == "auth"
 
 
 def test_retry_after_in_json_array_and_before_other_fields() -> None:
@@ -1683,7 +1716,7 @@ def test_provider_health_bad_data_and_busy_lock_fail_open(
             }
         )
     )
-    assert set(provider_health.active(tmp_path)) == {("claude", None), ("future", None)}
+    assert set(provider_health.active(tmp_path)) == {("claude", None, None), ("future", None, None)}
     lock = tmp_path / "locks" / "provider-health.lock"
     handle = lock_file(lock, "busy")
     before = path.read_bytes()
@@ -1707,7 +1740,7 @@ def test_provider_health_bad_data_and_busy_lock_fail_open(
 
     monkeypatch.setattr(provider_health, "write_file", fail_write)
     provider_health.record(tmp_path, "grok", "auth")
-    assert set(provider_health.active(tmp_path)) == {("claude", None), ("future", None)}
+    assert set(provider_health.active(tmp_path)) == {("claude", None, None), ("future", None, None)}
 
 
 @pytest.mark.parametrize(
@@ -1749,7 +1782,7 @@ async def test_health_survives_retry_stall_and_success_clears_it(
     manager = InvocationManager()
     manager.health_root = tmp_path
 
-    observed_during_stall: dict[tuple[str, str | None], provider_health.Health] = {}
+    observed_during_stall: dict[provider_health.Key, provider_health.Health] = {}
 
     async def stalled(record: Any) -> None:
         nonlocal observed_during_stall
@@ -1768,8 +1801,8 @@ async def test_health_survives_retry_stall_and_success_clears_it(
         assert result is not None and result.status is InvocationStatus.FAILED
         assert result.error is not None and result.error.code == "provider_error"
         expected = "auth" if reported else "quota"
-        assert observed_during_stall[("claude", "test")]["code"] == expected
-        assert provider_health.active(tmp_path)[("claude", "test")]["code"] == expected
+        assert observed_during_stall[("claude", None, "test")]["code"] == expected
+        assert provider_health.active(tmp_path)[("claude", None, "test")]["code"] == expected
 
         # Success on the same model clears its breaker.
         async def no_stall(_record: Any) -> None:

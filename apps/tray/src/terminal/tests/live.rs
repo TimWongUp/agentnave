@@ -161,6 +161,7 @@ fn claude_wakeup_live() {
         title_searched: None,
         started: SystemTime::now(),
         pending: 0,
+        account: None,
         codex: None,
     });
     let (mut attempted, mut seen, mut failed) = (HashSet::new(), HashMap::new(), HashSet::new());
@@ -320,6 +321,7 @@ fn codex_wakeup_live() {
             resume: None,
             workspaces: Vec::new(),
             light: false,
+            account: None,
         },
         &extra,
         &[("CODEX_HOME", &codex_home_str)],

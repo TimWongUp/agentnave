@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 from uuid import uuid4
 
-from agentnave import views
+from agentnave import accounts, views
 from agentnave.core import InvocationManager
 from agentnave.db import ClaimStatus, Database, Workspace
 from agentnave.follow_up import FollowUpLedger
@@ -223,7 +223,7 @@ class ConversationStore(Groups):
         self.task_invocations: dict[str, tuple[str, str]] = {}
         # (seat, provider, model) -> count of starts that drew this candidate and have not
         # reached start_task yet; covers async yields like isolation setup.
-        self._seat_model_claims: dict[tuple[str, str, str], int] = {}
+        self._seat_model_claims: dict[tuple[str, str, str | None, str], int] = {}
         manager.on_forget = self._forget_invocation
         manager.on_prompt_change = self._save_prompts
         self.collectors: set[asyncio.Task[None]] = set()
@@ -646,7 +646,13 @@ class ConversationStore(Groups):
             # new workspace under a fresh id has no owner without this row, so only it must fail.
             fresh = manager_session != boss[0] and self.db.workspace(manager_session) is None
             try:
-                self.db.register(manager_session, boss[0], self.host.name, self._boss_file(boss[1]))
+                self.db.register(
+                    manager_session,
+                    boss[0],
+                    self.host.name,
+                    self._boss_file(boss[1]),
+                    accounts.host_account(self.host),
+                )
             except OSError:
                 if fresh:
                     raise
@@ -693,7 +699,15 @@ class ConversationStore(Groups):
         elif not (title or (row and row.title)) or not (cwd or (row and row.cwd)):
             raise ValueError("this boss chat has no conversations yet: pass title and cwd")
         self.db.release(
-            workspace, boss[0], self.host.name, self._boss_file(boss[1]), note, now(), title, cwd
+            workspace,
+            boss[0],
+            self.host.name,
+            self._boss_file(boss[1]),
+            note,
+            now(),
+            title,
+            cwd,
+            accounts.host_account(self.host),
         )
         return workspace, len(records)
 
@@ -717,7 +731,11 @@ class ConversationStore(Groups):
         if not records and (row is None or not row.title):
             raise ValueError(f"workspace {workspace_id} has no saved conversations")
         before, after, status = self.db.claim(
-            workspace_id, boss[0], self.host.name, self._boss_file(boss[1])
+            workspace_id,
+            boss[0],
+            self.host.name,
+            self._boss_file(boss[1]),
+            account=accounts.host_account(self.host),
         )
         if before.owner == boss[0]:
             self._bosses[workspace_id] = boss

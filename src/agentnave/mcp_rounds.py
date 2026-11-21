@@ -10,8 +10,8 @@ from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import AfterValidator, Field
 
+from agentnave import accounts, provider_health
 from agentnave import mcp_runtime as runtime
-from agentnave import provider_health
 from agentnave.conversations import (
     Conversations,
     Decision,
@@ -91,6 +91,15 @@ def _add_started(
                 conversations, manager_session_id, current_round=(round_.group.id, round_.number)
             )
         )
+    warnings.extend(
+        accounts.dispatch_warnings(
+            conversations.host,
+            [
+                (seat.provider, seat.account)
+                for seat in (round_.group.seats[run.seat_id] for run in round_.runs)
+            ],
+        )
+    )
     if warnings:
         payload["warnings"] = warnings
 
@@ -134,6 +143,7 @@ def _open_show(
     prepared: list[GroupSeat] = []
     defaults: dict[str, list[str]] = {}
     for seat in members:
+        accounts.resolve(seat.provider, seat.account)
         options, defaults[seat.id] = apply_member(
             document,
             "discussion",
@@ -151,13 +161,15 @@ def _open_show(
                 Path(seat.cwd if seat.cwd is not None else cwd or "."),
                 seat.role,
                 seat.access,
+                seat.account,
+                accounts.label_of(seat.account),
             )
         )
     if dispatch_seats:
         provider_health.check(
             conversations.root,
             (
-                (seat.provider, provider_health.model_option(seat.provider_options))
+                (seat.provider, seat.account, provider_health.model_option(seat.provider_options))
                 for seat in prepared
                 if seat.id in dispatch_seats
             ),
@@ -170,8 +182,9 @@ def _open_show(
         isolated=isolated,
         manager_session_id=manager_session_id,
     ).state
-    return state.id, [
-        {
+    opened: list[GroupSeatPayload] = []
+    for seat in state.seats:
+        item: GroupSeatPayload = {
             "id": seat.id,
             "identity": seat_identity(state, seat.id, current=True),
             "provider": seat.provider,
@@ -189,8 +202,10 @@ def _open_show(
                 *([READ_ONLY_APPLIED] if seat.access == "read" else []),
             ],
         }
-        for seat in state.seats
-    ]
+        if seat.account is not None:
+            item["account"] = seat.account
+        opened.append(item)
+    return state.id, opened
 
 
 async def run_round(

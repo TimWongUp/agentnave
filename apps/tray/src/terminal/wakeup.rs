@@ -573,6 +573,7 @@ mod tests {
             title_searched: None,
             started: SystemTime::now(),
             pending: 0,
+            account: None,
             codex: Some(codex.clone()),
         });
 

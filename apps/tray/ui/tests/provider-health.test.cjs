@@ -28,3 +28,18 @@ test("warnings group models and disappear after recovery", async () => {
   await context.AN.providerHealth.refresh(box);
   assert.equal(box.hidden, true);
 });
+
+test("a named account's cooldown is named after its label and cleared with its id", async () => {
+  const until = new Date(Date.now() + 3600000).toISOString();
+  const providers = { claude: { accounts: { a1: { models: { opus: { code: "quota", until } } } } } };
+  const list = {};
+  const box = { hidden: true, dataset: {}, querySelector: (selector) => (selector === ".provider-health-lines" ? list : { dataset: {}, addEventListener() {} }) };
+  const context = vm.createContext({
+    AN: {}, localStorage: { getItem: () => null, setItem() {} }, document: { createElement: () => ({}) },
+    fetch: async () => ({ ok: true, json: async () => ({ providers, accounts: { a1: "工作" } }) }),
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../provider-health.js`, "utf8"), context);
+  await context.AN.providerHealth.refresh(box);
+  assert.equal(box.hidden, false);
+  assert.match(list.textContent, /Claude Code（工作）/);
+});
