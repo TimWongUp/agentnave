@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-21
-- 修订 [ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md) 中固定档「且不在已开启的专项范围内……专项范围内的任务都派出」的条款；修订 [ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md) 配套的 `fixed-seats.md` 跨专项拆分做法；扩展 [ADR-0043](0043-service-prompt-instructions.md) 的非交互派发指令；补充 [ADR-0089](0089-seat-fallback-order.md) 与 [ADR-0093](0093-decision-seat-random-candidates.md) 的 `seat_fallback` 回执字段。
+- 修订 [ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md) 中固定档「且不在已开启的专项范围内……专项范围内的任务都派出」的条款；修订 [ADR-0104](0104-in-app-boss-push.md) 中「用户自定义规则不改写」对旧生成等待句逐字迁移的适用边界（沿用 ADR-0068/0073 仅逐字替换旧生成句、保留用户自写内容的原则）；扩展 [ADR-0043](0043-service-prompt-instructions.md) 的非交互派发指令；补充 [ADR-0089](0089-seat-fallback-order.md) 与 [ADR-0093](0093-decision-seat-random-candidates.md) 的 `seat_fallback` 回执字段。
 
 ## 背景
 
@@ -12,10 +12,10 @@
 
 ## 决定
 
-- **固定档专项与小事边界解绑**：`orchestration_rules.json` 的 `shared` 段去掉「且不在下列专项范围内」与「和专项范围内的任务」，与 `decision_shared` 保持同一条小事边界；`fixed-seats.md` 改为同时命中多个专项时默认按主要交付物派给一个工位，仅在各部分可并行或需要不同原生工具时才拆开分别派。
-- **规则块收拢等待底线**：`shared`、`decision_shared` 与 `meetings_only_tail` 删去 `wait(wait_seconds=0)` 与 App 提示分支复述，保留「以回执 `next` 和 `follow_up` 为准收齐结果」及产物验收底线；托盘 `apps/tray/src/rules/roles.rs` 补充逐字旧句迁移，平滑更新自定义档已有规则。
-- **收尾要求改为服务语义提示**：`SUBAGENT_INSTRUCTIONS`（ADR-0043）在原有阻塞与待决定汇报句中补入未满足要求与未验证范围，不注入固定三行格式；Skill 删去手抄三行模板与「缺任一行即判未完成」的机械门控，改为按实际产物和正文语义验收（调用方显式要求固定格式时仍按约定验收）。
-- **`seat_fallback` 回执自描述**：`SeatFallback` 增加 `note` 字段，直接注明本次是用户配置的顺位回退还是随机抽中、无需改派；删除三份 Skill 对 `seat_fallback` 的重复说明。
+- **固定档专项与小事边界解绑**：`orchestration_rules.json` 的 `shared` 段去掉「且不在下列专项范围内」与「和专项范围内的任务」，与 `decision_shared` 保持同一条小事边界；配套调整 `fixed-seats.md` 中同时命中多个专项时的默认选工位方法（默认按主要交付物派给一个工位，仅在各部分可并行或需要不同原生工具时才拆开分别派）。
+- **规则块收拢等待底线**：`shared`、`decision_shared` 与 `meetings_only_tail` 删去 `wait(wait_seconds=0)` 与 App 提示分支复述，保留「以回执 `next` 和 `follow_up` 为准收齐结果」及产物验收底线；托盘 `apps/tray/src/rules/roles.rs` 补充逐字旧句迁移，平滑更新自定义档里逐字匹配的旧生成句（不改写用户自写规则）。
+- **收尾要求改为服务语义提示**：`SUBAGENT_INSTRUCTIONS`（ADR-0043）在原有与具体任务无关的阻塞与待决定汇报句中补入未满足要求与未验证范围，通过共用的派发前缀作用于全部私聊与会议席位，不注入固定三行格式；具体返回格式仍归 Skill 与调用方决定（保持 ADR-0043、ADR-0068 归属不变），纯观点交换的会议讨论轮仍按 `studio.md` 照常作答。Skill 删去手抄三行模板与「缺任一行即判未完成」的机械门控，改为按实际产物和正文语义验收（调用方显式要求固定格式时仍按约定验收）。
+- **`seat_fallback` 回执自描述**：`SeatFallback` 增加 `note` 字段，直接注明本次是用户配置的顺位回退还是随机抽中、无需改派；三份 Skill 对 `seat_fallback` 的重复说明精简为指向回执 `note` 的一句说明。
 
 ## 取舍
 
