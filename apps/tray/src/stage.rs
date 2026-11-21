@@ -378,10 +378,6 @@ fn boss_name(
         ANTIGRAVITY_CLI, ANTIGRAVITY_DESKTOP, CLAUDE_CLI, CLAUDE_DESKTOP, CODEX_CLI, CODEX_DESKTOP,
     };
     match (host, app) {
-        (Some("antigravity"), Some(crate::data::boss_app::ANTIGRAVITY_DESKTOP)) => (
-            Some(crate::data::boss_app::ANTIGRAVITY_DESKTOP),
-            Some("Antigravity"),
-        ),
         (Some("claude"), Some(CLAUDE_DESKTOP)) => (Some(CLAUDE_DESKTOP), Some("Claude 桌面")),
         (Some("claude"), Some(CLAUDE_CLI)) => (None, Some("Claude Code")),
         (Some("claude"), _) => (None, Some("Claude")),
