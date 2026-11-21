@@ -376,6 +376,10 @@ fn boss_name(
 ) -> (Option<&'static str>, Option<&'static str>) {
     use crate::data::boss_app::{CLAUDE_CLI, CLAUDE_DESKTOP, CODEX_CLI, CODEX_DESKTOP};
     match (host, app) {
+        (Some("antigravity"), Some(crate::data::boss_app::ANTIGRAVITY_DESKTOP)) => (
+            Some(crate::data::boss_app::ANTIGRAVITY_DESKTOP),
+            Some("Antigravity"),
+        ),
         (Some("claude"), Some(CLAUDE_DESKTOP)) => (Some(CLAUDE_DESKTOP), Some("Claude 桌面")),
         (Some("claude"), Some(CLAUDE_CLI)) => (None, Some("Claude Code")),
         (Some("claude"), _) => (None, Some("Claude")),

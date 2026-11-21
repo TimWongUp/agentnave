@@ -7,6 +7,7 @@
 - 修订：2026-11-20 自身修订，开放 Grok（`--resume <id>`，新开 `--session-id <uuid>`）与 Antigravity CLI（`agy --conversation <id>`，不开放桌面版会话；显示名与工作目录只读取 `conversation_summaries.db`）的终端续接与显示名定位。
 - 修订：Unix 上 Codex 的 `--no-daemon` 启动与续接由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订为进程树内私有 `app-server` + `--remote` TUI（Windows 维持 `--no-daemon`）。
 - 修订：办公室终端按账号选择与 `workspaces.owner_account` 续接、具名账号经 `/usr/bin/env CLAUDE_CONFIG_DIR=<dir>` 启动，以及独立账号登录终端边界由 [ADR-0107](0107-multi-account-isolation.md) 修订。
+- 修订：2026-11-21 自身修订，Claude 桌面端聊天不开放终端续接；Claude 与 Antigravity 桌面端聊天改为转交到新终端，由新 boss 接手工作区。
 
 ## 背景
 
@@ -22,6 +23,7 @@
 - **终端与最新聊天对应，托盘记住已确认的工作区。** 中继在连接回执里记下转发过的 boss 聊天键（只存哈希，不存原始 ID，最多 8 个，最近在末位）；当工具调用参数省略聊天 ID 时，中继按与服务相同的顺序从自身环境变量取回退 ID（先 `AGENTNAVE_HOST_SESSION_ID`，Claude 再取 `CLAUDE_CODE_SESSION_ID`）再算键，显式传入空白值时不记。托盘按回执文件名里的中继进程号对应到终端进程树，并在 App 运行期间记住每个终端已确认过的工作区（最近一次在末位）：CLI 退出或中继结束后仍保留直到关闭终端，不再变回「新 agent」；界面只认最近一次确认的工作区为该终端当前所属，不回退匹配旧聊天，未确认过工作区的终端才归入未派活占位列表。
 - **Codex 以 `--no-daemon` 启动和续接。** 本机 Codex 默认会连接共享的 `app-server` 守护进程，可能导致其启动的 MCP 中继不在终端进程树下；托盘启动与续接 Codex 时将 `--no-daemon` 作为独立 argv 参数传入（不拼进 shell 脚本字符串），其他 CLI 不加。
 - **续接与托盘内单活防重。** 续接时界面只传 agent 标识，由托盘 Rust 端查原生会话 ID（历史 `owner_file` 为空时按宿主规则重查；Antigravity 只续接 `antigravity-cli` 会话，桌面版会话不开放续接）并重算 boss 键校验后，以独立 argv 在原目录启动（原目录不存在时由系统选择器重选）。已开放 Claude Code（`--resume <id>`）、Codex（`resume --no-daemon <id>`）、Grok（`--resume <id>`）与 Antigravity CLI（`--conversation <id>`），其余支持会话指定／续接的 CLI（如 Pi、CodeBuddy）后续逐个开放。托盘内按聊天原子互斥占用（重复点击聚焦已有终端）。这段聊天的中继存活且不在 App 任何终端的进程树下时，视为在别处打开：续接前先确认，写明所在程序（进程祖先中的第一个应用名）与运行中／已暂停，用户可仍然续接或取消；没连 AgentNave 的外部会话检测不到，直接续接。
+- **桌面聊天转交到终端。** Claude 桌面端与 Antigravity 桌面端聊天不在内嵌终端续接；用户可选择 CLI 和账号，将原工作区标为待接手并在原文件夹打开新终端，由新 boss 接手。已有交接文档保留，预览版不执行转交。
 - **真终端加皮肤，不做结构化对话界面。** 伪终端在托盘 Rust 端创建，页面用 xterm.js 渲染 CLI 自己的界面，美化只在字体、配色和外壳上做。皮肤深浅跟随 App 外观；自绘配色的 CLI 在用户没在其配置里设主题时，启动时按 App 外观传主题参数（Claude `--settings {"theme":"auto"}`，CodeBuddy `--settings` 深或浅，Grok `GROK_THEME`）；终端应答深浅查询，并向订阅 mode 2031 的 CLI 通知外观变化。
 - **agent 显示名取 CLI 会话名。** 左栏、办公室和右栏用同一个名字，依次取用户在 App 里改的名、CLI 里用户起的名、CLI 自动生成的标题、工作区名、第一句话。托盘只读 CLI 的会话记录，不写回（Antigravity CLI 只读取其摘要数据库的自动标题，未生成前仍显示「新 agent」）。未派活 agent：Claude 与 Grok 新开时由托盘传 `--session-id` 预先指定会话 ID，仅用于定位会话记录；其他 CLI 只在同一文件夹里终端启动后新建的会话记录恰好一份时采用，否则显示「新 agent」直到中继确认工作区。
 - **生命周期随 App。** 关窗或切到别的页面不结束终端，回来时重放最近一段输出，重放段不应答其中的终端查询（服务端按已交付字节水位区分重放与新输出）；退出 App 时结束终端的进程组。不做独立守护进程保活。

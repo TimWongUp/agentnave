@@ -438,7 +438,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 /// that session's child (Claude Code then stops saving its transcript) or for one AgentNave
 /// dispatched. The terminal starts a session of its own, like a new terminal window; the login
 /// shell sets the user's own variables again.
-const PARENT_SESSION: [&str; 21] = [
+const PARENT_SESSION: [&str; 22] = [
     "CLAUDECODE",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
@@ -456,6 +456,7 @@ const PARENT_SESSION: [&str; 21] = [
     "AGENTNAVE_MANAGER_SESSION",
     "AGENTNAVE_MANAGER_STARTED_AT",
     "AGENTNAVE_DISPATCHED",
+    "AGENTNAVE_HANDOVER_PROMPT",
     // WorkBuddy and CodeBuddy point these at their own live listener.
     "SERVER__PORT",
     "SERVER__HOST",

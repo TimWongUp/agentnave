@@ -637,7 +637,7 @@ function renderAll(c, newGroup = false) {
   renderHead(c, n);
   ChatTerminal.prepare?.(c.group, c.host);
   renderConv(c, ctx);
-  ChatTerminal.column(c.group, c.host);
+  ChatTerminal.column(c.group, c.host, c.app);
   renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);
@@ -795,7 +795,7 @@ addEventListener("agentnave:model-names", () => {
 addEventListener("agentnave:voice", () => {
   if (state.chat) {
     renderConv(state.chat, state.ctx);
-    ChatTerminal.column(state.chat.group, state.chat.host);
+    ChatTerminal.column(state.chat.group, state.chat.host, state.chat.app);
   }
 });
 sync();
