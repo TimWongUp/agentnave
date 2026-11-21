@@ -14,7 +14,7 @@
 ## 决定
 
 - **通用账号模型，第一期只开放 Claude**：数据根新增 `accounts.json`（App 写、服务只读；Linux 无 App 时允许手写），结构预留通用 CLI 账号，第一期只开放 Claude。默认账号不入 `accounts.json`（`account=None`），保证老配置与单账号用户零变化。同一 CLI 的多个账号共用 `members.json` 的可用模型池与 `permissions.json` 的权限档位。
-- **默认账号原样继承环境，具名账号显式传入目录**：参考 t3code 的做法，默认账号启动时不设置也不清除 `CLAUDE_CONFIG_DIR`，原样继承服务进程环境，绝不写入字面量 `~/.claude`；具名账号设登记的绝对路径。内嵌终端经 login shell 启动时，为避免 shell 启动脚本覆盖环境变量，具名账号以 `/usr/bin/env CLAUDE_CONFIG_DIR=<dir> claude ...` 启动。始终不修改 `HOME`（改动 `HOME` 会丢失 macOS Keychain 凭据）。
+- **默认账号原样继承环境，具名账号显式传入目录**：参考 t3code 的做法，默认账号启动时不设置也不清除 `CLAUDE_CONFIG_DIR`，原样继承服务进程环境，绝不写入字面量 `~/.claude`；具名账号设登记的绝对路径。内嵌终端经 login shell 启动时，为避免 shell 启动脚本覆盖环境变量，具名账号以 `/usr/bin/env -u CLAUDE_CODE_OAUTH_TOKEN … CLAUDE_CONFIG_DIR=<dir> claude ...` 启动，同时去掉启动脚本可能导出的登录令牌与宿主会话变量，登录只由账号目录决定。始终不修改 `HOME`（改动 `HOME` 会丢失 macOS Keychain 凭据）。
 - **托管目录放在数据根外，添加账号只建托管目录**：App 自动创建的托管目录放在数据根外的固定位置 `~/.agentnave-accounts/claude/<id>`；添加账号只新建托管目录，并在独立登录终端（不属于办公室 agent，不传 `--session-id`，不进入唤醒和续接列表）中带对应 `CLAUDE_CONFIG_DIR` 执行（默认账号也在默认环境下使用同类独立登录终端）。App 不再提供关联已有目录或扫描／选择文件夹入口；`accounts.json` 中已登记的外部目录账号保持可用，与托管目录一样只同步 AgentNave 接入。
 - **手填短名称与本地展示边界**：允许用户在 App 手填账号显示名／编号；底层以不可变 `id` 关联，改名只改显示名。`claude auth status --json` 返回的邮箱、组织与套餐信息仅在 App 本地展示，不进入 MCP 回执、决策模型输入与日志。非默认账号在成员称呼中加账号消歧段（如 `@opus·Claude Code（工作）·评审`）。
 - **配置同步、接入行身份与宿主识别**：托管目录只自动同步 AgentNave 接入（MCP 配置、编排规则与 AgentNave Skill），用户个人配置不跨账号同步；接入行复用 `AGENTNAVE_HOST_APP=claude@<id>`（与 `codex@<folder>` 同构），不新增单独的账号环境变量。ADR-0090 的同类宿主判定收紧为「同 CLI 且同账号」，以服务进程继承到的 `CLAUDE_CONFIG_DIR` 规范化路径为准；与 `AGENTNAVE_HOST_APP` 不一致或 `<id>` 未登记时仍按继承路径判定，回执附 warning 提示修复，不拒绝派发。既有按 `CLAUDE_CONFIG_DIR` 拆出的接入行不迁移，仍属于默认账号；账号 A 作为 boss 派发账号 B 时由 AgentNave 直接启动 B。

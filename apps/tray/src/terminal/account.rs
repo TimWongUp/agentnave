@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde_json::Value;
+
 use super::session::Session;
 
 /// A named account a CLI runs as.
@@ -20,6 +22,24 @@ pub(super) struct Login {
     pub id: u64,
     pub account: String,
     pub session: Arc<Session>,
+}
+
+/// What `resolve` says of an account that is not registered (any more).
+const REMOVED: &str = "这个账号已被移除";
+
+/// The account a page asked for: none when left out or `null`; anything but a name is refused.
+pub(super) fn requested(payload: &Value) -> Result<Option<&str>, String> {
+    match &payload["account"] {
+        Value::Null => Ok(None),
+        Value::String(id) => Ok(Some(id)),
+        _ => Err("账号需为账号 ID".into()),
+    }
+}
+
+/// Why the account a chat began as cannot run it: `removed` when that account is gone, else what
+/// is wrong with the accounts file.
+pub(super) fn chat_refusal<'a>(error: &'a str, removed: &'a str) -> &'a str {
+    if error == REMOVED { removed } else { error }
 }
 
 /// The account named by `id`, None for the default account.
@@ -49,12 +69,22 @@ pub(super) fn resolve_in(
                 dir: account.dir,
             })
         })
-        .ok_or_else(|| "这个账号已被移除".to_owned())
+        .ok_or_else(|| REMOVED.to_owned())
 }
+
+/// What a shell startup file may export that would sign a named account's CLI in as someone else
+/// or make it act as part of another Claude session; the account's own folder decides instead.
+const SHELL_OVERRIDES: [&str; 4] = [
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+    "CLAUDE_CODE_ACCOUNT_UUID",
+];
 
 /// The program, arguments and extra environment that start `program` as `account`. On Unix the
 /// variable goes through `/usr/bin/env`, which runs after the login shell's startup files and so
-/// cannot be overwritten by them; Windows has no login shell and sets it directly.
+/// cannot be overwritten by them, and drops `SHELL_OVERRIDES` they may have set; Windows has no
+/// login shell and sets it directly.
 pub(super) fn launch_as(
     account: &Active,
     program: PathBuf,
@@ -65,10 +95,12 @@ pub(super) fn launch_as(
         let path = crate::detect::search_path(&program)
             .map(|path| vec![("PATH".to_owned(), path.to_string_lossy().into_owned())])
             .unwrap_or_default();
-        let mut wrapped = vec![
-            format!("{variable}={}", account.dir.display()),
-            program.display().to_string(),
-        ];
+        let mut wrapped: Vec<String> = SHELL_OVERRIDES
+            .iter()
+            .flat_map(|name| ["-u".to_owned(), (*name).to_owned()])
+            .collect();
+        wrapped.push(format!("{variable}={}", account.dir.display()));
+        wrapped.push(program.display().to_string());
         wrapped.extend(args);
         (PathBuf::from("/usr/bin/env"), wrapped, path)
     } else {

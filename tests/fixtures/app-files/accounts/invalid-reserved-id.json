@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "accounts": [
+    {
+      "id": "default",
+      "provider": "claude",
+      "label": "工作",
+      "dir": "/Users/example/.agentnave-accounts/claude/work",
+      "managed": true
+    }
+  ]
+}

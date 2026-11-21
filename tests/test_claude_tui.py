@@ -332,6 +332,11 @@ def test_every_path_strips_the_same_host_session_variables(
 
     # The interactive child, `--print`, the fallback wrapper and the usage query all drop them.
     assert set(HOST_SESSION_ENV) <= set(tui.STRIP_ENV)
+    assert {
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+        "CLAUDE_CODE_ACCOUNT_UUID",
+    } <= set(HOST_SESSION_ENV)
 
     # An absolute path, as when the CLI is installed.
     def installed(_self: ClaudeAdapter) -> str:

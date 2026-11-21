@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from agentnave.models import ACCOUNT_ID
+from agentnave.models import ACCOUNT_ID, RESERVED_ACCOUNT_ID
 
 if TYPE_CHECKING:
     from agentnave.adapters.base import ProviderAdapter
@@ -51,6 +51,12 @@ class Account(BaseModel):
     label: str
     dir: str
     managed: bool
+
+    @field_validator("id")
+    @classmethod
+    def unreserved_id(cls, value: str) -> str:
+        _check_unreserved(value)
+        return value
 
     @field_validator("label")
     @classmethod
@@ -99,10 +105,19 @@ class AccountListing(BaseModel):
     label: str
 
 
+def _check_unreserved(account: str) -> None:
+    if account == RESERVED_ACCOUNT_ID:
+        raise ValueError(f"account id {RESERVED_ACCOUNT_ID!r} is the default account's name")
+
+
 def check_choice(provider: str, account: str | None) -> None:
-    """The file-level rule for a seat choice: only a CLI that takes accounts may name one."""
-    if account is not None and provider not in ACCOUNT_PROVIDERS:
+    """The file-level rule for a seat choice: only a CLI that takes accounts may name one, and
+    never by the default account's name."""
+    if account is None:
+        return
+    if provider not in ACCOUNT_PROVIDERS:
         raise ValueError(f"{provider} does not take an account")
+    _check_unreserved(account)
 
 
 def read_accounts() -> AccountsFile | None:

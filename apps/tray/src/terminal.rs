@@ -491,10 +491,11 @@ impl Terminals {
         if !PROVIDERS.contains(&provider) {
             return Response::error(400, "未知的 CLI");
         }
-        let account = match account::resolve(provider, payload["account"].as_str()) {
-            Ok(account) => account,
-            Err(error) => return Response::error(400, &error),
-        };
+        let account =
+            match account::requested(payload).and_then(|id| account::resolve(provider, id)) {
+                Ok(account) => account,
+                Err(error) => return Response::error(400, &error),
+            };
         let cwd = PathBuf::from(payload["cwd"].as_str().unwrap_or_default());
         self.launch(Start {
             provider,
@@ -538,7 +539,9 @@ impl Terminals {
         if !matches!(provider, "claude" | "codex") {
             return Response::error(400, "这个 CLI 暂不支持自动接手");
         }
-        let account = match account::resolve_in(root, provider, payload["account"].as_str()) {
+        let account = match account::requested(payload)
+            .and_then(|id| account::resolve_in(root, provider, id))
+        {
             Ok(account) => account,
             Err(error) => return Response::error(400, &error),
         };
@@ -548,7 +551,12 @@ impl Terminals {
         let owner = links::owner_account(root, workspace);
         let source_account = match account::resolve_in(root, &host, owner.as_deref()) {
             Ok(account) => account,
-            Err(_) => return Response::error(409, "这段聊天的账号已被移除"),
+            Err(error) => {
+                return Response::error(
+                    409,
+                    account::chat_refusal(&error, "这段聊天的账号已被移除"),
+                );
+            }
         };
         let home = source_account.as_ref().map(|account| account.dir.as_path());
         let Some((id, record)) =
@@ -686,7 +694,10 @@ impl Terminals {
         let owner = links::owner_account(&crate::data_files::data_root(), workspace);
         let account = match account::resolve(&host, owner.as_deref()) {
             Ok(account) => account,
-            Err(_) => return Response::error(409, "这段聊天的账号已被移除，无法续接"),
+            Err(error) => {
+                let refusal = account::chat_refusal(&error, "这段聊天的账号已被移除，无法续接");
+                return Response::error(409, refusal);
+            }
         };
         let chat = match chat_session(workspace, &host, account.as_ref()) {
             Ok(found) => found,

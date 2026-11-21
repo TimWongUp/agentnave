@@ -285,7 +285,8 @@ fn validate_pick(fields: &Map<String, Value>, what: &str) -> Result<(), String> 
 /// The optional `account` of a pick: the id of a named account, which only Claude has. The file
 /// stays valid when no such account is registered; the service then skips that pick.
 pub(crate) fn validate_account(fields: &Map<String, Value>, what: &str) -> Result<(), String> {
-    let Some(account) = fields.get("account") else {
+    // `null` is no account, as the service reads it.
+    let Some(account) = fields.get("account").filter(|value| !value.is_null()) else {
         return Ok(());
     };
     if !account.as_str().is_some_and(crate::accounts::valid_id) {

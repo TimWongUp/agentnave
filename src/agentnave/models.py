@@ -12,6 +12,9 @@ from typing import Literal
 
 # What an account id looks like; the App creates them and never reuses one (see accounts.py).
 ACCOUNT_ID = r"^[a-z0-9][a-z0-9-]{0,31}$"
+# The App's name for the default account, so no named account may take it. Pydantic's regex
+# engine has no look-ahead, so it is refused beside the pattern rather than in it.
+RESERVED_ACCOUNT_ID = "default"
 
 type HostName = Literal[
     "codex",

@@ -72,6 +72,39 @@ fn desktop_chat_is_refused_for_resume_and_handed_over_with_selected_cli() {
         assert!(pending);
         assert_eq!(note, "keep");
     }
+
+    let refused = |payload: serde_json::Value| {
+        let reply = super::Terminals::default().handover_in(
+            root.path(),
+            &payload,
+            |_| true,
+            |_, _, _| panic!("nothing starts"),
+        );
+        let body: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+        (
+            reply.status,
+            body["error"].as_str().unwrap_or_default().to_owned(),
+        )
+    };
+    // An account that is not a name is refused, not taken for the default account.
+    let odd = json!({"workspace": workspace, "provider": "claude", "account": 7});
+    assert_eq!(refused(odd).0, 400);
+    // Only an account that is gone is told as removed; a broken accounts file says so itself.
+    let _ = db.execute("ALTER TABLE workspaces ADD COLUMN owner_account TEXT", []);
+    db.execute(
+        "UPDATE workspaces SET owner_account = 'gone' WHERE id = ?1",
+        [&workspace],
+    )
+    .unwrap();
+    let plain = json!({"workspace": workspace, "provider": "codex"});
+    assert_eq!(
+        refused(plain.clone()),
+        (409, "这段聊天的账号已被移除".to_owned())
+    );
+    std::fs::write(root.path().join("accounts.json"), "{").unwrap();
+    let (status, error) = refused(plain);
+    assert_eq!(status, 409);
+    assert!(error.contains("accounts.json"), "{error}");
 }
 
 /// Reads until `wanted` shows up in the output or the CLI exits, within a few seconds.
@@ -401,6 +434,9 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "CLAUDECODE",
         "CLAUDE_CODE_CHILD_SESSION",
         "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+        "CLAUDE_CODE_ACCOUNT_UUID",
         "CODEX_THREAD_ID",
         "GROK_SESSION_ID",
         "GROK_SANDBOX",

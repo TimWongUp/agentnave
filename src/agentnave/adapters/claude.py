@@ -60,10 +60,14 @@ def _denied_tools(event: dict[str, object]) -> list[str]:
 _MODES = frozenset({"auto", "bypassPermissions"})
 
 # A Claude Code session exports these to what it launches; a claude started with them acts as part
-# of that session (its id, messaging socket and token, effort). Dispatched Claude never keeps
-# them, on every path: interactive, `--print` and the usage query (ADR-0056, ADR-0108).
+# of that session (its id, messaging socket and token, effort, the app it records as its
+# entrypoint, the host's account and login refresh). Dispatched Claude never keeps them, on every
+# path: interactive, `--print` and the usage query (ADR-0056, ADR-0108).
 HOST_SESSION_ENV = (
     "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+    "CLAUDE_CODE_ACCOUNT_UUID",
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_CODE_HOST_SESSION_ID",
     "CLAUDE_CODE_CHILD_SESSION",

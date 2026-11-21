@@ -1,12 +1,11 @@
-use std::path::PathBuf;
+use super::super::account;
 
-use super::super::account::{self, Active};
-
-fn active(dir: &str) -> Active {
-    Active {
+#[cfg(unix)]
+fn active(dir: &str) -> account::Active {
+    account::Active {
         id: "a1".to_owned(),
         label: "工作".to_owned(),
-        dir: PathBuf::from(dir),
+        dir: std::path::PathBuf::from(dir),
     }
 }
 
@@ -33,29 +32,32 @@ fn a_chat_runs_as_its_account_and_a_removed_or_foreign_one_is_refused() {
 #[test]
 fn a_named_account_starts_through_env_so_a_login_shell_cannot_overwrite_it() {
     use portable_pty::CommandBuilder;
+    use std::path::PathBuf;
 
     let (program, args, env) = account::launch_as(
         &active("/accounts/work"),
         PathBuf::from("/bin/sh"),
         vec![
             "-c".to_owned(),
-            "printf 'dir:%s' \"$CLAUDE_CONFIG_DIR\"".to_owned(),
+            "printf 'dir:%s token:%s.' \"$CLAUDE_CONFIG_DIR\" \"$CLAUDE_CODE_OAUTH_TOKEN\""
+                .to_owned(),
         ],
     );
     assert_eq!(program, PathBuf::from("/usr/bin/env"));
-    assert_eq!(args[0], "CLAUDE_CONFIG_DIR=/accounts/work");
-    assert_eq!(args[1], "/bin/sh");
+    let at = args.iter().position(|arg| arg == "/bin/sh").unwrap();
+    assert_eq!(args[at - 1], "CLAUDE_CONFIG_DIR=/accounts/work");
     let mut command = CommandBuilder::new(program);
     command.args(args);
     command.cwd(std::env::temp_dir());
     // What a shell startup file would have exported before the CLI runs.
     command.env("CLAUDE_CONFIG_DIR", "/from/rc");
+    command.env("CLAUDE_CODE_OAUTH_TOKEN", "from-rc");
     for (name, value) in env {
         command.env(name, value);
     }
     let session = super::Session::start(command, 80, 24).unwrap();
-    let (text, _) = super::output_until(&session, "dir:/accounts/work");
-    assert!(text.contains("dir:/accounts/work"), "{text:?}");
+    let (text, _) = super::output_until(&session, "dir:/accounts/work token:.");
+    assert!(text.contains("dir:/accounts/work token:."), "{text:?}");
 }
 
 #[cfg(unix)]

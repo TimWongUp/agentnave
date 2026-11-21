@@ -61,7 +61,9 @@ pub(crate) fn managed_root(home: &Path) -> PathBuf {
 
 pub(crate) fn valid_id(id: &str) -> bool {
     let mut chars = id.chars();
-    id.len() <= ID_MAX
+    // The page's name for the default account.
+    id != "default"
+        && id.len() <= ID_MAX
         && chars
             .next()
             .is_some_and(|c| c.is_ascii_digit() || c.is_ascii_lowercase())
