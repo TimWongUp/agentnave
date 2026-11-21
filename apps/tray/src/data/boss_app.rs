@@ -18,6 +18,7 @@ pub(crate) const CLAUDE_DESKTOP: &str = "claude-desktop";
 pub(crate) const CLAUDE_CLI: &str = "claude-cli";
 pub(crate) const CODEX_DESKTOP: &str = "codex-desktop";
 pub(crate) const CODEX_CLI: &str = "codex-cli";
+pub(crate) const ANTIGRAVITY_DESKTOP: &str = "antigravity-desktop";
 
 /// How much of a transcript is searched at each end; a rollout's first line is its session_meta.
 const WINDOW: u64 = 256 * 1024;
@@ -156,6 +157,11 @@ impl BossApps {
                 Some((boss.workspace.clone(), app))
             })
             .collect();
+        if let Ok(mut statement) = connection.prepare("SELECT id, owner_file FROM workspaces WHERE owner_host = 'antigravity' AND owner_file IS NOT NULL")
+            && let Ok(rows) = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        {
+            apps.extend(rows.flatten().filter_map(|(id, file)| antigravity::is_desktop_record(Path::new(&file)).then_some((id, ANTIGRAVITY_DESKTOP))));
+        }
         apps.sort_unstable();
         apps
     }
@@ -550,6 +556,27 @@ pub(crate) fn native_session_as(
     claude_home: Option<&Path>,
 ) -> Option<(String, PathBuf)> {
     native_session_in(&Homes::here().with_claude(claude_home), host, key, file)
+}
+
+/// Locate a desktop record for handover without allowing it to be resumed.
+pub(crate) fn desktop_session(
+    host: &str,
+    key: &str,
+    file: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<(String, PathBuf)> {
+    if host == "antigravity" {
+        let path = file.filter(|path| antigravity::is_desktop_record(path))?;
+        if let Some(id) = antigravity::id_from_path(path) {
+            return (boss_key(host, &id) == key).then(|| (id, path.to_owned()));
+        }
+        let root = antigravity::root_from_record(path)?;
+        return antigravity::find_by_key(&[root], key);
+    }
+    let (id, path) = native_session_as(host, key, file, home)?;
+    (host == "claude"
+        && claude_entrypoint(&path).ok()?.as_deref().map(claude_app) == Some(CLAUDE_DESKTOP))
+    .then_some((id, path))
 }
 
 pub(crate) fn native_session_in(

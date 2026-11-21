@@ -11,6 +11,69 @@ use super::session::{KEPT, Output, cli_args, command, parent_session};
 #[cfg(unix)]
 use super::{Running, Terminals};
 
+#[test]
+fn desktop_chat_is_refused_for_resume_and_handed_over_with_selected_cli() {
+    use serde_json::json;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("project");
+    std::fs::create_dir(&cwd).unwrap();
+    let id = "01234567-89ab-4cde-8fab-0123456789ab";
+    let record = root.path().join(format!("{id}.jsonl"));
+    std::fs::write(
+        &record,
+        format!(
+            "{{\"entrypoint\":\"claude-desktop-3p\",\"cwd\":{}}}",
+            json!(cwd)
+        ),
+    )
+    .unwrap();
+    let workspace = crate::data::boss_app::boss_key("claude", id);
+    let db = crate::db::create(root.path());
+    db.execute("INSERT INTO workspaces (id, owner, owner_host, owner_file, title, note, released) VALUES (?1, ?1, 'claude', ?2, 'test', 'keep', 'old')", rusqlite::params![workspace, record.to_str().unwrap()]).unwrap();
+    let error = super::chat_session_in(root.path(), &workspace, "claude", None)
+        .err()
+        .unwrap();
+    assert!(error.contains("不能在这里续接"));
+    let account_dir = root.path().join("account");
+    std::fs::create_dir(&account_dir).unwrap();
+    std::fs::write(root.path().join("accounts.json"), json!({"version":1,"accounts":[{"id":"work","provider":"claude","label":"工作","dir":account_dir,"managed":false}]}).to_string()).unwrap();
+    for provider in ["claude", "codex"] {
+        let payload = json!({"workspace": workspace, "provider": provider, "account": if provider == "claude" { Some("work") } else { None }, "cols": 91, "rows": 27});
+        let reply = super::Terminals::default().handover_in(
+            root.path(),
+            &payload,
+            |_| true,
+            |start, args, env| {
+                assert_eq!(start.provider, provider);
+                assert_eq!(start.cwd, cwd);
+                assert_eq!(start.size, (91, 27));
+                assert!(start.resume.is_none());
+                assert_eq!(
+                    start.account.as_ref().map(|a| a.id.as_str()),
+                    (provider == "claude").then_some("work")
+                );
+                let prompt = format!("接手工作区 {workspace}");
+                if provider == "claude" || !cfg!(unix) {
+                    assert_eq!(args, [prompt]);
+                } else {
+                    assert_eq!(env, [("AGENTNAVE_HANDOVER_PROMPT", prompt.as_str())]);
+                }
+                crate::response::Response::json(&json!({"ok":true}))
+            },
+        );
+        assert_eq!(reply.status, 200);
+        let (pending, note): (bool, String) = db
+            .query_row(
+                "SELECT pending, note FROM workspaces WHERE id = ?1",
+                [&workspace],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(pending);
+        assert_eq!(note, "keep");
+    }
+}
+
 /// Reads until `wanted` shows up in the output or the CLI exits, within a few seconds.
 #[cfg(unix)]
 fn output_until(session: &Session, wanted: &str) -> (String, Option<u32>) {

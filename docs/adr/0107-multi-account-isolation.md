@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-21
+- 修订：2026-11-21 自身修订，Claude 桌面端注入的登录可能不同于 CLI 默认账号；桌面端聊天不按默认账号续接，改为转交到新终端。
 - 修订 [ADR-0029](0029-settings-without-free-text.md)（允许手填账号显示名／编号；关联已有目录仍用选择器或扫描，不手填路径）、[ADR-0056](0056-claude-interactive-runtime.md)（非 TUI `-p` 路径同样剥离 Claude 宿主会话变量；具名账号配置与会话隔离在 `CLAUDE_CONFIG_DIR` 内）、[ADR-0062](0062-service-owned-member-names.md)（非默认账号在成员称呼的 CLI 段后增加账号消歧段）、[ADR-0078](0078-startup-confirmations.md)（具名账号的信任与 API Key 确认写入其 `CLAUDE_CONFIG_DIR` 内的 `.claude.json`）、[ADR-0081](0081-account-cooldown-duration.md)（`provider-health.json` 不升版本，具名账号嵌套在 `accounts.<id>` 下独立冷却与清除，认证冷却按整账号记）、[ADR-0089](0089-seat-fallback-order.md)（工位与备选带可选账号并按 `(provider, account, model)` 判重与追踪，同 CLI 不同账号顺位由服务直接启动）、[ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md)（配额冷却按账号独立；私聊同类宿主收紧为「同 CLI 且同账号」，同 CLI 不同账号由服务直接启动）、[ADR-0100](0100-app-uninstall.md)（托管目录位于数据根外，卸载清理其中的 AgentNave 接入与 Skill，不删除目录）、[ADR-0103](0103-tray-embedded-terminal.md)（内嵌终端支持账号选择并按 `workspaces.owner_account` 续接，具名账号经 `/usr/bin/env` 传 `CLAUDE_CONFIG_DIR`；独立登录终端与办公室 agent 分离）。
 - 扩展 [ADR-0048](0048-sqlite-schema-evolution.md)（`workspaces` 表新增可空 `owner_account` 列并提升 `user_version`）；沿用 [ADR-0058](0058-claude-stored-login.md)（不存不读 token，API Key 与自定义网关变量不阻断不剥离）。
 
@@ -18,6 +19,7 @@
 - **配置同步、接入行身份与宿主识别**：托管目录只自动同步 AgentNave 接入（MCP 配置、编排规则与 AgentNave Skill），用户个人配置不跨账号同步；接入行复用 `AGENTNAVE_HOST_APP=claude@<id>`（与 `codex@<folder>` 同构），不新增单独的账号环境变量。ADR-0090 的同类宿主判定收紧为「同 CLI 且同账号」，以服务进程继承到的 `CLAUDE_CONFIG_DIR` 规范化路径为准；与 `AGENTNAVE_HOST_APP` 不一致或 `<id>` 未登记时仍按继承路径判定，回执附 warning 提示修复，不拒绝派发。既有按 `CLAUDE_CONFIG_DIR` 拆出的接入行不迁移，仍属于默认账号；账号 A 作为 boss 派发账号 B 时由 AgentNave 直接启动 B。
 - **全链路透传与剥离宿主变量**：Adapter 声明账号环境变量名（Claude 为 `CLAUDE_CONFIG_DIR`，预留 Codex `CODEX_HOME`）；服务在启动、权限模式回退、`/usage` 探测与结果回读（含 transcript 读取）全链路透传，不改服务自身 `os.environ`。派发 Claude 时按 t3code 剥离宿主会话变量，补齐非 TUI（`-p`）与探测路径。
 - **按解析后的配置目录禁止跨账号续接**：任务、会议席位及 `workspaces` 表新增的可空 `owner_account` 列（按 ADR-0048 升 `user_version`，托盘续接内嵌终端直接读取）记录账号。按解析后的配置目录比对归属，禁止跨账号续接同一原生线程；第一期原生锁与 `boss_key` 不改三端编码。
+- **Claude 桌面端登录独立判断**：默认账号按配置目录识别，但桌面端注入的登录可能不同于 CLI 默认账号，即使会话记录共用目录也不以默认账号续接；桌面端聊天通过转交交给新 boss。
 - **按账号独立冷却与 `(provider, account, model)` 判重**：`provider-health.json` 不升版本，具名账号嵌套在 `accounts.<id>` 下独立冷却与解冷，认证冷却按整账号记；补齐 Claude 交互登录屏报错向认证失败的归类，使未登录账号能触发冷却并走备选。自动顶上只在新线程启动前生效，不重试已执行任务。解除冷却可按账号指定，不指定账号时只作用于默认账号，与现有调用兼容。工位、备选与随机避重统一按 `(provider, account, model)` 判重和追踪。
 - **API Key 共存**：存在 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN` 或自定义 `ANTHROPIC_BASE_URL` 时沿用 ADR-0058 不阻断、不剥离；App 卡片按 `auth status` 如实展示认证方式，派发回执附 warning。
 - **移除、卸载与预览版约束**：移除账号默认只解绑，外部目录永不删除；托管目录仅在用户勾选确认时删除（删除前先检查活动任务、会议与终端，并校验真实路径、符号链接与 Windows junction），且删除时不自动执行 `claude auth logout`（登出为独立动作）。卸载只清理托管目录里的 AgentNave 接入，不删除托管目录；删除只在移除账号时由用户勾选确认。预览版禁止建账号、登录、同步与删除。

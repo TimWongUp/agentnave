@@ -112,6 +112,9 @@ pub(crate) fn request(
         (_, "/app/terminal/start") => {
             response::post(method, action, body, |payload| terminals.start(&payload))
         }
+        (_, "/app/terminal/handover") => {
+            response::post(method, action, body, |payload| terminals.handover(&payload))
+        }
         (_, "/app/terminal/input") => response::action(method, action, || {
             terminals.with_session(id, |session| {
                 if param(query, "source") == Some("auto") {
@@ -499,6 +502,99 @@ impl Terminals {
         })
     }
 
+    fn handover(&self, payload: &Value) -> Response {
+        if crate::PREVIEW {
+            return Response::error(403, "预览版不能转交工作区");
+        }
+        self.handover_in(
+            &crate::data_files::data_root(),
+            payload,
+            |provider| {
+                installed_path(provider).is_some_and(|path| has_terminal_ui(provider, &path))
+            },
+            |start, args, env| self.launch_with_extra(start, args, env),
+        )
+    }
+
+    fn handover_in(
+        &self,
+        root: &Path,
+        payload: &Value,
+        available: impl FnOnce(&str) -> bool,
+        launch: impl FnOnce(Start<'_>, &[String], &[(&str, &str)]) -> Response,
+    ) -> Response {
+        let Some(workspace) = payload["workspace"]
+            .as_str()
+            .filter(|id| crate::data_files::valid_id(id))
+        else {
+            return Response::error(400, "需要有效的工作区 ID");
+        };
+        let provider = payload["provider"].as_str().unwrap_or_default();
+        if !matches!(provider, "claude" | "codex") {
+            return Response::error(400, "这个 CLI 暂不支持自动接手");
+        }
+        let account = match account::resolve_in(root, provider, payload["account"].as_str()) {
+            Ok(account) => account,
+            Err(error) => return Response::error(400, &error),
+        };
+        let Some((host, key, file)) = links::chat(root, workspace) else {
+            return Response::error(404, "找不到这段聊天的记录");
+        };
+        let owner = links::owner_account(root, workspace);
+        let source_account = match account::resolve_in(root, &host, owner.as_deref()) {
+            Ok(account) => account,
+            Err(_) => return Response::error(409, "这段聊天的账号已被移除"),
+        };
+        let home = source_account.as_ref().map(|account| account.dir.as_path());
+        let Some((id, record)) =
+            crate::data::boss_app::desktop_session(&host, &key, file.as_deref(), home)
+        else {
+            return Response::error(409, "找不到桌面端聊天的会话记录");
+        };
+        let Some(cwd) = crate::data::boss_app::session_cwd_of(&host, &record, &id)
+            .filter(|path| path.is_absolute() && path.is_dir())
+        else {
+            return Response::error(409, "会话的文件夹不存在或无法确定");
+        };
+        if !available(provider) {
+            return Response::error(400, "这个 CLI 没有安装或没有终端界面");
+        }
+        let marked = crate::manage::handover_with_note(root, workspace, true);
+        if marked["status"] != "waiting" {
+            return Response::error(409, marked["message"].as_str().unwrap_or("转交失败"));
+        }
+        let prompt = format!("接手工作区 {workspace}");
+        let args = if provider == "claude" || !cfg!(unix) {
+            vec![prompt.clone()]
+        } else {
+            Vec::new()
+        };
+        let env = if provider == "codex" && cfg!(unix) {
+            vec![("AGENTNAVE_HANDOVER_PROMPT", prompt.as_str())]
+        } else {
+            Vec::new()
+        };
+        let reply = launch(
+            Start {
+                provider,
+                cwd,
+                size: launch_size(payload["cols"].as_u64(), payload["rows"].as_u64()),
+                resume: None,
+                workspaces: Vec::new(),
+                light: payload["light"].as_bool().unwrap_or(false),
+                account,
+            },
+            &args,
+            &env,
+        );
+        if reply.status != 200 {
+            let error: Value = serde_json::from_slice(&reply.body).unwrap_or_default();
+            let detail = error["error"].as_str().unwrap_or("启动终端失败");
+            return Response::error(reply.status, &format!("工作区已标为待接手，但{detail}"));
+        }
+        reply
+    }
+
     /// Starts an ended terminal's CLI again in its folder, in its place: continuing the chat it
     /// was the boss of when its CLI can, else afresh as a new agent.
     fn restart(&self, id: Option<u64>, attach: &Attach) -> Response {
@@ -855,17 +951,33 @@ fn chat_session(
     provider: &str,
     account: Option<&Active>,
 ) -> Result<Chat, &'static str> {
+    chat_session_in(
+        &crate::data_files::data_root(),
+        workspace,
+        provider,
+        account,
+    )
+}
+
+fn chat_session_in(
+    root: &Path,
+    workspace: &str,
+    provider: &str,
+    account: Option<&Active>,
+) -> Result<Chat, &'static str> {
     if !session::resumes(provider) {
         return Err("这个 CLI 还不能在 App 里续接");
     }
-    let (host, key, file) =
-        links::chat(&crate::data_files::data_root(), workspace).ok_or("找不到这段聊天的记录")?;
+    let (host, key, file) = links::chat(root, workspace).ok_or("找不到这段聊天的记录")?;
     if host != provider {
         return Err("这段聊天不是这个 CLI 的");
     }
     let home = account.map(|account| account.dir.as_path());
     let (id, record) = crate::data::boss_app::native_session_as(&host, &key, file.as_deref(), home)
         .ok_or("找不到这段聊天的会话记录")?;
+    if crate::data::boss_app::desktop_session(&host, &key, Some(&record), home).is_some() {
+        return Err("桌面端聊天不能在这里续接，请转交到终端");
+    }
     Ok(Chat { id, record, key })
 }
 

@@ -94,7 +94,7 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
             && ((cfg!(unix) && matches!(path, "/app/hosts/reload-copy" | "/app/hosts/stop-copy"))
                 || path.starts_with("/app/video-packs/")
                 // The embedded terminal runs the user's own CLI and writes no App data.
-                || path.starts_with("/app/terminal/")
+                || (path.starts_with("/app/terminal/") && path != "/app/terminal/handover")
                 || matches!(
                     path,
                     "/app/preferences"
@@ -579,6 +579,7 @@ mod tests {
         ));
         assert!(!preview_refuses(true, "POST", "/app/theme/dark"));
         assert!(!preview_refuses(true, "POST", "/app/terminal/start"));
+        assert!(preview_refuses(true, "POST", "/app/terminal/handover"));
         assert!(!preview_refuses(true, "POST", "/app/terminal/input"));
         assert!(!preview_refuses(true, "POST", "/app/projects/pick"));
         assert!(!preview_refuses(true, "POST", "/app/projects/add"));

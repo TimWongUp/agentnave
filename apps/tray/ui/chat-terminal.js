@@ -155,11 +155,11 @@ const ChatTerminal = (() => {
     return t.clis;
   }
   // Pick a CLI to start in `cwd`, or in a folder picked first when there is none.
-  async function newAgent(e, cwd) {
+  async function newAgent(e, cwd, workspace = null) {
     const position = { clientX: e.clientX, clientY: e.clientY, preventDefault() {}, stopPropagation() {} };
     e.preventDefault();
     e.stopPropagation();
-    const found = await clis().catch(() => []);
+    const found = (await clis().catch(() => [])).filter(({ provider }) => !workspace || ["claude", "codex"].includes(provider));
     if (!found.length) {
       Actions.openMenu(position, [{ label: L("没有检测到已安装的 CLI", "No installed CLI found"), run() {} }]);
       return;
@@ -168,10 +168,10 @@ const ChatTerminal = (() => {
     Actions.openMenu(
       position,
       found.flatMap(({ provider, accounts }) => [
-        { label: h("span.ctx-cli", {}, AN.hostTile(provider), AN.cliName(provider)), run: () => start(provider, cwd) },
+        { label: h("span.ctx-cli", {}, AN.hostTile(provider), AN.cliName(provider)), run: () => workspace ? handover(workspace, provider) : start(provider, cwd) },
         ...(accounts || []).map((account) => ({
           label: h("span.ctx-cli", {}, AN.hostTile(provider), L(`${AN.cliName(provider)}（${account.label}）`, `${AN.cliName(provider)} (${account.label})`)),
-          run: () => start(provider, cwd, account.id),
+          run: () => workspace ? handover(workspace, provider, account.id) : start(provider, cwd, account.id),
         })),
       ]),
     );
@@ -191,6 +191,18 @@ const ChatTerminal = (() => {
       }
       const { cols, rows } = measureSize();
       const result = await reply(await act("/app/terminal/start", JSON.stringify({ provider, account, cwd, cols, rows, light: light() })));
+      if (!result) return;
+      t.openOnce = PREFIX + result.session.id;
+      await refresh();
+      go(`/chat/${PREFIX}${result.session.id}`);
+    } catch (error) {
+      Actions.say(String(error?.message || error), true);
+    }
+  }
+  async function handover(workspace, provider, account) {
+    try {
+      const { cols, rows } = measureSize();
+      const result = await reply(await act("/app/terminal/handover", JSON.stringify({ workspace, provider, account, cols, rows, light: light() })));
       if (!result) return;
       t.openOnce = PREFIX + result.session.id;
       await refresh();
@@ -373,9 +385,10 @@ const ChatTerminal = (() => {
   };
   toMessages.addEventListener("click", switchTo(false));
   toTerminal.addEventListener("click", switchTo(true));
-  stopButton.addEventListener("click", () => {
+  stopButton.addEventListener("click", (event) => {
     const x = byId(t.owned);
-    if (x) void (x.exit == null ? stop(x.id) : restart(x.id));
+    if (t.handover) void newAgent(event, null, t.handover);
+    else if (x) void (x.exit == null ? stop(x.id) : restart(x.id));
     else if (t.resumable) void resume(t.resumable);
   });
 
@@ -415,9 +428,9 @@ const ChatTerminal = (() => {
     // One place for the terminal's action: stop it while it runs, start it again once it ended.
     // Without a terminal here, a chat its CLI can continue offers to, in the same place.
     const ended = x?.exit != null;
-    stopButton.hidden = !x && !t.resumable;
+    stopButton.hidden = !x && !t.resumable && !t.handover;
     stopButton.classList.toggle("start", !x || ended);
-    setText(stopButton, !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal"));
+    setText(stopButton, t.handover ? L("转交到终端", "Hand over to terminal") : !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal"));
     t.owned = x?.id ?? null;
     setAttr(toMessages, "aria-pressed", term ? "false" : "true");
     setAttr(toTerminal, "aria-pressed", term ? "true" : "false");
@@ -447,10 +460,11 @@ const ChatTerminal = (() => {
   }
   // After the conversation column is drawn for `group`: its terminal, shown unless the messages
   // were asked for.
-  function column(group, host) {
+  function column(group, host, app) {
     const agent = byId(pendingId(group));
     const x = agent || ofWorkspace(group);
-    t.resumable = !x && RESUMES.has(host) ? group : null;
+    t.handover = (!x || x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
+    t.resumable = !x && !t.handover && RESUMES.has(host) ? group : null;
     show(x, t.terminal.get(group) ?? true);
   }
   function consumeOpen(group) {

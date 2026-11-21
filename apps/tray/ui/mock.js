@@ -1028,12 +1028,14 @@ All checks passed!
     { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: null },
     { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs", display_title: null },
   ];
+  if (q.has("handover")) mockTerminals.shift();
   function terminalPost(path, body) {
     const query = new URLSearchParams(path.split("?")[1] || "");
     const id = Number(query.get("session"));
     const route = path.split("?")[0];
     if (route === "/app/terminal/pick") return { cwd: "/work/app" };
-    if (route === "/app/terminal/start") {
+    if (route === "/app/terminal/start" || route === "/app/terminal/handover") {
+      if (route === "/app/terminal/handover") body.cwd = PLACES.find((p) => p.group === body.workspace)?.project_path || "/work/app";
       const manual = mockProjects.find((p) => p.key === body.cwd);
       const project = PLACES.find((p) => p.project_path === body.cwd)
         || (manual ? { project_key: manual.key, project_label: manual.label, project_path: manual.path } : { project_key: "other" });
