@@ -319,11 +319,15 @@
     });
     input.value = keyDraft;
     const clear = el("button", { type: "button", disabled: keyBusy || !saved.key_set, onClick: () => storeKey("") }, L("清除", "Clear"));
-    return el("div", { className: "decision-key-row" },
-      el("div", { className: "review-role" }, el("strong", {}, label)),
-      el("div", { className: "voice-key" }, input, save, clear),
-      saved.key_error && el("p", { className: "fine decision-note error" }, saved.key_error),
-      keyMessage && el("p", { className: `fine decision-note${keyMessage.error ? " error" : ""}`, role: "status" }, keyMessage.text));
+    const sent = L(
+      "派发任务时，派发内容（过长时只取开头和结尾）和各工位的名称、专业说明、难度、读写类型会发给 Google 的决策模型；Gemini 免费层的输入可能被用于改进产品；可用地区以 Google 公布的为准。决策模型不接触 CLI，也不改任务内容；任务跑完后，boss 照常自己去收结果。",
+      "When a task is dispatched, its prompt (only the beginning and end when long) and each seat's name, specialty, difficulty and access type are sent to Google's decision model. On the Gemini free tier, inputs may be used to improve Google's products. Availability by region follows what Google publishes. The decision model never touches a CLI or changes the task; when the work is done, the boss collects the result as usual.");
+    return el("div", { className: "s-row" },
+      el("span", { className: "s-label" }, label, AN.settings.settingTip(sent)),
+      el("div", { className: "s-stack" },
+        el("div", { className: "s-field" }, input, save, clear),
+        saved.key_error && el("p", { className: "s-muted is-bad" }, saved.key_error),
+        keyMessage && el("p", { className: `s-muted${keyMessage.error ? " is-bad" : ""}`, role: "status" }, keyMessage.text)));
   }
 
   // One row of a card: the level's name and its CLI, model and effort.
@@ -332,13 +336,13 @@
     const seat = card.seats[level] || null;
     const set = (next) => setSeat(card.cid, level, next);
     const row = S.seatSelects(key, `${title} · ${label}`, seat, set, L("未设置", "Not set"));
-    return S.seatBlock(el("div", { className: "review-row" }, el("div", { className: "review-role" }, label), ...row), key, `${title} · ${label}`, seat, set);
+    return S.seatBlock(el("div", { className: "s-row is-sub" }, el("span", { className: "s-label" }, label), el("div", { className: "s-seat" }, ...row)), key, `${title} · ${label}`, seat, set);
   }
 
   // The tiers a three-tier card has set; no tier means no seat to choose from.
   function tiersSet(card) {
     const n = Object.keys(card.seats).length;
-    return el("span", { className: `ds-tiers${n ? "" : " unset"}` },
+    return el("span", { className: `s-muted ds-tiers${n ? "" : " unset"}` },
       n ? L(`已设 ${n} 档`, `${n} ${n === 1 ? "tier" : "tiers"} set`) : L("未设置", "Not set"));
   }
 
@@ -355,9 +359,10 @@
     const selects = S.seatSelects(key, name, row.seat, set, L("未设置", "Not set"));
     const remove = el("button", { type: "button", className: "ds-remove", "aria-label": L(`删除${name}`, `Delete ${name}`), onClick: () => removeRow(card.cid, row.rid) }, L("删除", "Delete"));
     // The add-fallback button goes in before the delete button, which stays in the last column.
-    const main = el("div", { className: "ds-image-row" }, specialty, ...selects);
+    const seatControl = el("div", { className: "s-seat" }, ...selects);
+    const main = el("div", { className: "s-row is-sub" }, el("div", { className: "s-label" }, specialty), seatControl);
     const block = S.seatBlock(main, key, name, row.seat, set);
-    main.appendChild(remove);
+    seatControl.appendChild(remove);
     return block;
   }
 
@@ -374,15 +379,17 @@
     } : {}, ...(own ? [] : [title]));
     const access = card.kind === CUSTOM
       ? select(`${key}/access`, L(`${title}的读写类型`, `Access of ${title}`), card.access, ACCESS, (value) => editCard(card.cid, { access: value }))
-      : el("span", { className: "ds-access" }, accessName(accessOf(card)));
+      : el("span", { className: "s-muted" }, accessName(accessOf(card)));
     const remove = el("button", { type: "button", className: "ds-remove", "aria-label": L(`删除${title}`, `Delete ${title}`), onClick: () => removeCard(card.cid) }, L("删除", "Delete"));
-    const head = el("div", { className: "ds-head" }, name, access, card.kind === IMAGE ? el("span") : tiersSet(card), remove);
     const scope = scopeOf(card);
+    const head = el("div", { className: "s-row" },
+      el("div", { className: "s-label" }, name, scope ? AN.settings.settingTip(scope) : null),
+      el("div", { className: "s-control" }, access, card.kind === IMAGE ? null : tiersSet(card), remove));
     const body = card.kind === IMAGE
       ? [...card.rows.map((row, at) => imageRow(card, row, at)),
-        el("button", { type: "button", className: "ds-add-row", disabled: toSeats(cards()).length >= MAX_SEATS, onClick: () => addRow(card.cid) }, L("添加方向", "Add specialty"))]
+        el("div", { className: "s-row is-stack" }, el("button", { type: "button", className: "ds-add-row", disabled: toSeats(cards()).length >= MAX_SEATS, onClick: () => addRow(card.cid) }, L("添加方向", "Add specialty")))]
       : DIFFICULTIES.map(([level, label]) => levelRow(card, level, label, title));
-    return el("div", { className: "decision-seat" }, head, scope ? el("p", { className: "fine decision-note" }, scope) : null, ...body);
+    return el("div", { className: "s-group decision-seat" }, el("div", { className: "s-card" }, head, ...body));
   }
 
   // The one way to add a card: a group of the role catalog not on a card yet, or a card of its own.
@@ -393,7 +400,7 @@
     const list = (title, entries) => entries.length ? el("optgroup", { label: title }, ...entries.map(([value, label]) => option(value, label))) : null;
     const named = (general) => groups.filter((entry) => !entry.fallback_group === general).map((entry) => [entry.group, S.roleName(entry)]);
     return el("select", {
-      className: "decision-add", dataset: { focusKey: "decision/add" }, "aria-label": L("添加工位", "Add seat"),
+      className: "decision-add", id: "decision-add", dataset: { focusKey: "decision/add" },
       disabled: toSeats(cards()).length >= MAX_SEATS, onChange: (e) => e.target.value && addCard(e.target.value),
     }, el("option", { value: "", selected: true }, L("添加工位", "Add seat")),
     list(L("通用工位", "General seats"), named(true)), list(L("专业工位", "Specialist seats"), named(false)),
@@ -413,32 +420,26 @@
   function flow() {
     return el("figure", { className: "decision-flow" },
       el("img", { src: AN.art.url("office/decision-flow.webp"), alt: "", draggable: false }),
-      el("figcaption", {}, ...FLOW.map(([who, what]) => el("span", {}, el("strong", {}, who), el("span", {}, what)))),
-      el("p", { className: "fine decision-note" }, L(
-        "决策模型不接触 CLI，也不改任务内容；任务跑完后，boss 照常自己去收结果。",
-        "The decision model never touches a CLI or changes the task. When the work is done, the boss collects the result as usual.")));
+      el("figcaption", {}, ...FLOW.map(([who, what]) => el("span", {}, el("strong", {}, who), el("span", {}, what)))));
   }
 
   function randomRow() {
-    return el("label", { className: "orchestration-switch" },
+    return el("div", { className: "s-row" },
+      el("label", { className: "s-label", htmlFor: "decision-random" }, L("同一档的候选随机选，分摊额度", "Pick randomly among a tier's candidates to spread quota")),
       el("input", {
-        type: "checkbox", className: "switch-input", dataset: { focusKey: "decision/random-candidates" },
+        type: "checkbox", id: "decision-random", className: "switch-input", dataset: { focusKey: "decision/random-candidates" },
         checked: randomCandidates(), onChange: (e) => setRandomCandidates(e.target.checked),
-      }),
-      el("span", {}, L("同一档的候选随机选，分摊额度", "Pick randomly among a tier's candidates to spread quota")));
+      }));
   }
 
   function panel() {
     if (locked()) return null;
-    return el("div", { className: "orchestration-section decision-seats" },
-      flow(),
-      el("p", { className: "fine decision-note" }, L(
-        "派发任务时，派发内容（过长时只取开头和结尾）和各工位的名称、专业说明、难度、读写类型会发给 Google 的决策模型；Gemini 免费层的输入可能被用于改进产品；可用地区以 Google 公布的为准。",
-        "When a task is dispatched, its prompt (only the beginning and end when long) and each seat's name, specialty, difficulty and access type are sent to Google's decision model. On the Gemini free tier, inputs may be used to improve Google's products. Availability by region follows what Google publishes.")),
-      keyRow(),
-      randomRow(),
-      el("div", { className: "decision-catalog" }, ...cards().map(seatCard)),
-      addMenu());
+    return el("div", { className: "s-wrap decision-seats" },
+      el("div", { className: "s-group" }, el("div", { className: "s-card" },
+        el("div", { className: "s-row is-stack" }, flow()), keyRow(), randomRow())),
+      ...cards().map(seatCard),
+      el("div", { className: "s-group" }, el("div", { className: "s-card" },
+        el("div", { className: "s-row" }, el("label", { className: "s-label", htmlFor: "decision-add" }, L("添加工位", "Add seat")), addMenu()))));
   }
 
   window.AgentNaveDecisionSeats = { load, panel, changed, problem, save, discard, entered, cards, document: fileDocument, prefill, addCard };

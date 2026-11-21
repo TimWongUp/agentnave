@@ -313,12 +313,12 @@
   }
 
   // Bosses on a saved mode dispatch through the seats, each boss by its own row.
-  function renderTaskScope() {
+  // The employees' scene hint names them, so the page needs no paragraph of its own.
+  function taskScopeNote() {
     const on = orchestration && !orchestration.error
       ? orchestration.bosses.filter((boss) => usesSeats(bossMode(orchestration.document, boss))) : [];
     const names = on.flatMap((boss) => boss.labels).join(AN.L("、", ", "));
-    $("task-scope").hidden = !on.length;
-    $("task-scope").textContent = on.length ? AN.L(`${names} 已启用编排，用“编排”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Orchestration; solo tasks are offered only to bosses without orchestration.`) : "";
+    return on.length ? AN.L(`${names} 已启用编排，用“编排”里的工位派活；单独干活只提供给未启用编排的 boss。`, `${names} use orchestration and dispatch through the seats in Orchestration; solo tasks are offered only to bosses without orchestration.`) : "";
   }
 
   // One seat for easy and hard of a specialist that is not split; it has no medium seat.
@@ -344,10 +344,10 @@
     else setSharedSeat(group, seat);
   }
 
-  function seatRow(group, label, name, seat, onSet, unset = SEAT_UNSET, scene = "task") {
-    return seatBlock(el("div", { className: "review-row" },
-      el("div", { className: "review-role" }, label),
-      ...seatSelects(group, name, seat, onSet, unset, undefined, scene)), group, name, seat, onSet, scene);
+  function seatRow(group, label, name, seat, onSet, unset = SEAT_UNSET, scene = "task", sub = false) {
+    return seatBlock(el("div", { className: `s-row${sub ? " is-sub" : ""}` },
+      el("span", { className: "s-label" }, label),
+      el("div", { className: "s-seat" }, ...seatSelects(group, name, seat, onSet, unset, undefined, scene))), group, name, seat, onSet, scene);
   }
 
   // A switch put back to what is saved restores the saved form of its key, so an explicit default is no edit.
@@ -376,10 +376,12 @@
     setOption("decision_options", sameJson(next, onlyOn(orchestration.document.decision_options)), Object.keys(next).length ? next : undefined);
   }
 
-  function switchRow(focusKey, checked, onChange, label, tip) {
-    return el("label", { className: "orchestration-switch" },
-      el("input", { type: "checkbox", className: "switch-input", dataset: { focusKey }, checked, onChange: (e) => onChange(e.target.checked) }),
-      el("span", {}, label), settingTip(tip, true));
+  // A switch lives in the control column; its words and hint are the row's label.
+  function switchRow(focusKey, checked, onChange, label, tip, sub = false) {
+    const id = `switch-${focusKey.replace(/[^\w-]/g, "-")}`;
+    return el("div", { className: `s-row${sub ? " is-sub" : ""}` },
+      el("label", { className: "s-label", htmlFor: id }, label, tip ? settingTip(tip) : null),
+      el("input", { type: "checkbox", id, className: "switch-input", dataset: { focusKey }, checked, onChange: (e) => onChange(e.target.checked) }));
   }
 
   function renderSplitOptions(preset, editable) {
@@ -437,7 +439,7 @@
         type: "button", className: `segment-btn${n === count ? " active" : ""}`, role: "radio", dataset: { focusKey: `meeting/count/${n}` },
         "aria-checked": String(n === count), onClick: () => setMeeting({ count: n }),
       }, String(n))));
-    box.replaceChildren(el("div", { className: "review-row" }, el("div", { className: "review-role" }, sizeLabel), sizes),
+    box.replaceChildren(el("div", { className: "s-row" }, el("span", { className: "s-label" }, sizeLabel), sizes),
       ...Array.from({ length: count }, (_, i) => {
         const label = AN.L(`席位 ${i + 1}`, `Seat ${i + 1}`);
         return seatRow(`meeting/${i}`, label, label, seats[i] ?? null, (seat) => setMeetingSeat(i, seat),
@@ -448,7 +450,7 @@
 
   // A role's switch, and its seats while on; turned off, they stay saved out of sight. A specialist
   // shows one seat for both difficulties until it is split.
-  function roleGroup(entry, doc) {
+  function roleRows(entry, doc) {
     const { group, access } = entry;
     const name = roleName(entry);
     const on = enabledGroups(doc).includes(group);
@@ -456,31 +458,20 @@
     const split = general || seatsSplit(doc, group);
     const seats = !on ? [] : split
       ? DIFFICULTIES.map(([difficulty, level]) => seatRow(`${group}/${difficulty}`, level, `${name} · ${level}`,
-        orchestrationSeat(doc, group, difficulty), (next) => setOrchestrationSeat(group, difficulty, next)))
+        orchestrationSeat(doc, group, difficulty), (next) => setOrchestrationSeat(group, difficulty, next), SEAT_UNSET, "task", true))
       : [seatRow(`${group}/both`, AN.L("简单 · 困难", "Easy · Hard"), name,
-        doc[group]?.hard ?? doc[group]?.easy, (next) => setSharedSeat(group, next))];
-    return el("div", { className: "orchestration-group" },
-      el("div", { className: "orchestration-head" },
-        el("label", { className: "orchestration-switch" },
-          el("input", {
-            type: "checkbox", className: "switch-input", dataset: { focusKey: `${group}/enabled` }, checked: on,
-            onChange: (e) => setRoleEnabled(group, e.target.checked),
-          }),
-          el("strong", {}, name), el("small", {}, ROLE_ACCESS[access])),
-        on && !general && el("label", { className: "orchestration-switch" },
-          el("input", {
-            type: "checkbox", className: "switch-input", dataset: { focusKey: `${group}/split` }, checked: split,
-            onChange: (e) => setRoleSplit(group, e.target.checked),
-          }),
-          el("span", {}, AN.L("区分难度", "By difficulty")),
-          settingTip(AN.L("关闭时这个专项各档共用一个模型；打开后简单、困难各选一个，中等可选。", "Off: every level of this specialist shares one model. On: pick one each for easy and hard; medium is optional."), true))),
-      ...seats);
+        doc[group]?.hard ?? doc[group]?.easy, (next) => setSharedSeat(group, next), SEAT_UNSET, "task", true)];
+    return [
+      switchRow(`${group}/enabled`, on, (checked) => setRoleEnabled(group, checked), [name, el("span", { className: "badge badge-muted" }, ROLE_ACCESS[access])]),
+      ...(on && !general ? [switchRow(`${group}/split`, split, (checked) => setRoleSplit(group, checked), AN.L("区分难度", "By difficulty"),
+        AN.L("关闭时这个专项各档共用一个模型；打开后简单、困难各选一个，中等可选。", "Off: every level of this specialist shares one model. On: pick one each for easy and hard; medium is optional."), true)] : []),
+      ...seats];
   }
 
   // General roles, then the specialists, each under its own heading.
   function roleSections(doc) {
-    const section = (title, entries) => el("div", { className: "orchestration-section" },
-      el("h3", {}, title), ...entries.map((entry) => roleGroup(entry, doc)));
+    const section = (title, entries) => el("div", { className: "s-group" },
+      el("h2", { className: "s-title" }, title), el("div", { className: "s-card" }, ...entries.map((entry) => el("div", { className: "s-wrap" }, ...roleRows(entry, doc)))));
     return [
       section(AN.L("通用", "General"), roleCatalog().filter(isGeneral)),
       section(AN.L("专项", "Specialist"), roleCatalog().filter((entry) => !isGeneral(entry))),
@@ -492,7 +483,6 @@
     if (orchestration && !orchestration.error && editor.value?.trim()) {
       editor.value = customRoleText(editor.value, orchestrationShown());
     }
-    renderTaskScope();
     const shown = orchestrationShown();
     const preset = orchestrationView;
     for (const button of $("orchestration-presets").querySelectorAll("button")) {
@@ -501,7 +491,7 @@
       button.setAttribute("aria-checked", String(active));
       button.disabled = !orchestration || Boolean(orchestration.error);
     }
-    $("orchestration-effect").textContent = orchestration ? ORCHESTRATION_EFFECTS[preset] : "";
+    $("orchestration-effect").setAttribute("aria-label", orchestration ? ORCHESTRATION_EFFECTS[preset] : "");
     renderBossChips();
     const text = orchestrationPresetText(preset);
     $("orchestration-text").hidden = !text;
@@ -522,11 +512,11 @@
       const fixed = !usesSeats(preset) || preset === "decision" || !roleCatalog().length ? [] : roleSections(shown);
       roles.replaceChildren(...(catalog ? [catalog] : fixed),
         // The decision mode's image seats are cards of its catalog, not the fixed one.
-        ...(preset === "meetings" || preset === "decision" ? [] : [seatBlock(el("div", { className: "review-row" },
-          el("div", { className: "review-role" }, el("strong", {}, name,
-            settingTip(AN.L("这里选的是和 CLI 对话的模型；图片由那个 CLI 调用它自己能用的生图服务来出。", "This picks the model you talk to in the CLI; the image itself comes from whatever image service that CLI can call.")))),
-          ...seatSelects(`${role}/${difficulty}`, name, shown[role], setImage, SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation"))),
-        `${role}/${difficulty}`, name, shown[role], setImage)]));
+        ...(preset === "meetings" || preset === "decision" ? [] : [el("div", { className: "s-group" }, el("div", { className: "s-card" }, seatBlock(el("div", { className: "s-row" },
+          el("span", { className: "s-label" }, name,
+            settingTip(AN.L("这里选的是和 CLI 对话的模型；图片由那个 CLI 调用它自己能用的生图服务来出。", "This picks the model you talk to in the CLI; the image itself comes from whatever image service that CLI can call."))),
+          el("div", { className: "s-seat" }, ...seatSelects(`${role}/${difficulty}`, name, shown[role], setImage, SEAT_UNSET, AN.L("生图的对话模型", "Chat model for image generation")))),
+        `${role}/${difficulty}`, name, shown[role], setImage)))]));
       if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
     }
     renderRuleFiles();
@@ -539,14 +529,15 @@
       const state = !file.target ? null
         : file.current ? ["written", AN.L("已写入", "Written")]
           : file.blocked ? ["failed", AN.L("经过符号链接，无法写入", "Goes through a symlink; cannot write")] : ["failed", AN.L("未写入", "Not written")];
-      return el("li", {},
-        el("span", { className: "rule-label" }, file.readers.join(AN.L("、", ", "))),
-        el("code", {}, file.path),
-        state && el("span", { className: `rule-state ${state[0]}` }, state[1]),
-        ruleOpenError?.path === file.path && el("span", { className: "rule-state failed" }, ruleOpenError.message),
-        file.exists
-          ? el("button", { type: "button", onClick: () => openRuleFile(file) }, AN.L("打开", "Open"))
-          : el("span", { className: "rule-missing" }, AN.L("未找到", "Not found")));
+      return el("div", { className: "s-row" },
+        el("span", { className: "s-label" }, file.readers.join(AN.L("、", ", "))),
+        el("div", { className: "s-control" },
+          el("code", { className: "s-value is-mono" }, file.path),
+          state && el("span", { className: `rule-state ${state[0]}` }, state[1]),
+          ruleOpenError?.path === file.path && el("span", { className: "rule-state failed" }, ruleOpenError.message),
+          file.exists
+            ? el("button", { type: "button", onClick: () => openRuleFile(file) }, AN.L("打开", "Open"))
+            : el("span", { className: "s-muted" }, AN.L("未找到", "Not found"))));
     }));
   }
 
@@ -757,21 +748,22 @@
     const takenBy = (skip) => new Set([seat, ...list.filter((_, i) => i !== skip)].map(pickKey));
     if (list.length < MAX_FALLBACKS) {
       const fresh = freshPick(scene, takenBy(-1), seat.provider);
-      row.appendChild(el("button", {
+      (row.querySelector?.(".s-seat") || row).appendChild(el("button", {
         type: "button", disabled: !fresh, dataset: { focusKey: `${key}/fb-add` }, onClick: () => store([...list, fresh]),
       }, AN.L("添加备选", "Add fallback")));
     }
     if (!list.length) return row;
-    return el("div", { className: "seat-block" }, row, ...list.map((pick, index) => {
+    return el("div", { className: "s-wrap" }, row, ...list.map((pick, index) => {
       const label = AN.L(`备选 ${index + 1}`, `Fallback ${index + 1}`);
       const set = (next) => store(list.map((one, i) => (i === index ? next : one)));
-      return el("div", { className: "fallback-row" },
-        el("span", { className: "fallback-label" }, label),
-        ...seatSelects(`${key}/fb${index}`, `${name} · ${label}`, pick, set, null, undefined, scene, takenBy(index)),
-        el("button", {
-          type: "button", dataset: { focusKey: `${key}/fb${index}/remove` }, "aria-label": AN.L(`移除${name}的${label}`, `Remove ${label} of ${name}`),
-          onClick: () => store(list.filter((_, i) => i !== index)),
-        }, AN.L("移除", "Remove")));
+      return el("div", { className: "s-row is-sub" },
+        el("span", { className: "s-label" }, label),
+        el("div", { className: "s-seat" },
+          ...seatSelects(`${key}/fb${index}`, `${name} · ${label}`, pick, set, null, undefined, scene, takenBy(index)),
+          el("button", {
+            type: "button", dataset: { focusKey: `${key}/fb${index}/remove` }, "aria-label": AN.L(`移除${name}的${label}`, `Remove ${label} of ${name}`),
+            onClick: () => store(list.filter((_, i) => i !== index)),
+          }, AN.L("移除", "Remove"))));
     }));
   }
 
@@ -842,17 +834,17 @@
     const focusKey = document.activeElement?.dataset?.focusKey;
     const shown = seatsShown();
     const uniformName = AN.L("统一评审模型", "One review model");
-    const uniform = el("div", { className: "review-row review-uniform" },
-      el("div", { className: "review-role" }, el("strong", {}, uniformName,
-        settingTip(AN.L("给还没选模型的评审角色一次填上这个模型；已经单独选过的角色和「正确性（简单）」不变。", "Fills this model into every review role that has none yet; roles you already picked and Correctness (easy) stay as they are.")))),
-      ...seatSelects("review/uniform", uniformName, uniformReview, setUniformReview, AN.L("未选择", "Not chosen")));
+    const uniform = el("div", { className: "s-row" },
+      el("span", { className: "s-label" }, uniformName,
+        settingTip(AN.L("给还没选模型的评审角色一次填上这个模型；已经单独选过的角色和「正确性（简单）」不变。", "Fills this model into every review role that has none yet; roles you already picked and Correctness (easy) stay as they are."))),
+      el("div", { className: "s-seat" }, ...seatSelects("review/uniform", uniformName, uniformReview, setUniformReview, AN.L("未选择", "Not chosen"))));
     const rows = REVIEW_ROLES.map(([role, name, hint, unset]) => {
       const seat = shown[role];
       const label = AN.L(`${name}评审`, `${name} review`);
       const set = (next) => setReviewSeat(role, next);
-      return seatBlock(el("div", { className: "review-row" },
-        el("div", { className: "review-role" }, el("strong", {}, name), el("small", {}, hint)),
-        ...seatSelects(role, label, seat, set, unset)), role, label, seat, set);
+      return seatBlock(el("div", { className: "s-row" },
+        el("span", { className: "s-label" }, name, settingTip(hint)),
+        el("div", { className: "s-seat" }, ...seatSelects(role, label, seat, set, unset))), role, label, seat, set);
     });
     box.replaceChildren(uniform, ...rows);
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
@@ -973,7 +965,7 @@
 
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
-    viewMode, setOrchestrationSeat, renderTaskScope, renderOrchestration, seatsShown, seatConflicts,
+    viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced,
     orchestrationShown, bossMode, setBossMode, liveSeats, roleCatalog, roleName, orchestrationSeat, seatModels

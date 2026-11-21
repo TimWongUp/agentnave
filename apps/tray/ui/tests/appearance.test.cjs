@@ -34,13 +34,13 @@ function appearance({ saved = {}, systemReduce = false, failWrite = false, trans
     return node;
   }
   function settings() {
-    nodes.set("general-prefs", h("div", {}));
+    for (const id of ["general-main", "general-motion", "general-launch"]) nodes.set(id, h("div", {}));
     nodes.set("pane-general", { hidden: false });
     context.AN = { h, $: id => nodes.get(id), L: (zh, en) => en, shellOS: () => "macos",
       load: async path => (await context.fetch(path)).json(),
       post: async (path, body) => (await context.fetch(path, { method: "POST", headers: {}, body: JSON.stringify(body) })).json() };
     vm.runInNewContext(readFileSync(`${__dirname}/../general-settings.js`, "utf8"), context);
-    return nodes.get("general-prefs");
+    return nodes.get("general-main");
   }
   return { api: context.window.ANAppearance, root, emit, requests, saved, buttons, h, settings };
 

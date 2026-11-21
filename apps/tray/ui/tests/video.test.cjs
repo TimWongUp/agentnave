@@ -739,6 +739,7 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
     return el;
   };
   const root = new Elem("div");
+  const notice = new Elem("p");
   const packs = {
     "272": { installed: false, stamp: null, bytes: 0, download: null },
     "544": { installed: true, stamp: "s544", bytes: 42 * 1048576, download: null },
@@ -777,7 +778,7 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
     navigator: { clipboard: { writeText: async text => { copied.push(text); } } },
     document: {
       documentElement: { dataset: { characterStyle: "static" } },
-      getElementById: id => (id === "avatar-settings" ? root : null),
+      getElementById: id => (id === "avatar-settings" ? root : id === "notice" ? notice : null),
     },
     window: {
       addEventListener: (t, fn) => { (listeners[t] ||= []).push(fn); },
@@ -793,7 +794,7 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
   vm.runInContext(source, ctx);
   await new Promise(r => setImmediate(r));
 
-  const status = root.children[0];
+  const status = notice;
   const tip = root.findAll(el => el.className.includes("setting-tip"))[0];
   assert.equal(tip.textContent, "?");
   assert.match(tip.attrs["aria-label"], /150–300 MB/);

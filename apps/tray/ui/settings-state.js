@@ -150,8 +150,8 @@
         await apiGetMembers();
       } catch (error) { showNotice(L(`解除失败：${error.message}`, `Could not clear cooldown: ${error.message}`), true); }
     };
-    box.replaceChildren(...active.map((row) => el("div", { className: "setting-row" },
-      el("span", {}, [AN.providerHealth.name(row, labels), row.model || row.quotaGroup, AN.providerHealth.reason(row.item, L), AN.providerHealth.recovery(row.item, L)].filter(Boolean).join(" · ")),
+    box.replaceChildren(...active.map((row) => el("div", { className: "s-row is-lead" },
+      el("span", { className: "s-label" }, [AN.providerHealth.name(row, labels), row.model || row.quotaGroup, AN.providerHealth.reason(row.item, L), AN.providerHealth.recovery(row.item, L)].filter(Boolean).join(" · ")),
       el("button", { type: "button", onClick: () => resume(row) }, L("立即恢复", "Resume now")))));
   }
 
@@ -233,17 +233,17 @@
   function renderPermission(provider) {
     if (provider === "pi") return null;
     if (FULL_ONLY[provider]) {
-      return el("div", { className: "member-row" },
-        el("span", { className: "member-scene" }, textNode(L("权限", "Permissions")), settingTip(FULL_ONLY[provider])),
-        el("div", { className: "member-line" }, el("span", { className: "member-muted" }, L("完全放开", "Full access"))));
+      return el("div", { className: "s-row" },
+        el("span", { className: "s-label" }, textNode(L("权限", "Permissions")), settingTip(FULL_ONLY[provider])),
+        el("div", { className: "s-control" }, el("span", { className: "member-muted" }, L("完全放开", "Full access"))));
     }
     const tier = permissionTier(provider);
     const tierText = (key) => TIER_TEXT[key][provider] || TIER_TEXT[key].any;
-    return el("div", { className: "member-row" },
-      el("span", { className: "member-scene" },
+    return el("div", { className: "s-row" },
+      el("span", { className: "s-label" },
         textNode(L("权限", "Permissions")),
         settingTip(L(`自动：${tierText("auto")} 完全放开：${tierText("full")} 选完立即保存。`, `Auto: ${tierText("auto")} Full access: ${tierText("full")} Saved immediately when selected.`))),
-      el("div", { className: "member-line" },
+      el("div", { className: "s-control" },
         el("select", {
           className: "member-model",
           title: permissionsError,

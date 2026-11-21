@@ -629,8 +629,8 @@
       { id: DEFAULT_ID, label: L("默认", "Default"), isDefault: true },
       ...accounts,
     ];
-    return el("div", { className: "member-row claude-accounts-row" },
-      el("span", { className: "member-scene" }, L("账号", "Accounts")),
+    return el("div", { className: "s-row claude-accounts-row" },
+      el("span", { className: "s-label" }, L("账号", "Accounts")),
       el("div", { className: "accounts-group" },
         el("div", { className: "accounts-list" }, ...items.map(renderAccountItem)),
         el("div", { className: "accounts-group-actions" }, renderAddAccountButton())));

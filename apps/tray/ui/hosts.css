@@ -1,5 +1,4 @@
-/* Settings -> 宿主接入. Builds on manage.css + settings.css (cards, banners, badges, tabs, .primary, .danger).
-   Success colour follows settings.css (--run); warnings use --warn; errors use --bad. */
+/* Settings -> boss. Layout comes from settings-layout.css; this file holds what is specific to hosts. */
 #notice:empty::before { content: "\200b"; }
 #notice.error { color: var(--bad); }
 
@@ -7,34 +6,15 @@
 .avatar { flex: none; width: 36px; height: 36px; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
 
 /* ---- page chrome ---- */
-.hosts-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 6px 0 2px; flex-wrap: wrap; }
-#refresh-result { margin-left: auto; font-size: 12px; color: var(--muted); }
-.hosts-summary { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; font-size: 13px; color: var(--soft); }
-.hosts-summary strong { color: var(--ink); font-weight: 620; }
 .sum-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .sum-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--c, var(--muted)); }
 button.sum-chip { background: transparent; border: 0; padding: 0; color: var(--accent); font-weight: 600; }
 button.sum-chip:hover:enabled { text-decoration: underline; }
-.backups-line { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin: 8px 0 18px; font-size: 12px; color: var(--muted); }
-.backups-line .sep { color: var(--line); }
-
-.banner .banner-actions { display: flex; gap: 8px; flex: none; align-items: center; }
-.banner.service { background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); align-items: center; }
-.banner.service p { color: var(--soft); }
-.banner.service.busy { background: color-mix(in srgb, var(--run) 10%, transparent); border-color: color-mix(in srgb, var(--run) 28%, transparent); }
-.banner.error .banner-actions button { color: var(--bad); }
-
-.callout { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 16px; margin-bottom: 14px; border-radius: 9px; background: color-mix(in srgb, var(--task) 10%, transparent); border: 1px solid color-mix(in srgb, var(--task) 30%, transparent); font-size: 12.5px; }
-.callout .callout-text { min-width: 0; }
-.callout strong { font-weight: 620; }
-.callout small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 1px; }
-.callout .banner-actions { display: flex; gap: 8px; flex: none; }
 
 /* ---- host list and detail ---- */
 /* The list and detail reuse the employees' .members-split / .member-list-item / .detail-* rules from settings.css. */
 .host-cards { scroll-margin-top: 64px; margin-bottom: 16px; }
 .host-detail h3.cli-name { margin: 0; }
-.detail-head > .member-title { flex-wrap: wrap; }
 .host-head-act { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 96px; }
 .host-head-act button { min-width: 96px; }
 .host-head-act .fine { font-size: 12px; color: var(--muted); text-align: right; }
@@ -44,7 +24,6 @@ button.sum-chip:hover:enabled { text-decoration: underline; }
 .hc-status .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .hc-status.tone-run { color: var(--run); } .hc-status.tone-warn { color: var(--warn); } .hc-status.tone-bad { color: var(--bad); } .hc-status.tone-muted { color: var(--muted); }
 .hc-status.is-busy .dot { animation: pulse-dot 1.4s infinite ease-in-out; }
-.host-row > .member-line { min-height: var(--control-height); flex-wrap: wrap; }
 .host-row .host-text { min-width: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
 .host-row .host-text.dim { color: var(--muted); }
 .host-row .fine { font-size: 12px; color: var(--muted); }
@@ -81,7 +60,6 @@ code.path { display: inline-flex; min-width: 0; font: 11.5px/1.5 ui-monospace, "
 .hc-reload button { flex: none; }
 .hc-reload .hc-reopen, .hc-reload .hc-trust { margin: 0; }
 .host-copies { display: flex; flex-direction: column; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
-.host-copy-row > .member-line { flex-wrap: nowrap; align-items: flex-start; }
 .host-copy-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 5px; }
 .host-copy-body p { margin: 0; }
 .hc-copy-cwd code { font: 11.5px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--soft); }
@@ -106,7 +84,6 @@ button.danger-solid:hover:enabled { border-color: var(--bad); filter: brightness
 .cards-empty strong { display: block; color: var(--ink); font-size: 14px; margin-bottom: 4px; }
 .host-others { margin-bottom: 16px; }
 .host-others-list { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 0; padding: 8px 20px 4px; }
-.host-others-list .member-row { grid-template-columns: 170px minmax(0, 1fr); }
 .others-list { gap: 8px 16px; }
 .others-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
 .others-icon { display: grid; place-items: center; width: 18px; height: 18px; }
@@ -115,9 +92,6 @@ button.danger-solid:hover:enabled { border-color: var(--bad); filter: brightness
 @media (max-width: 520px) {
   .hc-confirm .acts { width: 100%; }
   .hc-confirm .acts button { flex: 1; }
-  .callout { flex-direction: column; align-items: flex-start; }
-  .host-others-list { padding-inline: 14px; }
-  .host-others-list .member-row { grid-template-columns: minmax(0, 1fr); }
 }
 :root[data-motion="reduce"] :is(.spin, .hc-status.is-busy .dot, .member-item-status.is-busy .member-status-dot) { animation: none; }
 @media (prefers-reduced-motion: reduce) {

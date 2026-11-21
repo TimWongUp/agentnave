@@ -19,16 +19,16 @@
     const native = nativeDefault(provider);
     const all = getAllModelIds(provider);
     const offered = current.allowed ? all.filter((m) => current.allowed.includes(m)) : all;
-    const tip = scene === "discussion" ? null : settingTip(L("单独干活只用于没开编排的 boss，开会始终按这里设置。分开设置可以给两者选不同的默认模型和档位，或只停用其中一个。", "Solo tasks only serve bosses without orchestration; meetings always use these settings. Separate lets the two use different default models and efforts, or turns off just one."));
-    // The last scene keeps the tip beside it when the narrow column wraps the label.
-    const label = el("span", { className: "member-scene" }, split ? [SCENES[scene], tip]
-      : [L(`${SCENES.task}、`, `${SCENES.task}, `), el("span", { className: "nowrap" }, SCENES.discussion, tip)]);
+    const scope = S.taskScopeNote?.();
+    const tip = scene === "discussion" ? null : settingTip(L("单独干活只用于没开编排的 boss，开会始终按这里设置。分开设置可以给两者选不同的默认模型和档位，或只停用其中一个。", "Solo tasks only serve bosses without orchestration; meetings always use these settings. Separate lets the two use different default models and efforts, or turns off just one.") + (scope ? ` ${scope}` : ""));
+    const label = el("span", { className: "s-label" }, split ? [SCENES[scene], tip]
+      : [L(`${SCENES.task}、${SCENES.discussion}`, `${SCENES.task}, ${SCENES.discussion}`), tip]);
     const pick = (change) => changeSlot(provider, scene, change);
     // Turning a CLI off for both scenes asks first when it drops settings.
     const off = () => (scene ? pick({ enabled: false }) : setProviderEnabled(provider, false));
 
     if (!current.enabled) {
-      return [el("div", { className: "member-row" }, label, el("div", { className: "member-line" },
+      return [el("div", { className: "s-row" }, label, el("div", { className: "s-control" },
         el("select", {
           className: "member-model",
           dataset: { focusKey: `${key}/model` },
@@ -47,7 +47,7 @@
       ...(model && !offered.includes(model) ? [el("option", { value: model, selected: true, disabled: true }, L(`${model}（不在可用模型里）`, `${model} (not available)`))] : []),
       ...offered.map((m) => el("option", { value: m, selected: m === model }, m === native.model ? L(`${m}（CLI 当前设置）`, `${m} (CLI current)`) : m)),
     ];
-    const modelLine = el("div", { className: "member-line" },
+    const modelLine = el("div", { className: "s-control" },
       el("select", {
         className: "member-model",
         dataset: { focusKey: `${key}/model` },
@@ -70,7 +70,7 @@
         }, "↺")
         : el("span", { className: "member-reset-slot" }));
 
-    return [el("div", { className: "member-row" }, label, modelLine, slotEffortLine({ provider, scene, current, model, key, pick }))];
+    return [el("div", { className: "s-row" }, label, modelLine, slotEffortLine({ provider, scene, current, model, key, pick }))];
   }
 
   // What the pool row reads: scenes of an older file can still hold lists of their own.
@@ -97,8 +97,8 @@
     // Hidden and no longer listed models neither count nor survive an edit of the list.
     const chosen = pool?.filter((id) => all.includes(id));
     const open = S.pickerOpen === key;
-    const rows = [el("div", { className: "member-row" },
-      el("span", { className: "member-scene" }, L("可用模型", "Available models")),
+    const rows = [el("div", { className: "s-row" },
+      el("span", { className: "s-label" }, L("可用模型", "Available models")),
       el("button", {
         type: "button",
         className: "member-list",
@@ -184,17 +184,17 @@
   function renderInteractive(provider) {
     const runtime = INTERACTIVE[provider];
     if (!runtime || (provider === "antigravity" && AN.shellOS?.() === "windows")) return null;
-    return el("div", { className: "member-row member-runtime" },
-      el("label", { className: "member-interactive" },
-        el("input", {
-          type: "checkbox",
-          className: "switch-input",
-          dataset: { focusKey: `${provider}/interactive` },
-          checked: S.limitDoc?.[runtime.key] === true,
-          disabled: S.busy || !S.limitDoc || Boolean(S.limitError),
-          onChange: (e) => setInteractive(runtime.key, e.target.checked),
-        }), textNode(L("交互模式运行", "Run interactively")),
-        settingTip(runtime.tip())));
+    return el("div", { className: "s-row member-runtime" },
+      el("label", { className: "s-label", htmlFor: `${provider}-interactive` }, textNode(L("交互模式运行", "Run interactively")), settingTip(runtime.tip())),
+      el("input", {
+        type: "checkbox",
+        id: `${provider}-interactive`,
+        className: "switch-input",
+        dataset: { focusKey: `${provider}/interactive` },
+        checked: S.limitDoc?.[runtime.key] === true,
+        disabled: S.busy || !S.limitDoc || Boolean(S.limitError),
+        onChange: (e) => setInteractive(runtime.key, e.target.checked),
+      }));
   }
 
   function deepSeekRouteRows() {
@@ -207,8 +207,8 @@
           : !Object.hasOwn(options, "provider") && !Object.hasOwn(options, "stored_credentials") ? "default" : "custom";
         const label = L(`${model} 的连接方式`, `Connection for ${model}`);
         const tip = L("仅指定此模型时生效，适用于任务、会议和工位；场景自定义参数或调用方显式参数优先。账号方式使用 DeepSeek Harness 已登录的账号。", "Applies when this model is selected for tasks, meetings and seats. Scene overrides and explicit call options take precedence. Account uses the signed-in DeepSeek Harness account.");
-        return el("div", { className: "member-row" },
-          el("span", { className: "member-scene" }, label, settingTip(tip)),
+        return el("div", { className: "s-row" },
+          el("span", { className: "s-label" }, label, settingTip(tip)),
           el("select", { className: "member-model", dataset: { focusKey: `deepseek/route/${model}` },
             "aria-label": label, onChange: (e) => setDeepSeekRoute(model, e.target.value) },
             el("option", { value: "default", selected: route === "default" }, L("沿用 CLI 设置", "Follow CLI settings")),
@@ -351,9 +351,9 @@
         isDirty ? el("span", { className: "badge badge-warning" }, L("未保存", "Unsaved")) : null),
       renderCliUpdate(provider));
 
-    const splitRow = enabled ? el("div", { className: "member-row" },
-      el("span", { className: "member-scene" }, L("场景设置", "Scenes")),
-      el("div", { className: "member-line" },
+    const splitRow = enabled ? el("div", { className: "s-row" },
+      el("span", { className: "s-label" }, L("场景设置", "Scenes")),
+      el("div", { className: "s-control" },
         el("div", { className: "segment-control", role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`) },
           [[false, L("一起设置", "Together")], [true, L("分开设置", "Separate")]].map(([value, text]) => el("button", {
             type: "button",
@@ -410,7 +410,7 @@
       ? [active.selectionStart, active.selectionEnd] : null;
     const cards = document.createDocumentFragment();
     const missing = [];
-    cards.appendChild(renderCliUpdateSummary());
+    $("cli-update-info").replaceChildren(renderCliUpdateSummary());
 
     const saved = confirmScenes(JSON.parse(S.savedSnapshot || JSON.stringify(S.currentDoc)));
     const current = confirmScenes(structuredClone(S.currentDoc));
@@ -451,7 +451,7 @@
         : el("div", { className: "detail-empty member-muted" }, L("暂无可用员工", "No employees available"));
 
       const detailPane = el("div", { className: "members-detail-pane" }, detailContent);
-      cards.appendChild(el("div", { className: "cli-card members-split" }, listPane, detailPane));
+      cards.appendChild(el("div", { className: "members-split" }, listPane, detailPane));
     }
 
     if (missing.length) cards.appendChild(renderMissingClis(missing));
@@ -622,7 +622,7 @@
     else if (levels.length === 1) effortLine = el("span", { className: "member-muted" }, L(`只有 ${levels[0]} 一档`, `Only ${levels[0]}`));
     else if (levels.length > 1) {
       const shown = current.effort || (levels.includes(cli) ? cli : null);
-      effortLine = el("div", { className: "member-line" },
+      effortLine = el("div", { className: "s-control" },
         el("div", { className: "segment-control member-efforts", role: "radiogroup", "aria-label": L("思考档位", "Effort") },
           levels.map((level) => el("button", {
             type: "button",

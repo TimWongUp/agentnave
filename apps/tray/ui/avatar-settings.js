@@ -2,7 +2,7 @@
 (function () {
   const { h, art, L } = AN;
   const root = document.getElementById("avatar-settings");
-  const status = h("p", { role: "status" });
+  const status = document.getElementById("notice") || h("p", { role: "status" });
   // Upload order the tray expects: s and m carry every frame, heads (h) only the seven moods.
   const FRAMES = [
     ...["s", "m"].flatMap((size) => [...art.STATES, ...art.EXTRA].map((state) => `${size}/${state}`)),
@@ -11,7 +11,7 @@
   let busy = false, replaced = {}, packs = {}, packsLoaded = false, pollTimer = 0;
   let styleChoice = document.documentElement.dataset.characterStyle || "static";
   const refreshers = [];
-  const videoBox = h("div.video-packs");
+  const videoBox = h("div.s-card");
   const megabytes = (bytes) => `${((bytes || 0) / 1048576).toFixed(1)} MB`;
 
   const PROMPT_TEMPLATE = `2D flat cel-shaded chibi anime character sprite, full body, front-facing, centered in a 1024x1024 square canvas, true transparent background (RGBA PNG).
@@ -170,11 +170,11 @@ print("Done ->", out_dir)`;
       "Video characters continuously decode alpha video while the office window is open, using ~150–300 MB more memory and extra GPU/CPU than CSS characters (544p uses roughly twice as much as 272p); decoders are released automatically when the window is hidden, scrolled offscreen, or Reduce motion is on.",
     );
     const tip = h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tipText }, "?");
-    const rows = [h("div.setting-row", {}, h("div.video-pack-info", {}, h("h2", {}, label), tip), control)];
+    const rows = [h("div.s-row", {}, h("span.s-label", {}, label, tip), control)];
     for (const [tier, title] of [["272", L("272p 视频包", "272p video pack")], ["544", L("544p 高清视频包", "544p HD video pack")]]) {
       const pack = packs[tier] || {};
       const activeDl = ["downloading", "extracting"].includes(pack.download?.state);
-      const actions = h("div.video-pack-actions");
+      const actions = h("div.s-control");
       if (activeDl) {
         const cancel = h("button", { type: "button", disabled: busy }, L("取消下载", "Cancel"));
         cancel.addEventListener("click", () => void packAction(tier, "cancel", L("已取消下载", "Download cancelled")));
@@ -194,8 +194,8 @@ print("Done ->", out_dir)`;
           actions.append(del);
         }
       }
-      const badge = h(`span.video-pack-status${pack.download?.state === "failed" ? ".bad" : ""}`, {}, packStatusText(pack, tier));
-      rows.push(h("div.setting-row.video-pack-row", {}, h("div.video-pack-info", {}, h("h2", {}, title), badge), actions));
+      const badge = h(`span.video-pack-status.s-muted${pack.download?.state === "failed" ? ".bad" : ""}`, {}, packStatusText(pack, tier));
+      rows.push(h("div.s-row.video-pack-row", {}, h("span.s-label", {}, title), h("div.s-control", {}, badge, actions)));
     }
     videoBox.replaceChildren(...rows);
   }
@@ -243,7 +243,7 @@ print("Done ->", out_dir)`;
     await art.charactersChanged();
   }
   function editor(family, label) {
-    const row = h("div.avatar-editor");
+    const row = h("div.s-row.avatar-editor");
     const face = h("span.char-preview");
     const input = h("input", { type: "file", webkitdirectory: "", multiple: true, hidden: true, "aria-label": L(`选择${label}小人文件夹`, `Choose ${label} character folder`) });
     const upload = h("button", { type: "button" }, L("更换小人", "Replace character"));
@@ -264,9 +264,8 @@ print("Done ->", out_dir)`;
     reset.addEventListener("click", () => run(() => send(family, new Blob([])), L(`${label} 已恢复默认小人`, `Restored default character for ${label}`)));
     refreshers.push(update);
     update();
-    row.append(face, h("div.avatar-side", {},
-      h("div.avatar-name", {}, Avatars.create("family", family, ""), h("span.avatar-label", {}, label)),
-      h("div.avatar-actions", {}, upload, reset)), input);
+    row.append(h("span.s-label", {}, Avatars.create("family", family, ""), label),
+      h("div.s-control", {}, face, upload, reset), input);
     return row;
   }
   function copyBox(codeText, btnLabel) {
@@ -311,8 +310,9 @@ print("Done ->", out_dir)`;
   const guideDialog = buildGuideDialog();
   const guideBtn = h("button.char-guide-btn", { type: "button" }, L("自制与更换指南", "DIY & replace guide"));
   guideBtn.addEventListener("click", () => guideDialog.showModal?.());
-  const grid = h("div.avatar-grid");
-  root.append(status, h("h2", {}, L("小人动画", "Character animation")), videoBox, h("div.avatar-section-head", {}, h("h2", {}, L("CSS 小人（按模型家族更换）", "CSS characters (per model family)")), guideBtn), grid, guideDialog);
+  const grid = h("div.s-card");
+  root.append(h("div.s-group", {}, h("h2.s-title", {}, L("小人动画", "Character animation")), videoBox),
+    h("div.s-group", {}, h("h2.s-title", {}, L("CSS 小人（按模型家族更换）", "CSS characters (per model family)"), h("span.s-title-aside", {}, guideBtn)), grid), guideDialog);
   renderVideoPacks();
   void loadPacks();
   fetch("/app/preferences", { cache: "no-store" }).then((r) => (r.ok ? r.json() : {})).then((data) => {

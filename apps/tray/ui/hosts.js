@@ -298,31 +298,31 @@ function renderBanner() {
   const el = $("svc-banner");
   const svc = S.data.service;
   el.hidden = false;
-  el.className = "banner service";
+  el.className = "s-alert is-warn";
   el.setAttribute("role", "status");
   if (S.install.busy) {
-    el.classList.add("busy");
+    el.classList.replace("is-warn", "is-run");
     el.replaceChildren(
       h(
-        "div.banner-content",
+        "div.s-alert-body",
         {},
         h("strong", {}, L("正在安装本机服务…", "Installing local service…")),
         h("p", {}, L("从 GitHub 安装，约需一分钟。可以先看看下面检测到的应用。", "Installing from GitHub (~1 min). You can check the detected apps below in the meantime.")),
       ),
-      h("div.banner-actions", {}, spinBtn(L("安装中…", "Installing…"), ".primary")),
+      h("div.s-alert-actions", {}, spinBtn(L("安装中…", "Installing…"), ".primary")),
     );
   } else if (S.install.error) {
-    el.className = "banner error";
+    el.className = "s-alert is-bad";
     el.setAttribute("role", "alert");
     el.replaceChildren(
       h(
-        "div.banner-content",
+        "div.s-alert-body",
         {},
         h("strong", {}, L("安装本机服务失败", "Failed to install local service")),
         h("p", {}, S.install.error),
       ),
       h(
-        "div.banner-actions",
+        "div.s-alert-actions",
         {},
         copyButton(S.data.service.command, L("复制命令", "Copy command")),
         button(L("重试", "Retry"), "", "install", installSvc),
@@ -332,9 +332,9 @@ function renderBanner() {
     const title = L("请安装或更新本机服务", "Install or update local service");
     const desc = L("boss 统一通过 agentnave-mcp 启动 AgentNave，保存任务与协作历史。旧版服务需要先升级。", "Bosses start AgentNave via agentnave-mcp to save task and collaboration history. Older services must be upgraded first.");
     el.replaceChildren(
-      h("div.banner-content", {}, h("strong", {}, title), h("p", {}, desc)),
+      h("div.s-alert-body", {}, h("strong", {}, title), h("p", {}, desc)),
       h(
-        "div.banner-actions",
+        "div.s-alert-actions",
         {},
         copyButton(S.data.service.command, L("复制命令", "Copy command")),
         button(
@@ -382,8 +382,8 @@ function renderCallout() {
     S.batch,
   );
   el.replaceChildren(
-    h("div.callout-text", {}, h("strong", {}, title), h("small", {}, sub)),
-    h("div.banner-actions", {}, go, ignore),
+    h("div.s-alert-body", {}, h("strong", {}, title), h("small", {}, sub)),
+    h("div.s-alert-actions", {}, go, ignore),
   );
 }
 
@@ -449,17 +449,15 @@ function renderSummary() {
 function renderBackups() {
   const b = S.data.backups;
   $("backups-line").replaceChildren(
-    h(
-      "span",
-      {},
-      b.config || b.skill
-        ? L(`备份：配置文件 ${b.config} 份、Skill 文件 ${b.skill} 份`, `Backups: ${b.config} config, ${b.skill} Skill`)
-        : L("备份：还没有", "Backups: None yet"),
-    ),
-    h("span.sep", { "aria-hidden": "true" }, "·"),
-    pathRow(b.dir),
-    button(L("打开备份目录", "Open backup folder"), "", "reveal", async () => { try { const r = await post("/app/hosts/reveal-backups"); say(r.message, !r.ok); } catch { say(L("无法打开备份目录", "Failed to open backup folder"), true); } }),
-  );
+    h("div.s-row", {},
+      h("span.s-label", {}, L("备份", "Backups")),
+      h("div.s-control", {},
+        h("span.s-value", {},
+          b.config || b.skill
+            ? L(`配置文件 ${b.config} 份、Skill 文件 ${b.skill} 份`, `${b.config} config, ${b.skill} Skill`)
+            : L("还没有", "None yet")),
+        pathRow(b.dir),
+        button(L("打开备份目录", "Open backup folder"), "", "reveal", async () => { try { const r = await post("/app/hosts/reveal-backups"); say(r.message, !r.ok); } catch { say(L("无法打开备份目录", "Failed to open backup folder"), true); } }))));
 }
 
 // ---------------------------------------------------------------- host list and detail
@@ -494,9 +492,9 @@ function entryNode(host) {
 
 // One aligned row: the label in the left column, what it holds on the right.
 function detailRow(label, ...content) {
-  return h("div.member-row.host-row", {},
-    h("span.member-scene", {}, label),
-    h("div.member-line", {}, ...content.filter(Boolean)));
+  return h("div.s-row.host-row", {},
+    h("span.s-label", {}, label),
+    h("div.s-control", {}, ...content.filter(Boolean)));
 }
 
 function advRows(host) {
@@ -773,9 +771,9 @@ function hostCliRow(host) {
     }
     renderAll();
   });
-  return h("div.member-row.host-row.hc-hostcli", {},
-    h("span.member-scene", {}, label, h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tip }, "?")),
-    h("div.member-line", {}, select));
+  return h("div.s-row.host-row.hc-hostcli", {},
+    h("span.s-label", {}, label, h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tip }, "?")),
+    h("div.s-control", {}, select));
 }
 
 // Why a reload is required; the per-copy instructions below the title say how to reopen.
@@ -827,12 +825,12 @@ function copyRow(host, copy) {
           S.focus = { id, act: "copy-cancel" };
           renderAll();
         }, Boolean(busy) || S.updating || S.copyConfirm?.id === id);
-  const label = h("span.member-scene", {}, COPY_KIND[copy.kind] || copy.kind,
+  const label = h("span.s-label", {}, COPY_KIND[copy.kind] || copy.kind,
     ["daemon", "gateway"].includes(copy.kind) &&
       AN.settings.settingTip(L("这是应用在后台常驻的进程，关掉窗口也不会退出；它重启后才会用上新配置。", "This is the app’s resident background process; closing the window doesn’t stop it, and it only picks up the new config after a restart.")));
-  return h("div.member-row.host-row.host-copy-row", {},
+  return h("div.s-row.host-row.host-copy-row", {},
     label,
-    h("div.member-line", {},
+    h("div.s-control", {},
       h("div.host-copy-body", {},
         (which || since) && h("p.host-text", {}, which && h("strong", {}, which),
           since && h("span.hc-since", {}, which ? L(` · ${since}${/\d$/.test(since) ? " " : ""}启动`, ` · started ${since}`) : L(`${since}${/\d$/.test(since) ? " " : ""}启动`, `started ${since}`))),
@@ -923,7 +921,7 @@ function renderCards() {
   const hosts = orderedHosts();
   const current = selectedHost();
   box.replaceChildren(
-    h("div.cli-card.members-split", {},
+    h("div.members-split", {},
       h("div.members-list-pane", {},
         h("div.members-list-items", { role: "group", "aria-label": L("boss 列表", "Bosses") },
           ...hosts.map((host) => listRow(host, host.id === current.id)))),
@@ -957,13 +955,13 @@ function renderOthers() {
   });
   $("host-others").replaceChildren(
     h("div.cli-missing", {}, toggle,
-      S.othersOpen && h("div.host-others-list", {},
-        absent.length > 0 && h("div.member-row.host-row", {},
-          h("span.member-scene", {}, L("未安装", "Not installed")),
-          h("div.member-line.others-list", {}, ...absent.map((x) => h("span.others-item", {}, h("span.others-icon", {}, AN.hostTile(x.mark, x.label)), x.label)))),
-        h("div.member-row.host-row", {},
-          h("span.member-scene", {}, L("其他支持 MCP 的 Agent", "Other MCP agents")),
-          h("div.member-line", {},
+      S.othersOpen && h("div.s-card.host-others-list", {},
+        absent.length > 0 && h("div.s-row.host-row", {},
+          h("span.s-label", {}, L("未安装", "Not installed")),
+          h("div.s-control.others-list", {}, ...absent.map((x) => h("span.others-item", {}, h("span.others-icon", {}, AN.hostTile(x.mark, x.label)), x.label)))),
+        h("div.s-row.host-row", {},
+          h("span.s-label", {}, L("其他支持 MCP 的 Agent", "Other MCP agents")),
+          h("div.s-control", {},
             !launcher && h("span.fine", {}, S.install.busy ? L("正在安装本机服务…", "Installing local service…") : L("需先安装本机服务", "Install local service first")),
             copy)))));
 }

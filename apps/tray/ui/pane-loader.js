@@ -7,7 +7,7 @@
 {
   const { h, L, art } = AN;
   const CONTENT = {
-    general: "general-prefs", hosts: "host-cards", members: "cli-cards", orchestration: "orchestration-effect",
+    general: "general-main", hosts: "host-cards", members: "cli-cards", orchestration: "rule-files",
     avatars: "avatar-settings", voice: "voice-settings", storage: "storage-settings", advanced: "skill-list",
   };
   const CHARACTER = "deepseek";

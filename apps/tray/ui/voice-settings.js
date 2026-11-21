@@ -62,9 +62,10 @@
     return choiceButtons(label, config[field], choices,
       value => save({ [field]: value, ...(field === "engine" ? { voices: {} } : {}) }), disabled);
   }
-  const row = (label, control, extraClass = "") => h(`div.setting-row${extraClass}`, {}, h("h2", {}, label), control);
+  const row = (label, control, extraClass = "") => h(`div.s-row${extraClass}`, {}, typeof label === "string" ? h("span.s-label", {}, label) : label, control);
   // A long editor takes the row's whole width under its label.
-  const wide = (label, control) => h("div.setting-row.voice-wide", {}, h("h2", {}, label), control);
+  const wide = (label, control) => h("div.s-row.is-stack", {}, h("span.s-label", {}, label), control);
+  const group = (title, ...rows) => h("div.s-group", {}, title ? h("h2.s-title", {}, title) : null, h("div.s-card", {}, ...rows));
   // A catalog that arrives after the engine changed belongs to the old engine and is dropped.
   async function loadVoices() {
     const engine = config.engine, usable = config.enabled && config.keys[engine];
@@ -165,7 +166,7 @@
     }
     put.addEventListener("click", () => { if (input.value.trim()) void store(input.value); });
     remove.addEventListener("click", () => store(""));
-    return row(h("label", {}, L(`${label} API 密钥`, `${label} API key`)), h("div.voice-key", {}, input, put, remove));
+    return row(h("label.s-label", {}, L(`${label} API 密钥`, `${label} API key`)), h("div.s-field", {}, input, put, remove));
   }
   // Details keeps the list anchored below its row, independent of the OS select menu placement.
   function picker(label, items, selected, pick, icon = null) {
@@ -212,10 +213,17 @@
     finally { button.disabled = false; }
   }
   const summarySave = patch => save({ summary: { ...config.summary, ...patch } });
+  // A folded group of its own, or (fold) a fold inside a row.
   function section(key, label, ...parts) {
     const previous = root.querySelector(`details[data-section="${key}"]`);
-    const box = h("details.voice-section", { "data-section": key }, h("summary", {}, label), ...parts);
+    const box = h("details.s-group", { "data-section": key }, h("summary.s-title.is-fold", {}, label), h("div.s-card", {}, ...parts));
     box.open = previous ? previous.open : key === "summary-model";
+    return box;
+  }
+  function fold(key, label, ...parts) {
+    const previous = root.querySelector(`details[data-section="${key}"]`);
+    const box = h("details.s-fold", { "data-section": key }, h("summary", {}, label), ...parts);
+    box.open = previous ? previous.open : false;
     return box;
   }
   function promptEditor(key, label, value, limit, persist, reset = false) {
@@ -277,10 +285,10 @@
       : h("button", { type: "button", disabled: busy }, account.signing_in ? L("重新打开登录页", "Reopen sign-in page") : L("登录 ChatGPT", "Sign in to ChatGPT"));
     action.addEventListener("click", () => chatgptAction(`/app/voice/chatgpt/${account.signed_in ? "sign-out" : "start"}`));
     const said = account.signed_in ? [account.user, account.plan].filter(Boolean).join(" · ") : account.signing_in ? L("等待浏览器完成登录", "Waiting for browser sign-in") : account.error || "";
-    return row(L("ChatGPT 账号", "ChatGPT account"), h("div.voice-chatgpt", {}, h("span", { title: said }, said), action));
+    return row(L("ChatGPT 账号", "ChatGPT account"), h("div.s-control", {}, h("span.s-value", { title: said }, said), action));
   }
   function summaryConnection() {
-    const base = h("input.voice-summary-url", { type: "url", value: drafts.base ?? config.summary.base_url,
+    const base = h("input", { type: "url", value: drafts.base ?? config.summary.base_url,
       placeholder: "https://api.example.com/v1", disabled: busy, "aria-label": L("摘要 API 地址", "Summary API URL") });
     const dirty = () => base.value.trim() !== config.summary.base_url;
     const put = h("button", { type: "button", disabled: busy || !dirty() }, dirty() ? L("保存", "Save") : L("已保存", "Saved"));
@@ -288,14 +296,14 @@
       drafts.base = base.value; put.disabled = busy || !dirty(); put.textContent = dirty() ? L("保存", "Save") : L("已保存", "Saved");
     });
     put.addEventListener("click", () => { drafts.base = base.value.trim(); summarySave({ base_url: drafts.base }); });
-    return row(L("摘要 API 地址", "Summary API URL"), h("div.voice-summary-input", {}, base, put));
+    return row(L("摘要 API 地址", "Summary API URL"), h("div.s-field", {}, base, put));
   }
   function summaryEffort() {
     const supported = summaryModels.find(model => model.id === config.summary.model)?.reasoning_levels || [];
     const effort = config.summary.effort || "";
     const choices = [["", L("自动（最低）", "Auto (lowest)")], ...supported.map(level => [level, level])];
     if (effort && !supported.includes(effort)) choices.push([effort, L(`${effort}（不可用）`, `${effort} (unavailable)`)]);
-    const select = h("select.voice-summary-effort", { disabled: busy, "aria-label": L("摘要努力程度", "Summary effort") });
+    const select = h("select", { disabled: busy, "aria-label": L("摘要努力程度", "Summary effort") });
     for (const [value, label] of choices)
       select.append(h("option", { value, selected: value === effort, disabled: Boolean(value) && !supported.includes(value) }, label));
     select.addEventListener("change", () => summarySave({ effort: select.value }));
@@ -311,7 +319,7 @@
       drafts.model = input.value.trim();
       summarySave({ model: drafts.model, ...(drafts.model === config.summary.model ? {} : { effort: "" }) });
     });
-    return row(L("摘要模型 ID", "Summary model ID"), h("div.voice-summary-input", {}, input, put));
+    return row(L("摘要模型 ID", "Summary model ID"), h("div.s-field", {}, input, put));
   }
   function modelSettings() {
     const enabled = h("input.switch-input", { type: "checkbox", checked: config.summary.enabled, disabled: busy, "aria-label": L("使用摘要模型", "Use summary model") });
@@ -321,7 +329,7 @@
     const summaryOff = !config.summary.enabled;
     const parts = [
       row(L("使用摘要模型", "Use summary model"), enabled),
-      row(h("span", {}, levelLabel, AN.settings.settingTip(L("朗读前让摘要模型把回答缩短：简短约一句话，标准三句以内，详细六句以内；短消息不扩写。", "Before reading aloud, the summary model shortens the answer: Short is about one sentence, Standard up to three, Detailed up to six; short messages are not padded."))), choiceButtons(levelLabel, config.summary.level, [
+      row(h("span.s-label", {}, levelLabel, AN.settings.settingTip(L("朗读前让摘要模型把回答缩短：简短约一句话，标准三句以内，详细六句以内；短消息不扩写。", "Before reading aloud, the summary model shortens the answer: Short is about one sentence, Standard up to three, Detailed up to six; short messages are not padded."))), choiceButtons(levelLabel, config.summary.level, [
         ["short", L("简短", "Short")],
         ["standard", L("标准", "Standard")],
         ["detailed", L("详细", "Detailed")],
@@ -330,14 +338,14 @@
         ["source", L("跟随原文", "Follow source")],
         ["zh", L("中文", "中文")],
         ["en", L("English", "English")],
-      ], language => summarySave({ language }), summaryOff), summaryOff ? ".disabled" : ""),
+      ], language => summarySave({ language }), summaryOff), summaryOff ? ".is-off" : ""),
       row(L("摘要平台", "Summary platform"), summarySource()),
     ];
     const provider = config.summary.provider;
     if (provider === "custom") parts.push(summaryConnection(), keyRow("summary", L("摘要", "Summary")));
     if (provider === "chatgpt") parts.push(chatgptAccount());
     if (summaryPlatform()) parts.push(keyRow(`summary:${provider}`, config.summary_platforms.find(p => p.id === provider)?.name));
-    const refresh = h("button.voice-refresh", { type: "button", disabled: busy || !config.enabled || !config.summary.enabled }, L("刷新", "Refresh"));
+    const refresh = h("button", { type: "button", disabled: busy || !config.enabled || !config.summary.enabled }, L("刷新", "Refresh"));
     refresh.addEventListener("click", async () => {
       busy = true; render();
       try { await loadSummaryModels(); status(L("摘要模型已刷新", "Summary models refreshed")); }
@@ -348,7 +356,7 @@
     const select = picker(L("摘要模型", "Summary model"), choices, config.summary.model, id => {
       drafts.model = null; summarySave({ model: id, ...(id === config.summary.model ? {} : { effort: "" }) });
     });
-    parts.push(row(L("摘要模型", "Summary model"), h("div.voice-summary-model", {}, select, refresh)), summaryEffort());
+    parts.push(row(L("摘要模型", "Summary model"), h("div.s-field", {}, select, refresh)), summaryEffort());
     if (provider !== "magpie") parts.push(manualSummaryModel());
     return section("summary-model", L("摘要模型设置", "Summary model settings"), ...parts);
   }
@@ -359,17 +367,15 @@
       disabled: busy || clearingCache || !cacheBytes,
     }, L("立即清空", "Clear now"));
     clearBtn.addEventListener("click", () => void clearCache());
-    return row(label, h("div.voice-cache", {},
+    return row(label, h("div.s-control", {},
       segments(label, "cache_limit_mb", [
         [100, "100 MB"],
         [200, "200 MB"],
         [500, "500 MB"],
         [0, L("不缓存", "No cache")],
       ]),
-      h("div.voice-cache-meta", {},
-        h("span.voice-cache-size", {}, L(`当前占用 ${formatBytes(cacheBytes)}`, `Used ${formatBytes(cacheBytes)}`)),
-        clearBtn,
-      ),
+      h("span.s-muted", {}, L(`当前占用 ${formatBytes(cacheBytes)}`, `Used ${formatBytes(cacheBytes)}`)),
+      clearBtn,
     ));
   }
   function advancedSettings() {
@@ -379,22 +385,21 @@
         value => summarySave({ prompt: value }), true)));
   }
   function persona(family, label) {
-    return section(`persona-${family}`, L("人设", "Persona"),
+    return fold(`persona-${family}`, L("人设", "Persona"),
       promptEditor(`persona-${family}`, L(`${label}人设`, `${label.trim()} persona`), config.personas[family] || "", 500,
         value => save({ personas: { ...config.personas, [family]: value } }), true));
   }
   function familySettings() {
-    const table = h("div.voice-families", {}, h("div.voice-character", {},
-      h("div.voice-family", {}, h("span"), h("span", {}, "boss")), persona("boss", "boss ")));
+    const rows = [h("div.s-row", {}, h("span.s-label", {}, "boss"), persona("boss", "boss "))];
     [...Object.entries(Avatars.families), ["default", [L("新同事", "Newcomer")]]].forEach(([family, [label]], index) => {
       const button = h("button.voice-preview", { type: "button", disabled: busy || !config.enabled || !voices.length, "aria-label": L(`试听${label}音色`, `Preview ${label} voice`) }, L("试听", "Preview"));
       button.addEventListener("click", () => preview(family, button));
       const select = picker(L(`${label}音色`, `${label} voice`), voices, config.voices[family] || voices[index % voices.length]?.id,
         id => save({ voices: { ...config.voices, [family]: id } }));
-      table.append(h("div.voice-character", {}, h("div.voice-family", {},
-        art.head(art.character("", family), "idle"), h("span", {}, label), select, button), persona(family, label)));
+      rows.push(h("div.s-row", {}, h("span.s-label", {}, art.head(art.character("", family), "idle"), label),
+        h("div.s-stack", {}, h("div.s-field", {}, select, button), persona(family, label))));
     });
-    return table;
+    return rows;
   }
   function render() {
     if (!config) return;
@@ -405,8 +410,11 @@
     chained.addEventListener("change", () => save({ continue_read: chained.checked }));
     const scopeLabel = L("朗读哪些消息", "Messages to read");
     const codeLabel = L("代码和路径", "Code and paths");
-    const parts = [
-      row(L("语音播报", "Voice playback"), enabled),
+    const cloud = config.summary.enabled
+      ? L("回答内容会发送给所选摘要平台；摘要文本会发送给所选语音引擎。", "Replies are sent to the selected summary platform; summary text is sent to the selected voice engine.")
+      : L("回答内容会发送给所选语音引擎。", "Replies are sent to the selected voice engine.");
+    const playback = [
+      row(h("span.s-label", {}, L("语音播报", "Voice playback"), AN.settings.settingTip(cloud)), enabled),
       row(L("点读后连播", "Continue reading after click"), chained),
       row(L("收听时长", "Listening duration"), segments(L("收听时长", "Listening duration"), "listen_minutes", [
         [30, L("30 分钟", "30 min")], [60, L("1 小时", "1 hour")], [120, L("2 小时", "2 hours")], [240, L("4 小时", "4 hours")], [480, L("8 小时", "8 hours")],
@@ -421,18 +429,15 @@
         ["skip", L("跳过不读", "Skip")],
         ["mention", L("说“这里有一段代码”", "Say “Here is a code block”")],
       ])),
+    ];
+    const engine = [
       row(L("引擎", "Engine"), segments(L("语音引擎", "Voice engine"), "engine", [["elevenlabs", "ElevenLabs"], ["minimax", "MiniMax"]])),
       keyRow(),
     ];
-    if (config.engine === "minimax") parts.push(row(L("地区", "Region"), segments(L("MiniMax 地区", "MiniMax region"), "minimax_region", [["cn", L("国内", "China")], ["global", L("海外", "Global")]])));
-    parts.push(row(L("语音模型", "Voice model"), picker(L("语音模型", "Voice model"), models, config.model,
-      id => save({ models: { ...config.models, [config.engine]: id } }))));
-    parts.push(cacheRow());
-    parts.push(modelSettings());
-    parts.push(h("p.voice-cloud", {}, config.summary.enabled
-      ? L("回答内容会发送给所选摘要平台；摘要文本会发送给所选语音引擎。", "Replies are sent to the selected summary platform; summary text is sent to the selected voice engine.")
-      : L("回答内容会发送给所选语音引擎。", "Replies are sent to the selected voice engine.")));
-    root.replaceChildren(...parts, h("h2.voice-group", {}, L("角色", "Characters")), familySettings(), advancedSettings());
+    if (config.engine === "minimax") engine.push(row(L("地区", "Region"), segments(L("MiniMax 地区", "MiniMax region"), "minimax_region", [["cn", L("国内", "China")], ["global", L("海外", "Global")]])));
+    engine.push(row(L("语音模型", "Voice model"), picker(L("语音模型", "Voice model"), models, config.model,
+      id => save({ models: { ...config.models, [config.engine]: id } }))), cacheRow());
+    root.replaceChildren(group(null, ...playback), group(null, ...engine), modelSettings(), group(L("角色", "Characters"), ...familySettings()), advancedSettings());
   }
   // A redraw would take the caret from a field being typed in and swallow a click between its press and release,
   // so one asked for then waits until the pointer is up and no text field holds the focus.

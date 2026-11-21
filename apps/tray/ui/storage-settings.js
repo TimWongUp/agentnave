@@ -117,12 +117,7 @@
       control.append(btn);
     }
 
-    const card = h("div.updates-card.storage-card", {},
-      h("div.storage-row", {},
-        h("h2", {}, title),
-        control,
-      ),
-    );
+    const rows = [h("div.s-row", {}, h("span.s-label", {}, title), control)];
 
     if (pendingConfirm) {
       const n = pendingConfirm.workspaces;
@@ -140,8 +135,8 @@
       }, L("确认", "Confirm"));
       confirmBtn.addEventListener("click", () => void commitRetention(pendingConfirm.days));
 
-      card.append(
-        h("div.disable-confirm.storage-confirm", {
+      rows.push(
+        h("div.disable-confirm", {
           role: "group",
           "aria-label": title,
         },
@@ -151,7 +146,7 @@
       );
     }
 
-    return h("div.updates-panel", {}, card);
+    return rows;
   }
 
   function renderDirectoryCard() {
@@ -162,23 +157,19 @@
     }, L("打开文件夹", "Open folder"));
     openBtn.addEventListener("click", () => void openFolder());
 
-    return h("div.updates-panel", {},
-      h("div.updates-card.storage-card", {},
-        h("h2", {}, title),
-        h("div.storage-dir-row", {},
-          h("div.storage-dir-info", {},
-            h("code.storage-path", {}, data.path || "—"),
-            h("span.storage-size", {}, formatBytes(data.bytes)),
-          ),
-          openBtn,
-        ),
+    return h("div.s-row", {},
+      h("span.s-label", {}, title),
+      h("div.s-control", {},
+        h("code.s-value.is-mono", {}, data.path || "—"),
+        h("span.s-muted", {}, formatBytes(data.bytes)),
+        openBtn,
       ),
     );
   }
 
   function render() {
     if (!root || !data) return;
-    root.replaceChildren(renderRetentionCard(), renderDirectoryCard());
+    root.replaceChildren(h("div.s-group", {}, h("div.s-card", {}, ...renderRetentionCard(), renderDirectoryCard())));
   }
 
   async function refresh() {
