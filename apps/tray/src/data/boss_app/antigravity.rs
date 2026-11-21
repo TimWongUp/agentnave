@@ -65,6 +65,11 @@ pub(super) fn is_desktop_record(path: &Path) -> bool {
         .components()
         .filter_map(|component| component.as_os_str().to_str())
         .collect();
+    if names.windows(2).any(|pair| {
+        pair[0] == ".gemini" && matches!(pair[1], "antigravity" | "antigravity-insiders")
+    }) {
+        return true;
+    }
     if names.last().copied() == Some("conversation_summaries.db")
         && let Some(parent) = names.iter().rev().nth(1).copied()
     {

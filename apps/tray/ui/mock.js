@@ -216,6 +216,7 @@
     codebuddy: "CodeBuddy",
     grok: "Grok",
     antigravity: "Antigravity",
+    "antigravity-desktop": "Antigravity 桌面",
     pi: "Pi",
     deepseek: "DeepSeek Harness",
   };
@@ -496,7 +497,7 @@ All checks passed!
         });
       });
       return {
-        group: `${String(gi + 1).repeat(32).slice(0, 32)}`, host, color, live: gi % 2 === 0 || states.includes("running"),
+        group: `${String(gi + 1).repeat(32).slice(0, 32)}`, host, app: host === "antigravity" ? "antigravity-desktop" : null, color, live: gi % 2 === 0 || states.includes("running"),
         convs: [{ id: `20261017-11${gi}0-${String(gi).repeat(6)}`, title: `${HOSTS[host]} 会话 ${gi + 1}`, mode: "task", specs }],
       };
     });

@@ -18,6 +18,8 @@ pub(crate) const CLAUDE_DESKTOP: &str = "claude-desktop";
 pub(crate) const CLAUDE_CLI: &str = "claude-cli";
 pub(crate) const CODEX_DESKTOP: &str = "codex-desktop";
 pub(crate) const CODEX_CLI: &str = "codex-cli";
+pub(crate) const ANTIGRAVITY_DESKTOP: &str = "antigravity-desktop";
+pub(crate) const ANTIGRAVITY_CLI: &str = "antigravity-cli";
 
 /// How much of a transcript is searched at each end; a rollout's first line is its session_meta.
 const WINDOW: u64 = 256 * 1024;
@@ -97,6 +99,7 @@ struct Found {
     homes: Option<Homes>,
     transcripts: HashMap<String, PathBuf>,
     desktop: HashSet<String>,
+    antigravity_cli: HashSet<String>,
     /// Bosses already looked for with when they missed, so gone records do not sweep on every poll
     /// while newly created transcripts still resolve once `NEGATIVE_TTL` passes.
     searched: HashMap<String, Instant>,
@@ -137,6 +140,26 @@ impl BossApps {
         let mut apps: Vec<_> = bosses
             .iter()
             .filter_map(|boss| {
+                if boss.host == "antigravity" {
+                    let app = match boss.file.as_deref() {
+                        Some(file) if antigravity::is_desktop_record(file) => ANTIGRAVITY_DESKTOP,
+                        Some(file)
+                            if file
+                                .components()
+                                .collect::<Vec<_>>()
+                                .windows(2)
+                                .any(|pair| {
+                                    pair[0].as_os_str() == ".gemini"
+                                        && pair[1].as_os_str() == "antigravity-cli"
+                                }) =>
+                        {
+                            ANTIGRAVITY_CLI
+                        }
+                        None if found.antigravity_cli.contains(&boss.key) => ANTIGRAVITY_CLI,
+                        _ => return None,
+                    };
+                    return Some((boss.workspace.clone(), app));
+                }
                 let file = transcript(boss, &found);
                 let named = file.and_then(|file| self.named_by(&boss.host, file));
                 let app = named.or_else(|| {
@@ -164,6 +187,9 @@ impl BossApps {
         let mut titles: Vec<_> = bosses
             .iter()
             .filter_map(|boss| {
+                if boss.host == "antigravity" {
+                    return None;
+                }
                 let file = transcript(boss, &found)?;
                 let title = match boss.host.as_str() {
                     "claude" => title::claude(file),
@@ -181,6 +207,13 @@ impl BossApps {
     fn refresh(&self, found: &mut Found, bosses: &[Boss], homes: impl FnOnce() -> Homes) {
         let mut missing = Vec::new();
         for boss in bosses {
+            if boss.host == "antigravity" {
+                if boss.file.is_some() || found.antigravity_cli.contains(&boss.key) {
+                    continue;
+                }
+                missing.push(boss.key.clone());
+                continue;
+            }
             if boss.file.as_ref().is_some_and(|file| file.is_file()) {
                 continue;
             }
@@ -215,10 +248,20 @@ impl BossApps {
             kept.retain(|_, at| now.duration_since(*at) < NEGATIVE_TTL);
             kept
         };
+        let mut antigravity_cli = std::mem::take(&mut found.antigravity_cli);
+        let roots = antigravity::roots(&homes);
+        for boss in bosses.iter().filter(|boss| {
+            boss.host == "antigravity" && boss.file.is_none() && missing.contains(&boss.key)
+        }) {
+            if antigravity::find_by_key(&roots, &boss.key).is_some() {
+                antigravity_cli.insert(boss.key.clone());
+            }
+        }
         for key in missing {
             searched.insert(key, now);
         }
         *found = sweep(&homes);
+        found.antigravity_cli = antigravity_cli;
         found.homes = Some(homes);
         found.searched = searched;
     }
@@ -363,7 +406,7 @@ fn bosses(connection: &rusqlite::Connection) -> Vec<Boss> {
     );
     let recorded = rows(
         "SELECT id, owner, owner_host, owner_file FROM workspaces \
-         WHERE owner_host IN ('claude', 'codex')",
+         WHERE owner_host IN ('claude', 'codex', 'antigravity')",
     );
     let replaced: HashSet<String> = recorded.iter().map(|row| row.0.clone()).collect();
     for (workspace, key, host, file) in older

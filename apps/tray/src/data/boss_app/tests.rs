@@ -157,6 +157,57 @@ fn only_known_codex_entries_are_named() {
 }
 
 #[test]
+fn antigravity_apps_follow_records_and_cached_cli_lookup() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join(".gemini/antigravity-cli");
+    write(&root.join(format!("conversations/{CODEX_SESSION}.db")), "");
+    let connection = connection();
+    for (workspace, key, file) in [
+        (
+            "desktop",
+            "desktop-key".to_owned(),
+            Some("/home/user/.gemini/antigravity/brain/id/transcript.jsonl".to_owned()),
+        ),
+        (
+            "cli",
+            "cli-key".to_owned(),
+            Some(
+                root.join("conversations/id.db")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ),
+        ("found", boss_key("antigravity", CODEX_SESSION), None),
+        ("unknown", "unknown-key".to_owned(), None),
+        (
+            "other",
+            "other-key".to_owned(),
+            Some("/elsewhere/record.db".to_owned()),
+        ),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO workspaces VALUES (?1, ?2, 'antigravity', ?3)",
+                rusqlite::params![workspace, key, file],
+            )
+            .unwrap();
+    }
+    let apps = BossApps::new();
+    let homes = || Homes {
+        other: vec![("antigravity".to_owned(), root.clone())],
+        ..Homes::default()
+    };
+    let expected = vec![
+        ("cli".to_owned(), ANTIGRAVITY_CLI),
+        ("desktop".to_owned(), ANTIGRAVITY_DESKTOP),
+        ("found".to_owned(), ANTIGRAVITY_CLI),
+    ];
+    assert_eq!(apps.of(&connection, homes), expected);
+    fs::remove_dir_all(root.join("conversations")).unwrap();
+    assert_eq!(apps.of(&connection, homes), expected);
+}
+
+#[test]
 fn a_startup_miss_is_retried_when_probed_roots_arrive() {
     let dir = tempfile::tempdir().unwrap();
     let codex = dir.path().join("codex-work");
