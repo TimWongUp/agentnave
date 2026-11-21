@@ -205,6 +205,7 @@ html.paused *, html.paused ::before, html.paused ::after { animation-play-state:
 .cli-mark.mono > img { filter: invert(1); }
 .cli-mark.claude-tile { background: #d97757 !important; }
 .cli-mark.claude-tile > img { filter: brightness(0) invert(1); }
+.cli-mark.dark-tile { background: #111 !important; }
 
 
 .voice-listen:disabled { opacity: .45; cursor: default; }
