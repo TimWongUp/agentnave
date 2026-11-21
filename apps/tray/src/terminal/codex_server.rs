@@ -304,16 +304,11 @@ impl Client {
         self.state.lock().unwrap_or_else(|p| p.into_inner()).closed
     }
 
-    fn is_connected(&self) -> bool {
+    pub(super) fn is_connected(&self) -> bool {
         self.state
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .connected
-    }
-
-    pub(super) fn generation(&self) -> u64 {
-        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.connected { state.generation } else { 0 }
     }
 
     #[cfg(test)]

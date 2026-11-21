@@ -53,7 +53,6 @@ struct RawBoss {
 struct QueuedWake {
     terminal_id: u64,
     boss_key: String,
-    generation: u64,
     thread_id: String,
     submission_id: String,
     item_keys: Vec<String>,
@@ -231,7 +230,13 @@ fn reconcile_codex_queued(
         let Some(codex) = open_codex.get(&q.terminal_id) else {
             continue;
         };
-        if codex.generation() != q.generation || links.get(&q.terminal_id) != Some(&q.boss_key) {
+        if let Some(current_boss) = links.get(&q.terminal_id)
+            && current_boss != &q.boss_key
+        {
+            continue;
+        }
+        if !links.contains_key(&q.terminal_id) || !codex.is_connected() {
+            kept.push(q);
             continue;
         }
         let raw_items = raw.get(&q.boss_key).map_or(&[][..], |b| b.items.as_slice());
@@ -326,17 +331,13 @@ fn deliver_codex(root: &Path, candidate: &Candidate, state: &mut WakeupState) ->
                 state.attempted.insert(key.clone());
                 state.failed.remove(key);
             }
-            let generation = codex.generation();
-            if generation != 0 {
-                state.queued.push(QueuedWake {
-                    terminal_id: candidate.id,
-                    boss_key: candidate.boss_key.clone(),
-                    generation,
-                    thread_id,
-                    submission_id,
-                    item_keys,
-                });
-            }
+            state.queued.push(QueuedWake {
+                terminal_id: candidate.id,
+                boss_key: candidate.boss_key.clone(),
+                thread_id,
+                submission_id,
+                item_keys,
+            });
             true
         }
         Delivery::Started => {

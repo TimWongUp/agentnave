@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -863,20 +865,17 @@ def _explicit_wait_workspaces(
     round_ids: list[str],
     manager_session_id: str | None,
 ) -> set[str | None]:
-    workspaces: set[str | None] = set()
     try:
-        key = conversations.inbox_key(manager_session_id)
+        caller = conversations.inbox_key(manager_session_id)
     except ValueError:
-        key = None
-    if key is not None:
-        workspaces.add(key)
+        caller = None
+    if caller is not None:
+        return {caller}
+    workspaces: set[str | None] = set()
+    by_invocation = conversations.invocation_workspaces()
     for handle in invocation_ids:
-        entry = conversations.task_invocations.get(handle)
-        if entry is None:
-            continue
-        record = conversations.records.get(entry[0])
-        if record is not None:
-            workspaces.add(record.state.manager_session)
+        if handle in by_invocation:
+            workspaces.add(by_invocation[handle])
     for handle in round_ids:
         try:
             round_ = conversations.round(handle)
@@ -886,6 +885,35 @@ def _explicit_wait_workspaces(
         if record is not None:
             workspaces.add(record.state.manager_session)
     return workspaces
+
+
+@contextmanager
+def _track_blocking_wait(
+    ctx: Context[Runtime],
+    *,
+    blocking_inbox: bool,
+    inbox_key: str | None,
+    explicit_wait_keys: set[str | None],
+) -> Generator[None]:
+    active_inbox_waits = _active_inbox_waits(ctx)
+    active_waits = _active_waits(ctx)
+    if blocking_inbox:
+        active_inbox_waits.add(inbox_key)
+        ctx.request_context.lifespan_context.refresh_inbox()
+    elif explicit_wait_keys:
+        for workspace in explicit_wait_keys:
+            active_waits[workspace] += 1
+        ctx.request_context.lifespan_context.refresh_inbox()
+    try:
+        yield
+    finally:
+        if blocking_inbox:
+            active_inbox_waits.discard(inbox_key)
+        for workspace in explicit_wait_keys:
+            active_waits[workspace] -= 1
+            if active_waits[workspace] <= 0:
+                del active_waits[workspace]
+        ctx.request_context.lifespan_context.refresh_inbox()
 
 
 async def _receive(
@@ -901,7 +929,6 @@ async def _receive(
     round_ids: list[str] = []
     inbox_key: str | None = None
     active_inbox_waits = _active_inbox_waits(ctx)
-    active_waits = _active_waits(ctx)
     blocking_inbox = ids is None and wait_seconds != 0
     explicit_wait_keys: set[str | None] = set()
     if ids is None:
@@ -926,14 +953,12 @@ async def _receive(
     else:
         window = wait_seconds
     deadline = time.monotonic() + window
-    if blocking_inbox:
-        active_inbox_waits.add(inbox_key)
-        ctx.request_context.lifespan_context.refresh_inbox()
-    elif explicit_wait_keys:
-        for workspace in explicit_wait_keys:
-            active_waits[workspace] += 1
-        ctx.request_context.lifespan_context.refresh_inbox()
-    try:
+    with _track_blocking_wait(
+        ctx,
+        blocking_inbox=blocking_inbox,
+        inbox_key=inbox_key,
+        explicit_wait_keys=explicit_wait_keys,
+    ):
         while True:
             timeout = min(float(window), max(0.0, deadline - time.monotonic()))
             if blocking_inbox:
@@ -984,14 +1009,6 @@ async def _receive(
         ):
             payload["next"] = runtime.ALREADY_WAITING
         return payload
-    finally:
-        if blocking_inbox:
-            active_inbox_waits.discard(inbox_key)
-        for workspace in explicit_wait_keys:
-            active_waits[workspace] -= 1
-            if active_waits[workspace] <= 0:
-                del active_waits[workspace]
-        ctx.request_context.lifespan_context.refresh_inbox()
 
 
 receive = wait
