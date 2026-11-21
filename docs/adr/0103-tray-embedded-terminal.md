@@ -1,6 +1,6 @@
 # ADR-0103：办公室里开 agent，终端与它的工作区对应
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-17
 - 修订：2026-11-18 自身修订，确立「项目 → agent → 办公室 + 右栏终端/消息」结构、中继取聊天键顺序、托盘记忆已确认工作区、Codex `--no-daemon`、右栏三格与 Claude/Codex 续接合同、预览版边界。修订：[CONTEXT.md](../../CONTEXT.md)「工作区」「项目」「Tray App」并新增「agent」；[ADR-0012](0012-tray-conversation-cleanup.md) 的托盘写入边界在终端进程上扩展；[ADR-0071](0071-cross-platform-host-readers-and-receipts.md) 的连接回执多记 boss 聊天键。不改变：会话记录、boss 编排与 [ADR-0080](0080-tray-video-loopback-http.md) 的不监听端口。
 - 修订：2026-11-19 自身修订，改「第一期不检测跨客户端占用」为能从中继看出时先确认再续接；新增 agent 显示名取 CLI 会话名、Claude 新开时预先指定会话 ID 仅用于定位会话记录、启动时按 App 外观传主题参数、重放段不应答终端查询；右栏主操作改称「结束终端」并按条件确认，终端模式左格为 boss，中栏选中框跟随右栏实际对象。修订：[CONTEXT.md](../../CONTEXT.md)「agent」补显示名规则。
@@ -8,6 +8,7 @@
 - 修订：Unix 上 Codex 的 `--no-daemon` 启动与续接由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订为进程树内私有 `app-server` + `--remote` TUI（Windows 维持 `--no-daemon`）。
 - 修订：办公室终端按账号选择与 `workspaces.owner_account` 续接、具名账号经 `/usr/bin/env CLAUDE_CONFIG_DIR=<dir>` 启动，以及独立账号登录终端边界由 [ADR-0108](0108-multi-account-isolation.md) 修订。
 - 修订：2026-11-21 自身修订，Claude 桌面端聊天不开放终端续接；Claude 与 Antigravity 桌面端聊天改为转交到新终端，由新 boss 接手工作区。
+- 修订：「终端只由用户在办公室里开」「一个 agent 同时最多挂载一个活终端」与左栏展示边界由 [ADR-0109](0109-in-app-derived-sessions.md) 修订（App 内嵌终端 boss 可直接开出一层派生会话，在左栏缩进挂在父 agent 下方并共享同时运行上限）。
 
 ## 背景
 
