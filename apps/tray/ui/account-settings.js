@@ -1,19 +1,19 @@
 "use strict";
 {
-  // Settings -> 员工 -> Claude Code named accounts (ADR-0107): each account renders as a
-  // sibling employee card after the Claude Code card. Sign-in state is read on demand and never
-  // written to disk.
+  // Settings -> 员工 -> Claude Code named accounts (ADR-0107): each account is a compact row
+  // in the employee list after Claude Code and opens its own detail view on selection. Sign-in
+  // state is read on demand and never written to disk.
 
   const S = AN.settings ||= {};
-  const { $, L, el } = S;
+  const { $, L, el, textNode } = S;
   const PROVIDER = "claude";
 
   // Where the sign-in states stand: id -> { loading } | { state } | { error }.
   const states = new Map();
   let folders = null; // Scanned candidate folders; null until loaded.
   let foldersLoading = false;
-  let editing = null; // { id, value } while an account card title is being renamed inline.
-  let removing = null; // { id, deleteDir } while the removal confirmation is open on a card.
+  let renameDraft = null; // { id, value } while the user is typing in the display-name field.
+  let removing = null; // { id, deleteDir } while the removal confirmation is open in detail.
   let busy = false;
   let login = null; // The open sign-in dialog: { dialog, session, id }.
   let addDialog = null; // The open add-account dialog state.
@@ -45,6 +45,23 @@
     return el("span", { className: "account-status" },
       el("span", { className: "badge badge-run" }, L("已登录", "Signed in")),
       detail ? el("span", { className: "member-muted", title: detail }, detail) : null);
+  }
+
+  function accountListStatus(account) {
+    void readState(account.id);
+    const healthRows = (AN.providerHealth?.rows?.(S.providerHealth || {}) || [])
+      .filter((row) => row.provider === PROVIDER && row.account === account.id);
+    const entry = states.get(account.id);
+    if (healthRows.length) {
+      const plan = entry?.state?.logged_in ? entry.state.plan : null;
+      return { text: plan ? L(`冷却中 · ${plan}`, `Cooldown · ${plan}`) : L("冷却中", "Cooldown"), tone: "warn" };
+    }
+    if (!entry || entry.loading) return { text: L("读取中…", "Reading…"), tone: "muted" };
+    if (entry.error) return { text: L("无法读取状态", "Status unavailable"), tone: "bad" };
+    if (!entry.state.logged_in) return { text: L("未登录", "Not signed in"), tone: "warn" };
+    const tag = entry.state.plan || (entry.state.method && entry.state.method !== "claude.ai"
+      ? METHODS()[entry.state.method] || entry.state.method : null);
+    return { text: tag ? L(`已登录 · ${tag}`, `Signed in · ${tag}`) : L("已登录", "Signed in"), tone: "run" };
   }
 
   async function readState(id, force = false) {
@@ -106,25 +123,12 @@
     openLogin(account, data.session);
   }
 
-  function startRename(account) {
-    if (busy) return;
-    editing = { id: account.id, value: account.label };
-    S.renderCards();
-    const input = document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label-input"]`);
-    if (input && typeof input.focus === "function") {
-      input.focus({ preventScroll: true });
-      input.select?.();
-    }
-  }
-
   async function commitRename(account, input, fromBlur = false) {
     const label = input.value.trim();
     if (!label || label === account.label) {
-      editing = null;
-      if (!fromBlur) {
-        S.renderCards();
-        document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label"]`)?.focus({ preventScroll: true });
-      }
+      renameDraft = null;
+      input.value = account.label;
+      if (!fromBlur) S.renderCards();
       return;
     }
     if (busy) return;
@@ -132,31 +136,16 @@
     input.disabled = true;
     try {
       const data = await post("/app/accounts/rename", { id: account.id, label });
-      editing = null;
+      renameDraft = null;
       take(data);
     } catch (error) {
       S.showNotice(`${L("改名失败：", "Could not rename: ")}${error.message}`, true);
       input.value = account.label;
-      editing = null;
+      renameDraft = null;
     } finally {
       busy = false;
       S.renderCards();
-      if (!fromBlur) {
-        document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label"]`)?.focus({ preventScroll: true });
-      }
     }
-  }
-
-  async function finishRenameOnBlur(account, input) {
-    if (editing?.id !== account.id) return;
-    const label = input.value.trim();
-    if (!label || label === account.label) {
-      editing = null;
-      // Defer re-render so a concurrent click on Login/Remove is not detached before firing.
-      setTimeout(() => { if (!editing) S.renderCards(); }, 150);
-      return;
-    }
-    await commitRename(account, input, true);
   }
 
   async function remove(account) {
@@ -164,6 +153,7 @@
     const data = await act(() => post("/app/accounts/remove", { id: account.id, delete_dir: deleteDir }), L("移除失败：", "Could not remove: "));
     if (!data) return;
     removing = null;
+    renameDraft = null;
     states.delete(account.id);
     take(data);
     if (data.delete_error) S.showNotice(L(`账号已移除，但目录没有删除：${data.delete_error}`, `Account removed, but its folder was not deleted: ${data.delete_error}`), true);
@@ -266,6 +256,7 @@
     }
     take(created);
     sync(created);
+    S.selectedMember = `account:${created.account.id}`;
     addDialog.dialogBusy = false;
     closeAddDialog();
     S.renderCards();
@@ -293,6 +284,7 @@
     }
     take(data);
     sync(data);
+    S.selectedMember = `account:${data.account.id}`;
     addDialog.dialogBusy = false;
     closeAddDialog();
     S.renderCards();
@@ -364,7 +356,7 @@
     void readFolders();
   }
 
-  // ------------------------------------------------------------------ cards
+  // ------------------------------------------------------------------ detail & footer controls
   function confirmRemoval(account) {
     const folder = account.managed
       ? el("label", { className: "account-delete" },
@@ -387,92 +379,83 @@
   function renderAddAccountButton() {
     return el("button", {
       type: "button",
-      className: "member-toggle account-add-btn",
+      className: "members-add-btn",
       disabled: busy || Boolean(S.accountsError),
       dataset: { focusKey: `${PROVIDER}/accounts/add` },
       onClick: openAddDialog,
-    }, L("添加账号", "Add account"));
+    }, el("span", { className: "members-add-plus", "aria-hidden": "true" }, "+"), textNode(L("添加账号", "Add account")));
   }
 
-  function accountTitle(account) {
+  function renderAccountDetail(account) {
+    void readState(account.id);
     const cliTitle = S.PROVIDER_NAMES?.[PROVIDER] || "Claude Code";
-    if (editing?.id === account.id) {
-      const input = el("input", {
-        type: "text",
-        className: "account-title-input",
-        maxlength: "40",
-        spellcheck: "false",
-        value: editing.value,
-        disabled: busy,
-        "aria-label": L("账号名称", "Account name"),
-        dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/label-input` },
-        onInput: (event) => { if (editing?.id === account.id) editing.value = event.target.value; },
-        onKeydown: (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            void commitRename(account, event.target);
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            editing = null;
-            S.renderCards();
-            document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label"]`)?.focus({ preventScroll: true });
-          }
-        },
-        onBlur: (event) => { void finishRenameOnBlur(account, event.target); },
-      });
-      return el("span", { className: "cli-name account-title-editing" },
-        L(`${cliTitle}（`, `${cliTitle} (`),
-        input,
-        L("）", ")"));
-    }
-    const display = L(`${cliTitle}（${account.label}）`, `${cliTitle} (${account.label})`);
-    return el("button", {
-      type: "button",
-      className: "cli-name account-title-btn",
-      disabled: busy,
-      dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/label` },
-      title: L("点击修改账号名称", "Click to rename"),
-      "aria-label": L(`${display}，点击修改账号名称`, `${display}, click to rename`),
-      onClick: () => startRename(account),
-    }, el("span", { className: "account-title-text" }, display),
-       el("span", { className: "account-title-pencil", "aria-hidden": "true" }, "✎"));
-  }
-
-  function accountCard(account) {
-    const cliTitle = S.PROVIDER_NAMES?.[PROVIDER] || "Claude Code";
+    const displayTitle = L(`${cliTitle}（${account.label}）`, `${cliTitle} (${account.label})`);
     const signedIn = states.get(account.id)?.state?.logged_in;
-    const head = el("div", { className: "account-head" },
+    const inputId = `account-label-${account.id}`;
+    const value = renameDraft?.id === account.id ? renameDraft.value : account.label;
+
+    const head = el("div", { className: "detail-head" },
       el("div", { className: "member-title" },
         el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(PROVIDER, cliTitle)),
-        accountTitle(account)),
-      statusLine(account.id),
-      el("button", {
-        type: "button",
-        className: "member-toggle account-action-login",
-        disabled: busy,
-        dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/login` },
-        onClick: () => void act(() => startLogin(account), L("无法打开登录终端：", "Could not open the sign-in terminal: ")),
-      }, signedIn ? L("重新登录", "Sign in again") : L("登录", "Sign in")),
-      el("button", {
-        type: "button",
-        className: "member-toggle account-action-remove",
-        disabled: busy || removing !== null,
-        dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/remove` },
-        onClick: () => { removing = { id: account.id, deleteDir: false }; S.renderCards(); },
-      }, L("移除", "Remove")));
+        el("span", { className: "cli-name", title: displayTitle }, displayTitle)));
+
+    const loginBtn = el("button", {
+      type: "button",
+      className: "member-toggle account-action-login",
+      disabled: busy,
+      dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/login` },
+      onClick: () => void act(() => startLogin(account), L("无法打开登录终端：", "Could not open the sign-in terminal: ")),
+    }, signedIn ? L("重新登录", "Sign in again") : L("登录", "Sign in"));
+
+    const nameInput = el("input", {
+      id: inputId,
+      type: "text",
+      className: "account-detail-input",
+      maxlength: "40",
+      spellcheck: "false",
+      value,
+      disabled: busy,
+      dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/label-input` },
+      onInput: (event) => { renameDraft = { id: account.id, value: event.target.value }; },
+      onKeydown: (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void commitRename(account, event.target);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          renameDraft = null;
+          event.target.value = account.label;
+          event.target.blur?.();
+        }
+      },
+      onBlur: (event) => { void commitRename(account, event.target, true); },
+    });
+
+    const rows = el("div", { className: "detail-rows" },
+      el("div", { className: "member-row" },
+        el("span", { className: "member-scene" }, L("登录状态", "Sign-in status")),
+        el("div", { className: "account-detail-status" }, statusLine(account.id), loginBtn)),
+      el("div", { className: "member-row" },
+        el("label", { className: "member-scene", htmlFor: inputId }, L("显示名", "Display name")),
+        el("div", { className: "member-line" }, nameInput)),
+      S.accountsError ? el("p", { className: "member-error" }, S.accountsError) : null);
+
+    const foot = el("div", { className: "detail-foot" },
+      removing?.id === account.id ? confirmRemoval(account) : null,
+      el("div", { className: "detail-foot-actions" },
+        el("button", {
+          type: "button",
+          className: "member-toggle account-action-remove",
+          disabled: busy || removing !== null,
+          dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/remove` },
+          onClick: () => { removing = { id: account.id, deleteDir: false }; S.renderCards(); },
+        }, L("移除", "Remove"))));
+
     return el("div", {
-      className: "cli-card member-card account-card",
+      className: "detail-panel account-detail",
       dataset: { provider: PROVIDER, account: account.id },
-    },
-    head,
-    removing?.id === account.id ? confirmRemoval(account) : null);
+    }, head, rows, foot);
   }
 
-  function renderAccountCards() {
-    const accounts = S.accounts || [];
-    for (const account of accounts) void readState(account.id);
-    return accounts.map(accountCard);
-  }
-
-  Object.assign(S, { renderAddAccountButton, renderAccountCards, openAddDialog });
+  Object.assign(S, { renderAddAccountButton, renderAccountDetail, accountListStatus, openAddDialog });
 }

@@ -112,6 +112,7 @@
   let permissionsError = null;
   let accounts = []; // Named accounts from accounts.json: { id, label, dir, managed }.
   let accountsError = null;
+  let providerHealth = {};
   let reviewSaves = 0; // Seats or tiers saved so far; a probe answered before a save carries old ones.
   let docVersion = 0; // Monotonic counter for save race detection
   // Keep unfinished option edits across drawer/mode changes without writing invalid values.
@@ -129,7 +130,8 @@
     permissionKeys = data.permission_keys && typeof data.permission_keys === "object" ? data.permission_keys : null;
     accounts = data.accounts?.accounts || [];
     accountsError = data.accounts?.error || null;
-    renderProviderHealth(data.provider_health || {});
+    providerHealth = data.provider_health || {};
+    renderProviderHealth(providerHealth);
     return data;
   }
 
@@ -231,18 +233,25 @@
   function renderPermission(provider) {
     if (provider === "pi") return null;
     if (FULL_ONLY[provider]) {
-      return el("span", { className: "member-tier" }, textNode(L("权限", "Permissions")), settingTip(FULL_ONLY[provider], true), el("span", {}, L("完全放开", "Full access")));
+      return el("div", { className: "member-row" },
+        el("span", { className: "member-scene" }, textNode(L("权限", "Permissions")), settingTip(FULL_ONLY[provider])),
+        el("div", { className: "member-line" }, el("span", { className: "member-muted" }, L("完全放开", "Full access"))));
     }
     const tier = permissionTier(provider);
     const tierText = (key) => TIER_TEXT[key][provider] || TIER_TEXT[key].any;
-    return el("label", { className: "member-tier", title: permissionsError },
-      textNode(L("权限", "Permissions")),
-      settingTip(L(`自动：${tierText("auto")} 完全放开：${tierText("full")} 选完立即保存。`, `Auto: ${tierText("auto")} Full access: ${tierText("full")} Saved immediately when selected.`), true),
-      el("select", {
-        dataset: { focusKey: `${provider}/tier` },
-        disabled: Boolean(permissionsError),
-        onChange: (e) => setPermissionTier(provider, e.target.value),
-      }, TIERS.map(([value, label]) => el("option", { value, selected: value === tier }, label))));
+    return el("div", { className: "member-row" },
+      el("span", { className: "member-scene" },
+        textNode(L("权限", "Permissions")),
+        settingTip(L(`自动：${tierText("auto")} 完全放开：${tierText("full")} 选完立即保存。`, `Auto: ${tierText("auto")} Full access: ${tierText("full")} Saved immediately when selected.`))),
+      el("div", { className: "member-line" },
+        el("select", {
+          className: "member-model",
+          title: permissionsError,
+          "aria-label": L("权限", "Permissions"),
+          dataset: { focusKey: `${provider}/tier` },
+          disabled: Boolean(permissionsError),
+          onChange: (e) => setPermissionTier(provider, e.target.value),
+        }, TIERS.map(([value, label]) => el("option", { value, selected: value === tier }, label)))));
   }
 
   async function apiPostMembers(doc) {
@@ -707,6 +716,7 @@
     permissionsError: [() => permissionsError],
     accounts: [() => accounts, (v) => { accounts = v; }],
     accountsError: [() => accountsError, (v) => { accountsError = v; }],
+    providerHealth: [() => providerHealth, (v) => { providerHealth = v; }],
     reviewSaves: [() => reviewSaves, (v) => { reviewSaves = v; }],
     operatedControl: [() => operatedControl, (v) => { operatedControl = v; }],
     pendingDisable: [() => pendingDisable, (v) => { pendingDisable = v; }],

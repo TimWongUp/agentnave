@@ -140,6 +140,27 @@
     return updatableClis().filter(({ provider, target }) => !cliUpdating.has(cliKey(provider, target)));
   }
 
+  function cliListVersion(provider, info) {
+    if (!info?.installed) return "";
+    const installs = cliInstallations(provider);
+    const source = provider === "codex" ? S.currentDoc.clis?.codex?.executable_source : null;
+    const active = installs.find((i) => (source ? i.id === source : i.active));
+    return cliUpdates.clis?.[provider]?.version || active?.version || info.version || "";
+  }
+
+  function hasCliUpdate(provider) {
+    const installs = cliInstallations(provider);
+    if (installs.length) return installs.some((i) => i.id === "standalone" && i.update);
+    return Boolean(cliUpdates.clis?.[provider]?.update);
+  }
+
+  function isCliUpdating(provider) {
+    for (const key of cliUpdating) {
+      if (key === provider || key.startsWith(`${provider}/`)) return true;
+    }
+    return false;
+  }
+
   function renderCliUpdateSummary() {
     const targets = updatableClis();
     const visible = targets.length >= 2 || cliBatch || cliSummary;
@@ -151,7 +172,7 @@
     } else if (!text && targets.length >= 2) {
       text = L(`${targets.length} 个 CLI 有新版本`, `${targets.length} CLIs have updates`);
     }
-    return el("div", { className: `cli-update-summary${visible ? "" : " member-hidden"}`, role: "status" },
+    return el("div", { className: "cli-update-summary", role: "status", hidden: !visible },
       el("span", {}, text),
       targets.length >= 2 ? el("button", { type: "button", disabled: !!cliBatch || !waitingClis().length,
         onClick: updateAllClis }, L("全部更新", "Update all")) : null);
@@ -282,7 +303,8 @@
   }
 
   Object.assign(S, {
-    cliUpdating, cliBusy, loadCliInstallCommands, loadCliUpdates, renderCliUpdate, renderCliVersion,
+    cliUpdating, cliUpdateErrors, cliBusy, loadCliInstallCommands, loadCliUpdates, renderCliUpdate, renderCliVersion,
+    cliListVersion, hasCliUpdate, isCliUpdating,
     renderCodexSource, renderCliInstallations, renderCliUpdateError, updatableClis, renderCliUpdateSummary,
     updateSingleCli, updateAllClis, renderMissingClis
   });

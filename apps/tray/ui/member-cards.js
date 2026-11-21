@@ -10,6 +10,9 @@
     sameJson, saveLimit, savedEffort, sceneEffort, setDeepSeekRoute, setInteractive, setProviderEnabled, setSplit, settingTip,
     showNotice, shownPool, slot, takeReview, textNode, unlisted, writePool
   } = S;
+
+  let selectedMember = null; // "cli:<provider>" | "account:<id>"
+
   function slotRows(provider, scene, split) {
     const current = slot(scene || "task", provider);
     const key = `${provider}/${scene || "both"}`;
@@ -219,7 +222,139 @@
       "After signing in to DeepSeek Harness, select “Signed-in account” for the chosen model and save settings; “Official API key” uses the official API route; “Follow CLI settings” leaves routing unchanged. Applies only when that model is selected."))];
   }
 
-  // One card per CLI: one row for both scenes, or one row each once split.
+  function codexSourceUnavailable() {
+    const selected = S.currentDoc.clis?.codex?.executable_source || "auto";
+    if (selected === "auto") return false;
+    const installs = S.cliUpdates?.clis?.codex?.installations || [];
+    return !installs.some((install) => install.id === selected);
+  }
+
+  function providerDirty(provider, currentDoc, saved) {
+    if (!sameJson(currentDoc.clis?.[provider] ?? null, saved.clis?.[provider] ?? null)) return true;
+    return SCENE_IDS.some((s) => !sameJson(currentDoc.modes?.[s]?.[provider] ?? null, saved.modes?.[s]?.[provider] ?? null));
+  }
+
+  function cliErrors(provider, info) {
+    const conflicts = poolConflicts(provider);
+    const config = (S.configurationErrors?.() || [])
+      .filter((e) => e.provider === provider && !/不在可用模型里|Not in the available models/.test(e.message))
+      .map((e) => el("p", { className: "member-error" }, e.message));
+    const listErr = info.error ? [el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`))] : [];
+    const accountsErr = provider === "claude" && S.accountsError ? [el("p", { className: "member-error" }, S.accountsError)] : [];
+    return [...conflicts, ...config, ...listErr, ...accountsErr];
+  }
+
+  function cliStatus(provider, info, enabled) {
+    const healthRows = (AN.providerHealth?.rows?.(S.providerHealth || {}) || [])
+      .filter((row) => row.provider === provider && !row.account);
+    const updating = S.isCliUpdating?.(provider) || false;
+    const hasUpdate = S.hasCliUpdate?.(provider) || false;
+    const updateErr = Boolean(S.cliUpdateErrors?.[provider]);
+    if (!info.installed) return { text: L("未安装", "Not installed"), tone: "bad" };
+    if (updating) return { text: L("更新中…", "Updating…"), tone: "run" };
+    if (healthRows.length) return { text: L("冷却中", "Cooldown"), tone: "warn" };
+    if (info.error || updateErr) return { text: L("读取失败", "Error"), tone: "bad" };
+    if (!enabled) return { text: hasUpdate ? L("已停用 · 有更新", "Disabled · Update available") : L("已停用", "Disabled"), tone: hasUpdate ? "warn" : "muted" };
+    if (hasUpdate) return { text: L("有更新", "Update available"), tone: "warn" };
+    return { text: L("已启用", "Enabled"), tone: "run" };
+  }
+
+  function renderListRow(item, selected) {
+    const isCli = item.kind === "cli";
+    const provider = isCli ? item.provider : "claude";
+    const name = isCli ? (PROVIDER_NAMES[provider] || provider)
+      : L(`${PROVIDER_NAMES.claude || "Claude Code"}（${item.account.label}）`, `${PROVIDER_NAMES.claude || "Claude Code"} (${item.account.label})`);
+    const version = isCli ? (S.cliListVersion?.(provider, item.info) || "") : "";
+    const status = isCli ? cliStatus(provider, item.info, item.enabled)
+      : (S.accountListStatus?.(item.account) || { text: L("读取中…", "Reading…"), tone: "muted" });
+    const dimmed = isCli && !item.enabled && !selected;
+
+    return el("button", {
+      type: "button",
+      className: `member-list-item${selected ? " is-selected" : ""}${dimmed ? " is-off" : ""}${isCli ? "" : " is-account"}`,
+      "aria-pressed": String(selected),
+      dataset: {
+        focusKey: `select/${item.key}`,
+        memberKey: item.key,
+        provider,
+        ...(isCli ? {} : { account: item.account.id }),
+      },
+      onClick: () => {
+        if (selectedMember === item.key) return;
+        selectedMember = item.key;
+        S.pendingDisable = null;
+        S.renderCards();
+      },
+    },
+    el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
+    el("span", { className: "member-item-body" },
+      el("span", { className: "member-item-top" },
+        el("span", { className: "member-item-name", title: name }, name),
+        version ? el("span", { className: "member-item-version" }, version) : null,
+        item.hasError ? el("span", { className: "member-item-flag is-error", title: L("有配置错误", "Configuration error"), "aria-label": L("有配置错误", "Configuration error") }, "!") : null,
+        item.isDirty ? el("span", { className: "member-item-flag is-dirty", title: L("有未保存的修改", "Unsaved changes"), "aria-label": L("有未保存的修改", "Unsaved changes") }) : null),
+      el("span", { className: "member-item-status" },
+        el("span", { className: `member-status-dot tone-${status.tone}`, "aria-hidden": "true" }),
+        el("span", { className: "member-item-status-text", title: status.text }, status.text))));
+  }
+
+  function renderCliDetail({ provider, info, enabled, isDirty }) {
+    const name = PROVIDER_NAMES[provider] || provider;
+    const split = enabled && isSplit(provider);
+    const head = el("div", { className: "detail-head" },
+      el("div", { className: "member-title" },
+        el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
+        el("span", { className: "cli-name", title: name }, name),
+        renderCliVersion(provider, info),
+        info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed")),
+        isDirty ? el("span", { className: "badge badge-warning" }, L("未保存", "Unsaved")) : null),
+      renderCliUpdate(provider));
+
+    const splitRow = enabled ? el("div", { className: "member-row" },
+      el("span", { className: "member-scene" }, L("场景设置", "Scenes")),
+      el("div", { className: "member-line" },
+        el("div", { className: "segment-control", role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`) },
+          [[false, L("一起设置", "Together")], [true, L("分开设置", "Separate")]].map(([value, text]) => el("button", {
+            type: "button",
+            role: "radio",
+            className: `segment-btn${value === split ? " active" : ""}`,
+            "aria-checked": String(value === split),
+            dataset: { focusKey: `${provider}/split/${value}` },
+            onClick: () => value !== split && setSplit(provider, value),
+          }, text))))) : null;
+
+    const slotList = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
+    const rows = el("div", { className: "detail-rows" },
+      renderCliInstallations(provider),
+      provider === "codex" ? renderCodexSource() : null,
+      splitRow,
+      ...poolRows(provider),
+      ...slotList,
+      ...cliErrors(provider, info),
+      ...(provider === "deepseek" && enabled ? deepSeekRouteRows() : []),
+      renderPermission(provider),
+      renderInteractive(provider),
+      renderCliUpdateError(provider));
+
+    const confirm = S.pendingDisable === provider
+      ? el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
+        el("p", {}, L(`移除会清除 ${name} 的默认模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
+        el("div", { className: "btn-group" },
+          el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { S.pendingDisable = null; S.renderCards(); } }, L("保留", "Keep")),
+          el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove"))))
+      : null;
+
+    const foot = el("div", { className: "detail-foot" },
+      confirm,
+      el("div", { className: "detail-foot-actions" }, renderMembership(provider, enabled)));
+
+    return el("div", {
+      className: `detail-panel${enabled ? "" : " off"}`,
+      dataset: { provider },
+    }, head, rows, foot);
+  }
+
+  // Left compact list + right detail for CLIs and Claude named accounts; uninstalled CLIs fold below.
   function renderCards() {
     const container = $("cli-cards");
     // Build off-screen: emptying the live list first clamps the document scroll position.
@@ -229,13 +364,27 @@
     const focusKey = active?.dataset.focusKey;
     const anchorTop = focusKey ? active.getBoundingClientRect().top : null;
     const cards = document.createDocumentFragment();
-    // Not installed and named by no scene or default: only in the folded list at the end.
     const missing = [];
     cards.appendChild(renderCliUpdateSummary());
-    // Employees as last saved come first; a card stays put while its switch is being changed.
-    const saved = confirmScenes(JSON.parse(S.savedSnapshot || JSON.stringify(S.currentDoc)));
-    const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
 
+    const saved = confirmScenes(JSON.parse(S.savedSnapshot || JSON.stringify(S.currentDoc)));
+    const current = confirmScenes(structuredClone(S.currentDoc));
+    const hired = (provider) => SCENE_IDS.some((s) => saved.modes?.[s]?.[provider]);
+    const items = [];
+    const accounts = S.accounts || [];
+    const addAccountItems = () => {
+      for (const account of accounts) {
+        items.push({
+          kind: "account",
+          key: `account:${account.id}`,
+          account,
+          hasError: Boolean(S.accountsError),
+          isDirty: false,
+        });
+      }
+    };
+
+    let claudePlaced = false;
     for (const provider of [...PROVIDERS].sort((a, b) => hired(b) - hired(a))) {
       const info = S.detected[provider] || { installed: false, source: "none", path: null, error: null, models: [], efforts: [] };
       const enabled = SCENE_IDS.some((s) => slot(s, provider).enabled);
@@ -244,54 +393,35 @@
         missing.push(provider);
         continue;
       }
-      const name = PROVIDER_NAMES[provider] || provider;
-      const split = enabled && isSplit(provider);
-      const head = el("div", { className: "member-head" },
-        el("div", { className: "member-title" },
-          el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(provider, name)),
-          el("span", { className: "cli-name", title: name }, name),
-          renderCliVersion(provider, info),
-          renderCliUpdate(provider),
-          info.installed ? null : el("span", { className: "badge badge-bad" }, L("未安装", "Not installed"))),
-        el("div", { className: "member-end" },
-          el("div", { className: `segment-control${enabled ? "" : " member-hidden"}`, role: "radiogroup", "aria-label": L(`${name} 的两个场景`, `Two scenes for ${name}`), "aria-hidden": enabled ? null : "true" },
-            [[false, L("一起设置", "Together")], [true, L("分开设置", "Separate")]].map(([value, text]) => el("button", {
-              type: "button",
-              role: "radio",
-              className: `segment-btn${value === split ? " active" : ""}`,
-              "aria-checked": String(value === split),
-              dataset: { focusKey: `${provider}/split/${value}` },
-              onClick: () => value !== split && setSplit(provider, value),
-            }, text))),
-          el("div", { className: "member-tail" },
-            provider === "claude" && info.installed ? S.renderAddAccountButton?.() : null,
-            renderPermission(provider) || el("span"),
-            renderMembership(provider, enabled))));
-      const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head, renderCliInstallations(provider));
-      if (S.pendingDisable === provider) {
-        card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
-          el("p", {}, L(`移除会清除 ${name} 的默认模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
-          el("div", { className: "btn-group" },
-            el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { S.pendingDisable = null; S.renderCards(); } }, L("保留", "Keep")),
-            el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove")))));
-      }
-      const rows = split ? SCENE_IDS.flatMap((s) => slotRows(provider, s, true)) : slotRows(provider, null, false);
-      if (provider === "codex") card.appendChild(renderCodexSource());
-      for (const row of [...poolRows(provider), ...rows, ...poolConflicts(provider)]) card.appendChild(row);
-      if (provider === "deepseek" && enabled) for (const row of deepSeekRouteRows()) card.appendChild(row);
-      const runtime = renderInteractive(provider);
-      if (runtime) card.appendChild(runtime);
-      if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
-      if (provider === "claude" && S.accountsError) card.appendChild(el("p", { className: "member-error" }, S.accountsError));
-      card.appendChild(renderCliUpdateError(provider));
-      cards.appendChild(card);
+      const errors = cliErrors(provider, info);
+      const hasError = errors.length > 0 || Boolean(S.cliUpdateErrors?.[provider]) || (provider === "codex" && codexSourceUnavailable());
+      const isDirty = providerDirty(provider, current, saved);
+      items.push({ kind: "cli", key: `cli:${provider}`, provider, info, enabled, hasError, isDirty });
       if (provider === "claude") {
-        for (const accountCard of S.renderAccountCards?.() || []) cards.appendChild(accountCard);
+        claudePlaced = true;
+        addAccountItems();
       }
     }
+    if (!claudePlaced && accounts.length) addAccountItems();
 
-    if (!PROVIDERS.filter((p) => (S.detected[p]?.installed || known(p, saved))).includes("claude")) {
-      for (const accountCard of S.renderAccountCards?.() || []) cards.appendChild(accountCard);
+    if (!items.some((item) => item.key === selectedMember)) {
+      selectedMember = items[0]?.key || null;
+    }
+    const selectedItem = items.find((item) => item.key === selectedMember) || null;
+    const showAddAccount = Boolean(S.detected.claude?.installed || accounts.length);
+
+    if (items.length || showAddAccount) {
+      const listPane = el("div", { className: "members-list-pane" },
+        el("div", { className: "members-list-items", role: "listbox", "aria-label": L("员工列表", "Employees") },
+          ...items.map((item) => renderListRow(item, item.key === selectedMember))),
+        showAddAccount ? el("div", { className: "members-list-footer" }, S.renderAddAccountButton?.()) : null);
+
+      const detailContent = selectedItem
+        ? (selectedItem.kind === "cli" ? renderCliDetail(selectedItem) : S.renderAccountDetail?.(selectedItem.account))
+        : el("div", { className: "detail-empty member-muted" }, L("暂无可用员工", "No employees available"));
+
+      const detailPane = el("div", { className: "members-detail-pane" }, detailContent);
+      cards.appendChild(el("div", { className: "cli-card members-split" }, listPane, detailPane));
     }
 
     if (missing.length) cards.appendChild(renderMissingClis(missing));
@@ -489,5 +619,8 @@
   Object.assign(S, {
     slotRows, poolSummary, poolRows, poolConflicts, renderInteractive, deepSeekRouteRows, renderCards, saveMembers,
     renderErrorBanner, refreshDetection, probeWhenStale, loadMembers
+  });
+  S.share({
+    selectedMember: [() => selectedMember, (v) => { selectedMember = v; }],
   });
 }
