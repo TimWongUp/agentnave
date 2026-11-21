@@ -263,7 +263,10 @@
               dataset: { focusKey: `${provider}/split/${value}` },
               onClick: () => value !== split && setSplit(provider, value),
             }, text))),
-          el("div", { className: "member-tail" }, renderPermission(provider) || el("span"), renderMembership(provider, enabled))));
+          el("div", { className: "member-tail" },
+            provider === "claude" && info.installed ? S.renderAddAccountButton?.() : null,
+            renderPermission(provider) || el("span"),
+            renderMembership(provider, enabled))));
       const card = el("div", { className: `cli-card member-card${enabled ? "" : " off"}`, dataset: { provider } }, head, renderCliInstallations(provider));
       if (S.pendingDisable === provider) {
         card.appendChild(el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
@@ -278,10 +281,17 @@
       if (provider === "deepseek" && enabled) for (const row of deepSeekRouteRows()) card.appendChild(row);
       const runtime = renderInteractive(provider);
       if (runtime) card.appendChild(runtime);
-      if (provider === "claude" && info.installed) card.appendChild(S.renderAccounts());
       if (info.error) card.appendChild(el("p", { className: "member-error" }, L(`读取模型列表失败：${info.error}`, `Failed to load model list: ${info.error}`)));
+      if (provider === "claude" && S.accountsError) card.appendChild(el("p", { className: "member-error" }, S.accountsError));
       card.appendChild(renderCliUpdateError(provider));
       cards.appendChild(card);
+      if (provider === "claude") {
+        for (const accountCard of S.renderAccountCards?.() || []) cards.appendChild(accountCard);
+      }
+    }
+
+    if (!PROVIDERS.filter((p) => (S.detected[p]?.installed || known(p, saved))).includes("claude")) {
+      for (const accountCard of S.renderAccountCards?.() || []) cards.appendChild(accountCard);
     }
 
     if (missing.length) cards.appendChild(renderMissingClis(missing));

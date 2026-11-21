@@ -1,24 +1,29 @@
 "use strict";
 {
-  // Settings -> 员工 -> Claude Code card: the named accounts (ADR-0107). Each one is a folder with
-  // its own sign-in; the default account is Claude Code as the machine has it. The sign-in state
-  // (e-mail, plan) is read on the spot, shown here and kept nowhere.
+  // Settings -> 员工 -> Claude Code named accounts (ADR-0107): each account renders as a
+  // sibling employee card after the Claude Code card. Sign-in state is read on demand and never
+  // written to disk.
 
   const S = AN.settings ||= {};
   const { $, L, el } = S;
   const PROVIDER = "claude";
 
-  // Where the sign-in states stand: id -> { loading } | { state } | { error }; "default" is the
-  // default account's.
+  // Where the sign-in states stand: id -> { loading } | { state } | { error }.
   const states = new Map();
-  let folders = null; // Folders a scan found, to offer as links; null until looked for.
-  let adding = null; // The name typed for a new account while its row is open.
-  let removing = null; // { id, deleteDir } while the removal waits for its confirmation.
+  let folders = null; // Scanned candidate folders; null until loaded.
+  let foldersLoading = false;
+  let editing = null; // { id, value } while an account card title is being renamed inline.
+  let removing = null; // { id, deleteDir } while the removal confirmation is open on a card.
   let busy = false;
   let login = null; // The open sign-in dialog: { dialog, session, id }.
+  let addDialog = null; // The open add-account dialog state.
 
   const post = async (path, body = {}) => {
-    const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" }, body: JSON.stringify(body) });
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
+      body: JSON.stringify(body),
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) throw new Error(data.error || L(`操作失败（${res.status}）`, `Failed (${res.status})`));
     return data;
@@ -30,7 +35,6 @@
     oauth_token: "OAuth Token",
   });
 
-  // The row's sign-in line: whether signed in, how, and who.
   function statusLine(id) {
     const entry = states.get(id);
     if (!entry || entry.loading) return el("span", { className: "member-muted" }, L("读取中…", "Reading…"));
@@ -56,15 +60,18 @@
   }
 
   async function readFolders() {
+    foldersLoading = true;
+    renderDialogFolders();
     try {
       folders = (await (await fetch("/app/accounts/scan", { cache: "no-store" })).json()).folders || [];
     } catch {
       folders = [];
+    } finally {
+      foldersLoading = false;
+      renderDialogFolders();
     }
-    S.renderCards();
   }
 
-  // What a change to the accounts leaves: the list as the App holds it now.
   function take(data) {
     if (data.state) {
       S.accounts = data.state.accounts || [];
@@ -99,37 +106,57 @@
     openLogin(account, data.session);
   }
 
-  async function create() {
-    const label = (adding || "").trim();
-    if (!label) return;
-    const data = await act(() => post("/app/accounts/create", { label }), L("新建失败：", "Could not create: "));
-    if (!data) return;
-    adding = null;
-    take(data);
-    sync(data);
+  function startRename(account) {
+    if (busy) return;
+    editing = { id: account.id, value: account.label };
     S.renderCards();
-    void readState(data.account.id, true);
-    await act(() => startLogin(data.account), L("无法打开登录终端：", "Could not open the sign-in terminal: "));
-  }
-
-  async function link(value) {
-    const dir = value === "pick" ? undefined : value;
-    const data = await act(() => post("/app/accounts/link", { dir }), L("关联失败：", "Could not link: "));
-    if (!data || data.cancelled) return;
-    take(data);
-    sync(data);
-    if (data.shared_sessions) {
-      S.showNotice(L(`已关联。这个目录与已有账号有 ${data.shared_sessions} 个相同的会话 ID，续接它们可能串到另一个账号`, `Linked. This folder shares ${data.shared_sessions} session IDs with another account; continuing them may cross accounts`), true);
+    const input = document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label-input"]`);
+    if (input && typeof input.focus === "function") {
+      input.focus({ preventScroll: true });
+      input.select?.();
     }
-    void readState(data.account.id, true);
   }
 
-  async function rename(account, input) {
+  async function commitRename(account, input, fromBlur = false) {
     const label = input.value.trim();
-    if (label === account.label) return;
-    const data = await act(() => post("/app/accounts/rename", { id: account.id, label }), L("改名失败：", "Could not rename: "));
-    if (data) take(data);
-    else input.value = account.label;
+    if (!label || label === account.label) {
+      editing = null;
+      if (!fromBlur) {
+        S.renderCards();
+        document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label"]`)?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    input.disabled = true;
+    try {
+      const data = await post("/app/accounts/rename", { id: account.id, label });
+      editing = null;
+      take(data);
+    } catch (error) {
+      S.showNotice(`${L("改名失败：", "Could not rename: ")}${error.message}`, true);
+      input.value = account.label;
+      editing = null;
+    } finally {
+      busy = false;
+      S.renderCards();
+      if (!fromBlur) {
+        document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label"]`)?.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  async function finishRenameOnBlur(account, input) {
+    if (editing?.id !== account.id) return;
+    const label = input.value.trim();
+    if (!label || label === account.label) {
+      editing = null;
+      // Defer re-render so a concurrent click on Login/Remove is not detached before firing.
+      setTimeout(() => { if (!editing) S.renderCards(); }, 150);
+      return;
+    }
+    await commitRename(account, input, true);
   }
 
   async function remove(account) {
@@ -171,66 +198,173 @@
     if (event.data.session === login.session) void readState(login.id, true);
   });
 
-  // ------------------------------------------------------------------ rows
-  const row = (...cells) => el("div", { className: "account-row" }, ...cells);
-
-  function headRow() {
-    const scanned = folders || [];
-    const add = el("button", {
-      type: "button", disabled: busy || adding !== null || Boolean(S.accountsError), dataset: { focusKey: `${PROVIDER}/accounts/add` },
-      onClick: () => { adding = ""; S.renderCards(); },
-    }, L("新建账号", "New account"));
-    const choose = el("select", {
-      className: "account-link", disabled: busy || Boolean(S.accountsError), dataset: { focusKey: `${PROVIDER}/accounts/link` },
-      "aria-label": L("关联已有目录", "Link an existing folder"),
-      onFocus: () => { if (folders === null) void readFolders(); },
-      onChange: (event) => { const value = event.target.value; event.target.value = ""; if (value) void link(value); },
-    },
-    el("option", { value: "", selected: true }, L("关联已有目录", "Link an existing folder")),
-    ...scanned.map((folder) => el("option", { value: folder.dir, title: folder.dir }, folder.name)),
-    el("option", { value: "pick" }, L("选择文件夹…", "Choose a folder…")));
-    return row(el("span", { className: "member-scene" }, L("账号", "Accounts")), choose, add, el("span"));
+  // ------------------------------------------------------------------ add-account dialog
+  function renderDialogFolders() {
+    if (!addDialog) return;
+    const { linkBox, dialogBusy } = addDialog;
+    if (!linkBox?.replaceChildren) return;
+    if (foldersLoading && folders === null) {
+      linkBox.replaceChildren(el("span", { className: "member-muted" }, L("扫描中…", "Scanning…")));
+      return;
+    }
+    const items = (folders || []).map((folder) => el("button", {
+      type: "button",
+      disabled: dialogBusy,
+      title: folder.dir,
+      dataset: { focusKey: `${PROVIDER}/accounts/link-folder` },
+      onClick: () => void linkFromDialog(folder.dir),
+    }, folder.name));
+    const pick = el("button", {
+      type: "button",
+      disabled: dialogBusy,
+      dataset: { focusKey: `${PROVIDER}/accounts/link-pick` },
+      onClick: () => void linkFromDialog("pick"),
+    }, L("选择文件夹…", "Choose a folder…"));
+    linkBox.replaceChildren(...items, pick);
   }
 
-  function defaultRow() {
-    return row(el("span", { className: "member-scene" }, L("默认账号", "Default")), statusLine("default"), el("span"), el("span"));
+  function setDialogBusy(nextBusy) {
+    if (!addDialog) return;
+    addDialog.dialogBusy = nextBusy;
+    const { input, submit, cancel } = addDialog;
+    input.disabled = nextBusy;
+    cancel.disabled = nextBusy;
+    submit.disabled = nextBusy || !input.value.trim();
+    submit.textContent = nextBusy ? L("创建中…", "Creating…") : L("下一步", "Continue");
+    renderDialogFolders();
   }
 
-  function accountRow(account) {
+  function setDialogError(message) {
+    if (!addDialog) return;
+    const { errorEl } = addDialog;
+    errorEl.textContent = message || "";
+    errorEl.hidden = !message;
+  }
+
+  function closeAddDialog() {
+    if (!addDialog || addDialog.dialogBusy) return;
+    const { dialog } = addDialog;
+    addDialog = null;
+    if (dialog.open) dialog.close();
+    dialog.remove();
+  }
+
+  async function createFromDialog() {
+    if (!addDialog || addDialog.dialogBusy || busy) return;
+    const label = addDialog.input.value.trim();
+    if (!label) return;
+    setDialogError("");
+    setDialogBusy(true);
+    let created;
+    try {
+      created = await post("/app/accounts/create", { label });
+    } catch (error) {
+      setDialogBusy(false);
+      setDialogError(`${L("新建失败：", "Could not create: ")}${error.message}`);
+      addDialog?.input.focus?.();
+      return;
+    }
+    take(created);
+    sync(created);
+    addDialog.dialogBusy = false;
+    closeAddDialog();
+    S.renderCards();
+    void readState(created.account.id, true);
+    await act(() => startLogin(created.account), L("无法打开登录终端：", "Could not open the sign-in terminal: "));
+  }
+
+  async function linkFromDialog(value) {
+    if (!addDialog || addDialog.dialogBusy || busy) return;
+    const dir = value === "pick" ? undefined : value;
+    const label = addDialog.input.value.trim();
+    setDialogError("");
+    setDialogBusy(true);
+    let data;
+    try {
+      data = await post("/app/accounts/link", { ...(dir ? { dir } : {}), ...(label ? { label } : {}) });
+    } catch (error) {
+      setDialogBusy(false);
+      setDialogError(`${L("关联失败：", "Could not link: ")}${error.message}`);
+      return;
+    }
+    if (data.cancelled) {
+      setDialogBusy(false);
+      return;
+    }
+    take(data);
+    sync(data);
+    addDialog.dialogBusy = false;
+    closeAddDialog();
+    S.renderCards();
+    if (data.shared_sessions) {
+      S.showNotice(L(`已关联。这个目录与已有账号有 ${data.shared_sessions} 个相同的会话 ID，续接它们可能串到另一个账号`, `Linked. This folder shares ${data.shared_sessions} session IDs with another account; continuing them may cross accounts`), true);
+    }
+    void readState(data.account.id, true);
+  }
+
+  function openAddDialog() {
+    if (busy || S.accountsError) return;
+    if (addDialog) return;
     const input = el("input", {
-      type: "text", className: "account-label", maxlength: "40", spellcheck: "false", value: account.label,
-      "aria-label": L("账号名称", "Account name"), dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/label` },
-      disabled: busy,
-      onChange: (event) => void rename(account, event.target),
+      id: "account-add-name",
+      type: "text",
+      maxlength: "40",
+      spellcheck: "false",
+      placeholder: L("例如：工作、个人", "e.g. Work, Personal"),
+      dataset: { focusKey: `${PROVIDER}/accounts/new` },
+      onInput: () => {
+        if (!addDialog) return;
+        setDialogError("");
+        addDialog.submit.disabled = addDialog.dialogBusy || !input.value.trim();
+      },
     });
-    const signedIn = states.get(account.id)?.state?.logged_in;
-    return row(input, statusLine(account.id),
-      el("button", {
-        type: "button", disabled: busy, dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/login` },
-        onClick: () => void act(() => startLogin(account), L("无法打开登录终端：", "Could not open the sign-in terminal: ")),
-      }, signedIn ? L("重新登录", "Sign in again") : L("登录", "Sign in")),
-      el("button", {
-        type: "button", disabled: busy || removing !== null, dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/remove` },
-        onClick: () => { removing = { id: account.id, deleteDir: false }; S.renderCards(); },
-      }, L("移除", "Remove")));
-  }
-
-  function addRow() {
-    const input = el("input", {
-      type: "text", className: "account-label", maxlength: "40", spellcheck: "false", value: adding,
-      "aria-label": L("账号名称", "Account name"), placeholder: L("账号名称", "Account name"), dataset: { focusKey: `${PROVIDER}/accounts/new` },
-      disabled: busy,
-      onInput: (event) => { adding = event.target.value; submit.disabled = busy || !adding.trim(); },
-      onKeydown: (event) => { if (event.key === "Enter" && adding.trim()) void create(); },
-    });
+    const form = el("form", {
+      id: "account-add-form",
+      className: "account-add-form",
+      onSubmit: (event) => {
+        event.preventDefault();
+        void createFromDialog();
+      },
+    }, el("div", { className: "account-add-field" },
+      el("label", { htmlFor: "account-add-name" }, L("账号名称", "Account name")),
+      input));
+    const errorEl = el("p", { className: "member-error account-add-error", role: "status", hidden: true });
+    const linkBox = el("div", { className: "account-link-body" });
+    const linkSection = el("details", { className: "account-link-section" },
+      el("summary", {}, L("关联已有目录", "Link existing folder")),
+      linkBox);
+    const cancel = el("button", {
+      type: "button",
+      onClick: closeAddDialog,
+    }, L("取消", "Cancel"));
     const submit = el("button", {
-      type: "button", className: "primary", disabled: busy || !adding.trim(), dataset: { focusKey: `${PROVIDER}/accounts/create` },
-      onClick: () => void create(),
-    }, L("创建并登录", "Create and sign in"));
-    const cancel = el("button", { type: "button", disabled: busy, onClick: () => { adding = null; S.renderCards(); } }, L("取消", "Cancel"));
-    return row(input, el("span"), submit, cancel);
+      type: "submit",
+      form: "account-add-form",
+      className: "primary",
+      disabled: true,
+      dataset: { focusKey: `${PROVIDER}/accounts/create` },
+    }, L("下一步", "Continue"));
+    const dialog = el("dialog", {
+      className: "upd account-add-dialog",
+      "aria-labelledby": "account-add-title",
+    },
+    el("h2", { id: "account-add-title", className: "upd-title" }, L("添加账号", "Add account")),
+    form,
+    errorEl,
+    linkSection,
+    el("div", { className: "upd-row" }, cancel, submit));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeAddDialog();
+    });
+    addDialog = { dialog, input, submit, cancel, linkBox, errorEl, dialogBusy: false };
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    input.focus?.({ preventScroll: true });
+    void readFolders();
   }
 
+  // ------------------------------------------------------------------ cards
   function confirmRemoval(account) {
     const folder = account.managed
       ? el("label", { className: "account-delete" },
@@ -250,17 +384,95 @@
         }, removing.deleteDir ? L("移除并删除目录", "Remove and delete folder") : L("确认移除", "Remove"))));
   }
 
-  // The accounts block of the Claude card; the card draws it again whenever anything changes.
-  function renderAccounts() {
-    const accounts = S.accounts;
-    if (!states.has("default")) void readState("default");
-    for (const account of accounts) void readState(account.id);
-    return el("div", { className: "account-box" },
-      S.accountsError ? el("p", { className: "member-error" }, S.accountsError) : null,
-      headRow(), defaultRow(),
-      ...accounts.flatMap((account) => [accountRow(account), removing?.id === account.id ? confirmRemoval(account) : null]),
-      adding !== null ? addRow() : null);
+  function renderAddAccountButton() {
+    return el("button", {
+      type: "button",
+      className: "member-toggle account-add-btn",
+      disabled: busy || Boolean(S.accountsError),
+      dataset: { focusKey: `${PROVIDER}/accounts/add` },
+      onClick: openAddDialog,
+    }, L("添加账号", "Add account"));
   }
 
-  Object.assign(S, { renderAccounts });
+  function accountTitle(account) {
+    const cliTitle = S.PROVIDER_NAMES?.[PROVIDER] || "Claude Code";
+    if (editing?.id === account.id) {
+      const input = el("input", {
+        type: "text",
+        className: "account-title-input",
+        maxlength: "40",
+        spellcheck: "false",
+        value: editing.value,
+        disabled: busy,
+        "aria-label": L("账号名称", "Account name"),
+        dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/label-input` },
+        onInput: (event) => { if (editing?.id === account.id) editing.value = event.target.value; },
+        onKeydown: (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void commitRename(account, event.target);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            editing = null;
+            S.renderCards();
+            document.querySelector?.(`[data-focus-key="${PROVIDER}/accounts/${account.id}/label"]`)?.focus({ preventScroll: true });
+          }
+        },
+        onBlur: (event) => { void finishRenameOnBlur(account, event.target); },
+      });
+      return el("span", { className: "cli-name account-title-editing" },
+        L(`${cliTitle}（`, `${cliTitle} (`),
+        input,
+        L("）", ")"));
+    }
+    const display = L(`${cliTitle}（${account.label}）`, `${cliTitle} (${account.label})`);
+    return el("button", {
+      type: "button",
+      className: "cli-name account-title-btn",
+      disabled: busy,
+      dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/label` },
+      title: L("点击修改账号名称", "Click to rename"),
+      "aria-label": L(`${display}，点击修改账号名称`, `${display}, click to rename`),
+      onClick: () => startRename(account),
+    }, el("span", { className: "account-title-text" }, display),
+       el("span", { className: "account-title-pencil", "aria-hidden": "true" }, "✎"));
+  }
+
+  function accountCard(account) {
+    const cliTitle = S.PROVIDER_NAMES?.[PROVIDER] || "Claude Code";
+    const signedIn = states.get(account.id)?.state?.logged_in;
+    const head = el("div", { className: "account-head" },
+      el("div", { className: "member-title" },
+        el("span", { className: "cli-icon", "aria-hidden": "true" }, AN.hostTile(PROVIDER, cliTitle)),
+        accountTitle(account)),
+      statusLine(account.id),
+      el("button", {
+        type: "button",
+        className: "member-toggle account-action-login",
+        disabled: busy,
+        dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/login` },
+        onClick: () => void act(() => startLogin(account), L("无法打开登录终端：", "Could not open the sign-in terminal: ")),
+      }, signedIn ? L("重新登录", "Sign in again") : L("登录", "Sign in")),
+      el("button", {
+        type: "button",
+        className: "member-toggle account-action-remove",
+        disabled: busy || removing !== null,
+        dataset: { focusKey: `${PROVIDER}/accounts/${account.id}/remove` },
+        onClick: () => { removing = { id: account.id, deleteDir: false }; S.renderCards(); },
+      }, L("移除", "Remove")));
+    return el("div", {
+      className: "cli-card member-card account-card",
+      dataset: { provider: PROVIDER, account: account.id },
+    },
+    head,
+    removing?.id === account.id ? confirmRemoval(account) : null);
+  }
+
+  function renderAccountCards() {
+    const accounts = S.accounts || [];
+    for (const account of accounts) void readState(account.id);
+    return accounts.map(accountCard);
+  }
+
+  Object.assign(S, { renderAddAccountButton, renderAccountCards, openAddDialog });
 }

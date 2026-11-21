@@ -1619,3 +1619,271 @@ test("an image seat row adds and removes fallbacks, with the delete button kept 
   block.children[1].children.at(-1).listeners.click();
   assert.equal(fallbacks(), null, "no fallback left, no field");
 });
+
+function accountCardsEditor(fetch) {
+  const app = editor(fetch);
+  app.run(`
+    AN.L = (zh) => zh;
+    AN.cliName = (p) => ({ claude: "Claude Code", codex: "Codex" }[p] || p);
+    AN.hostTile = (p) => AN.settings.el("span", { className: "host-tile", dataset: { provider: p } });
+    AN.settings.L = AN.L;
+    AN.settings.renderLeaveConfirm = () => {};
+    AN.settings.renderAdvancedBar = () => {};
+    AN.settings.renderReviewSeats = () => {};
+    AN.settings.seatConflicts = () => [];
+    AN.settings.seatConflictText = () => "";
+    AN.settings.memberSaveErrors = () => [];
+    const nodes = new Map();
+    const dialogs = [];
+    const makeNode = (tag) => {
+      const n = {
+        tag, tagName: tag, attrs: {}, children: [], dataset: {}, listeners: {}, options: [], value: "",
+        classList: { toggle() {} },
+        setAttribute(k, v) { this.attrs[k] = v; if (k === "value") this.value = v; },
+        removeAttribute(k) { delete this.attrs[k]; },
+        addEventListener(type, fn) { this.listeners[type] = fn; },
+        appendChild(child) {
+          if (child == null) return;
+          if (child.tag === "fragment") this.children.push(...child.children);
+          else this.children.push(child);
+        },
+        append(...kids) {
+          for (const k of kids.flat(Infinity)) this.appendChild(k);
+        },
+        replaceChildren(...kids) {
+          this.children = [];
+          this.append(...kids);
+        },
+        querySelectorAll: () => [],
+        querySelector: () => null,
+        getBoundingClientRect: () => ({ top: 0 }),
+        focus() {},
+        showModal() { this.open = true; },
+        close() { this.open = false; },
+        remove() { this.removed = true; },
+      };
+      return n;
+    };
+    document.createElement = makeNode;
+    document.createDocumentFragment = () => makeNode("fragment");
+    document.createTextNode = (text) => text;
+    document.getElementById = (id) => nodes.get(id) || nodes.set(id, makeNode("div")).get(id);
+    document.querySelector = () => null;
+    document.body = {
+      children: dialogs,
+      appendChild(child) { dialogs.push(child); },
+    };
+    globalThis.__dialogs = dialogs;
+    function findKey(nodes, key) {
+      for (const node of [nodes].flat(Infinity)) {
+        if (!node || typeof node !== "object") continue;
+        if (node.dataset?.focusKey === key || node.attrs?.dataset?.focusKey === key) return node;
+        const found = findKey(node.children, key);
+        if (found) return found;
+      }
+      return null;
+    }
+    globalThis.findKey = findKey;
+    detected = {
+      claude: { installed: true, version: "2.1.0", models: [{ id: "sonnet" }], efforts: [] },
+      codex: { installed: true, version: "0.161.0", models: [{ id: "gpt-6.1-sol" }], efforts: [] },
+    };
+    currentDoc = {
+      version: 1,
+      clis: {},
+      modes: {
+        task: { claude: { models: [], overrides: {} }, codex: { models: [], overrides: {} } },
+        discussion: { claude: { models: [], overrides: {} }, codex: { models: [], overrides: {} } },
+      },
+    };
+    markSaved();
+  `);
+  app.load("member-updates.js");
+  app.load("account-settings.js");
+  app.load("member-cards.js");
+  return app;
+}
+
+test("named Claude accounts render as sibling cards after Claude Code without an embedded account box", async () => {
+  const app = accountCardsEditor(async (url) => {
+    if (url.startsWith("/app/accounts/status?id=a1")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "w@x.com", plan: "max", error: null }) };
+    }
+    if (url.startsWith("/app/accounts/status?id=a2")) {
+      return { ok: true, json: async () => ({ logged_in: false, method: "none", email: null, plan: null, error: null }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  });
+  app.run(`
+    AN.settings.accounts = [
+      { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true },
+      { id: "a2", provider: "claude", label: "个人", dir: "/ext/p", managed: false },
+    ];
+    renderCards();
+  `);
+  await new Promise(setImmediate);
+
+  const cards = app.run('$("cli-cards").children').filter((c) => c.className && c.className.includes("cli-card"));
+  assert.deepEqual(Array.from(cards, (c) => [c.dataset.provider, c.dataset.account || null]), [
+    ["codex", null],
+    ["claude", null],
+    ["claude", "a1"],
+    ["claude", "a2"],
+  ]);
+
+  const claudeCard = cards[1];
+  assert.ok(app.run('findKey($("cli-cards").children, "claude/accounts/add")'), "Claude main card header has Add account button");
+  assert.doesNotMatch(JSON.stringify(claudeCard), /account-box|关联已有目录|默认账号/);
+
+  const a1Card = cards[2];
+  const a1Json = JSON.stringify(a1Card);
+  assert.match(a1Json, /Claude Code（工作）/);
+  assert.match(a1Json, /已登录/);
+  assert.match(a1Json, /max/);
+  assert.match(a1Json, /重新登录/);
+  assert.match(a1Json, /移除/);
+  assert.doesNotMatch(a1Json, /可用模型|单独干活|开会|权限/);
+
+  const a2Json = JSON.stringify(cards[3]);
+  assert.match(a2Json, /Claude Code（个人）/);
+  assert.match(a2Json, /未登录/);
+  assert.match(a2Json, /"登录"/);
+});
+
+test("account card title edits inline on click and commits rename on Enter", async () => {
+  const calls = [];
+  const app = accountCardsEditor(async (url, options) => {
+    if (url === "/app/accounts/rename") {
+      const body = JSON.parse(options.body);
+      calls.push(body);
+      return { ok: true, json: async () => ({ state: { accounts: [{ id: "a1", provider: "claude", label: body.label, dir: "/m/a1", managed: true }], error: null } }) };
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run(`
+    AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
+    renderCards();
+  `);
+  await new Promise(setImmediate);
+
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/label").listeners.click()');
+  const input = app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")');
+  assert.ok(input);
+  assert.equal(input.value, "工作");
+
+  input.value = "公司";
+  input.listeners.keydown({ key: "Enter", target: input, preventDefault() {} });
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [{ id: "a1", label: "公司" }]);
+  assert.equal(app.run('findKey($("cli-cards").children, "claude/accounts/a1/label-input")'), null);
+  assert.match(JSON.stringify(app.run('findKey($("cli-cards").children, "claude/accounts/a1/label")')), /Claude Code（公司）/);
+});
+
+test("add account dialog creates a managed account and opens the login dialog, and supports linking scanned folders", async () => {
+  const calls = [];
+  const app = accountCardsEditor(async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push([url, body]);
+    if (url === "/app/accounts/scan") {
+      return { ok: true, json: async () => ({ folders: [{ dir: "/home/.claude_free", name: ".claude_free" }] }) };
+    }
+    if (url === "/app/accounts/create") {
+      const account = { id: "a1", provider: "claude", label: body.label, dir: "/m/a1", managed: true };
+      return { ok: true, json: async () => ({ account, sync: { ok: true }, state: { accounts: [account], error: null } }) };
+    }
+    if (url === "/app/accounts/login") {
+      return { ok: true, json: async () => ({ session: 77 }) };
+    }
+    if (url === "/app/accounts/link") {
+      const account = { id: "a2", provider: "claude", label: "claude_free", dir: body.dir || "/picked", managed: false };
+      return { ok: true, json: async () => ({ account, sync: { ok: true }, shared_sessions: 2, state: { accounts: [account], error: null } }) };
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run("renderCards()");
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await new Promise(setImmediate);
+
+  const addDlg = () => app.run("__dialogs[0]");
+  assert.equal(addDlg().open, true);
+  assert.match(JSON.stringify(addDlg()), /添加账号/);
+  assert.match(JSON.stringify(addDlg()), /关联已有目录/);
+  assert.match(JSON.stringify(addDlg()), /\.claude_free/);
+  assert.match(JSON.stringify(addDlg()), /选择文件夹/);
+
+  const nameInput = app.run('findKey(__dialogs[0].children, "claude/accounts/new")');
+  const submitBtn = app.run('findKey(__dialogs[0].children, "claude/accounts/create")');
+  assert.equal(submitBtn.disabled, true);
+  nameInput.value = "工作";
+  nameInput.listeners.input({ target: nameInput });
+  assert.equal(submitBtn.disabled, false);
+
+  app.run('findKey(__dialogs[0].children, "claude/accounts/new") && __dialogs[0].children[1].listeners.submit({ preventDefault() {} })');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls.filter(([u]) => !u.startsWith("/app/accounts/status")).map(([u, b]) => [u, b]), [
+    ["/app/accounts/scan", null],
+    ["/app/accounts/create", { label: "工作" }],
+    ["/app/accounts/login", { id: "a1", cols: 96, rows: 22 }],
+  ]);
+  assert.equal(addDlg().open, false);
+  const loginDlg = app.run("__dialogs[1]");
+  assert.equal(loginDlg.open, true);
+  assert.match(loginDlg.className, /account-login/);
+  assert.match(JSON.stringify(loginDlg), /\/terminal\/\?session=77/);
+
+  // Close login dialog and test linking an existing folder via secondary option.
+  app.run("__dialogs[1].children[2].children[0].listeners.click()");
+  app.run("__dialogs.length = 0");
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await new Promise(setImmediate);
+  app.run('findKey(__dialogs[0].children, "claude/accounts/link-folder").listeners.click()');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  const linkCall = calls.find(([u]) => u === "/app/accounts/link");
+  assert.deepEqual(linkCall, ["/app/accounts/link", { dir: "/home/.claude_free" }]);
+  assert.match(app.run('$("notice").textContent'), /2 个相同的会话 ID/);
+});
+
+test("account removal confirmation shows folder deletion only for managed accounts", async () => {
+  const calls = [];
+  const app = accountCardsEditor(async (url, options = {}) => {
+    if (url === "/app/accounts/remove") {
+      calls.push(JSON.parse(options.body));
+      return { ok: true, json: async () => ({ state: { accounts: [], error: null }, deleted: false }) };
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  app.run(`
+    AN.settings.accounts = [
+      { id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true },
+      { id: "a2", provider: "claude", label: "个人", dir: "/ext/p", managed: false },
+    ];
+    renderCards();
+  `);
+  await new Promise(setImmediate);
+
+  // Linked account: no delete-dir checkbox.
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/remove").listeners.click()');
+  assert.equal(app.run('findKey($("cli-cards").children, "claude/accounts/a2/delete-dir")'), null);
+  app.run('findKey($("cli-cards").children, "claude/accounts/a2/confirm-remove").listeners.click()');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls[0], { id: "a2", delete_dir: false });
+
+  // Managed account: has delete-dir checkbox, defaults to false, passes true when checked.
+  app.run(`
+    AN.settings.accounts = [{ id: "a1", provider: "claude", label: "工作", dir: "/m/a1", managed: true }];
+    renderCards();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/remove").listeners.click()');
+  const checkbox = app.run('findKey($("cli-cards").children, "claude/accounts/a1/delete-dir")');
+  assert.ok(checkbox);
+  assert.equal(checkbox.checked, false);
+  checkbox.listeners.change({ target: { checked: true } });
+  app.run('findKey($("cli-cards").children, "claude/accounts/a1/confirm-remove").listeners.click()');
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls[1], { id: "a1", delete_dir: true });
+});

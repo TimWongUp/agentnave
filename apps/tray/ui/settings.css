@@ -274,8 +274,8 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .member-row > .member-list { grid-column: 2; width: calc(100% - 34px); }
 .member-scope { margin: 0 0 10px; }
 .member-scene { color: var(--muted); font-size: 12.5px; }
-.member-tail { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.member-tail > :first-child { flex: 1; }
+.member-tail { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.member-tail > .member-tier { flex: 0 1 auto; }
 .member-toggle { flex: none; font-size: 12px; padding: 4px 10px; }
 .member-tier { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; font-size: 12.5px; color: var(--muted); }
 .member-tier select { flex: none; width: 112px; }
@@ -300,16 +300,37 @@ main:has(> .tab-pane.is-entering) > #advanced-bar > * { animation: pane-enter .3
 .member-picker-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .member-picker-actions button { font: inherit; }
 .member-card > .disable-confirm { margin: 0 -18px; border-top: 1px solid var(--line); }
-/* The accounts block of the Claude card: the account, its sign-in line, and two buttons in fixed columns. */
-.account-box { display: flex; flex-direction: column; gap: 8px; }
-.account-row { display: grid; grid-template-columns: minmax(96px, 168px) minmax(0, 1fr) 112px 72px; align-items: center; gap: 12px; padding-left: 30px; }
-.account-row > button { white-space: nowrap; }
-.account-row > .badge { justify-self: start; }
-.account-row > .account-label, .account-row > .account-link { width: 100%; min-width: 0; }
+/* Named Claude accounts: sibling employee cards with fixed action columns and an add dialog. */
+.account-card { gap: 0; }
+.account-head { display: grid; grid-template-columns: minmax(180px, auto) minmax(0, 1fr) 112px 72px; align-items: center; gap: 12px; min-height: 30px; }
+.account-head > .member-title { grid-column: auto; margin-left: 0; }
+.account-head > .badge { justify-self: start; }
+.account-head > .account-action-login, .account-head > .account-action-remove { width: 100%; }
+.account-title-btn { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; margin: -2px 0 -2px -6px; border: 1px solid transparent; border-radius: 6px; background: transparent; text-align: left; min-width: 0; max-width: 100%; }
+.account-title-btn:hover:enabled { background: var(--hover); border-color: var(--line); }
+.account-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-title-pencil { flex: none; font-size: 11px; color: var(--muted); opacity: 0; transition: opacity .12s; }
+.account-title-btn:hover:enabled .account-title-pencil, .account-title-btn:focus-visible .account-title-pencil { opacity: 1; }
+.account-title-editing { display: inline-flex; align-items: center; gap: 2px; min-width: 0; font-size: 14px; font-weight: 620; color: var(--ink); white-space: nowrap; }
+.settings-page input.account-title-input { width: 160px; max-width: 100%; height: 26px; padding: 0 8px; font-size: 13px; font-weight: 550; }
 .account-status { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .account-status > .member-muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-delete { flex: 1 1 100%; display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
-.account-box > .disable-confirm { margin: 0 -18px; border-top: 1px solid var(--line); }
+.account-card > .disable-confirm { margin: 12px -18px -12px; border-top: 1px solid var(--line); border-bottom: 0; }
+dialog.account-add-dialog { width: min(440px, 92vw); }
+.account-add-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.account-add-field { display: flex; flex-direction: column; gap: 6px; }
+.account-add-field > label { font-size: 12.5px; font-weight: 550; color: var(--soft); }
+.account-add-field > input { width: 100%; }
+.account-add-error { padding-left: 0; margin-top: 10px; }
+.account-link-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.account-link-section > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); user-select: none; -webkit-user-select: none; list-style: none; display: inline-flex; align-items: center; gap: 6px; }
+.account-link-section > summary::-webkit-details-marker { display: none; }
+.account-link-section > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+.account-link-section[open] > summary::before { transform: rotate(45deg); }
+.account-link-section > summary:hover { color: var(--ink); }
+.account-link-body { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.account-link-body > button { font-size: 12.5px; padding: 5px 11px; }
 dialog.account-login { width: min(780px, 94vw); height: min(540px, 86vh); max-height: none; }
 dialog.account-login > h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
 .account-login-frame { flex: 1; min-height: 0; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
@@ -317,13 +338,14 @@ dialog.account-login > h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650;
   .member-card { --member-cols: 96px minmax(0, 1fr) minmax(0, 1fr); }
   .member-title { grid-column: 1 / -1; }
   .member-end > .segment-control { grid-column: 2; }
+  .member-tail { flex-wrap: wrap; }
   .member-row .member-efforts { flex-wrap: wrap; }
   .member-efforts > .segment-btn { flex: 1 0 auto; min-width: max-content; padding-left: 8px; padding-right: 8px; }
 }
 @media (max-width: 700px) {
-  .account-row { grid-template-columns: minmax(0, 1fr) auto auto; padding-left: 0; gap: 8px; }
-  .account-row > :nth-child(2) { grid-column: 1 / -1; order: 3; }
-  .account-box > .disable-confirm { margin: 0 -14px; }
+  .account-head { grid-template-columns: minmax(0, 1fr) 104px 64px; gap: 8px; }
+  .account-head > :nth-child(2) { grid-column: 1 / -1; order: 4; }
+  .account-card > .disable-confirm { margin: 12px -14px -12px; }
   .member-card { --member-cols: minmax(0, 1fr); padding: 12px 14px; }
   .member-head, .member-row { padding-left: 0; gap: 8px; }
   .member-title { margin-left: 0; }
