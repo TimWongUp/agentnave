@@ -2,7 +2,7 @@
    A page is a column of groups. A group is a small title (optional) above one card; a card is a stack of
    rows; a row is a label in the left column and its controls in the column beside it. The employees and
    boss pages put the same rows in a list's detail pane. Nothing here is specific to a section. */
-.settings-page { --row-label: 180px; --row-pad: 20px; --control-height: 32px; --control-max: 340px; --split-row: 60px; overflow-anchor: none; }
+.settings-page { --row-label: 180px; --row-pad: 20px; --control-height: 32px; --control-max: 340px; overflow-anchor: none; }
 /* The column keeps its place whether or not the page scrolls. */
 html { overflow-y: scroll; }
 .settings-page .tab-pane, .settings-page main > :is(#notice, .s-bar, .s-alert) { width: 100%; max-width: 980px; }
@@ -142,7 +142,7 @@ label.s-label { cursor: pointer; }
 .members-split { display: grid; grid-template-columns: 264px minmax(0, 1fr); align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
 .members-list-pane { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); border-radius: 10px 0 0 10px; background: color-mix(in srgb, var(--ink) 2.2%, transparent); }
 .members-list-items { display: flex; flex-direction: column; flex: 1; }
-.member-list-item { position: relative; display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: var(--split-row); padding: 10px 14px; border: 0; border-radius: 0; background: transparent; text-align: left; white-space: normal; color: var(--ink); transition: background-color .12s ease, opacity .12s ease; }
+.member-list-item { position: relative; display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 11px 14px; border: 0; border-radius: 0; background: transparent; text-align: left; white-space: normal; color: var(--ink); transition: background-color .12s ease, opacity .12s ease; }
 .member-list-item + .member-list-item { border-top: 1px solid var(--line); }
 .member-list-item:first-child { border-top-left-radius: 9px; }
 .member-list-item:last-child { border-bottom-left-radius: 9px; }
@@ -168,11 +168,8 @@ label.s-label { cursor: pointer; }
 .member-status-dot.tone-bad { background: var(--bad); }
 .member-status-dot.tone-muted { background: var(--idle); }
 .members-detail-pane { min-width: 0; display: flex; flex-direction: column; }
-/* The detail's lines continue the list's: one-line rows are as tall as a list row. */
-.members-detail-pane .s-row { min-height: var(--split-row); }
-.members-detail-pane .s-row:is(:has(> .s-stack), :has(> :nth-child(3):not([hidden]))) { min-height: calc(var(--split-row) * 2); align-content: center; }
 .detail-panel { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: var(--split-row); padding: 14px var(--row-pad); border-bottom: 1px solid var(--line); }
+.detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; padding: 14px var(--row-pad); border-bottom: 1px solid var(--line); }
 .detail-head > .member-title { display: flex; align-items: center; flex: 1; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .detail-account-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 9px var(--row-pad); border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 1.5%, transparent); font-size: 12.5px; color: var(--soft); }
 .detail-rows { flex: 1; min-width: 0; }
