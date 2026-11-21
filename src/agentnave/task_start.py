@@ -145,7 +145,7 @@ def check_session_account(
     account: str | None,
 ) -> None:
     """Reject resuming a native session as an account whose configuration directory is not the
-    one it was recorded in: each directory keeps its own sessions (ADR-0107)."""
+    one it was recorded in: each directory keeps its own sessions (ADR-0108)."""
     recorded: set[tuple[str, str | None]] = set()
     for record in records:
         state = record.state

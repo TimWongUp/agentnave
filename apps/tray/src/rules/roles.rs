@@ -6,6 +6,10 @@ const LEGACY_SMALL_TASKS: &str = "用户点名 CLI 时也通过 AgentNave 派发
 const LEGACY_PARALLEL: &str = "- 并行写入和开会由 boss 判断：计划确认后，互不依赖的写入步骤并行派给多个可写工位，boss 合入当前分支，最后统一验收；有实质取舍或分歧时开 AgentNave 会议室出决定，会上不改代码。";
 const LEGACY_ASSIGNMENT: &str = "- 探索、规划派 Explorer，实现派 Worker。";
 const LEGACY_REVIEW: &str = "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。";
+const LEGACY_SPECIALIST_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件、改一处、几分钟能完成，且不在下列专项范围内；多文件实现、需要调查定位的问题、成篇文案和专项范围内的任务都派出，即使自己的工具也能做。";
+const CURRENT_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件、改一处、几分钟能完成；多文件实现、需要调查定位的问题和成篇文案都派出，即使自己的工具也能做。";
+const LEGACY_WAIT_VERIFY: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取；`succeeded` 不等于完成，boss 核对产物后验收；高风险改动由 boss 针对具体的出错方式补做检查。";
+const LEGACY_MEETINGS_WAIT: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取。";
 
 /// What replaced the old one-line "small tasks" rule: from the named-CLI sentence through the
 /// orchestration-only line.
@@ -79,9 +83,15 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         .lines()
         .find(|line| line.starts_with("- 本偏好不决定何时评审"))
         .expect("shared review instruction");
+    let wait_verify = shared
+        .lines()
+        .find(|line| line.starts_with("- 以回执 `next`"))
+        .expect("shared wait instruction");
+    let meetings_wait = super::catalog::section("meetings_only_tail").trim();
     text.replace(LEGACY_DISPATCH, dispatch)
         .replace(LEGACY_ASSIGNMENT, "")
         .replace(LEGACY_SMALL_TASKS, &small_tasks())
+        .replace(LEGACY_SPECIALIST_SMALL_TASKS, CURRENT_SMALL_TASKS)
         .replace(
             LEGACY_PARALLEL,
             &format!(
@@ -107,6 +117,8 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         )
         .replace("每次最多等十分钟", "每次最多等 270 秒")
         .replace(LEGACY_REVIEW, review)
+        .replace(LEGACY_WAIT_VERIFY, wait_verify)
+        .replace(LEGACY_MEETINGS_WAIT, meetings_wait)
 }
 
 pub(super) fn apply(document: &Value, text: String) -> String {
@@ -153,4 +165,15 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     assert_eq!(first, "用户正文");
     let last = apply(&document, format!("用户正文\n{section}"));
     assert_eq!(last, "用户正文");
+    let specialist_and_wait = apply(
+        &document,
+        format!("{LEGACY_SPECIALIST_SMALL_TASKS}\n{LEGACY_WAIT_VERIFY}\n{LEGACY_MEETINGS_WAIT}"),
+    );
+    assert!(specialist_and_wait.contains(CURRENT_SMALL_TASKS));
+    assert!(!specialist_and_wait.contains("不在下列专项范围内"));
+    assert!(!specialist_and_wait.contains("wait(wait_seconds=0)"));
+    assert!(
+        specialist_and_wait
+            .contains("以回执 `next` 和 `follow_up` 为准收齐结果；`succeeded` 不等于完成")
+    );
 }

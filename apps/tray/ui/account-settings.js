@@ -1,6 +1,6 @@
 "use strict";
 {
-  // Settings -> 员工 -> Claude Code accounts (ADR-0107): default account status at top of
+  // Settings -> 员工 -> Claude Code accounts (ADR-0108): default account status at top of
   // Claude Code detail, expandable account list (default + named accounts), and a 2-step add
   // wizard (name -> in-dialog sign-in). Sign-in state is read on demand and never saved to disk.
 

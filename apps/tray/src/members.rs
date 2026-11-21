@@ -245,7 +245,7 @@ pub fn validate_review(document: &Value) -> Result<(), String> {
 }
 
 /// One picked CLI and model, with an optional account, effort and up to three fallbacks
-/// (ADR-0089, ADR-0107); shared by review and orchestration seats.
+/// (ADR-0089, ADR-0108); shared by review and orchestration seats.
 fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     let fields = object(seat, what)?;
     only(

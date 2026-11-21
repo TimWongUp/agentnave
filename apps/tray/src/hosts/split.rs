@@ -2,7 +2,7 @@
 //! connecting one would not reach the other. Claude Desktop drops `CLAUDE_CONFIG_DIR` from the
 //! login shell's variables, so its Code tab stays on the default folder while the terminal follows
 //! the variable. Codex Desktop inherits them, so only a further Codex folder, one per account and
-//! chosen per command, needs a row. A named Claude account (ADR-0107) has a row of its own too:
+//! chosen per command, needs a row. A named Claude account (ADR-0108) has a row of its own too:
 //! its folder is the `CLAUDE_CONFIG_DIR` its connection is read from.
 use super::{Context, Format, Host, Spec};
 use std::{

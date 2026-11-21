@@ -4394,6 +4394,7 @@ async def test_review_seat_fallback_dispatch_and_resume(
         assert started["model"] == "second"
         receipt = _payload(started["seat_fallback"])
         assert receipt["position"] == 1 and "auth" in str(receipt["skipped"])
+        assert "user setting; do not redispatch" in str(receipt["note"])
         explicit = await client.call_tool(
             "start_agent",
             {
@@ -5029,6 +5030,7 @@ async def test_decision_random_candidates_dispatch_resume_and_scope(
         assert _payload(b_res["seat_fallback"]) == {
             "position": 0,
             "random": True,
+            "note": seat_fallbacks.RANDOM_CANDIDATE_NOTE,
             "skipped": [
                 {
                     "provider": "grok",
@@ -5241,7 +5243,12 @@ async def test_decision_random_candidates_avoids_in_use_and_keeps_resume(
             manager_session_id="boss-1",
         )
         assert fourth["model"] == "alt-1"
-        assert _payload(fourth["seat_fallback"]) == {"position": 1, "skipped": [], "random": True}
+        assert _payload(fourth["seat_fallback"]) == {
+            "position": 1,
+            "skipped": [],
+            "random": True,
+            "note": seat_fallbacks.RANDOM_CANDIDATE_NOTE,
+        }
 
         # Resuming an existing thread still keeps its historical model even while alt-1 is in use.
         resumed = await _start_and_wait(

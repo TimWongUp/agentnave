@@ -474,8 +474,9 @@ def _output_limit_error(
 SUBAGENT_INSTRUCTIONS = (
     "Please take care of this within the permissions you've been given. Work on it yourself, "
     "without calling AgentNave tools or passing it on through AgentNave. In your final reply, "
-    "let me know about any blockers, decisions, or additional authorization needed. Please "
-    "avoid interactive question tools and respect the native permissions."
+    "let me know about any unmet requirements, unchecked scope, blockers, decisions, or "
+    "additional authorization needed. Please avoid interactive question tools and respect the "
+    "native permissions."
 )
 READ_ONLY_INSTRUCTIONS = (
     "This is a read-only task, so please leave files unchanged and don't commit, push, send "

@@ -165,6 +165,7 @@ const BOSS_SET = {
   codex: "codex",
   "codex-desktop": "codex",
   antigravity: "agy",
+  "antigravity-desktop": "agy",
   agy: "agy",
   deepseek: "deepseek",
   devin: "devin",

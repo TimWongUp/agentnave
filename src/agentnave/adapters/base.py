@@ -121,7 +121,7 @@ class ProviderAdapter(Protocol):
     default_host_cli_mode: Literal["subagent", "launch"]
     restricted_extra_options: frozenset[str]
     paired_options: Mapping[str, frozenset[str]]
-    # The environment variable holding a named account's configuration directory (ADR-0107),
+    # The environment variable holding a named account's configuration directory (ADR-0108),
     # and where the default account keeps it; None when the CLI takes no named account.
     account_env: str | None
     account_home: str

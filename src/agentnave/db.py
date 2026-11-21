@@ -498,7 +498,7 @@ class Workspace(NamedTuple):
     title: str | None
     cwd: str | None
     origin: str | None
-    # The named account the owner boss runs as; None is the default account (ADR-0107).
+    # The named account the owner boss runs as; None is the default account (ADR-0108).
     owner_account: str | None
 
 
@@ -603,7 +603,7 @@ def _migrate_v3(connection: sqlite3.Connection) -> None:
 
 
 def _migrate_v4(connection: sqlite3.Connection) -> None:
-    """Add the workspace's owner account (ADR-0107) and advance the version in one transaction."""
+    """Add the workspace's owner account (ADR-0108) and advance the version in one transaction."""
     connection.execute("BEGIN IMMEDIATE")
     try:
         version = connection.execute("PRAGMA user_version").fetchone()[0]

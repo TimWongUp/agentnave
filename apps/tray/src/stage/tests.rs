@@ -1,4 +1,18 @@
 #[test]
+fn antigravity_boss_names_follow_the_app() {
+    use crate::data::boss_app::{ANTIGRAVITY_CLI, ANTIGRAVITY_DESKTOP};
+    assert_eq!(
+        super::boss_label(Some("antigravity"), Some(ANTIGRAVITY_DESKTOP)),
+        "Antigravity 桌面"
+    );
+    assert_eq!(
+        super::boss_label(Some("antigravity"), Some(ANTIGRAVITY_CLI)),
+        "Antigravity CLI"
+    );
+    assert_eq!(super::boss_label(Some("antigravity"), None), "Antigravity");
+}
+
+#[test]
 fn service_member_identity_contract_is_preserved() {
     use serde_json::{Value, json};
 

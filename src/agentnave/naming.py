@@ -67,7 +67,7 @@ class MemberName:
     reported: str | None = None
     role: str | None = None
     ordinal: int = 1
-    # The display name of a non-default account, which tells same-CLI members apart (ADR-0107).
+    # The display name of a non-default account, which tells same-CLI members apart (ADR-0108).
     account: str | None = None
 
     def identity(self, peers: list[MemberName]) -> MemberIdentity:

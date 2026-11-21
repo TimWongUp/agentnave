@@ -1,4 +1,4 @@
-"""Named CLI accounts (ADR-0107): the App-owned accounts.json and what an account launches with.
+"""Named CLI accounts (ADR-0108): the App-owned accounts.json and what an account launches with.
 
 The default account is not in the file: it starts the CLI with the inherited environment and this
 module never reads the file for it. A named account starts it with the registered configuration

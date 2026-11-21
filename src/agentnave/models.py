@@ -101,7 +101,7 @@ class InvocationRequest:
     provider_options: Mapping[str, ProviderOption] = field(default_factory=lambda: {})
     read_only: bool = False  # Adds the read-only instruction; native permissions stay as they are.
     extra_instructions: str | None = None  # Appended after the shared instructions.
-    # A registered named account of the provider; None runs the default account (ADR-0107).
+    # A registered named account of the provider; None runs the default account (ADR-0108).
     account: str | None = None
 
     def __post_init__(self) -> None:

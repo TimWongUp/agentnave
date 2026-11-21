@@ -6,7 +6,7 @@
 - 修订：2026-11-19 自身修订，改「第一期不检测跨客户端占用」为能从中继看出时先确认再续接；新增 agent 显示名取 CLI 会话名、Claude 新开时预先指定会话 ID 仅用于定位会话记录、启动时按 App 外观传主题参数、重放段不应答终端查询；右栏主操作改称「结束终端」并按条件确认，终端模式左格为 boss，中栏选中框跟随右栏实际对象。修订：[CONTEXT.md](../../CONTEXT.md)「agent」补显示名规则。
 - 修订：2026-11-20 自身修订，开放 Grok（`--resume <id>`，新开 `--session-id <uuid>`）与 Antigravity CLI（`agy --conversation <id>`，不开放桌面版会话；显示名与工作目录只读取 `conversation_summaries.db`）的终端续接与显示名定位。
 - 修订：Unix 上 Codex 的 `--no-daemon` 启动与续接由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订为进程树内私有 `app-server` + `--remote` TUI（Windows 维持 `--no-daemon`）。
-- 修订：办公室终端按账号选择与 `workspaces.owner_account` 续接、具名账号经 `/usr/bin/env CLAUDE_CONFIG_DIR=<dir>` 启动，以及独立账号登录终端边界由 [ADR-0107](0107-multi-account-isolation.md) 修订。
+- 修订：办公室终端按账号选择与 `workspaces.owner_account` 续接、具名账号经 `/usr/bin/env CLAUDE_CONFIG_DIR=<dir>` 启动，以及独立账号登录终端边界由 [ADR-0108](0108-multi-account-isolation.md) 修订。
 - 修订：2026-11-21 自身修订，Claude 桌面端聊天不开放终端续接；Claude 与 Antigravity 桌面端聊天改为转交到新终端，由新 boss 接手工作区。
 
 ## 背景

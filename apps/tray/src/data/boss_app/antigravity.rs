@@ -58,6 +58,16 @@ pub(super) fn roots(homes: &super::Homes) -> Vec<PathBuf> {
     found
 }
 
+/// The desktop app's data folders beside each CLI root: `~/.gemini/antigravity-cli` sits next to
+/// `~/.gemini/antigravity` and `~/.gemini/antigravity-insiders`.
+pub(super) fn desktop_roots(cli_roots: &[PathBuf]) -> Vec<PathBuf> {
+    cli_roots
+        .iter()
+        .filter_map(|root| root.parent())
+        .flat_map(|parent| ["antigravity", "antigravity-insiders"].map(|name| parent.join(name)))
+        .collect()
+}
+
 /// Whether `path` belongs to the Antigravity Desktop App (`~/.gemini/antigravity/`) rather than
 /// `antigravity-cli`.
 pub(super) fn is_desktop_record(path: &Path) -> bool {
@@ -65,6 +75,11 @@ pub(super) fn is_desktop_record(path: &Path) -> bool {
         .components()
         .filter_map(|component| component.as_os_str().to_str())
         .collect();
+    if names.windows(2).any(|pair| {
+        pair[0] == ".gemini" && matches!(pair[1], "antigravity" | "antigravity-insiders")
+    }) {
+        return true;
+    }
     if names.last().copied() == Some("conversation_summaries.db")
         && let Some(parent) = names.iter().rev().nth(1).copied()
     {

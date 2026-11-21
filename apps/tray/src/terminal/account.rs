@@ -1,4 +1,4 @@
-//! Terminals that run a named account (ADR-0107): the account the page picked or the workspace
+//! Terminals that run a named account (ADR-0108): the account the page picked or the workspace
 //! belongs to, the way its CLI is started, and the sign-in terminal that belongs to no workspace.
 
 use std::path::{Path, PathBuf};

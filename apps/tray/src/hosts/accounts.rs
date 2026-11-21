@@ -1,4 +1,4 @@
-//! What the accounts page asks of the host connections (ADR-0107): a named Claude account's
+//! What the accounts page asks of the host connections (ADR-0108): a named Claude account's
 //! folder carries AgentNave's connection, Skills and rules like any other boss row, and nothing of
 //! the user's own configuration.
 use super::Hosts;
