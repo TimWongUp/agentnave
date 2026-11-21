@@ -190,7 +190,9 @@ fn terminate_process(pid: u32) -> Result<(), String> {
         }
         return Err(format!("无法结束该终端会话：{error}"));
     }
-    for _ in 0..20 {
+    // Claude Code closes its MCP servers and flushes the transcript first, which takes about a
+    // second; wait up to three before reporting the session still running.
+    for _ in 0..120 {
         if unsafe { libc::kill(raw, 0) } != 0
             && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
         {
