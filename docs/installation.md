@@ -15,7 +15,7 @@ model options, waiting, cancellation, and session continuation. Neither installs
 sets the calling Agent's planning, review, or retry workflow. Hosts without Skill support can
 use MCP alone, but must supply their own calling guidance.
 
-**Paired release:** `v1.18.0` contains the runtime source, `agentnave-manager` Skill and all nine
+**Paired release:** `v1.17.0` contains the runtime source, `agentnave-manager` Skill and all nine
 CLI reference files. Install both components from this tag.
 
 ## Subagent orchestration guidance
@@ -30,7 +30,7 @@ not inspect process ancestry to disable tools; host identification remains best-
 
 Current AgentNave source supports Windows, macOS, and Linux. Install `uv` and Git. Set
 `AGENTNAVE_RELEASE` to a chosen published tag that supports the target platform, and use the same
-value for the Skill in step 4. The paired release for this version is `v1.18.0`, which supports
+value for the Skill in step 4. The paired release for this version is `v1.17.0`, which supports
 Windows, macOS, and Linux.
 
 Inspect the current installation before running an install command:
@@ -614,13 +614,13 @@ Use this paired procedure for repair and rollback too. Host registrations retain
 launcher path. Recheck configuration and restart after changes. There is no cross-host
 transaction or automatic host configuration update.
 
-### Upgrading to v1.18.0
+### Upgrading to v1.17.0
 
-Update or replace the App and reconnect hosts as prompted. For a manual installation, reinstall the runtime and Skills from `@v1.18.0` (replacing the full Skill directory to pick up the updated `agentnave-manager` instructions) and reconnect MCP. This release migrates `agentnave.db` one way to schema version 5 (a nullable `owner_account` column on workspaces); earlier versions cannot open the migrated database.
+Update or replace the App and reconnect hosts as prompted. For a manual installation, reinstall the runtime and Skills from `@v1.17.0` (replacing the full Skill directory to pick up updated `agentnave-manager` and `agentnave-meeting` instructions) and reconnect MCP. This release has no `agentnave.db` schema changes; the new local CLI usage panel stores its index in a separate `usage.db` created automatically on first scan.
 
-Upgrading from v1.17 or earlier still requires the applicable earlier upgrade instructions, including Antigravity `agy` 1.5.10+ in [v1.16.0](releases/v1.16.0.md) and the one-way database migrations described in [v1.14.0](releases/v1.14.0.md) and [v1.13.0](releases/v1.13.0.md).
+Upgrading from v1.16 or earlier still requires the applicable earlier upgrade instructions, including Antigravity `agy` 1.5.10+ in [v1.16.0](releases/v1.16.0.md) and the one-way database migrations described in [v1.14.0](releases/v1.14.0.md) and [v1.13.0](releases/v1.13.0.md).
 
-See [v1.18.0 release notes](releases/v1.18.0.md). Earlier upgrade instructions remain in [the release archive](releases/v1.17.0.md).
+See [v1.17.0 release notes](releases/v1.17.0.md). Earlier upgrade instructions remain in [the release archive](releases/v1.16.0.md).
 
 ## Uninstall
 
