@@ -161,6 +161,11 @@ fn antigravity_apps_follow_records_and_cached_cli_lookup() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join(".gemini/antigravity-cli");
     write(&root.join(format!("conversations/{CODEX_SESSION}.db")), "");
+    let desktop_root = dir.path().join(".gemini/antigravity");
+    write(
+        &desktop_root.join(format!("conversations/{CLAUDE_SESSION}.db")),
+        "",
+    );
     let connection = connection();
     for (workspace, key, file) in [
         (
@@ -178,6 +183,11 @@ fn antigravity_apps_follow_records_and_cached_cli_lookup() {
             ),
         ),
         ("found", boss_key("antigravity", CODEX_SESSION), None),
+        (
+            "found-desktop",
+            boss_key("antigravity", CLAUDE_SESSION),
+            None,
+        ),
         ("unknown", "unknown-key".to_owned(), None),
         (
             "other",
@@ -201,9 +211,11 @@ fn antigravity_apps_follow_records_and_cached_cli_lookup() {
         ("cli".to_owned(), ANTIGRAVITY_CLI),
         ("desktop".to_owned(), ANTIGRAVITY_DESKTOP),
         ("found".to_owned(), ANTIGRAVITY_CLI),
+        ("found-desktop".to_owned(), ANTIGRAVITY_DESKTOP),
     ];
     assert_eq!(apps.of(&connection, homes), expected);
     fs::remove_dir_all(root.join("conversations")).unwrap();
+    fs::remove_dir_all(desktop_root.join("conversations")).unwrap();
     assert_eq!(apps.of(&connection, homes), expected);
 }
 

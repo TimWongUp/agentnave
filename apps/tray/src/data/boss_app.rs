@@ -99,7 +99,8 @@ struct Found {
     homes: Option<Homes>,
     transcripts: HashMap<String, PathBuf>,
     desktop: HashSet<String>,
-    antigravity_cli: HashSet<String>,
+    /// Antigravity bosses with no saved record, found by key in the CLI's or the desktop app's data.
+    antigravity: HashMap<String, &'static str>,
     /// Bosses already looked for with when they missed, so gone records do not sweep on every poll
     /// while newly created transcripts still resolve once `NEGATIVE_TTL` passes.
     searched: HashMap<String, Instant>,
@@ -155,7 +156,7 @@ impl BossApps {
                         {
                             ANTIGRAVITY_CLI
                         }
-                        None if found.antigravity_cli.contains(&boss.key) => ANTIGRAVITY_CLI,
+                        None => *found.antigravity.get(&boss.key)?,
                         _ => return None,
                     };
                     return Some((boss.workspace.clone(), app));
@@ -208,7 +209,7 @@ impl BossApps {
         let mut missing = Vec::new();
         for boss in bosses {
             if boss.host == "antigravity" {
-                if boss.file.is_some() || found.antigravity_cli.contains(&boss.key) {
+                if boss.file.is_some() || found.antigravity.contains_key(&boss.key) {
                     continue;
                 }
                 missing.push(boss.key.clone());
@@ -248,20 +249,26 @@ impl BossApps {
             kept.retain(|_, at| now.duration_since(*at) < NEGATIVE_TTL);
             kept
         };
-        let mut antigravity_cli = std::mem::take(&mut found.antigravity_cli);
-        let roots = antigravity::roots(&homes);
+        let mut antigravity_apps = std::mem::take(&mut found.antigravity);
+        let cli_roots = antigravity::roots(&homes);
+        let desktop_roots = antigravity::desktop_roots(&cli_roots);
         for boss in bosses.iter().filter(|boss| {
             boss.host == "antigravity" && boss.file.is_none() && missing.contains(&boss.key)
         }) {
-            if antigravity::find_by_key(&roots, &boss.key).is_some() {
-                antigravity_cli.insert(boss.key.clone());
-            }
+            let app = if antigravity::find_by_key(&cli_roots, &boss.key).is_some() {
+                ANTIGRAVITY_CLI
+            } else if antigravity::find_by_key(&desktop_roots, &boss.key).is_some() {
+                ANTIGRAVITY_DESKTOP
+            } else {
+                continue;
+            };
+            antigravity_apps.insert(boss.key.clone(), app);
         }
         for key in missing {
             searched.insert(key, now);
         }
         *found = sweep(&homes);
-        found.antigravity_cli = antigravity_cli;
+        found.antigravity = antigravity_apps;
         found.homes = Some(homes);
         found.searched = searched;
     }
