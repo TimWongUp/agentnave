@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/manage/manage.css">
 <link rel="stylesheet" href="./settings.css">
 <link rel="stylesheet" href="./hosts.css">
+<link rel="stylesheet" href="./pages.css">
 <script src="/avatars.js" defer></script>
 <script src="/chat/appearance.js" defer></script>
 <script src="./settings-frame.js" defer></script>
@@ -111,6 +112,7 @@
   </section>
 
   <section id="pane-general" class="tab-pane" hidden aria-labelledby="nav-general">
+    <div class="settings-list">
     <div id="general-language"></div>
     <div id="general-prefs"></div>
     <div id="alerts-settings"></div>
@@ -123,6 +125,7 @@
         <button id="model-names-short" class="segment-btn" role="radio" type="button" data-en="Short">简短</button>
         <button id="model-names-full" class="segment-btn" role="radio" type="button" data-en="Full">完整</button>
       </div>
+    </div>
     </div>
   </section>
 
@@ -181,7 +184,7 @@
     <div id="reload-notice" class="banner reload-notice" role="note" hidden>
       <div class="banner-content">
         <strong data-en="Connection changes pending">有接入配置待生效</strong>
-        <p data-en=" to restart or reconnect; this notice clears automatically once done."><a href="#host-cards" data-en="Follow the instructions on the cards below">按下方卡片的提示</a>重开或重连，完成后提示自动消除。</p>
+        <p data-en=" to restart or reconnect; this notice clears automatically once done."><a href="#host-cards" data-en="Follow the instructions in the details below">按下方详情里的提示</a>重开或重连，完成后提示自动消除。</p>
       </div>
     </div>
 

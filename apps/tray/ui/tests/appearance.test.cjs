@@ -244,10 +244,15 @@ test("settings.html scripts load in declared order and language switch respects 
   // Trigger an unsaved edit in Advanced (custom text edited).
   context.AN.settings.setTab("advanced");
   await new Promise(r => setImmediate(r));
+  // The boss list picks which host the detail pane shows.
   const selectedHostCli = (hostId) => {
-    const card = getEl("host-cards").children.find(c => c.getAttribute("data-host") === hostId);
-    const row = card.children[0].children.find(c => c.className === "hc-hostcli");
-    const select = row.children[1];
+    const [listPane, detailPane] = getEl("host-cards").children[0].children;
+    const item = listPane.children[0].children.find(c => c.getAttribute("data-host") === hostId);
+    if (item.getAttribute("aria-pressed") !== "true") item.listeners.click[0]();
+    const panel = getEl("host-cards").children[0].children[1].children[0];
+    assert.equal(panel.getAttribute("data-host"), hostId);
+    const row = panel.children[1].children.find(c => c.className?.includes("hc-hostcli"));
+    const select = row.children[1].children[0];
     return select.options.find(o => o.getAttribute("selected") !== null)?.getAttribute("value");
   };
   assert.equal(selectedHostCli("antigravity"), "launch");

@@ -1,0 +1,111 @@
+/* The other settings sections, in the employees' detail look: a card per group, a row per setting with its label
+   in the left column and its control in the column beside it, group names as plain headings.
+   Loads after settings.css and hosts.css; it never touches the employee or account rules. */
+.settings-page { --row-label: 200px; --row-pad: 20px; }
+
+/* ---- group heading ---- */
+#avatar-settings > h2, .avatar-section-head > h2, .settings-page :is(#skill-list, #pane-advanced) > h2,
+#pane-advanced .updates-card > h2, .alerts-card > h2 { margin: 0 0 10px; font-size: 13px; font-weight: 650; color: var(--soft); }
+.avatar-section-head { margin: 22px 0 10px; }
+.avatar-section-head > h2 { margin: 0; }
+
+/* ---- rows: general, appearance, voice ---- */
+:is(#pane-general, #pane-avatars, #pane-voice) .setting-row, .settings-list .alerts-row {
+  display: grid; grid-template-columns: var(--row-label) minmax(0, 1fr); align-items: center; justify-content: normal;
+  gap: 8px 16px; min-height: 56px; margin: 0; padding: 12px var(--row-pad);
+  background: var(--surface); border: 1px solid var(--line); border-top-width: 0; border-radius: 0;
+}
+:is(#pane-general, #pane-avatars, #pane-voice) .setting-row > :not(:first-child), .settings-list .alerts-row > :not(:first-child) { justify-self: start; max-width: 100%; }
+:is(#pane-general, #pane-avatars, #pane-voice) .setting-row > :is(h2, label, .setting-copy h2, .video-pack-info > h2),
+.setting-copy h2, .alerts-label { margin: 0; font-size: 12.5px; font-weight: 400; color: var(--muted); line-height: 1.4; }
+.settings-list .setting-copy .setting-example { margin: 3px 0 0; font-size: 11.5px; }
+.settings-list .setting-copy h2 { margin: 0; }
+.video-pack-info > h2 { font-size: 12.5px; font-weight: 400; color: var(--soft); }
+:is(#pane-avatars, #pane-voice) .voice-cache { justify-content: flex-start; }
+#pane-voice .voice-wide { grid-template-columns: minmax(0, 1fr); }
+#pane-voice .voice-wide > .voice-prompt-editor { width: 100%; }
+#pane-voice .voice-cache-size { white-space: normal; }
+
+/* Consecutive rows are one card: the first one rounds the top, the last one the bottom. */
+:is(#pane-avatars, #pane-voice) .setting-row:is(:first-child, summary + .setting-row, :not(.setting-row) + .setting-row) { border-top-width: 1px; border-radius: 10px 10px 0 0; }
+:is(#pane-avatars, #pane-voice) .setting-row:is(:last-child, :has(+ :not(.setting-row))) { border-radius: 0 0 10px 10px; margin-bottom: 16px; }
+:is(#pane-avatars, #pane-voice) .setting-row:is(:first-child, :not(.setting-row) + .setting-row):is(:last-child, :has(+ :not(.setting-row))) { border-radius: 10px; }
+#pane-voice .voice-section .setting-row:last-child { margin-bottom: 0; }
+.video-packs { margin: 0 0 8px; }
+.video-pack-info { flex-wrap: wrap; gap: 4px 10px; }
+
+/* General: every row of the section shares one card. */
+.settings-list { margin-bottom: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+#pane-general .settings-list .setting-row { background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+#pane-general .settings-list > :first-child > .setting-row { border-top: 0; }
+#pane-general .settings-list .alerts-row { background: none; border: 0; border-top: 1px solid var(--line); }
+#pane-general .settings-list .updates-panel { margin: 0; max-width: none; }
+.settings-list .updates-card.alerts-card { gap: 0; padding: 0; background: none; border: 0; border-radius: 0; }
+.settings-list .alerts-card > h2 { padding: 16px var(--row-pad) 4px; margin: 0; border-top: 1px solid var(--line); }
+.settings-list .alerts-row.disabled > :not(.alerts-label) { opacity: .5; }
+.settings-list .model-names { max-width: none; }
+.settings-list .btn-group { gap: 8px; }
+
+/* ---- storage ---- */
+#storage-settings > .updates-panel { margin: 0; }
+#storage-settings .updates-card.storage-card { display: grid; grid-template-columns: var(--row-label) minmax(0, 1fr); align-items: center; gap: 8px 16px; min-height: 56px; padding: 12px var(--row-pad); border-radius: 0; }
+#storage-settings > .updates-panel:first-child .updates-card { border-radius: 10px 10px 0 0; }
+#storage-settings > .updates-panel:last-child .updates-card { border-top-width: 0; border-radius: 0 0 10px 10px; }
+#storage-settings > .updates-panel:only-child .updates-card { border-top-width: 1px; border-radius: 10px; }
+#storage-settings .storage-card h2, #storage-settings .storage-row > h2 { margin: 0; font-size: 12.5px; font-weight: 400; color: var(--muted); }
+#storage-settings .storage-row { display: contents; }
+#storage-settings .storage-row > .segment-control { justify-self: start; }
+#storage-settings .storage-dir-row { margin: 0; justify-content: flex-start; }
+#storage-settings .storage-confirm { grid-column: 1 / -1; margin: 4px calc(var(--row-pad) * -1) -12px; }
+
+/* ---- about ---- */
+#pane-about .updates-card { padding: 0; }
+#pane-about .updates-card > h2 { margin: 0; padding: 14px var(--row-pad); min-height: 56px; box-sizing: border-box; display: flex; align-items: center; border-bottom: 1px solid var(--line); }
+#pane-about .status-grid { display: block; margin: 0; padding: 0; border-bottom: 0; }
+#pane-about .status-item { display: grid; grid-template-columns: var(--row-label) minmax(0, 1fr); align-items: center; gap: 4px 16px; min-height: 56px; padding: 8px var(--row-pad); border-bottom: 1px solid var(--line); }
+#pane-about .status-label { font-size: 12.5px; color: var(--muted); }
+#pane-about .status-val-wrap { justify-content: flex-start; }
+#pane-about .status-value { font-size: 12.5px; font-weight: 500; }
+#pane-about .status-desc { grid-column: 2; }
+#pane-about .update-auto-check { display: grid; grid-template-columns: var(--row-label) minmax(0, 1fr); align-items: center; gap: 8px 16px; min-height: 56px; margin: 0; padding: 8px var(--row-pad); border-bottom: 1px solid var(--line); }
+#pane-about .update-auto-label { font-size: 12.5px; font-weight: 400; color: var(--muted); }
+#pane-about .update-auto-check > :not(:first-child) { justify-self: start; }
+#pane-about .update-action-area { padding: 12px var(--row-pad); }
+#pane-about .uninstall-entry { margin: 12px 0 0; padding: 12px var(--row-pad); min-height: 56px; }
+#pane-about .uninstall-entry > h2 { font-size: 12.5px; font-weight: 400; color: var(--muted); margin: 0; }
+
+/* ---- orchestration: the card gets the detail's head and padding ---- */
+#pane-orchestration .updates-card { padding: 0; }
+#pane-orchestration .updates-card > h2 { margin: 0; padding: 14px var(--row-pad); min-height: 56px; box-sizing: border-box; display: flex; align-items: center; font-size: 14px; border-bottom: 1px solid var(--line); }
+#pane-orchestration .updates-card > :not(h2) { margin-left: var(--row-pad); margin-right: var(--row-pad); }
+#pane-orchestration .updates-card > h2 + * { margin-top: 16px; }
+#pane-orchestration .updates-card > :last-child { margin-bottom: 16px; }
+#pane-orchestration .orchestration-apply { margin-bottom: 8px; font-size: 13px; font-weight: 650; color: var(--soft); }
+#pane-orchestration .review-role, #pane-orchestration .orchestration-meeting > .review-row > :first-child { font-size: 12.5px; color: var(--muted); }
+
+/* ---- skills: the entries are the cards, so the section needs no card of its own ---- */
+#pane-advanced .updates-panel { max-width: none; margin: 0 0 12px; }
+#pane-advanced .updates-card { padding: 0; background: none; border: 0; border-radius: 0; }
+.skill-row { border-radius: 10px; }
+.skill-head { padding: 14px var(--row-pad); }
+.skill-body { padding: 0 var(--row-pad) 18px; }
+
+/* ---- appearance gallery ---- */
+.avatar-editor { border-radius: 10px; }
+
+@media (max-width: 600px) {
+  :is(#pane-general, #pane-avatars, #pane-voice) .setting-row, .settings-list .alerts-row,
+  #storage-settings .updates-card.storage-card, #pane-about .status-item, #pane-about .update-auto-check { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px 14px; }
+  #pane-about .status-desc { grid-column: 1; }
+  .settings-list .alerts-card > h2 { padding-left: 14px; padding-right: 14px; }
+  #pane-about .updates-card > h2, #pane-orchestration .updates-card > h2 { padding-left: 14px; padding-right: 14px; }
+  #pane-orchestration .updates-card > :not(h2) { margin-left: 14px; margin-right: 14px; }
+  #pane-about .update-action-area, #pane-about .uninstall-entry { padding-left: 14px; padding-right: 14px; }
+  .skill-head { padding-left: 14px; padding-right: 14px; }
+  .skill-body { padding-left: 14px; padding-right: 14px; }
+}
+#pane-orchestration .rule-label { min-width: 207px; font-size: 12.5px; font-weight: 400; color: var(--muted); }
+.video-pack-info { flex-direction: column; align-items: flex-start; gap: 2px; }
+@media (max-width: 600px) {
+  #pane-orchestration .rule-label { min-width: 0; flex: 1 1 100%; }
+}
