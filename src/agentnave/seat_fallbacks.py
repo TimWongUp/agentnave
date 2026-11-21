@@ -15,6 +15,13 @@ if TYPE_CHECKING:
 
 
 IMAGE_HOST_CLI_REASON = "Image CLI is the host's own CLI"
+ORDERED_FALLBACK_NOTE = (
+    "Earlier seat candidates were unavailable; used next configured candidate "
+    "(user setting; do not redispatch)."
+)
+RANDOM_CANDIDATE_NOTE = (
+    "Configured seat candidate drawn randomly (user setting; do not redispatch)."
+)
 
 
 class SkippedChoice(TypedDict):
@@ -27,6 +34,7 @@ class SeatFallback(TypedDict):
     position: int
     skipped: list[SkippedChoice]
     random: NotRequired[Literal[True]]
+    note: str
 
 
 def choose_index(count: int) -> int:
@@ -128,7 +136,11 @@ def select(
             status.reason = IMAGE_HOST_CLI_REASON
         if status.reason is None:
             if not randomize:
-                receipt = SeatFallback(position=index, skipped=skipped) if index else None
+                receipt = (
+                    SeatFallback(position=index, skipped=skipped, note=ORDERED_FALLBACK_NOTE)
+                    if index
+                    else None
+                )
                 return choice, receipt
             usable.append((index, choice))
         else:
@@ -139,8 +151,15 @@ def select(
         return seat, None
     if len(usable) == 1:
         index, choice = usable[0]
-        return choice, SeatFallback(position=index, skipped=skipped) if index else None
+        return (
+            choice,
+            SeatFallback(position=index, skipped=skipped, note=ORDERED_FALLBACK_NOTE)
+            if index
+            else None,
+        )
     busy = set(in_use)
     pool = [item for item in usable if (item[1].provider, item[1].model) not in busy] or usable
     index, choice = pool[0] if len(pool) == 1 else pool[(randrange or choose_index)(len(pool))]
-    return choice, SeatFallback(position=index, skipped=skipped, random=True)
+    return choice, SeatFallback(
+        position=index, skipped=skipped, random=True, note=RANDOM_CANDIDATE_NOTE
+    )
