@@ -555,3 +555,36 @@ fn login_shells_hand_arguments_to_exec_their_own_way() {
     assert_eq!(login_exec(Path::new("/bin/zsh")), Some(r#"exec "$0" "$@""#));
     assert_eq!(login_exec(Path::new("/usr/bin/nu")), None);
 }
+
+#[test]
+fn the_default_model_comes_from_settings_then_the_probe_then_the_published_file() {
+    let root = tempfile::tempdir().unwrap();
+    let some = |name: &str| Some(name.to_owned());
+    let pick = |own, probed| default_model_of("zcode", None, root.path(), || own, || probed);
+    assert_eq!(pick(None, None), None);
+    std::fs::write(
+        root.path().join(NATIVE_FILE),
+        r#"{"version":1,"clis":{"zcode":{"model":" disk-model "}}}"#,
+    )
+    .unwrap();
+    assert_eq!(pick(None, None), some("disk-model"));
+    assert_eq!(pick(None, some("probed")), some("probed"));
+    assert_eq!(pick(some("own"), some("probed")), some("own"));
+
+    // A named account reads only its own settings, never the default account's or the probe's.
+    let account = tempfile::tempdir().unwrap();
+    let named = |dir: &Path| {
+        default_model_of(
+            "claude",
+            Some(dir),
+            root.path(),
+            || some("own"),
+            || some("probed"),
+        )
+    };
+    assert_eq!(named(account.path()), None);
+    std::fs::write(account.path().join("settings.json"), r#"{"model":" "}"#).unwrap();
+    assert_eq!(named(account.path()), None);
+    std::fs::write(account.path().join("settings.json"), r#"{"model":"opus"}"#).unwrap();
+    assert_eq!(named(account.path()), some("opus"));
+}

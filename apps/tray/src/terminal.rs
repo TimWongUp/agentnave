@@ -82,8 +82,14 @@ struct Running {
 }
 
 impl Running {
-    fn describe(&self) -> Value {
-        json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
+    fn describe(&self, root: &Path) -> Value {
+        // Dresses the boss figure of a terminal that has dispatched nothing yet; never a name.
+        let art_model = crate::detect::default_model(
+            &self.provider,
+            self.account.as_ref().map(|account| account.dir.as_path()),
+            root,
+        );
+        json!({"id": self.id, "provider": self.provider, "art_model": art_model, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
             "account": self.account.as_ref().map(|account| &account.id),
@@ -448,7 +454,7 @@ impl Terminals {
         let open = state
             .open
             .iter()
-            .map(|running| (running.id, running.cwd.clone(), running.describe()))
+            .map(|running| (running.id, running.cwd.clone(), running.describe(root)))
             .collect();
         (state.cwd.clone().or_else(dirs::home_dir), open)
     }
@@ -684,7 +690,9 @@ impl Terminals {
                     && running.workspaces.last().map(String::as_str) == Some(workspace)
             });
             if let Some(running) = open {
-                return Response::json(&json!({"session": running.describe()}));
+                return Response::json(
+                    &json!({"session": running.describe(&crate::data_files::data_root())}),
+                );
             }
         }
         let Some((host, _, _)) = links::chat(&crate::data_files::data_root(), workspace) else {
@@ -872,7 +880,7 @@ impl Terminals {
             #[cfg(unix)]
             codex,
         };
-        let described = running.describe();
+        let described = running.describe(&crate::data_files::data_root());
         state.open.push(running);
         Response::json(&json!({"session": described}))
     }

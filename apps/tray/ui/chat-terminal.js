@@ -102,6 +102,7 @@ const ChatTerminal = (() => {
         terminal: x.id,
         host: x.provider,
         app: x.provider,
+        boss_art_model: x.art_model || "",
         label: cliLabel(x),
         display_title: x.display_title ?? null,
         title: x.display_title || L("新 agent", "New agent"),
