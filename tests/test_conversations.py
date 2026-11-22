@@ -5373,6 +5373,42 @@ async def test_push_receipt_and_inbox_event_lifecycle(
         )
         assert result["next"] == expected_again
         assert not path.exists()
+        # Explicit ids follow the same push guidance and carry no blocking-only next seq.
+        explicit = await _call(
+            client,
+            "wait",
+            {
+                "ids": [slow["invocation_id"]],
+                "manager_session_id": "boss-session",
+                "wait_seconds": 0,
+                "seq": 1,
+            },
+        )
+        assert explicit["next"] == expected_again
+        if sys.platform != "win32":
+            assert "Next wait: seq" not in str(explicit["next"])
+        # wait=true must not hand the boss a blocking WAIT_AGAIN inside a push receipt.
+        with monkeypatch.context() as patch:
+
+            async def elapsed(*args: object) -> tuple[dict[str, object], dict[str, object]]:
+                return {}, {}
+
+            patch.setattr("agentnave.mcp_tasks._ready_handles", elapsed)
+            waited = await _call(
+                client,
+                "start_agent",
+                {
+                    "provider": "claude",
+                    "prompt": "Private instruction for you only:\nSLEEP",
+                    "cwd": str(tmp_path),
+                    "manager_session_id": "boss-session",
+                    "wait": True,
+                },
+            )
+        received = _data(waited["wait"])
+        assert received["all_finished"] is False
+        assert received["next"] == expected_again and waited["next"] == expected_again
+        await _cancel(client, waited["invocation_id"])
         await _cancel(client, slow["invocation_id"])
         push_file.unlink()
         fallback = await _call(
