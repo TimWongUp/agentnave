@@ -2,7 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-11
-- 扩展：托盘监听边界由 [ADR-0112](0112-mobile-remote-via-tailscale.md) 扩展（只听回环、经 Tailscale 发布的手机远程入口）。
+- 扩展：托盘监听边界由 [ADR-0112](0112-mobile-remote-via-tailscale.md) 扩展（只听回环、经 Tailscale 发布的手机远程入口）；ADR-0112 已被 [ADR-0113](0113-chat-desktop-split-out.md) 取代，此扩展作废。
 
 ## 决定
 
