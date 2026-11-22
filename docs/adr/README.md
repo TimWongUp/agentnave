@@ -59,7 +59,7 @@
 | 0053 | [员工里停用的 CLI 不能当工位](0053-disabled-cli-runs-for-no-seat.md) | 部分取代 | [ADR-0054](0054-members-need-confirmation.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md)；2026-11-17 自身修订：App 工位下拉不再列出员工外的 boss CLI，服务的宿主原生工位例外不变 |
 | 0054 | [CLI 要在员工里确认后才能用，接入 boss 时自动确认](0054-members-need-confirmation.md) | 已接受 | — |
 | 0055 | [App 在员工页更新已装的 CLI，安装只给命令](0055-app-updates-member-clis.md) | 已接受 | — |
-| 0056 | [Claude Code 改用交互模式运行](0056-claude-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0108](0108-multi-account-isolation.md) |
+| 0056 | [Claude Code 改用交互模式运行](0056-claude-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0108](0108-multi-account-isolation.md)；依据更正见 [ADR-0111](0111-self-drawn-conversation-view.md) |
 | 0057 | [运行中的原生弹框由 boss 代答](0057-boss-answers-native-prompts.md) | 部分修订 | [ADR-0070](0070-devin-runs-over-acp.md)、[ADR-0078](0078-startup-confirmations.md) |
 | 0058 | [Claude 子代理统一用 Claude Code 自己存的登录](0058-claude-stored-login.md) | 已接受 | — |
 | 0059 | [Claude 的两个权限档位互为退路](0059-claude-tier-fallback.md) | 已接受 | — |
@@ -75,7 +75,7 @@
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
-| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)、[ADR-0102](0102-agy-native-status.md) |
+| 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)、[ADR-0102](0102-agy-native-status.md)；省额度前提更正见 [ADR-0111](0111-self-drawn-conversation-view.md) |
 | 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 部分修订 | 扩展并修订 ADR-0068；固定档专项不再排除在小事外由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订 |
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射、[ADR-0087](0087-decision-model-recommends-seats.md)；「不可用边界」的兜底顺序由 [ADR-0089](0089-seat-fallback-order.md) 修订；执行边界由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
@@ -106,10 +106,11 @@
 | 0100 | [由 App 卸载并默认保留任务和会议记录](0100-app-uninstall.md) | 部分修订 | 扩展 ADR-0012 的托盘写入边界；保留 ADR-0078 的工作区信任标记；托管账号目录卸载边界由 [ADR-0108](0108-multi-account-isolation.md) 修订 |
 | 0101 | [托盘逐条展示并在校验后向旧终端宿主进程发送 SIGTERM](0101-tray-stops-old-cli-copies.md) | 已接受 | 扩展 ADR-0022 的重新加载引导边界 |
 | 0102 | [Antigravity 交互运行采用原生状态事件](0102-agy-native-status.md) | 已接受 | 修订 ADR-0072、ADR-0079 |
-| 0103 | [办公室里开 agent，终端与它的工作区对应](0103-tray-embedded-terminal.md) | 部分修订 | 修订 CONTEXT「工作区」「项目」「Tray App」并新增「agent」；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执；2026-11-18 自身修订（项目→agent→办公室模型、右栏三格、中继与托盘对应修复、Codex `--no-daemon`、Claude/Codex 续接与托盘内防重）；2026-11-19 自身修订（别处打开时先确认再续接、agent 显示名取 CLI 会话名、启动主题参数、重放不应答、「结束终端」按条件确认）；Unix Codex `--no-daemon` 由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订；多账号终端选择、续接与独立登录终端由 [ADR-0108](0108-multi-account-isolation.md) 修订；「终端只由用户在办公室里开」由 [ADR-0109](0109-in-app-derived-sessions.md) 修订 |
+| 0103 | [办公室里开 agent，终端与它的工作区对应](0103-tray-embedded-terminal.md) | 部分修订 | 修订 CONTEXT「工作区」「项目」「Tray App」并新增「agent」；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执；2026-11-18 自身修订（项目→agent→办公室模型、右栏三格、中继与托盘对应修复、Codex `--no-daemon`、Claude/Codex 续接与托盘内防重）；2026-11-19 自身修订（别处打开时先确认再续接、agent 显示名取 CLI 会话名、启动主题参数、重放不应答、「结束终端」按条件确认）；Unix Codex `--no-daemon` 由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订；多账号终端选择、续接与独立登录终端由 [ADR-0108](0108-multi-account-isolation.md) 修订；「终端只由用户在办公室里开」由 [ADR-0109](0109-in-app-derived-sessions.md) 修订；终端皮肤边界由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订（提议） |
 | 0104 | [App 内 boss 由 App 提示收件](0104-in-app-boss-push.md) | 部分修订 | 修订 ADR-0007、ADR-0064 的推送边界；Codex 排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订；自定义档旧生成等待句迁移由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；2026-11-21 自身修订（显式 `ids` 阻塞等待纳入等待状态，PTY 提交前复查并在已读时退格撤回） |
 | 0105 | [Codex 内嵌终端改用私有 app-server 与结构化推送](0105-codex-app-server-terminal-push.md) | 部分修订 | 修订 ADR-0103、ADR-0104；2026-11-21 自身修订（投递前复查 `inbox`，按 `queuedSubmission.id` 用 `thread/queue/delete`／`update` 撤回或缩容已读排队唤醒）；派生会话的线程订阅、按轮中断与来源标记由 [ADR-0109](0109-in-app-derived-sessions.md) 扩展 |
 | 0106 | [托盘拥有本机 CLI 用量统计与折算花费面板](0106-tray-usage-panel.md) | 已接受 | 扩展 ADR-0012 的托盘数据根写入边界；保持 ADR-0026、ADR-0048 的服务与会话库隔离；遵守 ADR-0029；复用 ADR-0100 卸载开关与 ADR-0103 预览版及内嵌页约定；同步更新 CONTEXT「Tray App」 |
 | 0107 | [固定档专项不再排除在小事边界外，收尾改为服务语义汇报，顺位回执自带说明](0107-specialist-scope-closing-and-fallback-note.md) | 已接受 | 修订 ADR-0073、ADR-0104；扩展 ADR-0043；补充 ADR-0089、ADR-0093 |
 | 0108 | [支持按账号隔离运行，第一期开放 Claude](0108-multi-account-isolation.md) | 已接受 | 修订 ADR-0029、ADR-0056、ADR-0062、ADR-0078、ADR-0081、ADR-0089、ADR-0090、ADR-0093、ADR-0100、ADR-0103；扩展 ADR-0048 |
-| 0109 | [派生会话是开在 App 终端里的子代理](0109-in-app-derived-sessions.md) | 已接受 | 修订 ADR-0025、ADR-0085、ADR-0103、ADR-0105；扩展 ADR-0043、ADR-0104；沿用 ADR-0028、ADR-0032、ADR-0080、ADR-0098、ADR-0108 |
+| 0109 | [派生会话是开在 App 终端里的子代理](0109-in-app-derived-sessions.md) | 已接受 | 修订 ADR-0025、ADR-0085、ADR-0103、ADR-0105；扩展 ADR-0043、ADR-0104；沿用 ADR-0028、ADR-0032、ADR-0080、ADR-0098、ADR-0108；展示与驱动方式由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订（提议） |
+| 0111 | [托盘为 CLI 会话自绘对话视图，按 CLI 选驱动协议](0111-self-drawn-conversation-view.md) | 提议 | 修订 ADR-0103、ADR-0109；更正 ADR-0056、ADR-0072 的依据；沿用 ADR-0080、ADR-0105 |
