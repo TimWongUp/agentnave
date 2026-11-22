@@ -83,3 +83,16 @@ def publish_request(root: Path, request_id: str, document: dict[str, object]) ->
     finally:
         Path(temporary).unlink(missing_ok=True)
     return path
+
+
+def outstanding_acknowledgements(
+    root: Path, acknowledgements: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    pending: list[dict[str, object]] = []
+    for item in acknowledgements:
+        tray = TrayIdentity(int(str(item["tray_pid"])), float(str(item["tray_started_at"])))
+        snapshot = read_tray(root, tray)
+        entries = snapshot.get("requests") if snapshot else None
+        if snapshot is None or not isinstance(entries, dict) or item["request_id"] in entries:
+            pending.append(item)
+    return pending

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -65,9 +66,11 @@ from agentnave.mcp_runtime import (
     update_payload,
 )
 from agentnave.members import (
+    PERMISSION_KEYS,
     OrchestrationRole,
     ProviderName,
     apply_seat,
+    data_root,
     orchestration_decision,
     role_seat,
     validate_provider_options,
@@ -82,6 +85,7 @@ from agentnave.models import (
 )
 from agentnave.native_prompts import NativePrompt
 from agentnave.orchestration_roles import AUTO_SEAT, ReviewSeat
+from agentnave.push_capability import find_tray
 from agentnave.seat_fallbacks import SeatFallback
 from agentnave.seat_recommendation import Recommendation
 from agentnave.task_isolation import check_resumed_cwd_not_redirected
@@ -97,6 +101,7 @@ from agentnave.task_start import (
     review_role,
     uses_random_candidates,
 )
+from agentnave.terminal_requests import read_tray
 
 
 def _own_seat(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
@@ -223,6 +228,7 @@ async def start_agent(
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
+    terminal: Annotated[bool | None, Field(description="Run this task in an App terminal.")] = None,
     wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,
     *,
     ctx: Context[Runtime],
@@ -234,6 +240,8 @@ async def start_agent(
     No deadline; only native prompts accept running replies via answer_prompt. Cancel to stop. Reply settings are requested,
     not effective; unreceived flags undelivered ends/blockers/reviews for wait.
     """
+    if terminal is not None and not runtime.terminal_available():
+        raise ToolError("terminal is not supported by this connection")
     if isolation is not None and session_id is not None:
         raise ToolError(
             "isolation cannot be combined with session_id; omit isolation when resuming a thread."
@@ -250,9 +258,20 @@ async def start_agent(
     requested = cast(str | None, seat)
     recommendation: Recommendation | None = None
     if requested == AUTO_SEAT:
-        recommendation = await choose_auto_seat(
-            prompt, access, provider, cwd, session_id, isolation is not None
-        )
+        if terminal:
+            recommendation = await choose_auto_seat(
+                prompt,
+                access,
+                provider,
+                cwd,
+                session_id,
+                isolation is not None,
+                excluded=_explicit_exclusions(),
+            )
+        else:
+            recommendation = await choose_auto_seat(
+                prompt, access, provider, cwd, session_id, isolation is not None
+            )
         requested = recommendation.seat
     payload = await launch_task(
         ctx,
@@ -272,6 +291,7 @@ async def start_agent(
             isolation=isolation,
             manager_model=manager_model,
             manager_session_id=manager_session_id,
+            terminal=terminal,
         ),
     )
     if recommendation is not None:
@@ -306,6 +326,7 @@ class TaskLaunch:
     manager_session_id: str | None
     isolation_auto: bool = False  # isolation the service added itself, not the boss's request
     account: str | None = None  # explicit; the seat's or the resumed thread's otherwise
+    terminal: bool | None = None
 
 
 # defaults_applied entry of a task whose isolated directory the service asked for.
@@ -355,6 +376,7 @@ def _select_fallback(
     provider_options: dict[str, ProviderOption] | None,
     conversations: Conversations | None = None,
     account: str | None = None,
+    terminal: bool = False,
 ) -> tuple[ReviewSeat | None, SeatFallback | None]:
     if (
         session_id is not None
@@ -379,10 +401,18 @@ def _select_fallback(
     return select(
         configured,
         runtime.HOST,
-        runtime.task_excluded_providers(),
+        _explicit_exclusions() if terminal else runtime.task_excluded_providers(),
         image=is_image_seat(seat_name, custom),
         randomize=randomize,
         in_use=in_use,
+    )
+
+
+def _explicit_exclusions() -> frozenset[str]:
+    return frozenset(
+        value.strip().lower()
+        for value in os.environ.get("AGENTNAVE_EXCLUDED_PROVIDERS", "").split(",")
+        if value.strip()
     )
 
 
@@ -447,6 +477,13 @@ async def _acquire_and_start_task(
                 raise ToolError(
                     f"automatic isolation failed (several write tasks in one call): {exc}"
                 ) from exc
+        tray = None
+        if launch.terminal:
+            tray = find_tray(data_root(), runtime.HOST.provider)
+            snapshot = read_tray(data_root(), tray) if tray else None
+            providers = snapshot.get("terminal_providers") if snapshot else None
+            if not isinstance(providers, list) or provider not in providers:
+                raise ValueError("Tray does not support terminal mode for this provider")
         started = conversations.start_task(
             request,
             launch.title,
@@ -461,6 +498,7 @@ async def _acquire_and_start_task(
             isolation_ref=isolation.ref if isolation is not None else None,
             hold=hold,
             manager_workspace=manager_workspace,
+            terminal_tray=tray,
         )
     except BaseException:
         if hold is not None:
@@ -485,11 +523,28 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
     seat_applied: list[str] = []
     fallback = None
     conversations = _conversations(ctx)
+    if session_id is not None:
+        try:
+            previous = conversations.resume_task(session_id, provider, manager_session_id)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        if previous is not None and previous.execution_mode == "terminal":
+            if launch.terminal is False:
+                raise ToolError("Cannot resume an open derived terminal in background mode")
+            launch.terminal = True
+    if launch.terminal and not runtime.terminal_available():
+        raise ToolError("terminal is not supported by this connection")
     claim: tuple[str, str, str | None, str] | None = None
     try:
         try:
             arguments = StartArguments(
-                provider, cwd, role, requested, access, account=launch.account
+                provider,
+                cwd,
+                role,
+                requested,
+                access,
+                account=launch.account,
+                terminal=bool(launch.terminal),
             )
             seat_key = requested or review_role(role)
             arguments.selected, fallback = _select_fallback(
@@ -499,6 +554,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
                 provider_options,
                 conversations,
                 launch.account,
+                bool(launch.terminal),
             )
             if (
                 arguments.selected is not None
@@ -540,10 +596,21 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
                 seat_name,
                 options,
                 seat_applied,
-                runtime.task_excluded_providers(),
+                _explicit_exclusions() if launch.terminal else runtime.task_excluded_providers(),
                 runtime.HOST,
                 seat,
             )
+            if launch.terminal:
+                unsupported = (
+                    set(options)
+                    - PERMISSION_KEYS.get(provider, frozenset())
+                    - {"model", "effort", "interactive"}
+                )
+                if unsupported:
+                    raise ValueError(
+                        "terminal mode does not support provider options: "
+                        + ", ".join(sorted(unsupported))
+                    )
             provider_health.check(
                 conversations.root,
                 [(provider, arguments.account, provider_health.model_option(options))],
@@ -592,6 +659,8 @@ async def _task_start_payload(
         "conversation_id": started.conversation_id,
         "access": started.access,
     }
+    if started.invocation_id in manager.terminal_runs:
+        payload["execution_mode"] = "terminal"
     if started.isolation is not None:
         payload["isolation"] = start_isolation_payload(started.isolation)
     if identity := conversations.task_identity(started.invocation_id):

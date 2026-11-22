@@ -66,12 +66,20 @@ async def recommend_seat(
 
 
 async def recommend_or_raise(
-    task: str, access: Literal["read", "write"], *, isolated: bool = False
+    task: str,
+    access: Literal["read", "write"],
+    *,
+    isolated: bool = False,
+    excluded: frozenset[str] | None = None,
 ) -> Recommendation:
     """The recommendation for the running host; failures become coded tool errors."""
     try:
         return await recommend(
-            task, access, runtime.HOST, runtime.task_excluded_providers(), isolated=isolated
+            task,
+            access,
+            runtime.HOST,
+            runtime.task_excluded_providers() if excluded is None else excluded,
+            isolated=isolated,
         )
     except RecommendationError as exc:
         raise ToolError(f"{exc.code}: {exc.message}") from None
@@ -117,6 +125,7 @@ async def choose_auto_seat(
     cwd: str | None,
     session_id: str | None,
     isolated: bool,
+    excluded: frozenset[str] | None = None,
 ) -> Recommendation:
     """start_agent(seat="auto"): the seat the decision model picks, or a refusal before any
     task starts. Everything cheap is checked first so a refused call costs no decision. A
@@ -136,7 +145,7 @@ async def choose_auto_seat(
         raise ToolError("seat='auto' needs access (read or write).")
     if cwd is None:
         raise ToolError("cwd is required for a new task; pass an absolute existing directory")
-    return await recommend_or_raise(prompt, access, isolated=isolated)
+    return await recommend_or_raise(prompt, access, isolated=isolated, excluded=excluded)
 
 
 def native_seat_message(found: Recommendation) -> str:

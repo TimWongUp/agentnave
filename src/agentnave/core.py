@@ -42,6 +42,8 @@ from agentnave.processes import (
     spawn_process,
     terminate_process_tree,
 )
+from agentnave.push_capability import TrayIdentity
+from agentnave.terminal_execution import TerminalLaunch, TerminalRun, execute_run
 from agentnave.usage_probe import run_usage_query
 
 _MAX_STDOUT_BYTES = 1024 * 1024
@@ -503,6 +505,9 @@ class InvocationManager:
         self.health_root: Path | None = None
         self._spawn_locks: dict[str, asyncio.Lock] = {}
         self._last_spawn: dict[str, float] = {}
+        self.terminal_runs: dict[str, TerminalRun] = {}
+        self.terminal_reconcilers: set[asyncio.Task[None]] = set()
+        self.settled_requests: list[dict[str, object]] = []
 
     def _next_seq(self) -> int:
         self._seq += 1
@@ -533,6 +538,7 @@ class InvocationManager:
         prepared: PreparedCommand | None = None,
         claim: IO[bytes] | None = None,
         on_settled: Callable[[str, InvocationStatus], None] | None = None,
+        terminal: TerminalLaunch | None = None,
     ) -> str:
         """Start one run; it owns claim (a reserve() result, taken here when omitted) from this
         call on and releases it once its process tree has ended."""
@@ -553,9 +559,42 @@ class InvocationManager:
                 record.prompts.encode = adapter.encode_prompt_answer
                 record.prompts.changed = lambda: self._prompts_changed(invocation_id)
             self._records[invocation_id] = record
-            record.task = asyncio.create_task(
-                self._execute(record, adapter, prepared, invocation_id, on_settled)
-            )
+            if terminal is None:
+                record.task = asyncio.create_task(
+                    self._execute(record, adapter, prepared, invocation_id, on_settled)
+                )
+            else:
+
+                def started(item: dict[str, object]) -> None:
+                    record.phase = InvocationPhase.RUNNING
+                    session_id = item.get("session_id")
+                    if isinstance(session_id, str) and session_id:
+                        record.session_id = session_id
+
+                instructions = "You may delegate background tasks and hold meetings, but cannot open derived terminals. Report the result to your manager, including unmet requirements, unchecked scope and blockers."
+                if request.read_only:
+                    instructions += f" {READ_ONLY_INSTRUCTIONS}"
+                if request.extra_instructions:
+                    instructions += f" {request.extra_instructions}"
+                run = TerminalRun(
+                    terminal,
+                    request,
+                    invocation_id,
+                    f"{instructions}{TASK_SEPARATOR}{request.prompt}",
+                    lambda _item: None,
+                    started,
+                    self.ack_terminal_request,
+                    session_id=request.session_id,
+                )
+                self.terminal_runs[invocation_id] = run
+                record.task = asyncio.create_task(
+                    execute_run(
+                        run,
+                        lambda result: self._settle_session(record, result),
+                        self.terminal_reconcilers,
+                        on_settled,
+                    )
+                )
         except BaseException:
             if claim is not None:
                 release_and_remove(claim, Path(claim.name))
@@ -595,7 +634,10 @@ class InvocationManager:
             raise RuntimeError("invocation manager is closed")
         if request.session_id is not None and any(
             record.request.provider == request.provider
-            and record.request.session_id == request.session_id
+            and (
+                record.request.session_id == request.session_id
+                or record.session_id == request.session_id
+            )
             and record.task is not None
             and not record.task.done()
             for record in self._records.values()
@@ -785,6 +827,21 @@ class InvocationManager:
 
     async def cancel(self, invocation_id: str) -> InvocationResult:
         record = self._record(invocation_id)
+        if (
+            (run := self.terminal_runs.get(invocation_id)) is not None
+            and record.task is not None
+            and not record.task.done()
+        ):
+            outcome = await run.cancel()
+            if outcome == "not_safe_to_interrupt":
+                raise ValueError(
+                    "Terminal could not safely identify the requested turn; it was not interrupted"
+                )
+            result = await self.wait(invocation_id)
+            if result is None:
+                raise RuntimeError("terminal invocation did not terminate")
+            record.result_read = True
+            return result
         record.phase = InvocationPhase.STOPPING
         for prompt in record.prompts.pending():
             try:
@@ -814,7 +871,27 @@ class InvocationManager:
             for invocation_id, record in self._records.items()
             if record.task is not None and not record.task.done()
         ]
-        await asyncio.gather(*(self.cancel(item) for item in active), return_exceptions=True)
+        for run in self.terminal_runs.values():
+            run.stop.set()
+        await asyncio.gather(
+            *(
+                self.wait(item) if item in self.terminal_runs else self.cancel(item)
+                for item in active
+            ),
+            return_exceptions=True,
+        )
+        await asyncio.gather(*self.terminal_reconcilers, return_exceptions=True)
+
+    def ack_terminal_request(self, request_id: str, tray: TrayIdentity) -> None:
+        ack: dict[str, object] = {
+            "tray_pid": tray.pid,
+            "tray_started_at": tray.started_at,
+            "request_id": request_id,
+        }
+        if ack not in self.settled_requests:
+            self.settled_requests.append(ack)
+            if self.on_inbox_change:
+                self.on_inbox_change()
 
     def forget_finished(self, invocation_ids: set[str]) -> int:
         removed = 0
@@ -824,6 +901,8 @@ class InvocationManager:
                 if record.cleanup_handle is not None:
                     record.cleanup_handle.cancel()
                 del self._records[invocation_id]
+                if terminal_run := self.terminal_runs.pop(invocation_id, None):
+                    terminal_run.stop.set()
                 if self.on_forget is not None:
                     self.on_forget(invocation_id)
                 removed += 1
