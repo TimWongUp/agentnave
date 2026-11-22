@@ -286,6 +286,27 @@ impl Coordinator {
         self.lock().active_runs.remove(invocation_id);
     }
 
+    #[cfg(test)]
+    pub(super) fn insert_test_receipt(&self, request_id: &str, invocation_id: &str) {
+        self.lock().receipts.insert(
+            request_id.to_owned(),
+            ReceiptEntry {
+                receipt: Receipt {
+                    service_pid: self.pid,
+                    invocation_id: invocation_id.to_owned(),
+                    kind: "run".to_owned(),
+                    state: ReceiptState::Accepted,
+                    session_id: None,
+                    lease_acquired: None,
+                    anchor: None,
+                    blocked: None,
+                    terminal: None,
+                },
+                finished_at: None,
+            },
+        );
+    }
+
     pub(super) fn run_receipt_by_invocation(&self, invocation_id: &str) -> Option<Receipt> {
         self.lock()
             .receipts

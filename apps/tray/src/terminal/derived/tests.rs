@@ -642,3 +642,356 @@ fn claude_permission_fallback_validates_pair_and_hook_blocks_default_mode() {
     assert!(second_out.status.success());
     assert!(second_out.stdout.is_empty());
 }
+
+#[test]
+fn claude_trust_dialog_screen_and_strict_matching() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path();
+    #[cfg(unix)]
+    let display_path = {
+        let alias = cwd.with_file_name(format!(
+            "{}-alias",
+            cwd.file_name().unwrap().to_string_lossy()
+        ));
+        std::os::unix::fs::symlink(cwd, &alias).unwrap();
+        alias
+    };
+    #[cfg(not(unix))]
+    let display_path = cwd.to_path_buf();
+
+    // Feed real Claude Code Ink ANSI (CHA `\x1b[...G`, SGR, OSC 8, split UTF-8/CSI) into VT Screen.
+    let mut vt = claude::ClaudeScreen::new();
+    let rule = "─".repeat(40);
+    let raw = format!(
+        "\x1b[2J\x1b[H{rule}\r\n\x1b[2G\x1b[1mAccessing\x1b[12Gworkspace:\x1b[22m\r\n\r\n\x1b[2G{}\r\n\r\n\x1b[2G\x1b]8;id=1;https://code.claude.com/docs\x07Security guide\x1b]8;;\x07\r\n\r\n\x1b[2G❯\x1b[4GNo,\x1b[8Gexit\r\n\x1b[4GYes,\x1b[9GI\x1b[11Gtrust\x1b[17Gthis\x1b[22Gfolder\r\n\r\n\x1b[2GEnter\x1b[8Gto\x1b[11Gconfirm\x1b[19G·\x1b[21GEsc\x1b[25Gto\x1b[28Gcancel\r\n",
+        display_path.display()
+    );
+    let split_at = raw.find("❯").unwrap() + 2; // split mid-UTF-8 `❯`
+    vt.feed(&raw.as_bytes()[..split_at]);
+    vt.feed(&raw.as_bytes()[split_at..]);
+    let rendered = vt.text();
+    assert_eq!(
+        claude::evaluate_trust_dialog(&rendered, cwd),
+        Some(claude::TrustDecision::Press(b"\x1b[B"))
+    );
+
+    // Moving cursor to `Yes, I trust this folder` returns Enter; alternate negative label works too.
+    let yes_selected = format!(
+        "{rule}\nAccessing workspace:\n{}\n  No, continue without these permissions\n❯ Yes, I trust this folder\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&yes_selected, cwd),
+        Some(claude::TrustDecision::Press(b"\r"))
+    );
+
+    // Mismatched path, missing path, or multiple paths must block.
+    let other_dir = tempfile::tempdir().unwrap();
+    let mismatch = yes_selected.replace(
+        &display_path.display().to_string(),
+        &other_dir.path().display().to_string(),
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&mismatch, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let two_paths = yes_selected.replace(
+        &display_path.display().to_string(),
+        &format!("{}\n{}", display_path.display(), other_dir.path().display()),
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&two_paths, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let no_path = yes_selected.replace(&display_path.display().to_string(), "not-a-path");
+    assert_eq!(
+        claude::evaluate_trust_dialog(&no_path, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+
+    // Non-2 choices, wrong negative label, or missing footer must block.
+    let three_choices = format!(
+        "{rule}\n{}\n  No, exit\n  Yes, I trust this folder\n❯ Something else\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&three_choices, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let three_choices_top_cursor = format!(
+        "{rule}\n{}\n❯ Something else\n  No, exit\n  Yes, I trust this folder\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&three_choices_top_cursor, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let one_choice = format!(
+        "{rule}\n{}\n❯ Yes, I trust this folder\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&one_choice, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let bad_negative = format!(
+        "{rule}\n{}\n  No, cancel\n❯ Yes, I trust this folder\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&bad_negative, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let no_footer = format!(
+        "{rule}\n{}\n  No, exit\n❯ Yes, I trust this folder",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&no_footer, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+
+    // Unrecognized selection (no cursor, numbered choice, or two cursors) must block.
+    let no_cursor = format!(
+        "❯ Yes, I trust this folder\n{rule}\n{}\n  No, exit\n  Yes, I trust this folder\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&no_cursor, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let numbered = format!(
+        "{rule}\n{}\n  1. No, exit\n❯ 2. Yes, I trust this folder\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&numbered, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+    let two_cursors = format!(
+        "{rule}\n{}\n❯ No, exit\n❯ Yes, I trust this folder\nEnter to confirm",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&two_cursors, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+
+    // Cursor inside input box (lower rule below cursor) must never confirm.
+    let in_input = format!(
+        "{rule}\n❯ Quoted:\n{}\n  No, exit\n❯ Yes, I trust this folder\nEnter to confirm\n{rule}\n  ? for shortcuts",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&in_input, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+
+    // Permission dialog quoting trust text above its own choices must not confirm.
+    let quoted_in_perm = format!(
+        "{rule}\n Bash command\n   {}\n   ❯ No, exit\n   Yes, I trust this folder\n Do you want to proceed?\n ❯ 1. Yes\n   3. No\n Enter to confirm · Esc to cancel",
+        display_path.display()
+    );
+    assert_eq!(
+        claude::evaluate_trust_dialog(&quoted_in_perm, cwd),
+        Some(claude::TrustDecision::Block)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_trust_pty_wait_tui_ready_confirms_match_and_blocks_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("workspace");
+    let other = dir.path().join("other");
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir_all(&other).unwrap();
+
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        super::super::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    let terminals = Terminals::default();
+
+    // 1) Matching cwd: waits SETTLE=0.3s, sends Down (`\x1b[B`), waits SETTLE, sends Enter (`\r`), reaches idle.
+    let script_match = r#"
+import os, select, sys, time, tty
+tty.setraw(0)
+cwd = sys.argv[1]
+def draw(sel_yes):
+    c1, c2 = (" ", "❯") if sel_yes else ("❯", " ")
+    os.write(1, (
+        f"\x1b[2J\x1b[H{'─'*40}\r\nAccessing workspace:\r\n{cwd}\r\n"
+        f"{c1} No, exit\r\n{c2} Yes, I trust this folder\r\nEnter to confirm · Esc to cancel\r\n"
+    ).encode())
+draw(False)
+os.write(1, b"\x1b]7501;state=blocked:app=claude-code:kind=permission:msg=dHJ1c3QgdGhpcyBmb2xkZXI=\x07")
+# Verify no key arrives before SETTLE (0.3s).
+assert not select.select([0], [], [], 0.15)[0], "key sent before settle"
+buf = b""
+deadline = time.monotonic() + 5.0
+while b"\x1b[B" not in buf and time.monotonic() < deadline:
+    if select.select([0], [], [], 0.05)[0]:
+        buf += os.read(0, 1024)
+assert b"\x1b[B" in buf and b"\r" not in buf
+draw(True)
+assert not select.select([0], [], [], 0.15)[0], "enter sent before redraw settle"
+buf2 = b""
+deadline = time.monotonic() + 5.0
+while b"\r" not in buf2 and time.monotonic() < deadline:
+    if select.select([0], [], [], 0.05)[0]:
+        buf2 += os.read(0, 1024)
+assert b"\r" in buf2
+os.write(1, b"\x1b[2J\x1b[H\xe2\x9d\xaf \x1b]7501;state=idle\x07")
+time.sleep(5)
+"#;
+    let mut cmd_ok = CommandBuilder::new("python3");
+    cmd_ok.args(["-c", script_match, cwd.to_str().unwrap()]);
+    cmd_ok.cwd(&cwd);
+    let session_ok = Session::start(cmd_ok, 100, 30).unwrap();
+    session_ok.record_writes();
+    coord.insert_test_receipt("req-ok", "inv-ok");
+    let handle_ok = coord.register_run("inv-ok");
+    let tid_ok = terminals.register_derived(NewDerived {
+        provider: "claude".to_owned(),
+        cwd: cwd.clone(),
+        session: session_ok.clone(),
+        native: Some("sid-ok".to_owned()),
+        account: None,
+        codex: None,
+        info: DerivedInfo {
+            parent_boss_key: "claude:boss".to_owned(),
+            parent_workspace_id: Some("ws".to_owned()),
+            busy: true,
+            blocked_kind: None,
+            isolation_id: None,
+            _lease: None,
+            _log_dir: None,
+            codex_ready_file: None,
+            active_invocation_id: Some("inv-ok".to_owned()),
+        },
+    });
+    let derived_ok = DerivedHandle {
+        id: tid_ok,
+        provider: "claude".to_owned(),
+        session: session_ok.clone(),
+        native: Some("sid-ok".to_owned()),
+        account: None,
+        codex: None,
+    };
+    assert!(tui::wait_tui_ready(
+        &coord,
+        &terminals,
+        &derived_ok,
+        "req-ok",
+        &handle_ok,
+        Some(&cwd),
+    ));
+    assert_eq!(
+        session_ok.recorded_writes(),
+        vec![b"\x1b[B".to_vec(), b"\r".to_vec()]
+    );
+    let receipt_ok = coord.run_receipt_by_invocation("inv-ok").unwrap();
+    assert!(receipt_ok.blocked.is_none());
+    session_ok.stop();
+
+    // 2) Mismatched cwd & cursor-in-input-box cases: never send keys, record `blocked.kind = "trust"`.
+    for (idx, screen_body) in [
+        format!(
+            "{}\r\nAccessing workspace:\r\n{}\r\n❯ No, exit\r\n  Yes, I trust this folder\r\nEnter to confirm",
+            "─".repeat(40),
+            other.display()
+        ),
+        format!(
+            "{}\r\n❯ Quoted:\r\n{}\r\n  No, exit\r\n❯ Yes, I trust this folder\r\nEnter to confirm\r\n{}\r\n  ? for shortcuts",
+            "─".repeat(40),
+            cwd.display(),
+            "─".repeat(40)
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let req_id = format!("req-blk-{idx}");
+        let inv_id = format!("inv-blk-{idx}");
+        let script_blk = r#"
+import os, sys, time, tty
+tty.setraw(0)
+os.write(1, sys.argv[1].encode())
+os.write(1, b"\x1b]7501;state=blocked:app=claude-code:kind=permission:msg=dHJ1c3QgdGhpcyBmb2xkZXI=\x07")
+time.sleep(5)
+"#;
+        let mut cmd_blk = CommandBuilder::new("python3");
+        cmd_blk.args(["-c", script_blk, &screen_body]);
+        cmd_blk.cwd(&cwd);
+        let session_blk = Session::start(cmd_blk, 100, 30).unwrap();
+        session_blk.record_writes();
+        coord.insert_test_receipt(&req_id, &inv_id);
+        let handle_blk = coord.register_run(&inv_id);
+        let tid_blk = terminals.register_derived(NewDerived {
+            provider: "claude".to_owned(),
+            cwd: cwd.clone(),
+            session: session_blk.clone(),
+            native: Some(format!("sid-blk-{idx}")),
+            account: None,
+            codex: None,
+            info: DerivedInfo {
+                parent_boss_key: "claude:boss".to_owned(),
+                parent_workspace_id: Some("ws".to_owned()),
+                busy: true,
+                blocked_kind: None,
+                isolation_id: None,
+                _lease: None,
+                _log_dir: None,
+                codex_ready_file: None,
+                active_invocation_id: Some(inv_id.clone()),
+            },
+        });
+        let derived_blk = DerivedHandle {
+            id: tid_blk,
+            provider: "claude".to_owned(),
+            session: session_blk.clone(),
+            native: Some(format!("sid-blk-{idx}")),
+            account: None,
+            codex: None,
+        };
+
+        let coord_t = coord.clone();
+        let terminals_t = terminals.clone();
+        let handle_t = handle_blk.clone();
+        let cwd_t = cwd.clone();
+        let req_t = req_id.clone();
+        let waiter = thread::spawn(move || {
+            tui::wait_tui_ready(
+                &coord_t,
+                &terminals_t,
+                &derived_blk,
+                &req_t,
+                &handle_t,
+                Some(&cwd_t),
+            )
+        });
+
+        let poll_until = Instant::now() + Duration::from_secs(3);
+        let mut saw_trust_block = false;
+        while Instant::now() < poll_until {
+            if let Some(r) = coord.run_receipt_by_invocation(&inv_id)
+                && let Some(b) = r.blocked
+            {
+                assert_eq!(b.kind, "trust");
+                saw_trust_block = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert!(saw_trust_block, "case {idx} should record trust blocker");
+        handle_blk
+            .cancel_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(!waiter.join().unwrap());
+        assert!(session_blk.recorded_writes().is_empty());
+        session_blk.stop();
+    }
+}

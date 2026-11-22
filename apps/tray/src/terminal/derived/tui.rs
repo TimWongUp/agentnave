@@ -102,7 +102,7 @@ pub(super) fn run_tui_cli(
     if let Some(sid) = &preset_sid {
         coordinator.set_session_id(req_id, sid);
     }
-    if !wait_tui_ready(coordinator, terminals, &launched, req_id, handle) {
+    if !wait_tui_ready(coordinator, terminals, &launched, req_id, handle, None) {
         finish_pre_ready(coordinator, terminals, &launched, req_id, handle);
         return;
     }
@@ -401,9 +401,11 @@ pub(super) fn wait_tui_ready(
     launched: &DerivedHandle,
     req_id: &str,
     handle: &Arc<RunHandle>,
+    trust_cwd: Option<&Path>,
 ) -> bool {
     let mut blocker: Option<(String, f64)> = None;
     let mut deadline = Instant::now() + READY_TIMEOUT;
+    let mut claude_startup = trust_cwd.map(claude::ClaudeStartup::new);
     while Instant::now() < deadline {
         if handle.is_cancelled() || launched.session.exit().is_some() {
             return false;
@@ -421,26 +423,57 @@ pub(super) fn wait_tui_ready(
             );
             return true;
         }
-        let next = if osc_state.as_deref() == Some("blocked") {
-            Some((
-                osc_kind.as_deref().unwrap_or("permission"),
-                "终端启动等待用户确认",
-            ))
+        if let Some(startup) = claude_startup.as_mut() {
+            match startup.step(&launched.session, osc_state.as_deref(), osc_kind.as_deref()) {
+                claude::StartupStep::Wait => {}
+                claude::StartupStep::SentKey => {
+                    deadline = Instant::now() + READY_TIMEOUT;
+                    update_blocker_if_changed(
+                        coordinator,
+                        terminals,
+                        launched.id,
+                        req_id,
+                        launched.native.as_deref(),
+                        &mut blocker,
+                        None,
+                    );
+                }
+                claude::StartupStep::Blocker(next) => {
+                    deadline = Instant::now() + READY_TIMEOUT;
+                    update_blocker_if_changed(
+                        coordinator,
+                        terminals,
+                        launched.id,
+                        req_id,
+                        launched.native.as_deref(),
+                        &mut blocker,
+                        Some(next),
+                    );
+                }
+                claude::StartupStep::WriteFailed => return false,
+            }
         } else {
-            detect_screen_blocker(&launched.session)
-        };
-        if next.is_some() {
-            deadline = Instant::now() + READY_TIMEOUT;
+            let next = if osc_state.as_deref() == Some("blocked") {
+                Some((
+                    osc_kind.as_deref().unwrap_or("permission"),
+                    "终端启动等待用户确认",
+                ))
+            } else {
+                detect_screen_blocker(&launched.session)
+            };
+            if next.is_some() {
+                deadline = Instant::now() + READY_TIMEOUT;
+            }
+            update_blocker_if_changed(
+                coordinator,
+                terminals,
+                launched.id,
+                req_id,
+                launched.native.as_deref(),
+                &mut blocker,
+                next,
+            );
         }
-        update_blocker_if_changed(
-            coordinator,
-            terminals,
-            launched.id,
-            req_id,
-            launched.native.as_deref(),
-            &mut blocker,
-            next,
-        );
         thread::sleep(POLL_STEP);
     }
     false

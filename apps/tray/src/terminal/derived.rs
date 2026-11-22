@@ -288,18 +288,23 @@ pub(super) fn account_mismatch(
 }
 
 pub(super) fn detect_screen_blocker(session: &Session) -> Option<(&'static str, &'static str)> {
-    let text = session.recent_screen_text(4096).to_ascii_lowercase();
-    if text.contains("do you trust")
-        || text.contains("trust this folder")
-        || text.contains("trust this workspace")
-        || text.contains("yes, i trust")
+    let lowered = session.recent_screen_text(4096).to_ascii_lowercase();
+    if lowered.contains("do you trust")
+        || lowered.contains("trust this folder")
+        || lowered.contains("trust this workspace")
+        || lowered.contains("yes, i trust")
     {
         return Some(("trust", "等待目录信任确认"));
     }
-    if text.contains("select login method")
-        || text.contains("please run /login")
-        || text.contains("not logged in")
-        || text.contains("sign in to continue")
+    detect_auth_blocker_in_text(&lowered)
+}
+
+pub(super) fn detect_auth_blocker_in_text(text: &str) -> Option<(&'static str, &'static str)> {
+    let lowered = text.to_ascii_lowercase();
+    if lowered.contains("select login method")
+        || lowered.contains("please run /login")
+        || lowered.contains("not logged in")
+        || lowered.contains("sign in to continue")
     {
         return Some(("auth", "等待账号登录确认"));
     }

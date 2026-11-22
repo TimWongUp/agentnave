@@ -411,6 +411,15 @@ impl Session {
         strip_ansi(&raw)
     }
 
+    /// Read raw PTY bytes appended since `from` without moving UI replay watermarks.
+    pub(crate) fn raw_output_from(&self, from: u64) -> (u64, Vec<u8>) {
+        let output = self.output();
+        let start = from.clamp(output.start, output.end());
+        let skip = usize::try_from(start - output.start).unwrap_or(usize::MAX);
+        let bytes: Vec<u8> = output.kept.iter().skip(skip).copied().collect();
+        (output.end(), bytes)
+    }
+
     #[cfg(all(test, unix))]
     pub(super) fn is_holding(&self) -> bool {
         self.gate
