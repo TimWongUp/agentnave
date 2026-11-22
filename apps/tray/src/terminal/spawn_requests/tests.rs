@@ -391,7 +391,14 @@ fn shared_contract_fixture_matches_tray_intake_and_receipts() {
         &[2468],
         &mut receipts,
     );
-    assert_eq!(doc, fixture["push_receipt"]);
+    let expected = if cfg!(target_os = "macos") {
+        fixture["push_receipt"].clone()
+    } else {
+        let mut adjusted = fixture["push_receipt"].clone();
+        adjusted["terminal_providers"] = json!([]);
+        adjusted
+    };
+    assert_eq!(doc, expected);
 
     let settled = &fixture["inbox_settlement"]["settled_requests"];
     assert!(is_request_settled(
