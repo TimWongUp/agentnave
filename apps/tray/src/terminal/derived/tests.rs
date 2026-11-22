@@ -1,15 +1,22 @@
 use super::*;
+#[cfg(unix)]
 use crate::terminal::spawn_requests::{
     ExpectedAnchor, ParentRef, ProcessIdentity, ReceiptState, TaskSpec,
 };
+#[cfg(unix)]
 use crate::terminal::{DerivedInfo, NewDerived, codex_server};
+#[cfg(unix)]
 use portable_pty::CommandBuilder;
 use serde_json::{Value, json};
+#[cfg(unix)]
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
 use std::sync::Mutex;
 
+#[cfg(unix)]
 mod esc_interrupt;
+#[cfg(unix)]
 mod security;
 
 #[test]
@@ -187,29 +194,32 @@ fn native_log_inspectors_extract_anchors_and_turn_states() {
     assert!(!claude::claude_turn_ended(&baseline, sid, "p-missing"));
 
     // Codex rollout reconciliation.
-    let rollout_dir = dir.path().join("sessions/2026/11/22");
-    fs::create_dir_all(&rollout_dir).unwrap();
-    let rollout = rollout_dir.join("rollout-2026-11-22-019a-test.jsonl");
-    fs::write(
-        &rollout,
-        concat!(
-            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"t-1\"}}\n",
-            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"t-1\"}}\n",
-            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"turn_id\":\"t-2\",\"reason\":\"interrupted\"}}\n"
-        ),
-    )
-    .unwrap();
-    let found =
-        native_logs::codex_rollout_path_for_thread(&[dir.path().to_path_buf()], "019a-test");
-    assert_eq!(found.as_deref(), Some(rollout.as_path()));
-    assert_eq!(
-        native_logs::codex_rollout_turn_state(&rollout, "t-1"),
-        native_logs::CodexRolloutTurn::Completed
-    );
-    assert_eq!(
-        native_logs::codex_rollout_turn_state(&rollout, "t-2"),
-        native_logs::CodexRolloutTurn::Interrupted
-    );
+    #[cfg(unix)]
+    {
+        let rollout_dir = dir.path().join("sessions/2026/11/22");
+        fs::create_dir_all(&rollout_dir).unwrap();
+        let rollout = rollout_dir.join("rollout-2026-11-22-019a-test.jsonl");
+        fs::write(
+            &rollout,
+            concat!(
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"t-1\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"t-1\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\",\"turn_id\":\"t-2\",\"reason\":\"interrupted\"}}\n"
+            ),
+        )
+        .unwrap();
+        let found =
+            native_logs::codex_rollout_path_for_thread(&[dir.path().to_path_buf()], "019a-test");
+        assert_eq!(found.as_deref(), Some(rollout.as_path()));
+        assert_eq!(
+            native_logs::codex_rollout_turn_state(&rollout, "t-1"),
+            native_logs::CodexRolloutTurn::Completed
+        );
+        assert_eq!(
+            native_logs::codex_rollout_turn_state(&rollout, "t-2"),
+            native_logs::CodexRolloutTurn::Interrupted
+        );
+    }
 
     // Antigravity log & transcript verification.
     let agy_log = dir.path().join("agy.log");
@@ -699,47 +709,50 @@ fn claude_permission_fallback_validates_pair_and_hook_blocks_default_mode() {
     fs::write(hook_dir.path().join("mode"), b"   \n").unwrap();
     assert_eq!(claude_hook::read_observed_mode(hook_dir.path()), None);
 
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("/bin/sh")
-        .args(["-c", cmd])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(
-            br#"{"hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"{\"permission_mode\":\"auto\"}"}"#,
-        )
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success());
-    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(reply["decision"], json!("block"));
-    assert_eq!(
-        claude_hook::read_observed_mode(hook_dir.path()).as_deref(),
-        Some("default")
-    );
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(
+                br#"{"hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"{\"permission_mode\":\"auto\"}"}"#,
+            )
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["decision"], json!("block"));
+        assert_eq!(
+            claude_hook::read_observed_mode(hook_dir.path()).as_deref(),
+            Some("default")
+        );
 
-    // Subsequent user prompts after armed is consumed exit cleanly without blocking.
-    let mut second = Command::new("/bin/sh")
-        .args(["-c", cmd])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    second
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(br#"{"hook_event_name":"UserPromptSubmit","permission_mode":"default"}"#)
-        .unwrap();
-    let second_out = second.wait_with_output().unwrap();
-    assert!(second_out.status.success());
-    assert!(second_out.stdout.is_empty());
+        // Subsequent user prompts after armed is consumed exit cleanly without blocking.
+        let mut second = Command::new("/bin/sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        second
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(br#"{"hook_event_name":"UserPromptSubmit","permission_mode":"default"}"#)
+            .unwrap();
+        let second_out = second.wait_with_output().unwrap();
+        assert!(second_out.status.success());
+        assert!(second_out.stdout.is_empty());
+    }
 }
 
 #[test]

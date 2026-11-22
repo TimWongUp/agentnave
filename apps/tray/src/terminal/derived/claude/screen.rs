@@ -220,8 +220,8 @@ impl ClaudeScreen {
                 let p = values[0];
                 let start = if matches!(p, 1..=3) { 0 } else { self.row };
                 let end = if p == 1 { self.row + 1 } else { SCREEN_ROWS };
-                for row in start..end {
-                    self.lines[row].fill(' ');
+                for line in &mut self.lines[start..end] {
+                    line.fill(' ');
                 }
             }
             'K' => {

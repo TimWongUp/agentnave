@@ -276,6 +276,7 @@ pub(super) fn spawn_tui_terminal(
         DerivedHandle {
             id: tid,
             provider: cfg.provider.clone(),
+            #[cfg(unix)]
             cwd: cwd.to_path_buf(),
             session,
             native: preset_sid,

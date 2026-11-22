@@ -151,6 +151,7 @@ pub(super) fn claude_turn_state(path: &Path, prompt_id: &str) -> ClaudeTurnState
     }
 }
 
+#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum CodexRolloutTurn {
     Unknown,
@@ -160,6 +161,7 @@ pub(super) enum CodexRolloutTurn {
     Failed(Option<String>),
 }
 
+#[cfg(unix)]
 pub(super) fn codex_homes() -> Vec<PathBuf> {
     if let Some(dir) = std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty()) {
         return vec![PathBuf::from(dir)];
@@ -169,6 +171,7 @@ pub(super) fn codex_homes() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+#[cfg(unix)]
 pub(super) fn codex_rollout_path_for_thread(homes: &[PathBuf], thread_id: &str) -> Option<PathBuf> {
     if thread_id.is_empty() || thread_id.contains(['/', '\\']) {
         return None;
@@ -195,6 +198,7 @@ pub(super) fn codex_rollout_path_for_thread(homes: &[PathBuf], thread_id: &str) 
     None
 }
 
+#[cfg(unix)]
 pub(super) fn codex_rollout_turn_state(path: &Path, turn_id: &str) -> CodexRolloutTurn {
     let Ok(file) = File::open(path) else {
         return CodexRolloutTurn::Unknown;

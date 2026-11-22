@@ -21,7 +21,7 @@ use super::spawn_requests::{
     BlockedReceipt, Coordinator, ForwardItem, IsolationSpec, Receipt, RunConfig, RunHandle,
     SpawnRequestEnvelope, TERMINAL_PROVIDERS, now_unix_secs,
 };
-use super::{DerivedHandle, DerivedLaunchConfig, Terminals, normalize_cwd};
+use super::{DerivedHandle, DerivedLaunchConfig, Terminals};
 use crate::isolated::leases::{self, HeldLease};
 
 #[cfg(test)]
@@ -335,8 +335,9 @@ pub(super) fn launch_config_mismatch(
     }
 }
 
+#[cfg(unix)]
 pub(super) fn cwd_mismatch(existing: &Path, requested: &Path) -> Option<String> {
-    if normalize_cwd(existing) == normalize_cwd(requested) {
+    if super::normalize_cwd(existing) == super::normalize_cwd(requested) {
         None
     } else {
         Some(LAUNCH_CONFIG_MISMATCH_ERR.to_owned())

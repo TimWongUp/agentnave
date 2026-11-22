@@ -123,6 +123,7 @@ impl Drop for DerivedInfo {
 pub(super) struct DerivedHandle {
     pub(in crate::terminal) id: u64,
     pub(in crate::terminal) provider: String,
+    #[cfg(unix)]
     pub(in crate::terminal) cwd: PathBuf,
     pub(in crate::terminal) session: Arc<Session>,
     pub(in crate::terminal) native: Option<String>,
@@ -169,6 +170,7 @@ impl Running {
         DerivedHandle {
             id: self.id,
             provider: self.provider.clone(),
+            #[cfg(unix)]
             cwd: self.cwd.clone(),
             session: self.session.clone(),
             native: self.native.clone(),
