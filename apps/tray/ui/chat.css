@@ -19,21 +19,19 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 
 /* ---- group list ---- */
 .side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); background: var(--solid); }
-.side-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px 6px 18px; }
-.side-head h1 { font-size: 16px; letter-spacing: -0.01em; font-weight: 650; margin: 0; }
-.side-add-btn { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; font-size: 16px; font-weight: 400; line-height: 1; color: var(--muted); cursor: pointer; }
-.side-add-btn:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
-.side-add-btn:disabled { opacity: 0.45; cursor: default; }
-.side-head-end { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-.side-icon-btn { position: relative; flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; font-size: 14px; line-height: 1; color: var(--muted); cursor: pointer; }
+.side-head { display: flex; align-items: center; gap: 4px; padding: 8px 10px 6px 12px; }
+.side-head-end { flex: none; display: flex; align-items: center; gap: 2px; }
+.side-icon-btn { position: relative; flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; font-size: 14px; line-height: 1; color: var(--muted); cursor: pointer; }
 .side-icon-btn:hover:not(:disabled), .side-icon-btn[aria-expanded="true"] { color: var(--ink); background: var(--hover); }
-.side-icon-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.side-icon-btn:disabled { opacity: 0.45; cursor: default; }
+.side-icon-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .side-icon-btn[data-active="true"]::after { content: ""; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 50%; background: var(--run); }
-.side-search { display: flex; align-items: center; gap: 6px; margin: 0 10px 6px; padding: 0 8px; height: 28px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--muted); }
-.side-search:focus-within { border-color: var(--line-strong); color: var(--ink); background: var(--bg); }
+.side-search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 6px; border-radius: 7px; background: transparent; color: var(--muted); transition: background 0.12s; }
+.side-search:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
+.side-search:focus-within { background: var(--hover); color: var(--ink); }
 .side-search-ico { flex: none; display: grid; place-items: center; color: var(--faint); pointer-events: none; }
-.side-search-ico svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-.side-search-input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font-size: 12px; line-height: 1.4; outline: none; }
+.side-search-ico svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.side-search-input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font-size: 13px; line-height: 1.4; outline: none; }
 .side-search-input::placeholder { color: var(--faint); }
 .side-search-clear { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 14px; line-height: 1; color: var(--muted); cursor: pointer; }
 .side-search-clear:hover { color: var(--ink); background: var(--hover); }
