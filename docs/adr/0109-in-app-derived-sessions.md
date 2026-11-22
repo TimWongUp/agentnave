@@ -26,12 +26,12 @@
 
 ### 2. 职责边界、数据根合同与托盘私有持久库
 
-- **服务拥有**：能力矩阵与 `app_can_push` 门控、权限不扩权校验、工位／账号／默认值与结构化启动规格解析（派生会话跳过 `start_agent` 的宿主同类排除与 `native_seat` 分流，也不复用 `resolve_start` 路径）、隔离目录创建、原生会话日志按轮正文解析与 400 字单行清洗摘要生成、`offer` 阻塞等待、以及 `wait` 收件汇总。
+- **服务拥有**：能力矩阵与 `app_can_push` 门控、权限不扩权校验、工位／账号／默认值与结构化启动规格解析（工位、模型池、账号、默认值与权限档位的各项解析照常复用，只跳过 `start_agent` 私聊的选席分流、宿主同类排除与 `native_seat` 分流）、隔离目录创建、原生会话日志按轮正文解析与 400 字单行清洗摘要生成、`offer` 阻塞等待、以及 `wait` 收件汇总。
 - **托盘拥有**：派生终端 PTY 与 Codex 私有 `app-server` 生命周期、家族拓扑与 `startChain` 配额、回合归属与汇聚唤醒状态机、提案与待办队列、同家族三向消息路由、运行期隔离目录 OS 租约、左栏父子缩进树及提案卡片交互。
 - **跨进程数据根文件**：
   - `spawn-requests/<request_id>.json`（服务写，`0o700` 目录、`0o600` 原子替换；合并初稿 `spawn-prompts/`）：承载一次性控制命令、调用方 `service_pid`、结构化启动规格、短命 `prompt`／`message` 正文及已读确认提交。托盘领取并落库后删除；服务超时只查询或取消未领取请求，不与托盘争删。
-  - `derived-messages/<msg_id>.json`（托盘写，`0o600`）：承载同家族跨会话（peer）消息正文；确认收取、归档或满 7 天后由托盘清理。
-  - `spawned/<tray_pid>.json`（托盘进程级单写，App 退出即删，**绝不含正文**）：记录本实例活派生终端与路由状态、在途请求与 `offer` 决策回执、每个接收者的有界未读事件元数据与名册、以及已确认位置。服务按 PID 与启动时间防复用校验后按需读取，不常驻轮询（`offer` 阻塞等待期间除外）。
+  - `derived-messages/<msg_id>.json`（托盘写，`0o600`）：承载同家族跨会话（peer）消息正文；收取后仍保留供按 `event_id` 重读，所属家族归档或满 7 天后由托盘清理。
+  - `spawned/<tray_pid>.json`（托盘进程级单写，App 退出即删，**绝不含正文**）：记录本实例活派生终端与路由状态、在途请求与 `offer` 决策回执、每个接收者的有界未读事件元数据、近 7 天事件索引（把 `event_id` 映射到原生会话与轮次、peer 正文文件或提案 brief，供重读）与名册、以及已确认位置。服务按 PID 与启动时间防复用校验后按需读取，不常驻轮询（`offer` 阻塞等待期间除外）。
   - `inbox/<service_pid>.json`（既有）：只管 `start_agent` 与 `run_round`；取消初稿在其上增记的派生已读游标。
 - **托盘私有持久库 `derived-sessions.db`**：置于托盘自有应用数据目录（预览版写独立预览目录，不改动 `agentnave.db`），以 SQLite WAL 单写者方式保存家族树、原生会话绑定、账号、工作目录、提案与待办、链路配额、事件引用与按 **`(稳定接收者 ID, event_id / 单调 event_seq)`** 持久化的已读确认位置。该库不作为跨进程合同，服务不直接打开它，而是通过 `spawn-requests/` 提交已读确认；因不绑定 `service_pid`，中继热切换或服务重启不会重复推送，且有请求在途或 `offer` 阻塞等待时服务的 `restart_safe()` 返回假。
 
@@ -40,14 +40,14 @@
 仅对运行在 App 内且满足 `app_can_push` 并在能力矩阵中可作父会话的宿主在 `tools/list` 公布以下 3 个工具（执行时逐项复核，不合规或 App 外调用直接拒绝；移除初稿的 `read_spawned_session`）：
 
 - **`spawn_session`**（`readOnlyHint=false`，非幂等；同一已领取 `proposal_id` 返回原回执）：
-  - `action="start"`：创建 `fresh` 或 `fork` 派生会话，或凭 `proposal_id` 原子认领提案；支持 `initiation="user_asked" | "offer" | "own_initiative"`（缺省 `user_asked`）。未指定 `provider`／`seat` 时默认继承父 `(provider, account)`；`fresh` 可带 `background` 且允许同 CLI 父子；`fork` 仅限同 CLI 同账号。
+  - `action="start"`：创建 `fresh` 或 `fork` 派生会话，或凭 `proposal_id` 原子认领提案；支持 `initiation="user_asked" | "offer" | "own_initiative"`（缺省 `user_asked`）。未指定 `provider`／`seat` 时默认继承父 `(provider, account)`；`fresh` 可带 `background` 且允许同 CLI 父子；可带 `forward`，规则与 `start_agent` 相同，注入内容对子会话是数据；`fork` 仅限同 CLI 同账号。
   - `action="hand_off"`：`context="fork"` 的任务移交封装，携带 `remaining_plan` 与移交模板；子终端确认收到首轮后，父节点的该项任务标为「已移交」，父停止自动续做该计划，但父终端仍可继续接收其他人类指令或管理其他子会话。
 - **`derived_session`**（`readOnlyHint=false, destructiveHint=true`）：
-  - `action="send"`：同家族三向投递（父→子续发、子→父求助 `target="parent"`、子→子互发）。目标空闲直投、忙碌排队、`dormant`（休眠）按原账号／目录／原生 ID 自动冷启 `--resume` 后投递；写入与创建分离，避免重试发信误开新终端。子向父求助时标记「等父回复」并立即退出父的阻塞等待集，防止父子互锁。
+  - `action="send"`：同家族三向投递（父→子续发、子→父求助 `target="parent"`、子→子互发）。目标空闲直投、忙碌排队、`dormant`（休眠）按原账号／目录／原生 ID 自动冷启 `--resume` 后投递；可带 `forward`（同 `start_agent` 规则）；写入与创建分离，避免重试发信误开新终端。子向父求助时标记「等父回复」并立即退出父的阻塞等待集，防止父子互锁。
   - `action="stop" | "close" | "archive"`：祖先操作后代（中断当前回合、关闭 PTY 并释放租约、归档并移出活跃名册）。若子会话最近一轮由用户亲自发起，拒绝父侧 `stop`／`close`／`archive`（父仍可 `send` 与只读查看）；父归档不递归终止子会话，也不删除原生日志与隔离目录。
   - `action="dismiss"`：撤回未启动提案（`spawn_in_flight` 或已启动时拒绝）并同步清理待办。
 - **`read_derived_session`**（`readOnlyHint=true, idempotentHint=true`）：
-  - 不传 `event_id` 时返回当前家族名册（`linked_sessions`）、可用动作、提案与回执；传入不可变 `event_id` 时按页重读该次回合报告、peer 消息或任务 `brief` 全文。**纯只读且永不推进已读位置。**
+  - 不传 `event_id` 时返回当前家族名册（`linked_sessions`）、可用动作、提案与回执；传入不可变 `event_id` 时按页重读该次回合报告、peer 消息或任务 `brief` 全文；超出 7 天保留范围时照实返回原因。**纯只读且永不推进已读位置。**
 - **扩展现有 `wait`**（`readOnlyHint=true`）：
   - 不传 `ids` 的收件箱模式（含 `wait_seconds=0` 与阻塞等待）新增 `derived` 字段与精简 `linked_sessions` 名册快照，返回未读回合通知（关联 `(derived_id, turn)`，含结局 `finished`/`stopped`/`failed`/`lost`、400 字单行清洗预览、原长度与 `event_id`）、`needs_user` 提醒、peer 来信正文及提案点击结果；领取即向托盘提交已读确认。`include_output=false` 仍返回可经 `read_derived_session` 重读的 `event_id`。派生事件可唤醒阻塞的收件箱 `wait`；空闲但可继续对话的子会话不使 `all_finished` 恒为假。显式传 `ids` 的语义不变。
 
@@ -78,13 +78,13 @@
   - 离线点击提案时（父终端在线则键入短提示引导父调用 `spawn_session(proposal_id)`；父不在线则由托盘先按原绑定冷启 `--resume` 父终端而不自动提交新用户任务，待就绪后再提示），由服务重新校验并按需建隔离目录，不预建无主 worktree，也不在托盘重复实现隔离创建逻辑。
 - **并发上限**：每个存活的派生 PTY（含启动中、等审批与空闲）各占一个 `max_running` 名额，关闭或休眠时释放，恢复时重新占用；不另设独立的全局派生终端总数上限，也不引入跨进程 OS 锁（服务预查 + 托盘串行受理复核）。名额满时回执列出可关闭的空闲子终端。
 - **隔离目录租约与 `fork` 基点**：需要隔离时由服务按 [ADR-0085](0085-service-managed-isolated-dirs.md) 创建目录并持有临时租约 `L_svc`，托盘接单后按同一仓库锁协议取得进程级租约 `L_tray` 并反馈给服务释放 `L_svc`；终端关闭、休眠或 App 退出时释放 `L_tray`。父在隔离目录中执行 `fork` 时，从父当前已提交 `HEAD` 切出新 worktree，未提交改动不带入并在回执写明。
-- **权限只降不升**：同 Provider 严格遵守各 Adapter 声明的原生偏序只降不升；跨 Provider 仅自动放行已验证映射表能证明不扩权的组合；当父会话实际权限未知或跨 CLI 组合无法证明不扩权时禁止直启，要求改为通过 `offer` 由用户在 App 针对该次启动显式确认。若本轮已被用户限定为更窄范围（如只读），提案同样必须满足该范围。
+- **权限只降不升**：同 Provider 严格遵守各 Adapter 声明的原生偏序只降不升；跨 Provider 仅自动放行已验证映射表能证明不扩权的组合；当父会话实际权限未知或跨 CLI 组合无法证明不扩权时禁止直启，要求改为通过 `offer` 由用户在 App 针对该次启动显式确认；非人类发起的回合不能弹 `offer`，此时拒绝启动，boss 可改提 `own_initiative` 卡，卡面列出目标账号、目录与实际权限，用户点击即视为对该次启动的确认。若本轮已被用户限定为更窄范围（如只读），提案同样必须满足该范围。
 - **重启恢复与防伪造**：App 退出不保活子进程；重启后托盘从 `derived-sessions.db` 重建左栏父子树，将旧终端标为 `dormant`（退出前未确认启动或送达的标为「待核对」，不自动重跑），清理未完成的阻塞 `offer` 并保留未过期的 `own_initiative` 与待办；用户点击或获准 `send` 时按原账号、目录与原生 ID 按需 `--resume` 并重新取租约。数据根与消息文件采用 `0o700` 目录、`0o600` 权限、防符号链接／junction 遍历检查及 PID 启动时间防复用校验，名称按白名单清洗，所有家族归属、深度、配额与权限均由服务与托盘基于进程树与单写者状态校验，不信任文本内容。
 
 ### 7. 不移植桌面端做法及替代方案
 
 - **不移植 `wrap_up` 专用工具**：强制子会话调用宿主专属收尾工具违反「Provider Adapter 不静默增补工具与 prompt」边界且无法跨 CLI 通用；替代为服务 Adapter 直接从各 CLI 原生会话日志解析最后一轮助手回复。
-- **不移植 `side-session-notes/` 共享便签目录 + `--add-dir`**：各 CLI 对附加目录授权参数与沙箱语义不一致，且额外目录会增加跨进程生命周期清理负担；替代为同家族 peer 消息、既有转发机制与隔离目录。
+- **不移植 `side-session-notes/` 共享便签目录 + `--add-dir`**：各 CLI 对附加目录授权参数与沙箱语义不一致，且额外目录会增加跨进程生命周期清理负担；替代为同家族 peer 消息、`spawn_session`／`send` 的 `forward` 与隔离目录。
 - **不移植 `cloud` / `ssh` / `preset` 目标**：AgentNave 定位为本机 STDIO MCP 服务，没有云端或远端会话运行载体，对应能力不在范围内。
 - **不移植 `<system-reminder>` 注入与 `tagScrub`**：桌面端将子会话摘要与名册直接拼入用户消息文本流，才不得不维护复杂的 Unicode 同形字 XML 标签清洗；AgentNave 坚持正文不进终端，改为工具回执附带名册与短提示唤醒，从源头隔离数据通道。
 
