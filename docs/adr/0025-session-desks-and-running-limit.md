@@ -3,9 +3,9 @@
 - 状态：部分取代
 - 称呼生成、重名消歧与历史署名由 [ADR-0062](0062-service-owned-member-names.md) 修订。
 - 日期：2026-10-24
+- 同时运行上限在终端模式下的口径由 [ADR-0109](0109-in-app-derived-sessions.md) 修订：派生终端只在 boss 派发的那一轮计入，空闲的派生终端与用户自己发起的回合不占名额。
 - 取代 [ADR-0023](0023-explicit-desk-continuation.md) 的 `continue_desk`，修订 [ADR-0018](0018-office-workspace-desks-and-meeting-rooms.md) 的工位身份；会议室、转发与 Manager 拥有编排决策的约定不变。
 - `role` 与访问等级只作显示标签的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊工位可套用参数并推断访问等级。
-- 同时运行上限 `max_running` 计入存活的派生会话终端（含启动中、等审批与空闲；休眠或关闭释放，恢复时重新占位），由 [ADR-0109](0109-in-app-derived-sessions.md) 修订。
 
 ## 背景
 
