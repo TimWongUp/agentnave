@@ -76,7 +76,7 @@
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
 | 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)、[ADR-0102](0102-agy-native-status.md) |
-| 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 部分修订 | 扩展并修订 ADR-0068；固定档专项不再排除在小事外由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订 |
+| 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 部分修订 | 扩展并修订 ADR-0068；固定档专项不再排除在小事外由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；上下文已全在 boss 手里的定稿写作例外由 [ADR-0110](0110-boss-writes-when-holding-context.md) 修订 |
 | 0074 | [App 工位模型作为选择来源，Claude 原生子代理使用同系列别名](0074-app-seat-model-source-and-claude-family-aliases.md) | 已接受 | 修订 ADR-0068 的「归属」与「退化」，仅限工位模型选择来源及 Claude 同系列映射、[ADR-0087](0087-decision-model-recommends-seats.md)；「不可用边界」的兜底顺序由 [ADR-0089](0089-seat-fallback-order.md) 修订；执行边界由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 补充 |
 | 0075 | [模型列表只用 CLI 当前列出的，与工位共用同一套名字](0075-model-lists-only-what-the-cli-lists.md) | 已接受 | 修订 ADR-0034 |
 | 0076 | [权限档位缺省为完全放开](0076-full-permission-default.md) | 已接受 | 修订 ADR-0032 |
@@ -112,3 +112,4 @@
 | 0106 | [托盘拥有本机 CLI 用量统计与折算花费面板](0106-tray-usage-panel.md) | 已接受 | 扩展 ADR-0012 的托盘数据根写入边界；保持 ADR-0026、ADR-0048 的服务与会话库隔离；遵守 ADR-0029；复用 ADR-0100 卸载开关与 ADR-0103 预览版及内嵌页约定；同步更新 CONTEXT「Tray App」 |
 | 0107 | [固定档专项不再排除在小事边界外，收尾改为服务语义汇报，顺位回执自带说明](0107-specialist-scope-closing-and-fallback-note.md) | 已接受 | 修订 ADR-0073、ADR-0104；扩展 ADR-0043；补充 ADR-0089、ADR-0093 |
 | 0108 | [支持按账号隔离运行，第一期开放 Claude](0108-multi-account-isolation.md) | 已接受 | 修订 ADR-0029、ADR-0056、ADR-0062、ADR-0078、ADR-0081、ADR-0089、ADR-0090、ADR-0093、ADR-0100、ADR-0103；扩展 ADR-0048 |
+| 0110 | [写作所需的上下文已全在 boss 手里时，定稿由 boss 自己写](0110-boss-writes-when-holding-context.md) | 已接受 | 修订 ADR-0073 |
