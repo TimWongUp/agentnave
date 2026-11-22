@@ -227,6 +227,11 @@ impl Running {
         } else {
             self.session.wrote_within(ACTIVE)
         };
+        let desk_key = self
+            .native
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|sid| thread_desk_key(&self.provider, sid));
         json!({"id": self.id, "provider": self.provider, "art_model": art_model, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": active,
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
@@ -239,8 +244,27 @@ impl Running {
             "derived_busy": busy,
             "native": self.native,
             "isolation_id": self.derived.as_ref().and_then(|d| d.isolation_id.as_deref()),
+            "desk_key": desk_key,
             "blocked_kind": self.derived.as_ref().and_then(|d| d.blocked_kind.as_deref())})
     }
+}
+
+/// Computes the service's private-thread desk key (`thread:<sha256(provider\0session_id)[:16]>`),
+/// matching `src/agentnave/naming.py::thread` and `stage.rs::task_desk`.
+pub(super) fn thread_desk_key(provider: &str, session_id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write;
+
+    let mut hasher = Sha256::new();
+    hasher.update(provider.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(session_id.as_bytes());
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(16);
+    for byte in &digest[..8] {
+        let _ = write!(&mut hex, "{byte:02x}");
+    }
+    format!("thread:{hex}")
 }
 
 pub(crate) fn request(

@@ -10,6 +10,7 @@ const ChatTerminal = (() => {
   const RESUMES = new Set(["claude", "codex", "grok", "antigravity"]);
   const t = {
     list: [],
+    listGen: 0,
     clis: null,
     cwd: null,
     since: new Map(), // terminal id -> when the office first saw it, to order the list
@@ -79,20 +80,28 @@ const ChatTerminal = (() => {
   // A derived terminal's desk in its parent's office is the thread of its native session.
   const ofDesk = (group, key) =>
     key?.startsWith("thread:")
-      ? t.list.find((x) => x.derived && x.native && x.parent_workspace_id === group && `thread:${x.native}` === key)
+      ? t.list.find(
+          (x) =>
+            x.derived &&
+            x.parent_workspace_id === group &&
+            ((x.desk_key && x.desk_key === key) || (x.native && `thread:${x.native}` === key)),
+        )
       : undefined;
   // The terminal this workspace's column shows: the open desk's own derived terminal, else the boss's.
   const terminalOf = (group) =>
     byId(pendingId(group)) || (state.drawer?.kind === "desk" && ofDesk(group, state.drawer.key)) || ofWorkspace(group);
 
   async function refresh() {
+    const gen = ++t.listGen;
+    let current;
     try {
-      const current = await AN.load("/app/terminal/state");
-      t.list = current.sessions;
-      t.cwd = current.cwd;
+      current = await AN.load("/app/terminal/state");
     } catch {
       return; // keep what is shown
     }
+    if (gen !== t.listGen) return;
+    t.list = current.sessions;
+    t.cwd = current.cwd;
     const now = new Date().toISOString();
     for (const x of t.list) if (!t.since.has(x.id)) t.since.set(x.id, now);
     for (const id of t.frames.keys()) if (!byId(id)) dropFrame(id);
