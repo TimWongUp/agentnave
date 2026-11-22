@@ -39,6 +39,7 @@ def setup_tray(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Termina
         return birth
 
     monkeypatch.setattr(terminal_requests, "read_process_started", started)
+    monkeypatch.setattr(terminal_execution, "read_process_started", started)
     return TerminalLaunch(tmp_path, TrayIdentity(42, birth), "s-boss", "workspace", None), path
 
 
@@ -393,6 +394,7 @@ async def test_mcp_terminal_dispatch_writes_run_request(
     monkeypatch.setattr(mcp_tasks, "find_tray", find_tray)
     monkeypatch.setattr(mcp_tasks, "read_tray", read_capability)
     monkeypatch.setattr(terminal_requests, "read_process_started", process_started)
+    monkeypatch.setattr(terminal_execution, "read_process_started", process_started)
     monkeypatch.setattr(terminal_execution, "read_turn", read_turn)
     async with Client(mcp) as client:
         response = await client.call_tool(
@@ -895,6 +897,7 @@ async def test_mcp_cancel_converts_not_safe_to_interrupt_to_tool_error(
     monkeypatch.setattr(mcp_tasks, "find_tray", find_tray)
     monkeypatch.setattr(mcp_tasks, "read_tray", read_capability)
     monkeypatch.setattr(terminal_requests, "read_process_started", process_started)
+    monkeypatch.setattr(terminal_execution, "read_process_started", process_started)
     async with Client(mcp) as client:
         response = await client.call_tool(
             "start_agent",
