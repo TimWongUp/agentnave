@@ -251,26 +251,8 @@ function inDesk(m, key, ctx) {
     (r) => r.seat && ctx.seatDesk.get(`${m.conversation}|${r.seat}`) === key,
   );
 }
-function roomIcon(chars) {
-  if (chars.length === 1) return ART.head(chars[0]);
-  if (chars.length > 1) {
-    return h("span.dr-ico-grid", { "data-n": String(chars.length) }, ...chars.map((ch) => ART.head(ch)));
-  }
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 18 18");
-  svg.setAttribute("class", "dr-ico-svg");
-  for (const d of [
-    "M6.5 8.5a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z",
-    "M2.4 14.3a4.2 4.2 0 0 1 8.2 0",
-    "M12.2 8.2a2 2 0 1 0 0-4",
-    "M12.6 10.6a3.5 3.5 0 0 1 3 3.7",
-  ]) {
-    const path = document.createElementNS(ns, "path");
-    path.setAttribute("d", d);
-    svg.append(path);
-  }
-  return svg;
+function roomIcon() {
+  return h("img.dr-ico-img", { src: "/art/office/meeting-icon.webp", alt: "", draggable: false });
 }
 function scopeHead(c, ctx, shown) {
   const d = state.drawer;
@@ -287,19 +269,13 @@ function scopeHead(c, ctx, shown) {
   }
   if (d.kind === "room") {
     const room = ctx.rooms.get(d.id);
-    if (room) {
-      const chars = room.seats
-        .map((s) => ctx.desks.get(s.desk))
-        .filter(Boolean)
-        .map((desk) => deskChar(desk))
-        .slice(0, 4);
+    if (room)
       return {
-        key: `room|${d.id}|${chars.join(",")}`,
-        ico: () => roomIcon(chars),
+        key: `room|${d.id}`,
+        ico: roomIcon,
         title: room.title,
         sub: L(`会议室 · ${room.seats.length} 位 · ${roundText(room)}`, `Meeting room · ${room.seats.length} seats · ${roundText(room)}`),
       };
-    }
   }
   return {
     key: `all|${c.host}|${c.label}`,
