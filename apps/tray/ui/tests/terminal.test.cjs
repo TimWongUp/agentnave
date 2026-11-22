@@ -74,7 +74,71 @@ function createFakeTerminalClass(written, deferWrite = false) {
   };
 }
 
-function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, deferWrite = false, transport } = {}) {
+function createDomNode(tag, doc) {
+  const listeners = { capture: {}, bubble: {} };
+  const node = {
+    tagName: tag.toUpperCase(),
+    ownerDocument: doc,
+    style: {},
+    attributes: {},
+    children: [],
+    className: "",
+    dir: "",
+    value: "",
+    offsetWidth: 800,
+    offsetHeight: 600,
+    isConnected: true,
+    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+    setAttribute(k, v) { this.attributes[k] = String(v); },
+    getAttribute(k) { return this.attributes[k]; },
+    append(...nodes) {
+      for (const child of nodes) {
+        if (child && typeof child === "object") { child.parentNode = node; this.children.push(child); }
+      }
+    },
+    appendChild(child) { this.append(child); return child; },
+    removeChild(child) { this.children = this.children.filter(c => c !== child); return child; },
+    insertBefore(child) { this.append(child); return child; },
+    replaceChildren(...nodes) { this.children = []; this.append(...nodes); },
+    get firstChild() { return this.children[0] || null; },
+    insertAdjacentElement(_pos, child) { this.append(child); },
+    remove() {},
+    focus() {},
+    blur() {},
+    select() {},
+    getBoundingClientRect() { return { left: 0, top: 0, width: 10, height: 18, right: 10, bottom: 18 }; },
+    addEventListener(type, fn, opts) {
+      const cap = typeof opts === "boolean" ? opts : !!opts?.capture;
+      (listeners[cap ? "capture" : "bubble"][type] ||= []).push(fn);
+    },
+    removeEventListener(type, fn, opts) {
+      const cap = typeof opts === "boolean" ? opts : !!opts?.capture;
+      const list = listeners[cap ? "capture" : "bubble"][type];
+      if (list) listeners[cap ? "capture" : "bubble"][type] = list.filter(f => f !== fn);
+    },
+    dispatchEvent(ev) {
+      ev.target ||= node;
+      ev.preventDefault ||= () => { ev.defaultPrevented = true; };
+      ev.stopPropagation ||= () => { ev.cancelBubble = true; };
+      const chain = [];
+      for (let cur = node; cur; cur = cur.parentNode) chain.unshift(cur);
+      for (const item of chain) {
+        for (const fn of [...(item._listeners?.capture[ev.type] || [])]) fn(ev);
+        if (ev.cancelBubble) return !ev.defaultPrevented;
+      }
+      for (let i = chain.length - 1; i >= 0; i--) {
+        const item = chain[i];
+        for (const fn of [...(item._listeners?.bubble[ev.type] || [])]) fn(ev);
+        if (ev.cancelBubble) return !ev.defaultPrevented;
+      }
+      return !ev.defaultPrevented;
+    },
+    _listeners: listeners,
+  };
+  return node;
+}
+
+function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, openRealDom = false, deferWrite = false, transport } = {}) {
   const docListeners = {};
   const winListeners = {};
   const observers = [];
@@ -95,12 +159,25 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, defe
   };
 
   let TerminalClass;
+  const domDoc = openRealDom ? {
+    queryCommandSupported: () => false,
+    addEventListener() {},
+    removeEventListener() {},
+    createElement: tag => createDomNode(tag, domDoc),
+    createDocumentFragment: () => createDomNode("fragment", domDoc),
+    createElementNS: (_ns, tag) => createDomNode(tag, domDoc),
+  } : null;
+  if (domDoc) {
+    domDoc.documentElement = createDomNode("html", domDoc);
+    domDoc.head = createDomNode("head", domDoc);
+    domDoc.body = createDomNode("body", domDoc);
+  }
   if (useRealXterm) {
     const xtermContext = vm.createContext({
       globalThis: null,
       self: null,
       window: null,
-      document: { queryCommandSupported: () => false },
+      document: domDoc || { queryCommandSupported: () => false },
       setTimeout,
       clearTimeout,
       setInterval,
@@ -117,13 +194,18 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, defe
       WeakMap,
       WeakSet,
       Promise,
-      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+      addEventListener() {},
+      removeEventListener() {},
+      getComputedStyle: () => ({ getPropertyValue: () => "10px" }),
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }),
       navigator: { userAgent: "Mac", platform: "MacIntel", language: "en-US" },
       performance: { now: () => Date.now() },
+      devicePixelRatio: 2,
     });
     xtermContext.globalThis = xtermContext;
     xtermContext.self = xtermContext;
     xtermContext.window = xtermContext;
+    if (domDoc) domDoc.defaultView = xtermContext;
     vm.runInContext(readFileSync(`${__dirname}/../vendor/xterm/xterm.js`, "utf8"), xtermContext);
     const RealTerminal = xtermContext.Terminal;
     TerminalClass = class HeadlessTerminal extends RealTerminal {
@@ -131,7 +213,7 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, defe
         super(options);
         this.focused = 0;
       }
-      open() {}
+      open(parent) { if (openRealDom) super.open(parent); }
       focus() { this.focused++; }
       write(data, cb) {
         written.push(typeof data === "string" ? data : decoder.decode(data));
@@ -155,7 +237,7 @@ function createHarness({ theme = "dark", lang = "zh", useRealXterm = false, defe
     location: { search: "?session=42", origin: "http://agentnave.localhost" },
     document: {
       documentElement: root,
-      createElement: () => ({ className: "", offsetWidth: 800, offsetHeight: 600 }),
+      createElement: tag => domDoc ? createDomNode(tag, domDoc) : ({ className: "", offsetWidth: 800, offsetHeight: 600 }),
       addEventListener(name, fn) { (docListeners[name] ||= []).push(fn); },
     },
     window: windowObj,
@@ -569,4 +651,40 @@ test("on the light skin Claude Code's pale message bar is drawn dark", async () 
     assert.equal(out.includes("\x1b[48;2;55;55;55m❯ hi"), theme === "light", theme);
     assert.equal(out.includes("\x1b[48;2;240;240;240m"), theme === "dark", theme);
   }
+});
+
+test("macOS IME Shift+punctuation delivers ？ once on first press and once on second press using vendored xterm.js", async () => {
+  let hold;
+  let step = 0;
+  const app = createHarness({
+    useRealXterm: true,
+    openRealDom: true,
+    transport: async () => {
+      if (++step === 1) return makeResponse({ body: "", headers: { "X-Terminal-Start": 0, "X-Terminal-End": 0, "X-Terminal-Appearance": 0 } });
+      return new Promise(resolve => { hold = resolve; });
+    },
+  });
+  await app.start();
+  const textarea = app.term().textarea;
+  assert.ok(textarea);
+
+  textarea.dispatchEvent({ type: "keydown", keyCode: 16, which: 16, key: "Shift", shiftKey: true });
+  textarea.value = "？";
+  textarea.dispatchEvent({ type: "input", inputType: "insertText", data: "？", composed: true });
+  textarea.dispatchEvent({ type: "keydown", keyCode: 229, which: 229, key: "？", shiftKey: true });
+  textarea.dispatchEvent({ type: "keyup", keyCode: 191, which: 191, key: "/", shiftKey: true });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(app.inputs, ["？"]);
+  assert.match(app.inputPaths[0], /source=user$/);
+
+  textarea.value = "？？";
+  textarea.dispatchEvent({ type: "input", inputType: "insertText", data: "？", composed: true });
+  textarea.dispatchEvent({ type: "keydown", keyCode: 229, which: 229, key: "？", shiftKey: true });
+  textarea.dispatchEvent({ type: "keyup", keyCode: 191, which: 191, key: "/", shiftKey: true });
+  textarea.dispatchEvent({ type: "keyup", keyCode: 16, which: 16, key: "Shift", shiftKey: false });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(app.inputs, ["？", "？"]);
+
+  hold(makeResponse({ body: "", headers: { "X-Terminal-Start": 0, "X-Terminal-End": 0, "X-Terminal-Exit": "0" } }));
+  await flush();
 });

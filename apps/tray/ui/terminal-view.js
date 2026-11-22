@@ -91,6 +91,10 @@ window.TerminalView = (() => {
 
     open() {
       this.term.open(this.element);
+      // Don't let standalone Shift keydowns arm xterm's _keyDownSeen before IME insertText (xtermjs/xterm.js#6200).
+      this.element.addEventListener?.("keydown", event => {
+        if (event.key === "Shift" && !event.ctrlKey && !event.altKey && !event.metaKey) event.stopPropagation();
+      }, true);
       try {
         const webgl = new WebglAddon.WebglAddon();
         webgl.onContextLoss(() => webgl.dispose());
