@@ -24,6 +24,9 @@ const RESUME_RETRY_GAP: Duration = Duration::from_millis(250);
 const INTERRUPT_RETRY_TIMEOUT: Duration = Duration::from_secs(4);
 const INTERRUPT_RETRY_GAP: Duration = Duration::from_millis(200);
 
+#[cfg(test)]
+mod tests;
+
 struct ReadyFileGuard(Option<PathBuf>);
 
 impl Drop for ReadyFileGuard {
@@ -71,7 +74,10 @@ pub(super) fn run_codex(
         coordinator.mark_finished(
             req_id,
             status,
-            Some("等待 Codex app-server 连接失败"),
+            Some(&startup_failure_reason(
+                &launched.session,
+                "等待 Codex app-server 连接失败",
+            )),
             launched.native.as_deref(),
         );
         return;
@@ -102,7 +108,10 @@ pub(super) fn run_codex(
         coordinator.mark_finished(
             req_id,
             status,
-            Some("等待 Codex 线程就绪失败"),
+            Some(&startup_failure_reason(
+                &launched.session,
+                "等待 Codex 线程就绪失败",
+            )),
             launched.native.as_deref(),
         );
         return;
@@ -415,8 +424,15 @@ pub(super) fn check_turn_reconciled(
             *rollout_path = path_opt;
         }
         if let Some(info) = turns.iter().find(|t| t.id == turn_id) {
+            // `thread/read` also reports a turn that is still running in the rollout as
+            // `interrupted` whenever the thread is not active (right after `turn/start`, or on a
+            // restarted app-server), so only its final states count; interruption is proven by the
+            // live notification or the rollout's `turn_aborted`.
             let res = map_codex_turn_status(&info.status, info.error.clone());
-            if res.0 != CodexTurnOutcome::Running {
+            if matches!(
+                res.0,
+                CodexTurnOutcome::Completed | CodexTurnOutcome::Failed
+            ) {
                 return res;
             }
         }
@@ -509,47 +525,56 @@ fn monitor_codex_turn(
 
         let (outcome, err_msg) =
             check_turn_reconciled(codex, thread_id, turn_id, &mut rollout_path, &homes);
-        if outcome != CodexTurnOutcome::Running {
-            terminals.set_derived_state(launched.id, None, Some(thread_id), false, None);
-            let (status, reason) = match outcome {
-                CodexTurnOutcome::Completed => ("succeeded", None),
-                CodexTurnOutcome::Interrupted => ("cancelled", Some("Codex 当前轮已中断")),
-                CodexTurnOutcome::Failed => {
-                    ("failed", err_msg.as_deref().or(Some("Codex 执行失败")))
-                }
-                CodexTurnOutcome::Running => unreachable!(),
+        let mut exit = None;
+        if outcome == CodexTurnOutcome::Running {
+            let Some(code) = launched.session.exit() else {
+                thread::sleep(POLL_STEP);
+                continue;
             };
-            coordinator.mark_finished(req_id, status, reason, Some(thread_id));
-            return;
+            exit = Some(code);
         }
-
-        if let Some(code) = launched.session.exit() {
-            thread::sleep(Duration::from_millis(120));
-            let (after_outcome, after_err) =
-                check_turn_reconciled(codex, thread_id, turn_id, &mut rollout_path, &homes);
-            terminals.set_derived_state(launched.id, None, Some(thread_id), false, None);
-            match after_outcome {
-                CodexTurnOutcome::Completed => {
-                    coordinator.mark_finished(req_id, "succeeded", None, Some(thread_id));
-                }
-                CodexTurnOutcome::Interrupted => {
-                    coordinator.mark_finished(
-                        req_id,
-                        "cancelled",
-                        Some("Codex 已中断退出"),
-                        Some(thread_id),
-                    );
-                }
-                _ => {
-                    let msg =
-                        after_err.unwrap_or_else(|| format!("Codex 终端提前退出（exit {code}）"));
-                    coordinator.mark_finished(req_id, "failed", Some(&msg), Some(thread_id));
-                }
+        let (outcome, err_msg) = match exit {
+            Some(_) => {
+                // The terminal is gone: look once more, since the app-server may have just
+                // written the turn's end.
+                thread::sleep(Duration::from_millis(120));
+                check_turn_reconciled(codex, thread_id, turn_id, &mut rollout_path, &homes)
             }
-            return;
-        }
-        thread::sleep(POLL_STEP);
+            None => (outcome, err_msg),
+        };
+        terminals.set_derived_state(launched.id, None, Some(thread_id), false, None);
+        let (status, reason) = settle_turn(outcome, err_msg, exit);
+        coordinator.mark_finished(req_id, status, reason.as_deref(), Some(thread_id));
+        return;
     }
+}
+
+/// How a run ends: a finished turn succeeds, a proven interruption is a cancel, and a terminal
+/// that exited without either proof is a failure, never a cancel.
+pub(super) fn settle_turn(
+    outcome: CodexTurnOutcome,
+    error: Option<String>,
+    exit: Option<u32>,
+) -> (&'static str, Option<String>) {
+    match outcome {
+        CodexTurnOutcome::Completed => ("succeeded", None),
+        CodexTurnOutcome::Interrupted => ("cancelled", Some("Codex 当前轮已中断".to_owned())),
+        CodexTurnOutcome::Failed => (
+            "failed",
+            Some(error.unwrap_or_else(|| "Codex 执行失败".to_owned())),
+        ),
+        CodexTurnOutcome::Running => ("failed", Some(early_exit_reason(exit.unwrap_or_default()))),
+    }
+}
+
+fn startup_failure_reason(session: &Session, fallback: &str) -> String {
+    session
+        .exit()
+        .map_or_else(|| fallback.to_owned(), early_exit_reason)
+}
+
+fn early_exit_reason(code: u32) -> String {
+    format!("Codex 终端提前退出（exit {code}）")
 }
 
 fn env_inv(handle: &Arc<RunHandle>) -> String {
