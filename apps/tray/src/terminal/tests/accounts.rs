@@ -139,3 +139,44 @@ fn the_workspace_owner_account_is_read_once_the_history_has_the_column() {
     assert_eq!(owner("s-b"), None);
     assert_eq!(owner("s-missing"), None);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_named_accounts_terminal_reports_only_its_own_default_model() {
+    let root = tempfile::tempdir().unwrap();
+    let named = root.path().join("named");
+    let bare = root.path().join("bare");
+    std::fs::create_dir_all(&named).unwrap();
+    std::fs::create_dir_all(&bare).unwrap();
+    std::fs::write(named.join("settings.json"), r#"{"model":"opus"}"#).unwrap();
+    // The data root's published default must not stand in for an account that names none.
+    std::fs::write(
+        root.path().join(crate::detect::NATIVE_FILE),
+        r#"{"version":1,"clis":{"claude":{"model":"sonnet"}}}"#,
+    )
+    .unwrap();
+    let session = super::Session::start(super::shell("sleep 30"), 80, 24).unwrap();
+    let terminals = super::super::Terminals::default();
+    for (id, dir) in [(1, &named), (2, &bare)] {
+        terminals.lock().open.push(super::Running {
+            id,
+            provider: "claude".to_owned(),
+            cwd: std::env::temp_dir(),
+            session: session.clone(),
+            workspaces: Vec::new(),
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: std::time::SystemTime::now(),
+            pending: 0,
+            account: Some(active(dir.to_str().unwrap())),
+            #[cfg(unix)]
+            codex: None,
+            derived: None,
+        });
+    }
+    let (_, open) = terminals.snapshot(root.path());
+    assert_eq!(open[0].2["art_model"], "opus");
+    assert!(open[1].2["art_model"].is_null());
+    session.stop();
+}

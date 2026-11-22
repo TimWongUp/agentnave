@@ -13,12 +13,14 @@ from typing import cast
 from agentnave.process_info import read_process_parent, read_process_started
 
 PUSH_NEXT = (
-    "The App will prompt you in the terminal when results are ready; you may end this turn. "
-    "When prompted, call inbox wait(wait_seconds=0) with the same manager_session_id."
+    "The App will prompt you in the terminal when results are ready. End this turn now; do not "
+    "call a blocking wait. When prompted, call inbox wait(wait_seconds=0) with the same "
+    "manager_session_id."
 )
 PUSH_AGAIN = (
-    "Handle ready prompts and reviews. The App will prompt you again when remaining items are "
-    "ready; you may end this turn and then call inbox wait(wait_seconds=0)."
+    "Handle ready prompts and reviews, then end this turn without calling a blocking wait. The "
+    "App will prompt you again when remaining items are ready; when prompted, call inbox "
+    "wait(wait_seconds=0) with the same manager_session_id."
 )
 MAX_PUSH_BYTES = 256 * 1024
 

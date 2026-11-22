@@ -554,7 +554,7 @@ fn message(items: &[Item]) -> String {
                 let status = match i.status.as_deref() {
                     Some("succeeded") => "成功",
                     Some("failed") => "失败",
-                    Some("blocked") => "受阻",
+                    Some("blocked" | "execution_blocked") => "受阻",
                     _ => "已结束",
                 };
                 format!("{role}（{status}）")

@@ -4,14 +4,14 @@
    inversion as a picked segment. */
 :root {
   color-scheme: dark;
-  --bg: #1e1e1e;
-  --solid: #1e1e1e;
-  --surface: #2a2a2a;
-  --card: #ffffff0b;
-  --card-hover: #ffffff14;
+  --bg: #171719;
+  --solid: #171719;
+  --surface: #212124;
+  --card: #ffffff09;
+  --card-hover: #ffffff12;
   --hover: #ffffff0a;
-  --line: #ffffff1a;
-  --line-strong: #ffffff2e;
+  --line: #ffffff14;
+  --line-strong: #ffffff29;
   --ink: #f5f5f7;
   --soft: #d1d1d6;
   --muted: #98989d;
@@ -23,17 +23,17 @@
   --knob-on: #1e1e1e;
   --boss-crown: #e3b341;
   --scrollbar: #ffffff4d;
-  --run: #4fd6c9;
+  --run: #4cc878;
   --review: #f0b45a;
-  --done: #7fca90;
+  --done: #4cc878;
   --idle: #7a808a;
   --warn: #e8975a;
   --bad: #ff7d6e;
   --show: #b9a4f5;
   --task: #6cc3f0;
-  /* the filled "answering / working" bubble: as striking on either ground */
-  --say-bg: #3cc4b8;
-  --say-ink: #06201d;
+  /* the filled "answering / working" bubble: unified with --run on either ground */
+  --say-bg: #3bb868;
+  --say-ink: #072010;
   /* eight manager colours (identity only; status is always a dot plus a word) */
   --m0: #6ea8ff;
   --m1: #a88bff;
@@ -45,14 +45,14 @@
   --m7: #42c7e6;
   --floor-dot: #ffffff12;
   --wall: #ffffff07;
-  /* the reading ground: messages and the terminal share it */
+  /* the reading ground: terminal keeps its contrast slab; messages share the office base */
   --term-bg: #141414;
-  --im-bg: var(--term-bg);
-  --im-member: var(--surface);
+  --im-bg: var(--bg);
+  --im-member: #26262a;
   --im-member-ink: #e8e8ea;
-  --im-boss: #1f3b39;
-  --im-boss-ink: #eaf5f3;
-  --im-aside: #192d2b;
+  --im-boss: #2a6235;
+  --im-boss-ink: #eef7ef;
+  --im-aside: #204928;
   /* terminal skin: text on a few steps of grey like Grok's, hues from the status colours */
   --term-fg: #e1e1e1;
   --term-cursor: #c8c8c8;
@@ -81,14 +81,14 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f5f5f7;
-  --solid: #fbfbfd;
+  --bg: #f7f7f8;
+  --solid: #f7f7f8;
   --surface: #fff;
-  --card: #0000000a;
-  --card-hover: #00000012;
+  --card: #00000008;
+  --card-hover: #0000000f;
   --hover: #00000008;
-  --line: #0000001a;
-  --line-strong: #0000002e;
+  --line: #00000014;
+  --line-strong: #00000026;
   --ink: #1d1d1f;
   --soft: #3a3a3c;
   --muted: #6e6e73;
@@ -100,15 +100,15 @@
   --knob-on: #fff;
   --boss-crown: #c99a1e;
   --scrollbar: #c7c7cc;
-  --run: #08786f;
+  --run: #1b7f44;
   --review: #90621f;
-  --done: #307944;
+  --done: #1b7f44;
   --idle: #8a8f98;
   --warn: #b24d00;
   --bad: #b83d31;
   --show: #7356cd;
   --task: #22729d;
-  --say-bg: #05645c;
+  --say-bg: #1b7f44;
   --say-ink: #fff;
   /* eight manager colours (identity only; status is always a dot plus a word) */
   --m0: #2f6fe0;
@@ -121,12 +121,13 @@
   --m7: #1d89a8;
   --floor-dot: #00000010;
   --wall: #0000000a;
-  /* the reading ground: messages and the terminal share it */
+  /* the reading ground: terminal keeps its contrast slab; messages share the office base */
   --term-bg: #eeeeee;
+  --im-member: var(--surface);
   --im-member-ink: #1d1d1f;
-  --im-boss: #cfe9e5;
+  --im-boss: #a9ea7a;
   --im-boss-ink: #1d1d1f;
-  --im-aside: #e0f0ed;
+  --im-aside: #d2f3ba;
   /* terminal skin: the 16 colours read at 4.5:1 or more on --term-bg without the renderer's help */
   --term-fg: #1f1f1f;
   --term-cursor: #3a3a3a;
@@ -156,14 +157,14 @@
 @media (prefers-color-scheme: light) {
   :root[data-theme="system"] {
     color-scheme: light;
-    --bg: #f5f5f7;
-    --solid: #fbfbfd;
+    --bg: #f7f7f8;
+    --solid: #f7f7f8;
     --surface: #fff;
-    --card: #0000000a;
-    --card-hover: #00000012;
+    --card: #00000008;
+    --card-hover: #0000000f;
     --hover: #00000008;
-    --line: #0000001a;
-    --line-strong: #0000002e;
+    --line: #00000014;
+    --line-strong: #00000026;
     --ink: #1d1d1f;
     --soft: #3a3a3c;
     --muted: #6e6e73;
@@ -175,15 +176,15 @@
     --knob-on: #fff;
     --boss-crown: #c99a1e;
     --scrollbar: #c7c7cc;
-    --run: #08786f;
+    --run: #1b7f44;
     --review: #90621f;
-    --done: #307944;
+    --done: #1b7f44;
     --idle: #8a8f98;
     --warn: #b24d00;
     --bad: #b83d31;
     --show: #7356cd;
     --task: #22729d;
-    --say-bg: #05645c;
+    --say-bg: #1b7f44;
     --say-ink: #fff;
     /* eight manager colours (identity only; status is always a dot plus a word) */
     --m0: #2f6fe0;
@@ -196,12 +197,13 @@
     --m7: #1d89a8;
     --floor-dot: #00000010;
     --wall: #0000000a;
-    /* the reading ground: messages and the terminal share it */
+    /* the reading ground: terminal keeps its contrast slab; messages share the office base */
     --term-bg: #eeeeee;
+    --im-member: var(--surface);
     --im-member-ink: #1d1d1f;
-    --im-boss: #cfe9e5;
+    --im-boss: #a9ea7a;
     --im-boss-ink: #1d1d1f;
-    --im-aside: #e0f0ed;
+    --im-aside: #d2f3ba;
     /* terminal skin: the 16 colours read at 4.5:1 or more on --term-bg without the renderer's help */
     --term-fg: #1f1f1f;
     --term-cursor: #3a3a3a;

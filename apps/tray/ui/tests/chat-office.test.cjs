@@ -159,6 +159,23 @@ test("an old boss speaking after release cannot take the new boss's model or era
   assert.equal(app.rec.portrait.children[0].name, old.speaker.model);
 });
 
+test("a boss that has not dispatched wears its default model's figure and names no model until one is reported", () => {
+  const app = office(), c = { host: "codex", app: "codex", label: "Codex CLI", boss_art_model: "gpt-6.1-sol", messages: [] };
+  app.update(c);
+  assert.equal(app.rec.char, "gpt-6.1-sol");
+  assert.equal(app.rec.state.textContent, "");
+  c.messages.push(speech("codex", "gpt-6.1-luna", "2026-11-04T14:25:03Z"));
+  app.update(c);
+  assert.equal(app.rec.char, "gpt-6.1-luna");
+  assert.equal(app.rec.state.textContent, "gpt-6.1-luna");
+});
+
+test("a default model never dresses a new boss that has yet to speak after a handover", () => {
+  const app = office(), c = { ...claimed(), boss_art_model: "gemini-4-argon" };
+  app.update(c);
+  assert.equal(app.rec.char, old.speaker.model);
+});
+
 test("same-host takeover does not carry the old model into an unknown new boss", () => {
   const app = office(), c = { ...claimed(), host: "claude", app: "claude-cli" };
   c.messages.push(speech("claude", "", "2026-11-04T14:25:03Z"));
@@ -1236,16 +1253,34 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
   assert.deepEqual(headTitles.slice(0, 2), ["app", "solo"]);
   assert.equal(headTitles.includes("deep"), false, "project past cap waits until revealed or expanded");
 
-  // Context menu opens only on empty manual headers, never on non-empty manual, auto, or clicking '+'.
+  // Context menu opens on all non-:handover headers, never on :handover or clicking '+'.
   for (const key of ["project:/w/app", "project:/w/p0", "project:/w/solo"]) {
     const rec = context.state.heads.get(key);
     for (const fn of rec.el.listeners.contextmenu) fn({ target: { closest: () => null } });
   }
-  assert.deepEqual(menuCalls, ["/w/solo"]);
+  assert.deepEqual(menuCalls, ["/w/app", "/w/p0", "/w/solo"]);
   for (const fn of context.state.heads.get("project:/w/solo").el.listeners.contextmenu) {
     fn({ target: { closest: sel => sel === ".gl-grp-add" } });
   }
-  assert.deepEqual(menuCalls, ["/w/solo"]);
+  assert.deepEqual(menuCalls, ["/w/app", "/w/p0", "/w/solo"]);
+
+  // Pending handover items stay visible even when :handover is folded, and folded headers show status dots.
+  storage.set("agentnave.office.fold.project::handover", "1");
+  storage.set("agentnave.office.fold.project:/w/p0", "1");
+  context.state.folded.set("project:/w/p0", true);
+  context.state.groupsData = [
+    ...groups,
+    { ...agent("g-handover", "/w/app", "2026-11-12T12:00:00Z"), handover: "pending" },
+    { ...agent("g-p0-bad", "/w/p0", "2026-11-11T01:00:00Z"), status: "failed" },
+  ];
+  context.renderList();
+  assert.equal(context.state.items.get("g-handover").el.attributes["data-folded"], undefined);
+  assert.equal(context.state.heads.get("project::handover").dot.hidden, false);
+  assert.equal(context.state.heads.get("project::handover").dot.attributes["data-tone"], "review");
+  assert.equal(context.state.heads.get("project::handover").dot.attributes.title, "待审核/待接手");
+  assert.equal(context.state.heads.get("project:/w/p0").dot.hidden, false);
+  assert.equal(context.state.heads.get("project:/w/p0").dot.attributes["data-tone"], "bad");
+  assert.equal(context.state.heads.get("project:/w/p0").dot.attributes.title, "有失败");
 
   context.revealProject("/w/deep");
   assert.equal(storage.has("agentnave.office.fold.project:/w/deep"), false);
@@ -1396,6 +1431,9 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
           return { project: projects[0], projects };
         }
         if (path === "/app/projects/remove") return { projects: [] };
+        if (path === "/app/projects/pin") return { sidebar: { project_aliases: {}, pinned_projects: body.pinned ? [body.key] : [], pinned_groups: [], project_order: [] } };
+        if (path === "/app/chats/pin") return { sidebar: { project_aliases: {}, pinned_projects: [], pinned_groups: body.pinned ? [body.group] : [], project_order: [] } };
+        if (path === "/app/projects/order") return { sidebar: { project_aliases: {}, pinned_projects: [], pinned_groups: [], project_order: body.order } };
         return {};
       },
     },
@@ -1439,19 +1477,42 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
   assert.equal(toast.textContent, "不在项目目录中");
   assert.equal(toast.classList.classes.has("bad"), true);
 
-  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [{ group: "g1" }] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
-  context.Actions.projectMenu({ key: "/tmp/repo", manual: false, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  const ev = { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} };
+  context.Actions.projectMenu({ key: ":handover", pinned: true, items: [] }, ev);
   assert.equal(menu.hidden, true);
 
-  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  let popClosed = 0;
+  let newChatClosed = 0;
+  context.ChatSidebar = { closePopover: () => { popClosed++; }, closeNewChat: () => { newChatClosed++; } };
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [{ group: "g1" }] }, ev);
+  assert.equal(popClosed, 1);
+  assert.equal(newChatClosed, 1);
   assert.equal(menu.hidden, false);
-  assert.equal(menu.children[0].textContent, "移除项目");
-  menu.children[0].listeners.click[0]();
+  assert.deepEqual(menu.children.map(c => c.textContent), ["在此项目新开 agent", "置顶", "重命名显示名…", "复制路径"]);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: false, items: [] }, ev);
+  assert.equal(menu.hidden, false);
+  assert.deepEqual(menu.children.map(c => c.textContent), ["在此项目新开 agent", "置顶", "重命名显示名…", "复制路径"]);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [] }, ev);
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.children.at(-1).textContent, "移除项目");
+  menu.children.at(-1).listeners.click[0]();
   await new Promise(r => setImmediate(r));
   await new Promise(r => setImmediate(r));
   assert.deepEqual(plain(posts.at(-1)), ["/app/projects/remove", { key: "/tmp/repo" }]);
   assert.deepEqual(plain(state.projects), []);
   assert.equal(refreshes, 2);
+
+  // Pin project, pin group (skipping term-*), and reorder projects update state.sidebar.
+  await context.Actions.pinProject("/tmp/repo", true);
+  assert.deepEqual(plain(state.sidebar.pinned_projects), ["/tmp/repo"]);
+  await context.Actions.pinGroup("term-9", true);
+  assert.deepEqual(plain(state.sidebar.pinned_groups), []);
+  await context.Actions.pinGroup("ws-1", true);
+  assert.deepEqual(plain(state.sidebar.pinned_groups), ["ws-1"]);
+  await context.Actions.reorderProjects(["/b", "/a"]);
+  assert.deepEqual(plain(state.sidebar.project_order), ["/b", "/a"]);
 });
 
 test("clicking boss desk returns to terminal with focus, and at most one selection box follows the right column", async () => {
@@ -1997,4 +2058,413 @@ test("derived terminals nest under parent workspace without counting self-chat a
   mockSessions = [mockSessions[0]];
   await context.ChatTerminal.close(20);
   assert.deepEqual(navigated, ["/chat/ws-parent"]);
+});
+
+test("leaving terminal mode clears .term-mode before applyFolds and long/peer/brief bubbles default folded while short bubbles clean up", async () => {
+  const AN = common(false);
+  const makeNode = (tagName = "div") => {
+    const classSet = new Set();
+    const [tag, ...initClasses] = String(tagName).split(".");
+    for (const c of initClasses) classSet.add(c);
+    const node = {
+      tagName: tag.toUpperCase(),
+      hidden: false,
+      textContent: "",
+      title: "",
+      dataset: {},
+      attributes: {},
+      children: [],
+      style: { setProperty() {}, removeProperty() {} },
+      listeners: {},
+      parentNode: null,
+      clientWidth: 400,
+      clientHeight: 500,
+      offsetWidth: 100,
+      scrollTop: 0,
+      get scrollHeight() {
+        if (node._scrollHeight != null) return node._scrollHeight;
+        const collect = n => typeof n === "string" ? n : `${n?.textContent || ""} ${(n?.children || []).map(collect).join(" ")}`;
+        return collect(node).includes("LONG_BUBBLE") ? 640 : 120;
+      },
+      get isConnected() {
+        let cur = node;
+        while (cur) {
+          if (cur === root) return true;
+          cur = cur.parentNode;
+        }
+        return false;
+      },
+      get offsetParent() {
+        // Mimic .conv.term-mode :is(.tl, .jump, .voice-channel) { display: none; } and [hidden].
+        let cur = node;
+        while (cur) {
+          if (cur.hidden) return null;
+          if (cur.classList?.contains?.("tl") && drawer.classList.contains("term-mode")) return null;
+          cur = cur.parentNode;
+        }
+        return root;
+      },
+      classList: {
+        set: classSet,
+        add: (...names) => names.forEach(n => classSet.add(n)),
+        remove: (...names) => names.forEach(n => classSet.delete(n)),
+        toggle: (n, on) => {
+          const next = on === undefined ? !classSet.has(n) : Boolean(on);
+          if (next) classSet.add(n); else classSet.delete(n);
+          return next;
+        },
+        contains: n => classSet.has(n),
+      },
+      setAttribute(k, v) {
+        if (v == null) {
+          delete this.attributes[k];
+          if (k.startsWith("data-")) delete this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
+        } else {
+          this.attributes[k] = v;
+          if (k.startsWith("data-")) this.dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = v;
+        }
+      },
+      removeAttribute(k) { this.setAttribute(k, null); },
+      toggleAttribute(k, on) {
+        const next = on === undefined ? !(k in this.attributes) : Boolean(on);
+        this.setAttribute(k, next ? "" : null);
+        return next;
+      },
+      append(...items) {
+        for (const item of items.flat()) {
+          if (item && typeof item === "object") item.parentNode = node;
+          node.children.push(item);
+        }
+      },
+      prepend(...items) {
+        const flat = items.flat();
+        for (const item of flat) if (item && typeof item === "object") item.parentNode = node;
+        node.children.unshift(...flat);
+      },
+      before() {},
+      after() {},
+      remove() { node.parentNode = null; },
+      insertBefore(c, b) { c.parentNode = node; c.nextSibling = b; },
+      replaceChildren(...items) {
+        for (const old of node.children) if (old && typeof old === "object") old.parentNode = null;
+        node.children = [];
+        node.append(...items);
+      },
+      addEventListener(name, fn) { (node.listeners[name] ||= []).push(fn); },
+      removeEventListener() {},
+      matches: () => false,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ width: 800, height: 600, top: 48, left: 0, right: 800, bottom: 648 }),
+      focus() {},
+      click() { (node.listeners.click || []).forEach(fn => fn({ target: node })); },
+    };
+    return node;
+  };
+  const h = (tag, attrs = {}, ...children) => {
+    const node = makeNode(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "hidden") node.hidden = Boolean(v);
+      else node.setAttribute(k, v === true ? "" : v);
+    }
+    const flat = children.flat(Infinity).filter(x => x != null && x !== false);
+    node.append(...flat);
+    if (flat.every(x => typeof x === "string")) node.textContent = flat.join("");
+    return node;
+  };
+
+  const root = makeNode("div.app");
+  const side = makeNode("aside.side");
+  const drawer = makeNode("aside.conv");
+  const tl = makeNode("div.tl");
+  const inner = makeNode("div.tl-inner");
+  const drAll = makeNode("button.dr-all");
+  let modesNode = null;
+  drAll.after = (first) => { modesNode = first; };
+  drawer.append(drAll, tl);
+  tl.append(inner);
+  const sideHandle = makeNode("div");
+  const convHandle = makeNode("div");
+  root.append(side, drawer);
+  root.querySelector = (sel) => {
+    if (sel === ".side") return side;
+    if (sel === '[data-split="side"]') return sideHandle;
+    if (sel === '[data-split="conv"]') return convHandle;
+    return null;
+  };
+  const byId = {
+    "dr-close": makeNode("button"),
+    "announce": makeNode("div"),
+  };
+  const el = {
+    app: root,
+    list: makeNode("div"),
+    head: makeNode("header"),
+    office: makeNode("div"),
+    floor: makeNode("div"),
+    boss: makeNode("section"),
+    desks: Object.assign(makeNode("div"), { clientWidth: 600 }),
+    rooms: makeNode("div"),
+    fx: makeNode("div"),
+    deskCount: makeNode("span"),
+    ticker: makeNode("footer"),
+    tick: makeNode("span"),
+    drawer,
+    convToggle: makeNode("button"),
+    sideToggle: makeNode("button"),
+    drIco: makeNode("span"),
+    drTitle: makeNode("span"),
+    drSub: makeNode("span"),
+    drAll,
+    tl,
+    inner,
+    blank: makeNode("div"),
+    jump: makeNode("button"),
+    banner: makeNode("div"),
+  };
+  const state = {
+    selected: "ws-1", loaded: "ws-1", groupsData: [], projects: [],
+    drawer: { kind: "all" }, convOpen: true, convCollapsed: false, sideCollapsed: false,
+    sidePeek: false, convPeek: false, opener: null, scopeKey: "",
+    nodes: new Map(), expanded: new Set(), seenIds: new Set(), unseen: 0,
+    bossRec: null, deskRecs: new Map(), roomRecs: new Map(), seatRecs: new Map(),
+    away: new Map(), closing: new Map(), known: new Set(), ready: true,
+    chat: null, ctx: null,
+  };
+  let termSessions = [{ id: 1, provider: "claude", cwd: "/repo", exit: null, active: true, workspaces: ["ws-1"], display_title: null }];
+  const context = vm.createContext({
+    AN: {
+      ...AN,
+      h,
+      $: id => byId[id] || null,
+      load: async () => ({ sessions: termSessions, cwd: "/repo" }),
+      cliName: p => p,
+      hostTile: p => makeNode(p),
+      href: p => p,
+      activities: () => [],
+      dozing: () => false,
+      ongoing: s => s,
+      urgent: () => false,
+      pick: () => ["空闲", "idle"],
+      GROUP: { idle: ["空闲", "idle"] },
+      plain: s => String(s || ""),
+      isHidden: () => false,
+      reducedMotion: { matches: true },
+      voice: { controls() {}, decorate() {}, ingest() {} },
+    },
+    h,
+    $: id => byId[id] || null,
+    L: AN.L,
+    ART: { character: () => "c", figure: () => makeNode("div"), head: () => makeNode("span"), lid: () => makeNode("span"), url: p => p, version: () => 1, canWarp: () => false },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { openMenu() {}, say() {}, roomMenu() {} },
+    activities: () => [],
+    cliOf: () => "Codex",
+    deskChar: () => "c",
+    deskName: d => d.model || "desk",
+    deskParts: d => ({ name: d.model || "desk", effort: "" }),
+    fullHandle: d => d.key || "",
+    relTime: () => "刚刚",
+    clock: () => "10:00",
+    fullTime: () => "2026",
+    dayLabel: () => "今天",
+    chatName: g => g.display_title || g.title || g.label,
+    shownName: g => g.display_title || g.title || g.label,
+    hostTile: p => makeNode(p),
+    setText: (n, v) => { n.textContent = v; },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const cls of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(cls);
+    },
+    reconcile: (p, nodes) => { p.replaceChildren(...nodes); },
+    el,
+    state,
+    FOLD_PX: 320,
+    FIG: 100,
+    narrow: { matches: false },
+    overlay: { matches: false },
+    reduceMotion: { matches: true },
+    stored: () => null,
+    store() {},
+    document: {
+      hidden: false,
+      documentElement: { lang: "zh", dataset: {} },
+      addEventListener() {},
+      querySelector: () => makeNode("div"),
+      querySelectorAll: () => [],
+    },
+    window: { addEventListener() {} },
+    addEventListener() {},
+    ResizeObserver: class { observe() {} },
+    getComputedStyle: () => ({ getPropertyValue: () => "2", columnGap: "10px" }),
+    requestAnimationFrame: fn => fn(),
+    setInterval: () => 0,
+    setTimeout,
+    clearTimeout,
+    location: { origin: "null" },
+    innerWidth: 1200,
+    Date,
+  });
+  context.contextOf = c => ({
+    c,
+    seatDesk: new Map([["r1|s1", "d1"], ["r1|s2", "d2"]]),
+    desks: new Map(c.desks.map(d => [d.key, d])),
+    drawn: new Set(c.desks.map(d => d.key)),
+    aliases: new Map(),
+    rooms: new Map(c.rooms.map(r => [r.id, r])),
+    fullRooms: new Set(),
+    sources: new Set(),
+  });
+  context.plain = s => String(s || "");
+  context.nearBottom = () => el.tl.scrollHeight - el.tl.scrollTop - el.tl.clientHeight < 64;
+  context.fullRoom = r => r.status === "running";
+  context.roundText = () => "第 1 轮";
+  context.followAlias = () => {};
+  context.counts = () => ({ running: 0, review: 0 });
+  context.renderHead = () => {};
+  context.renderSideToggle = () => {};
+  context.renderTicker = () => {};
+  context.renderOffice = () => {};
+  context.timeDriven = () => false;
+  context.tickOf = () => 1;
+  context.locatePlaying = () => false;
+
+  vm.runInContext(readFileSync(`${__dirname}/../chat-topics.js`, "utf8"), context);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-messages.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+  const chatSrc = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  vm.runInContext(chatSrc.slice(0, chatSrc.indexOf("for (const link of")), context);
+
+  // Wrap applyFolds to observe exact .term-mode state and visible records on every call.
+  const foldCalls = [];
+  const origApplyFolds = context.applyFolds;
+  context.applyFolds = (records) => {
+    const list = [...records];
+    foldCalls.push({
+      termModeDuringFold: drawer.classList.contains("term-mode"),
+      count: list.length,
+      visibleCount: list.filter(r => r.more && r.el.isConnected && r.el.offsetParent).length,
+    });
+    return origApplyFolds(list);
+  };
+
+  const chat = {
+    group: "ws-1",
+    host: "claude",
+    label: "Claude Code",
+    desks: [
+      { key: "d1", provider: "codex", model: "gpt-6.1", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+      { key: "d2", provider: "claude", model: "claude-x", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+    ],
+    rooms: [{ id: "r1", title: "方案评审", status: "idle", seats: [{ seat: "s1", desk: "d1" }, { seat: "s2", desk: "d2" }] }],
+    messages: [
+      { id: "m-short", kind: "reply", desk: "d1", conversation: "c1", time: "2026-11-19T01:00:00Z", text: "SHORT_BUBBLE", speaker: { role: "member", provider: "codex", model: "gpt-6.1" }, thread: { kind: "desk", key: "d1" } },
+      { id: "m-long", kind: "reply", desk: "d1", conversation: "c1", time: "2026-11-19T01:01:00Z", text: "LONG_BUBBLE ".repeat(80), speaker: { role: "member", provider: "codex", model: "gpt-6.1" }, thread: { kind: "desk", key: "d1" } },
+      { id: "m-d1-room", kind: "reply", desk: "d1", conversation: "r1", round: 1, visibility: "public", time: "2026-11-19T01:01:30Z", text: "SHORT_BUBBLE", speaker: { role: "member", provider: "codex", model: "gpt-6.1" }, thread: { kind: "room", id: "r1" } },
+      { id: "m-peer", kind: "reply", desk: "d2", conversation: "r1", round: 1, visibility: "public", time: "2026-11-19T01:02:00Z", text: "peer first line\npeer second line", speaker: { role: "member", provider: "claude", model: "claude-x" }, thread: { kind: "room", id: "r1" } },
+      { id: "m-brief", kind: "handover", desk: "d1", conversation: "c1", time: "2026-11-19T01:03:00Z", text: "Claude Code 交出工作区", detail: "LONG_BUBBLE detail", speaker: { role: "system" }, thread: { kind: "desk", key: "d1" } },
+      { id: "m-typing", kind: "typing", desk: "d1", conversation: "c1", time: "2026-11-19T01:04:00Z", text: "LONG_BUBBLE streaming", speaker: { role: "member", provider: "codex", model: "gpt-6.1" }, thread: { kind: "desk", key: "d1" } },
+    ],
+  };
+  state.chat = chat;
+  await context.ChatTerminal.refresh();
+
+  // Start in terminal mode.
+  context.renderAll(chat);
+  assert.equal(drawer.classList.contains("term-mode"), true);
+
+  // Switch from terminal mode to desk messages via openScope (single renderAll pass).
+  foldCalls.length = 0;
+  context.openScope({ kind: "desk", key: "d1" });
+  assert.equal(drawer.classList.contains("term-mode"), false);
+  assert.equal(foldCalls.length, 1, "applyFolds runs synchronously inside the same renderAll pass");
+  assert.equal(foldCalls[0].termModeDuringFold, false, ".term-mode must already be removed before applyFolds runs");
+  assert.equal(foldCalls[0].visibleCount, 5, "all five foldable messages are visible and measured immediately");
+
+  // Short message: no .fold left, button hidden.
+  const shortRec = state.nodes.get("m-short");
+  assert.equal(shortRec.bub.classList.contains("fold"), false);
+  assert.equal(shortRec.more.hidden, true);
+  assert.equal(shortRec.dirty, false);
+
+  // Long message: starts folded, button shows 展开全文, only expands on click and collapses on second click.
+  const longRec = state.nodes.get("m-long");
+  assert.equal(longRec.bub.classList.contains("fold"), true);
+  assert.equal(longRec.more.hidden, false);
+  assert.equal(longRec.more.textContent, "展开全文");
+  assert.equal(longRec.more.attributes["aria-expanded"], "false");
+  assert.equal(longRec.dirty, false);
+
+  longRec.more.click();
+  assert.equal(state.expanded.has("m-long"), true);
+  assert.equal(longRec.bub.classList.contains("fold"), false);
+  assert.equal(longRec.more.textContent, "收起");
+  assert.equal(longRec.more.attributes["aria-expanded"], "true");
+
+  longRec.more.click();
+  assert.equal(state.expanded.has("m-long"), false);
+  assert.equal(longRec.bub.classList.contains("fold"), true);
+  assert.equal(longRec.more.textContent, "展开全文");
+  assert.equal(longRec.more.attributes["aria-expanded"], "false");
+
+  // Peer and brief messages start folded and toggle on click; typing stays unfolded without button.
+  const peerRec = state.nodes.get("m-peer");
+  const briefRec = state.nodes.get("m-brief");
+  const typingRec = state.nodes.get("m-typing");
+  assert.equal(peerRec.bub.classList.contains("fold"), true);
+  assert.equal(peerRec.more.hidden, false);
+  assert.equal(briefRec.bub.classList.contains("fold"), true);
+  assert.equal(briefRec.more.hidden, false);
+  assert.equal(typingRec.bub.classList.contains("fold"), false);
+  assert.equal(typingRec.el.children.includes(typingRec.more), false);
+
+  // A newly created non-typing message starts with .fold before applyFolds even runs (prevents flash while hidden).
+  const unmeasured = context.createMessage({ id: "m-new", kind: "reply", text: "LONG_BUBBLE" });
+  assert.equal(unmeasured.bub.classList.contains("fold"), true);
+  assert.equal(unmeasured.more.hidden, true);
+
+  // Direct ChatTerminal.column() transition out of term-mode also flushes dirty folds synchronously.
+  drawer.classList.add("term-mode");
+  longRec.bub.classList.remove("fold");
+  longRec.dirty = true;
+  context.ChatTerminal.readMessages();
+  foldCalls.length = 0;
+  context.ChatTerminal.column("ws-1", "claude");
+  assert.equal(drawer.classList.contains("term-mode"), false);
+  assert.ok(foldCalls.length >= 1);
+  assert.equal(longRec.bub.classList.contains("fold"), true);
+  assert.equal(longRec.dirty, false);
+
+  // Switching to terminal mode while on a desk, receiving a new long message while hidden in term-mode,
+  // then returning to messages via renderAll folds the new message immediately without flashing expanded.
+  const termSwitchBtn = modesNode?.children?.[1];
+  const msgSwitchBtn = modesNode?.children?.[0];
+  assert.ok(termSwitchBtn && msgSwitchBtn);
+  termSwitchBtn.click();
+  assert.equal(drawer.classList.contains("term-mode"), true);
+
+  chat.messages.push({
+    id: "m-while-term", kind: "reply", desk: "d1", conversation: "c1", time: "2026-11-19T01:05:00Z",
+    text: "LONG_BUBBLE ".repeat(60), speaker: { role: "member", provider: "codex", model: "gpt-6.1" }, thread: { kind: "desk", key: "d1" },
+  });
+  context.renderAll(chat);
+  const whileTermRec = state.nodes.get("m-while-term");
+  assert.equal(whileTermRec.dirty, true, "skipped while in term-mode");
+  assert.equal(whileTermRec.bub.classList.contains("fold"), true, "already clamped even before measurement");
+
+  foldCalls.length = 0;
+  msgSwitchBtn.click();
+  assert.equal(drawer.classList.contains("term-mode"), false);
+  assert.equal(foldCalls.at(-1).termModeDuringFold, false);
+  assert.equal(whileTermRec.dirty, false);
+  assert.equal(whileTermRec.bub.classList.contains("fold"), true);
+  assert.equal(whileTermRec.more.hidden, false);
+  assert.equal(whileTermRec.more.textContent, "展开全文");
+
+  // CSS hides ::after fade mask when .more is still [hidden] so short unmeasured bubbles never show a bottom fade.
+  const chatCss = readFileSync(`${__dirname}/../chat.css`, "utf8");
+  assert.match(chatCss, /\.bub\.fold:has\(~\s*\.more\[hidden\]\)::after\s*\{\s*display:\s*none;\s*\}/);
 });

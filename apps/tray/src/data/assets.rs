@@ -320,6 +320,10 @@ fn chat_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/chat-groups.js").to_vec(),
         ),
+        "chat-sidebar.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-sidebar.js").to_vec(),
+        ),
         "chat-topics.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/chat-topics.js").to_vec(),

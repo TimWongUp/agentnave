@@ -60,7 +60,7 @@ fn list_keeps_pending_workspaces_beyond_the_other_workspace_limit() {
         .map(|i| super::Group::new(format!("workspace-{i}")))
         .collect();
     groups[201].handover.pending = true;
-    let response = super::list_response(groups, &[], &[]);
+    let response = super::list_response(groups, &[], &[], &Default::default());
     let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let listed = body["groups"].as_array().unwrap();
     assert_eq!(listed.len(), 201);
@@ -246,6 +246,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
             projects: &Default::default(),
             links: &[],
             manual_projects: &[],
+            sidebar: &Default::default(),
             titles: &Default::default(),
             renamed: &Default::default(),
         };
@@ -298,6 +299,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
         projects: &Default::default(),
         links: &[],
         manual_projects: &[],
+        sidebar: &Default::default(),
         titles: &titles,
         renamed: &renamed,
     };
@@ -386,6 +388,7 @@ fn untitled_dispatches_fall_back_to_first_prompt_line_before_project_name() {
         projects: &Default::default(),
         links: &[],
         manual_projects: &[],
+        sidebar: &Default::default(),
         titles: &Default::default(),
         renamed: &Default::default(),
     };
@@ -420,4 +423,92 @@ fn untitled_dispatches_fall_back_to_first_prompt_line_before_project_name() {
     );
     let body_empty: Value = serde_json::from_slice(&res_empty.body).unwrap();
     assert_eq!(body_empty["groups"][0]["display_title"], "proj");
+}
+
+#[test]
+fn chat_list_includes_earliest_created_and_falls_back_to_updated() {
+    use serde_json::{Value, json};
+
+    let mut early_task = origin_snapshot(
+        "c1",
+        "task",
+        json!({
+            "tasks": [
+                {"time": "2026-11-10T09:00:00Z", "prompt": "later"},
+                {"time": "2026-11-09T08:00:00Z", "prompt": "earlier"},
+            ],
+        }),
+    );
+    early_task.item.updated = "2026-11-12T00:00:00Z".to_owned();
+
+    let mut show = origin_snapshot(
+        "c2",
+        "show",
+        json!({
+            "created": "2026-11-08T10:00:00+08:00",
+            "messages": [{"kind": "task", "time": "2026-11-10T00:00:00Z"}],
+        }),
+    );
+    show.item.updated = "2026-11-12T01:00:00Z".to_owned();
+
+    let mut fallback = origin_snapshot("c3", "task", json!({}));
+    fallback.item.manager_session = Some("s-cccccccccccccccccccccccccccccccc".to_owned());
+    fallback.item.updated = "2026-11-11T05:00:00Z".to_owned();
+
+    let handovers = std::collections::HashMap::from([(
+        "s-dddddddddddddddddddddddddddddddd".to_owned(),
+        super::Handover {
+            title: Some("交接".to_owned()),
+            released: Some("2026-11-11T06:00:00Z".to_owned()),
+            ..Default::default()
+        },
+    )]);
+    let sidebar = crate::projects::SidebarState {
+        pinned_groups: vec!["s-cccccccccccccccccccccccccccccccc".to_owned()],
+        ..Default::default()
+    };
+    let places = super::Places {
+        dirs: &[],
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        sidebar: &sidebar,
+        titles: &Default::default(),
+        renamed: &Default::default(),
+    };
+    let res = super::respond(
+        "/app/chats",
+        vec![early_task, show, fallback],
+        true,
+        8,
+        &handovers,
+        &Default::default(),
+        &places,
+    );
+    let body: Value = serde_json::from_slice(&res.body).unwrap();
+    let group = |id: &str| {
+        body["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["group"] == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        group("s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")["created"],
+        "2026-11-08T10:00:00+08:00"
+    );
+    assert_eq!(
+        group("s-cccccccccccccccccccccccccccccccc")["created"],
+        "2026-11-11T05:00:00Z"
+    );
+    assert_eq!(
+        group("s-dddddddddddddddddddddddddddddddd")["created"],
+        "2026-11-11T06:00:00Z"
+    );
+    assert_eq!(
+        body["sidebar"]["pinned_groups"],
+        json!(["s-cccccccccccccccccccccccccccccccc"])
+    );
 }

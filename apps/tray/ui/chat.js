@@ -153,7 +153,7 @@ document.addEventListener("pointermove", (e) => {
 // a minimum and a maximum so the office in the middle never gets squeezed out. The right column
 // remembers its width separately for agents with and without a terminal.
 const SPLITS = {
-  side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 200, css: "--side-w" },
+  side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 240, css: "--side-w" },
   conv: { key: "agentnave.office.conv", min: 0.22, floor: 300, css: "--conv-w" },
   convTerm: { key: "agentnave.office.conv.term", min: 0.22, floor: 300, css: "--conv-term-w" },
 };
@@ -251,6 +251,9 @@ function inDesk(m, key, ctx) {
     (r) => r.seat && ctx.seatDesk.get(`${m.conversation}|${r.seat}`) === key,
   );
 }
+function roomIcon() {
+  return h("img.dr-ico-img", { src: "/art/office/meeting-icon.webp", alt: "", draggable: false });
+}
 function scopeHead(c, ctx, shown) {
   const d = state.drawer;
   const real = shown.filter((m) => m.kind !== "typing").length;
@@ -269,7 +272,7 @@ function scopeHead(c, ctx, shown) {
     if (room)
       return {
         key: `room|${d.id}`,
-        ico: () => h("span", {}, L("会", "M")),
+        ico: roomIcon,
         title: room.title,
         sub: L(`会议室 · ${room.seats.length} 位 · ${roundText(room)}`, `Meeting room · ${room.seats.length} seats · ${roundText(room)}`),
       };
@@ -315,12 +318,17 @@ function instructionsFirst(replies) {
     });
   return [...ordered, ...[...waiting.values()].flat()];
 }
-function renderConv(c, ctx) {
+function renderConv(c, ctx, forceMeasure = false) {
   const L = AN.L || ((zh) => zh);
   // Beside the floor a folded drawer stays in the page, out to the right, so it can slide; only the overlay hides it.
   const visible = overlay.matches ? state.convOpen : !state.convCollapsed || state.convPeek;
+  const wasHidden = Boolean(el.drawer.hidden);
+  const wasFolded = Boolean(el.drawer.classList?.contains?.("folded"));
+  const wasVisible = Boolean(state.convVisible);
+  state.convVisible = visible;
   el.drawer.hidden = overlay.matches && !visible;
-  el.drawer.classList.toggle("folded", !overlay.matches && state.convCollapsed);
+  const folded = !overlay.matches && state.convCollapsed;
+  el.drawer.classList.toggle("folded", folded);
   // The fold button is in the top bar; the overlay has its own close button.
   el.convToggle.hidden = overlay.matches;
   const shut = state.convCollapsed;
@@ -380,9 +388,10 @@ function renderConv(c, ctx) {
   setAttr(el.drSub, "title", null);
   el.drAll.hidden = state.drawer.kind === "all";
   setAttr(el.drawer, "aria-label", L(`${head.title} 的对话`, `${head.title} conversation`));
-  renderConversationMessages(shown, ctx, reset);
+  const becameVisible = forceMeasure || (wasHidden && !el.drawer.hidden) || (wasFolded && !folded) || !wasVisible;
+  renderConversationMessages(shown, ctx, reset, becameVisible);
 }
-function renderConversationMessages(shown, ctx, reset) {
+function renderConversationMessages(shown, ctx, reset, remeasure = false) {
   const L = AN.L || ((zh) => zh);
   // Geometry is the truth: a reader who is at the bottom follows new content, anyone else is left alone.
   const follow = reset || nearBottom();
@@ -448,7 +457,7 @@ function renderConversationMessages(shown, ctx, reset) {
     el.inner,
     [...keep].map((id) => state.nodes.get(id).el),
   );
-  applyFolds([...state.nodes.values()].filter((rec) => rec.dirty));
+  applyFolds(remeasure ? state.nodes.values() : [...state.nodes.values()].filter((rec) => rec.dirty));
 
   if (follow) {
     el.tl.scrollTop = el.tl.scrollHeight;
@@ -635,8 +644,10 @@ function renderAll(c, newGroup = false) {
   followAlias(c, ctx);
   const n = counts(c);
   renderHead(c, n);
+  const wasTerm = Boolean(el.drawer?.classList?.contains?.("term-mode"));
   ChatTerminal.prepare?.(c.group, c.host);
-  renderConv(c, ctx);
+  const leftTerm = wasTerm && !el.drawer?.classList?.contains?.("term-mode");
+  renderConv(c, ctx, leftTerm);
   ChatTerminal.column(c.group, c.host, c.app);
   renderSideToggle();
   renderTicker(c, ctx);
@@ -684,6 +695,9 @@ async function refresh() {
     el.banner.hidden = true;
     await ChatTerminal.refresh();
     state.projects = chats.projects || [];
+    state.sidebar = typeof ChatGroups !== "undefined" && ChatGroups.normalizeSidebar
+      ? ChatGroups.normalizeSidebar(chats.sidebar)
+      : (chats.sidebar || null);
     state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
     const derived = ChatTerminal.derivedAll?.() || [];
     const selectable = [...state.groupsData, ...derived];
@@ -699,7 +713,7 @@ async function refresh() {
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.selected, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();
