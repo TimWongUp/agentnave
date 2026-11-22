@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-11
+- 扩展：托盘监听边界由 [ADR-0112](0112-mobile-remote-via-tailscale.md) 扩展（只听回环、经 Tailscale 发布的手机远程入口）。
 
 ## 决定
 

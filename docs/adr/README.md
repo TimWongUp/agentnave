@@ -83,7 +83,7 @@
 | 0077 | [Claude Code 宿主增加长等待档](0077-claude-long-wait.md) | 部分修订 | 修订 ADR-0067 的 Claude Code 等待窗口与超时下限；[ADR-0082](0082-claude-long-wait-terminal-only.md)、[ADR-0084](0084-claude-terminal-default-long-wait.md) |
 | 0078 | [启动确认屏由服务自动处理](0078-startup-confirmations.md) | 部分修订 | 修订 ADR-0056、ADR-0057、ADR-0072；具名 Claude 账号写入位置由 [ADR-0108](0108-multi-account-isolation.md) 修订 |
 | 0079 | [Antigravity 交互活动从屏幕状态行补充](0079-agy-screen-activity.md) | 部分修订 | 修订 ADR-0072 的活动来源；结束判定见 [ADR-0102](0102-agy-native-status.md) |
-| 0080 | [macOS 视频小人经回环 HTTP 加载](0080-tray-video-loopback-http.md) | 已接受 | — |
+| 0080 | [macOS 视频小人经回环 HTTP 加载](0080-tray-video-loopback-http.md) | 已接受 | 监听边界由 [ADR-0112](0112-mobile-remote-via-tailscale.md) 扩展 |
 | 0081 | [按 CLI 和模型冷却账户阻断](0081-account-cooldown-duration.md) | 部分修订 | 修订 ADR-0024 的工具集合；自身的配额冷却规则于 2026-11-13 改为用量查询加一小时兜底；配额冷却粒度由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订；按账号嵌套冷却与认证整账号冷却由 [ADR-0108](0108-multi-account-isolation.md) 修订 |
 | 0082 | [长等待档只给 Claude Code 终端交互会话](0082-claude-long-wait-terminal-only.md) | 已接受 | 修订 ADR-0077 的适用范围 |
 | 0083 | [新增「只开会」编排档位，对服务按未开启任务编排处理](0083-meetings-only-preset.md) | 部分修订 | 扩展 ADR-0037、ADR-0068；补充 ADR-0041、ADR-0063；2026-11-12 修订（开会席位只存 CLI，模型与档位随员工「开会」设置）、[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) |
@@ -115,3 +115,4 @@
 | 0109 | [派生会话是开在 App 终端里的子代理](0109-in-app-derived-sessions.md) | 已接受 | 修订 ADR-0025、ADR-0085、ADR-0103、ADR-0105；扩展 ADR-0043、ADR-0104；沿用 ADR-0028、ADR-0032、ADR-0080、ADR-0098、ADR-0108；展示与驱动方式由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订 |
 | 0110 | [写作所需的上下文已全在 boss 手里时，定稿由 boss 自己写](0110-boss-writes-when-holding-context.md) | 已接受 | 修订 ADR-0073 |
 | 0111 | [托盘为 CLI 会话自绘对话视图，按 CLI 选驱动协议](0111-self-drawn-conversation-view.md) | 已接受 | 修订 ADR-0103、ADR-0109；更正 ADR-0056、ADR-0072 的依据；沿用 ADR-0080、ADR-0105 |
+| 0112 | [手机经 Tailscale 访问托盘的远程入口](0112-mobile-remote-via-tailscale.md) | 已接受 | 扩展 ADR-0080 的托盘监听边界；依赖 ADR-0111 |
