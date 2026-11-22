@@ -45,14 +45,14 @@
   --m7: #42c7e6;
   --floor-dot: #ffffff12;
   --wall: #ffffff07;
-  /* the reading ground: terminal keeps its contrast slab; messages sit on the main canvas */
+  /* the reading ground: terminal keeps its contrast slab; messages share the office base */
   --term-bg: #141414;
-  --im-bg: var(--surface);
-  --im-member: #2b2b30;
+  --im-bg: var(--bg);
+  --im-member: #26262a;
   --im-member-ink: #e8e8ea;
-  --im-boss: #1f3b39;
-  --im-boss-ink: #eaf5f3;
-  --im-aside: #192d2b;
+  --im-boss: #2a6235;
+  --im-boss-ink: #eef7ef;
+  --im-aside: #204928;
   /* terminal skin: text on a few steps of grey like Grok's, hues from the status colours */
   --term-fg: #e1e1e1;
   --term-cursor: #c8c8c8;
@@ -121,13 +121,13 @@
   --m7: #1d89a8;
   --floor-dot: #00000010;
   --wall: #0000000a;
-  /* the reading ground: terminal keeps its contrast slab; messages sit on the main canvas */
+  /* the reading ground: terminal keeps its contrast slab; messages share the office base */
   --term-bg: #eeeeee;
-  --im-member: #f2f2f4;
+  --im-member: var(--surface);
   --im-member-ink: #1d1d1f;
-  --im-boss: #cfe9e5;
+  --im-boss: #a9ea7a;
   --im-boss-ink: #1d1d1f;
-  --im-aside: #e0f0ed;
+  --im-aside: #d2f3ba;
   /* terminal skin: the 16 colours read at 4.5:1 or more on --term-bg without the renderer's help */
   --term-fg: #1f1f1f;
   --term-cursor: #3a3a3a;
@@ -197,13 +197,13 @@
     --m7: #1d89a8;
     --floor-dot: #00000010;
     --wall: #0000000a;
-    /* the reading ground: terminal keeps its contrast slab; messages sit on the main canvas */
+    /* the reading ground: terminal keeps its contrast slab; messages share the office base */
     --term-bg: #eeeeee;
-    --im-member: #f2f2f4;
+    --im-member: var(--surface);
     --im-member-ink: #1d1d1f;
-    --im-boss: #cfe9e5;
+    --im-boss: #a9ea7a;
     --im-boss-ink: #1d1d1f;
-    --im-aside: #e0f0ed;
+    --im-aside: #d2f3ba;
     /* terminal skin: the 16 colours read at 4.5:1 or more on --term-bg without the renderer's help */
     --term-fg: #1f1f1f;
     --term-cursor: #3a3a3a;

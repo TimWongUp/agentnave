@@ -616,7 +616,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .walker.walk .fig-a, .walker.walk .fig-b { animation: none; }
 
 /* ---- conversation column ---- */
-.conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
+.conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); }
 .conv-head { flex: none; display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
 .dr-ico { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--card-hover); color: var(--muted); overflow: hidden; }
 .dr-ico .avatar { width: 32px; height: 32px; border-radius: 10px; }
@@ -808,7 +808,7 @@ dialog.act::backdrop { background: #0006; }
 .voice-channel[hidden] { display: none; }
 .voice-channel > .listen-here { margin-left: auto; }
 .voice-roster { flex: none; display: flex; align-items: center; gap: 8px; }
-.voice-person, .voice-more { --ring: var(--surface); flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
+.voice-person, .voice-more { --ring: var(--bg); flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
 /* the boss wears a small crown: centred on the head, turned, then pushed out until its base rests on the rim */
 .voice-person.boss { position: relative; }
 .voice-person.boss::after { --crown: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath d='M1 2.5l2.6 3L6 1l2.4 4.5L11 2.5 10 9H2z'/%3E%3C/svg%3E"); content: ""; position: absolute; top: 50%; left: 50%; width: 12px; height: 10px; margin: -5px 0 0 -6px; transform: rotate(-35deg) translateY(-20px); background: var(--boss-crown); -webkit-mask: var(--crown) center / contain no-repeat; mask: var(--crown) center / contain no-repeat; }
