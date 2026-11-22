@@ -529,5 +529,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, pending, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, exitedOf, openBoss, close, stop };
+  return { refresh, pending, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, exitedOf, openBoss, close, stop };
 })();

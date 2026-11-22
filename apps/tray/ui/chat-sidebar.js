@@ -11,6 +11,10 @@
   let searchQuery = "";
   let activeId = null;
   let popover = null;
+  let newChatPop = null;
+  let newChatAnchor = null;
+  let newChatStep = null;
+  let newChatToken = 0;
   let dragState = null;
   let initialized = false;
 
@@ -215,21 +219,151 @@
       closePopover();
       return;
     }
+    closeNewChat();
     renderPopover();
     popover.hidden = false;
     setAttr(anchor, "aria-expanded", "true");
-    const rect = anchor.getBoundingClientRect();
-    const box = popover.getBoundingClientRect();
-    const left = Math.max(6, Math.min(rect.left, innerWidth - box.width - 6));
-    const top = Math.min(rect.bottom + 4, innerHeight - box.height - 6);
-    popover.style.left = `${left}px`;
-    popover.style.top = `${top}px`;
+    positionPopover(popover, anchor);
     popover.querySelector("button")?.focus({ preventScroll: true });
+  }
+
+  function positionPopover(boxEl, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const box = boxEl.getBoundingClientRect();
+    const left = Math.max(6, Math.min(rect.left, innerWidth - box.width - 6));
+    const top = Math.max(6, Math.min(rect.bottom + 4, innerHeight - box.height - 6));
+    boxEl.style.left = `${left}px`;
+    boxEl.style.top = `${top}px`;
+  }
+
+  // ---- new chat two-step popover (project -> CLI -> terminal) ---------------------------
+  function closeNewChat() {
+    newChatToken += 1;
+    if (!newChatPop || newChatPop.hidden) return;
+    newChatPop.hidden = true;
+    newChatPop.replaceChildren();
+    newChatStep = null;
+    const btn = $("new-chat");
+    if (btn) setAttr(btn, "aria-expanded", "false");
+  }
+
+  function pickableProjects() {
+    if (typeof state === "undefined") return [];
+    const sections = ChatGroups.arrange(state.groupsData || [], {
+      projects: state.projects || [],
+      urgent: AN.urgent,
+      L,
+      sidebar: state.sidebar,
+      prefs: { ...currentPrefs, view: "project", filter: "all", hideEmpty: false },
+      query: "",
+    });
+    return sections.filter((s) => !s.pinned && !s.other);
+  }
+
+  function ensureNewChatPop() {
+    if (newChatPop) return newChatPop;
+    newChatPop = h("div.side-popover", { role: "menu", hidden: true });
+    newChatPop.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeNewChat();
+        $("new-chat")?.focus({ preventScroll: true });
+        return;
+      }
+      if ((e.key === "ArrowLeft" || e.key === "Backspace") && newChatStep === "cli" && pickableProjects().length) {
+        e.preventDefault();
+        renderNewChatProjects();
+        return;
+      }
+      const buttons = [...newChatPop.querySelectorAll("button")];
+      if (!buttons.length) return;
+      const i = buttons.indexOf(document.activeElement);
+      const step = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+      if (!step) return;
+      e.preventDefault();
+      buttons[(i + step + buttons.length) % buttons.length].focus();
+    });
+    document.body.append(newChatPop);
+    return newChatPop;
+  }
+
+  function renderNewChatProjects() {
+    const pop = ensureNewChatPop();
+    const list = pickableProjects();
+    if (!list.length) {
+      void renderNewChatClis({ key: null, title: L("选择文件夹", "Choose folder") }, false);
+      return;
+    }
+    newChatStep = "project";
+    const rows = list.map((s) => {
+      const btn = h(
+        "button.side-pop-item",
+        { type: "button", role: "menuitem", title: s.path || s.title },
+        s.pinnedProject && h("span.gl-grp-pin", { "aria-hidden": "true" }),
+        h("span.side-pop-name", {}, s.title),
+        s.hint && h("span.side-pop-hint", {}, s.hint),
+      );
+      btn.addEventListener("click", () => void renderNewChatClis({ key: s.key, title: s.title }, true));
+      return btn;
+    });
+    const pickOther = h("button.side-pop-item", { type: "button", role: "menuitem" }, L("选择其他文件夹…", "Choose folder…"));
+    pickOther.addEventListener("click", () => void renderNewChatClis({ key: null, title: L("选择其他文件夹", "Choose folder") }, true));
+    pop.replaceChildren(h("div.side-pop-list", {}, ...rows), h("div.side-pop-sep"), pickOther);
+    if (newChatAnchor) positionPopover(pop, newChatAnchor);
+    pop.querySelector("button")?.focus({ preventScroll: true });
+  }
+
+  async function renderNewChatClis(choice, canBack) {
+    const pop = ensureNewChatPop();
+    const token = ++newChatToken;
+    newChatStep = "cli";
+    const back = canBack && h("button.side-pop-item.side-pop-back", { type: "button", role: "menuitem" }, `‹ ${choice.title}`);
+    if (back) back.addEventListener("click", () => renderNewChatProjects());
+    const found = typeof ChatTerminal !== "undefined" && ChatTerminal.clis
+      ? await ChatTerminal.clis().catch(() => [])
+      : [];
+    if (token !== newChatToken || pop.hidden) return;
+    const rows = found.flatMap(({ provider, accounts }) => [
+      { label: h("span.ctx-cli", {}, AN.hostTile(provider), AN.cliName(provider)), provider, account: undefined },
+      ...(accounts || []).map((account) => ({
+        label: h("span.ctx-cli", {}, AN.hostTile(provider), L(`${AN.cliName(provider)}（${account.label}）`, `${AN.cliName(provider)} (${account.label})`)),
+        provider,
+        account: account.id,
+      })),
+    ]).map((entry) => {
+      const btn = h("button.side-pop-item", { type: "button", role: "menuitem" }, entry.label);
+      btn.addEventListener("click", () => {
+        closeNewChat();
+        void ChatTerminal?.start?.(entry.provider, choice.key, entry.account);
+      });
+      return btn;
+    });
+    const body = rows.length
+      ? h("div.side-pop-list", {}, ...rows)
+      : h("div.side-pop-empty", {}, L("没有检测到已安装的 CLI", "No installed CLI found"));
+    pop.replaceChildren(...[back, back && h("div.side-pop-sep"), body].filter(Boolean));
+    if (newChatAnchor) positionPopover(pop, newChatAnchor);
+    (rows[0] || pop.querySelector("button"))?.focus({ preventScroll: true });
+  }
+
+  function openNewChat(anchor) {
+    const pop = ensureNewChatPop();
+    if (!pop.hidden) {
+      closeNewChat();
+      return;
+    }
+    closePopover();
+    newChatAnchor = anchor;
+    pop.hidden = false;
+    setAttr(anchor, "aria-expanded", "true");
+    renderNewChatProjects();
   }
 
   function openMoreMenu(anchor) {
     if (typeof Actions === "undefined" || !Actions.openMenu) return;
     closePopover();
+    closeNewChat();
     const rect = anchor.getBoundingClientRect();
     const event = {
       clientX: rect.left,
@@ -380,12 +514,17 @@
     if (initialized) return;
     initialized = true;
     const viewBtn = $("side-view-btn");
+    const newChatBtn = $("new-chat");
     const moreBtn = $("side-more-btn");
     const input = $("side-search-input");
     const clearBtn = $("side-search-clear");
     viewBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
       openPopover(viewBtn);
+    });
+    newChatBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openNewChat(newChatBtn);
     });
     moreBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -394,11 +533,23 @@
     if (input) bindSearch(input, clearBtn);
 
     document.addEventListener("pointerdown", (e) => {
-      if (!popover || popover.hidden) return;
-      if (!popover.contains(e.target) && !$("side-view-btn")?.contains(e.target)) closePopover();
+      if (popover && !popover.hidden && !popover.contains(e.target) && !$("side-view-btn")?.contains(e.target)) {
+        closePopover();
+      }
+      if (newChatPop && !newChatPop.hidden && !newChatPop.contains(e.target) && !$("new-chat")?.contains(e.target)) {
+        closeNewChat();
+      }
     }, true);
-    window.addEventListener("blur", closePopover);
+    window.addEventListener("blur", () => {
+      closePopover();
+      closeNewChat();
+    });
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && newChatPop && !newChatPop.hidden) {
+        e.preventDefault();
+        closeNewChat();
+        return;
+      }
       if (e.key === "Escape" && popover && !popover.hidden) {
         e.preventDefault();
         closePopover();

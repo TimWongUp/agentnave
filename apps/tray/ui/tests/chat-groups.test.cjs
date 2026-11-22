@@ -315,3 +315,137 @@ test("ChatSidebar manages search keyboard navigation, Cmd/Ctrl+F, '/', and view 
   assert.equal(ChatSidebar.query(), "");
   assert.equal(els.get("side-search-clear").hidden, true);
 });
+
+test("ChatSidebar new-chat flow picks project then CLI and launches terminal", async () => {
+  const els = new Map();
+  const bodyChildren = [];
+  const docListeners = {};
+  const makeEl = (tag) => {
+    const classes = new Set();
+    const attrs = {};
+    const listeners = {};
+    const node = {
+      tag,
+      hidden: false,
+      style: {},
+      children: [],
+      listeners,
+      classList: {
+        add: (...c) => c.forEach(x => classes.add(x)),
+        remove: (...c) => c.forEach(x => classes.delete(x)),
+        toggle: (c, on) => (on === undefined ? (classes.has(c) ? classes.delete(c) : classes.add(c)) : (on ? classes.add(c) : classes.delete(c))),
+        contains: (c) => classes.has(c),
+      },
+      setAttribute(k, v) { attrs[k] = String(v); },
+      removeAttribute(k) { delete attrs[k]; },
+      getAttribute(k) { return attrs[k] ?? null; },
+      addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
+      focus() {},
+      contains(target) { return target === node || node.children.some(c => c?.contains?.(target)); },
+      getBoundingClientRect: () => ({ left: 120, top: 12, bottom: 38, width: 200, height: 120 }),
+      replaceChildren(...items) { node.children = items.filter(Boolean); },
+      querySelectorAll(sel) {
+        const out = [];
+        const walk = (n) => {
+          for (const c of n.children || []) {
+            if (typeof c === "object" && c) {
+              if (sel === "button" && String(c.tag || "").startsWith("button")) out.push(c);
+              walk(c);
+            }
+          }
+        };
+        walk(node);
+        return out;
+      },
+      querySelector(sel) { return node.querySelectorAll(sel)[0] || null; },
+    };
+    return node;
+  };
+  for (const id of ["side-view-btn", "side-more-btn", "new-chat", "side-search-input", "side-search-clear"]) {
+    els.set(id, makeEl("button"));
+  }
+  const started = [];
+  const sbContext = vm.createContext({
+    window: {},
+    innerWidth: 1200,
+    innerHeight: 800,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    AN: {
+      $: id => els.get(id) || null,
+      h: (tag, attrs = {}, ...kids) => {
+        const n = makeEl(tag);
+        for (const [k, v] of Object.entries(attrs || {})) {
+          if (k === "hidden") n.hidden = Boolean(v);
+          else n.setAttribute(k, v);
+        }
+        n.children = kids.filter(Boolean);
+        return n;
+      },
+      L: zh => zh,
+      setAttr: (el, k, v) => (v == null ? el.removeAttribute(k) : el.setAttribute(k, v)),
+      urgent: env.urgent,
+      hostTile: (p) => makeEl(`span.tile-${p}`),
+      cliName: (p) => ({ codex: "Codex", claude: "Claude Code" }[p] || p),
+    },
+    ChatGroups: context.window.ChatGroups,
+    ChatTerminal: {
+      clis: async () => [
+        { provider: "codex", accounts: [] },
+        { provider: "claude", accounts: [{ id: "work", label: "工作" }] },
+      ],
+      start: async (provider, cwd, account) => { started.push({ provider, cwd, account }); },
+    },
+    state: {
+      groupsData: [ws("g1", "/w/alpha", "2026-11-12T10:00:00Z")],
+      projects: [{ key: "/w/beta", label: "beta", path: "/w/beta", added_at: Date.parse("2026-11-11T00:00:00Z") }],
+      sidebar: { project_aliases: { "/w/alpha": "Alpha App" }, pinned_projects: ["/w/beta"], pinned_groups: [], project_order: [] },
+      order: [],
+      items: new Map(),
+      heads: new Map(),
+    },
+    document: {
+      readyState: "complete",
+      body: { append: (...nodes) => bodyChildren.push(...nodes) },
+      addEventListener: (t, fn) => { (docListeners[t] ||= []).push(fn); },
+      querySelector: () => null,
+      activeElement: null,
+    },
+    addEventListener() {},
+    Date,
+  });
+  sbContext.window = sbContext;
+  vm.runInContext(readFileSync(`${__dirname}/../chat-sidebar.js`, "utf8"), sbContext);
+
+  const btn = els.get("new-chat");
+  btn.listeners.click[0]({ stopPropagation() {} });
+  const pop = bodyChildren.find(n => n.tag === "div.side-popover");
+  assert.ok(pop && !pop.hidden);
+
+  // Step 1: pinned project beta first, then aliased alpha, then choose other folder.
+  const step1Buttons = pop.querySelectorAll("button");
+  assert.equal(step1Buttons.length, 3);
+  const textOf = (node) => (node.children || []).map(c => typeof c === "string" ? c : textOf(c)).join("");
+  assert.match(textOf(step1Buttons[0]), /beta/);
+  assert.match(textOf(step1Buttons[1]), /Alpha App/);
+  assert.match(textOf(step1Buttons[2]), /选择其他文件夹/);
+
+  // Click Alpha App -> Step 2 shows back button + Codex + Claude + Claude (工作)
+  step1Buttons[1].listeners.click[0]();
+  await new Promise(r => setImmediate(r));
+  const step2Buttons = pop.querySelectorAll("button");
+  assert.equal(step2Buttons.length, 4);
+  assert.match(textOf(step2Buttons[0]), /Alpha App/);
+  assert.match(textOf(step2Buttons[1]), /Codex/);
+  assert.match(textOf(step2Buttons[3]), /工作/);
+
+  // Back returns to Step 1
+  step2Buttons[0].listeners.click[0]();
+  assert.equal(pop.querySelectorAll("button").length, 3);
+
+  // Pick Alpha App again and launch Claude (工作)
+  pop.querySelectorAll("button")[1].listeners.click[0]();
+  await new Promise(r => setImmediate(r));
+  pop.querySelectorAll("button")[3].listeners.click[0]();
+  assert.equal(pop.hidden, true);
+  assert.deepEqual(started, [{ provider: "claude", cwd: "/w/alpha", account: "work" }]);
+});
