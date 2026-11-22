@@ -71,6 +71,7 @@ async def test_terminal_lifecycle_uses_receipt_and_preserves_capacity(
         "anchor": {"turn_id": "turn", "client_user_message_id": "client"},
     }
     snapshot(path, {invocation: item})
+    request_path.unlink()
     await asyncio.sleep(0.2)
     with pytest.raises(ValueError, match="already has an active invocation"):
         manager.start(
