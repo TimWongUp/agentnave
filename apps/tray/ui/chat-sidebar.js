@@ -300,8 +300,9 @@
       const btn = h(
         "button.side-pop-item",
         { type: "button", role: "menuitem", title: s.path || s.title },
-        s.pinnedProject && h("span.gl-grp-pin", { "aria-hidden": "true" }),
+        h("span.side-pop-folder", { "aria-hidden": "true" }),
         h("span.side-pop-name", {}, s.title),
+        s.pinnedProject && h("span.gl-grp-pin", { "aria-hidden": "true" }),
         s.hint && h("span.side-pop-hint", {}, s.hint),
       );
       btn.addEventListener("click", () => void renderNewChatClis({ key: s.key, title: s.title }, true));

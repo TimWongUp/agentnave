@@ -455,6 +455,7 @@ function headNode(section, folded = false) {
     state.heads.set(id, rec);
   }
   setAttr(rec.el, "aria-expanded", folded ? "false" : "true");
+  setAttr(rec.el, "data-kind", section.pinned ? "handover" : section.other ? "other" : null);
   setAttr(rec.el, "title", section.path || section.title);
   setText(rec.name, section.title);
   setText(rec.hint, section.hint);
