@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -19,11 +20,22 @@ PUSH_AGAIN = (
     "Handle ready prompts and reviews. The App will prompt you again when remaining items are "
     "ready; you may end this turn and then call inbox wait(wait_seconds=0)."
 )
+MAX_PUSH_BYTES = 256 * 1024
+
+
+@dataclass(frozen=True)
+class TrayIdentity:
+    pid: int
+    started_at: float
 
 
 def app_can_push(root: Path, provider: str | None) -> bool:
+    return find_tray(root, provider) is not None
+
+
+def find_tray(root: Path, provider: str | None) -> TrayIdentity | None:
     if sys.platform == "win32" or provider is None:
-        return False
+        return None
     seen: set[int] = set()
     chain: list[tuple[int, int, float]] = []
     pid = os.getppid()
@@ -41,18 +53,18 @@ def app_can_push(root: Path, provider: str | None) -> bool:
                 abs(read_process_started(one) - birth) < 0.01 and read_process_parent(one) == up
                 for one, up, birth in chain
             ):
-                return True
+                return TrayIdentity(pid, started)
             pid = parent
         except (OSError, ValueError, IndexError, StopIteration):
             break
-    return False
+    return None
 
 
 def _matches(path: Path, pid: int, provider: str, started: float) -> bool:
     try:
         with path.open("rb") as stream:
             info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > 16384:
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_PUSH_BYTES:
                 return False
             # A file from a former process must predate the current process's start.
             if started > info.st_mtime + 0.01:
