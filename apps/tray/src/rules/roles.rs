@@ -7,7 +7,8 @@ const LEGACY_PARALLEL: &str = "- 并行写入和开会由 boss 判断：计划�
 const LEGACY_ASSIGNMENT: &str = "- 探索、规划派 Explorer，实现派 Worker。";
 const LEGACY_REVIEW: &str = "- 本偏好不决定何时评审，用户要求或其规则要求时才评审。评审时有 agentnave-review Skill 就按它定级、选工位，不另派 Explorer；没有时派 Explorer，不交给写这段代码的 Worker，尽量换模型。";
 const LEGACY_SPECIALIST_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件、改一处、几分钟能完成，且不在下列专项范围内；多文件实现、需要调查定位的问题、成篇文案和专项范围内的任务都派出，即使自己的工具也能做。";
-const CURRENT_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件、改一处、几分钟能完成；多文件实现、需要调查定位的问题和成篇文案都派出，即使自己的工具也能做。";
+const LEGACY_WRITING_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件、改一处、几分钟能完成；多文件实现、需要调查定位的问题和成篇文案都派出，即使自己的工具也能做。";
+const CURRENT_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件、改一处、几分钟能完成；多文件实现、需要调查定位的问题和成篇文案都派出，即使自己的工具也能做；写作所需的上下文已全在 boss 手里时除外，例如刚收敛的讨论或会议结论要写成 ADR、架构文档、术语表或定稿说明，简报几乎就是正文，boss 自己写；需要另外调研或上下文不在 boss 手里的成篇写作仍派出。";
 const LEGACY_WAIT_VERIFY: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取；`succeeded` 不等于完成，boss 核对产物后验收；高风险改动由 boss 针对具体的出错方式补做检查。";
 const LEGACY_MEETINGS_WAIT: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取。";
 
@@ -92,6 +93,7 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         .replace(LEGACY_ASSIGNMENT, "")
         .replace(LEGACY_SMALL_TASKS, &small_tasks())
         .replace(LEGACY_SPECIALIST_SMALL_TASKS, CURRENT_SMALL_TASKS)
+        .replace(LEGACY_WRITING_SMALL_TASKS, CURRENT_SMALL_TASKS)
         .replace(
             LEGACY_PARALLEL,
             &format!(
@@ -171,6 +173,11 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     );
     assert!(specialist_and_wait.contains(CURRENT_SMALL_TASKS));
     assert!(!specialist_and_wait.contains("不在下列专项范围内"));
+    assert!(super::catalog::section("shared").contains(CURRENT_SMALL_TASKS));
+    assert_eq!(
+        apply(&document, LEGACY_WRITING_SMALL_TASKS.to_owned()),
+        CURRENT_SMALL_TASKS
+    );
     assert!(!specialist_and_wait.contains("wait(wait_seconds=0)"));
     assert!(
         specialist_and_wait
