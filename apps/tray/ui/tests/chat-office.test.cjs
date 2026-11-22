@@ -1252,6 +1252,105 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
   assert.equal(context.state.heads.get("project:/w/deep").el.classList.contains("flash"), true);
 });
 
+test("open derived terminals stay under their parent when idle, past the cap and in a folded project", () => {
+  const classes = (set = new Set()) => ({
+    set,
+    add: (...names) => names.forEach(n => set.add(n)),
+    remove: (...names) => names.forEach(n => set.delete(n)),
+    toggle: (name, on) => (on ? set.add(name) : set.delete(name)),
+    contains: name => set.has(name),
+  });
+  const makeNode = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [],
+    classList: classes(), listeners: {},
+    setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+    append(...items) { this.children.push(...items.flat()); },
+    replaceChildren(...items) { this.children = items.flat(); },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    scrollIntoView() {},
+    closest: () => null,
+  });
+  const h = (tag, attrs = {}, ...children) =>
+    Object.assign(makeNode(tag), { attributes: { ...attrs }, children: children.flat(Infinity).filter(x => x != null && x !== false) });
+  const els = new Map([["app", makeNode("div")], ["list", makeNode("div")]]);
+  const storage = new Map();
+  let derived = [];
+  const context = vm.createContext({
+    AN: {
+      h, $: id => els.get(id) || makeNode(id), L: zh => zh,
+      load: async () => ({}), href: p => p, GROUP: { idle: ["空闲", "idle"] },
+      pick: (_map, key) => ["空闲", key || "idle"], urgent: s => s === "running",
+      avatar: () => makeNode("span"), colorClass: () => "c0", relTime: () => "刚刚",
+      clock: () => "", fullTime: () => "", dayLabel: () => "",
+      setText: (el, v) => { el.textContent = v == null ? "" : String(v); },
+      setAttr: (el, k, v) => el.setAttribute(k, v),
+      setClass: (el, v) => { el.className = v; },
+      reconcile: (parent, nodes) => { parent.children = [...nodes]; },
+      stickyOrder: items => items, poll() {}, plain: x => x,
+      art: { character: () => "c" }, hostTile: () => makeNode("span"),
+      deskName: () => "", deskParts: () => [], handleOf: () => "", fullHandle: () => "",
+      cliOf: () => "", chatName: g => g.title || g.group, shownName: g => g.title || g.group,
+      activities: () => [], ongoing: s => s || "idle",
+    },
+    localStorage: {
+      getItem: k => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, v),
+      removeItem: k => storage.delete(k),
+    },
+    window: null,
+    document: { addEventListener() {}, documentElement: { lang: "zh" } },
+    location: { search: "", pathname: "/", hash: "" },
+    history: { pushState() {}, replaceState() {} },
+    ChatTerminal: {
+      headAction(rec) { rec.add ||= makeNode("span.gl-grp-add"); },
+      decorate() {},
+      menu() { return false; },
+      derivedOf: parent => derived.filter(d => d.parent_workspace_id === parent),
+    },
+    Actions: { picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {} },
+    addEventListener() {},
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    Avatars: null,
+    requestAnimationFrame() {}, setTimeout, clearTimeout, Date,
+  });
+  context.window = context;
+  vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
+  vm.runInContext(
+    `${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.state = state; globalThis.renderList = renderList;`,
+    context,
+  );
+
+  const agent = (group, updated) => ({
+    group, title: group, status: "idle", updated, label: "Codex", boss_key: "codex|codex", host: "codex",
+    project_key: "/w/calc", project_label: "calc", project_path: "/w/calc", preview: "", desks_count: 0, rooms_count: 0,
+  });
+  const child = (live) => ({
+    group: "term-20", terminal: 20, host: "antigravity", app: "antigravity", label: "Antigravity", title: "Add Sub Function",
+    status: live ? "running" : "idle", live, updated: "2026-11-12T10:00:00Z", derived: true,
+    parent_workspace_id: "g-parent", blocked_kind: null, project_key: "/w/calc", project_label: "calc", project_path: "/w/calc", preview: "",
+  });
+  // The parent is the oldest of seven agents in its project, so only a running boss keeps it past the cap.
+  const groups = [agent("g-parent", "2026-11-01T00:00:00Z")];
+  for (let i = 0; i < 6; i++) groups.push(agent(`g-other${i}`, `2026-11-1${i}T00:00:00Z`));
+  context.state.groupsData = groups;
+  const rows = () => {
+    context.renderList();
+    return els.get("list").children.filter(n => n.attributes?.href);
+  };
+  const shown = () => rows().filter(n => n.attributes["data-folded"] !== "true").map(n => n.attributes.href);
+
+  derived = [child(true)];
+  assert.ok(shown().includes("/chat/term-20"), "running child shows under its parent");
+  derived = [child(false)];
+  assert.deepEqual(shown().slice(shown().indexOf("/chat/g-parent"), shown().indexOf("/chat/g-parent") + 2), ["/chat/g-parent", "/chat/term-20"]);
+
+  context.state.folded.set("project:/w/calc", true);
+  const folded = shown();
+  assert.deepEqual(folded, ["/chat/g-parent", "/chat/term-20"]);
+  derived = [];
+  assert.deepEqual(shown(), []);
+});
+
 test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and empty manual project removal", async () => {
   const h = (tag, attributes = {}, ...children) => {
     const kids = children.flat(Infinity).filter(x => x != null && x !== false);

@@ -324,11 +324,11 @@ function renderList() {
   if (!nodes.length) nodes.push(h("div.gl-empty", {}, L("还没有 agent", "No agents yet")));
   reconcile(el.list, nodes);
 }
-// The cap may never hide a pending handover, work waiting on the reader, or the agent already open.
+// The cap may never hide a pending handover, work waiting on the reader, the agent already open, or
+// an agent with a derived terminal still open under it.
 function mustShow(g) {
   if (g.handover === "pending" || urgent(g.status) || g.group === state.selected) return true;
-  const children = ChatTerminal.derivedOf?.(g.group) || [];
-  return children.some((c) => urgent(c.status) || c.group === state.selected);
+  return Boolean(ChatTerminal.derivedOf?.(g.group)?.length);
 }
 // A "show more" button, made once and reused: reconcile matches nodes, so it keeps its place and
 // the click handler reads whatever this render decided it opens.
@@ -403,15 +403,13 @@ function groupedNodes(groups) {
     nodes.push(headNode(section));
     for (const g of section.shown) {
       const children = ChatTerminal.derivedOf?.(g.group) || [];
-      const childNeed = children.some((c) => urgent(c.status) || c.group === state.selected);
-      // A folded group still shows what needs the reader or is open.
-      const hidden = folded && !(urgent(g.status) || g.group === state.selected || childNeed);
+      // A folded group still shows what needs the reader or is open, and every open derived terminal.
+      const hidden = folded && !(urgent(g.status) || g.group === state.selected || children.length);
       nodes.push(itemNode(g, hidden));
       if (!hidden) order.push(g.group);
       for (const child of children) {
-        const childHidden = folded && !(urgent(child.status) || child.group === state.selected);
-        nodes.push(itemNode(child, childHidden));
-        if (!childHidden) order.push(child.group);
+        nodes.push(itemNode(child, false));
+        order.push(child.group);
       }
     }
     if (section.hidden)

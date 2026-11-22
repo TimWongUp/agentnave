@@ -4,6 +4,7 @@ mod claude;
 mod claude_hook;
 #[cfg(unix)]
 mod codex;
+mod interrupt;
 pub(super) mod native_logs;
 #[cfg(test)]
 mod tests;
@@ -18,7 +19,7 @@ use super::account::{self, Active};
 use super::session::Session;
 use super::spawn_requests::{
     BlockedReceipt, Coordinator, ForwardItem, IsolationSpec, Receipt, RunConfig, RunHandle,
-    SpawnRequestEnvelope, TERMINAL_PROVIDERS, now_unix_secs, truncate_short,
+    SpawnRequestEnvelope, TERMINAL_PROVIDERS, now_unix_secs,
 };
 use super::{DerivedHandle, Terminals};
 use crate::isolated::leases::{self, HeldLease};
@@ -364,7 +365,11 @@ pub(super) fn execute_cancel(
         return;
     }
 
-    if let Some(handle) = coordinator.active_run(&env.invocation_id) {
+    // 只在启动前用 cancel_requested 拦截；轮次已开始后是否取消由各 CLI 的中断确认决定。
+    let pre_start_flag = coordinator
+        .active_run(&env.invocation_id)
+        .filter(|_| run_receipt.state == super::spawn_requests::ReceiptState::Accepted);
+    if let Some(handle) = &pre_start_flag {
         handle
             .cancel_requested
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -380,18 +385,21 @@ pub(super) fn execute_cancel(
         };
         run_receipt = latest;
     }
+    if run_receipt.state != super::spawn_requests::ReceiptState::Finished
+        && let Some(handle) = &pre_start_flag
+    {
+        handle
+            .cancel_requested
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
 
     if run_receipt.state == super::spawn_requests::ReceiptState::Finished {
-        let outcome = if run_receipt
-            .terminal
-            .as_ref()
-            .is_some_and(|t| t.status == "cancelled")
-        {
-            "interrupted"
-        } else {
-            "already_finished"
-        };
-        coordinator.mark_finished(req_id, outcome, None, run_receipt.session_id.as_deref());
+        coordinator.mark_finished(
+            req_id,
+            finished_cancel_outcome(&run_receipt),
+            None,
+            run_receipt.session_id.as_deref(),
+        );
         return;
     }
 
@@ -435,6 +443,18 @@ pub(super) fn execute_cancel(
             Some("未知 CLI"),
             run_receipt.session_id.as_deref(),
         ),
+    }
+}
+
+fn finished_cancel_outcome(run_receipt: &Receipt) -> &'static str {
+    if run_receipt
+        .terminal
+        .as_ref()
+        .is_some_and(|t| t.status == "cancelled")
+    {
+        "interrupted"
+    } else {
+        "already_finished"
     }
 }
 
@@ -496,41 +516,19 @@ fn cancel_claude(
         return;
     };
     let homes = native_logs::claude_homes(handle.account.as_ref().map(|a| a.dir.as_path()));
-    if let Some(path) = native_logs::claude_transcript_path(&homes, sid) {
+    let probe = |_state: Option<&str>| {
+        let Some(path) = native_logs::claude_transcript_path(&homes, sid) else {
+            return interrupt::TurnProbe::Active;
+        };
         match native_logs::claude_turn_state(&path, pid) {
-            native_logs::ClaudeTurnState::Completed => {
-                coordinator.mark_finished(req_id, "already_finished", None, Some(sid));
-                return;
+            native_logs::ClaudeTurnState::Completed => interrupt::TurnProbe::Completed,
+            native_logs::ClaudeTurnState::Superseded(_) => interrupt::TurnProbe::Superseded,
+            native_logs::ClaudeTurnState::Active | native_logs::ClaudeTurnState::Unknown => {
+                interrupt::TurnProbe::Active
             }
-            native_logs::ClaudeTurnState::Superseded(_) => {
-                coordinator.mark_finished(
-                    req_id,
-                    "not_safe_to_interrupt",
-                    Some("已进入后续轮次"),
-                    Some(sid),
-                );
-                return;
-            }
-            native_logs::ClaudeTurnState::Active | native_logs::ClaudeTurnState::Unknown => {}
         }
-    }
-    if matches!(
-        handle.session.osc_snapshot().1.as_deref(),
-        Some("done" | "error")
-    ) {
-        coordinator.mark_finished(req_id, "already_finished", None, Some(sid));
-        return;
-    }
-    if let Err(err) = handle.session.write(b"\x03") {
-        coordinator.mark_finished(
-            req_id,
-            "not_safe_to_interrupt",
-            Some(&truncate_short(&err)),
-            Some(sid),
-        );
-        return;
-    }
-    coordinator.mark_finished(req_id, "interrupted", None, Some(sid));
+    };
+    interrupt::interrupt_turn_with_esc(coordinator, env, handle, sid, &probe);
 }
 
 fn cancel_agy(
@@ -554,39 +552,21 @@ fn cancel_agy(
         );
         return;
     };
-    if let Some(home) = native_logs::agy_home() {
-        let path = native_logs::agy_transcript_path(&home, sid);
-        match native_logs::agy_turn_state(&path, idx) {
-            native_logs::AgyTurnState::Superseded(_) => {
-                coordinator.mark_finished(
-                    req_id,
-                    "not_safe_to_interrupt",
-                    Some("已进入后续轮次"),
-                    Some(sid),
-                );
-                return;
-            }
+    let agy_home = native_logs::agy_home();
+    let probe = |state: Option<&str>| {
+        let Some(home) = agy_home.as_deref() else {
+            return interrupt::TurnProbe::Active;
+        };
+        match native_logs::agy_turn_state(&native_logs::agy_transcript_path(home, sid), idx) {
+            native_logs::AgyTurnState::Superseded(_) => interrupt::TurnProbe::Superseded,
             native_logs::AgyTurnState::HasFinalPlannerResponse
-                if matches!(
-                    handle.session.osc_snapshot().1.as_deref(),
-                    Some("done" | "idle")
-                ) =>
+                if matches!(state, Some("done" | "idle")) =>
             {
-                coordinator.mark_finished(req_id, "already_finished", None, Some(sid));
-                return;
+                interrupt::TurnProbe::Completed
             }
             native_logs::AgyTurnState::Waiting
-            | native_logs::AgyTurnState::HasFinalPlannerResponse => {}
+            | native_logs::AgyTurnState::HasFinalPlannerResponse => interrupt::TurnProbe::Active,
         }
-    }
-    if let Err(err) = handle.session.write(b"\x03") {
-        coordinator.mark_finished(
-            req_id,
-            "not_safe_to_interrupt",
-            Some(&truncate_short(&err)),
-            Some(sid),
-        );
-        return;
-    }
-    coordinator.mark_finished(req_id, "interrupted", None, Some(sid));
+    };
+    interrupt::interrupt_turn_with_esc(coordinator, env, handle, sid, &probe);
 }

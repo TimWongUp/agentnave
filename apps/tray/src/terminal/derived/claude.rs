@@ -896,9 +896,10 @@ fn monitor_claude_turn(
                         },
                     )
                 });
-                if state_str == Some("error")
-                    || (mode_confirmed && transcript_ready)
-                    || at.elapsed() >= TRANSCRIPT_FLUSH_WAIT
+                if !handle.interrupt_pending()
+                    && (state_str == Some("error")
+                        || (mode_confirmed && transcript_ready)
+                        || at.elapsed() >= TRANSCRIPT_FLUSH_WAIT)
                 {
                     if !mode_confirmed
                         && let Some(dir) = hook_dir

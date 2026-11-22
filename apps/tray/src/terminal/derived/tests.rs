@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::Mutex;
 
+mod esc_interrupt;
+
 #[test]
 fn claude_args_merge_theme_and_permission_prompt_skip_into_single_settings() {
     let cfg = RunConfig {
@@ -231,7 +233,7 @@ fn claude_late_cancel_respects_completed_and_superseded_turns() {
         &["claude"],
     );
 
-    // Completed turn -> cancel refuses Ctrl+C and reports already_finished.
+    // Completed turn -> cancel refuses Esc and reports already_finished.
     fs::write(
         &transcript,
         concat!(
@@ -305,27 +307,6 @@ fn claude_late_cancel_respects_completed_and_superseded_turns() {
     cancel_claude(&coord, &env_done, &receipt_done, &handle_done);
     assert!(s1.recorded_writes().is_empty());
     s1.stop();
-
-    // Active turn -> cancel sends \x03 once.
-    fs::write(
-        &transcript,
-        "{\"type\":\"user\",\"promptId\":\"p-active\",\"message\":{\"content\":\"hi\"}}\n",
-    )
-    .unwrap();
-    let s2 = make_session();
-    s2.record_writes();
-    let receipt_active = Receipt {
-        anchor: Some(json!({"session_id": sid, "prompt_id": "p-active"})),
-        ..receipt_done
-    };
-    let handle_active = DerivedHandle {
-        session: s2.clone(),
-        ..handle_done
-    };
-    cancel_claude(&coord, &env_done, &receipt_active, &handle_active);
-    let writes = s2.recorded_writes();
-    assert_eq!(writes, vec![b"\x03".to_vec()]);
-    s2.stop();
 }
 
 #[cfg(unix)]

@@ -164,6 +164,7 @@ struct ReceiptEntry {
 pub(super) struct RunHandle {
     pub invocation_id: String,
     pub cancel_requested: AtomicBool,
+    interrupt_pending: AtomicBool,
 }
 
 impl RunHandle {
@@ -171,7 +172,17 @@ impl RunHandle {
         Self {
             invocation_id,
             cancel_requested: AtomicBool::new(false),
+            interrupt_pending: AtomicBool::new(false),
         }
+    }
+
+    pub(super) fn set_interrupt_pending(&self, pending: bool) {
+        self.interrupt_pending.store(pending, Ordering::SeqCst);
+    }
+
+    /// True while an Esc interruption is undecided; turn monitors must not settle then.
+    pub(super) fn interrupt_pending(&self) -> bool {
+        self.interrupt_pending.load(Ordering::SeqCst)
     }
 
     pub(super) fn is_cancelled(&self) -> bool {

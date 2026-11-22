@@ -584,9 +584,10 @@ fn monitor_agy_turn(
                             idx,
                         ) != native_logs::AgyTurnState::Waiting
                 );
-                if state_str == Some("error")
-                    || planner_done
-                    || at.elapsed() >= TRANSCRIPT_FLUSH_WAIT
+                if !handle.interrupt_pending()
+                    && (state_str == Some("error")
+                        || planner_done
+                        || at.elapsed() >= TRANSCRIPT_FLUSH_WAIT)
                 {
                     finish_settled(
                         coordinator,
