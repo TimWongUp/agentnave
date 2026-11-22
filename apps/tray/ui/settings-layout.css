@@ -23,7 +23,11 @@ html { overflow-y: scroll; }
 
 /* ---- row ---- */
 .s-row { display: grid; grid-template-columns: var(--row-label) minmax(0, 1fr); align-items: center; gap: 8px 16px; min-width: 0; min-height: 56px; padding: 12px var(--row-pad); border-top: 1px solid var(--line); }
-.s-row:first-child, .s-wrap:first-child > .s-row:first-child { border-top: 0; }
+.s-card > .s-row:first-child,
+.s-card > .s-wrap:first-child > .s-row:first-child,
+.s-card > .s-wrap:first-child > .s-wrap:first-child > .s-row:first-child,
+.detail-rows > .s-row:first-child,
+.detail-rows > .s-wrap:first-child > .s-row:first-child { border-top: 0; }
 .s-row > :not(.s-label) { grid-column: 2; justify-self: start; min-width: 0; max-width: 100%; }
 .s-row.is-lead { grid-template-columns: minmax(0, 1fr) auto; }
 .s-row.is-lead > :not(.s-label) { grid-column: 2; justify-self: end; }
