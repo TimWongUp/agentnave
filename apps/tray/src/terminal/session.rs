@@ -390,6 +390,11 @@ impl Session {
     pub(crate) fn send_paste(&self, text: &str) -> Result<String, String> {
         let clean = sanitize_paste_text(text);
         let use_paste = self.output().modes.paste();
+        if !use_paste && clean.contains('\n') {
+            return Err(
+                "终端未进入可粘贴状态（未启用括号粘贴模式），无法安全提交多行任务".to_owned(),
+            );
+        }
         let payload = if use_paste {
             format!("\x1b[200~{clean}\x1b[201~")
         } else {
@@ -479,7 +484,9 @@ impl Session {
 pub(crate) fn sanitize_paste_text(text: &str) -> String {
     text.replace("\x1b[200~", "")
         .replace("\x1b[201~", "")
-        .replace('\x1b', "")
+        .chars()
+        .filter(|&c| c == '\t' || c == '\n' || !('\u{0000}'..='\u{001f}').contains(&c))
+        .collect()
 }
 
 fn size(cols: u16, rows: u16) -> PtySize {

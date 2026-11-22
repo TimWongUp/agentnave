@@ -93,6 +93,7 @@ fn rig(mode: &str) -> Rig {
             label: "acc".to_owned(),
             dir: dir.path().to_path_buf(),
         }),
+        launch_config: None,
         codex: None,
     };
     Rig {

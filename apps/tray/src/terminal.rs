@@ -63,6 +63,35 @@ struct State {
     links_checked: Option<(Instant, PathBuf)>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct DerivedLaunchConfig {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub permissions: Value,
+}
+
+impl DerivedLaunchConfig {
+    pub(in crate::terminal) fn from_run_config(cfg: &spawn_requests::RunConfig) -> Self {
+        let permissions = match &cfg.permissions {
+            Value::Null => json!({}),
+            other => other.clone(),
+        };
+        Self {
+            model: cfg
+                .model
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            effort: cfg
+                .effort
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            permissions,
+        }
+    }
+}
+
 pub(super) struct DerivedInfo {
     pub parent_boss_key: String,
     pub parent_workspace_id: Option<String>,
@@ -73,6 +102,7 @@ pub(super) struct DerivedInfo {
     pub _log_dir: Option<tempfile::TempDir>,
     pub codex_ready_file: Option<PathBuf>,
     pub active_invocation_id: Option<String>,
+    pub launch_config: Option<DerivedLaunchConfig>,
 }
 
 impl Drop for DerivedInfo {
@@ -90,6 +120,7 @@ pub(super) struct DerivedHandle {
     pub(in crate::terminal) session: Arc<Session>,
     pub(in crate::terminal) native: Option<String>,
     pub(in crate::terminal) account: Option<Active>,
+    pub(in crate::terminal) launch_config: Option<DerivedLaunchConfig>,
     #[cfg(unix)]
     pub(in crate::terminal) codex: Option<Arc<codex_server::Client>>,
 }
@@ -134,6 +165,7 @@ impl Running {
             session: self.session.clone(),
             native: self.native.clone(),
             account: self.account.clone(),
+            launch_config: self.derived.as_ref().and_then(|d| d.launch_config.clone()),
             #[cfg(unix)]
             codex: self.codex.clone(),
         }
@@ -621,6 +653,20 @@ impl Terminals {
             .filter(|running| running.session.exit().is_none())
             .filter_map(|running| Some((running.id, running.session.pid()?)))
             .collect()
+    }
+
+    /// The CLI pid of every still-running derived terminal, sorted and deduplicated.
+    pub(super) fn live_derived_pids(&self) -> Vec<u32> {
+        let state = self.lock();
+        let mut pids: Vec<u32> = state
+            .open
+            .iter()
+            .filter(|running| running.derived.is_some() && running.session.exit().is_none())
+            .filter_map(|running| running.session.pid())
+            .collect();
+        pids.sort_unstable();
+        pids.dedup();
+        pids
     }
 
     /// What each terminal's chat is called in its CLI, read from the CLI's session record. A

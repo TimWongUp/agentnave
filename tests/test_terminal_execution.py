@@ -778,6 +778,7 @@ def test_make_launch_account_and_shared_contract_fixture(
 
     # Verify Python consumes the tray's push_receipt fixture (run + cancel) and emits inbox_settlement.
     push_doc = cast(dict[str, object], fixture["push_receipt"])
+    assert push_doc["derived_pids"] == [2468]
     run_receipt = terminal_requests.receipt(
         push_doc, expected_run["request_id"], expected_run["invocation_id"]
     )
@@ -880,11 +881,20 @@ async def test_mcp_cancel_converts_not_safe_to_interrupt_to_tool_error(
     started = path.stat().st_mtime - 1
     tray = TrayIdentity(42, started)
 
+    def find_tray(_root: Path, _provider: str | None) -> TrayIdentity:
+        return tray
+
+    def read_capability(_root: Path, _tray: TrayIdentity) -> dict[str, object]:
+        return {"terminal_providers": ["codex"]}
+
+    def process_started(_pid: int) -> float:
+        return started
+
     monkeypatch.setattr(mcp_runtime, "HOST", Host(name="codex"))
     monkeypatch.setattr(mcp_runtime, "terminal_available", lambda: True)
-    monkeypatch.setattr(mcp_tasks, "find_tray", lambda _r, _p: tray)
-    monkeypatch.setattr(mcp_tasks, "read_tray", lambda _r, _t: {"terminal_providers": ["codex"]})
-    monkeypatch.setattr(terminal_requests, "read_process_started", lambda _p: started)
+    monkeypatch.setattr(mcp_tasks, "find_tray", find_tray)
+    monkeypatch.setattr(mcp_tasks, "read_tray", read_capability)
+    monkeypatch.setattr(terminal_requests, "read_process_started", process_started)
     async with Client(mcp) as client:
         response = await client.call_tool(
             "start_agent",
@@ -926,3 +936,37 @@ async def test_mcp_cancel_converts_not_safe_to_interrupt_to_tool_error(
         cancel_resp = await asyncio.wait_for(cancel_task, 2)
         assert cancel_resp.is_error
         assert "could not safely" in str(cancel_resp.content)
+
+
+def test_terminal_unavailable_when_ancestor_is_derived_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_runtime, push_capability
+
+    monkeypatch.delenv("AGENTNAVE_DERIVED_SESSION", raising=False)
+    monkeypatch.setattr(mcp_runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(push_capability.sys, "platform", "darwin")
+
+    # Simulate Codex derived terminal tree without AGENTNAVE_DERIVED_SESSION:
+    # mcp_server -> relay (80) -> codex app-server (50) -> derived wrapper (20) -> tray (10)
+    parents = {80: 50, 50: 20, 20: 10, 10: 1}
+    derived_pids: list[int] = [20]
+
+    def parent(pid: int) -> int:
+        return parents[pid]
+
+    def find_tray(_root: Path, _provider: str | None) -> TrayIdentity:
+        return TrayIdentity(10, 1.0)
+
+    def read_capability(_root: Path, _tray: TrayIdentity) -> dict[str, object]:
+        return {"terminal_providers": ["codex"], "derived_pids": list(derived_pids)}
+
+    monkeypatch.setattr(push_capability.os, "getppid", lambda: 80)
+    monkeypatch.setattr(push_capability, "read_process_parent", parent)
+    monkeypatch.setattr(push_capability, "find_tray", find_tray)
+    monkeypatch.setattr(terminal_requests, "read_tray", read_capability)
+    assert not mcp_runtime.terminal_available()
+
+    # Sibling derived terminal PID (not in our ancestor chain) must not block boss terminal.
+    derived_pids[:] = [99]
+    assert mcp_runtime.terminal_available()

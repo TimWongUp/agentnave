@@ -30,6 +30,7 @@ fn mock_with_read_status(
         let id = msg.get("id").and_then(Value::as_u64);
         let result = match msg.get("method").and_then(Value::as_str) {
             Some("initialize") => json!({}),
+            Some("thread/loaded/list") => json!({"data": []}),
             Some("thread/read") => json!({"thread": {
                 "id": TID,
                 "path": rollout,
@@ -120,6 +121,13 @@ fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
                             &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
                         );
                     }
+                    Some("thread/loaded/list") => {
+                        write_server_frame(
+                            stream,
+                            &json!({"jsonrpc": "2.0", "id": id, "result": {"data": []}})
+                                .to_string(),
+                        );
+                    }
                     Some("thread/read") => {
                         write_server_frame(
                             stream,
@@ -173,7 +181,7 @@ fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
             Some(TID),
             Some(json!({"session_id": TID, "turn_id": TURN})),
         );
-        coord.insert_test_receipt("cancel-req", "inv-codex");
+        coord.insert_test_receipt("cancel-req", "inv-codex-cancel");
         let run_receipt = coord.run_receipt_by_invocation("inv-codex").unwrap();
 
         let mut cmd = CommandBuilder::new("python3");
@@ -203,6 +211,7 @@ fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
             session: session.clone(),
             native: Some(TID.to_owned()),
             account: None,
+            launch_config: None,
             codex: Some(codex.clone()),
         };
 
@@ -216,5 +225,29 @@ fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
         assert_eq!(actual, expected, "case {name}");
         session.stop();
         codex.close();
+    }
+}
+
+#[test]
+fn build_turn_config_does_not_enable_network_access_for_workspace_write() {
+    let cwd = Path::new("/tmp/repo");
+    for perms in [
+        json!({"approve_for_me": true}),
+        json!({"sandbox": "workspace-write"}),
+    ] {
+        let cfg = RunConfig {
+            provider: "codex".to_owned(),
+            account: None,
+            account_dir: None,
+            cwd: cwd.display().to_string(),
+            isolation: None,
+            model: None,
+            effort: None,
+            permissions: perms,
+        };
+        let turn_cfg = build_turn_config("hello", "client-1", cwd, &cfg);
+        let sandbox = turn_cfg.sandbox_policy.expect("workspaceWrite policy");
+        assert_eq!(sandbox["type"], json!("workspaceWrite"));
+        assert!(sandbox.get("networkAccess").is_none());
     }
 }

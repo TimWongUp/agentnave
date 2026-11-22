@@ -60,7 +60,7 @@ fn publishes_256k_limit_evicts_oldest_finished_only() {
         );
     }
 
-    let doc = build_push_document(coord.pid, coord.push_providers, &mut receipts);
+    let doc = build_push_document(coord.pid, coord.push_providers, &[], &mut receipts);
     let encoded = serde_json::to_vec(&doc).unwrap();
     assert!(encoded.len() <= PUSH_MAX_BYTES);
     assert!(doc["requests"].get("active-id").is_some());
@@ -385,7 +385,12 @@ fn shared_contract_fixture_matches_tray_intake_and_receipts() {
             finished_at: Some(Instant::now()),
         },
     );
-    let doc = build_push_document(5678, &["claude", "codex", "antigravity"], &mut receipts);
+    let doc = build_push_document(
+        5678,
+        &["claude", "codex", "antigravity"],
+        &[2468],
+        &mut receipts,
+    );
     assert_eq!(doc, fixture["push_receipt"]);
 
     let settled = &fixture["inbox_settlement"]["settled_requests"];
@@ -395,4 +400,75 @@ fn shared_contract_fixture_matches_tray_intake_and_receipts() {
         1700000000.0,
         &run_env.request_id
     ));
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_group_or_world_writable_spawn_requests_dir_and_publishes_derived_pids() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    ensure_spawn_requests_dir(dir.path());
+    let req_dir = dir.path().join("spawn-requests");
+    let coord = test_coord(dir.path());
+    let terminals = Terminals::default();
+
+    // D3: Group-writable spawn-requests directory must be refused without consuming requests.
+    fs::set_permissions(&req_dir, fs::Permissions::from_mode(0o770)).unwrap();
+    let req_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+    let req_path = req_dir.join(format!("{req_id}.json"));
+    fs::write(
+        &req_path,
+        json!({
+            "version": 1,
+            "request_id": req_id,
+            "kind": "cancel",
+            "service": {"pid": coord.pid, "started_at": coord.started_at},
+            "target_tray": {"pid": coord.pid, "started_at": coord.started_at},
+            "invocation_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    coord.poll(&terminals);
+    assert!(req_path.exists());
+    assert!(coord.receipts_snapshot().is_empty());
+
+    // Restoring 0700 lets intake proceed normally.
+    fs::set_permissions(&req_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    coord.poll(&terminals);
+    assert!(!req_path.exists());
+
+    // D5: Live derived terminal PID is published in push/<pid>.json `derived_pids`.
+    let mut cmd = portable_pty::CommandBuilder::new("python3");
+    cmd.args(["-c", "import time; time.sleep(5)"]);
+    cmd.cwd(dir.path());
+    let session = super::super::session::Session::start(cmd, 80, 24).unwrap();
+    let expected_pid = session.pid().expect("derived child pid");
+    let tid = terminals.register_derived(super::super::NewDerived {
+        provider: "codex".to_owned(),
+        cwd: dir.path().to_path_buf(),
+        session: session.clone(),
+        native: None,
+        account: None,
+        codex: None,
+        info: super::super::DerivedInfo {
+            parent_boss_key: "codex:boss".to_owned(),
+            parent_workspace_id: Some("ws".to_owned()),
+            busy: false,
+            blocked_kind: None,
+            isolation_id: None,
+            _lease: None,
+            _log_dir: None,
+            codex_ready_file: None,
+            active_invocation_id: None,
+            launch_config: None,
+        },
+    });
+    coord.poll(&terminals);
+    let push_path = dir.path().join("push").join(format!("{}.json", coord.pid));
+    let push_doc: Value = serde_json::from_slice(&fs::read(&push_path).unwrap()).unwrap();
+    assert_eq!(push_doc["derived_pids"], json!([expected_pid]));
+    terminals.remove_derived_terminal(tid);
+    session.stop();
 }

@@ -168,12 +168,23 @@ def wait_guidance(*, again: bool = False) -> str:
 def terminal_available() -> bool:
     if sys.platform != "darwin" or os.environ.get("AGENTNAVE_DERIVED_SESSION") == "1":
         return False
-    from agentnave.push_capability import find_tray
+    from agentnave.push_capability import find_tray, has_ancestor_in
     from agentnave.terminal_requests import read_tray
 
     tray = find_tray(data_root(), HOST.provider)
     snapshot = read_tray(data_root(), tray) if tray else None
-    providers = snapshot.get("terminal_providers") if snapshot else None
+    if not snapshot:
+        return False
+    derived_raw = snapshot.get("derived_pids")
+    if isinstance(derived_raw, list):
+        derived_pids = {
+            item
+            for item in cast(list[object], derived_raw)
+            if isinstance(item, int) and not isinstance(item, bool) and item > 1
+        }
+        if derived_pids and has_ancestor_in(derived_pids, stop_pid=tray.pid if tray else None):
+            return False
+    providers = snapshot.get("terminal_providers")
     return isinstance(providers, list) and any(
         name in ("claude", "codex", "antigravity") for name in cast(list[object], providers)
     )

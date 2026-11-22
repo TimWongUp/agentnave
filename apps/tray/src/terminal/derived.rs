@@ -21,7 +21,7 @@ use super::spawn_requests::{
     BlockedReceipt, Coordinator, ForwardItem, IsolationSpec, Receipt, RunConfig, RunHandle,
     SpawnRequestEnvelope, TERMINAL_PROVIDERS, now_unix_secs,
 };
-use super::{DerivedHandle, Terminals};
+use super::{DerivedHandle, DerivedLaunchConfig, Terminals};
 use crate::isolated::leases::{self, HeldLease};
 
 #[cfg(test)]
@@ -249,6 +249,9 @@ where
             if let Some(err) = account_mismatch(existing.account.as_ref(), account) {
                 return Err(err);
             }
+            if let Some(err) = launch_config_mismatch(existing.launch_config.as_ref(), cfg) {
+                return Err(err);
+            }
             if existing.session.has_draft()
                 || matches!(
                     existing.session.osc_snapshot().1.as_deref(),
@@ -315,6 +318,17 @@ pub(super) fn account_mismatch(
         (None, None) => None,
         (Some(a), Some(b)) if a.id == b.id && a.dir == b.dir => None,
         _ => Some("派生会话原账号与请求账号不一致".to_owned()),
+    }
+}
+
+pub(super) fn launch_config_mismatch(
+    existing: Option<&DerivedLaunchConfig>,
+    requested: &RunConfig,
+) -> Option<String> {
+    let want = DerivedLaunchConfig::from_run_config(requested);
+    match existing {
+        Some(actual) if actual == &want => None,
+        _ => Some("派生终端以不同的权限或模型启动，需先结束该终端再续派".to_owned()),
     }
 }
 

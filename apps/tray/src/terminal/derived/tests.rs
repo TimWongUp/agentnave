@@ -10,6 +10,7 @@ use std::fs;
 use std::sync::Mutex;
 
 mod esc_interrupt;
+mod security;
 
 #[test]
 fn claude_args_merge_theme_and_permission_prompt_skip_into_single_settings() {
@@ -320,6 +321,7 @@ fn claude_late_cancel_respects_completed_and_superseded_turns() {
             label: "acc".to_owned(),
             dir: claude_dir.path().to_path_buf(),
         }),
+        launch_config: None,
         codex: None,
     };
     // Register a cancel receipt entry by writing & polling or invoking cancel_claude directly.
@@ -539,6 +541,7 @@ fn isolation_lease_holds_until_terminal_closes() {
             _log_dir: None,
             codex_ready_file: None,
             active_invocation_id: None,
+            launch_config: None,
         },
     });
 
@@ -575,6 +578,7 @@ fn isolation_lease_holds_until_terminal_closes() {
             _log_dir: None,
             codex_ready_file: None,
             active_invocation_id: Some("inv-fail".to_owned()),
+            launch_config: None,
         },
     });
     assert!(leases::remove_lease_dir_locked(&resolved, "wt-abcdef012345").is_err());
@@ -584,6 +588,7 @@ fn isolation_lease_holds_until_terminal_closes() {
         session: session2,
         native: Some("cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned()),
         account: None,
+        launch_config: None,
         codex: None,
     };
     cleanup_derived_startup(
@@ -616,6 +621,7 @@ fn isolation_lease_holds_until_terminal_closes() {
             _log_dir: None,
             codex_ready_file: None,
             active_invocation_id: None,
+            launch_config: None,
         },
     });
     let (iso_id3, lease3) =
@@ -962,6 +968,7 @@ time.sleep(5)
             _log_dir: None,
             codex_ready_file: None,
             active_invocation_id: Some("inv-ok".to_owned()),
+            launch_config: None,
         },
     });
     let derived_ok = DerivedHandle {
@@ -970,6 +977,7 @@ time.sleep(5)
         session: session_ok.clone(),
         native: Some("sid-ok".to_owned()),
         account: None,
+        launch_config: None,
         codex: None,
     };
     assert!(tui::wait_tui_ready(
@@ -1038,6 +1046,7 @@ time.sleep(5)
                 _log_dir: None,
                 codex_ready_file: None,
                 active_invocation_id: Some(inv_id.clone()),
+                launch_config: None,
             },
         });
         let derived_blk = DerivedHandle {
@@ -1046,6 +1055,7 @@ time.sleep(5)
             session: session_blk.clone(),
             native: Some(format!("sid-blk-{idx}")),
             account: None,
+            launch_config: None,
             codex: None,
         };
 
@@ -1123,6 +1133,7 @@ fn update_blocker_keeps_invocation_ownership_until_cleared() {
             _log_dir: None,
             codex_ready_file: None,
             active_invocation_id: Some("inv-a1".to_owned()),
+            launch_config: None,
         },
     });
     let mut current = None;
@@ -1196,6 +1207,7 @@ fn claude_monitor_fails_instead_of_succeeding_when_anchor_never_appears() {
             _log_dir: None,
             codex_ready_file: None,
             active_invocation_id: Some("inv-b4".to_owned()),
+            launch_config: None,
         },
     });
     let launched = DerivedHandle {
@@ -1204,6 +1216,7 @@ fn claude_monitor_fails_instead_of_succeeding_when_anchor_never_appears() {
         session: session.clone(),
         native: Some(sid.to_owned()),
         account: None,
+        launch_config: None,
         codex: None,
     };
     let baseline = tui::TurnBaseline {

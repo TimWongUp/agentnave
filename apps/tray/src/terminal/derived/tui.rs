@@ -13,7 +13,9 @@ use super::super::session::{self, Launch, Session};
 use super::super::spawn_requests::{
     Coordinator, ParentRef, RunConfig, RunHandle, SpawnRequestEnvelope,
 };
-use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
+use super::super::{
+    DerivedHandle, DerivedInfo, DerivedLaunchConfig, NewDerived, Terminals, installed_path,
+};
 use super::{
     POLL_STEP, claude, cleanup_derived_startup, detect_screen_blocker, native_logs,
     prepare_open_or_launch, update_blocker_if_changed,
@@ -82,8 +84,10 @@ pub(super) fn run_tui_cli(
         handle,
         |lease, isolation_id| {
             let (launched, log_path) = spawn_tui_terminal(
+                coordinator,
                 terminals,
                 env,
+                cfg,
                 cfg,
                 parent,
                 cwd,
@@ -181,9 +185,11 @@ pub(super) fn finish_pre_ready(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_tui_terminal(
+    coordinator: &Coordinator,
     terminals: &Terminals,
     env: &SpawnRequestEnvelope,
     cfg: &RunConfig,
+    recorded_cfg: &RunConfig,
     parent: &ParentRef,
     cwd: &Path,
     account: Option<Active>,
@@ -238,6 +244,7 @@ pub(super) fn spawn_tui_terminal(
         rows: 30,
         derived: true,
     })?;
+    let launch_config = Some(DerivedLaunchConfig::from_run_config(recorded_cfg));
     let tid = terminals.register_derived(NewDerived {
         provider: cfg.provider.clone(),
         cwd: cwd.to_path_buf(),
@@ -256,8 +263,10 @@ pub(super) fn spawn_tui_terminal(
             _log_dir: log_dir_opt,
             codex_ready_file: None,
             active_invocation_id: Some(env.invocation_id.clone()),
+            launch_config: launch_config.clone(),
         },
     });
+    coordinator.sync_derived_pids(terminals);
     Ok((
         DerivedHandle {
             id: tid,
@@ -265,6 +274,7 @@ pub(super) fn spawn_tui_terminal(
             session,
             native: preset_sid,
             account,
+            launch_config,
             #[cfg(unix)]
             codex: None,
         },

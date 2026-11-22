@@ -370,7 +370,7 @@ pub(super) fn run_claude_cli(
                 coordinator,
                 terminals,
                 env,
-                &attempt_cfg,
+                cfg,
                 cwd,
                 account.as_ref(),
                 handle,
@@ -379,9 +379,11 @@ pub(super) fn run_claude_cli(
                         hook_dir = Some(claude_hook::prepare_mode_hook()?);
                     }
                     let (h, _) = spawn_tui_terminal(
+                        coordinator,
                         terminals,
                         env,
                         &attempt_cfg,
+                        cfg,
                         parent,
                         cwd,
                         account.clone(),
@@ -568,6 +570,7 @@ fn prepare_fallback_attempt(
         }
     };
     terminals.replace_derived_session(prev.id, new_session.clone(), Some(preset_sid));
+    coordinator.sync_derived_pids(terminals);
     prev.session = new_session;
     prev.native = Some(preset_sid.clone());
     Some((prev, dir))

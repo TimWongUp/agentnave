@@ -207,8 +207,10 @@ impl RunHandle {
 struct CoordinatorState {
     receipts: HashMap<String, ReceiptEntry>,
     active_runs: HashMap<String, Arc<RunHandle>>,
+    derived_pids: Vec<u32>,
     published_once: bool,
     last_published: Option<Value>,
+    last_dir_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -272,8 +274,10 @@ impl Coordinator {
             inner: Arc::new(Mutex::new(CoordinatorState {
                 receipts: HashMap::new(),
                 active_runs: HashMap::new(),
+                derived_pids: Vec::new(),
                 published_once: false,
                 last_published: None,
+                last_dir_error: None,
             })),
             publish_lock: Arc::new(Mutex::new(())),
         }
@@ -283,12 +287,32 @@ impl Coordinator {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    pub(super) fn sync_derived_pids(&self, terminals: &Terminals) {
+        let pids = terminals.live_derived_pids();
+        let changed = {
+            let mut state = self.lock();
+            if state.derived_pids == pids {
+                false
+            } else {
+                state.derived_pids = pids;
+                true
+            }
+        };
+        if changed {
+            let _ = self.publish();
+        }
+    }
+
     pub(super) fn publish(&self) -> Result<(), String> {
         let _publish_guard = self.publish_lock.lock().unwrap_or_else(|p| p.into_inner());
         let (doc, evicted) = {
             let state = self.lock();
-            let (doc, evicted) =
-                build_push_document_plan(self.pid, self.push_providers, &state.receipts);
+            let (doc, evicted) = build_push_document_plan(
+                self.pid,
+                self.push_providers,
+                &state.derived_pids,
+                &state.receipts,
+            );
             if state.published_once && state.last_published.as_ref() == Some(&doc) {
                 return Ok(());
             }
@@ -474,6 +498,11 @@ impl Coordinator {
             true,
             ProcessRefreshKind::nothing(),
         );
+        {
+            let pids = terminals.live_derived_pids();
+            let mut state = self.lock();
+            state.derived_pids = pids;
+        }
         self.reconcile_settled(&system);
         self.scan_requests(terminals, &system);
         let _ = self.publish();
@@ -481,8 +510,20 @@ impl Coordinator {
 
     fn scan_requests(&self, terminals: &Terminals, system: &System) {
         let dir = self.root.join("spawn-requests");
-        if links_or_missing_dir(&dir) {
-            return;
+        match verify_spawn_requests_dir(&dir) {
+            Ok(()) => {
+                self.lock().last_dir_error = None;
+            }
+            Err(reason) => {
+                if !reason.is_empty() {
+                    let mut state = self.lock();
+                    if state.last_dir_error.as_deref() != Some(reason.as_str()) {
+                        eprintln!("跳过读取 spawn-requests 目录：{reason}");
+                        state.last_dir_error = Some(reason);
+                    }
+                }
+                return;
+            }
         }
         let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
             .into_iter()
@@ -657,6 +698,7 @@ impl Coordinator {
 fn build_push_document_plan(
     pid: u32,
     providers: &[&str],
+    derived_pids: &[u32],
     receipts: &HashMap<String, ReceiptEntry>,
 ) -> (Value, Vec<String>) {
     let mut excluded: HashSet<&str> = HashSet::new();
@@ -676,6 +718,7 @@ fn build_push_document_plan(
             "pid": pid,
             "providers": providers,
             "terminal_providers": TERMINAL_PROVIDERS,
+            "derived_pids": derived_pids,
             "requests": entries,
         })
     };
@@ -705,20 +748,43 @@ fn build_push_document_plan(
 fn build_push_document(
     pid: u32,
     providers: &[&str],
+    derived_pids: &[u32],
     receipts: &mut HashMap<String, ReceiptEntry>,
 ) -> Value {
-    let (doc, evicted) = build_push_document_plan(pid, providers, receipts);
+    let (doc, evicted) = build_push_document_plan(pid, providers, derived_pids, receipts);
     for id in evicted {
         receipts.remove(&id);
     }
     doc
 }
 
-fn links_or_missing_dir(dir: &Path) -> bool {
+fn verify_spawn_requests_dir(dir: &Path) -> Result<(), String> {
     if !dir.exists() {
-        return true;
+        return Err(String::new());
     }
-    fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink() || !m.is_dir())
+    let meta = fs::symlink_metadata(dir).map_err(|e| format!("无法读取目录属性：{e}"))?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err("spawn-requests 不是普通目录".to_owned());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let uid = unsafe { libc::geteuid() };
+        if meta.uid() != uid {
+            return Err(format!(
+                "目录属主 uid={} 与当前用户 uid={} 不一致",
+                meta.uid(),
+                uid
+            ));
+        }
+        if meta.mode() & 0o022 != 0 {
+            return Err(format!(
+                "目录权限 {:04o} 允许组或其他用户写入",
+                meta.mode() & 0o7777
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn read_request_envelope(path: &Path) -> Option<SpawnRequestEnvelope> {
@@ -736,6 +802,20 @@ fn read_request_envelope(path: &Path) -> Option<SpawnRequestEnvelope> {
     let meta = file.metadata().ok()?;
     if !meta.is_file() || meta.len() > MAX_REQUEST_BYTES {
         return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let uid = unsafe { libc::geteuid() };
+        if meta.uid() != uid {
+            eprintln!(
+                "拒绝领取请求文件 {}：属主 uid={} 与当前用户 uid={} 不一致",
+                path.display(),
+                meta.uid(),
+                uid
+            );
+            return None;
+        }
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;

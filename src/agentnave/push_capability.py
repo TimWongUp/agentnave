@@ -35,6 +35,25 @@ def app_can_push(root: Path, provider: str | None) -> bool:
     return find_tray(root, provider) is not None
 
 
+def has_ancestor_in(pids: set[int] | frozenset[int], stop_pid: int | None = None) -> bool:
+    """True when any live ancestor process before `stop_pid` is in `pids`."""
+    if sys.platform == "win32" or not pids:
+        return False
+    seen: set[int] = set()
+    pid = os.getppid()
+    for _ in range(128):
+        if pid <= 1 or pid in seen or pid == stop_pid:
+            break
+        seen.add(pid)
+        if pid in pids:
+            return True
+        try:
+            pid = read_process_parent(pid)
+        except (OSError, ValueError, IndexError, StopIteration):
+            break
+    return False
+
+
 def find_tray(root: Path, provider: str | None) -> TrayIdentity | None:
     if sys.platform == "win32" or provider is None:
         return None

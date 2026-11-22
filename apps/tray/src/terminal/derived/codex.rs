@@ -16,7 +16,8 @@ use super::super::spawn_requests::{
 };
 use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
 use super::{
-    acquire_isolation_for_terminal, cleanup_derived_startup, detect_screen_blocker, native_logs,
+    account_mismatch, acquire_isolation_for_terminal, cleanup_derived_startup,
+    detect_screen_blocker, native_logs,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -26,10 +27,11 @@ const RESUME_RETRY_GAP: Duration = Duration::from_millis(250);
 const INTERRUPT_RETRY_TIMEOUT: Duration = Duration::from_secs(4);
 const INTERRUPT_RETRY_GAP: Duration = Duration::from_millis(200);
 const INTERRUPT_CONFIRM_TIMEOUT: Duration = if cfg!(test) {
-    Duration::from_millis(800)
+    Duration::from_millis(1500)
 } else {
     Duration::from_secs(5)
 };
+const INTERRUPT_RECONCILE_GAP: Duration = Duration::from_millis(250);
 
 #[cfg(test)]
 mod tests;
@@ -209,6 +211,9 @@ fn open_or_launch_codex(
     if let Some(sid) = env.session_id.as_deref() {
         terminals.remove_exited_derived("codex", sid);
         if let Some(existing) = terminals.find_derived_session("codex", sid) {
+            if let Some(err) = account_mismatch(existing.account.as_ref(), account.as_ref()) {
+                return Err(err);
+            }
             if existing.session.has_draft()
                 || matches!(
                     existing.session.osc_snapshot().1.as_deref(),
@@ -304,9 +309,11 @@ fn open_or_launch_codex(
                 _log_dir: None,
                 codex_ready_file: ready_file,
                 active_invocation_id: Some(env.invocation_id.clone()),
+                launch_config: None,
             },
         },
     );
+    coordinator.sync_derived_pids(terminals);
     Ok((
         DerivedHandle {
             id: terminal_id,
@@ -314,6 +321,7 @@ fn open_or_launch_codex(
             session,
             native: env.session_id.clone(),
             account: None,
+            launch_config: None,
             codex: Some(client),
         },
         false,
@@ -385,7 +393,7 @@ fn wait_codex_thread(
     None
 }
 
-fn build_turn_config(
+pub(super) fn build_turn_config(
     prompt: &str,
     client_id: &str,
     cwd: &Path,
@@ -410,7 +418,6 @@ fn build_turn_config(
         sandbox_policy = Some(json!({
             "type": "workspaceWrite",
             "writableRoots": [cwd_str],
-            "networkAccess": true,
         }));
     } else if let Some(sandbox) = perms.get("sandbox").and_then(Value::as_str) {
         sandbox_policy = match sandbox {
@@ -418,7 +425,6 @@ fn build_turn_config(
             "workspace-write" => Some(json!({
                 "type": "workspaceWrite",
                 "writableRoots": [cwd_str],
-                "networkAccess": true,
             })),
             "danger-full-access" => Some(json!({"type": "dangerFullAccess"})),
             _ => None,
@@ -711,8 +717,20 @@ fn wait_codex_interrupt_confirmed(
     homes: &[PathBuf],
 ) {
     let confirm_deadline = Instant::now() + INTERRUPT_CONFIRM_TIMEOUT;
+    let mut last_reconcile = Instant::now();
     loop {
-        let (outcome, _) = check_turn_reconciled(codex, tid, turn_id, rollout_path, homes);
+        let outcome = if let Some(ev) = codex.turn_event(tid, turn_id)
+            && let Some(status) = ev.completed_status.as_deref()
+        {
+            map_codex_turn_status(status, ev.error).0
+        } else if last_reconcile.elapsed() >= INTERRUPT_RECONCILE_GAP
+            || Instant::now() >= confirm_deadline
+        {
+            last_reconcile = Instant::now();
+            check_turn_reconciled(codex, tid, turn_id, rollout_path, homes).0
+        } else {
+            CodexTurnOutcome::Running
+        };
         match outcome {
             CodexTurnOutcome::Interrupted => {
                 coordinator.mark_finished(req_id, "interrupted", None, Some(tid));
