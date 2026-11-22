@@ -487,6 +487,45 @@ fn codex_run_fails_startup_and_never_starts_turn_when_pid_publish_fails() {
             .as_deref()
             .is_some_and(|r| r.contains("发布派生终端进程标记失败"))
     );
+
+    // F1: When PID publish succeeds and pre-start cancel arrives before start_turn,
+    // settle as cancelled, clean up turn ownership, and never call turn/start.
+    fs::remove_file(dir.path().join("push")).unwrap();
+    coord.insert_test_receipt("req-f1", "inv-f1");
+    let cancel_handle = coord.register_run("inv-f1");
+    let claimed = terminals
+        .try_claim_derived_turn(tid, "inv-f1", None)
+        .expect("reused terminal should be idle after E3(b) cleanup");
+    cancel_handle.request_pre_start_cancel();
+    let turn_cfg = build_turn_config("hello", "inv-f1", dir.path(), &cfg);
+    assert_eq!(
+        publish_and_start_codex_turn(
+            &coord,
+            &terminals,
+            &claimed,
+            &codex,
+            true,
+            "req-f1",
+            TID,
+            &turn_cfg,
+            &cancel_handle,
+        ),
+        None
+    );
+    assert!(!turn_started.load(Ordering::SeqCst));
+    assert!(
+        dir.path()
+            .join("push")
+            .join(format!("{}.json", coord.pid))
+            .is_file()
+    );
+    assert!(terminals.derived_by_invocation("inv-f1").is_none());
+    let f1_receipt = coord.run_receipt_by_invocation("inv-f1").unwrap();
+    assert_eq!(f1_receipt.session_id.as_deref(), Some(TID));
+    let f1_term = f1_receipt.terminal.unwrap();
+    assert_eq!(f1_term.status, "cancelled");
+    assert_eq!(f1_term.reason.as_deref(), Some("启动前已取消"));
+
     terminals.remove_derived_terminal(tid);
     session.stop();
     codex.close();

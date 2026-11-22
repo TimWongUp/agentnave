@@ -171,25 +171,19 @@ pub(super) fn run_codex(
         return;
     }
 
-    if !publish_codex_derived_pid(
+    let turn_cfg = build_turn_config(prompt, &env.invocation_id, cwd, cfg);
+    let Some(turn_id) = publish_and_start_codex_turn(
         coordinator,
         terminals,
         &launched,
+        &codex,
         reused,
         req_id,
-        Some(&thread_id),
-    ) {
+        &thread_id,
+        &turn_cfg,
+        handle,
+    ) else {
         return;
-    }
-
-    let turn_cfg = build_turn_config(prompt, &env.invocation_id, cwd, cfg);
-    let turn_id = match codex.start_turn(&thread_id, &turn_cfg) {
-        Ok(id) => id,
-        Err(err) => {
-            cleanup_derived_startup(terminals, &launched, reused, Some(&thread_id));
-            coordinator.mark_finished(req_id, "failed", Some(&err), Some(&thread_id));
-            return;
-        }
     };
 
     coordinator.mark_started(
@@ -213,7 +207,44 @@ pub(super) fn run_codex(
     );
 }
 
-pub(super) fn publish_codex_derived_pid(
+#[allow(clippy::too_many_arguments)]
+fn publish_and_start_codex_turn(
+    coordinator: &Coordinator,
+    terminals: &Terminals,
+    launched: &DerivedHandle,
+    codex: &codex_server::Client,
+    reused: bool,
+    req_id: &str,
+    thread_id: &str,
+    turn_cfg: &TurnStartConfig,
+    handle: &Arc<RunHandle>,
+) -> Option<String> {
+    if !publish_codex_derived_pid(
+        coordinator,
+        terminals,
+        launched,
+        reused,
+        req_id,
+        Some(thread_id),
+    ) {
+        return None;
+    }
+    if handle.is_pre_start_cancelled() {
+        cleanup_derived_startup(terminals, launched, reused, Some(thread_id));
+        coordinator.mark_finished(req_id, "cancelled", Some("启动前已取消"), Some(thread_id));
+        return None;
+    }
+    match codex.start_turn(thread_id, turn_cfg) {
+        Ok(id) => Some(id),
+        Err(err) => {
+            cleanup_derived_startup(terminals, launched, reused, Some(thread_id));
+            coordinator.mark_finished(req_id, "failed", Some(&err), Some(thread_id));
+            None
+        }
+    }
+}
+
+fn publish_codex_derived_pid(
     coordinator: &Coordinator,
     terminals: &Terminals,
     launched: &DerivedHandle,
