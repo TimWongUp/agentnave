@@ -271,6 +271,7 @@ def timeline(
                     "message_id": f"{state.id}:t:{task.id}",
                     "identity": task_identity(state, task, peers),
                     "provider": task.provider,
+                    "execution_mode": task.execution_mode,
                     "model": task.reported_model or task.model or None,
                     "role": task.role,
                     "access": task.access,

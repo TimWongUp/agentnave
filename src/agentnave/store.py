@@ -122,6 +122,7 @@ class TaskRecord(BaseModel):
     cwd: str
     prompt: str
     session_id: str | None = None
+    execution_mode: Literal["background", "terminal"] = "background"
     status: str = "running"
     output: str = ""
     error: str | None = None

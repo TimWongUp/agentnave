@@ -91,6 +91,7 @@ class InvocationFields(TypedDict):
     identity: NotRequired[ReplyIdentity]
     elapsed_ms: NotRequired[int]
     provider: NotRequired[str]
+    execution_mode: NotRequired[Literal["background", "terminal"]]
     account: NotRequired[str]  # a named account's id; the default account has none
     model: NotRequired[str]
     effort: NotRequired[str]
