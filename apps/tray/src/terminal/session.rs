@@ -23,6 +23,7 @@ pub(crate) struct Launch {
     pub cwd: PathBuf,
     pub cols: u16,
     pub rows: u16,
+    pub derived: bool,
 }
 
 /// The CLI's arguments, each its own argv entry (ADR-0103): Windows Codex runs without the
@@ -186,6 +187,10 @@ pub(crate) struct Session {
 impl Session {
     pub(crate) fn spawn(launch: &Launch) -> Result<Arc<Self>, String> {
         let mut command = command(&launch.program, &launch.args, &launch.cwd);
+        if launch.derived {
+            // Added after `command()` strips parent-session variables so derived status survives.
+            command.env("AGENTNAVE_DERIVED_SESSION", "1");
+        }
         for (name, value) in &launch.env {
             command.env(name, value);
         }
@@ -369,6 +374,43 @@ impl Session {
         }
     }
 
+    pub(crate) fn osc_snapshot(&self) -> (u64, Option<String>, Option<String>) {
+        let output = self.output();
+        (
+            output.status.seq,
+            output.status.state.clone(),
+            output.status.kind.clone(),
+        )
+    }
+
+    pub(crate) fn has_draft(&self) -> bool {
+        let gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
+        gate.has_draft()
+    }
+
+    pub(crate) fn send_paste(&self, text: &str) -> Result<(), String> {
+        let clean = text
+            .replace('\x1b', "")
+            .replace("\x1b[200~", "")
+            .replace("\x1b[201~", "");
+        let use_paste = self.output().modes.paste();
+        let payload = if use_paste {
+            format!("\x1b[200~{clean}\x1b[201~")
+        } else {
+            clean
+        };
+        self.write(payload.as_bytes())
+    }
+
+    pub(crate) fn recent_screen_text(&self, max_bytes: usize) -> String {
+        let raw: Vec<u8> = {
+            let output = self.output();
+            let skip = output.kept.len().saturating_sub(max_bytes);
+            output.kept.iter().skip(skip).copied().collect()
+        };
+        strip_ansi(&raw)
+    }
+
     #[cfg(all(test, unix))]
     pub(super) fn is_holding(&self) -> bool {
         self.gate
@@ -442,7 +484,7 @@ fn size(cols: u16, rows: u16) -> PtySize {
 /// that session's child (Claude Code then stops saving its transcript) or for one AgentNave
 /// dispatched. The terminal starts a session of its own, like a new terminal window; the login
 /// shell sets the user's own variables again.
-const PARENT_SESSION: [&str; 22] = [
+const PARENT_SESSION: [&str; 23] = [
     "CLAUDECODE",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
@@ -460,6 +502,7 @@ const PARENT_SESSION: [&str; 22] = [
     "AGENTNAVE_MANAGER_SESSION",
     "AGENTNAVE_MANAGER_STARTED_AT",
     "AGENTNAVE_DISPATCHED",
+    "AGENTNAVE_DERIVED_SESSION",
     "AGENTNAVE_HANDOVER_PROMPT",
     // WorkBuddy and CodeBuddy point these at their own live listener.
     "SERVER__PORT",
@@ -506,4 +549,48 @@ pub(super) fn command(program: &Path, args: &[String], cwd: &Path) -> CommandBui
         command.env("LANG", "en_US.UTF-8");
     }
     command
+}
+
+fn strip_ansi(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') | Some('P') => {
+                    let kind = chars.next();
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                        if kind == Some(']') && c == '\n' {
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
+            }
+            continue;
+        }
+        if ch == '\r' || ch == '\n' || !ch.is_control() {
+            out.push(ch);
+        }
+    }
+    out
 }

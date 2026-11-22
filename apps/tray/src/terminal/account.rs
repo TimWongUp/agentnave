@@ -89,6 +89,7 @@ pub(super) fn launch_as(
     account: &Active,
     program: PathBuf,
     args: Vec<String>,
+    derived: bool,
 ) -> (PathBuf, Vec<String>, Vec<(String, String)>) {
     let variable = crate::accounts::CONFIG_VARIABLE;
     if cfg!(unix) {
@@ -100,14 +101,17 @@ pub(super) fn launch_as(
             .flat_map(|name| ["-u".to_owned(), (*name).to_owned()])
             .collect();
         wrapped.push(format!("{variable}={}", account.dir.display()));
+        if derived {
+            wrapped.push("AGENTNAVE_DERIVED_SESSION=1".to_owned());
+        }
         wrapped.push(program.display().to_string());
         wrapped.extend(args);
         (PathBuf::from("/usr/bin/env"), wrapped, path)
     } else {
-        (
-            program,
-            args,
-            vec![(variable.to_owned(), account.dir.display().to_string())],
-        )
+        let mut env = vec![(variable.to_owned(), account.dir.display().to_string())];
+        if derived {
+            env.push(("AGENTNAVE_DERIVED_SESSION".to_owned(), "1".to_owned()));
+        }
+        (program, args, env)
     }
 }

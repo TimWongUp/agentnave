@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 #[test]
 fn failed_write_stays_attempted_but_clean_blocked_or_cancelled_can_retry() {
@@ -221,6 +222,7 @@ fn codex_failed_delivery_retries_until_sent_then_deduplicates() {
         pending: 0,
         account: None,
         codex: Some(codex.clone()),
+        derived: None,
     });
 
     let mut state = WakeupState::default();
@@ -341,6 +343,7 @@ fn codex_queued_wakeup_updates_on_partial_read_and_deletes_when_cleared() {
         pending: 0,
         account: None,
         codex: Some(codex.clone()),
+        derived: None,
     });
 
     let mut state = WakeupState::default();
@@ -433,6 +436,7 @@ fn pty_wakeup_cancels_with_backspaces_when_inbox_clears_during_hold_window() {
         pending: 0,
         account: None,
         codex: None,
+        derived: None,
     });
 
     session.record_writes();

@@ -4,7 +4,7 @@
 
 mod git;
 mod inspect;
-mod leases;
+pub(crate) mod leases;
 mod release;
 mod request;
 mod state;

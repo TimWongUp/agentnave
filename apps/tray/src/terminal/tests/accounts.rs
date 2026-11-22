@@ -42,6 +42,7 @@ fn a_named_account_starts_through_env_so_a_login_shell_cannot_overwrite_it() {
             "printf 'dir:%s token:%s.' \"$CLAUDE_CONFIG_DIR\" \"$CLAUDE_CODE_OAUTH_TOKEN\""
                 .to_owned(),
         ],
+        false,
     );
     assert_eq!(program, PathBuf::from("/usr/bin/env"));
     let at = args.iter().position(|arg| arg == "/bin/sh").unwrap();

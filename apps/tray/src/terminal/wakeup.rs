@@ -3,14 +3,13 @@
 use super::codex_server::{Client as CodexClient, Delivery};
 use super::{Terminals, links, session::Session, session::WakeupOutcome};
 use serde::Deserialize;
-use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     fs,
     io::Read,
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -67,28 +66,48 @@ pub(super) struct WakeupState {
     queued: Vec<QueuedWake>,
 }
 
+static COORDINATOR: OnceLock<Mutex<Option<super::spawn_requests::Coordinator>>> = OnceLock::new();
+
+fn coordinator_slot() -> &'static Mutex<Option<super::spawn_requests::Coordinator>> {
+    COORDINATOR.get_or_init(|| Mutex::new(None))
+}
+
+pub(super) fn on_terminal_closed(invocation_id: &str) {
+    let coord = coordinator_slot()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    if let Some(coord) = coord {
+        coord.on_terminal_closed(invocation_id);
+    }
+}
+
 pub(super) fn start(app: AppHandle) {
     STOP.store(false, Ordering::SeqCst);
     let root = crate::data_files::data_root();
+    super::spawn_requests::ensure_spawn_requests_dir(&root);
     let pid = std::process::id();
-    if let Err(error) = crate::data_files::write_atomic(
-        &root.join("push"),
-        &format!("{pid}.json"),
-        &json!({"version": 1, "pid": pid, "providers": PROVIDERS}),
-    ) {
+    let started_at = super::spawn_requests::current_process_started_at();
+    let coordinator =
+        super::spawn_requests::Coordinator::new(root.clone(), pid, started_at, PROVIDERS);
+    if let Err(error) = coordinator.publish() {
         eprintln!("无法登记终端推送：{error}");
         return;
     }
+    *coordinator_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(coordinator.clone());
     thread::spawn(move || {
         let mut state = WakeupState::default();
+        let terminals = app.state::<Terminals>().inner().clone();
         while !STOP.load(Ordering::SeqCst) {
-            scan(&app.state::<Terminals>(), &root, &mut state);
-            thread::sleep(Duration::from_millis(500));
+            coordinator.poll(&terminals);
+            scan(&terminals, &root, &mut state);
+            thread::sleep(Duration::from_millis(250));
         }
     });
 }
 pub(super) fn shutdown() {
     STOP.store(true, Ordering::SeqCst);
+    *coordinator_slot().lock().unwrap_or_else(|p| p.into_inner()) = None;
     let _ = fs::remove_file(
         crate::data_files::data_root()
             .join("push")
@@ -403,7 +422,7 @@ pub(super) fn scan(terminals: &Terminals, root: &Path, state: &mut WakeupState) 
         let open = terminals.lock();
         open.open
             .iter()
-            .filter(|r| PROVIDERS.contains(&r.provider.as_str()))
+            .filter(|r| r.derived.is_none() && PROVIDERS.contains(&r.provider.as_str()))
             .filter_map(|r| {
                 let boss_key = links.get(&r.id)?.clone();
                 let boss = raw.get(&boss_key)?;

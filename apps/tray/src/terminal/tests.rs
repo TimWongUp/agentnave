@@ -288,6 +288,7 @@ fn the_output_route_marks_replays_and_the_appearance_subscription() {
         account: None,
         #[cfg(unix)]
         codex: None,
+        derived: None,
     });
     let header = |reply: &crate::response::Response, name: &str| {
         reply
@@ -533,6 +534,7 @@ fn terminal_remembers_confirmed_workspaces_until_closed() {
         account: None,
         #[cfg(unix)]
         codex: None,
+        derived: None,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -770,6 +772,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             account: None,
             #[cfg(unix)]
             codex: None,
+            derived: None,
         });
         state.open.push(Running {
             id: 2,
@@ -785,6 +788,7 @@ fn unlocated_terminal_title_lookups_are_throttled_per_terminal() {
             account: None,
             #[cfg(unix)]
             codex: None,
+            derived: None,
         });
     }
 
@@ -861,6 +865,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             account: None,
             #[cfg(unix)]
             codex: None,
+            derived: None,
         });
         state.open.push(Running {
             id: 2,
@@ -876,6 +881,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             account: None,
             #[cfg(unix)]
             codex: None,
+            derived: None,
         });
         state.open.push(Running {
             id: 3,
@@ -891,6 +897,7 @@ fn claimed_native_session_ids_are_excluded_for_other_terminals() {
             account: None,
             #[cfg(unix)]
             codex: None,
+            derived: None,
         });
     }
 
@@ -954,6 +961,7 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
         account: None,
         #[cfg(unix)]
         codex: None,
+        derived: None,
     });
     let connections = root.path().join("connections");
     std::fs::create_dir_all(&connections).unwrap();
@@ -1097,6 +1105,7 @@ fn blocked_wakeup_is_retried_once_unblocked() {
         account: None,
         #[cfg(unix)]
         codex: None,
+        derived: None,
     });
     let mut state = super::wakeup::WakeupState::default();
     session.record_writes();

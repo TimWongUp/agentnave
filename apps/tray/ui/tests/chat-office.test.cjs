@@ -1766,3 +1766,116 @@ test("removing the last ended meeting recomputes boss office layout", () => {
   assert.equal(state.bossRec.row.classList.contains("stack"), false);
   assert.equal(state.bossRec.scene.style.width, "334px");
 });
+
+test("derived terminals nest under parent workspace without counting self-chat as running", async () => {
+  const makeNode = (tag) => {
+    const cls = new Set();
+    return {
+      tagName: tag.toUpperCase(),
+      hidden: false,
+      textContent: "",
+      dataset: {},
+      attributes: {},
+      children: [],
+      listeners: {},
+      style: {},
+      classList: {
+        set: cls,
+        add: (...names) => names.forEach((n) => cls.add(n)),
+        remove: (...names) => names.forEach((n) => cls.delete(n)),
+        toggle: (name, on) => (on === undefined ? (cls.has(name) ? (cls.delete(name), false) : (cls.add(name), true)) : on ? (cls.add(name), true) : (cls.delete(name), false)),
+        contains: (name) => cls.has(name),
+      },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = String(v); },
+      addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
+      replaceChildren(...nodes) { this.children = nodes; },
+      append(...nodes) { this.children.push(...nodes); },
+      after(...nodes) { this._after = nodes; },
+      querySelector() { return null; },
+      focus() {},
+      remove() {},
+    };
+  };
+  const h = (tag, attrs = {}, ...children) => Object.assign(makeNode(tag), {
+    attributes: { ...attrs }, children: children.flat(Infinity).filter((x) => x != null && x !== false),
+  });
+  const drawer = makeNode("section");
+  const modes = h("div", {}, h("button"), h("button"));
+  const stopButton = h("button");
+  const drAll = h("div");
+  const navigated = [];
+  const state = {
+    selected: "term-20", loaded: "term-20", groupsData: [], drawer: { kind: "all" },
+    ready: true, convCollapsed: false, convPeek: false,
+  };
+  let mockSessions = [
+    { id: 10, provider: "claude", cwd: "/repo", exit: null, active: false, workspaces: ["ws-parent"], derived: false },
+    { id: 20, provider: "codex", cwd: "/repo/.wt", exit: null, active: false, workspaces: [], derived: true, parent_boss_key: "claude:boss", parent_workspace_id: "ws-parent", derived_busy: false, blocked_kind: null, display_title: "派生调试" },
+  ];
+  const el = {
+    drawer, drAll, tl: h("div"), drIco: h("span"), drTitle: h("span"), drSub: h("span"),
+    convToggle: h("button"), app: { dataset: {} },
+  };
+  drawer.querySelector = (sel) => ({ ".modes": modes, ".dr-term": stopButton }[sel] || null);
+  modes.querySelectorAll = () => modes.children;
+  const context = vm.createContext({
+    AN: {
+      h, L: (zh) => zh, at: Date.parse,
+      load: async () => ({ sessions: mockSessions, cwd: "/repo" }),
+      act: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      reply: async () => ({ ok: true }),
+      cliName: (p) => (p === "codex" ? "Codex" : p === "claude" ? "Claude Code" : p),
+      hostTile: (p) => makeNode(p),
+      href: (p) => p,
+    },
+    h, L: (zh) => zh, el, state, Actions: { openMenu() {}, confirm: async () => true },
+    setText: (n, v) => { n.textContent = v; },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    go(path) { navigated.push(path); },
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    addEventListener() {}, location: { origin: "null" }, Date,
+    renderOffice() {}, openScope() {},
+  });
+  context.h = (tag, attrs = {}, ...children) => (tag.startsWith("iframe") ? Object.assign(makeNode("iframe"), { contentWindow: { postMessage() {} } }) : h(tag, attrs, ...children));
+  context.AN.h = context.h;
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+
+  await context.ChatTerminal.refresh();
+  // Derived terminal is excluded from top-level pending() and from owning ws-parent.
+  assert.equal(context.ChatTerminal.pending().length, 0);
+  assert.equal(context.ChatTerminal.running("ws-parent"), true);
+  assert.equal(context.ChatTerminal.follow("term-20"), "term-20");
+
+  // Idle derived terminal (even with exit == null and user typing self-chat) stays idle/non-live.
+  const [idleChild] = context.ChatTerminal.derivedOf("ws-parent");
+  assert.equal(idleChild.group, "term-20");
+  assert.equal(idleChild.derived, true);
+  assert.equal(idleChild.status, "idle");
+  assert.equal(idleChild.live, false);
+  assert.equal(idleChild.title, "派生调试");
+
+  // Busy derived terminal flips to running/live; blocked flips to waiting.
+  mockSessions[1].derived_busy = true;
+  await context.ChatTerminal.refresh();
+  const [busyChild] = context.ChatTerminal.derivedOf("ws-parent");
+  assert.equal(busyChild.status, "running");
+  assert.equal(busyChild.live, true);
+
+  mockSessions[1].blocked_kind = "permission";
+  await context.ChatTerminal.refresh();
+  const [blockedChild] = context.ChatTerminal.derivedOf("ws-parent");
+  assert.equal(blockedChild.status, "waiting");
+
+  // Drawer shows derived title instead of "boss", and hides restart on ended derived terminal.
+  mockSessions[1].exit = 0;
+  mockSessions[1].derived_busy = false;
+  await context.ChatTerminal.refresh();
+  context.ChatTerminal.column("term-20", "codex", "codex");
+  assert.equal(el.drTitle.textContent, "派生调试");
+  assert.equal(drAll._after[1].hidden, true);
+
+  // Closing selected derived terminal returns to its parent workspace.
+  mockSessions = [mockSessions[0]];
+  await context.ChatTerminal.close(20);
+  assert.deepEqual(navigated, ["/chat/ws-parent"]);
+});

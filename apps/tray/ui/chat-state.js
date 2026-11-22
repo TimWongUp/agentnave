@@ -269,11 +269,17 @@ function updateItem(rec, g) {
   const name = shownName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${g.derived ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
-  setAttr(rec.el, "aria-label", L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`));
+  setAttr(
+    rec.el,
+    "aria-label",
+    g.derived
+      ? L(`${name}，派生终端 ${g.label}，${word}`, `${name}, derived terminal in ${g.label}, ${word}`)
+      : L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`),
+  );
   const place = itemPlace(g);
   setAttr(rec.el, "title", `${name} · ${place}`);
   const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
@@ -288,8 +294,9 @@ function updateItem(rec, g) {
   setText(rec.label, chatName(g));
   // the avatar already names the boss; the line is left for a handover the user should know about
   const handover = g.handover === "pending" || g.handover === "changed";
-  rec.meta.hidden = !handover;
-  setText(rec.meta, handover ? `${handoverWord(g)}${place}` : "");
+  const blocked = Boolean(g.derived && g.blocked_kind);
+  rec.meta.hidden = !handover && !blocked;
+  setText(rec.meta, handover ? `${handoverWord(g)}${place}` : blocked ? L("等待确认", "Needs attention") : "");
   rec.bottom.hidden = rec.iso.hidden = !g.isolated_count;
   setText(rec.iso, isolatedCount(g.isolated_count));
   ChatTerminal.decorate(rec, g);
@@ -319,7 +326,9 @@ function renderList() {
 }
 // The cap may never hide a pending handover, work waiting on the reader, or the agent already open.
 function mustShow(g) {
-  return g.handover === "pending" || urgent(g.status) || g.group === state.selected;
+  if (g.handover === "pending" || urgent(g.status) || g.group === state.selected) return true;
+  const children = ChatTerminal.derivedOf?.(g.group) || [];
+  return children.some((c) => urgent(c.status) || c.group === state.selected);
 }
 // A "show more" button, made once and reused: reconcile matches nodes, so it keeps its place and
 // the click handler reads whatever this render decided it opens.
@@ -393,10 +402,17 @@ function groupedNodes(groups) {
     const folded = isFolded(id);
     nodes.push(headNode(section));
     for (const g of section.shown) {
+      const children = ChatTerminal.derivedOf?.(g.group) || [];
+      const childNeed = children.some((c) => urgent(c.status) || c.group === state.selected);
       // A folded group still shows what needs the reader or is open.
-      const hidden = folded && !(urgent(g.status) || g.group === state.selected);
+      const hidden = folded && !(urgent(g.status) || g.group === state.selected || childNeed);
       nodes.push(itemNode(g, hidden));
       if (!hidden) order.push(g.group);
+      for (const child of children) {
+        const childHidden = folded && !(urgent(child.status) || child.group === state.selected);
+        nodes.push(itemNode(child, childHidden));
+        if (!childHidden) order.push(child.group);
+      }
     }
     if (section.hidden)
       nodes.push(

@@ -10,11 +10,13 @@
 mod account;
 #[cfg(unix)]
 mod codex_server;
+mod derived;
 mod elsewhere;
 mod input_gate;
 mod links;
 mod modes;
 mod session;
+mod spawn_requests;
 mod status;
 #[cfg(test)]
 mod tests;
@@ -45,9 +47,9 @@ const TITLE_LOOKUP_TTL: Duration = Duration::from_secs(5);
 /// Minimum interval between full connection-file + process-table scans on `/app/terminal/state`.
 const LINKS_TTL: Duration = Duration::from_secs(5);
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Terminals {
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
 }
 
 #[derive(Default)]
@@ -59,6 +61,48 @@ struct State {
     cwd: Option<PathBuf>,
     started: u64,
     links_checked: Option<(Instant, PathBuf)>,
+}
+
+pub(super) struct DerivedInfo {
+    pub parent_boss_key: String,
+    pub parent_workspace_id: Option<String>,
+    pub busy: bool,
+    pub blocked_kind: Option<String>,
+    pub isolation_id: Option<String>,
+    pub _lease: Option<crate::isolated::leases::HeldLease>,
+    pub _log_dir: Option<tempfile::TempDir>,
+    pub codex_ready_file: Option<PathBuf>,
+    pub active_invocation_id: Option<String>,
+}
+
+impl Drop for DerivedInfo {
+    fn drop(&mut self) {
+        if let Some(path) = self.codex_ready_file.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct DerivedHandle {
+    pub(in crate::terminal) id: u64,
+    pub(in crate::terminal) provider: String,
+    pub(in crate::terminal) session: Arc<Session>,
+    pub(in crate::terminal) native: Option<String>,
+    pub(in crate::terminal) account: Option<Active>,
+    #[cfg(unix)]
+    pub(in crate::terminal) codex: Option<Arc<codex_server::Client>>,
+}
+
+pub(super) struct NewDerived {
+    pub(in crate::terminal) provider: String,
+    pub(in crate::terminal) cwd: PathBuf,
+    pub(in crate::terminal) session: Arc<Session>,
+    pub(in crate::terminal) native: Option<String>,
+    pub(in crate::terminal) account: Option<Active>,
+    #[cfg(unix)]
+    pub(in crate::terminal) codex: Option<Arc<codex_server::Client>>,
+    pub(in crate::terminal) info: DerivedInfo,
 }
 
 struct Running {
@@ -79,16 +123,41 @@ struct Running {
     account: Option<Active>,
     #[cfg(unix)]
     codex: Option<Arc<codex_server::Client>>,
+    derived: Option<DerivedInfo>,
 }
 
 impl Running {
+    fn to_derived_handle(&self) -> DerivedHandle {
+        DerivedHandle {
+            id: self.id,
+            provider: self.provider.clone(),
+            session: self.session.clone(),
+            native: self.native.clone(),
+            account: self.account.clone(),
+            #[cfg(unix)]
+            codex: self.codex.clone(),
+        }
+    }
+
     fn describe(&self) -> Value {
+        let is_derived = self.derived.is_some();
+        let busy = self.derived.as_ref().is_some_and(|d| d.busy);
+        let active = if is_derived {
+            busy && self.session.exit().is_none()
+        } else {
+            self.session.wrote_within(ACTIVE)
+        };
         json!({"id": self.id, "provider": self.provider, "cwd": self.cwd.display().to_string(),
-            "exit": self.session.exit(), "active": self.session.wrote_within(ACTIVE),
+            "exit": self.session.exit(), "active": active,
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
             "account": self.account.as_ref().map(|account| &account.id),
             "account_label": self.account.as_ref().map(|account| &account.label),
-            "title": null, "title_custom": false, "display_title": null, "pending_results": self.pending})
+            "title": null, "title_custom": false, "display_title": null, "pending_results": self.pending,
+            "derived": is_derived,
+            "parent_boss_key": self.derived.as_ref().map(|d| &d.parent_boss_key),
+            "parent_workspace_id": self.derived.as_ref().and_then(|d| d.parent_workspace_id.as_deref()),
+            "derived_busy": busy,
+            "blocked_kind": self.derived.as_ref().and_then(|d| d.blocked_kind.as_deref())})
     }
 }
 
@@ -160,35 +229,31 @@ pub(crate) fn start_wakeup(app: AppHandle) {
 pub(crate) fn shutdown(app: &AppHandle) {
     wakeup::shutdown();
     let terminals = app.state::<Terminals>();
-    #[cfg(unix)]
-    let (sessions, codex_clients): (Vec<_>, Vec<_>) = {
-        let state = terminals.lock();
-        state
-            .open
-            .iter()
-            .map(|r| (r.session.clone(), r.codex.clone()))
-            .unzip()
-    };
-    #[cfg(not(unix))]
-    let sessions: Vec<_> = {
-        let state = terminals.lock();
-        state.open.iter().map(|r| r.session.clone()).collect()
+    let drained: Vec<Running> = {
+        let mut state = terminals.lock();
+        std::mem::take(&mut state.open)
     };
     #[cfg(unix)]
-    for codex in codex_clients.into_iter().flatten() {
+    for codex in drained.iter().filter_map(|r| r.codex.as_ref()) {
         codex.close();
     }
-    for session in sessions {
-        session.stop();
+    for running in &drained {
+        if let Some(inv_id) = running
+            .derived
+            .as_ref()
+            .and_then(|d| d.active_invocation_id.as_deref())
+        {
+            wakeup::on_terminal_closed(inv_id);
+        }
+        running.session.stop();
     }
-    let logins: Vec<_> = terminals
-        .lock()
-        .logins
-        .iter()
-        .map(|login| login.session.clone())
-        .collect();
-    for session in logins {
-        session.stop();
+    drop(drained);
+    let logins: Vec<_> = {
+        let mut state = terminals.lock();
+        std::mem::take(&mut state.logins)
+    };
+    for login in logins {
+        login.session.stop();
     }
 }
 
@@ -234,6 +299,163 @@ struct Start<'a> {
 }
 
 impl Terminals {
+    pub(super) fn reserve_id(&self) -> u64 {
+        let mut state = self.lock();
+        state.started += 1;
+        state.started
+    }
+
+    pub(super) fn register_derived(&self, spec: NewDerived) -> u64 {
+        let id = self.reserve_id();
+        self.insert_reserved_derived(id, spec);
+        id
+    }
+
+    pub(super) fn insert_reserved_derived(&self, id: u64, spec: NewDerived) {
+        let mut state = self.lock();
+        state.cwd = Some(spec.cwd.clone());
+        state.open.push(Running {
+            id,
+            provider: spec.provider,
+            cwd: spec.cwd,
+            session: spec.session,
+            workspaces: Vec::new(),
+            native: spec.native,
+            title_located: false,
+            title_searched: None,
+            started: SystemTime::now(),
+            pending: 0,
+            account: spec.account,
+            #[cfg(unix)]
+            codex: spec.codex,
+            derived: Some(spec.info),
+        });
+    }
+
+    pub(super) fn find_derived_session(
+        &self,
+        provider: &str,
+        native_id: &str,
+    ) -> Option<DerivedHandle> {
+        let state = self.lock();
+        state
+            .open
+            .iter()
+            .find(|r| {
+                r.derived.is_some()
+                    && r.provider == provider
+                    && r.native.as_deref() == Some(native_id)
+                    && r.session.exit().is_none()
+            })
+            .map(Running::to_derived_handle)
+    }
+
+    pub(super) fn derived_by_invocation(&self, invocation_id: &str) -> Option<DerivedHandle> {
+        let state = self.lock();
+        state
+            .open
+            .iter()
+            .find(|r| {
+                r.derived
+                    .as_ref()
+                    .is_some_and(|d| d.active_invocation_id.as_deref() == Some(invocation_id))
+            })
+            .map(Running::to_derived_handle)
+    }
+
+    pub(super) fn has_lease_for_isolation(&self, isolation_id: &str) -> bool {
+        let state = self.lock();
+        state.open.iter().any(|r| {
+            r.session.exit().is_none()
+                && r.derived.as_ref().is_some_and(|d| {
+                    d.isolation_id.as_deref() == Some(isolation_id) && d._lease.is_some()
+                })
+        })
+    }
+
+    pub(super) fn remove_exited_derived(&self, provider: &str, native_id: &str) {
+        let removed: Vec<Running> = {
+            let mut state = self.lock();
+            let mut gone = Vec::new();
+            let mut kept = Vec::with_capacity(state.open.len());
+            for r in state.open.drain(..) {
+                if r.derived.is_some()
+                    && r.provider == provider
+                    && r.native.as_deref() == Some(native_id)
+                    && r.session.exit().is_some()
+                {
+                    gone.push(r);
+                } else {
+                    kept.push(r);
+                }
+            }
+            state.open = kept;
+            gone
+        };
+        drop(removed);
+    }
+
+    pub(super) fn try_claim_derived_turn(
+        &self,
+        terminal_id: u64,
+        invocation_id: &str,
+        expected_account: Option<&str>,
+    ) -> Result<DerivedHandle, String> {
+        let mut state = self.lock();
+        let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id) else {
+            return Err("派生终端已关闭".to_owned());
+        };
+        if running.session.exit().is_some() {
+            return Err("派生终端已退出".to_owned());
+        }
+        if running.account.as_ref().map(|a| a.id.as_str()) != expected_account {
+            return Err("派生会话原账号与请求账号不一致".to_owned());
+        }
+        let Some(derived) = running.derived.as_mut() else {
+            return Err("目标不是派生终端".to_owned());
+        };
+        if derived.busy || derived.active_invocation_id.is_some() {
+            return Err("派生终端正忙，无法同时续派".to_owned());
+        }
+        derived.busy = true;
+        derived.blocked_kind = None;
+        derived.active_invocation_id = Some(invocation_id.to_owned());
+        Ok(running.to_derived_handle())
+    }
+
+    pub(super) fn set_derived_state(
+        &self,
+        terminal_id: u64,
+        invocation_id: Option<&str>,
+        native: Option<&str>,
+        busy: bool,
+        blocked_kind: Option<&str>,
+    ) {
+        let mut state = self.lock();
+        let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id) else {
+            return;
+        };
+        if let Some(sid) = native
+            && running.native.as_deref() != Some(sid)
+        {
+            running.native = Some(sid.to_owned());
+            running.title_located = false;
+            running.title_searched = None;
+        }
+        if let Some(derived) = running.derived.as_mut() {
+            derived.busy = busy;
+            derived.blocked_kind = blocked_kind.map(str::to_owned);
+            derived.active_invocation_id = invocation_id.map(str::to_owned);
+        }
+    }
+
+    #[cfg(unix)]
+    pub(super) fn take_codex_ready_file(&self, terminal_id: u64) -> Option<PathBuf> {
+        let mut state = self.lock();
+        let running = state.open.iter_mut().find(|r| r.id == terminal_id)?;
+        running.derived.as_mut()?.codex_ready_file.take()
+    }
+
     pub(crate) fn cwds(&self) -> Vec<String> {
         self.lock()
             .open
@@ -267,7 +489,7 @@ impl Terminals {
                     label: String::new(),
                     dir: dir.to_owned(),
                 };
-                account::launch_as(&active, program.to_owned(), args)
+                account::launch_as(&active, program.to_owned(), args, false)
             }
             None => (program.to_owned(), args, Vec::new()),
         };
@@ -278,6 +500,7 @@ impl Terminals {
             cwd: home.to_owned(),
             cols,
             rows,
+            derived: false,
         })?;
         let mut state = self.lock();
         // One sign-in per account: an earlier terminal of it gives way.
@@ -426,7 +649,7 @@ impl Terminals {
             let pids = state
                 .open
                 .iter()
-                .filter(|running| running.session.exit().is_none())
+                .filter(|running| running.session.exit().is_none() && running.derived.is_none())
                 .filter_map(|running| Some((running.id, running.session.pid()?)))
                 .collect();
             (fresh, pids)
@@ -616,6 +839,9 @@ impl Terminals {
             let Some(running) = state.open.iter().find(|running| Some(running.id) == id) else {
                 return Response::error(404, "找不到这个终端");
             };
+            if running.derived.is_some() {
+                return Response::error(409, "派生终端不能从侧栏重启");
+            }
             if running.session.exit().is_none() {
                 return Response::error(409, "终端还在运行");
             }
@@ -681,6 +907,7 @@ impl Terminals {
             let state = self.lock();
             let open = state.open.iter().find(|running| {
                 running.session.exit().is_none()
+                    && running.derived.is_none()
                     && running.workspaces.last().map(String::as_str) == Some(workspace)
             });
             if let Some(running) = open {
@@ -833,7 +1060,7 @@ impl Terminals {
         let (launch_program, launch_args) = match &account {
             Some(account) => {
                 let (program, args, more) =
-                    account::launch_as(account, launch_program, launch_args);
+                    account::launch_as(account, launch_program, launch_args, false);
                 env.extend(more);
                 (program, args)
             }
@@ -846,6 +1073,7 @@ impl Terminals {
             cwd: cwd.clone(),
             cols,
             rows,
+            derived: false,
         };
         let session = match Session::spawn(&launch) {
             Ok(session) => session,
@@ -871,6 +1099,7 @@ impl Terminals {
             account,
             #[cfg(unix)]
             codex,
+            derived: None,
         };
         let described = running.describe();
         state.open.push(running);
@@ -923,7 +1152,15 @@ impl Terminals {
         if let Some(codex) = &removed.codex {
             codex.close();
         }
+        if let Some(inv_id) = removed
+            .derived
+            .as_ref()
+            .and_then(|d| d.active_invocation_id.as_deref())
+        {
+            wakeup::on_terminal_closed(inv_id);
+        }
         removed.session.stop();
+        drop(removed);
         Response::json(&json!({"ok": true}))
     }
 
