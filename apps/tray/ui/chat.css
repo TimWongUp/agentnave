@@ -18,7 +18,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .app { flex: 1; min-height: 0; display: grid; grid-template-columns: 320px minmax(0, 1fr); }
 
 /* ---- group list ---- */
-.side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); background: var(--solid); }
+.side { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-right: 1px solid var(--line); background: var(--bg); }
 .side-head { display: flex; align-items: center; gap: 4px; padding: 10px 10px 6px 12px; }
 .side-head-end { flex: none; display: flex; align-items: center; gap: 2px; }
 .side-icon-btn { position: relative; flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 7px; font-size: 17px; line-height: 1; color: var(--muted); cursor: pointer; }
@@ -27,8 +27,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .side-icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .side-icon-btn[data-active="true"]::after { content: ""; position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--run); }
 .side-search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 7px; border-radius: 7px; background: transparent; color: var(--muted); transition: background 0.12s; }
-.side-search:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); }
-.side-search:focus-within { background: var(--hover); color: var(--ink); }
+.side-search:hover, .side-search:focus-within { background: var(--hover); }
+.side-search:focus-within { color: var(--ink); }
 .side-search-ico { flex: none; display: grid; place-items: center; color: var(--faint); pointer-events: none; }
 .side-search-ico svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 .side-search-input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font-size: 14px; line-height: 1.4; outline: none; }
@@ -87,7 +87,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.hot::before, .gi.on::before { opacity: 1; }
 .gi:hover { background: var(--hover); }
 .gi.kbd-active:not(.on) { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.gi.on { background: color-mix(in srgb, var(--mc) 12%, var(--card)); }
+.gi.on { background: var(--card-hover); }
 .gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 12px; color: var(--muted); }
 .gi-label { min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -102,8 +102,8 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .pill.tone-run::after { content: ""; position: absolute; z-index: -1; left: 8px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: color-mix(in srgb, var(--run) 70%, transparent); animation: pulse 1.6s ease-out infinite; }
 .pill[hidden] { display: none; }
 @keyframes pulse { from { transform: scale(1); opacity: 1; } to { transform: scale(3); opacity: 0; } }
-.presence { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--solid); box-shadow: inset 0 0 0 1.5px var(--idle); }
-.presence.on { background: var(--done); box-shadow: 0 0 0 2px var(--solid); }
+.presence { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--idle); }
+.presence.on { background: var(--done); box-shadow: 0 0 0 2px var(--bg); }
 .presence[hidden] { display: none; }
 
 
@@ -200,7 +200,7 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 /* Zones space themselves, so an ended room can fold its own gap away as it closes. */
 .floor .zone:not(.boss-zone) { margin-top: 12px; }
 .rooms { display: contents; }
-.zone { position: relative; min-width: 0; border-radius: 16px; background: color-mix(in srgb, var(--surface) 84%, transparent); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
+.zone { position: relative; min-width: 0; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
 .desks-zone { cursor: default; }
 .zone.sel { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
 .zone-h { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; color: var(--muted); }
@@ -223,7 +223,7 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 .boss-row { display: grid; grid-template-columns: auto minmax(225px, 380px); justify-content: center; align-items: center; gap: 16px 24px; margin-top: 4px; }
 /* never narrower than the boss's scene, or the meetings panel beside it would squeeze under the desk */
 .boss-mid { min-width: max-content; }
-.boss-side { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px 10px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 52%, transparent); border: 1px solid var(--line); cursor: default; }
+.boss-side { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px 10px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); cursor: default; }
 .boss-side[hidden] { display: none; }
 .boss-row:has(> .boss-side[hidden]) { grid-template-columns: auto; }
 /* chat-office.js stacks the meetings under the boss when beside it the boss would have to shrink */
@@ -591,7 +591,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .seat.empty .plate, .seat.empty .seat-nm { opacity: 0.6; }
 
 /* ---- ticker and envelopes ---- */
-.ticker { flex: none; display: flex; align-items: center; gap: 10px; box-sizing: border-box; height: var(--foot-h); padding: 0 20px; border-top: 1px solid var(--line); background: var(--solid); font-size: 12px; color: var(--soft); }
+.ticker { flex: none; display: flex; align-items: center; gap: 10px; box-sizing: border-box; height: var(--foot-h); padding: 0 20px; border-top: 1px solid var(--line); background: var(--bg); font-size: 12px; color: var(--soft); }
 .ticker .lbl { flex: none; font-size: 11px; font-weight: 650; color: var(--faint); letter-spacing: 0.04em; }
 .tick { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tick.new { animation: tick-in 0.4s ease-out; }
@@ -614,7 +614,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .walker.walk .fig-a, .walker.walk .fig-b { animation: none; }
 
 /* ---- conversation column ---- */
-.conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--solid); }
+.conv { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); }
 .conv-head { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--line); }
 .dr-ico { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--card-hover); color: var(--muted); overflow: hidden; }
 .dr-ico .avatar { width: 32px; height: 32px; border-radius: 10px; }
@@ -806,7 +806,7 @@ dialog.act::backdrop { background: #0006; }
 .voice-channel[hidden] { display: none; }
 .voice-channel > .listen-here { margin-left: auto; }
 .voice-roster { flex: none; display: flex; align-items: center; gap: 8px; }
-.voice-person, .voice-more { --ring: var(--solid); flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
+.voice-person, .voice-more { --ring: var(--bg); flex: none; width: 30px; height: 30px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); background: var(--card-hover); transition: opacity .15s, transform .15s, box-shadow .15s; }
 /* the boss wears a small crown: centred on the head, turned, then pushed out until its base rests on the rim */
 .voice-person.boss { position: relative; }
 .voice-person.boss::after { --crown: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath d='M1 2.5l2.6 3L6 1l2.4 4.5L11 2.5 10 9H2z'/%3E%3C/svg%3E"); content: ""; position: absolute; top: 50%; left: 50%; width: 12px; height: 10px; margin: -5px 0 0 -6px; transform: rotate(-35deg) translateY(-20px); background: var(--boss-crown); -webkit-mask: var(--crown) center / contain no-repeat; mask: var(--crown) center / contain no-repeat; }
