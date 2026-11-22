@@ -93,6 +93,8 @@ def outstanding_acknowledgements(
         tray = TrayIdentity(int(str(item["tray_pid"])), float(str(item["tray_started_at"])))
         snapshot = read_tray(root, tray)
         entries = snapshot.get("requests") if snapshot else None
-        if snapshot is None or not isinstance(entries, dict) or item["request_id"] in entries:
+        if snapshot is not None and (
+            not isinstance(entries, dict) or item["request_id"] in entries
+        ):
             pending.append(item)
     return pending

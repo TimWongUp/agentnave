@@ -299,7 +299,7 @@ pub(super) fn agy_match_user_input(
         return None;
     }
     let reader = BufReader::new(file);
-    for (line_idx, line) in reader.lines().map_while(Result::ok).enumerate() {
+    for line in reader.lines().map_while(Result::ok) {
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -308,9 +308,9 @@ pub(super) fn agy_match_user_input(
         {
             continue;
         }
-        let step_index = row["step_index"]
-            .as_i64()
-            .unwrap_or_else(|| i64::try_from(line_idx).unwrap_or(0));
+        let Some(step_index) = row["step_index"].as_i64() else {
+            continue;
+        };
         if after_index.is_some_and(|prev| step_index <= prev) {
             continue;
         }
@@ -337,16 +337,16 @@ pub(super) fn agy_turn_state(path: &Path, user_input_index: i64) -> AgyTurnState
     let reader = BufReader::new(file);
     let mut saw_ours = false;
     let mut answered = false;
-    for (line_idx, line) in reader.lines().map_while(Result::ok).enumerate() {
+    for line in reader.lines().map_while(Result::ok) {
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        let step_index = row["step_index"]
-            .as_i64()
-            .unwrap_or_else(|| i64::try_from(line_idx).unwrap_or(0));
         if row["type"].as_str() == Some("USER_INPUT")
             && row["source"].as_str() == Some("USER_EXPLICIT")
         {
+            let Some(step_index) = row["step_index"].as_i64() else {
+                continue;
+            };
             if step_index == user_input_index {
                 saw_ours = true;
                 answered = false;

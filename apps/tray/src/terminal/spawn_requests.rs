@@ -48,7 +48,7 @@ pub(super) struct IsolationSpec {
     #[serde(default)]
     pub repo_common_dir: Option<String>,
     #[serde(default)]
-    pub worktree_path: Option<String>,
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -92,6 +92,8 @@ pub(super) struct ExpectedAnchor {
     pub session_id: Option<String>,
     #[serde(default)]
     pub turn_id: Option<String>,
+    #[serde(default)]
+    pub client_user_message_id: Option<String>,
     #[serde(default)]
     pub prompt_id: Option<String>,
     #[serde(default)]
@@ -464,7 +466,13 @@ impl Coordinator {
         if !matches!(env.kind.as_str(), "run" | "cancel") {
             return;
         }
-        if env.kind == "run" && (env.config.is_none() || env.task.is_none() || env.parent.is_none())
+        if env.kind == "run"
+            && (env.config.is_none()
+                || env.task.is_none()
+                || env
+                    .parent
+                    .as_ref()
+                    .is_none_or(|p| p.workspace_id.as_deref().is_none_or(str::is_empty)))
         {
             return;
         }

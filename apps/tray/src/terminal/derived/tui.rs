@@ -13,15 +13,15 @@ use super::super::session::{self, Launch, Session};
 use super::super::spawn_requests::{
     Coordinator, ParentRef, RunConfig, RunHandle, SpawnRequestEnvelope,
 };
-use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path, theme};
+use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
 use super::{
-    POLL_STEP, detect_screen_blocker, native_logs, prepare_open_or_launch,
+    POLL_STEP, claude, detect_screen_blocker, native_logs, prepare_open_or_launch,
     update_blocker_if_changed,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const PASTE_COMMIT_DELAY: Duration = Duration::from_millis(300);
-const TRANSCRIPT_FLUSH_WAIT: Duration = Duration::from_millis(1800);
+pub(super) const TRANSCRIPT_FLUSH_WAIT: Duration = Duration::from_millis(1800);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TuiKind {
@@ -29,12 +29,12 @@ pub(super) enum TuiKind {
     Antigravity,
 }
 
-struct TurnBaseline {
-    claude_homes: Vec<PathBuf>,
-    pre_offset: u64,
+pub(super) struct TurnBaseline {
+    pub(super) claude_homes: Vec<PathBuf>,
+    pub(super) pre_offset: u64,
     agy_baseline_cids: Vec<String>,
     agy_prev_idx: Option<i64>,
-    seq_before: u64,
+    pub(super) seq_before: u64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -50,15 +50,22 @@ pub(super) fn run_tui_cli(
     handle: &Arc<RunHandle>,
     kind: TuiKind,
 ) {
+    if kind == TuiKind::Claude {
+        claude::run_claude_cli(
+            coordinator,
+            terminals,
+            env,
+            cfg,
+            parent,
+            cwd,
+            account,
+            prompt,
+            handle,
+        );
+        return;
+    }
     let req_id = &env.request_id;
-    let preset_sid = match kind {
-        TuiKind::Claude => Some(
-            env.session_id
-                .clone()
-                .unwrap_or_else(session::fresh_session_id),
-        ),
-        TuiKind::Antigravity => env.session_id.clone(),
-    };
+    let preset_sid = env.session_id.clone();
     let mut agy_log_path: Option<PathBuf> = None;
     let open = prepare_open_or_launch(
         coordinator,
@@ -76,9 +83,10 @@ pub(super) fn run_tui_cli(
                 cwd,
                 account.clone(),
                 preset_sid.clone(),
-                kind,
+                TuiKind::Antigravity,
                 lease,
                 isolation_id,
+                None,
             )?;
             agy_log_path = log_path;
             Ok(launched)
@@ -95,27 +103,12 @@ pub(super) fn run_tui_cli(
         coordinator.set_session_id(req_id, sid);
     }
     if !wait_tui_ready(coordinator, terminals, &launched, req_id, handle) {
-        finish_pre_submit(
-            coordinator,
-            terminals,
-            &launched,
-            req_id,
-            if handle.is_cancelled() {
-                "cancelled"
-            } else {
-                "failed"
-            },
-            if handle.is_cancelled() {
-                "就绪前已取消"
-            } else {
-                "等待终端就绪失败或超时"
-            },
-        );
+        finish_pre_ready(coordinator, terminals, &launched, req_id, handle);
         return;
     }
 
     let baseline = capture_baseline(
-        kind,
+        TuiKind::Antigravity,
         account.as_ref(),
         preset_sid.as_deref(),
         env.session_id.as_deref(),
@@ -125,34 +118,46 @@ pub(super) fn run_tui_cli(
     if !submit_prompt(coordinator, terminals, &launched, req_id, prompt, handle) {
         return;
     }
+    monitor_agy_turn(
+        coordinator,
+        terminals,
+        &launched,
+        req_id,
+        env.session_id.as_deref(),
+        agy_log_path.as_deref(),
+        &baseline,
+        prompt,
+        handle,
+    );
+}
 
-    match kind {
-        TuiKind::Claude => monitor_claude_turn(
-            coordinator,
-            terminals,
-            &launched,
-            req_id,
-            preset_sid.as_deref().unwrap_or_default(),
-            &baseline,
-            prompt,
-            handle,
-        ),
-        TuiKind::Antigravity => monitor_agy_turn(
-            coordinator,
-            terminals,
-            &launched,
-            req_id,
-            env.session_id.as_deref(),
-            agy_log_path.as_deref(),
-            &baseline,
-            prompt,
-            handle,
-        ),
-    }
+pub(super) fn finish_pre_ready(
+    coordinator: &Coordinator,
+    terminals: &Terminals,
+    launched: &DerivedHandle,
+    req_id: &str,
+    handle: &Arc<RunHandle>,
+) {
+    finish_pre_submit(
+        coordinator,
+        terminals,
+        launched,
+        req_id,
+        if handle.is_cancelled() {
+            "cancelled"
+        } else {
+            "failed"
+        },
+        if handle.is_cancelled() {
+            "就绪前已取消"
+        } else {
+            "等待终端就绪失败或超时"
+        },
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_tui_terminal(
+pub(super) fn spawn_tui_terminal(
     terminals: &Terminals,
     env: &SpawnRequestEnvelope,
     cfg: &RunConfig,
@@ -163,6 +168,7 @@ fn spawn_tui_terminal(
     kind: TuiKind,
     lease: Option<crate::isolated::leases::HeldLease>,
     isolation_id: Option<String>,
+    hook_dir: Option<&Path>,
 ) -> Result<(DerivedHandle, Option<PathBuf>), String> {
     let Some(program) = installed_path(&cfg.provider) else {
         return Err("这个 CLI 没有安装".to_owned());
@@ -170,10 +176,11 @@ fn spawn_tui_terminal(
     let (mut args, mut extra_env, log_dir_opt, log_file_opt) = match kind {
         TuiKind::Claude => {
             let sid = preset_sid.as_deref().unwrap_or_default();
-            let args = build_claude_args(
+            let args = claude::build_claude_args(
                 cfg,
                 env.session_id.as_deref(),
                 env.session_id.is_none().then_some(sid),
+                hook_dir,
             );
             (args, Vec::new(), None, None)
         }
@@ -242,7 +249,7 @@ fn spawn_tui_terminal(
     ))
 }
 
-fn capture_baseline(
+pub(super) fn capture_baseline(
     kind: TuiKind,
     account: Option<&Active>,
     preset_sid: Option<&str>,
@@ -280,7 +287,7 @@ fn capture_baseline(
     }
 }
 
-fn finish_pre_submit(
+pub(super) fn finish_pre_submit(
     coordinator: &Coordinator,
     terminals: &Terminals,
     launched: &DerivedHandle,
@@ -292,7 +299,7 @@ fn finish_pre_submit(
     coordinator.mark_finished(req_id, status, Some(reason), launched.native.as_deref());
 }
 
-fn submit_prompt(
+pub(super) fn submit_prompt(
     coordinator: &Coordinator,
     terminals: &Terminals,
     launched: &DerivedHandle,
@@ -341,56 +348,6 @@ fn submit_prompt(
     true
 }
 
-pub(super) fn build_claude_args(
-    cfg: &RunConfig,
-    resume: Option<&str>,
-    fresh: Option<&str>,
-) -> Vec<String> {
-    let mut args = session::cli_args("claude", resume, fresh);
-    let mut settings = serde_json::Map::new();
-    let base_theme = theme::for_cli("claude", false);
-    if base_theme.args.len() == 2
-        && base_theme.args[0] == "--settings"
-        && let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(&base_theme.args[1])
-    {
-        settings.extend(obj);
-    }
-    if let Some(mode) = cfg
-        .permissions
-        .get("permission_mode")
-        .and_then(Value::as_str)
-    {
-        if matches!(
-            mode,
-            "auto" | "bypassPermissions" | "default" | "plan" | "acceptEdits" | "dontAsk"
-        ) {
-            args.push("--permission-mode".to_owned());
-            args.push(mode.to_owned());
-        }
-        if mode == "bypassPermissions" {
-            settings.insert(
-                "skipDangerousModePermissionPrompt".to_owned(),
-                Value::Bool(true),
-            );
-        } else if mode == "auto" {
-            settings.insert("skipAutoPermissionPrompt".to_owned(), Value::Bool(true));
-        }
-    }
-    if !settings.is_empty() {
-        args.push("--settings".to_owned());
-        args.push(Value::Object(settings).to_string());
-    }
-    if let Some(model) = cfg.model.as_deref().filter(|s| !s.is_empty()) {
-        args.push("--model".to_owned());
-        args.push(model.to_owned());
-    }
-    if let Some(effort) = cfg.effort.as_deref().filter(|s| !s.is_empty()) {
-        args.push("--effort".to_owned());
-        args.push(effort.to_owned());
-    }
-    args
-}
-
 pub(super) fn build_agy_args(
     cfg: &RunConfig,
     resume: Option<&str>,
@@ -428,18 +385,17 @@ pub(super) fn build_agy_args(
     if let Some(sandbox) = cfg.permissions.get("sandbox").and_then(Value::as_bool) {
         args.push(format!("--sandbox={sandbox}"));
     }
-    if cfg
+    if let Some(skip) = cfg
         .permissions
         .get("dangerously_skip_permissions")
         .and_then(Value::as_bool)
-        == Some(true)
     {
-        args.push("--dangerously-skip-permissions=true".to_owned());
+        args.push(format!("--dangerously-skip-permissions={skip}"));
     }
     args
 }
 
-fn wait_tui_ready(
+pub(super) fn wait_tui_ready(
     coordinator: &Coordinator,
     terminals: &Terminals,
     launched: &DerivedHandle,
@@ -524,110 +480,6 @@ fn wait_unblocked(
         thread::sleep(POLL_STEP);
     }
     false
-}
-
-#[allow(clippy::too_many_arguments)]
-fn monitor_claude_turn(
-    coordinator: &Coordinator,
-    terminals: &Terminals,
-    launched: &DerivedHandle,
-    req_id: &str,
-    sid: &str,
-    baseline: &TurnBaseline,
-    prompt: &str,
-    handle: &Arc<RunHandle>,
-) {
-    let mut started = false;
-    let mut prompt_id: Option<String> = None;
-    let mut blocker: Option<(String, f64)> = None;
-    let mut saw_working = false;
-    let mut settled_at: Option<Instant> = None;
-
-    loop {
-        if prompt_id.is_none()
-            && let Some(path) = native_logs::claude_transcript_path(&baseline.claude_homes, sid)
-            && let Some(pid) = native_logs::claude_prompt_anchor(&path, baseline.pre_offset, prompt)
-        {
-            prompt_id = Some(pid.clone());
-            let anchor = json!({"session_id": sid, "prompt_id": pid});
-            if !started {
-                started = true;
-                coordinator.mark_started(req_id, Some(sid), Some(anchor));
-            } else {
-                coordinator.update_anchor(req_id, anchor);
-            }
-        }
-
-        let (seq, osc_state, osc_kind) = launched.session.osc_snapshot();
-        let state_str = osc_state.as_deref();
-        if seq > baseline.seq_before {
-            if state_str == Some("working") {
-                saw_working = true;
-                settled_at = None;
-                if !started {
-                    started = true;
-                    coordinator.mark_started(req_id, Some(sid), Some(json!({"session_id": sid})));
-                }
-            }
-            sync_turn_blocker(
-                coordinator,
-                terminals,
-                launched.id,
-                req_id,
-                Some(sid),
-                state_str,
-                osc_kind.as_deref(),
-                &mut blocker,
-                &mut settled_at,
-            );
-            if is_osc_settled(state_str, saw_working) {
-                if !started {
-                    started = true;
-                    coordinator.mark_started(req_id, Some(sid), Some(json!({"session_id": sid})));
-                }
-                let at = *settled_at.get_or_insert_with(Instant::now);
-                let transcript_ready = prompt_id.as_deref().is_some_and(|pid| {
-                    native_logs::claude_transcript_path(&baseline.claude_homes, sid).is_some_and(
-                        |p| {
-                            native_logs::claude_turn_state(&p, pid)
-                                != native_logs::ClaudeTurnState::Active
-                        },
-                    )
-                });
-                if state_str == Some("error")
-                    || transcript_ready
-                    || at.elapsed() >= TRANSCRIPT_FLUSH_WAIT
-                {
-                    finish_settled(
-                        coordinator,
-                        terminals,
-                        launched.id,
-                        req_id,
-                        Some(sid),
-                        state_str == Some("error"),
-                        handle.is_cancelled(),
-                        "CLI 返回错误状态",
-                    );
-                    return;
-                }
-            }
-        }
-
-        if let Some(code) = launched.session.exit() {
-            finish_exited(
-                coordinator,
-                terminals,
-                launched.id,
-                req_id,
-                Some(sid),
-                code,
-                settled_at.is_some(),
-                handle.is_cancelled(),
-            );
-            return;
-        }
-        thread::sleep(POLL_STEP);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -762,12 +614,12 @@ fn locate_agy_turn(
     None
 }
 
-fn is_osc_settled(state: Option<&str>, saw_working: bool) -> bool {
+pub(super) fn is_osc_settled(state: Option<&str>, saw_working: bool) -> bool {
     matches!(state, Some("done" | "error")) || (saw_working && state == Some("idle"))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn sync_turn_blocker(
+pub(super) fn sync_turn_blocker(
     coordinator: &Coordinator,
     terminals: &Terminals,
     terminal_id: u64,
@@ -804,7 +656,7 @@ fn sync_turn_blocker(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_settled(
+pub(super) fn finish_settled(
     coordinator: &Coordinator,
     terminals: &Terminals,
     terminal_id: u64,
@@ -826,7 +678,7 @@ fn finish_settled(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_exited(
+pub(super) fn finish_exited(
     coordinator: &Coordinator,
     terminals: &Terminals,
     terminal_id: u64,
@@ -855,16 +707,14 @@ fn finish_exited(
 fn highest_agy_user_index(path: &Path) -> Option<i64> {
     let text = fs::read_to_string(path).ok()?;
     let mut best = None;
-    for (idx, line) in text.lines().enumerate() {
+    for line in text.lines() {
         let Ok(row) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         if row["type"].as_str() == Some("USER_INPUT")
             && row["source"].as_str() == Some("USER_EXPLICIT")
+            && let Some(step) = row["step_index"].as_i64()
         {
-            let step = row["step_index"]
-                .as_i64()
-                .unwrap_or_else(|| i64::try_from(idx).unwrap_or(0));
             best = Some(best.map_or(step, |cur: i64| cur.max(step)));
         }
     }

@@ -1,5 +1,7 @@
 //! Derived-session execution and cancellation lifecycle (ADR-0109).
 
+mod claude;
+mod claude_hook;
 #[cfg(unix)]
 mod codex;
 pub(super) mod native_logs;
@@ -22,7 +24,9 @@ use super::{DerivedHandle, Terminals};
 use crate::isolated::leases::{self, HeldLease};
 
 #[cfg(test)]
-use tui::{build_agy_args, build_claude_args};
+use claude::build_claude_args;
+#[cfg(test)]
+use tui::build_agy_args;
 
 const LEASE_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_STEP: Duration = Duration::from_millis(50);
@@ -203,7 +207,7 @@ pub(super) fn acquire_isolation_for_terminal(
         Some(path) if Path::new(path).is_dir() => PathBuf::from(path),
         _ => {
             let wt = iso
-                .worktree_path
+                .path
                 .as_deref()
                 .map(Path::new)
                 .filter(|p| p.is_dir())
@@ -242,7 +246,7 @@ where
             {
                 return Err("派生终端正在输入或运行中".to_owned());
             }
-            let _ = acquire_isolation_for_terminal(
+            let (_, lease) = acquire_isolation_for_terminal(
                 coordinator,
                 terminals,
                 &env.request_id,
@@ -250,6 +254,9 @@ where
                 cfg.isolation.as_ref(),
                 true,
             )?;
+            if let Some(lease) = lease {
+                terminals.attach_derived_lease(existing.id, lease);
+            }
             return terminals.try_claim_derived_turn(
                 existing.id,
                 &env.invocation_id,
@@ -441,6 +448,11 @@ fn anchor_matches(
     let anchor = receipt.anchor.as_ref();
     if let Some(exp_turn) = exp.turn_id.as_deref()
         && anchor.and_then(|a| a["turn_id"].as_str()) != Some(exp_turn)
+    {
+        return false;
+    }
+    if let Some(exp_client) = exp.client_user_message_id.as_deref()
+        && anchor.and_then(|a| a["client_user_message_id"].as_str()) != Some(exp_client)
     {
         return false;
     }

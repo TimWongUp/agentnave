@@ -226,3 +226,99 @@ fn receipt_stays_until_service_inbox_settlement_confirms() {
     let push_doc: Value = serde_json::from_slice(&push_bytes).unwrap();
     assert!(push_doc["requests"].as_object().unwrap().is_empty());
 }
+
+#[test]
+fn shared_contract_fixture_matches_tray_intake_and_receipts() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../tests/fixtures/derived-terminal-contract.json"
+    ))
+    .unwrap();
+
+    let run_env: SpawnRequestEnvelope =
+        serde_json::from_value(fixture["run_request"].clone()).unwrap();
+    assert_eq!(run_env.version, 1);
+    assert!(valid_uuid(&run_env.request_id));
+    assert_eq!(run_env.kind, "run");
+    let cfg = run_env.config.as_ref().unwrap();
+    assert_eq!(cfg.account.as_deref(), Some("work"));
+    assert!(cfg.account_dir.is_none());
+    let iso = cfg.isolation.as_ref().unwrap();
+    assert_eq!(
+        iso.path.as_deref(),
+        Some("/tmp/repo/.agentnave-worktrees/wt-abcdef012345")
+    );
+    assert_eq!(
+        run_env
+            .parent
+            .as_ref()
+            .and_then(|p| p.workspace_id.as_deref()),
+        Some("s-0123456789abcdef0123456789abcdef")
+    );
+
+    let cancel_env: SpawnRequestEnvelope =
+        serde_json::from_value(fixture["cancel_request"].clone()).unwrap();
+    assert!(valid_uuid(&cancel_env.request_id));
+    assert_eq!(cancel_env.kind, "cancel");
+    assert_eq!(
+        cancel_env
+            .expected_anchor
+            .as_ref()
+            .and_then(|a| a.client_user_message_id.as_deref()),
+        Some("11111111-1111-4111-8111-111111111111")
+    );
+
+    let mut receipts = HashMap::new();
+    receipts.insert(
+        run_env.request_id.clone(),
+        ReceiptEntry {
+            receipt: Receipt {
+                service_pid: 1234,
+                invocation_id: run_env.invocation_id.clone(),
+                kind: "run".to_owned(),
+                state: ReceiptState::Finished,
+                session_id: Some("33333333-3333-4333-8333-333333333333".to_owned()),
+                lease_acquired: Some(true),
+                anchor: Some(json!({
+                    "session_id": "33333333-3333-4333-8333-333333333333",
+                    "prompt_id": "prompt-1"
+                })),
+                blocked: None,
+                terminal: Some(TerminalOutcome {
+                    status: "succeeded".to_owned(),
+                    reason: None,
+                }),
+            },
+            finished_at: Some(Instant::now()),
+        },
+    );
+    receipts.insert(
+        cancel_env.request_id.clone(),
+        ReceiptEntry {
+            receipt: Receipt {
+                service_pid: 1234,
+                invocation_id: cancel_env.invocation_id.clone(),
+                kind: "cancel".to_owned(),
+                state: ReceiptState::Finished,
+                session_id: Some("33333333-3333-4333-8333-333333333333".to_owned()),
+                lease_acquired: None,
+                anchor: None,
+                blocked: None,
+                terminal: Some(TerminalOutcome {
+                    status: "interrupted".to_owned(),
+                    reason: None,
+                }),
+            },
+            finished_at: Some(Instant::now()),
+        },
+    );
+    let doc = build_push_document(5678, &["claude", "codex", "antigravity"], &mut receipts);
+    assert_eq!(doc, fixture["push_receipt"]);
+
+    let settled = &fixture["inbox_settlement"]["settled_requests"];
+    assert!(is_request_settled(
+        settled,
+        5678,
+        1700000000.0,
+        &run_env.request_id
+    ));
+}

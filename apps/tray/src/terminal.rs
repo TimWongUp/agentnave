@@ -449,6 +449,37 @@ impl Terminals {
         }
     }
 
+    pub(super) fn attach_derived_lease(
+        &self,
+        terminal_id: u64,
+        lease: crate::isolated::leases::HeldLease,
+    ) {
+        let mut state = self.lock();
+        if let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id)
+            && let Some(derived) = running.derived.as_mut()
+            && derived._lease.is_none()
+        {
+            derived._lease = Some(lease);
+        }
+    }
+
+    pub(super) fn replace_derived_session(
+        &self,
+        terminal_id: u64,
+        session: Arc<Session>,
+        native: Option<&str>,
+    ) {
+        let mut state = self.lock();
+        if let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id) {
+            running.session = session;
+            if let Some(sid) = native {
+                running.native = Some(sid.to_owned());
+                running.title_located = false;
+                running.title_searched = None;
+            }
+        }
+    }
+
     #[cfg(unix)]
     pub(super) fn take_codex_ready_file(&self, terminal_id: u64) -> Option<PathBuf> {
         let mut state = self.lock();

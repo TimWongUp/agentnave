@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
-from agentnave import accounts
-from agentnave.adapters import get_adapter
 from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.models import InvocationError, InvocationRequest, InvocationResult, InvocationStatus
 from agentnave.process_info import read_process_started
@@ -52,12 +50,7 @@ def make_launch(
             "branch": info.branch,
         }
     )
-    account_dir = accounts.home_of(get_adapter(request.provider), request.account)
-    if request.provider == "codex":
-        account_dir = str(Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").resolve())
-    elif request.provider == "antigravity":
-        account_dir = str(Path.home() / ".gemini/antigravity-cli")
-    return TerminalLaunch(root, tray, boss[0], workspace, account_dir, isolation)
+    return TerminalLaunch(root, tray, boss[0], workspace, None, isolation)
 
 
 def _object(value: object) -> dict[str, object]:
@@ -140,7 +133,7 @@ class TerminalRun:
         return doc
 
     def _send_cancel(self) -> None:
-        cancel_id = uuid4().hex
+        cancel_id = str(uuid4())
         doc = self._base(cancel_id, "cancel")
         doc["expected_anchor"] = {"session_id": self.session_id, **self.anchor}
         publish_request(self.launch.root, cancel_id, doc)

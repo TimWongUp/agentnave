@@ -24,7 +24,13 @@ fn claude_args_merge_theme_and_permission_prompt_skip_into_single_settings() {
             "permission_fallback": "auto"
         }),
     };
-    let args = build_claude_args(&cfg, None, Some("11111111-1111-4111-8111-111111111111"));
+    let hook_dir = tempfile::tempdir().unwrap();
+    let args = build_claude_args(
+        &cfg,
+        None,
+        Some("11111111-1111-4111-8111-111111111111"),
+        Some(hook_dir.path()),
+    );
     assert_eq!(
         args.iter().filter(|a| a.as_str() == "--settings").count(),
         1
@@ -32,6 +38,7 @@ fn claude_args_merge_theme_and_permission_prompt_skip_into_single_settings() {
     let settings_idx = args.iter().position(|a| a == "--settings").unwrap();
     let parsed: Value = serde_json::from_str(&args[settings_idx + 1]).unwrap();
     assert_eq!(parsed["skipDangerousModePermissionPrompt"], json!(true));
+    assert!(parsed["hooks"]["UserPromptSubmit"].is_array());
     assert!(
         args.windows(2)
             .any(|w| w == ["--permission-mode", "bypassPermissions"])
@@ -255,6 +262,7 @@ fn claude_late_cancel_respects_completed_and_superseded_turns() {
         expected_anchor: Some(ExpectedAnchor {
             session_id: Some(sid.to_owned()),
             turn_id: None,
+            client_user_message_id: None,
             prompt_id: Some("p-done".to_owned()),
             user_input_index: None,
         }),
@@ -491,7 +499,7 @@ fn isolation_lease_holds_until_terminal_closes() {
     let iso = IsolationSpec {
         id: "wt-abcdef012345".to_owned(),
         repo_common_dir: None,
-        worktree_path: None,
+        path: None,
     };
     let (iso_id, lease) =
         acquire_isolation_for_terminal(&coord, &terminals, "req-1", &wt, Some(&iso), false)
@@ -540,4 +548,97 @@ fn isolation_lease_holds_until_terminal_closes() {
         text: String::new(),
         forward: Vec::new(),
     };
+}
+
+#[test]
+fn claude_permission_fallback_validates_pair_and_hook_blocks_default_mode() {
+    assert_eq!(
+        claude_hook::claude_permission_modes(&json!({
+            "permission_mode": "auto",
+            "permission_fallback": "bypassPermissions"
+        })),
+        Ok((Some("auto"), Some("bypassPermissions")))
+    );
+    assert!(
+        claude_hook::claude_permission_modes(&json!({
+            "permission_mode": "auto",
+            "permission_fallback": "auto"
+        }))
+        .is_err()
+    );
+    assert!(
+        claude_hook::claude_permission_modes(&json!({
+            "permission_mode": "plan",
+            "permission_fallback": "bypassPermissions"
+        }))
+        .is_err()
+    );
+
+    let hook_dir = claude_hook::prepare_mode_hook().unwrap();
+    let cfg = RunConfig {
+        provider: "claude".to_owned(),
+        account: None,
+        account_dir: None,
+        cwd: "/tmp".to_owned(),
+        isolation: None,
+        model: None,
+        effort: None,
+        permissions: json!({
+            "permission_mode": "auto",
+            "permission_fallback": "bypassPermissions"
+        }),
+    };
+    let args = build_claude_args(
+        &cfg,
+        None,
+        Some("11111111-1111-4111-8111-111111111111"),
+        Some(hook_dir.path()),
+    );
+    let settings_idx = args.iter().position(|a| a == "--settings").unwrap();
+    let settings: Value = serde_json::from_str(&args[settings_idx + 1]).unwrap();
+    let cmd = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", cmd])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            br#"{"hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"{\"permission_mode\":\"auto\"}"}"#,
+        )
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reply["decision"], json!("block"));
+    assert_eq!(
+        claude_hook::read_observed_mode(hook_dir.path()).as_deref(),
+        Some("default")
+    );
+
+    // Subsequent user prompts after armed is consumed exit cleanly without blocking.
+    let mut second = Command::new("/bin/sh")
+        .args(["-c", cmd])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    second
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"hook_event_name":"UserPromptSubmit","permission_mode":"default"}"#)
+        .unwrap();
+    let second_out = second.wait_with_output().unwrap();
+    assert!(second_out.status.success());
+    assert!(second_out.stdout.is_empty());
 }

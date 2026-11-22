@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -681,3 +681,126 @@ async def test_changed_turn_anchor_does_not_settle_another_turn(
         result is not None and result.error is not None and result.error.code == "receipt_changed"
     )
     await manager.shutdown()
+
+
+def test_make_launch_account_and_shared_contract_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import re
+
+    from agentnave.inbox_snapshot import InboxSnapshot
+    from agentnave.isolated.prompts import TaskIsolationInfo
+    from agentnave.terminal_execution import TerminalRun, make_launch
+
+    fixture_path = Path(__file__).parent / "fixtures" / "derived-terminal-contract.json"
+    fixture = cast(dict[str, Any], json.loads(fixture_path.read_text(encoding="utf-8")))
+    tray = TrayIdentity(5678, 1700000000.0)
+    boss = ("s-0123456789abcdef0123456789abcdef", "raw-boss")
+    workspace = "s-0123456789abcdef0123456789abcdef"
+
+    def fake_pid() -> int:
+        return 1234
+
+    def fake_started(_pid: int) -> float:
+        return 1700000100.0
+
+    monkeypatch.setattr(terminal_execution.os, "getpid", fake_pid)
+    monkeypatch.setattr(terminal_execution, "read_process_started", fake_started)
+
+    # Codex, Antigravity, and default Claude must pass account=None and account_dir=None.
+    for provider in ("codex", "antigravity", "claude"):
+        launch = make_launch(
+            tmp_path, tray, boss, workspace, InvocationRequest(provider, "t", tmp_path), None
+        )
+        assert launch.account_dir is None
+
+    wt_dir = (tmp_path / "repo/.agentnave-worktrees/wt-abcdef012345").resolve()
+    wt_dir.mkdir(parents=True)
+    iso = TaskIsolationInfo(
+        id="wt-abcdef012345",
+        path=str(wt_dir),
+        cwd=str(wt_dir),
+        branch="agentnave/wt-abcdef012345",
+        repo_common_dir=tmp_path / "repo/.git",
+    )
+    claude_req = InvocationRequest(
+        "claude",
+        "Run task",
+        wt_dir,
+        provider_options={
+            "model": "claude-sonnet-4-6",
+            "effort": "high",
+            "permission_mode": "auto",
+            "permission_fallback": "bypassPermissions",
+        },
+        account="work",
+    )
+    claude_launch = make_launch(tmp_path, tray, boss, workspace, claude_req, iso)
+    assert claude_launch.account_dir is None
+
+    run = TerminalRun(
+        claude_launch,
+        claude_req,
+        "11111111-1111-4111-8111-111111111111",
+        "Run task",
+        lambda _item: None,
+        lambda _item: None,
+        lambda _req, _tray: None,
+    )
+    generated_run = run._run_request()  # pyright: ignore[reportPrivateUsage]
+    expected_run = cast(dict[str, Any], fixture["run_request"])
+    assert set(generated_run) == set(expected_run)
+    generated_cfg = cast(dict[str, Any], generated_run["config"])
+    expected_cfg = cast(dict[str, Any], expected_run["config"])
+    assert set(generated_cfg) == set(expected_cfg)
+    assert set(cast(dict[str, Any], generated_cfg["isolation"])) == set(expected_cfg["isolation"])
+    assert generated_cfg["provider"] == expected_cfg["provider"]
+    assert generated_cfg["account"] == expected_cfg["account"]
+    assert generated_cfg["account_dir"] is expected_cfg["account_dir"] is None
+    assert generated_cfg["model"] == expected_cfg["model"]
+    assert generated_cfg["effort"] == expected_cfg["effort"]
+    assert generated_cfg["permissions"] == expected_cfg["permissions"]
+    assert generated_run["parent"] == expected_run["parent"]
+    assert generated_run["task"] == expected_run["task"]
+
+    run.session_id = "33333333-3333-4333-8333-333333333333"
+    run.anchor = {"turn_id": "turn-1", "client_user_message_id": run.invocation_id}
+    run._send_cancel()  # pyright: ignore[reportPrivateUsage]
+    cancel_files = list((tmp_path / "spawn-requests").glob("*.json"))
+    assert len(cancel_files) == 1
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", cancel_files[0].stem
+    )
+    generated_cancel = cast(dict[str, Any], json.loads(cancel_files[0].read_text()))
+    expected_cancel = cast(dict[str, Any], fixture["cancel_request"])
+    assert set(generated_cancel) == set(expected_cancel)
+    assert generated_cancel["expected_anchor"] == expected_cancel["expected_anchor"]
+
+    # Verify Python consumes the tray's push_receipt fixture (run + cancel) and emits inbox_settlement.
+    push_doc = cast(dict[str, object], fixture["push_receipt"])
+    run_receipt = terminal_requests.receipt(
+        push_doc, expected_run["request_id"], expected_run["invocation_id"]
+    )
+    assert run_receipt is not None
+
+    def fake_read_turn(
+        _provider: str, _account: str | None, _session: str, _anchor: dict[str, object]
+    ) -> str:
+        return "done"
+
+    monkeypatch.setattr(terminal_execution, "read_turn", fake_read_turn)
+    run.anchor = cast(dict[str, object], run_receipt["anchor"])
+    finished = run._finish(run_receipt)  # pyright: ignore[reportPrivateUsage]
+    assert finished.status == InvocationStatus.SUCCEEDED
+    assert finished.output == "done"
+
+    acked: list[tuple[str, TrayIdentity]] = []
+    run.ack = lambda req_id, t: acked.append((req_id, t))
+    run._cancel_id = expected_cancel["request_id"]  # pyright: ignore[reportPrivateUsage]
+    run._cancel_receipt(push_doc)  # pyright: ignore[reportPrivateUsage]
+    assert acked == [(expected_cancel["request_id"], tray)]
+
+    inbox = InboxSnapshot(tmp_path, 1234)
+    settled = cast(list[dict[str, object]], fixture["inbox_settlement"]["settled_requests"])
+    inbox.publish({}, settled)
+    assert json.loads(inbox.path.read_text()) == fixture["inbox_settlement"]
