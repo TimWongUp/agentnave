@@ -1236,16 +1236,34 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
   assert.deepEqual(headTitles.slice(0, 2), ["app", "solo"]);
   assert.equal(headTitles.includes("deep"), false, "project past cap waits until revealed or expanded");
 
-  // Context menu opens only on empty manual headers, never on non-empty manual, auto, or clicking '+'.
+  // Context menu opens on all non-:handover headers, never on :handover or clicking '+'.
   for (const key of ["project:/w/app", "project:/w/p0", "project:/w/solo"]) {
     const rec = context.state.heads.get(key);
     for (const fn of rec.el.listeners.contextmenu) fn({ target: { closest: () => null } });
   }
-  assert.deepEqual(menuCalls, ["/w/solo"]);
+  assert.deepEqual(menuCalls, ["/w/app", "/w/p0", "/w/solo"]);
   for (const fn of context.state.heads.get("project:/w/solo").el.listeners.contextmenu) {
     fn({ target: { closest: sel => sel === ".gl-grp-add" } });
   }
-  assert.deepEqual(menuCalls, ["/w/solo"]);
+  assert.deepEqual(menuCalls, ["/w/app", "/w/p0", "/w/solo"]);
+
+  // Pending handover items stay visible even when :handover is folded, and folded headers show status dots.
+  storage.set("agentnave.office.fold.project::handover", "1");
+  storage.set("agentnave.office.fold.project:/w/p0", "1");
+  context.state.folded.set("project:/w/p0", true);
+  context.state.groupsData = [
+    ...groups,
+    { ...agent("g-handover", "/w/app", "2026-11-12T12:00:00Z"), handover: "pending" },
+    { ...agent("g-p0-bad", "/w/p0", "2026-11-11T01:00:00Z"), status: "failed" },
+  ];
+  context.renderList();
+  assert.equal(context.state.items.get("g-handover").el.attributes["data-folded"], undefined);
+  assert.equal(context.state.heads.get("project::handover").dot.hidden, false);
+  assert.equal(context.state.heads.get("project::handover").dot.attributes["data-tone"], "review");
+  assert.equal(context.state.heads.get("project::handover").dot.attributes.title, "待审核/待接手");
+  assert.equal(context.state.heads.get("project:/w/p0").dot.hidden, false);
+  assert.equal(context.state.heads.get("project:/w/p0").dot.attributes["data-tone"], "bad");
+  assert.equal(context.state.heads.get("project:/w/p0").dot.attributes.title, "有失败");
 
   context.revealProject("/w/deep");
   assert.equal(storage.has("agentnave.office.fold.project:/w/deep"), false);
@@ -1294,6 +1312,9 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
           return { project: projects[0], projects };
         }
         if (path === "/app/projects/remove") return { projects: [] };
+        if (path === "/app/projects/pin") return { sidebar: { project_aliases: {}, pinned_projects: body.pinned ? [body.key] : [], pinned_groups: [], project_order: [] } };
+        if (path === "/app/chats/pin") return { sidebar: { project_aliases: {}, pinned_projects: [], pinned_groups: body.pinned ? [body.group] : [], project_order: [] } };
+        if (path === "/app/projects/order") return { sidebar: { project_aliases: {}, pinned_projects: [], pinned_groups: [], project_order: body.order } };
         return {};
       },
     },
@@ -1337,19 +1358,42 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
   assert.equal(toast.textContent, "不在项目目录中");
   assert.equal(toast.classList.classes.has("bad"), true);
 
-  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [{ group: "g1" }] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
-  context.Actions.projectMenu({ key: "/tmp/repo", manual: false, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  const ev = { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} };
+  context.Actions.projectMenu({ key: ":handover", pinned: true, items: [] }, ev);
   assert.equal(menu.hidden, true);
 
-  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [] }, { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  let popClosed = 0;
+  let newChatClosed = 0;
+  context.ChatSidebar = { closePopover: () => { popClosed++; }, closeNewChat: () => { newChatClosed++; } };
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [{ group: "g1" }] }, ev);
+  assert.equal(popClosed, 1);
+  assert.equal(newChatClosed, 1);
   assert.equal(menu.hidden, false);
-  assert.equal(menu.children[0].textContent, "移除项目");
-  menu.children[0].listeners.click[0]();
+  assert.deepEqual(menu.children.map(c => c.textContent), ["在此项目新开 agent", "置顶", "重命名显示名…", "复制路径"]);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: false, items: [] }, ev);
+  assert.equal(menu.hidden, false);
+  assert.deepEqual(menu.children.map(c => c.textContent), ["在此项目新开 agent", "置顶", "重命名显示名…", "复制路径"]);
+
+  context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [] }, ev);
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.children.at(-1).textContent, "移除项目");
+  menu.children.at(-1).listeners.click[0]();
   await new Promise(r => setImmediate(r));
   await new Promise(r => setImmediate(r));
   assert.deepEqual(plain(posts.at(-1)), ["/app/projects/remove", { key: "/tmp/repo" }]);
   assert.deepEqual(plain(state.projects), []);
   assert.equal(refreshes, 2);
+
+  // Pin project, pin group (skipping term-*), and reorder projects update state.sidebar.
+  await context.Actions.pinProject("/tmp/repo", true);
+  assert.deepEqual(plain(state.sidebar.pinned_projects), ["/tmp/repo"]);
+  await context.Actions.pinGroup("term-9", true);
+  assert.deepEqual(plain(state.sidebar.pinned_groups), []);
+  await context.Actions.pinGroup("ws-1", true);
+  assert.deepEqual(plain(state.sidebar.pinned_groups), ["ws-1"]);
+  await context.Actions.reorderProjects(["/b", "/a"]);
+  assert.deepEqual(plain(state.sidebar.project_order), ["/b", "/a"]);
 });
 
 test("clicking boss desk returns to terminal with focus, and at most one selection box follows the right column", async () => {

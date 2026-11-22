@@ -756,7 +756,7 @@
     return el("div", { className: "s-wrap" }, row, ...list.map((pick, index) => {
       const label = AN.L(`备选 ${index + 1}`, `Fallback ${index + 1}`);
       const set = (next) => store(list.map((one, i) => (i === index ? next : one)));
-      return el("div", { className: "s-row is-sub" },
+      return el("div", { className: "s-row is-sub", dataset: { fallback: "true" } },
         el("span", { className: "s-label" }, label),
         el("div", { className: "s-seat" },
           ...seatSelects(`${key}/fb${index}`, `${name} · ${label}`, pick, set, null, undefined, scene, takenBy(index)),

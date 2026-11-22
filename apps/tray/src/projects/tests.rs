@@ -550,3 +550,93 @@ fn manual_projects_persist_deduplicate_and_remove_cleanly() {
     let (removed_missing, _) = super::manual::remove(&config, &wt_proj.key).unwrap();
     assert!(!removed_missing);
 }
+
+#[test]
+fn sidebar_state_persists_normalizes_and_recovers_from_corrupt_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("tray-config");
+    let file = config.join(super::sidebar::FILE);
+
+    // Missing file falls back to empty defaults.
+    assert_eq!(
+        super::sidebar::load(&config),
+        super::SidebarState::default()
+    );
+
+    // Corrupt JSON, non-object JSON, and wrong version fall back safely.
+    fs::create_dir_all(&config).unwrap();
+    for bad in [
+        "{not json",
+        "[]",
+        r#"{"version": 2, "pinned_groups": ["g1"]}"#,
+    ] {
+        fs::write(&file, bad).unwrap();
+        assert_eq!(
+            super::sidebar::load(&config),
+            super::SidebarState::default(),
+            "{bad}"
+        );
+    }
+
+    // Rename trims, strips newlines, caps at 80 chars, and clears on blank.
+    assert_eq!(super::sidebar::rename(&config, "", "x").unwrap_err().0, 400);
+    assert_eq!(
+        super::sidebar::rename(&config, OTHER, "x").unwrap_err().0,
+        400
+    );
+    let long = format!("  {}\n{}\r\n  ", "a".repeat(50), "b".repeat(50));
+    let state = super::sidebar::rename(&config, "/work/app", &long).unwrap();
+    let alias = &state.project_aliases["/work/app"];
+    assert_eq!(alias.chars().count(), 80);
+    assert!(!alias.contains('\n') && !alias.contains('\r'));
+    assert_eq!(super::sidebar::load(&config), state);
+
+    let cleared = super::sidebar::rename(&config, "/work/app", " \n ").unwrap();
+    assert!(cleared.project_aliases.is_empty());
+
+    // Pinning projects and groups deduplicates and handles unpinning.
+    assert_eq!(
+        super::sidebar::pin_project(&config, OTHER, true)
+            .unwrap_err()
+            .0,
+        400
+    );
+    let state = super::sidebar::pin_project(&config, "/work/a", true).unwrap();
+    assert_eq!(state.pinned_projects, vec!["/work/a"]);
+    let state = super::sidebar::pin_project(&config, "/work/a", true).unwrap();
+    assert_eq!(state.pinned_projects, vec!["/work/a"]);
+    let state = super::sidebar::pin_project(&config, "/work/b", true).unwrap();
+    assert_eq!(state.pinned_projects, vec!["/work/b", "/work/a"]);
+    let state = super::sidebar::pin_project(&config, "/work/a", false).unwrap();
+    assert_eq!(state.pinned_projects, vec!["/work/b"]);
+
+    assert_eq!(
+        super::sidebar::pin_group(&config, "  ", true)
+            .unwrap_err()
+            .0,
+        400
+    );
+    let _ = super::sidebar::pin_group(&config, " g1 ", true).unwrap();
+    let state = super::sidebar::pin_group(&config, "g1", true).unwrap();
+    assert_eq!(state.pinned_groups, vec!["g1"]);
+    let state = super::sidebar::pin_group(&config, "g1", false).unwrap();
+    assert!(state.pinned_groups.is_empty());
+
+    // Ordering filters blanks and "other", strips trailing slashes, and deduplicates while overwriting.
+    let state =
+        super::sidebar::set_order(&config, &["", "other", " /work/b/ ", "/work/a", "/work/b"])
+            .unwrap();
+    assert_eq!(state.project_order, vec!["/work/b", "/work/a"]);
+
+    // Trailing slashes and control/bidi characters are normalized so keys match frontend lookups.
+    let state = super::sidebar::rename(&config, "/work/app///", "App\u{202E}\x00\tName").unwrap();
+    assert_eq!(
+        state.project_aliases.get("/work/app").map(String::as_str),
+        Some("App Name")
+    );
+    let state = super::sidebar::pin_project(&config, "/work/c/", true).unwrap();
+    assert_eq!(state.pinned_projects[0], "/work/c");
+
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(saved["version"], 1);
+}

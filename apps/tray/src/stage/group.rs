@@ -11,6 +11,8 @@ impl Group {
             app: None,
             cli_title: None,
             renamed: false,
+            created: String::new(),
+            created_at: None,
             updated: String::new(),
             at: i64::MIN,
             title: String::new(),
@@ -49,8 +51,44 @@ impl Group {
         if let Some(released) = &handover.released {
             group.updated.clone_from(released);
             group.at = timestamp(released).unwrap_or_default();
+            group.consider_created(released);
         }
         group
+    }
+    pub(super) fn created_time(&self) -> &str {
+        if self.created.is_empty() {
+            &self.updated
+        } else {
+            &self.created
+        }
+    }
+    fn consider_created(&mut self, raw: &str) {
+        let Some(at) = timestamp(raw) else {
+            return;
+        };
+        if self.created_at.is_none_or(|known| at < known) {
+            self.created_at = Some(at);
+            self.created = raw.to_owned();
+        }
+    }
+    fn record_snapshot_created(&mut self, snapshot: &Snapshot) {
+        let director = &snapshot.view["director"];
+        self.consider_created(text(director, "created"));
+        if snapshot.item.mode == "task" {
+            for task in array(director, "tasks") {
+                self.consider_created(text(task, "time"));
+            }
+        } else {
+            for key in ["messages", "instructions", "private_messages"] {
+                for entry in array(director, key) {
+                    self.consider_created(text(entry, "time"));
+                }
+            }
+            for seat in array(&director["round"], "seats") {
+                self.consider_created(text(seat, "finished"));
+            }
+        }
+        self.consider_created(&snapshot.item.updated);
     }
     pub(super) fn manager_label(&self) -> &str {
         boss_label(self.host.as_deref(), self.app)
@@ -337,6 +375,7 @@ impl Group {
             self.updated.clone_from(&item.updated);
             self.host.clone_from(&item.host);
         }
+        self.record_snapshot_created(snapshot);
         // Later calls may work elsewhere; the workspace stays with where it began.
         if let Some(origin) = origin::snapshot_origin(snapshot)
             && self.origin.as_ref().is_none_or(|known| origin < *known)

@@ -25,6 +25,10 @@ const Actions = {};
   function openMenu(e, items) {
     e.preventDefault();
     e.stopPropagation();
+    if (typeof ChatSidebar !== "undefined") {
+      ChatSidebar?.closePopover?.();
+      ChatSidebar?.closeNewChat?.();
+    }
     menu.replaceChildren(
       ...items.map((item) => {
         const b = h(`button.ctx-item${item.danger ? ".danger" : ""}`, { type: "button", role: "menuitem" }, item.label);
@@ -105,7 +109,7 @@ const Actions = {};
   // One modal at a time: a title, a body, and buttons; resolves with the button's value.
   function ask({ title, body = [], buttons, input }) {
     return new Promise((resolve) => {
-      const field = input && h("input.act-input", { type: "text", value: input.value, "aria-label": input.label });
+      const field = input && h("input.act-input", { type: "text", value: input.value, placeholder: input.placeholder || null, "aria-label": input.label });
       const error = h("p.act-error", { role: "alert", hidden: true });
       let focusButton = null;
       const row = h("div.act-buttons", {}, buttons.map((b) => {
@@ -562,8 +566,80 @@ const Actions = {};
     }
   }
 
+  // ---- sidebar state writes ---------------------------------------------------------------
+  function applySidebar(result) {
+    if (result?.sidebar) {
+      state.sidebar = typeof ChatGroups !== "undefined" && ChatGroups.normalizeSidebar
+        ? ChatGroups.normalizeSidebar(result.sidebar)
+        : result.sidebar;
+    }
+    state.listKey = null;
+    renderList();
+  }
+  const isProjectPinned = (key) => Boolean(state.sidebar?.pinned_projects?.includes(key));
+  const isGroupPinned = (group) => Boolean(state.sidebar?.pinned_groups?.includes(group));
+  async function postSidebar(path, body, fallbackError) {
+    try {
+      const result = await AN.post(path, body);
+      applySidebar(result);
+      return result;
+    } catch (error) {
+      say(error.message || fallbackError, true);
+      return null;
+    }
+  }
+  async function pinProject(key, pinned) {
+    await postSidebar("/app/projects/pin", { key, pinned }, L("未能更新项目置顶状态", "Failed to update project pin"));
+  }
+  async function pinGroup(group, pinned) {
+    if (String(group).startsWith("term-")) return;
+    await postSidebar("/app/chats/pin", { group, pinned }, L("未能更新 agent 置顶状态", "Failed to update agent pin"));
+  }
+  async function reorderProjects(order) {
+    await postSidebar("/app/projects/order", { order }, L("未能保存项目顺序", "Failed to save project order"));
+  }
+  async function renameProject(section) {
+    const currentAlias = state.sidebar?.project_aliases?.[section.key] || "";
+    const rawName = section.rawTitle || section.title || section.key;
+    await ask({
+      title: L("重命名项目显示名", "Rename project display name"),
+      body: [h("p.act-note", {}, L(`留空将恢复为目录名（${rawName}）。`, `Leave empty to restore the folder name (${rawName}).`))],
+      input: { value: currentAlias, placeholder: rawName, label: L("显示名", "Display name") },
+      buttons: [
+        { label: L("取消", "Cancel") },
+        {
+          label: L("保存", "Save"),
+          primary: true,
+          value: "save",
+          check: async (text) => {
+            const alias = text.trim();
+            if (alias === currentAlias) return "";
+            try {
+              const result = await AN.post("/app/projects/rename", { key: section.key, alias });
+              applySidebar(result);
+            } catch (error) {
+              return error.message || L("未能重命名项目", "Failed to rename project");
+            }
+            say(alias ? L(`已重命名为“${alias}”`, `Renamed to "${alias}"`) : L("已恢复目录名", "Restored folder name"));
+            return "";
+          },
+        },
+      ],
+    });
+  }
+  async function copyPath(path) {
+    if (!path) return;
+    try {
+      await navigator.clipboard.writeText(path);
+      say(L("已复制路径", "Path copied"));
+    } catch {
+      say(L("复制失败", "Copy failed"), true);
+    }
+  }
+
   // ---- menus ------------------------------------------------------------------------------
   function workspaceMenu(id, e) {
+    if (String(id).startsWith("term-")) return;
     if (picked.size && !picked.has(id)) clearPicks();
     if (picked.size > 1) {
       const ids = [...picked];
@@ -575,9 +651,11 @@ const Actions = {};
     }
     const g = state.groupsData.find((x) => x.group === id);
     if (!g) return;
+    const pinned = isGroupPinned(id);
     const endedTerm = typeof ChatTerminal !== "undefined" ? ChatTerminal?.exitedOf?.(id) : null;
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
+      { label: pinned ? L("取消置顶", "Unpin") : L("置顶", "Pin"), run: () => pinGroup(id, !pinned) },
       g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("agent", "agent")) },
       endedTerm && { label: L("关闭终端", "Close terminal"), run: () => ChatTerminal.close(endedTerm.id) },
       g.handover === "pending"
@@ -587,10 +665,16 @@ const Actions = {};
     ].filter(Boolean));
   }
   function projectMenu(section, e) {
-    if (!section?.manual || section.items.length) return;
+    if (!section || section.pinned || section.key === ":handover") return;
+    const pos = { clientX: e.clientX, clientY: e.clientY, preventDefault() {}, stopPropagation() {} };
+    const pinned = isProjectPinned(section.key);
     openMenu(e, [
-      { label: L("移除项目", "Remove project"), run: () => removeProject(section.key) },
-    ]);
+      { label: L("在此项目新开 agent", "New agent in this project"), run: () => typeof ChatTerminal !== "undefined" && ChatTerminal?.newAgent?.(pos, section.other ? null : section.key) },
+      !section.other && { label: pinned ? L("取消置顶", "Unpin") : L("置顶", "Pin"), run: () => pinProject(section.key, !pinned) },
+      !section.other && { label: L("重命名显示名…", "Rename display name…"), run: () => renameProject(section) },
+      !section.other && { label: L("复制路径", "Copy path"), run: () => copyPath(section.key || section.path) },
+      section.manual && !section.items.length && { label: L("移除项目", "Remove project"), run: () => removeProject(section.key) },
+    ].filter(Boolean));
   }
   function roomMenu(id, e) {
     const room = state.ctx?.rooms.get(id);
@@ -602,8 +686,8 @@ const Actions = {};
     ]);
   }
 
-  $("cleanup").addEventListener("click", cleanup);
+  $("cleanup")?.addEventListener("click", cleanup);
   $("add-project")?.addEventListener("click", addProject);
 
-  Object.assign(Actions, { picked, pick, ask, workspaceMenu, projectMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say });
+  Object.assign(Actions, { picked, pick, ask, workspaceMenu, projectMenu, roomMenu, cancelHandover, deleteIsolated, openMenu, say, cleanup, pinProject, pinGroup, reorderProjects, renameProject });
 }

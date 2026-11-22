@@ -107,6 +107,7 @@ const ChatTerminal = (() => {
         title: x.display_title || L("新 agent", "New agent"),
         status: x.exit == null ? "running" : "idle",
         live: x.exit == null,
+        created: t.since.get(x.id),
         updated: t.since.get(x.id),
         project_key: x.project_key,
         project_label: x.project_label || folder(x.cwd),
@@ -528,5 +529,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, pending, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, exitedOf, openBoss, close, stop };
+  return { refresh, pending, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, exitedOf, openBoss, close, stop };
 })();

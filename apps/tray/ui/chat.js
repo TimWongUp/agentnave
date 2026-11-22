@@ -153,7 +153,7 @@ document.addEventListener("pointermove", (e) => {
 // a minimum and a maximum so the office in the middle never gets squeezed out. The right column
 // remembers its width separately for agents with and without a terminal.
 const SPLITS = {
-  side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 200, css: "--side-w" },
+  side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 240, css: "--side-w" },
   conv: { key: "agentnave.office.conv", min: 0.22, floor: 300, css: "--conv-w" },
   convTerm: { key: "agentnave.office.conv.term", min: 0.22, floor: 300, css: "--conv-term-w" },
 };
@@ -251,6 +251,9 @@ function inDesk(m, key, ctx) {
     (r) => r.seat && ctx.seatDesk.get(`${m.conversation}|${r.seat}`) === key,
   );
 }
+function roomIcon() {
+  return h("img.dr-ico-img", { src: "/art/office/meeting-icon.webp", alt: "", draggable: false });
+}
 function scopeHead(c, ctx, shown) {
   const d = state.drawer;
   const real = shown.filter((m) => m.kind !== "typing").length;
@@ -269,7 +272,7 @@ function scopeHead(c, ctx, shown) {
     if (room)
       return {
         key: `room|${d.id}`,
-        ico: () => h("span", {}, L("会", "M")),
+        ico: roomIcon,
         title: room.title,
         sub: L(`会议室 · ${room.seats.length} 位 · ${roundText(room)}`, `Meeting room · ${room.seats.length} seats · ${roundText(room)}`),
       };
@@ -684,6 +687,9 @@ async function refresh() {
     el.banner.hidden = true;
     await ChatTerminal.refresh();
     state.projects = chats.projects || [];
+    state.sidebar = typeof ChatGroups !== "undefined" && ChatGroups.normalizeSidebar
+      ? ChatGroups.normalizeSidebar(chats.sidebar)
+      : (chats.sidebar || null);
     state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
     const followed = ChatTerminal.follow(state.selected);
     if (followed !== state.selected) {
@@ -697,7 +703,7 @@ async function refresh() {
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([state.groupsData, state.projects, state.selected, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();
