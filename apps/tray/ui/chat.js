@@ -699,6 +699,8 @@ async function refresh() {
       ? ChatGroups.normalizeSidebar(chats.sidebar)
       : (chats.sidebar || null);
     state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
+    const derived = ChatTerminal.derivedAll?.() || [];
+    const selectable = [...state.groupsData, ...derived];
     const followed = ChatTerminal.follow(state.selected);
     if (followed !== state.selected) {
       state.selected = followed;
@@ -707,11 +709,11 @@ async function refresh() {
     if (
       state.auto &&
       !narrow.matches &&
-      !state.groupsData.some((g) => g.group === state.selected)
+      !selectable.some((g) => g.group === state.selected)
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([state.groupsData, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();

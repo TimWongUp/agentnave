@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-20
 - 修订：[ADR-0103](0103-tray-embedded-terminal.md) 的 Codex `--no-daemon` 运行方式与 [ADR-0104](0104-in-app-boss-push.md) 的 Codex 推送排除。
+- 修订：托盘 `app-server` 客户端在派生会话中须先 `thread/resume` 订阅线程回合、以 `turn/interrupt` 按轮中断、投递带 `clientUserMessageId` 以区分用户亲自提交的回合，由 [ADR-0109](0109-in-app-derived-sessions.md) 扩展。
 
 ## 背景
 

@@ -7,6 +7,7 @@
 - 修订 [ADR-0019](0019-no-running-messages.md)：Claude 不再只有一次性 print 调用；交互模式会让会话出现在 Claude Code 自带的历史与 `/resume` 列表里。
 - 运行中的原生弹框由 boss 代答，见 [ADR-0057](0057-boss-answers-native-prompts.md)。
 - 非 TUI 路径宿主变量剥离与具名账号目录隔离由 [ADR-0108](0108-multi-account-isolation.md) 修订：`-p` 路径同样剥离 Claude 宿主会话变量；具名账号通过 `CLAUDE_CONFIG_DIR` 将配置、历史与 transcript 隔离在账号目录内。
+- 「Anthropic 对第三方入口名改走额外用量」的判断与 2026-11 的公开实测不符（自定义入口名反而不计 `sdk-*` 倍率），更正见 [ADR-0111](0111-self-drawn-conversation-view.md)；交互运行方式与不改入口名的做法不变。
 
 ## 背景
 

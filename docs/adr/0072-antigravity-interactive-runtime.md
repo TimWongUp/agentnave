@@ -7,6 +7,7 @@
 - 运行活动可由屏幕状态行更新，见 [ADR-0079](0079-agy-screen-activity.md)。
 - 2026-11-14 修订启动投递、`agentnave-interactive` 条目与无 `Stop` 时的终态规则：投递前等待本次进程日志完成实验刷新，增加 `PreInvocation` 探针，并对整轮未挂载 hooks 的回合做条件保底收尾，见文末「修订（2026-11-14）」。
 - 沿用 [ADR-0056](0056-claude-interactive-runtime.md) 的形状：helper 在同一 supervisor 进程组里用伪终端驱动 CLI，一次调用一个进程，回合结束即退出。
+- 省额度前提经 Google 官方答复不成立（交互、`-p`、ACP 同额度同权重），见 [ADR-0111](0111-self-drawn-conversation-view.md)；本 ADR 的运行方式暂不改。
 
 ## 背景
 

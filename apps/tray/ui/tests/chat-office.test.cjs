@@ -1287,6 +1287,108 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
   assert.equal(context.state.heads.get("project:/w/deep").el.classList.contains("flash"), true);
 });
 
+test("open derived terminals stay under their parent when idle, past the cap and in a folded project", () => {
+  const classes = (set = new Set()) => ({
+    set,
+    add: (...names) => names.forEach(n => set.add(n)),
+    remove: (...names) => names.forEach(n => set.delete(n)),
+    toggle: (name, on) => (on ? set.add(name) : set.delete(name)),
+    contains: name => set.has(name),
+  });
+  const makeNode = (tag = "div") => ({
+    tag, hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [],
+    classList: classes(), listeners: {},
+    setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = v; },
+    append(...items) { this.children.push(...items.flat()); },
+    replaceChildren(...items) { this.children = items.flat(); },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    scrollIntoView() {},
+    closest: () => null,
+  });
+  const h = (tag, attrs = {}, ...children) =>
+    Object.assign(makeNode(tag), { attributes: { ...attrs }, children: children.flat(Infinity).filter(x => x != null && x !== false) });
+  const els = new Map([["app", makeNode("div")], ["list", makeNode("div")]]);
+  const storage = new Map();
+  let derived = [];
+  const context = vm.createContext({
+    AN: {
+      h, $: id => els.get(id) || makeNode(id), L: zh => zh,
+      load: async () => ({}), href: p => p, GROUP: { idle: ["空闲", "idle"] },
+      pick: (_map, key) => ["空闲", key || "idle"], urgent: s => s === "running",
+      avatar: () => makeNode("span"), colorClass: () => "c0", relTime: () => "刚刚",
+      clock: () => "", fullTime: () => "", dayLabel: () => "",
+      setText: (el, v) => { el.textContent = v == null ? "" : String(v); },
+      setAttr: (el, k, v) => el.setAttribute(k, v),
+      setClass: (el, v) => { el.className = v; },
+      reconcile: (parent, nodes) => { parent.children = [...nodes]; },
+      stickyOrder: items => items, poll() {}, plain: x => x,
+      art: { character: () => "c" }, hostTile: () => makeNode("span"),
+      deskName: () => "", deskParts: () => [], handleOf: () => "", fullHandle: () => "",
+      cliOf: () => "", chatName: g => g.title || g.group, shownName: g => g.title || g.group,
+      activities: () => [], ongoing: s => s || "idle",
+    },
+    localStorage: {
+      getItem: k => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, v),
+      removeItem: k => storage.delete(k),
+    },
+    window: null,
+    document: { addEventListener() {}, documentElement: { lang: "zh" } },
+    location: { search: "", pathname: "/", hash: "" },
+    history: { pushState() {}, replaceState() {} },
+    ChatTerminal: {
+      headAction(rec) { rec.add ||= makeNode("span.gl-grp-add"); },
+      decorate() {},
+      menu() { return false; },
+      derivedOf: parent => derived.filter(d => d.parent_workspace_id === parent),
+    },
+    Actions: { picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {} },
+    addEventListener() {},
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    Avatars: null,
+    requestAnimationFrame() {}, setTimeout, clearTimeout, Date,
+  });
+  context.window = context;
+  vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
+  vm.runInContext(
+    `${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.state = state; globalThis.renderList = renderList;`,
+    context,
+  );
+
+  const agent = (group, updated) => ({
+    group, title: group, status: "idle", updated, label: "Codex", boss_key: "codex|codex", host: "codex",
+    project_key: "/w/calc", project_label: "calc", project_path: "/w/calc", preview: "", desks_count: 0, rooms_count: 0,
+  });
+  const child = (live) => ({
+    group: "term-20", terminal: 20, host: "antigravity", app: "antigravity", label: "Antigravity", title: "Add Sub Function",
+    status: live ? "running" : "idle", live, updated: "2026-11-12T10:00:00Z", derived: true,
+    parent_workspace_id: "g-parent", blocked_kind: null, project_key: "/w/calc", project_label: "calc", project_path: "/w/calc", preview: "",
+  });
+  // The parent is the oldest of seven agents in its project, so only a running boss keeps it past the cap.
+  const groups = [agent("g-parent", "2026-11-01T00:00:00Z")];
+  for (let i = 0; i < 6; i++) groups.push(agent(`g-other${i}`, `2026-11-1${i}T00:00:00Z`));
+  context.state.groupsData = groups;
+  const rows = () => {
+    context.renderList();
+    return els.get("list").children.filter(n => n.attributes?.href);
+  };
+  const shown = () => rows().filter(n => n.attributes["data-folded"] !== "true").map(n => n.attributes.href);
+
+  derived = [child(true)];
+  assert.ok(shown().includes("/chat/term-20"), "running child shows under its parent");
+  derived = [child(false)];
+  assert.deepEqual(shown().slice(shown().indexOf("/chat/g-parent"), shown().indexOf("/chat/g-parent") + 2), ["/chat/g-parent", "/chat/term-20"]);
+
+  // Waiting for a permission answer, the row is the user's way in, even in a folded project.
+  derived = [{ ...child(true), status: "waiting", blocked_kind: "permission" }];
+  context.state.folded.set("project:/w/calc", true);
+  assert.deepEqual(shown(), ["/chat/g-parent", "/chat/term-20"]);
+  derived = [child(false)];
+  assert.deepEqual(shown(), ["/chat/g-parent", "/chat/term-20"]);
+  derived = [];
+  assert.deepEqual(shown(), []);
+});
+
 test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and empty manual project removal", async () => {
   const h = (tag, attributes = {}, ...children) => {
     const kids = children.flat(Infinity).filter(x => x != null && x !== false);
@@ -1826,6 +1928,136 @@ test("removing the last ended meeting recomputes boss office layout", () => {
   assert.equal(state.bossRec.meets.hidden, true);
   assert.equal(state.bossRec.row.classList.contains("stack"), false);
   assert.equal(state.bossRec.scene.style.width, "334px");
+});
+
+test("derived terminals nest under parent workspace without counting self-chat as running", async () => {
+  const makeNode = (tag) => {
+    const cls = new Set();
+    return {
+      tagName: tag.toUpperCase(),
+      hidden: false,
+      textContent: "",
+      dataset: {},
+      attributes: {},
+      children: [],
+      listeners: {},
+      style: {},
+      classList: {
+        set: cls,
+        add: (...names) => names.forEach((n) => cls.add(n)),
+        remove: (...names) => names.forEach((n) => cls.delete(n)),
+        toggle: (name, on) => (on === undefined ? (cls.has(name) ? (cls.delete(name), false) : (cls.add(name), true)) : on ? (cls.add(name), true) : (cls.delete(name), false)),
+        contains: (name) => cls.has(name),
+      },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = String(v); },
+      addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
+      replaceChildren(...nodes) { this.children = nodes; },
+      append(...nodes) { this.children.push(...nodes); },
+      after(...nodes) { this._after = nodes; },
+      querySelector() { return null; },
+      focus() {},
+      remove() {},
+    };
+  };
+  const h = (tag, attrs = {}, ...children) => Object.assign(makeNode(tag), {
+    attributes: { ...attrs }, children: children.flat(Infinity).filter((x) => x != null && x !== false),
+  });
+  const drawer = makeNode("section");
+  const modes = h("div", {}, h("button"), h("button"));
+  const stopButton = h("button");
+  const drAll = h("div");
+  const navigated = [];
+  const state = {
+    selected: "term-20", loaded: "term-20", groupsData: [], drawer: { kind: "all" },
+    ready: true, convCollapsed: false, convPeek: false,
+  };
+  let mockSessions = [
+    { id: 10, provider: "claude", cwd: "/repo", exit: null, active: false, workspaces: ["ws-parent"], derived: false },
+    { id: 20, provider: "codex", cwd: "/repo/.wt", exit: null, active: false, workspaces: [], derived: true, parent_boss_key: "claude:boss", parent_workspace_id: "ws-parent", derived_busy: false, blocked_kind: null, display_title: "派生调试" },
+  ];
+  const el = {
+    drawer, drAll, tl: h("div"), drIco: h("span"), drTitle: h("span"), drSub: h("span"),
+    convToggle: h("button"), app: { dataset: {} },
+  };
+  drawer.querySelector = (sel) => ({ ".modes": modes, ".dr-term": stopButton }[sel] || null);
+  modes.querySelectorAll = () => modes.children;
+  const context = vm.createContext({
+    AN: {
+      h, L: (zh) => zh, at: Date.parse,
+      load: async () => ({ sessions: mockSessions, cwd: "/repo" }),
+      act: async () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      reply: async () => ({ ok: true }),
+      cliName: (p) => (p === "codex" ? "Codex" : p === "claude" ? "Claude Code" : p),
+      hostTile: (p) => makeNode(p),
+      href: (p) => p,
+    },
+    h, L: (zh) => zh, el, state, Actions: { openMenu() {}, confirm: async () => true },
+    setText: (n, v) => { n.textContent = v; },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    go(path) { navigated.push(path); },
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }),
+    addEventListener() {}, location: { origin: "null" }, Date,
+    renderOffice() {}, openScope() {},
+  });
+  context.h = (tag, attrs = {}, ...children) => (tag.startsWith("iframe") ? Object.assign(makeNode("iframe"), { contentWindow: { postMessage() {} } }) : h(tag, attrs, ...children));
+  context.AN.h = context.h;
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+
+  await context.ChatTerminal.refresh();
+  // Derived terminal is excluded from top-level pending() and from owning ws-parent.
+  assert.equal(context.ChatTerminal.pending().length, 0);
+  assert.equal(context.ChatTerminal.running("ws-parent"), true);
+  assert.equal(context.ChatTerminal.follow("term-20"), "term-20");
+
+  // Idle derived terminal (even with exit == null and user typing self-chat) stays idle/non-live.
+  const [idleChild] = context.ChatTerminal.derivedOf("ws-parent");
+  assert.equal(idleChild.group, "term-20");
+  assert.equal(idleChild.derived, true);
+  assert.equal(idleChild.status, "idle");
+  assert.equal(idleChild.live, false);
+  assert.equal(idleChild.title, "派生调试");
+
+  // Busy derived terminal flips to running/live; blocked flips to waiting.
+  mockSessions[1].derived_busy = true;
+  await context.ChatTerminal.refresh();
+  const [busyChild] = context.ChatTerminal.derivedOf("ws-parent");
+  assert.equal(busyChild.status, "running");
+  assert.equal(busyChild.live, true);
+
+  mockSessions[1].blocked_kind = "permission";
+  await context.ChatTerminal.refresh();
+  const [blockedChild] = context.ChatTerminal.derivedOf("ws-parent");
+  assert.equal(blockedChild.status, "waiting");
+
+  // A derived desk's card in the parent's office opens that terminal, not the boss's.
+  mockSessions[1].derived_busy = false;
+  mockSessions[1].blocked_kind = null;
+  mockSessions[1].native = "sid-1";
+  await context.ChatTerminal.refresh();
+  state.loaded = "ws-parent";
+  state.drawer = { kind: "desk", key: "thread:sid-1" };
+  context.ChatTerminal.column("ws-parent", "claude", "claude");
+  assert.equal(el.drTitle.textContent, "派生调试");
+  assert.equal(context.ChatTerminal.showingDerived(), true);
+  state.drawer = { kind: "desk", key: "thread:other" };
+  context.ChatTerminal.column("ws-parent", "claude", "claude");
+  assert.equal(el.drTitle.textContent, "boss");
+  assert.equal(context.ChatTerminal.showingDerived(), false);
+  state.drawer = { kind: "all" };
+  state.loaded = "term-20";
+
+  // Drawer shows derived title instead of "boss", and hides restart on ended derived terminal.
+  mockSessions[1].exit = 0;
+  mockSessions[1].derived_busy = false;
+  await context.ChatTerminal.refresh();
+  context.ChatTerminal.column("term-20", "codex", "codex");
+  assert.equal(el.drTitle.textContent, "派生调试");
+  assert.equal(drAll._after[1].hidden, true);
+
+  // Closing selected derived terminal returns to its parent workspace.
+  mockSessions = [mockSessions[0]];
+  await context.ChatTerminal.close(20);
+  assert.deepEqual(navigated, ["/chat/ws-parent"]);
 });
 
 test("leaving terminal mode clears .term-mode before applyFolds and long/peer/brief bubbles default folded while short bubbles clean up", async () => {

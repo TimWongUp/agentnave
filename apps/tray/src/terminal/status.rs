@@ -10,6 +10,7 @@ pub(super) struct Tracker {
     sequence: Vec<u8>,
     pub state: Option<String>,
     pub kind: Option<String>,
+    pub seq: u64,
 }
 
 impl Tracker {
@@ -53,9 +54,11 @@ impl Tracker {
                             self.kind = pairs.iter().find_map(|(k, v)| {
                                 (k.trim() == "kind").then(|| v.trim().to_owned())
                             });
+                            self.seq += 1;
                         } else if state == "clear" {
                             self.state = None;
                             self.kind = None;
+                            self.seq += 1;
                         }
                     }
                 }
