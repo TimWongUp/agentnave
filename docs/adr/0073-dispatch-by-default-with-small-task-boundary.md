@@ -1,6 +1,6 @@
 # ADR-0073：开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关
 
-- 状态：部分修订；固定档小事边界去掉「且不在已开启的专项范围内……专项范围内的任务都派出」条款，由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订。
+- 状态：部分修订；固定档小事边界去掉「且不在已开启的专项范围内……专项范围内的任务都派出」条款，由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；「成篇文案……都派出」加上「写作所需的上下文已全在 boss 手里时 boss 自己写」的例外，由 [ADR-0109](0109-boss-writes-when-holding-context.md) 修订。
 - 日期：2026-11-09
 - 扩展 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)：派不派的边界属于「决定派不派之前就必须知道的约束」，写进规则块；不改两档的区分。修订 ADR-0068 中「并行分工」固定由 boss 判断开会的条款。
 
