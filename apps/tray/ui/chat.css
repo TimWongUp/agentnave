@@ -184,10 +184,10 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
 }
 
 /* ---- floor ---- */
-.floor-wrap { margin: 0; padding: 0; max-width: none; position: relative; container-type: inline-size; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+.floor-wrap { margin: 0; padding: 0; max-width: none; position: relative; container-type: inline-size; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: radial-gradient(circle, var(--floor-dot) 1.2px, transparent 1.4px) 0 0 / 20px 20px, var(--bg); }
 :root { --foot-h: 38px; /* the floor's ticker and the conversation's footer share one bottom line */ }
-.floor-head { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; min-height: 54px; padding: 10px 24px; border-bottom: 1px solid var(--line); }
-.floor-head h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.floor-head { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; padding: 14px 20px 4px; }
+.floor-head h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .fh-sub { font-size: 12px; color: var(--muted); }
 .fh-sum { margin-left: auto; display: flex; gap: 8px; }
 .back { display: none; flex: none; padding: 4px 2px; color: var(--accent); font-weight: 600; font-size: 13px; }
@@ -198,16 +198,14 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
 /* The office page never scrolls itself: manage.css's root gutter would paint a strip at its right edge. */
 html:has(body.chat-page) { scrollbar-gutter: auto; }
 /* one column: boss office, meetings in session, open desks. --fig is the character size everywhere */
-.floor { --fig: 100px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; padding: 0; }
-/* Zones separate with one quiet architectural hairline on the shared canvas. */
-.floor .zone:not(.boss-zone) { margin-top: 0; border-top: 1px solid var(--line); }
+.floor { --fig: 100px; position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; padding: 10px 20px 20px; }
+/* Zones space themselves, so an ended room can fold its own gap away as it closes. */
+.floor .zone:not(.boss-zone) { margin-top: 12px; }
 .rooms { display: contents; }
-.zone { position: relative; min-width: 0; border-radius: 0; background: transparent; border: 0; padding: 18px 24px 22px; cursor: pointer; transition: background 0.15s; }
-.zone:not(.desks-zone):hover { background: color-mix(in srgb, var(--ink) 1.5%, transparent); }
+.zone { position: relative; min-width: 0; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); padding: 10px 12px 12px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
 .desks-zone { cursor: default; }
-.zone.sel > .zone-h { color: var(--ink); }
-.zone.sel > .zone-h::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.zone-h { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11.5px; font-weight: 600; letter-spacing: 0.03em; color: var(--muted); }
+.zone.sel { border-color: color-mix(in srgb, var(--accent) 45%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent); }
+.zone-h { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; color: var(--muted); }
 .zone-h .r { margin-left: auto; letter-spacing: 0; font-weight: 550; }
 .zone-h .r.run { color: var(--run); }
 .boss-zone .zone-h .r { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -227,12 +225,12 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 .boss-row { display: grid; grid-template-columns: auto minmax(225px, 380px); justify-content: center; align-items: center; gap: 16px 24px; margin-top: 4px; }
 /* never narrower than the boss's scene, or the meetings panel beside it would squeeze under the desk */
 .boss-mid { min-width: max-content; }
-.boss-side { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 2px 0 2px 20px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; cursor: default; }
+.boss-side { min-width: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px 10px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); cursor: default; }
 .boss-side[hidden] { display: none; }
 .boss-row:has(> .boss-side[hidden]) { grid-template-columns: auto; }
 /* chat-office.js stacks the meetings under the boss when beside it the boss would have to shrink */
 .boss-row.stack { grid-template-columns: minmax(0, 1fr); justify-items: center; }
-.boss-row.stack .boss-side { max-width: none; border-left: 0; border-top: 1px solid var(--line); padding: 14px 0 0; }
+.boss-row.stack .boss-side { max-width: none; }
 .side-rows { display: flex; flex-direction: column; gap: 2px; max-height: calc(46px * 3 + 4px); overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
 @container (max-width: 600px) {
   .boss-row { grid-template-columns: auto minmax(225px, 1fr); gap: 12px 14px; }
@@ -240,7 +238,7 @@ html:has(body.chat-page) { scrollbar-gutter: auto; }
 @container (max-width: 489px) {
   .boss-row { grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 10px; }
   .boss-mid { max-width: 100%; }
-  .boss-side { max-width: none; border-left: 0; border-top: 1px solid var(--line); padding: 14px 0 0; }
+  .boss-side { max-width: none; }
 }
 .l-chair, .l-desk { position: absolute; display: block; pointer-events: none; user-select: none; -webkit-user-drag: none; }
 .l-chair { left: 16.667%; top: 0; width: 66.667%; z-index: 1; }
@@ -513,12 +511,12 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .boss-portrait .head { position: absolute; left: 16.5%; top: 15.5%; width: 67%; height: 69%; display: block; background: var(--wall) center / cover; }
 .boss-portrait::after { content: ""; position: absolute; inset: 0; background: url("/art/office/portrait-frame.png") center / contain no-repeat; pointer-events: none; }
 .boss-zone .label { position: relative; z-index: 6; text-align: center; margin-top: 0; }
-.boss-usage { display: flex; align-items: center; justify-content: center; gap: 5px; max-width: 250px; margin: 4px auto 0; padding: 0; font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--faint); line-height: 1.2; cursor: default; z-index: 6; position: relative; }
-.boss-usage[hidden] { display: none; }
+.boss-usage { display: flex; align-items: center; justify-content: center; gap: 5px; max-width: 250px; height: 16px; min-height: 16px; margin: 4px auto 0; padding: 0; font-size: 10.5px; font-variant-numeric: tabular-nums; color: var(--faint); line-height: 1.2; cursor: default; z-index: 6; position: relative; }
+.chat-page .boss-usage[hidden] { display: flex !important; visibility: hidden; pointer-events: none; }
 .boss-usage-refresh { flex: none; display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
 .boss-usage-refresh:hover { color: var(--muted); background: var(--hover); }
 .boss-usage-refresh svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.boss-zone { padding: 14px 24px 16px; }
+.boss-zone { padding-top: 8px; padding-bottom: 4px; }
 .label { text-align: center; margin-top: 4px; min-width: 0; }
 .label .nm { font-size: 12px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .label .cli { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 3px 5px; font-size: 11px; color: var(--muted); }
@@ -595,7 +593,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .seat.empty .plate, .seat.empty .seat-nm { opacity: 0.6; }
 
 /* ---- ticker and envelopes ---- */
-.ticker { flex: none; display: flex; align-items: center; gap: 10px; box-sizing: border-box; height: var(--foot-h); padding: 0 24px; border-top: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--soft); }
+.ticker { flex: none; display: flex; align-items: center; gap: 10px; box-sizing: border-box; height: var(--foot-h); padding: 0 20px; border-top: 1px solid var(--line); background: var(--bg); font-size: 12px; color: var(--soft); }
 .ticker .lbl { flex: none; font-size: 11px; font-weight: 650; color: var(--faint); letter-spacing: 0.04em; }
 .tick { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tick.new { animation: tick-in 0.4s ease-out; }
@@ -752,7 +750,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .side { border-right: 0; }
   .back { display: inline-block; }
   .side-toggle { display: none; }
-  .floor { padding: 0; }
+  .floor { padding: 10px 12px 18px; }
   .conv { width: 100vw; }
 }
 :root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
