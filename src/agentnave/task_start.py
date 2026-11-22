@@ -267,6 +267,7 @@ class StartArguments:
     selected: ReviewSeat | None = None
     resumed_task: TaskRecord | None = None
     account: str | None = None  # a registered account of the provider; None: the default one
+    terminal: bool = False
 
     def inherit(self, task: TaskRecord) -> None:
         self.provider = self._inherited(
@@ -343,7 +344,7 @@ class StartArguments:
         if is_image_seat(name, custom) and own:
             raise ValueError(IMAGE_HOST_CLI_REASON)
         choice = host_cli_mode(host)
-        if seat is not None and own and choice == "subagent":
+        if seat is not None and own and choice == "subagent" and not self.terminal:
             options, _ = apply_seat(seat, seat.provider, provider_options or {})
             model = options.get("model", seat.model)
             effort = options.get("effort", "")
@@ -366,7 +367,7 @@ class StartArguments:
                     provider=seat.provider, model=model, effort=effort, account=self.account
                 ),
             )
-        if own and choice == "skip":
+        if own and choice == "skip" and not self.terminal:
             raise ValueError("CLI is the host's own CLI")
 
 

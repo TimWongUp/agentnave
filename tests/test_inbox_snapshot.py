@@ -25,3 +25,14 @@ def test_snapshot_changes_only_when_state_changes(tmp_path: Path) -> None:
     assert snapshot.path.exists()
     snapshot.close()
     assert not snapshot.path.exists()
+
+
+def test_settlement_ack_keeps_snapshot_without_inbox_events(tmp_path: Path) -> None:
+    snapshot = InboxSnapshot(tmp_path, 123)
+    acknowledgements: list[dict[str, object]] = [
+        {"tray_pid": 456, "tray_started_at": 123.0, "request_id": "req"}
+    ]
+    snapshot.publish({}, acknowledgements)
+    assert json.loads(snapshot.path.read_text())["settled_requests"] == acknowledgements
+    snapshot.publish({}, [])
+    assert not snapshot.path.exists()

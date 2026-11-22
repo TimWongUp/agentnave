@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 from collections import Counter
 from collections.abc import AsyncGenerator
@@ -164,6 +165,31 @@ def wait_guidance(*, again: bool = False) -> str:
     return WAIT_AGAIN if again else WAIT_NEXT
 
 
+def terminal_available() -> bool:
+    if sys.platform != "darwin" or os.environ.get("AGENTNAVE_DERIVED_SESSION") == "1":
+        return False
+    from agentnave.push_capability import find_tray, has_ancestor_in
+    from agentnave.terminal_requests import read_tray
+
+    tray = find_tray(data_root(), HOST.provider)
+    snapshot = read_tray(data_root(), tray) if tray else None
+    if not snapshot:
+        return False
+    derived_raw = snapshot.get("derived_pids")
+    if isinstance(derived_raw, list):
+        derived_pids = {
+            item
+            for item in cast(list[object], derived_raw)
+            if isinstance(item, int) and not isinstance(item, bool) and item > 1
+        }
+        if derived_pids and has_ancestor_in(derived_pids, stop_pid=tray.pid if tray else None):
+            return False
+    providers = snapshot.get("terminal_providers")
+    return isinstance(providers, list) and any(
+        name in ("claude", "codex", "antigravity") for name in cast(list[object], providers)
+    )
+
+
 ALREADY_WAITING = (
     "An earlier blocking inbox wait for this chat is still running (in the background or an "
     "earlier exec cell) and returns its results to that call: collect them there and do not "
@@ -269,10 +295,20 @@ class Runtime:
         if self._inbox_closed:
             return
         try:
+            from agentnave.terminal_requests import outstanding_acknowledgements
+
+            pending = outstanding_acknowledgements(data_root(), self.manager.settled_requests)
+            self.manager.settled_requests = pending
             waiting = self.active_inbox_waits | {
                 ws for ws, count in self.active_waits.items() if count > 0
             }
-            self.inbox_snapshot.publish(inbox_events(self.conversations, waiting, self.cancelling))
+            self.inbox_snapshot.publish(
+                inbox_events(self.conversations, waiting, self.cancelling), pending
+            )
+            if pending:
+                self._inbox_scheduled = asyncio.get_running_loop().call_later(
+                    0.5, self.refresh_inbox
+                )
         except (OSError, ValueError, KeyError):
             logging.getLogger(__name__).warning("Could not publish inbox state", exc_info=True)
 
@@ -500,6 +536,8 @@ class _Server(MCPServer[Runtime]):
                 continue
             schema = json.loads(json.dumps(tool.input_schema))
             schema["additionalProperties"] = False
+            if tool.name == "start_agent" and not terminal_available():
+                schema.get("properties", {}).pop("terminal", None)
             output = json.loads(json.dumps(tool.output_schema))
             _filter_role_schema(schema, groups, image_enabled, input_ids, medium)
             if decision and tool.name == "start_agent":
@@ -525,6 +563,8 @@ class _Server(MCPServer[Runtime]):
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Runtime, Any] | None = None
     ) -> CallToolResult | InputRequiredResult:
+        if name == "start_agent" and "terminal" in arguments and not terminal_available():
+            raise ToolError("terminal is not supported by this connection")
         tool = self._tool_manager.get_tool(name)
         if tool is not None:
             _check_arguments(name, arguments, tool.parameters)

@@ -156,20 +156,8 @@ fn leases_dir(repo_common_dir: &Path, isolation_id: &str) -> Result<PathBuf, Str
     Ok(target)
 }
 
-fn create_private_dir(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)
-    }
-    #[cfg(not(unix))]
-    {
-        fs::create_dir_all(path)
-    }
-}
+use super::git::{GitRunner, bytes_to_path, trim_line_end};
+use crate::data_files::create_private_dir;
 
 fn open_lock(path: &Path, create: bool) -> io::Result<File> {
     let mut options = OpenOptions::new();
@@ -334,4 +322,78 @@ pub(crate) fn remove_lease_dir_locked(
     }
     let _ = fs::remove_dir(&dir);
     Ok(())
+}
+
+/// Process-held OS file lock keeping an isolated worktree alive while a derived terminal runs.
+pub(crate) struct HeldLease {
+    pub(crate) path: PathBuf,
+    file: Option<File>,
+}
+
+impl Drop for HeldLease {
+    fn drop(&mut self) {
+        if let Some(file) = self.file.take() {
+            release_and_remove(file, &self.path);
+        }
+    }
+}
+
+fn random_lease_name() -> String {
+    let mut bytes = [0u8; 16];
+    if getrandom::fill(&mut bytes).is_err() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        bytes.copy_from_slice(&nanos.to_le_bytes());
+    }
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{hex}.lock")
+}
+
+/// Resolve the Git common directory of `worktree_cwd` without executing hooks/filters.
+pub(crate) fn resolve_repo_common_dir(worktree_cwd: &Path) -> Result<PathBuf, String> {
+    if is_link(worktree_cwd) || !worktree_cwd.is_dir() {
+        return Err(format!("无效的隔离工作目录：{}", worktree_cwd.display()));
+    }
+    let git = GitRunner::new()?;
+    let out = git.run(
+        worktree_cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        &[0],
+        &[],
+    )?;
+    let path = bytes_to_path(trim_line_end(&out.stdout));
+    if is_link(&path) || !path.is_dir() {
+        return Err(format!("无效的 Git 公共目录：{}", path.display()));
+    }
+    Ok(path)
+}
+
+/// Acquire an independent OS usage lease for `isolation_id` under the repository lock (ADR-0109).
+pub(crate) fn acquire_lease(
+    repo_common_dir: &Path,
+    isolation_id: &str,
+    timeout: Duration,
+) -> Result<HeldLease, String> {
+    let _repo_lock = acquire_repo_lock(repo_common_dir, timeout)?;
+    let dir = leases_dir(repo_common_dir, isolation_id)?;
+    create_private_dir(&dir).map_err(|e| e.to_string())?;
+    check_safe_dir(&dir)?;
+    for _ in 0..8 {
+        let path = dir.join(random_lease_name());
+        if path.exists() || is_link(&path) {
+            continue;
+        }
+        match try_lock_verified(&path, true) {
+            Ok(Some(file)) => {
+                return Ok(HeldLease {
+                    path,
+                    file: Some(file),
+                });
+            }
+            Ok(None) | Err(TryLockError::WouldBlock) => continue,
+            Err(TryLockError::Error(e)) => return Err(e.to_string()),
+        }
+    }
+    Err(format!("无法为隔离目录 {isolation_id} 分配租约锁文件"))
 }

@@ -285,11 +285,17 @@ function updateItem(rec, g, flat = false) {
   const name = shownName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${g.derived ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
-  setAttr(rec.el, "aria-label", L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`));
+  setAttr(
+    rec.el,
+    "aria-label",
+    g.derived
+      ? L(`${name}，派生终端 ${g.label}，${word}`, `${name}, derived terminal in ${g.label}, ${word}`)
+      : L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`),
+  );
   const place = itemPlace(g);
   setAttr(rec.el, "title", `${name} · ${place}`);
   const tileKey = `${g.host}|${g.label}|${!!window.Avatars?.custom("host", g.host, "")}`;
@@ -306,19 +312,21 @@ function updateItem(rec, g, flat = false) {
   setAttr(rec.pin, "title", pinned ? L("已置顶", "Pinned") : null);
   // In flat view, .gi-meta also displays the owning project name when not "other".
   const handover = g.handover === "pending" || g.handover === "changed";
+  const blocked = Boolean(g.derived && g.blocked_kind);
   if (flat) {
     const project = projectTitleOf(g);
     const parts = [];
     if (g.handover === "pending") parts.push(L("待接手", "Awaiting handover"));
     else if (g.handover === "changed") parts.push(L("boss 已更换", "boss changed"));
     if (handover) parts.push(g.label);
+    else if (blocked) parts.push(L("等待确认", "Needs attention"));
     if (project) parts.push(project);
     const metaText = parts.filter(Boolean).join(" · ");
     rec.meta.hidden = !metaText;
     setText(rec.meta, metaText);
   } else {
-    rec.meta.hidden = !handover;
-    setText(rec.meta, handover ? `${handoverWord(g)}${place}` : "");
+    rec.meta.hidden = !handover && !blocked;
+    setText(rec.meta, handover ? `${handoverWord(g)}${place}` : blocked ? L("等待确认", "Needs attention") : "");
   }
   rec.bottom.hidden = rec.iso.hidden = !g.isolated_count;
   setText(rec.iso, isolatedCount(g.isolated_count));
@@ -364,9 +372,16 @@ function renderList() {
     ChatSidebar.syncActiveHighlight?.();
   }
 }
-// The cap may never hide a pending handover, work waiting on the reader, a pinned agent, or the agent already open.
+// The cap may never hide a pending handover, work waiting on the reader, a pinned agent, the agent
+// already open, or an agent with a derived terminal still open under it.
 function mustShow(g) {
-  return g.handover === "pending" || urgent(g.status) || g.group === state.selected || isGroupPinned(g.group);
+  return (
+    g.handover === "pending" ||
+    urgent(g.status) ||
+    g.group === state.selected ||
+    isGroupPinned(g.group) ||
+    Boolean(ChatTerminal.derivedOf?.(g.group)?.length)
+  );
 }
 // A folded project keeps only pending handovers, urgent work, and the open agent visible.
 function stayVisibleWhenFolded(g) {
@@ -488,6 +503,10 @@ function flatNodes(groups, { prefs, query }) {
   for (const g of shown) {
     nodes.push(itemNode(g, false, true));
     order.push(g.group);
+    for (const child of ChatTerminal.derivedOf?.(g.group) || []) {
+      nodes.push(itemNode(child, false, true));
+      order.push(child.group);
+    }
   }
   if (items.length > shown.length) {
     nodes.push(
@@ -520,10 +539,15 @@ function groupedNodes(groups, { prefs, query } = {}) {
     const folded = searching ? false : isFolded(id);
     nodes.push(headNode(section, folded));
     for (const g of section.shown) {
-      // A folded group still shows what needs the reader or is open.
-      const hidden = folded && !stayVisibleWhenFolded(g);
+      const children = ChatTerminal.derivedOf?.(g.group) || [];
+      // A folded group still shows what needs the reader, is open, or has an open derived terminal.
+      const hidden = folded && !(stayVisibleWhenFolded(g) || children.length);
       nodes.push(itemNode(g, hidden, false));
       if (!hidden) order.push(g.group);
+      for (const child of children) {
+        nodes.push(itemNode(child, false));
+        order.push(child.group);
+      }
     }
     if (section.hidden)
       nodes.push(

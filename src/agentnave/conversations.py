@@ -58,6 +58,7 @@ from agentnave.member_names import seat_identity, task_identity
 from agentnave.members import CapacityError, ProviderName, read_max_running
 from agentnave.models import InvocationRequest, InvocationStatus, RoundOrder
 from agentnave.orchestration_roles import SeatChoice
+from agentnave.push_capability import TrayIdentity
 from agentnave.store import (
     Conversation,
     EntryRecord,
@@ -80,6 +81,7 @@ from agentnave.task_isolation import (
     release_hold,
 )
 from agentnave.task_start import check_foreign_session, latest_session_task
+from agentnave.terminal_execution import TerminalLaunch, make_launch
 from agentnave.threaded import to_thread_keeping, to_thread_uninterrupted
 
 
@@ -95,6 +97,7 @@ class _TaskStartup:
     owns_hold: bool = False
     cleanup_paths: tuple[Path, ...] = ()
     started: bool = False
+    terminal: bool = False
 
 
 class Conversations(ConversationStore):
@@ -703,6 +706,7 @@ class Conversations(ConversationStore):
         isolation_ref: str | None = None,
         hold: IsolationHold | None = None,
         manager_workspace: str | None = None,
+        terminal_tray: TrayIdentity | None = None,
     ) -> TaskStart:
         """Start one private task.
 
@@ -729,7 +733,9 @@ class Conversations(ConversationStore):
         prompt = request.prompt  # Keep the manager's own text as the saved task prompt.
         self.manager.check_start(request)
         self._check_capacity(1)
-        startup = _TaskStartup(hold=hold, owns_hold=hold is None)
+        startup = _TaskStartup(
+            hold=hold, owns_hold=hold is None, terminal=terminal_tray is not None
+        )
         try:
             if conversation_id:
                 startup.record = self.writable(conversation_id)
@@ -749,7 +755,11 @@ class Conversations(ConversationStore):
             request = startup.hold.request
             if forwarded:
                 request = replace(request, prompt=forwarded_prompt(forwarded, prompt))
-            prepared = self.manager.prepare(request)
+            prepared = (
+                PreparedCommand(argv=(), cwd=request.cwd)
+                if terminal_tray is not None
+                else self.manager.prepare(request)
+            )
             startup.cleanup_paths = tuple(Path(path) for path in prepared.cleanup_paths)
             # Held by the run until it ends: no other server can resume this session meanwhile.
             startup.native_lock = self.manager.reserve(request)
@@ -769,9 +779,22 @@ class Conversations(ConversationStore):
                 forwarded,
             )
             task.isolation_owned = info is not None and startup.hold.owns_isolation
+            task.execution_mode = "terminal" if terminal_tray is not None else "background"
             record.state.tasks.append(task)
             self._persist(record)
-            invocation_id = self._launch_prepared_task(startup, record, task, request, prepared)
+            terminal_launch = None
+            if terminal_tray is not None:
+                terminal_launch = make_launch(
+                    self.root,
+                    terminal_tray,
+                    self._boss(manager_session_id),
+                    manager_session,
+                    request,
+                    info,
+                )
+            invocation_id = self._launch_prepared_task(
+                startup, record, task, request, prepared, terminal_launch
+            )
             startup.native_lock = None  # the run releases it when it ends
             startup.started = True
             startup.hold.consumed = True
@@ -836,15 +859,17 @@ class Conversations(ConversationStore):
         task: TaskRecord,
         request: InvocationRequest,
         prepared: PreparedCommand,
+        terminal: TerminalLaunch | None = None,
     ) -> str:
         on_settled = self._task_settlement(startup)
         try:
-            if on_settled is not None:
+            if on_settled is not None or terminal is not None:
                 return self.manager.start(
                     request,
                     prepared=prepared,
                     claim=startup.native_lock,
                     on_settled=on_settled,
+                    terminal=terminal,
                 )
             return self.manager.start(
                 request,
@@ -999,7 +1024,10 @@ class Conversations(ConversationStore):
             # Runs on a worker thread after the process tree ended; the lease goes last.
             # Only read-only rounds: a write task's deliverable may sit in an ignored path.
             auto_release = (
-                owns_isolation and hold.request.read_only and status == InvocationStatus.SUCCEEDED
+                owns_isolation
+                and not startup.terminal
+                and hold.request.read_only
+                and status == InvocationStatus.SUCCEEDED
             )
             try:
                 summary, warnings = self.isolated.settle_task(
@@ -1144,6 +1172,11 @@ class Conversations(ConversationStore):
             # resumed native session still joins this conversation.
             finish("interrupted", "history_write_failed; use wait for the invocation result")
             record.saved = record.state.model_copy(deep=True)
+        else:
+            if (
+                terminal_run := self.manager.terminal_runs.get(invocation_id)
+            ) and terminal_run.terminal_finished:
+                self.manager.ack_terminal_request(invocation_id, terminal_run.launch.tray)
         self.running_tasks.pop(task_id, None)
         self._ensure_live_writer(record)
         self._release_idle(record)

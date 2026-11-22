@@ -69,3 +69,29 @@ def test_push_matches_codex_app_server_wrapper_chain(
 def test_process_start_time_is_current() -> None:
     started = read_process_started(os.getpid())
     assert time.time() - 3600 < started <= time.time()
+
+
+def test_push_accepts_large_snapshot_but_not_over_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_path / "push"
+    folder.mkdir()
+    path = folder / "42.json"
+    path.write_text(
+        json.dumps({"version": 1, "pid": 42, "providers": ["claude"], "padding": "x" * 20000})
+    )
+    started = path.stat().st_mtime - 1
+    monkeypatch.setattr(push_capability.sys, "platform", "darwin")
+    monkeypatch.setattr(push_capability.os, "getppid", lambda: 42)
+
+    def parent(_pid: int) -> int:
+        return 1
+
+    def birth(_pid: int) -> float:
+        return started
+
+    monkeypatch.setattr(push_capability, "read_process_parent", parent)
+    monkeypatch.setattr(push_capability, "read_process_started", birth)
+    assert push_capability.app_can_push(tmp_path, "claude")
+    path.write_text("x" * (push_capability.MAX_PUSH_BYTES + 1))
+    assert not push_capability.app_can_push(tmp_path, "claude")

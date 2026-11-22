@@ -37,6 +37,12 @@ const WRAPPER_SCRIPT: &str = concat!(
     "  sleep 0.1; i=$((i + 1))\n",
     "done\n",
     "if [ ! -S \"$sock\" ]; then echo \"codex app-server socket timeout: $sock\" >&2; exit 1; fi\n",
+    "if [ -n \"${AGENTNAVE_CODEX_READY_FILE:-}\" ]; then\n",
+    "  j=0\n",
+    "  while [ \"$j\" -lt 30 ] && [ ! -e \"$AGENTNAVE_CODEX_READY_FILE\" ]; do\n",
+    "    sleep 0.1; j=$((j + 1))\n",
+    "  done\n",
+    "fi\n",
     "if [ -n \"$resume_id\" ]; then\n",
     "  \"$codex\" resume --remote \"unix://$sock\" -C \"$cwd\" -c check_for_update_on_startup=false \"$@\" \"$resume_id\"\n",
     "else\n",
@@ -81,7 +87,7 @@ impl ThreadStatus {
         matches!(self, Self::Idle | Self::SystemError)
     }
 
-    fn is_deliverable(&self) -> bool {
+    pub(super) fn is_deliverable(&self) -> bool {
         !matches!(
             self,
             Self::NotLoaded
@@ -90,6 +96,45 @@ impl ThreadStatus {
                 }
         )
     }
+
+    pub(super) fn is_waiting_on_approval(&self) -> bool {
+        matches!(
+            self,
+            Self::Active {
+                waiting_on_approval: true
+            }
+        )
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct TurnEventState {
+    pub started: bool,
+    pub completed_status: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ThreadTurnInfo {
+    pub id: String,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+pub(super) struct TurnStartConfig {
+    pub prompt: String,
+    pub client_id: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub approval_policy: Option<String>,
+    pub approvals_reviewer: Option<String>,
+    pub sandbox_policy: Option<Value>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InterruptRpcOutcome {
+    Issued,
+    NoActiveTurn,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -114,6 +159,7 @@ struct ClientState {
     shutdown: Option<UnixStream>,
     pending: HashMap<u64, mpsc::Sender<Value>>,
     threads: HashMap<String, (ThreadStatus, u64)>,
+    turns: HashMap<(String, String), TurnEventState>,
     #[cfg(test)]
     last_error: Option<String>,
 }
@@ -207,6 +253,7 @@ impl Client {
             state.writer = None;
             state.pending.clear();
             state.threads.clear();
+            state.turns.clear();
             state.generation
         };
 
@@ -553,6 +600,169 @@ impl Client {
         )
     }
 
+    pub(super) fn loaded_threads(&self) -> Vec<String> {
+        self.refresh_threads();
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .threads
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    pub(super) fn thread_status(&self, tid: &str) -> Option<ThreadStatus> {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .threads
+            .get(tid)
+            .map(|(status, _)| status.clone())
+    }
+
+    pub(super) fn turn_event(&self, tid: &str, turn_id: &str) -> Option<TurnEventState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .turns
+            .get(&(tid.to_owned(), turn_id.to_owned()))
+            .cloned()
+    }
+
+    pub(super) fn write_project_trust(&self, cwd: &Path) -> Result<(), String> {
+        let canonical = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+        let quoted = serde_json::to_string(&canonical.to_string_lossy().into_owned())
+            .map_err(|e| e.to_string())?;
+        let key_path = format!("projects.{quoted}.trust_level");
+        match self.request(
+            "config/value/write",
+            Some(json!({
+                "keyPath": key_path,
+                "mergeStrategy": "replace",
+                "value": "trusted",
+            })),
+        ) {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(err)) => Err(err["message"]
+                .as_str()
+                .unwrap_or("config/value/write failed")
+                .to_owned()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn start_turn(
+        &self,
+        thread_id: &str,
+        cfg: &TurnStartConfig,
+    ) -> Result<String, String> {
+        let mut params = serde_json::Map::new();
+        params.insert("threadId".to_owned(), json!(thread_id));
+        params.insert(
+            "input".to_owned(),
+            json!([{"type": "text", "text": cfg.prompt, "text_elements": []}]),
+        );
+        params.insert("clientUserMessageId".to_owned(), json!(cfg.client_id));
+        if let Some(model) = &cfg.model {
+            params.insert("model".to_owned(), json!(model));
+        }
+        if let Some(effort) = &cfg.effort {
+            params.insert("effort".to_owned(), json!(effort));
+        }
+        if let Some(policy) = &cfg.approval_policy {
+            params.insert("approvalPolicy".to_owned(), json!(policy));
+        }
+        if let Some(reviewer) = &cfg.approvals_reviewer {
+            params.insert("approvalsReviewer".to_owned(), json!(reviewer));
+        }
+        if let Some(sandbox) = &cfg.sandbox_policy {
+            params.insert("sandboxPolicy".to_owned(), sandbox.clone());
+        }
+        match self.request("turn/start", Some(Value::Object(params))) {
+            Ok(Ok(res)) => res["turn"]["id"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| "turn/start response missing turn.id".to_owned()),
+            Ok(Err(err)) => Err(err["message"]
+                .as_str()
+                .unwrap_or("turn/start rejected")
+                .to_owned()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn resume_thread(&self, thread_id: &str) -> Result<(), String> {
+        match self.request(
+            "thread/resume",
+            Some(json!({"threadId": thread_id, "excludeTurns": true})),
+        ) {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(err)) => Err(err["message"]
+                .as_str()
+                .unwrap_or("thread/resume rejected")
+                .to_owned()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn read_thread(
+        &self,
+        thread_id: &str,
+    ) -> Result<(Option<PathBuf>, Vec<ThreadTurnInfo>), String> {
+        let res = match self.request(
+            "thread/read",
+            Some(json!({"threadId": thread_id, "includeTurns": true})),
+        ) {
+            Ok(Ok(res)) => res,
+            Ok(Err(err)) => {
+                return Err(err["message"]
+                    .as_str()
+                    .unwrap_or("thread/read failed")
+                    .to_owned());
+            }
+            Err(err) => return Err(err),
+        };
+        let path = res["thread"]["path"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        let turns = res["thread"]["turns"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| {
+                let id = t["id"].as_str()?.to_owned();
+                let status = t["status"].as_str().unwrap_or_default().to_owned();
+                let error = t["error"]["message"].as_str().map(str::to_owned);
+                Some(ThreadTurnInfo { id, status, error })
+            })
+            .collect();
+        Ok((path, turns))
+    }
+
+    pub(super) fn interrupt_turn(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<InterruptRpcOutcome, String> {
+        match self.request(
+            "turn/interrupt",
+            Some(json!({"threadId": thread_id, "turnId": turn_id})),
+        ) {
+            Ok(Ok(_)) => Ok(InterruptRpcOutcome::Issued),
+            Ok(Err(err)) => {
+                let msg = err["message"].as_str().unwrap_or("turn/interrupt failed");
+                if msg.to_ascii_lowercase().contains("no active turn") {
+                    Ok(InterruptRpcOutcome::NoActiveTurn)
+                } else {
+                    Err(msg.to_owned())
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     pub(super) fn update_queued(
         &self,
         thread_id: &str,
@@ -616,6 +826,51 @@ fn read_loop(mut reader: ws::WebSocketReader, state: Arc<Mutex<ClientState>>, ge
                         guard.thread_seq += 1;
                         let seq = guard.thread_seq;
                         guard.threads.insert(tid.to_owned(), (status, seq));
+                    }
+                }
+            }
+            Some("turn/started") => {
+                if let (Some(tid), Some(turn_id)) = (
+                    msg["params"]["threadId"].as_str(),
+                    msg["params"]["turn"]["id"].as_str(),
+                ) {
+                    let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+                    if guard.generation == gen_id {
+                        if guard.turns.len() >= 256 {
+                            guard.turns.clear();
+                        }
+                        guard
+                            .turns
+                            .entry((tid.to_owned(), turn_id.to_owned()))
+                            .or_default()
+                            .started = true;
+                    }
+                }
+            }
+            Some("turn/completed") => {
+                if let (Some(tid), Some(turn_id)) = (
+                    msg["params"]["threadId"].as_str(),
+                    msg["params"]["turn"]["id"].as_str(),
+                ) {
+                    let status = msg["params"]["turn"]["status"]
+                        .as_str()
+                        .unwrap_or("completed")
+                        .to_owned();
+                    let error = msg["params"]["turn"]["error"]["message"]
+                        .as_str()
+                        .map(str::to_owned);
+                    let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+                    if guard.generation == gen_id {
+                        if guard.turns.len() >= 256 {
+                            guard.turns.clear();
+                        }
+                        let entry = guard
+                            .turns
+                            .entry((tid.to_owned(), turn_id.to_owned()))
+                            .or_default();
+                        entry.started = true;
+                        entry.completed_status = Some(status);
+                        entry.error = error;
                     }
                 }
             }

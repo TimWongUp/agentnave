@@ -27,17 +27,22 @@ class InboxSnapshot:
     def __init__(self, root: Path, pid: int) -> None:
         self.path = root / "inbox" / f"{pid}.json"
         self.pid = pid
-        self._last: dict[str, BossInbox] | None = None
+        self._last: dict[str, object] | None = None
 
-    def publish(self, bosses: dict[str, BossInbox]) -> None:
+    def publish(
+        self, bosses: dict[str, BossInbox], settled_requests: list[dict[str, object]] | None = None
+    ) -> None:
         live = {key: value for key, value in bosses.items() if value["waiting"] or value["items"]}
-        if live == self._last:
+        document: dict[str, object] = {"version": 1, "pid": self.pid, "bosses": live}
+        if settled_requests:
+            document["settled_requests"] = settled_requests
+        if document == self._last:
             return
-        if not live:
+        if not live and not settled_requests:
             self.path.unlink(missing_ok=True)
-            self._last = {}
+            self._last = document
             return
-        payload = json.dumps({"version": 1, "pid": self.pid, "bosses": live}, ensure_ascii=False)
+        payload = json.dumps(document, ensure_ascii=False)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd, temporary = tempfile.mkstemp(prefix=f".{self.pid}.", dir=self.path.parent)
         try:
@@ -47,7 +52,7 @@ class InboxSnapshot:
         finally:
             Path(temporary).unlink(missing_ok=True)
         # Keep a copy, since callers may mutate their lists after publishing.
-        self._last = json.loads(json.dumps(live))
+        self._last = json.loads(json.dumps(document))
 
     def close(self) -> None:
         self.path.unlink(missing_ok=True)

@@ -162,6 +162,7 @@ fn claude_wakeup_live() {
         pending: 0,
         account: None,
         codex: None,
+        derived: None,
     });
     let mut state = wakeup::WakeupState::default();
     wait_for_ready(&session);

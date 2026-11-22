@@ -242,7 +242,8 @@ function drawerVisible() {
 }
 function activeSelection() {
   if (!drawerVisible()) return null;
-  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.showing?.()) return { kind: "boss" };
+  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.showing?.())
+    return ChatTerminal.showingDerived?.() && state.drawer.kind === "desk" ? { kind: "desk", key: state.drawer.key } : { kind: "boss" };
   if (el.drawer?.classList?.contains?.("term-mode")) return { kind: "boss" };
   if (state.drawer.kind === "all") return { kind: "boss" };
   if (state.drawer.kind === "desk") return { kind: "desk", key: state.drawer.key };
