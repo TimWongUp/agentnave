@@ -125,6 +125,10 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                         | "/app/projects/pick"
                         | "/app/projects/add"
                         | "/app/projects/remove"
+                        | "/app/projects/rename"
+                        | "/app/projects/pin"
+                        | "/app/projects/order"
+                        | "/app/chats/pin"
                 )))
 }
 
@@ -583,7 +587,12 @@ mod tests {
         assert!(!preview_refuses(true, "POST", "/app/projects/pick"));
         assert!(!preview_refuses(true, "POST", "/app/projects/add"));
         assert!(!preview_refuses(true, "POST", "/app/projects/remove"));
+        assert!(!preview_refuses(true, "POST", "/app/projects/rename"));
+        assert!(!preview_refuses(true, "POST", "/app/projects/pin"));
+        assert!(!preview_refuses(true, "POST", "/app/projects/order"));
+        assert!(!preview_refuses(true, "POST", "/app/chats/pin"));
         assert!(preview_refuses(true, "POST", "/app/projects/unknown"));
+        assert!(preview_refuses(true, "POST", "/app/chats/unknown"));
         assert_eq!(
             preview_refuses(true, "POST", "/app/hosts/reload-copy"),
             !cfg!(unix)

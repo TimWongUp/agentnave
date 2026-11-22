@@ -57,7 +57,10 @@ type RouteKey = (
     Vec<crate::isolated::Dir>,
     Vec<(String, crate::projects::Project)>,
     Vec<crate::stage::WorkspaceLink>,
-    Vec<crate::projects::ManualProject>,
+    (
+        Vec<crate::projects::ManualProject>,
+        crate::projects::SidebarState,
+    ),
 );
 
 /// A route answer with the views it was computed from, held so their addresses stay unique.
@@ -313,10 +316,13 @@ impl Reader {
             &crate::stage::origin_cwds(&snapshots, &handover_map),
             complete,
         );
-        let manual_projects = if path == "/app/chats" {
-            crate::projects::manual::list(&self.projects_dir)
+        let (manual_projects, sidebar) = if path == "/app/chats" {
+            (
+                crate::projects::manual::list(&self.projects_dir),
+                crate::projects::sidebar::load(&self.projects_dir),
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Default::default())
         };
         let (sources, stage_ids, key_handovers, key_apps, key_titles, key_links, views) =
             if let Some(group_id) = crate::stage::requested_group(path) {
@@ -385,7 +391,7 @@ impl Reader {
             dirs.clone(),
             projects.clone().into_iter().collect(),
             key_links,
-            manual_projects.clone(),
+            (manual_projects.clone(), sidebar.clone()),
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -405,6 +411,7 @@ impl Reader {
                 projects: &projects,
                 links: &links,
                 manual_projects: &manual_projects,
+                sidebar: &sidebar,
                 titles: &title_map,
                 renamed: &renamed,
             },

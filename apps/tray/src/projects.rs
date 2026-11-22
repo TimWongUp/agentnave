@@ -12,6 +12,7 @@ mod git;
 pub(crate) mod manual;
 mod memory;
 pub(crate) mod path;
+pub(crate) mod sidebar;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
@@ -22,6 +23,7 @@ use std::time::{Duration, Instant};
 use env::{Env, Stamp};
 pub(crate) use manual::ManualProject;
 use memory::Memory;
+pub(crate) use sidebar::SidebarState;
 
 /// The fixed key of the group for places that are not projects.
 pub(crate) const OTHER: &str = "other";

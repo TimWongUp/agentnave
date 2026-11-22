@@ -85,6 +85,15 @@ impl Reader {
             (_, "/app/projects/remove") => crate::response::post(method, action, body, |payload| {
                 self.remove_project(&payload)
             }),
+            (_, "/app/projects/rename") => crate::response::post(method, action, body, |payload| {
+                self.rename_project(&payload)
+            }),
+            (_, "/app/projects/pin") => {
+                crate::response::post(method, action, body, |payload| self.pin_project(&payload))
+            }
+            (_, "/app/projects/order") => crate::response::post(method, action, body, |payload| {
+                self.order_projects(&payload)
+            }),
             _ => Response::not_found(),
         }
     }
@@ -149,6 +158,73 @@ impl Reader {
             }
             Err((status, message)) => Response::error(status, &message),
         }
+    }
+
+    fn update_sidebar(
+        &self,
+        result: Result<crate::projects::SidebarState, (u16, String)>,
+    ) -> Response {
+        match result {
+            Ok(sidebar) => {
+                self.routes
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove("/app/chats");
+                Response::json(&json!({ "sidebar": sidebar.value() }))
+            }
+            Err((status, message)) => Response::error(status, &message),
+        }
+    }
+
+    fn rename_project(&self, payload: &Value) -> Response {
+        let key = payload["key"].as_str().unwrap_or_default();
+        let alias = match payload.get("alias") {
+            None | Some(Value::Null) => "",
+            Some(value) => match value.as_str() {
+                Some(text) => text,
+                None => return Response::error(400, "项目别名必须为字符串"),
+            },
+        };
+        self.update_sidebar(crate::projects::sidebar::rename(
+            &self.projects_dir,
+            key,
+            alias,
+        ))
+    }
+
+    fn pin_project(&self, payload: &Value) -> Response {
+        let key = payload["key"].as_str().unwrap_or_default();
+        let Some(pinned) = payload["pinned"].as_bool() else {
+            return Response::error(400, "pinned 必须为布尔值");
+        };
+        self.update_sidebar(crate::projects::sidebar::pin_project(
+            &self.projects_dir,
+            key,
+            pinned,
+        ))
+    }
+
+    fn order_projects(&self, payload: &Value) -> Response {
+        let Some(items) = payload.get("order").and_then(Value::as_array) else {
+            return Response::error(400, "order 必须为数组");
+        };
+        let order: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+        self.update_sidebar(crate::projects::sidebar::set_order(
+            &self.projects_dir,
+            &order,
+        ))
+    }
+
+    fn pin_chat(&self, payload: &Value) -> Response {
+        let group = payload["group"].as_str().unwrap_or_default();
+        let Some(pinned) = payload["pinned"].as_bool() else {
+            return Response::error(400, "pinned 必须为布尔值");
+        };
+        self.update_sidebar(crate::projects::sidebar::pin_group(
+            &self.projects_dir,
+            group,
+            pinned,
+        ))
     }
 
     /// Writes require an explicit POST and action header; navigation cannot mutate files.
@@ -261,6 +337,9 @@ impl Reader {
         }
         if matches!(path, "/app/isolated/inspect" | "/app/isolated/delete") {
             return crate::isolated::request(&self.root, method, path, action, body);
+        }
+        if path == "/app/chats/pin" {
+            return crate::response::post(method, action, body, |payload| self.pin_chat(&payload));
         }
         if method != "GET" {
             return Response::error(405, "此路由只接受 GET");

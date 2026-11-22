@@ -14,7 +14,7 @@ use crate::data::boss_app::CliTitle;
 use crate::data::snapshot::{Item, Snapshot};
 use crate::data_files::valid_id;
 use crate::isolated::{self, Dir};
-use crate::projects::{ManualProject, Project};
+use crate::projects::{ManualProject, Project, SidebarState};
 use crate::response::Response;
 use crate::time_format::{iso, timestamp};
 
@@ -330,6 +330,8 @@ struct Group {
     cli_title: Option<CliTitle>,
     /// The user renamed the conversation that names this chat.
     renamed: bool,
+    created: String,
+    created_at: Option<i64>,
     updated: String,
     at: i64,
     title: String,
@@ -509,6 +511,7 @@ pub(crate) struct Places<'a> {
     pub projects: &'a BTreeMap<String, Project>,
     pub links: &'a [WorkspaceLink],
     pub manual_projects: &'a [ManualProject],
+    pub sidebar: &'a SidebarState,
     /// The CLI's own name for each workspace's boss chat.
     pub titles: &'a HashMap<String, CliTitle>,
     /// The conversations the user renamed in the App.
@@ -573,7 +576,7 @@ pub(crate) fn respond(
     if path == "/app/stage" {
         panel_response(groups, &snapshots, &stage_ids, data_exists)
     } else {
-        list_response(groups, &snapshots, places.manual_projects)
+        list_response(groups, &snapshots, places.manual_projects, places.sidebar)
     }
 }
 
@@ -798,6 +801,7 @@ fn list_response(
     groups: Vec<Group>,
     snapshots: &[Snapshot],
     manual_projects: &[ManualProject],
+    sidebar: &SidebarState,
 ) -> Response {
     let mut previews = PREVIEWS.lock().unwrap_or_else(|p| p.into_inner());
     let mut kept = HashMap::new();
@@ -847,6 +851,7 @@ fn list_response(
             }
             let mut value = g.header();
             value["title"] = json!(g.title);
+            value["created"] = json!(g.created_time());
             value["conversations"] = json!(g.conversations.len());
             value["desks_count"] = json!(g.desks.len());
             value["rooms_count"] = json!(g.rooms.len());
@@ -857,5 +862,9 @@ fn list_response(
         .collect();
     *previews = kept;
     let projects = crate::projects::manual::values(manual_projects);
-    Response::json(&json!({"groups": groups, "projects": projects}))
+    Response::json(&json!({
+        "groups": groups,
+        "projects": projects,
+        "sidebar": sidebar.value(),
+    }))
 }
