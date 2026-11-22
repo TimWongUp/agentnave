@@ -684,6 +684,9 @@ async function refresh() {
     el.banner.hidden = true;
     await ChatTerminal.refresh();
     state.projects = chats.projects || [];
+    state.sidebar = typeof ChatGroups !== "undefined" && ChatGroups.normalizeSidebar
+      ? ChatGroups.normalizeSidebar(chats.sidebar)
+      : (chats.sidebar || null);
     state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
     const followed = ChatTerminal.follow(state.selected);
     if (followed !== state.selected) {
@@ -697,7 +700,7 @@ async function refresh() {
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([state.groupsData, state.projects, state.selected, tickOf(), document.documentElement.lang]);
+    const listKey = JSON.stringify([state.groupsData, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();
