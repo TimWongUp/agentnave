@@ -1,10 +1,12 @@
 use super::*;
-use crate::terminal::codex_server;
 use crate::terminal::spawn_requests::{
     ExpectedAnchor, ParentRef, ProcessIdentity, ReceiptState, TaskSpec,
 };
+use crate::terminal::{DerivedInfo, NewDerived, codex_server};
 use portable_pty::CommandBuilder;
+use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::fs;
 use std::sync::Mutex;
 
 #[test]
