@@ -286,23 +286,26 @@ function createMessage(m) {
   rec.tail = h("div.tail");
   rec.trail = h("div.tool-trail", { hidden: true });
   rec.status = h("div.typing-status", { hidden: true });
+  const expanded = typeof state !== "undefined" && state?.expanded?.has?.(m.id);
   rec.bub = h(
-    "div.bub",
+    m.kind === "typing" || expanded ? "div.bub" : "div.bub.fold",
     {},
     m.kind === "typing" ? [rec.tail, rec.trail, rec.status, rec.dots] : [rec.fwd, rec.to, rec.md],
   );
   rec.metaFaces = h("span.tp-faces");
   rec.metaText = h("span");
   rec.meta = h("div.m-meta", { hidden: true }, rec.metaFaces, rec.metaText);
-  rec.more = h("button.more", { type: "button", hidden: true }, L("展开全文", "Show more"));
-  rec.more.addEventListener("click", () => {
-    const id = rec.id;
-    if (state.expanded.has(id)) state.expanded.delete(id);
-    else state.expanded.add(id);
-    // A peer's or handover's collapsed bubble holds one line, not its answer: draw it again.
-    if (rec.el.dataset.peer !== undefined || rec.el.dataset.brief !== undefined) renderAll(state.chat);
-    applyFolds([rec]);
-  });
+  if (m.kind !== "typing") {
+    rec.more = h("button.more", { type: "button", hidden: true }, L("展开全文", "Show more"));
+    rec.more.addEventListener("click", () => {
+      const id = rec.id;
+      if (state.expanded.has(id)) state.expanded.delete(id);
+      else state.expanded.add(id);
+      // A peer's or handover's collapsed bubble holds one line, not its answer: draw it again.
+      if (rec.el.dataset.peer !== undefined || rec.el.dataset.brief !== undefined) renderAll(state.chat);
+      applyFolds([rec]);
+    });
+  }
   rec.el = h(
     "article.msg",
     {},
@@ -320,7 +323,7 @@ function createMessage(m) {
     ),
     rec.bub,
     rec.meta,
-    m.kind === "typing" ? null : rec.more,
+    rec.more || null,
   );
   return rec;
 }
@@ -470,6 +473,10 @@ function updateMessage(rec, m, ctx, id) {
   rec.el.toggleAttribute("data-brief", brief);
   const note = brief && state.expanded.has(id) ? m.detail : "";
   const body = m.kind === "handover" ? [m.text, note].filter(Boolean).join("\n\n") : summary ? tpFirst(m.text) : m.text;
+  if (rec.brief !== brief) {
+    rec.brief = brief;
+    rec.dirty = true;
+  }
   if (rec.text !== body) {
     rec.text = body;
     if (m.kind === "typing") {
@@ -486,6 +493,7 @@ function updateMessage(rec, m, ctx, id) {
       renderMarkdown(rec.md, m.text);
       rec.dirty = true; // height changed: measure again
     }
+    if (m.kind !== "typing") rec.bub?.classList?.toggle?.("fold", !state.expanded?.has?.(id));
   }
 }
 // Fold: clamp by CSS, show the button only when the content really overflows. Discarded answers

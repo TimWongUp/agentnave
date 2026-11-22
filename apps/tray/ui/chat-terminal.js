@@ -422,6 +422,7 @@ const ChatTerminal = (() => {
   // The office's terminal `x`, shown in place of the messages when `on`. The switch and the stop
   // button depend only on the terminal, never on which side is showing, so neither moves.
   function show(x, on) {
+    const wasTerm = Boolean(el.drawer?.classList?.contains?.("term-mode"));
     const term = x && on ? x : null;
     el.drawer.classList.toggle("has-term", !!x);
     if (el.app?.dataset) el.app.dataset.hasTerm = x ? "1" : "0";
@@ -439,6 +440,11 @@ const ChatTerminal = (() => {
     for (const [id, f] of t.frames) f.hidden = !term || id !== term.id;
     if (!term) {
       t.shown = null;
+      if (wasTerm) {
+        if (typeof measureAll === "function") measureAll();
+        else if (typeof applyFolds === "function" && typeof state !== "undefined" && state?.nodes)
+          applyFolds([...state.nodes.values()].filter((rec) => rec.dirty));
+      }
       return;
     }
     frame(term.id);
@@ -457,8 +463,10 @@ const ChatTerminal = (() => {
   }
   function prepare(group) {
     const x = byId(pendingId(group)) || ofWorkspace(group);
+    const term = x && (t.terminal.get(group) ?? true) ? x : null;
     el.drawer?.classList?.toggle?.("has-term", !!x);
     if (el.app?.dataset) el.app.dataset.hasTerm = x ? "1" : "0";
+    el.drawer?.classList?.toggle?.("term-mode", !!term);
   }
   // After the conversation column is drawn for `group`: its terminal, shown unless the messages
   // were asked for.
