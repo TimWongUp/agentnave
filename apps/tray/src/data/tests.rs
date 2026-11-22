@@ -66,6 +66,7 @@ fn routes_serve_views_and_reject_everything_else() {
         "/chat/office-settings.js",
         "/chat/chat-topics.js",
         "/chat/chat-groups.js",
+        "/chat/chat-sidebar.js",
         "/chat/actions.js",
         "/chat/chat.css",
         "/chat/onboarding-steps.js",
