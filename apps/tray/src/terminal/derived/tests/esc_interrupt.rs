@@ -86,6 +86,7 @@ fn rig(mode: &str) -> Rig {
     let handle = DerivedHandle {
         id: 1,
         provider: "claude".to_owned(),
+        cwd: dir.path().to_path_buf(),
         session: session.clone(),
         native: Some(SID.to_owned()),
         account: Some(Active {

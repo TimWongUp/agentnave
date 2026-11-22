@@ -208,6 +208,7 @@ fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
         let handle = DerivedHandle {
             id: 1,
             provider: "codex".to_owned(),
+            cwd: dir.path().to_path_buf(),
             session: session.clone(),
             native: Some(TID.to_owned()),
             account: None,
@@ -226,6 +227,269 @@ fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
         session.stop();
         codex.close();
     }
+}
+
+#[test]
+fn cancel_codex_exits_promptly_when_run_finishes_during_wait() {
+    use crate::terminal::spawn_requests::{
+        ProcessIdentity, SpawnRequestEnvelope, current_process_started_at,
+    };
+    use portable_pty::CommandBuilder;
+
+    let dir = tempfile::tempdir().unwrap();
+    let rollout = dir.path().join("rollout-closed.jsonl");
+    fs::write(&rollout, rollout_line("task_started", json!({}))).unwrap();
+    let rollout_str = rollout.display().to_string();
+    let codex = connect_to_mock(&dir.path().join("closed.sock"), move |msg, stream| {
+        let id = msg.get("id").and_then(Value::as_u64);
+        match msg.get("method").and_then(Value::as_str) {
+            Some("initialize") => {
+                write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
+                );
+            }
+            Some("thread/loaded/list") => {
+                write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {"data": []}}).to_string(),
+                );
+            }
+            Some("thread/read") => {
+                write_server_frame(
+                    stream,
+                    &json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {"thread": {
+                            "id": TID,
+                            "path": rollout_str,
+                            "turns": [{"id": TURN, "status": "inProgress"}],
+                        }}
+                    })
+                    .to_string(),
+                );
+            }
+            Some("turn/interrupt") => {
+                // Issued, but no turn/completed will ever arrive (simulating closed terminal).
+                write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
+                );
+            }
+            _ => {}
+        }
+    });
+    assert!(codex.is_connected());
+
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        current_process_started_at(),
+        &["codex"],
+    );
+    coord.insert_test_receipt("run-req", "inv-codex-closed");
+    coord.mark_started(
+        "run-req",
+        Some(TID),
+        Some(json!({"session_id": TID, "turn_id": TURN})),
+    );
+    coord.insert_test_receipt("cancel-req", "inv-codex-closed-cancel");
+    let run_receipt = coord.run_receipt_by_invocation("inv-codex-closed").unwrap();
+
+    let mut cmd = CommandBuilder::new("python3");
+    cmd.args(["-c", "import time; time.sleep(5)"]);
+    cmd.cwd(dir.path());
+    let session = Session::start(cmd, 80, 24).unwrap();
+    let identity = ProcessIdentity {
+        pid: std::process::id(),
+        started_at: coord.started_at,
+    };
+    let env = SpawnRequestEnvelope {
+        version: 1,
+        request_id: "cancel-req".to_owned(),
+        kind: "cancel".to_owned(),
+        service: identity.clone(),
+        target_tray: identity,
+        invocation_id: "inv-codex-closed".to_owned(),
+        parent: None,
+        session_id: Some(TID.to_owned()),
+        config: None,
+        task: None,
+        expected_anchor: None,
+    };
+    let handle = DerivedHandle {
+        id: 1,
+        provider: "codex".to_owned(),
+        cwd: dir.path().to_path_buf(),
+        session: session.clone(),
+        native: Some(TID.to_owned()),
+        account: None,
+        launch_config: None,
+        codex: Some(codex.clone()),
+    };
+
+    let coord_closer = coord.clone();
+    let closer = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(80));
+        coord_closer.on_terminal_closed("inv-codex-closed");
+    });
+    let started = Instant::now();
+    cancel_codex(&coord, &env, &run_receipt, &handle);
+    let elapsed = started.elapsed();
+    closer.join().unwrap();
+
+    assert_eq!(
+        coord.receipts_snapshot()["cancel-req"]
+            .terminal
+            .as_ref()
+            .map(|t| t.status.as_str()),
+        Some("already_finished")
+    );
+    assert!(
+        elapsed < INTERRUPT_CONFIRM_TIMEOUT,
+        "should return promptly when run finishes (took {elapsed:?})"
+    );
+    session.stop();
+    codex.close();
+}
+
+#[test]
+fn codex_run_fails_startup_and_never_starts_turn_when_pid_publish_fails() {
+    use crate::terminal::spawn_requests::{
+        ParentRef, ProcessIdentity, SpawnRequestEnvelope, current_process_started_at,
+    };
+    use portable_pty::CommandBuilder;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let dir = tempfile::tempdir().unwrap();
+    // Block push/ writes with a regular file so publishing derived_pids must fail.
+    fs::write(dir.path().join("push"), b"not-a-dir").unwrap();
+
+    let turn_started = Arc::new(AtomicBool::new(false));
+    let turn_started_srv = turn_started.clone();
+    let codex = connect_to_mock(&dir.path().join("pubfail.sock"), move |msg, stream| {
+        let id = msg.get("id").and_then(Value::as_u64);
+        match msg.get("method").and_then(Value::as_str) {
+            Some("initialize") => {
+                write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
+                );
+            }
+            Some("thread/loaded/list") => {
+                write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {"data": [TID]}}).to_string(),
+                );
+            }
+            Some("turn/start") => {
+                turn_started_srv.store(true, Ordering::SeqCst);
+                write_server_frame(
+                    stream,
+                    &json!({"jsonrpc": "2.0", "id": id, "result": {"turn": {"id": TURN}}})
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+    });
+    assert!(codex.is_connected());
+
+    let terminals = Terminals::default();
+    let coord = Coordinator::with_terminals(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        current_process_started_at(),
+        &["codex"],
+        terminals.clone(),
+    );
+    coord.insert_test_receipt("req-e3b", "inv-e3b");
+    let run_handle = coord.register_run("inv-e3b");
+
+    let mut cmd = CommandBuilder::new("python3");
+    cmd.args(["-c", "import time; time.sleep(5)"]);
+    cmd.cwd(dir.path());
+    let session = Session::start(cmd, 80, 24).unwrap();
+    let tid = terminals.register_derived(NewDerived {
+        provider: "codex".to_owned(),
+        cwd: dir.path().to_path_buf(),
+        session: session.clone(),
+        native: Some(TID.to_owned()),
+        account: None,
+        codex: Some(codex.clone()),
+        info: DerivedInfo {
+            parent_boss_key: "codex:boss".to_owned(),
+            parent_workspace_id: Some("ws".to_owned()),
+            busy: false,
+            blocked_kind: None,
+            isolation_id: None,
+            _lease: None,
+            _log_dir: None,
+            codex_ready_file: None,
+            active_invocation_id: None,
+            launch_config: None,
+        },
+    });
+    let identity = ProcessIdentity {
+        pid: std::process::id(),
+        started_at: coord.started_at,
+    };
+    let env = SpawnRequestEnvelope {
+        version: 1,
+        request_id: "req-e3b".to_owned(),
+        kind: "run".to_owned(),
+        service: identity.clone(),
+        target_tray: identity,
+        invocation_id: "inv-e3b".to_owned(),
+        parent: None,
+        session_id: Some(TID.to_owned()),
+        config: None,
+        task: None,
+        expected_anchor: None,
+    };
+    let cfg = RunConfig {
+        provider: "codex".to_owned(),
+        account: None,
+        account_dir: None,
+        cwd: dir.path().display().to_string(),
+        isolation: None,
+        model: None,
+        effort: None,
+        permissions: json!({}),
+    };
+    let parent = ParentRef {
+        boss_key: "codex:boss".to_owned(),
+        workspace_id: Some("ws".to_owned()),
+    };
+
+    run_codex(
+        &coord,
+        &terminals,
+        &env,
+        &cfg,
+        &parent,
+        dir.path(),
+        None,
+        "hello",
+        &run_handle,
+    );
+
+    assert!(!turn_started.load(Ordering::SeqCst));
+    let term = coord
+        .run_receipt_by_invocation("inv-e3b")
+        .unwrap()
+        .terminal
+        .unwrap();
+    assert_eq!(term.status, "failed");
+    assert!(
+        term.reason
+            .as_deref()
+            .is_some_and(|r| r.contains("发布派生终端进程标记失败"))
+    );
+    terminals.remove_derived_terminal(tid);
+    session.stop();
+    codex.close();
 }
 
 #[test]

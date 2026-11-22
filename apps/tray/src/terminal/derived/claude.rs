@@ -570,7 +570,7 @@ fn prepare_fallback_attempt(
         }
     };
     terminals.replace_derived_session(prev.id, new_session.clone(), Some(preset_sid));
-    coordinator.sync_derived_pids(terminals);
+    let _ = coordinator.sync_derived_pids(terminals);
     prev.session = new_session;
     prev.native = Some(preset_sid.clone());
     Some((prev, dir))

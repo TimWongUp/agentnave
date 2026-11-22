@@ -387,6 +387,10 @@ impl Session {
         gate.has_draft()
     }
 
+    pub(crate) fn bracketed_paste_enabled(&self) -> bool {
+        self.output().modes.paste()
+    }
+
     pub(crate) fn send_paste(&self, text: &str) -> Result<String, String> {
         let clean = sanitize_paste_text(text);
         let use_paste = self.output().modes.paste();

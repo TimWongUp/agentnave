@@ -21,7 +21,7 @@ use super::spawn_requests::{
     BlockedReceipt, Coordinator, ForwardItem, IsolationSpec, Receipt, RunConfig, RunHandle,
     SpawnRequestEnvelope, TERMINAL_PROVIDERS, now_unix_secs,
 };
-use super::{DerivedHandle, DerivedLaunchConfig, Terminals};
+use super::{DerivedHandle, DerivedLaunchConfig, Terminals, normalize_cwd};
 use crate::isolated::leases::{self, HeldLease};
 
 #[cfg(test)]
@@ -321,6 +321,9 @@ pub(super) fn account_mismatch(
     }
 }
 
+pub(super) const LAUNCH_CONFIG_MISMATCH_ERR: &str =
+    "派生终端以不同的目录、权限或模型启动，需先结束该终端再续派";
+
 pub(super) fn launch_config_mismatch(
     existing: Option<&DerivedLaunchConfig>,
     requested: &RunConfig,
@@ -328,7 +331,15 @@ pub(super) fn launch_config_mismatch(
     let want = DerivedLaunchConfig::from_run_config(requested);
     match existing {
         Some(actual) if actual == &want => None,
-        _ => Some("派生终端以不同的权限或模型启动，需先结束该终端再续派".to_owned()),
+        _ => Some(LAUNCH_CONFIG_MISMATCH_ERR.to_owned()),
+    }
+}
+
+pub(super) fn cwd_mismatch(existing: &Path, requested: &Path) -> Option<String> {
+    if normalize_cwd(existing) == normalize_cwd(requested) {
+        None
+    } else {
+        Some(LAUNCH_CONFIG_MISMATCH_ERR.to_owned())
     }
 }
 

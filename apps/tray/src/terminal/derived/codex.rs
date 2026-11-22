@@ -11,13 +11,13 @@ use serde_json::{Value, json};
 use super::super::codex_server::{self, InterruptRpcOutcome, ThreadStatus, TurnStartConfig};
 use super::super::session::Session;
 use super::super::spawn_requests::{
-    BlockedReceipt, Coordinator, ParentRef, Receipt, RunConfig, RunHandle, SpawnRequestEnvelope,
-    now_unix_secs, truncate_short,
+    BlockedReceipt, Coordinator, ParentRef, Receipt, ReceiptState, RunConfig, RunHandle,
+    SpawnRequestEnvelope, now_unix_secs, truncate_short,
 };
 use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
 use super::{
-    account_mismatch, acquire_isolation_for_terminal, cleanup_derived_startup,
-    detect_screen_blocker, native_logs,
+    account_mismatch, acquire_isolation_for_terminal, cleanup_derived_startup, cwd_mismatch,
+    detect_screen_blocker, finished_cancel_outcome, native_logs,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -81,6 +81,17 @@ pub(super) fn run_codex(
             return;
         }
     };
+    // Publish derived_pids synchronously before the Codex child can connect/submit turns.
+    if !publish_codex_derived_pid(
+        coordinator,
+        terminals,
+        &launched,
+        reused,
+        req_id,
+        launched.native.as_deref(),
+    ) {
+        return;
+    }
     let Some(codex) = launched.codex.clone() else {
         cleanup_derived_startup(terminals, &launched, reused, launched.native.as_deref());
         coordinator.mark_finished(req_id, "failed", Some("缺少 Codex app-server 客户端"), None);
@@ -160,6 +171,17 @@ pub(super) fn run_codex(
         return;
     }
 
+    if !publish_codex_derived_pid(
+        coordinator,
+        terminals,
+        &launched,
+        reused,
+        req_id,
+        Some(&thread_id),
+    ) {
+        return;
+    }
+
     let turn_cfg = build_turn_config(prompt, &env.invocation_id, cwd, cfg);
     let turn_id = match codex.start_turn(&thread_id, &turn_cfg) {
         Ok(id) => id,
@@ -191,8 +213,29 @@ pub(super) fn run_codex(
     );
 }
 
+pub(super) fn publish_codex_derived_pid(
+    coordinator: &Coordinator,
+    terminals: &Terminals,
+    launched: &DerivedHandle,
+    reused: bool,
+    req_id: &str,
+    native: Option<&str>,
+) -> bool {
+    if let Err(err) = coordinator.sync_derived_pids(terminals) {
+        cleanup_derived_startup(terminals, launched, reused, native);
+        coordinator.mark_finished(
+            req_id,
+            "failed",
+            Some(&format!("发布派生终端进程标记失败：{err}")),
+            native,
+        );
+        return false;
+    }
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
-fn open_or_launch_codex(
+pub(super) fn open_or_launch_codex(
     coordinator: &Coordinator,
     terminals: &Terminals,
     env: &SpawnRequestEnvelope,
@@ -212,6 +255,9 @@ fn open_or_launch_codex(
         terminals.remove_exited_derived("codex", sid);
         if let Some(existing) = terminals.find_derived_session("codex", sid) {
             if let Some(err) = account_mismatch(existing.account.as_ref(), account.as_ref()) {
+                return Err(err);
+            }
+            if let Some(err) = cwd_mismatch(&existing.cwd, cwd) {
                 return Err(err);
             }
             if existing.session.has_draft()
@@ -313,11 +359,11 @@ fn open_or_launch_codex(
             },
         },
     );
-    coordinator.sync_derived_pids(terminals);
     Ok((
         DerivedHandle {
             id: terminal_id,
             provider: "codex".to_owned(),
+            cwd: cwd.to_path_buf(),
             session,
             native: env.session_id.clone(),
             account: None,
@@ -674,6 +720,7 @@ pub(super) fn cancel_codex(
                 wait_codex_interrupt_confirmed(
                     coordinator,
                     req_id,
+                    &env.invocation_id,
                     codex,
                     tid,
                     turn_id,
@@ -707,9 +754,11 @@ pub(super) fn cancel_codex(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wait_codex_interrupt_confirmed(
     coordinator: &Coordinator,
     req_id: &str,
+    invocation_id: &str,
     codex: &codex_server::Client,
     tid: &str,
     turn_id: &str,
@@ -741,6 +790,18 @@ fn wait_codex_interrupt_confirmed(
                 return;
             }
             CodexTurnOutcome::Running => {}
+        }
+        if let Some(run_receipt) = coordinator
+            .run_receipt_by_invocation(invocation_id)
+            .filter(|r| r.state == ReceiptState::Finished)
+        {
+            coordinator.mark_finished(
+                req_id,
+                finished_cancel_outcome(&run_receipt),
+                None,
+                Some(tid),
+            );
+            return;
         }
         if Instant::now() >= confirm_deadline {
             coordinator.mark_finished(

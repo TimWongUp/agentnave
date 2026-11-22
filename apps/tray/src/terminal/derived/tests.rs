@@ -314,6 +314,7 @@ fn claude_late_cancel_respects_completed_and_superseded_turns() {
     let handle_done = DerivedHandle {
         id: 1,
         provider: "claude".to_owned(),
+        cwd: claude_dir.path().to_path_buf(),
         session: s1.clone(),
         native: Some(sid.to_owned()),
         account: Some(Active {
@@ -585,6 +586,7 @@ fn isolation_lease_holds_until_terminal_closes() {
     let failed_handle = DerivedHandle {
         id: term_id2,
         provider: "codex".to_owned(),
+        cwd: wt.clone(),
         session: session2,
         native: Some("cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned()),
         account: None,
@@ -941,7 +943,7 @@ while b"\r" not in buf2 and time.monotonic() < deadline:
     if select.select([0], [], [], 0.05)[0]:
         buf2 += os.read(0, 1024)
 assert b"\r" in buf2
-os.write(1, b"\x1b[2J\x1b[H\xe2\x9d\xaf \x1b]7501;state=idle\x07")
+os.write(1, b"\x1b[2J\x1b[H\x1b[?2004h\xe2\x9d\xaf \x1b]7501;state=idle\x07")
 time.sleep(5)
 "#;
     let mut cmd_ok = CommandBuilder::new("python3");
@@ -974,6 +976,7 @@ time.sleep(5)
     let derived_ok = DerivedHandle {
         id: tid_ok,
         provider: "claude".to_owned(),
+        cwd: cwd.clone(),
         session: session_ok.clone(),
         native: Some("sid-ok".to_owned()),
         account: None,
@@ -1052,6 +1055,7 @@ time.sleep(5)
         let derived_blk = DerivedHandle {
             id: tid_blk,
             provider: "claude".to_owned(),
+            cwd: cwd.clone(),
             session: session_blk.clone(),
             native: Some(format!("sid-blk-{idx}")),
             account: None,
@@ -1213,6 +1217,7 @@ fn claude_monitor_fails_instead_of_succeeding_when_anchor_never_appears() {
     let launched = DerivedHandle {
         id: tid,
         provider: "claude".to_owned(),
+        cwd: dir.path().to_path_buf(),
         session: session.clone(),
         native: Some(sid.to_owned()),
         account: None,

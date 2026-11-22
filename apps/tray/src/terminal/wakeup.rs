@@ -88,8 +88,14 @@ pub(super) fn start(app: AppHandle) {
     super::spawn_requests::ensure_spawn_requests_dir(&root);
     let pid = std::process::id();
     let started_at = super::spawn_requests::current_process_started_at();
-    let coordinator =
-        super::spawn_requests::Coordinator::new(root.clone(), pid, started_at, PROVIDERS);
+    let terminals = app.state::<Terminals>().inner().clone();
+    let coordinator = super::spawn_requests::Coordinator::with_terminals(
+        root.clone(),
+        pid,
+        started_at,
+        PROVIDERS,
+        terminals.clone(),
+    );
     if let Err(error) = coordinator.publish() {
         eprintln!("无法登记终端推送：{error}");
         return;
@@ -97,7 +103,6 @@ pub(super) fn start(app: AppHandle) {
     *coordinator_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(coordinator.clone());
     thread::spawn(move || {
         let mut state = WakeupState::default();
-        let terminals = app.state::<Terminals>().inner().clone();
         while !STOP.load(Ordering::SeqCst) {
             coordinator.poll(&terminals);
             scan(&terminals, &root, &mut state);

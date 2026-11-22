@@ -410,8 +410,14 @@ fn rejects_group_or_world_writable_spawn_requests_dir_and_publishes_derived_pids
     let dir = tempfile::tempdir().unwrap();
     ensure_spawn_requests_dir(dir.path());
     let req_dir = dir.path().join("spawn-requests");
-    let coord = test_coord(dir.path());
     let terminals = Terminals::default();
+    let coord = Coordinator::with_terminals(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        current_process_started_at(),
+        &["claude", "codex"],
+        terminals.clone(),
+    );
 
     // D3: Group-writable spawn-requests directory must be refused without consuming requests.
     fs::set_permissions(&req_dir, fs::Permissions::from_mode(0o770)).unwrap();
@@ -465,10 +471,14 @@ fn rejects_group_or_world_writable_spawn_requests_dir_and_publishes_derived_pids
             launch_config: None,
         },
     });
-    coord.poll(&terminals);
+    // E3(a): publish() reads live_derived_pids() directly under publish_lock, never stale state.
+    coord.publish().unwrap();
     let push_path = dir.path().join("push").join(format!("{}.json", coord.pid));
     let push_doc: Value = serde_json::from_slice(&fs::read(&push_path).unwrap()).unwrap();
     assert_eq!(push_doc["derived_pids"], json!([expected_pid]));
     terminals.remove_derived_terminal(tid);
+    coord.poll(&terminals);
+    let push_after: Value = serde_json::from_slice(&fs::read(&push_path).unwrap()).unwrap();
+    assert_eq!(push_after["derived_pids"], json!([]));
     session.stop();
 }

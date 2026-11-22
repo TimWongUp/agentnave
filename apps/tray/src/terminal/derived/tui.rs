@@ -22,6 +22,11 @@ use super::{
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
+const PASTE_MODE_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(600)
+} else {
+    Duration::from_secs(3)
+};
 const PASTE_COMMIT_DELAY: Duration = Duration::from_millis(300);
 pub(super) const TRANSCRIPT_FLUSH_WAIT: Duration = Duration::from_millis(1800);
 pub(super) const MISSING_ANCHOR_WAIT: Duration = if cfg!(test) {
@@ -266,11 +271,12 @@ pub(super) fn spawn_tui_terminal(
             launch_config: launch_config.clone(),
         },
     });
-    coordinator.sync_derived_pids(terminals);
+    let _ = coordinator.sync_derived_pids(terminals);
     Ok((
         DerivedHandle {
             id: tid,
             provider: cfg.provider.clone(),
+            cwd: cwd.to_path_buf(),
             session,
             native: preset_sid,
             account,
@@ -333,6 +339,19 @@ pub(super) fn finish_pre_submit(
     coordinator.mark_finished(req_id, status, Some(reason), launched.native.as_deref());
 }
 
+fn wait_bracketed_paste(session: &Session, handle: &Arc<RunHandle>) {
+    let deadline = Instant::now() + PASTE_MODE_WAIT;
+    while Instant::now() < deadline {
+        if session.bracketed_paste_enabled()
+            || handle.is_pre_start_cancelled()
+            || session.exit().is_some()
+        {
+            return;
+        }
+        thread::sleep(POLL_STEP);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn submit_prompt(
     coordinator: &Coordinator,
@@ -354,6 +373,28 @@ pub(super) fn submit_prompt(
             "提交前已取消",
         );
         return None;
+    }
+    if session::sanitize_paste_text(prompt).contains('\n')
+        && !launched.session.bracketed_paste_enabled()
+    {
+        wait_bracketed_paste(&launched.session, handle);
+        if handle.is_pre_start_cancelled() || launched.session.exit().is_some() {
+            let status = if handle.is_pre_start_cancelled() {
+                "cancelled"
+            } else {
+                "closed"
+            };
+            finish_pre_submit(
+                coordinator,
+                terminals,
+                launched,
+                reused,
+                req_id,
+                status,
+                "提交前取消或关闭",
+            );
+            return None;
+        }
     }
     let sent = match launched.session.send_paste(prompt) {
         Ok(clean) => clean,

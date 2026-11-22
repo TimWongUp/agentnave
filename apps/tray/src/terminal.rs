@@ -63,8 +63,13 @@ struct State {
     links_checked: Option<(Instant, PathBuf)>,
 }
 
+pub(in crate::terminal) fn normalize_cwd(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DerivedLaunchConfig {
+    pub cwd: PathBuf,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub permissions: Value,
@@ -77,6 +82,7 @@ impl DerivedLaunchConfig {
             other => other.clone(),
         };
         Self {
+            cwd: normalize_cwd(Path::new(&cfg.cwd)),
             model: cfg
                 .model
                 .as_deref()
@@ -117,6 +123,7 @@ impl Drop for DerivedInfo {
 pub(super) struct DerivedHandle {
     pub(in crate::terminal) id: u64,
     pub(in crate::terminal) provider: String,
+    pub(in crate::terminal) cwd: PathBuf,
     pub(in crate::terminal) session: Arc<Session>,
     pub(in crate::terminal) native: Option<String>,
     pub(in crate::terminal) account: Option<Active>,
@@ -162,6 +169,7 @@ impl Running {
         DerivedHandle {
             id: self.id,
             provider: self.provider.clone(),
+            cwd: self.cwd.clone(),
             session: self.session.clone(),
             native: self.native.clone(),
             account: self.account.clone(),

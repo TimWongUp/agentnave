@@ -207,7 +207,6 @@ impl RunHandle {
 struct CoordinatorState {
     receipts: HashMap<String, ReceiptEntry>,
     active_runs: HashMap<String, Arc<RunHandle>>,
-    derived_pids: Vec<u32>,
     published_once: bool,
     last_published: Option<Value>,
     last_dir_error: Option<String>,
@@ -219,6 +218,7 @@ pub(super) struct Coordinator {
     pub(super) pid: u32,
     pub(super) started_at: f64,
     pub(super) push_providers: &'static [&'static str],
+    terminals: Option<Terminals>,
     inner: Arc<Mutex<CoordinatorState>>,
     publish_lock: Arc<Mutex<()>>,
 }
@@ -260,21 +260,42 @@ pub(super) fn current_process_started_at() -> f64 {
 }
 
 impl Coordinator {
+    pub(super) fn with_terminals(
+        root: PathBuf,
+        pid: u32,
+        started_at: f64,
+        push_providers: &'static [&'static str],
+        terminals: Terminals,
+    ) -> Self {
+        Self::create(root, pid, started_at, push_providers, Some(terminals))
+    }
+
+    #[cfg(test)]
     pub(super) fn new(
         root: PathBuf,
         pid: u32,
         started_at: f64,
         push_providers: &'static [&'static str],
     ) -> Self {
+        Self::create(root, pid, started_at, push_providers, None)
+    }
+
+    fn create(
+        root: PathBuf,
+        pid: u32,
+        started_at: f64,
+        push_providers: &'static [&'static str],
+        terminals: Option<Terminals>,
+    ) -> Self {
         Self {
             root,
             pid,
             started_at,
             push_providers,
+            terminals,
             inner: Arc::new(Mutex::new(CoordinatorState {
                 receipts: HashMap::new(),
                 active_runs: HashMap::new(),
-                derived_pids: Vec::new(),
                 published_once: false,
                 last_published: None,
                 last_dir_error: None,
@@ -287,30 +308,26 @@ impl Coordinator {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    pub(super) fn sync_derived_pids(&self, terminals: &Terminals) {
-        let pids = terminals.live_derived_pids();
-        let changed = {
-            let mut state = self.lock();
-            if state.derived_pids == pids {
-                false
-            } else {
-                state.derived_pids = pids;
-                true
-            }
-        };
-        if changed {
-            let _ = self.publish();
-        }
+    pub(super) fn sync_derived_pids(&self, terminals: &Terminals) -> Result<(), String> {
+        self.publish_with(Some(terminals))
     }
 
     pub(super) fn publish(&self) -> Result<(), String> {
+        self.publish_with(None)
+    }
+
+    pub(super) fn publish_with(&self, terminals: Option<&Terminals>) -> Result<(), String> {
         let _publish_guard = self.publish_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let derived_pids = terminals
+            .or(self.terminals.as_ref())
+            .map(Terminals::live_derived_pids)
+            .unwrap_or_default();
         let (doc, evicted) = {
             let state = self.lock();
             let (doc, evicted) = build_push_document_plan(
                 self.pid,
                 self.push_providers,
-                &state.derived_pids,
+                &derived_pids,
                 &state.receipts,
             );
             if state.published_once && state.last_published.as_ref() == Some(&doc) {
@@ -498,14 +515,9 @@ impl Coordinator {
             true,
             ProcessRefreshKind::nothing(),
         );
-        {
-            let pids = terminals.live_derived_pids();
-            let mut state = self.lock();
-            state.derived_pids = pids;
-        }
         self.reconcile_settled(&system);
         self.scan_requests(terminals, &system);
-        let _ = self.publish();
+        let _ = self.publish_with(Some(terminals));
     }
 
     fn scan_requests(&self, terminals: &Terminals, system: &System) {
