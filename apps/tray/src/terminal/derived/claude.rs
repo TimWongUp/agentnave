@@ -834,6 +834,7 @@ fn monitor_claude_turn(
     let mut blocker: Option<(String, f64)> = None;
     let mut saw_working = false;
     let mut settled_at: Option<Instant> = None;
+    let mut last_transcript_check = Instant::now();
 
     loop {
         if !mode_confirmed
@@ -888,14 +889,9 @@ fn monitor_claude_turn(
                     coordinator.mark_started(req_id, Some(sid), Some(json!({"session_id": sid})));
                 }
                 let at = *settled_at.get_or_insert_with(Instant::now);
-                let transcript_ready = prompt_id.as_deref().is_some_and(|pid| {
-                    native_logs::claude_transcript_path(&baseline.claude_homes, sid).is_some_and(
-                        |p| {
-                            native_logs::claude_turn_state(&p, pid)
-                                != native_logs::ClaudeTurnState::Active
-                        },
-                    )
-                });
+                let transcript_ready = prompt_id
+                    .as_deref()
+                    .is_some_and(|pid| claude_turn_ended(baseline, sid, pid));
                 if !handle.interrupt_pending()
                     && (state_str == Some("error")
                         || (mode_confirmed && transcript_ready)
@@ -922,6 +918,29 @@ fn monitor_claude_turn(
             }
         }
 
+        // Background shell tasks keep the TUI reporting "working" after this
+        // prompt's turn has ended; the transcript is authoritative for the turn.
+        if mode_confirmed
+            && !handle.interrupt_pending()
+            && last_transcript_check.elapsed() >= TRANSCRIPT_POLL
+            && let Some(pid) = prompt_id.as_deref()
+        {
+            last_transcript_check = Instant::now();
+            if claude_turn_ended(baseline, sid, pid) {
+                finish_settled(
+                    coordinator,
+                    terminals,
+                    launched.id,
+                    req_id,
+                    Some(sid),
+                    false,
+                    handle.is_cancelled(),
+                    "CLI 返回错误状态",
+                );
+                return ClaudeTurnResult::Finished;
+            }
+        }
+
         if let Some(code) = launched.session.exit() {
             if !mode_confirmed
                 && let Some(dir) = hook_dir
@@ -943,4 +962,13 @@ fn monitor_claude_turn(
         }
         thread::sleep(POLL_STEP);
     }
+}
+
+const TRANSCRIPT_POLL: Duration = Duration::from_millis(500);
+
+/// This prompt's turn has a `turn_duration` row or a later prompt in the transcript.
+fn claude_turn_ended(baseline: &TurnBaseline, sid: &str, prompt_id: &str) -> bool {
+    native_logs::claude_transcript_path(&baseline.claude_homes, sid).is_some_and(|p| {
+        native_logs::claude_turn_state(&p, prompt_id) != native_logs::ClaudeTurnState::Active
+    })
 }
