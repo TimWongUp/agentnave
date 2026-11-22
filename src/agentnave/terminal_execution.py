@@ -92,6 +92,7 @@ class TerminalRun:
     session_id: str | None = None
     blocked: dict[str, object] | None = None
     terminal_finished: bool = False
+    _ended: bool = False
     _cancel_id: str | None = None
     _service_started: float = field(default_factory=lambda: read_process_started(os.getpid()))
     _time: float = field(default_factory=time.monotonic)
@@ -141,6 +142,8 @@ class TerminalRun:
         self.cancel_requested.clear()
 
     async def cancel(self) -> str:
+        if self._ended:
+            return "already_finished"
         if self.cancel_result is None or self.cancel_result.done():
             self.cancel_result = asyncio.get_running_loop().create_future()
             self.cancel_requested.set()
@@ -276,5 +279,6 @@ class TerminalRun:
         except (OSError, ValueError) as exc:
             return self._fail("terminal_transport_error", str(exc)[:500])
         finally:
+            self._ended = True
             if self.cancel_result is not None and not self.cancel_result.done():
                 self.cancel_result.set_result("already_finished")

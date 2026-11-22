@@ -620,6 +620,7 @@ pub(super) fn run_claude_cli(
                 &attempt_cfg,
                 cwd,
                 account.as_ref(),
+                handle,
                 |lease, isolation_id| {
                     if fallback.is_some() {
                         hook_dir = Some(claude_hook::prepare_mode_hook()?);
@@ -642,7 +643,12 @@ pub(super) fn run_claude_cli(
             ) {
                 Ok(h) => h,
                 Err(err) => {
-                    coordinator.mark_finished(req_id, "failed", Some(&err), Some(&preset_sid));
+                    let status = if handle.is_pre_start_cancelled() {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    coordinator.mark_finished(req_id, status, Some(&err), Some(&preset_sid));
                     return;
                 }
             }
@@ -666,7 +672,9 @@ pub(super) fn run_claude_cli(
         };
 
         coordinator.set_session_id(req_id, &preset_sid);
-        if !wait_tui_ready(coordinator, terminals, &launched, req_id, handle, Some(cwd)) {
+        if handle.is_pre_start_cancelled()
+            || !wait_tui_ready(coordinator, terminals, &launched, req_id, handle, Some(cwd))
+        {
             finish_pre_ready(coordinator, terminals, &launched, req_id, handle);
             return;
         }
@@ -702,7 +710,7 @@ pub(super) fn run_claude_cli(
                     launched_opt = Some(launched);
                     continue;
                 }
-                terminals.set_derived_state(launched.id, None, Some(&preset_sid), false, None);
+                terminals.clear_derived_turn(launched.id, Some(&preset_sid));
                 let msg = format!(
                     "Claude Code started in manual mode because neither {} nor {} mode is available here; enable one of them in Claude Code's settings",
                     req_mode.unwrap_or_default(),
@@ -728,7 +736,7 @@ fn prepare_fallback_attempt(
     handle: &Arc<RunHandle>,
 ) -> Option<(DerivedHandle, tempfile::TempDir)> {
     let req_id = &env.request_id;
-    if handle.is_cancelled() {
+    if handle.is_pre_start_cancelled() {
         finish_pre_submit(
             coordinator,
             terminals,
@@ -910,7 +918,7 @@ fn monitor_claude_turn(
                         req_id,
                         Some(sid),
                         state_str == Some("error"),
-                        handle.is_cancelled(),
+                        handle.is_interrupt_confirmed(),
                         "CLI 返回错误状态",
                     );
                     return ClaudeTurnResult::Finished;
@@ -934,7 +942,7 @@ fn monitor_claude_turn(
                     req_id,
                     Some(sid),
                     false,
-                    handle.is_cancelled(),
+                    handle.is_interrupt_confirmed(),
                     "CLI 返回错误状态",
                 );
                 return ClaudeTurnResult::Finished;
@@ -956,7 +964,7 @@ fn monitor_claude_turn(
                 Some(sid),
                 code,
                 settled_at.is_some(),
-                handle.is_cancelled(),
+                handle.is_interrupt_confirmed(),
             );
             return ClaudeTurnResult::Finished;
         }

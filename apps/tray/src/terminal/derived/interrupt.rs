@@ -102,8 +102,7 @@ pub(super) fn interrupt_turn_with_esc(
         TurnProbe::Superseded => finish("not_safe_to_interrupt", Some("已进入后续轮次")),
         TurnProbe::Active => {
             if let Some(run) = &run {
-                run.cancel_requested
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                run.confirm_interrupt();
             }
             finish("interrupted", None);
         }

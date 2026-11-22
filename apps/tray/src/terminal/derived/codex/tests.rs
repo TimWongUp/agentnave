@@ -90,3 +90,131 @@ fn early_terminal_exit_fails_unless_the_turn_is_proven_done_or_interrupted() {
         ("failed", Some("boom".to_owned()))
     );
 }
+
+#[test]
+fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
+    use crate::terminal::spawn_requests::{
+        ProcessIdentity, SpawnRequestEnvelope, current_process_started_at,
+    };
+    use portable_pty::CommandBuilder;
+
+    let cases: [(&str, Option<&str>, &str); 3] = [
+        ("interrupted", Some("interrupted"), "interrupted"),
+        ("completed", Some("completed"), "already_finished"),
+        ("timeout", None, "not_safe_to_interrupt"),
+    ];
+    for (name, notify_status, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let rollout = dir.path().join(format!("rollout-{name}.jsonl"));
+        fs::write(&rollout, rollout_line("task_started", json!({}))).unwrap();
+        let rollout_str = rollout.display().to_string();
+        let notify = notify_status.map(str::to_owned);
+        let codex = connect_to_mock(
+            &dir.path().join(format!("{name}.sock")),
+            move |msg, stream| {
+                let id = msg.get("id").and_then(Value::as_u64);
+                match msg.get("method").and_then(Value::as_str) {
+                    Some("initialize") => {
+                        write_server_frame(
+                            stream,
+                            &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
+                        );
+                    }
+                    Some("thread/read") => {
+                        write_server_frame(
+                            stream,
+                            &json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "result": {"thread": {
+                                    "id": TID,
+                                    "path": rollout_str,
+                                    "turns": [{"id": TURN, "status": "inProgress"}],
+                                }}
+                            })
+                            .to_string(),
+                        );
+                    }
+                    Some("turn/interrupt") => {
+                        write_server_frame(
+                            stream,
+                            &json!({"jsonrpc": "2.0", "id": id, "result": {}}).to_string(),
+                        );
+                        if let Some(status) = &notify {
+                            write_server_frame(
+                                stream,
+                                &json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "turn/completed",
+                                    "params": {
+                                        "threadId": TID,
+                                        "turn": {"id": TURN, "status": status},
+                                    }
+                                })
+                                .to_string(),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            },
+        );
+        assert!(codex.is_connected());
+
+        let coord = Coordinator::new(
+            dir.path().to_path_buf(),
+            std::process::id(),
+            current_process_started_at(),
+            &["codex"],
+        );
+        coord.insert_test_receipt("run-req", "inv-codex");
+        coord.mark_started(
+            "run-req",
+            Some(TID),
+            Some(json!({"session_id": TID, "turn_id": TURN})),
+        );
+        coord.insert_test_receipt("cancel-req", "inv-codex");
+        let run_receipt = coord.run_receipt_by_invocation("inv-codex").unwrap();
+
+        let mut cmd = CommandBuilder::new("python3");
+        cmd.args(["-c", "import time; time.sleep(5)"]);
+        cmd.cwd(dir.path());
+        let session = Session::start(cmd, 80, 24).unwrap();
+        let identity = ProcessIdentity {
+            pid: std::process::id(),
+            started_at: coord.started_at,
+        };
+        let env = SpawnRequestEnvelope {
+            version: 1,
+            request_id: "cancel-req".to_owned(),
+            kind: "cancel".to_owned(),
+            service: identity.clone(),
+            target_tray: identity,
+            invocation_id: "inv-codex".to_owned(),
+            parent: None,
+            session_id: Some(TID.to_owned()),
+            config: None,
+            task: None,
+            expected_anchor: None,
+        };
+        let handle = DerivedHandle {
+            id: 1,
+            provider: "codex".to_owned(),
+            session: session.clone(),
+            native: Some(TID.to_owned()),
+            account: None,
+            codex: Some(codex.clone()),
+        };
+
+        cancel_codex(&coord, &env, &run_receipt, &handle);
+        let actual = coord.receipts_snapshot()["cancel-req"]
+            .terminal
+            .as_ref()
+            .unwrap()
+            .status
+            .clone();
+        assert_eq!(actual, expected, "case {name}");
+        session.stop();
+        codex.close();
+    }
+}

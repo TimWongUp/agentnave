@@ -23,6 +23,11 @@ const POLL_STEP: Duration = Duration::from_millis(80);
 const RESUME_RETRY_GAP: Duration = Duration::from_millis(250);
 const INTERRUPT_RETRY_TIMEOUT: Duration = Duration::from_secs(4);
 const INTERRUPT_RETRY_GAP: Duration = Duration::from_millis(200);
+const INTERRUPT_CONFIRM_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_millis(800)
+} else {
+    Duration::from_secs(5)
+};
 
 #[cfg(test)]
 mod tests;
@@ -50,23 +55,37 @@ pub(super) fn run_codex(
     handle: &Arc<RunHandle>,
 ) {
     let req_id = &env.request_id;
-    let open = open_or_launch_codex(coordinator, terminals, env, cfg, parent, cwd, account);
+    let open = open_or_launch_codex(
+        coordinator,
+        terminals,
+        env,
+        cfg,
+        parent,
+        cwd,
+        account,
+        handle,
+    );
     let launched = match open {
         Ok(h) => h,
         Err(err) => {
-            coordinator.mark_finished(req_id, "failed", Some(&err), env.session_id.as_deref());
+            let status = if handle.is_pre_start_cancelled() {
+                "cancelled"
+            } else {
+                "failed"
+            };
+            coordinator.mark_finished(req_id, status, Some(&err), env.session_id.as_deref());
             return;
         }
     };
     let Some(codex) = launched.codex.clone() else {
-        terminals.set_derived_state(launched.id, None, launched.native.as_deref(), false, None);
+        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
         coordinator.mark_finished(req_id, "failed", Some("缺少 Codex app-server 客户端"), None);
         return;
     };
 
     if !wait_codex_connected(&codex, &launched.session, handle) {
-        terminals.set_derived_state(launched.id, None, launched.native.as_deref(), false, None);
-        let status = if handle.is_cancelled() {
+        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+        let status = if handle.is_pre_start_cancelled() {
             "cancelled"
         } else {
             "failed"
@@ -90,6 +109,17 @@ pub(super) fn run_codex(
         }
     }
 
+    if handle.is_pre_start_cancelled() {
+        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+        coordinator.mark_finished(
+            req_id,
+            "cancelled",
+            Some("启动前已取消"),
+            launched.native.as_deref(),
+        );
+        return;
+    }
+
     let Some(thread_id) = wait_codex_thread(
         coordinator,
         terminals,
@@ -99,8 +129,8 @@ pub(super) fn run_codex(
         req_id,
         handle,
     ) else {
-        terminals.set_derived_state(launched.id, None, launched.native.as_deref(), false, None);
-        let status = if handle.is_cancelled() {
+        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+        let status = if handle.is_pre_start_cancelled() {
             "cancelled"
         } else {
             "failed"
@@ -117,17 +147,11 @@ pub(super) fn run_codex(
         return;
     };
 
-    terminals.set_derived_state(
-        launched.id,
-        Some(&env.invocation_id),
-        Some(&thread_id),
-        true,
-        None,
-    );
+    terminals.set_derived_blocker(launched.id, Some(&thread_id), None);
     coordinator.set_session_id(req_id, &thread_id);
 
-    if handle.is_cancelled() {
-        terminals.set_derived_state(launched.id, None, Some(&thread_id), false, None);
+    if handle.is_pre_start_cancelled() {
+        terminals.clear_derived_turn(launched.id, Some(&thread_id));
         coordinator.mark_finished(req_id, "cancelled", Some("启动前已取消"), Some(&thread_id));
         return;
     }
@@ -136,7 +160,7 @@ pub(super) fn run_codex(
     let turn_id = match codex.start_turn(&thread_id, &turn_cfg) {
         Ok(id) => id,
         Err(err) => {
-            terminals.set_derived_state(launched.id, None, Some(&thread_id), false, None);
+            terminals.clear_derived_turn(launched.id, Some(&thread_id));
             coordinator.mark_finished(req_id, "failed", Some(&err), Some(&thread_id));
             return;
         }
@@ -160,7 +184,6 @@ pub(super) fn run_codex(
         req_id,
         &thread_id,
         &turn_id,
-        handle,
     );
 }
 
@@ -173,7 +196,11 @@ fn open_or_launch_codex(
     parent: &ParentRef,
     cwd: &Path,
     account: Option<super::super::account::Active>,
+    handle: &Arc<RunHandle>,
 ) -> Result<DerivedHandle, String> {
+    if handle.is_pre_start_cancelled() {
+        return Err("启动前已取消".to_owned());
+    }
     if account.is_some() {
         return Err("Codex 不支持多账号".to_owned());
     }
@@ -200,6 +227,9 @@ fn open_or_launch_codex(
                 cfg.isolation.as_ref(),
                 true,
             )?;
+            if handle.is_pre_start_cancelled() {
+                return Err("启动前已取消".to_owned());
+            }
             return terminals.try_claim_derived_turn(existing.id, &env.invocation_id, None);
         }
     }
@@ -212,6 +242,9 @@ fn open_or_launch_codex(
         cfg.isolation.as_ref(),
         false,
     )?;
+    if handle.is_pre_start_cancelled() {
+        return Err("启动前已取消".to_owned());
+    }
     let Some(program) = installed_path("codex") else {
         return Err("Codex CLI 没有安装".to_owned());
     };
@@ -287,7 +320,7 @@ fn wait_codex_connected(
         if codex.is_connected() {
             return true;
         }
-        if handle.is_cancelled() || session.exit().is_some() {
+        if handle.is_pre_start_cancelled() || session.exit().is_some() {
             return false;
         }
         thread::sleep(POLL_STEP);
@@ -307,7 +340,7 @@ fn wait_codex_thread(
     let mut deadline = Instant::now() + THREAD_WAIT_TIMEOUT;
     let mut trust_blocked = false;
     while Instant::now() < deadline {
-        if handle.is_cancelled() || launched.session.exit().is_some() {
+        if handle.is_pre_start_cancelled() || launched.session.exit().is_some() {
             return None;
         }
         let threads = codex.loaded_threads();
@@ -317,7 +350,7 @@ fn wait_codex_thread(
         };
         if let Some(tid) = found {
             if trust_blocked {
-                terminals.set_derived_state(launched.id, None, Some(&tid), true, None);
+                terminals.set_derived_blocker(launched.id, Some(&tid), None);
                 coordinator.set_blocked(req_id, None);
             }
             return Some(tid);
@@ -325,13 +358,7 @@ fn wait_codex_thread(
         if let Some((kind, reason)) = detect_screen_blocker(&launched.session) {
             if !trust_blocked {
                 trust_blocked = true;
-                terminals.set_derived_state(
-                    launched.id,
-                    None,
-                    launched.native.as_deref(),
-                    true,
-                    Some(kind),
-                );
+                terminals.set_derived_blocker(launched.id, launched.native.as_deref(), Some(kind));
                 coordinator.set_blocked(
                     req_id,
                     Some(BlockedReceipt {
@@ -474,7 +501,6 @@ fn monitor_codex_turn(
     req_id: &str,
     thread_id: &str,
     turn_id: &str,
-    handle: &Arc<RunHandle>,
 ) {
     let homes = native_logs::codex_homes();
     let mut rollout_path = None;
@@ -496,13 +522,7 @@ fn monitor_codex_turn(
             || launched.session.osc_snapshot().1.as_deref() == Some("blocked");
         if approval_blocked && !waiting_blocked {
             waiting_blocked = true;
-            terminals.set_derived_state(
-                launched.id,
-                Some(&env_inv(handle)),
-                Some(thread_id),
-                true,
-                Some("permission"),
-            );
+            terminals.set_derived_blocker(launched.id, Some(thread_id), Some("permission"));
             coordinator.set_blocked(
                 req_id,
                 Some(BlockedReceipt {
@@ -513,13 +533,7 @@ fn monitor_codex_turn(
             );
         } else if !approval_blocked && waiting_blocked {
             waiting_blocked = false;
-            terminals.set_derived_state(
-                launched.id,
-                Some(&env_inv(handle)),
-                Some(thread_id),
-                true,
-                None,
-            );
+            terminals.set_derived_blocker(launched.id, Some(thread_id), None);
             coordinator.set_blocked(req_id, None);
         }
 
@@ -542,7 +556,7 @@ fn monitor_codex_turn(
             }
             None => (outcome, err_msg),
         };
-        terminals.set_derived_state(launched.id, None, Some(thread_id), false, None);
+        terminals.clear_derived_turn(launched.id, Some(thread_id));
         let (status, reason) = settle_turn(outcome, err_msg, exit);
         coordinator.mark_finished(req_id, status, reason.as_deref(), Some(thread_id));
         return;
@@ -575,10 +589,6 @@ fn startup_failure_reason(session: &Session, fallback: &str) -> String {
 
 fn early_exit_reason(code: u32) -> String {
     format!("Codex 终端提前退出（exit {code}）")
-}
-
-fn env_inv(handle: &Arc<RunHandle>) -> String {
-    handle.invocation_id.clone()
 }
 
 pub(super) fn cancel_codex(
@@ -642,7 +652,15 @@ pub(super) fn cancel_codex(
 
         match codex.interrupt_turn(tid, turn_id) {
             Ok(InterruptRpcOutcome::Issued) => {
-                coordinator.mark_finished(req_id, "interrupted", None, Some(tid));
+                wait_codex_interrupt_confirmed(
+                    coordinator,
+                    req_id,
+                    codex,
+                    tid,
+                    turn_id,
+                    &mut rollout_path,
+                    &homes,
+                );
                 return;
             }
             Ok(InterruptRpcOutcome::NoActiveTurn) => {
@@ -667,5 +685,41 @@ pub(super) fn cancel_codex(
                 return;
             }
         }
+    }
+}
+
+fn wait_codex_interrupt_confirmed(
+    coordinator: &Coordinator,
+    req_id: &str,
+    codex: &codex_server::Client,
+    tid: &str,
+    turn_id: &str,
+    rollout_path: &mut Option<PathBuf>,
+    homes: &[PathBuf],
+) {
+    let confirm_deadline = Instant::now() + INTERRUPT_CONFIRM_TIMEOUT;
+    loop {
+        let (outcome, _) = check_turn_reconciled(codex, tid, turn_id, rollout_path, homes);
+        match outcome {
+            CodexTurnOutcome::Interrupted => {
+                coordinator.mark_finished(req_id, "interrupted", None, Some(tid));
+                return;
+            }
+            CodexTurnOutcome::Completed | CodexTurnOutcome::Failed => {
+                coordinator.mark_finished(req_id, "already_finished", None, Some(tid));
+                return;
+            }
+            CodexTurnOutcome::Running => {}
+        }
+        if Instant::now() >= confirm_deadline {
+            coordinator.mark_finished(
+                req_id,
+                "not_safe_to_interrupt",
+                Some("等待 Codex 中断确认超时"),
+                Some(tid),
+            );
+            return;
+        }
+        thread::sleep(POLL_STEP);
     }
 }

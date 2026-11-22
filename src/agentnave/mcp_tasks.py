@@ -1184,7 +1184,10 @@ async def cancel(
     state.refresh_inbox()
     try:
         if _known_invocation(manager, id):
-            result = await manager.cancel(id)
+            try:
+                result = await manager.cancel(id)
+            except ValueError as exc:
+                raise ToolError(str(exc)) from exc
             _conversations(ctx).delivered_tasks.add(id)
             return {"invocation": update_payload(manager, _conversations(ctx), id, result)}
         conversations = _conversations(ctx)

@@ -430,12 +430,10 @@ impl Terminals {
         Ok(running.to_derived_handle())
     }
 
-    pub(super) fn set_derived_state(
+    pub(super) fn set_derived_blocker(
         &self,
         terminal_id: u64,
-        invocation_id: Option<&str>,
         native: Option<&str>,
-        busy: bool,
         blocked_kind: Option<&str>,
     ) {
         let mut state = self.lock();
@@ -450,9 +448,27 @@ impl Terminals {
             running.title_searched = None;
         }
         if let Some(derived) = running.derived.as_mut() {
-            derived.busy = busy;
+            derived.busy = true;
             derived.blocked_kind = blocked_kind.map(str::to_owned);
-            derived.active_invocation_id = invocation_id.map(str::to_owned);
+        }
+    }
+
+    pub(super) fn clear_derived_turn(&self, terminal_id: u64, native: Option<&str>) {
+        let mut state = self.lock();
+        let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id) else {
+            return;
+        };
+        if let Some(sid) = native
+            && running.native.as_deref() != Some(sid)
+        {
+            running.native = Some(sid.to_owned());
+            running.title_located = false;
+            running.title_searched = None;
+        }
+        if let Some(derived) = running.derived.as_mut() {
+            derived.busy = false;
+            derived.blocked_kind = None;
+            derived.active_invocation_id = None;
         }
     }
 

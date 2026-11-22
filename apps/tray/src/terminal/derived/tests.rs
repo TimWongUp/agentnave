@@ -968,11 +968,81 @@ time.sleep(5)
             thread::sleep(Duration::from_millis(25));
         }
         assert!(saw_trust_block, "case {idx} should record trust blocker");
-        handle_blk
-            .cancel_requested
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        // A1: updating blocker state must preserve active_invocation_id so cancel can locate it.
+        assert!(
+            terminals.derived_by_invocation(&inv_id).is_some(),
+            "case {idx} should keep invocation ownership while blocked"
+        );
+        handle_blk.request_pre_start_cancel();
         assert!(!waiter.join().unwrap());
         assert!(session_blk.recorded_writes().is_empty());
         session_blk.stop();
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn update_blocker_keeps_invocation_ownership_until_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        super::super::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("req-a1", "inv-a1");
+    let terminals = Terminals::default();
+    let mut cmd = CommandBuilder::new("python3");
+    cmd.args(["-c", "import time; time.sleep(5)"]);
+    cmd.cwd(dir.path());
+    let session = Session::start(cmd, 80, 24).unwrap();
+    let tid = terminals.register_derived(NewDerived {
+        provider: "claude".to_owned(),
+        cwd: dir.path().to_path_buf(),
+        session: session.clone(),
+        native: Some("sid-a1".to_owned()),
+        account: None,
+        codex: None,
+        info: DerivedInfo {
+            parent_boss_key: "claude:boss".to_owned(),
+            parent_workspace_id: Some("ws".to_owned()),
+            busy: true,
+            blocked_kind: None,
+            isolation_id: None,
+            _lease: None,
+            _log_dir: None,
+            codex_ready_file: None,
+            active_invocation_id: Some("inv-a1".to_owned()),
+        },
+    });
+    let mut current = None;
+    update_blocker_if_changed(
+        &coord,
+        &terminals,
+        tid,
+        "req-a1",
+        Some("sid-a1"),
+        &mut current,
+        Some(("permission", "等待审批")),
+    );
+    assert_eq!(
+        terminals.derived_by_invocation("inv-a1").map(|h| h.id),
+        Some(tid)
+    );
+    update_blocker_if_changed(
+        &coord,
+        &terminals,
+        tid,
+        "req-a1",
+        Some("sid-a1"),
+        &mut current,
+        None,
+    );
+    assert_eq!(
+        terminals.derived_by_invocation("inv-a1").map(|h| h.id),
+        Some(tid)
+    );
+    terminals.clear_derived_turn(tid, Some("sid-a1"));
+    assert!(terminals.derived_by_invocation("inv-a1").is_none());
+    session.stop();
 }

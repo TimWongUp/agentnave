@@ -804,3 +804,125 @@ def test_make_launch_account_and_shared_contract_fixture(
     settled = cast(list[dict[str, object]], fixture["inbox_settlement"]["settled_requests"])
     inbox.publish({}, settled)
     assert json.loads(inbox.path.read_text()) == fixture["inbox_settlement"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_on_settled_returns_already_finished_without_hanging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    launch, path = setup_tray(tmp_path, monkeypatch)
+    manager = InvocationManager()
+
+    def read_turn(
+        _provider: str, _account: str | None, _session: str, _anchor: dict[str, object]
+    ) -> str:
+        return "done"
+
+    monkeypatch.setattr(terminal_execution, "read_turn", read_turn)
+    entered_settle = threading.Event()
+    release_settle = threading.Event()
+
+    def slow_settle(_invocation: str, _status: InvocationStatus) -> None:
+        entered_settle.set()
+        release_settle.wait(timeout=5)
+
+    invocation = manager.start(
+        InvocationRequest("codex", "task", tmp_path),
+        prepared=PreparedCommand((), tmp_path),
+        terminal=launch,
+        on_settled=slow_settle,
+    )
+    await wait_for_file(tmp_path / "spawn-requests" / f"{invocation}.json")
+    snapshot(
+        path,
+        {
+            invocation: {
+                "invocation_id": invocation,
+                "service_pid": os.getpid(),
+                "state": "finished",
+                "session_id": "native",
+                "anchor": {"turn_id": "turn", "client_user_message_id": "client"},
+                "terminal": {"status": "completed"},
+            }
+        },
+    )
+    for _ in range(100):
+        if entered_settle.is_set():
+            break
+        await asyncio.sleep(0.02)
+    assert entered_settle.is_set()
+    run = manager.terminal_runs[invocation]
+    outcome = await asyncio.wait_for(run.cancel(), 1)
+    assert outcome == "already_finished"
+    release_settle.set()
+    result = await asyncio.wait_for(manager.wait(invocation), 2)
+    assert result is not None and result.status is InvocationStatus.SUCCEEDED
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_mcp_cancel_converts_not_safe_to_interrupt_to_tool_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp import Client
+
+    from agentnave import mcp_runtime, mcp_tasks
+    from agentnave.mcp_server import mcp
+    from agentnave.models import Host
+
+    root = tmp_path / "agentnave-data"
+    root.mkdir(exist_ok=True)
+    (root / "push").mkdir()
+    path = root / "push/42.json"
+    snapshot(path, {})
+    started = path.stat().st_mtime - 1
+    tray = TrayIdentity(42, started)
+
+    monkeypatch.setattr(mcp_runtime, "HOST", Host(name="codex"))
+    monkeypatch.setattr(mcp_runtime, "terminal_available", lambda: True)
+    monkeypatch.setattr(mcp_tasks, "find_tray", lambda _r, _p: tray)
+    monkeypatch.setattr(mcp_tasks, "read_tray", lambda _r, _t: {"terminal_providers": ["codex"]})
+    monkeypatch.setattr(terminal_requests, "read_process_started", lambda _p: started)
+    async with Client(mcp) as client:
+        response = await client.call_tool(
+            "start_agent",
+            {"provider": "codex", "cwd": str(tmp_path), "prompt": "hello", "terminal": True},
+        )
+        assert not response.is_error, response.content
+        invocation = str(cast(dict[str, object], response.structured_content)["invocation_id"])
+        await wait_for_file(root / "spawn-requests" / f"{invocation}.json")
+        item: dict[str, object] = {
+            "invocation_id": invocation,
+            "service_pid": os.getpid(),
+            "state": "started",
+            "session_id": "native",
+            "anchor": {"turn_id": "turn"},
+        }
+        snapshot(path, {invocation: item})
+        await asyncio.sleep(0.2)
+        cancel_task = asyncio.create_task(client.call_tool("cancel", {"id": invocation}))
+        cancel_file: Path | None = None
+        for _ in range(100):
+            files = [p for p in (root / "spawn-requests").glob("*.json") if p.stem != invocation]
+            if files:
+                cancel_file = files[0]
+                break
+            await asyncio.sleep(0.02)
+        assert cancel_file is not None
+        snapshot(
+            path,
+            {
+                invocation: item,
+                cancel_file.stem: {
+                    "invocation_id": invocation,
+                    "service_pid": os.getpid(),
+                    "state": "finished",
+                    "terminal": {"status": "not_safe_to_interrupt"},
+                },
+            },
+        )
+        cancel_resp = await asyncio.wait_for(cancel_task, 2)
+        assert cancel_resp.is_error
+        assert "could not safely" in str(cancel_resp.content)

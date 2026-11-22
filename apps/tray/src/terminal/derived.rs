@@ -31,15 +31,20 @@ use tui::build_agy_args;
 
 const LEASE_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_STEP: Duration = Duration::from_millis(50);
+const PRE_START_CANCEL_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(1500)
+} else {
+    Duration::from_secs(5)
+};
 
 pub(super) fn execute_run(
     coordinator: Coordinator,
     terminals: Terminals,
     env: SpawnRequestEnvelope,
+    handle: Arc<RunHandle>,
 ) {
     let req_id = env.request_id.clone();
     let inv_id = env.invocation_id.clone();
-    let handle = coordinator.register_run(&inv_id);
     run_inner(&coordinator, &terminals, &env, &handle);
     coordinator.clear_run(&inv_id);
     let receipt = coordinator.run_receipt_by_invocation(&inv_id);
@@ -88,7 +93,7 @@ fn run_inner(
         coordinator.mark_finished(req_id, "failed", Some("任务内容为空"), None);
         return;
     }
-    if handle.is_cancelled() {
+    if handle.is_pre_start_cancelled() {
         coordinator.mark_finished(req_id, "cancelled", Some("启动前已取消"), None);
         return;
     }
@@ -221,6 +226,7 @@ pub(super) fn acquire_isolation_for_terminal(
     Ok((Some(iso.id.clone()), Some(lease)))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_open_or_launch<F>(
     coordinator: &Coordinator,
     terminals: &Terminals,
@@ -228,11 +234,15 @@ pub(super) fn prepare_open_or_launch<F>(
     cfg: &RunConfig,
     cwd: &Path,
     account: Option<&Active>,
+    handle: &Arc<RunHandle>,
     spawn_new: F,
 ) -> Result<DerivedHandle, String>
 where
     F: FnOnce(Option<HeldLease>, Option<String>) -> Result<DerivedHandle, String>,
 {
+    if handle.is_pre_start_cancelled() {
+        return Err("启动前已取消".to_owned());
+    }
     if let Some(sid) = env.session_id.as_deref() {
         terminals.remove_exited_derived(&cfg.provider, sid);
         if let Some(existing) = terminals.find_derived_session(&cfg.provider, sid) {
@@ -255,6 +265,9 @@ where
                 cfg.isolation.as_ref(),
                 true,
             )?;
+            if handle.is_pre_start_cancelled() {
+                return Err("启动前已取消".to_owned());
+            }
             if let Some(lease) = lease {
                 terminals.attach_derived_lease(existing.id, lease);
             }
@@ -274,6 +287,9 @@ where
         cfg.isolation.as_ref(),
         false,
     )?;
+    if handle.is_pre_start_cancelled() {
+        return Err("启动前已取消".to_owned());
+    }
     spawn_new(lease, isolation_id)
 }
 
@@ -326,7 +342,7 @@ pub(super) fn update_blocker_if_changed(
         (_, Some((kind, reason))) => {
             let since = now_unix_secs();
             *current = Some((kind.to_owned(), since));
-            terminals.set_derived_state(terminal_id, None, native, true, Some(kind));
+            terminals.set_derived_blocker(terminal_id, native, Some(kind));
             coordinator.set_blocked(
                 req_id,
                 Some(BlockedReceipt {
@@ -338,7 +354,7 @@ pub(super) fn update_blocker_if_changed(
         }
         (Some(_), None) => {
             *current = None;
-            terminals.set_derived_state(terminal_id, None, native, true, None);
+            terminals.set_derived_blocker(terminal_id, native, None);
             coordinator.set_blocked(req_id, None);
         }
         (None, None) => {}
@@ -365,32 +381,21 @@ pub(super) fn execute_cancel(
         return;
     }
 
-    // 只在启动前用 cancel_requested 拦截；轮次已开始后是否取消由各 CLI 的中断确认决定。
-    let pre_start_flag = coordinator
-        .active_run(&env.invocation_id)
-        .filter(|_| run_receipt.state == super::spawn_requests::ReceiptState::Accepted);
-    if let Some(handle) = &pre_start_flag {
-        handle
-            .cancel_requested
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    let pre_deadline = Instant::now() + Duration::from_secs(1);
-    while run_receipt.state == super::spawn_requests::ReceiptState::Accepted
-        && Instant::now() < pre_deadline
-    {
-        thread::sleep(POLL_STEP);
-        let Some(latest) = coordinator.run_receipt_by_invocation(&env.invocation_id) else {
-            break;
-        };
-        run_receipt = latest;
-    }
-    if run_receipt.state != super::spawn_requests::ReceiptState::Finished
-        && let Some(handle) = &pre_start_flag
-    {
-        handle
-            .cancel_requested
-            .store(false, std::sync::atomic::Ordering::SeqCst);
+    // 启动前收到的取消一直生效，不复位；轮次已开始后由各 CLI 的中断确认决定，不误覆写自然完成的回合。
+    if run_receipt.state == super::spawn_requests::ReceiptState::Accepted {
+        if let Some(handle) = coordinator.active_run(&env.invocation_id) {
+            handle.request_pre_start_cancel();
+        }
+        let pre_deadline = Instant::now() + PRE_START_CANCEL_WAIT;
+        while run_receipt.state == super::spawn_requests::ReceiptState::Accepted
+            && Instant::now() < pre_deadline
+        {
+            thread::sleep(POLL_STEP);
+            let Some(latest) = coordinator.run_receipt_by_invocation(&env.invocation_id) else {
+                break;
+            };
+            run_receipt = latest;
+        }
     }
 
     if run_receipt.state == super::spawn_requests::ReceiptState::Finished {
@@ -398,6 +403,16 @@ pub(super) fn execute_cancel(
             req_id,
             finished_cancel_outcome(&run_receipt),
             None,
+            run_receipt.session_id.as_deref(),
+        );
+        return;
+    }
+
+    if run_receipt.state == super::spawn_requests::ReceiptState::Accepted {
+        coordinator.mark_finished(
+            req_id,
+            "not_safe_to_interrupt",
+            Some("目标任务仍在启动，已记录启动前取消请求"),
             run_receipt.session_id.as_deref(),
         );
         return;

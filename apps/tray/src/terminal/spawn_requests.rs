@@ -162,16 +162,16 @@ struct ReceiptEntry {
 }
 
 pub(super) struct RunHandle {
-    pub invocation_id: String,
-    pub cancel_requested: AtomicBool,
+    pre_start_cancelled: AtomicBool,
+    interrupt_confirmed: AtomicBool,
     interrupt_pending: AtomicBool,
 }
 
 impl RunHandle {
-    pub(super) fn new(invocation_id: String) -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            invocation_id,
-            cancel_requested: AtomicBool::new(false),
+            pre_start_cancelled: AtomicBool::new(false),
+            interrupt_confirmed: AtomicBool::new(false),
             interrupt_pending: AtomicBool::new(false),
         }
     }
@@ -185,8 +185,22 @@ impl RunHandle {
         self.interrupt_pending.load(Ordering::SeqCst)
     }
 
-    pub(super) fn is_cancelled(&self) -> bool {
-        self.cancel_requested.load(Ordering::SeqCst)
+    /// Latches a cancel received before the turn started; never reset once set.
+    pub(super) fn request_pre_start_cancel(&self) {
+        self.pre_start_cancelled.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) fn is_pre_start_cancelled(&self) -> bool {
+        self.pre_start_cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Marks an in-flight turn's interruption as confirmed by the CLI/TUI.
+    pub(super) fn confirm_interrupt(&self) {
+        self.interrupt_confirmed.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) fn is_interrupt_confirmed(&self) -> bool {
+        self.interrupt_confirmed.load(Ordering::SeqCst)
     }
 }
 
@@ -282,7 +296,7 @@ impl Coordinator {
     }
 
     pub(super) fn register_run(&self, invocation_id: &str) -> Arc<RunHandle> {
-        let handle = Arc::new(RunHandle::new(invocation_id.to_owned()));
+        let handle = Arc::new(RunHandle::new());
         self.lock()
             .active_runs
             .insert(invocation_id.to_owned(), handle.clone());
@@ -411,7 +425,7 @@ impl Coordinator {
 
     pub(super) fn on_terminal_closed(&self, invocation_id: &str) {
         if let Some(handle) = self.active_run(invocation_id) {
-            handle.cancel_requested.store(true, Ordering::SeqCst);
+            handle.request_pre_start_cancel();
         }
         let req_id = {
             let state = self.lock();
@@ -510,10 +524,12 @@ impl Coordinator {
         }
 
         // Deduplicate by request_id in memory: never execute a second time.
-        let already_seen = {
+        // Register the RunHandle synchronously on intake so a cancel processed right after
+        // never races ahead of run thread startup.
+        let (already_seen, run_handle) = {
             let mut state = self.lock();
             if state.receipts.contains_key(&env.request_id) {
-                true
+                (true, None)
             } else {
                 let lease_acquired = env
                     .config
@@ -537,12 +553,28 @@ impl Coordinator {
                         finished_at: None,
                     },
                 );
-                false
+                let handle = if env.kind == "run" {
+                    let h = Arc::new(RunHandle::new());
+                    state
+                        .active_runs
+                        .insert(env.invocation_id.clone(), h.clone());
+                    Some(h)
+                } else {
+                    None
+                };
+                (false, handle)
             }
         };
 
         // Always publish accepted/existing receipt atomically BEFORE removing the request file.
         if self.publish().is_err() {
+            if !already_seen {
+                let mut state = self.lock();
+                state.receipts.remove(&env.request_id);
+                if run_handle.is_some() {
+                    state.active_runs.remove(&env.invocation_id);
+                }
+            }
             return;
         }
         let _ = fs::remove_file(path);
@@ -553,7 +585,11 @@ impl Coordinator {
         let coordinator = self.clone();
         let terminals = terminals.clone();
         std::thread::spawn(move || match env.kind.as_str() {
-            "run" => derived::execute_run(coordinator, terminals, env),
+            "run" => {
+                let handle =
+                    run_handle.unwrap_or_else(|| coordinator.register_run(&env.invocation_id));
+                derived::execute_run(coordinator, terminals, env, handle);
+            }
             "cancel" => derived::execute_cancel(coordinator, terminals, env),
             _ => {}
         });

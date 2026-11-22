@@ -74,6 +74,7 @@ pub(super) fn run_tui_cli(
         cfg,
         cwd,
         account.as_ref(),
+        handle,
         |lease, isolation_id| {
             let (launched, log_path) = spawn_tui_terminal(
                 terminals,
@@ -95,14 +96,21 @@ pub(super) fn run_tui_cli(
     let launched = match open {
         Ok(h) => h,
         Err(err) => {
-            coordinator.mark_finished(req_id, "failed", Some(&err), preset_sid.as_deref());
+            let status = if handle.is_pre_start_cancelled() {
+                "cancelled"
+            } else {
+                "failed"
+            };
+            coordinator.mark_finished(req_id, status, Some(&err), preset_sid.as_deref());
             return;
         }
     };
     if let Some(sid) = &preset_sid {
         coordinator.set_session_id(req_id, sid);
     }
-    if !wait_tui_ready(coordinator, terminals, &launched, req_id, handle, None) {
+    if handle.is_pre_start_cancelled()
+        || !wait_tui_ready(coordinator, terminals, &launched, req_id, handle, None)
+    {
         finish_pre_ready(coordinator, terminals, &launched, req_id, handle);
         return;
     }
@@ -143,12 +151,12 @@ pub(super) fn finish_pre_ready(
         terminals,
         launched,
         req_id,
-        if handle.is_cancelled() {
+        if handle.is_pre_start_cancelled() {
             "cancelled"
         } else {
             "failed"
         },
-        if handle.is_cancelled() {
+        if handle.is_pre_start_cancelled() {
             "就绪前已取消"
         } else {
             "等待终端就绪失败或超时"
@@ -295,7 +303,7 @@ pub(super) fn finish_pre_submit(
     status: &str,
     reason: &str,
 ) {
-    terminals.set_derived_state(launched.id, None, launched.native.as_deref(), false, None);
+    terminals.clear_derived_turn(launched.id, launched.native.as_deref());
     coordinator.mark_finished(req_id, status, Some(reason), launched.native.as_deref());
 }
 
@@ -307,13 +315,24 @@ pub(super) fn submit_prompt(
     prompt: &str,
     handle: &Arc<RunHandle>,
 ) -> bool {
+    if handle.is_pre_start_cancelled() {
+        finish_pre_submit(
+            coordinator,
+            terminals,
+            launched,
+            req_id,
+            "cancelled",
+            "提交前已取消",
+        );
+        return false;
+    }
     if let Err(err) = launched.session.send_paste(prompt) {
         finish_pre_submit(coordinator, terminals, launched, req_id, "failed", &err);
         return false;
     }
     thread::sleep(PASTE_COMMIT_DELAY);
-    if handle.is_cancelled() || launched.session.exit().is_some() {
-        let status = if handle.is_cancelled() {
+    if handle.is_pre_start_cancelled() || launched.session.exit().is_some() {
+        let status = if handle.is_pre_start_cancelled() {
             "cancelled"
         } else {
             "closed"
@@ -338,6 +357,17 @@ pub(super) fn submit_prompt(
             req_id,
             "cancelled",
             "阻塞期间取消",
+        );
+        return false;
+    }
+    if handle.is_pre_start_cancelled() {
+        finish_pre_submit(
+            coordinator,
+            terminals,
+            launched,
+            req_id,
+            "cancelled",
+            "提交前已取消",
         );
         return false;
     }
@@ -407,7 +437,7 @@ pub(super) fn wait_tui_ready(
     let mut deadline = Instant::now() + READY_TIMEOUT;
     let mut claude_startup = trust_cwd.map(claude::ClaudeStartup::new);
     while Instant::now() < deadline {
-        if handle.is_cancelled() || launched.session.exit().is_some() {
+        if handle.is_pre_start_cancelled() || launched.session.exit().is_some() {
             return false;
         }
         let (_, osc_state, osc_kind) = launched.session.osc_snapshot();
@@ -487,7 +517,7 @@ fn wait_unblocked(
     handle: &Arc<RunHandle>,
 ) -> bool {
     let mut blocker: Option<(String, f64)> = None;
-    while !handle.is_cancelled() && launched.session.exit().is_none() {
+    while !handle.is_pre_start_cancelled() && launched.session.exit().is_none() {
         let (_, osc_state, osc_kind) = launched.session.osc_snapshot();
         if osc_state.as_deref() != Some("blocked") {
             update_blocker_if_changed(
@@ -548,7 +578,7 @@ fn monitor_agy_turn(
         {
             confirmed_cid = Some(cid.clone());
             user_input_index = Some(idx);
-            terminals.set_derived_state(launched.id, Some(req_id), Some(&cid), true, None);
+            terminals.set_derived_blocker(launched.id, Some(&cid), None);
             coordinator.mark_started(
                 req_id,
                 Some(&cid),
@@ -596,7 +626,7 @@ fn monitor_agy_turn(
                         req_id,
                         confirmed_cid.as_deref(),
                         state_str == Some("error"),
-                        handle.is_cancelled(),
+                        handle.is_interrupt_confirmed(),
                         "Antigravity 返回错误状态",
                     );
                     return;
@@ -613,7 +643,7 @@ fn monitor_agy_turn(
                 confirmed_cid.as_deref(),
                 code,
                 settled_at.is_some(),
-                handle.is_cancelled(),
+                handle.is_interrupt_confirmed(),
             );
             return;
         }
@@ -707,7 +737,7 @@ pub(super) fn finish_settled(
     } else {
         ("succeeded", None)
     };
-    terminals.set_derived_state(terminal_id, None, sid, false, None);
+    terminals.clear_derived_turn(terminal_id, sid);
     coordinator.mark_finished(req_id, status, reason, sid);
 }
 
@@ -722,7 +752,7 @@ pub(super) fn finish_exited(
     had_settled: bool,
     cancelled: bool,
 ) {
-    terminals.set_derived_state(terminal_id, None, sid, false, None);
+    terminals.clear_derived_turn(terminal_id, sid);
     let (status, reason) = if cancelled {
         ("cancelled", "派生终端已中断退出".to_owned())
     } else if code == 0 && had_settled {

@@ -125,7 +125,7 @@ fn esc_returning_to_idle_confirms_interrupt_and_marks_run_cancelled() {
     cancel_claude(&rig.coord, &rig.env, &run_receipt(&rig), &rig.handle);
     assert_eq!(rig.session.recorded_writes(), vec![b"\x1b".to_vec()]);
     assert_eq!(cancel_status(&rig), "interrupted");
-    assert!(rig.run.is_cancelled());
+    assert!(rig.run.is_interrupt_confirmed());
     assert!(!rig.run.interrupt_pending());
     rig.session.stop();
 }
@@ -137,7 +137,7 @@ fn esc_without_state_change_is_not_safe_and_run_keeps_going() {
     cancel_claude(&rig.coord, &rig.env, &run_receipt(&rig), &rig.handle);
     assert_eq!(rig.session.recorded_writes(), vec![b"\x1b".to_vec()]);
     assert_eq!(cancel_status(&rig), "not_safe_to_interrupt");
-    assert!(!rig.run.is_cancelled());
+    assert!(!rig.run.is_interrupt_confirmed());
     assert!(!rig.run.interrupt_pending());
     assert_ne!(run_receipt(&rig).state, ReceiptState::Finished);
     rig.session.stop();
@@ -150,7 +150,7 @@ fn already_done_turn_sends_no_esc_and_run_settles_succeeded() {
     cancel_claude(&rig.coord, &rig.env, &run_receipt(&rig), &rig.handle);
     assert!(rig.session.recorded_writes().is_empty());
     assert_eq!(cancel_status(&rig), "already_finished");
-    assert!(!rig.run.is_cancelled());
+    assert!(!rig.run.is_interrupt_confirmed());
     tui::finish_settled(
         &rig.coord,
         &Terminals::default(),
@@ -158,7 +158,7 @@ fn already_done_turn_sends_no_esc_and_run_settles_succeeded() {
         "run-req",
         Some(SID),
         false,
-        rig.run.is_cancelled(),
+        rig.run.is_interrupt_confirmed(),
         "",
     );
     let status = run_receipt(&rig).terminal.unwrap().status;
@@ -181,6 +181,71 @@ fn natural_completion_racing_esc_reports_already_finished() {
     };
     interrupt::interrupt_turn_with_esc(&rig.coord, &rig.env, &rig.handle, SID, &probe);
     assert_eq!(cancel_status(&rig), "already_finished");
-    assert!(!rig.run.is_cancelled());
+    assert!(!rig.run.is_interrupt_confirmed());
     rig.session.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_start_cancel_latches_and_does_not_overwrite_natural_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        super::super::super::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("run-req", "inv-pre");
+    coord.insert_test_receipt("cancel-req", "inv-pre-cancel");
+    let run = coord.register_run("inv-pre");
+    let identity = ProcessIdentity {
+        pid: std::process::id(),
+        started_at: coord.started_at,
+    };
+    let cancel_env = SpawnRequestEnvelope {
+        version: 1,
+        request_id: "cancel-req".to_owned(),
+        kind: "cancel".to_owned(),
+        service: identity.clone(),
+        target_tray: identity,
+        invocation_id: "inv-pre".to_owned(),
+        parent: None,
+        session_id: None,
+        config: None,
+        task: None,
+        expected_anchor: None,
+    };
+    execute_cancel(coord.clone(), Terminals::default(), cancel_env);
+    // Cancel during Accepted must keep pre_start_cancelled latched (never reset to false).
+    assert!(run.is_pre_start_cancelled());
+    assert!(!run.is_interrupt_confirmed());
+    assert_eq!(
+        coord.receipts_snapshot()["cancel-req"]
+            .terminal
+            .as_ref()
+            .map(|t| t.status.as_str()),
+        Some("not_safe_to_interrupt")
+    );
+
+    // If the turn actually started and finished naturally without confirmed interrupt,
+    // finish_settled must not rewrite it to cancelled.
+    tui::finish_settled(
+        &coord,
+        &Terminals::default(),
+        1,
+        "run-req",
+        Some(SID),
+        false,
+        run.is_interrupt_confirmed(),
+        "",
+    );
+    assert_eq!(
+        coord
+            .run_receipt_by_invocation("inv-pre")
+            .unwrap()
+            .terminal
+            .unwrap()
+            .status,
+        "succeeded"
+    );
 }
