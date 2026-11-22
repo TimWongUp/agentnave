@@ -789,7 +789,7 @@ async def wait(
     prompt, still running. execution_blocked is still running, once per category.
     review_needed requires decide_answers before waiting again. seat_lost reports a failed/blocked
     seat while peers run, once per seat, answers withheld; retry via run_round.retry_seats.
-    wait_elapsed: status/activity only; wait again. nothing_pending: the inbox is empty.
+    wait_elapsed: status/activity only; follow next. nothing_pending: the inbox is empty.
     already_waiting: another blocking inbox wait is active; results return to that call (use
     wait_seconds=0 for progress).
 
