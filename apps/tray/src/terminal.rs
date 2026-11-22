@@ -157,6 +157,7 @@ impl Running {
             "parent_boss_key": self.derived.as_ref().map(|d| &d.parent_boss_key),
             "parent_workspace_id": self.derived.as_ref().and_then(|d| d.parent_workspace_id.as_deref()),
             "derived_busy": busy,
+            "native": self.native,
             "blocked_kind": self.derived.as_ref().and_then(|d| d.blocked_kind.as_deref())})
     }
 }

@@ -76,6 +76,14 @@ const ChatTerminal = (() => {
   const pendingId = (group) => (group?.startsWith(PREFIX) ? Number(group.slice(PREFIX.length)) : null);
   // The terminal whose CLI is currently in this workspace (the latest confirmed one).
   const ofWorkspace = (group) => t.list.find((x) => !x.derived && x.workspaces.at(-1) === group);
+  // A derived terminal's desk in its parent's office is the thread of its native session.
+  const ofDesk = (group, key) =>
+    key?.startsWith("thread:")
+      ? t.list.find((x) => x.derived && x.native && x.parent_workspace_id === group && `thread:${x.native}` === key)
+      : undefined;
+  // The terminal this workspace's column shows: the open desk's own derived terminal, else the boss's.
+  const terminalOf = (group) =>
+    byId(pendingId(group)) || (state.drawer?.kind === "desk" && ofDesk(group, state.drawer.key)) || ofWorkspace(group);
 
   async function refresh() {
     try {
@@ -508,15 +516,14 @@ const ChatTerminal = (() => {
     }
   }
   function prepare(group) {
-    const x = byId(pendingId(group)) || ofWorkspace(group);
+    const x = terminalOf(group);
     el.drawer?.classList?.toggle?.("has-term", !!x);
     if (el.app?.dataset) el.app.dataset.hasTerm = x ? "1" : "0";
   }
   // After the conversation column is drawn for `group`: its terminal, shown unless the messages
   // were asked for.
   function column(group, host, app) {
-    const agent = byId(pendingId(group));
-    const x = agent || ofWorkspace(group);
+    const x = terminalOf(group);
     t.handover = (!x || x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
     t.resumable = !x && !t.handover && RESUMES.has(host) ? group : null;
     show(x, t.terminal.get(group) ?? true);
@@ -528,7 +535,7 @@ const ChatTerminal = (() => {
   }
   const hasTerminal = (group) => Boolean(byId(pendingId(group)) || ofWorkspace(group));
   const displayState = (group) => {
-    const x = byId(pendingId(group)) || ofWorkspace(group);
+    const x = terminalOf(group);
     return x ? [x.id, x.exit != null] : null;
   };
   const bossOpensTerminal = (group) => {
@@ -542,6 +549,7 @@ const ChatTerminal = (() => {
     return Boolean(x && x.exit == null);
   };
   const showing = () => Boolean(t.shown != null && el.drawer?.classList?.contains?.("term-mode"));
+  const showingDerived = () => showing() && Boolean(byId(t.shown)?.derived);
   const exitedOf = (group) => {
     const x = ofWorkspace(group);
     return x && x.exit != null ? x : null;
@@ -576,11 +584,11 @@ const ChatTerminal = (() => {
     const x = byId(msg.session);
     if (x) {
       if (x.exit == null) x.exit = msg.code ?? 0;
-      const current = state.loaded && (pendingId(state.loaded) === x.id || ofWorkspace(state.loaded)?.id === x.id);
+      const current = state.loaded && terminalOf(state.loaded)?.id === x.id;
       if (current) show(x, t.terminal.get(state.loaded) ?? true);
     }
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, pending, derivedOf, derivedAll, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, exitedOf, openBoss, close, stop };
+  return { refresh, pending, derivedOf, derivedAll, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, close, stop };
 })();

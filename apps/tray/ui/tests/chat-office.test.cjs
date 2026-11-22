@@ -1344,9 +1344,12 @@ test("open derived terminals stay under their parent when idle, past the cap and
   derived = [child(false)];
   assert.deepEqual(shown().slice(shown().indexOf("/chat/g-parent"), shown().indexOf("/chat/g-parent") + 2), ["/chat/g-parent", "/chat/term-20"]);
 
+  // Waiting for a permission answer, the row is the user's way in, even in a folded project.
+  derived = [{ ...child(true), status: "waiting", blocked_kind: "permission" }];
   context.state.folded.set("project:/w/calc", true);
-  const folded = shown();
-  assert.deepEqual(folded, ["/chat/g-parent", "/chat/term-20"]);
+  assert.deepEqual(shown(), ["/chat/g-parent", "/chat/term-20"]);
+  derived = [child(false)];
+  assert.deepEqual(shown(), ["/chat/g-parent", "/chat/term-20"]);
   derived = [];
   assert.deepEqual(shown(), []);
 });
@@ -1964,6 +1967,23 @@ test("derived terminals nest under parent workspace without counting self-chat a
   await context.ChatTerminal.refresh();
   const [blockedChild] = context.ChatTerminal.derivedOf("ws-parent");
   assert.equal(blockedChild.status, "waiting");
+
+  // A derived desk's card in the parent's office opens that terminal, not the boss's.
+  mockSessions[1].derived_busy = false;
+  mockSessions[1].blocked_kind = null;
+  mockSessions[1].native = "sid-1";
+  await context.ChatTerminal.refresh();
+  state.loaded = "ws-parent";
+  state.drawer = { kind: "desk", key: "thread:sid-1" };
+  context.ChatTerminal.column("ws-parent", "claude", "claude");
+  assert.equal(el.drTitle.textContent, "派生调试");
+  assert.equal(context.ChatTerminal.showingDerived(), true);
+  state.drawer = { kind: "desk", key: "thread:other" };
+  context.ChatTerminal.column("ws-parent", "claude", "claude");
+  assert.equal(el.drTitle.textContent, "boss");
+  assert.equal(context.ChatTerminal.showingDerived(), false);
+  state.drawer = { kind: "all" };
+  state.loaded = "term-20";
 
   // Drawer shows derived title instead of "boss", and hides restart on ended derived terminal.
   mockSessions[1].exit = 0;
