@@ -163,6 +163,12 @@ impl Output {
     }
 }
 
+/// Whether the CLI is at its prompt (OSC 7501 idle, done or error); blocked or working
+/// (or no state yet) means a submitted line would not be read as a new turn.
+fn ready_for_submit(state: Option<&str>) -> bool {
+    matches!(state, Some("idle" | "done" | "error"))
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum WakeupOutcome {
     Delivered,
@@ -314,11 +320,7 @@ impl Session {
         let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
         let output = self.output();
         if output.exit.is_some()
-            || output
-                .status
-                .state
-                .as_deref()
-                .is_none_or(|s| s == "blocked")
+            || !ready_for_submit(output.status.state.as_deref())
             || !gate.ready()
         {
             return Ok(None);
@@ -342,12 +344,8 @@ impl Session {
     pub(super) fn finish_wakeup(&self, should_commit: bool) -> WakeupOutcome {
         let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
         let output = self.output();
-        let can_commit = output.exit.is_none()
-            && output
-                .status
-                .state
-                .as_deref()
-                .is_some_and(|s| s != "blocked");
+        // The submit key cannot be taken back once sent, so it waits for the CLI to be idle.
+        let can_commit = output.exit.is_none() && ready_for_submit(output.status.state.as_deref());
         let commit = should_commit && can_commit;
         let (chars, held) = gate.release(commit);
         let mut bytes = if commit {
@@ -362,7 +360,8 @@ impl Session {
             WakeupOutcome::Delivered
         } else if !should_commit {
             WakeupOutcome::Cancelled
-        } else if output.exit.is_none() && output.status.state.as_deref() == Some("blocked") {
+        } else if output.exit.is_none() {
+            // Nothing was submitted, so the held text was cleared and the wakeup can be retried.
             WakeupOutcome::Blocked
         } else {
             WakeupOutcome::Failed

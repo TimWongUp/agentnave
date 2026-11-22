@@ -1666,6 +1666,34 @@ def test_stream_blocker_without_model_records_cli_cooldown(tmp_path: Path) -> No
     assert provider_health.active(tmp_path)[("claude", None, None)]["code"] == "auth"
 
 
+def test_terminal_blocker_keeps_cooldown_but_not_running_blocker(tmp_path: Path) -> None:
+    # A failed Codex turn is the final outcome: its quota cooldown is recorded, but the blocker
+    # is not announced as a running blocker before the task settles.
+    notified: list[bool] = []
+    failed = _InvocationRecord(
+        InvocationRequest("codex", "work", tmp_path),
+        health_root=tmp_path,
+        on_inbox_change=lambda: notified.append(True),
+    )
+    turn_failed = {"type": "turn.failed", "error": {"message": "usage limit reached"}}
+    failed.observe_event(json.dumps(turn_failed).encode(), CodexAdapter())
+    assert failed.terminal_event.is_set()
+    assert [health["code"] for health in provider_health.active(tmp_path).values()] == ["quota"]
+    assert not failed.pending_attention and not failed.attention_event.is_set()
+    assert notified == []
+
+    # A blocker while the run is still going is announced as before.
+    running = _InvocationRecord(
+        InvocationRequest("claude", "work", tmp_path),
+        on_inbox_change=lambda: notified.append(True),
+    )
+    retry = {"type": "system", "subtype": "api_retry", "error": "authentication_failed"}
+    running.observe_event(json.dumps(retry).encode(), ClaudeAdapter())
+    assert not running.terminal_event.is_set()
+    assert [item.code for item in running.pending_attention] == ["authentication_failed"]
+    assert notified == [True]
+
+
 def test_retry_after_in_json_array_and_before_other_fields() -> None:
     now = datetime.now(UTC)
     claude = {"type": "result", "is_error": True, "errors": ["quota exceeded; Retry-After: 120"]}
