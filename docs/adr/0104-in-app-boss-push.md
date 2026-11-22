@@ -2,7 +2,7 @@
 
 - 状态：部分修订
 - 日期：2026-11-20
-- 修订：[ADR-0007](0007-wait-any-ready-subset.md)、[ADR-0064](0064-dispatch-receipts-steer-to-wait.md) 的推送边界。
+- 修订：[ADR-0007](0007-wait-any-ready-subset.md)、[ADR-0064](0064-dispatch-receipts-steer-to-wait.md) 的推送边界，以及 [ADR-0039](0039-retry-lost-seat-within-round.md) 中终态阻断的双报取舍（2026-11-22）。
 - 修订：Codex 暂不推送的排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订（Unix 改走私有 `app-server` 结构化投递，Windows 维持不推送）；自定义档中逐字匹配的旧生成等待句迁移由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订。
 
 ## 背景

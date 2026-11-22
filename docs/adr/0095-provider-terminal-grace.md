@@ -1,6 +1,6 @@
 # ADR-0095：Provider 终态后的进程退出宽限
 
-- 状态：部分修订
+- 状态：已接受
 - 日期：2026-11-15
 - 补充 [ADR-0049](0049-service-initiated-termination.md) 的主动终止情形。
 - 补充：终态事件同时携带执行阻断时的通知合并见 [ADR-0104](0104-in-app-boss-push.md) 2026-11-22 修订与 [ADR-0039](0039-retry-lost-seat-within-round.md)。
