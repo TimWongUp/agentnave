@@ -796,8 +796,9 @@ async def wait(
     wait_seconds=0 and include_output=false still receive ready items. Only 0 includes
     running tails (up to 1000 characters) and age, subject to include_output.
     Inbox ends and round answers arrive once; output_returned means use read_conversation.
-    Unknown/expired/duplicate ids reject the whole call. Follow receipt next: the App may
-    prompt an in-app boss when results are ready; otherwise wait before ending the turn.
+    Unknown/expired/duplicate ids reject the whole call. Follow receipt next: when the App
+    prompts you, end the turn without a blocking wait and call wait(wait_seconds=0) when
+    prompted; otherwise wait before ending the turn.
     """
     if wait_seconds == 1500 and not runtime.long_wait_enabled():
         raise ToolError(
@@ -810,9 +811,9 @@ async def wait(
     )
     if seq is not None:
         payload["seq"] = seq
-        # ALREADY_WAITING tells the boss not to start another wait, so it gets no next seq.
-        if (next_step := payload.get("next")) and next_step != runtime.ALREADY_WAITING:
-            payload["next"] = next_step + f" Next wait: seq={seq + 1}."
+        # Only blocking guidance asks for another wait; push and already-waiting receipts do not.
+        if payload.get("next") == runtime.WAIT_AGAIN:
+            payload["next"] = runtime.WAIT_AGAIN + f" Next wait: seq={seq + 1}."
     return payload
 
 
@@ -999,8 +1000,6 @@ async def _receive(
             wait_seconds,
             manager_session_id,
         )
-        if ids is None and "next" in payload:
-            payload["next"] = runtime.wait_guidance(again=True)
         if (
             ids is None
             and wait_seconds == 0
@@ -1094,7 +1093,7 @@ def _wait_payload(
         "rounds": rounds,
     }
     if pending_ids:
-        payload["next"] = runtime.WAIT_AGAIN
+        payload["next"] = runtime.wait_guidance(again=True)
     return payload
 
 

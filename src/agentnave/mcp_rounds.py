@@ -427,7 +427,8 @@ async def decide_answers(
     """Decide held answers atomically: publish shares with peers; private keeps between boss and
     seat. Repeating a decision is idempotent; changing it is rejected. Parallel rounds commit
     after all decisions; serial rounds then start the next seat. Returns after local commit
-    when no work/review remains: finished needs no further call; running/review requires wait.
+    when no work/review remains: finished needs no further call; running/review: follow your
+    connection's wait mode (end the turn if the App prompts you, otherwise wait).
     """
     try:
         conversations = _conversations(ctx)
