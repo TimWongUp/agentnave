@@ -8,7 +8,7 @@
 - 修订：Unix 上 Codex 的 `--no-daemon` 启动与续接由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订为进程树内私有 `app-server` + `--remote` TUI（Windows 维持 `--no-daemon`）。
 - 修订：办公室终端按账号选择与 `workspaces.owner_account` 续接、具名账号经 `/usr/bin/env CLAUDE_CONFIG_DIR=<dir>` 启动，以及独立账号登录终端边界由 [ADR-0108](0108-multi-account-isolation.md) 修订。
 - 修订：2026-11-21 自身修订，Claude 桌面端聊天不开放终端续接；Claude 与 Antigravity 桌面端聊天改为转交到新终端，由新 boss 接手工作区。
-- 修订：「终端只由用户在办公室里开」「一个 agent 同时最多挂载一个活终端」与左栏展示边界由 [ADR-0109](0109-in-app-derived-sessions.md) 修订（App 内嵌终端 boss 可直接开出一层派生会话，在左栏缩进挂在父 agent 下方并共享同时运行上限）。
+- 修订：「终端只由用户在办公室里开」「一个 agent 同时最多挂载一个活终端」、左栏父子树跨重启重建与按需冷启续接由 [ADR-0109](0109-in-app-derived-sessions.md) 修订（App 内嵌终端 boss 可经派生请求开启并管理可受控嵌套的派生终端树，各自独立占用终端并共享同时运行上限）。
 
 ## 背景
 

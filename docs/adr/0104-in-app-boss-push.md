@@ -3,7 +3,7 @@
 - 状态：部分修订
 - 日期：2026-11-20
 - 修订：[ADR-0007](0007-wait-any-ready-subset.md)、[ADR-0064](0064-dispatch-receipts-steer-to-wait.md) 的推送边界。
-- 修订：Codex 暂不推送的排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订（Unix 改走私有 `app-server` 结构化投递，Windows 维持不推送）；自定义档中逐字匹配的旧生成等待句迁移由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；不新增 MCP 工具、仅推 `inbox/` 的边界及已读撤回同步由 [ADR-0109](0109-in-app-derived-sessions.md) 修订（派生会话一轮结束亦经同一推送机制唤醒父会话读取回复）。
+- 修订：Codex 暂不推送的排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订（Unix 改走私有 `app-server` 结构化投递，Windows 维持不推送）；自定义档中逐字匹配的旧生成等待句迁移由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；不新增 MCP 工具、仅推 `inbox/` 的边界、唤醒提示合并与 `wait` 收件箱模式扩展至派生事件（含已读确认同步）由 [ADR-0109](0109-in-app-derived-sessions.md) 修订。
 
 ## 背景
 

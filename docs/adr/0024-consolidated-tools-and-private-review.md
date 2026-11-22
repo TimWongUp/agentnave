@@ -9,6 +9,7 @@
 - `access` 一律不拒绝调用的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊工位推断值与显式声明不一致时拒绝；这条拒绝已由 ADR-0038 的 2026-11-15 修订撤销，恢复「不拒绝调用」，工位推断值只作默认值。
 - 由 [ADR-0057](0057-boss-answers-native-prompts.md) 修订工具集合：新增 `answer_prompt`
 - 由 [ADR-0081](0081-account-cooldown-duration.md) 修订工具集合：新增 `clear_provider_cooldown`
+- 由 [ADR-0109](0109-in-app-derived-sessions.md) 修订：面向具备推送与派生能力的 App 内嵌终端 boss 新增 3 个条件公布工具（`spawn_session`、`derived_session`、`read_derived_session`）并扩展 `wait` 收件箱模式（App 外及无能力宿主不公布）。
 
 ## 背景
 

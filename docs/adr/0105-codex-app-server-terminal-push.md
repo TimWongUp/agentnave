@@ -3,7 +3,7 @@
 - 状态：部分修订
 - 日期：2026-11-20
 - 修订：[ADR-0103](0103-tray-embedded-terminal.md) 的 Codex `--no-daemon` 运行方式与 [ADR-0104](0104-in-app-boss-push.md) 的 Codex 推送排除。
-- 修订：Codex UDS `app-server` 通道在派生会话上的双向投递、轮次状态监听，以及派生子终端套用服务权限与默认参数由 [ADR-0109](0109-in-app-derived-sessions.md) 修订与扩展。
+- 修订：Codex UDS `app-server` 通道在派生会话上的 `thread/fork`、`turn/started`／`turn/completed` 与 `turn/interrupt`、双向结构化投递及派生子终端参数套用，由 [ADR-0109](0109-in-app-derived-sessions.md) 修订与扩展。
 
 ## 背景
 
