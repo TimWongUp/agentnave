@@ -23,17 +23,17 @@
   --knob-on: #1e1e1e;
   --boss-crown: #e3b341;
   --scrollbar: #ffffff4d;
-  --run: #4fd6c9;
+  --run: #4cc878;
   --review: #f0b45a;
-  --done: #7fca90;
+  --done: #4cc878;
   --idle: #7a808a;
   --warn: #e8975a;
   --bad: #ff7d6e;
   --show: #b9a4f5;
   --task: #6cc3f0;
-  /* the filled "answering / working" bubble: as striking on either ground */
-  --say-bg: #3cc4b8;
-  --say-ink: #06201d;
+  /* the filled "answering / working" bubble: unified with --run on either ground */
+  --say-bg: #3bb868;
+  --say-ink: #072010;
   /* eight manager colours (identity only; status is always a dot plus a word) */
   --m0: #6ea8ff;
   --m1: #a88bff;
@@ -100,15 +100,15 @@
   --knob-on: #fff;
   --boss-crown: #c99a1e;
   --scrollbar: #c7c7cc;
-  --run: #08786f;
+  --run: #1f8a4c;
   --review: #90621f;
-  --done: #307944;
+  --done: #1f8a4c;
   --idle: #8a8f98;
   --warn: #b24d00;
   --bad: #b83d31;
   --show: #7356cd;
   --task: #22729d;
-  --say-bg: #05645c;
+  --say-bg: #1f8a4c;
   --say-ink: #fff;
   /* eight manager colours (identity only; status is always a dot plus a word) */
   --m0: #2f6fe0;
@@ -176,15 +176,15 @@
     --knob-on: #fff;
     --boss-crown: #c99a1e;
     --scrollbar: #c7c7cc;
-    --run: #08786f;
+    --run: #1f8a4c;
     --review: #90621f;
-    --done: #307944;
+    --done: #1f8a4c;
     --idle: #8a8f98;
     --warn: #b24d00;
     --bad: #b83d31;
     --show: #7356cd;
     --task: #22729d;
-    --say-bg: #05645c;
+    --say-bg: #1f8a4c;
     --say-ink: #fff;
     /* eight manager colours (identity only; status is always a dot plus a word) */
     --m0: #2f6fe0;

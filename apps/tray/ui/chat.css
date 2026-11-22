@@ -528,8 +528,9 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .label .role { min-height: 1.5em; margin-top: 2px; font-size: 11px; line-height: 1.35; color: var(--show); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .tag { padding: 0 6px; border-radius: 99px; font-size: 10.5px; font-weight: 600; line-height: 16px; white-space: nowrap; background: var(--card-hover); color: var(--muted); }
 .tag-role { background: color-mix(in srgb, var(--show) 16%, transparent); color: var(--show); }
-/* access is a declared convention: outlined; meeting-only is a hard limit: filled */
-.tag-access { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--task) 55%, transparent); color: var(--task); }
+/* access is a declared convention: read-only stays quiet neutral, write draws subtle amber */
+.tag-access { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); }
+.tag-access[data-access="write"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 48%, transparent); color: var(--warn); }
 .tag-only { background: color-mix(in srgb, var(--idle) 30%, transparent); color: var(--soft); }
 
 /* ---- meetings beside the boss ---- */

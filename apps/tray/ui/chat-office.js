@@ -494,6 +494,7 @@ function updateDesk(rec, d, ctx) {
     rec.access,
     d.access === "read" ? L("只读", "Read-only") : d.access === "write" ? L("可写", "Writable") : "",
   );
+  setAttr(rec.access, "data-access", d.access || null);
   rec.access.hidden = !d.access;
   rec.only.hidden = d.private_allowed !== false;
   setAttr(
