@@ -1,6 +1,6 @@
 # ADR-0111：托盘为 CLI 会话自绘对话视图，按 CLI 选驱动协议
 
-- 状态：提议
+- 状态：已接受
 - 日期：2026-11-22
 - 修订：[ADR-0103](0103-tray-embedded-terminal.md) 的「真终端加皮肤，不做结构化对话界面」；[ADR-0109](0109-in-app-derived-sessions.md) 的展示与驱动方式（派生会话不再只开在终端里，一轮的边界改由各驱动协议给出）。
 - 更正依据：[ADR-0056](0056-claude-interactive-runtime.md) 关于第三方入口名的判断；[ADR-0072](0072-antigravity-interactive-runtime.md) 的省额度前提。两篇的运行方式本 ADR 不改。

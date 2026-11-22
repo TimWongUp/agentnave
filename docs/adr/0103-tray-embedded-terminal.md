@@ -9,7 +9,7 @@
 - 修订：办公室终端按账号选择与 `workspaces.owner_account` 续接、具名账号经 `/usr/bin/env CLAUDE_CONFIG_DIR=<dir>` 启动，以及独立账号登录终端边界由 [ADR-0108](0108-multi-account-isolation.md) 修订。
 - 修订：2026-11-21 自身修订，Claude 桌面端聊天不开放终端续接；Claude 与 Antigravity 桌面端聊天改为转交到新终端，由新 boss 接手工作区。
 - 修订：「终端只由用户在办公室里开」由 [ADR-0109](0109-in-app-derived-sessions.md) 修订：boss 可用 `start_agent` 的终端模式派发子代理，派生终端挂在派发它的 agent 下，不占该 agent 自己的终端槽位。
-- 修订：「真终端加皮肤，不做结构化对话界面」由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订为自绘对话视图加可切换的终端视图（提议中）。
+- 修订：「真终端加皮肤，不做结构化对话界面」由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订为自绘对话视图加可切换的终端视图。
 
 ## 背景
 
