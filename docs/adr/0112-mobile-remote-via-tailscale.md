@@ -1,6 +1,6 @@
 # ADR-0112：手机经 Tailscale 访问托盘的远程入口
 
-- 状态：已接受
+- 状态：已被 [ADR-0113](0113-chat-desktop-split-out.md) 取代（手机端移到另立的聊天桌面端项目，托盘不提供远程入口）
 - 日期：2026-11-22
 - 扩展：[ADR-0080](0080-tray-video-loopback-http.md) 的托盘监听边界（新增一个只听回环、经 Tailscale 发布的远程入口）。
 - 依赖：[ADR-0111](0111-self-drawn-conversation-view.md) 的对话事件。

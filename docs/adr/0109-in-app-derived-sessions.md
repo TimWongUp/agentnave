@@ -5,7 +5,7 @@
 - 修订：[ADR-0103](0103-tray-embedded-terminal.md) 的「终端只由用户在办公室里开」；[ADR-0025](0025-session-desks-and-running-limit.md) 的同时运行上限口径（终端模式只在 boss 派发的那一轮计入）；[ADR-0085](0085-service-managed-isolated-dirs.md) 的隔离目录租约持有方与自动释放时机；[ADR-0105](0105-codex-app-server-terminal-push.md) 的托盘 `app-server` 客户端（订阅线程回合、按轮中断、带来源标记投递）。
 - 扩展：[ADR-0043](0043-service-prompt-instructions.md) 的服务派发说明（终端模式改用自己的一段）；[ADR-0104](0104-in-app-boss-push.md) 的 `inbox/`、`push/` 合同。
 - 沿用：[ADR-0028](0028-follow-cli-default-model.md)、[ADR-0032](0032-cli-permission-tiers.md)、[ADR-0108](0108-multi-account-isolation.md)（默认值、权限档位与账号在服务入口解析）；[ADR-0080](0080-tray-video-loopback-http.md)（托盘不监听端口）；[ADR-0098](0098-tray-deletes-isolated-dirs.md)（仓库锁与租约协议）。
-- 修订：展示与驱动方式由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订：派生会话默认显示对话视图，一轮的边界改由驱动协议给出；派发、结算合同与进程归属不变。
+- 修订：展示与驱动方式由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订：派生会话默认显示对话视图，一轮的边界改由驱动协议给出；派发、结算合同与进程归属不变。ADR-0111 已被 [ADR-0113](0113-chat-desktop-split-out.md) 取代，此修订作废，恢复本 ADR 原条款。
 
 ## 背景
 
