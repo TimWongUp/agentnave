@@ -269,7 +269,7 @@ class TerminalRun:
                         last_state = state
                     if state == "finished":
                         self.terminal_finished = True
-                        return self._finish(item)
+                        return await asyncio.to_thread(self._finish, item)
                 if self.cancel_requested.is_set() and self._cancel_id is None:
                     self._send_cancel()
                 await asyncio.sleep(0.1)

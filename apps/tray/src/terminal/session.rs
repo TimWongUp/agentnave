@@ -387,18 +387,16 @@ impl Session {
         gate.has_draft()
     }
 
-    pub(crate) fn send_paste(&self, text: &str) -> Result<(), String> {
-        let clean = text
-            .replace('\x1b', "")
-            .replace("\x1b[200~", "")
-            .replace("\x1b[201~", "");
+    pub(crate) fn send_paste(&self, text: &str) -> Result<String, String> {
+        let clean = sanitize_paste_text(text);
         let use_paste = self.output().modes.paste();
         let payload = if use_paste {
             format!("\x1b[200~{clean}\x1b[201~")
         } else {
-            clean
+            clean.clone()
         };
-        self.write(payload.as_bytes())
+        self.write(payload.as_bytes())?;
+        Ok(clean)
     }
 
     pub(crate) fn recent_screen_text(&self, max_bytes: usize) -> String {
@@ -476,6 +474,12 @@ impl Session {
         }
         let _ = self.killer.lock().unwrap_or_else(|p| p.into_inner()).kill();
     }
+}
+
+pub(crate) fn sanitize_paste_text(text: &str) -> String {
+    text.replace("\x1b[200~", "")
+        .replace("\x1b[201~", "")
+        .replace('\x1b', "")
 }
 
 fn size(cols: u16, rows: u16) -> PtySize {

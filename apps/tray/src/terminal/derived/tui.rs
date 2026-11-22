@@ -22,6 +22,11 @@ use super::{
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const PASTE_COMMIT_DELAY: Duration = Duration::from_millis(300);
 pub(super) const TRANSCRIPT_FLUSH_WAIT: Duration = Duration::from_millis(1800);
+pub(super) const MISSING_ANCHOR_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(600)
+} else {
+    Duration::from_secs(10)
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum TuiKind {
@@ -32,8 +37,8 @@ pub(super) enum TuiKind {
 pub(super) struct TurnBaseline {
     pub(super) claude_homes: Vec<PathBuf>,
     pub(super) pre_offset: u64,
-    agy_baseline_cids: Vec<String>,
-    agy_prev_idx: Option<i64>,
+    pub(super) agy_baseline_cids: Vec<String>,
+    pub(super) agy_prev_idx: Option<i64>,
     pub(super) seq_before: u64,
 }
 
@@ -123,9 +128,11 @@ pub(super) fn run_tui_cli(
         agy_log_path.as_deref(),
         &launched.session,
     );
-    if !submit_prompt(coordinator, terminals, &launched, req_id, prompt, handle) {
+    let Some(sent_prompt) =
+        submit_prompt(coordinator, terminals, &launched, req_id, prompt, handle)
+    else {
         return;
-    }
+    };
     monitor_agy_turn(
         coordinator,
         terminals,
@@ -134,7 +141,7 @@ pub(super) fn run_tui_cli(
         env.session_id.as_deref(),
         agy_log_path.as_deref(),
         &baseline,
-        prompt,
+        &sent_prompt,
         handle,
     );
 }
@@ -314,7 +321,7 @@ pub(super) fn submit_prompt(
     req_id: &str,
     prompt: &str,
     handle: &Arc<RunHandle>,
-) -> bool {
+) -> Option<String> {
     if handle.is_pre_start_cancelled() {
         finish_pre_submit(
             coordinator,
@@ -324,12 +331,15 @@ pub(super) fn submit_prompt(
             "cancelled",
             "提交前已取消",
         );
-        return false;
+        return None;
     }
-    if let Err(err) = launched.session.send_paste(prompt) {
-        finish_pre_submit(coordinator, terminals, launched, req_id, "failed", &err);
-        return false;
-    }
+    let sent = match launched.session.send_paste(prompt) {
+        Ok(clean) => clean,
+        Err(err) => {
+            finish_pre_submit(coordinator, terminals, launched, req_id, "failed", &err);
+            return None;
+        }
+    };
     thread::sleep(PASTE_COMMIT_DELAY);
     if handle.is_pre_start_cancelled() || launched.session.exit().is_some() {
         let status = if handle.is_pre_start_cancelled() {
@@ -345,7 +355,7 @@ pub(super) fn submit_prompt(
             status,
             "提交前取消或关闭",
         );
-        return false;
+        return None;
     }
     if launched.session.osc_snapshot().1.as_deref() == Some("blocked")
         && !wait_unblocked(coordinator, terminals, launched, req_id, handle)
@@ -358,7 +368,7 @@ pub(super) fn submit_prompt(
             "cancelled",
             "阻塞期间取消",
         );
-        return false;
+        return None;
     }
     if handle.is_pre_start_cancelled() {
         finish_pre_submit(
@@ -369,13 +379,13 @@ pub(super) fn submit_prompt(
             "cancelled",
             "提交前已取消",
         );
-        return false;
+        return None;
     }
     if let Err(err) = launched.session.write(b"\r") {
         finish_pre_submit(coordinator, terminals, launched, req_id, "failed", &err);
-        return false;
+        return None;
     }
-    true
+    Some(sent)
 }
 
 pub(super) fn build_agy_args(
@@ -606,6 +616,7 @@ fn monitor_agy_turn(
             );
             if is_osc_settled(state_str, saw_working) {
                 let at = *settled_at.get_or_insert_with(Instant::now);
+                let has_anchor = confirmed_cid.is_some() && user_input_index.is_some();
                 let planner_done = matches!(
                     (agy_home.as_deref(), confirmed_cid.as_deref(), user_input_index),
                     (Some(home), Some(cid), Some(idx))
@@ -614,20 +625,30 @@ fn monitor_agy_turn(
                             idx,
                         ) != native_logs::AgyTurnState::Waiting
                 );
+                let flush_done = if has_anchor {
+                    at.elapsed() >= TRANSCRIPT_FLUSH_WAIT
+                } else {
+                    at.elapsed() >= MISSING_ANCHOR_WAIT
+                };
                 if !handle.interrupt_pending()
-                    && (state_str == Some("error")
-                        || planner_done
-                        || at.elapsed() >= TRANSCRIPT_FLUSH_WAIT)
+                    && (state_str == Some("error") || planner_done || flush_done)
                 {
+                    let missing_anchor = state_str != Some("error")
+                        && !handle.is_interrupt_confirmed()
+                        && !has_anchor;
                     finish_settled(
                         coordinator,
                         terminals,
                         launched.id,
                         req_id,
                         confirmed_cid.as_deref(),
-                        state_str == Some("error"),
+                        state_str == Some("error") || missing_anchor,
                         handle.is_interrupt_confirmed(),
-                        "Antigravity 返回错误状态",
+                        if missing_anchor {
+                            "缺少本轮锚点（未在 Antigravity 转录中匹配到本次输入）"
+                        } else {
+                            "Antigravity 返回错误状态"
+                        },
                     );
                     return;
                 }
@@ -635,6 +656,7 @@ fn monitor_agy_turn(
         }
 
         if let Some(code) = launched.session.exit() {
+            let has_anchor = confirmed_cid.is_some() && user_input_index.is_some();
             finish_exited(
                 coordinator,
                 terminals,
@@ -642,7 +664,7 @@ fn monitor_agy_turn(
                 req_id,
                 confirmed_cid.as_deref(),
                 code,
-                settled_at.is_some(),
+                settled_at.is_some() && has_anchor,
                 handle.is_interrupt_confirmed(),
             );
             return;

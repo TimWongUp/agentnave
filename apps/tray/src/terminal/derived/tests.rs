@@ -146,6 +146,17 @@ fn native_log_inspectors_extract_anchors_and_turn_states() {
         native_logs::claude_prompt_anchor(&claude_path, 0, "second task").as_deref(),
         Some("p-2")
     );
+    // B1: never fall back to another promptId when expected text does not match;
+    // sanitized paste text matches cleanly.
+    assert_eq!(
+        native_logs::claude_prompt_anchor(&claude_path, 0, "completely different"),
+        None
+    );
+    let sanitized = super::super::session::sanitize_paste_text("\x1b[200~second\x1b task\x1b[201~");
+    assert_eq!(
+        native_logs::claude_prompt_anchor(&claude_path, 0, &sanitized).as_deref(),
+        Some("p-2")
+    );
     assert_eq!(
         native_logs::claude_turn_state(&claude_path, "p-1"),
         native_logs::ClaudeTurnState::Superseded("p-2".to_owned())
@@ -154,6 +165,25 @@ fn native_log_inspectors_extract_anchors_and_turn_states() {
         native_logs::claude_turn_state(&claude_path, "p-2"),
         native_logs::ClaudeTurnState::Active
     );
+    assert_eq!(
+        native_logs::claude_turn_state(&claude_path, "p-missing"),
+        native_logs::ClaudeTurnState::Unknown
+    );
+    // B2: Unknown and Active must NOT count as ended; Completed and Superseded do.
+    let sid = "11111111-1111-4111-8111-111111111111";
+    let claude_proj = dir.path().join("projects/proj");
+    fs::create_dir_all(&claude_proj).unwrap();
+    fs::copy(&claude_path, claude_proj.join(format!("{sid}.jsonl"))).unwrap();
+    let baseline = tui::TurnBaseline {
+        claude_homes: vec![dir.path().to_path_buf()],
+        pre_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+    assert!(claude::claude_turn_ended(&baseline, sid, "p-1"));
+    assert!(!claude::claude_turn_ended(&baseline, sid, "p-2"));
+    assert!(!claude::claude_turn_ended(&baseline, sid, "p-missing"));
 
     // Codex rollout reconciliation.
     let rollout_dir = dir.path().join("sessions/2026/11/22");
@@ -1044,5 +1074,85 @@ fn update_blocker_keeps_invocation_ownership_until_cleared() {
     );
     terminals.clear_derived_turn(tid, Some("sid-a1"));
     assert!(terminals.derived_by_invocation("inv-a1").is_none());
+    session.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn claude_monitor_fails_instead_of_succeeding_when_anchor_never_appears() {
+    let dir = tempfile::tempdir().unwrap();
+    let sid = "22222222-2222-4222-8222-222222222222";
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        super::super::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("req-b4", "inv-b4");
+    let handle = coord.register_run("inv-b4");
+    let terminals = Terminals::default();
+
+    let mut cmd = CommandBuilder::new("python3");
+    cmd.args([
+        "-c",
+        "import os, time; os.write(1, b'\\x1b]7501;state=working\\x07\\x1b]7501;state=done\\x07'); time.sleep(5)",
+    ]);
+    cmd.cwd(dir.path());
+    let session = Session::start(cmd, 80, 24).unwrap();
+    let tid = terminals.register_derived(NewDerived {
+        provider: "claude".to_owned(),
+        cwd: dir.path().to_path_buf(),
+        session: session.clone(),
+        native: Some(sid.to_owned()),
+        account: None,
+        codex: None,
+        info: DerivedInfo {
+            parent_boss_key: "claude:boss".to_owned(),
+            parent_workspace_id: Some("ws".to_owned()),
+            busy: true,
+            blocked_kind: None,
+            isolation_id: None,
+            _lease: None,
+            _log_dir: None,
+            codex_ready_file: None,
+            active_invocation_id: Some("inv-b4".to_owned()),
+        },
+    });
+    let launched = DerivedHandle {
+        id: tid,
+        provider: "claude".to_owned(),
+        session: session.clone(),
+        native: Some(sid.to_owned()),
+        account: None,
+        codex: None,
+    };
+    let baseline = tui::TurnBaseline {
+        claude_homes: vec![dir.path().to_path_buf()],
+        pre_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+
+    claude::monitor_claude_turn(
+        &coord,
+        &terminals,
+        &launched,
+        "req-b4",
+        sid,
+        &baseline,
+        "expected prompt that never lands",
+        &handle,
+        None,
+    );
+    let receipt = coord.run_receipt_by_invocation("inv-b4").unwrap();
+    let terminal = receipt.terminal.unwrap();
+    assert_eq!(terminal.status, "failed");
+    assert!(
+        terminal
+            .reason
+            .as_deref()
+            .is_some_and(|r| r.contains("缺少本轮锚点"))
+    );
     session.stop();
 }

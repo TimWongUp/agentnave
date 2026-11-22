@@ -70,6 +70,7 @@ pub(super) fn file_len(path: &Path) -> u64 {
 }
 
 /// Find the `promptId` of the user prompt written to `path` at or after `offset`.
+/// Never falls back to another prompt: returns `None` until the expected text matches.
 pub(super) fn claude_prompt_anchor(
     path: &Path,
     offset: u64,
@@ -79,7 +80,9 @@ pub(super) fn claude_prompt_anchor(
     let _ = file.seek(SeekFrom::Start(offset));
     let reader = BufReader::new(file);
     let expected = flat_whitespace(expected_prompt);
-    let mut first_prompt_id = None;
+    if expected.is_empty() {
+        return None;
+    }
     for line in reader.lines().map_while(Result::ok) {
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
@@ -94,14 +97,11 @@ pub(super) fn claude_prompt_anchor(
         else {
             continue;
         };
-        if first_prompt_id.is_none() {
-            first_prompt_id = Some(pid.clone());
-        }
-        if !expected.is_empty() && flat_whitespace(&text) == expected {
+        if flat_whitespace(&text) == expected {
             return Some(pid);
         }
     }
-    first_prompt_id
+    None
 }
 
 #[derive(Debug, PartialEq, Eq)]

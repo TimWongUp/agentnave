@@ -5,12 +5,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import cast
 
 from agentnave import accounts
 from agentnave.adapters import get_adapter
 from agentnave.claude_tui.turn import is_user_prompt, transcript_event
+
+CODEX_READ_RETRY_SECONDS = 3.0
+CODEX_READ_POLL_SECONDS = 0.2
 
 
 def _object(value: object) -> dict[str, object]:
@@ -46,25 +50,13 @@ def read_turn(
         parser = claude_turn
     elif provider == "codex":
         root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
-        matches = list(root.glob(f"*/*/*/rollout-*-{session_id}.jsonl"))
         key = anchor.get("turn_id")
         client_id = anchor.get("client_user_message_id")
         if not isinstance(client_id, str) or not client_id:
             raise ValueError("missing Codex client_user_message_id")
-        matches = [p for p in matches if p.is_file() and p.resolve().is_relative_to(root.resolve())]
-        if len(matches) != 1 or not isinstance(key, str) or not key:
+        if not isinstance(key, str) or not key:
             raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
-        entries = rows(matches[0])
-        if not any(
-            row.get("type") == "event_msg"
-            and (payload := _object(row.get("payload"))).get("type") == "item_completed"
-            and payload.get("turn_id") == key
-            and _object(payload.get("item")).get("type") == "UserMessage"
-            and _object(payload.get("item")).get("client_id") == client_id
-            for row in entries
-        ):
-            raise ValueError("Codex user message does not match its client ID and turn")
-        return codex_turn(entries, key)
+        return _read_codex_turn_with_retry(root, session_id, key, client_id)
     elif provider == "antigravity":
         root = Path.home() / ".gemini/antigravity-cli/brain"
         matches = [root / session_id / ".system_generated/logs/transcript_full.jsonl"]
@@ -85,27 +77,79 @@ def read_turn(
     return parser(rows(matches[0]), key)
 
 
+def _codex_user_message_clients(entries: list[dict[str, object]], turn_id: str) -> list[str]:
+    clients: list[str] = []
+    for row in entries:
+        if row.get("type") != "event_msg":
+            continue
+        payload = _object(row.get("payload"))
+        if payload.get("type") != "item_completed" or payload.get("turn_id") != turn_id:
+            continue
+        item = _object(payload.get("item"))
+        if item.get("type") == "UserMessage":
+            cid = item.get("client_id")
+            clients.append(cid if isinstance(cid, str) else "")
+    return clients
+
+
+def _read_codex_turn_with_retry(root: Path, session_id: str, turn_id: str, client_id: str) -> str:
+    """Retry briefly while Codex flushes the rollout JSONL after turn/completed."""
+    deadline = time.monotonic() + CODEX_READ_RETRY_SECONDS
+    last_error = "native transcript missing, ambiguous, or missing turn anchor"
+    while True:
+        matches = [
+            p
+            for p in root.glob(f"*/*/*/rollout-*-{session_id}.jsonl")
+            if p.is_file() and p.resolve().is_relative_to(root.resolve())
+        ]
+        if len(matches) > 1:
+            raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
+        if len(matches) == 1:
+            entries = rows(matches[0])
+            clients = _codex_user_message_clients(entries, turn_id)
+            if client_id in clients:
+                try:
+                    return codex_turn(entries, turn_id)
+                except ValueError as exc:
+                    last_error = str(exc)
+            elif clients:
+                raise ValueError("Codex user message does not match its client ID and turn")
+            else:
+                last_error = "Codex user message does not match its client ID and turn"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError(last_error)
+        time.sleep(min(CODEX_READ_POLL_SECONDS, remaining))
+
+
+def _claude_user_prompt_id(row: dict[str, object]) -> str | None:
+    """Return promptId only for genuine non-meta user prompts, matching tray's is_claude_user_prompt."""
+    event = transcript_event(row, "")
+    if event is None or not is_user_prompt(event):
+        return None
+    pid = row.get("promptId")
+    return pid if isinstance(pid, str) and pid else None
+
+
 def claude_turn(entries: list[dict[str, object]], prompt_id: str) -> str:
     if not prompt_id:
         raise ValueError("missing Claude prompt_id")
     active = False
     answer = ""
     for row in entries:
-        if row.get("isSidechain") or row.get("isMeta"):
+        if row.get("isSidechain"):
             continue
-        event = transcript_event(row, "")
-        if (
-            active
-            and event is not None
-            and is_user_prompt(event)
-            and row.get("promptId") != prompt_id
-        ):
+        if active and row.get("type") == "system" and row.get("subtype") == "turn_duration":
             break
-        if row.get("type") == "user" and row.get("promptId"):
-            if active and row["promptId"] != prompt_id:
+        if row.get("isMeta"):
+            continue
+        user_pid = _claude_user_prompt_id(row)
+        if user_pid is not None:
+            if active and user_pid != prompt_id:
                 break
-            if row["promptId"] == prompt_id:
+            if user_pid == prompt_id:
                 active = True
+                continue
         if active and row.get("type") == "assistant":
             content = _object(row.get("message")).get("content")
             if isinstance(content, list):
