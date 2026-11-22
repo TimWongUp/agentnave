@@ -318,7 +318,9 @@ function renderBossState(rec, parts, tookOver, model) {
 function updateBoss(rec, c, n) {
   const holder = seatHolder(c);
   const model = holder.model;
-  dress(rec, ART.character(holder.host, model), rec.scene, rec.desk);
+  // Before any dispatch the figure wears the CLI's default model; only a reported model is named.
+  const artModel = !model && !holder.former && holder.host === c.host ? c.boss_art_model || "" : model;
+  dress(rec, ART.character(holder.host, artModel), rec.scene, rec.desk);
   dressBossSet(rec, c.host);
   dressLid(rec, c.app || c.host);
   hangPortrait(rec, c, holder.former);

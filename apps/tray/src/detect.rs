@@ -251,6 +251,44 @@ pub fn cached_native(provider: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The model a terminal's CLI starts on when nothing asked for another, read without probing or
+/// blocking: a named Claude account only from its own `settings.json`; otherwise the CLI's own
+/// settings, the last probe in memory, then the one on disk (a just-started app has not probed yet).
+pub fn default_model(provider: &str, account_dir: Option<&Path>, root: &Path) -> Option<String> {
+    default_model_of(
+        provider,
+        account_dir,
+        root,
+        || configured(provider),
+        || cached_native(provider),
+    )
+}
+
+fn default_model_of(
+    provider: &str,
+    account_dir: Option<&Path>,
+    root: &Path,
+    own: impl FnOnce() -> Option<String>,
+    probed: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let name = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+    };
+    if let Some(dir) = account_dir {
+        let text = std::fs::read_to_string(dir.join("settings.json")).ok()?;
+        let settings: Value = serde_json::from_str(&text).ok()?;
+        return name(settings["model"].as_str());
+    }
+    own().or_else(probed).or_else(|| {
+        let text = std::fs::read_to_string(root.join(NATIVE_FILE)).ok()?;
+        let published: Value = serde_json::from_str(&text).ok()?;
+        name(published["clis"][provider]["model"].as_str())
+    })
+}
+
 fn efforts(provider: &str) -> Vec<String> {
     EFFORTS
         .iter()

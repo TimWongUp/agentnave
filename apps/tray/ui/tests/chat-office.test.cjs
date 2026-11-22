@@ -159,6 +159,23 @@ test("an old boss speaking after release cannot take the new boss's model or era
   assert.equal(app.rec.portrait.children[0].name, old.speaker.model);
 });
 
+test("a boss that has not dispatched wears its default model's figure and names no model until one is reported", () => {
+  const app = office(), c = { host: "codex", app: "codex", label: "Codex CLI", boss_art_model: "gpt-6.1-sol", messages: [] };
+  app.update(c);
+  assert.equal(app.rec.char, "gpt-6.1-sol");
+  assert.equal(app.rec.state.textContent, "");
+  c.messages.push(speech("codex", "gpt-6.1-luna", "2026-11-04T14:25:03Z"));
+  app.update(c);
+  assert.equal(app.rec.char, "gpt-6.1-luna");
+  assert.equal(app.rec.state.textContent, "gpt-6.1-luna");
+});
+
+test("a default model never dresses a new boss that has yet to speak after a handover", () => {
+  const app = office(), c = { ...claimed(), boss_art_model: "gemini-4-argon" };
+  app.update(c);
+  assert.equal(app.rec.char, old.speaker.model);
+});
+
 test("same-host takeover does not carry the old model into an unknown new boss", () => {
   const app = office(), c = { ...claimed(), host: "claude", app: "claude-cli" };
   c.messages.push(speech("claude", "", "2026-11-04T14:25:03Z"));
