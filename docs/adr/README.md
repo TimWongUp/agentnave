@@ -42,7 +42,7 @@
 | 0036 | [本服务的 Skill 只由 App 管理](0036-app-owns-service-skills.md) | 已接受 | [ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) |
 | 0037 | [App 写入编排规则，Explorer 与 Worker 分简单、困难两档](0037-app-writes-orchestration-rules.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0051](0051-parallel-preset-without-recheck.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0038 | [私聊的 role 指明工位时，服务套用 App 里的工位设置](0038-role-applies-app-seat.md) | 部分取代 | [ADR-0043](0043-service-prompt-instructions.md)、[ADR-0050](0050-v1-compatibility-baseline.md)、[ADR-0052](0052-orchestration-specialty-seats.md)、[ADR-0053](0053-disabled-cli-runs-for-no-seat.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md)、[ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0089](0089-seat-fallback-order.md)、[ADR-0093](0093-decision-seat-random-candidates.md)；2026-11-15 自身修订：工位推断的访问等级改为默认值，不再拒绝不一致的声明；2026-11-16 自身修订：`session_id` 续接时显式改换到其他 CLI 的工位直接拒绝，不再记录新工位名却沿用历史模型 |
-| 0039 | [单席失败提醒一次，并联轮内可补跑](0039-retry-lost-seat-within-round.md) | 已接受 | — |
+| 0039 | [单席失败提醒一次，并联轮内可补跑](0039-retry-lost-seat-within-round.md) | 部分修订 | 终态事件携带的执行阻断不先报 `execution_blocked`，由 [ADR-0104](0104-in-app-boss-push.md) 2026-11-22 修订 |
 | 0040 | [工作区按会话记录显示 boss 的入口，接入按配置文件划分](0040-boss-app-from-session-records.md) | 部分修订 | [ADR-0071](0071-cross-platform-host-readers-and-receipts.md) |
 | 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | [ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md) |
 | 0042 | [组员模型带档位，服务每次传模型与档位](0042-pass-cli-default-effort.md) | 已接受 | — |
@@ -98,7 +98,7 @@
 | 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」 |
 | 0093 | [「决策模型」档自定义任务工位支持同档可用候选随机选](0093-decision-seat-random-candidates.md) | 部分修订 | 修订 ADR-0089 在「决策模型」档自定义任务工位上的顺位挑选与回执含义、ADR-0038 在该类工位开启随机选时的续接模型优先级；扩展 ADR-0087；2026-11-20 自身修订：优先避开本进程该工位运行中的候选模型；在用候选按账号维度追踪由 [ADR-0108](0108-multi-account-isolation.md) 修订；回执 `note` 由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 补充 |
 | 0094 | [Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动](0094-antigravity-host-cli-defaults-to-launch.md) | 已接受 | 修订 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的私聊同类默认值 |
-| 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049 |
+| 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049；终态事件不再先报运行中阻断由 [ADR-0104](0104-in-app-boss-push.md) 2026-11-22 补充 |
 | 0096 | [清除宿主自身的遗留排除项，重连后消除连接中断提示](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) | 已接受 | 修订 ADR-0015、ADR-0088、ADR-0090；扩展 ADR-0012；已结束连接的范围由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 补充 |
 | 0097 | [中继收到终止信号视为宿主关闭，已退出的加载回执仍作证据](0097-relay-termination-signal-and-exited-tool-receipts.md) | 已接受 | 修订 ADR-0022；补充 ADR-0096 |
 | 0098 | [托盘可在仓库锁与租约协议下手动删除隔离目录](0098-tray-deletes-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的 App 清理边界；扩展 ADR-0012 |
@@ -107,7 +107,7 @@
 | 0101 | [托盘逐条展示并在校验后向旧终端宿主进程发送 SIGTERM](0101-tray-stops-old-cli-copies.md) | 已接受 | 扩展 ADR-0022 的重新加载引导边界 |
 | 0102 | [Antigravity 交互运行采用原生状态事件](0102-agy-native-status.md) | 已接受 | 修订 ADR-0072、ADR-0079 |
 | 0103 | [办公室里开 agent，终端与它的工作区对应](0103-tray-embedded-terminal.md) | 部分修订 | 修订 CONTEXT「工作区」「项目」「Tray App」并新增「agent」；扩展 ADR-0012 的托盘写入边界与 ADR-0071 的连接回执；2026-11-18 自身修订（项目→agent→办公室模型、右栏三格、中继与托盘对应修复、Codex `--no-daemon`、Claude/Codex 续接与托盘内防重）；2026-11-19 自身修订（别处打开时先确认再续接、agent 显示名取 CLI 会话名、启动主题参数、重放不应答、「结束终端」按条件确认）；Unix Codex `--no-daemon` 由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订；多账号终端选择、续接与独立登录终端由 [ADR-0108](0108-multi-account-isolation.md) 修订 |
-| 0104 | [App 内 boss 由 App 提示收件](0104-in-app-boss-push.md) | 部分修订 | 修订 ADR-0007、ADR-0064 的推送边界；Codex 排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订；自定义档旧生成等待句迁移由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；2026-11-21 自身修订（显式 `ids` 阻塞等待纳入等待状态，PTY 提交前复查并在已读时退格撤回） |
+| 0104 | [App 内 boss 由 App 提示收件](0104-in-app-boss-push.md) | 部分修订 | 修订 ADR-0007、ADR-0064 的推送边界；Codex 排除由 [ADR-0105](0105-codex-app-server-terminal-push.md) 修订；自定义档旧生成等待句迁移由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；2026-11-21 自身修订（显式 `ids` 阻塞等待纳入等待状态，PTY 提交前复查并在已读时退格撤回）；2026-11-22 自身修订（PTY 仅在空闲／完成／出错时投递，终态事件携带阻断不再先报运行中阻断，连带修订 [ADR-0039](0039-retry-lost-seat-within-round.md) 并补充 [ADR-0095](0095-provider-terminal-grace.md)） |
 | 0105 | [Codex 内嵌终端改用私有 app-server 与结构化推送](0105-codex-app-server-terminal-push.md) | 已接受 | 修订 ADR-0103、ADR-0104；2026-11-21 自身修订（投递前复查 `inbox`，按 `queuedSubmission.id` 用 `thread/queue/delete`／`update` 撤回或缩容已读排队唤醒） |
 | 0106 | [托盘拥有本机 CLI 用量统计与折算花费面板](0106-tray-usage-panel.md) | 已接受 | 扩展 ADR-0012 的托盘数据根写入边界；保持 ADR-0026、ADR-0048 的服务与会话库隔离；遵守 ADR-0029；复用 ADR-0100 卸载开关与 ADR-0103 预览版及内嵌页约定；同步更新 CONTEXT「Tray App」 |
 | 0107 | [固定档专项不再排除在小事边界外，收尾改为服务语义汇报，顺位回执自带说明](0107-specialist-scope-closing-and-fallback-note.md) | 已接受 | 修订 ADR-0073、ADR-0104；扩展 ADR-0043；补充 ADR-0089、ADR-0093 |

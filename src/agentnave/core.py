@@ -148,6 +148,9 @@ class _InvocationRecord:
         self.last_event_at = time.monotonic()
         if adapter.terminal_event(event):
             self.terminal_event.set()
+        # Once the final outcome is known, the task's end is reported once by its settlement;
+        # a blocker in that outcome is not announced as a running blocker first.
+        finished = self.terminal_event.is_set()
         self.reported_model = adapter.event_model(event) or self.reported_model
         if self.prompts.encode is not None:
             prompt = adapter.prompt_event(event)
@@ -174,10 +177,11 @@ class _InvocationRecord:
                 message = "CLI reported an execution blocker; inspect or cancel the invocation."
                 if category == "quota":
                     message += " " + provider_health.QUOTA_RESUME_HINT
-                self.pending_attention.append(InvocationError(code, message))
-                self.attention_event.set()
-                if self.on_inbox_change is not None:
-                    self.on_inbox_change()
+                if not finished:
+                    self.pending_attention.append(InvocationError(code, message))
+                    self.attention_event.set()
+                    if self.on_inbox_change is not None:
+                        self.on_inbox_change()
             if activity.kind == "message" and activity.public_output:
                 # Delta events append; cumulative/final message events replace the current reply.
                 if activity.message_delta and self.output_event_type == activity.event_type:

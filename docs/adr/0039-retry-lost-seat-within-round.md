@@ -1,8 +1,9 @@
 # ADR-0039：单席失败提醒一次，并联轮内可补跑
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-10-31
 - 补充 [ADR-0007](0007-wait-any-ready-subset.md) 的就绪条件。
+- 修订：Adapter 声明 [ADR-0095](0095-provider-terminal-grace.md) 终态事件时的阻断合并由 [ADR-0104](0104-in-app-boss-push.md) 2026-11-22 修订。
 
 ## 背景
 
@@ -19,4 +20,5 @@
 
 - 不新增工具，加在 `run_round` 上，避免宿主的工具名单跟着改；代价是这个工具又多一种用法。
 - CLI 的错误行先于退出到达时，同一次失败可能先有一次 `execution_blocked`，退出后再有一次 `seat_lost`。前者席位仍在运行、不能补跑，两者含义不同，不合并。
+  - 2026-11-22 修订：若 Adapter 已按 [ADR-0095](0095-provider-terminal-grace.md) 将该错误事件声明为原生终态事件（如 Codex `turn.failed`），该事件已标志本次调用结束而非运行中受阻；服务仍记录 provider 冷却，但不再先报一次 `execution_blocked`，仅由终态结算或 `seat_lost` 通知一次（对所有等待方式生效）。
 - 已开会议增加新席位是另一件事，补跑不需要它，本决定不包含。

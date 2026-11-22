@@ -124,6 +124,19 @@ fn prompt_precedes_results_and_role_is_sanitized() {
 }
 
 #[test]
+fn running_blocker_is_worded_as_blocked_not_ended() {
+    let blocked = Item {
+        key: "blocked:s-1:provider_failed".into(),
+        kind: "blocked".into(),
+        role: Some("审查".into()),
+        status: Some("execution_blocked".into()),
+    };
+    let text = message(&[blocked]);
+    assert!(text.contains("审查（受阻）"), "{text}");
+    assert!(!text.contains("已结束"), "{text}");
+}
+
+#[test]
 fn push_providers_include_codex_only_on_unix() {
     #[cfg(unix)]
     assert!(PROVIDERS.contains(&"codex"));
