@@ -297,6 +297,7 @@
   }
 
   function renderNewChatProjects() {
+    newChatToken += 1;
     const pop = ensureNewChatPop();
     const list = pickableProjects();
     if (!list.length) {
@@ -482,10 +483,17 @@
       urgent: AN.urgent,
       L,
       sidebar: state.sidebar,
-      prefs: currentPrefs,
+      prefs: { ...currentPrefs, view: "project", filter: "all", hideEmpty: false },
       query: "",
     });
     const keys = sections.filter((s) => !s.pinned && !s.other).map((s) => s.key);
+    const seen = new Set(keys);
+    for (const saved of state.sidebar?.project_order || []) {
+      if (saved && !seen.has(saved)) {
+        keys.push(saved);
+        seen.add(saved);
+      }
+    }
     const from = keys.indexOf(dragKey);
     if (from < 0) return null;
     keys.splice(from, 1);

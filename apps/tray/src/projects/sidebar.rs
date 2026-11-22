@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use serde_json::{Value, json};
 
 use super::OTHER;
-use super::path::comparable;
+use super::path;
 
 pub(crate) const FILE: &str = "sidebar-state.json";
 const VERSION: u64 = 1;
@@ -35,19 +35,44 @@ impl SidebarState {
     }
 }
 
-fn same_key(left: &str, right: &str) -> bool {
-    comparable(Path::new(left)) == comparable(Path::new(right))
+fn normalize_project_key(raw: &str) -> Option<String> {
+    let mut key = raw.trim();
+    if key.is_empty() || key == OTHER {
+        return None;
+    }
+    while key.len() > 1 && (key.ends_with('/') || (cfg!(windows) && key.ends_with('\\'))) {
+        if cfg!(windows)
+            && key.len() == 3
+            && key.as_bytes()[0].is_ascii_alphabetic()
+            && key.as_bytes()[1] == b':'
+        {
+            break;
+        }
+        key = &key[..key.len() - 1];
+    }
+    let normalized = path::key(Path::new(key));
+    (!normalized.is_empty() && normalized != OTHER).then_some(normalized)
 }
 
-fn valid_project_key(raw: &str) -> Option<&str> {
-    let key = raw.trim();
-    (!key.is_empty() && key != OTHER).then_some(key)
+fn is_bidi_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 fn normalize_alias(raw: &str) -> String {
     let single_line: String = raw
         .chars()
-        .map(|c| if matches!(c, '\r' | '\n') { ' ' } else { c })
+        .filter_map(|c| {
+            if matches!(c, '\r' | '\n' | '\t') {
+                Some(' ')
+            } else if c.is_control() || is_bidi_control(c) {
+                None
+            } else {
+                Some(c)
+            }
+        })
         .collect();
     single_line
         .trim()
@@ -64,11 +89,11 @@ fn read_project_keys(value: Option<&Value>) -> Vec<String> {
     };
     let mut keys: Vec<String> = Vec::new();
     for item in items {
-        let Some(key) = item.as_str().and_then(valid_project_key) else {
+        let Some(key) = item.as_str().and_then(normalize_project_key) else {
             continue;
         };
-        if !keys.iter().any(|existing| same_key(existing, key)) {
-            keys.push(key.to_owned());
+        if !keys.iter().any(|existing| existing == &key) {
+            keys.push(key);
         }
     }
     keys
@@ -96,7 +121,7 @@ fn read_aliases(value: Option<&Value>) -> BTreeMap<String, String> {
     };
     let mut aliases: BTreeMap<String, String> = BTreeMap::new();
     for (raw_key, raw_alias) in entries {
-        let Some(key) = valid_project_key(raw_key) else {
+        let Some(key) = normalize_project_key(raw_key) else {
             continue;
         };
         let Some(alias) = raw_alias
@@ -106,9 +131,7 @@ fn read_aliases(value: Option<&Value>) -> BTreeMap<String, String> {
         else {
             continue;
         };
-        if !aliases.keys().any(|existing| same_key(existing, key)) {
-            aliases.insert(key.to_owned(), alias);
-        }
+        aliases.entry(key).or_insert(alias);
     }
     aliases
 }
@@ -164,15 +187,15 @@ fn mutate(
 }
 
 pub(crate) fn rename(dir: &Path, key: &str, alias: &str) -> Result<SidebarState, (u16, String)> {
-    let Some(key) = valid_project_key(key) else {
+    let Some(key) = normalize_project_key(key) else {
         return Err((400, "需要有效的项目路径".into()));
     };
     let alias = normalize_alias(alias);
     mutate(dir, |state| {
         let before = state.project_aliases.clone();
-        state.project_aliases.retain(|k, _| !same_key(k, key));
+        state.project_aliases.remove(&key);
         if !alias.is_empty() {
-            state.project_aliases.insert(key.to_owned(), alias);
+            state.project_aliases.insert(key, alias);
         }
         state.project_aliases != before
     })
@@ -183,17 +206,17 @@ pub(crate) fn pin_project(
     key: &str,
     pinned: bool,
 ) -> Result<SidebarState, (u16, String)> {
-    let Some(key) = valid_project_key(key) else {
+    let Some(key) = normalize_project_key(key) else {
         return Err((400, "需要有效的项目路径".into()));
     };
     mutate(dir, |state| {
         let before = state.pinned_projects.clone();
         if pinned {
-            if !state.pinned_projects.iter().any(|k| same_key(k, key)) {
-                state.pinned_projects.insert(0, key.to_owned());
+            if !state.pinned_projects.iter().any(|k| k == &key) {
+                state.pinned_projects.insert(0, key);
             }
         } else {
-            state.pinned_projects.retain(|k| !same_key(k, key));
+            state.pinned_projects.retain(|k| k != &key);
         }
         state.pinned_projects != before
     })
@@ -202,11 +225,11 @@ pub(crate) fn pin_project(
 pub(crate) fn set_order(dir: &Path, order: &[&str]) -> Result<SidebarState, (u16, String)> {
     let mut next: Vec<String> = Vec::new();
     for raw in order {
-        let Some(key) = valid_project_key(raw) else {
+        let Some(key) = normalize_project_key(raw) else {
             continue;
         };
-        if !next.iter().any(|existing| same_key(existing, key)) {
-            next.push(key.to_owned());
+        if !next.iter().any(|existing| existing == &key) {
+            next.push(key);
         }
     }
     mutate(dir, |state| {

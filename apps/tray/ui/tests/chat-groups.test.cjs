@@ -448,6 +448,17 @@ test("ChatSidebar new-chat flow picks project then CLI and launches terminal", a
   pop.querySelectorAll("button")[3].listeners.click[0]();
   assert.equal(pop.hidden, true);
   assert.deepEqual(started, [{ provider: "claude", cwd: "/w/alpha", account: "work" }]);
+
+  // Back navigation via keyboard while CLI probe is in-flight cancels the stale probe.
+  let resolveSlowClis;
+  sbContext.ChatTerminal.clis = () => new Promise(r => { resolveSlowClis = r; });
+  btn.listeners.click[0]({ stopPropagation() {} });
+  pop.querySelectorAll("button")[1].listeners.click[0]();
+  pop.listeners.keydown[0]({ key: "ArrowLeft", preventDefault() {}, stopPropagation() {} });
+  resolveSlowClis([{ provider: "codex", accounts: [] }]);
+  await new Promise(r => setImmediate(r));
+  assert.equal(pop.querySelectorAll("button").length, 3);
+  assert.match(textOf(pop.querySelectorAll("button")[1]), /Alpha App/);
 });
 
 test("ChatSidebar preserves popover focus on setPrefs, hides fold actions in flat view, and handles drop target, edge scroll, and closeNewChat", () => {
@@ -508,6 +519,7 @@ test("ChatSidebar preserves popover focus on setPrefs, hides fold actions in fla
     ["side-search-clear", makeEl("button")],
     ["list", list],
   ]);
+  let lastReordered = null;
   const sbContext = vm.createContext({
     AN: {
       h, $: id => els.get(id) || null, L: zh => zh,
@@ -517,7 +529,7 @@ test("ChatSidebar preserves popover focus on setPrefs, hides fold actions in fla
     ChatGroups: context.window.ChatGroups,
     Actions: {
       openMenu: (_e, items) => menuCalls.push(items.map(i => i.label)),
-      reorderProjects: () => {},
+      reorderProjects: (order) => { lastReordered = order; },
     },
     localStorage: {
       getItem: k => (storage.has(k) ? storage.get(k) : null),
@@ -607,4 +619,17 @@ test("ChatSidebar preserves popover focus on setPrefs, hides fold actions in fla
   assert.equal(itemC1.getAttribute("data-drop"), null);
   assert.equal(recC.el.getAttribute("data-drop"), null);
   assert.equal(recA.el.classList.contains("dragging"), false);
+
+  // Dragging while filtered/hiding empty projects preserves hidden and previously saved keys in project_order.
+  sbContext.state.groupsData = [
+    ws("ga", "/w/a", "2026-11-12T12:00:00Z", { state: "done" }),
+    ws("gb", "/w/b", "2026-11-12T11:00:00Z", { state: "running" }),
+    ws("gc", "/w/c", "2026-11-12T10:00:00Z", { state: "running" }),
+  ];
+  sbContext.state.projects = [{ key: "/w/empty", label: "empty", path: "/w/empty", added_at: 0 }];
+  sbContext.state.sidebar.project_order = ["/w/a", "/w/b", "/w/empty", "/w/c", "/w/offline"];
+  ChatSidebar.setPrefs({ view: "project", projectSort: "manual", filter: "active", hideEmpty: true });
+  recC.el.listeners.dragstart[0]({ target: recC.el, dataTransfer: { setData() {} } });
+  recB.el.listeners.drop[0]({ clientY: 1, preventDefault() {} });
+  assert.deepEqual(plain(lastReordered), ["/w/a", "/w/c", "/w/b", "/w/empty", "/w/offline"]);
 });

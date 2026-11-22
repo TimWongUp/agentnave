@@ -622,11 +622,20 @@ fn sidebar_state_persists_normalizes_and_recovers_from_corrupt_files() {
     let state = super::sidebar::pin_group(&config, "g1", false).unwrap();
     assert!(state.pinned_groups.is_empty());
 
-    // Ordering filters blanks and "other" and deduplicates while overwriting.
+    // Ordering filters blanks and "other", strips trailing slashes, and deduplicates while overwriting.
     let state =
-        super::sidebar::set_order(&config, &["", "other", " /work/b ", "/work/a", "/work/b"])
+        super::sidebar::set_order(&config, &["", "other", " /work/b/ ", "/work/a", "/work/b"])
             .unwrap();
     assert_eq!(state.project_order, vec!["/work/b", "/work/a"]);
+
+    // Trailing slashes and control/bidi characters are normalized so keys match frontend lookups.
+    let state = super::sidebar::rename(&config, "/work/app///", "App\u{202E}\x00\tName").unwrap();
+    assert_eq!(
+        state.project_aliases.get("/work/app").map(String::as_str),
+        Some("App Name")
+    );
+    let state = super::sidebar::pin_project(&config, "/work/c/", true).unwrap();
+    assert_eq!(state.pinned_projects[0], "/work/c");
 
     let saved: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
     assert_eq!(saved["version"], 1);
