@@ -475,6 +475,7 @@ impl Terminals {
     pub(super) fn attach_derived_lease(
         &self,
         terminal_id: u64,
+        isolation_id: Option<&str>,
         lease: crate::isolated::leases::HeldLease,
     ) {
         let mut state = self.lock();
@@ -482,7 +483,42 @@ impl Terminals {
             && let Some(derived) = running.derived.as_mut()
             && derived._lease.is_none()
         {
+            if derived.isolation_id.is_none() {
+                derived.isolation_id = isolation_id.map(str::to_owned);
+            }
             derived._lease = Some(lease);
+        }
+    }
+
+    pub(super) fn release_derived_lease(&self, terminal_id: u64) {
+        let lease = {
+            let mut state = self.lock();
+            state
+                .open
+                .iter_mut()
+                .find(|r| r.id == terminal_id)
+                .and_then(|r| r.derived.as_mut())
+                .and_then(|d| d._lease.take())
+        };
+        drop(lease);
+    }
+
+    pub(super) fn remove_derived_terminal(&self, terminal_id: u64) {
+        let removed = {
+            let mut state = self.lock();
+            state
+                .open
+                .iter()
+                .position(|r| r.id == terminal_id && r.derived.is_some())
+                .map(|idx| state.open.remove(idx))
+        };
+        if let Some(running) = removed {
+            #[cfg(unix)]
+            if let Some(codex) = running.codex.as_ref() {
+                codex.close();
+            }
+            running.session.stop();
+            drop(running);
         }
     }
 

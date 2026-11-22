@@ -65,6 +65,80 @@ fn publishes_256k_limit_evicts_oldest_finished_only() {
     assert!(encoded.len() <= PUSH_MAX_BYTES);
     assert!(doc["requests"].get("active-id").is_some());
     assert!(doc["terminal_providers"].as_array().is_some());
+
+    // C2: Actual persisted push file must use the same compact encoding and stay <= PUSH_MAX_BYTES.
+    coord.lock().receipts = receipts;
+    coord.publish().unwrap();
+    let on_disk = fs::read(dir.path().join("push").join(format!("{}.json", coord.pid))).unwrap();
+    assert!(on_disk.len() <= PUSH_MAX_BYTES);
+}
+
+#[test]
+fn publish_failure_rolls_back_intake_and_retries_receipt_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    ensure_spawn_requests_dir(dir.path());
+    let coord = test_coord(dir.path());
+    let terminals = Terminals::default();
+
+    // Block push/ creation by placing a regular file at `push`.
+    let blocker = dir.path().join("push");
+    fs::write(&blocker, b"not-a-dir").unwrap();
+
+    let req_id = "88888888-8888-4888-8888-888888888888";
+    let req_path = dir
+        .path()
+        .join("spawn-requests")
+        .join(format!("{req_id}.json"));
+    fs::write(
+        &req_path,
+        json!({
+            "version": 1,
+            "request_id": req_id,
+            "kind": "cancel",
+            "service": {"pid": coord.pid, "started_at": coord.started_at},
+            "target_tray": {"pid": coord.pid, "started_at": coord.started_at},
+            "invocation_id": "99999999-9999-4999-8999-999999999999",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // First poll fails to publish: receipt must be rolled back and request file kept for retry.
+    coord.poll(&terminals);
+    assert!(req_path.exists());
+    assert!(coord.receipts_snapshot().is_empty());
+
+    // Once push/ is writable, the next poll consumes the request and publishes its receipt.
+    fs::remove_file(&blocker).unwrap();
+    coord.poll(&terminals);
+    assert!(!req_path.exists());
+    let push_path = dir.path().join("push").join(format!("{}.json", coord.pid));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut disk_state = Value::Null;
+    while Instant::now() < deadline {
+        if let Ok(bytes) = fs::read(&push_path)
+            && let Ok(doc) = serde_json::from_slice::<Value>(&bytes)
+        {
+            disk_state = doc["requests"][req_id]["state"].clone();
+            if disk_state == json!("finished") {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(disk_state, json!("finished"));
+
+    // Simulate transient write failure on mark_finished: last_published must NOT advance,
+    // so a subsequent poll flushes the finished receipt once writable again.
+    coord.insert_test_receipt("req-late", "inv-late");
+    coord.publish().unwrap();
+    fs::remove_dir_all(dir.path().join("push")).unwrap();
+    fs::write(&blocker, b"blocked-again").unwrap();
+    coord.mark_finished("req-late", "succeeded", None, Some("sid-late"));
+    fs::remove_file(&blocker).unwrap();
+    coord.poll(&terminals);
+    let flushed: Value = serde_json::from_slice(&fs::read(&push_path).unwrap()).unwrap();
+    assert_eq!(flushed["requests"]["req-late"]["state"], json!("finished"));
 }
 
 #[test]

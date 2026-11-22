@@ -46,17 +46,34 @@ pub(crate) fn create_private_dir(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Replace `name` under `root` atomically: a unique sibling file, synced, then renamed.
-pub(crate) fn write_atomic(root: &Path, name: &str, document: &Value) -> Result<(), String> {
+fn write_atomic_bytes(root: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
     let write = || -> Result<(), Box<dyn std::error::Error>> {
         create_private_dir(root)?;
         // Dropping the temporary file cleans it up on failure, leaving the old file intact.
         let mut temporary = tempfile::NamedTempFile::new_in(root)?;
-        temporary.write_all(&serde_json::to_vec_pretty(document)?)?;
-        temporary.write_all(b"\n")?;
+        temporary.write_all(bytes)?;
         temporary.as_file().sync_all()?;
         temporary.persist(root.join(name))?;
         Ok(())
     };
     write().map_err(|error| format!("无法保存 {name}：{error}"))
+}
+
+/// Replace `name` under `root` atomically: a unique sibling file, synced, then renamed.
+pub(crate) fn write_atomic(root: &Path, name: &str, document: &Value) -> Result<(), String> {
+    let mut bytes =
+        serde_json::to_vec_pretty(document).map_err(|error| format!("无法保存 {name}：{error}"))?;
+    bytes.push(b'\n');
+    write_atomic_bytes(root, name, &bytes)
+}
+
+/// Replace `name` under `root` atomically using compact JSON so encoded size matches `to_vec`.
+pub(crate) fn write_atomic_compact(
+    root: &Path,
+    name: &str,
+    document: &Value,
+) -> Result<(), String> {
+    let bytes =
+        serde_json::to_vec(document).map_err(|error| format!("无法保存 {name}：{error}"))?;
+    write_atomic_bytes(root, name, &bytes)
 }

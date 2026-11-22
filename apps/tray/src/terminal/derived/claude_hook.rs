@@ -61,7 +61,9 @@ pub(super) fn hook_settings(hook_dir: &Path) -> Value {
         "[ -f {armed} ] || exit 0; rm -f {armed}; \
         /usr/bin/perl -MJSON::PP -0777 -e 'my $d = eval {{ decode_json(<STDIN>) }}; \
         my $m = ref($d) eq \"HASH\" ? ($d->{{permission_mode}} // \"\") : \"\"; \
-        open my $fh, \">\", $ARGV[0] or die $!; print {{$fh}} $m; close $fh; \
+        my $tmp = \"$ARGV[0].tmp.$$\"; \
+        open my $fh, \">\", $tmp or die $!; print {{$fh}} $m; close $fh or die $!; \
+        rename $tmp, $ARGV[0] or die $!; \
         if ($m eq \"default\") {{ print \"{{\\\"decision\\\":\\\"block\\\",\\\"reason\\\":\\\"AgentNave restarts Claude Code in its fallback permission mode for this prompt\\\"}}\\n\"; }}' {mode_file}"
     );
     json!([{
@@ -74,7 +76,8 @@ pub(super) fn hook_settings(hook_dir: &Path) -> Value {
 
 pub(super) fn read_observed_mode(hook_dir: &Path) -> Option<String> {
     let text = fs::read_to_string(hook_dir.join("mode")).ok()?;
-    Some(text.trim().to_owned())
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 pub(super) fn drop_empty_claude_session(homes: &[PathBuf], session_id: &str) {

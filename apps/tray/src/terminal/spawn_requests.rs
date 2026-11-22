@@ -17,7 +17,7 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use super::Terminals;
 use super::derived;
 use super::links;
-use crate::data_files::{PUSH_MAX_BYTES, create_private_dir, valid_uuid, write_atomic};
+use crate::data_files::{PUSH_MAX_BYTES, create_private_dir, valid_uuid, write_atomic_compact};
 
 const MAX_REQUEST_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TEXT_CHARS: usize = 240;
@@ -218,6 +218,7 @@ pub(super) struct Coordinator {
     pub(super) started_at: f64,
     pub(super) push_providers: &'static [&'static str],
     inner: Arc<Mutex<CoordinatorState>>,
+    publish_lock: Arc<Mutex<()>>,
 }
 
 pub(super) fn truncate_short(text: &str) -> String {
@@ -274,6 +275,7 @@ impl Coordinator {
                 published_once: false,
                 last_published: None,
             })),
+            publish_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -282,17 +284,24 @@ impl Coordinator {
     }
 
     pub(super) fn publish(&self) -> Result<(), String> {
-        let doc = {
-            let mut state = self.lock();
-            let doc = build_push_document(self.pid, self.push_providers, &mut state.receipts);
+        let _publish_guard = self.publish_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let (doc, evicted) = {
+            let state = self.lock();
+            let (doc, evicted) =
+                build_push_document_plan(self.pid, self.push_providers, &state.receipts);
             if state.published_once && state.last_published.as_ref() == Some(&doc) {
                 return Ok(());
             }
-            state.published_once = true;
-            state.last_published = Some(doc.clone());
-            doc
+            (doc, evicted)
         };
-        write_atomic(&self.root.join("push"), &format!("{}.json", self.pid), &doc)
+        write_atomic_compact(&self.root.join("push"), &format!("{}.json", self.pid), &doc)?;
+        let mut state = self.lock();
+        for id in evicted {
+            state.receipts.remove(&id);
+        }
+        state.published_once = true;
+        state.last_published = Some(doc);
+        Ok(())
     }
 
     pub(super) fn register_run(&self, invocation_id: &str) -> Arc<RunHandle> {
@@ -467,6 +476,7 @@ impl Coordinator {
         );
         self.reconcile_settled(&system);
         self.scan_requests(terminals, &system);
+        let _ = self.publish();
     }
 
     fn scan_requests(&self, terminals: &Terminals, system: &System) {
@@ -644,14 +654,16 @@ impl Coordinator {
     }
 }
 
-fn build_push_document(
+fn build_push_document_plan(
     pid: u32,
     providers: &[&str],
-    receipts: &mut HashMap<String, ReceiptEntry>,
-) -> Value {
-    let serialize = |map: &HashMap<String, ReceiptEntry>| -> Value {
-        let entries: serde_json::Map<String, Value> = map
+    receipts: &HashMap<String, ReceiptEntry>,
+) -> (Value, Vec<String>) {
+    let mut excluded: HashSet<&str> = HashSet::new();
+    let serialize = |excluded: &HashSet<&str>| -> Value {
+        let entries: serde_json::Map<String, Value> = receipts
             .iter()
+            .filter(|(k, _)| !excluded.contains(k.as_str()))
             .map(|(k, v)| {
                 (
                     k.clone(),
@@ -667,19 +679,37 @@ fn build_push_document(
             "requests": entries,
         })
     };
-    let mut doc = serialize(receipts);
-    // Keep push/<pid>.json strictly under PUSH_MAX_BYTES (256 KiB).
+    let mut evicted = Vec::new();
+    let mut doc = serialize(&excluded);
+    // Keep push/<pid>.json strictly under PUSH_MAX_BYTES (256 KiB) using the same compact
+    // encoding written by `write_atomic_compact`.
     while serde_json::to_vec(&doc).map_or(0, |b| b.len()) > PUSH_MAX_BYTES {
         let oldest_finished = receipts
             .iter()
-            .filter(|(_, e)| e.receipt.state == ReceiptState::Finished)
+            .filter(|(id, e)| {
+                !excluded.contains(id.as_str()) && e.receipt.state == ReceiptState::Finished
+            })
             .min_by_key(|(_, e)| e.finished_at)
-            .map(|(id, _)| id.clone());
+            .map(|(id, _)| id.as_str());
         let Some(evict) = oldest_finished else {
             break;
         };
-        receipts.remove(&evict);
-        doc = serialize(receipts);
+        excluded.insert(evict);
+        evicted.push(evict.to_owned());
+        doc = serialize(&excluded);
+    }
+    (doc, evicted)
+}
+
+#[cfg(test)]
+fn build_push_document(
+    pid: u32,
+    providers: &[&str],
+    receipts: &mut HashMap<String, ReceiptEntry>,
+) -> Value {
+    let (doc, evicted) = build_push_document_plan(pid, providers, receipts);
+    for id in evicted {
+        receipts.remove(&id);
     }
     doc
 }

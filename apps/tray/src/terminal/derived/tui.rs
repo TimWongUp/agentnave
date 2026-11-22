@@ -15,8 +15,8 @@ use super::super::spawn_requests::{
 };
 use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
 use super::{
-    POLL_STEP, claude, detect_screen_blocker, native_logs, prepare_open_or_launch,
-    update_blocker_if_changed,
+    POLL_STEP, claude, cleanup_derived_startup, detect_screen_blocker, native_logs,
+    prepare_open_or_launch, update_blocker_if_changed,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
@@ -98,8 +98,8 @@ pub(super) fn run_tui_cli(
             Ok(launched)
         },
     );
-    let launched = match open {
-        Ok(h) => h,
+    let (launched, reused) = match open {
+        Ok(pair) => pair,
         Err(err) => {
             let status = if handle.is_pre_start_cancelled() {
                 "cancelled"
@@ -116,7 +116,7 @@ pub(super) fn run_tui_cli(
     if handle.is_pre_start_cancelled()
         || !wait_tui_ready(coordinator, terminals, &launched, req_id, handle, None)
     {
-        finish_pre_ready(coordinator, terminals, &launched, req_id, handle);
+        finish_pre_ready(coordinator, terminals, &launched, reused, req_id, handle);
         return;
     }
 
@@ -128,9 +128,15 @@ pub(super) fn run_tui_cli(
         agy_log_path.as_deref(),
         &launched.session,
     );
-    let Some(sent_prompt) =
-        submit_prompt(coordinator, terminals, &launched, req_id, prompt, handle)
-    else {
+    let Some(sent_prompt) = submit_prompt(
+        coordinator,
+        terminals,
+        &launched,
+        reused,
+        req_id,
+        prompt,
+        handle,
+    ) else {
         return;
     };
     monitor_agy_turn(
@@ -150,6 +156,7 @@ pub(super) fn finish_pre_ready(
     coordinator: &Coordinator,
     terminals: &Terminals,
     launched: &DerivedHandle,
+    reused: bool,
     req_id: &str,
     handle: &Arc<RunHandle>,
 ) {
@@ -157,6 +164,7 @@ pub(super) fn finish_pre_ready(
         coordinator,
         terminals,
         launched,
+        reused,
         req_id,
         if handle.is_pre_start_cancelled() {
             "cancelled"
@@ -306,18 +314,21 @@ pub(super) fn finish_pre_submit(
     coordinator: &Coordinator,
     terminals: &Terminals,
     launched: &DerivedHandle,
+    reused: bool,
     req_id: &str,
     status: &str,
     reason: &str,
 ) {
-    terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+    cleanup_derived_startup(terminals, launched, reused, launched.native.as_deref());
     coordinator.mark_finished(req_id, status, Some(reason), launched.native.as_deref());
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn submit_prompt(
     coordinator: &Coordinator,
     terminals: &Terminals,
     launched: &DerivedHandle,
+    reused: bool,
     req_id: &str,
     prompt: &str,
     handle: &Arc<RunHandle>,
@@ -327,6 +338,7 @@ pub(super) fn submit_prompt(
             coordinator,
             terminals,
             launched,
+            reused,
             req_id,
             "cancelled",
             "提交前已取消",
@@ -336,7 +348,15 @@ pub(super) fn submit_prompt(
     let sent = match launched.session.send_paste(prompt) {
         Ok(clean) => clean,
         Err(err) => {
-            finish_pre_submit(coordinator, terminals, launched, req_id, "failed", &err);
+            finish_pre_submit(
+                coordinator,
+                terminals,
+                launched,
+                reused,
+                req_id,
+                "failed",
+                &err,
+            );
             return None;
         }
     };
@@ -351,6 +371,7 @@ pub(super) fn submit_prompt(
             coordinator,
             terminals,
             launched,
+            reused,
             req_id,
             status,
             "提交前取消或关闭",
@@ -364,6 +385,7 @@ pub(super) fn submit_prompt(
             coordinator,
             terminals,
             launched,
+            reused,
             req_id,
             "cancelled",
             "阻塞期间取消",
@@ -375,6 +397,7 @@ pub(super) fn submit_prompt(
             coordinator,
             terminals,
             launched,
+            reused,
             req_id,
             "cancelled",
             "提交前已取消",
@@ -382,7 +405,15 @@ pub(super) fn submit_prompt(
         return None;
     }
     if let Err(err) = launched.session.write(b"\r") {
-        finish_pre_submit(coordinator, terminals, launched, req_id, "failed", &err);
+        finish_pre_submit(
+            coordinator,
+            terminals,
+            launched,
+            reused,
+            req_id,
+            "failed",
+            &err,
+        );
         return None;
     }
     Some(sent)
@@ -775,6 +806,7 @@ pub(super) fn finish_exited(
     cancelled: bool,
 ) {
     terminals.clear_derived_turn(terminal_id, sid);
+    terminals.release_derived_lease(terminal_id);
     let (status, reason) = if cancelled {
         ("cancelled", "派生终端已中断退出".to_owned())
     } else if code == 0 && had_settled {

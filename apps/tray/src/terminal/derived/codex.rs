@@ -15,7 +15,9 @@ use super::super::spawn_requests::{
     now_unix_secs, truncate_short,
 };
 use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
-use super::{acquire_isolation_for_terminal, detect_screen_blocker, native_logs};
+use super::{
+    acquire_isolation_for_terminal, cleanup_derived_startup, detect_screen_blocker, native_logs,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const THREAD_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -65,8 +67,8 @@ pub(super) fn run_codex(
         account,
         handle,
     );
-    let launched = match open {
-        Ok(h) => h,
+    let (launched, reused) = match open {
+        Ok(pair) => pair,
         Err(err) => {
             let status = if handle.is_pre_start_cancelled() {
                 "cancelled"
@@ -78,13 +80,13 @@ pub(super) fn run_codex(
         }
     };
     let Some(codex) = launched.codex.clone() else {
-        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+        cleanup_derived_startup(terminals, &launched, reused, launched.native.as_deref());
         coordinator.mark_finished(req_id, "failed", Some("缺少 Codex app-server 客户端"), None);
         return;
     };
 
     if !wait_codex_connected(&codex, &launched.session, handle) {
-        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+        cleanup_derived_startup(terminals, &launched, reused, launched.native.as_deref());
         let status = if handle.is_pre_start_cancelled() {
             "cancelled"
         } else {
@@ -110,7 +112,7 @@ pub(super) fn run_codex(
     }
 
     if handle.is_pre_start_cancelled() {
-        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+        cleanup_derived_startup(terminals, &launched, reused, launched.native.as_deref());
         coordinator.mark_finished(
             req_id,
             "cancelled",
@@ -129,7 +131,7 @@ pub(super) fn run_codex(
         req_id,
         handle,
     ) else {
-        terminals.clear_derived_turn(launched.id, launched.native.as_deref());
+        cleanup_derived_startup(terminals, &launched, reused, launched.native.as_deref());
         let status = if handle.is_pre_start_cancelled() {
             "cancelled"
         } else {
@@ -151,7 +153,7 @@ pub(super) fn run_codex(
     coordinator.set_session_id(req_id, &thread_id);
 
     if handle.is_pre_start_cancelled() {
-        terminals.clear_derived_turn(launched.id, Some(&thread_id));
+        cleanup_derived_startup(terminals, &launched, reused, Some(&thread_id));
         coordinator.mark_finished(req_id, "cancelled", Some("启动前已取消"), Some(&thread_id));
         return;
     }
@@ -160,7 +162,7 @@ pub(super) fn run_codex(
     let turn_id = match codex.start_turn(&thread_id, &turn_cfg) {
         Ok(id) => id,
         Err(err) => {
-            terminals.clear_derived_turn(launched.id, Some(&thread_id));
+            cleanup_derived_startup(terminals, &launched, reused, Some(&thread_id));
             coordinator.mark_finished(req_id, "failed", Some(&err), Some(&thread_id));
             return;
         }
@@ -197,7 +199,7 @@ fn open_or_launch_codex(
     cwd: &Path,
     account: Option<super::super::account::Active>,
     handle: &Arc<RunHandle>,
-) -> Result<DerivedHandle, String> {
+) -> Result<(DerivedHandle, bool), String> {
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
@@ -219,7 +221,7 @@ fn open_or_launch_codex(
             {
                 return Err("Codex 派生终端正在运行中".to_owned());
             }
-            let _ = acquire_isolation_for_terminal(
+            let (iso_id, lease) = acquire_isolation_for_terminal(
                 coordinator,
                 terminals,
                 &env.request_id,
@@ -230,7 +232,12 @@ fn open_or_launch_codex(
             if handle.is_pre_start_cancelled() {
                 return Err("启动前已取消".to_owned());
             }
-            return terminals.try_claim_derived_turn(existing.id, &env.invocation_id, None);
+            if let Some(lease) = lease {
+                terminals.attach_derived_lease(existing.id, iso_id.as_deref(), lease);
+            }
+            let claimed =
+                terminals.try_claim_derived_turn(existing.id, &env.invocation_id, None)?;
+            return Ok((claimed, true));
         }
     }
 
@@ -300,14 +307,17 @@ fn open_or_launch_codex(
             },
         },
     );
-    Ok(DerivedHandle {
-        id: terminal_id,
-        provider: "codex".to_owned(),
-        session,
-        native: env.session_id.clone(),
-        account: None,
-        codex: Some(client),
-    })
+    Ok((
+        DerivedHandle {
+            id: terminal_id,
+            provider: "codex".to_owned(),
+            session,
+            native: env.session_id.clone(),
+            account: None,
+            codex: Some(client),
+        },
+        false,
+    ))
 }
 
 fn wait_codex_connected(
@@ -557,6 +567,9 @@ fn monitor_codex_turn(
             None => (outcome, err_msg),
         };
         terminals.clear_derived_turn(launched.id, Some(thread_id));
+        if exit.is_some() {
+            terminals.release_derived_lease(launched.id);
+        }
         let (status, reason) = settle_turn(outcome, err_msg, exit);
         coordinator.mark_finished(req_id, status, reason.as_deref(), Some(thread_id));
         return;

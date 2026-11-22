@@ -21,7 +21,8 @@ use super::tui::{
     spawn_tui_terminal, submit_prompt, sync_turn_blocker, wait_tui_ready,
 };
 use super::{
-    POLL_STEP, claude_hook, detect_auth_blocker_in_text, native_logs, prepare_open_or_launch,
+    POLL_STEP, claude_hook, cleanup_derived_startup, detect_auth_blocker_in_text, native_logs,
+    prepare_open_or_launch,
 };
 pub(super) use screen::ClaudeScreen;
 
@@ -354,6 +355,7 @@ pub(super) fn run_claude_cli(
         .clone()
         .unwrap_or_else(session::fresh_session_id);
     let mut launched_opt: Option<DerivedHandle> = None;
+    let mut reused = false;
 
     for (idx, mode_opt) in attempts.iter().enumerate() {
         let mut attempt_cfg = cfg.clone();
@@ -392,7 +394,10 @@ pub(super) fn run_claude_cli(
                     Ok(h)
                 },
             ) {
-                Ok(h) => h,
+                Ok((h, was_reused)) => {
+                    reused = was_reused;
+                    h
+                }
                 Err(err) => {
                     let status = if handle.is_pre_start_cancelled() {
                         "cancelled"
@@ -413,6 +418,7 @@ pub(super) fn run_claude_cli(
                 cwd,
                 account.as_ref(),
                 prev,
+                reused,
                 &mut preset_sid,
                 handle,
             ) else {
@@ -426,7 +432,7 @@ pub(super) fn run_claude_cli(
         if handle.is_pre_start_cancelled()
             || !wait_tui_ready(coordinator, terminals, &launched, req_id, handle, Some(cwd))
         {
-            finish_pre_ready(coordinator, terminals, &launched, req_id, handle);
+            finish_pre_ready(coordinator, terminals, &launched, reused, req_id, handle);
             return;
         }
         let baseline = capture_baseline(
@@ -437,9 +443,15 @@ pub(super) fn run_claude_cli(
             None,
             &launched.session,
         );
-        let Some(sent_prompt) =
-            submit_prompt(coordinator, terminals, &launched, req_id, prompt, handle)
-        else {
+        let Some(sent_prompt) = submit_prompt(
+            coordinator,
+            terminals,
+            &launched,
+            reused,
+            req_id,
+            prompt,
+            handle,
+        ) else {
             return;
         };
         match monitor_claude_turn(
@@ -463,7 +475,7 @@ pub(super) fn run_claude_cli(
                     launched_opt = Some(launched);
                     continue;
                 }
-                terminals.clear_derived_turn(launched.id, Some(&preset_sid));
+                cleanup_derived_startup(terminals, &launched, reused, Some(&preset_sid));
                 let msg = format!(
                     "Claude Code started in manual mode because neither {} nor {} mode is available here; enable one of them in Claude Code's settings",
                     req_mode.unwrap_or_default(),
@@ -485,6 +497,7 @@ fn prepare_fallback_attempt(
     cwd: &Path,
     account: Option<&Active>,
     mut prev: DerivedHandle,
+    reused: bool,
     preset_sid: &mut String,
     handle: &Arc<RunHandle>,
 ) -> Option<(DerivedHandle, tempfile::TempDir)> {
@@ -494,6 +507,7 @@ fn prepare_fallback_attempt(
             coordinator,
             terminals,
             &prev,
+            reused,
             req_id,
             "cancelled",
             "切换回退权限模式前已取消",
@@ -506,7 +520,15 @@ fn prepare_fallback_attempt(
     let dir = match claude_hook::prepare_mode_hook() {
         Ok(dir) => dir,
         Err(err) => {
-            finish_pre_submit(coordinator, terminals, &prev, req_id, "failed", &err);
+            finish_pre_submit(
+                coordinator,
+                terminals,
+                &prev,
+                reused,
+                req_id,
+                "failed",
+                &err,
+            );
             return None;
         }
     };
@@ -515,6 +537,7 @@ fn prepare_fallback_attempt(
             coordinator,
             terminals,
             &prev,
+            reused,
             req_id,
             "failed",
             "这个 CLI 没有安装",
@@ -532,7 +555,15 @@ fn prepare_fallback_attempt(
     ) {
         Ok(s) => s,
         Err(err) => {
-            finish_pre_submit(coordinator, terminals, &prev, req_id, "failed", &err);
+            finish_pre_submit(
+                coordinator,
+                terminals,
+                &prev,
+                reused,
+                req_id,
+                "failed",
+                &err,
+            );
             return None;
         }
     };

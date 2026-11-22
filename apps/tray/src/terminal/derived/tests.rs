@@ -550,6 +550,82 @@ fn isolation_lease_holds_until_terminal_closes() {
     assert_eq!(close_resp.status, 200);
     assert!(leases::remove_lease_dir_locked(&resolved, "wt-abcdef012345").is_ok());
 
+    // C3: Startup failure of a newly spawned derived terminal removes it and releases its lease.
+    let (iso_id2, lease2) =
+        acquire_isolation_for_terminal(&coord, &terminals, "req-2", &wt, Some(&iso), false)
+            .unwrap();
+    let mut cmd2 = CommandBuilder::new("/bin/sh");
+    cmd2.args(["-c", "sleep 30"]);
+    cmd2.cwd(&wt);
+    let session2 = Session::start(cmd2, 80, 24).unwrap();
+    let term_id2 = terminals.register_derived(NewDerived {
+        provider: "codex".to_owned(),
+        cwd: wt.clone(),
+        session: session2.clone(),
+        native: Some("cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned()),
+        account: None,
+        codex: None,
+        info: DerivedInfo {
+            parent_boss_key: "codex:boss".to_owned(),
+            parent_workspace_id: Some("ws-boss".to_owned()),
+            busy: true,
+            blocked_kind: None,
+            isolation_id: iso_id2,
+            _lease: lease2,
+            _log_dir: None,
+            codex_ready_file: None,
+            active_invocation_id: Some("inv-fail".to_owned()),
+        },
+    });
+    assert!(leases::remove_lease_dir_locked(&resolved, "wt-abcdef012345").is_err());
+    let failed_handle = DerivedHandle {
+        id: term_id2,
+        provider: "codex".to_owned(),
+        session: session2,
+        native: Some("cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_owned()),
+        account: None,
+        codex: None,
+    };
+    cleanup_derived_startup(
+        &terminals,
+        &failed_handle,
+        false,
+        failed_handle.native.as_deref(),
+    );
+    assert!(leases::remove_lease_dir_locked(&resolved, "wt-abcdef012345").is_ok());
+
+    // C3: Reusing an existing derived terminal without a lease attaches the newly acquired lease.
+    let mut cmd3 = CommandBuilder::new("/bin/sh");
+    cmd3.args(["-c", "sleep 30"]);
+    cmd3.cwd(&wt);
+    let session3 = Session::start(cmd3, 80, 24).unwrap();
+    let term_id3 = terminals.register_derived(NewDerived {
+        provider: "codex".to_owned(),
+        cwd: wt.clone(),
+        session: session3,
+        native: Some("dddddddd-dddd-4ddd-8ddd-dddddddddddd".to_owned()),
+        account: None,
+        codex: None,
+        info: DerivedInfo {
+            parent_boss_key: "codex:boss".to_owned(),
+            parent_workspace_id: Some("ws-boss".to_owned()),
+            busy: false,
+            blocked_kind: None,
+            isolation_id: None,
+            _lease: None,
+            _log_dir: None,
+            codex_ready_file: None,
+            active_invocation_id: None,
+        },
+    });
+    let (iso_id3, lease3) =
+        acquire_isolation_for_terminal(&coord, &terminals, "req-3", &wt, Some(&iso), true).unwrap();
+    terminals.attach_derived_lease(term_id3, iso_id3.as_deref(), lease3.unwrap());
+    assert!(terminals.has_lease_for_isolation("wt-abcdef012345"));
+    assert!(leases::remove_lease_dir_locked(&resolved, "wt-abcdef012345").is_err());
+    assert_eq!(terminals.close(Some(term_id3)).status, 200);
+    assert!(leases::remove_lease_dir_locked(&resolved, "wt-abcdef012345").is_ok());
+
     let _ = HashMap::<String, String>::new();
     let _ = ParentRef {
         boss_key: String::new(),
@@ -610,6 +686,10 @@ fn claude_permission_fallback_validates_pair_and_hook_blocks_default_mode() {
     let cmd = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
         .as_str()
         .unwrap();
+    // C4: hook writes via temporary file + rename, and empty mode file counts as not ready yet.
+    assert!(cmd.contains("rename"));
+    fs::write(hook_dir.path().join("mode"), b"   \n").unwrap();
+    assert_eq!(claude_hook::read_observed_mode(hook_dir.path()), None);
 
     use std::io::Write;
     use std::process::{Command, Stdio};

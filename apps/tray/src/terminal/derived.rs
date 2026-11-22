@@ -236,7 +236,7 @@ pub(super) fn prepare_open_or_launch<F>(
     account: Option<&Active>,
     handle: &Arc<RunHandle>,
     spawn_new: F,
-) -> Result<DerivedHandle, String>
+) -> Result<(DerivedHandle, bool), String>
 where
     F: FnOnce(Option<HeldLease>, Option<String>) -> Result<DerivedHandle, String>,
 {
@@ -257,7 +257,7 @@ where
             {
                 return Err("派生终端正在输入或运行中".to_owned());
             }
-            let (_, lease) = acquire_isolation_for_terminal(
+            let (iso_id, lease) = acquire_isolation_for_terminal(
                 coordinator,
                 terminals,
                 &env.request_id,
@@ -269,13 +269,14 @@ where
                 return Err("启动前已取消".to_owned());
             }
             if let Some(lease) = lease {
-                terminals.attach_derived_lease(existing.id, lease);
+                terminals.attach_derived_lease(existing.id, iso_id.as_deref(), lease);
             }
-            return terminals.try_claim_derived_turn(
+            let claimed = terminals.try_claim_derived_turn(
                 existing.id,
                 &env.invocation_id,
                 account.map(|a| a.id.as_str()),
-            );
+            )?;
+            return Ok((claimed, true));
         }
     }
 
@@ -290,7 +291,20 @@ where
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
-    spawn_new(lease, isolation_id)
+    spawn_new(lease, isolation_id).map(|h| (h, false))
+}
+
+pub(super) fn cleanup_derived_startup(
+    terminals: &Terminals,
+    launched: &DerivedHandle,
+    reused: bool,
+    native: Option<&str>,
+) {
+    if !reused || launched.session.exit().is_some() {
+        terminals.remove_derived_terminal(launched.id);
+    } else {
+        terminals.clear_derived_turn(launched.id, native);
+    }
 }
 
 pub(super) fn account_mismatch(
