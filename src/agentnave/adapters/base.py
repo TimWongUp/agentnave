@@ -211,8 +211,11 @@ class AdapterHooks:
         """Whether this native event is the invocation's final outcome (ADR-0095).
 
         Once it is seen, the service stops the process tree if it has not exited within the grace
-        period and parses with exit status 0. Only declare it for single-turn runs: never for
-        multi-turn or stdin-kept interactive runtimes, where a turn's end is not the process's.
+        period and parses with exit status 0. Execution blockers observed on or after this event
+        still record provider cooldown, but are suppressed from running-time ``execution_blocked``
+        alerts so the caller is notified once at terminal settlement (ADR-0039 / ADR-0104). Only
+        declare it for single-turn runs: never for multi-turn or stdin-kept interactive runtimes,
+        where a turn's end is not the process's.
         """
         return False
 
