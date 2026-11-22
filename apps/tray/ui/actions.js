@@ -25,6 +25,10 @@ const Actions = {};
   function openMenu(e, items) {
     e.preventDefault();
     e.stopPropagation();
+    if (typeof ChatSidebar !== "undefined") {
+      ChatSidebar?.closePopover?.();
+      ChatSidebar?.closeNewChat?.();
+    }
     menu.replaceChildren(
       ...items.map((item) => {
         const b = h(`button.ctx-item${item.danger ? ".danger" : ""}`, { type: "button", role: "menuitem" }, item.label);

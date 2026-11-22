@@ -153,7 +153,7 @@ document.addEventListener("pointermove", (e) => {
 // a minimum and a maximum so the office in the middle never gets squeezed out. The right column
 // remembers its width separately for agents with and without a terminal.
 const SPLITS = {
-  side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 200, css: "--side-w" },
+  side: { key: "agentnave.office.side", min: 0.14, max: 0.28, floor: 240, css: "--side-w" },
   conv: { key: "agentnave.office.conv", min: 0.22, floor: 300, css: "--conv-w" },
   convTerm: { key: "agentnave.office.conv.term", min: 0.22, floor: 300, css: "--conv-term-w" },
 };

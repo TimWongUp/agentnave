@@ -1260,8 +1260,10 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
   assert.equal(context.state.items.get("g-handover").el.attributes["data-folded"], undefined);
   assert.equal(context.state.heads.get("project::handover").dot.hidden, false);
   assert.equal(context.state.heads.get("project::handover").dot.attributes["data-tone"], "review");
+  assert.equal(context.state.heads.get("project::handover").dot.attributes.title, "待审核/待接手");
   assert.equal(context.state.heads.get("project:/w/p0").dot.hidden, false);
   assert.equal(context.state.heads.get("project:/w/p0").dot.attributes["data-tone"], "bad");
+  assert.equal(context.state.heads.get("project:/w/p0").dot.attributes.title, "有失败");
 
   context.revealProject("/w/deep");
   assert.equal(storage.has("agentnave.office.fold.project:/w/deep"), false);
@@ -1360,7 +1362,12 @@ test("#add-project and Actions.projectMenu handle pick, add, reveal, errors, and
   context.Actions.projectMenu({ key: ":handover", pinned: true, items: [] }, ev);
   assert.equal(menu.hidden, true);
 
+  let popClosed = 0;
+  let newChatClosed = 0;
+  context.ChatSidebar = { closePopover: () => { popClosed++; }, closeNewChat: () => { newChatClosed++; } };
   context.Actions.projectMenu({ key: "/tmp/repo", manual: true, items: [{ group: "g1" }] }, ev);
+  assert.equal(popClosed, 1);
+  assert.equal(newChatClosed, 1);
   assert.equal(menu.hidden, false);
   assert.deepEqual(menu.children.map(c => c.textContent), ["在此项目新开 agent", "置顶", "重命名显示名…", "复制路径"]);
 

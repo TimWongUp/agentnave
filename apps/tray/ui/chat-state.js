@@ -464,6 +464,14 @@ function headNode(section, folded = false) {
   const tone = folded && ChatGroups.foldedTone ? ChatGroups.foldedTone(section.items) : "";
   rec.dot.hidden = !tone;
   setAttr(rec.dot, "data-tone", tone || null);
+  const dotTitle = tone === "review"
+    ? L("待审核/待接手", "Awaiting review or handover")
+    : tone === "bad"
+      ? L("有失败", "Has failed tasks")
+      : tone === "run"
+        ? L("运行中", "Running")
+        : null;
+  setAttr(rec.dot, "title", dotTitle);
   setText(rec.count, String(section.items.length));
   rec.section = section;
   ChatTerminal.headAction(rec);

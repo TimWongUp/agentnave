@@ -449,3 +449,162 @@ test("ChatSidebar new-chat flow picks project then CLI and launches terminal", a
   assert.equal(pop.hidden, true);
   assert.deepEqual(started, [{ provider: "claude", cwd: "/w/alpha", account: "work" }]);
 });
+
+test("ChatSidebar preserves popover focus on setPrefs, hides fold actions in flat view, and handles drop target, edge scroll, and closeNewChat", () => {
+  const storage = new Map();
+  const bodyChildren = [];
+  const menuCalls = [];
+  const makeEl = (tag = "div") => {
+    const node = {
+      tag, hidden: false, value: "", textContent: "", attributes: {}, children: [], style: {}, listeners: {},
+      parentElement: null, scrollTop: 0, scrollHeight: 800, clientHeight: 300,
+      classList: { set: new Set(), toggle(n, on) { if (on) this.set.add(n); else this.set.delete(n); }, contains(n) { return this.set.has(n); }, add(n) { this.set.add(n); }, remove(n) { this.set.delete(n); } },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = String(v); },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      addEventListener(n, fn) { (this.listeners[n] ||= []).push(fn); },
+      replaceChildren(...items) { this.children = items.flat().filter(Boolean); },
+      append(...items) { this.children.push(...items.flat().filter(Boolean)); },
+      querySelectorAll(sel) {
+        const out = [];
+        const walk = (cur) => {
+          for (const c of cur.children || []) {
+            if (typeof c !== "object" || !c) continue;
+            if ((sel === "button" && String(c.tag || "").startsWith("button")) || (sel === "[data-drop]" && "data-drop" in (c.attributes || {}))) {
+              out.push(c);
+            }
+            walk(c);
+          }
+        };
+        walk(node);
+        return out;
+      },
+      querySelector(sel) { return node.querySelectorAll(sel)[0] || null; },
+      getBoundingClientRect: () => ({ left: 10, top: 10, bottom: 30, width: 200, height: 20 }),
+      focus() { sbContext.document.activeElement = node; node.focused = true; },
+      closest: () => null,
+      contains(target) { return target === node || (node.children || []).some(c => c?.contains?.(target)); },
+    };
+    return node;
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = makeEl(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k === "hidden") n.hidden = Boolean(v);
+      else n.setAttribute(k, v);
+    }
+    n.children = kids.flat(Infinity).filter(x => x != null && x !== false);
+    return n;
+  };
+  const wrap = makeEl("div.gl-wrap");
+  wrap.getBoundingClientRect = () => ({ left: 0, top: 0, bottom: 300, width: 240, height: 300 });
+  const list = makeEl("div#list");
+  list.parentElement = wrap;
+  list.closest = (sel) => (sel === ".gl-wrap" ? wrap : null);
+  const els = new Map([
+    ["side-view-btn", makeEl("button")],
+    ["side-more-btn", makeEl("button")],
+    ["new-chat", makeEl("button")],
+    ["side-search-input", makeEl("input")],
+    ["side-search-clear", makeEl("button")],
+    ["list", list],
+  ]);
+  const sbContext = vm.createContext({
+    AN: {
+      h, $: id => els.get(id) || null, L: zh => zh,
+      setAttr: (n, k, v) => n.setAttribute(k, v),
+      urgent: s => s === "running",
+    },
+    ChatGroups: context.window.ChatGroups,
+    Actions: {
+      openMenu: (_e, items) => menuCalls.push(items.map(i => i.label)),
+      reorderProjects: () => {},
+    },
+    localStorage: {
+      getItem: k => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => storage.set(k, v),
+      removeItem: k => storage.delete(k),
+    },
+    document: {
+      readyState: "complete",
+      activeElement: null,
+      body: { append: (...nodes) => bodyChildren.push(...nodes) },
+      addEventListener() {},
+      querySelector: () => null,
+    },
+    window: {},
+    addEventListener() {},
+    state: {
+      groupsData: [
+        ws("ga", "/w/a", "2026-11-12T12:00:00Z"),
+        ws("gb", "/w/b", "2026-11-12T11:00:00Z"),
+        ws("gc", "/w/c", "2026-11-12T10:00:00Z"),
+        ws("go", other, "2026-11-12T09:00:00Z"),
+      ],
+      projects: [],
+      sidebar: { project_aliases: {}, pinned_projects: [], pinned_groups: [], project_order: [] },
+      order: [],
+      items: new Map(),
+      heads: new Map(),
+      moreNodes: new Map(),
+    },
+    renderList() {},
+    innerWidth: 1200,
+    innerHeight: 800,
+  });
+  sbContext.window = sbContext;
+  vm.runInContext(readFileSync(`${__dirname}/../chat-sidebar.js`, "utf8"), sbContext);
+  const { ChatSidebar } = sbContext.window;
+  assert.equal(typeof ChatSidebar.closeNewChat, "function");
+
+  // M5: popover keeps focus on the active option after setPrefs re-renders it
+  els.get("side-view-btn").listeners.click[0]({ stopPropagation() {} });
+  const pop = bodyChildren.find(n => n.tag === "div.side-popover");
+  const createdBtn = pop.querySelectorAll("button").find(b => b.getAttribute("data-pop-key") === "itemSort:created");
+  createdBtn.focus();
+  createdBtn.listeners.click[0]();
+  const refocused = pop.querySelectorAll("button").find(b => b.getAttribute("data-pop-key") === "itemSort:created");
+  assert.equal(refocused.focused, true);
+  assert.equal(sbContext.document.activeElement, refocused);
+
+  // L1: more menu hides collapse/expand in flat view
+  els.get("side-more-btn").listeners.click[0]({ stopPropagation() {} });
+  assert.deepEqual(plain(menuCalls.at(-1)), ["全部折叠", "全部展开", "清理…"]);
+  ChatSidebar.setPrefs({ view: "flat" });
+  els.get("side-more-btn").listeners.click[0]({ stopPropagation() {} });
+  assert.deepEqual(plain(menuCalls.at(-1)), ["清理…"]);
+  ChatSidebar.setPrefs({ view: "project" });
+
+  // M3 & M4: drop indicator targets next draggable header or last visible element, clears on drop, and edge-scrolls
+  const makeHead = (key, extra = {}) => ({
+    el: makeEl("button.gl-grp"),
+    section: { key, other: false, pinned: false, pinnedProject: false, ...extra },
+  });
+  const recA = makeHead("/w/a"), recB = makeHead("/w/b"), recC = makeHead("/w/c"), recOther = makeHead(other, { other: true });
+  const itemA1 = makeEl("a.gi"), itemB1 = makeEl("a.gi"), itemC1 = makeEl("a.gi");
+  for (const [k, rec] of [["project:/w/a", recA], ["project:/w/b", recB], ["project:/w/c", recC], ["project:other", recOther]]) {
+    sbContext.state.heads.set(k, rec);
+    ChatSidebar.attachDrag(rec);
+  }
+  list.children = [recA.el, itemA1, recB.el, itemB1, recC.el, itemC1, recOther.el];
+  for (const node of list.children) node.parentElement = list;
+
+  recA.el.listeners.dragstart[0]({ target: recA.el, dataTransfer: { setData() {} } });
+  recB.el.listeners.dragover[0]({ clientY: 25, preventDefault() {}, dataTransfer: {} });
+  assert.equal(recC.el.getAttribute("data-drop"), "before");
+  assert.equal(recB.el.getAttribute("data-drop"), null);
+
+  recC.el.listeners.dragover[0]({ clientY: 25, preventDefault() {}, dataTransfer: {} });
+  assert.equal(itemC1.getAttribute("data-drop"), "after");
+  assert.equal(recC.el.getAttribute("data-drop"), null);
+
+  wrap.listeners.dragover[0]({ clientY: 290 });
+  assert.ok(wrap.scrollTop > 0);
+  const scrolled = wrap.scrollTop;
+  wrap.listeners.dragover[0]({ clientY: 5 });
+  assert.ok(wrap.scrollTop < scrolled);
+
+  recC.el.listeners.drop[0]({ clientY: 25, preventDefault() {} });
+  assert.equal(itemC1.getAttribute("data-drop"), null);
+  assert.equal(recC.el.getAttribute("data-drop"), null);
+  assert.equal(recA.el.classList.contains("dragging"), false);
+});

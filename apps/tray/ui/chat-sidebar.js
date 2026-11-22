@@ -159,39 +159,47 @@
     if (btn) setAttr(btn, "aria-expanded", "false");
   }
 
-  function popoverRow(label, checked, onClick) {
+  function popoverRow(label, checked, onClick, key) {
     const mark = h("span.side-pop-mark", { "aria-hidden": "true" }, checked ? "✓" : "");
-    const btn = h("button.side-pop-item", { type: "button", role: "menuitemcheckbox", "aria-checked": checked ? "true" : "false" }, mark, label);
+    const btn = h("button.side-pop-item", { type: "button", role: "menuitemcheckbox", "aria-checked": checked ? "true" : "false", "data-pop-key": key }, mark, label);
     btn.addEventListener("click", () => onClick());
     return btn;
   }
 
   function renderPopover() {
     if (!popover) return;
+    const activeEl = document.activeElement;
+    const activeKey = activeEl && popover.contains?.(activeEl)
+      ? activeEl.getAttribute?.("data-pop-key")
+      : null;
     const p = currentPrefs;
     const flat = p.view === "flat";
     const nodes = [
       h("div.side-pop-sec", {}, L("视图", "View")),
-      popoverRow(L("按项目分组", "By project"), p.view === "project", () => setPrefs({ view: "project" })),
-      popoverRow(L("按时间平铺", "Flat timeline"), p.view === "flat", () => setPrefs({ view: "flat" })),
+      popoverRow(L("按项目分组", "By project"), p.view === "project", () => setPrefs({ view: "project" }), "view:project"),
+      popoverRow(L("按时间平铺", "Flat timeline"), p.view === "flat", () => setPrefs({ view: "flat" }), "view:flat"),
       !flat && h("div.side-pop-sep"),
       !flat && h("div.side-pop-sec", {}, L("项目排序", "Project order")),
-      !flat && popoverRow(L("最近活动", "Recent activity"), p.projectSort === "recent", () => setPrefs({ projectSort: "recent" })),
-      !flat && popoverRow(L("名称 A–Z", "Name A–Z"), p.projectSort === "name", () => setPrefs({ projectSort: "name" })),
-      !flat && popoverRow(L("手动顺序", "Manual order"), p.projectSort === "manual", () => setPrefs({ projectSort: "manual" })),
+      !flat && popoverRow(L("最近活动", "Recent activity"), p.projectSort === "recent", () => setPrefs({ projectSort: "recent" }), "projectSort:recent"),
+      !flat && popoverRow(L("名称 A–Z", "Name A–Z"), p.projectSort === "name", () => setPrefs({ projectSort: "name" }), "projectSort:name"),
+      !flat && popoverRow(L("手动顺序", "Manual order"), p.projectSort === "manual", () => setPrefs({ projectSort: "manual" }), "projectSort:manual"),
       h("div.side-pop-sep"),
       h("div.side-pop-sec", {}, L("Agent 排序", "Agent order")),
-      popoverRow(L("最近活动", "Recent activity"), p.itemSort === "updated", () => setPrefs({ itemSort: "updated" })),
-      popoverRow(L("创建时间", "Created time"), p.itemSort === "created", () => setPrefs({ itemSort: "created" })),
+      popoverRow(L("最近活动", "Recent activity"), p.itemSort === "updated", () => setPrefs({ itemSort: "updated" }), "itemSort:updated"),
+      popoverRow(L("创建时间", "Created time"), p.itemSort === "created", () => setPrefs({ itemSort: "created" }), "itemSort:created"),
       h("div.side-pop-sep"),
       h("div.side-pop-sec", {}, L("筛选与选项", "Filter & options")),
-      popoverRow(L("全部", "All"), p.filter === "all", () => setPrefs({ filter: "all" })),
-      popoverRow(L("仅活跃", "Active only"), p.filter === "active", () => setPrefs({ filter: "active" })),
+      popoverRow(L("全部", "All"), p.filter === "all", () => setPrefs({ filter: "all" }), "filter:all"),
+      popoverRow(L("仅活跃", "Active only"), p.filter === "active", () => setPrefs({ filter: "active" }), "filter:active"),
       h("div.side-pop-sep"),
-      popoverRow(L("运行中/待审置顶", "Urgent first"), p.urgentFirst, () => setPrefs({ urgentFirst: !p.urgentFirst })),
-      !flat && popoverRow(L("隐藏空项目", "Hide empty projects"), p.hideEmpty, () => setPrefs({ hideEmpty: !p.hideEmpty })),
+      popoverRow(L("运行中/待审置顶", "Urgent first"), p.urgentFirst, () => setPrefs({ urgentFirst: !p.urgentFirst }), "urgentFirst"),
+      !flat && popoverRow(L("隐藏空项目", "Hide empty projects"), p.hideEmpty, () => setPrefs({ hideEmpty: !p.hideEmpty }), "hideEmpty"),
     ].filter(Boolean);
     popover.replaceChildren(...nodes);
+    if (activeKey) {
+      const match = nodes.find((n) => n.getAttribute?.("data-pop-key") === activeKey);
+      (match || popover.querySelector("button"))?.focus?.({ preventScroll: true });
+    }
   }
 
   function openPopover(anchor) {
@@ -372,14 +380,19 @@
       preventDefault() {},
       stopPropagation() {},
     };
+    const flat = currentPrefs.view === "flat";
     Actions.openMenu(event, [
-      { label: L("全部折叠", "Collapse all"), run: () => typeof setAllFolded === "function" && setAllFolded(true) },
-      { label: L("全部展开", "Expand all"), run: () => typeof setAllFolded === "function" && setAllFolded(false) },
+      !flat && { label: L("全部折叠", "Collapse all"), run: () => typeof setAllFolded === "function" && setAllFolded(true) },
+      !flat && { label: L("全部展开", "Expand all"), run: () => typeof setAllFolded === "function" && setAllFolded(false) },
       { label: L("清理…", "Clean up…"), run: () => Actions.cleanup?.() },
-    ]);
+    ].filter(Boolean));
   }
 
   // ---- drag-and-drop project reordering -------------------------------------------------
+  const DRAG_EDGE_PX = 40;
+  const DRAG_SCROLL_MAX = 12;
+  let boundWrap = null;
+
   function canDrag(section) {
     return Boolean(
       currentPrefs.view === "project" &&
@@ -391,11 +404,75 @@
   }
 
   function clearDropIndicators() {
-    if (typeof state === "undefined" || !state.heads) return;
-    for (const rec of state.heads.values()) {
-      rec.el?.classList?.remove("dragging");
-      setAttr(rec.el, "data-drop", null);
+    if (typeof state !== "undefined") {
+      for (const rec of state.heads?.values?.() || []) {
+        rec.el?.classList?.remove("dragging");
+        setAttr(rec.el, "data-drop", null);
+      }
+      for (const rec of state.items?.values?.() || []) setAttr(rec.el, "data-drop", null);
+      for (const rec of state.moreNodes?.values?.() || []) setAttr(rec.el, "data-drop", null);
     }
+    const list = $("list");
+    if (list?.querySelectorAll) {
+      for (const node of list.querySelectorAll("[data-drop]")) setAttr(node, "data-drop", null);
+    }
+    if (dragState?.dropEl) setAttr(dragState.dropEl, "data-drop", null);
+  }
+
+  function resolveDropIndicator(rec, pos) {
+    if (pos !== "after") return { el: rec.el, pos: "before" };
+    const parent = rec.el.parentElement || $("list");
+    const children = parent?.children ? [...parent.children] : [];
+    const idx = children.indexOf(rec.el);
+    if (idx < 0) return { el: rec.el, pos: "after" };
+    const groupsMore = state.moreNodes?.get?.("groups:project")?.el || null;
+    let lastVisible = rec.el;
+    for (let i = idx + 1; i < children.length; i++) {
+      const child = children[i];
+      if (groupsMore && child === groupsMore) break;
+      let nextHead = null;
+      for (const hRec of state.heads.values()) {
+        if (hRec.el === child) { nextHead = hRec; break; }
+      }
+      if (nextHead) {
+        if (canDrag(nextHead.section) && Boolean(nextHead.section.pinnedProject) === dragState.pinned) {
+          return { el: nextHead.el, pos: "before" };
+        }
+        break;
+      }
+      if (!child.hidden && child.getAttribute?.("data-folded") !== "true") {
+        lastVisible = child;
+      }
+    }
+    return { el: lastVisible, pos: "after" };
+  }
+
+  function bindWrapDragScroll() {
+    const list = $("list");
+    const wrap = list?.closest?.(".gl-wrap") || list?.parentElement || document.querySelector?.(".gl-wrap");
+    if (!wrap || wrap === boundWrap || !wrap.addEventListener) return;
+    boundWrap = wrap;
+    wrap.addEventListener("dragover", (e) => {
+      if (!dragState || !wrap.getBoundingClientRect) return;
+      const rect = wrap.getBoundingClientRect();
+      if (!rect || rect.height <= 0) return;
+      const topDist = e.clientY - rect.top;
+      const bottomDist = rect.bottom - e.clientY;
+      let delta = 0;
+      if (topDist < DRAG_EDGE_PX && topDist >= -4) {
+        const dist = Math.max(0, topDist);
+        delta = -Math.ceil(((DRAG_EDGE_PX - dist) / DRAG_EDGE_PX) * DRAG_SCROLL_MAX);
+      } else if (bottomDist < DRAG_EDGE_PX && bottomDist >= -4) {
+        const dist = Math.max(0, bottomDist);
+        delta = Math.ceil(((DRAG_EDGE_PX - dist) / DRAG_EDGE_PX) * DRAG_SCROLL_MAX);
+      }
+      if (delta) {
+        const maxTop = Number.isFinite(wrap.scrollHeight) && Number.isFinite(wrap.clientHeight)
+          ? Math.max(0, wrap.scrollHeight - wrap.clientHeight)
+          : Infinity;
+        wrap.scrollTop = Math.min(maxTop, Math.max(0, (wrap.scrollTop || 0) + delta));
+      }
+    });
   }
 
   function computeReorderedKeys(dragKey, targetKey, pos) {
@@ -419,6 +496,7 @@
   }
 
   function attachDrag(rec) {
+    bindWrapDragScroll();
     if (!rec.dragAttached) {
       rec.dragAttached = true;
       rec.el.addEventListener("dragstart", (e) => {
@@ -430,6 +508,8 @@
           key: rec.section.key,
           pinned: Boolean(rec.section.pinnedProject),
           pos: null,
+          dropEl: null,
+          dropOwner: null,
         };
         rec.el.classList.add("dragging");
         if (e.dataTransfer) {
@@ -445,14 +525,23 @@
         if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
         const rect = rec.el.getBoundingClientRect();
         const pos = e.clientY >= rect.top + rect.height / 2 ? "after" : "before";
-        for (const other of state.heads.values()) {
-          if (other !== rec) setAttr(other.el, "data-drop", null);
+        const target = resolveDropIndicator(rec, pos);
+        if (dragState.dropEl && dragState.dropEl !== target.el) {
+          setAttr(dragState.dropEl, "data-drop", null);
         }
         dragState.pos = pos;
-        setAttr(rec.el, "data-drop", pos);
+        dragState.dropEl = target.el;
+        dragState.dropOwner = rec;
+        setAttr(target.el, "data-drop", target.pos);
       });
       rec.el.addEventListener("dragleave", (e) => {
-        if (!rec.el.contains?.(e.relatedTarget)) setAttr(rec.el, "data-drop", null);
+        if (rec.el.contains?.(e.relatedTarget)) return;
+        setAttr(rec.el, "data-drop", null);
+        if (dragState?.dropOwner === rec && dragState.dropEl) {
+          setAttr(dragState.dropEl, "data-drop", null);
+          dragState.dropEl = null;
+          dragState.dropOwner = null;
+        }
       });
       rec.el.addEventListener("drop", (e) => {
         if (!dragState || !canDrag(rec.section)) return;
@@ -472,8 +561,8 @@
         Actions?.reorderProjects?.(nextOrder);
       });
       rec.el.addEventListener("dragend", () => {
-        dragState = null;
         clearDropIndicators();
+        dragState = null;
       });
     }
     setAttr(rec.el, "draggable", canDrag(rec.section) ? "true" : null);
@@ -532,6 +621,7 @@
       openMoreMenu(moreBtn);
     });
     if (input) bindSearch(input, clearBtn);
+    bindWrapDragScroll();
 
     document.addEventListener("pointerdown", (e) => {
       if (popover && !popover.hidden && !popover.contains(e.target) && !$("side-view-btn")?.contains(e.target)) {
@@ -588,5 +678,6 @@
     syncActiveHighlight,
     attachDrag,
     closePopover,
+    closeNewChat,
   };
 })();
