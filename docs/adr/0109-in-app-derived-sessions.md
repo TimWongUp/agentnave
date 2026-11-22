@@ -56,7 +56,7 @@ boss 想用终端模式派发时，先在对话里问用户要不要派生、派
 - **同时运行上限**：boss 派发从接纳到结算（含等待用户批准期间）占一个 `max_running` 名额；空闲的派生终端和用户自己发起的回合不占，不另设终端数量上限。
 - **隔离目录**：服务按 [ADR-0085](0085-service-managed-isolated-dirs.md) 创建；托盘在启动终端前按同一仓库锁协议接过使用租约，持有到终端关闭。首轮结算不清理终端仍在用的目录；终端关闭后再续派，若目录已释放，走现有恢复校验或明确失败，不悄悄切回主 checkout。
 - **关闭与重启**：用户关掉终端或 App 重启时，在途的那一轮有可验证终态就按它结算，否则报中断或失联。之后 boss 明确续派时，托盘按原账号、目录和 `session_id` 恢复终端再提交；终端正忙（用户在聊、有草稿或停在审批）时续派返回忙，不排队。
-- **新目录信任**：新隔离目录首次启动会弹信任确认的 CLI，由启动配置预先处理（Codex 用运行时 `-c` 覆盖该路径的信任，Claude 与 Antigravity 沿用服务对匹配 `cwd` 自动确认信任的做法）；处理不了时按停在信任框提醒。
+- **新目录信任**：新隔离目录首次启动会弹信任确认的 CLI，在提交任务前预先处理：Codex 由托盘经私有 `app-server` 的配置写入接口把该目录写成信任，写进用户的 Codex 配置并保留，目录删除后也不清理；Antigravity 用运行时 `--settings` 的 `trustedWorkspaces`（含规范化后的路径）；Claude 沿用服务的做法，只在信任框显示的路径与派发目录一致时自动确认。处理不了时按停在信任框记录阻塞。
 
 ### 8. 服务与托盘的合同
 
@@ -72,7 +72,7 @@ boss 想用终端模式派发时，先在对话里问用户要不要派生、派
 ## Phase 0 实测结论（macOS）
 
 - **Claude Code 2.1.330**：`--session-id` 在交互模式下绑定成功，位置参数传首条任务只执行一次；OSC 7501 普通一轮为 `idle → working → done`，需审批时为 `working → blocked:kind=permission → working → done`；审批按键只在转录里多一条内容为工具结果、`promptId` 不变的 user 行，可据此判定不是新回合；两个 `--settings` 时后者整体覆盖前者。
-- **Codex 0.171.0**：`turn/completed` 的 `status` 为 `completed`／`interrupted`／`failed`，完成时附最终助手消息；需审批时 `thread/status/changed` 为 `active` 且带 `waitingOnApproval`。托盘作为观察连接，必须先对线程调用 `thread/resume`，否则收不到别的连接发起的回合通知（现有托盘客户端没调）。`turn/started` 不带来源，托盘发起的投递带 `clientUserMessageId` 即可与用户在 TUI 里亲自提交的回合区分，审批按键不产生新回合。rollout 可按 `turn_id` 取 `task_complete` 的最后助手回复。新 worktree 首次启动 TUI 会弹目录信任框。
+- **Codex 0.171.0**：`turn/completed` 的 `status` 为 `completed`／`interrupted`／`failed`，完成时附最终助手消息；需审批时 `thread/status/changed` 为 `active` 且带 `waitingOnApproval`。托盘作为观察连接，必须先对线程调用 `thread/resume`，否则收不到别的连接发起的回合通知（现有托盘客户端没调）。`turn/started` 不带来源，托盘发起的投递带 `clientUserMessageId` 即可与用户在 TUI 里亲自提交的回合区分，审批按键不产生新回合。rollout 可按 `turn_id` 取 `task_complete` 的最后助手回复。新 worktree 首次启动 TUI 会弹目录信任框；运行时 `-c` 覆盖信任对 `--remote` TUI 无效，经 `app-server` 的 `config/value/write` 写入信任可以跳过，但会持久化进 `~/.codex/config.toml`。
 - **Antigravity 1.5.14**：`AGY_CLI_OSC7501=on` 下 OSC 完整（含 `blocked:permission`、`blocked:question`）；不能预先指定会话 ID；`-i` 传首条任务只执行一次，但在信任框期间提交的首条缺 `working`／`done`；`--conversation <id>` 可恢复；审批按键不产生 `USER_INPUT`。
 - 原生 fork 在 Claude、Codex、Grok、Pi、CodeBuddy 上都实测可用，但本方案不采用（见取舍）。
 
@@ -83,6 +83,7 @@ boss 想用终端模式派发时，先在对话里问用户要不要派生、派
 - **派生前在对话里问，不做 App 卡片**：问「要不要、派给谁」是对话里的一句话，用卡片要多一套阻塞等待与状态恢复。
 - **不另设终端数量上限**：空闲终端不占派发名额，不会卡住派发和开会；终端的关闭交给用户。
 - **任务作为原生用户输入交给子终端**：否则要另做一个让子代理读取任务正文的入口；父终端仍只收固定短提示。
+- **Codex 目录信任写入后不清理**：运行时覆盖无效，只能持久化写入；与 Claude、Antigravity 自动确认后由 CLI 自己保留信任的做法一致，代价是用户的 Codex 配置里会累积已删除隔离目录的信任条目。
 - **已读位置随服务历史持久化**：放在随进程号删除的 `inbox/` 文件里，用户聊完关掉终端、服务换代后提示就丢了。
 
 ## 后果
