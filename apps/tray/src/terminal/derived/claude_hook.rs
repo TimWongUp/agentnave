@@ -73,9 +73,11 @@ pub(super) fn hook_settings(hook_dir: &Path) -> Value {
     let cmd = format!(
         "[ -f {armed} ] || exit 0; rm -f {armed}; \
         /usr/bin/perl -MJSON::PP -e 'my $raw = \"\"; my $n = read(STDIN, $raw, 1048577); \
-        exit 0 if !defined($n) || $n > 1048576; \
-        my $d = eval {{ decode_json($raw) }}; \
-        my $m = ref($d) eq \"HASH\" ? ($d->{{permission_mode}} // \"\") : \"\"; \
+        my $m = \"default\"; \
+        if (defined($n) && $n <= 1048576) {{ \
+            my $d = eval {{ decode_json($raw) }}; \
+            $m = ref($d) eq \"HASH\" ? ($d->{{permission_mode}} // \"\") : \"\"; \
+        }} \
         my $tmp = \"$ARGV[0].tmp.$$\"; \
         open my $fh, \">\", $tmp or die $!; print {{$fh}} $m; close $fh or die $!; \
         rename $tmp, $ARGV[0] or die $!; \
@@ -157,7 +159,15 @@ pub(super) fn drop_empty_claude_session(homes: &[PathBuf], session_id: &str) {
     let mut reader = BufReader::new(file);
     let mut line = String::new();
     let mut has_turn = false;
-    while native_logs::read_bounded_line(&mut reader, &mut line) {
+    loop {
+        match native_logs::read_bounded_line(&mut reader, &mut line) {
+            native_logs::TranscriptLine::Eof => break,
+            native_logs::TranscriptLine::Oversized => {
+                has_turn = true;
+                break;
+            }
+            native_logs::TranscriptLine::Line => {}
+        }
         if serde_json::from_str::<Value>(&line).is_ok_and(|row| {
             row["type"].as_str() == Some("assistant")
                 || (row["type"].as_str() == Some("system")

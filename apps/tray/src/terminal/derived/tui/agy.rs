@@ -442,7 +442,12 @@ pub(super) fn highest_agy_user_index(path: &Path) -> Option<i64> {
     let mut reader = BufReader::new(file);
     let mut best = None;
     let mut line = String::new();
-    while native_logs::read_bounded_line(&mut reader, &mut line) {
+    loop {
+        match native_logs::read_bounded_line(&mut reader, &mut line) {
+            native_logs::TranscriptLine::Eof => break,
+            native_logs::TranscriptLine::Oversized => continue,
+            native_logs::TranscriptLine::Line => {}
+        }
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };

@@ -16,7 +16,8 @@ from agentnave.claude_tui.turn import is_user_prompt, transcript_event
 
 CODEX_READ_RETRY_SECONDS = 3.0
 CODEX_READ_POLL_SECONDS = 0.2
-_MAX_TRANSCRIPT_LINE_BYTES = 16 * 1024 * 1024
+# Keep in sync with `MAX_TRANSCRIPT_LINE_BYTES` in `apps/tray/src/terminal/derived/native_logs.rs`.
+MAX_TRANSCRIPT_LINE_BYTES = 8 * 1024 * 1024
 
 
 def _object(value: object) -> dict[str, object]:
@@ -74,15 +75,26 @@ def rows(path: Path, *, max_rows: int | None = None) -> list[dict[str, object]]:
         if not stat.S_ISREG(info.st_mode):
             raise ValueError("native transcript is not a regular file")
         while True:
-            line = stream.readline(_MAX_TRANSCRIPT_LINE_BYTES + 1)
+            line = stream.readline(MAX_TRANSCRIPT_LINE_BYTES + 1)
             if not line:
                 break
-            if len(line) > _MAX_TRANSCRIPT_LINE_BYTES and not line.endswith(b"\n"):
-                raise ValueError("native transcript line exceeds size limit")
+            if len(line) > MAX_TRANSCRIPT_LINE_BYTES:
+                ended = line.endswith(b"\n")
+                while not ended:
+                    chunk = stream.readline(64 * 1024)
+                    if not chunk:
+                        break
+                    if chunk.endswith(b"\n"):
+                        ended = True
+                if not ended:
+                    break
+                # Count complete oversized lines as a row placeholder to keep end_row_index aligned.
+                result.append({})
+                if max_rows is not None and len(result) >= max_rows:
+                    break
+                continue
             if not line.endswith(b"\n"):
                 break
-            if len(line) > _MAX_TRANSCRIPT_LINE_BYTES:
-                raise ValueError("native transcript line exceeds size limit")
             try:
                 value: object = json.loads(line)
             except ValueError as exc:

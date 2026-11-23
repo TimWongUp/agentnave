@@ -65,40 +65,49 @@ impl RelativeToExt for Path {
     }
 }
 
-/// Read the next line up to `MAX_TRANSCRIPT_LINE_BYTES`, skipping oversized lines cleanly.
-pub(super) fn read_bounded_line(reader: &mut BufReader<File>, out: &mut String) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TranscriptLine {
+    Eof,
+    Line,
+    Oversized,
+}
+
+/// Read the next line up to `MAX_TRANSCRIPT_LINE_BYTES`, preserving row alignment for oversized lines.
+pub(super) fn read_bounded_line(reader: &mut BufReader<File>, out: &mut String) -> TranscriptLine {
     let mut buf = Vec::new();
-    loop {
-        buf.clear();
-        let Ok(n) = reader
-            .by_ref()
-            .take((MAX_TRANSCRIPT_LINE_BYTES + 1) as u64)
-            .read_until(b'\n', &mut buf)
-        else {
-            return false;
+    let Ok(n) = reader
+        .by_ref()
+        .take((MAX_TRANSCRIPT_LINE_BYTES + 1) as u64)
+        .read_until(b'\n', &mut buf)
+    else {
+        return TranscriptLine::Eof;
+    };
+    if n == 0 {
+        return TranscriptLine::Eof;
+    }
+    if buf.len() <= MAX_TRANSCRIPT_LINE_BYTES {
+        out.clear();
+        out.push_str(&String::from_utf8_lossy(&buf));
+        return TranscriptLine::Line;
+    }
+    let mut ended = buf.ends_with(b"\n");
+    while !ended {
+        let Ok(avail) = reader.fill_buf() else {
+            return TranscriptLine::Eof;
         };
-        if n == 0 {
-            return false;
+        if avail.is_empty() {
+            return TranscriptLine::Eof;
         }
-        if buf.len() <= MAX_TRANSCRIPT_LINE_BYTES {
-            out.clear();
-            out.push_str(&String::from_utf8_lossy(&buf));
-            return true;
-        }
-        if !buf.ends_with(b"\n") {
-            while let Ok(avail) = reader.fill_buf() {
-                if avail.is_empty() {
-                    break;
-                }
-                if let Some(pos) = avail.iter().position(|&b| b == b'\n') {
-                    reader.consume(pos + 1);
-                    break;
-                }
-                let step = avail.len();
-                reader.consume(step);
-            }
+        if let Some(pos) = avail.iter().position(|&b| b == b'\n') {
+            reader.consume(pos + 1);
+            ended = true;
+        } else {
+            let step = avail.len();
+            reader.consume(step);
         }
     }
+    out.clear();
+    TranscriptLine::Oversized
 }
 
 pub(super) fn flat_whitespace(text: &str) -> String {
@@ -257,7 +266,12 @@ pub(super) fn claude_prompt_anchor(
         return None;
     }
     let mut line = String::new();
-    while read_bounded_line(&mut reader, &mut line) {
+    loop {
+        match read_bounded_line(&mut reader, &mut line) {
+            TranscriptLine::Eof => break,
+            TranscriptLine::Oversized => continue,
+            TranscriptLine::Line => {}
+        }
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -346,7 +360,15 @@ pub(super) fn claude_dispatch_scan(path: &Path, start_prompt_id: &str) -> Claude
     let mut row_idx = 0usize;
     let mut line = String::new();
 
-    while read_bounded_line(&mut reader, &mut line) {
+    loop {
+        match read_bounded_line(&mut reader, &mut line) {
+            TranscriptLine::Eof => break,
+            TranscriptLine::Oversized => {
+                row_idx += 1;
+                continue;
+            }
+            TranscriptLine::Line => {}
+        }
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -556,7 +578,12 @@ pub(super) fn codex_rollout_turn_state(path: &Path, turn_id: &str) -> CodexRollo
     let mut reader = BufReader::new(file);
     let mut state = CodexRolloutTurn::Unknown;
     let mut line = String::new();
-    while read_bounded_line(&mut reader, &mut line) {
+    loop {
+        match read_bounded_line(&mut reader, &mut line) {
+            TranscriptLine::Eof => break,
+            TranscriptLine::Oversized => continue,
+            TranscriptLine::Line => {}
+        }
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -665,7 +692,12 @@ pub(super) fn agy_match_user_input(
     }
     let mut reader = BufReader::new(file);
     let mut line = String::new();
-    while read_bounded_line(&mut reader, &mut line) {
+    loop {
+        match read_bounded_line(&mut reader, &mut line) {
+            TranscriptLine::Eof => break,
+            TranscriptLine::Oversized => continue,
+            TranscriptLine::Line => {}
+        }
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -736,7 +768,15 @@ pub(super) fn agy_dispatch_scan(path: &Path, user_input_index: i64) -> AgyDispat
     let mut open_bg_tasks: HashSet<String> = HashSet::new();
     let mut row_idx = 0usize;
     let mut line = String::new();
-    while read_bounded_line(&mut reader, &mut line) {
+    loop {
+        match read_bounded_line(&mut reader, &mut line) {
+            TranscriptLine::Eof => break,
+            TranscriptLine::Oversized => {
+                row_idx += 1;
+                continue;
+            }
+            TranscriptLine::Line => {}
+        }
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };

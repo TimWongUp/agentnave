@@ -630,3 +630,102 @@ fn s1_hook_requires_session_id_and_pairs_matching_prompt_ids() {
         } if pid == "p-1" && warnings.iter().any(|w| w.contains("不匹配当前回合"))
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn s1_oversized_transcript_line_counts_as_row_and_skips_empty_cleanup() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let proj = dir.path().join("projects/p1");
+    fs::create_dir_all(&proj).unwrap();
+
+    // 1) claude_dispatch_scan counts an >8 MiB line as a row while skipping JSON parsing.
+    let sid1 = "66666666-6666-4666-8666-666666666666";
+    let t1 = proj.join(format!("{sid1}.jsonl"));
+    {
+        let mut f = fs::File::create(&t1).unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type": "user", "promptId": "p0", "message": {"content": "go"}})
+        )
+        .unwrap();
+        f.write_all(b"{\"type\":\"assistant\",\"pad\":\"").unwrap();
+        f.write_all(&vec![b'x'; native_logs::MAX_TRANSCRIPT_LINE_BYTES + 1024])
+            .unwrap();
+        f.write_all(b"\"}\n").unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}})
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type": "system", "subtype": "turn_duration"})
+        )
+        .unwrap();
+    }
+    let scan = native_logs::claude_dispatch_scan(&t1, "p0");
+    assert_eq!(scan.segment_end_row, 4);
+    assert_eq!(scan.last_reply_end_row, Some(4));
+
+    // 2) drop_empty_claude_session must NOT delete a transcript that skipped an oversized line.
+    let sid2 = "77777777-7777-4777-8777-777777777777";
+    let t2 = proj.join(format!("{sid2}.jsonl"));
+    {
+        let mut f = fs::File::create(&t2).unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type": "user", "promptId": "p0", "message": {"content": "go"}})
+        )
+        .unwrap();
+        f.write_all(b"{\"type\":\"assistant\",\"pad\":\"").unwrap();
+        f.write_all(&vec![b'y'; native_logs::MAX_TRANSCRIPT_LINE_BYTES + 1024])
+            .unwrap();
+        f.write_all(b"\"}\n").unwrap();
+    }
+    let homes = vec![dir.path().to_path_buf()];
+    claude_hook::drop_empty_claude_session(&homes, sid2);
+    assert!(t2.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn s1_oversized_user_prompt_submit_fails_closed_with_block() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let hook_dir = claude_hook::prepare_claude_hook(true).unwrap();
+    let settings = claude_hook::hook_settings(hook_dir.path());
+    let cmd = settings[0]["hooks"][0]["command"].as_str().unwrap();
+
+    let huge = format!(
+        "{{\"permission_mode\":\"bypassPermissions\",\"prompt\":\"{}\"}}",
+        "x".repeat(1_048_600)
+    );
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", cmd])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(huge.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let decision: Value = serde_json::from_str(stdout.trim()).expect("must emit block JSON");
+    assert_eq!(decision["decision"], json!("block"));
+    assert_eq!(
+        claude_hook::read_observed_mode(hook_dir.path()).as_deref(),
+        Some("default")
+    );
+}

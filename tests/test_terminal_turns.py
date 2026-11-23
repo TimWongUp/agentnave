@@ -122,6 +122,42 @@ def test_read_turn_rejects_symlink_to_another_session(
         read_turn("antigravity", None, link_sid, {"user_input_index": 0})
 
 
+def test_oversized_transcript_line_counted_consistently_with_rust(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from agentnave.terminal_turns import MAX_TRANSCRIPT_LINE_BYTES, read_turn
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    proj = tmp_path / "projects/p1"
+    proj.mkdir(parents=True)
+    sid = "33333333-3333-4333-8333-333333333333"
+    transcript = proj / f"{sid}.jsonl"
+    oversized_bytes = MAX_TRANSCRIPT_LINE_BYTES + 1024
+    with transcript.open("wb") as stream:
+        stream.write(
+            (
+                json.dumps({"type": "user", "promptId": "p0", "message": {"content": "go"}}) + "\n"
+            ).encode("utf-8")
+        )
+        stream.write(b'{"type":"assistant","pad":"' + (b"x" * oversized_bytes) + b'"}\n')
+        stream.write(
+            (
+                json.dumps(
+                    {"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        stream.write(
+            (json.dumps({"type": "system", "subtype": "turn_duration"}) + "\n").encode("utf-8")
+        )
+
+    assert MAX_TRANSCRIPT_LINE_BYTES == 8 * 1024 * 1024
+    assert read_turn("claude", None, sid, {"prompt_id": "p0", "end_row_index": 4}) == "ok"
+
+
 def test_codex_requires_matching_turn() -> None:
     entries: list[dict[str, object]] = [
         {

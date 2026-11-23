@@ -1893,3 +1893,154 @@ fn claude_reminder_does_not_fire_during_foreground_subturn_after_task_notificati
     monitor.join().unwrap();
     session.stop();
 }
+
+#[test]
+fn claude_stale_older_turn_duration_timeout_does_not_overwrite_later_paired_end_row() {
+    use super::super::claude::turn_state::{ClaudeTurnDecision, ClaudeTurnTracker};
+
+    let dir = tempfile::tempdir().unwrap();
+    let hook_dir = claude_hook::prepare_claude_hook(false).unwrap();
+    let events_file = claude_hook::events_path(hook_dir.path());
+    let sid = "55555555-5555-4555-8555-555555555555";
+    let cfg = claude::ClaudeMonitorConfig {
+        signal_pair_timeout: Duration::from_millis(500),
+        bg_reminder_delay: Duration::from_secs(60),
+    };
+    let mut tracker = ClaudeTurnTracker::new(sid, 0, cfg);
+    let t0 = Instant::now();
+
+    // 1) Subturn 0 starts at row 0 and its Stop(p-0, waking=[bg-1]) times out before turn_duration arrives.
+    fs::write(
+        &events_file,
+        format!(
+            "{}\n",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": sid,
+                "prompt_id": "p-0",
+                "background_tasks": [{"id": "bg-1", "type": "shell", "status": "running"}]
+            })
+        ),
+    )
+    .unwrap();
+    assert!(tracker.ingest_hook_file(&events_file, t0).is_none());
+    let scan0 = native_logs::ClaudeDispatchScan {
+        found_start: true,
+        owned_prompt_ids: vec!["p-0".to_owned()],
+        has_assistant_reply: true,
+        last_reply_end_row: Some(2),
+        last_reply_prompt_id: Some("p-0".to_owned()),
+        segment_end_row: 2,
+        active_subturn_after_last_duration: true,
+        current_subturn_start_row: 0,
+        ..Default::default()
+    };
+    let (d0, bg0, _) = tracker.step("p-0", &scan0, None, false, t0 + Duration::from_millis(600));
+    assert_eq!(d0, ClaudeTurnDecision::Continue);
+    assert!(bg0);
+
+    // 2) Same poll observes subturn 0's late turn_duration (row 2) AND subturn 1 (start row 3, dur row 5)
+    // plus subturn 1's Stop(p-1, waking=[]).
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&events_file)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": sid,
+                "prompt_id": "p-1",
+                "background_tasks": []
+            })
+        )
+        .unwrap();
+    }
+    let t1 = t0 + Duration::from_millis(700);
+    assert!(tracker.ingest_hook_file(&events_file, t1).is_none());
+    let scan1 = native_logs::ClaudeDispatchScan {
+        found_start: true,
+        owned_prompt_ids: vec!["p-0".to_owned(), "p-1".to_owned()],
+        turn_durations: vec![
+            native_logs::ClaudeTurnDuration {
+                row_index: 2,
+                prompt_id: Some("p-0".to_owned()),
+            },
+            native_logs::ClaudeTurnDuration {
+                row_index: 5,
+                prompt_id: Some("p-1".to_owned()),
+            },
+        ],
+        has_assistant_reply: true,
+        last_reply_end_row: Some(6),
+        last_reply_prompt_id: Some("p-1".to_owned()),
+        segment_end_row: 6,
+        active_subturn_after_last_duration: false,
+        current_subturn_start_row: 3,
+        ..Default::default()
+    };
+    let _ = tracker.step("p-0", &scan1, None, false, t1);
+
+    // 3) Advance past signal_pair_timeout: if older dur(row 2) timed out, it MUST NOT overwrite row 6 -> 3.
+    let t2 = t1 + Duration::from_millis(600);
+    let (d2, _, _) = tracker.step("p-0", &scan1, None, false, t2);
+    assert!(matches!(
+        d2,
+        ClaudeTurnDecision::Settled {
+            end_prompt_id: Some(ref pid),
+            end_row_index: Some(6),
+            ..
+        } if pid == "p-1"
+    ));
+
+    // 4) Stale dur(row 2) timing out while a newer subturn is STILL active must NOT settle prematurely.
+    let mut tracker2 = ClaudeTurnTracker::new(sid, 0, cfg);
+    let events2 = dir.path().join("events2.jsonl");
+    fs::write(
+        &events2,
+        format!(
+            "{}\n",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": sid,
+                "prompt_id": "p-1",
+                "background_tasks": [{"id": "bg-2", "type": "shell", "status": "running"}]
+            })
+        ),
+    )
+    .unwrap();
+    assert!(tracker2.ingest_hook_file(&events2, t0).is_none());
+    let scan2 = native_logs::ClaudeDispatchScan {
+        found_start: true,
+        owned_prompt_ids: vec!["p-0".to_owned(), "p-1".to_owned()],
+        turn_durations: vec![
+            native_logs::ClaudeTurnDuration {
+                row_index: 5,
+                prompt_id: Some("p-1".to_owned()),
+            },
+            native_logs::ClaudeTurnDuration {
+                row_index: 2,
+                prompt_id: Some("p-0".to_owned()),
+            },
+        ],
+        has_assistant_reply: true,
+        last_reply_end_row: Some(6),
+        last_reply_prompt_id: Some("p-1".to_owned()),
+        segment_end_row: 6,
+        active_subturn_after_last_duration: false,
+        current_subturn_start_row: 3,
+        ..Default::default()
+    };
+    assert_eq!(
+        tracker2.step("p-0", &scan2, None, false, t0).0,
+        ClaudeTurnDecision::Continue
+    );
+    assert_eq!(
+        tracker2
+            .step("p-0", &scan2, None, false, t0 + Duration::from_millis(600))
+            .0,
+        ClaudeTurnDecision::Continue
+    );
+}

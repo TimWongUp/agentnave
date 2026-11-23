@@ -358,6 +358,25 @@ impl ClaudeTurnTracker {
         }
     }
 
+    fn record_paired_end(&mut self, end_row: usize, prompt_id: Option<String>) {
+        match self.last_paired_end_row {
+            None => {
+                self.last_paired_end_row = Some(end_row);
+                self.last_paired_prompt_id = prompt_id;
+            }
+            Some(prev) if end_row > prev => {
+                self.last_paired_end_row = Some(end_row);
+                self.last_paired_prompt_id = prompt_id;
+            }
+            Some(prev) if end_row == prev => {
+                if let Some(pid) = prompt_id {
+                    self.last_paired_prompt_id = Some(pid);
+                }
+            }
+            Some(_) => {}
+        }
+    }
+
     /// Poll hook events file. Returns `Some(err_msg)` immediately on `StopFailure`.
     pub(in crate::terminal::derived) fn ingest_hook_file(
         &mut self,
@@ -403,15 +422,25 @@ impl ClaudeTurnTracker {
     ) -> (ClaudeTurnDecision, bool, Option<BackgroundTasksReminder>) {
         if scan.found_start && scan.turn_durations.len() > self.seen_durations {
             for dur in &scan.turn_durations[self.seen_durations..] {
-                if self.timed_out_stop_subturn_row == Some(scan.current_subturn_start_row)
+                if self
+                    .last_paired_end_row
+                    .is_some_and(|paired_end| dur.row_index < paired_end)
+                {
+                    continue;
+                }
+                let matches_timed_out_subturn =
+                    self.timed_out_stop_subturn_row.is_some_and(|sub| {
+                        dur.row_index >= sub
+                            && (sub == scan.current_subturn_start_row
+                                || dur.row_index < scan.current_subturn_start_row)
+                    });
+                if matches_timed_out_subturn
                     && !self.active_bg_tasks.is_empty()
-                    && self.pending_stops.is_empty()
+                    && (self.pending_stops.is_empty()
+                        || dur.row_index < scan.current_subturn_start_row)
                 {
                     self.timed_out_stop_subturn_row = None;
-                    self.last_paired_end_row = Some(dur.row_index + 1);
-                    if let Some(pid) = &dur.prompt_id {
-                        self.last_paired_prompt_id = Some(pid.clone());
-                    }
+                    self.record_paired_end(dur.row_index + 1, dur.prompt_id.clone());
                 } else if self.pending_durations.len() >= MAX_PENDING_PAIR_QUEUE {
                     self.push_warning("Claude turn_duration 待配对队列超过上限，已丢弃");
                 } else {
@@ -503,8 +532,7 @@ impl ClaudeTurnTracker {
     ) -> Option<ClaudeTurnDecision> {
         while let Some((stop, dur)) = self.pop_matching_pair() {
             self.timed_out_stop_subturn_row = None;
-            self.last_paired_end_row = Some(dur.row_index + 1);
-            self.last_paired_prompt_id = dur.prompt_id.or(stop.prompt_id);
+            self.record_paired_end(dur.row_index + 1, dur.prompt_id.or(stop.prompt_id));
             match stop.background_tasks {
                 StopBackgroundTasks::Missing => {
                     self.push_warning(
@@ -548,13 +576,18 @@ impl ClaudeTurnTracker {
             && now.saturating_duration_since(*at) >= self.cfg.signal_pair_timeout
         {
             let (_, dur) = self.pending_durations.pop_front().expect("checked");
-            self.last_paired_end_row = Some(dur.row_index + 1);
-            self.last_paired_prompt_id = dur.prompt_id;
-            self.ready_to_settle_after_drain = true;
-            self.push_warning(
-                "未在时限内收到 Claude Stop 钩子，已退回 transcript 结算，后台任务完成未确认",
-            );
-            if !scan.active_subturn_after_last_duration
+            let stale_dur = self
+                .last_paired_end_row
+                .is_some_and(|paired_end| dur.row_index < paired_end);
+            if !stale_dur {
+                self.record_paired_end(dur.row_index + 1, dur.prompt_id);
+                self.ready_to_settle_after_drain = true;
+                self.push_warning(
+                    "未在时限内收到 Claude Stop 钩子，已退回 transcript 结算，后台任务完成未确认",
+                );
+            }
+            if self.ready_to_settle_after_drain
+                && !scan.active_subturn_after_last_duration
                 && self.pending_durations.is_empty()
                 && self.pending_stops.is_empty()
                 && self.active_bg_tasks.is_empty()
