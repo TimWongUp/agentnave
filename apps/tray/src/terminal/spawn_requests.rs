@@ -1,16 +1,14 @@
 //! Derived-session `spawn-requests/` intake, push receipts, and inbox settlement (ADR-0109).
 
+mod types;
+
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
@@ -18,9 +16,12 @@ use super::Terminals;
 use super::derived;
 use super::links;
 use crate::data_files::{PUSH_MAX_BYTES, create_private_dir, valid_uuid, write_atomic_compact};
+pub(super) use types::*;
 
 const MAX_REQUEST_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TEXT_CHARS: usize = 240;
+const MAX_WARNINGS: usize = 8;
+const MAX_REMINDER_TASKS: usize = 16;
 const DEAD_RECEIPT_TTL: Duration = Duration::from_secs(60);
 
 #[cfg(target_os = "macos")]
@@ -28,180 +29,10 @@ pub(super) const TERMINAL_PROVIDERS: &[&str] = &["claude", "codex", "antigravity
 #[cfg(not(target_os = "macos"))]
 pub(super) const TERMINAL_PROVIDERS: &[&str] = &[];
 
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct ProcessIdentity {
-    pub pid: u32,
-    pub started_at: f64,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct ParentRef {
-    pub boss_key: String,
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct IsolationSpec {
-    #[serde(alias = "isolation_id")]
-    pub id: String,
-    #[serde(default)]
-    pub repo_common_dir: Option<String>,
-    #[serde(default)]
-    pub path: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct RunConfig {
-    pub provider: String,
-    #[serde(default)]
-    pub account: Option<String>,
-    #[serde(default)]
-    pub account_dir: Option<String>,
-    pub cwd: String,
-    #[serde(default)]
-    pub isolation: Option<IsolationSpec>,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub effort: Option<String>,
-    #[serde(default)]
-    pub permissions: Value,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct ForwardItem {
-    #[serde(default)]
-    pub message_id: String,
-    #[serde(default)]
-    pub source: String,
-    #[serde(default)]
-    pub text: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct TaskSpec {
-    pub text: String,
-    #[serde(default)]
-    pub forward: Vec<ForwardItem>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct ExpectedAnchor {
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub turn_id: Option<String>,
-    #[serde(default)]
-    pub client_user_message_id: Option<String>,
-    #[serde(default)]
-    pub prompt_id: Option<String>,
-    #[serde(default)]
-    pub user_input_index: Option<i64>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(super) struct SpawnRequestEnvelope {
-    pub version: u32,
-    pub request_id: String,
-    pub kind: String,
-    pub service: ProcessIdentity,
-    pub target_tray: ProcessIdentity,
-    pub invocation_id: String,
-    #[serde(default)]
-    pub parent: Option<ParentRef>,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub config: Option<RunConfig>,
-    #[serde(default)]
-    pub task: Option<TaskSpec>,
-    #[serde(default)]
-    pub expected_anchor: Option<ExpectedAnchor>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum ReceiptState {
-    Accepted,
-    Started,
-    Finished,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(super) struct BlockedReceipt {
-    pub kind: String,
-    pub since: f64,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(super) struct TerminalOutcome {
-    pub status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(super) struct Receipt {
-    pub service_pid: u32,
-    pub invocation_id: String,
-    pub kind: String,
-    pub state: ReceiptState,
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lease_acquired: Option<bool>,
-    pub anchor: Option<Value>,
-    pub blocked: Option<BlockedReceipt>,
-    pub terminal: Option<TerminalOutcome>,
-}
-
 struct ReceiptEntry {
     receipt: Receipt,
+    provider: Option<String>,
     finished_at: Option<Instant>,
-}
-
-pub(super) struct RunHandle {
-    pre_start_cancelled: AtomicBool,
-    interrupt_confirmed: AtomicBool,
-    interrupt_pending: AtomicBool,
-}
-
-impl RunHandle {
-    pub(super) fn new() -> Self {
-        Self {
-            pre_start_cancelled: AtomicBool::new(false),
-            interrupt_confirmed: AtomicBool::new(false),
-            interrupt_pending: AtomicBool::new(false),
-        }
-    }
-
-    pub(super) fn set_interrupt_pending(&self, pending: bool) {
-        self.interrupt_pending.store(pending, Ordering::SeqCst);
-    }
-
-    /// True while an Esc interruption is undecided; turn monitors must not settle then.
-    pub(super) fn interrupt_pending(&self) -> bool {
-        self.interrupt_pending.load(Ordering::SeqCst)
-    }
-
-    /// Latches a cancel received before the turn started; never reset once set.
-    pub(super) fn request_pre_start_cancel(&self) {
-        self.pre_start_cancelled.store(true, Ordering::SeqCst);
-    }
-
-    pub(super) fn is_pre_start_cancelled(&self) -> bool {
-        self.pre_start_cancelled.load(Ordering::SeqCst)
-    }
-
-    /// Marks an in-flight turn's interruption as confirmed by the CLI/TUI.
-    pub(super) fn confirm_interrupt(&self) {
-        self.interrupt_confirmed.store(true, Ordering::SeqCst);
-    }
-
-    pub(super) fn is_interrupt_confirmed(&self) -> bool {
-        self.interrupt_confirmed.load(Ordering::SeqCst)
-    }
 }
 
 struct CoordinatorState {
@@ -375,11 +206,31 @@ impl Coordinator {
                     lease_acquired: None,
                     anchor: None,
                     blocked: None,
+                    background_tasks_pending: None,
                     terminal: None,
                 },
+                provider: None,
                 finished_at: None,
             },
         );
+    }
+
+    pub(super) fn has_unsettled_run_for_session(
+        &self,
+        provider: &str,
+        session_id: &str,
+        exclude_request_id: &str,
+    ) -> bool {
+        self.lock().receipts.iter().any(|(req_id, entry)| {
+            req_id != exclude_request_id
+                && entry.receipt.kind == "run"
+                && entry.receipt.state != ReceiptState::Finished
+                && entry.receipt.session_id.as_deref() == Some(session_id)
+                && entry
+                    .provider
+                    .as_deref()
+                    .is_none_or(|recorded| recorded == provider)
+        })
     }
 
     pub(super) fn run_receipt_by_invocation(&self, invocation_id: &str) -> Option<Receipt> {
@@ -411,6 +262,28 @@ impl Coordinator {
                 kind: truncate_short(&b.kind),
                 since: b.since,
                 reason: truncate_short(&b.reason),
+            });
+        });
+    }
+
+    pub(super) fn set_background_tasks_pending(
+        &self,
+        request_id: &str,
+        reminder: BackgroundTasksReminder,
+    ) {
+        self.mutate_receipt(request_id, |r| {
+            r.background_tasks_pending = Some(BackgroundTasksReminder {
+                code: truncate_short(&reminder.code),
+                since: reminder.since,
+                count: reminder.count,
+                tasks: reminder
+                    .tasks
+                    .into_iter()
+                    .take(MAX_REMINDER_TASKS)
+                    .map(|t| truncate_short(&t))
+                    .filter(|t| !t.is_empty())
+                    .collect(),
+                reason: truncate_short(&reminder.reason),
             });
         });
     }
@@ -448,18 +321,50 @@ impl Coordinator {
         reason: Option<&str>,
         session_id: Option<&str>,
     ) {
+        self.mark_finished_with(request_id, status, reason, session_id, None, Vec::new());
+    }
+
+    pub(super) fn mark_finished_with(
+        &self,
+        request_id: &str,
+        status: &str,
+        reason: Option<&str>,
+        session_id: Option<&str>,
+        anchor_patch: Option<Value>,
+        warnings: Vec<String>,
+    ) {
         let mut changed = false;
+        let warnings: Vec<String> = warnings
+            .into_iter()
+            .take(MAX_WARNINGS)
+            .map(|w| truncate_short(&w))
+            .filter(|w| !w.is_empty())
+            .collect();
         let outcome = TerminalOutcome {
             status: truncate_short(status),
             reason: reason.map(truncate_short).filter(|s| !s.is_empty()),
+            warnings,
         };
         {
             let mut state = self.lock();
             if let Some(entry) = state.receipts.get_mut(request_id)
                 && entry.receipt.state != ReceiptState::Finished
             {
+                if let Some(Value::Object(patch)) = anchor_patch {
+                    match entry.receipt.anchor.as_mut() {
+                        Some(Value::Object(existing)) => {
+                            for (k, v) in patch {
+                                existing.entry(k).or_insert(v);
+                            }
+                        }
+                        _ => {
+                            entry.receipt.anchor = Some(Value::Object(patch));
+                        }
+                    }
+                }
                 entry.receipt.state = ReceiptState::Finished;
                 entry.receipt.blocked = None;
+                entry.receipt.background_tasks_pending = None;
                 entry.receipt.terminal = Some(outcome);
                 if let Some(sid) = session_id {
                     entry.receipt.session_id = Some(truncate_short(sid));
@@ -611,8 +516,10 @@ impl Coordinator {
                             lease_acquired,
                             anchor: None,
                             blocked: None,
+                            background_tasks_pending: None,
                             terminal: None,
                         },
+                        provider: env.config.as_ref().map(|c| c.provider.clone()),
                         finished_at: None,
                     },
                 );

@@ -31,21 +31,131 @@ def test_claude_stays_between_prompt_ids() -> None:
         {"type": "system", "subtype": "turn_duration", "isSidechain": True},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "first"}]}},
         {"type": "system", "subtype": "turn_duration"},
-        # Background task continuation after turn_duration must not overwrite turn "a".
+        # Background task continuation after turn_duration belongs to turn "a" until next human prompt.
         {
             "type": "user",
+            "promptId": "a-notif",
+            "promptSource": "system",
+            "turnOrigin": "task_notification",
+            "origin": {"kind": "task-notification"},
             "message": {
                 "content": "<task-notification><task-id>bg-2</task-id></task-notification>"
             },
         },
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "bg followup"}]}},
+        {"type": "system", "subtype": "turn_duration"},
         {"type": "user", "promptId": "b", "message": {"content": "second prompt"}},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "second"}]}},
     ]
-    assert claude_turn(entries, "a") == "first"
+    assert claude_turn(entries, "a") == "first\n\nbg followup"
+    # Settlement anchors (end_prompt_id / end_row_index) bound the read strictly (e.g. bg-only cancel).
+    assert claude_turn(entries, "a", end_prompt_id="a") == "first"
+    assert claude_turn(entries, "a", end_row_index=7) == "first"
+    assert claude_turn(entries, "a", end_prompt_id="a-notif", end_row_index=10) == (
+        "first\n\nbg followup"
+    )
     assert claude_turn(entries, "b") == "second"
     with pytest.raises(ValueError):
         claude_turn(entries, "missing")
+
+
+def test_claude_multi_subturn_does_not_truncate_when_end_prompt_id_matches_start() -> None:
+    entries: list[dict[str, object]] = [
+        {"type": "user", "promptId": "p0", "message": {"content": "start"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "part 0"}]}},
+        {"type": "system", "subtype": "turn_duration"},
+        {
+            "type": "user",
+            "promptSource": "system",
+            "turnOrigin": "task_notification",
+            "origin": {"kind": "task-notification"},
+            "message": {
+                "content": "<task-notification><task-id>bg-1</task-id></task-notification>"
+            },
+        },
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "part 1"}]}},
+        {"type": "system", "subtype": "turn_duration"},
+    ]
+    assert claude_turn(entries, "p0", end_prompt_id="p0", end_row_index=6) == "part 0\n\npart 1"
+
+
+def test_read_turn_rejects_symlink_to_another_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    import os
+
+    from agentnave.terminal_turns import read_turn
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    proj = tmp_path / "projects/p1"
+    proj.mkdir(parents=True)
+    target_sid = "11111111-1111-4111-8111-111111111111"
+    link_sid = "22222222-2222-4222-8222-222222222222"
+    target = proj / f"{target_sid}.jsonl"
+    target.write_text(
+        json.dumps({"type": "user", "promptId": "p0", "message": {"content": "hi"}})
+        + "\n"
+        + json.dumps(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.symlink(target, proj / f"{link_sid}.jsonl")
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        read_turn("claude", None, link_sid, {"prompt_id": "p0"})
+
+    agy_root = tmp_path / "agy-home"
+    monkeypatch.setenv("AGENTNAVE_AGY_HOME", str(agy_root))
+    agy_target_logs = agy_root / "brain" / target_sid / ".system_generated/logs"
+    agy_target_logs.mkdir(parents=True)
+    (agy_target_logs / "transcript_full.jsonl").write_text(
+        json.dumps({"type": "USER_INPUT", "source": "USER_EXPLICIT", "step_index": 0})
+        + "\n"
+        + json.dumps({"type": "PLANNER_RESPONSE", "content": "secret"})
+        + "\n",
+        encoding="utf-8",
+    )
+    os.symlink(agy_root / "brain" / target_sid, agy_root / "brain" / link_sid)
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        read_turn("antigravity", None, link_sid, {"user_input_index": 0})
+
+
+def test_oversized_transcript_line_counted_consistently_with_rust(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from agentnave.terminal_turns import MAX_TRANSCRIPT_LINE_BYTES, read_turn
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    proj = tmp_path / "projects/p1"
+    proj.mkdir(parents=True)
+    sid = "33333333-3333-4333-8333-333333333333"
+    transcript = proj / f"{sid}.jsonl"
+    oversized_bytes = MAX_TRANSCRIPT_LINE_BYTES + 1024
+    with transcript.open("wb") as stream:
+        stream.write(
+            (
+                json.dumps({"type": "user", "promptId": "p0", "message": {"content": "go"}}) + "\n"
+            ).encode("utf-8")
+        )
+        stream.write(b'{"type":"assistant","pad":"' + (b"x" * oversized_bytes) + b'"}\n')
+        stream.write(
+            (
+                json.dumps(
+                    {"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        stream.write(
+            (json.dumps({"type": "system", "subtype": "turn_duration"}) + "\n").encode("utf-8")
+        )
+
+    assert MAX_TRANSCRIPT_LINE_BYTES == 8 * 1024 * 1024
+    assert read_turn("claude", None, sid, {"prompt_id": "p0", "end_row_index": 4}) == "ok"
 
 
 def test_codex_requires_matching_turn() -> None:
@@ -68,10 +178,14 @@ def test_antigravity_uses_explicit_input_step_and_does_not_cross_next_turn() -> 
     entries: list[dict[str, object]] = [
         {"type": "USER_INPUT", "source": "USER_EXPLICIT", "step_index": 3},
         {"type": "PLANNER_RESPONSE", "content": "first"},
+        {"type": "USER_INPUT", "source": "SYSTEM", "step_index": 5},
+        {"type": "PLANNER_RESPONSE", "content": "bg finished"},
         {"type": "USER_INPUT", "source": "USER_EXPLICIT", "step_index": 8},
         {"type": "PLANNER_RESPONSE", "content": "second"},
     ]
-    assert antigravity_turn(entries, 3) == "first"
+    assert antigravity_turn(entries, 3) == "first\n\nbg finished"
+    assert antigravity_turn(entries, 3, end_row_index=2) == "first"
+    assert antigravity_turn(entries, 8) == "second"
     with pytest.raises(ValueError):
         antigravity_turn(entries, 4)
 

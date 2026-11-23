@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import time
 from pathlib import Path
 from typing import cast
@@ -15,16 +16,83 @@ from agentnave.claude_tui.turn import is_user_prompt, transcript_event
 
 CODEX_READ_RETRY_SECONDS = 3.0
 CODEX_READ_POLL_SECONDS = 0.2
+# Keep in sync with `MAX_TRANSCRIPT_LINE_BYTES` in `apps/tray/src/terminal/derived/native_logs.rs`.
+MAX_TRANSCRIPT_LINE_BYTES = 8 * 1024 * 1024
 
 
 def _object(value: object) -> dict[str, object]:
     return cast(dict[str, object], value) if isinstance(value, dict) else {}
 
 
-def rows(path: Path) -> list[dict[str, object]]:
+def _is_regular_in_root(path: Path, root: Path) -> bool:
+    """Reject symlinks anywhere under `root`, including links pointing to another session."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    cur = root
+    if cur.is_symlink():
+        return False
+    for part in rel.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return False
+    try:
+        return path.is_file() and path.resolve() == root.resolve() / rel
+    except OSError:
+        return False
+
+
+def _optional_end_row_index(anchor: dict[str, object]) -> int | None:
+    raw = anchor.get("end_row_index")
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError("invalid native turn end_row_index")
+    return raw
+
+
+def _optional_end_prompt_id(anchor: dict[str, object]) -> str | None:
+    raw = anchor.get("end_prompt_id")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw:
+        raise ValueError("invalid Claude end_prompt_id")
+    return raw
+
+
+def rows(path: Path, *, max_rows: int | None = None) -> list[dict[str, object]]:
+    if max_rows == 0:
+        return []
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("native transcript missing or inaccessible") from exc
     result: list[dict[str, object]] = []
-    with path.open("rb") as stream:
-        for line in stream:
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("native transcript is not a regular file")
+        while True:
+            line = stream.readline(MAX_TRANSCRIPT_LINE_BYTES + 1)
+            if not line:
+                break
+            if len(line) > MAX_TRANSCRIPT_LINE_BYTES:
+                ended = line.endswith(b"\n")
+                while not ended:
+                    chunk = stream.readline(64 * 1024)
+                    if not chunk:
+                        break
+                    if chunk.endswith(b"\n"):
+                        ended = True
+                if not ended:
+                    break
+                # Count complete oversized lines as a row placeholder to keep end_row_index aligned.
+                result.append({})
+                if max_rows is not None and len(result) >= max_rows:
+                    break
+                continue
             if not line.endswith(b"\n"):
                 break
             try:
@@ -33,6 +101,8 @@ def rows(path: Path) -> list[dict[str, object]]:
                 raise ValueError("invalid native transcript line") from exc
             if isinstance(value, dict):
                 result.append(cast(dict[str, object], value))
+                if max_rows is not None and len(result) >= max_rows:
+                    break
     return result
 
 
@@ -47,8 +117,20 @@ def read_turn(
         root = Path(home or Path.home() / ".claude") / "projects"
         matches = list(root.glob(f"*/{session_id}.jsonl"))
         key = anchor.get("prompt_id")
-        parser = claude_turn
-    elif provider == "codex":
+        end_prompt_id = _optional_end_prompt_id(anchor)
+        end_row_index = _optional_end_row_index(anchor)
+        matches = [p for p in matches if _is_regular_in_root(p, root)]
+        if len(matches) != 1:
+            raise ValueError("native transcript missing or ambiguous")
+        if not isinstance(key, str) or not key:
+            raise ValueError("missing native turn anchor")
+        return claude_turn(
+            rows(matches[0], max_rows=end_row_index),
+            key,
+            end_prompt_id=end_prompt_id,
+            end_row_index=end_row_index,
+        )
+    if provider == "codex":
         root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
         key = anchor.get("turn_id")
         client_id = anchor.get("client_user_message_id")
@@ -57,24 +139,23 @@ def read_turn(
         if not isinstance(key, str) or not key:
             raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
         return _read_codex_turn_with_retry(root, session_id, key, client_id)
-    elif provider == "antigravity":
-        root = Path.home() / ".gemini/antigravity-cli/brain"
+    if provider == "antigravity":
+        agy_root = Path(
+            os.environ.get("AGENTNAVE_AGY_HOME") or Path.home() / ".gemini/antigravity-cli"
+        )
+        root = agy_root / "brain"
         matches = [root / session_id / ".system_generated/logs/transcript_full.jsonl"]
         index = anchor.get("user_input_index")
         if not isinstance(index, int) or isinstance(index, bool):
             raise ValueError("missing Antigravity user_input_index")
-        matches = [p for p in matches if p.is_file() and p.resolve().is_relative_to(root.resolve())]
+        end_row_index = _optional_end_row_index(anchor)
+        matches = [p for p in matches if _is_regular_in_root(p, root)]
         if len(matches) != 1:
             raise ValueError("native transcript missing or ambiguous")
-        return antigravity_turn(rows(matches[0]), index)
-    else:
-        raise ValueError("unsupported terminal provider")
-    matches = [p for p in matches if p.is_file() and p.resolve().is_relative_to(root.resolve())]
-    if len(matches) != 1:
-        raise ValueError("native transcript missing or ambiguous")
-    if not isinstance(key, str) or not key:
-        raise ValueError("missing native turn anchor")
-    return parser(rows(matches[0]), key)
+        return antigravity_turn(
+            rows(matches[0], max_rows=end_row_index), index, end_row_index=end_row_index
+        )
+    raise ValueError("unsupported terminal provider")
 
 
 def _codex_user_message_clients(entries: list[dict[str, object]], turn_id: str) -> list[str]:
@@ -100,7 +181,7 @@ def _read_codex_turn_with_retry(root: Path, session_id: str, turn_id: str, clien
         matches = [
             p
             for p in root.glob(f"*/*/*/rollout-*-{session_id}.jsonl")
-            if p.is_file() and p.resolve().is_relative_to(root.resolve())
+            if _is_regular_in_root(p, root)
         ]
         if len(matches) > 1:
             raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
@@ -122,8 +203,59 @@ def _read_codex_turn_with_retry(root: Path, session_id: str, turn_id: str, clien
         time.sleep(min(CODEX_READ_POLL_SECONDS, remaining))
 
 
+def _claude_user_text(row: dict[str, object]) -> str | None:
+    if row.get("type") != "user" or row.get("isSidechain") or row.get("isMeta"):
+        return None
+    content = _object(row.get("message")).get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts: list[str] = []
+    has_prompt_block = False
+    for raw in cast(list[object], content):
+        block = _object(raw)
+        if block.get("type") != "tool_result":
+            has_prompt_block = True
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts) if has_prompt_block else None
+
+
+def _is_claude_task_notification(row: dict[str, object]) -> bool:
+    if row.get("type") != "user" or row.get("isSidechain"):
+        return False
+    origin_kind = _object(row.get("origin")).get("kind")
+    if origin_kind in ("task-notification", "task_notification"):
+        return True
+    if row.get("turnOrigin") in ("task_notification", "task-notification"):
+        return True
+    text = _claude_user_text(row)
+    if text is None:
+        return False
+    trimmed = text.strip()
+    if row.get("promptSource") == "system" and "<task-notification>" in trimmed:
+        return True
+    return (
+        row.get("promptSource") is None
+        and trimmed.startswith("<task-notification>")
+        and "</task-notification>" in trimmed
+    )
+
+
+def _is_claude_interrupt_row(row: dict[str, object]) -> bool:
+    text = _claude_user_text(row)
+    if text is None:
+        return False
+    trimmed = text.strip()
+    return trimmed.startswith("[Request interrupted by user") and trimmed.endswith("]")
+
+
 def _claude_user_prompt_id(row: dict[str, object]) -> str | None:
-    """Return promptId only for genuine non-meta user prompts, matching tray's is_claude_user_prompt."""
+    """Return promptId only for genuine human non-meta user prompts (not task-notifications or interrupts)."""
+    if _is_claude_task_notification(row) or _is_claude_interrupt_row(row):
+        return None
     event = transcript_event(row, "")
     if event is None or not is_user_prompt(event):
         return None
@@ -131,17 +263,50 @@ def _claude_user_prompt_id(row: dict[str, object]) -> str | None:
     return pid if isinstance(pid, str) and pid else None
 
 
-def claude_turn(entries: list[dict[str, object]], prompt_id: str) -> str:
+def claude_turn(
+    entries: list[dict[str, object]],
+    prompt_id: str,
+    *,
+    end_prompt_id: str | None = None,
+    end_row_index: int | None = None,
+) -> str:
     if not prompt_id:
         raise ValueError("missing Claude prompt_id")
+    scoped = entries[:end_row_index] if end_row_index is not None else entries
     active = False
-    answer = ""
-    for row in entries:
+    subturn_ended = False
+    current_prompt_id: str | None = None
+    replies: list[str] = []
+    current_reply = ""
+    for row in scoped:
         if row.get("isSidechain"):
             continue
         if active and row.get("type") == "system" and row.get("subtype") == "turn_duration":
-            break
+            if current_reply:
+                replies.append(current_reply)
+                current_reply = ""
+            subturn_ended = True
+            if (
+                end_row_index is None
+                and end_prompt_id is not None
+                and current_prompt_id == end_prompt_id
+            ):
+                break
+            continue
         if row.get("isMeta"):
+            continue
+        if active and _is_claude_task_notification(row):
+            if current_reply:
+                replies.append(current_reply)
+                current_reply = ""
+            notif_pid = row.get("promptId")
+            if isinstance(notif_pid, str) and notif_pid:
+                current_prompt_id = notif_pid
+            elif subturn_ended:
+                current_prompt_id = None
+            subturn_ended = False
+            continue
+        if _is_claude_interrupt_row(row):
             continue
         user_pid = _claude_user_prompt_id(row)
         if user_pid is not None:
@@ -149,6 +314,9 @@ def claude_turn(entries: list[dict[str, object]], prompt_id: str) -> str:
                 break
             if user_pid == prompt_id:
                 active = True
+                subturn_ended = False
+                current_prompt_id = prompt_id
+                current_reply = ""
                 continue
         if active and row.get("type") == "assistant":
             content = _object(row.get("message")).get("content")
@@ -159,10 +327,12 @@ def claude_turn(entries: list[dict[str, object]], prompt_id: str) -> str:
                     if (block := _object(item)).get("type") == "text"
                 )
                 if text:
-                    answer = text
-    if not active or not answer:
+                    current_reply = text
+    if current_reply:
+        replies.append(current_reply)
+    if not active or not replies:
         raise ValueError("Claude anchored turn or its assistant reply was not found")
-    return answer
+    return "\n\n".join(replies)
 
 
 def codex_turn(entries: list[dict[str, object]], turn_id: str) -> str:
@@ -181,23 +351,39 @@ def codex_turn(entries: list[dict[str, object]], turn_id: str) -> str:
     raise ValueError("Codex anchored turn or its assistant reply was not found")
 
 
-def antigravity_turn(entries: list[dict[str, object]], user_input_index: int) -> str:
+def antigravity_turn(
+    entries: list[dict[str, object]],
+    user_input_index: int,
+    *,
+    end_row_index: int | None = None,
+) -> str:
     if isinstance(user_input_index, bool) or user_input_index < 0:
         raise ValueError("invalid Antigravity user_input_index")
+    scoped = entries[:end_row_index] if end_row_index is not None else entries
     active = False
-    answer = ""
-    for row in entries:
+    replies: list[str] = []
+    current_reply = ""
+    for row in scoped:
         if row.get("type") == "USER_INPUT" and row.get("source") == "USER_EXPLICIT":
             if active:
                 break
             if row.get("step_index") == user_input_index:
                 active = True
+                current_reply = ""
+        elif active and row.get("type") == "USER_INPUT":
+            if current_reply:
+                replies.append(current_reply)
+                current_reply = ""
         elif active and row.get("type") == "PLANNER_RESPONSE":
             content = row.get("content")
-            if row.get("tool_calls") or not isinstance(content, str) or not content:
-                answer = ""
-            else:
-                answer = content
-    if not active or not answer:
+            if row.get("tool_calls"):
+                if current_reply:
+                    replies.append(current_reply)
+                    current_reply = ""
+            elif isinstance(content, str) and content:
+                current_reply = content
+    if current_reply:
+        replies.append(current_reply)
+    if not active or not replies:
         raise ValueError("Antigravity anchored turn or its assistant reply was not found")
-    return answer
+    return "\n\n".join(replies)

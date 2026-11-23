@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict, cast
 
+from agentnave.background_tasks import BACKGROUND_TASKS_PENDING
 from agentnave.locks import lock_file, release_and_remove
 from agentnave.models import InvocationResult, InvocationStatus
 from agentnave.store import write_file
@@ -466,9 +467,16 @@ def classify(
     error_message: str | None,
     reported_errors: Iterable[str],
 ) -> Code | None:
-    if status is InvocationStatus.SUCCEEDED:
+    if status is InvocationStatus.SUCCEEDED or error_code == BACKGROUND_TASKS_PENDING:
         return None
-    codes = {*reported_errors, error_code}
+    reported = list(reported_errors)
+    if (
+        error_code is None
+        and reported
+        and all(code == BACKGROUND_TASKS_PENDING for code in reported)
+    ):
+        return None
+    codes = {*(code for code in reported if code != BACKGROUND_TASKS_PENDING), error_code}
     known: set[Code] = {_CODES[code] for code in codes if code in _CODES}
     if known:
         return max(known, key=lambda code: _PRIORITY[code])

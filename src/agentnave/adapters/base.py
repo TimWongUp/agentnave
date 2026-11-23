@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
+from agentnave.background_tasks import BackgroundTasksState
 from agentnave.models import (
     InvocationRequest,
     InvocationStatus,
@@ -136,6 +137,8 @@ class ProviderAdapter(Protocol):
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand: ...
 
+    def can_answer_questions(self, request: InvocationRequest) -> bool: ...
+
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult: ...
 
     def parse_prepared(
@@ -157,6 +160,8 @@ class ProviderAdapter(Protocol):
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None: ...
 
     def prompt_event(self, event: dict[str, object]) -> NativePrompt | None: ...
+
+    def background_tasks_event(self, event: dict[str, object]) -> BackgroundTasksState | None: ...
 
     def encode_prompt_answer(self, answer: dict[str, object]) -> bytes: ...
 
@@ -229,6 +234,13 @@ class AdapterHooks:
 
     def prompt_event(self, event: dict[str, object]) -> NativePrompt | None:
         return None
+
+    def background_tasks_event(self, event: dict[str, object]) -> BackgroundTasksState | None:
+        return None
+
+    def can_answer_questions(self, request: InvocationRequest) -> bool:
+        """Whether this run can relay live questions back to the caller (ADR-0114)."""
+        return False
 
     def encode_prompt_answer(self, answer: dict[str, object]) -> bytes:
         raise ValueError("this adapter does not support native prompts")

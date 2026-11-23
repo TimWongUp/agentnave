@@ -107,6 +107,7 @@ pub(super) struct DerivedInfo {
     pub isolation_id: Option<String>,
     pub _lease: Option<crate::isolated::leases::HeldLease>,
     pub _log_dir: Option<tempfile::TempDir>,
+    pub _hook_dir: Option<tempfile::TempDir>,
     pub codex_ready_file: Option<PathBuf>,
     pub active_invocation_id: Option<String>,
     pub launch_config: Option<DerivedLaunchConfig>,
@@ -130,6 +131,7 @@ pub(super) struct DerivedHandle {
     pub(in crate::terminal) native: Option<String>,
     pub(in crate::terminal) account: Option<Active>,
     pub(in crate::terminal) launch_config: Option<DerivedLaunchConfig>,
+    pub(in crate::terminal) hook_dir: Option<PathBuf>,
     #[cfg(unix)]
     pub(in crate::terminal) codex: Option<Arc<codex_server::Client>>,
 }
@@ -177,6 +179,10 @@ impl Running {
             native: self.native.clone(),
             account: self.account.clone(),
             launch_config: self.derived.as_ref().and_then(|d| d.launch_config.clone()),
+            hook_dir: self
+                .derived
+                .as_ref()
+                .and_then(|d| d._hook_dir.as_ref().map(|t| t.path().to_path_buf())),
             #[cfg(unix)]
             codex: self.codex.clone(),
         }
@@ -570,6 +576,7 @@ impl Terminals {
         terminal_id: u64,
         session: Arc<Session>,
         native: Option<&str>,
+        hook_dir: Option<tempfile::TempDir>,
     ) {
         let mut state = self.lock();
         if let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id) {
@@ -578,6 +585,11 @@ impl Terminals {
                 running.native = Some(sid.to_owned());
                 running.title_located = false;
                 running.title_searched = None;
+            }
+            if let Some(dir) = hook_dir
+                && let Some(derived) = running.derived.as_mut()
+            {
+                derived._hook_dir = Some(dir);
             }
         }
     }

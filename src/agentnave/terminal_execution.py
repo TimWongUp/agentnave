@@ -85,6 +85,7 @@ class TerminalRun:
     accepted: Callable[[dict[str, object]], None]
     started: Callable[[dict[str, object]], None]
     ack: Callable[[str, TrayIdentity], None]
+    on_blocked: Callable[[str, str], None] | None = None
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
     cancel_result: asyncio.Future[str] | None = None
@@ -92,6 +93,7 @@ class TerminalRun:
     session_id: str | None = None
     blocked: dict[str, object] | None = None
     terminal_finished: bool = False
+    _bg_reminder_emitted: bool = False
     _ended: bool = False
     _cancel_id: str | None = None
     _service_started: float = field(default_factory=lambda: read_process_started(os.getpid()))
@@ -162,6 +164,16 @@ class TerminalRun:
     def _finish(self, item: dict[str, object]) -> InvocationResult:
         terminal = _object(item.get("terminal"))
         status = terminal.get("status")
+        raw_warnings = terminal.get("warnings")
+        warnings = (
+            tuple(
+                entry[:500]
+                for entry in cast(list[object], raw_warnings)
+                if isinstance(entry, str) and entry
+            )
+            if isinstance(raw_warnings, list)
+            else ()
+        )
         if status in ("interrupted", "cancelled"):
             return InvocationResult(
                 InvocationStatus.CANCELLED,
@@ -169,6 +181,7 @@ class TerminalRun:
                 "",
                 self.session_id,
                 int((time.monotonic() - self._time) * 1000),
+                warnings=warnings,
             )
         if status not in ("completed", "succeeded"):
             return self._fail(
@@ -191,7 +204,40 @@ class TerminalRun:
             output,
             self.session_id,
             int((time.monotonic() - self._time) * 1000),
+            warnings=warnings,
         )
+
+    def _emit_bg_reminder_if_present(self, item: dict[str, object]) -> None:
+        if self._bg_reminder_emitted or self.on_blocked is None:
+            return
+        reminder = _object(item.get("background_tasks_pending"))
+        if not reminder:
+            blocked = _object(item.get("blocked"))
+            if blocked.get("kind") == "background_tasks_pending":
+                reminder = blocked
+        if not reminder:
+            return
+        self._bg_reminder_emitted = True
+        code = "background_tasks_pending"
+        raw_reason = reminder.get("reason")
+        if isinstance(raw_reason, str) and raw_reason.strip():
+            message = raw_reason.strip()[:500]
+        else:
+            count = reminder.get("count")
+            raw_tasks = reminder.get("tasks")
+            tasks = (
+                [t for t in cast(list[object], raw_tasks) if isinstance(t, str) and t][:16]
+                if isinstance(raw_tasks, list)
+                else []
+            )
+            if isinstance(count, int) and not isinstance(count, bool):
+                detail = f" ({', '.join(tasks)})" if tasks else ""
+                message = f"{count} background task(s) still pending{detail}."
+            elif tasks:
+                message = f"Background tasks still pending ({', '.join(tasks)})."
+            else:
+                message = "Background tasks are still pending in the derived terminal."
+        self.on_blocked(code, message)
 
     def _cancel_receipt(self, snapshot: dict[str, object]) -> None:
         if not self._cancel_id:
@@ -266,6 +312,7 @@ class TerminalRun:
                         self.blocked = blocked or None
                         if state == "started":
                             self.started(item)
+                            self._emit_bg_reminder_if_present(item)
                         last_state = state
                     if state == "finished":
                         self.terminal_finished = True

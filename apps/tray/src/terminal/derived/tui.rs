@@ -1,5 +1,7 @@
 //! Claude & Antigravity interactive TUI derived launch, readiness gating, and turn monitors.
 
+mod agy;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,9 +19,12 @@ use super::super::{
     DerivedHandle, DerivedInfo, DerivedLaunchConfig, NewDerived, Terminals, installed_path,
 };
 use super::{
-    POLL_STEP, claude, cleanup_derived_startup, detect_screen_blocker, native_logs,
+    POLL_STEP, claude, claude_hook, cleanup_derived_startup, detect_screen_blocker, native_logs,
     prepare_open_or_launch, update_blocker_if_changed,
 };
+#[cfg(all(test, unix))]
+pub(super) use agy::{AgyMonitorConfig, monitor_agy_turn_with_config};
+use agy::{highest_agy_user_index, monitor_agy_turn};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const PASTE_MODE_WAIT: Duration = if cfg!(test) {
@@ -28,7 +33,6 @@ const PASTE_MODE_WAIT: Duration = if cfg!(test) {
     Duration::from_secs(3)
 };
 const PASTE_COMMIT_DELAY: Duration = Duration::from_millis(300);
-pub(super) const TRANSCRIPT_FLUSH_WAIT: Duration = Duration::from_millis(1800);
 pub(super) const MISSING_ANCHOR_WAIT: Duration = if cfg!(test) {
     Duration::from_millis(600)
 } else {
@@ -44,6 +48,7 @@ pub(super) enum TuiKind {
 pub(super) struct TurnBaseline {
     pub(super) claude_homes: Vec<PathBuf>,
     pub(super) pre_offset: u64,
+    pub(super) hook_events_offset: u64,
     pub(super) agy_baseline_cids: Vec<String>,
     pub(super) agy_prev_idx: Option<i64>,
     pub(super) seq_before: u64,
@@ -135,6 +140,7 @@ pub(super) fn run_tui_cli(
         preset_sid.as_deref(),
         env.session_id.as_deref(),
         agy_log_path.as_deref(),
+        None,
         &launched.session,
     );
     let Some(sent_prompt) = submit_prompt(
@@ -202,11 +208,12 @@ pub(super) fn spawn_tui_terminal(
     kind: TuiKind,
     lease: Option<crate::isolated::leases::HeldLease>,
     isolation_id: Option<String>,
-    hook_dir: Option<&Path>,
+    hook_dir: Option<tempfile::TempDir>,
 ) -> Result<(DerivedHandle, Option<PathBuf>), String> {
     let Some(program) = installed_path(&cfg.provider) else {
         return Err("这个 CLI 没有安装".to_owned());
     };
+    let hook_dir_path = hook_dir.as_ref().map(|d| d.path().to_path_buf());
     let (mut args, mut extra_env, log_dir_opt, log_file_opt) = match kind {
         TuiKind::Claude => {
             let sid = preset_sid.as_deref().unwrap_or_default();
@@ -214,7 +221,7 @@ pub(super) fn spawn_tui_terminal(
                 cfg,
                 env.session_id.as_deref(),
                 env.session_id.is_none().then_some(sid),
-                hook_dir,
+                hook_dir_path.as_deref(),
             );
             (args, Vec::new(), None, None)
         }
@@ -266,6 +273,7 @@ pub(super) fn spawn_tui_terminal(
             isolation_id,
             _lease: lease,
             _log_dir: log_dir_opt,
+            _hook_dir: hook_dir,
             codex_ready_file: None,
             active_invocation_id: Some(env.invocation_id.clone()),
             launch_config: launch_config.clone(),
@@ -282,6 +290,7 @@ pub(super) fn spawn_tui_terminal(
             native: preset_sid,
             account,
             launch_config,
+            hook_dir: hook_dir_path,
             #[cfg(unix)]
             codex: None,
         },
@@ -295,6 +304,7 @@ pub(super) fn capture_baseline(
     preset_sid: Option<&str>,
     requested_sid: Option<&str>,
     agy_log_path: Option<&Path>,
+    hook_dir: Option<&Path>,
     session: &Session,
 ) -> TurnBaseline {
     let account_dir = account.map(|a| a.dir.as_path());
@@ -304,6 +314,9 @@ pub(super) fn capture_baseline(
             .map_or(0, |p| native_logs::file_len(&p)),
         _ => 0,
     };
+    let hook_events_offset = hook_dir
+        .map(|dir| native_logs::file_len(&claude_hook::events_path(dir)))
+        .unwrap_or(0);
     let agy_baseline_cids = if kind == TuiKind::Antigravity && requested_sid.is_none() {
         agy_log_path
             .map(native_logs::agy_log_conversation_ids)
@@ -321,6 +334,7 @@ pub(super) fn capture_baseline(
     TurnBaseline {
         claude_homes,
         pre_offset,
+        hook_events_offset,
         agy_baseline_cids,
         agy_prev_idx,
         seq_before,
@@ -639,155 +653,6 @@ fn wait_unblocked(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn monitor_agy_turn(
-    coordinator: &Coordinator,
-    terminals: &Terminals,
-    launched: &DerivedHandle,
-    req_id: &str,
-    existing_cid: Option<&str>,
-    log_path: Option<&Path>,
-    baseline: &TurnBaseline,
-    prompt: &str,
-    handle: &Arc<RunHandle>,
-) {
-    let agy_home = native_logs::agy_home();
-    let mut confirmed_cid = existing_cid.map(str::to_owned);
-    let mut user_input_index: Option<i64> = None;
-    let mut blocker: Option<(String, f64)> = None;
-    let mut saw_working = false;
-    let mut settled_at: Option<Instant> = None;
-
-    loop {
-        if user_input_index.is_none()
-            && let Some(home) = agy_home.as_deref()
-            && let Some((cid, idx)) = locate_agy_turn(
-                home,
-                confirmed_cid.as_deref(),
-                log_path,
-                &baseline.agy_baseline_cids,
-                baseline.agy_prev_idx,
-                prompt,
-            )
-        {
-            confirmed_cid = Some(cid.clone());
-            user_input_index = Some(idx);
-            terminals.set_derived_blocker(launched.id, Some(&cid), None);
-            coordinator.mark_started(
-                req_id,
-                Some(&cid),
-                Some(json!({"session_id": cid, "user_input_index": idx})),
-            );
-        }
-
-        let (seq, osc_state, osc_kind) = launched.session.osc_snapshot();
-        let state_str = osc_state.as_deref();
-        if seq > baseline.seq_before {
-            if state_str == Some("working") {
-                saw_working = true;
-                settled_at = None;
-            }
-            sync_turn_blocker(
-                coordinator,
-                terminals,
-                launched.id,
-                req_id,
-                confirmed_cid.as_deref(),
-                state_str,
-                osc_kind.as_deref(),
-                &mut blocker,
-                &mut settled_at,
-            );
-            if is_osc_settled(state_str, saw_working) {
-                let at = *settled_at.get_or_insert_with(Instant::now);
-                let has_anchor = confirmed_cid.is_some() && user_input_index.is_some();
-                let planner_done = matches!(
-                    (agy_home.as_deref(), confirmed_cid.as_deref(), user_input_index),
-                    (Some(home), Some(cid), Some(idx))
-                        if native_logs::agy_turn_state(
-                            &native_logs::agy_transcript_path(home, cid),
-                            idx,
-                        ) != native_logs::AgyTurnState::Waiting
-                );
-                let flush_done = if has_anchor {
-                    at.elapsed() >= TRANSCRIPT_FLUSH_WAIT
-                } else {
-                    at.elapsed() >= MISSING_ANCHOR_WAIT
-                };
-                if !handle.interrupt_pending()
-                    && (state_str == Some("error") || planner_done || flush_done)
-                {
-                    let missing_anchor = state_str != Some("error")
-                        && !handle.is_interrupt_confirmed()
-                        && !has_anchor;
-                    finish_settled(
-                        coordinator,
-                        terminals,
-                        launched.id,
-                        req_id,
-                        confirmed_cid.as_deref(),
-                        state_str == Some("error") || missing_anchor,
-                        handle.is_interrupt_confirmed(),
-                        if missing_anchor {
-                            "缺少本轮锚点（未在 Antigravity 转录中匹配到本次输入）"
-                        } else {
-                            "Antigravity 返回错误状态"
-                        },
-                    );
-                    return;
-                }
-            }
-        }
-
-        if let Some(code) = launched.session.exit() {
-            let has_anchor = confirmed_cid.is_some() && user_input_index.is_some();
-            finish_exited(
-                coordinator,
-                terminals,
-                launched.id,
-                req_id,
-                confirmed_cid.as_deref(),
-                code,
-                settled_at.is_some() && has_anchor,
-                handle.is_interrupt_confirmed(),
-            );
-            return;
-        }
-        thread::sleep(POLL_STEP);
-    }
-}
-
-fn locate_agy_turn(
-    home: &Path,
-    existing: Option<&str>,
-    log_path: Option<&Path>,
-    baseline_cids: &[String],
-    prev_idx: Option<i64>,
-    prompt: &str,
-) -> Option<(String, i64)> {
-    let candidates: Vec<String> = if let Some(cid) = existing {
-        vec![cid.to_owned()]
-    } else if let Some(log) = log_path {
-        native_logs::agy_log_conversation_ids(log)
-            .into_iter()
-            .filter(|cid| !baseline_cids.iter().any(|b| b == cid))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    for cid in candidates {
-        let transcript = native_logs::agy_transcript_path(home, &cid);
-        if let Some(idx) = native_logs::agy_match_user_input(&transcript, prev_idx, prompt) {
-            return Some((cid, idx));
-        }
-    }
-    None
-}
-
-pub(super) fn is_osc_settled(state: Option<&str>, saw_working: bool) -> bool {
-    matches!(state, Some("done" | "error")) || (saw_working && state == Some("idle"))
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) fn sync_turn_blocker(
     coordinator: &Coordinator,
     terminals: &Terminals,
@@ -835,15 +700,49 @@ pub(super) fn finish_settled(
     cancelled: bool,
     err_reason: &str,
 ) {
+    finish_settled_with(
+        coordinator,
+        terminals,
+        terminal_id,
+        req_id,
+        sid,
+        is_error,
+        cancelled,
+        err_reason,
+        None,
+        Vec::new(),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn finish_settled_with(
+    coordinator: &Coordinator,
+    terminals: &Terminals,
+    terminal_id: u64,
+    req_id: &str,
+    sid: Option<&str>,
+    is_error: bool,
+    cancelled: bool,
+    err_reason: &str,
+    anchor_patch: Option<Value>,
+    warnings: Vec<String>,
+) {
     let (status, reason) = if is_error {
         ("failed", Some(err_reason))
     } else if cancelled {
-        ("cancelled", Some("收到取消并结束当前轮"))
+        (
+            "cancelled",
+            Some(if err_reason.is_empty() {
+                "收到取消并结束当前轮"
+            } else {
+                err_reason
+            }),
+        )
     } else {
         ("succeeded", None)
     };
     terminals.clear_derived_turn(terminal_id, sid);
-    coordinator.mark_finished(req_id, status, reason, sid);
+    coordinator.mark_finished_with(req_id, status, reason, sid, anchor_patch, warnings);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -872,21 +771,4 @@ pub(super) fn finish_exited(
         (!reason.is_empty()).then_some(reason.as_str()),
         sid,
     );
-}
-
-fn highest_agy_user_index(path: &Path) -> Option<i64> {
-    let text = fs::read_to_string(path).ok()?;
-    let mut best = None;
-    for line in text.lines() {
-        let Ok(row) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if row["type"].as_str() == Some("USER_INPUT")
-            && row["source"].as_str() == Some("USER_EXPLICIT")
-            && let Some(step) = row["step_index"].as_i64()
-        {
-            best = Some(best.map_or(step, |cur: i64| cur.max(step)));
-        }
-    }
-    best
 }

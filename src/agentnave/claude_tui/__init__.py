@@ -63,11 +63,13 @@ from agentnave.claude_tui.terminal import (
     spawned_groups,
 )
 from agentnave.claude_tui.turn import (
+    PAIR_TIMEOUT,
     Transcript,
     Turn,
     blocked,
     drop_empty_session,
     emit,
+    is_task_notification,
     is_user_prompt,
     object_dict,
     transcript_event,
@@ -82,6 +84,7 @@ __all__ = [
     "HELPER",
     "INTERACTION_TOOLS",
     "MODE_HELD",
+    "PAIR_TIMEOUT",
     "PRINT_PARITY",
     "RULE",
     "STRIP_ENV",
@@ -101,6 +104,7 @@ __all__ = [
     "emit",
     "hook_main",
     "hook_reply",
+    "is_task_notification",
     "is_user_prompt",
     "mode_hook",
     "mode_of",
@@ -266,22 +270,28 @@ def await_turn(
     retried = False
     dialog_since: float | None = None
     answers = Answers()
+    last_bg: dict[str, object] | None = None
     while True:
         screen = terminal.poll()
         now = time.monotonic()
-        read_hooks(directory, turn)
+        read_hooks(directory, turn, now)
         answers.poll(directory, turn)
         for row in transcript.read():
-            turn.transcript(row)
+            turn.transcript(row, now)
+        turn.poll_timeout(now)
+        bg = turn.background_state_event()
+        if bg != last_bg and (last_bg is not None or bg["waiting"]):
+            emit(bg)
+            last_bg = bg
         if turn.mode_blocked:
             return
         if turn.error or (turn.done and not turn.pending_prompts):
-            if turn.done and not turn.assistant and not turn.error:
+            if turn.done and not turn.has_reply() and not turn.error:
                 turn.error = "Claude turn ended without an assistant message"
             return
         if terminal.process.poll() is not None:
             for row in transcript.read():
-                turn.transcript(row)
+                turn.transcript(row, now)
             turn.error = f"Claude exited unexpectedly with status {terminal.process.returncode}"
             return
         if turn.pending_prompts:

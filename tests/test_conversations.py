@@ -22,7 +22,7 @@ from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.conversations import Conversations
 from agentnave.core import SUBAGENT_INSTRUCTIONS, TASK_SEPARATOR, InvocationManager
 from agentnave.db import Database
-from agentnave.group import Groups, GroupSeat, SeatRun
+from agentnave.group import ENTRIES_HEADER, PRIVATE_NOTE_HEADER, Groups, GroupSeat, SeatRun
 from agentnave.mcp_server import mcp
 from agentnave.member_names import seat_identity
 from agentnave.members import CapacityError
@@ -59,7 +59,7 @@ def data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "prompt = sys.stdin.buffer.read().decode('utf-8')\n"
         f"assert prompt.startswith({SUBAGENT_INSTRUCTIONS!r})\n"
         f"assert prompt.split({TASK_SEPARATOR!r}, 1)[0].startswith({SUBAGENT_INSTRUCTIONS!r})\n"
-        "if 'Private instruction for you only:\\nSLEEP' in prompt:\n"
+        f"if {f'{PRIVATE_NOTE_HEADER}SLEEP'!r} in prompt or 'Private instruction for you only:\\nSLEEP' in prompt:\n"
         "    time.sleep(30)\n"
         "if 'FAIL_ONCE' in prompt and not os.path.exists('failed-once'):\n"
         "    open('failed-once', 'w').close()\n"
@@ -273,7 +273,7 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         )
         prompt = str(_seen(_seats(reviewed)[0])["prompt"])
         # c sees a's published answer, never b's private answer or private instruction.
-        delivered = json.loads(prompt.split("New entries (JSON data):\n")[1])
+        delivered = json.loads(prompt.split(ENTRIES_HEADER)[1])
         assert [(item["kind"], item.get("seat")) for item in delivered] == [
             ("host", None),
             ("task", None),
@@ -339,8 +339,10 @@ async def test_review_show_publishes_only_decided_answers_and_survives_a_crash(
         assert held["reason"] == "review_needed"
         # Only b's native session holds an answer the others never saw, so only b is told.
         notes = [str(_seen(seat)["prompt"]) for seat in _seats(held)]
-        assert "round 1 was kept private" not in notes[0]
-        assert "Note: your answer in round 1 was kept private" in notes[1]
+        assert "round 1 reply private" not in notes[0]
+        assert (
+            "I kept your round 1 reply private, so the other participants never saw it." in notes[1]
+        )
         # A graceful exit keeps undecided answers private, like cancel.
     saved = _state(data_root, group_id)
     assert [seat["review"] for seat in saved["rounds"][-1]["seats"]] == ["private", "private"]
@@ -5026,7 +5028,7 @@ async def test_isolated_task_rollbacks_resume_summary_errors_and_warnings(
             seen["argv"][seen["argv"].index("--resume")],
             seen["argv"][seen["argv"].index("--resume") + 1],
         ]
-        assert "Isolated task environment:" in seen["prompt"]
+        assert "separate git worktree" in seen["prompt"]
         summary_err = _data(resumed_end["isolation"])
         assert summary_err["summary_status"] == "error"
         assert "simulated git inspection failure" in str(summary_err["error"])

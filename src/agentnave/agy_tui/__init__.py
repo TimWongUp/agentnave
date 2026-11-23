@@ -37,6 +37,7 @@ DELIVERY_TIMEOUT = 30.0
 DIALOG_SETTLE = 2.0
 STALL_LIMIT = 60.0
 TRANSCRIPT_GRACE = 5.0
+_MAX_BG_REPLY_CHARS = 512 * 1024
 # A call agy moves to the background names its task here, and ends with that task's message.
 BACKGROUND = re.compile(r"running as a background task with task id: (\S+)")
 TASK_ENDED = re.compile(r'Task id "([^"]+)" (?:finished|was canceled|failed)\b')
@@ -270,6 +271,32 @@ class Turn:
             if screen:
                 self.error += f". Screen: {excerpt(screen)}"
 
+    @property
+    def waiting_for_background(self) -> bool:
+        """Reply is written and OSC 7501 is still working (agy is waiting on background tasks)."""
+        return (
+            self.user_seen
+            and self.answered
+            and bool(self.response.strip())
+            and self.active
+            and self.done_at is None
+            and not self.open_tools
+            and self.error is None
+            and not self.stopped
+        )
+
+    def background_state_event(self) -> dict[str, object]:
+        waiting = self.waiting_for_background
+        return {
+            "event": "agentnave_background_tasks",
+            "conversation_id": self.conversation_id,
+            "waiting": waiting,
+            "only_background": waiting,
+            "task_ids": sorted(self.background) if waiting else [],
+            "reply": self.response[:_MAX_BG_REPLY_CHARS] if waiting else None,
+            "model": self.model,
+        }
+
     def complete(self, now: float | None = None) -> bool:
         if (
             self.error is None
@@ -443,10 +470,15 @@ class Run:
 
     def await_stop(self) -> None:
         previous, since = "", time.monotonic()
+        last_bg: dict[str, object] | None = None
         while not self.turn.stopped and self.turn.error is None:
             offset = self.turn.offset
             screen = self.poll()
             self.turn.watch(state(screen), busy_activity(screen))
+            bg = self.turn.background_state_event()
+            if bg != last_bg and (last_bg is not None or bg["waiting"]):
+                emit(bg)
+                last_bg = bg
             now = time.monotonic()
             if self.exited():
                 self.poll()
@@ -458,6 +490,9 @@ class Run:
             if done_at is not None and now - done_at >= 1 and self.turn.complete(now):
                 return
             if done_at is not None and now - done_at >= TRANSCRIPT_GRACE:
+                self.turn.read()
+                if self.turn.complete(now):
+                    return
                 self.turn.error = "agy reported completion without a final reply after this task"
                 return
             if screen != previous or self.turn.offset != offset:
@@ -469,6 +504,10 @@ class Run:
         if shown == "menu" and steady > DIALOG_SETTLE:
             self.turn.block("agy opened a dialog during the turn", screen)
             return True
+        # Waiting on background commands leaves the footer idle while OSC 7501 stays working;
+        # STALL_LIMIT does not apply there (ADR-0114 section 4).
+        if self.turn.waiting_for_background or self.turn.done_at is not None:
+            return False
         if shown in ("unknown", "idle") and steady >= STALL_LIMIT:
             self.turn.block("agy stopped changing before native completion was confirmed", screen)
             return True
