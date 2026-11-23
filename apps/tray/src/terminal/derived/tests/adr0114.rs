@@ -1437,7 +1437,7 @@ fn claude_stop_recognizes_mcp_tool_remote_mcp_and_fallback_task_ids() {
             false,
             claude::ClaudeMonitorConfig {
                 signal_pair_timeout: Duration::from_millis(300),
-                bg_reminder_delay: Duration::from_millis(260),
+                bg_reminder_delay: Duration::from_millis(3000),
             },
         )
     });
@@ -1449,8 +1449,8 @@ fn claude_stop_recognizes_mcp_tool_remote_mcp_and_fallback_task_ids() {
     }
     assert!(handle.is_bg_only_waiting());
 
-    // At 150ms, one of the two un-ID'd shell tasks finishes -> reminder timer MUST reset!
-    thread::sleep(Duration::from_millis(150));
+    // At 200ms, one of the two un-ID'd shell tasks finishes -> reminder timer MUST reset.
+    thread::sleep(Duration::from_millis(200));
     {
         let mut f = fs::OpenOptions::new()
             .append(true)
@@ -1494,8 +1494,8 @@ fn claude_stop_recognizes_mcp_tool_remote_mcp_and_fallback_task_ids() {
         )
         .unwrap();
     }
-    // Wait until 320ms from start (still < 150ms + 260ms): reminder must NOT have fired yet.
-    thread::sleep(Duration::from_millis(170));
+    // At ~3150ms the original 3000ms timer would have fired; the reset one (>= 3200ms) must not have.
+    thread::sleep(Duration::from_millis(2950));
     assert!(
         coord
             .run_receipt_by_invocation("inv-mcp")
@@ -1504,8 +1504,8 @@ fn claude_stop_recognizes_mcp_tool_remote_mcp_and_fallback_task_ids() {
             .is_none()
     );
 
-    // Wait past reset delay (150ms + 260ms = 410ms) and confirm reminder cites distinct fallback ID.
-    let rem_deadline = Instant::now() + Duration::from_secs(2);
+    // Wait past the reset delay and confirm the reminder cites the distinct fallback ID.
+    let rem_deadline = Instant::now() + Duration::from_secs(5);
     let mut rem = None;
     while Instant::now() < rem_deadline {
         if let Some(r) = coord.run_receipt_by_invocation("inv-mcp")
