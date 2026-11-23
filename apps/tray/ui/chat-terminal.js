@@ -148,6 +148,8 @@ const ChatTerminal = (() => {
       isolated_count: 0,
       derived,
       parent_workspace_id: x.parent_workspace_id ?? null,
+      isolation_id: x.isolation_id ?? null,
+      cwd: x.cwd || "",
       blocked_kind: x.blocked_kind ?? null,
     };
   }
@@ -270,7 +272,11 @@ const ChatTerminal = (() => {
       rec.add = h("span.gl-grp-add", { role: "button", tabindex: "0" }, "+");
       const run = (e) => newAgent(e, rec.section?.other ? null : rec.section?.key);
       rec.add.addEventListener("click", run);
-      rec.add.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && run(e));
+      rec.add.addEventListener("keydown", (e) => {
+        const tag = String(e.target?.tagName || "").toUpperCase();
+        if (e.target?.isContentEditable || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+        if (e.key === "Enter" || e.key === " ") run(e);
+      });
       rec.el.append(rec.add);
     }
     const label = L("在这个项目里新开 agent", "New agent in this project");
@@ -600,5 +606,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, pending, derivedOf, derivedAll, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, close, stop };
 })();

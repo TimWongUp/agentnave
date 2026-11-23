@@ -124,6 +124,7 @@ function renderHead(c, n) {
   setText(t.iso, isolatedCount(dirs));
   t.run.hidden = !n.running && !n.review;
   setText(t.run, n.running ? L(`${n.running} 个在工作`, `${n.running} working`) : L("会议进行中", "In meeting"));
+  if (typeof ChatGit !== "undefined") ChatGit.decorateHead?.(t, c);
 }
 
 // ---------------------------------------------------------------- boss office
@@ -545,6 +546,8 @@ function createRoom(r) {
   rec.el.addEventListener("click", open);
   rec.el.addEventListener("contextmenu", (e) => Actions.roomMenu(r.id, e));
   rec.el.addEventListener("keydown", (e) => {
+    const tag = String(e.target?.tagName || "").toUpperCase();
+    if (e.target?.isContentEditable || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       open();

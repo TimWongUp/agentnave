@@ -10,10 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agentnave.isolated.auto_release import (
+    RebuiltWorktree,
     plan_rebuild,
+    rebuild_collapsed_locked,
     rebuild_worktree_locked,
     try_auto_release,
 )
+from agentnave.isolated.collapsed import rollback_rebuilding_collapsed_locked
 from agentnave.isolated.copy import copy_worktreeinclude
 from agentnave.isolated.leases import (
     IsolationLease,
@@ -81,6 +84,7 @@ class CreatedIsolation:
     warnings: tuple[str, ...]
     lease: IsolationLease
     source_root: Path | None = None
+    rebuilt_from_collapsed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +111,28 @@ class IsolatedListItem:
     created_at: str
     attention: str | None = None
     own_workspace: bool = True
+
+
+def _created_from_rebuilt(
+    isolation_id: str,
+    rebuilt: RebuiltWorktree,
+    *,
+    rebuilt_from_collapsed: bool,
+) -> CreatedIsolation:
+    return CreatedIsolation(
+        id=isolation_id,
+        worktree_path=rebuilt.worktree_path,
+        execution_cwd=rebuilt.execution_cwd,
+        branch=rebuilt.branch,
+        branch_ref=rebuilt.branch_ref,
+        main_root=rebuilt.main_root,
+        repo_common_dir=rebuilt.repo_common_dir,
+        base_oid=rebuilt.base_oid,
+        warnings=rebuilt.warnings,
+        lease=rebuilt.lease,
+        source_root=rebuilt.source_root,
+        rebuilt_from_collapsed=rebuilt_from_collapsed,
+    )
 
 
 def _validate_workspace_id(workspace_id: str) -> str:
@@ -424,6 +450,8 @@ class IsolatedDirs:
         )
 
     def _probe_in_use(self, record: IsolatedRecord) -> bool:
+        if record.state == "collapsed":
+            return False
         common_dir = Path(record.repo_common_dir)
         if not common_dir.is_dir() or is_link(common_dir):
             return False
@@ -470,14 +498,20 @@ class IsolatedDirs:
                 if latest is not None and not has_active_leases(
                     created.repo_common_dir, created.id, cleanup_stale=True
                 ):
-                    rollback_creating_locked(self.store, latest)
+                    if created.rebuilt_from_collapsed:
+                        if latest.state in ("creating", "ready"):
+                            rollback_rebuilding_collapsed_locked(
+                                self.store, latest, expected_state=latest.state
+                            )
+                    else:
+                        rollback_creating_locked(self.store, latest)
         except RepoLockUnavailable:
             # Without the lock nothing can be removed safely. Hand the record to recovery as an
             # unfinished creation instead of leaving a ready directory nobody knows about,
             # unless another resume already claimed a rebuilt directory: that one stays theirs.
             if not created.lease.closed:
                 created.lease.release()
-            if not self._leased_by_others(created):
+            if not created.rebuilt_from_collapsed and not self._leased_by_others(created):
                 self.store.revert_to_creating(created.id, updated_at=now())
         finally:
             if not created.lease.closed:
@@ -563,12 +597,48 @@ class IsolatedDirs:
         workspace_id: str,
     ) -> CreatedIsolation | ClaimedIsolation:
         """Rebuild an auto-released isolated directory in place, or claim if already ready."""
+        return self.rebuild_resumed(
+            isolation_id=isolation_id,
+            worktree_path=worktree_path,
+            cwd=cwd,
+            base_oid=base_oid,
+            main_root=main_root,
+            source_root=source_root,
+            workspace_id=workspace_id,
+            auto_released=True,
+        )
+
+    def rebuild_resumed(
+        self,
+        *,
+        isolation_id: str,
+        worktree_path: Path | str,
+        cwd: Path | str,
+        base_oid: str | None,
+        main_root: Path | str,
+        source_root: Path | str | None,
+        workspace_id: str,
+        auto_released: bool,
+    ) -> CreatedIsolation | ClaimedIsolation:
+        """Rebuild an auto-released or collapsed isolated directory, or claim if already ready."""
         ws_id = _validate_workspace_id(workspace_id)
+        if not auto_released:
+            pre = self.store.get(isolation_id)
+            if pre is None:
+                raise IsolationError(
+                    f"Isolated directory {isolation_id} ({worktree_path}) is no longer present "
+                    "and was not auto-released or collapsed; start a new task with isolation instead."
+                )
+            if pre.state not in ("collapsed", "ready"):
+                raise IsolationError(
+                    f"Isolated directory {isolation_id} is not available for rebuild "
+                    f"(state: {pre.state})"
+                )
         plan = plan_rebuild(
             isolation_id=isolation_id,
             worktree_path=Path(worktree_path),
             cwd=Path(cwd),
-            base_oid=base_oid,
+            base_oid=base_oid if auto_released else None,
             main_root=Path(main_root),
             source_root=Path(source_root) if source_root is not None else None,
         )
@@ -579,9 +649,17 @@ class IsolatedDirs:
                     return self._claim_registered_locked(
                         existing, Path(cwd).resolve(), plan.ctx.repo_common_dir
                     )
+                if existing.state == "collapsed":
+                    rebuilt = rebuild_collapsed_locked(self.store, plan, existing)
+                    return _created_from_rebuilt(isolation_id, rebuilt, rebuilt_from_collapsed=True)
                 raise IsolationError(
                     f"Isolated directory {isolation_id} is not available for rebuild "
                     f"(state: {existing.state})"
+                )
+            if not auto_released or base_oid is None:
+                raise IsolationError(
+                    f"Isolated directory {isolation_id} ({worktree_path}) is no longer present "
+                    "and was not auto-released or collapsed; start a new task with isolation instead."
                 )
             rebuilt = rebuild_worktree_locked(
                 self.store,
@@ -590,19 +668,7 @@ class IsolatedDirs:
                 base_oid=base_oid,
                 workspace_id=ws_id,
             )
-            return CreatedIsolation(
-                id=isolation_id,
-                worktree_path=rebuilt.worktree_path,
-                execution_cwd=rebuilt.execution_cwd,
-                branch=rebuilt.branch,
-                branch_ref=rebuilt.branch_ref,
-                main_root=rebuilt.main_root,
-                repo_common_dir=rebuilt.repo_common_dir,
-                base_oid=rebuilt.base_oid,
-                warnings=rebuilt.warnings,
-                lease=rebuilt.lease,
-                source_root=rebuilt.source_root,
-            )
+            return _created_from_rebuilt(isolation_id, rebuilt, rebuilt_from_collapsed=False)
 
     def recover(self) -> list[RecoveryOutcome]:
         """Roll back unfinished `creating` rows when safe and resume `deleting` rows."""

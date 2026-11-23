@@ -139,6 +139,7 @@ impl Group {
             .as_ref()
             .filter(|p| p.key != crate::projects::OTHER);
         json!({"group": self.id, "host": host, "app": app, "label": label, "handover": handover,
+            "cli_session": crate::git_pr::is_cli_boss(host, self.app),
             "took_over": took_over, "previous_host": previous_host,
             "previous_label": previous_host.map(|_| previous),
             "handover_to": self.handover_to, "handover_from": self.handover_from,

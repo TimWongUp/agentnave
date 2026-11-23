@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use super::git::{GitRunner, WORKTREES_DIR_NAME, never_checked_out, parse_worktrees, ref_exists};
 use super::inspect::{
     STATUS_ARGS, check_hidden_index_flags, inspect_record, verify_managed_branch_ref,
-    verify_repo_identity, verify_worktree_container, verify_worktree_root,
+    verify_repo_identity, verify_repo_identity_with_base, verify_worktree_container,
+    verify_worktree_root,
 };
 use super::leases::{
     acquire_repo_lock, has_active_leases, is_link, remove_lease_dir_locked, same_dir,
@@ -167,6 +168,7 @@ fn verify_rollback_worktree(
     main_root: &Path,
     common_dir: &Path,
     wt_path: &Path,
+    expected_head: &str,
 ) -> Result<(), String> {
     verify_worktree_container(wt_path, main_root, &record.id)?;
     if !wt_path.exists() && !is_link(wt_path) {
@@ -187,7 +189,7 @@ fn verify_rollback_worktree(
         .collect();
     if let Some(entry) = matches.first() {
         if entry.branch_ref.as_deref() != Some(record.branch_ref.as_str())
-            || entry.head_oid.as_deref() != Some(record.base_oid.as_str())
+            || entry.head_oid.as_deref() != Some(expected_head)
         {
             return Err("未完成的 worktree 分支或 HEAD 已偏离起点".to_owned());
         }
@@ -244,7 +246,65 @@ fn verify_rollback_worktree(
     Ok(())
 }
 
+fn rollback_rebuilding_collapsed_locked(
+    git: &GitRunner,
+    store: &WorktreeStore,
+    record: &Record,
+) -> Value {
+    let attempt = || -> Result<(), String> {
+        verify_managed_branch_ref(record)?;
+        let (main_root, common_dir) = verify_repo_identity_with_base(git, record, false)?;
+        if has_active_leases(&common_dir, &record.id)? {
+            return Err("未完成重建的隔离目录仍有活跃租约".to_owned());
+        }
+        let wt_path = PathBuf::from(&record.worktree_path);
+        if is_link(&wt_path) {
+            return Err(format!("存在不安全链接：{}", wt_path.display()));
+        }
+        let tip = if ref_exists(git, &main_root, &record.branch_ref)? {
+            let target = format!("{}^{{commit}}", record.branch_ref);
+            String::from_utf8_lossy(
+                git.run(
+                    &main_root,
+                    &["rev-parse", "--verify", "--end-of-options", &target],
+                    &[0],
+                    &[("GIT_OPTIONAL_LOCKS", "0")],
+                )?
+                .stdout
+                .trim_ascii(),
+            )
+            .into_owned()
+        } else {
+            String::new()
+        };
+        verify_rollback_worktree(git, record, &main_root, &common_dir, &wt_path, &tip)?;
+        store.revert_creating_to_collapsed(&record.id, &now_iso(), "creating")?;
+        remove_lease_dir_locked(&common_dir, &record.id)?;
+        Ok(())
+    };
+    match attempt() {
+        Ok(()) => json!({
+            "id": record.id,
+            "status": "collapsed",
+            "message": "已回滚未完成的重建，恢复为已收起状态并保留受管分支",
+        }),
+        Err(detail) => {
+            let _ = store.mark_attention(
+                &record.id,
+                "creating",
+                "rebuilding_rollback_failed",
+                &detail,
+                &now_iso(),
+            );
+            outcome(&record.id, "needs_attention", &detail)
+        }
+    }
+}
+
 fn rollback_creating_locked(git: &GitRunner, store: &WorktreeStore, record: &Record) -> Value {
+    if record.is_rebuilding_collapsed() {
+        return rollback_rebuilding_collapsed_locked(git, store, record);
+    }
     let attempt = || -> Result<(), String> {
         verify_managed_branch_ref(record)?;
         let (main_root, common_dir) = verify_repo_identity(git, record)?;
@@ -255,7 +315,14 @@ fn rollback_creating_locked(git: &GitRunner, store: &WorktreeStore, record: &Rec
         if is_link(&wt_path) {
             return Err(format!("存在不安全链接：{}", wt_path.display()));
         }
-        verify_rollback_worktree(git, record, &main_root, &common_dir, &wt_path)?;
+        verify_rollback_worktree(
+            git,
+            record,
+            &main_root,
+            &common_dir,
+            &wt_path,
+            &record.base_oid,
+        )?;
         if ref_exists(git, &main_root, &record.branch_ref)? {
             let remaining = parse_worktrees(
                 &git.run(
@@ -348,16 +415,59 @@ fn with_locked_record(
 /// Inspect an isolated directory under `repo_lock`, persist its confirmation digest, and return
 /// details for the confirmation dialog.
 pub(crate) fn inspect(root: &Path, isolation_id: &str, workspace_id: &str) -> Value {
+    inspect_with_gh(
+        root,
+        isolation_id,
+        workspace_id,
+        &crate::git_pr::gh::GhClient::system(),
+    )
+}
+
+pub(crate) fn inspect_with_gh(
+    root: &Path,
+    isolation_id: &str,
+    workspace_id: &str,
+    gh: &crate::git_pr::gh::GhClient,
+) -> Value {
     with_locked_record(root, isolation_id, workspace_id, |git, store, record| {
-        let (_, snap) = match inspect_record(git, store, record, workspace_id) {
+        let (repo_dirs, mut snap) = match inspect_record(git, store, record, workspace_id) {
             Ok(res) => res,
             Err(e) => return outcome(&record.id, "blocked", &e),
         };
         if let Err(e) = store.save_confirmation(&record.id, &snap.digest, &now_iso()) {
             return outcome(&record.id, "blocked", &e);
         }
+        attach_merged_pr(git, gh, record, repo_dirs.as_ref(), &mut snap);
         snap.to_confirm_json("confirm", record, None)
     })
+}
+
+fn attach_merged_pr(
+    git: &GitRunner,
+    gh: &crate::git_pr::gh::GhClient,
+    record: &Record,
+    repo_dirs: Option<&(PathBuf, PathBuf)>,
+    snap: &mut super::inspect::Snapshot,
+) {
+    if !snap.unique_commits || snap.rollback_only {
+        return;
+    }
+    let Some((main_root, _)) = repo_dirs else {
+        return;
+    };
+    let check_oid = if !snap.head_oid.is_empty() {
+        snap.head_oid.as_str()
+    } else {
+        snap.branch_oid.as_str()
+    };
+    snap.merged_pr = crate::git_pr::inspect_merged_pr_for_isolated(
+        git,
+        gh,
+        main_root,
+        record.branch(),
+        check_oid,
+    )
+    .map(|summary| json!(summary));
 }
 
 /// Delete an isolated directory after verifying the confirmation digest under `repo_lock`.
@@ -368,7 +478,7 @@ pub(crate) fn delete(
     confirmation: &str,
 ) -> Value {
     with_locked_record(root, isolation_id, workspace_id, |git, store, record| {
-        let (repo_dirs, snap) = match inspect_record(git, store, record, workspace_id) {
+        let (repo_dirs, mut snap) = match inspect_record(git, store, record, workspace_id) {
             Ok(res) => res,
             Err(e) => return outcome(&record.id, "blocked", &e),
         };
@@ -380,6 +490,13 @@ pub(crate) fn delete(
             if let Err(e) = store.save_confirmation(&record.id, &snap.digest, &now_iso()) {
                 return outcome(&record.id, "blocked", &e);
             }
+            attach_merged_pr(
+                git,
+                &crate::git_pr::gh::GhClient::system(),
+                record,
+                repo_dirs.as_ref(),
+                &mut snap,
+            );
             return snap.to_confirm_json(
                 "confirmation_required",
                 record,
@@ -387,7 +504,12 @@ pub(crate) fn delete(
             );
         }
         if snap.rollback_only {
-            match store.resume_creating(&record.id, "rolling_back", &now_iso()) {
+            let next_phase = if snap.collapsed_rollback {
+                "rebuilding_rolling_back"
+            } else {
+                "rolling_back"
+            };
+            match store.resume_creating(&record.id, next_phase, &now_iso()) {
                 Ok(true) => {
                     return match store.get(&record.id) {
                         Ok(Some(creating)) => rollback_creating_locked(git, store, &creating),

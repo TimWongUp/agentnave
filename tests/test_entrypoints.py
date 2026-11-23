@@ -3054,6 +3054,166 @@ async def test_mcp_auto_release_wait_true_and_session_id_in_place_rebuild(
 
 
 @pytest.mark.asyncio
+async def test_mcp_collapsed_isolated_dir_list_resume_and_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    (repo / ".worktreeinclude").write_text("*.ignored\n", encoding="utf-8")
+    (repo / "keep.ignored").write_text("from-main\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("*.ignored\n", encoding="utf-8")
+    git = [
+        "git",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+    ]
+    subprocess.run(
+        [*git, "add", ".gitignore", ".worktreeinclude"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run([*git, "commit", "-m", "ignore"], cwd=repo, check=True, capture_output=True)
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(data_dir))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_cli(
+        bin_dir,
+        "claude",
+        "import json, os, pathlib, subprocess, sys\n"
+        "prompt = sys.stdin.read()\n"
+        "if 'TURN_ONE' in prompt:\n"
+        "    pathlib.Path('feature.py').write_text('v = 1\\n', encoding='utf-8')\n"
+        "    subprocess.run(['git', 'add', 'feature.py'], check=True)\n"
+        "    subprocess.run(['git', '-c', 'user.name=T', '-c', 'user.email=t@e.com', "
+        "'-c', 'commit.gpgsign=false', 'commit', '-m', 'work'], check=True)\n"
+        "print(json.dumps({'type': 'result', 'result': json.dumps({'cwd': os.getcwd(), "
+        "'has_feature': pathlib.Path('feature.py').exists(), "
+        "'ignored': pathlib.Path('keep.ignored').read_text(encoding='utf-8')}), "
+        "'session_id': 'sess-collapsed', 'num_turns': 1, 'is_error': False}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    async with Client(mcp) as client:
+        turn1 = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "TURN_ONE",
+                        "cwd": str(repo),
+                        "access": "write",
+                        "isolation": {},
+                        "wait": True,
+                        "manager_session_id": "boss-col",
+                    },
+                )
+            ).structured_content
+        )
+        iso1 = _payload(turn1["isolation"])
+        wt_id = str(iso1["id"])
+        wt_path = Path(str(iso1["path"]))
+
+        # Simulate tray collapsing the directory while keeping branch + registration.
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(wt_path)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        with sqlite3.connect(data_dir / "worktrees.db") as db:
+            db.execute(
+                "UPDATE isolated_dirs SET state = 'collapsed', phase = 'collapsed', "
+                "worktree_git_dir = NULL WHERE id = ?",
+                (wt_id,),
+            )
+
+        listed = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs", {"action": "list", "manager_session_id": "boss-col"}
+                )
+            ).structured_content
+        )
+        assert len(listed["items"]) == 1  # type: ignore[arg-type]
+        item = _payload(listed["items"][0])  # type: ignore[index]
+        assert item["id"] == wt_id
+        assert item["state"] == "collapsed"
+        assert item["in_use"] is False
+
+        # Resuming the thread rebuilds in place from the branch tip and copies .worktreeinclude.
+        turn2 = _payload(
+            (
+                await client.call_tool(
+                    "start_agent",
+                    {
+                        "provider": "claude",
+                        "prompt": "TURN_TWO",
+                        "session_id": "sess-collapsed",
+                        "access": "write",
+                        "wait": True,
+                        "manager_session_id": "boss-col",
+                    },
+                )
+            ).structured_content
+        )
+        assert turn2["unreleased_isolation_count"] == 1
+        wait2 = cast(list[dict[str, object]], _payload(turn2["wait"])["updates"])[0]
+        assert wait2["status"] == "succeeded"
+        seen2 = json.loads(str(wait2["output"]))
+        assert Path(seen2["cwd"]).resolve() == wt_path.resolve()
+        assert seen2["has_feature"] is True
+        assert seen2["ignored"] == "from-main\n"
+
+        # Collapse again, then release via isolated_dirs (confirmation flow -> deleted).
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(wt_path)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        with sqlite3.connect(data_dir / "worktrees.db") as db:
+            db.execute(
+                "UPDATE isolated_dirs SET state = 'collapsed', phase = 'collapsed', "
+                "worktree_git_dir = NULL WHERE id = ?",
+                (wt_id,),
+            )
+        confirm = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {"action": "release", "id": wt_id, "manager_session_id": "boss-col"},
+                )
+            ).structured_content
+        )
+        assert confirm["status"] == "confirmation_required"
+        assert confirm["unique_commits"] is True
+        released = _payload(
+            (
+                await client.call_tool(
+                    "isolated_dirs",
+                    {
+                        "action": "release",
+                        "id": wt_id,
+                        "confirmation": confirm["confirmation"],
+                        "manager_session_id": "boss-col",
+                    },
+                )
+            ).structured_content
+        )
+        assert released["status"] == "deleted"
+
+
+@pytest.mark.asyncio
 async def test_creating_an_isolated_directory_does_not_block_the_event_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

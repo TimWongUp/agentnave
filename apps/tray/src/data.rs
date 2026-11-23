@@ -2,8 +2,10 @@
 mod uninstall;
 
 mod assets;
+mod git_pr;
 mod orphaned;
 mod request;
+pub(crate) use git_pr::is_non_isolated_in_dir;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -157,6 +159,120 @@ impl Reader {
         let origins = self.workspace_origins(&database, &snapshots, &handovers);
         let projects = crate::projects::lookup(&origins, false);
         (snapshots, projects)
+    }
+
+    /// Read-only CLI boss workspaces and isolated directories for ADR-0115 Git/PR status.
+    pub(crate) fn git_pr_targets(
+        &self,
+        selected: Option<&str>,
+        terminal_workspaces: &HashSet<String>,
+        limit: usize,
+    ) -> (
+        boss_app::Homes,
+        Vec<crate::git_pr::WorkspaceTarget>,
+        Vec<crate::git_pr::IsolatedTarget>,
+    ) {
+        let homes = self.boss_homes();
+        let database = crate::db::read(&self.root);
+        let (_, snapshots) = self.scan_with(&database);
+        let (handovers_vec, apps_vec, owner_map) = match &database {
+            Ok(Some(connection)) => (
+                handovers(connection).unwrap_or_default(),
+                self.boss_apps.of(connection, || homes.clone()),
+                workspace_owners(connection),
+            ),
+            _ => (Vec::new(), Vec::new(), HashMap::new()),
+        };
+        let handover_map: HashMap<_, _> = handovers_vec.into_iter().collect();
+        let app_map: HashMap<_, _> = apps_vec.into_iter().collect();
+        let origins = self.workspace_origins(&database, &snapshots, &handover_map);
+        let account_dirs: HashMap<String, PathBuf> = crate::accounts::read(&self.root)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| (a.id, a.dir))
+            .collect();
+
+        let isolated: Vec<crate::git_pr::IsolatedTarget> = crate::isolated::read(&self.root)
+            .into_iter()
+            .map(|dir| crate::git_pr::IsolatedTarget {
+                id: dir.id,
+                workspace: dir.workspace,
+                path: dir.path,
+                branch: dir.branch,
+            })
+            .collect();
+        let isolated_paths: Vec<PathBuf> =
+            isolated.iter().map(|d| PathBuf::from(&d.path)).collect();
+        let ws_meta = collect_workspace_meta(&snapshots, &handover_map);
+        let all_running: Vec<PathBuf> = snapshots
+            .iter()
+            .flat_map(|snap| crate::stage::running_in(&snap.view["director"]))
+            .map(PathBuf::from)
+            .collect();
+        let mut eligible: Vec<(bool, i64, crate::git_pr::WorkspaceTarget)> = ws_meta
+            .into_iter()
+            .filter_map(|(id, (at, host))| {
+                let app = app_map.get(&id).copied();
+                let in_terminal = terminal_workspaces.contains(&id);
+                if !in_terminal && !crate::git_pr::is_cli_boss(host.as_deref(), app) {
+                    return None;
+                }
+                let owner = owner_map.get(&id);
+                let effective_host = owner.and_then(|o| o.host.clone()).or(host);
+                let account_dir = owner
+                    .and_then(|o| o.account.as_deref())
+                    .and_then(|acc| account_dirs.get(acc))
+                    .cloned();
+                let cwd = origins.get(&id).map(PathBuf::from);
+                let working = cwd.as_deref().is_some_and(|dir| {
+                    all_running
+                        .iter()
+                        .any(|c| is_non_isolated_in_dir(c, dir, &isolated_paths))
+                });
+                Some((
+                    selected == Some(id.as_str()),
+                    at,
+                    crate::git_pr::WorkspaceTarget {
+                        id,
+                        host: effective_host,
+                        owner_key: owner.map(|o| o.key.clone()),
+                        owner_file: owner.and_then(|o| o.file.clone()),
+                        account_dir,
+                        cwd,
+                        working,
+                    },
+                ))
+            })
+            .collect();
+        eligible.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        let workspaces = eligible
+            .into_iter()
+            .take(limit)
+            .map(|(_, _, target)| target)
+            .collect();
+
+        (homes, workspaces, isolated)
+    }
+
+    /// Resolves a single CLI boss workspace for Git operations; returns `None` for desktop or unknown hosts.
+    pub(crate) fn resolve_git_pr_workspace(
+        &self,
+        ws_id: &str,
+        terminal_workspaces: &HashSet<String>,
+    ) -> Option<crate::git_pr::WorkspaceTarget> {
+        let (_, workspaces, _) = self.git_pr_targets(Some(ws_id), terminal_workspaces, 512);
+        workspaces.into_iter().find(|w| w.id == ws_id)
+    }
+
+    /// Whether any running task or meeting seat currently works inside `dir_path`.
+    pub(crate) fn is_isolated_in_use(&self, dir_path: &Path) -> bool {
+        let database = crate::db::read(&self.root);
+        let (_, snapshots) = self.scan_with(&database);
+        snapshots.iter().any(|snap| {
+            crate::stage::running_in(&snap.view["director"])
+                .into_iter()
+                .any(|cwd| crate::isolated::leases::is_same_or_subpath(Path::new(&cwd), dir_path))
+        })
     }
 
     /// Installed CLI names from the existing prepared members view.
@@ -684,6 +800,91 @@ fn links(connection: &rusqlite::Connection) -> Option<Vec<crate::stage::Workspac
                 .collect()
         })
         .ok()
+}
+
+fn collect_workspace_meta(
+    snapshots: &[Snapshot],
+    handover_map: &HashMap<String, crate::stage::Handover>,
+) -> HashMap<String, (i64, Option<String>)> {
+    let mut ws_meta: HashMap<String, (i64, Option<String>)> = HashMap::new();
+    for snap in snapshots {
+        let Some(group) = crate::stage::chat_group(&snap.item) else {
+            continue;
+        };
+        let at = crate::time_format::timestamp(&snap.item.updated).unwrap_or_default();
+        let entry = ws_meta.entry(group).or_insert((i64::MIN, None));
+        if at >= entry.0 {
+            entry.0 = at;
+            entry.1 = snap.item.host.clone();
+        }
+    }
+    for (id, ho) in handover_map {
+        let at = ho
+            .released
+            .as_deref()
+            .and_then(crate::time_format::timestamp)
+            .unwrap_or(i64::MIN);
+        let entry = ws_meta.entry(id.clone()).or_insert((at, ho.host.clone()));
+        if ho.changed && ho.host.is_some() {
+            entry.1 = ho.host.clone();
+        }
+    }
+    ws_meta
+}
+
+struct WorkspaceOwner {
+    key: String,
+    host: Option<String>,
+    file: Option<PathBuf>,
+    account: Option<String>,
+}
+
+fn workspace_owners(connection: &rusqlite::Connection) -> HashMap<String, WorkspaceOwner> {
+    let has_account: bool = connection
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('workspaces') WHERE name = 'owner_account')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    let sql = if has_account {
+        "SELECT id, owner, owner_host, owner_file, owner_account FROM workspaces"
+    } else {
+        "SELECT id, owner, owner_host, owner_file, NULL FROM workspaces"
+    };
+    let mut out = HashMap::new();
+    if let Ok(mut stmt) = connection.prepare(sql)
+        && let Ok(rows) = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                WorkspaceOwner {
+                    key: row.get(1)?,
+                    host: row.get(2)?,
+                    file: row.get::<_, Option<String>>(3)?.map(PathBuf::from),
+                    account: row.get(4)?,
+                },
+            ))
+        })
+    {
+        for (id, owner) in rows.flatten() {
+            out.insert(id, owner);
+        }
+    }
+    if let Ok(mut stmt) = connection.prepare(
+        "SELECT DISTINCT manager_session, host FROM conversations WHERE manager_session IS NOT NULL",
+    ) && let Ok(rows) = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    }) {
+        for (id, host) in rows.flatten() {
+            out.entry(id.clone()).or_insert(WorkspaceOwner {
+                key: id,
+                host,
+                file: None,
+                account: None,
+            });
+        }
+    }
+    out
 }
 
 fn view_body(connection: &rusqlite::Connection, id: &str) -> Option<String> {

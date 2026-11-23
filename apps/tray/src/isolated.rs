@@ -2,7 +2,7 @@
 //! deletes idle or unfinished ones under the service's repository lock and lease protocol
 //! (ADR-0085, ADR-0098).
 
-mod git;
+pub(crate) mod git;
 mod inspect;
 pub(crate) mod leases;
 mod release;
@@ -14,6 +14,8 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+#[cfg(all(test, unix))]
+pub(crate) use release::inspect_with_gh;
 pub(crate) use request::request;
 
 /// One registered isolated directory that is past creation.

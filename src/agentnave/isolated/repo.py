@@ -645,8 +645,10 @@ def add_worktree_locked(
     branch_name: str,
     worktree_path: Path,
     base_oid: str,
+    *,
+    create_branch: bool = True,
 ) -> Path:
-    """Create the linked worktree on a brand-new managed branch with hooks and LFS disabled."""
+    """Create the linked worktree on a managed branch with hooks and LFS disabled."""
     container = main_root / WORKTREES_DIR_NAME
     if is_link(container):
         raise IsolationError(f"Unsafe {WORKTREES_DIR_NAME} link: {container}")
@@ -656,8 +658,13 @@ def add_worktree_locked(
     # Check out only after the branch exists: conditional includes (onbranch:) can add filter
     # drivers that are invisible while the main checkout is on another branch, so the drivers
     # to neutralize are enumerated from the new worktree itself.
+    cmd = ["worktree", "add", "--no-checkout"]
+    if create_branch:
+        cmd.extend(["-b", branch_name, "--", str(worktree_path), base_oid])
+    else:
+        cmd.extend(["--", str(worktree_path), branch_name])
     run_git(
-        ["worktree", "add", "--no-checkout", "-b", branch_name, "--", str(worktree_path), base_oid],
+        cmd,
         cwd=main_root,
         extra_env=_CHECKOUT_ENV,
     )

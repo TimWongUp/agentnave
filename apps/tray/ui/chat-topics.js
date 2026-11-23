@@ -215,8 +215,9 @@ const isolatedStatus = (status) =>
     unfinished: [L("需要处理", "Needs attention"), "tone-review"],
   })[status] || [L("任务已结束", "Task ended"), "tone-idle"];
 function isolatedCard(d, ctx) {
-  const [word, tone] = isolatedStatus(d.status);
-  const inUse = d.status === "using";
+  const gitExtra = typeof ChatGit !== "undefined" ? ChatGit.isolatedNodes?.(d, ctx) : null;
+  const inUse = d.status === "using" || Boolean(gitExtra?.hasActiveTerminal);
+  const [word, tone] = isolatedStatus(inUse ? "using" : d.status);
   const desk = d.task && ctx.desks.get(d.task.desk);
   const who = [desk && deskName(desk), d.task?.text].filter(Boolean).join(" · ");
   const workspace = ctx.c?.group || state?.chat?.group || "";
@@ -235,19 +236,23 @@ function isolatedCard(d, ctx) {
     L("删除", "Delete"),
   );
   if (!inUse) del.addEventListener("click", () => Actions.deleteIsolated(workspace, d, del));
+  const extraNodes = gitExtra?.nodes || [];
+  const hasUserNode = extraNodes.some((n) => n?.className === "iso-user");
+  const whoText = who ? L(`建立者：${who}`, `Created by: ${who}`) : "";
   return h(
     "div.iso-card",
     {},
     h(
       "div.iso-top",
       {},
-      h("b.iso-branch", {}, d.branch || d.path),
+      h("b.iso-branch", { title: d.branch || d.path }, d.branch || d.path),
       h("span.iso-top-end", {}, h(`span.pill.${tone}`, {}, word), del),
     ),
-    who ? h("div.iso-line", {}, L(`建立者：${who}`, `Created by: ${who}`)) : null,
+    ...extraNodes,
+    !hasUserNode && whoText ? h("div.iso-line", { title: whoText }, whoText) : null,
     d.created && Number.isFinite(AN.at(d.created)) ? h("div.iso-line", {}, L(`建立于 ${relTime(d.created)}`, `Created ${relTime(d.created)}`)) : null,
     d.attention ? h("div.iso-line.iso-warn", {}, L(`上次清理未完成：${d.attention}`, `Last cleanup incomplete: ${d.attention}`)) : null,
-    h("div.iso-path", {}, d.path),
+    h("div.iso-path", { title: d.path }, d.path),
   );
 }
 function renderIsolatedDrawer(c, ctx) {
@@ -264,7 +269,9 @@ function renderIsolatedDrawer(c, ctx) {
   el.drAll.hidden = false;
   el.jump.hidden = true;
   setAttr(el.drawer, "aria-label", L("隔离目录", "Isolated directories"));
-  const key = JSON.stringify(["isolated", c.group, dirs, [...ctx.desks.values()].map((d) => [d.key, deskName(d)]), Math.floor(Date.now() / 30000)]);
+  const gitVer = typeof ChatGit !== "undefined" ? (ChatGit.version?.() || 0) : 0;
+  const derivedKey = typeof ChatTerminal !== "undefined" ? (ChatTerminal.derivedAll?.() || []).map((x) => [x.group, x.isolation_id, x.status]) : [];
+  const key = JSON.stringify(["isolated", c.group, dirs, [...ctx.desks.values()].map((d) => [d.key, deskName(d)]), gitVer, derivedKey, Math.floor(Date.now() / 30000)]);
   if (tp.key === key && el.inner.querySelector(".iso-card")) return;
   tp.key = key;
   el.inner.replaceChildren(...dirs.map((d) => isolatedCard(d, ctx)));

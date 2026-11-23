@@ -995,3 +995,83 @@ fn working_tree_named_like_the_directory_plus_a_line_end_is_refused() {
         assert_eq!(inspected["status"], "blocked");
     }
 }
+
+#[test]
+fn collapsed_rebuild_rollback_failure_with_new_commits_restores_collapsed_and_keeps_branch() {
+    let fx = setup_worktree_fixture("wt-3a4b5c6d7e8f");
+    fs::write(fx.wt_path.join("saved.txt"), "new commit work\n").unwrap();
+    git_cmd(&fx.wt_path, &["add", "saved.txt"]);
+    git_cmd(
+        &fx.wt_path,
+        &["commit", "-m", "feat: commit before collapse"],
+    );
+    let tip = git_cmd(&fx.wt_path, &["rev-parse", "HEAD"]);
+
+    // Simulate a failed collapsed rebuild rollback left in needs_attention with delete_oid = NULL.
+    Connection::open(fx.root.join(store::NAME))
+        .unwrap()
+        .execute(
+            "UPDATE isolated_dirs SET state = 'needs_attention', phase = 'rebuilding_rollback_failed', \
+             delete_oid = NULL, attention = 'stray file blocked rollback' WHERE id = ?1",
+            [&fx.id],
+        )
+        .unwrap();
+
+    // Uncommitted file still blocks rollback and keeps phase = 'rebuilding_rollback_failed'.
+    fs::write(fx.wt_path.join("blocker.txt"), "dirty\n").unwrap();
+    let reader = Reader::new(fx.root.clone());
+    let inspected_dirty = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected_dirty["status"], "confirm");
+    assert_eq!(inspected_dirty["rollback_only"], true);
+    assert_eq!(inspected_dirty["collapsed_rollback"], true);
+    let refused = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected_dirty["confirmation"],
+        }),
+    );
+    assert_eq!(refused["status"], "needs_attention");
+    assert!(fx.wt_path.exists());
+    let after_refused = store::WorktreeStore::new(&fx.root)
+        .get(&fx.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after_refused.state, "needs_attention");
+    assert_eq!(after_refused.phase, "rebuilding_rollback_failed");
+
+    // Once the blocker is cleared, confirming rolls back the worktree to collapsed while
+    // preserving the managed branch at tip (even though tip != base_oid).
+    fs::remove_file(fx.wt_path.join("blocker.txt")).unwrap();
+    let inspected = post(
+        &reader,
+        "/app/isolated/inspect",
+        json!({"id": fx.id, "workspace": fx.workspace}),
+    );
+    assert_eq!(inspected["status"], "confirm");
+    assert_eq!(inspected["collapsed_rollback"], true);
+    let rolled_back = post(
+        &reader,
+        "/app/isolated/delete",
+        json!({
+            "id": fx.id,
+            "workspace": fx.workspace,
+            "confirmation": inspected["confirmation"],
+        }),
+    );
+    assert_eq!(rolled_back["status"], "collapsed");
+    assert!(!fx.wt_path.exists());
+    let after = store::WorktreeStore::new(&fx.root)
+        .get(&fx.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.state, "collapsed");
+    assert_eq!(after.phase, "collapsed");
+    assert_eq!(git_cmd(&fx.main_root, &["rev-parse", &fx.branch_ref]), tip);
+}

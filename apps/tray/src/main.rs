@@ -12,6 +12,7 @@ mod data_files;
 mod db;
 mod decision_seats;
 mod detect;
+mod git_pr;
 mod hosts;
 mod isolated;
 mod manage;
@@ -99,6 +100,14 @@ fn preview_refuses(preview: bool, method: &str, path: &str) -> bool {
                     path,
                     "/app/preferences"
                         | "/app/usage/refresh"
+                        | "/app/git-pr/refresh"
+                        | "/app/git-pr/open-url"
+                        | "/app/git-pr/prepare"
+                        | "/app/git-pr/commit"
+                        | "/app/git-pr/pull"
+                        | "/app/git-pr/push"
+                        | "/app/git-pr/pr/create"
+                        | "/app/git-pr/pr/merge"
                         | "/app/uninstall/cancel"
                         | "/app/alerts/test"
                         | "/settings/members"
@@ -156,7 +165,8 @@ fn main() {
             None,
         ))
         .manage(preferences::runtime::Runtime::default())
-        .manage(terminal::Terminals::default());
+        .manage(terminal::Terminals::default())
+        .manage(git_pr::GitPr::default());
     let app = register_protocol(builder, reader.clone())
         .manage(Tray {
             reader: reader.clone(),
@@ -455,6 +465,9 @@ impl ProtocolRequest {
             _ if path == "/app/usage" || path.starts_with("/app/usage/") => {
                 usage::request(reader, method, path, self.request.uri().query(), action)
             }
+            _ if path.starts_with("/app/git-pr/") => {
+                git_pr::request(app, reader, method, path, action, self.request.body())
+            }
             ("GET", "/app/status") => response::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),
             // Whether the page's maximize button should read as maximize or restore.
@@ -551,6 +564,14 @@ mod tests {
         for path in [
             "/app/preferences",
             "/app/usage/refresh",
+            "/app/git-pr/refresh",
+            "/app/git-pr/open-url",
+            "/app/git-pr/prepare",
+            "/app/git-pr/commit",
+            "/app/git-pr/pull",
+            "/app/git-pr/push",
+            "/app/git-pr/pr/create",
+            "/app/git-pr/pr/merge",
             "/app/alerts/test",
             "/settings/members",
             "/app/voice",
