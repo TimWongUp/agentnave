@@ -2841,3 +2841,256 @@ test("isolatedConfirmBody notes merged PR instead of unmerged-commit warning and
     });
   });
 });
+
+test("ChatGit never renders literal null in hover card or clean git badge", () => {
+  // Mimic native DOM Element.prototype.replaceChildren, which stringifies null/undefined into Text nodes.
+  const domReplaceChildren = (target, items) => {
+    target.children = items.map((x) => (x && typeof x === "object" ? x : String(x)));
+  };
+  const mkNode = (tag, attributes = {}, ...children) => ({
+    tag,
+    className: tag.split(".").slice(1).join(" "),
+    attributes: { ...attributes },
+    hidden: Boolean(attributes.hidden),
+    isConnected: false,
+    children: children.flat(Infinity).filter((x) => x != null && x !== false),
+    listeners: {},
+    style: {},
+    textContent: "",
+    setAttribute(k, v) { this.attributes[k] = v; },
+    getAttribute(k) { return this.attributes[k] ?? null; },
+    hasAttribute(k) { return Object.hasOwn(this.attributes, k); },
+    removeAttribute(k) { delete this.attributes[k]; },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    fire(name, ev = {}) {
+      const event = { preventDefault() {}, stopPropagation() {}, ...ev };
+      for (const fn of this.listeners[name] || []) fn(event);
+    },
+    append(...items) { this.children.push(...items.flat(Infinity).filter((x) => x != null && x !== false)); },
+    replaceChildren(...items) { domReplaceChildren(this, items); },
+    insertBefore(item, before) {
+      const idx = this.children.indexOf(before);
+      if (idx >= 0) this.children.splice(idx, 0, item);
+      else this.children.push(item);
+    },
+    closest() { return null; },
+    contains(x) { return x === this || this.children.some((c) => typeof c === "object" && c?.contains?.(x)); },
+    getBoundingClientRect() { return { left: 20, right: 120, top: 40, bottom: 60, width: 100, height: 20 }; },
+  });
+  const hasLiteralNull = (node) => {
+    if (node === "null" || node === null || node === undefined) return true;
+    if (typeof node !== "object") return false;
+    if (String(node.textContent) === "null") return true;
+    return (node.children || []).some(hasLiteralNull);
+  };
+  const bodyChildren = [];
+  const context = vm.createContext({
+    AN: {
+      h: mkNode,
+      L: (zh) => zh,
+      setText: (n, t) => { n.textContent = t; },
+      setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+      relTime: () => "5 分钟前",
+      at: Date.parse,
+      deskName: (d) => d?.label || d?.key || "",
+      post: async () => ({}),
+      load: async () => ({}),
+    },
+    document: {
+      body: { append(...nodes) { for (const n of nodes) { if (n) n.isConnected = true; bodyChildren.push(n); } } },
+      createElementNS: (_ns, tag) => mkNode(tag),
+      addEventListener() {},
+    },
+    window: { addEventListener() {}, innerWidth: 1200, innerHeight: 800 },
+    setTimeout,
+    clearTimeout,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
+  const { ChatGit } = context;
+
+  ChatGit._applyForTest({
+    gh_status: "ready",
+    terminals: {},
+    workspaces: {
+      "ws-git-only": {
+        git: { is_git: true, branch: "feature/local", changed_files: 0, additions: 0, deletions: 0, ahead_of_default: 0 },
+        prs: [],
+      },
+      "ws-prs-only": {
+        git: null,
+        prs: [{ repo: "o/r", number: 509, title: "PR only", state: "open", checks: { state: "passing", total: 1, passed: 1 }, url: "https://github.com/o/r/pull/509" }],
+      },
+    },
+    isolated: {},
+  });
+
+  // Clean git-only branch badge must not contain "null".
+  const gitOnlyRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(gitOnlyRec, { group: "ws-git-only", cli_session: true });
+  assert.equal(hasLiteralNull(gitOnlyRec.prBadge), false);
+
+  // Hover card with git only (no PRs) must not render "null" at bottom.
+  gitOnlyRec.prBadge.fire("pointerenter");
+  const card = bodyChildren.find((n) => n.className === "git-pr-card");
+  assert.ok(card && !card.hidden);
+  assert.equal(hasLiteralNull(card), false);
+
+  // Hover card with PRs only (git: null) must not render "null" at top.
+  const prsOnlyRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(prsOnlyRec, { group: "ws-prs-only", cli_session: true });
+  prsOnlyRec.prBadge.fire("pointerenter");
+  assert.equal(hasLiteralNull(card), false);
+});
+
+test("Space key inside commit message and PR title/body inputs is not preventDefaulted by keydown handlers", async () => {
+  const docListeners = {};
+  const mkNode = (tag, attributes = {}, ...children) => {
+    const tagName = tag.split(".")[0].toUpperCase();
+    const node = {
+      tag,
+      tagName,
+      type: attributes.type || "",
+      className: tag.split(".").slice(1).join(" "),
+      attributes: { ...attributes },
+      hidden: Boolean(attributes.hidden),
+      disabled: Boolean(attributes.disabled),
+      value: attributes.value ?? "",
+      isConnected: false,
+      children: [],
+      listeners: {},
+      style: {},
+      textContent: "",
+      parentNode: null,
+      setAttribute(k, v) { this.attributes[k] = v; },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      hasAttribute(k) { return Object.hasOwn(this.attributes, k); },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+      append(...items) {
+        for (const item of items.flat(Infinity)) {
+          if (item == null || item === false) continue;
+          if (typeof item === "object") item.parentNode = this;
+          this.children.push(item);
+        }
+      },
+      replaceChildren(...items) {
+        this.children = [];
+        this.append(...items);
+      },
+      insertBefore(item, before) {
+        if (typeof item === "object" && item) item.parentNode = this;
+        const idx = this.children.indexOf(before);
+        if (idx >= 0) this.children.splice(idx, 0, item);
+        else this.children.push(item);
+      },
+      closest() { return null; },
+      contains(x) { return x === this || this.children.some((c) => typeof c === "object" && c?.contains?.(x)); },
+      getBoundingClientRect() { return { left: 20, right: 120, top: 40, bottom: 60, width: 100, height: 20 }; },
+      focus() {},
+      showModal() { this.open = true; },
+      close() { this.open = false; },
+    };
+    node.append(...children);
+    return node;
+  };
+  const dispatchBubblingKeydown = (target, key) => {
+    let defaultPrevented = false;
+    let propagationStopped = false;
+    const event = {
+      key,
+      target,
+      defaultPrevented: false,
+      preventDefault() { defaultPrevented = true; event.defaultPrevented = true; },
+      stopPropagation() { propagationStopped = true; },
+    };
+    let cur = target;
+    while (cur && !propagationStopped) {
+      for (const fn of cur.listeners?.keydown || []) fn(event);
+      cur = cur.parentNode;
+    }
+    if (!propagationStopped) {
+      for (const fn of docListeners.keydown || []) fn(event);
+    }
+    return { defaultPrevented, propagationStopped };
+  };
+  const findAll = (root, pred, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (pred(root)) out.push(root);
+    for (const c of root.children || []) findAll(c, pred, out);
+    return out;
+  };
+
+  const bodyChildren = [];
+  const context = vm.createContext({
+    AN: {
+      h: mkNode,
+      L: (zh) => zh,
+      setText: (n, t) => { n.textContent = t; },
+      setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+      relTime: () => "5 分钟前",
+      at: Date.parse,
+      deskName: (d) => d?.label || d?.key || "",
+      post: async (_path, payload) => {
+        if (payload.op === "commit") {
+          return {
+            op: "commit", branch: "feat/x", working: false,
+            files: [{ path: "a.rs", code: ".M", staged: false, unstaged: true, untracked: false, unmerged: false }],
+            has_staged: false, has_unstaged: true, has_unmerged: false,
+          };
+        }
+        if (payload.op === "create_pr") {
+          return { op: "create_pr", repo: "o/r", head: "feat/x", base: "main", title: "", body: "", working: false };
+        }
+        return {};
+      },
+      load: async () => ({}),
+    },
+    document: {
+      body: {
+        listeners: {},
+        append(...nodes) { for (const n of nodes) { if (n) n.isConnected = true; bodyChildren.push(n); } },
+      },
+      createElementNS: (_ns, tag) => mkNode(tag),
+      addEventListener(name, fn) { (docListeners[name] ||= []).push(fn); },
+    },
+    window: { addEventListener() {}, innerWidth: 1200, innerHeight: 800 },
+    setTimeout,
+    clearTimeout,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git-ops.js`, "utf8") + "\nglobalThis.ChatGitOps = ChatGitOps;", context);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
+  const { ChatGit, ChatGitOps } = context;
+
+  // Also test ancestor shortcut handler (badge keydown) directly with an editable target vs badge target.
+  ChatGit._applyForTest({
+    gh_status: "ready",
+    terminals: {},
+    workspaces: { "ws-1": { git: { is_git: true, branch: "feat/x", changed_files: 1 }, prs: [] } },
+    isolated: {},
+  });
+  const rec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(rec, { group: "ws-1", cli_session: true });
+  const nestedInput = mkNode("input", { type: "text" });
+  rec.prBadge.append(nestedInput);
+  assert.equal(dispatchBubblingKeydown(nestedInput, " ").defaultPrevented, false);
+
+  // Simulate an ancestor keydown handler on document that would preventDefault(" ") if not stopped.
+  docListeners.keydown ||= [];
+  docListeners.keydown.push((e) => {
+    if (e.key === " ") e.preventDefault();
+  });
+
+  // Commit message textarea: pressing Space must NOT be preventDefaulted.
+  await ChatGitOps.openCommit({ kind: "workspace", id: "ws-1" });
+  const dlg = bodyChildren.find((n) => n.className.includes("gp-dialog"));
+  const commitTextarea = findAll(dlg, (n) => n.tagName === "TEXTAREA")[0];
+  assert.equal(dispatchBubblingKeydown(commitTextarea, " ").defaultPrevented, false);
+  dlg.close();
+
+  // Create PR title input and description textarea: pressing Space must NOT be preventDefaulted.
+  await ChatGitOps.openCreatePr({ kind: "workspace", id: "ws-1" });
+  const prTitle = findAll(dlg, (n) => n.attributes.id === "gp-pr-title")[0];
+  const prBody = findAll(dlg, (n) => n.attributes.id === "gp-pr-body")[0];
+  assert.equal(dispatchBubblingKeydown(prTitle, " ").defaultPrevented, false);
+  assert.equal(dispatchBubblingKeydown(prBody, " ").defaultPrevented, false);
+});

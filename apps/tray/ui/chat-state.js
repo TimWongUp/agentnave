@@ -272,7 +272,11 @@ function createItem(g) {
     go(`/chat/${rec.id}`);
   };
   rec.iso.addEventListener("click", openIsolated);
-  rec.iso.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && openIsolated(e));
+  rec.iso.addEventListener("keydown", (e) => {
+    const tag = String(e.target?.tagName || "").toUpperCase();
+    if (e.target?.isContentEditable || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+    if (e.key === "Enter" || e.key === " ") openIsolated(e);
+  });
   rec.el.addEventListener("contextmenu", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e));
   return rec;
 }

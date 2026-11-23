@@ -16,7 +16,7 @@ pub(crate) const OPEN_PR_TTL: Duration = Duration::from_secs(60);
 /// Merged/closed PRs rarely change and cache for 10 minutes.
 pub(crate) const CLOSED_PR_TTL: Duration = Duration::from_secs(600);
 /// Local Git status cache TTL for non-forced refreshes.
-pub(crate) const GIT_STATUS_TTL: Duration = Duration::from_secs(15);
+pub(crate) const GIT_STATUS_TTL: Duration = Duration::from_secs(3);
 /// `gh auth status` cache TTL when ready vs unavailable.
 pub(crate) const GH_READY_TTL: Duration = Duration::from_secs(300);
 pub(crate) const GH_UNAVAILABLE_TTL: Duration = Duration::from_secs(60);

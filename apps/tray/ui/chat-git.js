@@ -6,6 +6,7 @@ const ChatGit = (() => {
   const SVG_NS = "http://www.w3.org/2000/svg";
   const CLOSE_DELAY_MS = 360;
   const FOCUS_COOLDOWN_MS = 2000;
+  const HOVER_COOLDOWN_MS = 1000;
 
   const store = {
     snap: { gh_status: "unknown", terminals: {}, workspaces: {}, isolated: {}, updated_at: 0 },
@@ -13,12 +14,27 @@ const ChatGit = (() => {
     loaded: false,
     inflight: false,
     queuedReason: null,
+    queuedSelected: undefined,
     timer: 0,
     lastFocusAt: 0,
+    lastHoverAt: 0,
+    lastHoverAnchor: null,
     prevWsBusy: new Map(),
     prevTermBusy: new Map(),
     selected: null,
   };
+
+  function isEditableTarget(target) {
+    if (!target) return false;
+    if (target.isContentEditable) return true;
+    const tag = String(target.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const type = String(target.type || "text").toLowerCase();
+      return !["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image", "hidden"].includes(type);
+    }
+    return false;
+  }
 
   // ---- small SVG glyphs (standard Git/PR UI symbols, not brand logos) ---------------------
   function icon(kind) {
@@ -376,6 +392,15 @@ const ChatGit = (() => {
     );
   }
 
+  function refreshOnHover(anchor, payload) {
+    const now = Date.now();
+    if (store.lastHoverAnchor === anchor && now - store.lastHoverAt < HOVER_COOLDOWN_MS) return;
+    store.lastHoverAt = now;
+    store.lastHoverAnchor = anchor;
+    const selected = payload?.target?.kind === "workspace" ? payload.target.id : store.selected;
+    scheduleRefresh("hover", selected, 0, true);
+  }
+
   function showCard(anchor, payload, pin = false) {
     ensureCardMounted();
     if (!anchor || !payload?.entry) return;
@@ -387,14 +412,16 @@ const ChatGit = (() => {
     const prNodes = prs.map((pr) => buildPrRow(pr, target, Boolean(working), ghReady));
     if (!gitNode && !prNodes.length) return;
 
+    const opening = card.hidden || cardAnchor !== anchor;
     cardAnchor = anchor;
     if (pin) cardPinned = true;
-    cardBody.replaceChildren(
-      gitNode,
-      prNodes.length ? h("div.gp-prs", {}, ...prNodes) : null,
-    );
+    const bodyNodes = [];
+    if (gitNode) bodyNodes.push(gitNode);
+    if (prNodes.length) bodyNodes.push(h("div.gp-prs", {}, ...prNodes));
+    cardBody.replaceChildren(...bodyNodes);
     card.hidden = false;
     positionCard(anchor);
+    if (opening) refreshOnHover(anchor, payload);
   }
 
   function positionCard(anchor) {
@@ -446,6 +473,7 @@ const ChatGit = (() => {
       else showCard(node, payload, true);
     });
     node.addEventListener("keydown", (e) => {
+      if (isEditableTarget(e.target)) return;
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
       e.stopPropagation();
@@ -486,7 +514,7 @@ const ChatGit = (() => {
         rec.prBadge.replaceChildren(icon(icoKind), h("span.gi-pr-n", {}, String(summary.count)));
       } else {
         const suffix = summary.dirty ? `*${summary.dirty}` : summary.ahead ? `↑${summary.ahead}` : "";
-        rec.prBadge.replaceChildren(icon("branch"), suffix ? h("span.gi-pr-n", {}, suffix) : null);
+        rec.prBadge.replaceChildren(...[icon("branch"), suffix ? h("span.gi-pr-n", {}, suffix) : null].filter(Boolean));
       }
     }
     const aria = summary.kind === "pr"
@@ -628,7 +656,7 @@ const ChatGit = (() => {
             pr.url,
             h(`span.gp-pr-ico.gp-tone-${tone}`, {}, icon(icoKind)),
             h("code.gp-pr-ref", {}, `#${pr.number}`),
-            h("span.iso-pr-title", {}, pr.title),
+            h("span.iso-pr-title", { title: pr.title || "" }, pr.title || `#${pr.number}`),
             h(`span.gp-pr-state.gp-tone-${tone}`, {}, prStateLabel(pr.state)),
           ),
           ci ? githubAnchor(`a.gp-chip.gp-tone-${ci[1]}`, resolveChecksUrl(pr), ci[0]) : null,
@@ -642,12 +670,13 @@ const ChatGit = (() => {
     if (opsRow) nodes.push(opsRow);
 
     if (user) {
+      const userLabel = user.kind === "terminal"
+        ? L(`派生终端：${user.label || ""}`, `Derived terminal: ${user.label || ""}`)
+        : L(`会话：${user.label || ""}`, `Session: ${user.label || ""}`);
       const btn = h(
         "button.iso-user-btn",
-        { type: "button" },
-        user.kind === "terminal"
-          ? L(`派生终端：${user.label}`, `Derived terminal: ${user.label}`)
-          : L(`会话：${user.label}`, `Session: ${user.label}`),
+        { type: "button", title: userLabel },
+        userLabel,
       );
       btn.addEventListener("click", () => {
         if (user.kind === "terminal" && typeof go === "function") go(`/chat/${user.group}`);
@@ -660,7 +689,7 @@ const ChatGit = (() => {
 
   // ---- refresh triggers (event-driven only, no background polling) ------------------------
   function applySnapshot(next) {
-    if (!next || typeof next !== "object") return;
+    if (!next || typeof next !== "object" || (!next.terminals && !next.workspaces && !next.isolated)) return;
     store.snap = next;
     store.loaded = true;
     store.version += 1;
@@ -677,14 +706,16 @@ const ChatGit = (() => {
     }
   }
 
-  async function runRefresh(reason) {
+  async function runRefresh(reason, selectedOverride) {
     if (store.inflight) {
       store.queuedReason = reason;
+      store.queuedSelected = selectedOverride;
       return;
     }
     store.inflight = true;
     try {
-      const next = await AN.post("/app/git-pr/refresh", { reason, selected: store.selected });
+      const selected = selectedOverride !== undefined ? selectedOverride : store.selected;
+      const next = await AN.post("/app/git-pr/refresh", { reason, selected });
       applySnapshot(next);
     } catch {
       try {
@@ -695,17 +726,19 @@ const ChatGit = (() => {
       store.inflight = false;
       if (store.queuedReason) {
         const queued = store.queuedReason;
+        const queuedSelected = store.queuedSelected;
         store.queuedReason = null;
-        scheduleRefresh(queued, store.selected, 200);
+        store.queuedSelected = undefined;
+        scheduleRefresh(queued, queuedSelected, 200, queuedSelected !== undefined);
       }
     }
   }
 
-  function scheduleRefresh(reason, selected, delayMs = 150) {
-    if (selected !== undefined) store.selected = selected;
+  function scheduleRefresh(reason, selected, delayMs = 150, keepStoreSelected = false) {
+    if (!keepStoreSelected && selected !== undefined) store.selected = selected;
     clearTimeout(store.timer);
     store.timer = setTimeout(() => {
-      void runRefresh(reason);
+      void runRefresh(reason, keepStoreSelected ? selected : undefined);
     }, delayMs);
   }
 

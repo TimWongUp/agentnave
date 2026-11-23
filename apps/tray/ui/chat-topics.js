@@ -238,20 +238,21 @@ function isolatedCard(d, ctx) {
   if (!inUse) del.addEventListener("click", () => Actions.deleteIsolated(workspace, d, del));
   const extraNodes = gitExtra?.nodes || [];
   const hasUserNode = extraNodes.some((n) => n?.className === "iso-user");
+  const whoText = who ? L(`建立者：${who}`, `Created by: ${who}`) : "";
   return h(
     "div.iso-card",
     {},
     h(
       "div.iso-top",
       {},
-      h("b.iso-branch", {}, d.branch || d.path),
+      h("b.iso-branch", { title: d.branch || d.path }, d.branch || d.path),
       h("span.iso-top-end", {}, h(`span.pill.${tone}`, {}, word), del),
     ),
     ...extraNodes,
-    !hasUserNode && who ? h("div.iso-line", {}, L(`建立者：${who}`, `Created by: ${who}`)) : null,
+    !hasUserNode && whoText ? h("div.iso-line", { title: whoText }, whoText) : null,
     d.created && Number.isFinite(AN.at(d.created)) ? h("div.iso-line", {}, L(`建立于 ${relTime(d.created)}`, `Created ${relTime(d.created)}`)) : null,
     d.attention ? h("div.iso-line.iso-warn", {}, L(`上次清理未完成：${d.attention}`, `Last cleanup incomplete: ${d.attention}`)) : null,
-    h("div.iso-path", {}, d.path),
+    h("div.iso-path", { title: d.path }, d.path),
   );
 }
 function renderIsolatedDrawer(c, ctx) {

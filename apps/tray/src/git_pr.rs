@@ -116,7 +116,10 @@ impl GitPr {
 
     fn compute_snapshot(&self, input: RefreshInput) -> Value {
         let now = Instant::now();
-        let bypass_git_ttl = matches!(input.reason.as_str(), "turn_end" | "focus" | "manual");
+        let bypass_git_ttl = matches!(
+            input.reason.as_str(),
+            "turn_end" | "focus" | "manual" | "hover"
+        );
         let gh_status = self.resolve_gh_status(now, input.reason == "manual");
         let gh_ready = gh_status == GhStatus::Ready;
         let Ok(git_runner) = GitRunner::new() else {

@@ -272,7 +272,11 @@ const ChatTerminal = (() => {
       rec.add = h("span.gl-grp-add", { role: "button", tabindex: "0" }, "+");
       const run = (e) => newAgent(e, rec.section?.other ? null : rec.section?.key);
       rec.add.addEventListener("click", run);
-      rec.add.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && run(e));
+      rec.add.addEventListener("keydown", (e) => {
+        const tag = String(e.target?.tagName || "").toUpperCase();
+        if (e.target?.isContentEditable || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
+        if (e.key === "Enter" || e.key === " ") run(e);
+      });
       rec.el.append(rec.add);
     }
     const label = L("在这个项目里新开 agent", "New agent in this project");

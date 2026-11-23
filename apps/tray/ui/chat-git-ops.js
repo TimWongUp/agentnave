@@ -5,10 +5,26 @@ const ChatGitOps = (() => {
   const { h, L } = AN;
   let dialog = null;
 
+  function isEditableTarget(target) {
+    if (!target) return false;
+    if (target.isContentEditable) return true;
+    const tag = String(target.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      const type = String(target.type || "text").toLowerCase();
+      return !["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "image", "hidden"].includes(type);
+    }
+    return false;
+  }
+
   function ensureDialog() {
     if (dialog && dialog.isConnected) return dialog;
     if (typeof document === "undefined" || !document.body) return null;
     dialog = h("dialog.act.gp-dialog");
+    dialog.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") return;
+      if (isEditableTarget(e.target)) e.stopPropagation();
+    });
     document.body.append(dialog);
     return dialog;
   }
@@ -172,7 +188,7 @@ const ChatGitOps = (() => {
         conflictTag,
         listEl,
         stageToggle,
-        h("label.gp-field", { for: msgId }, h("span.gp-field-label", {}, L("提交说明", "Commit message")), msgInput),
+        h("div.gp-field", {}, h("label.gp-field-label", { for: msgId }, L("提交说明", "Commit message")), msgInput),
       ],
       primaryLabel: L("提交", "Commit"),
       runningLabel: L("提交中…", "Committing…"),
@@ -294,8 +310,8 @@ const ChatGitOps = (() => {
       title: L("创建 Pull Request", "Create Pull Request"),
       body: [
         meta,
-        h("label.gp-field", { for: titleId }, h("span.gp-field-label", {}, L("标题", "Title")), titleInput),
-        h("label.gp-field", { for: bodyId }, h("span.gp-field-label", {}, L("描述", "Description")), bodyInput),
+        h("div.gp-field", {}, h("label.gp-field-label", { for: titleId }, L("标题", "Title")), titleInput),
+        h("div.gp-field", {}, h("label.gp-field-label", { for: bodyId }, L("描述", "Description")), bodyInput),
         h("label.gp-check", {}, draftCb, L("草稿 PR", "Draft PR")),
       ],
       primaryLabel: L("创建 PR", "Create PR"),

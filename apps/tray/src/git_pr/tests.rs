@@ -625,3 +625,84 @@ fn cache_respects_open_vs_closed_ttls() {
     let after_605s = t0 + Duration::from_secs(605);
     assert!(cache.get_pr_by_number("acme/demo", 2, after_605s).is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn hover_refresh_updates_local_git_status_while_preserving_pr_cache() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git_cmd(&repo, &["init", "-b", "main"]);
+    git_cmd(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/demo.git",
+        ],
+    );
+    fs::write(repo.join("f.txt"), "hello\n").unwrap();
+    git_cmd(&repo, &["add", "f.txt"]);
+    git_cmd(&repo, &["commit", "-m", "init"]);
+    git_cmd(&repo, &["checkout", "-b", "feat/hover"]);
+
+    let counter = tmp.path().join("gh-calls.log");
+    let fake_gh = write_fake_gh(
+        tmp.path(),
+        &format!(
+            r#"echo "$@" >> "{counter}"
+if [ "$1" = "auth" ]; then
+  echo "Logged in to github.com account tester"
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  cat <<EOF
+{{"title":"Hover PR","number":77,"state":"OPEN","isDraft":false,"additions":1,"deletions":0,"statusCheckRollup":[],"reviewDecision":"APPROVED","mergeable":"MERGEABLE","updatedAt":"2026-11-23T02:00:00Z","url":"https://github.com/acme/demo/pull/77","headRefName":"feat/hover","headRefOid":"111111","baseRefName":"main"}}
+EOF
+  exit 0
+fi
+exit 1"#,
+            counter = counter.display()
+        ),
+    );
+
+    let git_pr = GitPr::with_client(GhClient::with_program(fake_gh));
+    let input = |reason: &str| RefreshInput {
+        reason: reason.to_owned(),
+        homes: Homes::default(),
+        terminals: Vec::new(),
+        workspaces: vec![WorkspaceTarget {
+            id: "s-ws-hover".to_owned(),
+            host: Some("claude".to_owned()),
+            owner_key: None,
+            owner_file: None,
+            account_dir: None,
+            cwd: Some(repo.clone()),
+            working: false,
+        }],
+        isolated: Vec::new(),
+    };
+
+    let first = git_pr.refresh(input("init"));
+    assert_eq!(
+        first["workspaces"]["s-ws-hover"]["git"]["ahead_of_default"],
+        0
+    );
+    assert_eq!(first["workspaces"]["s-ws-hover"]["prs"][0]["number"], 77);
+    let initial_gh_calls = fs::read_to_string(&counter).unwrap().lines().count();
+
+    // Commit locally after initial refresh; immediate "hover" refresh must bypass GIT_STATUS_TTL
+    // and pick up the new ahead count without re-invoking gh.
+    fs::write(repo.join("f.txt"), "updated\n").unwrap();
+    git_cmd(&repo, &["add", "f.txt"]);
+    git_cmd(&repo, &["commit", "-m", "second"]);
+
+    let hovered = git_pr.refresh(input("hover"));
+    assert_eq!(
+        hovered["workspaces"]["s-ws-hover"]["git"]["ahead_of_default"],
+        1
+    );
+    let after_hover_gh_calls = fs::read_to_string(&counter).unwrap().lines().count();
+    assert_eq!(initial_gh_calls, after_hover_gh_calls);
+}

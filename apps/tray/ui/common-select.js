@@ -82,6 +82,10 @@
       }
       return;
     }
+    if (e.target && e.target !== open.select && (e.target.isContentEditable || ["INPUT", "TEXTAREA"].includes(e.target.tagName))) {
+      close();
+      return;
+    }
     const enabled = open.items.map((_, i) => i).filter((i) => !open.select.options[i].disabled);
     const step = (direction) => {
       const next = direction > 0 ? enabled.find((i) => i > open.active) : enabled.filter((i) => i < open.active).pop();

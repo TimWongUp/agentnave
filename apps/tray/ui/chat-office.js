@@ -546,6 +546,8 @@ function createRoom(r) {
   rec.el.addEventListener("click", open);
   rec.el.addEventListener("contextmenu", (e) => Actions.roomMenu(r.id, e));
   rec.el.addEventListener("keydown", (e) => {
+    const tag = String(e.target?.tagName || "").toUpperCase();
+    if (e.target?.isContentEditable || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       open();
