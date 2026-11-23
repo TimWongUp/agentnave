@@ -313,7 +313,7 @@ class IsolatedDirItemPayload(TypedDict):
     cwd: str
     branch: str
     base_oid: str
-    state: Literal["creating", "ready", "deleting", "needs_attention"]
+    state: Literal["creating", "ready", "deleting", "needs_attention", "collapsed"]
     in_use: bool
     created_at: str
     own_workspace: bool

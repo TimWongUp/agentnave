@@ -261,16 +261,11 @@ def rebuild_resumed_isolation(
             "belonged to another thread and is gone; this thread only ran inside it. "
             "Start a new task with isolation or another cwd instead."
         )
-    if not resumed_task.isolation_auto_released:
-        raise ValueError(
-            f"Isolated directory {resumed_task.isolation_id} ({resumed_task.isolation_path}) "
-            "is no longer present and was not auto-released; start a new task with isolation instead."
-        )
     if (
         not resumed_task.isolation_id
         or not resumed_task.isolation_path
-        or not resumed_task.isolation_base_oid
         or not resumed_task.isolation_main_root
+        or (resumed_task.isolation_auto_released and not resumed_task.isolation_base_oid)
     ):
         raise ValueError(
             f"Isolated directory {resumed_task.isolation_id} is missing saved rebuild metadata; "
@@ -281,7 +276,7 @@ def rebuild_resumed_isolation(
             "Rebuilding an auto-released isolated directory needs a known manager session; "
             "pass manager_session_id or configure AGENTNAVE_HOST_SESSION_ID"
         )
-    return isolated.rebuild_auto_released(
+    return isolated.rebuild_resumed(
         isolation_id=resumed_task.isolation_id,
         worktree_path=resumed_task.isolation_path,
         cwd=cwd,
@@ -289,6 +284,7 @@ def rebuild_resumed_isolation(
         main_root=resumed_task.isolation_main_root,
         source_root=resumed_task.isolation_source_root,
         workspace_id=workspace_id,
+        auto_released=resumed_task.isolation_auto_released,
     )
 
 

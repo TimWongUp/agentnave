@@ -246,3 +246,21 @@ async def test_a_leased_isolated_directory_stays_queued_until_it_is_free() -> No
     free = _payload()
     await attach_follow_up(cast(Conversations, conversations), cast(WaitPayload, free), "m")
     assert [item["id"] for item in free["follow_up"]] == ["wt-1"]  # type: ignore[index]
+
+
+async def test_a_collapsed_isolated_directory_is_reported_in_follow_up() -> None:
+    collapsed = SimpleNamespace(
+        id="wt-col", in_use=False, state="collapsed", path="/x/wt-col", branch="agentnave/wt-col"
+    )
+    conversations = _ledger_stub({}, [collapsed])
+    reply = _payload()
+    await attach_follow_up(cast(Conversations, conversations), cast(WaitPayload, reply), "m")
+    assert reply["follow_up"] == [
+        {
+            "id": "wt-col",
+            "kind": "isolation",
+            "status": "collapsed",
+            "path": "/x/wt-col",
+            "branch": "agentnave/wt-col",
+        }
+    ]
