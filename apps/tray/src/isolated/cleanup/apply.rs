@@ -142,7 +142,7 @@ fn decide_locked(
     };
     let detail = merged.map(|hit| format!("#{}", hit.number));
     if whole {
-        let result = delete_snapshot_locked(git, store, record, repo_dirs, &snap);
+        let result = delete_snapshot_locked(git, store, record, repo_dirs, &snap, false);
         return if result["status"] == "deleted" {
             (Outcome::Removed(rule), detail)
         } else {

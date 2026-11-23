@@ -152,6 +152,65 @@ fn commits_beyond_the_default_branch_are_not_unchanged() {
     );
 }
 
+/// A `gh` that reports the branch's PR as merged at `head_oid`.
+#[cfg(unix)]
+fn merged_gh(fx: &RepoFixture, head_oid: &str) -> GhClient {
+    use std::os::unix::fs::PermissionsExt;
+    let branch = fx.branch_ref.trim_start_matches("refs/heads/");
+    let path = fx.root.join("fake-gh");
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  cat <<EOF
+{{"title":"Squash","number":42,"state":"MERGED","isDraft":false,"additions":1,"deletions":0,"statusCheckRollup":[],"reviewDecision":"APPROVED","mergeable":"UNKNOWN","updatedAt":"2026-11-23T03:00:00Z","url":"https://github.com/acme/demo/pull/42","headRefName":"{branch}","headRefOid":"{head_oid}","baseRefName":"main"}}
+EOF
+  exit 0
+fi
+exit 1
+"#
+    );
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    GhClient::with_program(path)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_squash_merged_pr_removes_the_directory_only_at_its_head() {
+    let fx = setup_worktree_fixture("wt-0123456789ab");
+    git_cmd(
+        &fx.main_root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/demo.git",
+        ],
+    );
+    let tip = commit_file(&fx, "feature.txt");
+    let rules = Rules {
+        merged: true,
+        ..Rules::default()
+    };
+
+    // A commit after the merged head is new work: the directory stays.
+    let later = commit_file(&fx, "more.txt");
+    let mut pass = Pass::new(rules);
+    pass.gh = merged_gh(&fx, &tip);
+    assert_eq!(verdict(&pass.run(&fx), &fx.id), kept("no_match"));
+    assert!(fx.wt_path.exists() && branch_exists(&fx));
+
+    pass.gh = merged_gh(&fx, &later);
+    let report = pass.run(&fx);
+    assert_eq!(
+        verdict(&report, &fx.id),
+        ("removed".into(), "merged".into())
+    );
+    assert!(!fx.wt_path.exists());
+    assert!(!branch_exists(&fx));
+    assert!(read(&fx.root).is_empty());
+}
+
 #[test]
 fn idle_collapses_the_directory_and_keeps_its_branch_and_row() {
     let fx = setup_worktree_fixture("wt-0123456789ab");
