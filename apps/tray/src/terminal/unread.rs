@@ -49,12 +49,12 @@ impl BossSnapshot {
             let event_seq = self.event_seq.unwrap_or(0);
             let delivered_seq = self.delivered_seq.unwrap_or(0);
             if event_seq > delivered_seq {
-                if !self.items.is_empty() {
-                    self.items.len()
+                // Delivered-but-undecided reviews stay in items; the sequence gap bounds the unread ones.
+                let gap = usize::try_from(event_seq - delivered_seq).unwrap_or(usize::MAX);
+                if self.items.is_empty() {
+                    gap.max(1)
                 } else {
-                    usize::try_from(event_seq - delivered_seq)
-                        .unwrap_or(1)
-                        .max(1)
+                    self.items.len().min(gap)
                 }
             } else {
                 0

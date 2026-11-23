@@ -45,11 +45,18 @@ class InboxTracker:
         for gone in list(item_seq):
             if gone not in current_keys:
                 del item_seq[gone]
-        if delivered_keys := self._delivered_keys.get(boss):
+        delivered_keys = self._delivered_keys.get(boss, set())
+        if delivered_keys:
             delivered_keys &= current_keys
             if not delivered_keys:
                 self._delivered_keys.pop(boss, None)
-        return seq, self._delivered_seq.get(boss, 0)
+        # Items that vanished undelivered (a prompt closed natively, a review decided
+        # directly) no longer need a wake, so delivery catches up to the oldest pending one.
+        pending = [item_seq[key] for key in current_keys if key not in delivered_keys]
+        floor = min(pending) - 1 if pending else seq
+        delivered = max(self._delivered_seq.get(boss, 0), floor)
+        self._delivered_seq[boss] = delivered
+        return seq, delivered
 
     def project(self, states: dict[str, BossInboxState]) -> dict[str, BossInbox]:
         for boss in list(self._item_seq):

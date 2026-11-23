@@ -241,6 +241,13 @@ def test_inbox_tracker_preserves_mid_wait_events_and_delivered_reviews() -> None
     snap = tracker.project({boss: BossInboxState(waiting=False, in_flight=1, items=[])})
     assert snap[boss]["event_seq"] == 3 and snap[boss]["delivered_seq"] == 3
 
+    # A prompt that closes natively before any wait must not leave a phantom wake.
+    prompt: InboxItem = {"key": "prompt:t3:p1", "kind": "prompt", "role": None, "status": "x"}
+    snap = tracker.project({boss: BossInboxState(waiting=False, in_flight=1, items=[prompt])})
+    assert snap[boss]["event_seq"] == 4 and snap[boss]["delivered_seq"] == 3
+    snap = tracker.project({boss: BossInboxState(waiting=False, in_flight=1, items=[])})
+    assert snap[boss]["event_seq"] == 4 and snap[boss]["delivered_seq"] == 4
+
 
 @pytest.mark.asyncio
 async def test_dispatch_and_wait_flush_inbox_snapshot_synchronously(

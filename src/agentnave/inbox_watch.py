@@ -52,7 +52,7 @@ def _service_alive(pid: int, expected_started: float) -> bool:
         return False
     try:
         live_started = read_process_started(pid)
-    except (OSError, ValueError):
+    except (OSError, ValueError, IndexError):  # IndexError: truncated /proc/<pid>/stat
         return False
     return abs(live_started - expected_started) < STARTED_TOLERANCE_SECONDS
 
@@ -62,7 +62,7 @@ def _read_snapshot(
 ) -> tuple[Literal["ok", "missing", "retry"], dict[str, object] | None]:
     """Re-open by path on every poll so atomic os.replace updates are observed immediately."""
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         fd = os.open(path, flags)
     except FileNotFoundError:
         return "missing", None
@@ -94,12 +94,13 @@ def _evaluate_snapshot(
     if data.get("version") != 1 or data.get("pid") != pid:
         return "service_gone"
     file_started = data.get("started_at")
-    if (
-        isinstance(file_started, (int, float))
-        and not isinstance(file_started, bool)
-        and abs(float(file_started) - started_at) >= STARTED_TOLERANCE_SECONDS
-    ):
-        return "service_gone"
+    if isinstance(file_started, (int, float)) and not isinstance(file_started, bool):
+        try:
+            drift = abs(float(file_started) - started_at)
+        except OverflowError:
+            return "service_gone"
+        if drift >= STARTED_TOLERANCE_SECONDS:
+            return "service_gone"
     bosses = data.get("bosses")
     if not isinstance(bosses, dict):
         return None

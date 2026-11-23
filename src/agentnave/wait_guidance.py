@@ -84,7 +84,9 @@ WATCH_CLI_RULES: dict[str, WatchCliRule] = {
         host_name="antigravity",
         basename_pattern=re.compile(r"^agy(?:-\d+(?:\.\d+)*)?\Z", re.IGNORECASE),
         min_version=(1, 5, 14),
-        non_interactive_flags=frozenset({"-p", "--print", "--prompt"}),
+        non_interactive_flags=frozenset(
+            {"-p", "--print", "--prompt", "--input-format", "--output-format"}
+        ),
         non_interactive_subcommands=frozenset({"acp"}),
         reject_path_parts=frozenset({"antigravity.app"}),
         reject_argv_pairs=(("--subclient_type", "hub"),),

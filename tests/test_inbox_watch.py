@@ -190,6 +190,10 @@ def test_watch_service_gone_on_wrong_start_time_or_dead_pid(tmp_path: Path) -> N
     assert dead.returncode == 0, dead.stderr
     assert dead.stdout == "service_gone\n"
 
+    # An out-of-range started_at must not crash the watcher.
+    huge: dict[str, object] = {"version": 1, "pid": pid, "started_at": 10**400, "bosses": {}}
+    assert inbox_watch._evaluate_snapshot(huge, pid, started, boss) == "service_gone"  # pyright: ignore[reportPrivateUsage]
+
 
 def test_watch_expired_after_timeout(tmp_path: Path) -> None:
     pid = os.getpid()

@@ -5398,9 +5398,11 @@ async def test_push_receipt_and_inbox_event_lifecycle(
                 "seq": 1,
             },
         )
-        assert explicit["next"] == expected_again
-        if sys.platform != "win32":
-            assert "Next wait: seq" not in str(explicit["next"])
+        if sys.platform == "win32":
+            # Windows has no push, so blocking guidance carries the next seq.
+            assert explicit["next"] == f"{expected_again} Next wait: seq=2."
+        else:
+            assert explicit["next"] == expected_again
         # wait=true must not hand the boss a blocking WAIT_AGAIN inside a push receipt.
         with monkeypatch.context() as patch:
 

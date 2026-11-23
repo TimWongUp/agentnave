@@ -306,7 +306,7 @@ fn push_codex(
     delivered_any
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn scan(terminals: &Terminals, root: &Path, state: &mut WakeupState) {
     scan_with(terminals, root, state, Instant::now(), |_| {});
 }

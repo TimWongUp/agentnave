@@ -446,10 +446,12 @@ const PARENT_SESSION: [&str; 23] = [
 ];
 
 pub(crate) fn parent_session(name: &str) -> bool {
+    // Windows environment names are case-insensitive.
+    let name = name.to_ascii_uppercase();
     name.starts_with("CLAUDE_CODE_")
         || name.starts_with("ANTIGRAVITY_")
         || name.starts_with("HERDR_")
-        || PARENT_SESSION.contains(&name)
+        || PARENT_SESSION.contains(&name.as_str())
 }
 
 pub(super) fn strip_parent_session(

@@ -1,6 +1,7 @@
 #[cfg(unix)]
 use super::super::session::Session;
 use super::*;
+#[cfg(unix)]
 use serde_json::json;
 
 #[test]

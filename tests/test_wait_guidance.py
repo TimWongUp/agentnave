@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import cast
 
@@ -45,7 +44,8 @@ def _watch_all(_host: str) -> bool:
 def test_read_process_executable_returns_current_python() -> None:
     exe = read_process_executable(os.getpid())
     assert Path(exe).is_file()
-    assert os.path.samefile(exe, sys.executable)
+    # Framework builds (python.org, Homebrew) re-exec into Python.app, so compare by name.
+    assert Path(exe).name.lower().startswith("python")
 
 
 def test_probe_watch_host_cli_agy_rules() -> None:

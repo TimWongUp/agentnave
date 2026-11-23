@@ -448,6 +448,7 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "HERDR_PANE_ID",
         "HERDR_SESSION",
         "HERDR_SOCKET",
+        "Herdr_Pane_Id",
         "TERM_PROGRAM",
     ] {
         assert!(parent_session(name), "{name}");
