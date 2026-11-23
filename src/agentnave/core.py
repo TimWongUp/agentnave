@@ -189,8 +189,11 @@ class _InvocationRecord:
             self.reported_model = state.model
         self.background_only = state.only_background and bool(state.reply and state.reply.strip())
         self.background_reply = state.reply if self.background_only else None
+        was_waiting = self.background_wait.waiting
         if self.background_wait.update(state):
             self.background_wait_changed.set()
+        if was_waiting != self.background_wait.waiting:
+            self.progress.hold()
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -951,7 +954,11 @@ class InvocationManager:
     def _prompts_changed(self, invocation_id: str) -> None:
         if self.on_inbox_change is not None:
             self.on_inbox_change()
-        self._record(invocation_id).update_doing(time.monotonic())
+        record = self._record(invocation_id)
+        # A prompt opening, closing or being answered pauses the silence clock; the guard only
+        # polls, so a pause shorter than its interval must restart the clock here.
+        record.progress.hold()
+        record.update_doing(time.monotonic())
         if self.on_prompt_change is not None:
             self.on_prompt_change(invocation_id)
 

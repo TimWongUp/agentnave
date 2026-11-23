@@ -2465,3 +2465,23 @@ async def test_progress_stall_clock_waits_for_a_prompt_or_background_wait(
     # Quiet time is measured from when counting resumed, not from before the prompt.
     assert 0.2 <= fired[0] < 0.6
     guard.cancel()
+
+
+def test_a_prompt_change_restarts_the_progress_clock(tmp_path: Path) -> None:
+    # A prompt can open and close inside one guard poll; the change itself must restart the clock.
+    manager = InvocationManager()
+    record = _InvocationRecord(InvocationRequest("claude", "work", tmp_path))
+    manager._records["prompted"] = record  # pyright: ignore[reportPrivateUsage]
+    record.progress.at = 1.0
+    manager._prompts_changed("prompted")  # pyright: ignore[reportPrivateUsage]
+    assert record.progress.at is not None and record.progress.at > 1.0
+
+
+def test_a_background_wait_that_starts_and_ends_restarts_the_progress_clock(
+    tmp_path: Path,
+) -> None:
+    record = _InvocationRecord(InvocationRequest("claude", "work", tmp_path))
+    for waiting in (True, False):
+        record.progress.at = 1.0
+        record.observe_background_tasks(BackgroundTasksState(waiting=waiting, task_ids=("bg",)))
+        assert record.progress.at is not None and record.progress.at > 1.0

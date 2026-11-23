@@ -251,7 +251,13 @@ class ClaudeAdapter(AdapterHooks):
         return assistant_model(event)
 
     def is_progress(self, event: dict[str, object], activity: ProviderActivity | None) -> bool:
-        return event.get("type") != "keep_alive" and super().is_progress(event, activity)
+        # Heartbeats and rate-limit notices arrive whether or not the model is working.
+        kind = event.get("type")
+        if kind in ("keep_alive", "rate_limit_event"):
+            return False
+        if kind == "stream_event" and object_dict(event.get("event")).get("type") == "ping":
+            return False
+        return super().is_progress(event, activity)
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
