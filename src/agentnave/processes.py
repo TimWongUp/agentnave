@@ -167,6 +167,11 @@ def _system_proxy(env: dict[str, str]) -> dict[str, str]:
 _EXIT_TAIL_SECONDS = 0.2
 
 
+def _reader_gone(completion: asyncio.Future[ProviderCompletion]) -> bool:
+    """A cancelled or failed status reader carries no exit signal, so it must not cut the grace."""
+    return completion.done() and (completion.cancelled() or completion.exception() is not None)
+
+
 async def terminate_process_tree(
     process: asyncio.subprocess.Process,
     grace_seconds: float = 2.0,
@@ -188,12 +193,12 @@ async def terminate_process_tree(
     except ProcessLookupError:
         await process.wait()
         return
-    if completion is None:
+    if completion is None or _reader_gone(completion):
         await asyncio.sleep(grace_seconds)
     else:
         if not completion.done():
             await asyncio.wait({completion}, timeout=grace_seconds)
-        if completion.done():
+        if completion.done() and not _reader_gone(completion):
             await asyncio.sleep(min(_EXIT_TAIL_SECONDS, max(0.0, grace_seconds)))
     with suppress(ProcessLookupError):
         os.killpg(process_group, signal.SIGKILL)
