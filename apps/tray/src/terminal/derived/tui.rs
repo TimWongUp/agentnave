@@ -22,7 +22,7 @@ use super::{
     POLL_STEP, claude, claude_hook, cleanup_derived_startup, detect_screen_blocker, native_logs,
     prepare_open_or_launch, update_blocker_if_changed,
 };
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) use agy::{AgyMonitorConfig, monitor_agy_turn_with_config};
 use agy::{highest_agy_user_index, monitor_agy_turn};
 

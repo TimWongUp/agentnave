@@ -26,12 +26,14 @@ use super::tui::{
 use super::{
     claude_hook, cleanup_derived_startup, detect_auth_blocker_in_text, prepare_open_or_launch,
 };
-pub(super) use monitor::monitor_claude_turn;
 #[cfg(test)]
-pub(super) use monitor::{claude_turn_ended, monitor_claude_turn_with_config};
+pub(super) use monitor::claude_turn_ended;
+pub(super) use monitor::monitor_claude_turn;
+#[cfg(all(test, unix))]
+pub(super) use monitor::monitor_claude_turn_with_config;
 pub(super) use screen::ClaudeScreen;
 pub(super) use turn_state::BG_WAIT_REMINDER_DELAY;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) use turn_state::ClaudeMonitorConfig;
 
 const TRUST_SETTLE: Duration = Duration::from_millis(300);
