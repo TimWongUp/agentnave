@@ -142,7 +142,7 @@ fn a_workspace_begins_where_its_earliest_surviving_dispatch_worked() {
             json!({"cwd": "/meeting", "created": "2026-11-04T00:00:00Z"}),
         ),
     ];
-    let cwds = super::origin_cwds(&snapshots, &Default::default());
+    let cwds = super::origin_cwds(&snapshots, &Default::default(), &Default::default());
     assert_eq!(cwds["s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], "/second");
     // The same time falls back to a stable order.
     let tie = vec![
@@ -150,8 +150,27 @@ fn a_workspace_begins_where_its_earliest_surviving_dispatch_worked() {
         task("x", json!([{"cwd": "/x", "time": "2026-11-02T00:00:00Z"}])),
     ];
     assert_eq!(
-        super::origin_cwds(&tie, &Default::default())["s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        super::origin_cwds(&tie, &Default::default(), &Default::default())["s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
         "/x"
+    );
+    // The boss session's own directory beats an earlier dispatch directory.
+    let boss_cwds = std::collections::HashMap::from([(
+        "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "/boss/agentnave".to_owned(),
+    )]);
+    let overridden = super::origin_cwds(&snapshots, &Default::default(), &boss_cwds);
+    assert_eq!(
+        overridden["s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        "/boss/agentnave"
+    );
+    // A blank boss directory is ignored so the earliest dispatch still serves as fallback.
+    let blank_boss = std::collections::HashMap::from([(
+        "s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        "   ".to_owned(),
+    )]);
+    assert_eq!(
+        super::origin_cwds(&snapshots, &Default::default(), &blank_boss)["s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        "/second"
     );
 }
 
@@ -166,7 +185,11 @@ fn a_handed_over_workspace_without_sessions_uses_the_handover_directory() {
             ..Default::default()
         },
     );
-    let cwds = super::origin_cwds(&[], &handovers);
+    let boss_cwds = std::collections::HashMap::from([(
+        "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+        "/work/ignored-boss".to_owned(),
+    )]);
+    let cwds = super::origin_cwds(&[], &handovers, &boss_cwds);
     assert_eq!(cwds["s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"], "/work/handed");
 }
 
@@ -243,6 +266,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
     let query = |path: &str| -> Value {
         let places = super::Places {
             dirs: &[],
+            origins: &Default::default(),
             projects: &Default::default(),
             links: &[],
             manual_projects: &[],
@@ -296,6 +320,7 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
     )]);
     let places = super::Places {
         dirs: &[],
+        origins: &Default::default(),
         projects: &Default::default(),
         links: &[],
         manual_projects: &[],
@@ -385,6 +410,7 @@ fn untitled_dispatches_fall_back_to_first_prompt_line_before_project_name() {
     };
     let places = super::Places {
         dirs: &[],
+        origins: &Default::default(),
         projects: &Default::default(),
         links: &[],
         manual_projects: &[],
@@ -469,6 +495,7 @@ fn chat_list_includes_earliest_created_and_falls_back_to_updated() {
     };
     let places = super::Places {
         dirs: &[],
+        origins: &Default::default(),
         projects: &Default::default(),
         links: &[],
         manual_projects: &[],

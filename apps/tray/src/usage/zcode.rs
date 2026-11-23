@@ -8,7 +8,7 @@ use std::time::UNIX_EPOCH;
 const DAY: i64 = 86_400_000;
 
 /// ZCode's session database, or the one `config.json` points to.
-pub(super) fn database() -> PathBuf {
+pub(crate) fn database() -> PathBuf {
     let base = dirs::home_dir().unwrap_or_default().join(".zcode/cli");
     super::read_small_json(&base.join("config.json"))
         .and_then(|config| {

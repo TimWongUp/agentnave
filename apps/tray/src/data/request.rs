@@ -119,7 +119,8 @@ impl Reader {
             .unwrap_or_default()
             .into_iter()
             .collect();
-        let mut cwds: Vec<String> = crate::stage::origin_cwds(&snapshots, &handovers)
+        let mut cwds: Vec<String> = self
+            .workspace_origins(&database, &snapshots, &handovers)
             .into_values()
             .collect();
         if let Some(app) = app {
