@@ -217,6 +217,17 @@ def is_host_account(host: Host, provider: str, account: str | None) -> bool:
     )
 
 
+def without_host_cli(
+    excluded: frozenset[str], host: Host, provider: str, account: str | None
+) -> frozenset[str]:
+    """The exclusions that apply to a CLI run as this account. The host's own CLI is excluded
+    only for its own account (ADR-0090, ADR-0108): another account of it is started by the
+    service like any other CLI, so the host's exclusion of that CLI does not reach it."""
+    if provider == host.provider and not is_host_account(host, provider, account):
+        return excluded - {provider}
+    return excluded
+
+
 def connection_warnings(host: Host) -> list[str]:
     """Why the host's connection line may name another account than the one it runs as."""
     app_id = host.app_id or ""

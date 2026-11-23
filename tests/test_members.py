@@ -445,6 +445,9 @@ def test_named_accounts_are_chosen_cooled_and_hosted_apart(
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(personal))
     other = list_members(frozenset(), claude).review["security-reviewer"]
     assert other.account == "work" and other.native is None
+    # The host's exclusion of its own CLI does not reach another account of it.
+    excluded = list_members(frozenset({"claude"}), claude).review["security-reviewer"]
+    assert excluded.account == "work" and excluded.reason is None
     # An image seat of another account of the same CLI is not the host drawing for itself.
     (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
     _write_decision_seats(

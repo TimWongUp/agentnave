@@ -461,6 +461,7 @@ def apply_task_defaults(
     excluded: frozenset[str],
     host: Host,
     selected: ReviewSeat | None = None,
+    account: str | None = None,
 ) -> tuple[dict[str, ProviderOption], list[str]]:
     selected = selected or role_seat(seat_name, host)
     options, applied = apply_member(
@@ -468,7 +469,7 @@ def apply_task_defaults(
         "task",
         provider,
         options,
-        excluded,
+        accounts.without_host_cli(excluded, host, provider, account),
         permissions=read_permissions(),
         seat=frozenset(seat_applied),
         scenario=not orchestration_enabled(host),
