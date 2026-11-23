@@ -878,7 +878,8 @@ class Conversations(ConversationStore):
             )
         except Exception:
             if startup.hold is not None and startup.hold.rebuilt:
-                task.isolation_auto_released = True
+                if startup.hold.created is None or not startup.hold.created.rebuilt_from_collapsed:
+                    task.isolation_auto_released = True
             elif startup.hold is not None and startup.hold.created is not None:
                 task.isolation_id = None
                 task.isolation_path = None

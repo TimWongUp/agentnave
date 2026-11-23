@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 
+from agentnave.isolated.branches import branch_tip
+from agentnave.isolated.collapsed import rollback_rebuilding_collapsed_locked
 from agentnave.isolated.copy import copy_worktreeinclude
 from agentnave.isolated.leases import (
     IsolationLease,
@@ -29,13 +31,16 @@ from agentnave.isolated.repo import (
     ensure_info_exclude_locked,
     has_active_hooks,
     is_link,
+    parse_worktrees,
     ref_exists,
     resolve_mapped_cwd,
     run_git,
+    same_dir,
 )
 from agentnave.isolated.store import (
     ID_PATTERN,
     IsolatedRecord,
+    StaleStateError,
     WorktreeStore,
     local_machine_id,
 )
@@ -197,12 +202,30 @@ def _auto_release_locked(
     return replace(summary, auto_released=True), warnings
 
 
+def _rebuild_warnings(
+    main_root: Path,
+    *,
+    lfs_detected: bool,
+    extra_warnings: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    warnings: list[str] = []
+    hooks_skipped = has_active_hooks(main_root)
+    if hooks_skipped and lfs_detected:
+        warnings.append("Git hooks and LFS downloads were skipped; LFS files may contain pointers.")
+    elif hooks_skipped:
+        warnings.append("Git hooks were skipped when rebuilding the isolated directory.")
+    elif lfs_detected:
+        warnings.append("Git LFS downloads were skipped; LFS files may contain pointers.")
+    warnings.extend(extra_warnings)
+    return tuple(warnings)
+
+
 def plan_rebuild(
     *,
     isolation_id: str,
     worktree_path: Path,
     cwd: Path,
-    base_oid: str,
+    base_oid: str | None,
     main_root: Path,
     source_root: Path | None,
 ) -> RebuildPlan:
@@ -236,27 +259,21 @@ def plan_rebuild(
     rel = cwd_resolved.relative_to(wt_path)
     subdir_prefix = PurePosixPath(rel.as_posix()) if rel != Path(".") else PurePosixPath()
 
-    try:
-        run_git(
-            ["cat-file", "-e", f"{base_oid}^{{commit}}"],
-            cwd=ctx.main_root,
-        )
-    except IsolationError as exc:
-        raise IsolationError(
-            f"Original commit {base_oid[:12]} for isolated directory {isolation_id} is no longer "
-            "available in the repository; start a new thread with isolation instead."
-        ) from exc
+    lfs_detected = False
+    if base_oid is not None:
+        try:
+            run_git(
+                ["cat-file", "-e", f"{base_oid}^{{commit}}"],
+                cwd=ctx.main_root,
+            )
+        except IsolationError as exc:
+            raise IsolationError(
+                f"Original commit {base_oid[:12]} for isolated directory {isolation_id} is no "
+                "longer available in the repository; start a new thread with isolation instead."
+            ) from exc
+        lfs_detected = check_tree_and_filters(ctx, base_oid)
 
-    lfs_detected = check_tree_and_filters(ctx, base_oid)
-    warnings: list[str] = []
-    hooks_skipped = has_active_hooks(ctx.main_root)
-    if hooks_skipped and lfs_detected:
-        warnings.append("Git hooks and LFS downloads were skipped; LFS files may contain pointers.")
-    elif hooks_skipped:
-        warnings.append("Git hooks were skipped when rebuilding the isolated directory.")
-    elif lfs_detected:
-        warnings.append("Git LFS downloads were skipped; LFS files may contain pointers.")
-
+    extra_warnings: list[str] = []
     include_source = ctx.main_root
     if source_root is not None and not control_char_in(str(source_root)):
         source_is_link = is_link(source_root)
@@ -266,17 +283,77 @@ def plan_rebuild(
         elif source_is_link or os.path.normcase(str(resolved_source)) != os.path.normcase(
             str(ctx.main_root)
         ):
-            warnings.append(
+            extra_warnings.append(
                 f"Original .worktreeinclude source ({source_root}) is no longer present; "
                 "copied ignored files from main worktree instead."
             )
+    warnings = (
+        _rebuild_warnings(
+            ctx.main_root, lfs_detected=lfs_detected, extra_warnings=tuple(extra_warnings)
+        )
+        if base_oid is not None
+        else tuple(extra_warnings)
+    )
     return RebuildPlan(
         ctx=ctx,
         wt_path=wt_path,
         subdir_prefix=subdir_prefix,
         include_source=include_source,
-        warnings=tuple(warnings),
+        warnings=warnings,
     )
+
+
+def _finish_rebuild_locked(
+    store: WorktreeStore,
+    plan: RebuildPlan,
+    *,
+    isolation_id: str,
+    branch_name: str,
+    branch_ref: str,
+    base_oid: str,
+    target_oid: str,
+    usage_generation: int,
+    create_branch: bool,
+    copying_phase: str,
+    warnings: tuple[str, ...],
+) -> RebuiltWorktree:
+    ctx = plan.ctx
+    wt_path = plan.wt_path
+    lease: IsolationLease | None = None
+    try:
+        wt_git_dir = add_worktree_locked(
+            ctx.main_root,
+            branch_name,
+            wt_path,
+            target_oid,
+            create_branch=create_branch,
+        )
+        store.mark_worktree_added(
+            isolation_id,
+            str(wt_git_dir),
+            phase=copying_phase,
+            updated_at=now(),
+        )
+        copy_worktreeinclude(plan.include_source, wt_path)
+        mapped_cwd = resolve_mapped_cwd(wt_path, plan.subdir_prefix)
+        lease = acquire_lease_locked(ctx.repo_common_dir, isolation_id)
+        store.mark_ready(isolation_id, usage_generation=usage_generation, updated_at=now())
+        return RebuiltWorktree(
+            worktree_path=wt_path.resolve(),
+            execution_cwd=mapped_cwd,
+            branch=branch_name,
+            branch_ref=branch_ref,
+            main_root=ctx.main_root,
+            source_root=plan.include_source,
+            repo_common_dir=ctx.repo_common_dir,
+            base_oid=base_oid,
+            warnings=warnings,
+            lease=lease,
+        )
+    except BaseException:
+        if lease is not None:
+            lease.release()
+        raise
 
 
 def rebuild_worktree_locked(
@@ -324,34 +401,104 @@ def rebuild_worktree_locked(
         updated_at=timestamp,
     )
     store.insert_creating(creating_record)
-    lease: IsolationLease | None = None
     try:
-        wt_git_dir = add_worktree_locked(ctx.main_root, branch_name, wt_path, base_oid)
-        store.mark_worktree_added(
-            isolation_id,
-            str(wt_git_dir),
-            phase="copying_include",
-            updated_at=now(),
-        )
-        copy_worktreeinclude(plan.include_source, wt_path)
-        mapped_cwd = resolve_mapped_cwd(wt_path, plan.subdir_prefix)
-        lease = acquire_lease_locked(ctx.repo_common_dir, isolation_id)
-        store.mark_ready(isolation_id, usage_generation=1, updated_at=now())
-        return RebuiltWorktree(
-            worktree_path=wt_path.resolve(),
-            execution_cwd=mapped_cwd,
-            branch=branch_name,
+        return _finish_rebuild_locked(
+            store,
+            plan,
+            isolation_id=isolation_id,
+            branch_name=branch_name,
             branch_ref=branch_ref,
-            main_root=ctx.main_root,
-            source_root=plan.include_source,
-            repo_common_dir=ctx.repo_common_dir,
             base_oid=base_oid,
+            target_oid=base_oid,
+            usage_generation=1,
+            create_branch=True,
+            copying_phase="copying_include",
             warnings=plan.warnings,
-            lease=lease,
         )
     except BaseException:
-        if lease is not None:
-            lease.release()
         latest = store.get(isolation_id) or creating_record
         rollback_creating_locked(store, latest)
+        raise
+
+
+def rebuild_collapsed_locked(
+    store: WorktreeStore,
+    plan: RebuildPlan,
+    existing: IsolatedRecord,
+) -> RebuiltWorktree:
+    """Recreate the worktree of a collapsed record in place from its preserved managed branch."""
+    ctx = plan.ctx
+    wt_path = plan.wt_path
+    expected_ref = f"refs/heads/agentnave/{existing.id}"
+    if existing.branch_ref != expected_ref:
+        raise IsolationError(f"Managed branch {existing.branch_ref} does not match {expected_ref}")
+    if not same_dir(Path(existing.repo_common_dir), ctx.repo_common_dir):
+        raise IsolationError(f"Isolated directory {existing.id} belongs to another repository")
+    if wt_path.exists() or is_link(wt_path):
+        raise IsolationError(
+            f"Cannot rebuild isolated directory {existing.id}: path already exists at {wt_path}"
+        )
+    if not ref_exists(ctx.main_root, existing.branch_ref):
+        raise IsolationError(
+            f"Cannot rebuild isolated directory {existing.id}: branch {existing.branch} "
+            "no longer exists"
+        )
+    sym = run_git(
+        ["symbolic-ref", "-q", existing.branch_ref],
+        cwd=ctx.main_root,
+        allowed_exit_codes=(0, 1),
+    )
+    if sym.returncode == 0:
+        raise IsolationError(
+            f"Cannot rebuild isolated directory {existing.id}: branch {existing.branch} "
+            "is a symbolic ref"
+        )
+    run_git(["worktree", "prune"], cwd=ctx.main_root)
+    worktrees = parse_worktrees(
+        run_git(["worktree", "list", "--porcelain", "-z"], cwd=ctx.main_root).stdout
+    )
+    if any(w.branch_ref == existing.branch_ref for w in worktrees):
+        raise IsolationError(
+            f"Cannot rebuild isolated directory {existing.id}: branch {existing.branch} "
+            "is already checked out in another worktree"
+        )
+    target_oid = branch_tip(ctx.main_root, existing.branch_ref)
+    if not target_oid:
+        raise IsolationError(
+            f"Cannot rebuild isolated directory {existing.id}: branch {existing.branch} "
+            "no longer exists"
+        )
+    lfs_detected = check_tree_and_filters(ctx, target_oid)
+    warnings = _rebuild_warnings(
+        ctx.main_root, lfs_detected=lfs_detected, extra_warnings=plan.warnings
+    )
+    ensure_info_exclude_locked(ctx.main_root)
+    provisional_cwd = (
+        wt_path.joinpath(*plan.subdir_prefix.parts) if plan.subdir_prefix.parts else wt_path
+    )
+    if not store.begin_rebuild_collapsed(
+        existing.id,
+        execution_cwd=str(provisional_cwd),
+        phase="rebuilding_collapsed",
+        updated_at=now(),
+    ):
+        raise StaleStateError(f"Isolated directory {existing.id} left the collapsed state")
+    try:
+        return _finish_rebuild_locked(
+            store,
+            plan,
+            isolation_id=existing.id,
+            branch_name=existing.branch,
+            branch_ref=existing.branch_ref,
+            base_oid=existing.base_oid,
+            target_oid=target_oid,
+            usage_generation=max(existing.usage_generation, 0) + 1,
+            create_branch=False,
+            copying_phase="rebuilding_copying_include",
+            warnings=warnings,
+        )
+    except BaseException:
+        latest = store.get(existing.id)
+        if latest is not None:
+            rollback_rebuilding_collapsed_locked(store, latest)
         raise

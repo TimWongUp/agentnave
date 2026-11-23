@@ -2034,3 +2034,202 @@ def test_a_working_tree_named_like_the_directory_plus_a_line_end_is_refused(
         assert dirs.recover()[0].status == "needs_attention"
         assert (created.worktree_path / "README.md").read_text(encoding="utf-8") == "unsaved\n"
     dirs.close()
+
+
+def _collapse_in_db(dirs: IsolatedDirs, repo: Path, isolation_id: str, wt_path: Path) -> None:
+    _git(repo, "worktree", "remove", "--force", str(wt_path))
+    _set_record(
+        dirs,
+        isolation_id,
+        "state = 'collapsed', phase = 'collapsed', worktree_git_dir = NULL",
+    )
+
+
+def test_collapsed_isolated_dir_list_unreleased_recovery_and_release(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+
+    # 1. Collapsed directory with unmerged commit: listed as not in_use, counts as unreleased,
+    # skipped by startup recovery, and requires confirmation token before deleting branch & row.
+    unmerged = dirs.create(repo, workspace_id="ws-1")
+    unmerged.lease.release()
+    (unmerged.worktree_path / "work.txt").write_text("feature\n", encoding="utf-8")
+    _git(unmerged.worktree_path, "add", "work.txt")
+    _git(unmerged.worktree_path, "commit", "-m", "unmerged feature")
+    _collapse_in_db(dirs, repo, unmerged.id, unmerged.worktree_path)
+
+    ws_items = dirs.list_for_workspace("ws-1")
+    assert len(ws_items) == 1
+    assert ws_items[0].id == unmerged.id
+    assert ws_items[0].state == "collapsed"
+    assert ws_items[0].in_use is False
+    repo_items = dirs.list_for_repo(repo, "ws-1")
+    assert [item.state for item in repo_items] == ["collapsed"]
+    assert dirs.unreleased_count("ws-1") == 1
+    assert dirs.recover() == []
+    collapsed_rec = dirs.store.get(unmerged.id)
+    assert collapsed_rec is not None
+    assert release_mod.recover_record(dirs.store, collapsed_rec).status == "skipped"
+
+    asked = dirs.release(unmerged.id, workspace_id="ws-1")
+    assert asked.status == "confirmation_required"
+    assert asked.unique_commits is True
+    assert asked.uncommitted is False
+    assert asked.confirmation is not None
+
+    deleted = dirs.release(unmerged.id, workspace_id="ws-1", confirmation=asked.confirmation)
+    assert deleted.status == "deleted"
+    assert dirs.store.get(unmerged.id) is None
+    assert dirs.unreleased_count("ws-1") == 0
+    assert f"agentnave/{unmerged.id}" not in _git(
+        repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/"
+    )
+
+    # 2. Collapsed directory whose branch is merged into main deletes without token for owner,
+    # even when original base_oid was GC'd; foreign workspace still needs confirmation first.
+    _git(repo, "checkout", "--detach", "main")
+    _git(repo, "commit", "--allow-empty", "-m", "ephemeral base")
+    ephemeral_wt = dirs.create(repo, workspace_id="ws-1")
+    ephemeral_wt.lease.release()
+    _git(ephemeral_wt.worktree_path, "reset", "--hard", "main")
+    _git(repo, "checkout", "main")
+    _collapse_in_db(dirs, repo, ephemeral_wt.id, ephemeral_wt.worktree_path)
+    _git(repo, "reflog", "expire", "--expire=all", "--all")
+    _git(repo, "prune", "--expire=now")
+
+    foreign_asked = dirs.release(ephemeral_wt.id, workspace_id="ws-2")
+    assert foreign_asked.status == "confirmation_required"
+    assert foreign_asked.unique_commits is False
+    foreign_done = dirs.release(
+        ephemeral_wt.id, workspace_id="ws-2", confirmation=foreign_asked.confirmation
+    )
+    assert foreign_done.status == "deleted"
+    dirs.close()
+
+
+def test_collapsed_isolated_dir_rebuild_on_resume_and_guards(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    sub = repo / "packages" / "app"
+    sub.mkdir(parents=True)
+    (sub / "app.py").write_text("v = 1\n", encoding="utf-8")
+    _git(repo, "add", "packages")
+    _git(repo, "commit", "-m", "add app")
+    (repo / ".worktreeinclude").write_text("*.ignored\n", encoding="utf-8")
+    (repo / "keep.ignored").write_text("env-config\n", encoding="utf-8")
+
+    # Create from a detached ephemeral commit, add a commit on the managed branch, collapse,
+    # then GC the original base_oid so rebuild must succeed using the branch tip alone.
+    _git(repo, "checkout", "--detach", "main")
+    _git(repo, "commit", "--allow-empty", "-m", "ephemeral start")
+    created = None
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(sub, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / "feature.py").write_text("x = 2\n", encoding="utf-8")
+    _git(created.worktree_path, "add", "feature.py")
+    _git(created.worktree_path, "commit", "-m", "branch work")
+    tip_oid = _git(created.worktree_path, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+    _collapse_in_db(dirs, repo, created.id, created.worktree_path)
+    _git(repo, "reflog", "expire", "--expire=all", "--all")
+    _git(repo, "prune", "--expire=now")
+
+    resumed_task = TaskRecord(
+        id="t-collapsed",
+        provider="codex",
+        model="",
+        cwd=str(created.execution_cwd),
+        prompt="continue",
+        time=now(),
+        isolation_id=created.id,
+        isolation_path=str(created.worktree_path),
+        isolation_branch=created.branch,
+        isolation_base_oid=created.base_oid,
+        isolation_main_root=str(created.main_root),
+        isolation_source_root=str(created.source_root),
+        isolation_auto_released=False,
+        isolation_owned=True,
+    )
+    rebuilt = rebuild_resumed_isolation(dirs, created.execution_cwd, resumed_task, "ws-1")
+    try:
+        assert rebuilt.worktree_path == created.worktree_path
+        assert rebuilt.execution_cwd == created.execution_cwd
+        assert rebuilt.branch == created.branch
+        assert (rebuilt.worktree_path / "feature.py").read_text(encoding="utf-8") == "x = 2\n"
+        assert (rebuilt.worktree_path / "keep.ignored").read_text(
+            encoding="utf-8"
+        ) == "env-config\n"
+        assert _git(rebuilt.worktree_path, "rev-parse", "HEAD") == tip_oid
+        assert _git(rebuilt.worktree_path, "symbolic-ref", "--short", "HEAD") == created.branch
+        rec = dirs.store.get(created.id)
+        assert rec is not None and rec.state == "ready"
+        assert rec.usage_generation == 2
+    finally:
+        rebuilt.lease.release()
+
+    # Guards: occupied path, occupied branch, and missing branch all refuse without moving paths.
+    _collapse_in_db(dirs, repo, created.id, created.worktree_path)
+    created.worktree_path.mkdir(parents=True)
+    with pytest.raises(IsolationError, match="already exists"):
+        rebuild_resumed_isolation(dirs, created.execution_cwd, resumed_task, "ws-1")
+    created.worktree_path.rmdir()
+
+    other_wt = tmp_path / "other-wt"
+    _git(repo, "worktree", "add", str(other_wt), created.branch)
+    with pytest.raises(IsolationError, match="already checked out"):
+        rebuild_resumed_isolation(dirs, created.execution_cwd, resumed_task, "ws-1")
+    _git(repo, "worktree", "remove", "--force", str(other_wt))
+
+    _git(repo, "branch", "-D", created.branch)
+    with pytest.raises(IsolationError, match="no longer exists"):
+        rebuild_resumed_isolation(dirs, created.execution_cwd, resumed_task, "ws-1")
+    dirs.close()
+
+
+def test_collapsed_rebuild_rollback_and_recovery_keep_managed_branch(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    (created.worktree_path / "saved.txt").write_text("keep me\n", encoding="utf-8")
+    _git(created.worktree_path, "add", "saved.txt")
+    _git(created.worktree_path, "commit", "-m", "saved commit")
+    tip_oid = _git(created.worktree_path, "rev-parse", "HEAD")
+    _collapse_in_db(dirs, repo, created.id, created.worktree_path)
+
+    resumed_task = TaskRecord(
+        id="t-abort",
+        provider="codex",
+        model="",
+        cwd=str(created.execution_cwd),
+        prompt="continue",
+        time=now(),
+        isolation_id=created.id,
+        isolation_path=str(created.worktree_path),
+        isolation_branch=created.branch,
+        isolation_base_oid=created.base_oid,
+        isolation_main_root=str(created.main_root),
+        isolation_source_root=str(created.source_root),
+        isolation_auto_released=False,
+        isolation_owned=True,
+    )
+    rebuilt = rebuild_resumed_isolation(dirs, created.execution_cwd, resumed_task, "ws-1")
+    assert rebuilt.rebuilt_from_collapsed is True  # type: ignore[union-attr]
+    # Aborting launch before the task runs restores collapsed state and preserves the branch.
+    dirs.abort_created(rebuilt)  # type: ignore[arg-type]
+    assert not created.worktree_path.exists()
+    rec = dirs.store.get(created.id)
+    assert rec is not None and rec.state == "collapsed"
+    assert _git(repo, "rev-parse", f"refs/heads/{created.branch}") == tip_oid
+
+    # Simulated crash mid-rebuild (state='creating', phase='rebuilding_collapsed') recovers
+    # cleanly back to collapsed without deleting the managed branch.
+    _git(repo, "worktree", "add", str(created.worktree_path), created.branch)
+    _set_record(dirs, created.id, "state = 'creating', phase = 'rebuilding_collapsed'")
+    outcomes = dirs.recover()
+    assert len(outcomes) == 1 and outcomes[0].status == "rolled_back"
+    assert not created.worktree_path.exists()
+    after = dirs.store.get(created.id)
+    assert after is not None and after.state == "collapsed"
+    assert _git(repo, "rev-parse", f"refs/heads/{created.branch}") == tip_oid
+    dirs.close()

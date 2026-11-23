@@ -16,7 +16,7 @@ SCHEMA_VERSION = 1
 ID_PATTERN = re.compile(r"^wt-[0-9a-f]{12}$")
 MANAGED_BRANCH_PREFIX = "refs/heads/agentnave/"
 
-type IsolationState = Literal["creating", "ready", "deleting", "needs_attention"]
+type IsolationState = Literal["creating", "ready", "deleting", "needs_attention", "collapsed"]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS isolated_dirs (
@@ -285,13 +285,44 @@ class WorktreeStore:
         changed = self._update(
             "UPDATE isolated_dirs SET state = 'ready', phase = 'ready', "
             "usage_generation = ?, attention = NULL, confirmation_digest = NULL, "
-            "updated_at = ? WHERE id = ? AND state = 'creating'",
+            "delete_oid = NULL, updated_at = ? WHERE id = ? AND state = 'creating'",
             (usage_generation, updated_at, isolation_id),
         )
         record = self.get(isolation_id)
         if not changed or record is None:
             raise StaleStateError(f"Isolated directory {isolation_id} left the creating state")
         return record
+
+    def begin_rebuild_collapsed(
+        self,
+        isolation_id: str,
+        *,
+        execution_cwd: str,
+        phase: str,
+        updated_at: str,
+    ) -> bool:
+        """Transition a collapsed row into creating while its worktree is rebuilt in place."""
+        return self._update(
+            "UPDATE isolated_dirs SET state = 'creating', phase = ?, execution_cwd = ?, "
+            "worktree_git_dir = NULL, attention = NULL, confirmation_digest = NULL, "
+            "delete_oid = NULL, updated_at = ? WHERE id = ? AND state = 'collapsed'",
+            (phase, execution_cwd, updated_at, isolation_id),
+        )
+
+    def revert_creating_to_collapsed(
+        self,
+        isolation_id: str,
+        *,
+        updated_at: str,
+        expected_state: IsolationState = "creating",
+    ) -> bool:
+        """Restore a collapsed row when rebuilding its worktree stopped before use."""
+        return self._update(
+            "UPDATE isolated_dirs SET state = 'collapsed', phase = 'collapsed', "
+            "worktree_git_dir = NULL, attention = NULL, confirmation_digest = NULL, "
+            "delete_oid = NULL, updated_at = ? WHERE id = ? AND state = ?",
+            (updated_at, isolation_id, expected_state),
+        )
 
     def bump_usage(self, isolation_id: str, *, updated_at: str) -> IsolatedRecord:
         changed = self._update(
@@ -307,7 +338,7 @@ class WorktreeStore:
     def save_confirmation(self, isolation_id: str, digest: str, *, updated_at: str) -> bool:
         return self._update(
             "UPDATE isolated_dirs SET confirmation_digest = ?, updated_at = ? "
-            "WHERE id = ? AND state IN ('ready', 'needs_attention', 'deleting')",
+            "WHERE id = ? AND state IN ('ready', 'needs_attention', 'deleting', 'collapsed')",
             (digest, updated_at, isolation_id),
         )
 
