@@ -15,6 +15,7 @@
 - macOS／Linux 使用专用 POSIX 进程组 supervisor；Windows 使用挂起创建并先加入
   kill-on-close Job Object 的专用 supervisor，不得用 Windows process group 冒充树级所有权。
 - stdout 的 JSON 结果遵守 `InvocationResult` 稳定字段；Provider 业务终态必须尽量保全输出和原生 `session_id`。
+- 交互 TUI 的驱动、回合终点判断、推送投递和终端拥有者，先查 herdr（<https://github.com/herdrdev/herdr>，Apache-2.0）和 magpie（<https://github.com/yetone/magpie>，MIT）怎么做：有成熟做法就复用或移植，移植代码保留许可证要求的署名并在 PR 注明出处；它们没覆盖或与现行 ADR 冲突时才自行设计，冲突先修订 ADR。
 
 ## Code readability
 
