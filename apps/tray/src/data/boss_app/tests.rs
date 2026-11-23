@@ -485,6 +485,321 @@ fn a_chat_runs_again_in_the_folder_its_record_names() {
         session_cwd_of("antigravity", &agy_transcript, CODEX_SESSION),
         None
     );
+
+    // Archived zstd rollout and DeepSeek zstd session both decode their startup cwd.
+    let archived = dir.path().join("rollout.jsonl.zst");
+    fs::write(
+        &archived,
+        packed(b"{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/work/zst\"}}\n"),
+    )
+    .unwrap();
+    assert_eq!(session_cwd(&archived), Some(PathBuf::from("/work/zst")));
+}
+
+#[test]
+fn boss_cwds_cover_supported_hosts_and_preserve_handover_origin() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |rel: &str| dir.path().join(rel);
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE conversations (manager_session TEXT, host TEXT);
+         CREATE TABLE workspaces (
+            id TEXT PRIMARY KEY,
+            owner TEXT NOT NULL,
+            origin TEXT,
+            owner_host TEXT,
+            owner_file TEXT,
+            previous_host TEXT,
+            previous_file TEXT
+         );",
+    )
+    .unwrap();
+
+    let claude_ws = boss_key("claude", CLAUDE_SESSION);
+    let claude_rec = at(&format!("claude/projects/p/{CLAUDE_SESSION}.jsonl"));
+    write(&claude_rec, "{\"cwd\":\"/work/claude\"}\n");
+
+    let desktop_id = "77777777-7777-7777-7777-777777777777";
+    let desktop_ws = boss_key("claude", desktop_id);
+    write(
+        &at("Claude/claude-code-sessions/acc/org/local_1.json"),
+        &format!(
+            "{{\"sessionId\":\"local_1\",\"cliSessionId\":\"{desktop_id}\",\"originCwd\":\"/work/claude-desktop\"}}"
+        ),
+    );
+
+    let codex_ws = boss_key("codex", CODEX_SESSION);
+    let codex_rec = at(&format!(
+        "codex/archived_sessions/rollout-2026-11-23T00-00-00-{CODEX_SESSION}.jsonl.zst"
+    ));
+    fs::create_dir_all(codex_rec.parent().unwrap()).unwrap();
+    fs::write(
+        &codex_rec,
+        packed(b"{\"type\":\"session_meta\",\"payload\":{\"cwd\":\"/work/codex\"}}\n"),
+    )
+    .unwrap();
+
+    let agy_ws = boss_key("antigravity", CLAUDE_SESSION);
+    let agy_root = at(".gemini/antigravity-cli");
+    fs::create_dir_all(&agy_root).unwrap();
+    let agy_db = rusqlite::Connection::open(agy_root.join("conversation_summaries.db")).unwrap();
+    agy_db
+        .execute_batch(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, workspace_uris TEXT, last_modified_time TEXT);",
+        )
+        .unwrap();
+    agy_db
+        .execute(
+            "INSERT INTO conversation_summaries VALUES (?1, 'T', '[\"file:///work/agy\"]', '2026-11-23T00:00:00Z')",
+            [CLAUDE_SESSION],
+        )
+        .unwrap();
+    drop(agy_db);
+
+    let cb_rec = at("cb/projects/p/cb.jsonl");
+    write(&cb_rec, "{\"cwd\":\"/work/codebuddy\"}\n");
+    let wb_rec = at("wb/projects/p/wb.jsonl");
+    write(&wb_rec, "{\"cwd\":\"/work/workbuddy\"}\n");
+    let pi_rec = at("pi/sessions/p/2026_11.jsonl");
+    write(&pi_rec, "{\"type\":\"session\",\"cwd\":\"/work/pi\"}\n");
+    let grok_rec = at("grok/sessions/e/g1/chat_history.jsonl");
+    write(&grok_rec, "");
+    write(
+        &at("grok/sessions/e/g1/summary.json"),
+        "{\"info\":{\"cwd\":\"/work/grok\"}}",
+    );
+    let dsh_rec = at("dsh/sessions/e/session-1/session.v4.jsonl.zstd");
+    fs::create_dir_all(dsh_rec.parent().unwrap()).unwrap();
+    fs::write(
+        &dsh_rec,
+        packed(b"{\"type\":\"session\",\"cwd\":\"/work/dsh\"}\n"),
+    )
+    .unwrap();
+
+    let devin_db = at("devin/sessions.db");
+    fs::create_dir_all(devin_db.parent().unwrap()).unwrap();
+    let dc = rusqlite::Connection::open(&devin_db).unwrap();
+    dc.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY, working_directory TEXT);")
+        .unwrap();
+    dc.execute("INSERT INTO sessions VALUES ('dev-1', '/work/devin')", [])
+        .unwrap();
+    drop(dc);
+    let devin_transcript = at("devin/transcripts/dev-1.json");
+    write(&devin_transcript, "{}");
+
+    let zcode_db = at("zcode/db.sqlite");
+    fs::create_dir_all(zcode_db.parent().unwrap()).unwrap();
+    let zc = rusqlite::Connection::open(&zcode_db).unwrap();
+    zc.execute_batch("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT);")
+        .unwrap();
+    zc.execute("INSERT INTO session VALUES ('zc-1', '/work/zcode')", [])
+        .unwrap();
+    drop(zc);
+
+    let hermes_db = at("hermes/state.db");
+    fs::create_dir_all(hermes_db.parent().unwrap()).unwrap();
+    let hc = rusqlite::Connection::open(&hermes_db).unwrap();
+    hc.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT);")
+        .unwrap();
+    hc.execute(
+        "INSERT INTO sessions VALUES ('hm-1', '/work/hermes'), ('hm-null', NULL)",
+        [],
+    )
+    .unwrap();
+    drop(hc);
+
+    let insert_ws = |id: &str,
+                     owner: &str,
+                     origin: Option<&str>,
+                     host: &str,
+                     file: Option<&Path>,
+                     prev_host: Option<&str>,
+                     prev_file: Option<&Path>| {
+        conn.execute(
+            "INSERT INTO workspaces VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                id,
+                owner,
+                origin,
+                host,
+                file.map(|p| p.to_str().unwrap()),
+                prev_host,
+                prev_file.map(|p| p.to_str().unwrap()),
+            ],
+        )
+        .unwrap();
+    };
+
+    insert_ws(
+        &claude_ws,
+        &claude_ws,
+        Some(&claude_ws),
+        "claude",
+        Some(&claude_rec),
+        None,
+        None,
+    );
+    insert_ws(
+        &desktop_ws,
+        &desktop_ws,
+        Some(&desktop_ws),
+        "claude",
+        None,
+        None,
+        None,
+    );
+    insert_ws(
+        &codex_ws,
+        &codex_ws,
+        Some(&codex_ws),
+        "codex",
+        None,
+        None,
+        None,
+    );
+    insert_ws(
+        &agy_ws,
+        &agy_ws,
+        Some(&agy_ws),
+        "antigravity",
+        None,
+        None,
+        None,
+    );
+    insert_ws(
+        "ws-cb",
+        "ws-cb",
+        Some("ws-cb"),
+        "codebuddy",
+        Some(&cb_rec),
+        None,
+        None,
+    );
+    insert_ws(
+        "ws-wb",
+        "ws-wb",
+        Some("ws-wb"),
+        "workbuddy",
+        Some(&wb_rec),
+        None,
+        None,
+    );
+    insert_ws(
+        "ws-pi",
+        "ws-pi",
+        Some("ws-pi"),
+        "pi",
+        Some(&pi_rec),
+        None,
+        None,
+    );
+    insert_ws(
+        "ws-grok",
+        "ws-grok",
+        Some("ws-grok"),
+        "grok",
+        Some(&grok_rec),
+        None,
+        None,
+    );
+    insert_ws(
+        "ws-dsh",
+        "ws-dsh",
+        Some("ws-dsh"),
+        "deepseek",
+        Some(&dsh_rec),
+        None,
+        None,
+    );
+    insert_ws(
+        &boss_key("devin", "dev-1"),
+        &boss_key("devin", "dev-1"),
+        None,
+        "devin",
+        Some(&devin_transcript),
+        None,
+        None,
+    );
+    insert_ws(
+        &boss_key("zcode", "zc-1"),
+        &boss_key("zcode", "zc-1"),
+        None,
+        "zcode",
+        Some(&zcode_db),
+        None,
+        None,
+    );
+    insert_ws(
+        &boss_key("hermes", "hm-1"),
+        &boss_key("hermes", "hm-1"),
+        None,
+        "hermes",
+        Some(&hermes_db),
+        None,
+        None,
+    );
+    insert_ws(
+        &boss_key("hermes", "hm-null"),
+        &boss_key("hermes", "hm-null"),
+        None,
+        "hermes",
+        Some(&hermes_db),
+        None,
+        None,
+    );
+    // Legacy handover: claiming boss's cwd must not replace the workspace's original project;
+    // when `previous_host`/`previous_file` exist, the creator's cwd is still used.
+    insert_ws(
+        "ws-legacy-no-prev",
+        "new-boss",
+        Some("ws-legacy-no-prev"),
+        "claude",
+        Some(&claude_rec),
+        None,
+        None,
+    );
+    insert_ws(
+        "ws-legacy-prev",
+        "new-boss-2",
+        Some(&claude_ws),
+        "codex",
+        Some(&codex_rec),
+        Some("claude"),
+        Some(&claude_rec),
+    );
+    insert_ws(
+        "ws-retired",
+        "ws-retired",
+        None,
+        "gemini",
+        Some(&claude_rec),
+        None,
+        None,
+    );
+
+    let homes = Homes {
+        claude: vec![at("claude")],
+        codex: vec![at("codex")],
+        desktop: vec![at("Claude")],
+        other: vec![("antigravity".to_owned(), agy_root)],
+    };
+    let cwds = BossApps::new().cwds(&conn, || homes);
+    assert_eq!(cwds[&claude_ws], "/work/claude");
+    assert_eq!(cwds[&desktop_ws], "/work/claude-desktop");
+    assert_eq!(cwds[&codex_ws], "/work/codex");
+    assert_eq!(cwds[&agy_ws], "/work/agy");
+    assert_eq!(cwds["ws-cb"], "/work/codebuddy");
+    assert_eq!(cwds["ws-wb"], "/work/workbuddy");
+    assert_eq!(cwds["ws-pi"], "/work/pi");
+    assert_eq!(cwds["ws-grok"], "/work/grok");
+    assert_eq!(cwds["ws-dsh"], "/work/dsh");
+    assert_eq!(cwds[&boss_key("devin", "dev-1")], "/work/devin");
+    assert_eq!(cwds[&boss_key("zcode", "zc-1")], "/work/zcode");
+    assert_eq!(cwds[&boss_key("hermes", "hm-1")], "/work/hermes");
+    assert!(!cwds.contains_key(&boss_key("hermes", "hm-null")));
+    assert!(!cwds.contains_key("ws-legacy-no-prev"));
+    assert_eq!(cwds["ws-legacy-prev"], "/work/claude");
+    assert!(!cwds.contains_key("ws-retired"));
 }
 
 fn titled(kind: &str, key: &str, text: &str) -> String {

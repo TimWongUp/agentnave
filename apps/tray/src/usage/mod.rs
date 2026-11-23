@@ -8,7 +8,7 @@ mod query;
 mod scan;
 #[cfg(test)]
 mod tests;
-mod zcode;
+pub(crate) mod zcode;
 
 use crate::{data::Reader, response::Response};
 use serde_json::{Value, json};

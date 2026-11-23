@@ -5,7 +5,7 @@ mod assets;
 mod orphaned;
 mod request;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -55,7 +55,10 @@ type RouteKey = (
     Vec<(String, &'static str)>,
     (Vec<(String, boss_app::CliTitle)>, BTreeSet<String>),
     Vec<crate::isolated::Dir>,
-    Vec<(String, crate::projects::Project)>,
+    (
+        Vec<(String, String)>,
+        Vec<(String, crate::projects::Project)>,
+    ),
     Vec<crate::stage::WorkspaceLink>,
     (
         Vec<crate::projects::ManualProject>,
@@ -121,6 +124,19 @@ impl Reader {
         }
     }
 
+    pub(super) fn workspace_origins(
+        &self,
+        database: &Result<Option<rusqlite::Connection>, String>,
+        snapshots: &[Snapshot],
+        handovers: &HashMap<String, crate::stage::Handover>,
+    ) -> BTreeMap<String, String> {
+        let boss_cwds = match database {
+            Ok(Some(connection)) => self.boss_apps.cwds(connection, || self.boss_homes()),
+            _ => HashMap::new(),
+        };
+        crate::stage::origin_cwds(snapshots, handovers, &boss_cwds)
+    }
+
     /// Current read-only workspace snapshots for tray-owned usage attribution.
     pub(crate) fn usage_views(
         &self,
@@ -138,7 +154,7 @@ impl Reader {
             .unwrap_or_default()
             .into_iter()
             .collect();
-        let origins = crate::stage::origin_cwds(&snapshots, &handovers);
+        let origins = self.workspace_origins(&database, &snapshots, &handovers);
         let projects = crate::projects::lookup(&origins, false);
         (snapshots, projects)
     }
@@ -312,10 +328,8 @@ impl Reader {
         let renamed = crate::manage::renamed_titles(&self.projects_dir);
         let data_exists = self.root.is_dir();
         let mut dirs = crate::isolated::read(&self.root);
-        let mut projects = crate::projects::lookup(
-            &crate::stage::origin_cwds(&snapshots, &handover_map),
-            complete,
-        );
+        let origins = self.workspace_origins(&database, &snapshots, &handover_map);
+        let mut projects = crate::projects::lookup(&origins, complete);
         let (manual_projects, sidebar) = if path == "/app/chats" {
             (
                 crate::projects::manual::list(&self.projects_dir),
@@ -324,61 +338,79 @@ impl Reader {
         } else {
             (Vec::new(), Default::default())
         };
-        let (sources, stage_ids, key_handovers, key_apps, key_titles, key_links, views) =
-            if let Some(group_id) = crate::stage::requested_group(path) {
-                dirs.retain(|dir| dir.workspace == group_id);
-                projects.retain(|id, _| id == group_id);
-                let rel_links: Vec<_> = links
-                    .iter()
-                    .filter(|l| {
-                        l.source == group_id
-                            || l.target.as_deref() == Some(group_id)
-                            || (l.target.is_none() && l.target_boss == group_id)
-                    })
-                    .cloned()
-                    .collect();
-                let mut watched = HashSet::from([group_id.to_owned()]);
-                for l in &rel_links {
-                    watched.insert(l.source.clone());
-                    if let Some(target) = &l.target {
-                        watched.insert(target.clone());
-                    }
+        let (
+            sources,
+            stage_ids,
+            key_handovers,
+            key_apps,
+            key_titles,
+            key_links,
+            key_origins,
+            views,
+        ) = if let Some(group_id) = crate::stage::requested_group(path) {
+            dirs.retain(|dir| dir.workspace == group_id);
+            projects.retain(|id, _| id == group_id);
+            let rel_links: Vec<_> = links
+                .iter()
+                .filter(|l| {
+                    l.source == group_id
+                        || l.target.as_deref() == Some(group_id)
+                        || (l.target.is_none() && l.target_boss == group_id)
+                })
+                .cloned()
+                .collect();
+            let mut watched = HashSet::from([group_id.to_owned()]);
+            for l in &rel_links {
+                watched.insert(l.source.clone());
+                if let Some(target) = &l.target {
+                    watched.insert(target.clone());
                 }
-                let stage_ids = crate::stage::stage_ids_of(&snapshots, &handover_map);
-                let mut sources = Vec::new();
-                let mut views = Vec::new();
-                for s in &snapshots {
-                    if crate::stage::chat_group(&s.item).is_some_and(|id| watched.contains(&id)) {
-                        sources.push(crate::stage::source_key(s));
-                        views.push(s.view.clone());
-                    }
+            }
+            let stage_ids = crate::stage::stage_ids_of(&snapshots, &handover_map);
+            let mut sources = Vec::new();
+            let mut views = Vec::new();
+            for s in &snapshots {
+                if crate::stage::chat_group(&s.item).is_some_and(|id| watched.contains(&id)) {
+                    sources.push(crate::stage::source_key(s));
+                    views.push(s.view.clone());
                 }
-                let h = handovers
-                    .into_iter()
-                    .filter(|(id, _)| watched.contains(id))
-                    .collect();
-                let a = apps
-                    .into_iter()
-                    .filter(|(id, _)| watched.contains(id))
-                    .collect();
-                let t = titles
-                    .into_iter()
-                    .filter(|(id, _)| watched.contains(id))
-                    .collect();
-                (sources, stage_ids, h, a, t, rel_links, views)
-            } else {
-                let sources = snapshots.iter().map(crate::stage::source_key).collect();
-                let views = snapshots.iter().map(|s| s.view.clone()).collect();
-                (
-                    sources,
-                    Vec::new(),
-                    handovers,
-                    apps,
-                    titles,
-                    links.clone(),
-                    views,
-                )
-            };
+            }
+            let h = handovers
+                .into_iter()
+                .filter(|(id, _)| watched.contains(id))
+                .collect();
+            let a = apps
+                .into_iter()
+                .filter(|(id, _)| watched.contains(id))
+                .collect();
+            let t = titles
+                .into_iter()
+                .filter(|(id, _)| watched.contains(id))
+                .collect();
+            let o = origins
+                .iter()
+                .filter(|(id, _)| watched.contains(*id))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            (sources, stage_ids, h, a, t, rel_links, o, views)
+        } else {
+            let sources = snapshots.iter().map(crate::stage::source_key).collect();
+            let views = snapshots.iter().map(|s| s.view.clone()).collect();
+            let o = origins
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            (
+                sources,
+                Vec::new(),
+                handovers,
+                apps,
+                titles,
+                links.clone(),
+                o,
+                views,
+            )
+        };
         let key = (
             sources,
             stage_ids,
@@ -389,7 +421,7 @@ impl Reader {
             key_apps,
             (key_titles, renamed.clone()),
             dirs.clone(),
-            projects.clone().into_iter().collect(),
+            (key_origins, projects.clone().into_iter().collect()),
             key_links,
             (manual_projects.clone(), sidebar.clone()),
         );
@@ -408,6 +440,7 @@ impl Reader {
             &app_map,
             &crate::stage::Places {
                 dirs: &dirs,
+                origins: &origins,
                 projects: &projects,
                 links: &links,
                 manual_projects: &manual_projects,

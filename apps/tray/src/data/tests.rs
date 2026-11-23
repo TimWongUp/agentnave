@@ -2257,5 +2257,81 @@ fn office_timeline_reports_omitted_and_counts_full_threads() {
     assert_eq!(resolves(&focused), 208);
 }
 
+#[test]
+fn boss_cwd_wins_project_grouping_across_sidebar_and_usage_with_dispatch_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let repo_boss = "/work/agentnave-boss-test";
+    let repo_dispatch = "/work/t3code-dispatch-test";
+
+    let boss_session = "11111111-2222-3333-4444-555555555555";
+    let ws_boss = crate::data::boss_app::boss_key("antigravity", boss_session);
+    let agy_root = root.join(".gemini/antigravity-cli");
+    fs::create_dir_all(&agy_root).unwrap();
+    let agy_conn = rusqlite::Connection::open(agy_root.join("conversation_summaries.db")).unwrap();
+    agy_conn
+        .execute_batch(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, workspace_uris TEXT, last_modified_time TEXT);",
+        )
+        .unwrap();
+    let boss_uri = format!("file://{repo_boss}");
+    agy_conn
+        .execute(
+            "INSERT INTO conversation_summaries VALUES (?1, 'Boss', ?2, '2026-11-23T00:00:00Z')",
+            rusqlite::params![boss_session, json!([boss_uri]).to_string()],
+        )
+        .unwrap();
+    drop(agy_conn);
+
+    // Earliest dispatch worked in t3code (66ms before the agentnave dispatch), while boss started in agentnave.
+    let mut with_boss = task_snapshot("c-boss", "succeeded", "2026-11-23T00:00:01Z");
+    with_boss["summary"]["manager_session"] = json!(ws_boss);
+    with_boss["summary"]["host"] = json!("antigravity");
+    with_boss["director"]["tasks"] = json!([
+        {"id": "t1", "provider": "codebuddy", "model": "m", "cwd": repo_dispatch, "time": "2026-11-23T00:00:00.000Z", "status": "succeeded"},
+        {"id": "t2", "provider": "codex", "model": "m", "cwd": repo_boss, "time": "2026-11-23T00:00:00.066Z", "status": "succeeded"},
+    ]);
+    save(root, &with_boss);
+
+    // A second workspace whose boss record cannot be read falls back to its earliest dispatch (t3code).
+    let ws_fallback = "s-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let mut fallback = task_snapshot("c-fallback", "succeeded", "2026-11-23T00:00:02Z");
+    fallback["summary"]["manager_session"] = json!(ws_fallback);
+    fallback["summary"]["host"] = json!("gemini");
+    fallback["director"]["tasks"] = json!([
+        {"id": "t3", "provider": "codex", "model": "m", "cwd": repo_dispatch, "time": "2026-11-23T00:00:00Z", "status": "succeeded"},
+    ]);
+    save(root, &fallback);
+
+    let conn = crate::db::write(root).unwrap().unwrap();
+    conn.execute(
+        "INSERT INTO workspaces (id, owner, owner_host, owner_file) VALUES (?1, ?1, 'antigravity', ?2), (?3, ?3, 'gemini', NULL)",
+        rusqlite::params![
+            ws_boss,
+            agy_root.join("conversation_summaries.db").to_str().unwrap(),
+            ws_fallback,
+        ],
+    )
+    .unwrap();
+    drop(conn);
+
+    // Warm projects cache synchronously so both sidebar and usage_views observe resolved entries immediately.
+    crate::projects::resolve_all([repo_boss.to_owned(), repo_dispatch.to_owned()]);
+
+    let reader = Reader::new(root.to_path_buf());
+    let chats = state(&reader, "/app/chats");
+    let groups = chats["groups"].as_array().unwrap();
+    let boss_group = groups.iter().find(|g| g["group"] == ws_boss).unwrap();
+    let fallback_group = groups.iter().find(|g| g["group"] == ws_fallback).unwrap();
+    assert_eq!(boss_group["project_label"], "agentnave-boss-test");
+    assert_eq!(boss_group["project"], "agentnave-boss-test");
+    assert_eq!(fallback_group["project_label"], "t3code-dispatch-test");
+    assert_eq!(fallback_group["project"], "t3code-dispatch-test");
+
+    let (_, usage_projects) = reader.usage_views();
+    assert_eq!(usage_projects[&ws_boss].label, "agentnave-boss-test");
+    assert_eq!(usage_projects[ws_fallback].label, "t3code-dispatch-test");
+}
+
 mod cli_updates;
 mod projects;

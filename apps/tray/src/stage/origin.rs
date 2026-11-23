@@ -1,5 +1,6 @@
-//! Where a workspace's work began: the working directory of its earliest surviving dispatch.
-//! It decides the workspace's project and never moves when later calls work elsewhere.
+//! Where a workspace's work began: handover directory for boss-only handovers, else the creating
+//! boss session's own working directory when readable, falling back to its earliest surviving
+//! dispatch. It decides the workspace's project and never moves when later calls work elsewhere.
 
 use super::*;
 
@@ -27,11 +28,13 @@ pub(super) fn snapshot_origin(snapshot: &Snapshot) -> Option<Origin> {
     }
 }
 
-/// The directory each workspace began in; a workspace a boss opened by handing over has the
-/// directory its handover record names.
+/// The directory each workspace belongs to: handover directory for boss-only handovers, else
+/// the boss session's own working directory when readable, falling back to the earliest surviving
+/// dispatch.
 pub(crate) fn origin_cwds(
     snapshots: &[Snapshot],
     handovers: &HashMap<String, Handover>,
+    boss_cwds: &HashMap<String, String>,
 ) -> BTreeMap<String, String> {
     let mut found: BTreeMap<String, Origin> = BTreeMap::new();
     let chats: BTreeSet<String> = snapshots
@@ -50,10 +53,19 @@ pub(crate) fn origin_cwds(
             }
         }
     }
-    let mut cwds: BTreeMap<_, _> = found
-        .into_iter()
-        .map(|(group, origin)| (group, origin.3))
-        .collect();
+    let mut cwds = BTreeMap::new();
+    for group in &chats {
+        let boss = boss_cwds
+            .get(group)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty());
+        if let Some(cwd) = boss {
+            cwds.insert(group.clone(), cwd.to_owned());
+        } else if let Some(origin) = found.get(group) {
+            cwds.insert(group.clone(), origin.3.clone());
+        }
+    }
     for (id, handover) in handovers {
         if let Some(cwd) = handover.cwd.as_deref().filter(|cwd| !cwd.is_empty())
             && handover.title.is_some()
