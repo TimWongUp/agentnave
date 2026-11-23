@@ -75,6 +75,8 @@ pub(crate) struct Inputs {
     /// Ids of the office workspaces that still exist; `None` when the history could not be
     /// read, so that nothing is judged deleted on a failed read.
     pub workspaces: Option<HashSet<String>>,
+    /// Some saved conversation could not be read, so `last_task` may miss a recent task.
+    pub history_unreadable: bool,
 }
 
 /// Everything one pass needs from the outside.
@@ -90,12 +92,13 @@ pub(crate) struct Env<'a> {
 }
 
 impl Env<'_> {
-    /// The newest sign of use: the registry's last update or the last task conversation. An
-    /// unreadable time counts as now, which keeps the directory.
+    /// The newest sign of use: the registry's last update, the last task conversation, or the
+    /// worktree's last commit or checkout (its HEAD reflog), which also covers a derived
+    /// terminal. An unreadable registry time counts as now, which keeps the directory.
     fn last_used(&self, record: &Record) -> i64 {
         let registered = crate::time_format::timestamp(&record.updated_at).unwrap_or(self.now);
         let task = self.inputs.last_task.get(&record.id).copied().unwrap_or(0);
-        registered.max(task)
+        registered.max(task).max(reflog_time(record).unwrap_or(0))
     }
 
     fn busy(&self, record: &Record) -> bool {
@@ -106,6 +109,17 @@ impl Env<'_> {
             .any(|cwd| super::leases::is_same_or_subpath(cwd, path))
             || (self.terminal_busy)(record)
     }
+}
+
+/// When the worktree's HEAD last moved, in microseconds since the epoch.
+fn reflog_time(record: &Record) -> Option<i64> {
+    let git_dir = record.worktree_git_dir.as_deref()?;
+    let modified = std::fs::metadata(Path::new(git_dir).join("logs").join("HEAD"))
+        .ok()?
+        .modified()
+        .ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(since.as_micros()).ok()
 }
 
 /// One pass over the registry. The directories to go are removed or collapsed; every other

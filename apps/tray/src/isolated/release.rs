@@ -151,15 +151,6 @@ pub(super) fn remove_registered_worktree(
     Ok(())
 }
 
-/// How a deletion takes the directory away: an orphan path is removed as a tree; a registered
-/// worktree is removed by git, forced only when the user confirmed the delete.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Removal {
-    Orphan,
-    Forced,
-    Clean,
-}
-
 fn complete_deletion_locked(
     git: &GitRunner,
     store: &WorktreeStore,
@@ -167,19 +158,18 @@ fn complete_deletion_locked(
     main_root: &Path,
     common_dir: &Path,
     expected_oid: &str,
-    removal: Removal,
+    remove_orphan: bool,
 ) -> Result<Option<String>, String> {
     if has_active_leases(common_dir, &record.id)? {
         return Err("存在活跃租约，不能完成删除".to_owned());
     }
     let wt_path = PathBuf::from(&record.worktree_path);
     verify_worktree_container(&wt_path, main_root, &record.id)?;
-    if removal == Removal::Orphan && (wt_path.exists() || is_link(&wt_path)) {
+    if remove_orphan && (wt_path.exists() || is_link(&wt_path)) {
         remove_tree(&wt_path, &main_root.join(WORKTREES_DIR_NAME))?;
         git.run(main_root, &["worktree", "prune"], &[0], &[])?;
     } else {
-        let force = removal != Removal::Clean;
-        remove_registered_worktree(git, record, main_root, expected_oid, force)?;
+        remove_registered_worktree(git, record, main_root, expected_oid, true)?;
     }
     store.update_phase(&record.id, "removing_branch", &now_iso())?;
     let note = remove_managed_branch(git, record, main_root, expected_oid)?;
@@ -208,6 +198,39 @@ pub(super) fn collapse_locked(
         return Err("隔离目录状态已变化，登记未能改为已收起".to_owned());
     }
     Ok(())
+}
+
+/// Remove a verified, clean directory together with its managed branch and registry row, for
+/// the automatic cleanup. The worktree goes first without force, as in a collapse, so a source
+/// file written after the last check makes git refuse and the directory stays `ready`; only
+/// then is the collapsed row deleted with its branch.
+pub(super) fn remove_whole_locked(
+    git: &GitRunner,
+    store: &WorktreeStore,
+    record: &Record,
+    main_root: &Path,
+    common_dir: &Path,
+    head_oid: &str,
+) -> Result<(), String> {
+    collapse_locked(git, store, record, main_root, common_dir, head_oid)?;
+    let attention = |detail: &str| {
+        let _ = store.mark_attention(&record.id, "deleting", "delete_failed", detail, &now_iso());
+        detail.to_owned()
+    };
+    match store.mark_deleting(
+        &record.id,
+        "removing_worktree",
+        head_oid,
+        &now_iso(),
+        "collapsed",
+    ) {
+        Ok(true) => {}
+        Ok(false) => return Err("隔离目录状态已变化，已收起但未删除分支".to_owned()),
+        Err(e) => return Err(e),
+    }
+    complete_deletion_locked(git, store, record, main_root, common_dir, head_oid, false)
+        .map(|_| ())
+        .map_err(|e| attention(&e))
 }
 
 fn verify_rollback_worktree(
@@ -519,15 +542,13 @@ fn attach_merged_pr(
 }
 
 /// Mark a verified directory as deleting and finish the deletion; the caller holds the
-/// repository lock and has checked `snap` against the user's or the cleanup's decision. Only
-/// the user's confirmed delete forces the worktree removal.
-pub(super) fn delete_snapshot_locked(
+/// repository lock and has checked `snap` against the user's confirmation.
+fn delete_snapshot_locked(
     git: &GitRunner,
     store: &WorktreeStore,
     record: &Record,
     repo_dirs: Option<(PathBuf, PathBuf)>,
     snap: &super::inspect::Snapshot,
-    force: bool,
 ) -> Value {
     let Some((main_root, common_dir)) = repo_dirs else {
         return outcome(&record.id, "blocked", "缺少仓库上下文");
@@ -561,11 +582,7 @@ pub(super) fn delete_snapshot_locked(
         &main_root,
         &common_dir,
         &delete_oid,
-        match (snap.orphan, force) {
-            (true, _) => Removal::Orphan,
-            (false, true) => Removal::Forced,
-            (false, false) => Removal::Clean,
-        },
+        snap.orphan,
     ) {
         Ok(note) => json!({
             "id": record.id,
@@ -636,6 +653,6 @@ pub(crate) fn delete(
                 Err(e) => return outcome(&record.id, "blocked", &e),
             }
         }
-        delete_snapshot_locked(git, store, record, repo_dirs, &snap, true)
+        delete_snapshot_locked(git, store, record, repo_dirs, &snap)
     })
 }

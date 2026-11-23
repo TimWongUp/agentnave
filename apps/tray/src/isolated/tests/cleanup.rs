@@ -19,6 +19,8 @@ struct Pass {
     inputs: Inputs,
     terminal_busy: bool,
     gh: GhClient,
+    /// When the worktree's HEAD reflog last changed; the registry time unless a test says.
+    reflog_at: Option<i64>,
 }
 
 impl Pass {
@@ -30,6 +32,7 @@ impl Pass {
             inputs: Inputs::default(),
             terminal_busy: false,
             gh: GhClient::system(),
+            reflog_at: None,
         }
     }
 
@@ -39,6 +42,27 @@ impl Pass {
     }
 
     fn run(&self, fx: &RepoFixture) -> Report {
+        // Commits made by the test touch the reflog at wall-clock time; pin it to the fake clock.
+        let at = self
+            .reflog_at
+            .unwrap_or_else(|| crate::time_format::timestamp(UPDATED).unwrap());
+        let reflog = fx.wt_path.exists().then(|| {
+            let git_dir = git_cmd(
+                &fx.wt_path,
+                &["rev-parse", "--path-format=absolute", "--git-dir"],
+            );
+            std::path::Path::new(&git_dir).join("logs").join("HEAD")
+        });
+        if let Some(reflog) = reflog.filter(|path| path.exists()) {
+            let when = std::time::UNIX_EPOCH
+                + std::time::Duration::from_micros(u64::try_from(at).unwrap());
+            fs::File::options()
+                .write(true)
+                .open(&reflog)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+        }
         let busy = |_: &store::Record| self.terminal_busy;
         let env = Env {
             root: &fx.root,
@@ -514,4 +538,55 @@ exit 1
         pass.gh = GhClient::with_program(fx.root.join("no-gh"));
         assert_eq!(verdict(&pass.run(&fx), &fx.id), kept("no_match"));
     }
+}
+
+#[test]
+fn a_recent_commit_in_the_worktree_postpones_idle_cleanup() {
+    let fx = setup_worktree_fixture("wt-0123456789ab");
+    commit_file(&fx, "feature.txt");
+    let mut pass = Pass::new(idle(14)).after_days(30);
+    // A derived terminal committed a minute ago; neither the registry nor a task shows it.
+    pass.reflog_at = Some(pass.now - MINUTE);
+    assert_eq!(verdict(&pass.run(&fx), &fx.id), kept("recent"));
+    pass.reflog_at = Some(pass.now - 20 * DAY);
+    assert_eq!(
+        verdict(&pass.run(&fx), &fx.id),
+        ("collapsed".into(), "idle".into())
+    );
+}
+
+#[test]
+fn an_incompletely_read_history_never_counts_as_idle() {
+    let fx = setup_worktree_fixture("wt-0123456789ab");
+    commit_file(&fx, "feature.txt");
+    let mut pass = Pass::new(idle(14)).after_days(30);
+    pass.inputs.history_unreadable = true;
+    assert_eq!(verdict(&pass.run(&fx), &fx.id), kept("no_match"));
+    assert!(fx.wt_path.exists());
+}
+
+#[test]
+fn a_source_file_written_after_the_check_keeps_the_directory_ready() {
+    let fx = setup_worktree_fixture("wt-0123456789ab");
+    let head = git_cmd(&fx.wt_path, &["rev-parse", "HEAD"]);
+    // Appears between the locked inspection and the removal.
+    fs::write(fx.wt_path.join("late.rs"), "fn main() {}\n").unwrap();
+    let git = crate::isolated::git::GitRunner::new().unwrap();
+    let store = store::WorktreeStore::new(&fx.root);
+    let record = store.get(&fx.id).unwrap().unwrap();
+    let removed = crate::isolated::release::remove_whole_locked(
+        &git,
+        &store,
+        &record,
+        &fx.main_root,
+        &fx.common_dir,
+        &head,
+    );
+    assert!(
+        removed.as_ref().unwrap_err().contains("untracked files"),
+        "{removed:?}"
+    );
+    assert!(fx.wt_path.join("late.rs").exists());
+    assert!(branch_exists(&fx));
+    assert_eq!(store.get(&fx.id).unwrap().unwrap().state, "ready");
 }

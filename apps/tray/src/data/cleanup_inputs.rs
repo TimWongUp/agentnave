@@ -46,6 +46,7 @@ impl Reader {
                 }
             }
         }
+        let history_unreadable = overview.scan_error.is_some() || !overview.unreadable.is_empty();
         let workspaces = match &database {
             Ok(Some(connection)) if overview.scan_error.is_none() => {
                 existing_workspaces(connection)
@@ -56,6 +57,7 @@ impl Reader {
             running,
             last_task,
             workspaces,
+            history_unreadable,
         }
     }
 }

@@ -9,7 +9,7 @@ use super::{DAY_MICROS, Env, GRACE_MICROS, Record};
 use crate::git_pr::git::{count_commits_ahead, resolve_default_branch, resolve_remote_name};
 use crate::isolated::git::GitRunner;
 use crate::isolated::inspect::inspect_record;
-use crate::isolated::release::{collapse_locked, delete_snapshot_locked, with_locked_record};
+use crate::isolated::release::{collapse_locked, remove_whole_locked, with_locked_record};
 use crate::isolated::store::WorktreeStore;
 
 /// A merged PR found before the lock is taken (the GitHub call can be slow); it only counts
@@ -22,7 +22,6 @@ struct PrHit {
 /// What the cheap checks outside the lock found.
 struct Facts {
     pr: Option<PrHit>,
-    idle: bool,
     workspace_deleted: bool,
 }
 
@@ -41,9 +40,8 @@ pub(super) fn clean_one(env: &Env, record: &Record) -> Option<Entry> {
     if env.busy(record) {
         return kept(Keep::Busy);
     }
-    let idle_for = env.now - env.last_used(record);
-    if idle_for < GRACE_MICROS {
-        return kept(Keep::Recent);
+    if let Some(why) = in_use(env, record) {
+        return kept(why);
     }
     let facts = Facts {
         pr: if env.rules.merged {
@@ -51,10 +49,6 @@ pub(super) fn clean_one(env: &Env, record: &Record) -> Option<Entry> {
         } else {
             None
         },
-        idle: env
-            .rules
-            .idle_days
-            .is_some_and(|days| idle_for >= i64::from(days) * DAY_MICROS),
         workspace_deleted: env.rules.workspace_deleted
             && env
                 .inputs
@@ -62,7 +56,8 @@ pub(super) fn clean_one(env: &Env, record: &Record) -> Option<Entry> {
                 .as_ref()
                 .is_some_and(|known| !known.contains(&record.workspace_id)),
     };
-    if !env.rules.unchanged && facts.pr.is_none() && !facts.idle && !facts.workspace_deleted {
+    if !env.rules.unchanged && facts.pr.is_none() && !idle(env, record) && !facts.workspace_deleted
+    {
         return kept(Keep::NoMatch);
     }
     let mut decided = None;
@@ -79,6 +74,25 @@ pub(super) fn clean_one(env: &Env, record: &Record) -> Option<Entry> {
         Some((outcome, detail)) => Some(Entry::new(record, outcome, detail)),
         None => early_exit(record, &early),
     }
+}
+
+/// A running task, an open terminal or a CLI there, or use within the grace period. Checked
+/// before the slow `gh` call and again under the lock, since a terminal can open meanwhile.
+fn in_use(env: &Env, record: &Record) -> Option<Keep> {
+    if env.busy(record) {
+        return Some(Keep::Busy);
+    }
+    (env.now - env.last_used(record) < GRACE_MICROS).then_some(Keep::Recent)
+}
+
+/// Unused for the chosen number of days. A history that could not be read in full may hide a
+/// recent task, so it never counts as idle.
+fn idle(env: &Env, record: &Record) -> bool {
+    !env.inputs.history_unreadable
+        && env
+            .rules
+            .idle_days
+            .is_some_and(|days| env.now - env.last_used(record) >= i64::from(days) * DAY_MICROS)
 }
 
 /// The lock could not be taken or the directory is leased: with_locked_record answered itself.
@@ -101,6 +115,9 @@ fn decide_locked(
 ) -> Decision {
     if record.state != "ready" {
         return keep(Keep::NotReady);
+    }
+    if let Some(why) = in_use(env, record) {
+        return keep(why);
     }
     let (repo_dirs, snap) = match inspect_record(git, store, record, &record.workspace_id) {
         Ok(found) => found,
@@ -131,7 +148,7 @@ fn decide_locked(
         (Rule::Merged, true)
     } else if integrated {
         (Rule::Unchanged, true)
-    } else if facts.idle {
+    } else if idle(env, record) {
         (Rule::Idle, false)
     } else if facts.workspace_deleted {
         (Rule::WorkspaceDeleted, false)
@@ -141,18 +158,14 @@ fn decide_locked(
         return keep(Keep::NoMatch);
     };
     let detail = merged.map(|hit| format!("#{}", hit.number));
-    if whole {
-        let result = delete_snapshot_locked(git, store, record, repo_dirs, &snap, false);
-        return if result["status"] == "deleted" {
-            (Outcome::Removed(rule), detail)
-        } else {
-            failed(rule, &result["message"])
-        };
-    }
-    match collapse_locked(git, store, record, &main_root, &common_dir, &snap.head_oid) {
-        Ok(()) => (Outcome::Collapsed(rule), None),
-        Err(error) => failed(rule, &Value::String(error)),
-    }
+    let done = if whole {
+        remove_whole_locked(git, store, record, &main_root, &common_dir, &snap.head_oid)
+            .map(|()| (Outcome::Removed(rule), detail))
+    } else {
+        collapse_locked(git, store, record, &main_root, &common_dir, &snap.head_oid)
+            .map(|()| (Outcome::Collapsed(rule), None))
+    };
+    done.unwrap_or_else(|error| failed(rule, &Value::String(error)))
 }
 
 fn failed(rule: Rule, message: &Value) -> Decision {

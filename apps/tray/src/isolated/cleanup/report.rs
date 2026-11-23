@@ -164,7 +164,7 @@ pub(super) fn remember(report: &Report) {
     for entry in report
         .entries
         .iter()
-        .filter(|entry| !matches!(entry.outcome, Outcome::Kept(_)))
+        .filter(|entry| matches!(entry.outcome, Outcome::Removed(_) | Outcome::Collapsed(_)))
     {
         recent.push_front((report.at, entry.clone()));
     }
