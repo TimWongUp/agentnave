@@ -257,7 +257,7 @@ async def test_terminate_process_tree_waits_grace_and_sigkills_sigterm_ignoring_
         else:
             pytest.fail(f"grandchild {grandchild_pid} survived SIGKILL")
     finally:
-        if grandchild_pid is not None:
+        if grandchild_pid is not None and sys.platform != "win32":
             with suppress(ProcessLookupError):
                 os.kill(grandchild_pid, signal.SIGKILL)
         await processes.terminate_process_tree(
