@@ -126,6 +126,9 @@ impl GitRunner {
             "diff.ignoreSubmodules=all",
             "log.showSignature=false",
             "status.submoduleSummary=false",
+            // `git worktree remove` checks for untracked files through `status`; a user's
+            // `showUntrackedFiles=no` would let it delete files written after our own check.
+            "status.showUntrackedFiles=normal",
             "submodule.recurse=false",
         ] {
             cmd.args(["-c", item]);

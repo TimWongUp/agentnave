@@ -204,6 +204,10 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/storage-settings.js").to_vec(),
         ),
+        "isolated-cleanup-settings.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/isolated-cleanup-settings.js").to_vec(),
+        ),
         "general-settings.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/general-settings.js").to_vec(),
@@ -298,6 +302,10 @@ fn chat_asset(resource: &str) -> Response {
         "chat-git-ops.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/chat-git-ops.js").to_vec(),
+        ),
+        "chat-isolated-cleanup.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/chat-isolated-cleanup.js").to_vec(),
         ),
         "chat-git.js" => Response::ok(
             "text/javascript; charset=utf-8",

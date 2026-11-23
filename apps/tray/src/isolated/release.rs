@@ -94,6 +94,63 @@ fn remove_managed_branch(
     Ok(None)
 }
 
+/// Remove the registered git worktree of `record` after checking it still sits on the managed
+/// branch at `expected_oid`; a path that is no worktree is never deleted recursively. Without
+/// `force` git refuses when source files appeared after the last check (ADR-0092); ignored
+/// files go either way.
+pub(super) fn remove_registered_worktree(
+    git: &GitRunner,
+    record: &Record,
+    main_root: &Path,
+    expected_oid: &str,
+    force: bool,
+) -> Result<(), String> {
+    let wt_path = PathBuf::from(&record.worktree_path);
+    if !wt_path.exists() && !is_link(&wt_path) {
+        git.run(main_root, &["worktree", "prune"], &[0], &[])?;
+    }
+    let worktrees = parse_worktrees(
+        &git.run(
+            main_root,
+            &["worktree", "list", "--porcelain", "-z"],
+            &[0],
+            &[],
+        )?
+        .stdout,
+    );
+    let matches: Vec<_> = worktrees
+        .iter()
+        .filter(|w| {
+            (w.path.exists() && wt_path.exists() && same_dir(&w.path, &wt_path))
+                || fs::canonicalize(&w.path).ok() == fs::canonicalize(&wt_path).ok()
+                    && fs::canonicalize(&wt_path).is_ok()
+        })
+        .collect();
+    if let Some(entry) = matches.first() {
+        if entry.branch_ref.as_deref() != Some(record.branch_ref.as_str())
+            || entry.head_oid.as_deref() != Some(expected_oid)
+        {
+            return Err("删除过程中 worktree 的分支或 HEAD 发生变化".to_owned());
+        }
+        if is_link(&wt_path) || is_link(&main_root.join(WORKTREES_DIR_NAME)) {
+            return Err(format!("删除前发现不安全链接：{}", wt_path.display()));
+        }
+        let wt_str = wt_path.to_string_lossy();
+        let mut args = vec!["worktree", "remove"];
+        if force {
+            args.push("--force");
+        }
+        args.extend(["--", wt_str.as_ref()]);
+        git.run(main_root, &args, &[0], &[])?;
+    } else if wt_path.exists() || is_link(&wt_path) {
+        return Err(format!(
+            "路径 {} 仍存在但未在 Git worktree 中登记，拒绝递归删除",
+            wt_path.display()
+        ));
+    }
+    Ok(())
+}
+
 fn complete_deletion_locked(
     git: &GitRunner,
     store: &WorktreeStore,
@@ -112,54 +169,68 @@ fn complete_deletion_locked(
         remove_tree(&wt_path, &main_root.join(WORKTREES_DIR_NAME))?;
         git.run(main_root, &["worktree", "prune"], &[0], &[])?;
     } else {
-        if !wt_path.exists() && !is_link(&wt_path) {
-            git.run(main_root, &["worktree", "prune"], &[0], &[])?;
-        }
-        let worktrees = parse_worktrees(
-            &git.run(
-                main_root,
-                &["worktree", "list", "--porcelain", "-z"],
-                &[0],
-                &[],
-            )?
-            .stdout,
-        );
-        let matches: Vec<_> = worktrees
-            .iter()
-            .filter(|w| {
-                (w.path.exists() && wt_path.exists() && same_dir(&w.path, &wt_path))
-                    || fs::canonicalize(&w.path).ok() == fs::canonicalize(&wt_path).ok()
-                        && fs::canonicalize(&wt_path).is_ok()
-            })
-            .collect();
-        if let Some(entry) = matches.first() {
-            if entry.branch_ref.as_deref() != Some(record.branch_ref.as_str())
-                || entry.head_oid.as_deref() != Some(expected_oid)
-            {
-                return Err("删除过程中 worktree 的分支或 HEAD 发生变化".to_owned());
-            }
-            if is_link(&wt_path) || is_link(&main_root.join(WORKTREES_DIR_NAME)) {
-                return Err(format!("删除前发现不安全链接：{}", wt_path.display()));
-            }
-            let wt_str = wt_path.to_string_lossy();
-            git.run(
-                main_root,
-                &["worktree", "remove", "--force", "--", wt_str.as_ref()],
-                &[0],
-                &[],
-            )?;
-        } else if wt_path.exists() || is_link(&wt_path) {
-            return Err(format!(
-                "路径 {} 仍存在但未在 Git worktree 中登记，拒绝递归删除",
-                wt_path.display()
-            ));
-        }
+        remove_registered_worktree(git, record, main_root, expected_oid, true)?;
     }
     store.update_phase(&record.id, "removing_branch", &now_iso())?;
     let note = remove_managed_branch(git, record, main_root, expected_oid)?;
     store.delete(&record.id, "deleting")?;
     remove_lease_dir_locked(common_dir, &record.id)?;
     Ok(note)
+}
+
+/// Take the worktree of a ready directory away and keep its managed branch and registry row
+/// as `collapsed`; the service rebuilds it in place on resume (ADR-0115). Runs under the
+/// repository lock after the caller verified the directory is clean and `snap` is current.
+pub(super) fn collapse_locked(
+    git: &GitRunner,
+    store: &WorktreeStore,
+    record: &Record,
+    main_root: &Path,
+    common_dir: &Path,
+    expected_oid: &str,
+) -> Result<(), String> {
+    if has_active_leases(common_dir, &record.id)? {
+        return Err("存在活跃租约，不能收起".to_owned());
+    }
+    verify_worktree_container(&PathBuf::from(&record.worktree_path), main_root, &record.id)?;
+    remove_registered_worktree(git, record, main_root, expected_oid, false)?;
+    if !store.mark_collapsed(&record.id, &now_iso())? {
+        return Err("隔离目录状态已变化，登记未能改为已收起".to_owned());
+    }
+    Ok(())
+}
+
+/// Remove a verified, clean directory together with its managed branch and registry row, for
+/// the automatic cleanup. The worktree goes first without force, as in a collapse, so a source
+/// file written after the last check makes git refuse and the directory stays `ready`; only
+/// then is the collapsed row deleted with its branch.
+pub(super) fn remove_whole_locked(
+    git: &GitRunner,
+    store: &WorktreeStore,
+    record: &Record,
+    main_root: &Path,
+    common_dir: &Path,
+    head_oid: &str,
+) -> Result<(), String> {
+    collapse_locked(git, store, record, main_root, common_dir, head_oid)?;
+    let attention = |detail: &str| {
+        let _ = store.mark_attention(&record.id, "deleting", "delete_failed", detail, &now_iso());
+        detail.to_owned()
+    };
+    match store.mark_deleting(
+        &record.id,
+        "removing_worktree",
+        head_oid,
+        &now_iso(),
+        "collapsed",
+    ) {
+        Ok(true) => {}
+        Ok(false) => return Err("隔离目录状态已变化，已收起但未删除分支".to_owned()),
+        Err(e) => return Err(e),
+    }
+    complete_deletion_locked(git, store, record, main_root, common_dir, head_oid, false)
+        .map(|_| ())
+        .map_err(|e| attention(&e))
 }
 
 fn verify_rollback_worktree(
@@ -371,7 +442,7 @@ fn rollback_creating_locked(git: &GitRunner, store: &WorktreeStore, record: &Rec
     }
 }
 
-fn with_locked_record(
+pub(super) fn with_locked_record(
     root: &Path,
     isolation_id: &str,
     workspace_id: &str,
@@ -470,6 +541,63 @@ fn attach_merged_pr(
     .map(|summary| json!(summary));
 }
 
+/// Mark a verified directory as deleting and finish the deletion; the caller holds the
+/// repository lock and has checked `snap` against the user's confirmation.
+fn delete_snapshot_locked(
+    git: &GitRunner,
+    store: &WorktreeStore,
+    record: &Record,
+    repo_dirs: Option<(PathBuf, PathBuf)>,
+    snap: &super::inspect::Snapshot,
+) -> Value {
+    let Some((main_root, common_dir)) = repo_dirs else {
+        return outcome(&record.id, "blocked", "缺少仓库上下文");
+    };
+    let delete_oid = if snap.orphan {
+        record
+            .delete_oid
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or((!snap.branch_oid.is_empty()).then_some(snap.branch_oid.as_str()))
+            .unwrap_or(&record.base_oid)
+            .to_owned()
+    } else {
+        snap.branch_oid.clone()
+    };
+    match store.mark_deleting(
+        &record.id,
+        "removing_worktree",
+        &delete_oid,
+        &now_iso(),
+        &record.state,
+    ) {
+        Ok(true) => {}
+        Ok(false) => return outcome(&record.id, "blocked", "隔离目录状态已变化，请重试"),
+        Err(e) => return outcome(&record.id, "blocked", &e),
+    }
+    match complete_deletion_locked(
+        git,
+        store,
+        record,
+        &main_root,
+        &common_dir,
+        &delete_oid,
+        snap.orphan,
+    ) {
+        Ok(note) => json!({
+            "id": record.id,
+            "status": "deleted",
+            "reason": note,
+            "message": note.unwrap_or_else(|| "已删除隔离目录".to_owned()),
+        }),
+        Err(detail) => {
+            let _ =
+                store.mark_attention(&record.id, "deleting", "delete_failed", &detail, &now_iso());
+            outcome(&record.id, "needs_attention", &detail)
+        }
+    }
+}
+
 /// Delete an isolated directory after verifying the confirmation digest under `repo_lock`.
 pub(crate) fn delete(
     root: &Path,
@@ -525,56 +653,6 @@ pub(crate) fn delete(
                 Err(e) => return outcome(&record.id, "blocked", &e),
             }
         }
-        let Some((main_root, common_dir)) = repo_dirs else {
-            return outcome(&record.id, "blocked", "缺少仓库上下文");
-        };
-        let delete_oid = if snap.orphan {
-            record
-                .delete_oid
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .or((!snap.branch_oid.is_empty()).then_some(snap.branch_oid.as_str()))
-                .unwrap_or(&record.base_oid)
-                .to_owned()
-        } else {
-            snap.branch_oid.clone()
-        };
-        match store.mark_deleting(
-            &record.id,
-            "removing_worktree",
-            &delete_oid,
-            &now_iso(),
-            &record.state,
-        ) {
-            Ok(true) => {}
-            Ok(false) => return outcome(&record.id, "blocked", "隔离目录状态已变化，请重试"),
-            Err(e) => return outcome(&record.id, "blocked", &e),
-        }
-        match complete_deletion_locked(
-            git,
-            store,
-            record,
-            &main_root,
-            &common_dir,
-            &delete_oid,
-            snap.orphan,
-        ) {
-            Ok(note) => json!({
-                "id": record.id,
-                "status": "deleted",
-                "reason": note,
-                "message": note.unwrap_or_else(|| "已删除隔离目录".to_owned()),
-            }),
-            Err(detail) => {
-                let _ = store.mark_attention(
-                    &record.id,
-                    "deleting",
-                    "delete_failed",
-                    &detail,
-                    &now_iso(),
-                );
-                outcome(&record.id, "needs_attention", &detail)
-            }
-        }
+        delete_snapshot_locked(git, store, record, repo_dirs, &snap)
     })
 }

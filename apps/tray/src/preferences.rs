@@ -9,6 +9,7 @@ use serde_json::{Map, Value, json};
 
 pub mod autostart;
 pub mod general;
+mod isolated_cleanup;
 mod keep_awake;
 pub mod runtime;
 
@@ -56,6 +57,7 @@ fn validate_field(section: &str, field: &str, value: &Value) -> Result<(), Strin
         "general" => general::validate(field, value),
         "alerts" => alerts::validate(field, value),
         "onboarding" => onboarding::validate(field, value),
+        "isolated_cleanup" => isolated_cleanup::validate(field, value),
         "updates" => updates(field, value),
         _ => Err(format!("未知的设置分区：{section}")),
     }

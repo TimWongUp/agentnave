@@ -332,8 +332,9 @@ function updateItem(rec, g, flat = false) {
     rec.meta.hidden = !handover && !blocked;
     setText(rec.meta, handover ? `${handoverWord(g)}${place}` : blocked ? L("等待确认", "Needs attention") : "");
   }
-  rec.bottom.hidden = rec.iso.hidden = !g.isolated_count;
-  setText(rec.iso, isolatedCount(g.isolated_count));
+  const cleaned = typeof ChatIsolatedCleanup !== "undefined" ? ChatIsolatedCleanup.doneCount(g.group) : 0;
+  rec.bottom.hidden = rec.iso.hidden = !g.isolated_count && !cleaned;
+  setText(rec.iso, g.isolated_count ? isolatedCount(g.isolated_count) : L(`已清理 ${cleaned} 个隔离目录`, `${cleaned} isolated dirs cleaned`));
   ChatTerminal.decorate(rec, g);
   if (typeof ChatGit !== "undefined") ChatGit.decorateItem?.(rec, g);
 }

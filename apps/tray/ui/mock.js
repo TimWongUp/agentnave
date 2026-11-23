@@ -822,7 +822,29 @@ All checks passed!
     { id: "wt-3f9a1c2b4d5e", path: "/work/app/.agentnave-worktrees/wt-3f9a1c2b4d5e", branch: "agentnave/fix-login", status: "using", created: new Date(Date.now() - 40 * 60000).toISOString() },
     { id: "wt-7b2e9d1a0c44", path: "/work/app/.agentnave-worktrees/wt-7b2e9d1a0c44", branch: "agentnave/docs-refresh", status: "idle", created: new Date(Date.now() - 3 * 3600000).toISOString() },
     { id: "wt-0c8d4e6f1a22", path: "/work/app/.agentnave-worktrees/wt-0c8d4e6f1a22", branch: "agentnave/old-experiment", status: "unfinished", created: new Date(Date.now() - 26 * 3600000).toISOString() },
+    { id: "wt-5a6b7c8d9e0f", path: "/work/app/.agentnave-worktrees/wt-5a6b7c8d9e0f", branch: "agentnave/payments-spike", status: "collapsed", created: new Date(Date.now() - 9 * 86400000).toISOString() },
   ];
+  // What the automatic cleanup did, as the tray reports it: one earlier pass and, after "clean now", a second.
+  let mockCleanupRan = false;
+  function mockCleanup() {
+    const ago = (minutes) => new Date(Date.now() - minutes * 60000).toISOString();
+    const workspace = world().groups[0].group;
+    const kept = (id, branch, reason) => ({ id, workspace, branch, outcome: "kept", rule: null, reason, detail: null });
+    const collapsed = { id: "wt-5a6b7c8d9e0f", workspace, branch: "agentnave/payments-spike", outcome: "collapsed", rule: "idle", reason: null, detail: null };
+    const recent = [
+      { ...collapsed, at: ago(mockCleanupRan ? 0 : 42) },
+      { id: "wt-1d2e3f4a5b6c", workspace, branch: "agentnave/auth-cleanup", outcome: "removed", rule: "merged", reason: null, detail: "#214", at: ago(mockCleanupRan ? 0 : 42) },
+      { id: "wt-8e9f0a1b2c3d", workspace, branch: "agentnave/typo-fix", outcome: "removed", rule: "unchanged", reason: null, detail: null, at: ago(190) },
+    ];
+    return {
+      running: false,
+      report: {
+        at: ago(mockCleanupRan ? 0 : 42), trigger: mockCleanupRan ? "manual" : "auto", error: null,
+        entries: [kept("wt-3f9a1c2b4d5e", "agentnave/fix-login", "busy"), kept("wt-7b2e9d1a0c44", "agentnave/docs-refresh", "dirty"), kept("wt-0c8d4e6f1a22", "agentnave/old-experiment", "not_ready"), recent[0], recent[1]],
+      },
+      recent,
+    };
+  }
   const isolatedOf = (g, w) => {
     if (!q.has("isolated") || g.group !== w.groups[0].group) return [];
     const first = g.convs.find((c) => c.mode === "task")?.specs[0];
@@ -1217,6 +1239,8 @@ All checks passed!
   async function p3Fetch(path) {
     if (path === "/app/projects") return { projects: structuredClone(mockProjects) };
     if (path === "/app/git-pr/state") return mockGitPr();
+    if (path === "/app/isolated/cleanup" && q.has("isolated")) return mockCleanup();
+    if (path === "/app/isolated/cleanup") return { running: false, report: null, recent: [] };
     if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
     if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider, accounts: provider === "claude" ? mockAccounts.map(({ id, label }) => ({ id, label })) : [] })) };
     if (path === "/app/accounts") return { accounts: structuredClone(mockAccounts), error: null };
@@ -1337,6 +1361,10 @@ All checks passed!
         unique_commits: Boolean(iso?.git?.ahead_of_default), unmerged_commits: ["abc1234 feat: update"], unmerged_total: iso?.git?.ahead_of_default || 0,
         merged_pr: iso?.merged_pr || null,
       };
+    }
+    if (path === "/app/isolated/cleanup/run") {
+      mockCleanupRan = true;
+      return mockCleanup();
     }
     if (path === "/app/isolated/delete") return { status: "deleted", id: body.id, message: "已删除隔离目录" };
     if (path.startsWith("/app/projects/")) return projectPost(path, body);
