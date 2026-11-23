@@ -496,6 +496,7 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
     // The page's own top bar is the title bar: the window buttons sit in it and follow its theme.
     #[cfg(target_os = "macos")]
     let builder = builder
+        .accept_first_mouse(true)
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true)
         .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
@@ -557,6 +558,50 @@ fn build_main(app: &AppHandle, label: &str, target: Url, show: bool) {
         if show {
             let _ = window.set_focus();
         }
+    }
+}
+
+/// Disables macOS automatic smart quotes, dashes, text replacement, autocorrect, and spellcheck
+/// for this process's WKWebView text inputs without writing any plist to disk.
+#[cfg(target_os = "macos")]
+pub(crate) fn disable_smart_text_substitutions() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSString;
+
+    const KEYS: [&str; 10] = [
+        "NSAutomaticQuoteSubstitutionEnabled",
+        "NSAutomaticDashSubstitutionEnabled",
+        "NSAutomaticTextReplacementEnabled",
+        "NSAutomaticSpellingCorrectionEnabled",
+        "NSAutomaticPeriodSubstitutionEnabled",
+        "WebAutomaticQuoteSubstitutionEnabled",
+        "WebAutomaticDashSubstitutionEnabled",
+        "WebAutomaticTextReplacementEnabled",
+        "WebAutomaticSpellingCorrectionEnabled",
+        "WebContinuousSpellCheckingEnabled",
+    ];
+
+    // SAFETY: runs on startup before WKWebView creation; `NSArgumentDomain` is an in-memory
+    // volatile domain with higher priority than `NSGlobalDomain`, overriding system smart quotes.
+    unsafe {
+        let defaults: *mut AnyObject = msg_send![class!(NSUserDefaults), standardUserDefaults];
+        if defaults.is_null() {
+            return;
+        }
+        let domain_name = NSString::from_str("NSArgumentDomain");
+        let existing: *mut AnyObject = msg_send![defaults, volatileDomainForName: &*domain_name];
+        let dict: *mut AnyObject = if existing.is_null() {
+            msg_send![class!(NSMutableDictionary), dictionary]
+        } else {
+            msg_send![class!(NSMutableDictionary), dictionaryWithDictionary: existing]
+        };
+        let no: *mut AnyObject = msg_send![class!(NSNumber), numberWithBool: false];
+        for key in KEYS {
+            let ns_key = NSString::from_str(key);
+            let _: () = msg_send![dict, setObject: no, forKey: &*ns_key];
+        }
+        let _: () = msg_send![defaults, setVolatileDomain: dict, forName: &*domain_name];
     }
 }
 
@@ -646,5 +691,29 @@ mod tests {
         );
         assert_eq!(x, 1920.0 - PANEL_SIZE.0 - 6.0);
         assert_eq!(y, -1042.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn disable_smart_text_substitutions_overrides_macos_defaults() {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        use objc2_foundation::NSString;
+
+        disable_smart_text_substitutions();
+        unsafe {
+            let defaults: *mut AnyObject = msg_send![class!(NSUserDefaults), standardUserDefaults];
+            assert!(!defaults.is_null());
+            for key in [
+                "NSAutomaticQuoteSubstitutionEnabled",
+                "WebAutomaticQuoteSubstitutionEnabled",
+                "NSAutomaticDashSubstitutionEnabled",
+                "WebAutomaticSpellingCorrectionEnabled",
+            ] {
+                let ns_key = NSString::from_str(key);
+                let enabled: bool = msg_send![defaults, boolForKey: &*ns_key];
+                assert!(!enabled, "{key} should be disabled");
+            }
+        }
     }
 }

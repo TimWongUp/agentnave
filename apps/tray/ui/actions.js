@@ -109,7 +109,7 @@ const Actions = {};
   // One modal at a time: a title, a body, and buttons; resolves with the button's value.
   function ask({ title, body = [], buttons, input }) {
     return new Promise((resolve) => {
-      const field = input && h("input.act-input", { type: "text", value: input.value, placeholder: input.placeholder || null, "aria-label": input.label });
+      const field = input && h("input.act-input", { type: "text", value: input.value, placeholder: input.placeholder || null, "aria-label": input.label, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off" });
       const error = h("p.act-error", { role: "alert", hidden: true });
       let focusButton = null;
       const row = h("div.act-buttons", {}, buttons.map((b) => {
