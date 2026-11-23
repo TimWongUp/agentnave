@@ -250,6 +250,9 @@ class ClaudeAdapter(AdapterHooks):
     def event_model(self, event: dict[str, object]) -> str | None:
         return assistant_model(event)
 
+    def is_progress(self, event: dict[str, object], activity: ProviderActivity | None) -> bool:
+        return event.get("type") != "keep_alive" and super().is_progress(event, activity)
+
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:
         event_type = event.get("type")
         if event_type == "system":

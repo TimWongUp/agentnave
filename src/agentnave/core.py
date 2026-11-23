@@ -50,6 +50,12 @@ from agentnave.processes import (
     spawn_process,
     terminate_process_tree,
 )
+from agentnave.progress_stall import (
+    PROGRESS_STALL_SECONDS,
+    ProgressTracker,
+    progress_stall_guard,
+    progress_stalled_error,
+)
 from agentnave.push_capability import TrayIdentity
 from agentnave.terminal_execution import TerminalLaunch, TerminalRun, execute_run
 from agentnave.usage_probe import run_usage_query
@@ -155,6 +161,26 @@ class _InvocationRecord:
     background_only: bool = False
     background_reply: str | None = None
     background_reminder_sent: bool = False
+    progress: ProgressTracker = field(default_factory=ProgressTracker)
+
+    def raise_attention(self, error: InvocationError) -> None:
+        """Queue a running-time blocker for the next wait and wake the inbox."""
+        self.pending_attention.append(error)
+        self.attention_event.set()
+        if self.on_inbox_change is not None:
+            self.on_inbox_change()
+
+    def accepts_reminders(self) -> bool:
+        """Whether a one-shot reminder still makes sense: the run is live and unsettled."""
+        return (
+            self.phase != InvocationPhase.STOPPING
+            and not self.terminal_event.is_set()
+            and (self.task is None or not self.task.done())
+        )
+
+    def counts_silence(self) -> bool:
+        """Whether quiet time counts toward the no-progress reminder (ADR-0116)."""
+        return not self.prompts.pending() and not self.background_wait.waiting
 
     def observe_background_tasks(self, state: BackgroundTasksState) -> None:
         if state.session_id:
@@ -185,6 +211,8 @@ class _InvocationRecord:
                 self.retry_since = self.retry_at = None
                 self.attention_event.set()
         activity = adapter.activity(event)
+        if adapter.is_progress(event, activity):
+            self.progress.note(self.last_event_at)
         if activity is not None:
             code = activity.blocking_error
             if code is not None and code not in self.reported_errors:
@@ -205,10 +233,7 @@ class _InvocationRecord:
                 if category == "quota":
                     message += " " + provider_health.QUOTA_RESUME_HINT
                 if not finished:
-                    self.pending_attention.append(InvocationError(code, message))
-                    self.attention_event.set()
-                    if self.on_inbox_change is not None:
-                        self.on_inbox_change()
+                    self.raise_attention(InvocationError(code, message))
             if activity.kind == "message" and activity.public_output:
                 # Delta events append; cumulative/final message events replace the current reply.
                 if activity.message_delta and self.output_event_type == activity.event_type:
@@ -389,6 +414,7 @@ class _RunIO:
     stall_task: asyncio.Task[None]
     terminal_task: asyncio.Task[None]
     bg_reminder_task: asyncio.Task[None]
+    progress_task: asyncio.Task[None]
     output_exceeded: asyncio.Event
     stdout_diagnostics: _StreamDiagnostics
     stderr_diagnostics: _StreamDiagnostics
@@ -405,6 +431,7 @@ class _RunIO:
             self.stall_task,
             self.terminal_task,
             self.bg_reminder_task,
+            self.progress_task,
         )
 
 
@@ -419,6 +446,7 @@ def _start_run_io(
     prepared: PreparedCommand,
     supervised: SupervisedProcess,
     bg_reminder_task: asyncio.Task[None],
+    progress_task: asyncio.Task[None],
 ) -> _RunIO:
     process = supervised.process
     assert process.stdout is not None and process.stderr is not None and process.stdin is not None
@@ -462,6 +490,7 @@ def _start_run_io(
         stall_task=stall_task,
         terminal_task=asyncio.create_task(_terminal_grace(record.terminal_event)),
         bg_reminder_task=bg_reminder_task,
+        progress_task=progress_task,
         output_exceeded=output_exceeded,
         stdout_diagnostics=stdout_diagnostics,
         stderr_diagnostics=stderr_diagnostics,
@@ -561,6 +590,7 @@ class InvocationManager:
 
     spawn_interval: tuple[float, float] = (1.0, 3.0)
     background_wait_reminder_seconds: float = BACKGROUND_WAIT_REMINDER_SECONDS
+    progress_stall_seconds: float = PROGRESS_STALL_SECONDS
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
@@ -655,10 +685,7 @@ class InvocationManager:
                         return
                     else:
                         record.reported_errors.add(code)
-                    record.pending_attention.append(InvocationError(code, message))
-                    record.attention_event.set()
-                    if self.on_inbox_change is not None:
-                        self.on_inbox_change()
+                    record.raise_attention(InvocationError(code, message))
 
                 instructions = DERIVED_INSTRUCTIONS
                 if request.read_only:
@@ -866,20 +893,25 @@ class InvocationManager:
         invocation running so a terminal outcome delivers directly if it arrives first.
         """
         record = self._records.get(invocation_id)
-        if (
-            record is None
-            or record.background_reminder_sent
-            or record.phase == InvocationPhase.STOPPING
-            or record.terminal_event.is_set()
-            or (record.task is not None and record.task.done())
-        ):
+        if record is None or record.background_reminder_sent or not record.accepts_reminders():
             return False
         record.background_reminder_sent = True
         record.background_wait.reminded = True
-        record.pending_attention.append(background_tasks_pending_error(task_ids, count=count))
-        record.attention_event.set()
-        if record.on_inbox_change is not None:
-            record.on_inbox_change()
+        record.raise_attention(background_tasks_pending_error(task_ids, count=count))
+        return True
+
+    def notify_progress_stalled(self, invocation_id: str, quiet_seconds: float) -> bool:
+        """Queue the one-shot progress_stalled execution_blocked alert (ADR-0116).
+
+        Like the background reminder it never feeds account health or cooldown, is never
+        recorded in reported_errors, and leaves the invocation running.
+        """
+        record = self._records.get(invocation_id)
+        if record is None or not record.accepts_reminders():
+            return False
+        record.update_doing(time.monotonic())
+        last_tool = record.recent_tools[-1] if record.recent_tools else None
+        record.raise_attention(progress_stalled_error(quiet_seconds, record.doing, last_tool))
         return True
 
     def progress(self, invocation_id: str) -> tuple[str | None, str | None]:
@@ -1198,7 +1230,17 @@ class InvocationManager:
                     ),
                 )
             )
-            io = _start_run_io(record, adapter, prepared, supervised, bg_reminder_task)
+            progress_task = asyncio.create_task(
+                progress_stall_guard(
+                    record.progress,
+                    self.progress_stall_seconds,
+                    record.counts_silence,
+                    lambda quiet: self.notify_progress_stalled(invocation_id, quiet),
+                )
+            )
+            io = _start_run_io(
+                record, adapter, prepared, supervised, bg_reminder_task, progress_task
+            )
             tasks.extend(io.tasks)
 
             return await self._collect_run(record, adapter, prepared, process, io)
@@ -1260,8 +1302,9 @@ class InvocationManager:
         bg_cancel_tasks = record.background_wait.task_ids
 
         record.phase = InvocationPhase.STOPPING
-        if not io.bg_reminder_task.done():
-            io.bg_reminder_task.cancel()
+        for guard in (io.bg_reminder_task, io.progress_task):
+            if not guard.done():
+                guard.cancel()
         await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
         stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
         terminal, error = _drained_limit(terminal, error, stdout, stderr, io)

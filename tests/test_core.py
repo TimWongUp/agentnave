@@ -20,6 +20,7 @@ from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.adapters.zcode import ZcodeAdapter
+from agentnave.background_tasks import BackgroundTasksState
 from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
     _RETRY_STALL_QUIET_SECONDS,  # pyright: ignore[reportPrivateUsage]
@@ -48,6 +49,7 @@ from agentnave.native_prompts import NativePrompt, PromptChannel
 from agentnave.processes import (
     _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
 )
+from agentnave.progress_stall import ProgressTracker, progress_stall_guard
 
 
 def test_doing_since_changes_only_with_displayed_state(tmp_path: Path) -> None:
@@ -2354,3 +2356,112 @@ async def test_background_reminder_and_cancel_when_only_background_remains(
         await asyncio.wait_for(cancel_task, 5.0)
     finally:
         await manager.shutdown()
+
+
+def _stall_script(tmp_path: Path, lines: list[str], gate: Path | None = None) -> PreparedCommand:
+    """A fake Claude CLI that prints the given events, then (once gate exists) a message."""
+    body = (
+        "import json, pathlib, sys, time\n"
+        f"for line in {lines!r}:\n"
+        "    print(line, flush=True)\n"
+        f"gate = {str(gate)!r} if {gate is not None!r} else None\n"
+        "while True:\n"
+        "    if gate and pathlib.Path(gate).exists():\n"
+        "        pathlib.Path(gate).unlink()\n"
+        "        print(json.dumps({'type': 'stream_event', 'event': {'delta': "
+        "{'type': 'text_delta', 'text': 'moving'}}}), flush=True)\n"
+        "    time.sleep(0.05)\n"
+    )
+    script = tmp_path / "stall.py"
+    script.write_text(body, encoding="utf-8")
+    capture = ClaudeAdapter().prepare(InvocationRequest("claude", "w", tmp_path)).capture_line
+    return PreparedCommand((sys.executable, str(script)), tmp_path, capture_line=capture)
+
+
+@pytest.mark.asyncio
+async def test_progress_stall_reminds_once_then_again_after_new_progress(tmp_path: Path) -> None:
+    tool = json.dumps(
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "id": "a", "name": "Bash"}]},
+        }
+    )
+    gate = tmp_path / "gate"
+    manager = InvocationManager()
+    manager.health_root = tmp_path
+    manager.progress_stall_seconds = 0.4
+    try:
+        invocation = manager.start(
+            InvocationRequest("claude", "work", tmp_path),
+            prepared=_stall_script(tmp_path, [tool], gate),
+        )
+        alert = await asyncio.wait_for(manager.wait_for_update(invocation, 5), 6)
+        assert isinstance(alert, InvocationError) and alert.code == "progress_stalled"
+        assert "Bash" in alert.message and "wait_seconds=0" in alert.message
+        # The same silence is reported once; the task keeps running and is not in cooldown.
+        assert await manager.wait_for_update(invocation, 1.0) is None
+        assert provider_health.active(tmp_path) == {}
+        assert manager.snapshot(invocation).phase is InvocationPhase.RUNNING
+        # New substantive progress restarts the clock and re-arms the reminder.
+        gate.touch()
+        again = await asyncio.wait_for(manager.wait_for_update(invocation, 5), 6)
+        assert isinstance(again, InvocationError) and again.code == "progress_stalled"
+        assert provider_health.active(tmp_path) == {}
+        assert (await manager.cancel(invocation)).status is InvocationStatus.CANCELLED
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_progress_stall_ignores_retry_events(tmp_path: Path) -> None:
+    retry = json.dumps({"type": "system", "subtype": "api_retry", "error": "server_error"})
+    script = tmp_path / "retrying.py"
+    script.write_text(
+        f"import time\nwhile True:\n    print({retry!r}, flush=True)\n    time.sleep(0.1)\n",
+        encoding="utf-8",
+    )
+    capture = ClaudeAdapter().prepare(InvocationRequest("claude", "w", tmp_path)).capture_line
+    manager = InvocationManager()
+    manager.progress_stall_seconds = 0.5
+    try:
+        invocation = manager.start(
+            InvocationRequest("claude", "work", tmp_path),
+            prepared=PreparedCommand((sys.executable, str(script)), tmp_path, capture_line=capture),
+        )
+        alert = await asyncio.wait_for(manager.wait_for_update(invocation, 5), 6)
+        assert isinstance(alert, InvocationError) and alert.code == "progress_stalled"
+        assert "retrying" in alert.message
+        await manager.cancel(invocation)
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_progress_stall_clock_waits_for_a_prompt_or_background_wait(
+    tmp_path: Path,
+) -> None:
+    tracker = ProgressTracker()
+    record = _InvocationRecord(InvocationRequest("claude", "work", tmp_path))
+    assert record.counts_silence()
+    record.prompts.receive(NativePrompt("d" * 32, "permission", "Bash"))
+    assert not record.counts_silence()
+    record = _InvocationRecord(InvocationRequest("claude", "work", tmp_path))
+    record.observe_background_tasks(BackgroundTasksState(waiting=True, task_ids=("bg-1",)))
+    assert not record.counts_silence()
+
+    counting = [False]
+    fired: list[float] = []
+    guard = asyncio.create_task(
+        progress_stall_guard(
+            tracker, 0.2, lambda: counting[0], lambda quiet: fired.append(quiet) or True
+        )
+    )
+    await asyncio.sleep(0.6)
+    assert fired == []
+    counting[0] = True
+    async with asyncio.timeout(5):
+        while not fired:
+            await asyncio.sleep(0.02)
+    # Quiet time is measured from when counting resumed, not from before the prompt.
+    assert 0.2 <= fired[0] < 0.6
+    guard.cancel()

@@ -83,6 +83,7 @@ description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude 
    - **注明 App 会提示时**（App 内终端的 Codex）：启动后直接结束本轮，不挂阻塞 `wait`，提示到达后调收件箱 `wait(wait_seconds=0)` 收取，未全结束同样结束本轮等下次提示。
    - **要求前台 `wait` 时**：按回执 `next` 用收件箱阻塞 `wait`（省略 `ids`、同 `manager_session_id`、`seq` 递增，除非 `next` 明确要求 `wait_seconds=270` 否则省略 `wait_seconds`）持续等到终态或显式取消，不另加总时限。
 2. **先处理再等**：任一就绪即返回，先处理 `prompt_pending`、`review_needed` 和 `seat_lost`，再按回执 `next` 指示的等待方式继续收齐至 `all_finished=true`；收口回执带 `follow_up` 时汇报前逐项处理或写进结论。`wait(wait_seconds=0)` 返回的运行中 `output` 只是最新公开正文尾部，不凭此判定卡死。
+   席位收到 `progress_stalled` 表示它连续 6 分钟没有实质进展、仍在跑：先 `wait(wait_seconds=0)` 看输出尾巴，还在推理就继续等；疑似卡死再 `cancel` 该席，补跑时必要时收窄议题，避开触发安全过滤的内容。
 3. **验收答案**：核对每席结论的出处、未验证范围与阻塞项，有缺漏或未完成在总结里注明；推测不当作事实。席位失败不另开私聊顶替。
 4. **总结**：两轮 `parallel` 后由 boss 综合，按[会话与审核](references/studio.md)的「会议总结」写入会议并回复用户；席位列出的待决定项写进总结，需要席位补做时下一轮点名；仍有实质分歧时列出分歧和各方理由交用户决定。
 

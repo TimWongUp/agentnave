@@ -156,6 +156,12 @@ class PiAdapter(AdapterHooks):
             return ProviderActivity("lifecycle", "agent_end", state)
         return None
 
+    def is_progress(self, event: dict[str, object], activity: ProviderActivity | None) -> bool:
+        # An agent run that ends only to be retried is a failed attempt, not progress.
+        if event.get("type") == "agent_end" and event.get("willRetry") is True:
+            return False
+        return super().is_progress(event, activity)
+
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         events = parse_json_lines(stdout.decode(errors="replace"))
         session_id = next(
