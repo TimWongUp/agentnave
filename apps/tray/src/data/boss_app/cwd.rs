@@ -69,18 +69,21 @@ fn bosses(connection: &Connection) -> Vec<Boss> {
         }
     }
 
-    let ws_sql = if has_origin && has_previous {
-        "SELECT id, \
+    // An older schema cannot tell the creating boss from one that took over, so its workspaces
+    // read no boss directory and fall back to their earliest dispatch.
+    let ws_sql = "SELECT id, \
          CASE WHEN previous_host IS NOT NULL THEN coalesce(origin, id) ELSE owner END, \
          CASE WHEN previous_host IS NOT NULL THEN previous_host ELSE owner_host END, \
          CASE WHEN previous_host IS NOT NULL THEN previous_file ELSE owner_file END \
          FROM workspaces \
          WHERE (previous_host IS NOT NULL AND previous_host != '') \
-            OR (owner = coalesce(origin, id) AND owner_host IS NOT NULL)"
+            OR (owner = coalesce(origin, id) AND owner_host IS NOT NULL)";
+    let rows = if has_origin && has_previous {
+        query_boss_rows(connection, ws_sql)
     } else {
-        "SELECT id, owner, owner_host, owner_file FROM workspaces WHERE owner_host IS NOT NULL"
+        Vec::new()
     };
-    for (workspace, key, host, file) in query_boss_rows(connection, ws_sql) {
+    for (workspace, key, host, file) in rows {
         bosses.entry(workspace.clone()).or_insert(Boss {
             workspace,
             key,
@@ -512,7 +515,9 @@ fn db_cwds(
             return Some(entry.by_key.clone());
         }
     }
-    let map = Arc::new(read_db_cwds(host, db_path, sql, parse)?);
+    // A failed read (locked, corrupt or another schema) is remembered as empty until the files
+    // change, so the bosses of one host do not each reopen it on every poll.
+    let map = Arc::new(read_db_cwds(host, db_path, sql, parse).unwrap_or_default());
     DB_CWDS.lock().unwrap_or_else(|p| p.into_inner()).insert(
         cache_key,
         CachedDbCwds {
