@@ -620,6 +620,7 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
                 _explicit_exclusions() if launch.terminal else runtime.task_excluded_providers(),
                 runtime.HOST,
                 seat,
+                arguments.account,
             )
             if launch.terminal:
                 unsupported = (

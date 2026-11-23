@@ -2604,6 +2604,55 @@ def _init_git_repo(repo: Path) -> str:
 
 
 @pytest.mark.asyncio
+async def test_host_cli_exclusion_reaches_only_the_hosts_own_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "data"
+    root.mkdir()
+    boss_home = tmp_path / "boss-home"
+    (root / "accounts.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "accounts": [
+                    {
+                        "id": id_,
+                        "provider": "claude",
+                        "label": id_,
+                        "dir": str(home),
+                        "managed": True,
+                    }
+                    for id_, home in (("work", tmp_path / "work-home"), ("boss", boss_home))
+                ],
+            }
+        )
+    )
+    write_fake_cli(
+        tmp_path,
+        "claude",
+        "import json\nprint(json.dumps({'type': 'result', 'result': 'ran', 'session_id': 's'}))\n",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(boss_home))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "parent"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset({"claude"}))
+
+    async def start(client: Client, **arguments: object) -> CallToolResult:
+        return await client.call_tool(
+            "start_agent",
+            {"provider": "claude", "prompt": "ok", "cwd": str(tmp_path), **arguments},
+        )
+
+    async with Client(mcp) as client:
+        other = await start(client, account="work")
+        assert not other.is_error, other.content
+        # The host's own CLI as its own account, named or default, stays excluded.
+        for own in ({}, {"account": "boss"}):
+            blocked = await start(client, **own)
+            assert blocked.is_error and "excluded by this host" in str(blocked.content)
+
+
+@pytest.mark.asyncio
 async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
