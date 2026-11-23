@@ -1,6 +1,6 @@
 # ADR-0098：托盘可在仓库锁与租约协议下手动删除隔离目录
 
-- 状态：已接受
+- 状态：已接受；「不做自动回收」一条由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 修订：用户打开规则后托盘自动清理
 - 日期：2026-11-16
 - 修订 [ADR-0085](0085-service-managed-isolated-dirs.md) 中「App 也不提供清理入口」一条；扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘写入范围，沿用 [ADR-0085](0085-service-managed-isolated-dirs.md) 与 [ADR-0092](0092-auto-release-untouched-isolated-dirs.md) 的仓库级锁、租约、确认摘要与禁用 hooks/filter/fsmonitor 边界。
 

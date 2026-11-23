@@ -32,7 +32,7 @@
 | 0026 | [会话存储改为 SQLite](0026-sqlite-conversation-store.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0048](0048-sqlite-schema-evolution.md)、[ADR-0060](0060-tray-detects-orphaned-running-work.md) |
 | 0027 | [DeepSeek 官方路由自动恢复已存认证](0027-deepseek-official-route-stored-credentials.md) | 已接受 | — |
 | 0028 | [默认模型与档位跟随 CLI 自身设置](0028-follow-cli-default-model.md) | 部分取代 | [ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0062](0062-service-owned-member-names.md) |
-| 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0108](0108-multi-account-isolation.md) |
+| 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0108](0108-multi-account-isolation.md)；提交说明与 PR 内容可手填由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充 |
 | 0030 | [App「技能」页提供可选 Skill，评审门控为首个，评审工位在 App 设置](0030-optional-review-gate-skill.md) | 部分取代 | [ADR-0036](0036-app-owns-service-skills.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md) |
 | 0031 | [单向编排使用派发指令约束](0031-prompt-only-orchestration.md) | 已接受 | [ADR-0043](0043-service-prompt-instructions.md) |
 | 0032 | [App 按 CLI 设权限档位](0032-cli-permission-tiers.md) | 部分取代 | [ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0059](0059-claude-tier-fallback.md)、[ADR-0076](0076-full-permission-default.md) |
@@ -95,13 +95,13 @@
 | 0089 | [App 工位可配备选顺位，服务派发时按顺位取第一个可用](0089-seat-fallback-order.md) | 部分修订 | 修订 ADR-0074「不可用边界」的兜底顺序、ADR-0087「候选只含真正能派的工位」的可用判断；扩展 ADR-0038 的工位设置套用；同类顺位与配额冷却判断由 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 修订；「决策模型」档自定义任务工位同档候选随机选由 [ADR-0093](0093-decision-seat-random-candidates.md) 修订；2026-11-18 自身补充：`session_id` 续接遇冷却时 boss 可显式换同 CLI 其他模型原位续接；账号维度顺位与 `(provider, account, model)` 判重由 [ADR-0108](0108-multi-account-isolation.md) 修订；回执 `note` 由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 补充 |
 | 0090 | [配额按额度组冷却，宿主同类 CLI 按 boss 选择处理](0090-quota-group-cooldown-and-host-cli-choice.md) | 部分修订 | 修订 ADR-0081、ADR-0013、ADR-0089；补充 ADR-0087、ADR-0074；私聊同类默认方式由 [ADR-0094](0094-antigravity-host-cli-defaults-to-launch.md) 修订；三选一不再被环境变量排除项压过由 [ADR-0096](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) 修订；同 CLI 同账号判定与按账号冷却由 [ADR-0108](0108-multi-account-isolation.md) 修订 |
 | 0091 | [「只开会」档只用会议室，按档位互斥安装 Skill，主动开会改为默认关的开关](0091-meetings-only-skill-and-auto-meeting-switch.md) | 已接受 | 修订 ADR-0083、ADR-0068；扩展 ADR-0036 |
-| 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」 |
+| 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」；自动清理收起的目录按保留分支重建由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充 |
 | 0093 | [「决策模型」档自定义任务工位支持同档可用候选随机选](0093-decision-seat-random-candidates.md) | 部分修订 | 修订 ADR-0089 在「决策模型」档自定义任务工位上的顺位挑选与回执含义、ADR-0038 在该类工位开启随机选时的续接模型优先级；扩展 ADR-0087；2026-11-20 自身修订：优先避开本进程该工位运行中的候选模型；在用候选按账号维度追踪由 [ADR-0108](0108-multi-account-isolation.md) 修订；回执 `note` 由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 补充 |
 | 0094 | [Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动](0094-antigravity-host-cli-defaults-to-launch.md) | 已接受 | 修订 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的私聊同类默认值 |
 | 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049；终态事件不再先报运行中阻断由 [ADR-0104](0104-in-app-boss-push.md) 2026-11-22 补充 |
 | 0096 | [清除宿主自身的遗留排除项，重连后消除连接中断提示](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) | 已接受 | 修订 ADR-0015、ADR-0088、ADR-0090；扩展 ADR-0012；已结束连接的范围由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 补充 |
 | 0097 | [中继收到终止信号视为宿主关闭，已退出的加载回执仍作证据](0097-relay-termination-signal-and-exited-tool-receipts.md) | 已接受 | 修订 ADR-0022；补充 ADR-0096 |
-| 0098 | [托盘可在仓库锁与租约协议下手动删除隔离目录](0098-tray-deletes-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的 App 清理边界；扩展 ADR-0012 |
+| 0098 | [托盘可在仓库锁与租约协议下手动删除隔离目录](0098-tray-deletes-isolated-dirs.md) | 部分修订 | 修订 ADR-0085 的 App 清理边界；扩展 ADR-0012；「不做自动回收」由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 修订 |
 | 0099 | [接手改为建立关联，工作区不再转移](0099-handover-links-workspaces.md) | 已接受 | 取代 ADR-0033 的归属转移部分；修订 ADR-0017 的跨 boss 显式续接、ADR-0046 的清理计时起点 |
 | 0100 | [由 App 卸载并默认保留任务和会议记录](0100-app-uninstall.md) | 部分修订 | 扩展 ADR-0012 的托盘写入边界；保留 ADR-0078 的工作区信任标记；托管账号目录卸载边界由 [ADR-0108](0108-multi-account-isolation.md) 修订 |
 | 0101 | [托盘逐条展示并在校验后向旧终端宿主进程发送 SIGTERM](0101-tray-stops-old-cli-copies.md) | 已接受 | 扩展 ADR-0022 的重新加载引导边界 |
@@ -116,5 +116,6 @@
 | 0110 | [写作所需的上下文已全在 boss 手里时，定稿由 boss 自己写](0110-boss-writes-when-holding-context.md) | 已接受 | 修订 ADR-0073 |
 | 0111 | [托盘为 CLI 会话自绘对话视图，按 CLI 选驱动协议](0111-self-drawn-conversation-view.md) | 已被 ADR-0113 取代 | [ADR-0113](0113-chat-desktop-split-out.md)（对 ADR-0056、ADR-0072 依据的更正保留） |
 | 0112 | [手机经 Tailscale 访问托盘的远程入口](0112-mobile-remote-via-tailscale.md) | 已被 ADR-0113 取代 | [ADR-0113](0113-chat-desktop-split-out.md) |
-| 0113 | [多 agent 聊天桌面端另立项目，AgentNave 保持以 MCP 编排为主](0113-chat-desktop-split-out.md) | 已接受 | 取代 ADR-0111、ADR-0112；恢复 ADR-0103、ADR-0109 的原条款；保留 ADR-0111 对 ADR-0056、ADR-0072 依据的更正 |
+| 0113 | [多 agent 聊天桌面端另立项目，AgentNave 保持以 MCP 编排为主](0113-chat-desktop-split-out.md) | 部分修订 | 「Git 与 PR 归新项目」由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 修订（只读状态与基础操作回到托盘）；取代 ADR-0111、ADR-0112；恢复 ADR-0103、ADR-0109 的原条款；保留 ADR-0111 对 ADR-0056、ADR-0072 依据的更正 |
 | 0114 | [Claude 与 agy 保持交互 TUI，boss 以用户身份驱动，结果靠宿主自己唤醒收取](0114-tui-runtime-like-a-user.md) | 已接受 | 修订 ADR-0003、0043、0056、0057、0062、0064、0067、0072、0082、0084、0104（作废 PTY 键入投递）、0107、0109；沿用 ADR-0031、0018、0049、0102、0105、0113 |
+| 0115 | [托盘显示 Git 与 PR 状态，并提供基础 Git 操作](0115-tray-git-status-and-basic-ops.md) | 已接受 | 修订 ADR-0113（Git 与 PR 的只读状态与基础操作回到托盘）、ADR-0098（用户打开规则后自动清理隔离目录）；补充 ADR-0029、ADR-0092 |

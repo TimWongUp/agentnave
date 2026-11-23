@@ -1,6 +1,6 @@
 # ADR-0113：多 agent 聊天桌面端另立项目，AgentNave 保持以 MCP 编排为主
 
-- 状态：已接受
+- 状态：已接受；「Git 与 PR 归新项目」一条由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 修订：只读状态与基础操作回到托盘
 - 日期：2026-11-23
 - 取代：[ADR-0111](0111-self-drawn-conversation-view.md)（托盘自绘对话视图）、[ADR-0112](0112-mobile-remote-via-tailscale.md)（手机经 Tailscale 访问托盘）。
 - 恢复：[ADR-0103](0103-tray-embedded-terminal.md)「真终端加皮肤，不做结构化对话界面」与 [ADR-0109](0109-in-app-derived-sessions.md) 的展示与驱动方式（派生会话开在 App 终端里）；[ADR-0080](0080-tray-video-loopback-http.md) 的托盘监听边界不再扩展。
