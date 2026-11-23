@@ -314,7 +314,21 @@ const Actions = {};
         items.push(h("ul.act-list", {}, list));
       }
     }
-    if (info.unique_commits) {
+    if (info.merged_pr?.number) {
+      const prLabel = `PR #${info.merged_pr.number}`;
+      const prNode = info.merged_pr.url
+        ? h("a.iso-merged-link", { href: info.merged_pr.url, target: "_blank", rel: "noopener" }, prLabel)
+        : prLabel;
+      items.push(
+        h(
+          "p.act-note.iso-merged",
+          {},
+          L("受管分支上的提交已随 ", "Managed branch commits are already merged via "),
+          prNode,
+          L(" 合并。", "."),
+        ),
+      );
+    } else if (info.unique_commits) {
       const commits = info.unmerged_commits || [];
       const total = info.unmerged_total || commits.length;
       items.push(h("p.act-note.warn", {}, total

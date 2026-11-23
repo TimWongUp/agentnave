@@ -53,6 +53,7 @@ pub(crate) struct Snapshot {
     pub missing_dir: bool,
     pub rollback_only: bool,
     pub digest: String,
+    pub merged_pr: Option<Value>,
 }
 
 impl Snapshot {
@@ -77,6 +78,7 @@ impl Snapshot {
             "unique_commits": self.unique_commits,
             "unmerged_commits": self.unmerged_commits,
             "unmerged_total": self.unmerged_total,
+            "merged_pr": self.merged_pr,
             "nested_repos": self.nested,
             "nested_truncated": self.nested_truncated,
             "orphan": self.orphan,
@@ -619,6 +621,7 @@ fn inspect_ready_locked(
             missing_dir: false,
             rollback_only: false,
             digest,
+            merged_pr: None,
         },
     ))
 }
@@ -697,6 +700,7 @@ fn inspect_orphan_locked(
         missing_dir: false,
         rollback_only: false,
         digest,
+        merged_pr: None,
     })
 }
 
@@ -746,6 +750,7 @@ pub(crate) fn inspect_record(
                     missing_dir: !dir_present,
                     rollback_only: true,
                     digest,
+                    merged_pr: None,
                 },
             ));
         }
@@ -786,6 +791,7 @@ pub(crate) fn inspect_record(
                     missing_dir: true,
                     rollback_only: false,
                     digest,
+                    merged_pr: None,
                 },
             ));
         }

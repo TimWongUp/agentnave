@@ -254,7 +254,7 @@ function createItem(g) {
       {},
       // an agent shows its title; a handover and isolated directories still waiting to be released
       // are the only things it adds
-      h("span.gi-top", {}, rec.label, rec.pin),
+      (rec.top = h("span.gi-top", {}, rec.label, rec.pin)),
       rec.meta,
       (rec.bottom = h("span.gi-bottom", {}, rec.iso)),
     ),
@@ -331,6 +331,7 @@ function updateItem(rec, g, flat = false) {
   rec.bottom.hidden = rec.iso.hidden = !g.isolated_count;
   setText(rec.iso, isolatedCount(g.isolated_count));
   ChatTerminal.decorate(rec, g);
+  if (typeof ChatGit !== "undefined") ChatGit.decorateItem?.(rec, g);
 }
 // The boss, then the project when the item is pinned under awaiting handover.
 function itemPlace(g) {

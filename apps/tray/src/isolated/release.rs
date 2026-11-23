@@ -348,16 +348,59 @@ fn with_locked_record(
 /// Inspect an isolated directory under `repo_lock`, persist its confirmation digest, and return
 /// details for the confirmation dialog.
 pub(crate) fn inspect(root: &Path, isolation_id: &str, workspace_id: &str) -> Value {
+    inspect_with_gh(
+        root,
+        isolation_id,
+        workspace_id,
+        &crate::git_pr::gh::GhClient::system(),
+    )
+}
+
+pub(crate) fn inspect_with_gh(
+    root: &Path,
+    isolation_id: &str,
+    workspace_id: &str,
+    gh: &crate::git_pr::gh::GhClient,
+) -> Value {
     with_locked_record(root, isolation_id, workspace_id, |git, store, record| {
-        let (_, snap) = match inspect_record(git, store, record, workspace_id) {
+        let (repo_dirs, mut snap) = match inspect_record(git, store, record, workspace_id) {
             Ok(res) => res,
             Err(e) => return outcome(&record.id, "blocked", &e),
         };
         if let Err(e) = store.save_confirmation(&record.id, &snap.digest, &now_iso()) {
             return outcome(&record.id, "blocked", &e);
         }
+        attach_merged_pr(git, gh, record, repo_dirs.as_ref(), &mut snap);
         snap.to_confirm_json("confirm", record, None)
     })
+}
+
+fn attach_merged_pr(
+    git: &GitRunner,
+    gh: &crate::git_pr::gh::GhClient,
+    record: &Record,
+    repo_dirs: Option<&(PathBuf, PathBuf)>,
+    snap: &mut super::inspect::Snapshot,
+) {
+    if !snap.unique_commits || snap.rollback_only {
+        return;
+    }
+    let Some((main_root, _)) = repo_dirs else {
+        return;
+    };
+    let check_oid = if !snap.head_oid.is_empty() {
+        snap.head_oid.as_str()
+    } else {
+        snap.branch_oid.as_str()
+    };
+    snap.merged_pr = crate::git_pr::inspect_merged_pr_for_isolated(
+        git,
+        gh,
+        main_root,
+        record.branch(),
+        check_oid,
+    )
+    .map(|summary| json!(summary));
 }
 
 /// Delete an isolated directory after verifying the confirmation digest under `repo_lock`.
@@ -368,7 +411,7 @@ pub(crate) fn delete(
     confirmation: &str,
 ) -> Value {
     with_locked_record(root, isolation_id, workspace_id, |git, store, record| {
-        let (repo_dirs, snap) = match inspect_record(git, store, record, workspace_id) {
+        let (repo_dirs, mut snap) = match inspect_record(git, store, record, workspace_id) {
             Ok(res) => res,
             Err(e) => return outcome(&record.id, "blocked", &e),
         };
@@ -380,6 +423,13 @@ pub(crate) fn delete(
             if let Err(e) = store.save_confirmation(&record.id, &snap.digest, &now_iso()) {
                 return outcome(&record.id, "blocked", &e);
             }
+            attach_merged_pr(
+                git,
+                &crate::git_pr::gh::GhClient::system(),
+                record,
+                repo_dirs.as_ref(),
+                &mut snap,
+            );
             return snap.to_confirm_json(
                 "confirmation_required",
                 record,

@@ -206,6 +206,7 @@ impl Running {
             "parent_workspace_id": self.derived.as_ref().and_then(|d| d.parent_workspace_id.as_deref()),
             "derived_busy": busy,
             "native": self.native,
+            "isolation_id": self.derived.as_ref().and_then(|d| d.isolation_id.as_deref()),
             "blocked_kind": self.derived.as_ref().and_then(|d| d.blocked_kind.as_deref())})
     }
 }
@@ -593,6 +594,27 @@ impl Terminals {
             .open
             .iter()
             .map(|running| running.cwd.display().to_string())
+            .collect()
+    }
+
+    /// Read-only snapshot of open terminals for ADR-0115 Git/PR status inspection.
+    pub(crate) fn git_pr_targets(&self) -> Vec<crate::git_pr::TerminalTarget> {
+        self.lock()
+            .open
+            .iter()
+            .map(|running| crate::git_pr::TerminalTarget {
+                id: running.id,
+                provider: running.provider.clone(),
+                cwd: running.cwd.clone(),
+                native: running.native.clone(),
+                account_dir: running.account.as_ref().map(|a| a.dir.clone()),
+                workspaces: running.workspaces.clone(),
+                derived: running.derived.is_some(),
+                parent_workspace_id: running
+                    .derived
+                    .as_ref()
+                    .and_then(|d| d.parent_workspace_id.clone()),
+            })
             .collect()
     }
 

@@ -718,6 +718,9 @@ async function refresh() {
       state.listKey = listKey;
       renderList();
     }
+    if (typeof ChatGit !== "undefined") {
+      ChatGit.observe?.(state.groupsData, ChatTerminal.all?.() || [], state.selected);
+    }
     if (!state.selected) {
       showBlank(chats.groups.length ? "pick" : "nogroups");
       return;

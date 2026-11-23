@@ -33,6 +33,11 @@ mod other;
 mod title;
 pub(crate) use title::CliTitle;
 
+/// Locate a Claude Code session transcript by UUID within `homes`.
+pub(crate) fn claude_transcript_in(homes: &[PathBuf], id: &str) -> Option<PathBuf> {
+    title::claude_file(homes, id)
+}
+
 /// A terminal's chat, whether its session record was located, and its CLI's title for it.
 pub(crate) fn terminal_title(
     provider: &str,

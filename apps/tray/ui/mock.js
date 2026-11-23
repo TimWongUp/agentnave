@@ -859,6 +859,7 @@ All checks passed!
         const display_title = displayTitleOf(g);
         return {
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
+          cli_session: !g.app || !String(g.app).endsWith("-desktop"),
           handover: handoverOf(g), title: conv.title, display_title, title_id: conv.id, conversations: g.convs.length, preview,
           desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
           isolated_count: isolatedOf(g, w).length,
@@ -879,6 +880,7 @@ All checks passed!
     const display_title = displayTitleOf(g);
     return {
       group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status,
+      cli_session: !g.app || !String(g.app).endsWith("-desktop"),
       title: g.convs[0]?.title || "", display_title, title_id: g.convs[0]?.id || null, project: place.project_label,
       handover: ho,
       took_over: ho === "changed" ? `${label(g)} 接手了 Claude Code` : null,
@@ -1075,8 +1077,78 @@ All checks passed!
   // Terminals the office started (ADR-0103): the first one's CLI is the boss of the first workspace.
   const mockTerminals = [
     { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: null },
-    { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs", display_title: null },
+    { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs", display_title: "整理迁移文档" },
+    ...(q.has("isolated") || q.has("gitpr") ? [{ id: 3, provider: "claude", cwd: "/work/app/.agentnave-worktrees/wt-3f9a1c2b4d5e", exit: null, active: true, derived: true, derived_busy: true, parent_workspace_id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", isolation_id: "wt-3f9a1c2b4d5e", workspaces: [], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "修登录竞态" }] : []),
   ];
+  const mockGitPr = () => {
+    const ghStatus = q.get("gh") === "off" ? "not_installed" : "ready";
+    const prFixLogin = {
+      repo: "acme/app", number: 214, title: "fix: resolve OAuth callback race condition", state: "open", is_draft: false,
+      additions: 148, deletions: 32,
+      checks: { state: "failing", total: 4, passed: 2, failed: 1, pending: 1, checks_url: "https://github.com/acme/app/pull/214/checks" },
+      review_decision: "changes_requested", mergeable: "mergeable",
+      updated_at: new Date(Date.now() - 8 * 60000).toISOString(),
+      url: "https://github.com/acme/app/pull/214", head_ref_name: "agentnave/fix-login", head_ref_oid: "abc123", base_ref_name: "main",
+    };
+    const prDocsMerged = {
+      repo: "acme/app", number: 209, title: "docs: refresh architecture & release notes", state: "merged", is_draft: false,
+      additions: 84, deletions: 19,
+      checks: { state: "passing", total: 3, passed: 3, failed: 0, pending: 0, checks_url: "https://github.com/acme/app/pull/209/checks" },
+      review_decision: "approved", mergeable: "unknown",
+      updated_at: new Date(Date.now() - 2 * 3600000).toISOString(),
+      url: "https://github.com/acme/app/pull/209", head_ref_name: "agentnave/docs-refresh", head_ref_oid: "def456", base_ref_name: "main",
+    };
+    const prDraft = {
+      repo: "acme/docs", number: 77, title: "WIP: migration guide for v2", state: "draft", is_draft: true,
+      additions: 230, deletions: 11,
+      checks: { state: "pending", total: 2, passed: 1, failed: 0, pending: 1, checks_url: "https://github.com/acme/docs/pull/77/checks" },
+      review_decision: "review_required", mergeable: "mergeable",
+      updated_at: new Date(Date.now() - 25 * 60000).toISOString(),
+      url: "https://github.com/acme/docs/pull/77", head_ref_name: "docs/v2-migration", head_ref_oid: "998877", base_ref_name: "main",
+    };
+    const prs = (list) => (ghStatus === "ready" ? list : []);
+    return {
+      gh_status: ghStatus,
+      terminals: {
+        "1": {
+          git: { is_git: true, branch: "feat/auth-cleanup", detached: false, head_sha: "aa11", is_worktree: false, upstream: "origin/feat/auth-cleanup", ahead: 2, behind: 0, default_branch: "main", ahead_of_default: 2, integrated_into_default: false, changed_files: 3, staged_files: 1, unstaged_files: 2, untracked_files: 0, additions: 42, deletions: 9, github_repo: "acme/app" },
+          prs: prs([prFixLogin]),
+        },
+        "2": {
+          git: { is_git: true, branch: "docs/v2-migration", detached: false, head_sha: "998877", is_worktree: false, upstream: "origin/docs/v2-migration", ahead: 1, behind: 0, default_branch: "main", ahead_of_default: 1, integrated_into_default: false, changed_files: 1, staged_files: 0, unstaged_files: 1, untracked_files: 0, additions: 18, deletions: 3, github_repo: "acme/docs" },
+          prs: prs([prDraft]),
+        },
+        "3": {
+          git: { is_git: true, branch: "agentnave/fix-login", detached: false, head_sha: "abc123", is_worktree: true, upstream: "origin/agentnave/fix-login", ahead: 1, behind: 0, default_branch: "main", ahead_of_default: 3, integrated_into_default: false, changed_files: 2, staged_files: 0, unstaged_files: 1, untracked_files: 1, additions: 27, deletions: 5, github_repo: "acme/app" },
+          prs: prs([prFixLogin]),
+        },
+      },
+      workspaces: {
+        "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50": {
+          git: { is_git: true, branch: "feat/auth-cleanup", detached: false, head_sha: "aa11", is_worktree: false, upstream: "origin/feat/auth-cleanup", ahead: 2, behind: 0, default_branch: "main", ahead_of_default: 2, integrated_into_default: false, changed_files: 3, staged_files: 1, unstaged_files: 2, untracked_files: 0, additions: 42, deletions: 9, github_repo: "acme/app" },
+          prs: prs([prFixLogin, prDocsMerged]),
+        },
+      },
+      isolated: {
+        "wt-3f9a1c2b4d5e": {
+          git: { is_git: true, branch: "agentnave/fix-login", detached: false, head_sha: "abc123", is_worktree: true, upstream: "origin/agentnave/fix-login", ahead: 1, behind: 0, default_branch: "main", ahead_of_default: 3, integrated_into_default: false, changed_files: 2, staged_files: 0, unstaged_files: 1, untracked_files: 1, additions: 27, deletions: 5, github_repo: "acme/app" },
+          pr: ghStatus === "ready" ? prFixLogin : null,
+          merged_pr: null,
+        },
+        "wt-7b2e9d1a0c44": {
+          git: { is_git: true, branch: "agentnave/docs-refresh", detached: false, head_sha: "def456", is_worktree: true, upstream: null, ahead: 0, behind: 0, default_branch: "main", ahead_of_default: 2, integrated_into_default: false, changed_files: 0, staged_files: 0, unstaged_files: 0, untracked_files: 0, additions: 0, deletions: 0, github_repo: "acme/app" },
+          pr: ghStatus === "ready" ? prDocsMerged : null,
+          merged_pr: ghStatus === "ready" ? { number: 209, repo: "acme/app", title: prDocsMerged.title, url: prDocsMerged.url } : null,
+        },
+        "wt-0c8d4e6f1a22": {
+          git: { is_git: true, branch: "agentnave/old-experiment", detached: false, head_sha: "112233", is_worktree: true, upstream: null, ahead: 0, behind: 0, default_branch: "main", ahead_of_default: 1, integrated_into_default: false, changed_files: 1, staged_files: 0, unstaged_files: 1, untracked_files: 0, additions: 4, deletions: 1, github_repo: "acme/app" },
+          pr: null,
+          merged_pr: null,
+        },
+      },
+      updated_at: Date.now(),
+    };
+  };
   if (q.has("handover")) mockTerminals.shift();
   function terminalPost(path, body) {
     const query = new URLSearchParams(path.split("?")[1] || "");
@@ -1144,6 +1216,7 @@ All checks passed!
   }
   async function p3Fetch(path) {
     if (path === "/app/projects") return { projects: structuredClone(mockProjects) };
+    if (path === "/app/git-pr/state") return mockGitPr();
     if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
     if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider, accounts: provider === "claude" ? mockAccounts.map(({ id, label }) => ({ id, label })) : [] })) };
     if (path === "/app/accounts") return { accounts: structuredClone(mockAccounts), error: null };
@@ -1200,6 +1273,18 @@ All checks passed!
     throw Object.assign(new Error("404"), { status: 404 });
   }
   async function post(path, body = {}) {
+    if (path === "/app/git-pr/refresh") return mockGitPr();
+    if (path === "/app/isolated/inspect") {
+      const iso = mockGitPr().isolated?.[body.id];
+      const d = ISOLATED.find((x) => x.id === body.id);
+      return {
+        status: "confirm", id: body.id, path: d?.path || "", branch: d?.branch || "", confirmation: "mock-digest",
+        uncommitted: Boolean(iso?.git?.changed_files), uncommitted_files: iso?.git?.changed_files ? ["src/auth.rs"] : [], uncommitted_total: iso?.git?.changed_files || 0,
+        unique_commits: Boolean(iso?.git?.ahead_of_default), unmerged_commits: ["abc1234 feat: update"], unmerged_total: iso?.git?.ahead_of_default || 0,
+        merged_pr: iso?.merged_pr || null,
+      };
+    }
+    if (path === "/app/isolated/delete") return { status: "deleted", id: body.id, message: "已删除隔离目录" };
     if (path.startsWith("/app/projects/")) return projectPost(path, body);
     if (path.startsWith("/app/terminal/")) return terminalPost(path, body);
     if (path.startsWith("/app/accounts/")) return accountPost(path, body);

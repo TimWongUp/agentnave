@@ -148,6 +148,8 @@ const ChatTerminal = (() => {
       isolated_count: 0,
       derived,
       parent_workspace_id: x.parent_workspace_id ?? null,
+      isolation_id: x.isolation_id ?? null,
+      cwd: x.cwd || "",
       blocked_kind: x.blocked_kind ?? null,
     };
   }
@@ -600,5 +602,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, pending, derivedOf, derivedAll, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, close, stop };
 })();

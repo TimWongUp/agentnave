@@ -2468,3 +2468,199 @@ test("leaving terminal mode clears .term-mode before applyFolds and long/peer/br
   const chatCss = readFileSync(`${__dirname}/../chat.css`, "utf8");
   assert.match(chatCss, /\.bub\.fold:has\(~\s*\.more\[hidden\]\)::after\s*\{\s*display:\s*none;\s*\}/);
 });
+
+test("ChatGit prioritizes PR tones, hides desktop sessions and PRs when gh unavailable, and renders isolated Git/PR/jump controls", () => {
+  const mkNode = (tag, attributes = {}, ...children) => {
+    const node = {
+      tag,
+      className: tag.split(".").slice(1).join(" "),
+      attributes: { ...attributes },
+      hidden: Boolean(attributes.hidden),
+      children: children.flat(Infinity).filter((x) => x != null && x !== false),
+      listeners: {},
+      style: {},
+      textContent: "",
+      setAttribute(k, v) { this.attributes[k] = v; },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      hasAttribute(k) { return Object.hasOwn(this.attributes, k); },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener(name, fn) { this.listeners[name] = fn; },
+      append(...items) { this.children.push(...items.flat(Infinity).filter((x) => x != null && x !== false)); },
+      replaceChildren(...items) { this.children = items.flat(Infinity).filter((x) => x != null && x !== false); },
+      insertBefore(item, before) {
+        const idx = this.children.indexOf(before);
+        if (idx >= 0) this.children.splice(idx, 0, item);
+        else this.children.push(item);
+      },
+      closest() { return null; },
+      contains() { return false; },
+    };
+    node.parentNode = null;
+    return node;
+  };
+  const jumped = [];
+  const opened = [];
+  const context = vm.createContext({
+    AN: {
+      h: mkNode,
+      L: (zh) => zh,
+      setText: (n, t) => { n.textContent = t; },
+      setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+      relTime: () => "5 分钟前",
+      at: Date.parse,
+      deskName: (d) => d?.label || d?.key || "",
+      post: async () => ({}),
+      load: async () => ({}),
+    },
+    document: {
+      body: { append() {} },
+      createElementNS: (_ns, tag) => mkNode(tag),
+      addEventListener() {},
+    },
+    window: { addEventListener() {}, innerWidth: 1200, innerHeight: 800 },
+    ChatTerminal: {
+      hasTerminal: (group) => group === "ws-term",
+      derivedAll: () => [{ group: "term-9", isolation_id: "wt-1", cwd: "/repo/.agentnave-worktrees/wt-1", display_title: "派生修 Bug", label: "Claude Code", status: "running", live: true }],
+    },
+    go: (path) => jumped.push(path),
+    openScope: (scope) => opened.push(scope),
+    setTimeout,
+    clearTimeout,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
+  const { ChatGit } = context;
+
+  // Priority: CI failing / conflict > open > draft > merged > closed.
+  assert.equal(ChatGit.prTone({ state: "open", checks: { state: "failing" }, mergeable: "mergeable" }), "bad");
+  assert.equal(ChatGit.prTone({ state: "draft", checks: { state: "passing" }, mergeable: "conflicting" }), "bad");
+  assert.equal(ChatGit.prTone({ state: "open", checks: { state: "passing" }, mergeable: "mergeable" }), "open");
+  assert.equal(ChatGit.prTone({ state: "draft", checks: { state: "none" }, mergeable: "mergeable" }), "draft");
+  assert.equal(ChatGit.prTone({ state: "merged", checks: { state: "failing" }, mergeable: "conflicting" }), "merged");
+  assert.equal(ChatGit.prTone({ state: "closed", checks: { state: "none" }, mergeable: "unknown" }), "closed");
+
+  // CLI vs desktop eligibility.
+  assert.equal(ChatGit.isCliSession({ group: "ws-cli", cli_session: true }), true);
+  assert.equal(ChatGit.isCliSession({ group: "ws-term", cli_session: false }), true);
+  assert.equal(ChatGit.isCliSession({ group: "term-1", terminal: 1 }), true);
+  assert.equal(ChatGit.isCliSession({ group: "term-2", derived: true }), true);
+  assert.equal(ChatGit.isCliSession({ group: "ws-desktop", app: "claude-desktop", cli_session: false }), false);
+  assert.equal(ChatGit.isCliSession({ group: "ws-unknown" }), false);
+
+  ChatGit._applyForTest({
+    gh_status: "ready",
+    terminals: {},
+    workspaces: {
+      "ws-cli": {
+        git: { is_git: true, branch: "feat/x", changed_files: 2, additions: 10, deletions: 3 },
+        prs: [
+          { repo: "o/r", number: 1, title: "Merged", state: "merged", checks: { state: "passing", total: 1, passed: 1, failed: 0, pending: 0 }, url: "https://github.com/o/r/pull/1" },
+          { repo: "o/r", number: 2, title: "Failing", state: "open", checks: { state: "failing", total: 2, passed: 1, failed: 1, pending: 0 }, url: "https://github.com/o/r/pull/2" },
+        ],
+      },
+      "ws-desktop": {
+        git: { is_git: true, branch: "main", changed_files: 1 },
+        prs: [{ repo: "o/r", number: 3, title: "Open", state: "open", checks: { state: "passing", total: 1 }, url: "https://github.com/o/r/pull/3" }],
+      },
+    },
+    isolated: {
+      "wt-1": {
+        git: { is_git: true, branch: "agentnave/wt-1", default_branch: "main", ahead_of_default: 2, changed_files: 1, additions: 5, deletions: 2 },
+        pr: { repo: "o/r", number: 12, title: "PR 12", state: "open", checks: { state: "passing", total: 1, passed: 1, failed: 0, pending: 0 }, url: "https://github.com/o/r/pull/12" },
+        merged_pr: null,
+      },
+    },
+  });
+
+  const cliRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(cliRec, { group: "ws-cli", cli_session: true });
+  assert.equal(cliRec.prBadge.hidden, false);
+  assert.equal(cliRec.prBadge.attributes["data-tone"], "bad");
+
+  const deskRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(deskRec, { group: "ws-desktop", app: "claude-desktop", cli_session: false });
+  assert.equal(deskRec.prBadge.hidden, true);
+
+  // Isolated card nodes: git status + PR + clickable derived terminal jump.
+  const isoRes = ChatGit.isolatedNodes({ id: "wt-1", path: "/repo/.agentnave-worktrees/wt-1", branch: "agentnave/wt-1", status: "idle" }, { desks: new Map() });
+  assert.equal(isoRes.hasActiveTerminal, true);
+  const userNode = isoRes.nodes.find((n) => n.className === "iso-user");
+  assert.ok(userNode);
+  userNode.children[0].listeners.click();
+  assert.deepEqual(jumped, ["/chat/term-9"]);
+
+  // When gh is not installed, PRs are hidden while Git status remains visible.
+  ChatGit._applyForTest({
+    gh_status: "not_installed",
+    terminals: {},
+    workspaces: {
+      "ws-cli": {
+        git: { is_git: true, branch: "feat/x", changed_files: 2, additions: 10, deletions: 3 },
+        prs: [{ repo: "o/r", number: 2, title: "Failing", state: "open", checks: { state: "failing", total: 1 }, url: "https://github.com/o/r/pull/2" }],
+      },
+    },
+    isolated: {},
+  });
+  ChatGit.decorateItem(cliRec, { group: "ws-cli", cli_session: true });
+  assert.equal(cliRec.prBadge.hidden, false);
+  assert.equal(cliRec.prBadge.attributes["data-tone"], "git");
+});
+
+test("isolatedConfirmBody notes merged PR instead of unmerged-commit warning and falls back when gh has no match", () => {
+  const h = (tag, attributes = {}, ...children) => ({
+    tag, attributes, children: children.flat(Infinity).filter((x) => x != null && x !== false),
+    classList: { toggle() {} }, listeners: {}, textContent: "",
+    replaceChildren(...items) { this.children = items; },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    append(...items) { this.children.push(...items); },
+    querySelector() { return { focus() {} }; },
+    showModal() { this.open = true; },
+    close() { this.open = false; },
+  });
+  let dialogNode;
+  let inspectReply;
+  const context = vm.createContext({
+    AN: {
+      h, $: () => null, L: (zh) => zh, load: async () => ({}), chatName: () => "",
+      post: async () => inspectReply,
+    },
+    document: { body: { append(...nodes) { for (const n of nodes) if (n.tag === "dialog.act") dialogNode = n; } }, addEventListener() {} },
+    window: { addEventListener() {} },
+    state: { groupsData: [], order: [] },
+    refresh: async () => {},
+    renderList() {}, go() {}, openScope() {},
+    setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../actions.js`, "utf8") + "\nglobalThis.Actions = Actions;", context);
+
+  // Squash-merged via PR #42: shows calm merged_pr note, no unmerged-commit warning.
+  inspectReply = {
+    status: "confirm", id: "wt-1", path: "/p", branch: "agentnave/wt-1", confirmation: "tok",
+    unique_commits: true, unmerged_commits: ["abc feat"], unmerged_total: 1,
+    merged_pr: { number: 42, repo: "o/r", title: "Merged", url: "https://github.com/o/r/pull/42" },
+  };
+  const p1 = context.Actions.deleteIsolated("s-1", { id: "wt-1", path: "/p", branch: "agentnave/wt-1" }, { disabled: false });
+  return new Promise((r) => setImmediate(r)).then(() => {
+    const mergedNote = dialogNode.children.find((n) => n.tag === "p.act-note.iso-merged");
+    assert.ok(mergedNote, "should display merged PR note");
+    const unmergedWarn = dialogNode.children.find((n) => n.tag === "p.act-note.warn" && String(n.children[0]).includes("尚未合入"));
+    assert.equal(unmergedWarn, undefined, "must not warn about unmerged commits when merged_pr is confirmed");
+    dialogNode.children.at(-1).children[0].listeners.click();
+    return p1;
+  }).then(() => {
+    // Fallback without merged_pr: shows existing unmerged-commit warning.
+    inspectReply = {
+      status: "confirm", id: "wt-2", path: "/p2", branch: "agentnave/wt-2", confirmation: "tok2",
+      unique_commits: true, unmerged_commits: ["def feat"], unmerged_total: 1,
+      merged_pr: null,
+    };
+    const p2 = context.Actions.deleteIsolated("s-1", { id: "wt-2", path: "/p2", branch: "agentnave/wt-2" }, { disabled: false });
+    return new Promise((r) => setImmediate(r)).then(() => {
+      const mergedNote = dialogNode.children.find((n) => n.tag === "p.act-note.iso-merged");
+      assert.equal(mergedNote, undefined);
+      const unmergedWarn = dialogNode.children.find((n) => n.tag === "p.act-note.warn" && String(n.children[0]).includes("尚未合入"));
+      assert.ok(unmergedWarn, "should fall back to unmerged commit warning when gh has no match");
+      dialogNode.children.at(-1).children[0].listeners.click();
+      return p2;
+    });
+  });
+});

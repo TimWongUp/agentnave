@@ -124,6 +124,7 @@ function renderHead(c, n) {
   setText(t.iso, isolatedCount(dirs));
   t.run.hidden = !n.running && !n.review;
   setText(t.run, n.running ? L(`${n.running} 个在工作`, `${n.running} working`) : L("会议进行中", "In meeting"));
+  if (typeof ChatGit !== "undefined") ChatGit.decorateHead?.(t, c);
 }
 
 // ---------------------------------------------------------------- boss office
