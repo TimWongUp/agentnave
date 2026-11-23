@@ -148,6 +148,8 @@ pub(crate) struct Tray {
 
 fn main() {
     uninstall::entry();
+    #[cfg(target_os = "macos")]
+    window::disable_smart_text_substitutions();
     proxy::apply();
     let reader = Arc::new(Reader::new(data_files::data_root()));
     #[cfg(target_os = "macos")]

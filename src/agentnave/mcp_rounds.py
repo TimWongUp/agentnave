@@ -245,7 +245,9 @@ async def run_round(
         list[str] | None,
         Field(
             description=(
-                "Message_ids to commit before this task; requires seats; see MCP instructions."
+                "Up to 20 unique message_ids of succeeded tasks or committed entries in this "
+                "workspace or a linked handover workspace, committed as data before this round; "
+                "requires seats."
             )
         ),
     ] = None,

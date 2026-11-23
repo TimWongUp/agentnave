@@ -2029,12 +2029,17 @@ test("derived terminals nest under parent workspace without counting self-chat a
   const [blockedChild] = context.ChatTerminal.derivedOf("ws-parent");
   assert.equal(blockedChild.status, "waiting");
 
-  // A derived desk's card in the parent's office opens that terminal, not the boss's.
+  // A derived desk's card in the parent's office matches hashed desk_key and falls back to thread:<native>.
   mockSessions[1].derived_busy = false;
   mockSessions[1].blocked_kind = null;
   mockSessions[1].native = "sid-1";
+  mockSessions[1].desk_key = "thread:1fd2c8006815717d";
   await context.ChatTerminal.refresh();
   state.loaded = "ws-parent";
+  state.drawer = { kind: "desk", key: "thread:1fd2c8006815717d" };
+  context.ChatTerminal.column("ws-parent", "claude", "claude");
+  assert.equal(el.drTitle.textContent, "派生调试");
+  assert.equal(context.ChatTerminal.showingDerived(), true);
   state.drawer = { kind: "desk", key: "thread:sid-1" };
   context.ChatTerminal.column("ws-parent", "claude", "claude");
   assert.equal(el.drTitle.textContent, "派生调试");
@@ -2045,6 +2050,24 @@ test("derived terminals nest under parent workspace without counting self-chat a
   assert.equal(context.ChatTerminal.showingDerived(), false);
   state.drawer = { kind: "all" };
   state.loaded = "term-20";
+
+  // Stale refresh() responses must not overwrite a newer terminal list.
+  const origLoad = context.AN.load;
+  let resolveStale;
+  const stalePromise = new Promise((resolve) => { resolveStale = resolve; });
+  let loadCalls = 0;
+  context.AN.load = async (path) => {
+    if (path !== "/app/terminal/state") return origLoad(path);
+    loadCalls += 1;
+    if (loadCalls === 1) return stalePromise;
+    return { cwd: "/repo", sessions: [{ ...mockSessions[0] }, { ...mockSessions[1], display_title: "最新标题" }] };
+  };
+  const firstRefresh = context.ChatTerminal.refresh();
+  await context.ChatTerminal.refresh();
+  resolveStale({ cwd: "/repo", sessions: [{ ...mockSessions[0] }, { ...mockSessions[1], display_title: "过期标题" }] });
+  await firstRefresh;
+  assert.equal(context.ChatTerminal.derivedOf("ws-parent")[0].title, "最新标题");
+  context.AN.load = origLoad;
 
   // Drawer shows derived title instead of "boss", and hides restart on ended derived terminal.
   mockSessions[1].exit = 0;
@@ -3181,4 +3204,79 @@ test("Space key inside commit message and PR title/body inputs is not preventDef
   const prBody = findAll(dlg, (n) => n.attributes.id === "gp-pr-body")[0];
   assert.equal(dispatchBubblingKeydown(prTitle, " ").defaultPrevented, false);
   assert.equal(dispatchBubblingKeydown(prBody, " ").defaultPrevented, false);
+});
+
+test("renderMarkdown renders http(s) as external anchors, file:// as text without raw syntax, and rejects unsafe schemes", () => {
+  const AN = common(false);
+  const makeNode = (tagName = "div") => {
+    const classSet = new Set();
+    const [tag, ...initClasses] = String(tagName).split(".");
+    for (const c of initClasses) classSet.add(c);
+    const node = {
+      tagName: tag.toUpperCase(),
+      attributes: {},
+      children: [],
+      classList: {
+        contains: (c) => classSet.has(c),
+      },
+      setAttribute(k, v) { this.attributes[k] = String(v); },
+      append(...items) {
+        for (const item of items) if (item != null && item !== false) this.children.push(item);
+      },
+      replaceChildren(...items) { this.children = items.filter((x) => x != null && x !== false); },
+    };
+    return node;
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const node = makeNode(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v != null && v !== false) node.setAttribute(k, v === true ? "" : v);
+    }
+    node.append(...kids.flat(Infinity));
+    return node;
+  };
+  const findAll = (root, pred, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (pred(root)) out.push(root);
+    for (const child of root.children || []) findAll(child, pred, out);
+    return out;
+  };
+  const collectText = (node) => {
+    if (typeof node === "string") return node;
+    return (node?.children || []).map(collectText).join("");
+  };
+
+  const context = vm.createContext({ AN, h, L: AN.L, Array, Object, String, Number, Boolean, Date, JSON, Map, Set, RegExp });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-messages.js`, "utf8")}\nglobalThis.renderMarkdown = renderMarkdown;`, context);
+
+  const md = makeNode("div.md");
+  context.renderMarkdown(
+    md,
+    "见 [`chat.js`](file:///Users/tim/chat.js#L10) 和 [文档](https://example.com/a_(b)) 以及 [bad](javascript:alert(1)) 与 `[literal](https://x)`",
+  );
+  const fullText = collectText(md);
+  assert.equal(fullText.includes("file:///Users/tim/chat.js"), false);
+  assert.match(fullText, /chat\.js/);
+  assert.match(fullText, /\[literal\]\(https:\/\/x\)/);
+
+  const anchors = findAll(md, (n) => n.tagName === "A");
+  assert.equal(anchors.length, 1);
+  assert.equal(anchors[0].attributes.href, "https://example.com/a_(b)");
+  assert.equal(anchors[0].attributes.target, "_blank");
+  assert.equal(anchors[0].attributes.rel, "noopener noreferrer");
+  assert.equal(collectText(anchors[0]), "文档");
+
+  const fileSpans = findAll(md, (n) => n.classList?.contains("md-file"));
+  assert.equal(fileSpans.length, 1);
+  assert.equal(fileSpans[0].attributes.title, "file:///Users/tim/chat.js#L10");
+  assert.equal(findAll(fileSpans[0], (n) => n.tagName === "CODE").length, 1);
+
+  // An unclosed link must not backtrack exponentially.
+  const started = Date.now();
+  context.renderMarkdown(makeNode("div.md"), `[a](${"a".repeat(5000)} `);
+  assert.ok(Date.now() - started < 500);
+
+  const chatCss = readFileSync(`${__dirname}/../chat.css`, "utf8");
+  assert.match(chatCss, /\.md a\s*\{/);
+  assert.match(chatCss, /\.md \.md-file\s*\{/);
 });

@@ -132,7 +132,7 @@
     finally { busy = false; render(); }
   }
   function keyRow(engine = config.engine, label = engine === "minimax" ? "MiniMax" : "ElevenLabs") {
-    const input = h("input", { type: "password", autocomplete: "off", spellcheck: "false", maxlength: "4096", "aria-label": L(`${engine} API 密钥`, `${engine} API key`), disabled: busy,
+    const input = h("input", { type: "password", autocomplete: "off", spellcheck: "false", autocorrect: "off", autocapitalize: "off", maxlength: "4096", "aria-label": L(`${engine} API 密钥`, `${engine} API key`), disabled: busy,
       placeholder: config.keys[engine] ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key") });
     input.value = drafts.keys.get(engine) ?? "";
     input.addEventListener("input", () => drafts.keys.set(engine, input.value));
@@ -227,7 +227,7 @@
     return box;
   }
   function promptEditor(key, label, value, limit, persist, reset = false) {
-    const input = h("textarea", { rows: limit > 500 ? "4" : "2", maxlength: String(limit), disabled: busy,
+    const input = h("textarea", { rows: limit > 500 ? "4" : "2", maxlength: String(limit), disabled: busy, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off",
       "aria-label": label, placeholder: limit > 500 ? L("摘要要求", "Summary instructions") : key === "persona-boss" ? L("例如：带队时交代清楚对象和要求，保留原有角色的性格与口吻。", "e.g. Give clear assignments while keeping the character's personality and voice.") : L("例如：你是一位冷静可靠、偶尔幽默的同伴，说话直接，关心对方。", "e.g. You are a calm, reliable companion with occasional humor who speaks directly and cares about others.") });
     input.value = drafts.prompts.get(key) ?? value;
     const dirty = () => input.value !== value;
@@ -288,7 +288,7 @@
     return row(L("ChatGPT 账号", "ChatGPT account"), h("div.s-control", {}, h("span.s-value", { title: said }, said), action));
   }
   function summaryConnection() {
-    const base = h("input", { type: "url", value: drafts.base ?? config.summary.base_url,
+    const base = h("input", { type: "url", value: drafts.base ?? config.summary.base_url, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off",
       placeholder: "https://api.example.com/v1", disabled: busy, "aria-label": L("摘要 API 地址", "Summary API URL") });
     const dirty = () => base.value.trim() !== config.summary.base_url;
     const put = h("button", { type: "button", disabled: busy || !dirty() }, dirty() ? L("保存", "Save") : L("已保存", "Saved"));
@@ -311,7 +311,7 @@
   }
   function manualSummaryModel() {
     const fallback = summaryModels.some(item => item.id === config.summary.model) ? "" : config.summary.model;
-    const input = h("input", { value: drafts.model ?? fallback, placeholder: L("或手填模型 ID", "Or enter model ID"), disabled: busy, "aria-label": L("手填摘要模型 ID", "Custom summary model ID") });
+    const input = h("input", { value: drafts.model ?? fallback, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", placeholder: L("或手填模型 ID", "Or enter model ID"), disabled: busy, "aria-label": L("手填摘要模型 ID", "Custom summary model ID") });
     input.addEventListener("input", () => { drafts.model = input.value; });
     const put = h("button", { type: "button", disabled: busy }, L("使用", "Use"));
     put.addEventListener("click", () => {

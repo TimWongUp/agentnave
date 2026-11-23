@@ -171,6 +171,10 @@ const ChatGitOps = (() => {
       rows: "3",
       placeholder: L("输入提交说明", "Commit message"),
       "aria-label": L("提交说明", "Commit message"),
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+      autocomplete: "off",
     });
     const metaRow = h(
       "div.gp-dlg-meta",
@@ -290,12 +294,20 @@ const ChatGitOps = (() => {
       value: info.title || "",
       placeholder: L("输入 PR 标题", "PR title"),
       "aria-label": L("PR 标题", "PR title"),
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+      autocomplete: "off",
     });
     const bodyInput = h("textarea.gp-textarea", {
       id: bodyId,
       rows: "4",
       placeholder: L("输入 PR 描述（可选）", "PR description (optional)"),
       "aria-label": L("PR 描述", "PR description"),
+      spellcheck: "false",
+      autocorrect: "off",
+      autocapitalize: "off",
+      autocomplete: "off",
     });
     bodyInput.value = info.body || "";
     const draftCb = h("input", { type: "checkbox" });

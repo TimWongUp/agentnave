@@ -23,7 +23,7 @@ from typing import IO
 
 from agentnave import accounts, provider_health
 from agentnave.adapters import ProviderAdapter, get_adapter
-from agentnave.adapters.base import PreparedCommand, parse_json_object
+from agentnave.adapters.base import AdapterHooks, PreparedCommand, parse_json_object
 from agentnave.background_tasks import (
     BACKGROUND_TASKS_PENDING,
     BACKGROUND_WAIT_REMINDER_SECONDS,
@@ -92,7 +92,7 @@ _FOREIGN_SESSION_ERROR = InvocationError(
 )
 _PIPE_DRAIN_SECONDS = 1.0
 # After an Adapter's terminal event, the provider gets this long to exit on its own (ADR-0095).
-_TERMINAL_GRACE_SECONDS = 2.0
+_TERMINAL_GRACE_SECONDS = 0.5
 _FINISHED_RETENTION_SECONDS = 7 * 24 * 60 * 60
 _ENDED_TOOL_STATES = frozenset({"completed", "done", "failed", "error", "errored"})
 _RECENT_TOOLS = 5
@@ -1122,8 +1122,15 @@ class InvocationManager:
             result = self._settle_session(record, result)
             outcome = result.status
             reported = record.reported_model
-            if not reported and not prepared.model_from_result_only:
-                reported = adapter.session_model(result.session_id, since=record.started_wall_at)
+            if (
+                not reported
+                and not prepared.model_from_result_only
+                and getattr(adapter.session_model, "__func__", None)
+                is not AdapterHooks.session_model
+            ):
+                reported = await asyncio.to_thread(
+                    adapter.session_model, result.session_id, since=record.started_wall_at
+                )
             record.reported_model = reported
             return replace(result, reported_model=reported)
         except Exception:
@@ -1264,7 +1271,9 @@ class InvocationManager:
             try:
                 try:
                     if supervised is not None and supervised.process.returncode is None:
-                        await terminate_process_tree(supervised.process)
+                        await terminate_process_tree(
+                            supervised.process, completion=supervised.completion
+                        )
                 finally:
                     try:
                         for task in tasks:
@@ -1312,7 +1321,11 @@ class InvocationManager:
         for guard in (io.bg_reminder_task, io.progress_task):
             if not guard.done():
                 guard.cancel()
-        await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
+        await terminate_process_tree(
+            process,
+            0.2 if io.completion_task in done else 2.0,
+            completion=io.completion_task,
+        )
         stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
         terminal, error = _drained_limit(terminal, error, stdout, stderr, io)
         parse_returncode = provider_returncode

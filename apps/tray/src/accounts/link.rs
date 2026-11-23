@@ -1,4 +1,4 @@
-//! Linking a folder that already holds a Claude account (ADR-0117): found by a scan of the home
+//! Linking a folder that already holds a Claude account (ADR-0118): found by a scan of the home
 //! folder or named by a path. Such an account is registered as `managed: false`, so removing it
 //! only unbinds it. The sign-in states of the scan go to the page that asked and nowhere else.
 

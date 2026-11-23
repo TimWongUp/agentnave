@@ -1029,6 +1029,14 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
     let _ = exit_of(&session);
 }
 
+#[test]
+fn thread_desk_key_matches_service_hash() {
+    assert_eq!(
+        super::thread_desk_key("antigravity", "680b3822-c887-4303-b482-4d3ed38279b1"),
+        "thread:1fd2c8006815717d"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn status_probe_is_answered_once_even_when_output_is_replayed() {

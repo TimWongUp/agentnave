@@ -11,6 +11,7 @@ const LEGACY_WRITING_SMALL_TASKS: &str = "boss 只自己做小事：读一两个
 const CURRENT_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件、改一处、几分钟能完成；多文件实现、需要调查定位的问题和成篇文案都派出，即使自己的工具也能做；写作所需的上下文已全在 boss 手里、且未要求 boss 只负责编排时除外，例如刚收敛的讨论或会议结论要写成 ADR、架构文档、术语表或定稿说明，简报几乎就是正文，boss 自己写；需要另外调研或上下文不在 boss 手里的成篇写作仍派出。";
 const LEGACY_WAIT_VERIFY: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取；`succeeded` 不等于完成，boss 核对产物后验收；高风险改动由 boss 针对具体的出错方式补做检查。";
 const LEGACY_MEETINGS_WAIT: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取。";
+const LEGACY_AUTH_LOAD: &str = "- 本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数；派发、开会、等待和验收前先加载 agentnave-manager Skill 并按它执行。";
 
 /// What replaced the old one-line "small tasks" rule: from the named-CLI sentence through the
 /// orchestration-only line.
@@ -88,6 +89,10 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         .lines()
         .find(|line| line.starts_with("- 以回执 `next`"))
         .expect("shared wait instruction");
+    let auth_load = shared
+        .lines()
+        .find(|line| line.starts_with("- 本偏好不新增推送、合并 PR、发布、发送的授权"))
+        .expect("shared auth/load instruction");
     let meetings_wait = super::catalog::section("meetings_only_tail").trim();
     text.replace(LEGACY_DISPATCH, dispatch)
         .replace(LEGACY_ASSIGNMENT, "")
@@ -121,6 +126,7 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         .replace(LEGACY_REVIEW, review)
         .replace(LEGACY_WAIT_VERIFY, wait_verify)
         .replace(LEGACY_MEETINGS_WAIT, meetings_wait)
+        .replace(LEGACY_AUTH_LOAD, auth_load)
 }
 
 pub(super) fn apply(document: &Value, text: String) -> String {
@@ -183,5 +189,15 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     assert!(
         specialist_and_wait
             .contains("以回执 `next` 和 `follow_up` 为准收齐结果；`succeeded` 不等于完成")
+    );
+    let migrated_auth = apply(
+        &document,
+        format!("{LEGACY_AUTH_LOAD}\n用户自定义：保留这行。"),
+    );
+    assert!(!migrated_auth.contains("派发、开会、等待和验收前先加载"));
+    assert!(migrated_auth.contains("普通私聊按工具描述与回执 `next` 执行，不必先读 Skill"));
+    assert!(migrated_auth.contains("用户自定义：保留这行。"));
+    assert!(
+        super::catalog::section("decision_shared").contains("普通私聊按工具描述与回执 `next` 执行")
     );
 }

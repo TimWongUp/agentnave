@@ -1,6 +1,6 @@
 ---
 name: agentnave-manager
-description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、Devin CLI 或 ZCode 执行任务，或开启编排后由 boss 主动派活。说明如何选工位、交接、传参、等待、验收、取消及续接；也用于多个 CLI 并联或串联协作（各自答、多轮各自答、轮流聊、先各自答再讨论）、问意见、交叉复核、分头做、流水线、择优、反证、分歧收敛、接力，以及保存的会议；咨询或仅提到模型名称不授权执行。
+description: 通过 AgentNave 开会、评审、转交、多个可写任务并行、做流水线类多任务编排（流水线、择优、反证、各自答、轮流聊、分歧收敛），或派发／等待回执报错、返回 not_started 时使用。普通私聊派发、续接、收结果与验收直接按 MCP 工具描述和回执 next 执行，不必先读本 Skill；咨询或仅提到模型名称不授权执行。
 ---
 
 # 通过 AgentNave 调用 CLI
@@ -19,7 +19,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 
 私聊用 `start_agent`（一个 CLI 做一项任务，结果只回给 boss），会议室用 `run_round`（答案在席位间共享），两者都用 `wait` 收结果。其余工具：`answer_prompt` 代答弹框，`cancel` 取消，`decide_answers` 审核会议答案，`list`、`read_conversation` 读历史，`list_members` 查工位和组员，`clear_provider_cooldown` 解除冷却，`handover` 转交和接手。
 
-下面的情况先读对应参考，同一上下文只读一次：
+下面的情况按需再读对应参考，同一上下文只读一次：
 
 | 什么时候 | 读 |
 | --- | --- |
@@ -27,7 +27,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 | 开会议室、审核、补跑席位、回读保存的会话 | [会话与审核](references/studio.md) |
 | 同时派出多个任务，或做流水线、择优、反证 | [多任务编排](references/workflows.md) |
 | 用户点名 CLI、模型或参数；工位不可用或在冷却 | [点名与冷却](references/models.md) |
-| 用到某个 CLI，含 `native=true` 交给宿主自带子代理的工位 | 「CLI 与模型」表里该 CLI 的参考 |
+| 该 CLI 作宿主或要传它专有参数时 | 「CLI 与模型」表里该 CLI 的参考（`native_seat` 与等待方式以回执为准） |
 | 用户要求转交或接手会话 | `agentnave-handover` Skill，不在新聊天里主动查待接手 |
 
 ## boss 会话归属
@@ -50,17 +50,17 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 - **访问等级**：`access` 是声明，在 App 显示，不改变 CLI 权限；真正的只读靠 Provider 原生权限。工位自带默认读写等级，显式传时以本次为准；续接不继承上次声明。回执 `warnings` 提示同一 `cwd` 已有其他运行中的 CLI 时：并行写入用 `isolation` 建隔离目录，只读就补声明 `read`。
 - **同时运行上限**：私聊任务与会议席位合计受 App 设置限制（默认 8），超出时调用被拒绝；等部分任务结束后再派，或减少并联席位。
 - **转发**：私聊默认不带任何工作区上下文。要带上别人的结果时，用 `forward` 按顺序引用本工作区（或已认领的直接交接来源工作区）里已成功任务与已提交条目的 `message_id`。私聊接收方按顺序看到 `Forwarded [#1]`…`[#n]` 并将其当数据（会议室为无序号条目）；`prompt` 只写针对 `#1`、`#2` 的任务、裁决或取舍，正文留在转发块里。
-- **同类宿主**：收到 `reason="native_seat"` 时先读当前宿主参考，按回执模型和档位交给宿主自带子代理（档位有值才传，空值不补）。App 保存的工位模型和档位视同明确选择，但不因此获得派发授权、不启用隐藏工位；宿主在已授权范围内满足不了时按工位不可用走兜底，不自动回退，其他替代须用户明确授权。
+- **同类宿主**：收到 `reason="native_seat"` 时直接按回执 `message` 给出的调用方式、模型和档位交给宿主自带子代理（档位有值才传，空值不补）。App 保存的工位模型和档位视同明确选择，但不因此获得派发授权、不启用隐藏工位；宿主在已授权范围内满足不了时按工位不可用走兜底，不自动回退，其他替代须用户明确授权。
 
 ## 选择调用方式
 
-选谁执行：用户点名优先。否则按档位读对应参考，每个聊天第一次选执行者前读一次，之后复用：
+选谁执行：用户点名优先。普通私聊直接按规则块和工具描述传 `seat` 或 `role`，遇复杂取舍、未开启编排、点名参数、工位不可用或冷却时再读对应参考，同一聊天复用：
 
 | 情况 | 读 |
 | --- | --- |
 | 规则块写明工位交给决策模型选（「决策模型」档） | [决策模型档](references/decision.md) |
 | 规则块列出了固定工位（分工协作、并行分工等） | [固定编排工位](references/fixed-seats.md) |
-| 编排未开启，或用户点名 CLI、模型或参数 | [点名与冷却](references/models.md) |
+| 编排未开启，或用户点名 CLI、模型、专有参数；工位不可用或冷却 | [点名与冷却](references/models.md) |
 
 档位按规则块判断，派发前不用先查 `list_members`；规则块与实际配置不符时派发会被拒绝并说明原因，再按报错查 `list_members`。宿主全局规则里没有「AgentNave 编排偏好」一段时，先查一次 `list_members`：`orchestration.enabled=true` 读[没有规则块的宿主](references/headless.md)，否则按编排未开启处理。
 
@@ -93,7 +93,7 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 - 讨论、顾问和只看给定材料的任务用 prompt 约定范围，不因此自动启用 `restricted_tools`；仅在用户明确要求从工具层面限制访问时才设 `provider_options.restricted_tools=true`。
 - 终态回执的 `warnings` 报告 CLI 报成功但有工具调用被拒时，按未完成处理，并告知用户可在 App 调整档位。
 
-只读取所选 CLI 的参考文件，切换 CLI 再读新文件。
+仅在该 CLI 作宿主或要传它专有参数时才读其参考文件，普通派发不必先读，切换 CLI 再读新文件。
 
 <!-- shared:cli-refs -->
 | CLI | `provider` | 参考 |
@@ -128,16 +128,12 @@ description: 通过 AgentNave 派发任务时使用：用户要求用 Claude Cod
 
 ## 等待、验收与取消
 
-以回执 `next` 为准收齐结果；各状态字段（`wait_elapsed`、`already_waiting`、`follow_up`、`prompt_pending` 等）语义见 `wait` 工具说明，宿主专属等待做法见 [Claude Code](references/claude.md)、[Antigravity CLI](references/antigravity.md)、[Grok CLI](references/grok.md)、[Codex CLI](references/codex.md)。
+按回执 `next` 选择并持续收齐结果，不另加总时限；各状态字段（`wait_elapsed`、`already_waiting`、`follow_up`、`prompt_pending` 等）语义见 `wait` 工具说明。
 
-1. **怎么等**：按回执 `next` 选择本连接的收件方式：
-   - **给出后台等待命令时**（如已验收的交互 `agy`、`grok` CLI）：按回执指定的命令与工具参数在后台原样运行，不挂阻塞 `wait`（也不必传 `wait=true`）；命令在前台直接返回时同样立即处理。输出 `ready` 或 `expired` 时调收件箱 `wait(wait_seconds=0)`（省略 `ids`、同 `manager_session_id`）收取，仍有在途再照回执 `next` 续等；输出 `already_watching` 或 `all_done` 直接结束本轮；输出 `service_gone` 回到当前连接核对。
-   - **注明 App 会提示时**（App 内终端的 Codex）：派出后直接结束本轮，不挂阻塞 `wait`（也不必传 `wait=true`）；提示到达后调收件箱 `wait(wait_seconds=0)` 收取，若仍有未完结项同样结束本轮等下次提示。
-   - **要求前台 `wait` 时**（Claude 终端由宿主自动转后台的长 `wait`、Claude 关后台时显式 `wait_seconds=270` 及其他宿主的常规 270 秒 `wait`）：按回执 `next` 调收件箱 `wait`（省略 `ids`、同 `manager_session_id`、`seq` 递增，除非 `next` 明确要求 `wait_seconds=270` 否则省略 `wait_seconds`），持续等到终态或显式取消，不另加总时限；只派一个 `start_agent` 且本轮就要结果时可传 `wait=true`，并联派发全部派出后再统一等。
-2. **先处理再等**：任一就绪即返回，先处理 `prompt_pending`、阻塞和待审，再按回执 `next` 指示的等待方式继续收齐至 `all_finished=true`（不代表全部成功）；收口回执带 `follow_up` 时汇报前逐项处理或写进结论。`wait(wait_seconds=0)` 返回的运行中 `output` 只是最新公开正文尾部，不含思考或工具参数，材料不足就报告未知，不凭此判定卡死。
-3. **阻塞不等于失败**：`execution_blocked` 不停止 CLI，按 `error.code` 决定继续等或取消。`background_tasks_pending` 表示子代理已写出回复、只剩它本轮的后台任务跑满 30 分钟，不是 CLI 或账号故障：要完整结果就继续等，否则 `cancel` 按已写出的回复收尾（后台进程随之结束，派生会话的后台任务留给用户）。`progress_stalled` 表示任务连续 6 分钟没有实质进展（重试通知不算），任务仍在跑，只提醒一次：先 `wait(wait_seconds=0)` 看输出尾巴，还在正常推理就继续等；疑似卡死（反复重试、长时间退避、同一工具挂住）就 `cancel`，再用同一 `session_id` 续接，必要时改写简报、收窄范围，绕开触发安全过滤的内容。非交互模式下单个工具调用被拒绝、普通工具失败、重试或沉默都不证明任务失败，终态按结果核对。
-4. **验收**：`succeeded` 不证明目标完成，须以实际命令、产物、检查结果和正文语义验收；回复报告了未满足要求、未验证范围或阻塞时按未完成跟进（显式要求特定格式的任务照约定核对，不再因缺少固定格式行机械返工）。多任务按覆盖清单逐项核对，隔离目录验收与释放见[多任务编排](references/workflows.md)（`auto_released=true` 时原路径已失效，不要再当 `cwd`）。高风险改动由 boss 针对具体出错方式补做一项检查，不另派工位；独立检查走 `agentnave-review`。
-5. **待决定的事**：正文报告了待确认的问题或需决定的事项时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。
+1. **先处理再等**：任一就绪即返回，先处理 `prompt_pending`、阻塞和待审，再按回执 `next` 指示的等待方式继续收齐至 `all_finished=true`（不代表全部成功）；收口回执带 `follow_up` 时汇报前逐项处理或写进结论。`wait(wait_seconds=0)` 返回的运行中 `output` 只是最新公开正文尾部，不含思考或工具参数，材料不足就报告未知，不凭此判定卡死。
+2. **阻塞不等于失败**：`execution_blocked` 不停止 CLI，按 `error.code` 决定继续等或取消。`background_tasks_pending` 表示子代理已写出回复、只剩它本轮的后台任务跑满 30 分钟，不是 CLI 或账号故障：要完整结果就继续等，否则 `cancel` 按已写出的回复收尾（后台进程随之结束，派生会话的后台任务留给用户）。`progress_stalled` 表示任务连续 6 分钟没有实质进展（重试通知不算），任务仍在跑，只提醒一次：先 `wait(wait_seconds=0)` 看输出尾巴，还在正常推理就继续等；疑似卡死（反复重试、长时间退避、同一工具挂住）就 `cancel`，再用同一 `session_id` 续接，必要时改写简报、收窄范围，绕开触发安全过滤的内容。非交互模式下单个工具调用被拒绝、普通工具失败、重试或沉默都不证明任务失败，终态按结果核对。
+3. **验收**：`succeeded` 不证明目标完成，须以实际命令、产物、检查结果和正文语义验收；回复报告了未满足要求、未验证范围或阻塞时按未完成跟进（显式要求特定格式的任务照约定核对，不再因缺少固定格式行机械返工）。多任务按覆盖清单逐项核对，隔离目录验收与释放见[多任务编排](references/workflows.md)（`auto_released=true` 时原路径已失效，不要再当 `cwd`）。高风险改动由 boss 针对具体出错方式补做一项检查，不另派工位；独立检查走 `agentnave-review`。
+4. **待决定的事**：正文报告了待确认的问题或需决定的事项时，先核对现有授权，能回答就续接；需用户决定则转达具体问题和进展。
 
 <!-- shared:prompts -->
 `cancel` 先拒绝待答弹框再终止进程，返回终态，不撤销已发生的副作用。

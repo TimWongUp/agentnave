@@ -1,13 +1,30 @@
 "use strict";
-function inline(parent, text) {
+function renderInlineLink(label, rawUrl) {
+  const url = String(rawUrl || "").trim();
+  let node;
+  if (/^https?:\/\//i.test(url)) {
+    node = h("a", { href: url, target: "_blank", rel: "noopener noreferrer" });
+  } else if (/^file:\/\//i.test(url)) {
+    node = h("span.md-file", { title: url });
+  } else {
+    node = h("span");
+  }
+  return inline(node, label, false);
+}
+function inline(parent, text, allowLinks = true) {
   let last = 0;
-  for (const m of text.matchAll(/`[^`\n]+`|\*\*[^*\n]+\*\*/g)) {
+  const pattern = allowLinks
+    ? /`[^`\n]+`|\[([^\]\n]+)\]\(((?:[^\s()]|\([^\s()]*\))+)\)|\*\*[^*\n]+\*\*/g
+    : /`[^`\n]+`|\*\*[^*\n]+\*\*/g;
+  for (const m of text.matchAll(pattern)) {
     if (m.index > last) parent.append(text.slice(last, m.index));
-    parent.append(
-      m[0][0] === "`"
-        ? h("code", {}, m[0].slice(1, -1))
-        : h("strong", {}, m[0].slice(2, -2)),
-    );
+    if (m[0][0] === "`") {
+      parent.append(h("code", {}, m[0].slice(1, -1)));
+    } else if (allowLinks && m[0][0] === "[") {
+      parent.append(renderInlineLink(m[1], m[2]));
+    } else {
+      parent.append(h("strong", {}, m[0].slice(2, -2)));
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) parent.append(text.slice(last));

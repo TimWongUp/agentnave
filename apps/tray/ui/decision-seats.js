@@ -312,7 +312,7 @@
     const label = L("Gemini 密钥", "Gemini API key");
     const save = el("button", { type: "button", disabled: keyBusy || !keyDraft.trim(), onClick: () => storeKey(keyDraft) }, L("保存", "Save"));
     const input = el("input", {
-      type: "password", autocomplete: "off", spellcheck: "false", maxlength: "4096", "aria-label": label, disabled: keyBusy,
+      type: "password", autocomplete: "off", spellcheck: "false", autocorrect: "off", autocapitalize: "off", maxlength: "4096", "aria-label": label, disabled: keyBusy,
       dataset: { focusKey: "decision/key" },
       placeholder: saved.key_set ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key"),
       onInput: (e) => { keyDraft = e.target.value; save.disabled = keyBusy || !keyDraft.trim(); },
@@ -351,7 +351,7 @@
     const key = `decision/${card.cid}/${row.rid}`;
     const name = row.role.trim() || L(`生图工位第 ${index + 1} 行`, `Image seats row ${index + 1}`);
     const specialty = el("input", {
-      type: "text", className: "ds-role", maxlength: String(ROLE_MAX), spellcheck: "false", value: row.role,
+      type: "text", className: "ds-role", maxlength: String(ROLE_MAX), spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", value: row.role,
       "aria-label": L("专业", "Specialty"), placeholder: L("专业", "Specialty"), dataset: { focusKey: `${key}/role` },
       onInput: (e) => editRow(card.cid, row.rid, { role: e.target.value }, false),
     });
@@ -373,7 +373,7 @@
     const own = card.kind === CUSTOM;
     const title = cardName(card) || L(`卡片 ${index + 1}`, `Card ${index + 1}`);
     const name = el(own ? "input" : "strong", own ? {
-      type: "text", className: "ds-role", maxlength: String(ROLE_MAX), spellcheck: "false", value: card.role,
+      type: "text", className: "ds-role", maxlength: String(ROLE_MAX), spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", value: card.role,
       "aria-label": L("专业", "Specialty"), placeholder: L("专业", "Specialty"), dataset: { focusKey: `${key}/role` },
       onInput: (e) => editCard(card.cid, { role: e.target.value }, false),
     } : {}, ...(own ? [] : [title]));

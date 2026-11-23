@@ -3,11 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import sys
+import time
+from contextlib import suppress
 from pathlib import Path
 from typing import cast
 
 import pytest
+from fake_cli import write_fake_cli
 
 from agentnave import processes
 
@@ -178,3 +182,85 @@ async def test_cancelled_windows_startup_drains_full_output_pipes(
             process.kill()
         await process.communicate()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group grace cleanup")
+@pytest.mark.asyncio
+async def test_terminate_process_tree_stops_early_when_cli_exits_on_sigterm(
+    tmp_path: Path,
+) -> None:
+    cli = write_fake_cli(
+        tmp_path,
+        "fake-cli",
+        "import time\nprint('ready', flush=True)\ntime.sleep(60)\n",
+    )
+    supervised = await processes.spawn_process((str(cli),), tmp_path)
+    try:
+        assert supervised.process.stdout is not None
+        assert await asyncio.wait_for(supervised.process.stdout.readline(), 5) == b"ready\n"
+        started = time.monotonic()
+        await processes.terminate_process_tree(
+            supervised.process, grace_seconds=5.0, completion=supervised.completion
+        )
+        elapsed = time.monotonic() - started
+        assert elapsed < 2.0
+        assert supervised.process.returncode is not None
+        assert supervised.completion.done()
+    finally:
+        await processes.terminate_process_tree(
+            supervised.process, grace_seconds=0.01, completion=supervised.completion
+        )
+        await asyncio.gather(supervised.completion, return_exceptions=True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group grace cleanup")
+@pytest.mark.asyncio
+async def test_terminate_process_tree_waits_grace_and_sigkills_sigterm_ignoring_grandchild(
+    tmp_path: Path,
+) -> None:
+    grandchild_code = (
+        "import os, signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "print(os.getpid(), flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    cli = write_fake_cli(
+        tmp_path,
+        "fake-cli",
+        (
+            "import signal, subprocess, sys\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {grandchild_code!r}])\n"
+            "raise SystemExit(child.wait())\n"
+        ),
+    )
+    supervised = await processes.spawn_process((str(cli),), tmp_path)
+    grandchild_pid: int | None = None
+    try:
+        assert supervised.process.stdout is not None
+        line = await asyncio.wait_for(supervised.process.stdout.readline(), 5)
+        grandchild_pid = int(line.decode().strip())
+        started = time.monotonic()
+        await processes.terminate_process_tree(
+            supervised.process, grace_seconds=0.5, completion=supervised.completion
+        )
+        elapsed = time.monotonic() - started
+        assert 0.45 <= elapsed < 3.0
+        assert supervised.process.returncode is not None
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            try:
+                os.kill(grandchild_pid, 0)
+            except ProcessLookupError:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail(f"grandchild {grandchild_pid} survived SIGKILL")
+    finally:
+        if grandchild_pid is not None and sys.platform != "win32":
+            with suppress(ProcessLookupError):
+                os.kill(grandchild_pid, signal.SIGKILL)
+        await processes.terminate_process_tree(
+            supervised.process, grace_seconds=0.01, completion=supervised.completion
+        )
+        await asyncio.gather(supervised.completion, return_exceptions=True)

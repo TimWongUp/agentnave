@@ -100,7 +100,7 @@ async def _discard(stream: asyncio.StreamReader) -> None:
 async def _stop(supervised: SupervisedProcess, readers: list[asyncio.Task[None]]) -> None:
     try:
         # The readers keep draining while the tree stops, then reach the closed pipes' end.
-        await terminate_process_tree(supervised.process, 0.2)
+        await terminate_process_tree(supervised.process, 0.2, completion=supervised.completion)
         if readers:
             await asyncio.wait(readers, timeout=_DRAIN_SECONDS)
     finally:
