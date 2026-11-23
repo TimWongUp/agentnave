@@ -71,7 +71,7 @@
 | 0065 | [预置专项角色、独立开关与同难度兜底](0065-predefined-specialist-roles.md) | 已接受 | 扩展 ADR-0037、ADR-0038、ADR-0052；[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md) |
 | 0066 | [统一十分钟等待窗口，用序号区分连续等待](0066-unified-wait-window-and-call-sequence.md) | 部分取代 | 修订 ADR-0007、ADR-0015；[ADR-0067](0067-wait-270s-window-and-host-background-limits.md) |
 | 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 部分修订 | 修订 ADR-0007、ADR-0015、ADR-0066；[ADR-0077](0077-claude-long-wait.md)；agy 等待方式由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订 |
-| 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 部分修订 | 修订 ADR-0037、ADR-0051、ADR-0065；[ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)、[ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) |
+| 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 部分修订 | 修订 ADR-0037、ADR-0051、ADR-0065；[ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)、[ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md)、[ADR-0117](0117-private-dispatch-without-skill.md) |
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
 | 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
@@ -120,3 +120,4 @@
 | 0114 | [Claude 与 agy 保持交互 TUI，boss 以用户身份驱动，结果靠宿主自己唤醒收取](0114-tui-runtime-like-a-user.md) | 已接受 | 修订 ADR-0003、0043、0056、0057、0062、0064、0067、0072、0082、0084、0104（作废 PTY 键入投递）、0107、0109；沿用 ADR-0031、0018、0049、0102、0105、0113 |
 | 0115 | [托盘显示 Git 与 PR 状态，并提供基础 Git 操作](0115-tray-git-status-and-basic-ops.md) | 已接受 | 修订 ADR-0113（Git 与 PR 的只读状态与基础操作回到托盘）、ADR-0098（用户打开规则后自动清理隔离目录）；补充 ADR-0029、ADR-0092 |
 | 0116 | [运行中任务长时间无实质进展时提醒 boss 一次](0116-progress-stall-reminder.md) | 已接受 | 补充 ADR-0049；沿用 ADR-0114 的到限提醒方式 |
+| 0117 | [普通私聊派发不必先读 Skill，用法放进工具描述与回执](0117-private-dispatch-without-skill.md) | 已接受 | 修订 ADR-0068 的「归属」；沿用 ADR-0028、0032、0043、0056、0074、0114 |
