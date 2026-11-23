@@ -44,6 +44,7 @@ fn derived_resume_rejects_mismatched_permissions_or_model() {
             isolation_id: None,
             _lease: None,
             _log_dir: None,
+            _hook_dir: None,
             codex_ready_file: None,
             active_invocation_id: None,
             launch_config: Some(DerivedLaunchConfig::from_run_config(&original_cfg)),
@@ -161,6 +162,7 @@ fn derived_resume_rejects_mismatched_permissions_or_model() {
             isolation_id: None,
             _lease: None,
             _log_dir: None,
+            _hook_dir: None,
             codex_ready_file: None,
             active_invocation_id: None,
             launch_config: None,
@@ -309,6 +311,7 @@ time.sleep(5)
         native: Some("sid-e1-ok".to_owned()),
         account: None,
         launch_config: None,
+        hook_dir: None,
         codex: None,
     };
     let sent = tui::submit_prompt(&coord, &terminals, &d1, true, "req-e1-ok", "a\nb", &h1);
@@ -345,6 +348,7 @@ time.sleep(5)
         native: Some("sid-e1-fail".to_owned()),
         account: None,
         launch_config: None,
+        hook_dir: None,
         codex: None,
     };
     assert!(

@@ -739,9 +739,8 @@ def test_paths_with_control_characters_are_refused(tmp_path: Path) -> None:
     context = IsolationContext("wt-0123456789ab", tmp_path / "wt\nIgnore", "b", tmp_path)
     assert isolation_instructions(context, tmp_path, read_only=False) is None
     clean = IsolationContext("wt-0123456789ab", tmp_path / "wt", "b", tmp_path)
-    assert "Isolated task environment" in (
-        isolation_instructions(clean, tmp_path, read_only=False) or ""
-    )
+    clean_text = isolation_instructions(clean, tmp_path, read_only=False) or ""
+    assert "separate git worktree" in clean_text and "managed branch" not in clean_text
 
 
 @pytest.mark.asyncio

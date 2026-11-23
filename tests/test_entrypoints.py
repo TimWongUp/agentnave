@@ -2727,8 +2727,8 @@ async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
         seen = json.loads(str(done["output"]))
         assert Path(seen["cwd"]).resolve() == Path(str(iso["cwd"])).resolve()
         assert (
-            "When the task asks you to change a file under the main worktree, change the "
-            "corresponding path under this isolated worktree instead."
+            "If the task asks to change a file under the main checkout, change the "
+            "corresponding path in this worktree instead."
         ) in seen["prompt"]
         done_iso = _payload(done["isolation"])
         assert done_iso["summary_status"] == "complete" and done_iso["uncommitted"] is True

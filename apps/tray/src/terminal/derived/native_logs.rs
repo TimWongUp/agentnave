@@ -1,5 +1,6 @@
-//! Pure read-only native log/transcript/rollout inspectors for derived terminal turns (ADR-0109).
+//! Pure read-only native log/transcript/rollout inspectors for derived terminal turns (ADR-0109, ADR-0114).
 
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -12,7 +13,7 @@ pub(super) fn flat_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn is_claude_user_prompt(row: &Value) -> Option<String> {
+fn raw_claude_user_text(row: &Value) -> Option<String> {
     if row["type"].as_str() != Some("user")
         || row["isSidechain"].as_bool() == Some(true)
         || row["isMeta"].as_bool() == Some(true)
@@ -36,6 +37,80 @@ fn is_claude_user_prompt(row: &Value) -> Option<String> {
         }
     }
     has_prompt_block.then(|| parts.join("\n"))
+}
+
+pub(super) fn is_claude_task_notification(row: &Value) -> bool {
+    if row["type"].as_str() != Some("user") || row["isSidechain"].as_bool() == Some(true) {
+        return false;
+    }
+    if matches!(
+        row["origin"]["kind"].as_str(),
+        Some("task-notification" | "task_notification")
+    ) || matches!(
+        row["turnOrigin"].as_str(),
+        Some("task_notification" | "task-notification")
+    ) {
+        return true;
+    }
+    let Some(text) = raw_claude_user_text(row) else {
+        return false;
+    };
+    let trimmed = text.trim();
+    if row["promptSource"].as_str() == Some("system") && trimmed.contains("<task-notification>") {
+        return true;
+    }
+    row["promptSource"].is_null()
+        && trimmed.starts_with("<task-notification>")
+        && trimmed.contains("</task-notification>")
+}
+
+pub(super) fn is_claude_interrupt_row(row: &Value) -> bool {
+    let Some(text) = raw_claude_user_text(row) else {
+        return false;
+    };
+    let trimmed = text.trim();
+    trimmed.starts_with("[Request interrupted by user") && trimmed.ends_with(']')
+}
+
+pub(super) fn is_claude_user_queued_interjection(row: &Value) -> bool {
+    if row["isSidechain"].as_bool() == Some(true) {
+        return false;
+    }
+    let attachment = &row["attachment"];
+    if attachment["type"].as_str() != Some("queued_command") {
+        return false;
+    }
+    if matches!(
+        row["origin"]["kind"].as_str(),
+        Some("task-notification" | "task_notification")
+    ) {
+        return false;
+    }
+    let Some(prompt) = attachment["prompt"].as_str() else {
+        return false;
+    };
+    let trimmed = prompt.trim();
+    !trimmed.is_empty() && !trimmed.starts_with("<task-notification>")
+}
+
+fn is_claude_user_prompt(row: &Value) -> Option<String> {
+    if is_claude_task_notification(row) || is_claude_interrupt_row(row) {
+        return None;
+    }
+    raw_claude_user_text(row)
+}
+
+fn assistant_row_has_text(row: &Value) -> bool {
+    if row["type"].as_str() != Some("assistant") || row["isSidechain"].as_bool() == Some(true) {
+        return false;
+    }
+    let Some(blocks) = row["message"]["content"].as_array() else {
+        return false;
+    };
+    blocks.iter().any(|block| {
+        block["type"].as_str() == Some("text")
+            && block["text"].as_str().is_some_and(|s| !s.trim().is_empty())
+    })
 }
 
 pub(super) fn claude_homes(account_dir: Option<&Path>) -> Vec<PathBuf> {
@@ -97,11 +172,191 @@ pub(super) fn claude_prompt_anchor(
         else {
             continue;
         };
-        if flat_whitespace(&text) == expected {
+        if flat_whitespace(unwrap_claude_pasted(&text)) == expected {
             return Some(pid);
         }
     }
     None
+}
+
+/// Claude Code 2.1.330 records a pasted prompt as `<pasted_content id="x">…</pasted_content id="x">`.
+fn unwrap_claude_pasted(text: &str) -> &str {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix("<pasted_content id=\"") else {
+        return text;
+    };
+    let Some((id, body)) = rest.split_once("\">") else {
+        return text;
+    };
+    let tagged = format!("</pasted_content id=\"{id}\">");
+    body.strip_suffix(tagged.as_str())
+        .or_else(|| body.strip_suffix("</pasted_content>"))
+        .unwrap_or(text)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ClaudeTurnDuration {
+    pub row_index: usize,
+    pub prompt_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct ClaudeDispatchScan {
+    pub found_start: bool,
+    pub prior_prompt_ids: HashSet<String>,
+    pub owned_prompt_ids: Vec<String>,
+    pub turn_durations: Vec<ClaudeTurnDuration>,
+    pub has_assistant_reply: bool,
+    pub last_reply_end_row: Option<usize>,
+    pub last_reply_prompt_id: Option<String>,
+    pub segment_end_row: usize,
+    pub interrupted_by_user: bool,
+    pub user_interjected_queued: bool,
+    pub superseded_by: Option<(String, usize)>,
+    pub active_subturn_after_last_duration: bool,
+}
+
+fn resolve_parent_prompt_id(
+    nodes: &HashMap<String, (Option<String>, Option<String>)>,
+    start_parent: Option<&str>,
+) -> Option<String> {
+    let mut cur = start_parent?;
+    let mut visited = HashSet::new();
+    while visited.insert(cur) {
+        let (parent, pid) = nodes.get(cur)?;
+        if let Some(found) = pid {
+            return Some(found.clone());
+        }
+        cur = parent.as_deref()?;
+    }
+    None
+}
+
+/// Scan a Claude JSONL transcript for one dispatch starting at `start_prompt_id`.
+/// Includes `<task-notification>` sub-turns up to the next genuine human user prompt.
+pub(super) fn claude_dispatch_scan(path: &Path, start_prompt_id: &str) -> ClaudeDispatchScan {
+    let mut scan = ClaudeDispatchScan::default();
+    let Ok(file) = File::open(path) else {
+        return scan;
+    };
+    let reader = BufReader::new(file);
+    let mut nodes: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+    let mut current_subturn_pid: Option<String> = None;
+    let mut row_idx = 0usize;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if !row.is_object() {
+            continue;
+        }
+        let idx = row_idx;
+        row_idx += 1;
+
+        if let Some(uuid) = row["uuid"].as_str().filter(|s| !s.is_empty()) {
+            let parent = row["parentUuid"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            let pid = row["promptId"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            nodes.insert(uuid.to_owned(), (parent, pid));
+        }
+
+        if row["isSidechain"].as_bool() == Some(true) {
+            continue;
+        }
+
+        let row_pid = row["promptId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+
+        if is_claude_task_notification(&row) {
+            if !scan.found_start {
+                if let Some(pid) = row_pid {
+                    scan.prior_prompt_ids.insert(pid);
+                }
+                continue;
+            }
+            if let Some(pid) = row_pid {
+                if !scan.owned_prompt_ids.iter().any(|seen| seen == &pid) {
+                    scan.owned_prompt_ids.push(pid.clone());
+                }
+                current_subturn_pid = Some(pid);
+            }
+            scan.active_subturn_after_last_duration = true;
+            scan.interrupted_by_user = false;
+            continue;
+        }
+
+        if is_claude_interrupt_row(&row) {
+            if scan.found_start {
+                scan.interrupted_by_user = true;
+                scan.active_subturn_after_last_duration = false;
+            }
+            continue;
+        }
+
+        if is_claude_user_prompt(&row).is_some()
+            && let Some(pid) = row_pid
+        {
+            if pid == start_prompt_id {
+                scan.found_start = true;
+                if !scan.owned_prompt_ids.iter().any(|seen| seen == &pid) {
+                    scan.owned_prompt_ids.push(pid.clone());
+                }
+                current_subturn_pid = Some(pid);
+                scan.active_subturn_after_last_duration = true;
+                scan.interrupted_by_user = false;
+            } else if scan.found_start {
+                scan.superseded_by = Some((pid, idx));
+                scan.segment_end_row = idx;
+                return scan;
+            } else {
+                scan.prior_prompt_ids.insert(pid);
+            }
+            continue;
+        }
+
+        if !scan.found_start {
+            continue;
+        }
+
+        if is_claude_user_queued_interjection(&row) {
+            scan.user_interjected_queued = true;
+        }
+
+        if assistant_row_has_text(&row) {
+            scan.has_assistant_reply = true;
+            scan.last_reply_end_row = Some(idx + 1);
+            scan.last_reply_prompt_id = current_subturn_pid.clone();
+            scan.interrupted_by_user = false;
+        }
+
+        if row["type"].as_str() == Some("system")
+            && row["subtype"].as_str() == Some("turn_duration")
+        {
+            let resolved_pid = resolve_parent_prompt_id(&nodes, row["parentUuid"].as_str())
+                .or_else(|| current_subturn_pid.clone());
+            scan.turn_durations.push(ClaudeTurnDuration {
+                row_index: idx,
+                prompt_id: resolved_pid.clone(),
+            });
+            scan.active_subturn_after_last_duration = false;
+            scan.interrupted_by_user = false;
+            if scan.has_assistant_reply {
+                scan.last_reply_end_row = Some(idx + 1);
+                scan.last_reply_prompt_id = resolved_pid.or_else(|| current_subturn_pid.clone());
+            }
+        }
+    }
+
+    scan.segment_end_row = row_idx;
+    scan
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -113,38 +368,12 @@ pub(super) enum ClaudeTurnState {
 }
 
 pub(super) fn claude_turn_state(path: &Path, prompt_id: &str) -> ClaudeTurnState {
-    let Ok(file) = File::open(path) else {
-        return ClaudeTurnState::Unknown;
-    };
-    let reader = BufReader::new(file);
-    let mut saw_ours = false;
-    let mut completed = false;
-    for line in reader.lines().map_while(Result::ok) {
-        let Ok(row) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if let Some(pid) =
-            is_claude_user_prompt(&row).and_then(|_| row["promptId"].as_str().map(str::to_owned))
-            && !pid.is_empty()
-        {
-            if pid == prompt_id {
-                saw_ours = true;
-                completed = false;
-            } else if saw_ours {
-                return ClaudeTurnState::Superseded(pid);
-            }
-        }
-        if saw_ours
-            && row["isSidechain"].as_bool() != Some(true)
-            && row["type"].as_str() == Some("system")
-            && row["subtype"].as_str() == Some("turn_duration")
-        {
-            completed = true;
-        }
-    }
-    if !saw_ours {
+    let scan = claude_dispatch_scan(path, prompt_id);
+    if !scan.found_start {
         ClaudeTurnState::Unknown
-    } else if completed {
+    } else if let Some((next_pid, _)) = scan.superseded_by {
+        ClaudeTurnState::Superseded(next_pid)
+    } else if !scan.turn_durations.is_empty() && !scan.active_subturn_after_last_duration {
         ClaudeTurnState::Completed
     } else {
         ClaudeTurnState::Active
@@ -327,24 +556,33 @@ pub(super) fn agy_match_user_input(
     None
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum AgyTurnState {
-    Waiting,
-    HasFinalPlannerResponse,
-    Superseded(i64),
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct AgyDispatchScan {
+    pub found_start: bool,
+    pub has_final_reply: bool,
+    pub latest_planner_is_final: bool,
+    pub last_reply_end_row: Option<usize>,
+    pub segment_end_row: usize,
+    pub superseded_by: Option<(i64, usize)>,
 }
 
-pub(super) fn agy_turn_state(path: &Path, user_input_index: i64) -> AgyTurnState {
+pub(super) fn agy_dispatch_scan(path: &Path, user_input_index: i64) -> AgyDispatchScan {
+    let mut scan = AgyDispatchScan::default();
     let Ok(file) = File::open(path) else {
-        return AgyTurnState::Waiting;
+        return scan;
     };
     let reader = BufReader::new(file);
-    let mut saw_ours = false;
-    let mut answered = false;
+    let mut row_idx = 0usize;
     for line in reader.lines().map_while(Result::ok) {
         let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if !row.is_object() {
+            continue;
+        }
+        let idx = row_idx;
+        row_idx += 1;
+
         if row["type"].as_str() == Some("USER_INPUT")
             && row["source"].as_str() == Some("USER_EXPLICIT")
         {
@@ -352,14 +590,18 @@ pub(super) fn agy_turn_state(path: &Path, user_input_index: i64) -> AgyTurnState
                 continue;
             };
             if step_index == user_input_index {
-                saw_ours = true;
-                answered = false;
-            } else if saw_ours && step_index > user_input_index {
-                return AgyTurnState::Superseded(step_index);
+                scan.found_start = true;
+                scan.has_final_reply = false;
+                scan.latest_planner_is_final = false;
+                scan.last_reply_end_row = None;
+            } else if scan.found_start && step_index > user_input_index {
+                scan.superseded_by = Some((step_index, idx));
+                scan.segment_end_row = idx;
+                return scan;
             }
             continue;
         }
-        if !saw_ours {
+        if !scan.found_start {
             continue;
         }
         if row["type"].as_str() == Some("PLANNER_RESPONSE") {
@@ -369,10 +611,30 @@ pub(super) fn agy_turn_state(path: &Path, user_input_index: i64) -> AgyTurnState
             let has_text = row["content"]
                 .as_str()
                 .is_some_and(|s| !s.trim().is_empty());
-            answered = !has_calls && has_text;
+            let is_final = !has_calls && has_text;
+            scan.latest_planner_is_final = is_final;
+            if is_final {
+                scan.has_final_reply = true;
+                scan.last_reply_end_row = Some(idx + 1);
+            }
         }
     }
-    if answered {
+    scan.segment_end_row = row_idx;
+    scan
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum AgyTurnState {
+    Waiting,
+    HasFinalPlannerResponse,
+    Superseded(i64),
+}
+
+pub(super) fn agy_turn_state(path: &Path, user_input_index: i64) -> AgyTurnState {
+    let scan = agy_dispatch_scan(path, user_input_index);
+    if let Some((next_idx, _)) = scan.superseded_by {
+        AgyTurnState::Superseded(next_idx)
+    } else if scan.has_final_reply {
         AgyTurnState::HasFinalPlannerResponse
     } else {
         AgyTurnState::Waiting

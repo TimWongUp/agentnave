@@ -1,4 +1,4 @@
-//! Claude Code `permission_fallback` validation, `UserPromptSubmit` hook, and cleanup (ADR-0059).
+//! Claude Code hooks (`Stop` / `StopFailure` permanent hooks and `permission_fallback` `UserPromptSubmit`).
 
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -40,14 +40,27 @@ pub(super) fn claude_permission_modes(
     Ok((mode, fallback))
 }
 
-pub(super) fn prepare_mode_hook() -> Result<tempfile::TempDir, String> {
+/// Create the per-derived-terminal hook directory (lives for the terminal's lifetime).
+/// When `arm_mode_fallback` is true, also arms the one-shot `UserPromptSubmit` mode check.
+pub(super) fn prepare_claude_hook(arm_mode_fallback: bool) -> Result<tempfile::TempDir, String> {
     let dir = tempfile::Builder::new()
         .prefix("agentnave-claude-hook-")
         .tempdir()
         .map_err(|e| format!("无法创建 Claude hook 目录：{e}"))?;
-    fs::write(dir.path().join("armed"), b"1")
-        .map_err(|e| format!("无法初始化 Claude hook 标记：{e}"))?;
+    if arm_mode_fallback {
+        fs::write(dir.path().join("armed"), b"1")
+            .map_err(|e| format!("无法初始化 Claude hook 标记：{e}"))?;
+    }
     Ok(dir)
+}
+
+#[cfg(test)]
+pub(super) fn prepare_mode_hook() -> Result<tempfile::TempDir, String> {
+    prepare_claude_hook(true)
+}
+
+pub(super) fn events_path(hook_dir: &Path) -> PathBuf {
+    hook_dir.join("events.jsonl")
 }
 
 fn shell_single_quote(raw: &str) -> String {
@@ -72,6 +85,51 @@ pub(super) fn hook_settings(hook_dir: &Path) -> Value {
             "command": cmd,
         }]
     }])
+}
+
+/// Permanent (non-one-shot) command hook for `Stop` and `StopFailure`.
+/// Appends compact JSON lines to `<hook_dir>/events.jsonl` while preserving whether
+/// `background_tasks` was present vs absent in stdin.
+pub(super) fn stop_hook_settings(hook_dir: &Path) -> Value {
+    let events_file = shell_single_quote(&events_path(hook_dir).display().to_string());
+    let cmd = format!(
+        "/usr/bin/perl -MJSON::PP -0777 -e '\
+        my $d = eval {{ decode_json(<STDIN>) }}; \
+        exit 0 unless ref($d) eq \"HASH\"; \
+        my $ev = $d->{{hook_event_name}} // \"\"; \
+        exit 0 unless $ev eq \"Stop\" || $ev eq \"StopFailure\"; \
+        my %out = (hook_event_name => $ev); \
+        for my $k (qw(session_id prompt_id stop_hook_active error error_details)) {{ \
+            $out{{$k}} = $d->{{$k}} if exists $d->{{$k}}; \
+        }} \
+        if ($ev eq \"StopFailure\" && defined $d->{{last_assistant_message}}) {{ \
+            $out{{last_assistant_message}} = substr(\"$d->{{last_assistant_message}}\", 0, 400); \
+        }} \
+        if (exists $d->{{background_tasks}}) {{ \
+            $out{{background_tasks}} = $d->{{background_tasks}}; \
+        }} \
+        open my $fh, \">>\", $ARGV[0] or exit 0; \
+        flock($fh, 2); \
+        print {{$fh}} encode_json(\\%out) . \"\\n\"; \
+        close $fh;' {events_file}"
+    );
+    json!([{
+        "hooks": [{
+            "type": "command",
+            "command": cmd,
+        }]
+    }])
+}
+
+pub(super) fn build_claude_hooks(hook_dir: &Path, include_mode_fallback: bool) -> Value {
+    let mut hooks = serde_json::Map::new();
+    let stop = stop_hook_settings(hook_dir);
+    hooks.insert("Stop".to_owned(), stop.clone());
+    hooks.insert("StopFailure".to_owned(), stop);
+    if include_mode_fallback {
+        hooks.insert("UserPromptSubmit".to_owned(), hook_settings(hook_dir));
+    }
+    Value::Object(hooks)
 }
 
 pub(super) fn read_observed_mode(hook_dir: &Path) -> Option<String> {

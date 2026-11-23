@@ -24,6 +24,14 @@ from typing import IO
 from agentnave import accounts, provider_health
 from agentnave.adapters import ProviderAdapter, get_adapter
 from agentnave.adapters.base import PreparedCommand, parse_json_object
+from agentnave.background_tasks import (
+    BACKGROUND_TASKS_PENDING,
+    BACKGROUND_WAIT_REMINDER_SECONDS,
+    BackgroundTasksState,
+    BackgroundWaitTracker,
+    background_cancel_warning,
+    background_tasks_pending_error,
+)
 from agentnave.locks import lock_file, release_and_remove
 from agentnave.models import (
     InvocationError,
@@ -142,6 +150,21 @@ class _InvocationRecord:
     end_seq: int | None = None
     session_id: str | None = None
     on_inbox_change: Callable[[], None] | None = None
+    background_wait: BackgroundWaitTracker = field(default_factory=BackgroundWaitTracker)
+    background_wait_changed: asyncio.Event = field(default_factory=asyncio.Event)
+    background_only: bool = False
+    background_reply: str | None = None
+    background_reminder_sent: bool = False
+
+    def observe_background_tasks(self, state: BackgroundTasksState) -> None:
+        if state.session_id:
+            self.session_id = state.session_id
+        if state.model:
+            self.reported_model = state.model
+        self.background_only = state.only_background and bool(state.reply and state.reply.strip())
+        self.background_reply = state.reply if self.background_only else None
+        if self.background_wait.update(state):
+            self.background_wait_changed.set()
 
     def observe_event(self, line: bytes, adapter: ProviderAdapter) -> None:
         event = parse_json_object(line.decode(errors="replace"))
@@ -154,6 +177,8 @@ class _InvocationRecord:
         # a blocker in that outcome is not announced as a running blocker first.
         finished = self.terminal_event.is_set()
         self.reported_model = adapter.event_model(event) or self.reported_model
+        if (bg_state := adapter.background_tasks_event(event)) is not None:
+            self.observe_background_tasks(bg_state)
         if self.prompts.encode is not None:
             prompt = adapter.prompt_event(event)
             if prompt is not None and self.prompts.receive(prompt):
@@ -329,6 +354,30 @@ class _StreamDiagnostics:
         return "\n".join(lines) or "[no complete diagnostic line retained]"
 
 
+async def _background_reminder_guard(
+    record: _InvocationRecord,
+    threshold_seconds: float,
+    notify: Callable[[BackgroundTasksState], bool],
+) -> None:
+    """Emit one background_tasks_pending blocker once waiting exceeds threshold_seconds."""
+    while not record.background_wait.reminded and not record.background_reminder_sent:
+        record.background_wait_changed.clear()
+        remaining = record.background_wait.remaining_seconds(threshold_seconds)
+        if remaining is None:
+            await record.background_wait_changed.wait()
+            continue
+        if remaining <= 0:
+            if state := record.background_wait.fire():
+                notify(state)
+            return
+        try:
+            await asyncio.wait_for(record.background_wait_changed.wait(), timeout=remaining)
+        except TimeoutError:
+            if state := record.background_wait.fire():
+                notify(state)
+            return
+
+
 @dataclass
 class _RunIO:
     stdout_task: asyncio.Task[_CapturedStream]
@@ -339,6 +388,7 @@ class _RunIO:
     exceeded_task: asyncio.Task[bool]
     stall_task: asyncio.Task[None]
     terminal_task: asyncio.Task[None]
+    bg_reminder_task: asyncio.Task[None]
     output_exceeded: asyncio.Event
     stdout_diagnostics: _StreamDiagnostics
     stderr_diagnostics: _StreamDiagnostics
@@ -354,6 +404,7 @@ class _RunIO:
             self.exceeded_task,
             self.stall_task,
             self.terminal_task,
+            self.bg_reminder_task,
         )
 
 
@@ -367,6 +418,7 @@ def _start_run_io(
     adapter: ProviderAdapter,
     prepared: PreparedCommand,
     supervised: SupervisedProcess,
+    bg_reminder_task: asyncio.Task[None],
 ) -> _RunIO:
     process = supervised.process
     assert process.stdout is not None and process.stderr is not None and process.stdin is not None
@@ -409,6 +461,7 @@ def _start_run_io(
         exceeded_task=exceeded_task,
         stall_task=stall_task,
         terminal_task=asyncio.create_task(_terminal_grace(record.terminal_event)),
+        bg_reminder_task=bg_reminder_task,
         output_exceeded=output_exceeded,
         stdout_diagnostics=stdout_diagnostics,
         stderr_diagnostics=stderr_diagnostics,
@@ -478,11 +531,22 @@ def _output_limit_error(
 
 
 SUBAGENT_INSTRUCTIONS = (
-    "Please take care of this within the permissions you've been given. Work on it yourself, "
-    "without calling AgentNave tools or passing it on through AgentNave. In your final reply, "
-    "let me know about any unmet requirements, unchecked scope, blockers, decisions, or "
-    "additional authorization needed. Please avoid interactive question tools and respect the "
-    "native permissions."
+    "Please handle this within your current permissions without bypassing them. Work on it "
+    "yourself, without calling AgentNave tools or passing it on to someone else through "
+    "AgentNave. In your final reply, let me know about any unmet requirements, unchecked scope, "
+    "blockers, or additional permissions needed."
+)
+QUESTIONS_ALLOWED_INSTRUCTIONS = "If anything is unclear or needs my decision, feel free to ask me."
+NO_QUESTIONS_INSTRUCTIONS = (
+    "I won't be able to answer questions while you work, so don't use question tools or stop to "
+    "ask—note anything uncertain or needing a decision at the end of your reply."
+)
+DERIVED_INSTRUCTIONS = (
+    "Please handle this within your current permissions without bypassing them. You can use "
+    "AgentNave to run background tasks or hold meetings if needed, but don't open another "
+    "terminal session through it. If anything is unclear, feel free to ask me here. In your "
+    "final reply, let me know about any unmet requirements, unchecked scope, blockers, "
+    "decisions, or additional permissions needed."
 )
 READ_ONLY_INSTRUCTIONS = (
     "This is a read-only task, so please leave files unchanged and don't commit, push, send "
@@ -496,6 +560,7 @@ class InvocationManager:
     """Own active child processes only for this Python process lifetime."""
 
     spawn_interval: tuple[float, float] = (1.0, 3.0)
+    background_wait_reminder_seconds: float = BACKGROUND_WAIT_REMINDER_SECONDS
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
@@ -518,13 +583,18 @@ class InvocationManager:
         return self._seq
 
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
-        """Apply the shared subagent instruction before provider-specific encoding."""
-        instructions = SUBAGENT_INSTRUCTIONS
+        """Apply the shared task instructions before provider-specific encoding."""
+        adapter = get_adapter(request.provider)
+        question_guidance = (
+            QUESTIONS_ALLOWED_INSTRUCTIONS
+            if adapter.can_answer_questions(request)
+            else NO_QUESTIONS_INSTRUCTIONS
+        )
+        instructions = f"{SUBAGENT_INSTRUCTIONS} {question_guidance}"
         if request.read_only:
             instructions += f" {READ_ONLY_INSTRUCTIONS}"
         if request.extra_instructions:
             instructions += f" {request.extra_instructions}"
-        adapter = get_adapter(request.provider)
         prepared = adapter.prepare(
             replace(request, prompt=f"{instructions}{TASK_SEPARATOR}{request.prompt}")
         )
@@ -575,7 +645,22 @@ class InvocationManager:
                     if isinstance(session_id, str) and session_id:
                         record.session_id = session_id
 
-                instructions = "You may delegate background tasks and hold meetings, but cannot open derived terminals. Report the result to your manager, including unmet requirements, unchecked scope and blockers."
+                def blocked(code: str, message: str) -> None:
+                    if code == BACKGROUND_TASKS_PENDING:
+                        # Same once-per-dispatch guard as helpers; never in reported_errors.
+                        if record.background_reminder_sent:
+                            return
+                        record.background_reminder_sent = True
+                    elif code in record.reported_errors:
+                        return
+                    else:
+                        record.reported_errors.add(code)
+                    record.pending_attention.append(InvocationError(code, message))
+                    record.attention_event.set()
+                    if self.on_inbox_change is not None:
+                        self.on_inbox_change()
+
+                instructions = DERIVED_INSTRUCTIONS
                 if request.read_only:
                     instructions += f" {READ_ONLY_INSTRUCTIONS}"
                 if request.extra_instructions:
@@ -588,6 +673,7 @@ class InvocationManager:
                     lambda _item: None,
                     started,
                     self.ack_terminal_request,
+                    on_blocked=blocked,
                     session_id=request.session_id,
                 )
                 self.terminal_runs[invocation_id] = run
@@ -765,6 +851,35 @@ class InvocationManager:
     def unread_blockers(self, invocation_id: str) -> list[str]:
         """Codes of blockers no wait has returned yet, oldest first; reading them consumes none."""
         return [attention.code for attention in self._record(invocation_id).pending_attention]
+
+    def notify_background_tasks_pending(
+        self,
+        invocation_id: str,
+        *,
+        task_ids: Sequence[str] = (),
+        count: int | None = None,
+    ) -> bool:
+        """Queue the one-shot background_tasks_pending execution_blocked alert (ADR-0114).
+
+        Shared by interactive helpers and derived-terminal push receipt bridges. Never feeds
+        account health classification or cooldown, never includes reply body, and leaves the
+        invocation running so a terminal outcome delivers directly if it arrives first.
+        """
+        record = self._records.get(invocation_id)
+        if (
+            record is None
+            or record.background_reminder_sent
+            or record.terminal_event.is_set()
+            or (record.task is not None and record.task.done())
+        ):
+            return False
+        record.background_reminder_sent = True
+        record.background_wait.reminded = True
+        record.pending_attention.append(background_tasks_pending_error(task_ids, count=count))
+        record.attention_event.set()
+        if record.on_inbox_change is not None:
+            record.on_inbox_change()
+        return True
 
     def progress(self, invocation_id: str) -> tuple[str | None, str | None]:
         """What the CLI is doing now and when its reply last grew, as labels that change only
@@ -963,7 +1078,7 @@ class InvocationManager:
     ) -> InvocationResult:
         outcome = InvocationStatus.FAILED
         try:
-            result = await self._run(record, adapter, prepared)
+            result = await self._run(record, adapter, prepared, invocation_id)
             result = self._settle_session(record, result)
             outcome = result.status
             reported = record.reported_model
@@ -1031,7 +1146,11 @@ class InvocationManager:
         )
 
     async def _run(
-        self, record: _InvocationRecord, adapter: ProviderAdapter, prepared: PreparedCommand
+        self,
+        record: _InvocationRecord,
+        adapter: ProviderAdapter,
+        prepared: PreparedCommand,
+        invocation_id: str,
     ) -> InvocationResult:
         started = record.started_at
         supervised = None
@@ -1069,7 +1188,16 @@ class InvocationManager:
             if process.stdout is None or process.stderr is None or process.stdin is None:
                 raise RuntimeError("provider subprocess pipes were not created")
 
-            io = _start_run_io(record, adapter, prepared, supervised)
+            bg_reminder_task = asyncio.create_task(
+                _background_reminder_guard(
+                    record,
+                    self.background_wait_reminder_seconds,
+                    lambda state: self.notify_background_tasks_pending(
+                        invocation_id, task_ids=state.task_ids
+                    ),
+                )
+            )
+            io = _start_run_io(record, adapter, prepared, supervised, bg_reminder_task)
             tasks.extend(io.tasks)
 
             return await self._collect_run(record, adapter, prepared, process, io)
@@ -1127,6 +1255,8 @@ class InvocationManager:
             return_when=asyncio.FIRST_COMPLETED,
         )
         terminal, error, provider_returncode = _run_outcome(record, io, done)
+        bg_cancel_reply = record.background_reply if record.background_only else None
+        bg_cancel_tasks = record.background_wait.task_ids
 
         record.phase = InvocationPhase.STOPPING
         await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
@@ -1139,12 +1269,30 @@ class InvocationManager:
 
         # Without a final answer, an interrupted run keeps the reply text seen so far.
         partial = parsed.output or record.output_tail
+        if terminal is InvocationStatus.CANCELLED and bg_cancel_reply is not None:
+            # Only background tasks remained: settle directly with the reply already written,
+            # noting that the helper process group was terminated (ADR-0114 section 4).
+            result = InvocationResult(
+                InvocationStatus.SUCCEEDED,
+                record.request.provider,
+                bg_cancel_reply,
+                parsed.session_id
+                or record.session_id
+                or prepared.session_id
+                or record.request.session_id,
+                _duration_ms(started),
+                warnings=(*parsed.warnings, background_cancel_warning(bg_cancel_tasks)),
+            )
+            return await self._observe(record, adapter, result, None, stdout.data, stderr.data)
         if terminal is not None:
             result = InvocationResult(
                 terminal,
                 record.request.provider,
                 partial,
-                parsed.session_id or prepared.session_id or record.request.session_id,
+                parsed.session_id
+                or record.session_id
+                or prepared.session_id
+                or record.request.session_id,
                 _duration_ms(started),
                 error,
             )

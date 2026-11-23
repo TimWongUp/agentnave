@@ -213,6 +213,7 @@ fn cancel_codex_waits_for_turn_completed_after_interrupt_issued() {
             native: Some(TID.to_owned()),
             account: None,
             launch_config: None,
+            hook_dir: None,
             codex: Some(codex.clone()),
         };
 
@@ -326,6 +327,7 @@ fn cancel_codex_exits_promptly_when_run_finishes_during_wait() {
         native: Some(TID.to_owned()),
         account: None,
         launch_config: None,
+        hook_dir: None,
         codex: Some(codex.clone()),
     };
 
@@ -426,6 +428,7 @@ fn codex_run_fails_startup_and_never_starts_turn_when_pid_publish_fails() {
             isolation_id: None,
             _lease: None,
             _log_dir: None,
+            _hook_dir: None,
             codex_ready_file: None,
             active_invocation_id: None,
             launch_config: None,

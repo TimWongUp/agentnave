@@ -25,6 +25,7 @@ from agentnave.adapters.base import (
     restricted_options,
 )
 from agentnave.adapters.usage_reset import antigravity_reset
+from agentnave.background_tasks import BackgroundTasksState, parse_background_tasks_event
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 
 _LABEL = re.compile(rb'Propagating selected model override to backend: label="([^"\n]{1,80})"')
@@ -213,10 +214,18 @@ class AntigravityAdapter(AdapterHooks):
 
     def event_model(self, event: dict[str, object]) -> str | None:
         # The interactive runtime names the model in its result; print mode's comes from the log.
+        if event.get("event") == "agentnave_background_tasks":
+            model = event.get("model")
+            return model if isinstance(model, str) and model else None
         if event.get("event") != "result":
             return None
         model = object_dict(event.get("result")).get("model")
         return model if isinstance(model, str) and model else None
+
+    def background_tasks_event(self, event: dict[str, object]) -> BackgroundTasksState | None:
+        if event.get("event") != "agentnave_background_tasks":
+            return None
+        return parse_background_tasks_event(event)
 
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
         return session_model(session_id, since=since)

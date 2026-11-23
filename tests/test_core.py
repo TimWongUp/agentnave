@@ -24,6 +24,9 @@ from agentnave.core import (
     _MAX_STDOUT_BYTES,  # pyright: ignore[reportPrivateUsage]
     _RETRY_STALL_QUIET_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _RETRY_STALL_SECONDS,  # pyright: ignore[reportPrivateUsage]
+    DERIVED_INSTRUCTIONS,
+    NO_QUESTIONS_INSTRUCTIONS,
+    QUESTIONS_ALLOWED_INSTRUCTIONS,
     READ_ONLY_INSTRUCTIONS,
     SUBAGENT_INSTRUCTIONS,
     TASK_SEPARATOR,
@@ -198,7 +201,7 @@ class FakeAdapter(ClaudeAdapter):
     def prepare(self, request: InvocationRequest) -> PreparedCommand:
         request = replace(
             request,
-            prompt=request.prompt.removeprefix(f"{SUBAGENT_INSTRUCTIONS}{TASK_SEPARATOR}"),
+            prompt=request.prompt.split(TASK_SEPARATOR, 1)[-1],
         )
         seconds = "30" if request.prompt == "sleep" else "0"
         if request.prompt == "child_holds_pipes":
@@ -1326,19 +1329,69 @@ def test_read_only_tasks_get_the_read_only_instruction(
     prompts: list[str] = []
 
     class Capture:
+        def __init__(self, can_ask: bool = False) -> None:
+            self._can_ask = can_ask
+
+        def can_answer_questions(self, request: InvocationRequest) -> bool:
+            return self._can_ask
+
         def prepare(self, request: InvocationRequest) -> InvocationRequest:
             prompts.append(request.prompt)
             return request
 
+    can_ask = False
+
     def capture(_: str) -> Capture:
-        return Capture()
+        return Capture(can_ask)
 
     monkeypatch.setattr("agentnave.core.get_adapter", capture)
     manager = InvocationManager()
     manager.prepare(InvocationRequest("codex", "task", tmp_path, read_only=True))
     manager.prepare(InvocationRequest("codex", "task", tmp_path))
+    can_ask = True
+    manager.prepare(InvocationRequest("claude", "task", tmp_path))
     assert READ_ONLY_INSTRUCTIONS in prompts[0] and prompts[0].endswith(f"{TASK_SEPARATOR}task")
+    assert "leave files unchanged" in prompts[0] and "don't commit, push" in prompts[0]
     assert READ_ONLY_INSTRUCTIONS not in prompts[1] and SUBAGENT_INSTRUCTIONS in prompts[1]
+    assert "AgentNave" in prompts[1] and "unmet requirements" in prompts[1]
+    assert NO_QUESTIONS_INSTRUCTIONS in prompts[1]
+    assert QUESTIONS_ALLOWED_INSTRUCTIONS not in prompts[1]
+    assert QUESTIONS_ALLOWED_INSTRUCTIONS in prompts[2]
+    assert NO_QUESTIONS_INSTRUCTIONS not in prompts[2]
+    assert "AgentNave" in DERIVED_INSTRUCTIONS and "hold meetings" in DERIVED_INSTRUCTIONS
+    assert "another terminal" in DERIVED_INSTRUCTIONS and "manager" not in DERIVED_INSTRUCTIONS
+
+
+def test_adapter_can_answer_questions_declarations(tmp_path: Path) -> None:
+    from agentnave.adapters import get_adapter
+
+    claude = get_adapter("claude")
+    assert claude.can_answer_questions(
+        InvocationRequest("claude", "task", tmp_path, provider_options={"interactive": True})
+    )
+    assert not claude.can_answer_questions(InvocationRequest("claude", "task", tmp_path))
+    assert not claude.can_answer_questions(
+        InvocationRequest(
+            "claude",
+            "task",
+            tmp_path,
+            provider_options={"interactive": True, "restricted_tools": True},
+        )
+    )
+    for provider in (
+        "antigravity",
+        "codebuddy",
+        "codex",
+        "deepseek",
+        "devin",
+        "grok",
+        "pi",
+        "zcode",
+    ):
+        adapter = get_adapter(provider)
+        assert not adapter.can_answer_questions(
+            InvocationRequest(provider, "task", tmp_path, provider_options={"interactive": True})
+        )
 
 
 @pytest.mark.asyncio
@@ -2131,3 +2184,150 @@ def test_blocker_hint_only_for_quota_codes() -> None:
     assert provider_health.QUOTA_RESUME_HINT in provider_health.blocker_hint("insufficient_quota")
     assert provider_health.blocker_hint("authentication_failed") == ""
     assert provider_health.blocker_hint("provider_failed") == ""
+    assert provider_health.blocker_hint("background_tasks_pending") == ""
+
+
+def test_background_wait_tracker_and_provider_health_exclusion() -> None:
+    from agentnave.background_tasks import (
+        BACKGROUND_TASKS_PENDING,
+        BackgroundTasksState,
+        BackgroundWaitTracker,
+    )
+
+    tracker = BackgroundWaitTracker()
+    assert tracker.remaining_seconds(30.0, now=10.0) is None
+    assert tracker.update(BackgroundTasksState(True, True, ("mon-1",), "secret body"), now=10.0)
+    assert tracker.remaining_seconds(30.0, now=20.0) == 20.0
+    # Intermediate Monitor event keeps the same task set: timer does not reset.
+    assert not tracker.update(BackgroundTasksState(True, False, ("mon-1",)), now=25.0)
+    assert tracker.remaining_seconds(30.0, now=25.0) == 15.0
+    # A new task starting resets the timer.
+    assert tracker.update(BackgroundTasksState(True, True, ("mon-1", "sh-2"), "secret"), now=26.0)
+    assert tracker.remaining_seconds(30.0, now=26.0) == 30.0
+    # One task ending resets the timer while another remains.
+    assert tracker.update(BackgroundTasksState(True, True, ("sh-2",), "secret"), now=40.0)
+    assert tracker.remaining_seconds(30.0, now=40.0) == 30.0
+    fired = tracker.fire()
+    assert fired is not None and fired.task_ids == ("sh-2",)
+    assert tracker.fire() is None  # one-shot per invocation
+
+    # Excluded from account health classification, without masking a later real quota error.
+    assert (
+        provider_health.classify(
+            InvocationStatus.BLOCKED,
+            BACKGROUND_TASKS_PENDING,
+            "usage limit quota login",
+            [BACKGROUND_TASKS_PENDING],
+        )
+        is None
+    )
+    assert (
+        provider_health.classify(
+            InvocationStatus.FAILED,
+            "provider_error",
+            "usage limit reached",
+            [BACKGROUND_TASKS_PENDING],
+        )
+        == "quota"
+    )
+
+
+@pytest.mark.asyncio
+async def test_background_reminder_and_cancel_when_only_background_remains(
+    tmp_path: Path,
+) -> None:
+    from agentnave.adapters.claude import ClaudeAdapter
+    from agentnave.background_tasks import BACKGROUND_TASKS_PENDING
+
+    script = tmp_path / "bg_helper.py"
+    script.write_text(
+        "import json, sys, time\n"
+        "from pathlib import Path\n"
+        "gate = Path(sys.argv[1])\n"
+        "print(json.dumps({'type': 'system', 'subtype': 'init', 'session_id': 'sid-bg'}), flush=True)\n"
+        "print(json.dumps({'type': 'agentnave_background_tasks', 'waiting': True, "
+        "'only_background': True, 'task_ids': ['bg-1'], 'reply': 'SECRET_BODY_REPLY', "
+        "'session_id': 'sid-bg'}), flush=True)\n"
+        "while not gate.exists():\n"
+        "    time.sleep(0.05)\n"
+        "print(json.dumps({'type': 'result', 'subtype': 'success', 'result': 'FINAL_REPLY', "
+        "'session_id': 'sid-bg'}), flush=True)\n",
+        encoding="utf-8",
+    )
+    adapter = ClaudeAdapter()
+    manager = InvocationManager()
+    manager.health_root = tmp_path
+    manager.background_wait_reminder_seconds = 0.15
+    try:
+        # Case 1: reminder fires once without reply body, task keeps running and finishes.
+        gate1 = tmp_path / "gate1"
+        cmd1 = PreparedCommand(
+            (sys.executable, str(script), str(gate1)),
+            tmp_path,
+            capture_line=adapter.prepare(InvocationRequest("claude", "w", tmp_path)).capture_line,
+        )
+        inv1 = manager.start(InvocationRequest("claude", "work", tmp_path), prepared=cmd1)
+        update = await asyncio.wait_for(manager.wait_for_update(inv1, 5.0), 5.0)
+        assert isinstance(update, InvocationError)
+        assert update.code == BACKGROUND_TASKS_PENDING
+        assert "bg-1" in update.message and "SECRET_BODY_REPLY" not in update.message
+        assert provider_health.active(tmp_path) == {}
+        # A second bridge call is ignored (at most once per invocation).
+        assert not manager.notify_background_tasks_pending(inv1, task_ids=("bg-1",))
+        gate1.touch()
+        result1 = await asyncio.wait_for(manager.wait(inv1), 5.0)
+        assert result1 is not None and result1.status is InvocationStatus.SUCCEEDED
+        assert result1.output == "FINAL_REPLY"
+
+        # Case 2: cancel while only background tasks remain settles with reply already written.
+        gate2 = tmp_path / "gate2"
+        cmd2 = PreparedCommand(
+            (sys.executable, str(script), str(gate2)),
+            tmp_path,
+            capture_line=adapter.prepare(InvocationRequest("claude", "w", tmp_path)).capture_line,
+        )
+        inv2 = manager.start(InvocationRequest("claude", "work", tmp_path), prepared=cmd2)
+        alert = await asyncio.wait_for(manager.wait_for_update(inv2, 5.0), 5.0)
+        assert isinstance(alert, InvocationError) and alert.code == BACKGROUND_TASKS_PENDING
+        settled = await asyncio.wait_for(manager.cancel(inv2), 5.0)
+        assert settled.status is InvocationStatus.SUCCEEDED
+        assert settled.output == "SECRET_BODY_REPLY"
+        assert settled.session_id == "sid-bg"
+        assert any("process group" in warning for warning in settled.warnings)
+        assert provider_health.active(tmp_path) == {}
+
+        # Case 3: Antigravity adapter decodes background state + model and settles cancel cleanly.
+        from agentnave.adapters.antigravity import AntigravityAdapter
+
+        agy_script = tmp_path / "agy_bg.py"
+        agy_script.write_text(
+            "import json, time\n"
+            "print(json.dumps({'event': 'init', 'conversation_id': 'agy-cid'}), flush=True)\n"
+            "print(json.dumps({'event': 'agentnave_background_tasks', 'conversation_id': 'agy-cid', "
+            "'waiting': True, 'only_background': True, 'task_ids': [], 'reply': 'agy written reply', "
+            "'model': 'gemini-3.8-flash-high'}), flush=True)\n"
+            "time.sleep(30)\n",
+            encoding="utf-8",
+        )
+        agy_adapter = AntigravityAdapter()
+        agy_cmd = PreparedCommand(
+            (sys.executable, str(agy_script)),
+            tmp_path,
+            capture_line=agy_adapter.prepare(
+                InvocationRequest("antigravity", "w", tmp_path)
+            ).capture_line,
+            model_from_result_only=True,
+        )
+        inv3 = manager.start(InvocationRequest("antigravity", "work", tmp_path), prepared=agy_cmd)
+        agy_alert = await asyncio.wait_for(manager.wait_for_update(inv3, 5.0), 5.0)
+        assert isinstance(agy_alert, InvocationError)
+        assert agy_alert.code == BACKGROUND_TASKS_PENDING
+        assert "agy written reply" not in agy_alert.message
+        agy_settled = await asyncio.wait_for(manager.cancel(inv3), 5.0)
+        assert agy_settled.status is InvocationStatus.SUCCEEDED
+        assert agy_settled.output == "agy written reply"
+        assert agy_settled.session_id == "agy-cid"
+        assert agy_settled.reported_model == "gemini-3.8-flash-high"
+        assert any("process group" in warning for warning in agy_settled.warnings)
+    finally:
+        await manager.shutdown()

@@ -31,18 +31,29 @@ def test_claude_stays_between_prompt_ids() -> None:
         {"type": "system", "subtype": "turn_duration", "isSidechain": True},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "first"}]}},
         {"type": "system", "subtype": "turn_duration"},
-        # Background task continuation after turn_duration must not overwrite turn "a".
+        # Background task continuation after turn_duration belongs to turn "a" until next human prompt.
         {
             "type": "user",
+            "promptId": "a-notif",
+            "promptSource": "system",
+            "turnOrigin": "task_notification",
+            "origin": {"kind": "task-notification"},
             "message": {
                 "content": "<task-notification><task-id>bg-2</task-id></task-notification>"
             },
         },
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "bg followup"}]}},
+        {"type": "system", "subtype": "turn_duration"},
         {"type": "user", "promptId": "b", "message": {"content": "second prompt"}},
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "second"}]}},
     ]
-    assert claude_turn(entries, "a") == "first"
+    assert claude_turn(entries, "a") == "first\n\nbg followup"
+    # Settlement anchors (end_prompt_id / end_row_index) bound the read strictly (e.g. bg-only cancel).
+    assert claude_turn(entries, "a", end_prompt_id="a") == "first"
+    assert claude_turn(entries, "a", end_row_index=7) == "first"
+    assert claude_turn(entries, "a", end_prompt_id="a-notif", end_row_index=10) == (
+        "first\n\nbg followup"
+    )
     assert claude_turn(entries, "b") == "second"
     with pytest.raises(ValueError):
         claude_turn(entries, "missing")
@@ -68,10 +79,14 @@ def test_antigravity_uses_explicit_input_step_and_does_not_cross_next_turn() -> 
     entries: list[dict[str, object]] = [
         {"type": "USER_INPUT", "source": "USER_EXPLICIT", "step_index": 3},
         {"type": "PLANNER_RESPONSE", "content": "first"},
+        {"type": "USER_INPUT", "source": "SYSTEM", "step_index": 5},
+        {"type": "PLANNER_RESPONSE", "content": "bg finished"},
         {"type": "USER_INPUT", "source": "USER_EXPLICIT", "step_index": 8},
         {"type": "PLANNER_RESPONSE", "content": "second"},
     ]
-    assert antigravity_turn(entries, 3) == "first"
+    assert antigravity_turn(entries, 3) == "first\n\nbg finished"
+    assert antigravity_turn(entries, 3, end_row_index=2) == "first"
+    assert antigravity_turn(entries, 8) == "second"
     with pytest.raises(ValueError):
         antigravity_turn(entries, 4)
 
