@@ -4,6 +4,8 @@ use rusqlite::Connection;
 use std::fs;
 use std::process::Command;
 
+mod cleanup;
+
 fn registry(root: &Path, rows: &[(&str, &str, &str, &str)]) {
     let connection = Connection::open(root.join(store::NAME)).unwrap();
     connection
@@ -63,6 +65,7 @@ fn a_directory_is_in_use_only_while_a_running_call_works_inside_it() {
         path: path.into(),
         branch: "agentnave/x".into(),
         ready,
+        collapsed: false,
         attention: None,
         id: path.into(),
         created: String::new(),
@@ -91,6 +94,7 @@ fn the_builder_is_found_by_the_registered_id() {
         path: "/r/a".into(),
         branch: "agentnave/a".into(),
         ready: true,
+        collapsed: false,
         attention: None,
         id: "wt-1".into(),
         created: "2026-11-12T00:00:00+00:00".into(),

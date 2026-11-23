@@ -718,6 +718,65 @@ fn inspect_orphan_locked(
     })
 }
 
+/// A collapsed directory has no worktree left; only its managed branch can hold commits.
+fn inspect_collapsed_locked(
+    git: &GitRunner,
+    record: &Record,
+    workspace_id: &str,
+) -> Result<(Option<(PathBuf, PathBuf)>, Snapshot), String> {
+    let wt_path = PathBuf::from(&record.worktree_path);
+    if wt_path.exists() || is_link(&wt_path) {
+        return Err(format!(
+            "已收起的目录在磁盘上仍有路径：{}",
+            wt_path.display()
+        ));
+    }
+    let (main_root, common_dir) = verify_repo_identity_with_base(git, record, false)?;
+    verify_worktree_container(&wt_path, &main_root, &record.id)?;
+    let (tip, unique_commits, unmerged_commits, unmerged_total) =
+        inspect_branch_commits(git, &main_root, &record.branch_ref, &record.base_oid)?;
+    let digest = compute_digest(DigestInput {
+        isolation_id: &record.id,
+        workspace_id,
+        head_oid: "collapsed",
+        branch_oid: if tip.is_empty() { "none" } else { &tip },
+        usage_generation: record.usage_generation,
+        status_raw: b"collapsed",
+        stat_bytes: tip.as_bytes(),
+        nested: &[],
+        nested_truncated: false,
+        unique_commits,
+        unmerged_commits: &unmerged_commits,
+        unmerged_total,
+    });
+    let branch_oid = if tip.is_empty() {
+        record.base_oid.clone()
+    } else {
+        tip
+    };
+    Ok((
+        Some((main_root, common_dir)),
+        Snapshot {
+            head_oid: String::new(),
+            branch_oid,
+            uncommitted: false,
+            uncommitted_files: Vec::new(),
+            uncommitted_total: 0,
+            unique_commits,
+            unmerged_commits,
+            unmerged_total,
+            nested: Vec::new(),
+            nested_truncated: false,
+            orphan: false,
+            missing_dir: true,
+            rollback_only: false,
+            collapsed_rollback: false,
+            digest,
+            merged_pr: None,
+        },
+    ))
+}
+
 pub(crate) fn inspect_record(
     git: &GitRunner,
     store: &WorktreeStore,
@@ -725,6 +784,9 @@ pub(crate) fn inspect_record(
     workspace_id: &str,
 ) -> Result<(Option<(PathBuf, PathBuf)>, Snapshot), String> {
     verify_managed_branch_ref(record)?;
+    if record.state == "collapsed" {
+        return inspect_collapsed_locked(git, record, workspace_id);
+    }
     let wt_path = PathBuf::from(&record.worktree_path);
     let dir_present = wt_path.exists() || is_link(&wt_path);
 

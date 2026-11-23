@@ -29,6 +29,7 @@ pub(crate) struct Record {
     pub attention: Option<String>,
     pub confirmation_digest: Option<String>,
     pub delete_oid: Option<String>,
+    pub updated_at: String,
 }
 
 impl Record {
@@ -74,7 +75,8 @@ pub(crate) fn read_dirs(root: &Path) -> rusqlite::Result<Vec<Dir>> {
     let mut statement = connection.prepare(
         "SELECT workspace_id, worktree_path, branch_ref, state, id, created_at, attention \
          FROM isolated_dirs \
-         WHERE state IN ('ready', 'deleting', 'needs_attention') ORDER BY created_at, id",
+         WHERE state IN ('ready', 'deleting', 'needs_attention', 'collapsed') \
+         ORDER BY created_at, id",
     )?;
     statement
         .query_map([], |row| {
@@ -88,6 +90,7 @@ pub(crate) fn read_dirs(root: &Path) -> rusqlite::Result<Vec<Dir>> {
                     .unwrap_or(&branch)
                     .to_owned(),
                 ready: state == "ready",
+                collapsed: state == "collapsed",
                 attention: row.get(6)?,
                 id: row.get(4)?,
                 created: row.get(5)?,
@@ -146,7 +149,7 @@ impl WorktreeStore {
             .query_row(
                 "SELECT id, workspace_id, repo_common_dir, main_root, worktree_path, \
                  worktree_git_dir, branch_ref, base_oid, state, phase, usage_generation, \
-                 attention, confirmation_digest, delete_oid \
+                 attention, confirmation_digest, delete_oid, updated_at \
                  FROM isolated_dirs WHERE id = ?1",
                 [isolation_id],
                 row_to_record,
@@ -163,7 +166,7 @@ impl WorktreeStore {
             .prepare(
                 "SELECT id, workspace_id, repo_common_dir, main_root, worktree_path, \
                  worktree_git_dir, branch_ref, base_oid, state, phase, usage_generation, \
-                 attention, confirmation_digest, delete_oid \
+                 attention, confirmation_digest, delete_oid, updated_at \
                  FROM isolated_dirs ORDER BY created_at, id",
             )
             .map_err(|e| e.to_string())?;
@@ -182,7 +185,7 @@ impl WorktreeStore {
     ) -> Result<bool, String> {
         self.write(
             "UPDATE isolated_dirs SET confirmation_digest = ?1, updated_at = ?2 \
-             WHERE id = ?3 AND state IN ('ready', 'needs_attention', 'deleting')",
+             WHERE id = ?3 AND state IN ('ready', 'needs_attention', 'deleting', 'collapsed')",
             rusqlite::params![digest, updated_at, isolation_id],
         )
     }
@@ -258,6 +261,16 @@ impl WorktreeStore {
         )
     }
 
+    /// A cleaned-up directory keeps its managed branch and registry row; the service rebuilds
+    /// the worktree in place when a thread resumes (ADR-0115).
+    pub(crate) fn mark_collapsed(
+        &self,
+        isolation_id: &str,
+        updated_at: &str,
+    ) -> Result<bool, String> {
+        self.revert_creating_to_collapsed(isolation_id, updated_at, "ready")
+    }
+
     pub(crate) fn delete(&self, isolation_id: &str, expected_state: &str) -> Result<bool, String> {
         self.write(
             "DELETE FROM isolated_dirs WHERE id = ?1 AND state = ?2",
@@ -282,5 +295,6 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<Record> {
         attention: row.get(11)?,
         confirmation_digest: row.get(12)?,
         delete_oid: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }

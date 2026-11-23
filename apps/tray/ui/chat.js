@@ -347,7 +347,7 @@ function renderConv(c, ctx, forceMeasure = false) {
   if (
     (d.kind === "desk" && !ctx.desks.has(d.key)) ||
     (d.kind === "room" && !ctx.rooms.has(d.id)) ||
-    (d.kind === "isolated" && !c.isolated?.length)
+    (d.kind === "isolated" && !c.isolated?.length && !(typeof ChatIsolatedCleanup !== "undefined" && ChatIsolatedCleanup.doneCount(c.group)))
   )
     state.drawer = { kind: "all" };
   el.drawer.classList.toggle("tp-room", state.drawer.kind === "room");

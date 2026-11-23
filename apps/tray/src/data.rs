@@ -2,6 +2,7 @@
 mod uninstall;
 
 mod assets;
+mod cleanup_inputs;
 mod git_pr;
 mod orphaned;
 mod request;
@@ -194,6 +195,7 @@ impl Reader {
 
         let isolated: Vec<crate::git_pr::IsolatedTarget> = crate::isolated::read(&self.root)
             .into_iter()
+            .filter(|dir| !dir.collapsed)
             .map(|dir| crate::git_pr::IsolatedTarget {
                 id: dir.id,
                 workspace: dir.workspace,

@@ -2,6 +2,7 @@
 //! deletes idle or unfinished ones under the service's repository lock and lease protocol
 //! (ADR-0085, ADR-0098).
 
+pub(crate) mod cleanup;
 pub(crate) mod git;
 mod inspect;
 pub(crate) mod leases;
@@ -28,6 +29,8 @@ pub(crate) struct Dir {
     pub branch: String,
     /// Registered as usable; any other state is waiting to be dealt with.
     pub ready: bool,
+    /// Cleaned up with its managed branch kept; the service rebuilds the worktree on resume.
+    pub collapsed: bool,
     /// Last failure reason when `state == 'needs_attention'`.
     pub attention: Option<String>,
 }
@@ -59,8 +62,8 @@ pub(crate) struct Builder {
 }
 
 /// A workspace's directories for the office, those in use last. Each is in use (a running call
-/// works inside it), left over (usable but nobody works in it) or unfinished (the last release
-/// did not complete).
+/// works inside it), left over (usable but nobody works in it), collapsed (cleaned up, branch
+/// kept) or unfinished (the last release did not complete).
 pub(crate) fn classify(
     dirs: &[Dir],
     workspace: &str,
@@ -74,6 +77,8 @@ pub(crate) fn classify(
             let using = dir.ready && running.iter().any(|cwd| within(cwd, &dir.path));
             let status = if using {
                 "using"
+            } else if dir.collapsed {
+                "collapsed"
             } else if dir.ready {
                 "idle"
             } else {

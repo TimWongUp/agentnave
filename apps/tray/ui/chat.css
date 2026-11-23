@@ -917,6 +917,19 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .iso-card { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 4px; margin: 10px 0 0; padding: 10px 12px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); font-size: 12.5px; color: var(--soft); user-select: text; }
 .iso-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
 .iso-top-end { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.iso-clean { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 10px 0 0; min-width: 0; font-size: 12px; color: var(--muted); }
+.iso-clean-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; min-width: 0; }
+.iso-clean-last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iso-clean-btn { flex: none; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 11.5px; line-height: 22px; color: var(--ink); cursor: pointer; }
+.iso-clean-btn:hover:not(:disabled) { background: var(--card-hover); }
+.iso-clean-btn:disabled { color: var(--faint); cursor: default; opacity: .65; }
+.iso-clean-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 8px; min-width: 0; font-size: 11.5px; }
+.iso-clean-word { font-weight: 600; white-space: nowrap; }
+.iso-clean-word.removed { color: var(--show); }
+.iso-clean-word.collapsed { color: var(--muted); }
+.iso-clean-word.failed { color: var(--bad); }
+.iso-clean-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.iso-clean-why { color: var(--faint); white-space: nowrap; }
 .iso-del { flex: none; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 11px; line-height: 18px; color: var(--bad); cursor: pointer; }
 .iso-del:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, var(--bg)); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
 .iso-del:disabled { color: var(--faint); cursor: not-allowed; opacity: .65; }

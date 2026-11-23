@@ -400,6 +400,7 @@ fn setup(app: &mut tauri::App, reader: Arc<Reader>) -> Result<(), Box<dyn std::e
         }
     });
     usage::start(reader.clone());
+    isolated::cleanup::start(handle.clone(), reader.clone());
     alerts::start(handle.clone(), reader.clone());
     thread::spawn(move || poll(handle, reader, overview));
     Ok(())
@@ -467,6 +468,9 @@ impl ProtocolRequest {
             }
             _ if path.starts_with("/app/git-pr/") => {
                 git_pr::request(app, reader, method, path, action, self.request.body())
+            }
+            _ if path == "/app/isolated/cleanup" || path == "/app/isolated/cleanup/run" => {
+                isolated::cleanup::request(app, reader, method, path, action)
             }
             ("GET", "/app/status") => response::Response::json(&update::status(app)),
             (_, "/app/alerts/test") => alerts::test(app, method, action),
@@ -555,6 +559,7 @@ mod tests {
             ("POST", "/app/workspaces/cancel-handover"),
             ("POST", "/app/isolated/inspect"),
             ("POST", "/app/isolated/delete"),
+            ("POST", "/app/isolated/cleanup/run"),
             ("DELETE", "/app/chats/x"),
             ("DELETE", "/settings/members"),
         ] {

@@ -681,7 +681,10 @@
       S.loadOrchestration();
       loadLimit();
     }
-    if (tab === "storage") window.AgentNaveStorageSettings?.load();
+    if (tab === "storage") {
+      window.AgentNaveStorageSettings?.load();
+      window.AgentNaveIsolatedCleanupSettings?.load();
+    }
   }
 
   const SCENE_IDS = ["task", "discussion"];

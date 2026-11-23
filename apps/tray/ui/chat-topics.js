@@ -213,6 +213,7 @@ const isolatedStatus = (status) =>
   ({
     using: [L("使用中", "In use"), "tone-run"],
     unfinished: [L("需要处理", "Needs attention"), "tone-review"],
+    collapsed: [L("已收起", "Collapsed"), "tone-idle"],
   })[status] || [L("任务已结束", "Task ended"), "tone-idle"];
 function isolatedCard(d, ctx) {
   const gitExtra = typeof ChatGit !== "undefined" ? ChatGit.isolatedNodes?.(d, ctx) : null;
@@ -221,6 +222,7 @@ function isolatedCard(d, ctx) {
   const desk = d.task && ctx.desks.get(d.task.desk);
   const who = [desk && deskName(desk), d.task?.text].filter(Boolean).join(" · ");
   const workspace = ctx.c?.group || state?.chat?.group || "";
+  const cleanupKept = typeof ChatIsolatedCleanup !== "undefined" ? ChatIsolatedCleanup.keptReason(d.id) : "";
   const del = h(
     "button.iso-del",
     {
@@ -251,6 +253,7 @@ function isolatedCard(d, ctx) {
     ...extraNodes,
     !hasUserNode && whoText ? h("div.iso-line", { title: whoText }, whoText) : null,
     d.created && Number.isFinite(AN.at(d.created)) ? h("div.iso-line", {}, L(`建立于 ${relTime(d.created)}`, `Created ${relTime(d.created)}`)) : null,
+    cleanupKept ? h("div.iso-line", {}, L(`未清理：${cleanupKept}`, `Kept: ${cleanupKept}`)) : null,
     d.attention ? h("div.iso-line.iso-warn", {}, L(`上次清理未完成：${d.attention}`, `Last cleanup incomplete: ${d.attention}`)) : null,
     h("div.iso-path", { title: d.path }, d.path),
   );
@@ -270,9 +273,11 @@ function renderIsolatedDrawer(c, ctx) {
   el.jump.hidden = true;
   setAttr(el.drawer, "aria-label", L("隔离目录", "Isolated directories"));
   const gitVer = typeof ChatGit !== "undefined" ? (ChatGit.version?.() || 0) : 0;
+  const cleanup = typeof ChatIsolatedCleanup !== "undefined" ? ChatIsolatedCleanup : null;
+  cleanup?.ensureLoaded();
   const derivedKey = typeof ChatTerminal !== "undefined" ? (ChatTerminal.derivedAll?.() || []).map((x) => [x.group, x.isolation_id, x.status]) : [];
-  const key = JSON.stringify(["isolated", c.group, dirs, [...ctx.desks.values()].map((d) => [d.key, deskName(d)]), gitVer, derivedKey, Math.floor(Date.now() / 30000)]);
-  if (tp.key === key && el.inner.querySelector(".iso-card")) return;
+  const key = JSON.stringify(["isolated", c.group, dirs, [...ctx.desks.values()].map((d) => [d.key, deskName(d)]), gitVer, derivedKey, cleanup?.version() || 0, Math.floor(Date.now() / 30000)]);
+  if (tp.key === key && el.inner.querySelector(".iso-clean")) return;
   tp.key = key;
-  el.inner.replaceChildren(...dirs.map((d) => isolatedCard(d, ctx)));
+  el.inner.replaceChildren(...(cleanup ? [cleanup.panel(c.group)] : []), ...dirs.map((d) => isolatedCard(d, ctx)));
 }
