@@ -46,7 +46,10 @@ impl Reader {
                 }
             }
         }
-        let history_unreadable = overview.scan_error.is_some() || !overview.unreadable.is_empty();
+        // A missing database (a restore in progress, say) hides history just as an error does.
+        let history_unreadable = !matches!(database, Ok(Some(_)))
+            || overview.scan_error.is_some()
+            || !overview.unreadable.is_empty();
         let workspaces = match &database {
             Ok(Some(connection)) if overview.scan_error.is_none() => {
                 existing_workspaces(connection)

@@ -569,6 +569,11 @@ fn an_incompletely_read_history_never_counts_as_idle() {
 fn a_source_file_written_after_the_check_keeps_the_directory_ready() {
     let fx = setup_worktree_fixture("wt-0123456789ab");
     let head = git_cmd(&fx.wt_path, &["rev-parse", "HEAD"]);
+    // A user setting that hides untracked files from `status` must not hide them from the removal.
+    git_cmd(
+        &fx.main_root,
+        &["config", "status.showUntrackedFiles", "no"],
+    );
     // Appears between the locked inspection and the removal.
     fs::write(fx.wt_path.join("late.rs"), "fn main() {}\n").unwrap();
     let git = crate::isolated::git::GitRunner::new().unwrap();
@@ -583,7 +588,7 @@ fn a_source_file_written_after_the_check_keeps_the_directory_ready() {
         &head,
     );
     assert!(
-        removed.as_ref().unwrap_err().contains("untracked files"),
+        removed.as_ref().unwrap_err().contains("--force"),
         "{removed:?}"
     );
     assert!(fx.wt_path.join("late.rs").exists());

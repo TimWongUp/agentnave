@@ -37,9 +37,6 @@ pub(super) fn clean_one(env: &Env, record: &Record) -> Option<Entry> {
     if record.state != "ready" {
         return kept(Keep::NotReady);
     }
-    if env.busy(record) {
-        return kept(Keep::Busy);
-    }
     if let Some(why) = in_use(env, record) {
         return kept(why);
     }
@@ -116,9 +113,6 @@ fn decide_locked(
     if record.state != "ready" {
         return keep(Keep::NotReady);
     }
-    if let Some(why) = in_use(env, record) {
-        return keep(why);
-    }
     let (repo_dirs, snap) = match inspect_record(git, store, record, &record.workspace_id) {
         Ok(found) => found,
         Err(error) if error.contains("detached HEAD") => return keep(Keep::Detached),
@@ -157,6 +151,10 @@ fn decide_locked(
     } else {
         return keep(Keep::NoMatch);
     };
+    // As late as possible: the inspection above can take seconds.
+    if let Some(why) = in_use(env, record) {
+        return keep(why);
+    }
     let detail = merged.map(|hit| format!("#{}", hit.number));
     let done = if whole {
         remove_whole_locked(git, store, record, &main_root, &common_dir, &snap.head_oid)
