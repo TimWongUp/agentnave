@@ -8,7 +8,7 @@
 
 ## Implementation boundaries
 
-- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，只提供 `agentnave-mcp` 一个入口，不提供面向人的 CLI；服务、App、Manager 与 Provider CLI 的所有权划分见 `docs/context/architecture.md`。规划、角色、模型、轮次编排、审核判断、综合、重试与 worktree 由调用方 Manager 决定。
+- AgentNave 是只供 Agent 使用的本地 STDIO MCP Server，对外只提供 `agentnave-mcp` 一个入口（服务包内另有一个供 boss 在后台运行的只读等待模块，ADR-0114），不提供面向人的 CLI；服务、App、Manager 与 Provider CLI 的所有权划分见 `docs/context/architecture.md`。规划、角色、模型、轮次编排、审核判断、综合、重试与 worktree 由调用方 Manager 决定。
 - Provider Adapter 不得静默设置模型、effort、权限、工具或 prompt 增补；参数只能来自协议必需、调用方显式或回执注明的 App 默认值，权限类参数另受权限档位约束，boss 不得自行追加，要点见 `docs/context/architecture.md` 的「参数与默认值」，细则见 ADR-0028、ADR-0032。Provider 专属的协议、解析与模型回读放进 Adapter 及其钩子，核心与历史层不按 Provider 名分支；默认值与权限档位映射仍在服务入口套用，不下沉到 Adapter；Adapter 不在模块级导入 `agentnave.host`。
 - Invocation 只在当前进程内存中存在；server 退出对仍在 Provider 进程树内的活跃进程做 best-effort 清理，不引入跨重启恢复。`start_agent` 终端模式（派生会话）的进程归托盘，不由服务 supervisor 监督，server 退出不结束也不中断它（ADR-0109）。
 - AgentNave 不是沙箱；Provider 原生权限才是安全边界，不声称能隔离主动杀 supervisor、创建新 OS session 或其他同用户恶意逃逸。

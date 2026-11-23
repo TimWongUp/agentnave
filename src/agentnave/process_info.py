@@ -7,9 +7,10 @@ import errno
 import os
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, cast
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,25 @@ def _linux_argv(pid: int) -> Sequence[str]:
     return [
         os.fsdecode(arg) for arg in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if arg
     ]
+
+
+def _linux_executable(pid: int) -> str:
+    return os.readlink(f"/proc/{pid}/exe")
+
+
+_MACOS_PIDPATH_MAXSIZE = 4096
+
+
+def _macos_executable(pid: int) -> str:
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    libproc.proc_pidpath.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+    libproc.proc_pidpath.restype = ctypes.c_int
+    buffer = ctypes.create_string_buffer(_MACOS_PIDPATH_MAXSIZE)
+    length = int(libproc.proc_pidpath(pid, buffer, _MACOS_PIDPATH_MAXSIZE))
+    if length <= 0:
+        error = ctypes.get_errno() or errno.EIO
+        raise OSError(error, os.strerror(error))
+    return os.fsdecode(buffer.raw[:length])
 
 
 class _ProcBsdShortInfo(ctypes.Structure):
@@ -124,6 +144,15 @@ def read_process_argv(pid: int) -> Sequence[str]:
     raise OSError(f"unsupported process platform: {sys.platform}")
 
 
+def read_process_executable(pid: int) -> str:
+    """Read a live POSIX process's real executable path, or raise if unavailable."""
+    if sys.platform == "darwin":
+        return _macos_executable(pid)
+    if sys.platform.startswith("linux"):
+        return _linux_executable(pid)
+    raise OSError(f"unsupported process platform: {sys.platform}")
+
+
 class _ProcBsdInfo(ctypes.Structure):
     # PROC_PIDTBSDINFO, from sys/proc_info.h.
     _fields_ = [
@@ -134,6 +163,73 @@ class _ProcBsdInfo(ctypes.Structure):
         ("start_sec", ctypes.c_uint64),
         ("start_usec", ctypes.c_uint64),
     ]
+
+
+_WINDOWS_EPOCH_OFFSET = 11644473600.0
+_WINDOWS_SYNCHRONIZE = 0x00100000
+_WINDOWS_QUERY_LIMITED = 0x1000
+_WINDOWS_WAIT_TIMEOUT = 258
+
+
+class _WinFn(Protocol):
+    argtypes: object
+    restype: object
+
+    def __call__(self, *args: object) -> object: ...
+
+
+class _WinKernel32(Protocol):
+    OpenProcess: _WinFn
+    WaitForSingleObject: _WinFn
+    GetProcessTimes: _WinFn
+    CloseHandle: _WinFn
+
+
+def _windows_started(pid: int) -> float:
+    from ctypes import wintypes
+
+    load_library = cast(
+        Callable[..., object],
+        ctypes.WinDLL,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+    )
+    api = cast(_WinKernel32, load_library("kernel32", use_last_error=True))
+    api.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    api.OpenProcess.restype = wintypes.HANDLE
+    api.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    api.WaitForSingleObject.restype = wintypes.DWORD
+    api.GetProcessTimes.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    )
+    api.GetProcessTimes.restype = wintypes.BOOL
+    api.CloseHandle.argtypes = (wintypes.HANDLE,)
+    api.CloseHandle.restype = wintypes.BOOL
+
+    handle = cast(
+        wintypes.HANDLE,
+        api.OpenProcess(_WINDOWS_SYNCHRONIZE | _WINDOWS_QUERY_LIMITED, False, pid),
+    )
+    if not handle:
+        raise OSError(f"cannot open process {pid}")
+    try:
+        if api.WaitForSingleObject(handle, 0) != _WINDOWS_WAIT_TIMEOUT:
+            raise ProcessLookupError(f"process {pid} has exited")
+        created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not api.GetProcessTimes(
+            handle,
+            ctypes.byref(created),
+            ctypes.byref(exited),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        ):
+            raise OSError(f"cannot read process times for {pid}")
+        ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+        return ticks / 10_000_000 - _WINDOWS_EPOCH_OFFSET
+    finally:
+        api.CloseHandle(handle)
 
 
 def read_process_started(pid: int) -> float:
@@ -159,4 +255,6 @@ def read_process_started(pid: int) -> float:
         # CLOCK_BOOTTIME includes suspend, as does /proc/<pid>/stat starttime.
         boot = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
         return boot + int(fields[19]) / os.sysconf("SC_CLK_TCK")
+    if sys.platform == "win32":
+        return _windows_started(pid)
     raise OSError(f"unsupported process platform: {sys.platform}")

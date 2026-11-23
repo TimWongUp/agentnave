@@ -576,6 +576,14 @@ class ConversationStore(Groups):
         # Namespace true chat identities separately from old per-connection UUIDs.
         return boss_key(self.host.name, raw), raw
 
+    def boss_key_of(self, session_id: str | None) -> str | None:
+        """Opaque boss key for routing inbox snapshots and watchers; None when unknown."""
+        try:
+            boss = self._boss(session_id)
+        except ValueError:
+            return None
+        return boss[0] if boss is not None else None
+
     def _manager_session(self, session_id: str | None, *, strict: bool = True) -> str | None:
         """The workspace the calling boss writes (ADR-0033). Strictly, a boss whose workspace
         went to another boss is refused instead."""

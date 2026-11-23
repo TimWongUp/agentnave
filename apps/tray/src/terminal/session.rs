@@ -164,20 +164,6 @@ impl Output {
     }
 }
 
-/// Whether the CLI is at its prompt (OSC 7501 idle, done or error); blocked or working
-/// (or no state yet) means a submitted line would not be read as a new turn.
-fn ready_for_submit(state: Option<&str>) -> bool {
-    matches!(state, Some("idle" | "done" | "error"))
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum WakeupOutcome {
-    Delivered,
-    Blocked,
-    Cancelled,
-    Failed,
-}
-
 pub(crate) struct Session {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -312,65 +298,11 @@ impl Session {
     }
 
     pub(crate) fn user_input(&self, bytes: &[u8], paste: bool) -> Result<(), String> {
-        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
-        if gate.input(bytes, paste) {
-            Ok(())
-        } else {
-            self.write(bytes)
-        }
-    }
-
-    /// Hold user input until the prompt is submitted or cleared.
-    pub(super) fn begin_wakeup(&self, text: &str) -> Result<Option<()>, String> {
-        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
-        let output = self.output();
-        if output.exit.is_some()
-            || !ready_for_submit(output.status.state.as_deref())
-            || !gate.ready()
-        {
-            return Ok(None);
-        }
-        // A hint after the user's draft is set apart from it by a space.
-        let text = if gate.has_draft() {
-            format!(" {text}")
-        } else {
-            text.to_owned()
-        };
-        let bytes = if output.modes.paste() {
-            format!("\x1b[200~{text}\x1b[201~")
-        } else {
-            text.clone()
-        };
-        self.write(bytes.as_bytes())?;
-        gate.hold(text.chars().count());
-        Ok(Some(()))
-    }
-
-    pub(super) fn finish_wakeup(&self, should_commit: bool) -> WakeupOutcome {
-        let mut gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
-        let output = self.output();
-        // The submit key cannot be taken back once sent, so it waits for the CLI to be idle.
-        let can_commit = output.exit.is_none() && ready_for_submit(output.status.state.as_deref());
-        let commit = should_commit && can_commit;
-        let (chars, held) = gate.release(commit);
-        let mut bytes = if commit {
-            vec![b'\r']
-        } else {
-            vec![0x7f; chars]
-        };
-        bytes.extend(held);
-        if self.write(&bytes).is_err() {
-            WakeupOutcome::Failed
-        } else if commit {
-            WakeupOutcome::Delivered
-        } else if !should_commit {
-            WakeupOutcome::Cancelled
-        } else if output.exit.is_none() {
-            // Nothing was submitted, so the held text was cleared and the wakeup can be retried.
-            WakeupOutcome::Blocked
-        } else {
-            WakeupOutcome::Failed
-        }
+        self.gate
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .input(bytes, paste);
+        self.write(bytes)
     }
 
     pub(crate) fn osc_snapshot(&self) -> (u64, Option<String>, Option<String>) {
@@ -427,14 +359,6 @@ impl Session {
     }
 
     #[cfg(all(test, unix))]
-    pub(super) fn is_holding(&self) -> bool {
-        self.gate
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .is_holding()
-    }
-
-    #[cfg(all(test, unix))]
     pub(super) fn record_writes(&self) {
         *self.writes.lock().unwrap_or_else(|p| p.into_inner()) = Some(Vec::new());
     }
@@ -446,19 +370,6 @@ impl Session {
             .unwrap_or_else(|p| p.into_inner())
             .take()
             .unwrap_or_default()
-    }
-
-    #[cfg(all(test, unix))]
-    pub(super) fn set_draft_wait(&self, delay: Duration) {
-        self.gate
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .set_draft_wait(delay);
-    }
-
-    #[cfg(all(test, unix))]
-    pub(super) fn program_state(&self) -> Option<String> {
-        self.output().status.state.clone()
     }
 
     pub(crate) fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
@@ -537,7 +448,19 @@ const PARENT_SESSION: [&str; 23] = [
 pub(crate) fn parent_session(name: &str) -> bool {
     name.starts_with("CLAUDE_CODE_")
         || name.starts_with("ANTIGRAVITY_")
+        || name.starts_with("HERDR_")
         || PARENT_SESSION.contains(&name)
+}
+
+pub(super) fn strip_parent_session(
+    command: &mut CommandBuilder,
+    vars: impl IntoIterator<Item = std::ffi::OsString>,
+) {
+    for name in vars {
+        if name.to_str().is_some_and(parent_session) {
+            command.env_remove(name);
+        }
+    }
 }
 
 /// The CLI started through the user's login shell, as in their own terminal, so it sees the PATH
@@ -558,11 +481,7 @@ pub(super) fn command(program: &Path, args: &[String], cwd: &Path) -> CommandBui
     };
     command.args(args);
     command.cwd(cwd);
-    for (name, _) in std::env::vars_os() {
-        if name.to_str().is_some_and(parent_session) {
-            command.env_remove(name);
-        }
-    }
+    strip_parent_session(&mut command, std::env::vars_os().map(|(name, _)| name));
     if let Some(path) = crate::detect::search_path(program) {
         command.env("PATH", path);
     }

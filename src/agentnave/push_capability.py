@@ -12,6 +12,7 @@ from typing import cast
 
 from agentnave.process_info import read_process_parent, read_process_started
 
+# Used for App-embedded Codex terminals with structured app-server push (ADR-0105, ADR-0114).
 PUSH_NEXT = (
     "The App will prompt you in the terminal when results are ready. End this turn now; do not "
     "call a blocking wait. When prompted, call inbox wait(wait_seconds=0) with the same "
@@ -32,6 +33,8 @@ class TrayIdentity:
 
 
 def app_can_push(root: Path, provider: str | None) -> bool:
+    if provider is None:
+        return False
     return find_tray(root, provider) is not None
 
 
@@ -54,8 +57,13 @@ def has_ancestor_in(pids: set[int] | frozenset[int], stop_pid: int | None = None
     return False
 
 
-def find_tray(root: Path, provider: str | None) -> TrayIdentity | None:
-    if sys.platform == "win32" or provider is None:
+def find_tray(root: Path, provider: str | None = None) -> TrayIdentity | None:
+    """Find a live verified ancestor tray process.
+
+    When `provider` is given, also require it in the tray's push allowlist (`providers`).
+    When `provider` is None, verify tray identity only (for derived terminal capability, ADR-0114).
+    """
+    if sys.platform == "win32":
         return None
     seen: set[int] = set()
     chain: list[tuple[int, int, float]] = []
@@ -81,7 +89,7 @@ def find_tray(root: Path, provider: str | None) -> TrayIdentity | None:
     return None
 
 
-def _matches(path: Path, pid: int, provider: str, started: float) -> bool:
+def _matches(path: Path, pid: int, provider: str | None, started: float) -> bool:
     try:
         with path.open("rb") as stream:
             info = os.fstat(stream.fileno())
@@ -94,12 +102,11 @@ def _matches(path: Path, pid: int, provider: str, started: float) -> bool:
         if path.is_symlink() or not isinstance(value, dict):
             return False
         value = cast(dict[str, object], value)
+        if value.get("version") != 1 or value.get("pid") != pid:
+            return False
+        if provider is None:
+            return True
         providers = value.get("providers")
-        return (
-            value.get("version") == 1
-            and value.get("pid") == pid
-            and isinstance(providers, list)
-            and provider in cast(list[object], providers)
-        )
+        return isinstance(providers, list) and provider in cast(list[object], providers)
     except (OSError, ValueError, TypeError):
         return False

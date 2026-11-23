@@ -445,6 +445,9 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "ANTIGRAVITY_LS_ADDRESS",
         "ANTIGRAVITY_CSRF_TOKEN",
         "AGENTNAVE_HOST_SESSION_ID",
+        "HERDR_PANE_ID",
+        "HERDR_SESSION",
+        "HERDR_SOCKET",
         "TERM_PROGRAM",
     ] {
         assert!(parent_session(name), "{name}");
@@ -453,11 +456,27 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "ANTHROPIC_API_KEY",
         "GEMINI_API_KEY",
         "CODEBUDDY_CONFIG_DIR",
+        "HERDR",
+        "MY_HERDR_FLAG",
         "HOME",
         "PATH",
     ] {
         assert!(!parent_session(name), "{name}");
     }
+
+    let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
+    cmd.env("HERDR_PANE_ID", "pane-1");
+    cmd.env("HERDR_SESSION", "sess-1");
+    cmd.env("KEEP_ME", "ok");
+    super::session::strip_parent_session(
+        &mut cmd,
+        ["HERDR_PANE_ID", "HERDR_SESSION", "KEEP_ME"]
+            .into_iter()
+            .map(std::ffi::OsString::from),
+    );
+    assert_eq!(cmd.get_env("HERDR_PANE_ID"), None);
+    assert_eq!(cmd.get_env("HERDR_SESSION"), None);
+    assert_eq!(cmd.get_env("KEEP_ME").and_then(|v| v.to_str()), Some("ok"));
 }
 
 /// A relay running under a terminal's CLI names the workspaces that CLI is the boss of: the one a
@@ -1007,160 +1026,6 @@ fn terminal_state_snapshot_throttles_connection_scans_while_elsewhere_stays_fres
     );
     session.stop();
     let _ = exit_of(&session);
-}
-
-#[cfg(unix)]
-#[test]
-fn wakeup_holds_user_input_until_submit_or_blocked_cleanup() {
-    let run = |blocked: bool| {
-        let change = if blocked {
-            "sleep 0.3; printf '\\033]7501;state=blocked\\007blocked';"
-        } else {
-            ""
-        };
-        let script = format!(
-            "stty raw -echo; printf '\\033]7501;state=idle\\007ready'; {change} dd bs=1 count={} 2>/dev/null | od -An -t u1; printf done",
-            if blocked { 16 } else { 10 }
-        );
-        let session = Session::start(shell(&script), 80, 24).unwrap();
-        assert!(output_until(&session, "ready").0.contains("ready"));
-        if blocked {
-            session.set_draft_wait(Duration::ZERO);
-            session.user_input(b"old", false).unwrap();
-        }
-        let notice = if blocked { "通知" } else { "notice" };
-        assert!(session.begin_wakeup(notice).unwrap().is_some());
-        session.user_input(b"xy", false).unwrap();
-        session.user_input(b"z", false).unwrap();
-        if blocked {
-            assert!(output_until(&session, "blocked").0.contains("blocked"));
-        }
-        assert_eq!(
-            session.finish_wakeup(true),
-            if blocked {
-                super::session::WakeupOutcome::Blocked
-            } else {
-                super::session::WakeupOutcome::Delivered
-            }
-        );
-        let (text, _) = output_until(&session, "done");
-        let expected = if blocked {
-            "111 108 100 32 233 128 154 231 159 165 127 127 127 120 121 122"
-        } else {
-            "110 111 116 105 99 101 13 120 121 122"
-        };
-        let actual: Vec<_> = text
-            .split_whitespace()
-            .filter_map(|s| s.parse::<u8>().ok())
-            .collect();
-        let expected: Vec<_> = expected
-            .split_whitespace()
-            .map(|s| s.parse::<u8>().unwrap())
-            .collect();
-        assert!(
-            actual
-                .windows(expected.len())
-                .any(|window| window == expected),
-            "{text:?}"
-        );
-        assert!(session.begin_wakeup("another").unwrap().is_none());
-        session.stop();
-    };
-    run(false);
-    run(true);
-}
-
-#[cfg(unix)]
-#[test]
-fn wakeup_waits_while_cli_is_working_and_delivers_at_prompt() {
-    let script = "stty raw -echo; printf '\\033]7501;state=working\\007ready'; sleep 0.5; printf '\\033]7501;state=done\\007turn-over'; dd bs=1 count=7 2>/dev/null | od -An -t u1; printf ack";
-    let session = Session::start(shell(script), 80, 24).unwrap();
-    assert!(output_until(&session, "ready").0.contains("ready"));
-    session.record_writes();
-    // While the CLI is working, nothing reaches the PTY: no hold, no text, no Enter.
-    assert!(session.begin_wakeup("notice").unwrap().is_none());
-    assert!(!session.is_holding());
-    assert!(session.recorded_writes().is_empty());
-    output_until(&session, "turn-over");
-    session.record_writes();
-    assert!(session.begin_wakeup("notice").unwrap().is_some());
-    assert_eq!(
-        session.finish_wakeup(true),
-        super::session::WakeupOutcome::Delivered
-    );
-    let (text, _) = output_until(&session, "ack");
-    let expected: Vec<u8> = "110 111 116 105 99 101 13"
-        .split(' ')
-        .map(|s| s.parse().unwrap())
-        .collect();
-    let actual: Vec<u8> = text
-        .split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    assert!(
-        actual.windows(expected.len()).any(|w| w == expected),
-        "{text:?}"
-    );
-    session.stop();
-}
-
-#[cfg(unix)]
-#[test]
-fn blocked_wakeup_is_retried_once_unblocked() {
-    use serde_json::json;
-    let temp = tempfile::tempdir().unwrap();
-    std::fs::create_dir(temp.path().join("connections")).unwrap();
-    std::fs::create_dir(temp.path().join("inbox")).unwrap();
-    let session = Session::start(shell("stty raw -echo; printf '\\033]7501;state=idle\\007ready'; dd bs=1 count=1 of=/dev/null 2>/dev/null; printf '\\033]7501;state=blocked\\007blocked'; sleep 1; printf '\\033]7501;state=idle\\007back'; sleep 30"), 80, 24).unwrap();
-    assert!(output_until(&session, "ready").0.contains("ready"));
-    let pid = session.pid().unwrap();
-    let key = "s-11111111111111111111111111111111";
-    std::fs::write(
-        temp.path()
-            .join("connections")
-            .join(format!("{pid}-test.json")),
-        json!({"bosses":[key]}).to_string(),
-    )
-    .unwrap();
-    let current = std::process::id();
-    std::fs::write(temp.path().join("inbox").join(format!("{current}.json")), json!({"version":1,"pid":current,"bosses":{key:{"waiting":false,"items":[{"key":"item","kind":"task_end"}]}}}).to_string()).unwrap();
-    let terminals = Terminals::default();
-    terminals.lock().open.push(Running {
-        id: 1,
-        provider: "claude".into(),
-        cwd: temp.path().into(),
-        session: session.clone(),
-        workspaces: Vec::new(),
-        native: None,
-        title_located: false,
-        title_searched: None,
-        started: std::time::SystemTime::now(),
-        pending: 0,
-        account: None,
-        #[cfg(unix)]
-        codex: None,
-        derived: None,
-    });
-    let mut state = super::wakeup::WakeupState::default();
-    session.record_writes();
-    super::wakeup::scan(&terminals, temp.path(), &mut state);
-    assert!(!state.attempted.contains("item"));
-    assert!(state.failed.contains("item"));
-    assert!(output_until(&session, "back").0.contains("back"));
-    super::wakeup::scan(&terminals, temp.path(), &mut state);
-    assert!(state.attempted.contains("item"));
-    assert!(!state.failed.contains("item"));
-    super::wakeup::scan(&terminals, temp.path(), &mut state);
-    let writes = session.recorded_writes();
-    assert_eq!(
-        writes
-            .iter()
-            .filter(|b| b.windows(11).any(|w| w == b"[AgentNave]"))
-            .count(),
-        2
-    );
-    assert_eq!(writes.iter().filter(|b| b.as_slice() == b"\r").count(), 1);
-    session.stop();
 }
 
 #[cfg(unix)]
