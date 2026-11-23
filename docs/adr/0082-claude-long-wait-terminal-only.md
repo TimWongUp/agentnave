@@ -1,7 +1,8 @@
 # ADR-0082：长等待档只给 Claude Code 终端交互会话
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-11
+- 长等待判据加上「未关闭后台任务」，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 修订 [ADR-0077](0077-claude-long-wait.md) 的适用范围。
 
 ADR-0077 依据终端 CLI 的行为，把 1500 秒窗口给了所有 Claude Code 宿主。但 Claude Code 只在交互会话里把满两分钟的 MCP 调用转入后台。桌面 App 以 stream-json 启动，被当作非交互会话，默认不转后台，官方也不为它和 VS Code 提供 MCP tasks。结果是桌面 App 里的 `wait(1500)` 会在前台静默阻塞最长 25 分钟。

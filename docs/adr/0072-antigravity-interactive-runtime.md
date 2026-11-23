@@ -3,6 +3,7 @@
 - 状态：部分修订
 - 原生状态事件取代全局 hooks 与共享日志绑定，见 [ADR-0102](0102-agy-native-status.md)。
 - 日期：2026-11-09
+- 60 秒空闲受阻不适用于回复已写出、仍在等后台命令的阶段，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 信任屏确认与用户配置持久化例外修订见 [ADR-0078](0078-startup-confirmations.md)。
 - 运行活动可由屏幕状态行更新，见 [ADR-0079](0079-agy-screen-activity.md)。
 - 2026-11-14 修订启动投递、`agentnave-interactive` 条目与无 `Stop` 时的终态规则：投递前等待本次进程日志完成实验刷新，增加 `PreInvocation` 探针，并对整轮未挂载 hooks 的回合做条件保底收尾，见文末「修订（2026-11-14）」。

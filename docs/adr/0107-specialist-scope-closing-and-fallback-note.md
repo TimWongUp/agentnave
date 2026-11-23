@@ -1,7 +1,8 @@
 # ADR-0107：固定档专项不再排除在小事边界外，收尾改为服务语义汇报，顺位回执自带说明
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-21
+- 派发说明收尾句改用户口吻，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 修订 [ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md) 中固定档「且不在已开启的专项范围内……专项范围内的任务都派出」的条款；修订 [ADR-0104](0104-in-app-boss-push.md) 中「用户自定义规则不改写」对旧生成等待句逐字迁移的适用边界（沿用 ADR-0068/0073 仅逐字替换旧生成句、保留用户自写内容的原则）；扩展 [ADR-0043](0043-service-prompt-instructions.md) 的非交互派发指令；补充 [ADR-0089](0089-seat-fallback-order.md) 与 [ADR-0093](0093-decision-seat-random-candidates.md) 的 `seat_fallback` 回执字段。
 
 ## 背景

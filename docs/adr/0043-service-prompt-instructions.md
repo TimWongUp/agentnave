@@ -3,6 +3,7 @@
 - 状态：部分修订
 - 会议派发增加已有成员称呼的身份说明，由 [ADR-0062](0062-service-owned-member-names.md) 补充；职责标签不转为行为指令。非交互汇报句补入未满足要求与未验证范围，由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 扩展。
 - 日期：2026-11-02
+- 派发与只读说明改用户口吻、按本次能否答题选措辞，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 补充 [ADR-0031](0031-prompt-only-orchestration.md)、[ADR-0038](0038-role-applies-app-seat.md)。
 
 ## 背景

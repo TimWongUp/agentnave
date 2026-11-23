@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-08-30
+- 服务包内新增 boss 可在后台运行的只读等待模块（不是 MCP 入口），由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 三个 MCP 工具的名称与工具集合由 [ADR-0024](0024-consolidated-tools-and-private-review.md) 修订
 
 AgentNave 的唯一用户是上层 Agent Manager。公开接口因此只保留 STDIO MCP 的 `start_agent`、`wait_agent` 和 `cancel_agent`，不再维护面向人的前台 `run` 命令；`agentnave-mcp` 仅是 MCP Host 启动 server 进程的入口。
