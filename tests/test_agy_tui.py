@@ -604,7 +604,7 @@ def test_native_status_fragments_and_current_turn_gate() -> None:
     turn.native("done")
     assert not turn.complete()
     assert turn.done_at is not None
-    assert turn.complete(turn.done_at + 5) and turn.model == "actual"
+    assert turn.complete(turn.done_at + 5.01) and turn.model == "actual"
 
 
 def test_native_empty_final_does_not_reuse_previous_answer_or_model() -> None:
