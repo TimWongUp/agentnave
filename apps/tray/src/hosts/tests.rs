@@ -2286,6 +2286,12 @@ fn an_entry_on_another_folder_than_its_cli_gets_its_own_row() {
     let homes = hosts.boss_homes();
     assert!(homes.claude.contains(&elsewhere) && homes.claude.contains(&home.join(".claude")));
     assert_eq!(homes.codex.len(), 3);
+    assert!(
+        homes
+            .other
+            .iter()
+            .any(|(h, p)| h == "antigravity" && p == &home.join(".gemini/antigravity-cli"))
+    );
 }
 
 #[test]

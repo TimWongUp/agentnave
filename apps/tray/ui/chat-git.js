@@ -15,6 +15,9 @@ const ChatGit = (() => {
     inflight: false,
     queuedReason: null,
     queuedSelected: undefined,
+    pendingReason: null,
+    pendingSelected: undefined,
+    pendingKeepSelected: false,
     timer: 0,
     lastFocusAt: 0,
     lastHoverAt: 0,
@@ -706,10 +709,22 @@ const ChatGit = (() => {
     }
   }
 
+  const REASON_PRIORITY = { init: 1, hover: 2, focus: 3, turn_end: 4, manual: 5 };
+
+  function mergeReason(current, incoming) {
+    if (!current) return incoming;
+    return (REASON_PRIORITY[incoming] || 0) >= (REASON_PRIORITY[current] || 0) ? incoming : current;
+  }
+
   async function runRefresh(reason, selectedOverride) {
     if (store.inflight) {
-      store.queuedReason = reason;
-      store.queuedSelected = selectedOverride;
+      const merged = mergeReason(store.queuedReason, reason);
+      if (merged !== store.queuedReason) {
+        store.queuedReason = merged;
+        if (selectedOverride !== undefined) store.queuedSelected = selectedOverride;
+      } else if (selectedOverride !== undefined) {
+        store.queuedSelected = selectedOverride;
+      }
       return;
     }
     store.inflight = true;
@@ -729,17 +744,31 @@ const ChatGit = (() => {
         const queuedSelected = store.queuedSelected;
         store.queuedReason = null;
         store.queuedSelected = undefined;
-        scheduleRefresh(queued, queuedSelected, 200, queuedSelected !== undefined);
+        scheduleRefresh(queued, queuedSelected, queued === "manual" ? 0 : 200, queuedSelected !== undefined);
       }
     }
   }
 
   function scheduleRefresh(reason, selected, delayMs = 150, keepStoreSelected = false) {
     if (!keepStoreSelected && selected !== undefined) store.selected = selected;
+    const merged = mergeReason(store.pendingReason, reason);
+    store.pendingReason = merged;
+    if (keepStoreSelected) {
+      store.pendingSelected = selected;
+      store.pendingKeepSelected = true;
+    } else if (merged === reason) {
+      store.pendingSelected = undefined;
+      store.pendingKeepSelected = false;
+    }
     clearTimeout(store.timer);
     store.timer = setTimeout(() => {
-      void runRefresh(reason, keepStoreSelected ? selected : undefined);
-    }, delayMs);
+      const runReason = store.pendingReason || reason;
+      const runSelected = store.pendingKeepSelected ? store.pendingSelected : undefined;
+      store.pendingReason = null;
+      store.pendingSelected = undefined;
+      store.pendingKeepSelected = false;
+      void runRefresh(runReason, runSelected);
+    }, merged === "manual" ? 0 : delayMs);
   }
 
   function observe(groups, terminals, selected) {

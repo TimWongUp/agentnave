@@ -684,6 +684,10 @@ impl Terminals {
                 .derived
                 .as_ref()
                 .and_then(|d| d.parent_workspace_id.clone()),
+            isolation_id: running
+                .derived
+                .as_ref()
+                .and_then(|d| d.isolation_id.clone()),
             working: running.is_working(),
         }
     }

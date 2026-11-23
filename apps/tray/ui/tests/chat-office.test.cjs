@@ -2775,11 +2775,99 @@ test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and 
   assert.equal(dlg.open, true);
   dlg.close();
 
-  // Merge PR dialog only lists repository-allowed methods (squash, rebase; no merge).
-  await ChatGitOps.openMergePr({ kind: "workspace", id: "ws-idle" }, { repo: "o/r", number: 2, title: "Fix link" });
+  // Merge PR dialog only lists repository-allowed methods (squash, rebase; no merge) and binds head_ref_oid.
+  const headOid = "0123456789abcdef0123456789abcdef01234567";
+  await ChatGitOps.openMergePr(
+    { kind: "workspace", id: "ws-idle" },
+    { repo: "o/r", number: 2, title: "Fix link", head_ref_oid: headOid },
+  );
   const radios = findAll(dlg, (n) => n.attributes.role === "radio");
   assert.deepEqual(radios.map((r) => r.attributes["data-method"]), ["squash", "rebase"]);
   assert.equal(radios[0].attributes["aria-checked"], "true");
+  const mergeConfirmBtn = findAll(dlg, (n) => n.tag === "button.primary")[0];
+  mergeConfirmBtn.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  const mergeCall = posts.find(([path]) => path === "/app/git-pr/pr/merge");
+  assert.ok(mergeCall, "expected POST /app/git-pr/pr/merge");
+  assert.equal(mergeCall[1].head_ref_oid, headOid);
+  assert.equal(mergeCall[1].method, "squash");
+});
+
+test("ChatGit queuedReason preserves manual priority over focus and hover", async () => {
+  const mkNode = (tag, attributes = {}, ...children) => ({
+    tag,
+    className: tag.split(".").slice(1).join(" "),
+    attributes: { ...attributes },
+    hidden: Boolean(attributes.hidden),
+    children: children.flat(Infinity).filter((x) => x != null && x !== false),
+    listeners: {},
+    style: {},
+    setAttribute(k, v) { this.attributes[k] = v; },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    append() {},
+    replaceChildren() {},
+  });
+  const refreshReasons = [];
+  let releaseFirst;
+  const timers = [];
+  const winListeners = {};
+  const context = vm.createContext({
+    AN: {
+      h: mkNode,
+      L: (zh) => zh,
+      setText() {},
+      setAttr() {},
+      relTime: () => "",
+      at: Date.parse,
+      deskName: () => "",
+      post: (path, payload) => {
+        if (path === "/app/git-pr/refresh") {
+          refreshReasons.push(payload.reason);
+          if (refreshReasons.length === 1) {
+            return new Promise((resolve) => {
+              releaseFirst = () => resolve({ gh_status: "ready", terminals: {}, workspaces: {}, isolated: {}, updated_at: 1 });
+            });
+          }
+          return Promise.resolve({ gh_status: "ready", terminals: {}, workspaces: {}, isolated: {}, updated_at: 2 });
+        }
+        return Promise.resolve({});
+      },
+      load: async () => ({}),
+    },
+    document: { body: { append() {} }, createElementNS: (_ns, tag) => mkNode(tag), addEventListener() {} },
+    window: {
+      addEventListener: (name, fn) => { (winListeners[name] ||= []).push(fn); },
+      innerWidth: 1200,
+      innerHeight: 800,
+    },
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    clearTimeout: (id) => { if (id > 0) timers[id - 1] = null; },
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
+  const flushTimers = () => {
+    while (timers.some(Boolean)) {
+      const batch = timers.splice(0);
+      for (const fn of batch) if (fn) fn();
+    }
+  };
+
+  // Start an in-flight focus refresh.
+  context.ChatGit.refresh("focus");
+  flushTimers();
+  assert.deepEqual(refreshReasons, ["focus"]);
+
+  // Queue manual, then fire focus (lower priority) while first request is still in flight.
+  context.ChatGit.refresh("manual");
+  flushTimers();
+  winListeners.focus.forEach((fn) => fn());
+  flushTimers();
+
+  // Finish the first request; follow-up refresh must still run with reason "manual".
+  releaseFirst();
+  await new Promise((r) => setImmediate(r));
+  flushTimers();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(refreshReasons, ["focus", "manual"]);
 });
 
 test("isolatedConfirmBody notes merged PR instead of unmerged-commit warning and falls back when gh has no match", () => {

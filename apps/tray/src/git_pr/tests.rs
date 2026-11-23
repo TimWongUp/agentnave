@@ -1,5 +1,7 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -8,13 +10,20 @@ mod ops;
 use serde_json::json;
 
 use super::cache::{CLOSED_PR_TTL, Cache, OPEN_PR_TTL, pr_ttl};
+#[cfg(unix)]
+use super::gh::GhClient;
 use super::gh::{
-    GhClient, PrInfo, extract_github_pr_links, parse_github_remote_url, parse_pr_view_json,
+    PrInfo, extract_github_pr_links, parse_github_remote_url, parse_pr_view_json,
     pr_merged_for_worktree, pr_priority_rank,
 };
-use super::git::{inspect_workspace_git, parse_porcelain_v2_branch, parse_shortstat};
+use super::git::{
+    count_commits_ahead, inspect_workspace_git, parse_porcelain_v2_branch, parse_shortstat,
+    resolve_default_branch,
+};
+use super::is_cli_boss;
 use super::links::{extract_pr_links_from_files, terminal_log_files};
-use super::{GitPr, IsolatedTarget, RefreshInput, TerminalTarget, WorkspaceTarget, is_cli_boss};
+#[cfg(unix)]
+use super::{GitPr, IsolatedTarget, RefreshInput, TerminalTarget, WorkspaceTarget};
 use crate::data::boss_app::{
     ANTIGRAVITY_CLI, ANTIGRAVITY_DESKTOP, CLAUDE_CLI, CLAUDE_DESKTOP, CODEX_CLI, CODEX_DESKTOP,
     Homes,
@@ -69,6 +78,10 @@ fn cli_boss_filter_excludes_desktop_and_unknown_hosts() {
     assert!(!is_cli_boss(Some("workbuddy"), None));
     assert!(!is_cli_boss(Some("deepseek"), None));
     assert!(!is_cli_boss(Some("hermes"), None));
+    assert!(!is_cli_boss(Some("devin"), None));
+    assert!(!is_cli_boss(Some("devin"), Some("devin-desktop")));
+    assert!(!is_cli_boss(Some("zcode"), None));
+    assert!(!is_cli_boss(Some("zcode"), Some("zcode-desktop")));
     assert!(!is_cli_boss(None, None));
 }
 
@@ -400,6 +413,7 @@ exit 1"#,
                 workspaces: vec!["s-ws1".to_owned()],
                 derived: false,
                 parent_workspace_id: None,
+                isolation_id: None,
                 working: false,
             },
             TerminalTarget {
@@ -411,6 +425,7 @@ exit 1"#,
                 workspaces: Vec::new(),
                 derived: true,
                 parent_workspace_id: Some("s-ws1".to_owned()),
+                isolation_id: Some("wt-abc".to_owned()),
                 working: false,
             },
         ],
@@ -705,4 +720,334 @@ exit 1"#,
     );
     let after_hover_gh_calls = fs::read_to_string(&counter).unwrap().lines().count();
     assert_eq!(initial_gh_calls, after_hover_gh_calls);
+}
+
+#[test]
+fn forged_default_branch_symref_is_rejected_and_never_creates_output_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git_cmd(&repo, &["init", "-b", "main"]);
+    fs::write(repo.join("f.txt"), "hello\n").unwrap();
+    git_cmd(&repo, &["add", "f.txt"]);
+    git_cmd(&repo, &["commit", "-m", "init"]);
+    git_cmd(&repo, &["checkout", "-b", "feat/check"]);
+    fs::write(repo.join("f.txt"), "changed\n").unwrap();
+    git_cmd(&repo, &["add", "f.txt"]);
+    git_cmd(&repo, &["commit", "-m", "second"]);
+
+    let head_oid = git_cmd(&repo, &["rev-parse", "HEAD"]);
+    let evil_out = tmp.path().join("pwned-output");
+    let evil_ref = format!("--output={}", evil_out.display());
+    let remote_head = repo.join(".git/refs/remotes/origin/HEAD");
+    fs::create_dir_all(remote_head.parent().unwrap()).unwrap();
+    fs::write(&remote_head, format!("ref: {evil_ref}\n")).unwrap();
+
+    let runner = GitRunner::new().unwrap();
+    // Forged symref outside refs/remotes/origin/ must be rejected; falls back to refs/heads/main.
+    let resolved = resolve_default_branch(&runner, &repo, "origin");
+    assert_eq!(
+        resolved,
+        Some(("main".to_owned(), "refs/heads/main".to_owned()))
+    );
+    let status = inspect_workspace_git(&runner, &repo).unwrap();
+    assert_eq!(status.default_branch.as_deref(), Some("main"));
+    assert_eq!(status.ahead_of_default, Some(1));
+    assert!(!evil_out.exists(), "forged symref must not create files");
+
+    // Symref with leading '-' under refs/remotes/origin/ is also rejected.
+    fs::write(&remote_head, "ref: refs/remotes/origin/-evil\n").unwrap();
+    assert_eq!(
+        resolve_default_branch(&runner, &repo, "origin"),
+        Some(("main".to_owned(), "refs/heads/main".to_owned()))
+    );
+
+    // Direct option-like argument to count_commits_ahead is rejected without writing files.
+    let evil_out2 = tmp.path().join("pwned-output-2");
+    assert_eq!(
+        count_commits_ahead(
+            &runner,
+            &repo,
+            &format!("--output={}", evil_out2.display()),
+            &head_oid
+        ),
+        None
+    );
+    assert!(!evil_out2.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn inspect_workspace_git_never_runs_submodule_filters_or_rewrites_index() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let sub_src = tmp.path().join("sub-src");
+    fs::create_dir_all(&sub_src).unwrap();
+    git_cmd(&sub_src, &["init", "-b", "main"]);
+    fs::write(sub_src.join("s.txt"), "sub\n").unwrap();
+    git_cmd(&sub_src, &["add", "s.txt"]);
+    git_cmd(&sub_src, &["commit", "-m", "sub init"]);
+
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git_cmd(&repo, &["init", "-b", "main"]);
+    fs::write(repo.join("outer.txt"), "v1\n").unwrap();
+    git_cmd(&repo, &["add", "outer.txt"]);
+    git_cmd(&repo, &["commit", "-m", "init"]);
+    git_cmd(
+        &repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_src.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git_cmd(&repo, &["commit", "-m", "add submodule"]);
+
+    // Override submodule ignore to none and install a hostile clean filter inside the submodule.
+    git_cmd(&repo, &["config", "submodule.sub.ignore", "none"]);
+    let marker = tmp.path().join("submodule-filter-ran");
+    let filter_script = tmp.path().join("evil-filter.sh");
+    fs::write(
+        &filter_script,
+        format!("#!/bin/sh\ntouch \"{}\"\ncat\n", marker.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&filter_script, fs::Permissions::from_mode(0o755)).unwrap();
+    let sub_dir = repo.join("sub");
+    fs::write(sub_dir.join(".gitattributes"), "*.txt filter=evil\n").unwrap();
+    git_cmd(
+        &sub_dir,
+        &[
+            "config",
+            "filter.evil.clean",
+            filter_script.to_str().unwrap(),
+        ],
+    );
+    fs::write(sub_dir.join("s.txt"), "modified in submodule\n").unwrap();
+
+    // Edit outer file so inspect_workspace_git runs read_diff_shortstat too.
+    fs::write(repo.join("outer.txt"), "v2\n").unwrap();
+
+    let runner = GitRunner::new().unwrap();
+    let status = inspect_workspace_git(&runner, &repo).unwrap();
+    assert_eq!(status.changed_files, 1);
+    assert_eq!(status.additions, 1);
+    assert_eq!(status.deletions, 1);
+    assert!(
+        !marker.exists(),
+        "read-only git status/diff must never enter submodules or run submodule filters"
+    );
+
+    // Check GIT_OPTIONAL_LOCKS=0: reset to clean, touch a tracked file's mtime, and verify
+    // inspect_workspace_git does not rewrite .git/index.
+    git_cmd(&repo, &["checkout", "--", "outer.txt"]);
+    let index_path = repo.join(".git/index");
+    let before_bytes = fs::read(&index_path).unwrap();
+    let before_mtime = fs::metadata(&index_path).unwrap().modified().unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    fs::write(repo.join("outer.txt"), "v1\n").unwrap();
+    let clean = inspect_workspace_git(&runner, &repo).unwrap();
+    assert_eq!(clean.changed_files, 0);
+    assert_eq!(fs::read(&index_path).unwrap(), before_bytes);
+    assert_eq!(
+        fs::metadata(&index_path).unwrap().modified().unwrap(),
+        before_mtime
+    );
+}
+
+#[test]
+fn non_isolated_dir_guard_matches_subpaths_and_excludes_isolated_worktrees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let pkg = repo.join("packages/app");
+    let iso = repo.join(".agentnave-worktrees/wt-111111111111");
+    let iso_sub = iso.join("src");
+    let other = tmp.path().join("other");
+    for d in [&pkg, &iso_sub, &other] {
+        fs::create_dir_all(d).unwrap();
+    }
+    let isolated_dirs = vec![iso.clone()];
+
+    assert!(crate::data::is_non_isolated_in_dir(
+        &repo,
+        &repo,
+        &isolated_dirs
+    ));
+    assert!(crate::data::is_non_isolated_in_dir(
+        &pkg,
+        &repo,
+        &isolated_dirs
+    ));
+    assert!(!crate::data::is_non_isolated_in_dir(
+        &iso,
+        &repo,
+        &isolated_dirs
+    ));
+    assert!(!crate::data::is_non_isolated_in_dir(
+        &iso_sub,
+        &repo,
+        &isolated_dirs
+    ));
+    assert!(!crate::data::is_non_isolated_in_dir(
+        &other,
+        &repo,
+        &isolated_dirs
+    ));
+    // When target itself is inside the isolated dir, subpaths inside it still count.
+    assert!(crate::data::is_non_isolated_in_dir(
+        &iso_sub,
+        &iso,
+        &isolated_dirs
+    ));
+}
+
+#[test]
+fn cache_invalidate_pr_by_branch_also_evicts_number_entry() {
+    let mut cache = Cache::default();
+    let now = Instant::now();
+    let pr = PrInfo {
+        repo: "acme/demo".into(),
+        number: 88,
+        title: "Fix".into(),
+        state: "open".into(),
+        is_draft: false,
+        additions: 1,
+        deletions: 0,
+        checks: Default::default(),
+        review_decision: None,
+        mergeable: "conflicting".into(),
+        updated_at: String::new(),
+        url: "https://github.com/acme/demo/pull/88".into(),
+        head_ref_name: "feat/fix".into(),
+        head_ref_oid: "aaaaaaa".into(),
+        base_ref_name: "main".into(),
+    };
+    cache.put_pr_by_branch("acme/demo", "feat/fix", now, Some(pr));
+    assert!(
+        cache
+            .get_pr_by_branch("acme/demo", "feat/fix", now)
+            .is_some()
+    );
+    assert!(cache.get_pr_by_number("acme/demo", 88, now).is_some());
+
+    cache.invalidate_pr("acme/demo", Some("feat/fix"), None);
+    assert!(
+        cache
+            .get_pr_by_branch("acme/demo", "feat/fix", now)
+            .is_none()
+    );
+    assert!(cache.get_pr_by_number("acme/demo", 88, now).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn concurrent_fresh_refresh_runs_followup_pass_and_tracks_non_isolated_derived_terminal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    git_cmd(&repo, &["init", "-b", "main"]);
+    git_cmd(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/demo.git",
+        ],
+    );
+    fs::write(repo.join("f.txt"), "v1\n").unwrap();
+    git_cmd(&repo, &["add", "f.txt"]);
+    git_cmd(&repo, &["commit", "-m", "init"]);
+
+    let gate = tmp.path().join("gate");
+    let entered = tmp.path().join("entered");
+    let calls_log = tmp.path().join("gh-calls.log");
+    let fake_gh = write_fake_gh(
+        tmp.path(),
+        &format!(
+            r#"echo "$@" >> "{calls_log}"
+if [ "$1" = "auth" ]; then
+  touch "{entered}"
+  while [ ! -f "{gate}" ]; do sleep 0.02; done
+  echo "Logged in"
+  exit 0
+fi
+exit 1"#,
+            calls_log = calls_log.display(),
+            entered = entered.display(),
+            gate = gate.display()
+        ),
+    );
+
+    let git_pr = GitPr::with_client(GhClient::with_program(fake_gh));
+    let mk_input = |reason: &str, derived_working: bool, iso_id: Option<&str>| RefreshInput {
+        reason: reason.to_owned(),
+        homes: Homes::default(),
+        terminals: vec![TerminalTarget {
+            id: 9,
+            provider: "claude".to_owned(),
+            cwd: repo.clone(),
+            native: None,
+            account_dir: None,
+            workspaces: Vec::new(),
+            derived: true,
+            parent_workspace_id: Some("s-ws".to_owned()),
+            isolation_id: iso_id.map(str::to_owned),
+            working: derived_working,
+        }],
+        workspaces: vec![WorkspaceTarget {
+            id: "s-ws".to_owned(),
+            host: Some("claude".to_owned()),
+            owner_key: None,
+            owner_file: None,
+            account_dir: None,
+            cwd: Some(repo.clone()),
+            working: false,
+        }],
+        isolated: Vec::new(),
+    };
+
+    let bg = git_pr.clone();
+    let first_input = mk_input("focus", false, None);
+    let handle = std::thread::spawn(move || bg.refresh(first_input));
+    // Wait until the first refresh is inside fake_gh (active = true).
+    for _ in 0..1000 {
+        if entered.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(entered.exists());
+
+    // Mutate the repo while the first refresh is in flight, then call a manual refresh.
+    fs::write(repo.join("f.txt"), "v2\n").unwrap();
+    let bg2 = git_pr.clone();
+    let second_input = mk_input("manual", true, None);
+    let handle2 = std::thread::spawn(move || bg2.refresh(second_input));
+    std::thread::sleep(Duration::from_millis(50));
+    fs::write(&gate, "go").unwrap();
+
+    let first = handle.join().unwrap();
+    let second = handle2.join().unwrap();
+    assert_eq!(first["workspaces"]["s-ws"]["working"], false);
+    assert_eq!(second["workspaces"]["s-ws"]["git"]["changed_files"], 1);
+    assert_eq!(second["workspaces"]["s-ws"]["working"], true);
+    let auth_calls = fs::read_to_string(&calls_log)
+        .unwrap()
+        .lines()
+        .filter(|line| line.starts_with("auth "))
+        .count();
+    assert_eq!(
+        auth_calls, 2,
+        "manual refresh must run its own follow-up pass"
+    );
+
+    // An isolated derived terminal working does not mark the main workspace working.
+    let isolated_case = git_pr.refresh(mk_input("hover", true, Some("wt-1234567890ab")));
+    assert_eq!(isolated_case["workspaces"]["s-ws"]["working"], false);
 }

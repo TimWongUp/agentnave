@@ -24,6 +24,7 @@ pub(crate) struct Record {
     pub branch_ref: String,
     pub base_oid: String,
     pub state: String,
+    pub phase: String,
     pub usage_generation: i64,
     pub attention: Option<String>,
     pub confirmation_digest: Option<String>,
@@ -35,6 +36,17 @@ impl Record {
         self.branch_ref
             .strip_prefix("refs/heads/")
             .unwrap_or(&self.branch_ref)
+    }
+
+    pub(crate) fn is_rebuilding_collapsed(&self) -> bool {
+        matches!(
+            self.phase.as_str(),
+            "rebuilding_collapsed"
+                | "rebuilding_copying_include"
+                | "rebuilding_rolling_back"
+                | "rebuilding_rollback_failed"
+                | "rebuilding_recovery_failed"
+        )
     }
 }
 
@@ -133,7 +145,7 @@ impl WorktreeStore {
         connection
             .query_row(
                 "SELECT id, workspace_id, repo_common_dir, main_root, worktree_path, \
-                 worktree_git_dir, branch_ref, base_oid, state, usage_generation, \
+                 worktree_git_dir, branch_ref, base_oid, state, phase, usage_generation, \
                  attention, confirmation_digest, delete_oid \
                  FROM isolated_dirs WHERE id = ?1",
                 [isolation_id],
@@ -150,7 +162,7 @@ impl WorktreeStore {
         let mut stmt = connection
             .prepare(
                 "SELECT id, workspace_id, repo_common_dir, main_root, worktree_path, \
-                 worktree_git_dir, branch_ref, base_oid, state, usage_generation, \
+                 worktree_git_dir, branch_ref, base_oid, state, phase, usage_generation, \
                  attention, confirmation_digest, delete_oid \
                  FROM isolated_dirs ORDER BY created_at, id",
             )
@@ -232,6 +244,20 @@ impl WorktreeStore {
         self.get(isolation_id)
     }
 
+    pub(crate) fn revert_creating_to_collapsed(
+        &self,
+        isolation_id: &str,
+        updated_at: &str,
+        expected_state: &str,
+    ) -> Result<bool, String> {
+        self.write(
+            "UPDATE isolated_dirs SET state = 'collapsed', phase = 'collapsed', \
+             worktree_git_dir = NULL, attention = NULL, confirmation_digest = NULL, \
+             delete_oid = NULL, updated_at = ?1 WHERE id = ?2 AND state = ?3",
+            rusqlite::params![updated_at, isolation_id, expected_state],
+        )
+    }
+
     pub(crate) fn delete(&self, isolation_id: &str, expected_state: &str) -> Result<bool, String> {
         self.write(
             "DELETE FROM isolated_dirs WHERE id = ?1 AND state = ?2",
@@ -251,9 +277,10 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<Record> {
         branch_ref: row.get(6)?,
         base_oid: row.get(7)?,
         state: row.get(8)?,
-        usage_generation: row.get(9)?,
-        attention: row.get(10)?,
-        confirmation_digest: row.get(11)?,
-        delete_oid: row.get(12)?,
+        phase: row.get(9)?,
+        usage_generation: row.get(10)?,
+        attention: row.get(11)?,
+        confirmation_digest: row.get(12)?,
+        delete_oid: row.get(13)?,
     })
 }

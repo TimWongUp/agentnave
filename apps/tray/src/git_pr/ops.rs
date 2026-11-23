@@ -144,6 +144,9 @@ fn handle_push(app: &AppHandle, reader: &Reader, git_pr: &GitPr, payload: &Value
     match exec_push(&git, &target.cwd) {
         Ok(value) => {
             git_pr.invalidate_cwd(&target.cwd);
+            if let Some(repo) = value["repo"].as_str() {
+                git_pr.invalidate_pr(repo, value["branch"].as_str(), None);
+            }
             Response::json(&value)
         }
         Err((status, msg)) => Response::error(status, &msg),
@@ -166,7 +169,7 @@ fn handle_create_pr(app: &AppHandle, reader: &Reader, git_pr: &GitPr, payload: &
         Ok(g) => g,
         Err(e) => return Response::error(500, &e),
     };
-    match exec_create_pr(
+    match exec_create_pr_inner(
         &git,
         git_pr.gh_client(),
         &target.cwd,
@@ -174,6 +177,10 @@ fn handle_create_pr(app: &AppHandle, reader: &Reader, git_pr: &GitPr, payload: &
         body_text,
         base,
         draft,
+        |repo, branch| {
+            git_pr.invalidate_cwd(&target.cwd);
+            git_pr.invalidate_pr(repo, Some(branch), None);
+        },
     ) {
         Ok(value) => {
             git_pr.invalidate_cwd(&target.cwd);
@@ -197,13 +204,23 @@ fn handle_merge_pr(app: &AppHandle, reader: &Reader, git_pr: &GitPr, payload: &V
     let repo = payload["repo"].as_str().unwrap_or("").trim();
     let number = payload["number"].as_u64().unwrap_or(0);
     let method = payload["method"].as_str().unwrap_or("").trim();
-    match exec_merge_pr(git_pr.gh_client(), repo, number, method) {
+    let head_oid = payload["head_ref_oid"]
+        .as_str()
+        .or_else(|| payload["head_sha"].as_str())
+        .unwrap_or("")
+        .trim();
+    match exec_merge_pr(git_pr.gh_client(), repo, number, method, head_oid) {
         Ok(value) => {
             git_pr.invalidate_cwd(&target.cwd);
             git_pr.invalidate_pr(repo, None, Some(number));
             Response::json(&value)
         }
-        Err((status, msg)) => Response::error(status, &msg),
+        Err((status, msg)) => {
+            if status == 409 {
+                git_pr.invalidate_pr(repo, None, Some(number));
+            }
+            Response::error(status, &msg)
+        }
     }
 }
 
@@ -240,12 +257,18 @@ fn resolve_target(
             let term = terminals
                 .find_git_pr_terminal(id)
                 .ok_or_else(|| (404, "找不到对应的终端会话".to_owned()))?;
+            let tasks_working = reader.has_running_non_isolated_in_dir(&term.cwd);
+            let working = term.working || tasks_working;
             Ok(ResolvedTarget {
                 cwd: term.cwd,
-                working: term.working,
-                busy_reason: term
-                    .working
-                    .then(|| "终端 CLI 正在工作，暂时无法执行 Git 操作".to_owned()),
+                working,
+                busy_reason: working.then(|| {
+                    if term.working {
+                        "终端 CLI 正在工作，暂时无法执行 Git 操作".to_owned()
+                    } else {
+                        "同目录下仍有运行中的任务或席位，暂时无法执行 Git 操作".to_owned()
+                    }
+                }),
             })
         }
         "workspace" => {
@@ -269,7 +292,20 @@ fn resolve_target(
                 .map(|t| t.cwd.clone())
                 .or(ws.cwd)
                 .ok_or_else(|| (400, "无法确定该工作区的目录".to_owned()))?;
-            let working = own_term.is_some_and(|t| t.working) || ws.working;
+            let isolated_dirs: Vec<PathBuf> = crate::isolated::read(reader.data_root())
+                .into_iter()
+                .map(|d| PathBuf::from(d.path))
+                .collect();
+            let derived_working = all_terms.iter().any(|t| {
+                t.derived
+                    && t.working
+                    && t.isolation_id.is_none()
+                    && crate::data::is_non_isolated_in_dir(&t.cwd, &cwd, &isolated_dirs)
+            });
+            let working = own_term.is_some_and(|t| t.working)
+                || ws.working
+                || derived_working
+                || reader.has_running_non_isolated_in_dir(&cwd);
             Ok(ResolvedTarget {
                 cwd,
                 working,
@@ -320,7 +356,7 @@ fn resolve_git_common_dir(git: &GitRunner, cwd: &Path) -> Option<PathBuf> {
             cwd,
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
             &[0, 128],
-            &[],
+            &[("GIT_OPTIONAL_LOCKS", "0")],
         )
         .ok()?;
     (out.code == 0).then(|| bytes_to_path(trim_line_end(&out.stdout)))
@@ -456,10 +492,26 @@ fn prepare_merge_pr(
     if allowed.is_empty() {
         return Err((400, "该仓库未启用任何 PR 合并方式".to_owned()));
     }
+    let head_ref_oid = payload["head_ref_oid"]
+        .as_str()
+        .or_else(|| payload["head_sha"].as_str())
+        .map(str::trim)
+        .filter(|oid| valid_commit_oid(oid))
+        .map(str::to_owned)
+        .or_else(|| {
+            git_pr
+                .gh_client()
+                .view_pr_number(repo, number)
+                .ok()
+                .flatten()
+                .map(|pr| pr.head_ref_oid)
+                .filter(|oid| valid_commit_oid(oid))
+        });
     Ok(json!({
         "op": "merge_pr",
         "repo": repo,
         "number": number,
+        "head_ref_oid": head_ref_oid,
         "allowed_methods": allowed,
         "default_method": settings.effective_default(),
         "delete_branch_on_merge": settings.delete_branch_on_merge,
@@ -595,6 +647,10 @@ pub(crate) fn exec_push(git: &GitRunner, cwd: &Path) -> Result<Value, (u16, Stri
     let status = inspect_workspace_git(git, cwd)
         .ok_or_else(|| (400, "当前目录不是有效的 Git 仓库".to_owned()))?;
     let plan = plan_push(git, cwd, &status).map_err(|e| (400, e))?;
+    let repo = status
+        .github_repo
+        .clone()
+        .or_else(|| resolve_github_repo(git, cwd, &plan.remote));
     let refspec = format!("HEAD:refs/heads/{}", plan.remote_branch);
     let args: Vec<&str> = if plan.set_upstream {
         vec!["push", "-u", "--", &plan.remote, &refspec]
@@ -604,6 +660,7 @@ pub(crate) fn exec_push(git: &GitRunner, cwd: &Path) -> Result<Value, (u16, Stri
     let output_text = run_git_raw(git, cwd, &args, NETWORK_GIT_TIMEOUT)?;
     Ok(json!({
         "ok": true,
+        "repo": repo,
         "branch": plan.branch,
         "remote": plan.remote,
         "upstream": format!("{}/{}", plan.remote, plan.remote_branch),
@@ -613,6 +670,7 @@ pub(crate) fn exec_push(git: &GitRunner, cwd: &Path) -> Result<Value, (u16, Stri
 }
 
 /// Pushes current branch if needed, then creates a GitHub PR via `gh pr create`.
+#[cfg(all(test, unix))]
 pub(crate) fn exec_create_pr(
     git: &GitRunner,
     gh: &GhClient,
@@ -621,6 +679,20 @@ pub(crate) fn exec_create_pr(
     body: &str,
     base_override: Option<&str>,
     draft: bool,
+) -> Result<Value, (u16, String)> {
+    exec_create_pr_inner(git, gh, cwd, title, body, base_override, draft, |_, _| {})
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exec_create_pr_inner(
+    git: &GitRunner,
+    gh: &GhClient,
+    cwd: &Path,
+    title: &str,
+    body: &str,
+    base_override: Option<&str>,
+    draft: bool,
+    on_pushed: impl FnOnce(&str, &str),
 ) -> Result<Value, (u16, String)> {
     let title = title.trim();
     if title.is_empty() {
@@ -653,6 +725,7 @@ pub(crate) fn exec_create_pr(
     }
     if plan.set_upstream || status.ahead > 0 {
         exec_push(git, cwd)?;
+        on_pushed(&repo, branch);
     }
     let created = gh
         .create_pr(&repo, &base, branch, title, body, draft)
@@ -667,15 +740,20 @@ pub(crate) fn exec_create_pr(
     }))
 }
 
-/// Validates `method` against repo's allowed merge strategies, then calls `gh pr merge`.
+/// Validates `method` against repo's allowed merge strategies, then calls `gh pr merge`
+/// pinned to `head_oid` via `--match-head-commit`.
 pub(crate) fn exec_merge_pr(
     gh: &GhClient,
     repo: &str,
     number: u64,
     method: &str,
+    head_oid: &str,
 ) -> Result<Value, (u16, String)> {
     if repo.is_empty() || number == 0 {
         return Err((400, "缺少 PR 仓库或编号".to_owned()));
+    }
+    if !valid_commit_oid(head_oid) {
+        return Err((400, "缺少有效的 PR 头提交校验信息，请刷新后重试".to_owned()));
     }
     if !matches!(method, "merge" | "squash" | "rebase") {
         return Err((400, format!("不支持的合并方式：{method}")));
@@ -687,7 +765,7 @@ pub(crate) fn exec_merge_pr(
         return Err((400, format!("该仓库不允许使用 {method} 方式合并 PR")));
     }
     let output_text = gh
-        .merge_pr(repo, number, method)
+        .merge_pr(repo, number, method, head_oid)
         .map_err(gh_error_to_http)?;
     Ok(json!({
         "ok": true,
@@ -699,11 +777,21 @@ pub(crate) fn exec_merge_pr(
     }))
 }
 
+fn valid_commit_oid(oid: &str) -> bool {
+    (7..=64).contains(&oid.len()) && oid.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 fn is_diverged_from_upstream(git: &GitRunner, cwd: &Path) -> bool {
     let Some(counts) = git_stdout(
         git,
         cwd,
-        &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            "--end-of-options",
+            "HEAD...@{u}",
+        ],
     ) else {
         return false;
     };
@@ -755,6 +843,10 @@ fn gh_error_to_http(err: GhError) -> (u16, String) {
         GhError::NotAuthenticated => (401, "gh 尚未登录 GitHub，请先执行 gh auth login".to_owned()),
         GhError::RateLimited => (429, "GitHub API 触发速率限制，请稍后重试".to_owned()),
         GhError::NotFound => (404, "找不到对应的仓库或 PR".to_owned()),
+        GhError::HeadMismatch(raw) => (
+            409,
+            format!("PR 提交已更新，与确认时看到的版本不一致，请刷新后重试。\n{raw}"),
+        ),
         GhError::Other(msg) => (400, msg),
     }
 }

@@ -290,7 +290,9 @@ const Actions = {};
     const items = [];
     const target = info.branch ? `${info.branch} · ${info.path}` : info.path;
     items.push(h("p.act-note", {}, target));
-    if (info.missing_dir) {
+    if (info.collapsed_rollback) {
+      items.push(h("p.act-note", {}, L("这个已收起目录上次重建未完成。确认后将清理残留目录、恢复为已收起状态并保留受管分支；若目录内已有未提交改动、隐藏索引标记或嵌套仓库（含无法检查的目录），则会保留目录并说明原因。", "Rebuilding this collapsed directory did not finish. Confirming cleans up the leftover directory, restores the collapsed state, and keeps the managed branch; if uncommitted changes, hidden index flags, or nested repositories exist, the directory will be kept and the reason shown.")));
+    } else if (info.missing_dir) {
       items.push(h("p.act-note", {}, L("目录已不在磁盘上。确认后将清理残留的受管分支和登记记录。", "The directory is no longer on disk. Confirming cleans up the remaining managed branch and registry entry.")));
     } else if (info.rollback_only) {
       items.push(h("p.act-note", {}, L("这个目录上次创建或回滚未完成。确认后将尝试删除残留目录、受管分支和登记记录，目录里被 git 忽略的文件也会一并丢弃；若目录内已有未提交改动、隐藏索引标记或嵌套仓库（含无法检查的目录），则会保留目录并说明原因。", "Creation or rollback of this directory did not finish. Confirming attempts to remove the leftover directory, managed branch, and registry entry, discarding any Git-ignored files; if uncommitted changes, hidden index flags, or nested repositories (including unreadable directories) exist, the directory will be kept and the reason shown.")));
@@ -394,6 +396,8 @@ const Actions = {};
           }
           if (result.status === "deleted") {
             say(result.reason || L("已删除隔离目录", "Deleted isolated directory"));
+          } else if (result.status === "collapsed") {
+            say(result.reason || result.message || L("已回滚未完成的重建并保留受管分支", "Rolled back unfinished rebuild and preserved managed branch"));
           } else {
             say(result.reason || result.message || L("未能删除隔离目录", "Failed to delete isolated directory"), true);
           }

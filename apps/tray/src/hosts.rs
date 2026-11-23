@@ -417,6 +417,15 @@ impl Hosts {
             match host.boss {
                 "claude" => homes.claude.push(host.root.path),
                 "codex" => homes.codex.push(host.root.path),
+                "antigravity" => {
+                    let cli_home = host
+                        .root
+                        .path
+                        .parent()
+                        .map(|parent| parent.join("antigravity-cli"))
+                        .unwrap_or_else(|| self.context.home.join(".gemini/antigravity-cli"));
+                    homes.other.push(("antigravity".to_owned(), cli_home));
+                }
                 "codebuddy" | "workbuddy" | "grok" | "pi" | "deepseek" => {
                     homes.other.push((host.boss.to_owned(), host.root.path));
                 }

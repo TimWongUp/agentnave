@@ -44,11 +44,44 @@ pub(crate) struct GitPr {
     inner: Arc<Inner>,
 }
 
+#[derive(Default)]
+struct RefreshState {
+    active: bool,
+    started_gen: u64,
+    completed_gen: u64,
+    completed_manual_gen: u64,
+}
+
 struct Inner {
     cache: Mutex<Cache>,
-    refreshing: Mutex<bool>,
+    refreshing: Mutex<RefreshState>,
     done: Condvar,
     gh: GhClient,
+}
+
+struct RefreshGuard<'a> {
+    inner: &'a Inner,
+    gen_id: u64,
+    manual: bool,
+    completed: bool,
+}
+
+impl Drop for RefreshGuard<'_> {
+    fn drop(&mut self) {
+        let mut state = self
+            .inner
+            .refreshing
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if self.completed {
+            state.completed_gen = self.gen_id;
+            if self.manual {
+                state.completed_manual_gen = self.gen_id;
+            }
+        }
+        state.active = false;
+        self.inner.done.notify_all();
+    }
 }
 
 impl Default for GitPr {
@@ -62,7 +95,7 @@ impl GitPr {
         Self {
             inner: Arc::new(Inner {
                 cache: Mutex::default(),
-                refreshing: Mutex::new(false),
+                refreshing: Mutex::default(),
                 done: Condvar::new(),
                 gh,
             }),
@@ -78,39 +111,57 @@ impl GitPr {
     }
 
     /// Runs a coalesced refresh pass and returns the updated in-memory snapshot.
+    /// Callers requesting fresh data (`manual`, `turn_end`, `focus`, `hover`) wait for any
+    /// in-flight pass and run a new pass unless another pass started after they arrived.
     pub(crate) fn refresh(&self, input: RefreshInput) -> Value {
-        {
-            let mut active = self
+        let manual = input.reason == "manual";
+        let need_fresh = matches!(
+            input.reason.as_str(),
+            "turn_end" | "focus" | "manual" | "hover"
+        );
+        let gen_id = {
+            let mut state = self
                 .inner
                 .refreshing
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
-            if *active {
-                while *active {
-                    active = self
+            if state.active {
+                let min_gen = state.started_gen;
+                while state.active {
+                    state = self
                         .inner
                         .done
-                        .wait(active)
+                        .wait(state)
                         .unwrap_or_else(|p| p.into_inner());
                 }
-                return self.snapshot();
+                let satisfied = if !need_fresh {
+                    true
+                } else if manual {
+                    state.completed_manual_gen > min_gen
+                } else {
+                    state.completed_gen > min_gen
+                };
+                if satisfied {
+                    return self.snapshot();
+                }
             }
-            *active = true;
-        }
+            state.active = true;
+            state.started_gen = state.started_gen.saturating_add(1);
+            state.started_gen
+        };
+        let mut guard = RefreshGuard {
+            inner: &self.inner,
+            gen_id,
+            manual,
+            completed: false,
+        };
         let snapshot = self.compute_snapshot(input);
         {
             let mut cache = self.inner.cache.lock().unwrap_or_else(|p| p.into_inner());
             cache.set_snapshot(snapshot.clone());
         }
-        {
-            let mut active = self
-                .inner
-                .refreshing
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
-            *active = false;
-            self.inner.done.notify_all();
-        }
+        guard.completed = true;
+        drop(guard);
         snapshot
     }
 
@@ -303,6 +354,11 @@ impl GitPr {
         bypass_git_ttl: bool,
         gh_ready: bool,
     ) -> Map<String, Value> {
+        let isolated_paths: Vec<PathBuf> = input
+            .isolated
+            .iter()
+            .map(|i| PathBuf::from(&i.path))
+            .collect();
         let mut workspace_map = Map::new();
         for ws in &input.workspaces {
             let own_term = input
@@ -346,7 +402,15 @@ impl GitPr {
                 }
                 dedupe_and_sort_prs(&mut prs);
             }
-            let ws_working = own_term.is_some_and(|t| t.working) || ws.working;
+            let derived_working = cwd.is_some_and(|dir| {
+                input.terminals.iter().any(|t| {
+                    t.derived
+                        && t.working
+                        && t.isolation_id.is_none()
+                        && crate::data::is_non_isolated_in_dir(&t.cwd, dir, &isolated_paths)
+                })
+            });
+            let ws_working = own_term.is_some_and(|t| t.working) || ws.working || derived_working;
             workspace_map.insert(
                 ws.id.clone(),
                 json!({ "git": git_status, "prs": prs, "working": ws_working }),
@@ -430,7 +494,9 @@ impl GitPr {
                     .put_gh_status(now, GhStatus::NotAuthenticated);
                 return None;
             }
-            Err(GhError::RateLimited | GhError::Other(_)) => return None,
+            Err(GhError::RateLimited | GhError::HeadMismatch(_) | GhError::Other(_)) => {
+                return None;
+            }
         };
         self.inner
             .cache
@@ -469,7 +535,9 @@ impl GitPr {
                     .put_gh_status(now, GhStatus::NotAuthenticated);
                 return None;
             }
-            Err(GhError::RateLimited | GhError::Other(_)) => return None,
+            Err(GhError::RateLimited | GhError::HeadMismatch(_) | GhError::Other(_)) => {
+                return None;
+            }
         };
         self.inner
             .cache
@@ -482,16 +550,21 @@ impl GitPr {
 
 /// Whether a boss workspace (without an embedded terminal) is strictly a terminal CLI session
 /// (ADR-0115 §1). Desktop apps (`claude-desktop`, `codex-desktop`, `antigravity-desktop`,
-/// `workbuddy`) and unknown/ambiguous hosts return `false`.
+/// `workbuddy`) and hosts whose desktop and CLI cannot be reliably distinguished (`devin`,
+/// `zcode`, `deepseek`, or unconfirmed `claude`/`codex`/`antigravity`) return `false`.
 pub(crate) fn is_cli_boss(host: Option<&str>, app: Option<&str>) -> bool {
     match (host, app) {
         (Some("claude"), Some(CLAUDE_CLI)) => true,
         (Some("codex"), Some(CODEX_CLI)) => true,
         (Some("antigravity"), Some(ANTIGRAVITY_CLI)) => true,
-        (Some("claude" | "codex" | "antigravity" | "workbuddy" | "deepseek" | "hermes"), _) => {
-            false
-        }
-        (Some("codebuddy" | "grok" | "pi" | "devin" | "zcode" | "opencode" | "gemini"), _) => true,
+        (
+            Some(
+                "claude" | "codex" | "antigravity" | "workbuddy" | "deepseek" | "hermes" | "devin"
+                | "zcode",
+            ),
+            _,
+        ) => false,
+        (Some("codebuddy" | "grok" | "pi" | "opencode" | "gemini"), _) => true,
         _ => false,
     }
 }
@@ -535,6 +608,7 @@ pub(crate) struct TerminalTarget {
     pub workspaces: Vec<String>,
     pub derived: bool,
     pub parent_workspace_id: Option<String>,
+    pub isolation_id: Option<String>,
     pub working: bool,
 }
 
@@ -583,7 +657,7 @@ pub(crate) fn request(
                 .as_str()
                 .filter(|id| !id.is_empty())
                 .map(str::to_owned);
-            let terminals = app.state::<Terminals>().git_pr_targets();
+            let mut terminals = app.state::<Terminals>().git_pr_targets();
             let terminal_ws: HashSet<String> = terminals
                 .iter()
                 .filter(|t| !t.derived)
@@ -591,6 +665,18 @@ pub(crate) fn request(
                 .collect();
             let (homes, workspaces, isolated) =
                 reader.git_pr_targets(selected.as_deref(), &terminal_ws, MAX_CLI_WORKSPACES);
+            let isolated_paths: Vec<PathBuf> =
+                isolated.iter().map(|i| PathBuf::from(&i.path)).collect();
+            let running_cwds = reader.running_cwds();
+            for term in &mut terminals {
+                if !term.working
+                    && running_cwds
+                        .iter()
+                        .any(|c| crate::data::is_non_isolated_in_dir(c, &term.cwd, &isolated_paths))
+                {
+                    term.working = true;
+                }
+            }
             let snap = git_pr.refresh(RefreshInput {
                 reason,
                 homes,

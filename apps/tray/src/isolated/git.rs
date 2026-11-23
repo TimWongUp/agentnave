@@ -200,7 +200,7 @@ impl GitRunner {
             cwd,
             &["config", "--null", "--get-regexp", r"^filter\."],
             &[0, 1],
-            &[],
+            &[("GIT_OPTIONAL_LOCKS", "0")],
         )?;
         let mut names = BTreeSet::new();
         for item in res.stdout.split(|&b| b == 0) {
@@ -331,9 +331,9 @@ pub(crate) fn porcelain_v2_paths(status_z: &[u8]) -> Vec<String> {
 pub(crate) fn ref_exists(git: &GitRunner, repo_dir: &Path, full_ref: &str) -> Result<bool, String> {
     let res = git.run(
         repo_dir,
-        &["show-ref", "--verify", "--quiet", full_ref],
+        &["show-ref", "--verify", "--quiet", "--", full_ref],
         &[0, 1],
-        &[],
+        &[("GIT_OPTIONAL_LOCKS", "0")],
     )?;
     Ok(res.code == 0)
 }

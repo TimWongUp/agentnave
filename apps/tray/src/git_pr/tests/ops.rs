@@ -3,9 +3,13 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::super::gh::{GhClient, parse_status_check_rollup, validate_github_url};
+#[cfg(unix)]
+use super::super::gh::GhClient;
+use super::super::gh::{parse_status_check_rollup, validate_github_url};
 use super::super::git::{default_pr_draft, list_changed_files};
-use super::super::ops::{exec_commit, exec_create_pr, exec_merge_pr, exec_pull, exec_push};
+use super::super::ops::{exec_commit, exec_pull, exec_push};
+#[cfg(unix)]
+use super::super::ops::{exec_create_pr, exec_merge_pr};
 use super::git_cmd;
 #[cfg(unix)]
 use super::write_fake_gh;
@@ -263,22 +267,49 @@ exit 1
     assert_eq!(created["number"], 42);
     assert_eq!(created["url"], "https://github.com/acme/demo/pull/42");
 
+    // Missing or invalid head commit is rejected before calling gh.
+    let head_oid = "0123456789abcdef0123456789abcdef01234567";
+    let (code, err) = exec_merge_pr(&gh, "acme/demo", 42, "squash", "").unwrap_err();
+    assert_eq!(code, 400);
+    assert!(err.contains("刷新后重试"));
+
     // Disallowed merge method ("merge") is rejected before calling `gh pr merge`.
-    let (code, err) = exec_merge_pr(&gh, "acme/demo", 42, "merge").unwrap_err();
+    let (code, err) = exec_merge_pr(&gh, "acme/demo", 42, "merge", head_oid).unwrap_err();
     assert_eq!(code, 400);
     assert!(err.contains("merge"));
 
-    // Allowed merge method ("squash") succeeds and never passes --delete-branch.
-    let merged = exec_merge_pr(&gh, "acme/demo", 42, "squash").unwrap();
+    // Allowed merge method ("squash") succeeds, binds --match-head-commit, and never passes --delete-branch.
+    let merged = exec_merge_pr(&gh, "acme/demo", 42, "squash", head_oid).unwrap();
     assert_eq!(merged["ok"], true);
     assert_eq!(merged["delete_branch_on_merge"], true);
 
     let logged = fs::read_to_string(&log_file).unwrap();
     assert!(logged.contains("pr create --repo acme/demo --base main --head feat/pr-test"));
-    assert!(logged.contains("pr merge 42 --repo acme/demo --squash"));
+    assert!(logged.contains(&format!(
+        "pr merge 42 --repo acme/demo --squash --match-head-commit {head_oid}"
+    )));
     assert!(!logged.contains("--delete-branch"));
 
-    // Failure surfaces raw gh stderr.
+    // Head commit mismatch surfaces a 409 error asking the user to refresh and retry.
+    let mismatch = write_fake_gh(
+        tmp.path(),
+        r#"
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+  echo '{"mergeCommitAllowed":true,"squashMergeAllowed":false,"rebaseMergeAllowed":false,"deleteBranchOnMerge":false}'
+  exit 0
+fi
+echo "GraphQL: Head branch was modified. Review and try the merge again." >&2
+exit 1
+"#,
+    );
+    let gh_mismatch = GhClient::with_program(mismatch);
+    let (status, mismatch_err) =
+        exec_merge_pr(&gh_mismatch, "acme/demo", 42, "merge", head_oid).unwrap_err();
+    assert_eq!(status, 409);
+    assert!(mismatch_err.contains("请刷新后重试"));
+    assert!(mismatch_err.contains("Head branch was modified"));
+
+    // Generic failure surfaces raw gh stderr.
     let failing = write_fake_gh(
         tmp.path(),
         r#"
@@ -291,6 +322,7 @@ exit 1
 "#,
     );
     let gh_fail = GhClient::with_program(failing);
-    let (_status, raw_err) = exec_merge_pr(&gh_fail, "acme/demo", 42, "merge").unwrap_err();
+    let (_status, raw_err) =
+        exec_merge_pr(&gh_fail, "acme/demo", 42, "merge", head_oid).unwrap_err();
     assert!(raw_err.contains("Pull Request is not mergeable"));
 }

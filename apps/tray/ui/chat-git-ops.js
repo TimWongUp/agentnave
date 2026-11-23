@@ -320,16 +320,21 @@ const ChatGitOps = (() => {
       onConfirm: async () => {
         const title = titleInput.value.trim();
         if (!title) return L("请填写 PR 标题", "Enter a PR title");
-        const res = await AN.post("/app/git-pr/pr/create", {
-          target,
-          title,
-          body: bodyInput.value,
-          base: info.base,
-          draft: Boolean(draftCb.checked),
-        });
-        say(res.number ? L(`已创建 PR #${res.number}`, `Created PR #${res.number}`) : L("已创建 PR", "Created PR"));
-        afterWrite();
-        return "";
+        try {
+          const res = await AN.post("/app/git-pr/pr/create", {
+            target,
+            title,
+            body: bodyInput.value,
+            base: info.base,
+            draft: Boolean(draftCb.checked),
+          });
+          say(res.number ? L(`已创建 PR #${res.number}`, `Created PR #${res.number}`) : L("已创建 PR", "Created PR"));
+          afterWrite();
+          return "";
+        } catch (error) {
+          if (info.needs_push) afterWrite();
+          throw error;
+        }
       },
     });
     titleInput.addEventListener("keydown", (e) => {
@@ -345,7 +350,11 @@ const ChatGitOps = (() => {
 
   async function openMergePr(target, pr) {
     if (!pr?.repo || !pr?.number) return;
-    const info = await prepare("merge_pr", target, { repo: pr.repo, number: pr.number });
+    const info = await prepare("merge_pr", target, {
+      repo: pr.repo,
+      number: pr.number,
+      head_ref_oid: pr.head_ref_oid || "",
+    });
     if (!info) return;
     if (info.working) {
       say(info.busy_reason || L("CLI 正在工作，暂时无法合并 PR", "CLI is working; merge PR unavailable"), true);
@@ -356,6 +365,7 @@ const ChatGitOps = (() => {
       say(L("该仓库未启用任何 PR 合并方式", "No merge methods allowed by repository"), true);
       return;
     }
+    const headOid = String(pr.head_ref_oid || info.head_ref_oid || "").trim();
     let chosen = info.default_method && allowed.includes(info.default_method) ? info.default_method : allowed[0];
     const labels = METHOD_LABELS();
     const choices = h(
@@ -383,6 +393,7 @@ const ChatGitOps = (() => {
       pr.head_ref_name && pr.base_ref_name
         ? h("code.gp-branch", {}, `${pr.head_ref_name} → ${pr.base_ref_name}`)
         : null,
+      headOid ? h("code.gp-tag", {}, headOid.slice(0, 7)) : null,
       info.delete_branch_on_merge ? h("span.gp-tag", {}, L("合并后自动删远端分支", "Deletes remote branch")) : null,
     );
     runModal({
@@ -395,15 +406,22 @@ const ChatGitOps = (() => {
       primaryLabel: L("合并 PR", "Merge PR"),
       runningLabel: L("合并中…", "Merging…"),
       onConfirm: async () => {
-        await AN.post("/app/git-pr/pr/merge", {
-          target,
-          repo: pr.repo,
-          number: pr.number,
-          method: chosen,
-        });
-        say(L(`已合并 PR #${pr.number}`, `Merged PR #${pr.number}`));
-        afterWrite();
-        return "";
+        if (!headOid) return L("缺少 PR 提交校验信息，请刷新后重试", "Missing PR head commit; refresh and retry");
+        try {
+          await AN.post("/app/git-pr/pr/merge", {
+            target,
+            repo: pr.repo,
+            number: pr.number,
+            method: chosen,
+            head_ref_oid: headOid,
+          });
+          say(L(`已合并 PR #${pr.number}`, `Merged PR #${pr.number}`));
+          afterWrite();
+          return "";
+        } catch (error) {
+          afterWrite();
+          throw error;
+        }
       },
     });
   }

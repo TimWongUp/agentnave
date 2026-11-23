@@ -204,7 +204,14 @@ impl Cache {
             self.pr_by_number.remove(&(lower.clone(), num));
         }
         if let Some(br) = branch {
-            self.pr_by_branch.remove(&(lower.clone(), br.to_owned()));
+            if let Some(entry) = self.pr_by_branch.remove(&(lower.clone(), br.to_owned()))
+                && let Some(pr) = entry.value
+            {
+                self.pr_by_number.remove(&(lower.clone(), pr.number));
+            }
+            self.pr_by_number.retain(|(r, _), entry| {
+                r != &lower || entry.value.as_ref().is_none_or(|p| p.head_ref_name != br)
+            });
         } else if let Some(num) = number {
             self.pr_by_branch.retain(|(r, _), entry| {
                 r != &lower || entry.value.as_ref().is_none_or(|p| p.number != num)

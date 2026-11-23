@@ -649,6 +649,26 @@ def _retry_attention_locked(
         reason=record.attention or "Isolated directory requires manual attention",
     )
     if not record.delete_oid:
+        from agentnave.isolated.collapsed import (
+            REBUILDING_COLLAPSED_PHASES,
+            release_collapsed_locked,
+            rollback_rebuilding_collapsed_locked,
+        )
+
+        if record.phase in REBUILDING_COLLAPSED_PHASES:
+            if not store.resume_creating(
+                record.id, phase="rebuilding_rolling_back", updated_at=now()
+            ):
+                return stuck
+            latest = store.get(record.id)
+            if latest is not None:
+                rollback_rebuilding_collapsed_locked(store, latest)
+            after = store.get(record.id)
+            if after is None:
+                return ReleaseResult(id=record.id, status="deleted")
+            if after.state == "collapsed":
+                return release_collapsed_locked(store, after, workspace_id, confirmation)
+            return ReleaseResult(id=record.id, status="needs_attention", reason=after.attention)
         if not store.resume_creating(record.id, phase="rolling_back", updated_at=now()):
             return stuck
         latest = store.get(record.id)
@@ -868,11 +888,18 @@ def recover_record(store: WorktreeStore, record: IsolatedRecord) -> RecoveryOutc
     """
     common_dir = Path(record.repo_common_dir)
     if is_link(common_dir) or not common_dir.is_dir():
+        from agentnave.isolated.collapsed import REBUILDING_COLLAPSED_PHASES
+
         reason = f"Repository common-dir is unavailable: {common_dir}"
+        phase = (
+            "rebuilding_recovery_failed"
+            if record.phase in REBUILDING_COLLAPSED_PHASES
+            else "recovery_failed"
+        )
         store.mark_attention(
             record.id,
             expected_state=record.state,
-            phase="recovery_failed",
+            phase=phase,
             reason=reason,
             updated_at=now(),
         )

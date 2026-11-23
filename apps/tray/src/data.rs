@@ -2,8 +2,10 @@
 mod uninstall;
 
 mod assets;
+mod git_pr;
 mod orphaned;
 mod request;
+pub(crate) use git_pr::is_non_isolated_in_dir;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -190,8 +192,23 @@ impl Reader {
             .map(|a| (a.id, a.dir))
             .collect();
 
+        let isolated: Vec<crate::git_pr::IsolatedTarget> = crate::isolated::read(&self.root)
+            .into_iter()
+            .map(|dir| crate::git_pr::IsolatedTarget {
+                id: dir.id,
+                workspace: dir.workspace,
+                path: dir.path,
+                branch: dir.branch,
+            })
+            .collect();
+        let isolated_paths: Vec<PathBuf> =
+            isolated.iter().map(|d| PathBuf::from(&d.path)).collect();
         let ws_meta = collect_workspace_meta(&snapshots, &handover_map);
-        let running_by_ws = collect_running_cwds(&snapshots);
+        let all_running: Vec<PathBuf> = snapshots
+            .iter()
+            .flat_map(|snap| crate::stage::running_in(&snap.view["director"]))
+            .map(PathBuf::from)
+            .collect();
         let mut eligible: Vec<(bool, i64, crate::git_pr::WorkspaceTarget)> = ws_meta
             .into_iter()
             .filter_map(|(id, (at, host))| {
@@ -208,10 +225,9 @@ impl Reader {
                     .cloned();
                 let cwd = origins.get(&id).map(PathBuf::from);
                 let working = cwd.as_deref().is_some_and(|dir| {
-                    running_by_ws.get(&id).is_some_and(|cwds| {
-                        cwds.iter()
-                            .any(|c| crate::isolated::leases::same_dir(Path::new(c), dir))
-                    })
+                    all_running
+                        .iter()
+                        .any(|c| is_non_isolated_in_dir(c, dir, &isolated_paths))
                 });
                 Some((
                     selected == Some(id.as_str()),
@@ -235,15 +251,6 @@ impl Reader {
             .map(|(_, _, target)| target)
             .collect();
 
-        let isolated = crate::isolated::read(&self.root)
-            .into_iter()
-            .map(|dir| crate::git_pr::IsolatedTarget {
-                id: dir.id,
-                workspace: dir.workspace,
-                path: dir.path,
-                branch: dir.branch,
-            })
-            .collect();
         (homes, workspaces, isolated)
     }
 
@@ -823,20 +830,6 @@ fn collect_workspace_meta(
         }
     }
     ws_meta
-}
-
-fn collect_running_cwds(snapshots: &[Snapshot]) -> HashMap<String, Vec<String>> {
-    let mut out: HashMap<String, Vec<String>> = HashMap::new();
-    for snap in snapshots {
-        let Some(group) = crate::stage::chat_group(&snap.item) else {
-            continue;
-        };
-        let cwds = crate::stage::running_in(&snap.view["director"]);
-        if !cwds.is_empty() {
-            out.entry(group).or_default().extend(cwds);
-        }
-    }
-    out
 }
 
 struct WorkspaceOwner {

@@ -32,6 +32,8 @@ pub(crate) struct GitWorkspaceStatus {
     pub github_repo: Option<String>,
 }
 
+const READ_ONLY_ENV: &[(&str, &str)] = &[("GIT_OPTIONAL_LOCKS", "0")];
+
 /// Inspect local Git status of `cwd` strictly read-only with neutralized git parameters.
 pub(crate) fn inspect_workspace_git(git: &GitRunner, cwd: &Path) -> Option<GitWorkspaceStatus> {
     if !cwd.is_dir() {
@@ -49,7 +51,7 @@ pub(crate) fn inspect_workspace_git(git: &GitRunner, cwd: &Path) -> Option<GitWo
                 "--ignore-submodules=all",
             ],
             &[0, 128],
-            &[],
+            READ_ONLY_ENV,
         )
         .ok()?;
     if status_out.code != 0 {
@@ -185,7 +187,7 @@ fn detect_is_worktree(git: &GitRunner, cwd: &Path) -> bool {
             "--git-common-dir",
         ],
         &[0, 128],
-        &[],
+        READ_ONLY_ENV,
     ) else {
         return false;
     };
@@ -203,11 +205,26 @@ fn detect_is_worktree(git: &GitRunner, cwd: &Path) -> bool {
 
 fn read_diff_shortstat(git: &GitRunner, cwd: &Path, has_head: bool) -> (u64, u64) {
     if has_head {
-        let text = git_stdout(git, cwd, &["diff", "HEAD", "--shortstat"]).unwrap_or_default();
+        let text = git_stdout(
+            git,
+            cwd,
+            &["diff", "--ignore-submodules=all", "HEAD", "--shortstat"],
+        )
+        .unwrap_or_default();
         return parse_shortstat(&text);
     }
-    let staged = git_stdout(git, cwd, &["diff", "--cached", "--shortstat"]).unwrap_or_default();
-    let unstaged = git_stdout(git, cwd, &["diff", "--shortstat"]).unwrap_or_default();
+    let staged = git_stdout(
+        git,
+        cwd,
+        &["diff", "--cached", "--ignore-submodules=all", "--shortstat"],
+    )
+    .unwrap_or_default();
+    let unstaged = git_stdout(
+        git,
+        cwd,
+        &["diff", "--ignore-submodules=all", "--shortstat"],
+    )
+    .unwrap_or_default();
     let (sa, sd) = parse_shortstat(&staged);
     let (ua, ud) = parse_shortstat(&unstaged);
     (sa.saturating_add(ua), sd.saturating_add(ud))
@@ -232,9 +249,23 @@ pub(crate) fn parse_shortstat(text: &str) -> (u64, u64) {
     (additions, deletions)
 }
 
+fn valid_remote_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.contains("..")
+        && !name.chars().any(|c| c.is_control() || c.is_whitespace())
+}
+
 pub(crate) fn resolve_remote_name(git: &GitRunner, cwd: &Path, branch: Option<&str>) -> String {
     branch
-        .and_then(|b| git_stdout(git, cwd, &["config", &format!("branch.{b}.remote")]))
+        .and_then(|b| {
+            git_stdout(
+                git,
+                cwd,
+                &["config", "--get", &format!("branch.{b}.remote")],
+            )
+        })
+        .filter(|r| valid_remote_name(r))
         .unwrap_or_else(|| "origin".to_owned())
 }
 
@@ -243,11 +274,14 @@ pub(crate) fn resolve_github_repo(
     cwd: &Path,
     remote_name: &str,
 ) -> Option<String> {
-    let url = git_stdout(git, cwd, &["remote", "get-url", remote_name]).or_else(|| {
-        (remote_name != "origin")
-            .then(|| git_stdout(git, cwd, &["remote", "get-url", "origin"]))
-            .flatten()
-    })?;
+    let url = valid_remote_name(remote_name)
+        .then(|| git_stdout(git, cwd, &["remote", "get-url", "--", remote_name]))
+        .flatten()
+        .or_else(|| {
+            (remote_name != "origin")
+                .then(|| git_stdout(git, cwd, &["remote", "get-url", "--", "origin"]))
+                .flatten()
+        })?;
     parse_github_remote_url(&url)
 }
 
@@ -257,25 +291,49 @@ pub(crate) fn resolve_default_branch(
     cwd: &Path,
     remote_name: &str,
 ) -> Option<(String, String)> {
-    let remote_head = format!("refs/remotes/{remote_name}/HEAD");
-    if let Some(full) = git_stdout(git, cwd, &["symbolic-ref", "-q", &remote_head]) {
-        let prefix = format!("refs/remotes/{remote_name}/");
-        let name = full.strip_prefix(&prefix).unwrap_or(&full).trim();
-        if !name.is_empty() {
-            return Some((name.to_owned(), full));
+    if valid_remote_name(remote_name) {
+        let remote_head = format!("refs/remotes/{remote_name}/HEAD");
+        if let Some(full) = git_stdout(git, cwd, &["symbolic-ref", "-q", &remote_head]) {
+            let prefix = format!("refs/remotes/{remote_name}/");
+            if !full.starts_with('-')
+                && !full.chars().any(|c| c.is_control() || c.is_whitespace())
+                && !full.contains("..")
+                && let Some(name) = full.strip_prefix(&prefix)
+                && !name.is_empty()
+                && !name.starts_with('-')
+                && ref_exists(git, cwd, &full).unwrap_or(false)
+            {
+                return Some((name.to_owned(), full));
+            }
+        }
+        for (name, candidate) in [
+            ("main", format!("refs/remotes/{remote_name}/main")),
+            ("master", format!("refs/remotes/{remote_name}/master")),
+        ] {
+            if ref_exists(git, cwd, &candidate).unwrap_or(false) {
+                return Some((name.to_owned(), candidate));
+            }
         }
     }
-    for (name, candidate) in [
-        ("main", format!("refs/remotes/{remote_name}/main")),
-        ("master", format!("refs/remotes/{remote_name}/master")),
-        ("main", "refs/heads/main".to_owned()),
-        ("master", "refs/heads/master".to_owned()),
-    ] {
-        if ref_exists(git, cwd, &candidate).unwrap_or(false) {
-            return Some((name.to_owned(), candidate));
+    for (name, candidate) in [("main", "refs/heads/main"), ("master", "refs/heads/master")] {
+        if ref_exists(git, cwd, candidate).unwrap_or(false) {
+            return Some((name.to_owned(), candidate.to_owned()));
         }
     }
     None
+}
+
+fn resolve_commit_oid(git: &GitRunner, cwd: &Path, rev: &str) -> Option<String> {
+    if rev.is_empty() || rev.starts_with('-') {
+        return None;
+    }
+    let target = format!("{rev}^{{commit}}");
+    let oid = git_stdout(
+        git,
+        cwd,
+        &["rev-parse", "--verify", "--end-of-options", &target],
+    )?;
+    (oid.len() >= 40 && oid.bytes().all(|b| b.is_ascii_hexdigit())).then_some(oid)
 }
 
 pub(crate) fn count_commits_ahead(
@@ -284,10 +342,16 @@ pub(crate) fn count_commits_ahead(
     base_ref: &str,
     head_oid: &str,
 ) -> Option<u64> {
-    let range = format!("{base_ref}..{head_oid}");
-    git_stdout(git, cwd, &["rev-list", "--count", &range])?
-        .parse::<u64>()
-        .ok()
+    let base = resolve_commit_oid(git, cwd, base_ref)?;
+    let head = resolve_commit_oid(git, cwd, head_oid)?;
+    let range = format!("{base}..{head}");
+    git_stdout(
+        git,
+        cwd,
+        &["rev-list", "--count", "--end-of-options", &range],
+    )?
+    .parse::<u64>()
+    .ok()
 }
 
 /// One changed file reported by `git status --porcelain=v2 -z`.
@@ -313,7 +377,7 @@ pub(crate) fn list_changed_files(git: &GitRunner, cwd: &Path) -> Result<Vec<Chan
             "--ignore-submodules=all",
         ],
         &[0],
-        &[],
+        READ_ONLY_ENV,
     )?;
     Ok(parse_changed_files(&status_out.stdout))
 }
@@ -434,9 +498,21 @@ pub(crate) fn default_pr_draft(
     branch: &str,
     base_ref: Option<&str>,
 ) -> (String, String) {
-    let range = base_ref.map(|base| format!("{base}..HEAD"));
+    let range = base_ref
+        .and_then(|base| resolve_commit_oid(git, cwd, base))
+        .map(|base_oid| format!("{base_oid}..HEAD"));
     let subjects_raw = match &range {
-        Some(r) => git_stdout(git, cwd, &["log", "--reverse", "--pretty=format:%s", r]),
+        Some(r) => git_stdout(
+            git,
+            cwd,
+            &[
+                "log",
+                "--reverse",
+                "--pretty=format:%s",
+                "--end-of-options",
+                r,
+            ],
+        ),
         None => None,
     };
     let subjects: Vec<String> = subjects_raw
@@ -474,7 +550,7 @@ pub(crate) fn default_pr_draft(
 }
 
 pub(crate) fn git_stdout(git: &GitRunner, cwd: &Path, args: &[&str]) -> Option<String> {
-    let out = git.run(cwd, args, &[0, 1, 2, 128], &[]).ok()?;
+    let out = git.run(cwd, args, &[0, 1, 2, 128], READ_ONLY_ENV).ok()?;
     if out.code != 0 {
         return None;
     }

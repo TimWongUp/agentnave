@@ -81,6 +81,7 @@ pub(crate) enum GhError {
     NotAuthenticated,
     RateLimited,
     NotFound,
+    HeadMismatch(String),
     Other(String),
 }
 
@@ -147,7 +148,7 @@ impl GhClient {
         Self { program: None }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn with_program(program: PathBuf) -> Self {
         Self {
             program: Some(program),
@@ -318,7 +319,8 @@ impl GhClient {
         Ok(CreatedPr { url, number })
     }
 
-    /// Merges a pull request on GitHub via `gh pr merge` using the selected strategy.
+    /// Merges a pull request on GitHub via `gh pr merge` using the selected strategy and binds
+    /// the merge to `head_oid` (`--match-head-commit`) so commits pushed after review are rejected.
     /// Does not pass `--delete-branch` so GitHub honors repo `deleteBranchOnMerge` without
     /// switching or deleting local branches.
     pub(crate) fn merge_pr(
@@ -326,9 +328,15 @@ impl GhClient {
         repo: &str,
         number: u64,
         method: &str,
+        head_oid: &str,
     ) -> Result<String, GhError> {
         if split_repo(repo).is_none() || number == 0 {
             return Err(GhError::Other("无效的 PR 参数".into()));
+        }
+        if !(7..=64).contains(&head_oid.len()) || !head_oid.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(GhError::Other(
+                "缺少有效的 PR 头提交校验信息，请刷新后重试".into(),
+            ));
         }
         let flag = match method {
             "merge" => "--merge",
@@ -340,11 +348,26 @@ impl GhClient {
         let num = number.to_string();
         let out = self.run_gh_with_timeout(
             &program,
-            &["pr", "merge", &num, "--repo", repo, flag],
+            &[
+                "pr",
+                "merge",
+                &num,
+                "--repo",
+                repo,
+                flag,
+                "--match-head-commit",
+                head_oid,
+            ],
             GH_WRITE_TIMEOUT,
         )?;
         if !out.status.success() {
-            return Err(classify_gh_error(&out));
+            let err = classify_gh_error(&out);
+            if let GhError::Other(ref text) = err
+                && is_head_mismatch_error(text)
+            {
+                return Err(GhError::HeadMismatch(text.clone()));
+            }
+            return Err(err);
         }
         let text = combined_output(&out);
         Ok(text)
@@ -422,6 +445,16 @@ fn classify_gh_error(out: &std::process::Output) -> GhError {
         return GhError::NotFound;
     }
     GhError::Other(text)
+}
+
+fn is_head_mismatch_error(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("head branch was modified")
+        || lower.contains("expected head")
+        || lower.contains("expectedheadoid")
+        || lower.contains("match-head-commit")
+        || (lower.contains("head")
+            && (lower.contains("mismatch") || lower.contains("does not match")))
 }
 
 /// Validates that `raw` is strictly an `https://github.com/...` URL safe to open in the browser.

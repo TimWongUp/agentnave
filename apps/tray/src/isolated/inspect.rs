@@ -52,6 +52,7 @@ pub(crate) struct Snapshot {
     pub orphan: bool,
     pub missing_dir: bool,
     pub rollback_only: bool,
+    pub collapsed_rollback: bool,
     pub digest: String,
     pub merged_pr: Option<Value>,
 }
@@ -84,6 +85,7 @@ impl Snapshot {
             "orphan": self.orphan,
             "missing_dir": self.missing_dir,
             "rollback_only": self.rollback_only,
+            "collapsed_rollback": self.collapsed_rollback,
             "reason": reason,
         })
     }
@@ -172,6 +174,14 @@ pub(crate) fn verify_repo_identity(
     git: &GitRunner,
     record: &Record,
 ) -> Result<(PathBuf, PathBuf), String> {
+    verify_repo_identity_with_base(git, record, true)
+}
+
+pub(crate) fn verify_repo_identity_with_base(
+    git: &GitRunner,
+    record: &Record,
+    require_base_oid: bool,
+) -> Result<(PathBuf, PathBuf), String> {
     let main_root = PathBuf::from(&record.main_root);
     let common_dir = PathBuf::from(&record.repo_common_dir);
     if is_link(&main_root) || !main_root.is_dir() {
@@ -202,8 +212,10 @@ pub(crate) fn verify_repo_identity(
     if !same_dir(&common_dir, &actual_common) {
         return Err("主工作树不再属于原登记的仓库".to_owned());
     }
-    let base_arg = format!("{}^{{commit}}", record.base_oid);
-    git.run(&main_root, &["cat-file", "-e", &base_arg], &[0], &[])?;
+    if require_base_oid {
+        let base_arg = format!("{}^{{commit}}", record.base_oid);
+        git.run(&main_root, &["cat-file", "-e", &base_arg], &[0], &[])?;
+    }
     let container = main_root.join(WORKTREES_DIR_NAME);
     if is_link(&container) {
         return Err(format!(
@@ -620,6 +632,7 @@ fn inspect_ready_locked(
             orphan: false,
             missing_dir: false,
             rollback_only: false,
+            collapsed_rollback: false,
             digest,
             merged_pr: None,
         },
@@ -699,6 +712,7 @@ fn inspect_orphan_locked(
         orphan: true,
         missing_dir: false,
         rollback_only: false,
+        collapsed_rollback: false,
         digest,
         merged_pr: None,
     })
@@ -719,13 +733,24 @@ pub(crate) fn inspect_record(
             if record.state == "deleting" {
                 return Err("删除记录缺少预期的分支提交（delete_oid），无法完成删除".to_owned());
             }
+            let collapsed_rollback = record.is_rebuilding_collapsed();
+            let head_tag = if collapsed_rollback {
+                "collapsed_rollback"
+            } else {
+                "rollback"
+            };
+            let status_tag: &[u8] = if collapsed_rollback {
+                b"collapsed_rollback"
+            } else {
+                b"rollback"
+            };
             let digest = compute_digest(DigestInput {
                 isolation_id: &record.id,
                 workspace_id,
-                head_oid: "rollback",
+                head_oid: head_tag,
                 branch_oid: &record.base_oid,
                 usage_generation: record.usage_generation,
-                status_raw: b"rollback",
+                status_raw: status_tag,
                 stat_bytes: &[],
                 nested: &[],
                 nested_truncated: false,
@@ -749,6 +774,7 @@ pub(crate) fn inspect_record(
                     orphan: false,
                     missing_dir: !dir_present,
                     rollback_only: true,
+                    collapsed_rollback,
                     digest,
                     merged_pr: None,
                 },
@@ -790,6 +816,7 @@ pub(crate) fn inspect_record(
                     orphan: false,
                     missing_dir: true,
                     rollback_only: false,
+                    collapsed_rollback: false,
                     digest,
                     merged_pr: None,
                 },

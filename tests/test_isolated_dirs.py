@@ -2231,4 +2231,47 @@ def test_collapsed_rebuild_rollback_and_recovery_keep_managed_branch(tmp_path: P
     after = dirs.store.get(created.id)
     assert after is not None and after.state == "collapsed"
     assert _git(repo, "rev-parse", f"refs/heads/{created.branch}") == tip_oid
+
+    # Rebuild rollback failure (e.g. uncommitted edit in the rebuilt dir) enters needs_attention
+    # while keeping its collapsed origin, so later release retries cleanly back to collapsed
+    # (preserving the branch with new commits) instead of deadlocking on base_oid mismatch.
+    _git(repo, "worktree", "add", str(created.worktree_path), created.branch)
+    (created.worktree_path / "stray.txt").write_text("blocker\n", encoding="utf-8")
+    _set_record(dirs, created.id, "state = 'creating', phase = 'rebuilding_collapsed'")
+    failed = dirs.recover()
+    assert len(failed) == 1 and failed[0].status == "needs_attention"
+    stuck = dirs.store.get(created.id)
+    assert stuck is not None and stuck.state == "needs_attention"
+    assert stuck.phase == "rebuilding_rollback_failed"
+    assert stuck.delete_oid is None
+
+    # After clearing the stray file, release rolls back the rebuilt worktree to collapsed,
+    # keeps the managed branch at tip_oid, and asks confirmation for its unmerged commits.
+    (created.worktree_path / "stray.txt").unlink()
+    asked = dirs.release(created.id, workspace_id="ws-1")
+    assert asked.status == "confirmation_required"
+    assert asked.unique_commits is True
+    assert asked.confirmation is not None
+    assert not created.worktree_path.exists()
+    restored = dirs.store.get(created.id)
+    assert restored is not None and restored.state == "collapsed"
+    assert _git(repo, "rev-parse", f"refs/heads/{created.branch}") == tip_oid
+
+    # Simulated crash after resume_creating (phase='rebuilding_rolling_back') also recovers
+    # cleanly back to collapsed and keeps the managed branch.
+    _git(repo, "worktree", "add", str(created.worktree_path), created.branch)
+    _set_record(dirs, created.id, "state = 'creating', phase = 'rebuilding_rolling_back'")
+    recovered = dirs.recover()
+    assert len(recovered) == 1 and recovered[0].status == "rolled_back"
+    assert not created.worktree_path.exists()
+    restored2 = dirs.store.get(created.id)
+    assert restored2 is not None and restored2.state == "collapsed"
+    assert _git(repo, "rev-parse", f"refs/heads/{created.branch}") == tip_oid
+
+    # Explicit confirmation on the collapsed record removes branch and registry cleanly.
+    re_asked = dirs.release(created.id, workspace_id="ws-1")
+    assert re_asked.status == "confirmation_required" and re_asked.confirmation is not None
+    deleted = dirs.release(created.id, workspace_id="ws-1", confirmation=re_asked.confirmation)
+    assert deleted.status == "deleted"
+    assert dirs.store.get(created.id) is None
     dirs.close()

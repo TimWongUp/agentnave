@@ -19,7 +19,13 @@ from agentnave.isolated.repo import IsolationError, is_link, run_git
 from agentnave.isolated.store import IsolatedRecord, IsolationState, WorktreeStore
 from agentnave.store import now
 
-REBUILDING_COLLAPSED_PHASES = ("rebuilding_collapsed", "rebuilding_copying_include")
+REBUILDING_COLLAPSED_PHASES = (
+    "rebuilding_collapsed",
+    "rebuilding_copying_include",
+    "rebuilding_rolling_back",
+    "rebuilding_rollback_failed",
+    "rebuilding_recovery_failed",
+)
 
 
 def release_collapsed_locked(
@@ -153,7 +159,7 @@ def rollback_rebuilding_collapsed_locked(
         store.mark_attention(
             record.id,
             expected_state=expected_state,
-            phase="rollback_failed",
+            phase="rebuilding_rollback_failed",
             reason=str(exc),
             updated_at=now(),
         )

@@ -14,7 +14,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use release::inspect_with_gh;
 pub(crate) use request::request;
 
