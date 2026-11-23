@@ -1,7 +1,7 @@
-//! The accounts page's routes: list, sign-in state, create, rename, sign in and remove. Every
+//! The accounts page's routes: list, sign-in state, create, link, rename, sign in and remove. Every
 //! write answers with the accounts as they are afterwards.
 
-use super::{Account, auth, remove};
+use super::{Account, auth, link, remove};
 use crate::hosts::Hosts;
 use crate::response::{self, Response};
 use serde_json::{Value, json};
@@ -32,6 +32,10 @@ pub(crate) fn request(
         ("GET", "/app/accounts/status") => status(ctx, query),
         (_, "/app/accounts/create") => {
             response::post(method, action, body, |payload| create(ctx, &payload))
+        }
+        ("GET", "/app/accounts/discover") => discover(ctx),
+        (_, "/app/accounts/link") => {
+            response::post(method, action, body, |payload| link_existing(ctx, &payload))
         }
         (_, "/app/accounts/rename") => {
             response::post(method, action, body, |payload| rename(ctx, &payload))
@@ -96,6 +100,29 @@ fn sync(ctx: &Context, id: &str) -> Value {
 fn create(ctx: &Context, payload: &Value) -> Response {
     let label = payload["label"].as_str().unwrap_or_default();
     let account = match super::create(ctx.root, &ctx.home, label) {
+        Ok(account) => account,
+        Err(error) => return Response::error(400, &error),
+    };
+    let sync = sync(ctx, &account.id);
+    Response::json(&json!({
+        "account": account.value(), "sync": sync, "state": super::state(ctx.root)
+    }))
+}
+
+/// The folders a scan of the home folder finds that can be linked, with their sign-in states.
+fn discover(ctx: &Context) -> Response {
+    let accounts = match super::read(ctx.root) {
+        Ok(accounts) => accounts,
+        Err(error) => return Response::error(409, &error),
+    };
+    let dirs = link::discover(&ctx.home, &default_dir(ctx), &accounts);
+    Response::json(&json!({"candidates": link::candidates(&dirs, auth::program().as_deref())}))
+}
+
+fn link_existing(ctx: &Context, payload: &Value) -> Response {
+    let label = payload["label"].as_str().unwrap_or_default();
+    let dir = payload["dir"].as_str().unwrap_or_default();
+    let account = match link::link(ctx.root, &ctx.home, &default_dir(ctx), label, dir) {
         Ok(account) => account,
         Err(error) => return Response::error(400, &error),
     };

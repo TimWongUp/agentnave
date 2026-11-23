@@ -310,14 +310,31 @@
     }, 3000);
   }
 
+  function addSubmittable() {
+    const d = addDialog;
+    if (!d || d.dialogBusy || !d.input.value.trim()) return false;
+    if (d.mode === "existing") return Boolean(d.pickedDir);
+    if (d.mode === "path") return Boolean(d.pathInput.value.trim());
+    return true;
+  }
+
+  function refreshSubmit() {
+    if (addDialog?.step === 1) addDialog.submit.disabled = !addSubmittable();
+  }
+
   function setDialogBusy(nextBusy) {
     if (!addDialog || addDialog.step !== 1) return;
-    addDialog.dialogBusy = nextBusy;
-    const { input, submit, cancel } = addDialog;
-    input.disabled = nextBusy;
-    cancel.disabled = nextBusy;
-    submit.disabled = nextBusy || !input.value.trim();
-    submit.replaceChildren(nextBusy ? L("创建中…", "Creating…") : L("下一步", "Continue"));
+    const d = addDialog;
+    d.dialogBusy = nextBusy;
+    d.input.disabled = nextBusy;
+    d.pathInput.disabled = nextBusy;
+    d.cancel.disabled = nextBusy;
+    for (const button of d.modeButtons.values()) button.disabled = nextBusy;
+    if (d.pick) d.pick.disabled = nextBusy;
+    refreshSubmit();
+    d.submit.replaceChildren(nextBusy
+      ? (d.mode === "create" ? L("创建中…", "Creating…") : L("关联中…", "Linking…"))
+      : L("下一步", "Continue"));
   }
 
   function setDialogError(message) {
@@ -382,17 +399,20 @@
   }
 
   async function createFromDialog() {
-    if (!addDialog || addDialog.step !== 1 || addDialog.dialogBusy || busy) return;
+    if (!addDialog || addDialog.step !== 1 || addDialog.dialogBusy || busy || !addSubmittable()) return;
+    const { mode } = addDialog;
     const label = addDialog.input.value.trim();
-    if (!label) return;
+    const request = mode === "create"
+      ? ["/app/accounts/create", { label }]
+      : ["/app/accounts/link", { label, dir: mode === "existing" ? addDialog.pickedDir : addDialog.pathInput.value.trim() }];
     setDialogError("");
     setDialogBusy(true);
     let created;
     try {
-      created = await post("/app/accounts/create", { label });
+      created = await post(...request);
     } catch (error) {
       setDialogBusy(false);
-      setDialogError(`${L("新建失败：", "Could not create: ")}${error.message}`);
+      setDialogError(`${mode === "create" ? L("新建失败：", "Could not create: ") : L("关联失败：", "Could not link: ")}${error.message}`);
       addDialog?.input.focus?.();
       return;
     }
@@ -402,7 +422,92 @@
     expandedAccountId = created.account.id;
     removing = null;
     S.renderCards();
+    if (mode !== "create") {
+      // A folder that is already signed in needs no sign-in step.
+      await readState(created.account.id, true);
+      if (addDialog && states.get(created.account.id)?.state?.logged_in) {
+        addDialog.dialogBusy = false;
+        closeAddDialog();
+        return;
+      }
+    }
     await enterWizardLoginStep(created.account);
+  }
+
+  // ------------------------------------------------------------------ add dialog, step 1 fields
+  const ADD_MODES = () => [
+    ["create", L("新建", "New")],
+    ["existing", L("已有目录", "Existing")],
+    ["path", L("填写路径", "Path")],
+  ];
+
+  function candidateText(item) {
+    const state = item.state || {};
+    if (state.error) return L("无法读取状态", "Status unavailable");
+    if (!state.logged_in) return L("未登录", "Not signed in");
+    return maskEmail(state.email) || L("已登录", "Signed in");
+  }
+
+  // The folders found in the home folder, as a drop-down below its label.
+  function candidatePicker(d) {
+    const list = d.candidates?.list || [];
+    const placeholder = d.candidates?.loading ? L("读取中…", "Reading…")
+      : list.length ? L("选择目录", "Choose a folder") : L("没有可关联的目录", "No folder to link");
+    const pick = el("select", {
+      id: "account-add-pick",
+      disabled: !list.length,
+      dataset: { focusKey: `${PROVIDER}/accounts/pick` },
+      onChange: (event) => {
+        d.pickedDir = event.target.value;
+        setDialogError("");
+        refreshSubmit();
+      },
+    },
+    el("option", { value: "", selected: !d.pickedDir }, placeholder),
+    ...list.map((item) => el("option", { value: item.dir, selected: item.dir === d.pickedDir }, `${item.name} · ${candidateText(item)}`)));
+    d.pick = pick;
+    return pick;
+  }
+
+  function renderAddExtra() {
+    const d = addDialog;
+    if (!d || d.step !== 1) return;
+    d.pick = null;
+    if (d.mode === "path") {
+      d.extra.replaceChildren(el("label", { htmlFor: "account-add-path" }, L("目录路径", "Folder path")), d.pathInput);
+    } else if (d.mode === "existing") {
+      d.extra.replaceChildren(el("label", { htmlFor: "account-add-pick" }, L("目录", "Folder")), candidatePicker(d));
+    }
+    refreshSubmit();
+  }
+
+  async function loadCandidates(d) {
+    if (d.candidates) return;
+    d.candidates = { loading: true };
+    renderAddExtra();
+    try {
+      const data = await (await fetch("/app/accounts/discover", { cache: "no-store" })).json();
+      d.candidates = data.error ? { error: data.error } : { list: data.candidates || [] };
+    } catch (error) {
+      d.candidates = { error: String(error?.message || error) };
+    }
+    if (addDialog !== d) return;
+    if (d.candidates.error) setDialogError(`${L("无法读取目录：", "Could not read folders: ")}${d.candidates.error}`);
+    renderAddExtra();
+  }
+
+  function setAddMode(mode) {
+    const d = addDialog;
+    if (!d || d.step !== 1 || d.dialogBusy || d.mode === mode) return;
+    d.mode = mode;
+    for (const [id, button] of d.modeButtons) {
+      button.className = `segment-btn${id === mode ? " active" : ""}`;
+      button.setAttribute("aria-checked", String(id === mode));
+    }
+    setDialogError("");
+    d.form.replaceChildren(d.modeControl, d.nameField, ...(mode === "create" ? [] : [d.extra]));
+    renderAddExtra();
+    if (mode === "existing") void loadCandidates(d);
   }
 
   function openAddDialog() {
@@ -410,7 +515,7 @@
     if (addDialog) return;
     const step1Badge = el("span", { className: "account-wizard-step is-active" },
       el("span", { className: "account-wizard-num" }, "1"),
-      L("显示名", "Display name"));
+      L("账号", "Account"));
     const step2Badge = el("span", { className: "account-wizard-step" },
       el("span", { className: "account-wizard-num" }, "2"),
       L("登录", "Sign in"));
@@ -424,11 +529,39 @@
       placeholder: L("例如：工作、个人", "e.g. Work, Personal"),
       dataset: { focusKey: `${PROVIDER}/accounts/new` },
       onInput: () => {
-        if (!addDialog) return;
         setDialogError("");
-        addDialog.submit.disabled = addDialog.dialogBusy || !input.value.trim();
+        refreshSubmit();
       },
     });
+    const pathInput = el("input", {
+      id: "account-add-path",
+      type: "text",
+      maxlength: "1024",
+      spellcheck: "false",
+      placeholder: "~/.claude_personal",
+      dataset: { focusKey: `${PROVIDER}/accounts/path` },
+      onInput: () => {
+        setDialogError("");
+        refreshSubmit();
+      },
+    });
+    const modeControl = el("div", { className: "segment-control", role: "radiogroup", "aria-label": L("添加方式", "How to add") });
+    const modeButtons = new Map(ADD_MODES().map(([id, text]) => {
+      const button = el("button", {
+        type: "button",
+        role: "radio",
+        className: `segment-btn${id === "create" ? " active" : ""}`,
+        "aria-checked": String(id === "create"),
+        dataset: { focusKey: `${PROVIDER}/accounts/mode-${id}` },
+        onClick: () => setAddMode(id),
+      }, text);
+      modeControl.appendChild(button);
+      return [id, button];
+    }));
+    const nameField = el("div", { className: "account-add-field" },
+      el("label", { htmlFor: "account-add-name" }, L("显示名", "Display name")),
+      input);
+    const extra = el("div", { className: "account-add-field" });
     const form = el("form", {
       id: "account-add-form",
       className: "account-add-form",
@@ -436,9 +569,7 @@
         event.preventDefault();
         void createFromDialog();
       },
-    }, el("div", { className: "account-add-field" },
-      el("label", { htmlFor: "account-add-name" }, L("显示名", "Display name")),
-      input));
+    }, modeControl, nameField);
     const stepBody = el("div", { className: "account-wizard-body" }, form);
     const errorEl = el("p", { className: "member-error account-add-error", role: "status", hidden: true });
     const cancel = el("button", {
@@ -470,6 +601,8 @@
       dialog, step: 1, input, submit, cancel, stepBody, footer, errorEl,
       step1Badge, step2Badge, dialogBusy: false, account: null, session: null,
       statusBox: null, finishBtn: null, pollTimer: null,
+      mode: "create", form, modeControl, modeButtons, nameField, extra, pathInput,
+      candidates: null, pickedDir: "", pick: null,
     };
     document.body.appendChild(dialog);
     dialog.showModal();

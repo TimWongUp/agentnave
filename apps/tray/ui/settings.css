@@ -176,7 +176,8 @@ dialog.account-add-dialog.is-login-step { width: min(780px, 94vw); height: min(5
 .account-add-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
 .account-add-field { display: flex; flex-direction: column; gap: 6px; }
 .account-add-field > label { font-size: 12.5px; font-weight: 550; color: var(--soft); }
-.account-add-field > input { width: 100%; }
+.account-add-field > :is(input, select) { width: 100%; }
+.account-add-form .segment-btn { flex: 1 1 0; }
 .account-add-error { padding-left: 0; margin-top: 10px; }
 dialog.account-login { width: min(780px, 94vw); height: min(540px, 86vh); max-height: none; }
 dialog.account-login > h2 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }

@@ -239,24 +239,91 @@ fn existing_external_accounts_stay_readable_renamable_and_unbind_without_deletin
     assert_eq!(status, 200);
     assert_eq!(removed["state"]["accounts"], json!([]));
     assert!(folder.is_dir());
+}
 
-    // Retired link and scan routes return 404.
-    assert_eq!(
-        post(root.path(), home.path(), "/app/accounts/link", json!({})).0,
-        404
+#[test]
+fn linking_registers_an_existing_folder_as_an_external_account() {
+    let (root, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let home = home.path();
+    let default = home.join(".claude");
+    let personal = home.join(".claude_personal");
+    for dir in [
+        &default,
+        &personal,
+        &home.join(".claude_work"),
+        &home.join(".claude_bare"),
+    ] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    // The scan wants `.claude` names with a `.claude.json` inside: a folder without one, a file
+    // of that name and other names are passed over, as are the default and registered folders.
+    for dir in [&default, &personal, &home.join(".claude_work")] {
+        fs::write(dir.join(".claude.json"), "{}").unwrap();
+    }
+    fs::write(home.join(".claude.json"), "{}").unwrap();
+    fs::create_dir_all(home.join(".other")).unwrap();
+    fs::write(home.join(".other/.claude.json"), "{}").unwrap();
+    let found = |accounts: &[Account]| link::discover(home, &default, accounts);
+    assert_eq!(found(&[]), [personal.clone(), home.join(".claude_work")]);
+
+    let work = link::link(root.path(), home, &default, " 工作 ", "~/.claude_work/").unwrap();
+    assert_eq!((work.id.as_str(), work.managed), ("a1", false));
+    assert_eq!(work.dir, home.join(".claude_work"));
+    assert_eq!(found(&read(root.path()).unwrap()), vec![personal.clone()]);
+    // A linked folder is never deleted with its account, and its id is not given again.
+    assert!(remove::deletable(&work, home).is_err());
+    unbind(root.path(), "a1").unwrap();
+    let again = link::link(
+        root.path(),
+        home,
+        &default,
+        "个人",
+        &personal.display().to_string(),
     );
-    let hosts = Mutex::new(None);
-    let idle = || Ok(());
-    let ctx = Context {
-        root: root.path(),
-        home: home.path().to_owned(),
-        hosts: &hosts,
-        idle: &idle,
-    };
-    assert_eq!(
-        request(&ctx, None, "GET", "/app/accounts/scan", None, &[]).status,
-        404
+    assert_eq!(again.unwrap().id, "a2");
+
+    let refuse = |dir: &str| link::link(root.path(), home, &default, "x", dir).unwrap_err();
+    assert!(refuse("~/.claude").contains("默认账号"));
+    assert!(refuse("~/.claude_personal").contains("已关联"));
+    assert!(refuse("~/missing").contains("不存在"));
+    assert!(refuse("~/.claude_work/.claude.json").contains("不是文件夹"));
+    assert!(refuse("relative/dir").contains("绝对路径"));
+    assert!(link::link(root.path(), home, &default, " ", "~/.claude_work").is_err());
+    let saved: Value = serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
+    validate(&saved).unwrap();
+}
+
+#[test]
+fn the_page_links_a_folder_and_lists_the_ones_it_can_link() {
+    let (root, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = home.path().join(".claude_personal");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join(".claude.json"), "{}").unwrap();
+    let dirs = link::discover(home.path(), &home.path().join(".claude"), &[]);
+    let listed = link::candidates(&dirs, None);
+    assert_eq!(listed[0]["name"], ".claude_personal");
+    assert_eq!(listed[0]["dir"], folder.display().to_string());
+    assert!(listed[0]["state"]["error"].is_string());
+
+    let (status, linked) = post(
+        root.path(),
+        home.path(),
+        "/app/accounts/link",
+        json!({"label": "个人", "dir": "~/.claude_personal"}),
     );
+    assert_eq!(status, 200, "{linked}");
+    assert_eq!(linked["account"]["managed"], false);
+    assert_eq!(
+        linked["state"]["accounts"][0]["dir"],
+        folder.display().to_string()
+    );
+    let again = post(
+        root.path(),
+        home.path(),
+        "/app/accounts/link",
+        json!({"label": "再来", "dir": folder.display().to_string()}),
+    );
+    assert_eq!(again.0, 400);
 }
 
 #[cfg(unix)]

@@ -4,6 +4,7 @@
 //! samples in `tests/fixtures/app-files/accounts` pin what a valid file is.
 
 mod auth;
+mod link;
 mod remove;
 mod request;
 #[cfg(test)]
@@ -263,6 +264,10 @@ fn private(dir: &Path) {
 #[cfg(not(unix))]
 fn private(_dir: &Path) {}
 
+fn remember_id(managed: &Path, id: &str) {
+    let _ = fs::write(managed.join(LAST_ID), id.trim_start_matches('a'));
+}
+
 /// Registers a new managed account: its id, its folder in the managed root and its name.
 pub(crate) fn create(root: &Path, home: &Path, label: &str) -> Result<Account, String> {
     let label = clean_label(label)?;
@@ -285,7 +290,7 @@ pub(crate) fn create(root: &Path, home: &Path, label: &str) -> Result<Account, S
         let _ = fs::remove_dir(&dir);
         return Err(error);
     }
-    let _ = fs::write(managed.join(LAST_ID), id.trim_start_matches('a'));
+    remember_id(&managed, &id);
     Ok(account)
 }
 
