@@ -232,6 +232,35 @@ fn send(app: &AppHandle, notice: &Notice, request: bool, english: bool) -> Resul
     permission::send(app, &notice.title, &notice.body, english)
 }
 
+/// Reminds the user about unread results waiting in a bound in-app terminal (ADR-0114).
+/// Runs off the caller's thread so native permission/delivery timeouts never stall polling.
+pub(crate) fn notify_unread(app: &AppHandle, count: usize, derived: bool) {
+    let document = crate::preferences::read(&crate::preferences::dir()).unwrap_or_default();
+    let options = Options::from(&document);
+    if !options.enabled || count == 0 {
+        return;
+    }
+    let english = options.english;
+    let body = match (derived, english, count) {
+        (true, true, 1) => "1 result waiting for derived boss".to_owned(),
+        (true, true, n) => format!("{n} results waiting for derived boss"),
+        (true, false, n) => format!("派生终端有 {n} 项结果待 boss 收取"),
+        (false, true, 1) => "1 result waiting for boss".to_owned(),
+        (false, true, n) => format!("{n} results waiting for boss"),
+        (false, false, n) => format!("{n} 项结果待 boss 收取"),
+    };
+    let notice = Notice {
+        title: "AgentNave".into(),
+        body,
+    };
+    let app = app.clone();
+    thread::spawn(move || {
+        if let Err(reason) = send(&app, &notice, false, english) {
+            eprintln!("agentnave: notification: {reason}");
+        }
+    });
+}
+
 /// Test delivery uses the same notification switch and native permission checks.
 pub(crate) fn test(app: &AppHandle, method: &str, action: Option<&str>) -> Response {
     crate::response::action(method, action, || {

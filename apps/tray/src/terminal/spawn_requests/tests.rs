@@ -13,6 +13,29 @@ fn test_coord(dir: &Path) -> Coordinator {
 }
 
 #[test]
+fn push_document_splits_push_providers_from_terminal_providers() {
+    let mut receipts = HashMap::new();
+    let doc = build_push_document(
+        std::process::id(),
+        super::super::wakeup::PROVIDERS,
+        &[],
+        &mut receipts,
+    );
+    #[cfg(unix)]
+    assert_eq!(doc["providers"], json!(["codex"]));
+    #[cfg(not(unix))]
+    assert_eq!(doc["providers"], json!([]));
+
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        doc["terminal_providers"],
+        json!(["claude", "codex", "antigravity"])
+    );
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(doc["terminal_providers"], json!([]));
+}
+
+#[test]
 fn publishes_256k_limit_evicts_oldest_finished_only() {
     let dir = tempfile::tempdir().unwrap();
     let coord = test_coord(dir.path());
@@ -31,8 +54,10 @@ fn publishes_256k_limit_evicts_oldest_finished_only() {
                 lease_acquired: None,
                 anchor: None,
                 blocked: None,
+                background_tasks_pending: None,
                 terminal: None,
             },
+            provider: None,
             finished_at: None,
         },
     );
@@ -50,11 +75,14 @@ fn publishes_256k_limit_evicts_oldest_finished_only() {
                     lease_acquired: Some(true),
                     anchor: None,
                     blocked: None,
+                    background_tasks_pending: None,
                     terminal: Some(TerminalOutcome {
                         status: "succeeded".to_owned(),
                         reason: Some(huge_sid.clone()),
+                        warnings: Vec::new(),
                     }),
                 },
+                provider: None,
                 finished_at: Some(base + Duration::from_millis(i as u64)),
             },
         );
@@ -357,11 +385,14 @@ fn shared_contract_fixture_matches_tray_intake_and_receipts() {
                     "prompt_id": "prompt-1"
                 })),
                 blocked: None,
+                background_tasks_pending: None,
                 terminal: Some(TerminalOutcome {
                     status: "succeeded".to_owned(),
                     reason: None,
+                    warnings: Vec::new(),
                 }),
             },
+            provider: None,
             finished_at: Some(Instant::now()),
         },
     );
@@ -377,11 +408,14 @@ fn shared_contract_fixture_matches_tray_intake_and_receipts() {
                 lease_acquired: None,
                 anchor: None,
                 blocked: None,
+                background_tasks_pending: None,
                 terminal: Some(TerminalOutcome {
                     status: "interrupted".to_owned(),
                     reason: None,
+                    warnings: Vec::new(),
                 }),
             },
+            provider: None,
             finished_at: Some(Instant::now()),
         },
     );
@@ -473,6 +507,7 @@ fn rejects_group_or_world_writable_spawn_requests_dir_and_publishes_derived_pids
             isolation_id: None,
             _lease: None,
             _log_dir: None,
+            _hook_dir: None,
             codex_ready_file: None,
             active_invocation_id: None,
             launch_config: None,

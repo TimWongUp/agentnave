@@ -1,5 +1,7 @@
 # Pi Coding Agent
 
+Pi 作宿主时（含 App 内终端）不支持后台命令自唤醒，按回执 `next` 走前台阻塞 `wait`，不再由 App 键入唤醒。
+
 通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
 `provider: "pi"`；未配置 App 默认值且省略模型和 effort 时沿用 Pi 原生设置，不指定默认模型。

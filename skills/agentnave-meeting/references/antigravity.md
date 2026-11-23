@@ -1,5 +1,7 @@
 # Antigravity CLI
 
+Antigravity 作宿主时按回执 `next` 选择等待方式（App 内外终端一致，不再由 App 键入唤醒）：已验收版本的交互 `agy` CLI（1.5.14 及以上）会在 `next` 里给出只读等待命令，照常原样运行（超过 10 秒自动转入后台，不挂阻塞 `wait`），命令返回（含 10 秒内前台直接返回）后按输出行处理——`ready` 或 `expired` 调 `wait(wait_seconds=0)` 收取并按新回执续等，`already_watching` 或 `all_done` 直接结束本轮，`service_gone` 回到当前连接核对；Antigravity App、非交互模式或未确认版本的 `agy` 仍按 `next` 前台 `wait`。
+
 通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
 `provider: "antigravity"`；用户点名时的写法示例：

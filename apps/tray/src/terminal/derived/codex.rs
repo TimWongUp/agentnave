@@ -16,8 +16,9 @@ use super::super::spawn_requests::{
 };
 use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
 use super::{
-    account_mismatch, acquire_isolation_for_terminal, cleanup_derived_startup, cwd_mismatch,
-    detect_screen_blocker, finished_cancel_outcome, native_logs,
+    UNSETTLED_DISPATCH_BUSY_ERR, account_mismatch, acquire_isolation_for_terminal,
+    cleanup_derived_startup, cwd_mismatch, detect_screen_blocker, finished_cancel_outcome,
+    native_logs,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -283,6 +284,9 @@ pub(super) fn open_or_launch_codex(
         return Err("Codex 不支持多账号".to_owned());
     }
     if let Some(sid) = env.session_id.as_deref() {
+        if coordinator.has_unsettled_run_for_session("codex", sid, &env.request_id) {
+            return Err(UNSETTLED_DISPATCH_BUSY_ERR.to_owned());
+        }
         terminals.remove_exited_derived("codex", sid);
         if let Some(existing) = terminals.find_derived_session("codex", sid) {
             if let Some(err) = account_mismatch(existing.account.as_ref(), account.as_ref()) {
@@ -384,6 +388,7 @@ pub(super) fn open_or_launch_codex(
                 isolation_id,
                 _lease: lease,
                 _log_dir: None,
+                _hook_dir: None,
                 codex_ready_file: ready_file,
                 active_invocation_id: Some(env.invocation_id.clone()),
                 launch_config: None,
@@ -399,6 +404,7 @@ pub(super) fn open_or_launch_codex(
             native: env.session_id.clone(),
             account: None,
             launch_config: None,
+            hook_dir: None,
             codex: Some(client),
         },
         false,

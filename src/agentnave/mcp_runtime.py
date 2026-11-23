@@ -31,7 +31,7 @@ from agentnave.core import InvocationManager
 from agentnave.decision_seats import custom_seats
 from agentnave.group import Round
 from agentnave.host import detect_host, host_session_id
-from agentnave.inbox_events import inbox_events
+from agentnave.inbox_events import InboxTracker, collect_inbox_state
 from agentnave.inbox_snapshot import InboxSnapshot
 from agentnave.isolated import ChangeSummary
 from agentnave.manager_identity import SESSION_ID_DESCRIPTIONS, session_id_hint
@@ -72,6 +72,22 @@ from agentnave.orchestration_roles import AUTO_SEAT, role_catalog, seat_role
 from agentnave.push_capability import PUSH_AGAIN, PUSH_NEXT, app_can_push
 from agentnave.retention import Retention
 from agentnave.store import Review
+from agentnave.wait_guidance import (
+    BLOCKING_WAIT_AGAIN,
+    CLAUDE_LONG_WAIT_AGAIN,
+    CLAUDE_LONG_WAIT_NEXT,
+    CLAUDE_SHORT_WAIT_AGAIN,
+    CLAUDE_SHORT_WAIT_NEXT,
+    LONG_WAIT_SECONDS,
+    LONG_WAIT_SENTENCE,
+    WAIT_AGAIN,
+    WAIT_NEXT,
+    WAIT_SECONDS,
+    build_wait_guidance,
+    claude_background_disabled,
+    long_wait_enabled_for_host,
+    watch_host_cli_supported,
+)
 
 type ManagerModel = Annotated[
     str | None,
@@ -130,39 +146,35 @@ def _read_excluded_providers() -> frozenset[str]:
     return excluded if host_provider is None else excluded | {host_provider}
 
 
-WAIT_SECONDS = 270
-LONG_WAIT_SECONDS = 1500
 INBOX_WAIT_SLICE_SECONDS = 2.0
-LONG_WAIT_SENTENCE = (
-    "In the Claude Code terminal interactive session, omitting waits up to 1500s (25 minutes) "
-    "instead; pass 270 for the short window. "
-)
 
 
 def long_wait_enabled() -> bool:
-    """1500s waits only where Claude Code backgrounds long calls: its terminal session.
-
-    Desktop app, VS Code, -p/SDK and an unreadable entrypoint keep 0 and 270 (ADR-0082).
+    """1500s waits only where Claude Code backgrounds long calls: its terminal session
+    with background tasks enabled (ADR-0082, ADR-0114).
     """
-    return HOST.name == "claude" and os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli"
+    return long_wait_enabled_for_host(HOST)
 
 
-# App-capable connections may end the turn; all others retain the original wait guidance.
-WAIT_NEXT = (
-    "Ends are not pushed: before ending your turn, call wait (omit ids, same "
-    "manager_session_id) until all_finished."
-)
-WAIT_AGAIN = (
-    "Still pending: reply to any new user message first, and handle any prompt_pending or "
-    "review_needed, then call wait again "
-    "before ending your turn; increment seq on each wait to distinguish repeated calls."
-)
-
-
-def wait_guidance(*, again: bool = False) -> str:
-    if app_can_push(data_root(), HOST.provider):
-        return PUSH_AGAIN if again else PUSH_NEXT
-    return WAIT_AGAIN if again else WAIT_NEXT
+def wait_guidance(
+    *,
+    again: bool = False,
+    ctx: Context[Runtime] | None = None,
+    boss_key: str | None = None,
+) -> str:
+    started_at = (
+        ctx.request_context.lifespan_context.inbox_snapshot.started_at if ctx is not None else 0.0
+    )
+    return build_wait_guidance(
+        HOST,
+        root=data_root(),
+        pid=os.getpid(),
+        started_at=started_at,
+        boss_key=boss_key,
+        again=again,
+        can_push=app_can_push,
+        watch_supported=watch_host_cli_supported,
+    )
 
 
 def terminal_available() -> bool:
@@ -171,7 +183,7 @@ def terminal_available() -> bool:
     from agentnave.push_capability import find_tray, has_ancestor_in
     from agentnave.terminal_requests import read_tray
 
-    tray = find_tray(data_root(), HOST.provider)
+    tray = find_tray(data_root(), None)
     snapshot = read_tray(data_root(), tray) if tray else None
     if not snapshot:
         return False
@@ -279,6 +291,7 @@ class Runtime:
         self.active_waits: Counter[str | None] = Counter()
         self.cancelling: set[str] = set()
         self.inbox_snapshot = InboxSnapshot(data_root(), os.getpid())
+        self.inbox_tracker = InboxTracker()
         self._inbox_scheduled: asyncio.Handle | None = None
         self._inbox_closed = False
         self.manager.on_inbox_change = self.schedule_inbox
@@ -290,8 +303,20 @@ class Runtime:
             return
         self._inbox_scheduled = asyncio.get_running_loop().call_soon(self.refresh_inbox)
 
-    def refresh_inbox(self) -> None:
-        self._inbox_scheduled = None
+    def _waiting_workspaces(self) -> set[str | None]:
+        return self.active_inbox_waits | {
+            ws for ws, count in self.active_waits.items() if count > 0
+        }
+
+    def _publish_inbox(
+        self,
+        *,
+        delivered_bosses: set[str] | None = None,
+        delivered_review_keys: set[str] | None = None,
+    ) -> None:
+        if self._inbox_scheduled is not None:
+            self._inbox_scheduled.cancel()
+            self._inbox_scheduled = None
         if self._inbox_closed:
             return
         try:
@@ -299,18 +324,29 @@ class Runtime:
 
             pending = outstanding_acknowledgements(data_root(), self.manager.settled_requests)
             self.manager.settled_requests = pending
-            waiting = self.active_inbox_waits | {
-                ws for ws, count in self.active_waits.items() if count > 0
-            }
-            self.inbox_snapshot.publish(
-                inbox_events(self.conversations, waiting, self.cancelling), pending
+            states = collect_inbox_state(
+                self.conversations, self._waiting_workspaces(), self.cancelling
             )
+            bosses = (
+                self.inbox_tracker.mark_delivered(states, delivered_bosses, delivered_review_keys)
+                if delivered_bosses
+                else self.inbox_tracker.project(states)
+            )
+            self.inbox_snapshot.publish(bosses, pending)
             if pending:
                 self._inbox_scheduled = asyncio.get_running_loop().call_later(
                     0.5, self.refresh_inbox
                 )
         except (OSError, ValueError, KeyError):
             logging.getLogger(__name__).warning("Could not publish inbox state", exc_info=True)
+
+    def refresh_inbox(self) -> None:
+        self._publish_inbox()
+
+    def mark_inbox_delivered(
+        self, bosses: set[str], delivered_review_keys: set[str] | None = None
+    ) -> None:
+        self._publish_inbox(delivered_bosses=bosses, delivered_review_keys=delivered_review_keys)
 
     def close_inbox(self) -> None:
         self._inbox_closed = True
@@ -1031,10 +1067,18 @@ __all__ = [
     "HOST",
     "LONG_WAIT_SENTENCE",
     "long_wait_enabled",
+    "claude_background_disabled",
     "_restrict_wait_windows",
     "WAIT_AGAIN",
     "ALREADY_WAITING",
     "WAIT_NEXT",
+    "CLAUDE_LONG_WAIT_NEXT",
+    "CLAUDE_LONG_WAIT_AGAIN",
+    "CLAUDE_SHORT_WAIT_NEXT",
+    "CLAUDE_SHORT_WAIT_AGAIN",
+    "BLOCKING_WAIT_AGAIN",
+    "PUSH_NEXT",
+    "PUSH_AGAIN",
     "NATIVE_SEAT_NEXT",
     "WAIT_SECONDS",
     "LONG_WAIT_SECONDS",

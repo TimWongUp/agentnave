@@ -95,6 +95,7 @@ fn rig(mode: &str) -> Rig {
             dir: dir.path().to_path_buf(),
         }),
         launch_config: None,
+        hook_dir: None,
         codex: None,
     };
     Rig {

@@ -394,6 +394,27 @@ def test_stall_requires_native_completion(shown: str, steady: float, blocked: bo
     assert not turn.stopped and turn.response == "partial"
 
 
+def test_stall_skips_while_waiting_for_background_with_reply() -> None:
+    # Reply written and OSC 7501 still working: STALL_LIMIT must not fire, menu still blocks.
+    turn = Turn(
+        "c", expected="task", user_seen=True, response="partial", answered=True, active=True
+    )
+    run = Run(cast(Terminal, None), turn, Path())
+    assert turn.waiting_for_background
+    assert not run.stalled("idle", 120, "")
+    assert not run.stalled("unknown", 120, "")
+    assert turn.error is None
+    bg = turn.background_state_event()
+    assert bg["waiting"] is True and bg["only_background"] is True and bg["reply"] == "partial"
+    assert run.stalled("menu", 3, "")
+    assert turn.error is not None and "dialog" in turn.error
+
+    # Without a written reply, idle stall still applies even while active.
+    no_reply = Turn("c", expected="task", user_seen=True, active=True)
+    assert not no_reply.waiting_for_background
+    assert Run(cast(Terminal, None), no_reply, Path()).stalled("idle", 61, "")
+
+
 @pytest.mark.parametrize("ending", ["finished", "was canceled", "failed"])
 def test_background_calls_stay_open_and_the_footer_tells_who_works(
     ending: str,

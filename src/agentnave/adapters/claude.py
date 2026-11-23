@@ -28,6 +28,7 @@ from agentnave.adapters.base import (
 )
 from agentnave.adapters.quota_reset import parse_reset
 from agentnave.adapters.usage_reset import claude_reset
+from agentnave.background_tasks import BackgroundTasksState, parse_background_tasks_event
 from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
 from agentnave.native_prompts import NativePrompt, encode_answer, prompt_from_event
 from agentnave.native_sessions import assistant_model
@@ -228,8 +229,20 @@ class ClaudeAdapter(AdapterHooks):
             unset_env=self.host_session_env,
         )
 
+    def can_answer_questions(self, request: InvocationRequest) -> bool:
+        return (
+            self._supports_interactive
+            and request.provider_options.get("interactive") is True
+            and request.provider_options.get("restricted_tools") is not True
+        )
+
     def prompt_event(self, event: dict[str, object]) -> NativePrompt | None:
         return prompt_from_event(event)
+
+    def background_tasks_event(self, event: dict[str, object]) -> BackgroundTasksState | None:
+        if event.get("type") != "agentnave_background_tasks":
+            return None
+        return parse_background_tasks_event(event)
 
     def encode_prompt_answer(self, answer: dict[str, object]) -> bytes:
         return encode_answer(answer)

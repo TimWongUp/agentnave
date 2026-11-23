@@ -316,13 +316,17 @@ def test_child_environment_only_changes_the_interactive_child(
 ) -> None:
     for name in tui.STRIP_ENV:
         monkeypatch.setenv(name, "host-value")
+    monkeypatch.setenv("HERDR_PANE_ID", "pane-1")
+    monkeypatch.setenv("HERDR_SOCKET", "/tmp/herdr.sock")
     monkeypatch.setenv("PATH", os.pathsep.join([os.path.dirname(sys.executable), "/usr/bin"]))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/custom/config")
     env = tui.child_environment("/provider/bin/claude")
     assert not set(tui.STRIP_ENV).intersection(env)
+    assert "HERDR_PANE_ID" not in env and "HERDR_SOCKET" not in env
     assert env["PATH"].split(os.pathsep) == ["/provider/bin", "/usr/bin"]
     assert env["CLAUDE_CONFIG_DIR"] == "/custom/config" and env["TERM"] == "xterm-256color"
     assert os.environ["CLAUDE_CODE_CHILD_SESSION"] == "host-value"
+    assert os.environ["HERDR_PANE_ID"] == "pane-1"
 
 
 def test_every_path_strips_the_same_host_session_variables(
@@ -424,7 +428,7 @@ if case == "resume":
     # Simulate an Enter consumed while the paste was still being processed.
     read_until(b"\r")
 with path.open("a") as f:
-    f.write(json.dumps({"type": "user", "message": {"content": "work"}}) + "\n")
+    f.write(json.dumps({"type": "user", "uuid": "u-1", "promptId": "p-1", "message": {"content": "work"}}) + "\n")
 if case == "failure":
     hook("StopFailure", error="authentication_failed")
 else:
@@ -436,10 +440,12 @@ else:
     with path.open("a") as f:
         for row in [
             {"type": "assistant", "isSidechain": True, "message": {"content": [{"type": "text", "text": "child"}]}},
-            {"type": "assistant", "message": {"model": "fake-model", "content": [{"type": "text", "text": "finished"}], "stop_reason": "end_turn"}},
-            {"type": "system", "subtype": "turn_duration"},
+            {"type": "assistant", "uuid": "a-1", "parentUuid": "u-1", "message": {"model": "fake-model", "content": [{"type": "text", "text": "finished"}], "stop_reason": "end_turn"}},
         ]:
             f.write(json.dumps(row) + "\n")
+    hook("Stop", prompt_id="p-1", background_tasks=[])
+    with path.open("a") as f:
+        f.write(json.dumps({"type": "system", "subtype": "turn_duration", "uuid": "d-1", "parentUuid": "a-1"}) + "\n")
 time.sleep(12)
 """
 
@@ -542,6 +548,7 @@ def test_fake_claude_turn_through_the_standalone_helper(
 
 
 def test_turn_waits_for_background_tool_notifications() -> None:
+    """Legacy Stop (without background_tasks) falls back to transcript tracking (#504)."""
     turn = tui.Turn("session")
     start = {
         "type": "tool_use",
@@ -550,13 +557,19 @@ def test_turn_waits_for_background_tool_notifications() -> None:
         "input": {"run_in_background": True},
     }
     end: dict[str, object] = {"type": "system", "subtype": "turn_duration"}
+    legacy_stop: dict[str, object] = {"hook_event_name": "Stop"}
+
+    def finish_subturn() -> None:
+        turn.hook(legacy_stop)
+        turn.transcript(end)
+
     turn.transcript({"type": "user", "message": {"role": "user", "content": "task"}})
     turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [start]}})
-    turn.transcript(end)
+    finish_subturn()
     assert not turn.done
     notice = "<task-notification>\n<tool-use-id>tool-1</tool-use-id>\n</task-notification>"
     turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
-    turn.transcript(end)
+    finish_subturn()
     assert turn.done
     # An Agent call Claude moved to the background on its own says so only in its result.
     launch = {"type": "tool_result", "tool_use_id": "agent-1", "content": "launched"}
@@ -567,17 +580,17 @@ def test_turn_waits_for_background_tool_notifications() -> None:
             "toolUseResult": {"isAsync": True, "status": "async_launched"},
         }
     )
-    turn.transcript(end)
+    finish_subturn()
     assert not turn.done
     notice = notice.replace("tool-1", "agent-1")
     turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
-    turn.transcript(end)
+    finish_subturn()
     assert turn.done
     # A refused background call never starts, so no notification follows.
     turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [start]}})
     refused = {"type": "tool_result", "tool_use_id": "tool-1", "is_error": True, "content": "no"}
     turn.transcript({"type": "user", "message": {"role": "user", "content": [refused]}})
-    turn.transcript(end)
+    finish_subturn()
     assert turn.done
     # An MCP call Claude moved to the background by itself names only a task id, and the
     # completion notification carries only that id back. The same words in a prompt or in
@@ -595,7 +608,7 @@ def test_turn_waits_for_background_tool_notifications() -> None:
     turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": calls}})
     quoted = {"type": "tool_result", "tool_use_id": "bash-1", "content": moved}
     turn.transcript({"type": "user", "message": {"role": "user", "content": [quoted]}})
-    turn.transcript(end)
+    finish_subturn()
     assert turn.done
     receipt = {
         "type": "tool_result",
@@ -609,22 +622,22 @@ def test_turn_waits_for_background_tool_notifications() -> None:
             "toolUseResult": [{"type": "text", "text": moved}],
         }
     )
-    turn.transcript(end)
+    finish_subturn()
     assert not turn.done
     notice = "<task-notification>\n<task-id>kcbon96gb</task-id>\n</task-notification>"
     # Another tool's output quoting the notification does not settle the call.
     quoted = {"type": "tool_result", "tool_use_id": "bash-1", "content": notice}
     turn.transcript({"type": "user", "message": {"role": "user", "content": [quoted]}})
-    turn.transcript(end)
+    finish_subturn()
     assert not turn.done
     turn.transcript({"type": "user", "message": {"role": "user", "content": notice}})
-    turn.transcript(end)
+    finish_subturn()
     assert turn.done
     # A notification arriving while Claude is busy is attached to the running turn instead.
     turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [start]}})
     queued = {"type": "queued_command", "prompt": notice.replace("kcbon96gb", "x")}
     turn.transcript({"type": "attachment", "attachment": queued})
-    turn.transcript(end)
+    finish_subturn()
     assert not turn.done
     turn.transcript(
         {
@@ -637,8 +650,284 @@ def test_turn_waits_for_background_tool_notifications() -> None:
             },
         }
     )
-    turn.transcript(end)
+    finish_subturn()
     assert turn.done
+    # #504 (1): run_in_background + backgroundTaskId settled by non-error TaskStop(task_id).
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [start]}})
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": "ok"}],
+            },
+            "toolUseResult": {"backgroundTaskId": "bg-shell-1"},
+        }
+    )
+    finish_subturn()
+    assert not turn.done
+    stop_call = {
+        "type": "tool_use",
+        "id": "stop-fail",
+        "name": "TaskStop",
+        "input": {"task_id": "bg-shell-1"},
+    }
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [stop_call]}})
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "stop-fail",
+                        "is_error": True,
+                        "content": "busy",
+                    }
+                ],
+            },
+        }
+    )
+    finish_subturn()
+    assert not turn.done  # failed TaskStop must not settle
+    stop_ok = {**stop_call, "id": "stop-ok"}
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [stop_ok]}})
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "stop-ok", "content": "stopped"}
+                ],
+            },
+        }
+    )
+    finish_subturn()
+    assert turn.done
+    # #504 (2): synchronous Bash timed out and auto-moved to background (timedOutAfterMs).
+    sync_bash = {
+        "type": "tool_use",
+        "id": "sync-1",
+        "name": "Bash",
+        "input": {"command": "sleep 9"},
+    }
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [sync_bash]}})
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "sync-1", "content": "timed out"}
+                ],
+            },
+            "toolUseResult": {"backgroundTaskId": "bg-timeout-1", "timedOutAfterMs": 120000},
+        }
+    )
+    finish_subturn()
+    assert not turn.done
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": "<task-notification><task-id>bg-timeout-1</task-id></task-notification>",
+            },
+        }
+    )
+    finish_subturn()
+    assert turn.done
+    # #504 (3): Monitor registers taskId; running event does not settle; TaskStop settles it.
+    mon = {"type": "tool_use", "id": "mon-call", "name": "Monitor", "input": {"command": "tail -f"}}
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [mon]}})
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "mon-call", "content": "started"}
+                ],
+            },
+            "toolUseResult": {"taskId": "mon-1", "timeoutMs": 300000, "persistent": False},
+        }
+    )
+    finish_subturn()
+    assert not turn.done
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": (
+                    "<task-notification><task-id>mon-1</task-id>"
+                    "<status>running</status><output>tick</output></task-notification>"
+                ),
+            },
+        }
+    )
+    finish_subturn()
+    assert not turn.done
+    stop_mon = {
+        "type": "tool_use",
+        "id": "stop-mon",
+        "name": "TaskStop",
+        "input": {"task_id": "mon-1"},
+    }
+    turn.transcript({"type": "assistant", "message": {"role": "assistant", "content": [stop_mon]}})
+    turn.transcript(
+        {
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "stop-mon", "content": "ok"}],
+            },
+        }
+    )
+    finish_subturn()
+    assert turn.done
+
+
+def test_stop_and_turn_duration_pairing_waking_types_timeout_and_interrupt() -> None:
+    turn = tui.Turn("session")
+    # Task notification alone before the real user prompt must not mark user_seen.
+    turn.transcript(
+        {
+            "type": "user",
+            "turnOrigin": "task_notification",
+            "message": {
+                "role": "user",
+                "content": "<task-notification><task-id>x</task-id></task-notification>",
+            },
+        },
+        now=1.0,
+    )
+    assert not turn.user_seen
+    turn.transcript(
+        {
+            "type": "user",
+            "uuid": "u1",
+            "promptId": "p1",
+            "message": {"role": "user", "content": "go"},
+        },
+        now=2.0,
+    )
+    assert turn.user_seen
+    turn.transcript(
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parentUuid": "u1",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Part 1"}]},
+        },
+        now=2.1,
+    )
+    # SubagentStop must be ignored; only hook_event_name == "Stop" counts.
+    turn.hook(
+        {"hook_event_name": "SubagentStop", "prompt_id": "p1", "background_tasks": []}, now=2.2
+    )
+    turn.transcript(
+        {"type": "system", "subtype": "turn_duration", "uuid": "d1", "parentUuid": "a1"}, now=2.3
+    )
+    assert not turn.done
+    # Stop arriving after turn_duration pairs by promptId traced via parentUuid chain.
+    turn.hook(
+        {
+            "hook_event_name": "Stop",
+            "prompt_id": "p1",
+            "background_tasks": [
+                {"id": "sh-1", "type": "shell", "status": "running"},
+                {"id": "mon-1", "type": "monitor", "status": "running"},
+                {"id": "ag-1", "type": "subagent", "status": "running"},
+                {"id": "mcp-1", "type": "mcp_task", "status": "running"},
+                {"id": "wf-1", "type": "workflow", "status": "running"},
+                {"id": "dream-1", "type": "dream", "status": "running"},
+            ],
+            "session_crons": [{"id": "cron-1"}],
+        },
+        now=2.4,
+    )
+    assert not turn.done
+    bg = turn.background_state_event()
+    assert bg["waiting"] is True and bg["only_background"] is True
+    assert bg["task_ids"] == ["sh-1", "mon-1", "ag-1", "mcp-1", "wf-1"]
+    assert bg["reply"] == "Part 1"
+
+    # Sub-turn 2 triggered by <task-notification>: replies concatenate in order.
+    turn.transcript(
+        {
+            "type": "user",
+            "uuid": "u2",
+            "promptId": "p2",
+            "turnOrigin": "task_notification",
+            "origin": {"kind": "task-notification"},
+            "message": {
+                "role": "user",
+                "content": "<task-notification><task-id>sh-1</task-id></task-notification>",
+            },
+        },
+        now=5.0,
+    )
+    assert turn.background_state_event()["waiting"] is True
+    assert turn.background_state_event()["only_background"] is False
+    turn.transcript(
+        {
+            "type": "assistant",
+            "uuid": "a2",
+            "parentUuid": "u2",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Part 2"}]},
+        },
+        now=5.1,
+    )
+    # Stop arrives first with empty waking tasks (session_crons + internal dream ignored).
+    # Even if transcript still had an untracked background entry, explicit [] wins.
+    turn.background.add("stale-entry")
+    turn.hook(
+        {
+            "hook_event_name": "Stop",
+            "prompt_id": "p2",
+            "background_tasks": [{"id": "dream-1", "type": "dream", "status": "running"}],
+            "session_crons": [{"id": "cron-1"}],
+        },
+        now=5.2,
+    )
+    assert not turn.done  # waiting for turn_duration
+    turn.transcript(
+        {"type": "system", "subtype": "turn_duration", "uuid": "d2", "parentUuid": "a2"}, now=5.3
+    )
+    assert turn.done
+    assert turn.result()["result"] == "Part 1\n\nPart 2"
+    assert not turn.warnings
+
+    # Timeout fallback when Stop never arrives: falls back to transcript and records warning.
+    late = tui.Turn("session-late")
+    late.transcript({"type": "user", "message": {"role": "user", "content": "hi"}}, now=10.0)
+    late.transcript(
+        {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+        },
+        now=10.1,
+    )
+    late.transcript({"type": "system", "subtype": "turn_duration"}, now=10.2)
+    late.poll_timeout(now=10.2 + tui.PAIR_TIMEOUT - 0.5)
+    assert not late.done and not late.warnings
+    late.poll_timeout(now=10.2 + tui.PAIR_TIMEOUT + 0.1)
+    assert late.done and any("Stop hook did not arrive" in w for w in late.warnings)
+
+    # Esc interruption in transcript settles immediately with error.
+    interrupted = tui.Turn("session-esc")
+    interrupted.transcript({"type": "user", "message": {"role": "user", "content": "run"}}, now=1.0)
+    interrupted.transcript(
+        {
+            "type": "user",
+            "message": {"role": "user", "content": "[Request interrupted by user for tool use]"},
+        },
+        now=2.0,
+    )
+    assert interrupted.error and "interrupted" in interrupted.error.lower()
 
 
 @pytest.mark.parametrize(
@@ -849,6 +1138,7 @@ def test_hook_timeout_settings_and_bounded_event(tmp_path: Path) -> None:
         hook = settings["hooks"][name][0]["hooks"][0]
         assert hook["timeout"] == 604800 and hook["onFailure"] == "block"
     assert "Elicitation" in settings["hooks"]
+    assert "Stop" in settings["hooks"]
     assert settings["hooks"]["PreToolUse"][0]["matcher"] == "AskUserQuestion|ExitPlanMode"
     event = tui.prompt_event(
         "f" * 32, {"tool_name": "Bash", "tool_input": {"command": "x" * 10000}}
@@ -894,3 +1184,60 @@ def test_events_are_utf8_without_escapes(capsysbinary: pytest.CaptureFixture[byt
 
     emit({"type": "result", "result": "中文"})
     assert capsysbinary.readouterr().out == '{"type": "result", "result": "中文"}\n'.encode()
+
+
+def test_waking_task_id_fallback_and_single_task_completion_clears_wait() -> None:
+    turn = tui.Turn("session-bg")
+    turn.transcript(
+        {
+            "type": "user",
+            "uuid": "u1",
+            "promptId": "p1",
+            "message": {"role": "user", "content": "go"},
+        },
+        now=1.0,
+    )
+    turn.transcript(
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parentUuid": "u1",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "started"}]},
+        },
+        now=1.1,
+    )
+    turn.transcript(
+        {"type": "system", "subtype": "turn_duration", "uuid": "d1", "parentUuid": "a1"},
+        now=1.2,
+    )
+    turn.hook(
+        {
+            "hook_event_name": "Stop",
+            "prompt_id": "p1",
+            "background_tasks": [
+                {"id": 123, "task_id": "bg-1", "type": "mcp_tool", "status": "running"},
+            ],
+        },
+        now=1.3,
+    )
+    bg = turn.background_state_event()
+    assert bg["waiting"] is True and bg["task_ids"] == ["bg-1"]
+
+    # When the sole waking task finishes, waiting must clear immediately on its task-notification.
+    turn.transcript(
+        {
+            "type": "user",
+            "uuid": "u2",
+            "promptId": "p2",
+            "turnOrigin": "task_notification",
+            "origin": {"kind": "task-notification"},
+            "message": {
+                "role": "user",
+                "content": "<task-notification><task-id>bg-1</task-id></task-notification>",
+            },
+        },
+        now=2.0,
+    )
+    after = turn.background_state_event()
+    assert after["waiting"] is False
+    assert after["task_ids"] == []

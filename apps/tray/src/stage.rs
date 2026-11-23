@@ -508,6 +508,7 @@ pub(crate) fn stage_ids_of(
 /// What the answer shows besides sessions: isolated directories, projects and workspace links.
 pub(crate) struct Places<'a> {
     pub dirs: &'a [Dir],
+    pub origins: &'a BTreeMap<String, String>,
     pub projects: &'a BTreeMap<String, Project>,
     pub links: &'a [WorkspaceLink],
     pub manual_projects: &'a [ManualProject],
@@ -720,6 +721,17 @@ fn unprojected_groups(
             .as_ref()
             .is_some_and(|(_, _, id)| places.renamed.contains(id));
         group.project = places.projects.get(&group.id).cloned();
+        if !group.sources.is_empty()
+            && let Some(cwd) = places.origins.get(&group.id)
+        {
+            group.project_name = project_name(cwd);
+            if group.first_title.is_none()
+                && group.first_prompt.is_none()
+                && group.handover.title.is_none()
+            {
+                group.title = group.project_name.clone().unwrap_or_default();
+            }
+        }
         let running = running_cwds(snapshots, &group.sources);
         let builders = isolated_builders(snapshots, &group.sources);
         group.isolated = isolated::classify(places.dirs, &group.id, &running, &builders);

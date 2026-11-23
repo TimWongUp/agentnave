@@ -311,7 +311,7 @@ fn parse_time(raw: &str) -> Option<SystemTime> {
     None
 }
 
-fn first_cwd(workspace_uris: &str) -> Option<PathBuf> {
+pub(super) fn first_cwd(workspace_uris: &str) -> Option<PathBuf> {
     let Value::Array(uris) = serde_json::from_str::<Value>(workspace_uris).ok()? else {
         return None;
     };

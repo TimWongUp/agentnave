@@ -141,6 +141,7 @@ def write_settings(
         "PermissionRequest",
         "PreToolUse",
         "PermissionDenied",
+        "Stop",
         "StopFailure",
         "Notification",
         "Elicitation",
@@ -201,7 +202,8 @@ def hook_main(directory: Path) -> int:
         held = event.get("permission_mode") == "default"
         event = {"hook_event_name": name, "permission_mode": event.get("permission_mode")}
         atomic_json(
-            directory / f"event-{uuid.uuid4().hex}.json", {**event, "agentnave_mode_blocked": held}
+            directory / f"event-{time.time_ns():020d}-{uuid.uuid4().hex}.json",
+            {**event, "agentnave_mode_blocked": held},
         )
         if held:
             emit({"decision": "block", "reason": MODE_HELD})
@@ -224,7 +226,7 @@ def hook_main(directory: Path) -> int:
                 return 0
             time.sleep(0.05)
         return 1  # Claude's onFailure=block closes a timed-out or disconnected hook.
-    atomic_json(directory / f"event-{prompt_id}.json", event)
+    atomic_json(directory / f"event-{time.time_ns():020d}-{prompt_id}.json", event)
     return 0
 
 
@@ -280,7 +282,7 @@ class Answers:
                 atomic_json(directory / f"answer-{prompt_id}.json", answer)
 
 
-def read_hooks(directory: Path, turn: Turn) -> None:
+def read_hooks(directory: Path, turn: Turn, now: float | None = None) -> None:
     for path in sorted(directory.glob("prompt-*.json")):
         prompt_id = path.stem.removeprefix("prompt-")
         if prompt_id not in turn.pending_prompts:
@@ -291,7 +293,7 @@ def read_hooks(directory: Path, turn: Turn) -> None:
             emit(prompt_event(prompt_id, event))
             turn.pending_prompts.add(prompt_id)
     for path in sorted(directory.glob("event-*.json")):
-        turn.hook(object_dict(json.loads(path.read_text(encoding="utf-8"))))
+        turn.hook(object_dict(json.loads(path.read_text(encoding="utf-8"))), now)
         path.unlink()
     for prompt_id in list(turn.pending_prompts):
         path = directory / f"prompt-{prompt_id}.json"

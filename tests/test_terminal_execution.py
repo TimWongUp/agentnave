@@ -63,6 +63,9 @@ async def test_terminal_lifecycle_uses_receipt_and_preserves_capacity(
     assert invocation in manager.active_ids()
     value = json.loads(request_path.read_text())
     assert value["task"]["text"].endswith("task")
+    assert "hold meetings" in value["task"]["text"]
+    assert "another terminal" in value["task"]["text"]
+    assert "your manager" not in value["task"]["text"]
     assert value["target_tray"]["pid"] == 42
     item: dict[str, object] = {
         "invocation_id": invocation,
@@ -803,10 +806,12 @@ def test_make_launch_account_and_shared_contract_fixture(
     run._cancel_receipt(push_doc)  # pyright: ignore[reportPrivateUsage]
     assert acked == [(expected_cancel["request_id"], tray)]
 
-    inbox = InboxSnapshot(tmp_path, 1234)
+    inbox = InboxSnapshot(tmp_path, 1234, started_at=1700000100.0)
     settled = cast(list[dict[str, object]], fixture["inbox_settlement"]["settled_requests"])
     inbox.publish({}, settled)
-    assert json.loads(inbox.path.read_text()) == fixture["inbox_settlement"]
+    inbox_doc = json.loads(inbox.path.read_text())
+    assert inbox_doc.pop("started_at") == 1700000100.0
+    assert inbox_doc == fixture["inbox_settlement"]
 
 
 @pytest.mark.asyncio
@@ -973,3 +978,118 @@ def test_terminal_unavailable_when_ancestor_is_derived_terminal(
     # Sibling derived terminal PID (not in our ancestor chain) must not block boss terminal.
     derived_pids[:] = [99]
     assert mcp_runtime.terminal_available()
+
+
+def test_terminal_available_ignores_push_providers_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_runtime, push_capability
+    from agentnave.host import Host
+
+    monkeypatch.delenv("AGENTNAVE_DERIVED_SESSION", raising=False)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+    monkeypatch.setattr(mcp_runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(push_capability.sys, "platform", "darwin")
+    push_dir = tmp_path / "push"
+    push_dir.mkdir()
+    snapshot_file = push_dir / "10.json"
+    snapshot_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "pid": 10,
+                "providers": ["codex"],
+                "terminal_providers": ["claude", "codex", "antigravity"],
+            }
+        )
+    )
+    started = snapshot_file.stat().st_mtime - 1
+
+    def parent(_pid: int) -> int:
+        return 1
+
+    def birth(_pid: int) -> float:
+        return started
+
+    monkeypatch.setattr(push_capability.os, "getppid", lambda: 10)
+    monkeypatch.setattr(push_capability, "read_process_parent", parent)
+    monkeypatch.setattr(push_capability, "read_process_started", birth)
+    monkeypatch.setattr(terminal_requests, "read_process_started", birth)
+
+    assert not push_capability.app_can_push(tmp_path, "claude")
+    assert mcp_runtime.terminal_available()
+
+
+@pytest.mark.asyncio
+async def test_background_tasks_pending_bridges_to_execution_blocked_once_without_cooldown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.models import InvocationError
+
+    launch, path = setup_tray(tmp_path, monkeypatch)
+    manager = InvocationManager()
+    manager.health_root = tmp_path
+
+    def read_turn(
+        _provider: str, _account: str | None, _session: str, anchor: dict[str, object]
+    ) -> str:
+        assert anchor["prompt_id"] == "p-start"
+        assert anchor["end_prompt_id"] == "p-end"
+        assert anchor["end_row_index"] == 6
+        return "first reply\n\nsecond reply"
+
+    monkeypatch.setattr(terminal_execution, "read_turn", read_turn)
+    invocation = manager.start(
+        InvocationRequest("claude", "task", tmp_path),
+        prepared=PreparedCommand((), tmp_path),
+        terminal=launch,
+    )
+    await wait_for_file(tmp_path / "spawn-requests" / f"{invocation}.json")
+    item: dict[str, object] = {
+        "invocation_id": invocation,
+        "service_pid": os.getpid(),
+        "state": "started",
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "anchor": {
+            "session_id": "11111111-1111-4111-8111-111111111111",
+            "prompt_id": "p-start",
+        },
+        "background_tasks_pending": {
+            "code": "background_tasks_pending",
+            "since": 1700000100.0,
+            "count": 2,
+            "tasks": ["shell:b1", "monitor:m1"],
+            "reason": "仍有 2 个后台任务运行中（shell:b1, monitor:m1）",
+        },
+    }
+    snapshot(path, {invocation: item})
+    update = await asyncio.wait_for(manager.wait_for_update(invocation, 2.0), 3)
+    assert isinstance(update, InvocationError)
+    assert update.code == "background_tasks_pending"
+    assert "shell:b1" in update.message
+    assert "first reply" not in update.message
+    # Must never write account health / cooldown state.
+    assert not (tmp_path / "provider-health.json").exists()
+    # Must fire at most once even while the started receipt keeps carrying the reminder.
+    assert await manager.wait_for_update(invocation, 0.25) is None
+
+    # Adding end_prompt_id / end_row_index on Finished must not trigger receipt_changed,
+    # and terminal.warnings must propagate to InvocationResult.warnings.
+    item["state"] = "finished"
+    item["anchor"] = {
+        "session_id": "11111111-1111-4111-8111-111111111111",
+        "prompt_id": "p-start",
+        "end_prompt_id": "p-end",
+        "end_row_index": 6,
+    }
+    item["terminal"] = {
+        "status": "succeeded",
+        "warnings": ["后台任务完成未确认"],
+    }
+    snapshot(path, {invocation: item})
+    result = await asyncio.wait_for(manager.wait(invocation), 2)
+    assert result is not None and result.status is InvocationStatus.SUCCEEDED
+    assert result.output == "first reply\n\nsecond reply"
+    assert result.warnings == ("后台任务完成未确认",)
+    await manager.shutdown()

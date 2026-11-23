@@ -9,7 +9,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -29,6 +29,7 @@ const RECORD_LIMIT: u64 = 8 << 20;
 const NEGATIVE_TTL: Duration = Duration::from_secs(15);
 
 mod antigravity;
+mod cwd;
 mod other;
 mod title;
 pub(crate) use title::CliTitle;
@@ -113,7 +114,9 @@ impl Homes {
 struct Found {
     homes: Option<Homes>,
     transcripts: HashMap<String, PathBuf>,
+    other_transcripts: HashMap<String, PathBuf>,
     desktop: HashSet<String>,
+    desktop_cwds: HashMap<String, String>,
     /// Antigravity bosses with no saved record, found by key in the CLI's or the desktop app's data.
     antigravity: HashMap<String, &'static str>,
     /// Bosses already looked for with when they missed, so gone records do not sweep on every poll
@@ -121,10 +124,13 @@ struct Found {
     searched: HashMap<String, Instant>,
 }
 
+type CachedCwd = (u64, Option<SystemTime>, Option<String>);
+
 pub(super) struct BossApps {
     /// The app a transcript names, by file and its length: transcripts only grow, so an
     /// unchanged length needs no second read and appended tails only scan new bytes.
     files: Mutex<HashMap<PathBuf, (u64, Option<&'static str>)>>,
+    cwds: Mutex<HashMap<PathBuf, CachedCwd>>,
     found: Mutex<Found>,
 }
 
@@ -139,8 +145,18 @@ impl BossApps {
     pub fn new() -> Self {
         Self {
             files: Mutex::default(),
+            cwds: Mutex::default(),
             found: Mutex::default(),
         }
+    }
+
+    /// Working directory of each workspace's original boss session, read from its session records.
+    pub fn cwds(
+        &self,
+        connection: &rusqlite::Connection,
+        homes: impl FnOnce() -> Homes,
+    ) -> HashMap<String, String> {
+        cwd::of(self, connection, homes)
     }
 
     /// Every workspace whose boss's app is known; the rest are left out. Resolve `homes`
@@ -254,6 +270,11 @@ impl BossApps {
             kept
         };
         let mut antigravity_apps = std::mem::take(&mut found.antigravity);
+        let other_transcripts = if roots_changed {
+            HashMap::new()
+        } else {
+            std::mem::take(&mut found.other_transcripts)
+        };
         let cli_roots = antigravity::roots(&homes);
         let desktop_roots = antigravity::desktop_roots(&cli_roots);
         for boss in bosses.iter().filter(|boss| {
@@ -273,6 +294,7 @@ impl BossApps {
         }
         *found = sweep(&homes);
         found.antigravity = antigravity_apps;
+        found.other_transcripts = other_transcripts;
         found.homes = Some(homes);
         found.searched = searched;
     }
@@ -473,13 +495,17 @@ fn sweep(homes: &Homes) -> Found {
             });
         }
     }
-    found.desktop = desktop_keys(homes);
+    let (desktop, desktop_cwds) = desktop_keys(homes);
+    found.desktop = desktop;
+    found.desktop_cwds = desktop_cwds;
     found
 }
 
-/// The keys of the Claude chats Claude Desktop's own records count as its chats.
-fn desktop_keys(homes: &Homes) -> HashSet<String> {
+/// The keys of the Claude chats Claude Desktop's own records count as its chats, and any startup
+/// directory each record names.
+fn desktop_keys(homes: &Homes) -> (HashSet<String>, HashMap<String, String>) {
     let mut keys = HashSet::new();
+    let mut cwds = HashMap::new();
     for data in &homes.desktop {
         for kind in ["claude-code-sessions", "local-agent-mode-sessions"] {
             files_at(&data.join(kind), 2, &mut |path| {
@@ -490,16 +516,24 @@ fn desktop_keys(homes: &Homes) -> HashSet<String> {
                     && let Ok(text) = fs::read_to_string(path)
                     && let Ok(record) = serde_json::from_str::<Value>(&text)
                 {
-                    keys.extend(
-                        desktop_session_ids(&record)
-                            .into_iter()
-                            .map(|id| boss_key("claude", id)),
-                    );
+                    let cwd = ["originCwd", "cwd"]
+                        .iter()
+                        .filter_map(|field| record[*field].as_str())
+                        .map(str::trim)
+                        .find(|dir| !dir.is_empty() && Path::new(dir).is_absolute())
+                        .map(str::to_owned);
+                    for id in desktop_session_ids(&record) {
+                        let key = boss_key("claude", id);
+                        if let Some(cwd) = &cwd {
+                            cwds.entry(key.clone()).or_insert_with(|| cwd.clone());
+                        }
+                        keys.insert(key);
+                    }
                 }
             });
         }
     }
-    keys
+    (keys, cwds)
 }
 
 /// The CLI sessions Claude Desktop counts as one of its chats.
@@ -645,7 +679,7 @@ pub(crate) fn desktop_session_in(
     let (id, path) = native_session_in(homes, host, key, file)?;
     let app = match claude_entrypoint(&path).ok()? {
         Some(entrypoint) => claude_app(&entrypoint),
-        None if desktop_keys(homes).contains(key) => CLAUDE_DESKTOP,
+        None if desktop_keys(homes).0.contains(key) => CLAUDE_DESKTOP,
         None => CLAUDE_CLI,
     };
     (app == CLAUDE_DESKTOP).then_some((id, path))
@@ -714,15 +748,24 @@ pub(crate) fn session_cwd_of(host: &str, record: &Path, id: &str) -> Option<Path
     }
 }
 
+fn read_head(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut chunk = Vec::new();
+    let name = file_name(path);
+    if name.ends_with(".zst") || name.ends_with(".zstd") {
+        let mut decoder =
+            ruzstd::decoding::StreamingDecoder::new(file).map_err(std::io::Error::other)?;
+        let _ = (&mut decoder).take(limit).read_to_end(&mut chunk);
+    } else {
+        file.take(limit).read_to_end(&mut chunk)?;
+    }
+    Ok(chunk)
+}
+
 /// The folder a boss chat ran in, from the start of its session record: Claude Code and Codex
 /// both write it there, and a CLI finds the chat to continue by it.
 pub(crate) fn session_cwd(path: &Path) -> Option<PathBuf> {
-    let mut chunk = Vec::new();
-    fs::File::open(path)
-        .ok()?
-        .take(WINDOW)
-        .read_to_end(&mut chunk)
-        .ok()?;
+    let chunk = read_head(path, WINDOW).ok()?;
     json_string_field(&chunk, b"\"cwd\":").map(PathBuf::from)
 }
 
@@ -822,16 +865,7 @@ fn claude_entrypoint_since(path: &Path, seen: u64, len: u64) -> std::io::Result<
 
 /// The `originator` in a Codex rollout's first line; Codex packs archived rollouts with zstd.
 fn codex_originator(path: &Path) -> std::io::Result<Option<String>> {
-    let file = fs::File::open(path)?;
-    let mut chunk = Vec::new();
-    if file_name(path).ends_with(".zst") {
-        ruzstd::decoding::StreamingDecoder::new(file)
-            .map_err(std::io::Error::other)?
-            .take(WINDOW)
-            .read_to_end(&mut chunk)?;
-    } else {
-        file.take(WINDOW).read_to_end(&mut chunk)?;
-    }
+    let chunk = read_head(path, WINDOW)?;
     Ok(value_of(&chunk, b"\"originator\":\"", false))
 }
 

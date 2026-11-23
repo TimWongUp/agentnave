@@ -1,4 +1,4 @@
-"""Publish the current process's pending inbox metadata for the App."""
+"""Publish the current process's pending inbox metadata for the App and inbox_watch."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
+
+from agentnave.process_info import read_process_started
 
 
 class InboxItem(TypedDict):
@@ -14,26 +16,48 @@ class InboxItem(TypedDict):
     kind: str
     role: str | None
     status: str
+    # A review wait already reported that still awaits decide_answers; not unread.
+    delivered: NotRequired[bool]
 
 
 class BossInbox(TypedDict):
     waiting: bool
+    in_flight: int
+    event_seq: int
+    delivered_seq: int
     items: list[InboxItem]
+
+
+def _default_started_at(pid: int) -> float:
+    try:
+        return read_process_started(pid)
+    except OSError:
+        return 0.0
 
 
 class InboxSnapshot:
     """Replace the file only when the externally visible state changes."""
 
-    def __init__(self, root: Path, pid: int) -> None:
+    def __init__(self, root: Path, pid: int, started_at: float | None = None) -> None:
         self.path = root / "inbox" / f"{pid}.json"
         self.pid = pid
+        self.started_at = _default_started_at(pid) if started_at is None else float(started_at)
         self._last: dict[str, object] | None = None
 
     def publish(
         self, bosses: dict[str, BossInbox], settled_requests: list[dict[str, object]] | None = None
     ) -> None:
-        live = {key: value for key, value in bosses.items() if value["waiting"] or value["items"]}
-        document: dict[str, object] = {"version": 1, "pid": self.pid, "bosses": live}
+        live = {
+            key: value
+            for key, value in bosses.items()
+            if value["waiting"] or value["items"] or value["in_flight"] > 0
+        }
+        document: dict[str, object] = {
+            "version": 1,
+            "pid": self.pid,
+            "started_at": self.started_at,
+            "bosses": live,
+        }
         if settled_requests:
             document["settled_requests"] = settled_requests
         if document == self._last:
