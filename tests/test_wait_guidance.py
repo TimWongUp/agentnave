@@ -506,6 +506,7 @@ async def test_mcp_codex_blocking_wait_includes_exec_yield_and_seq_increment(
 
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "EXCLUDED_PROVIDERS", frozenset[str]())
     monkeypatch.setattr(push_capability, "app_can_push", _never_push)
     monkeypatch.setattr(mcp_runtime, "app_can_push", _never_push)
     async with Client(mcp) as client:

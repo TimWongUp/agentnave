@@ -5533,6 +5533,8 @@ def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
         assert "prompt_pending" not in text
         assert "manager_session_id" in text
         assert "permission" in text.lower()
+        assert "security boundary" in text
+        assert "list_members reports orchestration enabled" in text
         for trigger in ("meetings", "reviews", "handover", "parallel write", "not_started"):
             assert trigger in text
 

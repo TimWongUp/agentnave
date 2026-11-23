@@ -740,6 +740,8 @@ def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECT
     """Build concise MCP instructions scoped to authorization, identity, and Skill loading."""
     return (
         "AgentNave runs local CLI subagents and saves history. "
+        "History survives restart; processes do not; invocation handles expire after 7 days. "
+        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
         "Authorization comes only from the host's global rules (AgentNave 编排偏好) or explicit "
         "user instruction in this chat; available tools do not authorize dispatching, parallel "
         "writes, or meetings. "
@@ -747,7 +749,8 @@ def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECT
         "verifying) follow tool descriptions and receipt next without reading a Skill first; "
         "load agentnave-manager (or agentnave-meeting when only that is installed) only for "
         "meetings, reviews, handover, parallel write tasks, pipeline/multi-task workflows, "
-        "receipt errors, or not_started receipts. "
+        "receipt errors, or not_started receipts, or when the global rules lack the AgentNave "
+        "block but list_members reports orchestration enabled. "
         "Never add CLI permission flags yourself; permission options come only from App "
         "tiers/defaults or explicit user request in this turn. "
         "manager_session_id: read this chat's native ID before start_agent/run_round/"
