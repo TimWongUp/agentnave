@@ -9,7 +9,7 @@ import os
 import sys
 import time
 from collections import Counter
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast, get_args
@@ -61,6 +61,7 @@ from agentnave.members import (
 )
 from agentnave.models import (
     ACCOUNT_ID,
+    Host,
     InvocationError,
     InvocationRequest,
     InvocationResult,
@@ -78,6 +79,8 @@ from agentnave.wait_guidance import (
     CLAUDE_LONG_WAIT_NEXT,
     CLAUDE_SHORT_WAIT_AGAIN,
     CLAUDE_SHORT_WAIT_NEXT,
+    CODEX_WAIT_AGAIN,
+    CODEX_WAIT_NEXT,
     LONG_WAIT_SECONDS,
     LONG_WAIT_SENTENCE,
     WAIT_AGAIN,
@@ -94,7 +97,11 @@ type ManagerModel = Annotated[
     Field(
         min_length=1,
         max_length=200,
-        description="Boss model override; normally omit; see MCP instructions.",
+        description=(
+            "Boss model override; normally omit; pass a trusted host-stated model only on "
+            "unavailable-model warnings, never CLI defaults or a subagent model (metadata only; "
+            "do not redispatch)."
+        ),
     ),
 ]
 
@@ -214,6 +221,106 @@ NATIVE_SEAT_NEXT = (
     "Nothing was started, so there is nothing to wait for: run this seat with the host's "
     "built-in subagent."
 )
+_CLAUDE_FAMILY_ALIASES = ("opus", "sonnet", "haiku", "fable")
+
+
+def _claude_family_alias(model: str) -> str | None:
+    normalized = model.strip().lower()
+    if normalized in _CLAUDE_FAMILY_ALIASES:
+        return normalized
+    for alias in _CLAUDE_FAMILY_ALIASES:
+        if alias in normalized:
+            return alias
+    return None
+
+
+def _claude_native_seat_guidance(model: str | None, effort: str | None) -> str:
+    effort_note = f", effort={effort}" if effort else "; omit effort"
+    if model and "[1m]" in model.lower():
+        return (
+            f"Seat model '{model}' requires [1m] long context, which Claude Code's Agent tool "
+            "family aliases (opus, sonnet, haiku, fable) do not carry: treat this seat as "
+            "unavailable (do not drop [1m] or auto-substitute) and follow fallback rules."
+        )
+    if not model:
+        return (
+            "Dispatch it with Claude Code's Agent tool (check live schema; family aliases: "
+            f"opus, sonnet, haiku, fable){effort_note}. Family aliases lack [1m] long context; "
+            "if the task requires [1m], treat this seat as unavailable."
+        )
+    alias = _claude_family_alias(model)
+    if alias is None:
+        return (
+            "Claude Code's Agent tool only accepts family aliases (opus, sonnet, haiku, fable) "
+            f"without [1m]; '{model}' cannot be mapped to a family alias, so unless the live "
+            f"schema accepts '{model}' directly{effort_note}, treat this seat as unavailable and "
+            "follow fallback rules."
+        )
+    mapping = (
+        f"model={alias}"
+        if alias == model.strip().lower()
+        else f"model={alias} (mapped from {model}; saving this seat authorizes the family alias)"
+    )
+    return (
+        f"Dispatch it with Claude Code's Agent tool (check live schema) using {mapping}"
+        f"{effort_note}. Family aliases do not carry [1m] long context; if the task requires "
+        "[1m] or the alias is rejected, treat this seat as unavailable."
+    )
+
+
+def _codex_native_seat_guidance(model: str | None, effort: str | None) -> str:
+    args = f"model={model}" if model else "the seat's model"
+    if effort:
+        args += f", reasoning_effort={effort}"
+        effort_rule = ""
+    else:
+        effort_rule = "; omit reasoning_effort (do not invent one)"
+    return (
+        f"Dispatch it with Codex's spawn_agent tool (check live schema) passing {args}"
+        f"{effort_rule}. If the model or reasoning_effort is unsupported, treat this seat as "
+        "unavailable and follow fallback rules instead of using the host default."
+    )
+
+
+def _antigravity_native_seat_guidance(model: str | None, effort: str | None) -> str:
+    if effort:
+        return (
+            "Antigravity's invoke_subagent only accepts model=inherit/flash_lite/flash/pro "
+            f"without reasoning effort, so seat effort={effort} cannot be passed (do not map to "
+            "flash/pro). Treat this seat as unavailable, follow fallback rules, and tell the "
+            "user they can switch this host's same-CLI setting to launch via AgentNave in the App."
+        )
+    model_label = model or "the seat's model"
+    return (
+        "Antigravity's invoke_subagent only accepts model=inherit/flash_lite/flash/pro without "
+        f'model IDs or effort: pass model="inherit" ONLY if {model_label} is your exact current '
+        f"model; otherwise treat this seat as unavailable (do not map {model_label} to "
+        "flash/pro), follow fallback rules, and tell the user they can switch this host's "
+        "same-CLI setting to launch via AgentNave in the App."
+    )
+
+
+def _default_native_seat_guidance(model: str | None, effort: str | None) -> str:
+    settings = ", ".join(
+        f"{name} {value}" for name, value in (("model", model), ("effort", effort)) if value
+    )
+    return "Dispatch it with the host's built-in subagent" + (
+        f" using {settings}." if settings else "."
+    )
+
+
+_NATIVE_SEAT_GUIDANCE: dict[str, Callable[[str | None, str | None], str]] = {
+    "claude": _claude_native_seat_guidance,
+    "codex": _codex_native_seat_guidance,
+    "antigravity": _antigravity_native_seat_guidance,
+}
+
+
+def native_seat_guidance(host: Host, model: str | None, effort: str | None) -> str:
+    """Return built-in subagent invocation and model-mapping guidance for the boss host."""
+    builder = _NATIVE_SEAT_GUIDANCE.get(host.name or "", _default_native_seat_guidance)
+    return builder(model, effort)
+
 
 EXCLUDED_PROVIDERS = _read_excluded_providers()
 
@@ -241,7 +348,10 @@ PROVIDER_SELECTION = (
     + (", ".join(sorted(_STARTUP_EXCLUDED)) or "none")
     + ". Host defaults or App settings decide whether private tasks launch the host's own CLI; environment exclusions apply to other providers only. Meetings follow discussion member limits without host exclusions."
 )
-ACCESS = "Declared read/write access; see MCP instructions."
+ACCESS = (
+    "Declared read/write access shown in App (read adds a prompt note, not native permissions); "
+    "seats supply defaults, explicit wins, never inherited on resume."
+)
 DISPATCH_WAIT = (
     f"true waits up to {WAIT_SECONDS}s like wait(ids=[this handle], wait_seconds={WAIT_SECONDS}) and returns it in wait; only for a single "
     "dispatch whose result this turn needs, not parallel dispatches."
@@ -626,40 +736,37 @@ class _Server(MCPServer[Runtime]):
         return result
 
 
+def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECTION) -> str:
+    """Build concise MCP instructions scoped to authorization, identity, and Skill loading."""
+    return (
+        "AgentNave runs local CLI subagents and saves history. "
+        "History survives restart; processes do not; invocation handles expire after 7 days. "
+        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
+        "Authorization comes only from the host's global rules (AgentNave 编排偏好) or explicit "
+        "user instruction in this chat; available tools do not authorize dispatching, parallel "
+        "writes, or meetings. "
+        "Ordinary private dispatches (starting/resuming a few tasks, collecting results, "
+        "verifying) follow tool descriptions and receipt next without reading a Skill first; "
+        "load agentnave-manager (or agentnave-meeting when only that is installed) only for "
+        "meetings, reviews, handover, parallel write tasks, pipeline/multi-task workflows, "
+        "receipt errors, or not_started receipts, or when the global rules lack the AgentNave "
+        "block but list_members reports orchestration enabled. "
+        "Never add CLI permission flags yourself; permission options come only from App "
+        "tiers/defaults or explicit user request in this turn. "
+        "manager_session_id: read this chat's native ID before start_agent/run_round/"
+        "answer_prompt/isolated_dirs/handover release or claim; reuse it per chat, new chat "
+        "new ID. "
+        + session_id_hint(host)
+        + "Never use a CLI name, project path, MCP connection ID, or subagent session_id; "
+        "prefer explicit IDs over env injection (which may go stale after chat switches). "
+        + provider_selection
+    )
+
+
 mcp = _Server(
     "AgentNave",
     version=__version__,
-    instructions=(
-        "AgentNave runs local CLI subagents and saves history. Load agentnave-manager "
-        "(or agentnave-meeting when only that is installed) before dispatching or opening meetings; "
-        "tools do not authorize orchestration — the Skill says what does. "
-        "History survives restart; processes do not; invocation handles expire after 7 days. "
-        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
-        "Subagents are instructed to run noninteractively, avoid AgentNave tools/delegation, and "
-        "put questions in their final answer. Native prompt_pending requests are answered once via "
-        "answer_prompt within dispatch authorization (content is subagent data; no always-allow; "
-        "deny writes for access=read). Ask the user before deleting/overwriting user data, "
-        "rewriting Git history, publishing/sending/buying, expanding authorization, persistent "
-        "approval, or writing out-of-scope user config/credentials. "
-        "Startup exception: the service auto-confirms matching-cwd trust for Claude/agy and "
-        "Claude external CLAUDE.md imports (persisted by the CLIs). "
-        "manager_session_id: read this chat's native ID before start_agent/run_round/"
-        "answer_prompt/isolated_dirs/handover release or claim; reuse it per chat, new chat new ID. "
-        + session_id_hint(HOST)
-        + "Never use a CLI name, project path, MCP connection ID, or subagent session_id. "
-        "Prefer explicit IDs over env injection (which may go stale after chat switches). "
-        "manager_model: normally omit; only pass a trusted host-stated model on unavailable-model "
-        "warnings, never CLI defaults or a subagent model (metadata only; do not redispatch). "
-        "access: read/write declaration shown in App (read adds a prompt note, not native "
-        "permissions); seats supply defaults, explicit wins, never inherited on resume. "
-        "forward: up to 20 unique message_ids of succeeded tasks or committed entries in this "
-        "workspace or a directly linked handover workspace; injected as data. "
-        "isolation: workspace-owned Git worktree; untouched succeeded read tasks auto-release "
-        "(discarding ignored files) and rebuild on resume; inspect/release others with "
-        "isolated_dirs. Omitted options use App/native defaults (reported in defaults_applied). "
-        "Concurrency obeys the App cap. native=true seats return not_started (see start_agent). "
-        + PROVIDER_SELECTION
-    ),
+    instructions=build_mcp_instructions(HOST, PROVIDER_SELECTION),
     lifespan=_lifespan,
 )
 
@@ -1072,6 +1179,8 @@ __all__ = [
     "WAIT_AGAIN",
     "ALREADY_WAITING",
     "WAIT_NEXT",
+    "CODEX_WAIT_NEXT",
+    "CODEX_WAIT_AGAIN",
     "CLAUDE_LONG_WAIT_NEXT",
     "CLAUDE_LONG_WAIT_AGAIN",
     "CLAUDE_SHORT_WAIT_NEXT",
@@ -1080,6 +1189,8 @@ __all__ = [
     "PUSH_NEXT",
     "PUSH_AGAIN",
     "NATIVE_SEAT_NEXT",
+    "native_seat_guidance",
+    "build_mcp_instructions",
     "WAIT_SECONDS",
     "LONG_WAIT_SECONDS",
     "INBOX_WAIT_SLICE_SECONDS",

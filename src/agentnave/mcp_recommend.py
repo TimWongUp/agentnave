@@ -20,7 +20,6 @@ from agentnave.seat_recommendation import (
     RecommendationError,
     recommend,
 )
-from agentnave.task_start import native_seat_guidance
 
 
 def _candidate_payload(candidate: Candidate) -> SeatCandidatePayload:
@@ -152,5 +151,5 @@ def native_seat_message(found: Recommendation) -> str:
     """Why a chosen seat on the host's own CLI starts nothing, and how to run it instead."""
     return (
         f"the chosen seat {found.seat} ({found.role}) is the host's own CLI, so nothing was "
-        "started. " + native_seat_guidance(found.model, found.effort)
+        "started. " + runtime.native_seat_guidance(runtime.HOST, found.model, found.effort)
     )

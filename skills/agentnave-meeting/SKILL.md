@@ -76,7 +76,7 @@ description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude 
 
 ## 等待与收尾
 
-以回执 `next` 为准收齐结果；状态字段（`wait_elapsed`、`follow_up`、`prompt_pending` 等）见 `wait` 工具说明，审核、席位失败与补跑细节见[会话与审核](references/studio.md)，宿主专属等待做法见 [Claude Code](references/claude.md)、[Antigravity CLI](references/antigravity.md)、[Grok CLI](references/grok.md)、[Codex CLI](references/codex.md)。
+以回执 `next` 为准收齐结果；状态字段（`wait_elapsed`、`follow_up`、`prompt_pending` 等）见 `wait` 工具说明，审核、席位失败与补跑细节见[会话与审核](references/studio.md)，宿主专属等待做法见 [Claude Code](references/claude.md)、[Antigravity CLI](references/antigravity.md)、[Grok CLI](references/grok.md)。
 
 1. **怎么等**：`run_round` 保持默认 `wait=false`，按回执 `next` 选择本连接的收件方式：
    - **给出后台等待命令时**（如已验收的交互 `agy`、`grok` CLI）：按回执指定的命令与工具参数在后台原样运行，不挂阻塞 `wait`；命令在前台直接返回时同样立即处理。输出 `ready` 或 `expired` 时调收件箱 `wait(wait_seconds=0)`（省略 `ids`、同 `manager_session_id`）收取，仍有在途再照回执 `next` 续等；输出 `already_watching` 或 `all_done` 直接结束本轮；输出 `service_gone` 回到当前连接核对。

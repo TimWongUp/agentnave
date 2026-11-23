@@ -235,16 +235,6 @@ def role_access(role: str | None) -> Literal["read", "write"] | None:
     return "read" if name in get_args(ReviewRole.__value__) else None
 
 
-def native_seat_guidance(model: str | None, effort: str | None) -> str:
-    """How to run a native seat instead: the host's own subagent, at the saved settings."""
-    settings = ", ".join(
-        f"{name} {value}" for name, value in (("model", model), ("effort", effort)) if value
-    )
-    return "Dispatch it with the host's built-in subagent" + (
-        f" using {settings}." if settings else "."
-    )
-
-
 class NativeSeat(Exception):
     """The chosen seat belongs to this host's CLI, so the service can start nothing for it."""
 
