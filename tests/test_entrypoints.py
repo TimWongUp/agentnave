@@ -5556,8 +5556,10 @@ async def test_published_tool_descriptions_within_2000_chars_and_cover_private_d
     start_desc = tools["start_agent"].description or ""
     assert "title" in start_desc and "cwd" in start_desc and "self-contained" in start_desc
     assert "isolated_dirs" in start_desc and "succeeded" in start_desc
+    assert "file:line" in start_desc
     many_desc = tools["start_agents"].description or ""
     assert "title" in many_desc and "cwd" in many_desc and "isolated_dirs" in many_desc
+    assert "file:line" in many_desc
     wait_desc = tools["wait"].description or ""
     assert "follow_up" in wait_desc and "succeeded" in wait_desc
     prompt_desc = tools["answer_prompt"].description or ""

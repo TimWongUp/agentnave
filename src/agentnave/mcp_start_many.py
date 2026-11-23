@@ -175,7 +175,8 @@ async def start_agents(
     Each task sets access="read" or "write" (no per-task model, effort, or permission overrides;
     parallel writes are your decision). With >=2 write tasks, each gets a new isolated worktree
     automatically (explicit isolation wins; failures return start_failed, never unisolated);
-    after verifying, merge and release retained worktrees with isolated_dirs.
+    after verifying, merge and release retained worktrees with isolated_dirs. For fact-finding,
+    name the exact target and require file:line evidence; compare full sets for "all X" answers.
 
     results match tasks order: started items return start_agent receipts (invocation_id goes to
     wait; follow top-level next; succeeded does not mean done—verify artifacts and follow_up);

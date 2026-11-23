@@ -253,7 +253,9 @@ async def start_agent(
     Omit model, effort, and permission keys unless the user named them (if rejected, pick an
     allowed value from the error). Declare access="read" for investigation, pass session_id and
     re-pass access when resuming, and pass isolation for write tasks (after verifying, merge and
-    release with isolated_dirs). Follow receipt next to collect results; succeeded does not mean
+    release with isolated_dirs). For fact-finding, name the exact target (e.g. which schema or
+    class) and require file:line evidence; compare full sets for "all X" answers before trusting.
+    Follow receipt next to collect results; succeeded does not mean
     done—verify artifacts and follow_up. A seat native to this host starts nothing and returns
     status="not_started", reason="native_seat", and subagent instructions in message (no wait).
     No deadline; only native prompts accept running replies via answer_prompt; cancel stops work;
