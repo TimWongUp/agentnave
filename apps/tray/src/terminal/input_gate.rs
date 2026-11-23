@@ -1,32 +1,15 @@
-//! Tracks human drafts and holds user input while a wakeup is being submitted.
-use std::time::{Duration, Instant};
-
-struct Held {
-    chars: usize,
-    inputs: Vec<(Vec<u8>, bool)>,
-}
+//! Tracks human drafts for derived-session busy checks.
 
 #[derive(Default)]
 pub(super) struct Gate {
-    last: Option<Instant>,
     draft: usize,
     sequence: Vec<u8>,
     pasting: bool,
-    held: Option<Held>,
-    #[cfg(test)]
-    draft_wait: Option<Duration>,
 }
 
 impl Gate {
-    pub fn input(&mut self, bytes: &[u8], paste: bool) -> bool {
-        self.last = Some(Instant::now());
-        if let Some(held) = &mut self.held {
-            held.inputs.push((bytes.to_vec(), paste));
-            true
-        } else {
-            self.track_input(bytes, paste);
-            false
-        }
+    pub fn input(&mut self, bytes: &[u8], paste: bool) {
+        self.track_input(bytes, paste);
     }
 
     fn track_input(&mut self, bytes: &[u8], paste: bool) {
@@ -44,57 +27,8 @@ impl Gate {
         }
     }
 
-    pub fn ready(&self) -> bool {
-        let quiet = if self.draft == 0 {
-            Duration::from_secs(3)
-        } else {
-            self.draft_delay()
-        };
-        self.held.is_none() && self.last.is_none_or(|at| at.elapsed() >= quiet)
-    }
-
     pub fn has_draft(&self) -> bool {
         self.draft > 0
-    }
-
-    fn draft_delay(&self) -> Duration {
-        #[cfg(test)]
-        if let Some(delay) = self.draft_wait {
-            return delay;
-        }
-        Duration::from_secs(300)
-    }
-
-    #[cfg(all(test, unix))]
-    pub fn set_draft_wait(&mut self, delay: Duration) {
-        self.draft_wait = Some(delay);
-    }
-
-    #[cfg(all(test, unix))]
-    pub fn is_holding(&self) -> bool {
-        self.held.is_some()
-    }
-
-    pub fn hold(&mut self, chars: usize) {
-        self.held = Some(Held {
-            chars,
-            inputs: Vec::new(),
-        });
-    }
-
-    pub fn release(&mut self, commit: bool) -> (usize, Vec<u8>) {
-        let Some(held) = self.held.take() else {
-            return (0, Vec::new());
-        };
-        if commit {
-            self.draft = 0;
-        }
-        let mut bytes = Vec::new();
-        for (input, paste) in held.inputs {
-            self.track_input(&input, paste);
-            bytes.extend(input);
-        }
-        (held.chars, bytes)
     }
 
     fn key(&mut self, code: u32, modifiers: u32) {
@@ -245,17 +179,20 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn counts_text_paste_and_edit_keys() {
         let mut g = Gate::default();
+        assert!(!g.has_draft());
         g.input("你好".as_bytes(), false);
         assert_eq!(g.draft, 2);
+        assert!(g.has_draft());
         g.input(b"\x7f\x08\x7f", false);
         assert_eq!(g.draft, 0);
+        assert!(!g.has_draft());
         g.input(b"a\rb", true);
         assert_eq!(g.draft, 3);
-        g.last = Some(Instant::now() - Duration::from_secs(61));
-        assert!(!g.ready());
+        assert!(g.has_draft());
         g.input(b"\x15", false);
         assert_eq!(g.draft, 0);
         g.input(b"\x1b[20", false);
@@ -265,47 +202,6 @@ mod tests {
         assert_eq!(g.draft, 0);
         g.input(b"x\x03", false);
         assert_eq!(g.draft, 0);
-    }
-    #[test]
-    fn draft_waits_five_minutes_since_latest_user_input() {
-        let mut g = Gate::default();
-        g.input(b"draft", false);
-        g.last = Some(Instant::now() - Duration::from_secs(299));
-        assert!(!g.ready());
-        g.last = Some(Instant::now() - Duration::from_secs(300));
-        assert!(g.ready());
-        g.input(b"x", false);
-        assert!(!g.ready());
-        g.last = Some(Instant::now() - Duration::from_secs(299));
-        assert!(!g.ready());
-        g.last = Some(Instant::now() - Duration::from_secs(300));
-        assert!(g.ready());
-        g.hold(1);
-        assert!(!g.ready());
-        g.input(b"new", false);
-        assert_eq!(g.release(true).1, b"new");
-        assert_eq!(g.draft, 3);
-        g.input(b"\r", false);
-        g.last = Some(Instant::now() - Duration::from_secs(2));
-        assert!(!g.ready());
-        g.last = Some(Instant::now() - Duration::from_secs(3));
-        assert!(g.ready());
-    }
-
-    #[test]
-    fn cancelled_wakeup_retains_old_draft_and_applies_held_edits() {
-        let mut gate = Gate::default();
-        gate.input(b"old", false);
-        gate.hold(2);
-        gate.input(b"\x7fxy", false);
-        let (chars, held) = gate.release(false);
-        assert_eq!(chars, 2);
-        assert_eq!(held, b"\x7fxy");
-        assert_eq!(gate.draft, 4);
-        gate.hold(2);
-        gate.input(b"z", false);
-        assert_eq!(gate.release(true).1, b"z");
-        assert_eq!(gate.draft, 1);
     }
 
     #[test]
@@ -320,6 +216,6 @@ mod tests {
         assert_eq!(g.draft, 4);
         g.input(b"\x1b[99;5u", false);
         assert_eq!(g.draft, 0);
-        assert!(!g.ready());
+        assert!(!g.has_draft());
     }
 }

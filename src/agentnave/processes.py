@@ -74,6 +74,9 @@ async def spawn_process(
 # Claude Code withholds these from its own children, MCP servers included, so a subagent's
 # login would otherwise depend on which host started the service (ADR-0058).
 WITHHELD_CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN",)
+# Outer terminal-pane wrappers such as herdr export session bindings that nested CLIs must not
+# inherit and overwrite (ADR-0114).
+STRIP_ENV_PREFIXES = ("HERDR_",)
 INHERITED_HOST_ENV = (
     "AGENTNAVE_HOST",
     "AGENTNAVE_HOST_APP",
@@ -105,6 +108,12 @@ def provider_environment(
     env.pop("SERVER__PORT", None)
     env.pop("SERVER__HOST", None)
     for name in (*NATIVE_SESSION_ENV.values(), *WITHHELD_CREDENTIALS, *unset_env):
+        env.pop(name, None)
+    for name in [
+        key
+        for key in env
+        if (key.upper() if os.name == "nt" else key).startswith(STRIP_ENV_PREFIXES)
+    ]:
         env.pop(name, None)
     # A provider may load global MCP entries too; those relays are not boss connections.
     env["AGENTNAVE_DISPATCHED"] = "1"

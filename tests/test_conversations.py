@@ -3913,7 +3913,11 @@ async def test_native_prompt_inbox_validation_ownership_and_audit(
         inbox_path = data_root / "inbox" / f"{os.getpid()}.json"
         for _ in range(400):
             if inbox_path.exists():
-                break
+                boss_entry = json.loads(inbox_path.read_text())["bosses"].get(
+                    boss_key(None, "owner")
+                )
+                if boss_entry and boss_entry["items"]:
+                    break
             await asyncio.sleep(0.01)
         event = json.loads(inbox_path.read_text())["bosses"][boss_key(None, "owner")]["items"][0]
         assert event["kind"] == "prompt" and event["status"] == "prompt_pending"
@@ -3925,7 +3929,10 @@ async def test_native_prompt_inbox_validation_ownership_and_audit(
             )[0]
         )
         assert update["reason"] == "prompt_pending"
-        assert not inbox_path.exists()
+        after_wait = json.loads(inbox_path.read_text())["bosses"][boss_key(None, "owner")]
+        assert after_wait["items"] == []
+        assert after_wait["in_flight"] == 1
+        assert after_wait["event_seq"] == after_wait["delivered_seq"]
         prompt = _data(cast(list[object], update["prompts"])[0])
         assert prompt["content_source"] == "subagent_data"
         assert prompt["tool_input"] == "{}"
@@ -5307,7 +5314,7 @@ async def test_push_receipt_and_inbox_event_lifecycle(
     from agentnave.host import Host
     from agentnave.native_sessions import boss_key
 
-    monkeypatch.setattr(mcp_runtime, "HOST", Host("grok", "env"))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
     monkeypatch.setattr(push_capability.os, "getppid", lambda: 4242)
 
     def parent(_pid: int) -> int:
@@ -5321,8 +5328,8 @@ async def test_push_receipt_and_inbox_event_lifecycle(
     push_dir = data_root / "push"
     push_dir.mkdir(parents=True)
     push_file = push_dir / "4242.json"
-    push_file.write_text(json.dumps({"version": 1, "pid": 4242, "providers": ["grok"]}))
-    key = boss_key("grok", "boss-session")
+    push_file.write_text(json.dumps({"version": 1, "pid": 4242, "providers": ["codex"]}))
+    key = boss_key("codex", "boss-session")
     path = data_root / "inbox" / f"{os.getpid()}.json"
     monkeypatch.setattr(InvocationManager, "spawn_interval", (0.0, 0.0))
     async with Client(mcp) as client:
@@ -5350,7 +5357,11 @@ async def test_push_receipt_and_inbox_event_lifecycle(
         expected_next = mcp_runtime.WAIT_NEXT if sys.platform == "win32" else mcp_runtime.PUSH_NEXT
         assert started["next"] == expected_next
         async with asyncio.timeout(30):
-            while not path.exists():
+            while True:
+                if path.exists():
+                    entry = json.loads(path.read_text())["bosses"].get(key)
+                    if entry and entry["items"]:
+                        break
                 await asyncio.sleep(0.05)
         document = json.loads(path.read_text())
         event = document["bosses"][key]["items"][0]
@@ -5372,7 +5383,10 @@ async def test_push_receipt_and_inbox_event_lifecycle(
             mcp_runtime.WAIT_AGAIN if sys.platform == "win32" else mcp_runtime.PUSH_AGAIN
         )
         assert result["next"] == expected_again
-        assert not path.exists()
+        after_entry = json.loads(path.read_text())["bosses"][key]
+        assert after_entry["in_flight"] == 1
+        assert after_entry["items"] == []
+        assert after_entry["event_seq"] == after_entry["delivered_seq"] == 1
         # Explicit ids follow the same push guidance and carry no blocking-only next seq.
         explicit = await _call(
             client,
@@ -5384,9 +5398,11 @@ async def test_push_receipt_and_inbox_event_lifecycle(
                 "seq": 1,
             },
         )
-        assert explicit["next"] == expected_again
-        if sys.platform != "win32":
-            assert "Next wait: seq" not in str(explicit["next"])
+        if sys.platform == "win32":
+            # Windows has no push, so blocking guidance carries the next seq.
+            assert explicit["next"] == f"{expected_again} Next wait: seq=2."
+        else:
+            assert explicit["next"] == expected_again
         # wait=true must not hand the boss a blocking WAIT_AGAIN inside a push receipt.
         with monkeypatch.context() as patch:
 
@@ -5461,26 +5477,42 @@ async def test_inbox_snapshot_tracks_blocking_wait(
         task = asyncio.create_task(_call(client, "wait", {"manager_session_id": "waiting-chat"}))
         await asyncio.wait_for(entered.wait(), 2)
         document = json.loads(path.read_text())
-        assert document["bosses"][boss_key(None, "waiting-chat")] == {"waiting": True, "items": []}
+        assert document["bosses"][boss_key(None, "waiting-chat")] == {
+            "waiting": True,
+            "in_flight": 1,
+            "event_seq": 0,
+            "delivered_seq": 0,
+            "items": [],
+        }
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         await asyncio.wait_for(stopped.wait(), 2)
-        assert not path.exists()
+        assert json.loads(path.read_text())["bosses"][boss_key(None, "waiting-chat")] == {
+            "waiting": False,
+            "in_flight": 1,
+            "event_seq": 0,
+            "delivered_seq": 0,
+            "items": [],
+        }
         await _cancel(client, sleeping["invocation_id"])
+        assert not path.exists()
 
 
 @pytest.mark.asyncio
 async def test_inbox_snapshot_tracks_review_until_decided(
     tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from agentnave.host import Host
     from agentnave.native_sessions import boss_key
 
     def can_push(_root: Path, _provider: str | None) -> bool:
         return True
 
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
     monkeypatch.setattr(mcp_runtime, "app_can_push", can_push)
     path = data_root / "inbox" / f"{os.getpid()}.json"
+    key = boss_key("codex", "review-chat")
     async with Client(mcp) as client:
         started = await _call(
             client,
@@ -5504,21 +5536,15 @@ async def test_inbox_snapshot_tracks_review_until_decided(
         async with asyncio.timeout(30):
             receipt = await _call(client, "wait", {"manager_session_id": "review-chat"})
         assert _data(cast(list[object], receipt["rounds"])[0])["reason"] == "review_needed"
-        items = json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"]
+        items = json.loads(path.read_text())["bosses"][key]["items"]
         event = next(item for item in items if item["kind"] == "review")
         assert event["status"] == "review_needed" and event["role"] == "reviewer"
-        assert (
-            json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"][0]["key"]
-            == event["key"]
-        )
+        assert json.loads(path.read_text())["bosses"][key]["items"][0]["key"] == event["key"]
         await _call(client, "decide_answers", {"round_id": round_id, "decisions": {"a": "publish"}})
         async with asyncio.timeout(30):
             while (
                 not path.exists()
-                or json.loads(path.read_text())["bosses"][boss_key(None, "review-chat")]["items"][
-                    0
-                ]["kind"]
-                != "task_end"
+                or json.loads(path.read_text())["bosses"][key]["items"][0]["kind"] != "task_end"
             ):
                 await asyncio.sleep(0.05)
         await _call(client, "wait", {"manager_session_id": "review-chat", "wait_seconds": 0})

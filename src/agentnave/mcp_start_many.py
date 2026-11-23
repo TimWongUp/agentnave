@@ -206,11 +206,14 @@ async def start_agents(
                 )
             )
     conversations = _conversations(ctx)
+    ctx.request_context.lifespan_context.refresh_inbox()
     payload: StartAgentsPayload = {"results": results}
     if any(item["status"] != "not_started" for item in results):
         if unreceived := _unreceived(conversations, manager_session_id):
             payload["unreceived"] = unreceived
-        payload["next"] = runtime.wait_guidance()
+        payload["next"] = runtime.wait_guidance(
+            ctx=ctx, boss_key=conversations.boss_key_of(manager_session_id)
+        )
     return payload
 
 

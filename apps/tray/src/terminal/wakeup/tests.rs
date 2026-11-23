@@ -1,89 +1,17 @@
+#[cfg(unix)]
+use super::super::session::Session;
 use super::*;
+#[cfg(unix)]
 use serde_json::json;
-
-#[test]
-fn failed_write_stays_attempted_but_clean_blocked_or_cancelled_can_retry() {
-    let item = Item {
-        key: "one".into(),
-        kind: "task_end".into(),
-        role: None,
-        status: None,
-    };
-    let mut attempted = HashSet::from(["one".to_owned()]);
-    let mut failed = HashSet::new();
-    update_attempts(
-        std::slice::from_ref(&item),
-        WakeupOutcome::Failed,
-        &mut attempted,
-        &mut failed,
-    );
-    assert!(attempted.contains("one") && failed.contains("one"));
-    update_attempts(
-        std::slice::from_ref(&item),
-        WakeupOutcome::Blocked,
-        &mut attempted,
-        &mut failed,
-    );
-    assert!(!attempted.contains("one") && failed.contains("one"));
-    attempted.insert("one".to_owned());
-    update_attempts(
-        std::slice::from_ref(&item),
-        WakeupOutcome::Cancelled,
-        &mut attempted,
-        &mut failed,
-    );
-    assert!(!attempted.contains("one") && !failed.contains("one"));
-    attempted.insert("one".to_owned());
-    update_attempts(
-        &[item],
-        WakeupOutcome::Delivered,
-        &mut attempted,
-        &mut failed,
-    );
-    assert!(attempted.contains("one") && !failed.contains("one"));
-}
-
-#[test]
-fn ignores_stale_and_symlinked_inbox_files() {
-    let temp = tempfile::tempdir().unwrap();
-    let dir = temp.path().join("inbox");
-    fs::create_dir(&dir).unwrap();
-    let pid = std::process::id();
-    let path = dir.join(format!("{pid}.json"));
-    let document = json!({"version":1,"pid":pid,"bosses":{"boss":{"waiting":false,"items":[{"key":"one","kind":"task_end"}]}}});
-    fs::write(&path, document.to_string()).unwrap();
-    assert!(inboxes(temp.path()).contains_key("boss"));
-    let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let start = system.process(Pid::from_u32(pid)).unwrap().start_time();
-    let old = UNIX_EPOCH + Duration::from_secs(start.saturating_sub(10));
-    fs::OpenOptions::new()
-        .write(true)
-        .open(&path)
-        .unwrap()
-        .set_modified(old)
-        .unwrap();
-    assert!(!inboxes(temp.path()).contains_key("boss"));
-    #[cfg(unix)]
-    {
-        let target = temp.path().join("target.json");
-        fs::write(&target, document.to_string()).unwrap();
-        fs::remove_file(&path).unwrap();
-        std::os::unix::fs::symlink(&target, &path).unwrap();
-        assert!(!inboxes(temp.path()).contains_key("boss"));
-    }
-}
 
 #[test]
 fn prune_state_preserves_attempted_while_waiting_and_clears_departed_keys() {
     let mut state = WakeupState::default();
     state.attempted.insert("review-1".into());
     state.attempted.insert("done-1".into());
-    state.seen.insert("review-1".into(), Instant::now());
-    state.seen.insert("done-1".into(), Instant::now());
     state.failed.insert("done-1".into());
 
-    let mut raw = HashMap::new();
+    let mut raw = std::collections::HashMap::new();
     raw.insert(
         "boss".to_owned(),
         RawBoss {
@@ -93,14 +21,16 @@ fn prune_state_preserves_attempted_while_waiting_and_clears_departed_keys() {
                 kind: "review".into(),
                 role: None,
                 status: None,
+                delivered: false,
             }],
+            in_flight: 1,
+            has_unread: true,
+            unread_count: 1,
         },
     );
     prune_state(&raw, &mut state);
     assert!(state.attempted.contains("review-1"));
-    assert!(!state.seen.contains_key("review-1"));
     assert!(!state.attempted.contains("done-1"));
-    assert!(!state.seen.contains_key("done-1"));
     assert!(!state.failed.contains("done-1"));
 }
 
@@ -111,12 +41,14 @@ fn prompt_precedes_results_and_role_is_sanitized() {
         kind: "task_end".into(),
         role: Some("重构\n危险".into()),
         status: Some("succeeded".into()),
+        delivered: false,
     };
     let prompt = Item {
         key: "2".into(),
         kind: "prompt".into(),
         role: None,
         status: None,
+        delivered: false,
     };
     let text = message(&[result, prompt]);
     assert!(text.starts_with("[AgentNave] 1 个待你处理的请求"));
@@ -131,6 +63,7 @@ fn running_blocker_is_worded_as_blocked_not_ended() {
         kind: "blocked".into(),
         role: Some("审查".into()),
         status: Some("execution_blocked".into()),
+        delivered: false,
     };
     let text = message(&[blocked]);
     assert!(text.contains("审查（受阻）"), "{text}");
@@ -138,20 +71,113 @@ fn running_blocker_is_worded_as_blocked_not_ended() {
 }
 
 #[test]
-fn push_providers_include_codex_only_on_unix() {
+fn push_providers_contain_codex_only_on_unix_and_none_on_windows() {
     #[cfg(unix)]
-    assert!(PROVIDERS.contains(&"codex"));
+    assert_eq!(PROVIDERS, &["codex"]);
     #[cfg(not(unix))]
-    assert!(!PROVIDERS.contains(&"codex"));
+    assert!(PROVIDERS.is_empty());
     assert_eq!(
         event_key(&[Item {
             key: "k1".into(),
             kind: "task_end".into(),
             role: None,
             status: None,
+            delivered: false,
         }]),
         "k1"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn non_codex_terminals_never_receive_pty_wakeup_writes_but_still_get_unread_badge() {
+    use std::time::SystemTime;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("connections")).unwrap();
+    fs::create_dir(temp.path().join("inbox")).unwrap();
+
+    let mut command = portable_pty::CommandBuilder::new("/bin/sh");
+    command.args([
+        "-c",
+        "stty raw -echo; printf '\\033]7501;state=idle\\007ready'; sleep 30",
+    ]);
+    command.cwd(temp.path());
+    let session = Session::start(command, 80, 24).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && session.osc_snapshot().1.as_deref() != Some("idle") {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(session.osc_snapshot().1.as_deref(), Some("idle"));
+
+    let pid = session.pid().unwrap();
+    let key = "s-22222222222222222222222222222222";
+    fs::write(
+        temp.path()
+            .join("connections")
+            .join(format!("{pid}-test.json")),
+        json!({"bosses": [key]}).to_string(),
+    )
+    .unwrap();
+    let current = std::process::id();
+    fs::write(
+        temp.path().join("inbox").join(format!("{current}.json")),
+        json!({
+            "version": 1,
+            "pid": current,
+            "bosses": {
+                key: {
+                    "waiting": false,
+                    "event_seq": 1,
+                    "delivered_seq": 0,
+                    "items": [{"key": "evt-claude", "kind": "task_end"}]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let terminals = Terminals::default();
+    terminals.lock().open.push(super::super::Running {
+        id: 1,
+        provider: "claude".into(),
+        cwd: temp.path().into(),
+        session: session.clone(),
+        workspaces: Vec::new(),
+        native: None,
+        title_located: false,
+        title_searched: None,
+        started: SystemTime::now(),
+        pending: 0,
+        account: None,
+        codex: None,
+        derived: None,
+    });
+
+    session.record_writes();
+    let mut state = WakeupState::default();
+    let mut notices = Vec::new();
+    let t0 = Instant::now();
+    scan_with(&terminals, temp.path(), &mut state, t0, |n| notices.push(n));
+    assert_eq!(terminals.lock().open[0].pending, 0);
+    assert!(notices.is_empty());
+
+    scan_with(
+        &terminals,
+        temp.path(),
+        &mut state,
+        t0 + unread::DWELL,
+        |n| notices.push(n),
+    );
+    assert_eq!(terminals.lock().open[0].pending, 1);
+    assert_eq!(notices.len(), 1);
+    assert!(
+        session.recorded_writes().is_empty(),
+        "Claude terminal must not receive PTY keystroke wakeup"
+    );
+
+    session.stop();
 }
 
 #[cfg(unix)]
@@ -240,13 +266,13 @@ fn codex_failed_delivery_retries_until_sent_then_deduplicates() {
 
     let mut state = WakeupState::default();
 
-    // First scan: fallback turn/start fails -> stays unattempted, marked failed/pending, retries next scan.
+    // First scan: fallback turn/start fails -> stays unattempted, marked failed, retries next scan.
     scan(&terminals, temp.path(), &mut state);
     assert!(!state.attempted.contains("evt-retry"));
     assert!(state.failed.contains("evt-retry"));
-    assert_eq!(terminals.lock().open[0].pending, 1);
+    assert_eq!(terminals.lock().open[0].pending, 0);
 
-    // Second scan: retries and succeeds -> marked attempted, cleared from failed/pending.
+    // Second scan: retries and succeeds -> marked attempted, cleared from failed.
     scan(&terminals, temp.path(), &mut state);
     assert!(state.attempted.contains("evt-retry"));
     assert!(!state.failed.contains("evt-retry"));
@@ -393,96 +419,5 @@ fn codex_queued_wakeup_updates_on_partial_read_and_deletes_when_cleared() {
     assert_eq!(recorded[2].1["queuedSubmissionId"], "q-ab");
 
     codex.close();
-    session.stop();
-}
-
-#[cfg(unix)]
-#[test]
-fn pty_wakeup_cancels_with_backspaces_when_inbox_clears_during_hold_window() {
-    use std::time::SystemTime;
-
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("connections")).unwrap();
-    fs::create_dir(temp.path().join("inbox")).unwrap();
-
-    let mut command = portable_pty::CommandBuilder::new("/bin/sh");
-    command.args([
-        "-c",
-        "stty raw -echo; printf '\\033]7501;state=idle\\007ready'; sleep 30",
-    ]);
-    command.cwd(temp.path());
-    let session = Session::start(command, 80, 24).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && session.program_state().as_deref() != Some("idle") {
-        thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(session.program_state().as_deref(), Some("idle"));
-
-    let pid = session.pid().unwrap();
-    let key = "s-22222222222222222222222222222222";
-    fs::write(
-        temp.path()
-            .join("connections")
-            .join(format!("{pid}-test.json")),
-        json!({"bosses": [key]}).to_string(),
-    )
-    .unwrap();
-    let current = std::process::id();
-    let inbox_path = temp.path().join("inbox").join(format!("{current}.json"));
-    fs::write(
-        &inbox_path,
-        json!({"version": 1, "pid": current, "bosses": {key: {"waiting": false, "items": [{"key": "evt-pty", "kind": "task_end"}]}}}).to_string(),
-    )
-    .unwrap();
-
-    let terminals = Terminals::default();
-    terminals.lock().open.push(super::super::Running {
-        id: 1,
-        provider: "claude".into(),
-        cwd: temp.path().into(),
-        session: session.clone(),
-        workspaces: Vec::new(),
-        native: None,
-        title_located: false,
-        title_searched: None,
-        started: SystemTime::now(),
-        pending: 0,
-        account: None,
-        codex: None,
-        derived: None,
-    });
-
-    session.record_writes();
-    let held = session.clone();
-    let clear_path = inbox_path.clone();
-    let clearer = thread::spawn(move || {
-        let wait_until = Instant::now() + Duration::from_secs(5);
-        while !held.is_holding() && Instant::now() < wait_until {
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert!(held.is_holding(), "PTY wakeup never entered hold window");
-        fs::remove_file(&clear_path).unwrap();
-    });
-
-    let mut state = WakeupState::default();
-    scan(&terminals, temp.path(), &mut state);
-    clearer.join().unwrap();
-
-    let writes = session.recorded_writes();
-    assert!(
-        writes
-            .iter()
-            .any(|b| b.windows(11).any(|w| w == b"[AgentNave]"))
-    );
-    assert!(!writes.iter().any(|b| b.as_slice() == b"\r"));
-    assert!(
-        writes
-            .iter()
-            .any(|b| !b.is_empty() && b.iter().all(|&c| c == 0x7f))
-    );
-    assert!(!state.attempted.contains("evt-pty"));
-    assert!(!state.failed.contains("evt-pty"));
-    assert_eq!(terminals.lock().open[0].pending, 0);
-
     session.stop();
 }

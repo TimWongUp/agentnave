@@ -95,3 +95,45 @@ def test_push_accepts_large_snapshot_but_not_over_limit(
     assert push_capability.app_can_push(tmp_path, "claude")
     path.write_text("x" * (push_capability.MAX_PUSH_BYTES + 1))
     assert not push_capability.app_can_push(tmp_path, "claude")
+
+
+def test_find_tray_without_provider_ignores_push_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_path / "push"
+    folder.mkdir()
+    path = folder / "42.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "pid": 42,
+                "providers": ["codex"],
+                "terminal_providers": ["claude", "codex", "antigravity"],
+            }
+        )
+    )
+    started = path.stat().st_mtime - 1
+
+    def parent(_pid: int) -> int:
+        return 1
+
+    def birth(_pid: int) -> float:
+        return started
+
+    def reused(_pid: int) -> float:
+        return started + 10
+
+    monkeypatch.setattr(push_capability.sys, "platform", "darwin")
+    monkeypatch.setattr(push_capability.os, "getppid", lambda: 42)
+    monkeypatch.setattr(push_capability, "read_process_parent", parent)
+    monkeypatch.setattr(push_capability, "read_process_started", birth)
+
+    assert push_capability.find_tray(tmp_path, None) == push_capability.TrayIdentity(42, started)
+    assert not push_capability.app_can_push(tmp_path, None)
+    assert not push_capability.app_can_push(tmp_path, "claude")
+    assert push_capability.app_can_push(tmp_path, "codex")
+
+    # PID reuse (process started after file mtime) is still rejected without provider filter.
+    monkeypatch.setattr(push_capability, "read_process_started", reused)
+    assert push_capability.find_tray(tmp_path, None) is None

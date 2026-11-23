@@ -24,6 +24,7 @@ from agentnave.conversations import (
 from agentnave.core import InvocationManager
 from agentnave.group import Round
 from agentnave.handover import handover_dispatch_warning
+from agentnave.inbox_events import review_event_key
 from agentnave.isolated import ISOLATED_APPLIED
 from agentnave.manager_identity import model_warnings
 from agentnave.mcp_followup import settle_follow_up
@@ -238,7 +239,7 @@ async def start_agent(
     native_seat, the seat, its provider/model/effort and a message: run it with the host's
     built-in subagent instead, so no wait is needed.
     No deadline; only native prompts accept running replies via answer_prompt. Cancel to stop. Reply settings are requested,
-    not effective; unreceived flags undelivered ends/blockers/reviews for wait.
+    not effective; unreceived flags undelivered ends/blockers/reviews for wait. Follow receipt next to collect results.
     """
     if terminal is not None and not runtime.terminal_available():
         raise ToolError("terminal is not supported by this connection")
@@ -479,7 +480,7 @@ async def _acquire_and_start_task(
                 ) from exc
         tray = None
         if launch.terminal:
-            tray = find_tray(data_root(), runtime.HOST.provider)
+            tray = find_tray(data_root(), None)
             snapshot = read_tray(data_root(), tray) if tray else None
             providers = snapshot.get("terminal_providers") if snapshot else None
             if not isinstance(providers, list) or provider not in providers:
@@ -717,10 +718,12 @@ async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
 ) -> P:
     """Point a dispatch at wait, or run that wait now when asked (ADR-0064)."""
     conversations = _conversations(ctx)
+    boss_key = conversations.boss_key_of(manager_session_id)
     if not wait_now:
+        ctx.request_context.lifespan_context.refresh_inbox()
         if unreceived := _unreceived(conversations, manager_session_id):
             payload["unreceived"] = unreceived
-        payload["next"] = runtime.wait_guidance()
+        payload["next"] = runtime.wait_guidance(ctx=ctx, boss_key=boss_key)
         return payload
     waited = await receive(
         ids=[handle],
@@ -732,7 +735,7 @@ async def waited_dispatch[P: (TaskStartPayload, ShowRunPayload)](
     if unreceived := _unreceived(conversations, manager_session_id):
         payload["unreceived"] = unreceived
     if not waited["all_finished"] or any(conversations.inbox(manager_session_id)):
-        payload["next"] = runtime.wait_guidance(again=True)
+        payload["next"] = runtime.wait_guidance(again=True, ctx=ctx, boss_key=boss_key)
     return payload
 
 
@@ -865,24 +868,26 @@ async def wait(
     wait_seconds=0 and include_output=false still receive ready items. Only 0 includes
     running tails (up to 1000 characters) and age, subject to include_output.
     Inbox ends and round answers arrive once; output_returned means use read_conversation.
-    Unknown/expired/duplicate ids reject the whole call. Follow receipt next: when the App
-    prompts you, end the turn without a blocking wait and call wait(wait_seconds=0) when
-    prompted; otherwise wait before ending the turn.
+    Unknown/expired/duplicate ids reject the whole call. Follow receipt next for this host's wait
+    mode (blocking wait, background wait command then wait(wait_seconds=0), or App push then
+    wait(wait_seconds=0)).
     """
     if wait_seconds == 1500 and not runtime.long_wait_enabled():
         raise ToolError(
             "wait_seconds=1500 is only available in the Claude Code terminal interactive "
-            "session; use 0 or 270."
+            "session with background tasks enabled; use 0 or 270."
         )
     payload = await _receive(ids, include_output, wait_seconds, manager_session_id, ctx)
     await settle_follow_up(
         _conversations(ctx), payload, inbox=ids is None, manager_session_id=manager_session_id
     )
+    ctx.request_context.lifespan_context.refresh_inbox()
     if seq is not None:
         payload["seq"] = seq
-        # Only blocking guidance asks for another wait; push and already-waiting receipts do not.
-        if payload.get("next") == runtime.WAIT_AGAIN:
-            payload["next"] = runtime.WAIT_AGAIN + f" Next wait: seq={seq + 1}."
+        # Only blocking guidance asks for another wait; push, watch and already-waiting do not.
+        next_step = payload.get("next")
+        if next_step in runtime.BLOCKING_WAIT_AGAIN:
+            payload["next"] = f"{next_step} Next wait: seq={seq + 1}."
     return payload
 
 
@@ -1060,15 +1065,21 @@ async def _receive(
             invocation_ids, round_ids = conversations.inbox(manager_session_id)
             if not invocation_ids and not round_ids:
                 return _nothing_pending_payload()
-        payload = _wait_payload(
+        wait_results = _WaitResults(invocation_ids, round_ids, ready_invocations, ready_rounds)
+        payload, delivered_reviews = _wait_payload(
             manager,
             conversations,
-            _WaitResults(invocation_ids, round_ids, ready_invocations, ready_rounds),
+            wait_results,
             ids,
             include_output,
             wait_seconds,
             manager_session_id,
+            ctx,
         )
+        if payload["reason"] == "ready":
+            bosses = _delivered_bosses(conversations, manager_session_id, wait_results)
+            if bosses:
+                ctx.request_context.lifespan_context.mark_inbox_delivered(bosses, delivered_reviews)
         if (
             ids is None
             and wait_seconds == 0
@@ -1080,6 +1091,47 @@ async def _receive(
 
 
 receive = wait
+
+
+def _handle_boss_key(conversations: Conversations, handle: str) -> str | None:
+    owners = conversations._bosses  # pyright: ignore[reportPrivateUsage]
+    workspace = conversations.invocation_workspaces().get(handle)
+    if workspace is None:
+        try:
+            round_ = conversations.round(handle)
+        except KeyError:
+            return None
+        record = conversations.records.get(round_.group.id)
+        workspace = record.state.manager_session if record is not None else None
+    if workspace is None:
+        return None
+    owner = owners.get(workspace)
+    return owner[0] if owner is not None else None
+
+
+def _wait_boss_key(
+    conversations: Conversations, manager_session_id: str | None, handles: list[str]
+) -> str | None:
+    if boss := conversations.boss_key_of(manager_session_id):
+        return boss
+    for handle in handles:
+        if boss := _handle_boss_key(conversations, handle):
+            return boss
+    return None
+
+
+def _delivered_bosses(
+    conversations: Conversations,
+    manager_session_id: str | None,
+    results: _WaitResults,
+) -> set[str]:
+    bosses: set[str] = set()
+    if boss := conversations.boss_key_of(manager_session_id):
+        bosses.add(boss)
+    for handle in (*results.invocations, *results.rounds):
+        if boss := _handle_boss_key(conversations, handle):
+            bosses.add(boss)
+    return bosses
 
 
 @dataclass
@@ -1098,11 +1150,13 @@ def _wait_payload(
     include_output: bool,
     wait_seconds: Literal[0, 270, 1500] | None,
     manager_session_id: str | None,
-) -> WaitPayload:
+    ctx: Context[Runtime],
+) -> tuple[WaitPayload, set[str]]:
     invocation_ids, round_ids = results.invocation_ids, results.round_ids
     ready_invocations, ready_rounds = results.invocations, results.rounds
     elapsed = not ready_invocations and not ready_rounds
     include_running_output = include_output and wait_seconds == 0
+    delivered_reviews: set[str] = set()
     updates: list[InvocationPayload] = []
     for handle in invocation_ids:
         if not elapsed and handle not in ready_invocations:
@@ -1130,6 +1184,10 @@ def _wait_payload(
         if round_.finished and not elapsed:
             # One ending just after the window closed is delivered by the next wait as ready.
             conversations.delivered_rounds.add(handle)
+        elif not elapsed and reason == "review_needed":
+            for run in round_.runs:
+                if reviews.get(run.seat_id) == "pending":
+                    delivered_reviews.add(review_event_key(handle, run.seat_id, run.attempt))
         rounds.append(
             round_payload(
                 round_,
@@ -1162,8 +1220,12 @@ def _wait_payload(
         "rounds": rounds,
     }
     if pending_ids:
-        payload["next"] = runtime.wait_guidance(again=True)
-    return payload
+        payload["next"] = runtime.wait_guidance(
+            again=True,
+            ctx=ctx,
+            boss_key=_wait_boss_key(conversations, manager_session_id, pending_ids),
+        )
+    return payload, delivered_reviews
 
 
 async def cancel(
@@ -1179,7 +1241,10 @@ async def cancel(
     answers stay private. CLI side effects are not undone.
     """
     manager = _manager(ctx)
+    conversations = _conversations(ctx)
     state = ctx.request_context.lifespan_context
+    boss = _handle_boss_key(conversations, id)
+    delivered = False
     state.cancelling.add(id)
     state.refresh_inbox()
     try:
@@ -1188,14 +1253,15 @@ async def cancel(
                 result = await manager.cancel(id)
             except ValueError as exc:
                 raise ToolError(str(exc)) from exc
-            _conversations(ctx).delivered_tasks.add(id)
-            return {"invocation": update_payload(manager, _conversations(ctx), id, result)}
-        conversations = _conversations(ctx)
+            conversations.delivered_tasks.add(id)
+            delivered = True
+            return {"invocation": update_payload(manager, conversations, id, result)}
         try:
             round_ = await conversations.cancel(id)
         except KeyError as exc:
             raise _unknown_handle(id) from exc
         conversations.delivered_rounds.add(id)
+        delivered = True
         return {
             "round": round_payload(
                 round_,
@@ -1208,7 +1274,10 @@ async def cancel(
         }
     finally:
         state.cancelling.discard(id)
-        state.refresh_inbox()
+        if delivered and boss is not None:
+            state.mark_inbox_delivered({boss})
+        else:
+            state.refresh_inbox()
 
 
 def _invocation_items(manager: InvocationManager) -> list[InvocationListItem]:

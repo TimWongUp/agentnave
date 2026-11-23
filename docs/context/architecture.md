@@ -16,7 +16,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## 进程与模块
 
-- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）；macOS／Linux 的宿主配置指向 App 维护的固定启动器 `service/bin/agentnave-mcp`，切换版本只改它指向的版本，不改宿主配置（[ADR-0061](../adr/0061-fixed-service-launcher.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）；macOS／Linux 的宿主配置指向 App 维护的固定启动器 `service/bin/agentnave-mcp`，切换版本只改它指向的版本，不改宿主配置（[ADR-0061](../adr/0061-fixed-service-launcher.md)）。服务包内另提供一个只读等待模块，由支持后台命令自唤醒的宿主按回执原样在后台运行，只读 `inbox/` 快照而不建 MCP 连接；是否发放该命令由服务沿父进程链探测宿主真实可执行路径、启动参数与版本并缓存决定，不受 `AGENTNAVE_HOST` 短路（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
 - 服务运行在自己的会话里：挂起宿主时中继随之停住，不再转发调用和回执，已启动的任务继续跑。服务只在 stdin 关闭时结束，宿主进程组的信号到不了它。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）；`InvocationManager` 一边调用 Provider Adapter 准备命令与解析结果，一边经 `processes` 启动、取消 supervisor，Adapter 不拥有进程。宿主识别（`host`）与 Adapter 互不导入，按 CLI 读取原生会话记录的代码放在两者都不依赖的中性模块。
 - Claude 默认以交互模式运行：Provider 进程是服务自带的 helper，在 macOS／Linux 使用伪终端、在 Windows 使用 ConPTY 驱动 `claude`，并把 transcript 与 hooks 归一成事件；受限工具路径用 `-p`。Windows 的 helper 和后代仍归 supervisor 的 Job Object 所有。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)、[ADR-0086](../adr/0086-windows-claude-interactive.md)）。
@@ -58,7 +58,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## 进程所有权与安全边界
 
-- 启动组员前，服务从子进程环境移除父宿主内部 HTTP 服务的监听地址，避免组员复用父进程已占用的端口；不改服务自身环境或组员的原生配置目录。
+- 启动组员前，服务从子进程环境移除父宿主内部 HTTP 服务的监听地址，避免组员复用父进程已占用的端口；服务与 Claude／Antigravity 交互 helper 也不向子进程继承 `HERDR_*` 环境变量，避免嵌套 CLI 覆盖外层终端窗格的会话绑定（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）；均不改服务自身环境或组员的原生配置目录。
 - WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
 - macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
@@ -74,7 +74,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## 历史与数据根
 
-服务在数据根 `inbox/` 写本进程未收事件与阻塞等待状态，托盘只读；托盘在 `push/` 写本进程可推送的宿主能力，服务只读并结合进程祖先判断（[ADR-0104](../adr/0104-in-app-boss-push.md)、[ADR-0105](../adr/0105-codex-app-server-terminal-push.md)）。文件只保存路由与状态，不含正文；状态变化时更新，进程退出时删除。终端模式派发另经 `spawn-requests/`：服务写入一次性启动或取消请求（含任务正文，私有权限），托盘领取后删除；托盘在 `push/` 里按 Invocation 回报接单、原生会话与轮次锚点、阻塞和终态，保留到服务确认结算（[ADR-0109](../adr/0109-in-app-derived-sessions.md)）。
+服务在数据根 `inbox/` 写本进程实例标识（PID 与启动时间）、各 boss 的在途数、事件／交付序号、未收事件与阻塞等待状态，并在派发与 `wait` 返回前同步刷新，由托盘 App 与包内只读等待模块共同只读；托盘在 `push/` 写本进程可推送与可开派生终端的能力，服务只读并结合进程祖先判断，其中派生终端能力不再依赖推送名单，App 内仅 Codex 保留结构化推送唤醒，Claude、Antigravity、Grok 与 Pi 均不再接收托盘键入唤醒（[ADR-0104](../adr/0104-in-app-boss-push.md)、[ADR-0105](../adr/0105-codex-app-server-terminal-push.md)、[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。文件只保存路由与状态，不含正文；状态变化时更新，进程退出时删除。终端模式派发另经 `spawn-requests/`：服务写入一次性启动或取消请求（含任务正文，私有权限），托盘领取后删除；托盘在 `push/` 里按 Invocation 回报接单、原生会话与轮次锚点、阻塞和终态，保留到服务确认结算（[ADR-0109](../adr/0109-in-app-derived-sessions.md)）。
 
 数据根默认 `~/.agentnave`（`AGENTNAVE_DATA_DIR` 可覆盖）。会话历史存于 SQLite（[ADR-0026](../adr/0026-sqlite-conversation-store.md)），每个会话一把 OS 文件锁：持锁的服务才能写，其他服务只读，空闲后可接手。`workspaces` 表保存工作区的 `owner_account` 列（可空），供托盘续接内嵌终端直接读取。服务回收孤儿会话锁与席位目录，删除会话后回收其席位目录；原生会话锁由持有者用完即删（[ADR-0046](../adr/0046-service-history-retention.md)）。schema 每次变化都提升 `user_version`，迁移只由服务执行（[ADR-0048](../adr/0048-sqlite-schema-evolution.md)）。写入时在同一事务内更新托盘读取的视图快照（[ADR-0026](../adr/0026-sqlite-conversation-store.md)）；运行中的输出尾部只写进程级运行文件，内容不变时只刷新修改时间。中继在 `connections/` 写连接观测（宿主、连接时间、服务版本与工具定义摘要），不存原始工具定义、提示词、环境或凭据；正常结束后保留有期限的加载证据，由中继清理，App 将它与在线连接分开读取，用于确认短连接已加载配置。POSIX 上中继收到 `SIGTERM`／`SIGINT` 时与宿主关闭 `stdin` 同样处理（Windows 外部结束进程不经信号）；被强杀、来不及标记结束的回执，在原中继确认已退出或久未更新后，App 以最后写入时间补作结束时间，同名故障记录存在时除外（[ADR-0097](../adr/0097-relay-termination-signal-and-exited-tool-receipts.md)）。App 只读新鲜、大小受限、非符号链接的观测（[ADR-0022](../adr/0022-auto-clear-host-reload.md)）。中继在服务子进程非预期退出时另写 `connection-faults/` 下的故障记录，用于提示宿主连接中断；不覆盖中继被强杀的场景（[ADR-0088](../adr/0088-relay-records-service-exit-fault.md)）。同一配置行之后出现健康连接即视为恢复，带标识的配置行只认相同标识的记录；托盘读取时只过滤，在非预览版的刷新与用户确认时删除已恢复或无人认领的记录，中继清理超期记录与写入中断留下的暂存文件（[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）。
 
