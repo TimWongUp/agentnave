@@ -12,8 +12,6 @@ Antigravity 作宿主时按回执 `next` 选择等待方式（App 内外终端�
 
 对应 `agy` CLI。原生 `print_timeout` 由 CLI 执行，与 AgentNave 的单次等待时长是不同参数；仅在用户明确要求时设置。
 
-Antigravity 作宿主时，`native=true` 的 Antigravity 工位交给自带子代理：`invoke_subagent` 的 `model` 只能选 `inherit`、`flash_lite`、`flash`、`pro` 四档，不能指定模型 ID 和推理档，档位映射由服务端下发且会变动。只有工位模型就是 boss 当前模型且工位 `effort` 为空时传 `model="inherit"`；其他情况按工位不可用处理，走主 Skill 的兜底规则，不把工位模型硬套到 `flash` 或 `pro` 等档位，并告知用户可在 App 宿主设置把「同款 CLI 的任务」改为「由 AgentNave 另开」。
-
 服务默认给 Antigravity 派发带上 `"dangerously_skip_permissions": true`（`--dangerously-skip-permissions`），自动批准全部原生工具权限请求，CLI 已存配置不变，回执 `defaults_applied` 会注明；App 不提供其他档位。要某次调用守原生权限，只能由用户本轮明确要求，boss 显式传任一权限键（`mode`、`sandbox` 或 `dangerously_skip_permissions: false`）时整档不套用。`mode` 与 `sandbox` 是独立选项，不代表 YOLO。
 
 macOS／Linux 上权限放开时默认以交互模式运行（App 关掉「交互模式运行」或显式 `interactive=false` 时改用 `-p`），回执 `defaults_applied` 注明 `interactive`；不放开权限、Windows、受限工具路径，或传了 `print_timeout`、`disable_slash_commands` 时用 `-p`。交互模式要求 agy 1.5.10 或更新版本，通过原生终端事件判断进度。出现原生提问或需要用户输入的弹窗时，任务报受阻并保留会话；请按回执判断是否续接。需要用户决定的事项仍应写进最终回答。

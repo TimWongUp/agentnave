@@ -5356,7 +5356,9 @@ async def test_push_receipt_and_inbox_event_lifecycle(
                 "role": "reviewer",
             },
         )
-        expected_next = mcp_runtime.WAIT_NEXT if sys.platform == "win32" else mcp_runtime.PUSH_NEXT
+        expected_next = (
+            mcp_runtime.CODEX_WAIT_NEXT if sys.platform == "win32" else mcp_runtime.PUSH_NEXT
+        )
         assert started["next"] == expected_next
         async with asyncio.timeout(30):
             while True:
@@ -5382,7 +5384,7 @@ async def test_push_receipt_and_inbox_event_lifecycle(
         )
         assert result["all_finished"] is False
         expected_again = (
-            mcp_runtime.WAIT_AGAIN if sys.platform == "win32" else mcp_runtime.PUSH_AGAIN
+            mcp_runtime.CODEX_WAIT_AGAIN if sys.platform == "win32" else mcp_runtime.PUSH_AGAIN
         )
         assert result["next"] == expected_again
         after_entry = json.loads(path.read_text())["bosses"][key]
@@ -5439,7 +5441,7 @@ async def test_push_receipt_and_inbox_event_lifecycle(
                 "manager_session_id": "boss-session",
             },
         )
-        assert fallback["next"] == mcp_runtime.WAIT_NEXT
+        assert fallback["next"] == mcp_runtime.CODEX_WAIT_NEXT
         await _cancel(client, fallback["invocation_id"])
     assert not path.exists()
 

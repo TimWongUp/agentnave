@@ -429,8 +429,25 @@ def test_codex_push_and_pi_and_other_hosts_foreground_wait(tmp_path: Path) -> No
         wait_guidance.build_wait_guidance(
             codex, root=tmp_path, pid=1, started_at=1.0, can_push=_never_push
         )
-        == wait_guidance.WAIT_NEXT
+        == wait_guidance.CODEX_WAIT_NEXT
     )
+    assert (
+        wait_guidance.build_wait_guidance(
+            codex, root=tmp_path, pid=1, started_at=1.0, again=True, can_push=_never_push
+        )
+        == wait_guidance.CODEX_WAIT_AGAIN
+    )
+    assert wait_guidance.CODEX_WAIT_AGAIN in wait_guidance.BLOCKING_WAIT_AGAIN
+    for token in (
+        "functions.exec",
+        "yield_time_ms",
+        "300000",
+        "functions.wait",
+        "cell_id",
+        "already_waiting",
+    ):
+        assert token in wait_guidance.CODEX_WAIT_NEXT
+        assert token in wait_guidance.CODEX_WAIT_AGAIN
 
     # Pi and other hosts never use PUSH_NEXT or watch command even if can_push/watch_supported are True.
     for name in ("pi", "codebuddy", "deepseek", "devin", "zcode", None):
@@ -479,3 +496,35 @@ async def test_mcp_wait_hides_1500_when_claude_disables_background_tasks(
         rejected = await client.call_tool("wait", {"ids": ["missing"], "wait_seconds": 1500})
         assert rejected.is_error is True
         assert "background tasks enabled" in str(rejected.content)
+
+
+@pytest.mark.asyncio
+async def test_mcp_codex_blocking_wait_includes_exec_yield_and_seq_increment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import push_capability
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(push_capability, "app_can_push", _never_push)
+    monkeypatch.setattr(mcp_runtime, "app_can_push", _never_push)
+    async with Client(mcp) as client:
+        started = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "cwd": str(tmp_path),
+                "prompt": "Private instruction for you only:\nSLEEP",
+            },
+        )
+        assert not started.is_error, started.content
+        started_payload = cast(dict[str, object], started.structured_content)
+        assert started_payload["next"] == wait_guidance.CODEX_WAIT_NEXT
+        elapsed = await client.call_tool(
+            "wait",
+            {"ids": [started_payload["invocation_id"]], "wait_seconds": 0, "seq": 1},
+        )
+        assert not elapsed.is_error, elapsed.content
+        elapsed_payload = cast(dict[str, object], elapsed.structured_content)
+        assert elapsed_payload["next"] == f"{wait_guidance.CODEX_WAIT_AGAIN} Next wait: seq=2."
+        await client.call_tool("cancel", {"id": started_payload["invocation_id"]})

@@ -542,8 +542,8 @@ async def test_start_agent_provider_inference_reports_unusable_seats_and_require
         assert native["status"] == "not_started" and native["reason"] == "native_seat"
         assert native["seat"] == "worker-easy" and native["provider"] == "claude"
         assert native["model"] == "chosen" and "effort" not in native
-        assert native["message"] == (
-            "Dispatch it with the host's built-in subagent using model chosen."
+        assert native["message"] == mcp_runtime.native_seat_guidance(
+            Host("claude", "env"), "chosen", None
         )
         assert "nothing to wait for" in cast(str, native["next"])
         assert "invocation_id" not in native and "conversation_id" not in native
@@ -4096,8 +4096,8 @@ async def test_start_agent_auto_never_starts_when_the_decision_fails(
         assert native["status"] == "not_started" and native["reason"] == "native_seat"
         assert native["seat"] == "codex-w" and native["provider"] == "codex"
         assert native["model"] == "model-codex-w"
-        assert native["message"] == (
-            "Dispatch it with the host's built-in subagent using model model-codex-w."
+        assert native["message"] == mcp_runtime.native_seat_guidance(
+            Host("codex", "env"), "model-codex-w", None
         )
         picked = _payload(native["recommendation"])
         assert picked["seat"] == "codex-w" and picked["native"] is True
@@ -4343,8 +4343,8 @@ async def test_one_task_that_cannot_start_does_not_stop_the_others(
         # The same receipt start_agent gives: the host's subagent needs the seat and its settings.
         assert native["seat"] == "codex-w" and native["provider"] == "codex"
         assert native["model"] == "model-codex-w"
-        assert native["message"] == (
-            "Dispatch it with the host's built-in subagent using model model-codex-w."
+        assert native["message"] == mcp_runtime.native_seat_guidance(
+            Host("codex", "env"), "model-codex-w", None
         )
         assert "invocation_id" not in native and "conversation_id" not in native
         assert started["model"] == "model-write-b"
@@ -4763,8 +4763,8 @@ async def test_native_review_role_receipt_names_the_seat_model_and_effort(
         assert native["status"] == "not_started" and native["reason"] == "native_seat"
         assert native["seat"] == "correctness-reviewer" and native["provider"] == "codex"
         assert native["model"] == "native-model" and native["effort"] == "high"
-        assert native["message"] == (
-            "Dispatch it with the host's built-in subagent using model native-model, effort high."
+        assert native["message"] == mcp_runtime.native_seat_guidance(
+            Host("codex", "env"), "native-model", "high"
         )
         assert "seat_fallback" not in native and "error" not in native
         # A declared access that differs from the review seat's default is not refused.
@@ -4785,8 +4785,8 @@ async def test_native_review_role_receipt_names_the_seat_model_and_effort(
         )
         assert overridden["reason"] == "native_seat"
         assert overridden["model"] == "explicit-model" and overridden["effort"] == "low"
-        assert overridden["message"] == (
-            "Dispatch it with the host's built-in subagent using model explicit-model, effort low."
+        assert overridden["message"] == mcp_runtime.native_seat_guidance(
+            Host("codex", "env"), "explicit-model", "low"
         )
         provider_health.record(root, "codex", "auth", "explicit-model")
         override_cooled = await client.call_tool(
@@ -4830,8 +4830,8 @@ async def test_native_review_role_receipt_names_the_seat_model_and_effort(
         assert fallback_native["reason"] == "native_seat"
         assert fallback_native["provider"] == "codex" and "effort" not in fallback_native
         assert fallback_native["model"] == "native-backup"
-        assert fallback_native["message"] == (
-            "Dispatch it with the host's built-in subagent using model native-backup."
+        assert fallback_native["message"] == mcp_runtime.native_seat_guidance(
+            Host("codex", "env"), "native-backup", None
         )
         skipped = _payload(fallback_native["seat_fallback"])
         assert skipped["position"] == 1
@@ -5504,3 +5504,125 @@ async def test_decision_random_candidates_reserves_during_concurrent_isolation_a
 
         for item in (first, second):
             await client.call_tool("cancel", {"id": item["invocation_id"]})
+
+
+def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
+    from typing import get_args
+
+    from agentnave.host import Host
+    from agentnave.members import ProviderName
+    from agentnave.models import HostName
+
+    all_providers = sorted(get_args(ProviderName.__value__))
+    longest_provider_selection = (
+        "Providers permitted by this host configuration: none. Excluded providers: "
+        + ", ".join(all_providers)
+        + ". Host defaults or App settings decide whether private tasks launch the host's own "
+        "CLI; environment exclusions apply to other providers only. Meetings follow discussion "
+        "member limits without host exclusions."
+    )
+    assert len(longest_provider_selection.encode("utf-8")) >= len(
+        mcp_runtime.PROVIDER_SELECTION.encode("utf-8")
+    )
+    for host_name in (None, *get_args(HostName.__value__)):
+        host = Host(host_name, "env") if host_name else Host()
+        text = mcp_runtime.build_mcp_instructions(host, longest_provider_selection)
+        assert len(text.encode("utf-8")) <= 3500, host_name
+        assert "before dispatching" not in text
+        assert "Startup exception" not in text
+        assert "prompt_pending" not in text
+        assert "manager_session_id" in text
+        assert "permission" in text.lower()
+        for trigger in ("meetings", "reviews", "handover", "parallel write", "not_started"):
+            assert trigger in text
+
+
+@pytest.mark.asyncio
+async def test_published_tool_descriptions_within_2000_chars_and_cover_private_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    # Include decision-mode tools (start_agents, recommend_seat) so every tool is checked.
+    (tmp_path / "orchestration.json").write_text(json.dumps({"version": 1, "preset": "decision"}))
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    assert {"start_agent", "start_agents", "wait", "answer_prompt"}.issubset(tools)
+    for name, tool in tools.items():
+        description = tool.description or ""
+        assert len(description) <= 2000, f"{name}: {len(description)}"
+    start_desc = tools["start_agent"].description or ""
+    assert "title" in start_desc and "cwd" in start_desc and "self-contained" in start_desc
+    assert "isolated_dirs" in start_desc and "succeeded" in start_desc
+    many_desc = tools["start_agents"].description or ""
+    assert "title" in many_desc and "cwd" in many_desc and "isolated_dirs" in many_desc
+    wait_desc = tools["wait"].description or ""
+    assert "follow_up" in wait_desc and "succeeded" in wait_desc
+    prompt_desc = tools["answer_prompt"].description or ""
+    assert "Startup exception" in prompt_desc and "deleting/overwriting user data" in prompt_desc
+
+
+def test_native_seat_guidance_by_boss_host() -> None:
+    # Claude: family alias mapping, omit empty effort, and [1m] unavailability.
+    claude = Host("claude", "env")
+    opus_msg = mcp_runtime.native_seat_guidance(claude, "claude-opus-5-5", "high")
+    assert "Agent tool" in opus_msg and "model=opus" in opus_msg and "effort=high" in opus_msg
+    alias_msg = mcp_runtime.native_seat_guidance(claude, "sonnet", None)
+    assert "model=sonnet" in alias_msg and "omit effort" in alias_msg
+    long_ctx_msg = mcp_runtime.native_seat_guidance(claude, "claude-sonnet-4-5[1m]", "medium")
+    assert "[1m]" in long_ctx_msg and "unavailable" in long_ctx_msg
+    assert "model=sonnet" not in long_ctx_msg
+
+    # Codex: spawn_agent with model and optional reasoning_effort.
+    codex = Host("codex", "env")
+    codex_with_effort = mcp_runtime.native_seat_guidance(codex, "gpt-6.1-sol", "high")
+    assert "spawn_agent" in codex_with_effort
+    assert "model=gpt-6.1-sol" in codex_with_effort
+    assert "reasoning_effort=high" in codex_with_effort
+    codex_no_effort = mcp_runtime.native_seat_guidance(codex, "gpt-6.1-sol", None)
+    assert "spawn_agent" in codex_no_effort and "model=gpt-6.1-sol" in codex_no_effort
+    assert "omit reasoning_effort" in codex_no_effort and "reasoning_effort=" not in codex_no_effort
+
+    # Antigravity: invoke_subagent only allows inherit when effort is empty.
+    agy = Host("antigravity", "env")
+    agy_no_effort = mcp_runtime.native_seat_guidance(agy, "gemini-3.8-pro", None)
+    assert "invoke_subagent" in agy_no_effort and 'model="inherit"' in agy_no_effort
+    assert "exact current model" in agy_no_effort and "unavailable" in agy_no_effort
+    agy_with_effort = mcp_runtime.native_seat_guidance(agy, "gemini-3.8-pro", "high")
+    assert "invoke_subagent" in agy_with_effort and 'model="inherit"' not in agy_with_effort
+    assert "unavailable" in agy_with_effort and "effort=high" in agy_with_effort
+
+    # Other hosts keep the generic built-in subagent guidance.
+    for other in (Host("pi", "env"), Host("grok", "env"), Host()):
+        msg = mcp_runtime.native_seat_guidance(other, "m", "low")
+        assert msg == "Dispatch it with the host's built-in subagent using model m, effort low."
+
+
+@pytest.mark.asyncio
+async def test_native_seat_receipt_uses_antigravity_host_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("antigravity", "env"))
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "preset": "split",
+                "host_cli": {"antigravity": "subagent"},
+                "worker": {"easy": {"provider": "antigravity", "model": "gemini-3.8-pro"}},
+            }
+        )
+    )
+    async with Client(mcp) as client:
+        receipt = _payload(
+            (
+                await client.call_tool(
+                    "start_agent", {"prompt": "ok", "cwd": str(tmp_path), "seat": "worker-easy"}
+                )
+            ).structured_content
+        )
+    assert receipt["status"] == "not_started" and receipt["reason"] == "native_seat"
+    assert receipt["message"] == mcp_runtime.native_seat_guidance(
+        Host("antigravity", "env"), "gemini-3.8-pro", None
+    )

@@ -1,7 +1,5 @@
 # Codex CLI
 
-未注明 App 会提示、在 Codex 作宿主并用 `functions.exec` 调阻塞 `wait` 时，首行写 `// @exec: {"yield_time_ms": 300000}`；返回 `Script running with cell ID ...` 后，只用 `functions.wait(cell_id, yield_time_ms=300000)` 收取同一脚本，不再创建第二个 AgentNave `wait`；误发第二个时会收到 `already_waiting`，回到原 `cell_id` 收取。脚本一结束这两种调用都会立即返回，长让出不会推迟拿到结果，所以不要为了早点发现完成而缩短让出时间，也不要用默认十秒或其他短间隔反复检查；宿主限制更短时用它允许的最长值。五分钟让出窗口长过 `wait` 的 270 秒。外层让出控制权不代表超时或取消；`seq` 只在新发起一次 AgentNave `wait` 时递增。等待期间没有新终态、阻塞、待答弹框或需要用户决定的事时，不发进展消息。
-
 通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
 `provider: "codex"`；用户点名时的写法示例：
@@ -9,8 +7,6 @@
 ```json
 {"model": "gpt-6.1-sol", "effort": "high"}
 ```
-
-Codex 作宿主时，`native=true` 的 Codex 工位交给自带子代理：按 `spawn_agent` 的实时 schema 显式传工位的 `model`；工位 `effort` 有值且工具支持 `reasoning_effort` 时才传该值，空值省略，不自行补档位。模型或已设档位不能选择时，按主 Skill 的工位不可用与同难度兜底规则处理，不用宿主默认模型顶替；用户明确授权特定替代后才采用该替代。
 
 服务总是为 Codex 带上 `--skip-git-repo-check`，非 Git 目录也能直接运行，无需传参；它只跳过仓库检查，不扩大命令权限。
 

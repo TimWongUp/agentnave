@@ -43,8 +43,9 @@ class StartTask(BaseModel):
         Literal["read", "write"],
         Field(
             description=(
-                "Access this task needs; only seats with this access are candidates, except "
-                "read with isolation, which is chosen among write seats and stays read-only."
+                "Access this task needs (read for investigation, write for edits); only seats "
+                "with this access are candidates, except read with isolation, which picks among "
+                "write seats and stays read-only."
             )
         ),
     ]
@@ -53,9 +54,9 @@ class StartTask(BaseModel):
         Field(
             min_length=1,
             description=(
-                "Task, context, constraints and expected output. It is sent to an external "
-                "decision model to choose the seat, only its beginning and end when long: "
-                "leave out secrets."
+                "Self-contained brief (task, context, constraints, expected output); this chat is "
+                "not inherited. Sent to an external decision model (head/tail only when long): "
+                "omit secrets."
             ),
         ),
     ]
@@ -68,8 +69,8 @@ class StartTask(BaseModel):
         IsolationInput | None,
         Field(
             description=(
-                "New isolated Git worktree (optional ref), as in start_agent. Several write "
-                "tasks get one automatically; this replaces that one."
+                "New isolated Git worktree (optional ref), as in start_agent; >=2 write tasks "
+                "get one automatically. Merge and release retained ones with isolated_dirs."
             )
         ),
     ] = None
@@ -152,7 +153,12 @@ async def start_agents(
     ] = None,
     title: Annotated[
         str | None,
-        Field(description="New workspace title, as in start_agent."),
+        Field(
+            description=(
+                "New workspace title on this chat's first dispatch (<=48 cols, CJK=2), as in "
+                "start_agent."
+            )
+        ),
         AfterValidator(_short_title),
     ] = None,
     manager_model: ManagerModel = None,
@@ -160,23 +166,23 @@ async def start_agents(
     *,
     ctx: Context[Runtime],
 ) -> StartAgentsPayload:
-    """Start several new private CLI tasks at once; the decision model picks every seat in one
-    request, which is faster than start_agent(seat='auto') for each. Each prompt is sent to
-    that external model, only its beginning and end when long. Everything that costs
-    nothing is checked first and a bad task rejects the whole call. results follow the order
-    of tasks: a started one is start_agent's receipt (invocation_id goes to wait); one that did
-    not start says why in error.code (no_candidates, bad_response, native_seat, start_failed)
-    and, when a seat was chosen, in recommendation; the others are unaffected. Native seats
-    return not_started as in start_agent (keeping error.code native_seat). A decision that
-    fails as a whole (not_enabled, config_error, no_key, network, rate_limited, auth, rejected,
-    bad_response) starts nothing; only a network failure was retried once, and no
-    other seat replaces it. With two or more
-    access=write tasks the service gives each its own new isolated directory, as if it had
-    passed isolation (a task's own isolation wins; read tasks and a lone writer get none);
-    receipts show isolation and "isolation (automatic: ...)" in defaults_applied, and a task
-    whose directory cannot be made (for example cwd is not a Git repository) is not started
-    (start_failed), never started unisolated. Whether to run writes in parallel is your
-    decision, not the tool's.
+    """Start several new private CLI tasks at once with self-contained prompts (this chat is not
+    inherited), an existing absolute cwd, and title on this chat's first dispatch; the decision
+    model picks every seat in one request (faster than start_agent(seat='auto') per task).
+    Prompts go to that external model (head/tail only when long; omit secrets). Cheap checks run
+    first and a bad task rejects the whole call.
+
+    Each task sets access="read" or "write" (no per-task model, effort, or permission overrides;
+    parallel writes are your decision). With >=2 write tasks, each gets a new isolated worktree
+    automatically (explicit isolation wins; failures return start_failed, never unisolated);
+    after verifying, merge and release retained worktrees with isolated_dirs.
+
+    results match tasks order: started items return start_agent receipts (invocation_id goes to
+    wait; follow top-level next; succeeded does not mean done—verify artifacts and follow_up);
+    unstarted items report error.code (no_candidates, bad_response, native_seat, start_failed) and
+    optional recommendation without affecting peers; native_seat includes subagent guidance.
+    Whole-batch decision failures (not_enabled, config_error, no_key, network, rate_limited, auth,
+    rejected, bad_response) start nothing; only network retries once with no fallback.
     """
     if not orchestration_decision(runtime.HOST):
         raise ToolError(

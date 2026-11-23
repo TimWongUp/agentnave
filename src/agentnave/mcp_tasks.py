@@ -97,7 +97,6 @@ from agentnave.task_start import (
     apply_task_defaults,
     effective_seat,
     is_image_seat,
-    native_seat_guidance,
     resolve_start,
     review_role,
     uses_random_candidates,
@@ -123,14 +122,17 @@ async def start_agent(
         str,
         Field(
             min_length=1,
-            description="Task, context, constraints and expected output; this chat is not inherited.",
+            description=(
+                "Self-contained brief (task, context, constraints, expected output, paths); "
+                "this chat is not inherited."
+            ),
         ),
     ],
     provider: Annotated[
         ProviderName | None,
         Field(
             description=(
-                "CLI name; omit to inherit session history or the App seat; see MCP instructions for exclusions and native seats."
+                "CLI name; omit to inherit session history or the App seat; see MCP instructions for exclusions."
             )
         ),
     ] = None,
@@ -148,7 +150,12 @@ async def start_agent(
         Field(
             min_length=1,
             description=(
-                "Native session_id from a finished task in this workspace, never invocation_id; omit for a new thread. Threads belonging to another workspace (task or meeting seat) are rejected; start a new thread and use forward instead. Resume inherits provider/cwd/role/seat and, without a seat model, the thread's last model/effort; explicit values win. Unknown or ambiguous history needs provider and cwd; a new role without seat drops the old seat."
+                "Native session_id from a finished task in this workspace (never invocation_id); "
+                "omit for a new thread. Cross-workspace threads are rejected; start a new thread "
+                "and use forward instead. Resume inherits provider/cwd/role/seat and, without a "
+                "seat model, the thread's last model/effort, never access (re-pass access). "
+                "Unknown or ambiguous history needs provider and cwd; a new role without seat "
+                "drops the old seat."
             ),
         ),
     ] = None,
@@ -156,10 +163,11 @@ async def start_agent(
         dict[str, ProviderOption] | None,
         Field(
             description=(
-                "CLI options, including model/effort; keys via list_members(provider=...); "
-                "defaults in MCP instructions. With orchestration on and no matching seat/role "
-                "supplying a model, pass an explicit model listed for that CLI by list_members; "
-                "a * row allows omitting model or passing a concrete unlisted model, never the literal *."
+                "CLI options; omit model, effort, and permission keys unless the user named them "
+                "(App/seat defaults apply; if rejected, retry with an allowed value from the "
+                "error or list_members(provider=...)). With orchestration on and no matching "
+                "seat/role supplying a model, pass an explicit model listed by list_members; a * "
+                "row allows omitting model or passing a concrete unlisted model, never literal *."
             )
         ),
     ] = None,
@@ -181,8 +189,8 @@ async def start_agent(
         str | None,
         Field(
             description=(
-                "New title: at most 48 columns (CJK=2). The first permanently names this workspace, so "
-                "state the chat's purpose; later tasks may omit it."
+                "Workspace title on this chat's first dispatch (<=48 cols, CJK=2); permanently "
+                "names this chat, so state its purpose; later tasks may omit it."
             )
         ),
         AfterValidator(_short_title),
@@ -212,7 +220,12 @@ async def start_agent(
     ] = None,
     forward: Annotated[
         list[str] | None,
-        Field(description=("Message_ids to inject before this task; see MCP instructions.")),
+        Field(
+            description=(
+                "Up to 20 unique message_ids of succeeded tasks or committed entries in this "
+                "workspace or a linked handover workspace; injected as data."
+            )
+        ),
     ] = None,
     access: Annotated[
         Literal["read", "write"] | None,
@@ -222,8 +235,9 @@ async def start_agent(
         IsolationInput | None,
         Field(
             description=(
-                "New isolated Git worktree (optional ref); omit on session_id resume "
-                "(read-only tasks that changed nothing auto-release it; resume rebuilds it in place)."
+                "New isolated Git worktree (optional ref) for write tasks or read-then-write "
+                "threads; omit on session_id resume. Merge and release with isolated_dirs "
+                "(untouched succeeded read tasks auto-release and rebuild on resume)."
             ),
         ),
     ] = None,
@@ -234,12 +248,16 @@ async def start_agent(
     *,
     ctx: Context[Runtime],
 ) -> TaskStartPayload:
-    """Start a private CLI task; invocation_id goes to wait, not session_id.
-    A seat native to this host starts nothing and returns status not_started with reason
-    native_seat, the seat, its provider/model/effort and a message: run it with the host's
-    built-in subagent instead, so no wait is needed.
-    No deadline; only native prompts accept running replies via answer_prompt. Cancel to stop. Reply settings are requested,
-    not effective; unreceived flags undelivered ends/blockers/reviews for wait. Follow receipt next to collect results.
+    """Start a private CLI task with a self-contained prompt, an existing absolute cwd, and title
+    on this chat's first dispatch; invocation_id goes to wait, not session_id.
+    Omit model, effort, and permission keys unless the user named them (if rejected, pick an
+    allowed value from the error). Declare access="read" for investigation, pass session_id and
+    re-pass access when resuming, and pass isolation for write tasks (after verifying, merge and
+    release with isolated_dirs). Follow receipt next to collect results; succeeded does not mean
+    done—verify artifacts and follow_up. A seat native to this host starts nothing and returns
+    status="not_started", reason="native_seat", and subagent instructions in message (no wait).
+    No deadline; only native prompts accept running replies via answer_prompt; cancel stops work;
+    unreceived flags undelivered items.
     """
     if terminal is not None and not runtime.terminal_available():
         raise ToolError("terminal is not supported by this connection")
@@ -350,7 +368,7 @@ def native_seat_payload(
         "status": "not_started",
         "reason": "native_seat",
         "seat": seat,
-        "message": native_seat_guidance(model, effort),
+        "message": runtime.native_seat_guidance(runtime.HOST, model, effort),
         "next": runtime.NATIVE_SEAT_NEXT,
     }
     if provider is not None:
@@ -849,28 +867,25 @@ async def wait(
     *,
     ctx: Context[Runtime],
 ) -> WaitPayload:
-    """Receive all handles ready now in updates (tasks) and rounds; return when any is ready.
+    """Receive ready task updates and meeting rounds, returning when any is ready; follow receipt
+    next for this host's wait mode, and remember succeeded/all_finished do not mean done—verify
+    artifacts and handle follow_up before reporting.
 
-    Inbox: omit ids, pass this chat's manager_session_id; increment seq for each call.
-    Selected ids: continue with pending_ids; retaining finished ids rereads their results.
-    all_finished means no unreceived ends remain in that scope, not that all succeeded.
-    follow_up (inbox wait closing at all_finished): bad ends delivered by earlier waits and
-    isolated dirs still unreleased, each listed once; handle before reporting.
+    Inbox: omit ids, pass this chat's manager_session_id, increment seq per call.
+    Selected ids: continue with pending_ids; finished ids reread results.
+    follow_up (inbox wait at all_finished): earlier non-succeeded ends and unreleased isolated
+    dirs (merge and release via isolated_dirs), each listed once; handle before reporting.
 
-    ready: handle each item's reason first. prompt_pending requires answer_prompt, once per
-    prompt, still running. execution_blocked is still running, once per category.
-    review_needed requires decide_answers before waiting again. seat_lost reports a failed/blocked
-    seat while peers run, once per seat, answers withheld; retry via run_round.retry_seats.
-    wait_elapsed: status/activity only; follow next. nothing_pending: the inbox is empty.
-    already_waiting: another blocking inbox wait is active; results return to that call (use
-    wait_seconds=0 for progress).
+    ready: handle each item's reason first. prompt_pending -> answer_prompt once (still running).
+    execution_blocked -> still running, once per category. review_needed -> decide_answers before
+    waiting again. seat_lost -> failed/blocked seat while peers run; retry via
+    run_round.retry_seats. wait_elapsed: activity only; follow next. nothing_pending: inbox empty.
+    already_waiting: another blocking inbox wait is active; collect there (wait_seconds=0 checks
+    progress).
 
-    wait_seconds=0 and include_output=false still receive ready items. Only 0 includes
-    running tails (up to 1000 characters) and age, subject to include_output.
-    Inbox ends and round answers arrive once; output_returned means use read_conversation.
-    Unknown/expired/duplicate ids reject the whole call. Follow receipt next for this host's wait
-    mode (blocking wait, background wait command then wait(wait_seconds=0), or App push then
-    wait(wait_seconds=0)).
+    wait_seconds=0 and include_output=false still receive ready items; only 0 includes running
+    tails (<=1000 chars) and age. Inbox ends and round answers arrive once; output_returned means
+    use read_conversation. Unknown/expired/duplicate ids reject the whole call.
     """
     if wait_seconds == 1500 and not runtime.long_wait_enabled():
         raise ToolError(

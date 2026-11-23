@@ -38,6 +38,26 @@ WAIT_AGAIN = (
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
 
+_CODEX_EXEC_HINT = (
+    'When calling blocking wait via functions.exec, start with `// @exec: {"yield_time_ms": 300000}` '
+    "(or your host max if shorter; 5 min exceeds wait's 270s). If it returns `Script running "
+    "with cell ID ...`, collect that same script only via `functions.wait(cell_id, "
+    "yield_time_ms=300000)` and never start a second AgentNave wait (if `already_waiting`, "
+    "return to the original `cell_id`). Both return immediately when the script ends, so do not "
+    "shorten yield_time_ms or poll every 10s; yielding is not timeout or cancel. Increment seq "
+    "only when starting a new AgentNave wait, and post no progress updates without a new end, "
+    "blocker, prompt_pending, or user decision."
+)
+CODEX_WAIT_NEXT = (
+    "Ends are not pushed: before ending your turn, call wait (omit ids, same "
+    f"manager_session_id) until all_finished. {_CODEX_EXEC_HINT}"
+)
+CODEX_WAIT_AGAIN = (
+    "Still pending: reply to any new user message first, and handle any prompt_pending or "
+    "review_needed, then call wait again before ending your turn. "
+    f"{_CODEX_EXEC_HINT}"
+)
+
 CLAUDE_LONG_WAIT_NEXT = (
     "Before ending your turn, call wait (omit ids and wait_seconds, same manager_session_id): "
     "Claude Code moves this long wait to the background and starts a new turn when results arrive."
@@ -59,7 +79,9 @@ CLAUDE_SHORT_WAIT_AGAIN = (
     "before ending your turn; increment seq on each wait to distinguish repeated calls."
 )
 
-BLOCKING_WAIT_AGAIN = frozenset({WAIT_AGAIN, CLAUDE_LONG_WAIT_AGAIN, CLAUDE_SHORT_WAIT_AGAIN})
+BLOCKING_WAIT_AGAIN = frozenset(
+    {WAIT_AGAIN, CODEX_WAIT_AGAIN, CLAUDE_LONG_WAIT_AGAIN, CLAUDE_SHORT_WAIT_AGAIN}
+)
 
 type WatchHostName = Literal["antigravity", "grok"]
 
@@ -366,6 +388,8 @@ def build_wait_guidance(
             cmd = watch_command(root, pid, started_at, boss_key)
             return watch_guidance(cmd, cli=rule.host_name, again=again)
         return WAIT_AGAIN if again else WAIT_NEXT
-    if host.name == "codex" and can_push(root, "codex"):
-        return PUSH_AGAIN if again else PUSH_NEXT
+    if host.name == "codex":
+        if can_push(root, "codex"):
+            return PUSH_AGAIN if again else PUSH_NEXT
+        return CODEX_WAIT_AGAIN if again else CODEX_WAIT_NEXT
     return WAIT_AGAIN if again else WAIT_NEXT
