@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 主动终止情形由 [ADR-0095](0095-provider-terminal-grace.md) 补充：Adapter 声明的终态事件出现后，进程超过宽限仍未退出时清理进程树（非故障情形）；下文「只在两种故障情形下」指故障判定。
+- 「疑似卡住」只提醒、不终止由 [ADR-0116](0116-progress-stall-reminder.md) 补充：连续 6 分钟无实质进展时提醒 boss 一次（不改变下文两种故障终止）。
 - 日期：2026-11-03
 - 补充 [ADR-0002](0002-lightweight-cli-subagent-adapter.md) 的执行边界，以及 [ADR-0007](0007-wait-any-ready-subset.md) 的等待语义。
 

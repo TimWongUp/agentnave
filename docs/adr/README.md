@@ -52,7 +52,7 @@
 | 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 部分修订 | 清理计时起点由 [ADR-0099](0099-handover-links-workspaces.md) 修订 |
 | 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 部分取代 | [ADR-0061](0061-fixed-service-launcher.md) |
 | 0048 | [SQLite schema 演进与迁移归属](0048-sqlite-schema-evolution.md) | 已接受 | — |
-| 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | [ADR-0095](0095-provider-terminal-grace.md) 补充 |
+| 0049 | [服务主动终止任务的情形](0049-service-initiated-termination.md) | 已接受 | [ADR-0095](0095-provider-terminal-grace.md) 补充；「疑似卡住」只提醒由 [ADR-0116](0116-progress-stall-reminder.md) 补充 |
 | 0050 | [1.0 兼容基线](0050-v1-compatibility-baseline.md) | 已接受 | — |
 | 0051 | [并行档不再逐次复核，评审时机交给用户](0051-parallel-preset-without-recheck.md) | 已接受 | [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) |
 | 0052 | [Worker 增加界面两档](0052-orchestration-specialty-seats.md) | 部分取代 | [ADR-0065](0065-predefined-specialist-roles.md)、[ADR-0069](0069-interface-seat-as-specialist-and-single-model-specialists.md)、[ADR-0087](0087-decision-model-recommends-seats.md)；2026-11-15 自身修订：各分组可加可选的中等档 `<前缀>-medium`，只公布绑定了的 |
@@ -119,3 +119,4 @@
 | 0113 | [多 agent 聊天桌面端另立项目，AgentNave 保持以 MCP 编排为主](0113-chat-desktop-split-out.md) | 部分修订 | 「Git 与 PR 归新项目」由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 修订（只读状态与基础操作回到托盘）；取代 ADR-0111、ADR-0112；恢复 ADR-0103、ADR-0109 的原条款；保留 ADR-0111 对 ADR-0056、ADR-0072 依据的更正 |
 | 0114 | [Claude 与 agy 保持交互 TUI，boss 以用户身份驱动，结果靠宿主自己唤醒收取](0114-tui-runtime-like-a-user.md) | 已接受 | 修订 ADR-0003、0043、0056、0057、0062、0064、0067、0072、0082、0084、0104（作废 PTY 键入投递）、0107、0109；沿用 ADR-0031、0018、0049、0102、0105、0113 |
 | 0115 | [托盘显示 Git 与 PR 状态，并提供基础 Git 操作](0115-tray-git-status-and-basic-ops.md) | 已接受 | 修订 ADR-0113（Git 与 PR 的只读状态与基础操作回到托盘）、ADR-0098（用户打开规则后自动清理隔离目录）；补充 ADR-0029、ADR-0092 |
+| 0116 | [运行中任务长时间无实质进展时提醒 boss 一次](0116-progress-stall-reminder.md) | 已接受 | 补充 ADR-0049；沿用 ADR-0114 的到限提醒方式 |
