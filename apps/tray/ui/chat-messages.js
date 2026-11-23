@@ -14,7 +14,7 @@ function renderInlineLink(label, rawUrl) {
 function inline(parent, text, allowLinks = true) {
   let last = 0;
   const pattern = allowLinks
-    ? /`[^`\n]+`|\[([^\]\n]+)\]\(((?:[^\s()]+|\([^\s()]*\))+)\)|\*\*[^*\n]+\*\*/g
+    ? /`[^`\n]+`|\[([^\]\n]+)\]\(((?:[^\s()]|\([^\s()]*\))+)\)|\*\*[^*\n]+\*\*/g
     : /`[^`\n]+`|\*\*[^*\n]+\*\*/g;
   for (const m of text.matchAll(pattern)) {
     if (m.index > last) parent.append(text.slice(last, m.index));

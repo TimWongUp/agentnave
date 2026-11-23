@@ -3271,6 +3271,11 @@ test("renderMarkdown renders http(s) as external anchors, file:// as text withou
   assert.equal(fileSpans[0].attributes.title, "file:///Users/tim/chat.js#L10");
   assert.equal(findAll(fileSpans[0], (n) => n.tagName === "CODE").length, 1);
 
+  // An unclosed link must not backtrack exponentially.
+  const started = Date.now();
+  context.renderMarkdown(makeNode("div.md"), `[a](${"a".repeat(5000)} `);
+  assert.ok(Date.now() - started < 500);
+
   const chatCss = readFileSync(`${__dirname}/../chat.css`, "utf8");
   assert.match(chatCss, /\.md a\s*\{/);
   assert.match(chatCss, /\.md \.md-file\s*\{/);
