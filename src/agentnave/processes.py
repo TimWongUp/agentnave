@@ -164,8 +164,14 @@ def _system_proxy(env: dict[str, str]) -> dict[str, str]:
     return {"HTTPS_PROXY": entry, "HTTP_PROXY": entry}
 
 
+_EXIT_TAIL_SECONDS = 0.2
+
+
 async def terminate_process_tree(
-    process: asyncio.subprocess.Process, grace_seconds: float = 2.0
+    process: asyncio.subprocess.Process,
+    grace_seconds: float = 2.0,
+    *,
+    completion: asyncio.Future[ProviderCompletion] | None = None,
 ) -> None:
     """Terminate a provider tree through its platform supervisor."""
     if process.returncode is not None:
@@ -177,8 +183,18 @@ async def terminate_process_tree(
         await process.wait()
         return
     process_group = process.pid
-    os.killpg(process_group, signal.SIGTERM)
-    await asyncio.sleep(grace_seconds)
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        await process.wait()
+        return
+    if completion is None:
+        await asyncio.sleep(grace_seconds)
+    else:
+        if not completion.done():
+            await asyncio.wait({completion}, timeout=grace_seconds)
+        if completion.done():
+            await asyncio.sleep(min(_EXIT_TAIL_SECONDS, max(0.0, grace_seconds)))
     with suppress(ProcessLookupError):
         os.killpg(process_group, signal.SIGKILL)
     await process.wait()
