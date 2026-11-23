@@ -183,7 +183,7 @@ impl Reader {
         };
         let handover_map: HashMap<_, _> = handovers_vec.into_iter().collect();
         let app_map: HashMap<_, _> = apps_vec.into_iter().collect();
-        let origins = crate::stage::origin_cwds(&snapshots, &handover_map);
+        let origins = self.workspace_origins(&database, &snapshots, &handover_map);
         let account_dirs: HashMap<String, PathBuf> = crate::accounts::read(&self.root)
             .unwrap_or_default()
             .into_iter()
