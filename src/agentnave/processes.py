@@ -193,13 +193,15 @@ async def terminate_process_tree(
     except ProcessLookupError:
         await process.wait()
         return
-    if completion is None or _reader_gone(completion):
-        await asyncio.sleep(grace_seconds)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, grace_seconds)
+    if completion is not None and not completion.done():
+        await asyncio.wait({completion}, timeout=grace_seconds)
+    if completion is not None and completion.done() and not _reader_gone(completion):
+        await asyncio.sleep(min(_EXIT_TAIL_SECONDS, max(0.0, grace_seconds)))
     else:
-        if not completion.done():
-            await asyncio.wait({completion}, timeout=grace_seconds)
-        if completion.done() and not _reader_gone(completion):
-            await asyncio.sleep(min(_EXIT_TAIL_SECONDS, max(0.0, grace_seconds)))
+        # No delivered exit (no reader, reader gone, or timeout): use the rest of the grace.
+        await asyncio.sleep(max(0.0, deadline - loop.time()))
     with suppress(ProcessLookupError):
         os.killpg(process_group, signal.SIGKILL)
     await process.wait()
