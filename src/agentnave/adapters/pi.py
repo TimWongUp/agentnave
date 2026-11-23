@@ -70,6 +70,17 @@ def _capture_line(line: bytes) -> bytes:
     return json.dumps(kept).encode() + b"\n"
 
 
+_RETRY_EVENTS = frozenset(
+    {
+        "auto_retry_start",
+        "auto_retry_end",
+        "summarization_retry_scheduled",
+        "summarization_retry_attempt_start",
+        "summarization_retry_finished",
+    }
+)
+
+
 class PiAdapter(AdapterHooks):
     name = "pi"
     options_description = "provider (model backend; requires model), tools, restricted_tools (boolean; disables tools, extensions and MCP)"
@@ -155,6 +166,22 @@ class PiAdapter(AdapterHooks):
             state = "retrying" if event.get("willRetry") is True else "completed"
             return ProviderActivity("lifecycle", "agent_end", state)
         return None
+
+    def is_progress(self, event: dict[str, object], activity: ProviderActivity | None) -> bool:
+        # A failed attempt and the retry bookkeeping around it say nothing moved.
+        kind = event.get("type")
+        if kind == "agent_end" and event.get("willRetry") is True:
+            return False
+        if kind in _RETRY_EVENTS:
+            return False
+        if kind == "message_end":
+            message = object_dict(event.get("message"))
+            if message.get("role") == "assistant" and message.get("stopReason") in (
+                "error",
+                "aborted",
+            ):
+                return False
+        return super().is_progress(event, activity)
 
     def parse(self, returncode: int, stdout: bytes, stderr: bytes) -> ParsedProviderResult:
         events = parse_json_lines(stdout.decode(errors="replace"))

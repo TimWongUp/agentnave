@@ -155,6 +155,8 @@ class ProviderAdapter(Protocol):
 
     def terminal_event(self, event: dict[str, object]) -> bool: ...
 
+    def is_progress(self, event: dict[str, object], activity: ProviderActivity | None) -> bool: ...
+
     def event_model(self, event: dict[str, object]) -> str | None: ...
 
     def session_model(self, session_id: str | None, *, since: datetime) -> str | None: ...
@@ -223,6 +225,13 @@ class AdapterHooks:
         where a turn's end is not the process's.
         """
         return False
+
+    def is_progress(self, event: dict[str, object], activity: ProviderActivity | None) -> bool:
+        """Whether this native event shows the CLI doing work, for the no-progress reminder
+        (ADR-0116). ``activity`` is what ``activity(event)`` returned for it. Retry notices and
+        heartbeats say the process is alive, not that the task moved, so they do not count; an
+        Adapter overrides this for the ones its own protocol sends."""
+        return activity is None or activity.kind != "retry"
 
     def event_model(self, event: dict[str, object]) -> str | None:
         """The main assistant's model named by one native stream event."""

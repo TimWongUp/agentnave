@@ -1932,3 +1932,57 @@ def test_devin_activity_keeps_thinking_and_tool_inputs_private() -> None:
     assert adapter.event_model({"type": "model", "model": "swe-2-flash-medium"}) == (
         "swe-2-flash-medium"
     )
+
+
+@pytest.mark.parametrize(
+    ("adapter", "event", "progress"),
+    [
+        (CodexAdapter(), {"type": "error", "message": "Reconnecting... 2/5"}, False),
+        (
+            CodexAdapter(),
+            {"type": "item.completed", "item": {"type": "error", "message": "stream"}},
+            False,
+        ),
+        (CodexAdapter(), {"type": "turn.started"}, True),
+        (
+            CodexAdapter(),
+            {"type": "item.started", "item": {"type": "command_execution", "id": "1"}},
+            True,
+        ),
+        (ClaudeAdapter(), {"type": "system", "subtype": "api_retry", "error": "overloaded"}, False),
+        (CodeBuddyAdapter(), {"type": "keep_alive"}, False),
+        (ClaudeAdapter(), {"type": "stream_event", "event": {"type": "ping"}}, False),
+        (CodeBuddyAdapter(), {"type": "rate_limit_event", "rate_limit_info": {}}, False),
+        (
+            ClaudeAdapter(),
+            {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": "x"}}},
+            True,
+        ),
+        (ClaudeAdapter(), {"type": "system", "subtype": "status", "status": "requesting"}, True),
+        (PiAdapter(), {"type": "agent_end", "willRetry": True}, False),
+        (PiAdapter(), {"type": "agent_end", "willRetry": False}, True),
+        (
+            PiAdapter(),
+            {"type": "message_end", "message": {"role": "assistant", "stopReason": "error"}},
+            False,
+        ),
+        (
+            PiAdapter(),
+            {"type": "message_end", "message": {"role": "assistant", "stopReason": "aborted"}},
+            False,
+        ),
+        (
+            PiAdapter(),
+            {"type": "message_end", "message": {"role": "assistant", "stopReason": "stop"}},
+            True,
+        ),
+        (PiAdapter(), {"type": "auto_retry_start", "attempt": 1, "delayMs": 2000}, False),
+        (PiAdapter(), {"type": "auto_retry_end", "success": False, "attempt": 1}, False),
+        (PiAdapter(), {"type": "summarization_retry_scheduled", "attempt": 1}, False),
+        (GrokAdapter(), {"type": "text", "data": "hi"}, True),
+    ],
+)
+def test_adapters_decide_which_events_are_substantive_progress(
+    adapter: base.ProviderAdapter, event: dict[str, object], progress: bool
+) -> None:
+    assert adapter.is_progress(event, adapter.activity(event)) is progress

@@ -302,6 +302,16 @@ class CodexAdapter(AdapterHooks):
             return ProviderActivity("lifecycle", str(event_type), "reasoning")
         return None
 
+    def is_progress(self, event: dict[str, object], activity: ProviderActivity | None) -> bool:
+        # Reconnect notices arrive as `error` events (a retry activity) or as non-fatal `error`
+        # items; neither means the turn moved.
+        item = object_dict(event.get("item"))
+        if event.get("type") in ("item.started", "item.updated", "item.completed") and (
+            item.get("type") == "error"
+        ):
+            return False
+        return super().is_progress(event, activity)
+
     def quota_reset(self, stdout: bytes, stderr: bytes, now: datetime) -> datetime | None:
         events = parse_json_lines(stdout.decode(errors="replace"))
         errors = [event for event in events if event.get("type") in ("turn.failed", "error")]
