@@ -32,7 +32,7 @@
 | 0026 | [会话存储改为 SQLite](0026-sqlite-conversation-store.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0048](0048-sqlite-schema-evolution.md)、[ADR-0060](0060-tray-detects-orphaned-running-work.md) |
 | 0027 | [DeepSeek 官方路由自动恢复已存认证](0027-deepseek-official-route-stored-credentials.md) | 已接受 | — |
 | 0028 | [默认模型与档位跟随 CLI 自身设置](0028-follow-cli-default-model.md) | 部分取代 | [ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0062](0062-service-owned-member-names.md) |
-| 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0108](0108-multi-account-isolation.md)；提交说明与 PR 内容可手填由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充 |
+| 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0108](0108-multi-account-isolation.md)、[ADR-0117](0117-link-existing-claude-account-dirs.md)；提交说明与 PR 内容可手填由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充 |
 | 0030 | [App「技能」页提供可选 Skill，评审门控为首个，评审工位在 App 设置](0030-optional-review-gate-skill.md) | 部分取代 | [ADR-0036](0036-app-owns-service-skills.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md) |
 | 0031 | [单向编排使用派发指令约束](0031-prompt-only-orchestration.md) | 已接受 | [ADR-0043](0043-service-prompt-instructions.md) |
 | 0032 | [App 按 CLI 设权限档位](0032-cli-permission-tiers.md) | 部分取代 | [ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0059](0059-claude-tier-fallback.md)、[ADR-0076](0076-full-permission-default.md) |
@@ -111,7 +111,7 @@
 | 0105 | [Codex 内嵌终端改用私有 app-server 与结构化推送](0105-codex-app-server-terminal-push.md) | 部分修订 | 修订 ADR-0103、ADR-0104；2026-11-21 自身修订（投递前复查 `inbox`，按 `queuedSubmission.id` 用 `thread/queue/delete`／`update` 撤回或缩容已读排队唤醒）；派生会话的线程订阅、按轮中断与来源标记由 [ADR-0109](0109-in-app-derived-sessions.md) 扩展 |
 | 0106 | [托盘拥有本机 CLI 用量统计与折算花费面板](0106-tray-usage-panel.md) | 已接受 | 扩展 ADR-0012 的托盘数据根写入边界；保持 ADR-0026、ADR-0048 的服务与会话库隔离；遵守 ADR-0029；复用 ADR-0100 卸载开关与 ADR-0103 预览版及内嵌页约定；同步更新 CONTEXT「Tray App」 |
 | 0107 | [固定档专项不再排除在小事边界外，收尾改为服务语义汇报，顺位回执自带说明](0107-specialist-scope-closing-and-fallback-note.md) | 部分修订 | 修订 ADR-0073、ADR-0104；扩展 ADR-0043；补充 ADR-0089、ADR-0093；收尾句口吻由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订 |
-| 0108 | [支持按账号隔离运行，第一期开放 Claude](0108-multi-account-isolation.md) | 已接受 | 修订 ADR-0029、ADR-0056、ADR-0062、ADR-0078、ADR-0081、ADR-0089、ADR-0090、ADR-0093、ADR-0100、ADR-0103；扩展 ADR-0048 |
+| 0108 | [支持按账号隔离运行，第一期开放 Claude](0108-multi-account-isolation.md) | 部分修订 | 关联已有目录由 [ADR-0117](0117-link-existing-claude-account-dirs.md) 恢复；修订 ADR-0029、ADR-0056、ADR-0062、ADR-0078、ADR-0081、ADR-0089、ADR-0090、ADR-0093、ADR-0100、ADR-0103；扩展 ADR-0048 |
 | 0109 | [派生会话是开在 App 终端里的子代理](0109-in-app-derived-sessions.md) | 部分修订 | 修订 ADR-0025、ADR-0085、ADR-0103、ADR-0105；扩展 ADR-0043、ADR-0104；沿用 ADR-0028、ADR-0032、ADR-0080、ADR-0098、ADR-0108；展示与驱动方式由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订（已随 ADR-0111 被 [ADR-0113](0113-chat-desktop-split-out.md) 取代而作废）；第 1、3、5、6、7、8 节由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订 |
 | 0110 | [写作所需的上下文已全在 boss 手里时，定稿由 boss 自己写](0110-boss-writes-when-holding-context.md) | 已接受 | 修订 ADR-0073 |
 | 0111 | [托盘为 CLI 会话自绘对话视图，按 CLI 选驱动协议](0111-self-drawn-conversation-view.md) | 已被 ADR-0113 取代 | [ADR-0113](0113-chat-desktop-split-out.md)（对 ADR-0056、ADR-0072 依据的更正保留） |
@@ -120,3 +120,4 @@
 | 0114 | [Claude 与 agy 保持交互 TUI，boss 以用户身份驱动，结果靠宿主自己唤醒收取](0114-tui-runtime-like-a-user.md) | 已接受 | 修订 ADR-0003、0043、0056、0057、0062、0064、0067、0072、0082、0084、0104（作废 PTY 键入投递）、0107、0109；沿用 ADR-0031、0018、0049、0102、0105、0113 |
 | 0115 | [托盘显示 Git 与 PR 状态，并提供基础 Git 操作](0115-tray-git-status-and-basic-ops.md) | 已接受 | 修订 ADR-0113（Git 与 PR 的只读状态与基础操作回到托盘）、ADR-0098（用户打开规则后自动清理隔离目录）；补充 ADR-0029、ADR-0092 |
 | 0116 | [运行中任务长时间无实质进展时提醒 boss 一次](0116-progress-stall-reminder.md) | 已接受 | 补充 ADR-0049；沿用 ADR-0114 的到限提醒方式 |
+| 0117 | [App 添加 Claude 账号可关联已有配置目录](0117-link-existing-claude-account-dirs.md) | 已接受 | 修订 ADR-0108（恢复关联已有目录）、ADR-0029（允许手填账号配置目录）；沿用 ADR-0108 外部目录账号边界 |

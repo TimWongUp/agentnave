@@ -8,7 +8,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 | --- | --- |
 | Manager（boss） | 目标解释、任务拆解、角色与模型选择、并行、重试、审核、综合、是否隔离与合入、长期任务状态 |
 | AgentNave 服务 | 启动与取消 Provider 进程树、默认值套用、活动快照与终态归一化、进程内 Invocation 句柄、会议轮次、会话历史与按用户设定天数的自动清理、隔离目录的创建、登记、只读任务无改动时的自动释放与显式释放后的删除、终端模式派发的参数解析、结算与原生日志按轮读取（[ADR-0109](../adr/0109-in-app-derived-sessions.md)） |
-| 托盘 App | 宿主接入与 Skill 安装、组员／多账号与设置文件、托管账号目录（建目录、独立登录终端与仅接入同步）、历史展示、会话改名与手动清理、隔离目录的手动删除与用户打开规则后的自动清理（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)、[ADR-0115](../adr/0115-tray-git-status-and-basic-ops.md)）、CLI 会话的 Git 与 PR 状态及用户确认的基础 Git 操作（[ADR-0115](../adr/0115-tray-git-status-and-basic-ops.md)）、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)）、用户自己开的内嵌终端（[ADR-0103](../adr/0103-tray-embedded-terminal.md)）、派生会话终端（[ADR-0109](../adr/0109-in-app-derived-sessions.md)）、本机用量统计（[ADR-0106](../adr/0106-tray-usage-panel.md)） |
+| 托盘 App | 宿主接入与 Skill 安装、组员／多账号与设置文件、托管账号目录（建目录、独立登录终端与仅接入同步）与关联已有账号目录（[ADR-0117](../adr/0117-link-existing-claude-account-dirs.md)）、历史展示、会话改名与手动清理、隔离目录的手动删除与用户打开规则后的自动清理（[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)、[ADR-0115](../adr/0115-tray-git-status-and-basic-ops.md)）、CLI 会话的 Git 与 PR 状态及用户确认的基础 Git 操作（[ADR-0115](../adr/0115-tray-git-status-and-basic-ops.md)）、App 偏好（`preferences.json`）、编排规则块、应用更新与按版本安装服务、按原安装方式更新已装的 CLI（[ADR-0055](../adr/0055-app-updates-member-clis.md)）、用户自己开的内嵌终端（[ADR-0103](../adr/0103-tray-embedded-terminal.md)）、派生会话终端（[ADR-0109](../adr/0109-in-app-derived-sessions.md)）、本机用量统计（[ADR-0106](../adr/0106-tray-usage-panel.md)） |
 | Provider CLI | 自身的安装、认证、配置、权限与原生 Session |
 | MCP Host | 注册格式、作用域与加载行为 |
 
