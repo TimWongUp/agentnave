@@ -2258,6 +2258,10 @@ fn office_timeline_reports_omitted_and_counts_full_threads() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "fixture directories are POSIX paths, not absolute on Windows"
+)]
 fn boss_cwd_wins_project_grouping_across_sidebar_and_usage_with_dispatch_fallback() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -2274,10 +2278,7 @@ fn boss_cwd_wins_project_grouping_across_sidebar_and_usage_with_dispatch_fallbac
             "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, workspace_uris TEXT, last_modified_time TEXT);",
         )
         .unwrap();
-    let boss_uri = format!(
-        "file:///{}",
-        repo_boss.trim_start_matches('/').replace('\\', "/")
-    );
+    let boss_uri = format!("file://{repo_boss}");
     agy_conn
         .execute(
             "INSERT INTO conversation_summaries VALUES (?1, 'Boss', ?2, '2026-11-23T00:00:00Z')",
