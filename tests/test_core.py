@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -47,6 +48,7 @@ from agentnave.models import (
 )
 from agentnave.native_prompts import NativePrompt, PromptChannel
 from agentnave.processes import (
+    ProviderCompletion,
     _wait_windows_supervisor_ready,  # pyright: ignore[reportPrivateUsage]
 )
 from agentnave.progress_stall import ProgressTracker, progress_stall_guard
@@ -929,10 +931,13 @@ async def test_supervisor_still_owns_process_group_when_cleanup_starts(
     original = core.terminate_process_tree
 
     async def observe_cleanup(
-        process: asyncio.subprocess.Process, grace_seconds: float = 2.0
+        process: asyncio.subprocess.Process,
+        grace_seconds: float = 2.0,
+        *,
+        completion: asyncio.Future[ProviderCompletion] | None = None,
     ) -> None:
         observed_returncodes.append(process.returncode)
-        await original(process, grace_seconds)
+        await original(process, grace_seconds, completion=completion)
 
     monkeypatch.setattr(core, "terminate_process_tree", observe_cleanup)
     manager = InvocationManager()
@@ -2073,11 +2078,13 @@ async def test_codex_terminal_event_ends_sleeping_process(tmp_path: Path) -> Non
     prepared = replace(manager.prepare(request), argv=(sys.executable, "-c", script))
     started = time.monotonic()
     try:
-        # Well under the fake's 60-second sleep, with room for a slow CI runner.
+        # 0.5s terminal grace + ~0.2s POSIX exit tail (no full 2s process-tree grace).
         result = await manager.wait(manager.start(request, prepared=prepared), 30)
         assert result is not None and result.status is InvocationStatus.SUCCEEDED
         assert (result.output, result.session_id) == ("ok", "session-1")
-        assert 2 <= time.monotonic() - started < 30
+        elapsed = time.monotonic() - started
+        assert core._TERMINAL_GRACE_SECONDS == 0.5  # pyright: ignore[reportPrivateUsage]
+        assert 0.5 <= elapsed < 3.0
     finally:
         await manager.shutdown()
 
@@ -2485,3 +2492,31 @@ def test_a_background_wait_that_starts_and_ends_restarts_the_progress_clock(
         record.progress.at = 1.0
         record.observe_background_tasks(BackgroundTasksState(waiting=waiting, task_ids=("bg",)))
         assert record.progress.at is not None and record.progress.at > 1.0
+
+
+@pytest.mark.asyncio
+async def test_session_model_runs_off_event_loop_during_settlement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen_threads: list[int] = []
+
+    class ModelLookupAdapter(FakeAdapter):
+        def session_model(self, session_id: str | None, *, since: datetime) -> str | None:
+            assert session_id == "provider-session"
+            seen_threads.append(threading.get_ident())
+            return "resolved-model"
+
+    def adapter_for(_provider: str) -> ModelLookupAdapter:
+        return ModelLookupAdapter()
+
+    monkeypatch.setattr("agentnave.core.get_adapter", adapter_for)
+    manager = InvocationManager()
+    try:
+        result = await asyncio.wait_for(
+            manager.wait(manager.start(InvocationRequest("claude", "work", tmp_path))), 5
+        )
+        assert result is not None and result.status is InvocationStatus.SUCCEEDED
+        assert result.reported_model == "resolved-model"
+        assert seen_threads and seen_threads[0] != threading.get_ident()
+    finally:
+        await manager.shutdown()
