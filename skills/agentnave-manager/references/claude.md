@@ -1,6 +1,6 @@
 # Claude Code
 
-回执注明 App 会提示时直接结束本轮、提示到达后调 `wait(wait_seconds=0)`，不走下述阻塞等待。未注明 App 会提示时，阻塞等待省略 `wait_seconds`：Claude Code 终端交互会话里服务自动等 1500 秒，桌面 App、VS Code 等仍是 270 秒，按 SKILL.md 常规做法连续等待。调用转入后台后不再另发 `wait`，同一时间只挂一个；若收到 `already_waiting` 说明已有一次收件箱等待在进行，不要再调阻塞式 `wait`（等原等待返回，要查进展或先收就绪结果改用 `wait(wait_seconds=0)`）；可以结束本轮或继续做其他工作，由完成通知唤醒。通知到达后需要继续等待时，再递增 `seq` 发下一次。后台挂着等待时用户问进展，可以对相关 `ids` 调 `wait(wait_seconds=0)` 查；它收到的终态算已收取，后台那次不会再送一遍，以这次为准。如果 `wait` 报的是宿主的工具超时，而不是正常返回 `wait_elapsed`，说明这条连接的超时还没补到 1500 秒以上：比如升级后没有重连，或者项目层配置里还是旧值。这时任务仍在运行，本会话改传 `wait_seconds=270`，重连或重启 Claude Code 后再省略。超时前就绪的结果可能已经被取走，先对相关 `ids` 调 `wait(wait_seconds=0)`，或用 `read_conversation` 核对。
+Claude Code 在 App 内外终端均走 `wait`，不再由 App 键入唤醒。终端交互会话（`CLAUDE_CODE_ENTRYPOINT=cli`）且未关闭后台任务时，阻塞等待省略 `wait_seconds`：服务自动等 1500 秒，约两分钟后由 Claude Code 转为后台任务、结果到达时自动开新一轮；若关闭了后台任务（`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` 等），按回执 `next` 显式传 `wait_seconds=270`；桌面 App、VS Code 等非终端入口同样是 270 秒，按 SKILL.md 常规做法连续等待。调用转入后台后不再另发 `wait`，同一时间只挂一个；若收到 `already_waiting` 说明已有一次收件箱等待在进行，不要再调阻塞式 `wait`（等原等待返回，要查进展或先收就绪结果改用 `wait(wait_seconds=0)`）；可以结束本轮或继续做其他工作，由完成通知唤醒。通知到达后需要继续等待时，再递增 `seq` 发下一次。后台挂着等待时用户问进展，可以对相关 `ids` 调 `wait(wait_seconds=0)` 查；它收到的终态算已收取，后台那次不会再送一遍，以这次为准。如果 `wait` 报的是宿主的工具超时，而不是正常返回 `wait_elapsed`，说明这条连接的超时还没补到 1500 秒以上：比如升级后没有重连，或者项目层配置里还是旧值。这时任务仍在运行，本会话改传 `wait_seconds=270`，重连或重启 Claude Code 后再省略。超时前就绪的结果可能已经被取走，先对相关 `ids` 调 `wait(wait_seconds=0)`，或用 `read_conversation` 核对。
 
 通常省略 `model`、`effort`，由服务按 App 里的组员设置传入；用户点名模型或档位时才传，并按 `list_members` 核对，超出模式范围会被拒绝。
 
@@ -25,4 +25,4 @@ macOS／Linux 默认以交互模式运行（App 关掉「交互模式」或显�
 {"invocation_id":"<wait 中的句柄>","prompt_id":"<弹框编号>","manager_session_id":"<本聊天原生 ID>","decision":"allow"}
 ```
 
-提问框改传 `answers={"题目原文":"选项或填写的答案"}`，省略 `decision`。计划确认（`ExitPlanMode`，工具输入里是计划正文）按权限框答：允许即批准计划，Claude 按派发时的档位继续；拒绝附理由，Claude 留在计划阶段修改。权限只允许本次调用，服务不保存 Claude 的持久放行规则；答后按原等待方式继续（App 提示模式结束本轮，常规模式继续 `wait`）。画面出现弹框但 hook 通道未收到时会报受阻，由 boss 检查，不猜按键。
+提问框改传 `answers={"题目原文":"选项或填写的答案"}`，省略 `decision`。计划确认（`ExitPlanMode`，工具输入里是计划正文）按权限框答：允许即批准计划，Claude 按派发时的档位继续；拒绝附理由，Claude 留在计划阶段修改。权限只允许本次调用，服务不保存 Claude 的持久放行规则；答后按回执 `next` 指示的等待方式继续。画面出现弹框但 hook 通道未收到时会报受阻，由 boss 检查，不猜按键。

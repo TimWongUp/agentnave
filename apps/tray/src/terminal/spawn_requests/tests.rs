@@ -13,6 +13,29 @@ fn test_coord(dir: &Path) -> Coordinator {
 }
 
 #[test]
+fn push_document_splits_push_providers_from_terminal_providers() {
+    let mut receipts = HashMap::new();
+    let doc = build_push_document(
+        std::process::id(),
+        super::super::wakeup::PROVIDERS,
+        &[],
+        &mut receipts,
+    );
+    #[cfg(unix)]
+    assert_eq!(doc["providers"], json!(["codex"]));
+    #[cfg(not(unix))]
+    assert_eq!(doc["providers"], json!([]));
+
+    #[cfg(target_os = "macos")]
+    assert_eq!(
+        doc["terminal_providers"],
+        json!(["claude", "codex", "antigravity"])
+    );
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(doc["terminal_providers"], json!([]));
+}
+
+#[test]
 fn publishes_256k_limit_evicts_oldest_finished_only() {
     let dir = tempfile::tempdir().unwrap();
     let coord = test_coord(dir.path());

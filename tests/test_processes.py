@@ -19,6 +19,8 @@ async def test_provider_does_not_inherit_host_listener(
     inherited = {
         "SERVER__PORT": "51153",
         "SERVER__HOST": "127.0.0.1",
+        "HERDR_PANE_ID": "pane-42",
+        "HERDR_SESSION": "sess-9",
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
     }
     for name, value in inherited.items():
@@ -38,6 +40,8 @@ async def test_provider_does_not_inherit_host_listener(
     assert json.loads(stdout) == {
         "SERVER__PORT": None,
         "SERVER__HOST": None,
+        "HERDR_PANE_ID": None,
+        "HERDR_SESSION": None,
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
         # POSIX names the supervisor's own session, which the provider tree shares.
         "AGENTNAVE_DISPATCHED": "1" if os.name == "nt" else str(supervised.process.pid),

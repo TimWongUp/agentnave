@@ -803,10 +803,12 @@ def test_make_launch_account_and_shared_contract_fixture(
     run._cancel_receipt(push_doc)  # pyright: ignore[reportPrivateUsage]
     assert acked == [(expected_cancel["request_id"], tray)]
 
-    inbox = InboxSnapshot(tmp_path, 1234)
+    inbox = InboxSnapshot(tmp_path, 1234, started_at=1700000100.0)
     settled = cast(list[dict[str, object]], fixture["inbox_settlement"]["settled_requests"])
     inbox.publish({}, settled)
-    assert json.loads(inbox.path.read_text()) == fixture["inbox_settlement"]
+    inbox_doc = json.loads(inbox.path.read_text())
+    assert inbox_doc.pop("started_at") == 1700000100.0
+    assert inbox_doc == fixture["inbox_settlement"]
 
 
 @pytest.mark.asyncio
@@ -972,4 +974,45 @@ def test_terminal_unavailable_when_ancestor_is_derived_terminal(
 
     # Sibling derived terminal PID (not in our ancestor chain) must not block boss terminal.
     derived_pids[:] = [99]
+    assert mcp_runtime.terminal_available()
+
+
+def test_terminal_available_ignores_push_providers_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_runtime, push_capability
+    from agentnave.host import Host
+
+    monkeypatch.delenv("AGENTNAVE_DERIVED_SESSION", raising=False)
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("claude", "env"))
+    monkeypatch.setattr(mcp_runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(push_capability.sys, "platform", "darwin")
+    push_dir = tmp_path / "push"
+    push_dir.mkdir()
+    snapshot_file = push_dir / "10.json"
+    snapshot_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "pid": 10,
+                "providers": ["codex"],
+                "terminal_providers": ["claude", "codex", "antigravity"],
+            }
+        )
+    )
+    started = snapshot_file.stat().st_mtime - 1
+
+    def parent(_pid: int) -> int:
+        return 1
+
+    def birth(_pid: int) -> float:
+        return started
+
+    monkeypatch.setattr(push_capability.os, "getppid", lambda: 10)
+    monkeypatch.setattr(push_capability, "read_process_parent", parent)
+    monkeypatch.setattr(push_capability, "read_process_started", birth)
+    monkeypatch.setattr(terminal_requests, "read_process_started", birth)
+
+    assert not push_capability.app_can_push(tmp_path, "claude")
     assert mcp_runtime.terminal_available()

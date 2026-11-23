@@ -35,8 +35,18 @@ STRIP_ENV = (
 )
 
 
+STRIP_ENV_PREFIXES = ("HERDR_",)
+
+
+def _stripped_env(name: str) -> bool:
+    if name in STRIP_ENV:
+        return True
+    key = name.upper() if os.name == "nt" else name
+    return key.startswith(STRIP_ENV_PREFIXES)
+
+
 def child_environment(executable: str) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
+    env = {k: v for k, v in os.environ.items() if not _stripped_env(k)}
     paths = env.get("PATH", "").split(os.pathsep)
     if paths and paths[0] == os.path.dirname(sys.executable):
         paths.pop(0)

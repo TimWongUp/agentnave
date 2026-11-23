@@ -21,6 +21,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 mod theme;
+mod unread;
 mod wakeup;
 
 use std::collections::{BTreeMap, HashMap, HashSet};

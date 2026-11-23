@@ -316,13 +316,17 @@ def test_child_environment_only_changes_the_interactive_child(
 ) -> None:
     for name in tui.STRIP_ENV:
         monkeypatch.setenv(name, "host-value")
+    monkeypatch.setenv("HERDR_PANE_ID", "pane-1")
+    monkeypatch.setenv("HERDR_SOCKET", "/tmp/herdr.sock")
     monkeypatch.setenv("PATH", os.pathsep.join([os.path.dirname(sys.executable), "/usr/bin"]))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/custom/config")
     env = tui.child_environment("/provider/bin/claude")
     assert not set(tui.STRIP_ENV).intersection(env)
+    assert "HERDR_PANE_ID" not in env and "HERDR_SOCKET" not in env
     assert env["PATH"].split(os.pathsep) == ["/provider/bin", "/usr/bin"]
     assert env["CLAUDE_CONFIG_DIR"] == "/custom/config" and env["TERM"] == "xterm-256color"
     assert os.environ["CLAUDE_CODE_CHILD_SESSION"] == "host-value"
+    assert os.environ["HERDR_PANE_ID"] == "pane-1"
 
 
 def test_every_path_strips_the_same_host_session_variables(
