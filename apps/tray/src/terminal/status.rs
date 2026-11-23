@@ -11,6 +11,9 @@ pub(super) struct Tracker {
     pub state: Option<String>,
     pub kind: Option<String>,
     pub seq: u64,
+    pub last_working_seq: u64,
+    pub last_done_seq: u64,
+    pub last_blocked_seq: u64,
 }
 
 impl Tracker {
@@ -55,10 +58,19 @@ impl Tracker {
                                 (k.trim() == "kind").then(|| v.trim().to_owned())
                             });
                             self.seq += 1;
+                            match state {
+                                "working" => self.last_working_seq = self.seq,
+                                "done" => self.last_done_seq = self.seq,
+                                "blocked" => self.last_blocked_seq = self.seq,
+                                _ => {}
+                            }
                         } else if state == "clear" {
                             self.state = None;
                             self.kind = None;
                             self.seq += 1;
+                            self.last_working_seq = 0;
+                            self.last_done_seq = 0;
+                            self.last_blocked_seq = 0;
                         }
                     }
                 }

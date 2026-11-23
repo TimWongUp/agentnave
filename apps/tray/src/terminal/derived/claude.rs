@@ -2,6 +2,9 @@
 
 mod monitor;
 mod screen;
+#[cfg(test)]
+pub(super) mod turn_state;
+#[cfg(not(test))]
 mod turn_state;
 
 use std::path::{Path, PathBuf};

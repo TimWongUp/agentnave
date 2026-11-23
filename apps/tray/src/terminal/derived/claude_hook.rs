@@ -1,7 +1,7 @@
 //! Claude Code hooks (`Stop` / `StopFailure` permanent hooks and `permission_fallback` `UserPromptSubmit`).
 
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::fs;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -72,7 +72,9 @@ pub(super) fn hook_settings(hook_dir: &Path) -> Value {
     let mode_file = shell_single_quote(&hook_dir.join("mode").display().to_string());
     let cmd = format!(
         "[ -f {armed} ] || exit 0; rm -f {armed}; \
-        /usr/bin/perl -MJSON::PP -0777 -e 'my $d = eval {{ decode_json(<STDIN>) }}; \
+        /usr/bin/perl -MJSON::PP -e 'my $raw = \"\"; my $n = read(STDIN, $raw, 1048577); \
+        exit 0 if !defined($n) || $n > 1048576; \
+        my $d = eval {{ decode_json($raw) }}; \
         my $m = ref($d) eq \"HASH\" ? ($d->{{permission_mode}} // \"\") : \"\"; \
         my $tmp = \"$ARGV[0].tmp.$$\"; \
         open my $fh, \">\", $tmp or die $!; print {{$fh}} $m; close $fh or die $!; \
@@ -93,8 +95,10 @@ pub(super) fn hook_settings(hook_dir: &Path) -> Value {
 pub(super) fn stop_hook_settings(hook_dir: &Path) -> Value {
     let events_file = shell_single_quote(&events_path(hook_dir).display().to_string());
     let cmd = format!(
-        "/usr/bin/perl -MJSON::PP -0777 -e '\
-        my $d = eval {{ decode_json(<STDIN>) }}; \
+        "/usr/bin/perl -MFcntl=:DEFAULT,:flock -MJSON::PP -e '\
+        my $raw = \"\"; my $n = read(STDIN, $raw, 1048577); \
+        exit 0 if !defined($n) || $n > 1048576; \
+        my $d = eval {{ decode_json($raw) }}; \
         exit 0 unless ref($d) eq \"HASH\"; \
         my $ev = $d->{{hook_event_name}} // \"\"; \
         exit 0 unless $ev eq \"Stop\" || $ev eq \"StopFailure\"; \
@@ -108,7 +112,10 @@ pub(super) fn stop_hook_settings(hook_dir: &Path) -> Value {
         if (exists $d->{{background_tasks}}) {{ \
             $out{{background_tasks}} = $d->{{background_tasks}}; \
         }} \
-        open my $fh, \">>\", $ARGV[0] or exit 0; \
+        exit 0 if -l $ARGV[0]; \
+        my $flags = O_WRONLY | O_CREAT | O_APPEND | (eval {{ O_NOFOLLOW() }} // 0) | (eval {{ O_NONBLOCK() }} // 0); \
+        sysopen(my $fh, $ARGV[0], $flags, 0600) or exit 0; \
+        exit 0 unless -f $fh; \
         flock($fh, 2); \
         print {{$fh}} encode_json(\\%out) . \"\\n\"; \
         close $fh;' {events_file}"
@@ -133,7 +140,9 @@ pub(super) fn build_claude_hooks(hook_dir: &Path, include_mode_fallback: bool) -
 }
 
 pub(super) fn read_observed_mode(hook_dir: &Path) -> Option<String> {
-    let text = fs::read_to_string(hook_dir.join("mode")).ok()?;
+    let file = native_logs::open_regular_readonly(&hook_dir.join("mode"))?;
+    let mut text = String::new();
+    file.take(1024).read_to_string(&mut text).ok()?;
     let trimmed = text.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
@@ -142,20 +151,25 @@ pub(super) fn drop_empty_claude_session(homes: &[PathBuf], session_id: &str) {
     let Some(path) = native_logs::claude_transcript_path(homes, session_id) else {
         return;
     };
-    let Ok(file) = File::open(&path) else {
+    let Some(file) = native_logs::open_regular_readonly(&path) else {
         return;
     };
-    let has_turn = BufReader::new(file)
-        .lines()
-        .map_while(Result::ok)
-        .any(|line| {
-            serde_json::from_str::<Value>(&line).is_ok_and(|row| {
-                row["type"].as_str() == Some("assistant")
-                    || (row["type"].as_str() == Some("system")
-                        && row["subtype"].as_str() == Some("turn_duration"))
-            })
-        });
-    if !has_turn {
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut has_turn = false;
+    while native_logs::read_bounded_line(&mut reader, &mut line) {
+        if serde_json::from_str::<Value>(&line).is_ok_and(|row| {
+            row["type"].as_str() == Some("assistant")
+                || (row["type"].as_str() == Some("system")
+                    && row["subtype"].as_str() == Some("turn_duration"))
+        }) {
+            has_turn = true;
+            break;
+        }
+    }
+    if !has_turn
+        && fs::symlink_metadata(&path).is_ok_and(|m| !m.file_type().is_symlink() && m.is_file())
+    {
         let _ = fs::remove_file(path);
     }
 }

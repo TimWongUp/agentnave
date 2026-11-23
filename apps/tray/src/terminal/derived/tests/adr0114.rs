@@ -1032,3 +1032,864 @@ fn claude_priority_stop_failure_interrupt_timeout_fallback_and_user_interjection
     assert_eq!(r4.anchor.unwrap()["end_row_index"], json!(2));
     s4.stop();
 }
+
+#[test]
+fn claude_task_notification_without_prompt_id_does_not_regress_end_prompt_id_to_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let hook_dir = claude_hook::prepare_claude_hook(false).unwrap();
+    let proj = dir.path().join("projects/p1");
+    fs::create_dir_all(&proj).unwrap();
+    let transcript = proj.join(format!("{CLAUDE_SID}.jsonl"));
+    let events_file = claude_hook::events_path(hook_dir.path());
+
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"user\",\"uuid\":\"u1\",\"promptId\":\"p-start\",\"message\":{\"content\":\"go\"}}\n",
+            "{\"type\":\"assistant\",\"uuid\":\"a1\",\"parentUuid\":\"u1\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"step 0\"}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"turn_duration\",\"uuid\":\"d1\",\"parentUuid\":\"a1\"}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &events_file,
+        format!(
+            "{}\n",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "prompt_id": "p-start",
+                "background_tasks": [{"id": "bg-1", "type": "shell", "status": "running"}]
+            })
+        ),
+    )
+    .unwrap();
+
+    let session = sleep_session_with_osc(dir.path(), "\x1b]7501;state=working\x07");
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        crate::terminal::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("req-nopid", "inv-nopid");
+    let handle = coord.register_run("inv-nopid");
+    let terminals = Terminals::default();
+    let launched = register_test_derived(
+        &terminals,
+        "claude",
+        dir.path(),
+        &session,
+        CLAUDE_SID,
+        "inv-nopid",
+        Some(hook_dir.path().to_path_buf()),
+    );
+    let baseline = tui::TurnBaseline {
+        claude_homes: vec![dir.path().to_path_buf()],
+        pre_offset: 0,
+        hook_events_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+    let coord_t = coord.clone();
+    let terms_t = terminals.clone();
+    let launched_t = launched.clone();
+    let handle_t = handle.clone();
+    let hook_path = hook_dir.path().to_path_buf();
+    let monitor = thread::spawn(move || {
+        claude::monitor_claude_turn_with_config(
+            &coord_t,
+            &terms_t,
+            &launched_t,
+            "req-nopid",
+            CLAUDE_SID,
+            &baseline,
+            "go",
+            &handle_t,
+            Some(&hook_path),
+            false,
+            claude::ClaudeMonitorConfig {
+                signal_pair_timeout: Duration::from_millis(400),
+                bg_reminder_delay: Duration::from_secs(60),
+            },
+        )
+    });
+
+    let wait_bg = Instant::now() + Duration::from_secs(2);
+    while !handle.is_bg_only_waiting() && Instant::now() < wait_bg {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(handle.is_bg_only_waiting());
+
+    // Subturn 1 task-notification without promptId whose parentUuid chains to a1, plus Stop without prompt_id.
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "type": "user",
+                "uuid": "u2",
+                "parentUuid": "a1",
+                "promptSource": "system",
+                "turnOrigin": "task_notification",
+                "origin": {"kind": "task-notification"},
+                "message": {"content": "<task-notification><task-id>bg-1</task-id></task-notification>"}
+            })
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type":"assistant","uuid":"a2","parentUuid":"u2","message":{"content":[{"type":"text","text":"step 1"}]}})
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type":"system","subtype":"turn_duration","uuid":"d2","parentUuid":"a2"})
+        )
+        .unwrap();
+    }
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&events_file)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "background_tasks": []
+            })
+        )
+        .unwrap();
+    }
+
+    monitor.join().unwrap();
+    let receipt = coord.run_receipt_by_invocation("inv-nopid").unwrap();
+    let anchor = receipt.anchor.unwrap();
+    assert_eq!(anchor["end_row_index"], json!(6));
+    assert_ne!(anchor.get("end_prompt_id"), Some(&json!("p-start")));
+    session.stop();
+}
+
+#[test]
+fn agy_settles_when_done_transitions_to_idle_quickly() {
+    let dir = tempfile::tempdir().unwrap();
+    let transcript = native_logs::agy_transcript_path(dir.path(), AGY_CID);
+    fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"step_index\":0,\"content\":\"<USER_REQUEST>fast</USER_REQUEST>\"}\n",
+            "{\"type\":\"PLANNER_RESPONSE\",\"content\":\"quick reply\"}\n"
+        ),
+    )
+    .unwrap();
+    // Coalesced working -> done -> idle before the first poll reads osc_snapshot.
+    let session = sleep_session_with_osc(
+        dir.path(),
+        "\x1b]7501;state=working\x07\x1b]7501;state=done\x07\x1b]7501;state=idle\x07",
+    );
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        crate::terminal::spawn_requests::current_process_started_at(),
+        &["antigravity"],
+    );
+    coord.insert_test_receipt("req-fast", "inv-fast");
+    let handle = coord.register_run("inv-fast");
+    let terminals = Terminals::default();
+    let launched = register_test_derived(
+        &terminals,
+        "antigravity",
+        dir.path(),
+        &session,
+        AGY_CID,
+        "inv-fast",
+        None,
+    );
+    let baseline = tui::TurnBaseline {
+        claude_homes: Vec::new(),
+        pre_offset: 0,
+        hook_events_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+    let coord_t = coord.clone();
+    let terms_t = terminals.clone();
+    let launched_t = launched.clone();
+    let handle_t = handle.clone();
+    let home_t = dir.path().to_path_buf();
+    let monitor = thread::spawn(move || {
+        tui::monitor_agy_turn_with_config(
+            &coord_t,
+            &terms_t,
+            &launched_t,
+            "req-fast",
+            Some(AGY_CID),
+            None,
+            &baseline,
+            "fast",
+            &handle_t,
+            Some(home_t),
+            tui::AgyMonitorConfig {
+                done_reply_wait: Duration::from_millis(250),
+                bg_reminder_delay: Duration::from_secs(60),
+            },
+        );
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while coord.run_receipt_by_invocation("inv-fast").unwrap().state != ReceiptState::Finished
+        && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let receipt = coord.run_receipt_by_invocation("inv-fast").unwrap();
+    if receipt.state != ReceiptState::Finished {
+        session.stop();
+        monitor.join().unwrap();
+        panic!("agy monitor hung when done transitioned quickly to idle");
+    }
+    monitor.join().unwrap();
+    assert_eq!(receipt.terminal.unwrap().status, "succeeded");
+    assert_eq!(receipt.anchor.unwrap()["end_row_index"], json!(2));
+    session.stop();
+}
+
+#[test]
+fn agy_does_not_settle_early_on_subturn0_final_after_background_wake() {
+    let dir = tempfile::tempdir().unwrap();
+    let transcript = native_logs::agy_transcript_path(dir.path(), AGY_CID);
+    fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"step_index\":0,\"content\":\"<USER_REQUEST>run</USER_REQUEST>\"}\n",
+            "{\"type\":\"PLANNER_RESPONSE\",\"step_index\":1,\"tool_calls\":[{\"name\":\"run_command\"}]}\n",
+            "{\"type\":\"GENERIC\",\"status\":\"RUNNING\",\"content\":\"running as a background task with task id: t-bg\"}\n",
+            "{\"type\":\"PLANNER_RESPONSE\",\"content\":\"interim\"}\n",
+            "{\"type\":\"SYSTEM_MESSAGE\",\"content\":\"Task id \\\"t-bg\\\" finished\"}\n"
+        ),
+    )
+    .unwrap();
+    let session = sleep_session_with_osc(
+        dir.path(),
+        "\x1b]7501;state=working\x07\x1b]7501;state=done\x07",
+    );
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        crate::terminal::spawn_requests::current_process_started_at(),
+        &["antigravity"],
+    );
+    coord.insert_test_receipt("req-agy-wake", "inv-agy-wake");
+    let handle = coord.register_run("inv-agy-wake");
+    let terminals = Terminals::default();
+    let launched = register_test_derived(
+        &terminals,
+        "antigravity",
+        dir.path(),
+        &session,
+        AGY_CID,
+        "inv-agy-wake",
+        None,
+    );
+    let baseline = tui::TurnBaseline {
+        claude_homes: Vec::new(),
+        pre_offset: 0,
+        hook_events_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+    let coord_t = coord.clone();
+    let terms_t = terminals.clone();
+    let launched_t = launched.clone();
+    let handle_t = handle.clone();
+    let home_t = dir.path().to_path_buf();
+    let monitor = thread::spawn(move || {
+        tui::monitor_agy_turn_with_config(
+            &coord_t,
+            &terms_t,
+            &launched_t,
+            "req-agy-wake",
+            Some(AGY_CID),
+            None,
+            &baseline,
+            "run",
+            &handle_t,
+            Some(home_t),
+            tui::AgyMonitorConfig {
+                done_reply_wait: Duration::from_millis(500),
+                bg_reminder_delay: Duration::from_secs(60),
+            },
+        );
+    });
+    thread::sleep(Duration::from_millis(120));
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type": "PLANNER_RESPONSE", "content": "final after bg"})
+        )
+        .unwrap();
+    }
+    monitor.join().unwrap();
+    let receipt = coord.run_receipt_by_invocation("inv-agy-wake").unwrap();
+    assert_eq!(receipt.terminal.unwrap().status, "succeeded");
+    assert_eq!(receipt.anchor.unwrap()["end_row_index"], json!(6));
+    session.stop();
+}
+
+#[test]
+fn claude_stop_recognizes_mcp_tool_remote_mcp_and_fallback_task_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let hook_dir = claude_hook::prepare_claude_hook(false).unwrap();
+    let proj = dir.path().join("projects/p1");
+    fs::create_dir_all(&proj).unwrap();
+    let transcript = proj.join(format!("{CLAUDE_SID}.jsonl"));
+    let events_file = claude_hook::events_path(hook_dir.path());
+
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"user\",\"promptId\":\"p-mcp\",\"message\":{\"content\":\"run\"}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"working\"}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"turn_duration\"}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &events_file,
+        format!(
+            "{}\n",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "prompt_id": "p-mcp",
+                "background_tasks": [
+                    {"task_id": "m1", "type": "mcp_tool", "status": "running"},
+                    {"tool_use_id": "rm1", "type": "remote_mcp", "status": "running"},
+                    {"type": "shell", "status": "running"},
+                    {"type": "shell", "status": "running"}
+                ]
+            })
+        ),
+    )
+    .unwrap();
+
+    let session = sleep_session_with_osc(dir.path(), "\x1b]7501;state=working\x07");
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        crate::terminal::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("req-mcp", "inv-mcp");
+    let handle = coord.register_run("inv-mcp");
+    let terminals = Terminals::default();
+    let launched = register_test_derived(
+        &terminals,
+        "claude",
+        dir.path(),
+        &session,
+        CLAUDE_SID,
+        "inv-mcp",
+        Some(hook_dir.path().to_path_buf()),
+    );
+    let baseline = tui::TurnBaseline {
+        claude_homes: vec![dir.path().to_path_buf()],
+        pre_offset: 0,
+        hook_events_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+    let coord_t = coord.clone();
+    let terms_t = terminals.clone();
+    let launched_t = launched.clone();
+    let handle_t = handle.clone();
+    let hook_path = hook_dir.path().to_path_buf();
+    let monitor = thread::spawn(move || {
+        claude::monitor_claude_turn_with_config(
+            &coord_t,
+            &terms_t,
+            &launched_t,
+            "req-mcp",
+            CLAUDE_SID,
+            &baseline,
+            "run",
+            &handle_t,
+            Some(&hook_path),
+            false,
+            claude::ClaudeMonitorConfig {
+                signal_pair_timeout: Duration::from_millis(300),
+                bg_reminder_delay: Duration::from_millis(260),
+            },
+        )
+    });
+
+    // Must enter bg_only_waiting because mcp_tool / remote_mcp / shell tasks are waking.
+    let wait_bg = Instant::now() + Duration::from_secs(2);
+    while !handle.is_bg_only_waiting() && Instant::now() < wait_bg {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(handle.is_bg_only_waiting());
+
+    // At 150ms, one of the two un-ID'd shell tasks finishes -> reminder timer MUST reset!
+    thread::sleep(Duration::from_millis(150));
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "type": "user",
+                "promptId": "p-mcp-2",
+                "promptSource": "system",
+                "turnOrigin": "task_notification",
+                "origin": {"kind": "task-notification"},
+                "message": {"content": "<task-notification>one shell done</task-notification>"}
+            })
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"1 left"}]}})
+        )
+        .unwrap();
+        writeln!(f, "{}", json!({"type":"system","subtype":"turn_duration"})).unwrap();
+    }
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&events_file)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "prompt_id": "p-mcp-2",
+                "background_tasks": [{"type": "shell", "status": "running"}]
+            })
+        )
+        .unwrap();
+    }
+    // Wait until 320ms from start (still < 150ms + 260ms): reminder must NOT have fired yet.
+    thread::sleep(Duration::from_millis(170));
+    assert!(
+        coord
+            .run_receipt_by_invocation("inv-mcp")
+            .unwrap()
+            .background_tasks_pending
+            .is_none()
+    );
+
+    // Wait past reset delay (150ms + 260ms = 410ms) and confirm reminder cites distinct fallback ID.
+    let rem_deadline = Instant::now() + Duration::from_secs(2);
+    let mut rem = None;
+    while Instant::now() < rem_deadline {
+        if let Some(r) = coord.run_receipt_by_invocation("inv-mcp")
+            && let Some(bg) = r.background_tasks_pending
+        {
+            rem = Some(bg);
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(rem.is_some());
+
+    // Finish cleanly.
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "type": "user",
+                "promptId": "p-mcp-3",
+                "promptSource": "system",
+                "turnOrigin": "task_notification",
+                "origin": {"kind": "task-notification"},
+                "message": {"content": "<task-notification>all done</task-notification>"}
+            })
+        )
+        .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}})
+        )
+        .unwrap();
+        writeln!(f, "{}", json!({"type":"system","subtype":"turn_duration"})).unwrap();
+    }
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&events_file)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "prompt_id": "p-mcp-3",
+                "background_tasks": []
+            })
+        )
+        .unwrap();
+    }
+    monitor.join().unwrap();
+    session.stop();
+}
+
+#[test]
+fn claude_stop_timeout_with_bg_tasks_keeps_waiting_and_allows_bg_only_cancel() {
+    let dir = tempfile::tempdir().unwrap();
+    let hook_dir = claude_hook::prepare_claude_hook(false).unwrap();
+    let proj = dir.path().join("projects/p1");
+    fs::create_dir_all(&proj).unwrap();
+    let transcript = proj.join(format!("{CLAUDE_SID}.jsonl"));
+    let events_file = claude_hook::events_path(hook_dir.path());
+
+    // Subturn 0 has NO turn_duration yet, only Stop(waking=[bg-1]).
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"user\",\"promptId\":\"p-to\",\"message\":{\"content\":\"go\"}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"waiting bg\"}]}}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &events_file,
+        format!(
+            "{}\n",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "prompt_id": "p-to",
+                "background_tasks": [{"id": "bg-1", "type": "shell", "status": "running"}]
+            })
+        ),
+    )
+    .unwrap();
+
+    let session = sleep_session_with_osc(dir.path(), "\x1b]7501;state=idle\x07");
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        crate::terminal::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("req-to", "inv-to");
+    let handle = coord.register_run("inv-to");
+    let terminals = Terminals::default();
+    let launched = register_test_derived(
+        &terminals,
+        "claude",
+        dir.path(),
+        &session,
+        CLAUDE_SID,
+        "inv-to",
+        Some(hook_dir.path().to_path_buf()),
+    );
+    let baseline = tui::TurnBaseline {
+        claude_homes: vec![dir.path().to_path_buf()],
+        pre_offset: 0,
+        hook_events_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+    let coord_t = coord.clone();
+    let terms_t = terminals.clone();
+    let launched_t = launched.clone();
+    let handle_t = handle.clone();
+    let hook_path = hook_dir.path().to_path_buf();
+    let monitor = thread::spawn(move || {
+        claude::monitor_claude_turn_with_config(
+            &coord_t,
+            &terms_t,
+            &launched_t,
+            "req-to",
+            CLAUDE_SID,
+            &baseline,
+            "go",
+            &handle_t,
+            Some(&hook_path),
+            false,
+            claude::ClaudeMonitorConfig {
+                signal_pair_timeout: Duration::from_millis(120),
+                bg_reminder_delay: Duration::from_secs(60),
+            },
+        )
+    });
+
+    // After Stop times out waiting for turn_duration, bg_only_waiting MUST become true!
+    let wait_bg = Instant::now() + Duration::from_secs(2);
+    while !handle.is_bg_only_waiting() && Instant::now() < wait_bg {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(handle.is_bg_only_waiting());
+
+    // Now late turn_duration arrives; even past another pair timeout, monitor MUST NOT settle early!
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(f, "{}", json!({"type":"system","subtype":"turn_duration"})).unwrap();
+    }
+    thread::sleep(Duration::from_millis(260));
+    assert_eq!(
+        coord.run_receipt_by_invocation("inv-to").unwrap().state,
+        ReceiptState::Started
+    );
+    assert!(handle.is_bg_only_waiting());
+
+    // bg-only cancel works without sending keys.
+    coord.insert_test_receipt("cancel-to", "inv-to-cancel");
+    let run_receipt = coord.run_receipt_by_invocation("inv-to").unwrap();
+    let id = ProcessIdentity {
+        pid: std::process::id(),
+        started_at: coord.started_at,
+    };
+    let cancel_env = SpawnRequestEnvelope {
+        version: 1,
+        request_id: "cancel-to".to_owned(),
+        kind: "cancel".to_owned(),
+        service: id.clone(),
+        target_tray: id,
+        invocation_id: "inv-to".to_owned(),
+        parent: None,
+        session_id: Some(CLAUDE_SID.to_owned()),
+        config: None,
+        task: None,
+        expected_anchor: None,
+    };
+    cancel_claude(&coord, &cancel_env, &run_receipt, &launched);
+    monitor.join().unwrap();
+    assert!(session.recorded_writes().is_empty());
+    assert_eq!(
+        coord
+            .run_receipt_by_invocation("inv-to")
+            .unwrap()
+            .terminal
+            .unwrap()
+            .status,
+        "succeeded"
+    );
+    session.stop();
+}
+
+#[test]
+fn try_cancel_bg_only_timeout_resets_cancel_latch() {
+    let dir = tempfile::tempdir().unwrap();
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        crate::terminal::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("req-latch", "inv-latch");
+    coord.insert_test_receipt("cancel-latch", "inv-latch-cancel");
+    let handle = coord.register_run("inv-latch");
+    handle.set_bg_only_waiting(true);
+    let id = ProcessIdentity {
+        pid: std::process::id(),
+        started_at: coord.started_at,
+    };
+    let cancel_env = SpawnRequestEnvelope {
+        version: 1,
+        request_id: "cancel-latch".to_owned(),
+        kind: "cancel".to_owned(),
+        service: id.clone(),
+        target_tray: id,
+        invocation_id: "inv-latch".to_owned(),
+        parent: None,
+        session_id: Some(CLAUDE_SID.to_owned()),
+        config: None,
+        task: None,
+        expected_anchor: None,
+    };
+    assert!(!try_cancel_bg_only(&coord, &cancel_env, CLAUDE_SID));
+    assert!(!handle.is_bg_only_cancel_requested());
+}
+
+#[test]
+fn claude_reminder_does_not_fire_during_foreground_subturn_after_task_notification() {
+    let dir = tempfile::tempdir().unwrap();
+    let hook_dir = claude_hook::prepare_claude_hook(false).unwrap();
+    let proj = dir.path().join("projects/p1");
+    fs::create_dir_all(&proj).unwrap();
+    let transcript = proj.join(format!("{CLAUDE_SID}.jsonl"));
+    let events_file = claude_hook::events_path(hook_dir.path());
+
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"user\",\"promptId\":\"p-rem\",\"message\":{\"content\":\"go\"}}\n",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"started\"}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"turn_duration\"}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &events_file,
+        format!(
+            "{}\n",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "prompt_id": "p-rem",
+                "background_tasks": [{"id": "bg-1", "type": "shell", "status": "running"}]
+            })
+        ),
+    )
+    .unwrap();
+
+    let session = sleep_session_with_osc(dir.path(), "\x1b]7501;state=working\x07");
+    let coord = Coordinator::new(
+        dir.path().to_path_buf(),
+        std::process::id(),
+        crate::terminal::spawn_requests::current_process_started_at(),
+        &["claude"],
+    );
+    coord.insert_test_receipt("req-rem", "inv-rem");
+    let handle = coord.register_run("inv-rem");
+    let terminals = Terminals::default();
+    let launched = register_test_derived(
+        &terminals,
+        "claude",
+        dir.path(),
+        &session,
+        CLAUDE_SID,
+        "inv-rem",
+        Some(hook_dir.path().to_path_buf()),
+    );
+    let baseline = tui::TurnBaseline {
+        claude_homes: vec![dir.path().to_path_buf()],
+        pre_offset: 0,
+        hook_events_offset: 0,
+        agy_baseline_cids: Vec::new(),
+        agy_prev_idx: None,
+        seq_before: 0,
+    };
+    let coord_t = coord.clone();
+    let terms_t = terminals.clone();
+    let launched_t = launched.clone();
+    let handle_t = handle.clone();
+    let hook_path = hook_dir.path().to_path_buf();
+    let monitor = thread::spawn(move || {
+        claude::monitor_claude_turn_with_config(
+            &coord_t,
+            &terms_t,
+            &launched_t,
+            "req-rem",
+            CLAUDE_SID,
+            &baseline,
+            "go",
+            &handle_t,
+            Some(&hook_path),
+            false,
+            claude::ClaudeMonitorConfig {
+                signal_pair_timeout: Duration::from_millis(300),
+                bg_reminder_delay: Duration::from_millis(180),
+            },
+        )
+    });
+
+    let wait_bg = Instant::now() + Duration::from_secs(2);
+    while !handle.is_bg_only_waiting() && Instant::now() < wait_bg {
+        thread::sleep(Duration::from_millis(15));
+    }
+    assert!(handle.is_bg_only_waiting());
+
+    // Task notification wakes subturn 1 (foreground active, no Stop/turn_duration yet).
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "type": "user",
+                "promptId": "p-rem-1",
+                "promptSource": "system",
+                "turnOrigin": "task_notification",
+                "origin": {"kind": "task-notification"},
+                "message": {"content": "<task-notification><task-id>bg-1</task-id></task-notification>"}
+            })
+        )
+        .unwrap();
+    }
+    // Wait past bg_reminder_delay while subturn 1 is active in foreground -> must NOT remind stale bg-1!
+    thread::sleep(Duration::from_millis(260));
+    assert!(
+        coord
+            .run_receipt_by_invocation("inv-rem")
+            .unwrap()
+            .background_tasks_pending
+            .is_none()
+    );
+
+    // Finish subturn 1 cleanly.
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}})
+        )
+        .unwrap();
+        writeln!(f, "{}", json!({"type":"system","subtype":"turn_duration"})).unwrap();
+    }
+    {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&events_file)
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "hook_event_name": "Stop",
+                "session_id": CLAUDE_SID,
+                "prompt_id": "p-rem-1",
+                "background_tasks": []
+            })
+        )
+        .unwrap();
+    }
+    monitor.join().unwrap();
+    session.stop();
+}

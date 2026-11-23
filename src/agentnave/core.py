@@ -869,6 +869,7 @@ class InvocationManager:
         if (
             record is None
             or record.background_reminder_sent
+            or record.phase == InvocationPhase.STOPPING
             or record.terminal_event.is_set()
             or (record.task is not None and record.task.done())
         ):
@@ -1259,6 +1260,8 @@ class InvocationManager:
         bg_cancel_tasks = record.background_wait.task_ids
 
         record.phase = InvocationPhase.STOPPING
+        if not io.bg_reminder_task.done():
+            io.bg_reminder_task.cancel()
         await terminate_process_tree(process, 0.2 if io.completion_task in done else 2.0)
         stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
         terminal, error = _drained_limit(terminal, error, stdout, stderr, io)

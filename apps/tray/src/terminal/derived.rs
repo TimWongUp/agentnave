@@ -584,6 +584,24 @@ fn try_cancel_bg_only(coordinator: &Coordinator, env: &SpawnRequestEnvelope, sid
         }
         thread::sleep(POLL_STEP);
     }
+    if !run.take_bg_only_cancel() {
+        let grace = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < grace {
+            if coordinator
+                .run_receipt_by_invocation(&env.invocation_id)
+                .is_some_and(|r| r.state == super::spawn_requests::ReceiptState::Finished)
+            {
+                coordinator.mark_finished(
+                    &env.request_id,
+                    "already_finished",
+                    Some("仅剩后台任务运行，已按已写出的回复结算并将后台任务留给用户"),
+                    Some(sid),
+                );
+                return true;
+            }
+            thread::sleep(POLL_STEP);
+        }
+    }
     false
 }
 

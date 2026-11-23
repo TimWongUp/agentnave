@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import time
 from pathlib import Path
 from typing import cast
@@ -15,10 +16,30 @@ from agentnave.claude_tui.turn import is_user_prompt, transcript_event
 
 CODEX_READ_RETRY_SECONDS = 3.0
 CODEX_READ_POLL_SECONDS = 0.2
+_MAX_TRANSCRIPT_LINE_BYTES = 16 * 1024 * 1024
 
 
 def _object(value: object) -> dict[str, object]:
     return cast(dict[str, object], value) if isinstance(value, dict) else {}
+
+
+def _is_regular_in_root(path: Path, root: Path) -> bool:
+    """Reject symlinks anywhere under `root`, including links pointing to another session."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    cur = root
+    if cur.is_symlink():
+        return False
+    for part in rel.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return False
+    try:
+        return path.is_file() and path.resolve() == root.resolve() / rel
+    except OSError:
+        return False
 
 
 def _optional_end_row_index(anchor: dict[str, object]) -> int | None:
@@ -39,18 +60,37 @@ def _optional_end_prompt_id(anchor: dict[str, object]) -> str | None:
     return raw
 
 
-def rows(path: Path) -> list[dict[str, object]]:
+def rows(path: Path, *, max_rows: int | None = None) -> list[dict[str, object]]:
+    if max_rows == 0:
+        return []
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("native transcript missing or inaccessible") from exc
     result: list[dict[str, object]] = []
-    with path.open("rb") as stream:
-        for line in stream:
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("native transcript is not a regular file")
+        while True:
+            line = stream.readline(_MAX_TRANSCRIPT_LINE_BYTES + 1)
+            if not line:
+                break
+            if len(line) > _MAX_TRANSCRIPT_LINE_BYTES and not line.endswith(b"\n"):
+                raise ValueError("native transcript line exceeds size limit")
             if not line.endswith(b"\n"):
                 break
+            if len(line) > _MAX_TRANSCRIPT_LINE_BYTES:
+                raise ValueError("native transcript line exceeds size limit")
             try:
                 value: object = json.loads(line)
             except ValueError as exc:
                 raise ValueError("invalid native transcript line") from exc
             if isinstance(value, dict):
                 result.append(cast(dict[str, object], value))
+                if max_rows is not None and len(result) >= max_rows:
+                    break
     return result
 
 
@@ -67,13 +107,16 @@ def read_turn(
         key = anchor.get("prompt_id")
         end_prompt_id = _optional_end_prompt_id(anchor)
         end_row_index = _optional_end_row_index(anchor)
-        matches = [p for p in matches if p.is_file() and p.resolve().is_relative_to(root.resolve())]
+        matches = [p for p in matches if _is_regular_in_root(p, root)]
         if len(matches) != 1:
             raise ValueError("native transcript missing or ambiguous")
         if not isinstance(key, str) or not key:
             raise ValueError("missing native turn anchor")
         return claude_turn(
-            rows(matches[0]), key, end_prompt_id=end_prompt_id, end_row_index=end_row_index
+            rows(matches[0], max_rows=end_row_index),
+            key,
+            end_prompt_id=end_prompt_id,
+            end_row_index=end_row_index,
         )
     if provider == "codex":
         root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
@@ -94,10 +137,12 @@ def read_turn(
         if not isinstance(index, int) or isinstance(index, bool):
             raise ValueError("missing Antigravity user_input_index")
         end_row_index = _optional_end_row_index(anchor)
-        matches = [p for p in matches if p.is_file() and p.resolve().is_relative_to(root.resolve())]
+        matches = [p for p in matches if _is_regular_in_root(p, root)]
         if len(matches) != 1:
             raise ValueError("native transcript missing or ambiguous")
-        return antigravity_turn(rows(matches[0]), index, end_row_index=end_row_index)
+        return antigravity_turn(
+            rows(matches[0], max_rows=end_row_index), index, end_row_index=end_row_index
+        )
     raise ValueError("unsupported terminal provider")
 
 
@@ -124,7 +169,7 @@ def _read_codex_turn_with_retry(root: Path, session_id: str, turn_id: str, clien
         matches = [
             p
             for p in root.glob(f"*/*/*/rollout-*-{session_id}.jsonl")
-            if p.is_file() and p.resolve().is_relative_to(root.resolve())
+            if _is_regular_in_root(p, root)
         ]
         if len(matches) > 1:
             raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
@@ -217,6 +262,7 @@ def claude_turn(
         raise ValueError("missing Claude prompt_id")
     scoped = entries[:end_row_index] if end_row_index is not None else entries
     active = False
+    subturn_ended = False
     current_prompt_id: str | None = None
     replies: list[str] = []
     current_reply = ""
@@ -227,7 +273,12 @@ def claude_turn(
             if current_reply:
                 replies.append(current_reply)
                 current_reply = ""
-            if end_prompt_id is not None and current_prompt_id == end_prompt_id:
+            subturn_ended = True
+            if (
+                end_row_index is None
+                and end_prompt_id is not None
+                and current_prompt_id == end_prompt_id
+            ):
                 break
             continue
         if row.get("isMeta"):
@@ -239,6 +290,9 @@ def claude_turn(
             notif_pid = row.get("promptId")
             if isinstance(notif_pid, str) and notif_pid:
                 current_prompt_id = notif_pid
+            elif subturn_ended:
+                current_prompt_id = None
+            subturn_ended = False
             continue
         if _is_claude_interrupt_row(row):
             continue
@@ -248,6 +302,7 @@ def claude_turn(
                 break
             if user_pid == prompt_id:
                 active = True
+                subturn_ended = False
                 current_prompt_id = prompt_id
                 current_reply = ""
                 continue

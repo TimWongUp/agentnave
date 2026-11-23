@@ -211,4 +211,9 @@ impl RunHandle {
     pub(in crate::terminal) fn is_bg_only_cancel_requested(&self) -> bool {
         self.bg_only_cancel_requested.load(Ordering::SeqCst)
     }
+
+    /// Atomically consume and clear the bg-only cancel latch; returns whether it was still pending.
+    pub(in crate::terminal) fn take_bg_only_cancel(&self) -> bool {
+        self.bg_only_cancel_requested.swap(false, Ordering::SeqCst)
+    }
 }

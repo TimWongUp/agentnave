@@ -1184,3 +1184,60 @@ def test_events_are_utf8_without_escapes(capsysbinary: pytest.CaptureFixture[byt
 
     emit({"type": "result", "result": "中文"})
     assert capsysbinary.readouterr().out == '{"type": "result", "result": "中文"}\n'.encode()
+
+
+def test_waking_task_id_fallback_and_single_task_completion_clears_wait() -> None:
+    turn = tui.Turn("session-bg")
+    turn.transcript(
+        {
+            "type": "user",
+            "uuid": "u1",
+            "promptId": "p1",
+            "message": {"role": "user", "content": "go"},
+        },
+        now=1.0,
+    )
+    turn.transcript(
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parentUuid": "u1",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "started"}]},
+        },
+        now=1.1,
+    )
+    turn.transcript(
+        {"type": "system", "subtype": "turn_duration", "uuid": "d1", "parentUuid": "a1"},
+        now=1.2,
+    )
+    turn.hook(
+        {
+            "hook_event_name": "Stop",
+            "prompt_id": "p1",
+            "background_tasks": [
+                {"id": 123, "task_id": "bg-1", "type": "mcp_tool", "status": "running"},
+            ],
+        },
+        now=1.3,
+    )
+    bg = turn.background_state_event()
+    assert bg["waiting"] is True and bg["task_ids"] == ["bg-1"]
+
+    # When the sole waking task finishes, waiting must clear immediately on its task-notification.
+    turn.transcript(
+        {
+            "type": "user",
+            "uuid": "u2",
+            "promptId": "p2",
+            "turnOrigin": "task_notification",
+            "origin": {"kind": "task-notification"},
+            "message": {
+                "role": "user",
+                "content": "<task-notification><task-id>bg-1</task-id></task-notification>",
+            },
+        },
+        now=2.0,
+    )
+    after = turn.background_state_event()
+    assert after["waiting"] is False
+    assert after["task_ids"] == []

@@ -19,6 +19,8 @@ _MAX_BG_REPLY_CHARS = 512 * 1024
 
 # Background task types reported by Claude Code's Stop.background_tasks that wake the main turn.
 # session_crons and internal tasks (dream, auto-mode scan) do not wake the main turn.
+# Keep in sync with `WAKING_TASK_TYPES` and ID fallback order (`id` -> `task_id` -> `tool_use_id` ->
+# `<kind>:<index>`) in `apps/tray/src/terminal/derived/claude/turn_state.rs`.
 _WAKING_TASK_TYPES = frozenset(
     {
         "shell",
@@ -156,8 +158,14 @@ def _waking_background_tasks(event: dict[str, object]) -> tuple[bool, tuple[str,
         kind = str(item.get("type") or "").strip().lower().replace("-", "_").replace(" ", "_")
         if kind not in _WAKING_TASK_TYPES:
             continue
-        raw_id = item.get("id") or item.get("task_id") or item.get("tool_use_id")
-        task_id = raw_id if isinstance(raw_id, str) and raw_id else f"{kind}:{index}"
+        task_id = next(
+            (
+                val
+                for key in ("id", "task_id", "tool_use_id")
+                if isinstance((val := item.get(key)), str) and val
+            ),
+            f"{kind}:{index}",
+        )
         if task_id not in seen:
             seen.add(task_id)
             found.append(task_id)
@@ -426,10 +434,18 @@ class Turn:
         status_match = _STATUS_TAG.search(text)
         if status_match and status_match.group(1).lower() in _RUNNING_NOTIFICATION_STATUSES:
             return
+        settled_ids: set[str] = set()
         for tool_use in re.findall(r"<tool-use-id>([^<]+)</tool-use-id>", text):
+            settled_ids.add(tool_use)
             self._settle_bg(tool_use)
         for task in re.findall(r"<task-id>([^<]+)</task-id>", text):
+            settled_ids.add(task)
             self._settle_bg(task)
+        if settled_ids and self._stop_bg_active is not None:
+            remaining = tuple(tid for tid in self._stop_bg_active if tid not in settled_ids)
+            self._stop_bg_active = remaining
+            if not remaining:
+                self._bg_wait_active = False
 
     def _settle_subturn(self, stop: _StopSignal | None) -> None:
         if not self.user_seen:

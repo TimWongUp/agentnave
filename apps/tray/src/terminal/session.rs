@@ -314,6 +314,15 @@ impl Session {
         )
     }
 
+    pub(crate) fn osc_activity_seqs(&self) -> (u64, u64, u64) {
+        let output = self.output();
+        (
+            output.status.last_working_seq,
+            output.status.last_done_seq,
+            output.status.last_blocked_seq,
+        )
+    }
+
     pub(crate) fn has_draft(&self) -> bool {
         let gate = self.gate.lock().unwrap_or_else(|p| p.into_inner());
         gate.has_draft()

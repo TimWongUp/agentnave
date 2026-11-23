@@ -2329,5 +2329,28 @@ async def test_background_reminder_and_cancel_when_only_background_remains(
         assert agy_settled.session_id == "agy-cid"
         assert agy_settled.reported_model == "gemini-3.8-flash-high"
         assert any("process group" in warning for warning in agy_settled.warnings)
+
+        # Case 4: reminder must not fire once an invocation enters STOPPING.
+        stopping_cmd = PreparedCommand(
+            (
+                sys.executable,
+                "-c",
+                "import signal, sys, time; signal.signal(signal.SIGTERM, lambda *_: None); "
+                "print('ready', flush=True); time.sleep(0.3)",
+            ),
+            tmp_path,
+        )
+        inv4 = manager.start(InvocationRequest("claude", "work", tmp_path), prepared=stopping_cmd)
+        deadline = time.monotonic() + 5.0
+        while manager.snapshot(inv4).phase is InvocationPhase.PREPARING:
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.01)
+        cancel_task = asyncio.create_task(manager.cancel(inv4))
+        while manager.snapshot(inv4).phase is not InvocationPhase.STOPPING:
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.005)
+        assert not manager.notify_background_tasks_pending(inv4, task_ids=("bg-1",))
+        assert manager.unread_blockers(inv4) == []
+        await asyncio.wait_for(cancel_task, 5.0)
     finally:
         await manager.shutdown()

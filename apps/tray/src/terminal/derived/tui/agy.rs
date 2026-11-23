@@ -1,6 +1,6 @@
 //! Antigravity (agy) derived-turn monitor (OSC 7501 `done` + final reply, bg reminder, bg-only cancel).
 
-use std::fs;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -113,6 +113,8 @@ pub(in crate::terminal::derived) fn monitor_agy_turn_with_config(
         );
 
         let (seq, osc_state, osc_kind) = launched.session.osc_snapshot();
+        let (last_working_seq, last_done_seq, last_blocked_seq) =
+            launched.session.osc_activity_seqs();
         let state_str = osc_state.as_deref();
         if !handle.interrupt_pending() && handle.is_interrupt_confirmed() {
             handle.set_bg_only_waiting(false);
@@ -129,9 +131,6 @@ pub(in crate::terminal::derived) fn monitor_agy_turn_with_config(
             return;
         }
         if seq > baseline.seq_before {
-            if state_str != Some("done") {
-                state.done_since = None;
-            }
             sync_turn_blocker(
                 coordinator,
                 terminals,
@@ -157,8 +156,13 @@ pub(in crate::terminal::derived) fn monitor_agy_turn_with_config(
                 );
                 return;
             }
-            if state_str == Some("done") {
+            let saw_new_done = last_done_seq > baseline.seq_before
+                && last_done_seq >= last_working_seq
+                && last_done_seq >= last_blocked_seq;
+            if saw_new_done && state_str != Some("blocked") {
                 state.done_since.get_or_insert_with(Instant::now);
+            } else if last_working_seq > last_done_seq || state_str == Some("blocked") {
+                state.done_since = None;
             }
         }
 
@@ -342,7 +346,7 @@ fn step_agy_transcript(
         return false;
     };
     if let Some(scan) = &scan {
-        if scan.latest_planner_is_final {
+        if scan.latest_planner_is_final && !scan.has_open_background {
             handle.set_bg_only_waiting(false);
             let end_row = scan.last_reply_end_row.unwrap_or(scan.segment_end_row);
             finish_settled_with(
@@ -434,10 +438,12 @@ fn locate_agy_turn(
 }
 
 pub(super) fn highest_agy_user_index(path: &Path) -> Option<i64> {
-    let text = fs::read_to_string(path).ok()?;
+    let file = native_logs::open_regular_readonly(path)?;
+    let mut reader = BufReader::new(file);
     let mut best = None;
-    for line in text.lines() {
-        let Ok(row) = serde_json::from_str::<Value>(line) else {
+    let mut line = String::new();
+    while native_logs::read_bounded_line(&mut reader, &mut line) {
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         if row["type"].as_str() == Some("USER_INPUT")
