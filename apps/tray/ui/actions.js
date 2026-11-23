@@ -316,9 +316,19 @@ const Actions = {};
     }
     if (info.merged_pr?.number) {
       const prLabel = `PR #${info.merged_pr.number}`;
-      const prNode = info.merged_pr.url
-        ? h("a.iso-merged-link", { href: info.merged_pr.url, target: "_blank", rel: "noopener" }, prLabel)
-        : prLabel;
+      const prUrl = typeof info.merged_pr.url === "string" && info.merged_pr.url.startsWith("https://github.com/")
+        ? info.merged_pr.url
+        : null;
+      let prNode = prLabel;
+      if (prUrl) {
+        prNode = h("a.iso-merged-link", { href: prUrl }, prLabel);
+        prNode.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (typeof ChatGit !== "undefined" && ChatGit.openUrl) ChatGit.openUrl(prUrl);
+          else AN.post("/app/git-pr/open-url", { url: prUrl }).catch(() => {});
+        });
+      }
       items.push(
         h(
           "p.act-note.iso-merged",

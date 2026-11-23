@@ -1,10 +1,10 @@
 "use strict";
-// Read-only Git workspace & GitHub PR status for CLI sessions and isolated directories (ADR-0115).
-// No background polling: refreshes on initial load, window focus, and when a turn finishes.
+// Git workspace & GitHub PR status + user-confirmed basic Git ops for CLI sessions (ADR-0115).
+// No background polling: refreshes on initial load, window focus, turn end, and after Git ops.
 const ChatGit = (() => {
-  const { h, L, setText, setAttr, relTime } = AN;
+  const { h, L, setAttr, relTime } = AN;
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const CLOSE_DELAY_MS = 180;
+  const CLOSE_DELAY_MS = 360;
   const FOCUS_COOLDOWN_MS = 2000;
 
   const store = {
@@ -47,7 +47,6 @@ const ChatGit = (() => {
       add("circle", { cx: "11.5", cy: "12.5", r: "1.6" });
       add("path", { d: "M4.5 5.1v5.8M9.5 2.5l4 4M13.5 2.5l-4 4M11.5 8.5v2.4" });
     } else {
-      // open / draft PR
       add("circle", { cx: "4.5", cy: "3.5", r: "1.6" });
       add("circle", { cx: "4.5", cy: "12.5", r: "1.6" });
       add("circle", { cx: "11.5", cy: "12.5", r: "1.6" });
@@ -56,12 +55,62 @@ const ChatGit = (() => {
     return svg;
   }
 
-  // ---- eligibility & status priority ------------------------------------------------------
+  // ---- external link opening (strictly https://github.com/ via Rust browse_address) -------
+  function isGithubUrl(url) {
+    return typeof url === "string" && url.startsWith("https://github.com/") && !/[\s\x00-\x1f]/.test(url);
+  }
+
+  async function openUrl(url) {
+    if (!isGithubUrl(url)) return false;
+    try {
+      await AN.post("/app/git-pr/open-url", { url });
+      return true;
+    } catch (error) {
+      if (typeof Actions !== "undefined" && Actions.say) {
+        Actions.say(error?.message || L("无法打开链接", "Failed to open link"), true);
+      }
+      return false;
+    }
+  }
+
+  function githubAnchor(tag, url, ...children) {
+    if (!isGithubUrl(url)) {
+      const spanTag = tag.replace(/^a(?=\.|$)/, "span");
+      return h(spanTag, {}, ...children);
+    }
+    const link = h(tag, { href: url }, ...children);
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      void openUrl(url);
+    });
+    return link;
+  }
+
+  // ---- eligibility, targets & status priority ---------------------------------------------
   function isCliSession(g) {
     if (!g) return false;
     if (g.terminal != null || g.derived) return true;
     if (typeof ChatTerminal !== "undefined" && ChatTerminal?.hasTerminal?.(g.group)) return true;
     return g.cli_session === true;
+  }
+
+  function targetOf(g) {
+    if (!g || !isCliSession(g)) return null;
+    if (g.terminal != null) return { kind: "terminal", id: g.terminal };
+    if (typeof g.group === "string" && g.group.startsWith("term-")) {
+      const tid = Number(g.group.slice(5));
+      if (Number.isFinite(tid)) return { kind: "terminal", id: tid };
+    }
+    return g.group ? { kind: "workspace", id: g.group } : null;
+  }
+
+  function isWorking(g, entry) {
+    if (entry?.working) return true;
+    if (!g) return false;
+    if (g.derived && g.status === "running") return true;
+    if (g.terminal != null && store.prevTermBusy.get(g.terminal) === true) return true;
+    return false;
   }
 
   function prPriority(pr) {
@@ -103,6 +152,9 @@ const ChatGit = (() => {
   function entryOf(g) {
     if (!g || !isCliSession(g)) return null;
     if (g.terminal != null) return store.snap.terminals?.[String(g.terminal)] || null;
+    if (typeof g.group === "string" && g.group.startsWith("term-")) {
+      return store.snap.terminals?.[g.group.slice(5)] || null;
+    }
     return store.snap.workspaces?.[g.group] || null;
   }
 
@@ -110,16 +162,18 @@ const ChatGit = (() => {
     return (id && store.snap.isolated?.[id]) || null;
   }
 
-  // ---- floating hover card ----------------------------------------------------------------
-  const card = h("div.git-pr-card", { role: "dialog", hidden: true });
+  // ---- floating hover/click card ----------------------------------------------------------
+  const cardBody = h("div.git-pr-body");
+  const card = h("div.git-pr-card", { role: "dialog", hidden: true }, cardBody);
   let cardAnchor = null;
+  let cardPinned = false;
   let closeTimer = 0;
 
   function ensureCardMounted() {
     if (typeof document === "undefined" || !document.body || card.isConnected) return;
     document.body.append(card);
     card.addEventListener("pointerenter", () => clearTimeout(closeTimer));
-    card.addEventListener("pointerleave", hideCardSoon);
+    card.addEventListener("pointerleave", () => { if (!cardPinned) hideCardSoon(); });
     document.addEventListener("pointerdown", (e) => {
       if (!card.hidden && !card.contains(e.target) && !cardAnchor?.contains?.(e.target)) hideCard();
     }, true);
@@ -132,9 +186,11 @@ const ChatGit = (() => {
     clearTimeout(closeTimer);
     card.hidden = true;
     cardAnchor = null;
+    cardPinned = false;
   }
 
   function hideCardSoon() {
+    if (cardPinned) return;
     clearTimeout(closeTimer);
     closeTimer = setTimeout(hideCard, CLOSE_DELAY_MS);
   }
@@ -160,7 +216,61 @@ const ChatGit = (() => {
     return [L(`CI 通过 (${checks.passed})`, `CI passed (${checks.passed})`), "good"];
   }
 
-  function buildGitSection(git) {
+  function opButton(label, disabled, run, primary = false) {
+    const btn = h(`button.gp-op-btn${primary ? ".primary" : ""}`, { type: "button", disabled }, label);
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (disabled) return;
+      hideCard();
+      run();
+    });
+    return btn;
+  }
+
+  function canPush(git, merged) {
+    if (!git?.is_git || git.detached || !git.branch) return false;
+    if (merged && !git.ahead) return false;
+    if (!git.upstream) return true;
+    if (git.ahead > 0) return true;
+    if (git.default_branch && git.branch !== git.default_branch && git.upstream.endsWith(`/${git.default_branch}`)) {
+      return true;
+    }
+    return false;
+  }
+
+  function canCreatePr(git, prs, ghReady, merged) {
+    if (!ghReady || !git?.is_git || git.detached || !git.branch || !git.github_repo) return false;
+    if (merged) return false;
+    if (git.default_branch && git.branch === git.default_branch) return false;
+    if (typeof git.ahead_of_default === "number" && git.ahead_of_default === 0) return false;
+    const hasOpenForBranch = (prs || []).some(
+      (pr) => (pr.state === "open" || pr.state === "draft") && pr.head_ref_name === git.branch,
+    );
+    return !hasOpenForBranch;
+  }
+
+  function buildOpsRow(git, prs, target, disabled, ghReady, cls = "gp-ops", merged = false) {
+    if (!git?.is_git || !target || typeof ChatGitOps === "undefined") return null;
+    const buttons = [];
+    if (git.changed_files > 0) {
+      buttons.push(opButton(L("提交", "Commit"), disabled, () => ChatGitOps.openCommit(target), true));
+    }
+    if (git.upstream && !git.detached) {
+      const pullLabel = git.behind > 0 ? L(`拉取 ↓${git.behind}`, `Pull ↓${git.behind}`) : L("拉取", "Pull");
+      buttons.push(opButton(pullLabel, disabled, () => ChatGitOps.openPull(target)));
+    }
+    if (canPush(git, merged)) {
+      const pushLabel = git.ahead > 0 ? L(`推送 ↑${git.ahead}`, `Push ↑${git.ahead}`) : L("推送", "Push");
+      buttons.push(opButton(pushLabel, disabled, () => ChatGitOps.openPush(target)));
+    }
+    if (canCreatePr(git, prs, ghReady, merged)) {
+      buttons.push(opButton(L("开 PR", "Create PR"), disabled, () => ChatGitOps.openCreatePr(target)));
+    }
+    return buttons.length ? h(`div.${cls}`, {}, ...buttons) : null;
+  }
+
+  function buildGitSection(git, prs, target, working, ghReady) {
     if (!git?.is_git) return null;
     const branchText = git.branch || (git.detached ? L("游离 HEAD", "Detached HEAD") : "HEAD");
     const syncParts = [];
@@ -189,6 +299,7 @@ const ChatGit = (() => {
         icon("branch"),
         h("code.gp-branch", {}, branchText),
         git.is_worktree ? h("span.gp-tag", {}, "worktree") : null,
+        working ? h("span.gp-tag.gp-tag-busy", {}, L("工作中", "Working")) : null,
       ),
       h(
         "div.gp-git-stats",
@@ -196,23 +307,24 @@ const ChatGit = (() => {
         ...dirtyNodes,
         ...syncParts.map((text) => h("span.gp-sync", {}, text)),
       ),
+      buildOpsRow(git, prs, target, working, ghReady, "gp-ops"),
     );
   }
 
-  function buildPrRow(pr) {
+  function resolveChecksUrl(pr) {
+    const raw = pr.checks?.checks_url;
+    if (isGithubUrl(raw)) return raw;
+    if (isGithubUrl(pr.url)) return `${pr.url}/checks`;
+    return null;
+  }
+
+  function buildPrRow(pr, target, working, ghReady) {
     const tone = prTone(pr);
     const prIconKind = pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open";
     const chips = [];
     const ci = checksLabel(pr.checks);
     if (ci) {
-      const ciUrl = pr.checks?.checks_url || `${pr.url}/checks`;
-      chips.push(
-        h(
-          `a.gp-chip.gp-tone-${ci[1]}`,
-          { href: ciUrl, target: "_blank", rel: "noopener" },
-          ci[0],
-        ),
-      );
+      chips.push(githubAnchor(`a.gp-chip.gp-tone-${ci[1]}`, resolveChecksUrl(pr), ci[0]));
     }
     const rev = reviewLabel(pr.review_decision);
     if (rev) chips.push(h(`span.gp-chip.gp-tone-${rev[1]}`, {}, rev[0]));
@@ -224,12 +336,24 @@ const ChatGit = (() => {
       diffNodes.push(h("span.gp-add", {}, `+${pr.additions}`));
       diffNodes.push(h("span.gp-del", {}, `-${pr.deletions}`));
     }
+    let mergeBtn = null;
+    if (ghReady && pr.state === "open" && target && typeof ChatGitOps !== "undefined") {
+      const mergeDisabled = working || pr.mergeable === "conflicting";
+      mergeBtn = h("button.gp-pr-merge", { type: "button", disabled: mergeDisabled }, L("合并 PR", "Merge PR"));
+      mergeBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (mergeDisabled) return;
+        hideCard();
+        void ChatGitOps.openMergePr(target, pr);
+      });
+    }
     return h(
       "div.gp-pr",
       {},
-      h(
+      githubAnchor(
         "a.gp-pr-head",
-        { href: pr.url, target: "_blank", rel: "noopener" },
+        pr.url,
         h(`span.gp-pr-ico.gp-tone-${tone}`, {}, icon(prIconKind)),
         h("span.gp-pr-title", {}, pr.title || `#${pr.number}`),
       ),
@@ -241,22 +365,31 @@ const ChatGit = (() => {
         ...diffNodes,
         pr.updated_at && AN.at(pr.updated_at) ? h("time.gp-pr-time", {}, relTime(pr.updated_at)) : null,
       ),
-      chips.length ? h("div.gp-pr-chips", {}, ...chips) : null,
+      chips.length || mergeBtn
+        ? h(
+            "div.gp-pr-foot",
+            {},
+            h("div.gp-pr-chips", {}, ...chips),
+            mergeBtn ? h("div.gp-pr-actions", {}, mergeBtn) : null,
+          )
+        : null,
     );
   }
 
-  function showCard(anchor, entry) {
+  function showCard(anchor, payload, pin = false) {
     ensureCardMounted();
-    if (!anchor || !entry) return;
+    if (!anchor || !payload?.entry) return;
     clearTimeout(closeTimer);
+    const { entry, target, working } = payload;
     const ghReady = store.snap.gh_status === "ready";
     const prs = ghReady && Array.isArray(entry.prs) ? entry.prs : [];
-    const gitNode = buildGitSection(entry.git);
-    const prNodes = prs.map(buildPrRow);
+    const gitNode = buildGitSection(entry.git, prs, target, Boolean(working), ghReady);
+    const prNodes = prs.map((pr) => buildPrRow(pr, target, Boolean(working), ghReady));
     if (!gitNode && !prNodes.length) return;
 
     cardAnchor = anchor;
-    card.replaceChildren(
+    if (pin) cardPinned = true;
+    cardBody.replaceChildren(
       gitNode,
       prNodes.length ? h("div.gp-prs", {}, ...prNodes) : null,
     );
@@ -267,47 +400,64 @@ const ChatGit = (() => {
   function positionCard(anchor) {
     if (typeof window === "undefined" || !anchor.getBoundingClientRect) return;
     const rect = anchor.getBoundingClientRect();
-    const cw = card.offsetWidth || 320;
-    const ch = card.offsetHeight || 180;
+    const cw = card.offsetWidth || 360;
+    const ch = card.offsetHeight || 200;
     const margin = 8;
     const inSide = Boolean(anchor.closest?.(".side"));
-    let left = inSide ? rect.right + 8 : rect.right - cw;
-    let top = inSide ? rect.top - 4 : rect.bottom + 6;
+    let left = inSide ? rect.right + 4 : rect.right - cw;
+    let top = inSide ? rect.top - 4 : rect.bottom + 4;
+    let side = inSide ? "right" : "bottom";
+    if (inSide && left + cw > window.innerWidth - margin) {
+      left = Math.max(margin, rect.left - cw - 4);
+      side = "left";
+    }
+    if (!inSide && top + ch > window.innerHeight - margin && rect.top - ch - 4 >= margin) {
+      top = rect.top - ch - 4;
+      side = "top";
+    }
     if (left + cw > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - cw - margin);
     if (left < margin) left = margin;
     if (top + ch > window.innerHeight - margin) top = Math.max(margin, window.innerHeight - ch - margin);
     if (top < margin) top = margin;
+    card.setAttribute("data-side", side);
     card.style.left = `${Math.round(left)}px`;
     card.style.top = `${Math.round(top)}px`;
   }
 
-  function bindHoverTrigger(node, getEntry) {
+  function bindHoverTrigger(node, getPayload) {
     if (node._gpBound) {
-      node._gpGetEntry = getEntry;
+      node._gpGetPayload = getPayload;
       return;
     }
     node._gpBound = true;
-    node._gpGetEntry = getEntry;
+    node._gpGetPayload = getPayload;
     node.addEventListener("pointerenter", () => {
-      const entry = node._gpGetEntry?.();
-      if (entry) showCard(node, entry);
+      if (cardPinned && !card.hidden && cardAnchor !== node) return;
+      const payload = node._gpGetPayload?.();
+      if (payload?.entry) showCard(node, payload, false);
     });
     node.addEventListener("pointerleave", hideCardSoon);
     node.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const entry = node._gpGetEntry?.();
-      if (!entry) return;
-      if (!card.hidden && cardAnchor === node) hideCard();
-      else showCard(node, entry);
+      const payload = node._gpGetPayload?.();
+      if (!payload?.entry) return;
+      if (!card.hidden && cardAnchor === node && cardPinned) hideCard();
+      else showCard(node, payload, true);
     });
     node.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
       e.stopPropagation();
-      const entry = node._gpGetEntry?.();
-      if (entry) showCard(node, entry);
+      const payload = node._gpGetPayload?.();
+      if (payload?.entry) showCard(node, payload, true);
     });
+  }
+
+  function payloadFor(g) {
+    const entry = entryOf(g);
+    if (!entry) return null;
+    return { entry, target: targetOf(g), working: isWorking(g, entry) };
   }
 
   // ---- sidebar row decoration -------------------------------------------------------------
@@ -343,7 +493,7 @@ const ChatGit = (() => {
       ? L(`${summary.count} 个关联 PR`, `${summary.count} linked PR(s)`)
       : L(`Git 分支 ${summary.git.branch || "HEAD"}`, `Git branch ${summary.git.branch || "HEAD"}`);
     setAttr(rec.prBadge, "aria-label", aria);
-    bindHoverTrigger(rec.prBadge, () => entryOf(g));
+    bindHoverTrigger(rec.prBadge, () => payloadFor(g));
   }
 
   // ---- office floor header pill -----------------------------------------------------------
@@ -378,7 +528,7 @@ const ChatGit = (() => {
       headRec.gitKey = key;
       headRec.git.replaceChildren(...parts);
     }
-    bindHoverTrigger(headRec.git, () => entryOf(c));
+    bindHoverTrigger(headRec.git, () => payloadFor(c));
   }
 
   // ---- isolated directory drawer enrichment -----------------------------------------------
@@ -401,13 +551,14 @@ const ChatGit = (() => {
         group: term.group,
         label: term.display_title || term.label,
         active,
+        open: term.exit == null,
       };
     }
     const desk = d.task?.desk && ctx?.desks?.get?.(d.task.desk);
     if (desk || d.task?.desk) {
       const name = desk ? AN.deskName(desk) : "";
       const text = [name, d.task?.text].filter(Boolean).join(" · ") || d.task.desk;
-      return { kind: "desk", key: d.task.desk, label: text, active: d.status === "using" };
+      return { kind: "desk", key: d.task.desk, label: text, active: d.status === "using", open: false };
     }
     return null;
   }
@@ -416,6 +567,12 @@ const ChatGit = (() => {
     const info = isolatedOf(d.id);
     const nodes = [];
     const git = info?.git;
+    const ghReady = store.snap.gh_status === "ready";
+    const user = findIsolatedUser(d, ctx);
+    const hasActiveTerminal = Boolean(user?.kind === "terminal" && (user.active || user.open));
+    const opsDisabled = d.status === "using" || d.status === "unfinished" || hasActiveTerminal;
+    const target = { kind: "isolated", id: d.id };
+
     if (git?.is_git) {
       const chunks = [];
       if (git.changed_files > 0) {
@@ -447,35 +604,43 @@ const ChatGit = (() => {
       nodes.push(h("div.iso-git", {}, ...chunks));
     }
 
-    if (store.snap.gh_status === "ready" && info?.pr) {
+    if (ghReady && info?.pr) {
       const pr = info.pr;
       const tone = prTone(pr);
       const icoKind = pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open";
       const ci = checksLabel(pr.checks);
+      let mergeBtn = null;
+      if (pr.state === "open" && typeof ChatGitOps !== "undefined") {
+        const mergeDisabled = opsDisabled || pr.mergeable === "conflicting";
+        mergeBtn = h("button.gp-pr-merge", { type: "button", disabled: mergeDisabled }, L("合并 PR", "Merge PR"));
+        mergeBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!mergeDisabled) void ChatGitOps.openMergePr(target, pr);
+        });
+      }
       nodes.push(
         h(
           "div.iso-pr",
           {},
-          h(
+          githubAnchor(
             "a.iso-pr-link",
-            { href: pr.url, target: "_blank", rel: "noopener" },
+            pr.url,
             h(`span.gp-pr-ico.gp-tone-${tone}`, {}, icon(icoKind)),
             h("code.gp-pr-ref", {}, `#${pr.number}`),
             h("span.iso-pr-title", {}, pr.title),
             h(`span.gp-pr-state.gp-tone-${tone}`, {}, prStateLabel(pr.state)),
           ),
-          ci
-            ? h(
-                `a.gp-chip.gp-tone-${ci[1]}`,
-                { href: pr.checks?.checks_url || `${pr.url}/checks`, target: "_blank", rel: "noopener" },
-                ci[0],
-              )
-            : null,
+          ci ? githubAnchor(`a.gp-chip.gp-tone-${ci[1]}`, resolveChecksUrl(pr), ci[0]) : null,
+          mergeBtn,
         ),
       );
     }
 
-    const user = findIsolatedUser(d, ctx);
+    const isoPrs = info?.pr ? [info.pr] : [];
+    const opsRow = buildOpsRow(git, isoPrs, target, opsDisabled, ghReady, "iso-ops", Boolean(info?.merged_pr));
+    if (opsRow) nodes.push(opsRow);
+
     if (user) {
       const btn = h(
         "button.iso-user-btn",
@@ -490,7 +655,7 @@ const ChatGit = (() => {
       });
       nodes.push(h("div.iso-user", {}, btn));
     }
-    return { nodes, hasActiveTerminal: Boolean(user?.kind === "terminal" && user.active) };
+    return { nodes, hasActiveTerminal };
   }
 
   // ---- refresh triggers (event-driven only, no background polling) ------------------------
@@ -506,6 +671,10 @@ const ChatGit = (() => {
         renderIsolatedDrawer(state.chat, state.ctx);
       }
     }
+    if (!card.hidden && cardAnchor?.isConnected && cardAnchor._gpGetPayload) {
+      const updated = cardAnchor._gpGetPayload();
+      if (updated?.entry) showCard(cardAnchor, updated, cardPinned);
+    }
   }
 
   async function runRefresh(reason) {
@@ -518,7 +687,6 @@ const ChatGit = (() => {
       const next = await AN.post("/app/git-pr/refresh", { reason, selected: store.selected });
       applySnapshot(next);
     } catch {
-      // Fallback to cached GET snapshot if POST is unavailable (e.g. partial mock).
       try {
         const fallback = await AN.load("/app/git-pr/state");
         applySnapshot(fallback);
@@ -588,6 +756,8 @@ const ChatGit = (() => {
     isolatedNodes,
     isolatedOf,
     isCliSession,
+    isGithubUrl,
+    openUrl,
     prPriority,
     prTone,
     badgeSummary,

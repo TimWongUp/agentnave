@@ -42,6 +42,7 @@ const REMOVED_ENVS: &[&str] = &[
 pub(crate) struct GitOutput {
     pub code: i32,
     pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -71,8 +72,25 @@ impl GitRunner {
         allowed_exit_codes: &[i32],
         extra_env: &[(&str, &str)],
     ) -> Result<GitOutput, String> {
+        self.run_with_timeout(
+            cwd,
+            args,
+            allowed_exit_codes,
+            extra_env,
+            DEFAULT_GIT_TIMEOUT,
+        )
+    }
+
+    pub(crate) fn run_with_timeout(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        allowed_exit_codes: &[i32],
+        extra_env: &[(&str, &str)],
+        timeout: Duration,
+    ) -> Result<GitOutput, String> {
         let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
-        self.run_os(cwd, &args, allowed_exit_codes, extra_env)
+        self.run_os_with_timeout(cwd, &args, allowed_exit_codes, extra_env, timeout)
     }
 
     pub(crate) fn run_os(
@@ -81,6 +99,23 @@ impl GitRunner {
         args: &[&OsStr],
         allowed_exit_codes: &[i32],
         extra_env: &[(&str, &str)],
+    ) -> Result<GitOutput, String> {
+        self.run_os_with_timeout(
+            cwd,
+            args,
+            allowed_exit_codes,
+            extra_env,
+            DEFAULT_GIT_TIMEOUT,
+        )
+    }
+
+    pub(crate) fn run_os_with_timeout(
+        &self,
+        cwd: &Path,
+        args: &[&OsStr],
+        allowed_exit_codes: &[i32],
+        extra_env: &[(&str, &str)],
+        timeout: Duration,
     ) -> Result<GitOutput, String> {
         let mut cmd = Command::new("git");
         cmd.arg("--no-pager").arg("-C").arg(cwd);
@@ -123,7 +158,7 @@ impl GitRunner {
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
-        let out = match output(cmd, DEFAULT_GIT_TIMEOUT) {
+        let out = match output(cmd, timeout) {
             Ok(out) => out,
             Err(OutputError::Timeout) => {
                 let op = args.first().copied().unwrap_or_default().to_string_lossy();
@@ -139,10 +174,11 @@ impl GitRunner {
         let code = out.status.code().unwrap_or(-1);
         if !allowed_exit_codes.contains(&code) {
             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-            let detail = if stderr.is_empty() {
-                format!("exit status {code}")
-            } else {
-                stderr
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+            let detail = match (stderr.is_empty(), stdout.is_empty()) {
+                (false, _) => stderr,
+                (true, false) => stdout,
+                (true, true) => format!("exit status {code}"),
             };
             let op = args
                 .iter()
@@ -155,6 +191,7 @@ impl GitRunner {
         Ok(GitOutput {
             code,
             stdout: out.stdout,
+            stderr: out.stderr,
         })
     }
 

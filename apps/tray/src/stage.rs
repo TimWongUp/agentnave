@@ -614,7 +614,7 @@ fn running_cwds(snapshots: &[Snapshot], sources: &[usize]) -> Vec<String> {
 
 /// Where one conversation's running calls work: a task's own directory, or a running seat's,
 /// falling back to the meeting's for views saved before seats carried one.
-fn running_in(director: &Value) -> Vec<String> {
+pub(crate) fn running_in(director: &Value) -> Vec<String> {
     let mut found: Vec<String> = array(&director["round"], "seats")
         .filter(|seat| seat["status"] == "running")
         .filter_map(|seat| {

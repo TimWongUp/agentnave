@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+mod ops;
+
 use serde_json::json;
 
 use super::cache::{CLOSED_PR_TTL, Cache, OPEN_PR_TTL, pr_ttl};
@@ -398,6 +400,7 @@ exit 1"#,
                 workspaces: vec!["s-ws1".to_owned()],
                 derived: false,
                 parent_workspace_id: None,
+                working: false,
             },
             TerminalTarget {
                 id: 2,
@@ -408,6 +411,7 @@ exit 1"#,
                 workspaces: Vec::new(),
                 derived: true,
                 parent_workspace_id: Some("s-ws1".to_owned()),
+                working: false,
             },
         ],
         workspaces: vec![WorkspaceTarget {
@@ -417,6 +421,7 @@ exit 1"#,
             owner_file: None,
             account_dir: None,
             cwd: Some(repo.clone()),
+            working: false,
         }],
         isolated: vec![IsolatedTarget {
             id: "wt-abc".to_owned(),

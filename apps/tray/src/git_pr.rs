@@ -8,6 +8,7 @@ mod cache;
 pub(crate) mod gh;
 pub(crate) mod git;
 mod links;
+pub(crate) mod ops;
 #[cfg(test)]
 mod tests;
 
@@ -226,7 +227,7 @@ impl GitPr {
             terminal_prs.insert(term.id, prs.clone());
             terminal_map.insert(
                 term.id.to_string(),
-                json!({ "git": git_status, "prs": prs }),
+                json!({ "git": git_status, "prs": prs, "working": term.working }),
             );
         }
         (terminal_map, terminal_prs)
@@ -342,7 +343,11 @@ impl GitPr {
                 }
                 dedupe_and_sort_prs(&mut prs);
             }
-            workspace_map.insert(ws.id.clone(), json!({ "git": git_status, "prs": prs }));
+            let ws_working = own_term.is_some_and(|t| t.working) || ws.working;
+            workspace_map.insert(
+                ws.id.clone(),
+                json!({ "git": git_status, "prs": prs, "working": ws_working }),
+            );
         }
         workspace_map
     }
@@ -527,6 +532,7 @@ pub(crate) struct TerminalTarget {
     pub workspaces: Vec<String>,
     pub derived: bool,
     pub parent_workspace_id: Option<String>,
+    pub working: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -537,6 +543,7 @@ pub(crate) struct WorkspaceTarget {
     pub owner_file: Option<PathBuf>,
     pub account_dir: Option<PathBuf>,
     pub cwd: Option<PathBuf>,
+    pub working: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -555,7 +562,7 @@ pub(crate) struct RefreshInput {
     pub isolated: Vec<IsolatedTarget>,
 }
 
-/// Protocol route handler for `/app/git-pr/state` and `/app/git-pr/refresh`.
+/// Protocol route handler for `/app/git-pr/*`.
 pub(crate) fn request(
     app: &AppHandle,
     reader: &Reader,
@@ -590,7 +597,7 @@ pub(crate) fn request(
             });
             Response::json(&snap)
         }),
-        _ => Response::not_found(),
+        _ => ops::request(app, reader, method, path, action, body),
     }
 }
 

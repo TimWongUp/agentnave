@@ -181,6 +181,31 @@ impl Running {
         }
     }
 
+    fn is_working(&self) -> bool {
+        if self.session.exit().is_some() {
+            return false;
+        }
+        if self.derived.as_ref().is_some_and(|d| d.busy) {
+            return true;
+        }
+        if matches!(
+            self.session.osc_snapshot().1.as_deref(),
+            Some("working" | "blocked")
+        ) {
+            return true;
+        }
+        #[cfg(unix)]
+        if self.codex.as_ref().is_some_and(|c| {
+            self.native.as_deref().is_some_and(|sid| {
+                c.thread_status(sid)
+                    .is_some_and(|s| matches!(s, codex_server::ThreadStatus::Active { .. }))
+            })
+        }) {
+            return true;
+        }
+        false
+    }
+
     fn describe(&self, root: &Path) -> Value {
         // Dresses the boss figure of a terminal that has dispatched nothing yet; never a name.
         let art_model = crate::detect::default_model(
@@ -602,20 +627,52 @@ impl Terminals {
         self.lock()
             .open
             .iter()
-            .map(|running| crate::git_pr::TerminalTarget {
-                id: running.id,
-                provider: running.provider.clone(),
-                cwd: running.cwd.clone(),
-                native: running.native.clone(),
-                account_dir: running.account.as_ref().map(|a| a.dir.clone()),
-                workspaces: running.workspaces.clone(),
-                derived: running.derived.is_some(),
-                parent_workspace_id: running
-                    .derived
-                    .as_ref()
-                    .and_then(|d| d.parent_workspace_id.clone()),
-            })
+            .map(Self::running_to_git_pr_target)
             .collect()
+    }
+
+    pub(crate) fn find_git_pr_terminal(&self, id: u64) -> Option<crate::git_pr::TerminalTarget> {
+        self.lock()
+            .open
+            .iter()
+            .find(|r| r.id == id)
+            .map(Self::running_to_git_pr_target)
+    }
+
+    pub(crate) fn has_active_terminal_for_isolated(
+        &self,
+        isolation_id: &str,
+        dir_path: &Path,
+    ) -> bool {
+        self.lock().open.iter().any(|r| {
+            if r.session.exit().is_some() {
+                return false;
+            }
+            if r.derived.as_ref().is_some_and(|d| {
+                d.isolation_id.as_deref() == Some(isolation_id)
+                    || (d._lease.is_some() && d.isolation_id.as_deref() == Some(isolation_id))
+            }) {
+                return true;
+            }
+            crate::isolated::leases::is_same_or_subpath(&r.cwd, dir_path)
+        })
+    }
+
+    fn running_to_git_pr_target(running: &Running) -> crate::git_pr::TerminalTarget {
+        crate::git_pr::TerminalTarget {
+            id: running.id,
+            provider: running.provider.clone(),
+            cwd: running.cwd.clone(),
+            native: running.native.clone(),
+            account_dir: running.account.as_ref().map(|a| a.dir.clone()),
+            workspaces: running.workspaces.clone(),
+            derived: running.derived.is_some(),
+            parent_workspace_id: running
+                .derived
+                .as_ref()
+                .and_then(|d| d.parent_workspace_id.clone()),
+            working: running.is_working(),
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {

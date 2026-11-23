@@ -175,6 +175,7 @@ impl Reader {
             .collect();
 
         let ws_meta = collect_workspace_meta(&snapshots, &handover_map);
+        let running_by_ws = collect_running_cwds(&snapshots);
         let mut eligible: Vec<(bool, i64, crate::git_pr::WorkspaceTarget)> = ws_meta
             .into_iter()
             .filter_map(|(id, (at, host))| {
@@ -190,6 +191,12 @@ impl Reader {
                     .and_then(|acc| account_dirs.get(acc))
                     .cloned();
                 let cwd = origins.get(&id).map(PathBuf::from);
+                let working = cwd.as_deref().is_some_and(|dir| {
+                    running_by_ws.get(&id).is_some_and(|cwds| {
+                        cwds.iter()
+                            .any(|c| crate::isolated::leases::same_dir(Path::new(c), dir))
+                    })
+                });
                 Some((
                     selected == Some(id.as_str()),
                     at,
@@ -200,6 +207,7 @@ impl Reader {
                         owner_file: owner.and_then(|o| o.file.clone()),
                         account_dir,
                         cwd,
+                        working,
                     },
                 ))
             })
@@ -221,6 +229,27 @@ impl Reader {
             })
             .collect();
         (homes, workspaces, isolated)
+    }
+
+    /// Resolves a single CLI boss workspace for Git operations; returns `None` for desktop or unknown hosts.
+    pub(crate) fn resolve_git_pr_workspace(
+        &self,
+        ws_id: &str,
+        terminal_workspaces: &HashSet<String>,
+    ) -> Option<crate::git_pr::WorkspaceTarget> {
+        let (_, workspaces, _) = self.git_pr_targets(Some(ws_id), terminal_workspaces, 512);
+        workspaces.into_iter().find(|w| w.id == ws_id)
+    }
+
+    /// Whether any running task or meeting seat currently works inside `dir_path`.
+    pub(crate) fn is_isolated_in_use(&self, dir_path: &Path) -> bool {
+        let database = crate::db::read(&self.root);
+        let (_, snapshots) = self.scan_with(&database);
+        snapshots.iter().any(|snap| {
+            crate::stage::running_in(&snap.view["director"])
+                .into_iter()
+                .any(|cwd| crate::isolated::leases::is_same_or_subpath(Path::new(&cwd), dir_path))
+        })
     }
 
     /// Installed CLI names from the existing prepared members view.
@@ -761,6 +790,20 @@ fn collect_workspace_meta(
         }
     }
     ws_meta
+}
+
+fn collect_running_cwds(snapshots: &[Snapshot]) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for snap in snapshots {
+        let Some(group) = crate::stage::chat_group(&snap.item) else {
+            continue;
+        };
+        let cwds = crate::stage::running_in(&snap.view["director"]);
+        if !cwds.is_empty() {
+            out.entry(group).or_default().extend(cwds);
+        }
+    }
+    out
 }
 
 struct WorkspaceOwner {

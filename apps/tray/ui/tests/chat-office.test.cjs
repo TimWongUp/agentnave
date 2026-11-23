@@ -2605,6 +2605,183 @@ test("ChatGit prioritizes PR tones, hides desktop sessions and PRs when gh unava
   assert.equal(cliRec.prBadge.attributes["data-tone"], "git");
 });
 
+test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and renders op buttons gated by gh & working state", async () => {
+  const mkNode = (tag, attributes = {}, ...children) => {
+    const node = {
+      tag,
+      className: tag.split(".").slice(1).join(" "),
+      attributes: { ...attributes },
+      hidden: Boolean(attributes.hidden),
+      disabled: Boolean(attributes.disabled),
+      value: attributes.value ?? "",
+      checked: Boolean(attributes.checked),
+      isConnected: false,
+      children: children.flat(Infinity).filter((x) => x != null && x !== false),
+      listeners: {},
+      style: {},
+      textContent: "",
+      setAttribute(k, v) { this.attributes[k] = v; },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      hasAttribute(k) { return Object.hasOwn(this.attributes, k); },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+      fire(name, ev = {}) {
+        const event = { preventDefault() {}, stopPropagation() {}, ...ev };
+        for (const fn of this.listeners[name] || []) fn(event);
+      },
+      append(...items) { this.children.push(...items.flat(Infinity).filter((x) => x != null && x !== false)); },
+      replaceChildren(...items) { this.children = items.flat(Infinity).filter((x) => x != null && x !== false); },
+      insertBefore(item, before) {
+        const idx = this.children.indexOf(before);
+        if (idx >= 0) this.children.splice(idx, 0, item);
+        else this.children.push(item);
+      },
+      closest() { return null; },
+      contains(x) { return x === this || this.children.some((c) => c?.contains?.(x)); },
+      getBoundingClientRect() { return { left: 20, right: 120, top: 40, bottom: 60, width: 100, height: 20 }; },
+      focus() {},
+      showModal() { this.open = true; },
+      close() { this.open = false; },
+    };
+    return node;
+  };
+  const findAll = (root, pred, out = []) => {
+    if (!root || typeof root !== "object") return out;
+    if (pred(root)) out.push(root);
+    for (const c of root.children || []) findAll(c, pred, out);
+    return out;
+  };
+
+  const posts = [];
+  const toasts = [];
+  const bodyChildren = [];
+  let postImpl = async (path, payload) => {
+    posts.push([path, payload]);
+    if (path === "/app/git-pr/prepare" && payload.op === "commit") {
+      return {
+        op: "commit", branch: "feat/x", working: false,
+        files: [{ path: "a.rs", code: ".M", staged: false, unstaged: true, untracked: false, unmerged: false }],
+        has_staged: false, has_unstaged: true, has_unmerged: false,
+      };
+    }
+    if (path === "/app/git-pr/commit") {
+      throw new Error("git commit failed: nothing added");
+    }
+    if (path === "/app/git-pr/prepare" && payload.op === "merge_pr") {
+      return {
+        op: "merge_pr", repo: "o/r", number: 2,
+        allowed_methods: ["squash", "rebase"], default_method: "squash", delete_branch_on_merge: true, working: false,
+      };
+    }
+    return { ok: true };
+  };
+  const context = vm.createContext({
+    AN: {
+      h: mkNode,
+      L: (zh) => zh,
+      setText: (n, t) => { n.textContent = t; },
+      setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+      relTime: () => "5 分钟前",
+      at: Date.parse,
+      deskName: (d) => d?.label || d?.key || "",
+      post: (...args) => postImpl(...args),
+      load: async () => ({}),
+    },
+    Actions: { say: (msg, bad) => toasts.push([msg, bad]) },
+    document: {
+      body: { append(...nodes) { for (const n of nodes) { if (n) n.isConnected = true; bodyChildren.push(n); } } },
+      createElementNS: (_ns, tag) => mkNode(tag),
+      addEventListener() {},
+    },
+    window: { addEventListener() {}, innerWidth: 1200, innerHeight: 800 },
+    setTimeout,
+    clearTimeout,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git-ops.js`, "utf8") + "\nglobalThis.ChatGitOps = ChatGitOps;", context);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
+  const { ChatGit, ChatGitOps } = context;
+
+  // openUrl strictly allows https://github.com/
+  assert.equal(await ChatGit.openUrl("https://evil.example/o/r/pull/1"), false);
+  assert.equal(posts.length, 0);
+  assert.equal(await ChatGit.openUrl("https://github.com/o/r/pull/2"), true);
+  assert.deepEqual(JSON.parse(JSON.stringify(posts[0])), ["/app/git-pr/open-url", { url: "https://github.com/o/r/pull/2" }]);
+
+  ChatGit._applyForTest({
+    gh_status: "ready",
+    terminals: {},
+    workspaces: {
+      "ws-idle": {
+        working: false,
+        git: { is_git: true, branch: "feat/x", default_branch: "main", upstream: "origin/feat/x", ahead: 1, behind: 1, changed_files: 2, additions: 10, deletions: 3, github_repo: "o/r" },
+        prs: [
+          {
+            repo: "o/r", number: 2, title: "Fix link", state: "open", head_ref_name: "other/branch", base_ref_name: "main",
+            checks: { state: "failing", total: 2, passed: 1, failed: 1, pending: 0, checks_url: "https://ci.external/run/1" },
+            mergeable: "mergeable", url: "https://github.com/o/r/pull/2",
+          },
+        ],
+      },
+      "ws-busy": {
+        working: true,
+        git: { is_git: true, branch: "feat/y", default_branch: "main", upstream: "origin/feat/y", ahead: 1, behind: 0, changed_files: 1, github_repo: "o/r" },
+        prs: [],
+      },
+    },
+    isolated: {},
+  });
+
+  // Open hover card by clicking badge -> pins card and renders PR link, GitHub-fallback CI link, and op buttons.
+  const idleRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(idleRec, { group: "ws-idle", cli_session: true });
+  idleRec.prBadge.fire("click");
+  const card = bodyChildren.find((n) => n.className === "git-pr-card");
+  assert.ok(card && !card.hidden);
+  const prLink = findAll(card, (n) => n.className === "gp-pr-head")[0];
+  assert.equal(prLink.attributes.href, "https://github.com/o/r/pull/2");
+  prLink.fire("click");
+  await Promise.resolve();
+  assert.deepEqual(JSON.parse(JSON.stringify(posts.at(-1))), ["/app/git-pr/open-url", { url: "https://github.com/o/r/pull/2" }]);
+
+  // External CI URL falls back to PR's GitHub checks URL.
+  const ciChip = findAll(card, (n) => n.tag.startsWith("a.gp-chip"))[0];
+  assert.equal(ciChip.attributes.href, "https://github.com/o/r/pull/2/checks");
+
+  const opButtons = findAll(card, (n) => n.className.startsWith("gp-op-btn"));
+  assert.equal(opButtons.length, 4); // Commit, Pull, Push, Create PR
+  assert.ok(opButtons.every((b) => !b.disabled));
+  const mergeBtn = findAll(card, (n) => n.className === "gp-pr-merge")[0];
+  assert.ok(mergeBtn && !mergeBtn.disabled);
+
+  // Busy CLI disables all write buttons.
+  const busyRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(busyRec, { group: "ws-busy", cli_session: true });
+  busyRec.prBadge.fire("click");
+  const busyButtons = findAll(card, (n) => n.className.startsWith("gp-op-btn"));
+  assert.ok(busyButtons.length > 0 && busyButtons.every((b) => b.disabled));
+
+  // Commit confirmation dialog displays raw error on git failure and stays open.
+  await ChatGitOps.openCommit({ kind: "workspace", id: "ws-idle" });
+  const dlg = bodyChildren.find((n) => n.className.includes("gp-dialog"));
+  assert.ok(dlg && dlg.open);
+  const textarea = findAll(dlg, (n) => n.tag.startsWith("textarea"))[0];
+  textarea.value = "feat: test";
+  const commitBtn = findAll(dlg, (n) => n.tag === "button.primary")[0];
+  commitBtn.fire("click");
+  await new Promise((r) => setTimeout(r, 0));
+  const errBox = findAll(dlg, (n) => n.className === "gp-error")[0];
+  assert.equal(errBox.hidden, false);
+  assert.ok(errBox.textContent.includes("nothing added"));
+  assert.equal(dlg.open, true);
+  dlg.close();
+
+  // Merge PR dialog only lists repository-allowed methods (squash, rebase; no merge).
+  await ChatGitOps.openMergePr({ kind: "workspace", id: "ws-idle" }, { repo: "o/r", number: 2, title: "Fix link" });
+  const radios = findAll(dlg, (n) => n.attributes.role === "radio");
+  assert.deepEqual(radios.map((r) => r.attributes["data-method"]), ["squash", "rebase"]);
+  assert.equal(radios[0].attributes["aria-checked"], "true");
+});
+
 test("isolatedConfirmBody notes merged PR instead of unmerged-commit warning and falls back when gh has no match", () => {
   const h = (tag, attributes = {}, ...children) => ({
     tag, attributes, children: children.flat(Infinity).filter((x) => x != null && x !== false),
