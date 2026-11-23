@@ -28,6 +28,9 @@ pub(super) struct Item {
     pub(super) role: Option<String>,
     #[cfg_attr(not(any(unix, test)), allow(dead_code))]
     pub(super) status: Option<String>,
+    /// Already reported by wait (a review awaiting decision), so not unread.
+    #[serde(default)]
+    pub(super) delivered: bool,
 }
 
 #[derive(Deserialize)]
@@ -49,12 +52,13 @@ impl BossSnapshot {
             let event_seq = self.event_seq.unwrap_or(0);
             let delivered_seq = self.delivered_seq.unwrap_or(0);
             if event_seq > delivered_seq {
-                // Delivered-but-undecided reviews stay in items; the sequence gap bounds the unread ones.
-                let gap = usize::try_from(event_seq - delivered_seq).unwrap_or(usize::MAX);
-                if self.items.is_empty() {
-                    gap.max(1)
+                let fresh = self.items.iter().filter(|item| !item.delivered).count();
+                if fresh > 0 {
+                    fresh
                 } else {
-                    self.items.len().min(gap)
+                    usize::try_from(event_seq - delivered_seq)
+                        .unwrap_or(1)
+                        .max(1)
                 }
             } else {
                 0
@@ -187,7 +191,9 @@ pub(super) fn inboxes(root: &Path) -> HashMap<String, RawBoss> {
             if unread > 0 {
                 entry.has_unread = true;
                 entry.unread_count = entry.unread_count.saturating_add(unread);
-                entry.items.extend(boss.items);
+                entry
+                    .items
+                    .extend(boss.items.into_iter().filter(|item| !item.delivered));
             }
         }
     }

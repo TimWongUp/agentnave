@@ -58,6 +58,12 @@ class InboxTracker:
         self._delivered_seq[boss] = delivered
         return seq, delivered
 
+    def _mark_delivered_items(self, boss: str, items: list[InboxItem]) -> list[InboxItem]:
+        delivered_keys = self._delivered_keys.get(boss, set())
+        return [
+            {**item, "delivered": True} if item["key"] in delivered_keys else item for item in items
+        ]
+
     def project(self, states: dict[str, BossInboxState]) -> dict[str, BossInbox]:
         for boss in list(self._item_seq):
             if boss not in states:
@@ -72,7 +78,7 @@ class InboxTracker:
                     "in_flight": state.in_flight,
                     "event_seq": event_seq,
                     "delivered_seq": delivered_seq,
-                    "items": state.items,
+                    "items": self._mark_delivered_items(boss, state.items),
                 }
         return bosses
 

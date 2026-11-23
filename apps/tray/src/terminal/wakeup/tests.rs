@@ -21,6 +21,7 @@ fn prune_state_preserves_attempted_while_waiting_and_clears_departed_keys() {
                 kind: "review".into(),
                 role: None,
                 status: None,
+                delivered: false,
             }],
             in_flight: 1,
             has_unread: true,
@@ -40,12 +41,14 @@ fn prompt_precedes_results_and_role_is_sanitized() {
         kind: "task_end".into(),
         role: Some("重构\n危险".into()),
         status: Some("succeeded".into()),
+        delivered: false,
     };
     let prompt = Item {
         key: "2".into(),
         kind: "prompt".into(),
         role: None,
         status: None,
+        delivered: false,
     };
     let text = message(&[result, prompt]);
     assert!(text.starts_with("[AgentNave] 1 个待你处理的请求"));
@@ -60,6 +63,7 @@ fn running_blocker_is_worded_as_blocked_not_ended() {
         kind: "blocked".into(),
         role: Some("审查".into()),
         status: Some("execution_blocked".into()),
+        delivered: false,
     };
     let text = message(&[blocked]);
     assert!(text.contains("审查（受阻）"), "{text}");
@@ -78,6 +82,7 @@ fn push_providers_contain_codex_only_on_unix_and_none_on_windows() {
             kind: "task_end".into(),
             role: None,
             status: None,
+            delivered: false,
         }]),
         "k1"
     );

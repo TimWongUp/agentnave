@@ -42,6 +42,7 @@ fn sample_item(key: &str) -> Item {
         kind: "task_end".to_owned(),
         role: Some("实现".to_owned()),
         status: Some("succeeded".to_owned()),
+        delivered: false,
     }
 }
 
@@ -169,6 +170,17 @@ fn new_and_legacy_snapshot_unread_semantics() {
                 "delivered_seq": 4,
                 "items": [{"key": "stale", "kind": "task_end"}]
             },
+            // A delivered review awaiting decision is neither counted nor surfaced.
+            "b-delivered-review": {
+                "waiting": false,
+                "in_flight": 1,
+                "event_seq": 2,
+                "delivered_seq": 1,
+                "items": [
+                    {"key": "review:r1:a:a:1", "kind": "review", "delivered": true},
+                    {"key": "task_end:t2", "kind": "task_end"}
+                ]
+            },
             // Legacy entry omitting seq fields falls back to items non-empty.
             "b-legacy-unread": {
                 "waiting": false,
@@ -196,6 +208,10 @@ fn new_and_legacy_snapshot_unread_semantics() {
     assert!(!parsed["b-caught-up"].has_unread);
     assert_eq!(parsed["b-caught-up"].unread_count, 0);
     assert!(parsed["b-caught-up"].items.is_empty());
+
+    assert_eq!(parsed["b-delivered-review"].unread_count, 1);
+    assert_eq!(parsed["b-delivered-review"].items.len(), 1);
+    assert_eq!(parsed["b-delivered-review"].items[0].key, "task_end:t2");
 
     assert!(parsed["b-legacy-unread"].has_unread);
     assert_eq!(parsed["b-legacy-unread"].unread_count, 2);

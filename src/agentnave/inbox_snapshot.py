@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from agentnave.process_info import read_process_started
 
@@ -16,6 +16,8 @@ class InboxItem(TypedDict):
     kind: str
     role: str | None
     status: str
+    # A review wait already reported that still awaits decide_answers; not unread.
+    delivered: NotRequired[bool]
 
 
 class BossInbox(TypedDict):

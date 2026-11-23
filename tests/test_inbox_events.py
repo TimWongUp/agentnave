@@ -248,6 +248,15 @@ def test_inbox_tracker_preserves_mid_wait_events_and_delivered_reviews() -> None
     snap = tracker.project({boss: BossInboxState(waiting=False, in_flight=1, items=[])})
     assert snap[boss]["event_seq"] == 4 and snap[boss]["delivered_seq"] == 4
 
+    # A delivered review still awaiting decision is flagged so the tray does not count it.
+    snap = tracker.project({boss: BossInboxState(waiting=False, in_flight=1, items=[rev])})
+    snap = tracker.mark_delivered(
+        {boss: BossInboxState(waiting=False, in_flight=1, items=[rev])}, {boss}, {rev_key}
+    )
+    t6: InboxItem = {"key": "task_end:t6", "kind": "task_end", "role": None, "status": "succeeded"}
+    snap = tracker.project({boss: BossInboxState(waiting=False, in_flight=1, items=[rev, t6])})
+    assert [item.get("delivered", False) for item in snap[boss]["items"]] == [True, False]
+
 
 @pytest.mark.asyncio
 async def test_dispatch_and_wait_flush_inbox_snapshot_synchronously(
