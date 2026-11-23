@@ -2274,7 +2274,10 @@ fn boss_cwd_wins_project_grouping_across_sidebar_and_usage_with_dispatch_fallbac
             "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, workspace_uris TEXT, last_modified_time TEXT);",
         )
         .unwrap();
-    let boss_uri = format!("file://{repo_boss}");
+    let boss_uri = format!(
+        "file:///{}",
+        repo_boss.trim_start_matches('/').replace('\\', "/")
+    );
     agy_conn
         .execute(
             "INSERT INTO conversation_summaries VALUES (?1, 'Boss', ?2, '2026-11-23T00:00:00Z')",

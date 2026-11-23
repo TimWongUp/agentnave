@@ -497,6 +497,10 @@ fn a_chat_runs_again_in_the_folder_its_record_names() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "fixture directories are POSIX paths, not absolute on Windows"
+)]
 fn boss_cwds_cover_supported_hosts_and_preserve_handover_origin() {
     let dir = tempfile::tempdir().unwrap();
     let at = |rel: &str| dir.path().join(rel);
