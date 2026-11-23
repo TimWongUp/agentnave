@@ -1,7 +1,8 @@
 # ADR-0057：运行中的原生弹框由 boss 代答
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-04
+- 派发说明按本次能否答题选措辞，由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订。
 - 准备阶段已识别的启动确认屏自动按键及持久化例外见 [ADR-0078](0078-startup-confirmations.md)。
 - 修订 [ADR-0019](0019-no-running-messages.md)：运行中允许应答 CLI 自己发起的弹框；[ADR-0024](0024-consolidated-tools-and-private-review.md) 的工具集合：新增 `answer_prompt`；[ADR-0032](0032-cli-permission-tiers.md) 中「自动」档的含义：CLI 自动审核交回的请求由 boss 决定。
 - 补充 [ADR-0007](0007-wait-any-ready-subset.md)：待答弹框是新的就绪原因，收件箱 `wait` 同样返回。
