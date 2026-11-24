@@ -169,7 +169,6 @@ const BOSS_SET = {
   "antigravity-desktop": "agy",
   agy: "agy",
   deepseek: "deepseek",
-  devin: "devin",
   grok: "grok",
   codebuddy: "codebuddy",
   workbuddy: "codebuddy",

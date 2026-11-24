@@ -22,7 +22,6 @@ REFERENCES = (
     "antigravity.md",
     "pi.md",
     "deepseek.md",
-    "devin.md",
     "zcode.md",
 )
 # The blocks the meeting Skill takes from the manager; a lost marker would otherwise go unchecked.

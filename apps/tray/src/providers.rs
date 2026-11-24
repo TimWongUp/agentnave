@@ -1,11 +1,10 @@
-pub const PROVIDERS: [&str; 9] = [
+pub const PROVIDERS: [&str; 8] = [
     "zcode",
     "antigravity",
     "claude",
     "codebuddy",
     "codex",
     "deepseek",
-    "devin",
     "grok",
     "pi",
 ];

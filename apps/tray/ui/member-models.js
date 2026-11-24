@@ -29,7 +29,7 @@
   // A default its own listing lacks is no choice to offer, so the scene simply follows the CLI.
   function nativeDefault(provider) {
     const native = S.detected[provider]?.native || {};
-    const model = native.model && !unlisted(provider, native.model) && !hiddenModel(provider, native.model) ? native.model : null;
+    const model = native.model && !unlisted(provider, native.model) ? native.model : null;
     return { model, effort: native.effort || null };
   }
 
@@ -86,10 +86,8 @@
         for (const id of selection?.[provider]?.models || []) ids.add(id);
       }
     }
-    return [...ids].filter((id) => typeof id === "string" && id.trim() && !hiddenModel(provider, id));
+    return [...ids].filter((id) => typeof id === "string" && id.trim());
   }
-
-  const hiddenModel = (provider, id) => provider === "devin" && /^fusion-/i.test(id);
 
   // A scene's effort for one model: its override, else the shared level; "" follows the CLI.
   function sceneEffort(scene, provider, modelId) {
@@ -344,7 +342,7 @@
 
   Object.assign(S, {
     isRestricted, hasPool, listedPool, outOfPool, unlisted, nativeDefault, cliEffort, effortLevels,
-    savedEffort, getAllModelIds, hiddenModel, sceneEffort, slot, shownPool, isSplit, known, restrict,
+    savedEffort, getAllModelIds, sceneEffort, slot, shownPool, isSplit, known, restrict,
     confirmScenes, writePool, edited, setDeepSeekRoute, changeSlot, setProviderEnabled, setSplit
   });
   S.share({

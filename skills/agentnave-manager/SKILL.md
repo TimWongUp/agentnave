@@ -105,7 +105,6 @@ description: 通过 AgentNave 开会、评审、转交、多个可写任务并�
 | Antigravity CLI | `antigravity` | [Antigravity CLI](references/antigravity.md) |
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 | DeepSeek Harness | `deepseek` | [DeepSeek Harness](references/deepseek.md) |
-| Devin CLI | `devin` | [Devin CLI](references/devin.md) |
 | ZCode | `zcode` | [ZCode](references/zcode.md) |
 <!-- /shared:cli-refs -->
 

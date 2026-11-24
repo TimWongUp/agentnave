@@ -25,12 +25,22 @@ type HostName = Literal[
     "antigravity",
     "pi",
     "deepseek",
-    "devin",
     "hermes",
     "zcode",
 ]
 # Hosts no longer connected or detected; saved history may still name them.
-type RetiredHostName = Literal["gemini", "opencode"]
+# CLIs the service no longer runs (ADR-0119); history keeps their name, App files drop them.
+RETIRED_PROVIDERS = frozenset({"devin"})
+
+
+def retired_provider_error(provider: str) -> ValueError:
+    return ValueError(
+        f"CLI '{provider}' is no longer supported: its saved threads stay readable but cannot be "
+        "resumed. Start a new thread with another CLI and hand the work over."
+    )
+
+
+type RetiredHostName = Literal["gemini", "opencode", "devin"]
 type HostSource = Literal["env", "parent", "unknown"]
 
 

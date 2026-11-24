@@ -51,7 +51,6 @@ fn native_and_desktop_installations() {
             "Applications/Claude.app/Contents/node_modules/@anthropic-ai/claude-code/cli.js",
         ),
         ("zcode", ".grok/bin/zcode"),
-        ("devin", ".local/bin/devin"),
         ("antigravity", ".grok/bin/agy"),
         ("codex", "unknown/codex"),
     ] {

@@ -40,7 +40,7 @@ Click Listen and the App reads a meeting, a private chat or a whole workspace al
 
 ### 🙋 The boss answers prompts
 
-Claude runs interactively by default, so its sessions can be resumed in Claude Code; you can turn this off on its App employee card. Permission prompts, questions and plan confirmations go to the boss, so you don't have to sit and watch. So do the actions Devin's automatic approval cannot judge. CLI permission tiers default to full access; the App can switch them to automatic approval.
+Claude runs interactively by default, so its sessions can be resumed in Claude Code; you can turn this off on its App employee card. Permission prompts, questions and plan confirmations go to the boss, so you don't have to sit and watch. CLI permission tiers default to full access; the App can switch them to automatic approval.
 
 ### 🧭 Seats and review
 
@@ -58,8 +58,8 @@ On first launch the App installs the local service, and a getting-started list i
 
 | Role                                                | Supported                                                                                                                                     |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Devin CLI / desktop app, Hermes, Grok Bot (Linux only) |
-| **Employee** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode, Devin CLI                                   |
+| **Boss** (connects to AgentNave and hands out work) | Claude desktop app, Claude Code, Codex CLI, CodeBuddy Code, WorkBuddy desktop app, Grok CLI, Antigravity, Pi, DeepSeek Harness, ZCode, Hermes, Grok Bot (Linux only) |
+| **Employee** (the CLI that gets the work)           | Claude Code, Codex CLI, CodeBuddy Code, Grok CLI, Antigravity CLI, Pi Coding Agent, DeepSeek Harness, ZCode                                   |
 
 A host never sends a single task to its own CLI, though its CLI can take a seat in a meeting.
 
@@ -123,7 +123,7 @@ whom to ask and whether to double-check stay with the boss, who already has the 
 | Keeps task and meeting records           | Decides whether to retry a failure     |
 | Runs the rounds of a meeting             | Who answers, in what order, how well   |
 
-By default AgentNave runs a dispatched CLI with full access. When Claude runs interactively, and whenever Devin runs, the boss answers the prompts
+By default AgentNave runs a dispatched CLI with full access. When Claude runs interactively, the boss answers the prompts
 that still need one. The App can switch a CLI to automatic approval. AgentNave has no
 command line for people: you just talk to the boss.
 

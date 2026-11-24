@@ -27,6 +27,7 @@ from agentnave.members import (
     ReviewSeat,
     ReviewSeatStatus,
     SettingsFileError,
+    _read_app_file,  # pyright: ignore[reportPrivateUsage]
     apply_member,
     list_members,
     read_antigravity_interactive,
@@ -1817,3 +1818,78 @@ def test_decision_random_candidates_flag_and_selection(
     )
     assert sole.model == "c-2" and sole_receipt is not None
     assert sole_receipt["position"] == 2 and "random" not in sole_receipt
+
+
+def test_app_files_naming_a_retired_cli_are_read_without_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    claude = {"provider": "claude", "model": "opus"}
+    devin = {"provider": "devin", "model": "swe"}
+    files: dict[str, dict[str, Any]] = {
+        "members.json": {
+            "version": 1,
+            "clis": {"devin": {"models": {"swe": {}}}, "codex": {"models": {}}},
+            "modes": {"task": {"devin": {"models": ["swe"]}, "codex": {"models": []}}},
+            "defaults": {"discussion": {"devin": "swe"}},
+        },
+        "permissions.json": {"version": 1, "clis": {"devin": "auto", "codex": "auto"}},
+        "review.json": {
+            "version": 1,
+            "seats": {
+                "security-reviewer": {**devin, "fallbacks": [claude]},
+                "performance-reviewer": {**devin, "fallbacks": [devin | {"model": "x"}]},
+            },
+        },
+        "orchestration.json": {
+            "version": 1,
+            "explorer": {"easy": devin},
+            "image_generation": devin,
+        },
+        "decision-seats.json": {
+            "version": 1,
+            "seats": [
+                {
+                    "id": "scout",
+                    "kind": "custom",
+                    "role": "Scout",
+                    "description": "Reads",
+                    "access": "read",
+                    "difficulty": "easy",
+                    **devin,
+                    "fallbacks": [claude],
+                },
+                {
+                    "id": "only-devin",
+                    "kind": "custom",
+                    "role": "Gone",
+                    "description": "Gone",
+                    "access": "read",
+                    "difficulty": "easy",
+                    **devin,
+                },
+            ],
+        },
+    }
+    for name, document in files.items():
+        (tmp_path / name).write_text(json.dumps(document))
+
+    members = read_members()
+    assert members is not None
+    assert set(members.clis) == {"codex"} and set(members.modes["task"]) == {"codex"}
+    assert members.defaults["discussion"] == {}
+    permissions = read_permissions()
+    assert permissions is not None and permissions.clis == {"codex": "auto"}
+    review = _read_app_file("review.json", ReviewFile, MemberFileError)
+    assert review is not None
+    # The next remaining choice takes the retired primary's place; a seat with none is unbound.
+    assert set(review.seats) == {"security-reviewer"}
+    assert review.seats["security-reviewer"].provider == "claude"
+    assert review.seats["security-reviewer"].fallbacks == []
+    orchestration = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+    assert orchestration is not None
+    assert orchestration.explorer == {} and orchestration.image_generation is None
+    decision = _read_app_file("decision-seats.json", DecisionSeatsFile, DecisionSeatsFileError)
+    assert decision is not None and [(s.id, s.provider) for s in decision.seats] == [
+        ("scout", "claude")
+    ]

@@ -1,6 +1,6 @@
 ---
 name: agentnave-meeting
-description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、Devin CLI 或 ZCode 一起开会，或规则块允许 boss 主动开会。说明怎么开会议室、各自答、多轮各自答、轮流聊、先各自答再讨论、分歧收敛，以及等待、审核、补跑席位、保存和回读会议；这一档只开会，不私聊派活。咨询或仅提到模型名称不授权开会。
+description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness 或 ZCode 一起开会，或规则块允许 boss 主动开会。说明怎么开会议室、各自答、多轮各自答、轮流聊、先各自答再讨论、分歧收敛，以及等待、审核、补跑席位、保存和回读会议；这一档只开会，不私聊派活。咨询或仅提到模型名称不授权开会。
 ---
 
 # 通过 AgentNave 开会
@@ -39,7 +39,6 @@ description: 通过 AgentNave 会议室开会时使用：用户要求让 Claude 
 | Antigravity CLI | `antigravity` | [Antigravity CLI](references/antigravity.md) |
 | Pi Coding Agent | `pi` | [Pi Coding Agent](references/pi.md) |
 | DeepSeek Harness | `deepseek` | [DeepSeek Harness](references/deepseek.md) |
-| Devin CLI | `devin` | [Devin CLI](references/devin.md) |
 | ZCode | `zcode` | [ZCode](references/zcode.md) |
 <!-- /shared:cli-refs -->
 

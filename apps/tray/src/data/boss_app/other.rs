@@ -1,7 +1,7 @@
 //! Chat names of the other CLIs, read where magpie reads them: CodeBuddy and WorkBuddy write the
 //! same `custom-title` and `ai-title` entries as Claude Code, Grok keeps `generated_title` in a
 //! session's `summary.json`, Pi's `/name` is a `session_info` entry, and DeepSeek logs a
-//! `session/title` event. Devin and ZCode keep sessions in a shared database or a binary format,
+//! `session/title` event. ZCode keeps sessions in a shared database or a binary format,
 //! so their chats have no name here; Antigravity CLI (`agy`) is read by `super::antigravity`.
 
 use std::collections::HashSet;

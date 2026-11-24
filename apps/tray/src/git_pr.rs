@@ -550,8 +550,8 @@ impl GitPr {
 
 /// Whether a boss workspace (without an embedded terminal) is strictly a terminal CLI session
 /// (ADR-0115 §1). Desktop apps (`claude-desktop`, `codex-desktop`, `antigravity-desktop`,
-/// `workbuddy`) and hosts whose desktop and CLI cannot be reliably distinguished (`devin`,
-/// `zcode`, `deepseek`, or unconfirmed `claude`/`codex`/`antigravity`) return `false`.
+/// `workbuddy`) and hosts whose desktop and CLI cannot be reliably distinguished (`zcode`,
+/// `deepseek`, or unconfirmed `claude`/`codex`/`antigravity`) return `false`.
 pub(crate) fn is_cli_boss(host: Option<&str>, app: Option<&str>) -> bool {
     match (host, app) {
         (Some("claude"), Some(CLAUDE_CLI)) => true,
@@ -559,8 +559,7 @@ pub(crate) fn is_cli_boss(host: Option<&str>, app: Option<&str>) -> bool {
         (Some("antigravity"), Some(ANTIGRAVITY_CLI)) => true,
         (
             Some(
-                "claude" | "codex" | "antigravity" | "workbuddy" | "deepseek" | "hermes" | "devin"
-                | "zcode",
+                "claude" | "codex" | "antigravity" | "workbuddy" | "deepseek" | "hermes" | "zcode",
             ),
             _,
         ) => false,

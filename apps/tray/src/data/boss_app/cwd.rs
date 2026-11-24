@@ -287,7 +287,6 @@ fn boss_cwd(apps: &BossApps, boss: &Boss, found: &Found, homes: &Homes) -> Optio
             .or_else(|| found.other_transcripts.get(&boss.key))
             .and_then(|file| cached_file_cwd(apps, file, session_cwd)),
         "antigravity" => antigravity_cwd(boss, homes),
-        "devin" => devin_cwd(boss, homes),
         "zcode" => zcode_cwd(boss, homes),
         "hermes" => hermes_cwd(boss, homes),
         _ => None,
@@ -361,32 +360,6 @@ fn antigravity_cwd(boss: &Boss, homes: &Homes) -> Option<String> {
         .find_map(|root| query(root, &boss.key))
 }
 
-fn devin_cwd(boss: &Boss, homes: &Homes) -> Option<String> {
-    let db = boss
-        .file
-        .as_deref()
-        .and_then(|path| {
-            if file_name(path) == "sessions.db" && path.is_file() {
-                Some(path.to_owned())
-            } else {
-                path.parent()?
-                    .parent()
-                    .map(|root| root.join("sessions.db"))
-                    .filter(|db| db.is_file())
-            }
-        })
-        .or_else(|| other_home(homes, "devin").map(|root| root.join("sessions.db")))
-        .or_else(|| (!cfg!(test)).then(default_devin_db).flatten())?;
-    db_cwds(
-        "devin",
-        &db,
-        "SELECT id, working_directory FROM sessions \
-         WHERE working_directory IS NOT NULL AND working_directory != ''",
-        |raw| Some(PathBuf::from(raw)),
-    )
-    .and_then(|map| map.get(&boss.key).cloned())
-}
-
 fn zcode_cwd(boss: &Boss, homes: &Homes) -> Option<String> {
     let db = boss
         .file
@@ -427,21 +400,6 @@ fn other_home(homes: &Homes, target: &str) -> Option<PathBuf> {
         .iter()
         .find(|(host, _)| host == target)
         .map(|(_, path)| path.clone())
-}
-
-fn default_devin_db() -> Option<PathBuf> {
-    if let Some(override_dir) = std::env::var_os("DEVIN_SESSIONS_DIR").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(override_dir).join("sessions.db"));
-    }
-    let base = if cfg!(windows) {
-        dirs::data_local_dir()?
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))?
-    };
-    Some(base.join("devin/cli/sessions.db"))
 }
 
 fn default_hermes_db() -> Option<PathBuf> {

@@ -214,8 +214,9 @@ pub fn read(root: &Path) -> Result<Option<Value>, String> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("无法读取 {FILE}：{error}")),
     };
-    let document =
+    let mut document =
         serde_json::from_slice(&content).map_err(|error| format!("{FILE} 损坏：{error}"))?;
+    crate::retired_providers::members(&mut document);
     validate(&document).map_err(|error| format!("{FILE} 格式错误：{error}"))?;
     Ok(Some(document))
 }
@@ -483,8 +484,9 @@ pub fn read_orchestration(root: &Path) -> Result<Value, String> {
         }
         Err(error) => return Err(format!("无法读取 {ORCHESTRATION_FILE}：{error}")),
     };
-    let document = serde_json::from_slice(&content)
+    let mut document = serde_json::from_slice(&content)
         .map_err(|error| format!("{ORCHESTRATION_FILE} 损坏：{error}"))?;
+    crate::retired_providers::orchestration(&mut document);
     validate_orchestration(&document)
         .map_err(|error| format!("{ORCHESTRATION_FILE} 格式错误：{error}"))?;
     Ok(document)
@@ -504,8 +506,9 @@ pub fn read_review(root: &Path) -> Result<Value, String> {
         }
         Err(error) => return Err(format!("无法读取 {REVIEW_FILE}：{error}")),
     };
-    let document =
+    let mut document =
         serde_json::from_slice(&content).map_err(|error| format!("{REVIEW_FILE} 损坏：{error}"))?;
+    crate::retired_providers::review(&mut document);
     validate_review(&document).map_err(|error| format!("{REVIEW_FILE} 格式错误：{error}"))?;
     Ok(document)
 }
@@ -541,8 +544,9 @@ pub fn read_permissions(root: &Path) -> Result<Option<Value>, String> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("无法读取 {PERMISSIONS_FILE}：{error}")),
     };
-    let document = serde_json::from_slice(&content)
+    let mut document = serde_json::from_slice(&content)
         .map_err(|error| format!("{PERMISSIONS_FILE} 损坏：{error}"))?;
+    crate::retired_providers::permissions(&mut document);
     validate_permissions(&document)
         .map_err(|error| format!("{PERMISSIONS_FILE} 格式错误：{error}"))?;
     Ok(Some(document))
@@ -727,7 +731,6 @@ fn permission_keys() -> Value {
         "antigravity": ["mode", "sandbox", "dangerously_skip_permissions"],
         "codex": ["approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
         "deepseek": ["permission_mode"],
-        "devin": ["permission_mode", "sandbox"],
         "pi": [],
     })
 }

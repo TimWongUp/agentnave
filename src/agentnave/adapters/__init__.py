@@ -6,10 +6,10 @@ from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.adapters.codebuddy import CodeBuddyAdapter
 from agentnave.adapters.codex import CodexAdapter
 from agentnave.adapters.deepseek import DeepSeekAdapter
-from agentnave.adapters.devin import DevinAdapter
 from agentnave.adapters.grok import GrokAdapter
 from agentnave.adapters.pi import PiAdapter
 from agentnave.adapters.zcode import ZcodeAdapter
+from agentnave.models import RETIRED_PROVIDERS, retired_provider_error
 
 
 def get_adapter(provider: str) -> ProviderAdapter:
@@ -19,7 +19,6 @@ def get_adapter(provider: str) -> ProviderAdapter:
         "codebuddy": CodeBuddyAdapter(),
         "codex": CodexAdapter(),
         "deepseek": DeepSeekAdapter(),
-        "devin": DevinAdapter(),
         "grok": GrokAdapter(),
         "pi": PiAdapter(),
         "zcode": ZcodeAdapter(),
@@ -27,6 +26,8 @@ def get_adapter(provider: str) -> ProviderAdapter:
     try:
         return adapters[provider]
     except KeyError as exc:
+        if provider in RETIRED_PROVIDERS:
+            raise retired_provider_error(provider) from exc
         raise ValueError(f"unsupported provider: {provider}") from exc
 
 

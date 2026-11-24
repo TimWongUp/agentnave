@@ -78,8 +78,6 @@ fn cli_boss_filter_excludes_desktop_and_unknown_hosts() {
     assert!(!is_cli_boss(Some("workbuddy"), None));
     assert!(!is_cli_boss(Some("deepseek"), None));
     assert!(!is_cli_boss(Some("hermes"), None));
-    assert!(!is_cli_boss(Some("devin"), None));
-    assert!(!is_cli_boss(Some("devin"), Some("devin-desktop")));
     assert!(!is_cli_boss(Some("zcode"), None));
     assert!(!is_cli_boss(Some("zcode"), Some("zcode-desktop")));
     assert!(!is_cli_boss(None, None));

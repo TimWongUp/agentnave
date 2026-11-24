@@ -202,7 +202,7 @@ json.dump(saved, open(root / "permissions.json.tmp", "w"), indent=2)
 (root / "permissions.json.tmp").replace(root / "permissions.json")
 PY
 ```
-验证：`list_members.permissions` 返回全部 7 个有档位的 CLI，不限于已选组员，也不含 Pi。没写的 CLI 显示 `full`；写了 `auto` 的 claude、grok、codex、devin 显示 `auto`，codebuddy、deepseek、antigravity、zcode 的 `auto` 档本身就是全权限，仍显示为 `full`，这是正常的。
+验证：`list_members.permissions` 返回全部 7 个有档位的 CLI，不限于已选组员，也不含 Pi。没写的 CLI 显示 `full`；写了 `auto` 的 claude、grok、codex 显示 `auto`，codebuddy、deepseek、antigravity、zcode 的 `auto` 档本身就是全权限，仍显示为 `full`，这是正常的。
 
 ## 8. 其他设置
 

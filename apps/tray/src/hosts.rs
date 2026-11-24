@@ -20,6 +20,7 @@ mod registry;
 mod reload;
 mod reopen;
 mod retention;
+mod retired;
 mod roots;
 mod skill;
 mod snapshot;
@@ -178,7 +179,6 @@ impl Context {
             home.join(".bun/bin"),
             home.join(".npm-global/bin"),
             home.join(".volta/bin"),
-            home.join("AppData/Local/devin/cli/bin"),
         ]);
         Self {
             applications: applications(&home),
@@ -279,7 +279,7 @@ type Spec = (
     Format,
     &'static str,
 );
-const IDS: [&str; 11] = [
+const IDS: [&str; 10] = [
     "codex",
     "claude",
     "codebuddy",
@@ -288,7 +288,6 @@ const IDS: [&str; 11] = [
     "antigravity",
     "pi",
     "deepseek",
-    "devin",
     "hermes",
     "zcode",
 ];
@@ -470,15 +469,7 @@ impl Hosts {
     /// Write the orchestration block into the connected apps' rules and take it out of the rest,
     /// backing up each file first. Returns the files that could not be written.
     pub fn sync_rules(&self, document: &Value, also: &[PathBuf]) -> Vec<Value> {
-        let (app, home) = (&self.context.app, &self.context.home);
-        // Named by the folder under home, so `AGENTS.md` copies of different apps stay apart.
-        let backup = |path: &Path, bytes: &[u8]| {
-            let folder = path.parent().and_then(|dir| dir.strip_prefix(home).ok());
-            let folder = folder.map(|dir| dir.to_string_lossy().replace(['/', '\\'], "_"));
-            let id = folder.as_deref().unwrap_or("rules").trim_start_matches('.');
-            backup_bytes(app, RULES_BACKUP, id, path, bytes, home)
-                .map_err(|error| message(&error).to_owned())
-        };
+        let home = &self.context.home;
         let connected = if self.uninstalling {
             Vec::new()
         } else {
@@ -490,9 +481,20 @@ impl Hosts {
             home,
             document,
             also,
-            &backup,
+            &self.rules_backup(),
             self.service_behind(),
         )
+    }
+    fn rules_backup(&self) -> impl Fn(&Path, &[u8]) -> Result<(), String> + '_ {
+        let (app, home) = (&self.context.app, &self.context.home);
+        // Named by the folder under home, so `AGENTS.md` copies of different apps stay apart.
+        move |path, bytes| {
+            let folder = path.parent().and_then(|dir| dir.strip_prefix(home).ok());
+            let folder = folder.map(|dir| dir.to_string_lossy().replace(['/', '\\'], "_"));
+            let id = folder.as_deref().unwrap_or("rules").trim_start_matches('.');
+            backup_bytes(app, RULES_BACKUP, id, path, bytes, home)
+                .map_err(|error| message(&error).to_owned())
+        }
     }
     /// Whether the service is older than this App. The block tells bosses to use tool arguments
     /// of this App's release, which an older service rejects, so it waits for the upgrade; the
@@ -535,7 +537,6 @@ fn reload_hint(id: &str) -> &'static str {
         "antigravity" => "重启 Antigravity（桌面版需完整退出）",
         "pi" => "重启 Pi",
         "deepseek" => "重启 DeepSeek Harness（桌面版需完整退出）",
-        "devin" => "重启 Devin CLI 或桌面端",
         "hermes" => "重启 Hermes 网关",
         "zcode" => "在 ZCode 新建会话或重启 ZCode",
         _ => "重启宿主应用",

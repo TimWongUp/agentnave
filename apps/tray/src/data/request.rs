@@ -404,6 +404,9 @@ impl Reader {
             if self.uninstalling() {
                 return;
             }
+            for failure in hosts.remove_retired() {
+                eprintln!("无法清理已撤掉 CLI 的接入：{failure}");
+            }
             hosts.refresh_probed();
             crate::hosts::sync_orchestration(&self.root, hosts, &[]);
             self.update_boss_homes(hosts);

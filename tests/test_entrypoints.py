@@ -494,6 +494,39 @@ async def test_start_agent_resume_unknown_ambiguous_and_foreign_history(
             assert foreign.is_error and "different manager session" in str(foreign.content)
             assert "forward" in str(foreign.content)
             assert "PRIVATE_" not in str(foreign.content)
+        # A thread of a retired CLI stays in history but cannot be resumed (ADR-0119).
+        Record.create(
+            Database(root),
+            root / "locks",
+            Conversation(
+                id="saved-devin",
+                title="Old Devin thread",
+                kind="task",
+                manager_session=boss_key(None, "test-chat"),
+                tasks=[
+                    TaskRecord(
+                        id="saved-devin",
+                        provider="devin",
+                        model="swe-1.5",
+                        cwd=str(tmp_path),
+                        prompt="old",
+                        session_id="session-devin",
+                        status="succeeded",
+                        time="2099-01-01T00:00:00+00:00",
+                    )
+                ],
+            ),
+        ).release()
+        saved = await client.call_tool("read_conversation", {"conversation_id": "saved-devin"})
+        assert not saved.is_error and "Old Devin thread" in str(saved.content)
+        retired = await client.call_tool(
+            "start_agent", {"prompt": "ok", "session_id": "session-devin"}
+        )
+        assert retired.is_error and "no longer supported" in str(retired.content)
+        refused = await client.call_tool(
+            "start_agent", {"prompt": "ok", "provider": "devin", "cwd": str(tmp_path)}
+        )
+        assert refused.is_error
 
 
 @pytest.mark.asyncio
@@ -1597,7 +1630,7 @@ async def test_stdio_entrypoint_exposes_mcp_tools(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "excluded",
-    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,devin,grok,pi,zcode"],
+    [" CODEX, codex, ", "antigravity,claude,codebuddy,codex,deepseek,grok,pi,zcode"],
 )
 async def test_stdio_enforces_host_exclusions_before_launch(
     excluded: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1661,7 +1694,7 @@ async def test_stdio_enforces_host_exclusions_before_launch(
 def test_stdio_rejects_unknown_exclusion_configuration() -> None:
     completed = subprocess.run(
         [sys.executable, "-m", "agentnave.mcp_server"],
-        env={**os.environ, "AGENTNAVE_EXCLUDED_PROVIDERS": "codxe"},
+        env={**os.environ, "AGENTNAVE_EXCLUDED_PROVIDERS": "devin,codxe"},
         input="",
         capture_output=True,
         text=True,

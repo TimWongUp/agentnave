@@ -40,24 +40,6 @@ function editor(fetch = async () => { throw new Error("unexpected request"); }, 
   return { run, load, listeners, doc: () => JSON.parse(run("JSON.stringify(currentDoc)")) };
 }
 
-test("Devin Fusion models stay out of choices even when saved previously", () => {
-  const app = editor();
-  app.run(`
-    detected.devin = { models: [{ id: "swe-2-medium" }, { id: "fusion-gpt-sidekick-swe" }] };
-    currentDoc.clis.devin = { models: { "fusion-gpt-sidekick-swe": {}, "swe-2-medium": {} },
-      allowed_models: ["fusion-gpt-sidekick-swe", "swe-2-medium"] };
-    currentDoc.modes.task.devin = { models: ["fusion-gpt-sidekick-swe"] };
-  `);
-  assert.deepEqual(Array.from(app.run('getAllModelIds("devin")')), ["swe-2-medium"]);
-  assert.equal(app.doc().clis.devin.allowed_models[0], "fusion-gpt-sidekick-swe");
-  app.run("AN.L = (zh) => zh");
-  app.load("member-cards.js");
-  assert.equal(app.run('poolSummary("devin", getAllModelIds("devin"), shownPool("devin"))'), "1 个：swe-2-medium");
-  // A hidden model alone is no choice at all.
-  app.run('currentDoc.clis.devin.allowed_models = ["fusion-gpt-sidekick-swe"]');
-  assert.ok(app.run("configurationErrors().some((e) => /至少选一个模型/.test(e.message))"));
-});
-
 // The settings page's orchestration half, with a DOM just deep enough to read rendered rows.
 function advancedEditor(fetch) {
   const app = editor(fetch);

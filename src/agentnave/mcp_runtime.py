@@ -61,6 +61,7 @@ from agentnave.members import (
 )
 from agentnave.models import (
     ACCOUNT_ID,
+    RETIRED_PROVIDERS,
     Host,
     InvocationError,
     InvocationRequest,
@@ -146,6 +147,8 @@ def _read_excluded_providers() -> frozenset[str]:
         for name in os.environ.get("AGENTNAVE_EXCLUDED_PROVIDERS", "").split(",")
         if name.strip()
     )
+    # A retired CLI left in an old entry excludes nothing and is no mistake (ADR-0119).
+    excluded -= RETIRED_PROVIDERS
     unknown = excluded.difference(get_args(ProviderName.__value__))
     if unknown:
         raise ValueError("Unknown AGENTNAVE_EXCLUDED_PROVIDERS: " + ", ".join(sorted(unknown)))

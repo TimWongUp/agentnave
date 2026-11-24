@@ -10,6 +10,7 @@ impl Hosts {
                 failures.push(json!({"host": host.label, "error": message(&error)}));
             }
         }
+        failures.extend(self.remove_retired());
         if let Err(error) = hooks::remove_interactive(&self.context.home) {
             failures.push(json!({"host": "agy hook", "error": message(&error)}));
         }
