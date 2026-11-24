@@ -549,6 +549,7 @@ mod tests {
             ("POST", "/app/decision-key"),
             ("POST", "/app/provider-health/clear"),
             ("POST", "/app/accounts/create"),
+            ("POST", "/app/accounts/link"),
             ("POST", "/app/accounts/rename"),
             ("POST", "/app/accounts/login"),
             ("POST", "/app/accounts/remove"),

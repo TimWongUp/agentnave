@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-21
 - 修订：2026-11-21 自身修订，Claude 桌面端注入的登录可能不同于 CLI 默认账号；桌面端聊天不按默认账号续接，改为转交到新终端。
+- 关联已有目录由 [ADR-0118](0118-link-existing-claude-account-dirs.md) 恢复（自动发现加手填路径）。
 - 修订：2026-11-21 自身修订，App 不再提供关联已有目录入口，添加账号只创建托管目录并在向导内完成登录；`accounts.json` 中已登记的外部目录账号保持可用（仍只解绑、不删目录）。
 - 修订 [ADR-0029](0029-settings-without-free-text.md)（允许手填账号显示名／编号；App 不再提供目录关联，仍不手填路径）、[ADR-0056](0056-claude-interactive-runtime.md)（非 TUI `-p` 路径同样剥离 Claude 宿主会话变量；具名账号配置与会话隔离在 `CLAUDE_CONFIG_DIR` 内）、[ADR-0062](0062-service-owned-member-names.md)（非默认账号在成员称呼的 CLI 段后增加账号消歧段）、[ADR-0078](0078-startup-confirmations.md)（具名账号的信任与 API Key 确认写入其 `CLAUDE_CONFIG_DIR` 内的 `.claude.json`）、[ADR-0081](0081-account-cooldown-duration.md)（`provider-health.json` 不升版本，具名账号嵌套在 `accounts.<id>` 下独立冷却与清除，认证冷却按整账号记）、[ADR-0089](0089-seat-fallback-order.md)（工位与备选带可选账号并按 `(provider, account, model)` 判重与追踪，同 CLI 不同账号顺位由服务直接启动）、[ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md)（配额冷却按账号独立；私聊同类宿主收紧为「同 CLI 且同账号」，同 CLI 不同账号由服务直接启动）、[ADR-0100](0100-app-uninstall.md)（托管目录位于数据根外，卸载清理其中的 AgentNave 接入与 Skill，不删除目录）、[ADR-0103](0103-tray-embedded-terminal.md)（内嵌终端支持账号选择并按 `workspaces.owner_account` 续接，具名账号经 `/usr/bin/env` 传 `CLAUDE_CONFIG_DIR`；独立登录终端与办公室 agent 分离）。
 - 扩展 [ADR-0048](0048-sqlite-schema-evolution.md)（`workspaces` 表新增可空 `owner_account` 列并提升 `user_version`）；沿用 [ADR-0058](0058-claude-stored-login.md)（不存不读 token，API Key 与自定义网关变量不阻断不剥离）。

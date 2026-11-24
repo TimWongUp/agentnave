@@ -1976,7 +1976,7 @@ test("add account wizard creates a managed account in step 1 and runs in-dialog 
   const addDlg = () => app.run("__dialogs[0]");
   assert.equal(addDlg().open, true);
   assert.match(JSON.stringify(addDlg()), /添加账号/);
-  assert.doesNotMatch(JSON.stringify(addDlg()), /关联已有目录|选择文件夹|扫描|\.agentnave-accounts|\/m\//);
+  assert.doesNotMatch(JSON.stringify(addDlg()), /\.agentnave-accounts|\/m\//);
 
   const nameInput = app.run('findKey(__dialogs[0].children, "claude/accounts/new")');
   const submitBtn = app.run('findKey(__dialogs[0].children, "claude/accounts/create")');
@@ -2019,6 +2019,108 @@ test("add account wizard creates a managed account in step 1 and runs in-dialog 
   await new Promise(setImmediate);
   assert.equal(addDlg().open, false);
   assert.ok(calls.some(([u]) => u === "/app/terminal/close?session=77"));
+});
+
+test("add account wizard links a discovered or typed folder as an external account", async () => {
+  const calls = [];
+  const app = accountCardsEditor(async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push([url, body]);
+    if (url === "/app/accounts/discover") {
+      const state = { logged_in: true, method: "claude.ai", email: "me@work.example", plan: "pro", error: null };
+      return { ok: true, json: async () => ({ candidates: [{ name: ".claude_work", dir: "/h/.claude_work", state }] }) };
+    }
+    if (url === "/app/accounts/link") {
+      if (body.dir === "~/nope") return { ok: false, status: 400, json: async () => ({ error: "目录不存在" }) };
+      const account = { id: "a1", provider: "claude", label: body.label, dir: body.dir, managed: false };
+      return { ok: true, json: async () => ({ account, sync: { ok: true }, state: { accounts: [account], error: null } }) };
+    }
+    if (url.startsWith("/app/accounts/status?id=a1")) {
+      return { ok: true, json: async () => ({ logged_in: true, method: "claude.ai", email: "me@work.example", plan: "pro", error: null }) };
+    }
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(setImmediate); };
+  const key = (name) => app.run(`findKey(__dialogs[0].children, "claude/accounts/${name}")`);
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await flush();
+
+  // A discovered folder: picked from the list, linked, and no sign-in step as it is signed in.
+  key("mode-existing").listeners.click();
+  await flush();
+  const pick = key("pick");
+  assert.match(JSON.stringify(pick), /\.claude_work · m\*\*\*@\*\*\*\.example/);
+  const name = key("new");
+  name.value = "工作";
+  name.listeners.input({ target: name });
+  assert.equal(key("create").disabled, true);
+  pick.listeners.change({ target: { value: "/h/.claude_work" } });
+  assert.equal(key("create").disabled, false);
+  app.run('__dialogs[0].children[2].children[0].listeners.submit({ preventDefault() {} })');
+  await flush();
+  assert.deepEqual(calls.filter(([u]) => u === "/app/accounts/link"), [["/app/accounts/link", { label: "工作", dir: "/h/.claude_work" }]]);
+  assert.ok(!calls.some(([u]) => u === "/app/accounts/login"));
+  assert.equal(app.run("__dialogs[0].open"), false);
+  assert.equal(app.run("AN.settings.accounts[0].managed"), false);
+});
+
+test("add account wizard keeps a failed folder scan out of another mode and retries it", async () => {
+  const scans = [];
+  const app = accountCardsEditor(async (url) => {
+    if (url === "/app/accounts/discover") return new Promise((resolve) => scans.push(resolve));
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(setImmediate); };
+  const key = (name) => app.run(`findKey(__dialogs[0].children, "claude/accounts/${name}")`);
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await flush();
+  key("mode-existing").listeners.click();
+  key("mode-path").listeners.click();
+  scans[0]({ ok: false, json: async () => ({ error: "boom" }) });
+  await flush();
+  assert.doesNotMatch(JSON.stringify(app.run("__dialogs[0].children")), /boom/);
+  key("mode-existing").listeners.click();
+  await flush();
+  assert.equal(scans.length, 2);
+});
+
+test("add account wizard shows a link error in place and keeps the typed path", async () => {
+  const app = accountCardsEditor(async (url, options = {}) => {
+    if (url === "/app/accounts/link") return { ok: false, status: 400, json: async () => ({ error: "目录不存在" }) };
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(setImmediate); };
+  const key = (name) => app.run(`findKey(__dialogs[0].children, "claude/accounts/${name}")`);
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await flush();
+  key("mode-path").listeners.click();
+  const name = key("new");
+  name.value = "个人";
+  name.listeners.input({ target: name });
+  assert.equal(key("create").disabled, true);
+  const path = key("path");
+  path.value = "~/nope";
+  path.listeners.input({ target: path });
+  assert.equal(key("create").disabled, false);
+  app.run('__dialogs[0].children[2].children[0].listeners.submit({ preventDefault() {} })');
+  await flush();
+  const error = app.run('collectByClass(__dialogs[0].children, "account-add-error")[0].textContent');
+  assert.match(error, /目录不存在/);
+  assert.equal(app.run("__dialogs[0].open"), true);
+  assert.equal(key("path").value, "~/nope");
+  assert.equal(key("create").disabled, false);
 });
 
 test("an emptied display name falls back on blur and clears its flag", async () => {

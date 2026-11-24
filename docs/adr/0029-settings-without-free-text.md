@@ -8,6 +8,7 @@
 - 不手填约束由 [ADR-0044](0044-meeting-voice-cloud-and-key-input.md) 修订：允许语音密钥、自定义摘要连接、prompt 与人设。
 - 由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充：提交说明、PR 标题与描述是内容输入，可以手填；设置项仍不手填。
 - 不手填约束由 [ADR-0108](0108-multi-account-isolation.md) 修订：允许在 App 手填账号显示名／编号；关联已有目录仍用选择器或扫描，不手填路径。
+- 不手填约束由 [ADR-0118](0118-link-existing-claude-account-dirs.md) 修订：添加 Claude 账号时允许手填配置目录路径。
 
 ## 背景
 

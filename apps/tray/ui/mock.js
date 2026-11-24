@@ -23,6 +23,11 @@
     { id: "a1", provider: "claude", label: "工作", dir: "/Users/preview/.agentnave-accounts/claude/a1", managed: true },
     { id: "a2", provider: "claude", label: "个人 2", dir: "/Users/preview/.claude_personal", managed: false },
   ] : [];
+  // Folders the scan of the home folder finds, shown in the add dialog.
+  const mockFoundDirs = [
+    { name: ".claude_work", dir: "/Users/preview/.claude_work", state: { logged_in: true, method: "claude.ai", email: "me@work.example", plan: "team", error: null } },
+    { name: ".claude_trial", dir: "/Users/preview/.claude_trial", state: { logged_in: false, method: "none", email: null, plan: null, error: null } },
+  ];
   const mockAccountStates = new Map([
     ["default", q.get("default") === "out"
       ? { logged_in: false, method: "none", email: null, plan: null, error: null }
@@ -1244,6 +1249,9 @@ All checks passed!
     if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
     if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider, accounts: provider === "claude" ? mockAccounts.map(({ id, label }) => ({ id, label })) : [] })) };
     if (path === "/app/accounts") return { accounts: structuredClone(mockAccounts), error: null };
+    if (path === "/app/accounts/discover") {
+      return { candidates: mockFoundDirs.filter((found) => !mockAccounts.some((a) => a.dir === found.dir)).map((found) => structuredClone(found)) };
+    }
     if (path.startsWith("/app/accounts/status")) {
       const id = new URLSearchParams(path.split("?")[1]).get("id");
       return structuredClone(mockAccountStates.get(id) || { logged_in: false, method: "none", email: null, plan: null, error: null });
@@ -1281,6 +1289,18 @@ All checks passed!
       const account = { id, provider: "claude", label: body.label, dir, managed: true };
       mockAccounts.push(account);
       mockAccountStates.set(id, { logged_in: false, method: "none", email: null, plan: null, error: null });
+      return { account, sync: { ok: true, message: "" }, state: state() };
+    }
+    if (route === "/app/accounts/link") {
+      const dir = String(body.dir || "").replace(/^~/, "/Users/preview");
+      if (!dir.startsWith("/Users/preview/.claude") || mockAccounts.some((a) => a.dir === dir)) {
+        throw Object.assign(new Error(mockAccounts.some((a) => a.dir === dir) ? "这个目录已关联" : "目录不存在"), { status: 400 });
+      }
+      const id = `a${Math.max(0, ...mockAccounts.map((a) => Number(a.id.slice(1)))) + 1}`;
+      const account = { id, provider: "claude", label: body.label, dir, managed: false };
+      const found = mockFoundDirs.find((item) => item.dir === dir);
+      mockAccounts.push(account);
+      mockAccountStates.set(id, found ? structuredClone(found.state) : { logged_in: false, method: "none", email: null, plan: null, error: null });
       return { account, sync: { ok: true, message: "" }, state: state() };
     }
     if (route === "/app/accounts/rename" && at >= 0) { mockAccounts[at].label = body.label; return { state: state() }; }

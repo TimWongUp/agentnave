@@ -1085,7 +1085,9 @@ def single_review_status[Role: str](
             reason = provider_health.reason(seat.provider, match[1], match[0], account=seat.account)
         elif native:
             reason = None
-        elif seat.provider in excluded:
+        elif seat.provider in accounts.without_host_cli(
+            excluded, host, seat.provider, seat.account
+        ):
             reason = "CLI is excluded by this host"
         elif mode.restricted and all(m.provider != seat.provider for m in task):
             reason = "CLI is disabled in the App"
