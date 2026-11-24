@@ -10,13 +10,14 @@ impl Hosts {
     /// of its configuration folder.
     pub(super) fn retired_devin(&self) -> Host {
         let env = |var| {
+            let absolute =
+                |value: &String| Some(PathBuf::from(value)).filter(|path| path.is_absolute());
             roots::env_value(&self.context.env, var)
+                .and_then(absolute)
                 .or_else(|| {
                     let vars = self.shell.as_ref()?.as_ref().ok()?;
-                    vars.get(var)
+                    vars.get(var).and_then(absolute)
                 })
-                .map(PathBuf::from)
-                .filter(|path| path.is_absolute())
         };
         let home = &self.context.home;
         let folder = if cfg!(windows) {
@@ -63,7 +64,19 @@ impl Hosts {
         if startup && (self.settings_error.is_some() || self.settings[DEVIN]["removed"] == true) {
             return Vec::new();
         }
-        let host = self.retired_devin();
+        let mut host = self.retired_devin();
+        // Without a confirmed root the folder may be somewhere else: try again next start.
+        if startup && !host.root.confirmed {
+            return Vec::new();
+        }
+        // An entry under that name that is not AgentNave's own stays.
+        if host.read().is_ok_and(|document| {
+            document
+                .entry
+                .is_some_and(|entry| !managed_entry(&host, &entry))
+        }) {
+            host.user_layers.clear();
+        }
         let mut failures = Vec::new();
         // Like uninstalling, remove only the App's own unmodified Skill copies.
         let uninstalling = std::mem::replace(&mut self.uninstalling, true);
@@ -73,7 +86,7 @@ impl Hosts {
             failures.push(json!({"host": host.label, "error": message(&error)}));
         }
         let rules = host.root.path.join("AGENTS.md");
-        failures.extend(crate::rules::sync(
+        let blocked = crate::rules::sync(
             &[],
             &[],
             &self.context.home,
@@ -81,10 +94,15 @@ impl Hosts {
             &[rules],
             &self.rules_backup(),
             false,
-        ));
+        );
+        failures.extend(
+            blocked
+                .into_iter()
+                .map(|failure| json!({"host": failure["path"], "error": failure["error"]})),
+        );
         if startup && failures.is_empty() {
             let mut settings = self.settings.clone();
-            settings[DEVIN] = json!({"removed": true});
+            settings[DEVIN]["removed"] = json!(true);
             match roots::save(&self.context, &settings) {
                 Ok(()) => self.settings = settings,
                 Err(error) => failures.push(json!({"host": host.label, "error": error})),

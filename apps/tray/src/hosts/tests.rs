@@ -596,6 +596,19 @@ fn retired_devin_config_root_uses_absolute_environment_paths_only() {
                 .join("devin/mcp_config.json")
         );
     }
+    // A relative value does not hide an absolute one the login shell reports.
+    if !cfg!(windows) {
+        let reported = hosts.context.home.join("shell-config");
+        hosts.shell = Some(Ok(BTreeMap::from([(
+            variable.to_owned(),
+            reported.display().to_string(),
+        )])));
+        assert_eq!(
+            hosts.retired_devin().config,
+            reported.join("devin/mcp_config.json")
+        );
+        hosts.shell = Some(Ok(BTreeMap::new()));
+    }
     let configured = hosts.context.home.join("custom-config");
     hosts
         .context

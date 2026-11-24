@@ -61,8 +61,21 @@ fn retired_devin_integration_is_removed_once_and_only_what_agentnave_wrote() {
     let own = devin.optional("agentnave-review").unwrap();
     save(&own.join("SKILL.md"), "mine");
 
+    // An unconfirmed root may hide the real folder: nothing happens and nothing is recorded.
+    hosts.shell = Some(Err("unknown".into()));
+    assert!(hosts.remove_retired().is_empty());
+    assert!(devin.read().unwrap().entry.is_some());
+    assert!(hosts.settings["devin"].get("removed").is_none());
+    hosts.shell = Some(Ok(BTreeMap::new()));
+    hosts.settings = json!({"devin": {"first_seen": "then"}});
+
     let failures = hosts.remove_retired();
     assert!(failures.is_empty(), "{failures:?}");
+    // The record adds to what the file already held for the row.
+    assert_eq!(
+        hosts.settings["devin"],
+        json!({"first_seen": "then", "removed": true})
+    );
     let left = devin.read().unwrap();
     assert!(left.entry.is_none());
     assert_eq!(
@@ -81,4 +94,24 @@ fn retired_devin_integration_is_removed_once_and_only_what_agentnave_wrote() {
     // Uninstalling covers it regardless.
     assert!(hosts.uninstall().is_empty());
     assert!(devin.read().unwrap().entry.is_none());
+}
+
+#[test]
+fn retired_devin_cleanup_keeps_a_foreign_entry_and_names_blocked_rules_files() {
+    let (_temp, mut hosts) = fixture();
+    let devin = hosts.retired_devin();
+    let foreign = json!({"command": "/opt/tools/other-server", "args": []});
+    let document = Document::parse("{}", Format::Json, "mcpServers").unwrap();
+    save(&devin.config, &document.render(Some(&foreign)).unwrap());
+    // A lone marker is refused rather than guessed at.
+    let rules = devin.root.path.join("AGENTS.md");
+    save(&rules, "<!-- AGENTNAVE:START -->\n保留\n");
+
+    let failures = hosts.remove_retired();
+    assert_eq!(devin.read().unwrap().entry, Some(foreign));
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0]["host"], json!(rules));
+    assert!(failures[0]["error"].is_string());
+    // Not recorded as done, so the next start-up tries again.
+    assert!(hosts.settings["devin"].get("removed").is_none());
 }
