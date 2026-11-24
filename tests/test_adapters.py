@@ -288,7 +288,7 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
         )
     )
 
-    # Permissions are fixed at launch; model and effort travel with each turn (ADR-0120).
+    # Permission flags are fixed at launch; model and effort travel with each turn (ADR-0120).
     assert prepared.argv == (
         sys.executable,
         "-I",
@@ -297,11 +297,11 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
         "model",
         "--turn-option",
         "effort",
+        "--approval",
+        "headless",
         "--",
         "codex",
         "app-server",
-        "--config",
-        'approval_policy="never"',
         "--config",
         'sandbox_mode="workspace-write"',
     )
@@ -333,13 +333,7 @@ def test_codex_adapter_does_not_supply_model_defaults(
     )
 
     split = prepared.argv.index("--")
-    assert prepared.argv[split:] == (
-        "--",
-        "codex",
-        "app-server",
-        "--config",
-        'approval_policy="never"',
-    )
+    assert prepared.argv[split - 2 :] == ("--approval", "headless", "--", "codex", "app-server")
     assert "--turn-option" not in prepared.argv
     assert prepared.stdin is not None
     turn = json.loads(prepared.stdin)
@@ -510,11 +504,12 @@ def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None)
     prepared = CodexAdapter().prepare(
         request(tmp_path, "codex", provider_options={**options, "sandbox": "read-only"})
     )
-    # Like exec's flag, the bypass overrides a sandbox option; without it exec never asks.
+    # Like exec's flag, the bypass overrides a sandbox option and keeps approval at never.
     bypass = 'sandbox_mode="danger-full-access"' in prepared.argv
     assert bypass is (value is True)
     assert ('sandbox_mode="read-only"' in prepared.argv) is (value is not True)
-    assert 'approval_policy="never"' in prepared.argv
+    approval = prepared.argv[prepared.argv.index("--approval") + 1]
+    assert approval == ("never" if value is True else "headless")
 
 
 def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None:

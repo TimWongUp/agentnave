@@ -1,20 +1,24 @@
 """One `codex app-server` thread, turn after turn, owned by the provider supervisor (ADR-0120).
 
-Usage: codex_app_server.py [--turn-option NAME]... -- <codex app-server argv>
+Usage: codex_app_server.py [--approval headless|never] [--turn-option NAME]... -- <app-server argv>
 
 stdin carries one JSON turn per line: {"session_id", "cwd", "prompt", "model", "effort"}. The
 first line starts the thread (or loads `session_id`); later lines must name that thread. Only the
 options named by --turn-option may be set, so a process is reused only by turns that set the same
 ones: a value can change between turns, but a setting cannot be cleared once a turn set it.
+Permissions are read again for every turn and sent with it (see codex_permissions), so neither a
+resumed thread nor a kept process runs with settings left from before.
 
 stdout carries the events `codex exec --json` prints, ending every turn with exactly one
 `turn.completed` or `turn.failed`; nothing is written between turns. A protocol failure ends the
-current turn with `turn.failed` and exits 1, never falling back to `codex exec`.
+current turn with `turn.failed` and exits 1, never falling back to `codex exec`. An app-server that
+exits between turns ends the bridge too, so the service sees the provider gone.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import shutil
@@ -25,6 +29,8 @@ from contextlib import suppress
 from typing import Any, cast
 
 from agentnave import __version__
+from agentnave.adapters import codex_permissions
+from agentnave.adapters.codex_permissions import APPROVAL_MODES, ApprovalMode, Permissions
 from agentnave.windows_supervisor import popen_args
 
 LINE_LIMIT = 64 * 1024 * 1024
@@ -51,6 +57,7 @@ _ITEM_FIELDS = (
     ("query", "query"),
 )
 _CAMEL = re.compile(r"(?<=[a-z0-9])([A-Z])")
+_USAGE = "usage: codex_app_server.py [--approval MODE] [--turn-option NAME]... -- <app-server argv>"
 
 
 def emit(event: dict[str, Any]) -> None:
@@ -85,6 +92,10 @@ class Connection:
         self._backlog: list[dict[str, Any]] = []
         self._closed = False
         self._counter = 0
+        # A connection is opened for a turn; between turns the reader alone can see it end.
+        self._state = threading.Lock()
+        self._in_turn = True
+        self._gone = False
         threading.Thread(target=self._read, daemon=True).start()
 
     def send(self, value: dict[str, Any]) -> None:
@@ -112,13 +123,31 @@ class Connection:
         except (OSError, ValueError):
             pass
         finally:
+            with self._state:
+                self._gone = True
+                if not self._in_turn:
+                    # Idle, with no turn to fail: end, so the kept process is not left dead.
+                    os._exit(1)
             self._messages.put(None)
+
+    def begin_turn(self) -> None:
+        with self._state:
+            self._in_turn = True
+
+    def end_turn(self) -> bool:
+        """Whether the app-server is still there to serve the next turn."""
+        with self._state:
+            self._in_turn = False
+            return not self._gone
 
     def _answer(self, request: dict[str, Any]) -> None:
         """Never approve anything: these runs have nobody to ask, as `codex exec` has not."""
         method = str(request.get("method"))
         if method == "mcpServer/elicitation/request":
-            reply: dict[str, Any] = {"id": request["id"], "result": {"action": "cancel"}}
+            reply: dict[str, Any] = {
+                "id": request["id"],
+                "result": cancelled_elicitation(_object(request.get("params"))),
+            }
         else:
             reply = {
                 "id": request["id"],
@@ -178,6 +207,15 @@ class Connection:
             self.process.wait()
 
 
+def cancelled_elicitation(params: dict[str, Any]) -> dict[str, Any]:
+    """Cancel as exec does, marking a tool-call approval as cancelled for want of a user."""
+    result: dict[str, Any] = {"action": "cancel", "content": None}
+    meta = _object(params.get("_meta"))
+    if params.get("mode") == "form" and meta.get("codex_approval_kind") == "mcp_tool_call":
+        result["_meta"] = {"codex_approval_cancellation_reason": "non_interactive"}
+    return result
+
+
 def handshake(connection: Connection) -> None:
     connection.request(
         "initialize",
@@ -189,8 +227,14 @@ def handshake(connection: Connection) -> None:
     connection.send({"method": "initialized"})
 
 
-def open_thread(connection: Connection, turn: dict[str, Any]) -> str:
-    params: dict[str, Any] = {"cwd": turn["cwd"]}
+def permissions(connection: Connection, cwd: str, mode: ApprovalMode) -> Permissions:
+    """This turn's permissions, from the config as it is on disk now, for this cwd."""
+    read = connection.request("config/read", {"cwd": cwd, "includeLayers": False})
+    return codex_permissions.resolve(_object(read.get("config")), cwd, mode)
+
+
+def open_thread(connection: Connection, turn: dict[str, Any], allowed: Permissions) -> str:
+    params: dict[str, Any] = {"cwd": turn["cwd"], **allowed.thread_params()}
     if turn.get("model") is not None:
         params["model"] = turn["model"]
     session_id = turn.get("session_id")
@@ -240,18 +284,23 @@ def turn_end(turn: dict[str, Any], usage: dict[str, Any] | None) -> dict[str, An
     return {"type": "turn.failed", "error": {"message": message or f"codex turn {status}"}}
 
 
-def run_turn(connection: Connection, thread_id: str, turn: dict[str, Any]) -> None:
-    connection.forget_idle()
+def run_turn(
+    connection: Connection, thread_id: str, turn: dict[str, Any], allowed: Permissions
+) -> None:
     emit({"type": "thread.started", "thread_id": thread_id})
     params: dict[str, Any] = {
         "threadId": thread_id,
         "input": [{"type": "text", "text": turn["prompt"], "text_elements": []}],
+        "cwd": turn["cwd"],
+        **allowed.turn_params(),
     }
     for name in TURN_OPTIONS:
         if turn.get(name) is not None:
             params[name] = turn[name]
     started = connection.request("turn/start", params)
     turn_id = _object(started.get("turn")).get("id")
+    if not isinstance(turn_id, str) or not turn_id:
+        raise RuntimeError("codex app-server returned no turn id")
     usage: dict[str, Any] | None = None
     while True:
         message = connection.notification()
@@ -292,18 +341,27 @@ def read_turn(allowed: frozenset[str]) -> dict[str, Any] | None:
     return turn
 
 
-def parse_args(argv: list[str]) -> tuple[frozenset[str], list[str]]:
+def parse_args(argv: list[str]) -> tuple[ApprovalMode, frozenset[str], list[str]]:
     if "--" not in argv:
-        raise ValueError("usage: codex_app_server.py [--turn-option NAME]... -- <app-server argv>")
+        raise ValueError(_USAGE)
     split = argv.index("--")
     options, command = argv[:split], argv[split + 1 :]
-    names = [options[index + 1] for index, flag in enumerate(options) if flag == "--turn-option"]
-    if not command or len(names) * 2 != len(options) or set(names) - set(TURN_OPTIONS):
-        raise ValueError("usage: codex_app_server.py [--turn-option NAME]... -- <app-server argv>")
-    return frozenset(names), command
+    pairs = list(zip(options[::2], options[1::2], strict=False))
+    names = [value for flag, value in pairs if flag == "--turn-option"]
+    approvals = [value for flag, value in pairs if flag == "--approval"]
+    if (
+        not command
+        or len(options) != 2 * (len(names) + len(approvals))
+        or set(names) - set(TURN_OPTIONS)
+        or len(approvals) > 1
+        or set(approvals) - set(APPROVAL_MODES)
+    ):
+        raise ValueError(_USAGE)
+    mode = cast(ApprovalMode, approvals[0] if approvals else "headless")
+    return mode, frozenset(names), command
 
 
-def serve(allowed: frozenset[str], command: list[str]) -> int:
+def serve(mode: ApprovalMode, allowed: frozenset[str], command: list[str]) -> int:
     connection: Connection | None = None
     thread_id: str | None = None
     try:
@@ -311,11 +369,16 @@ def serve(allowed: frozenset[str], command: list[str]) -> int:
             if connection is None:
                 connection = Connection(command)
                 handshake(connection)
+            connection.begin_turn()
+            connection.forget_idle()
+            granted = permissions(connection, turn["cwd"], mode)
             if thread_id is None:
-                thread_id = open_thread(connection, turn)
+                thread_id = open_thread(connection, turn, granted)
             elif turn.get("session_id") != thread_id:
                 raise ValueError(f"this Codex process serves thread {thread_id} only")
-            run_turn(connection, thread_id, turn)
+            run_turn(connection, thread_id, turn, granted)
+            if not connection.end_turn():
+                return 1
         return 0
     except (OSError, ValueError, RuntimeError) as exc:
         emit({"type": "turn.failed", "error": {"message": str(exc)}})
@@ -327,11 +390,11 @@ def serve(allowed: frozenset[str], command: list[str]) -> int:
 
 def main() -> None:
     try:
-        allowed, command = parse_args(sys.argv[1:])
+        mode, allowed, command = parse_args(sys.argv[1:])
     except ValueError as exc:
         emit({"type": "turn.failed", "error": {"message": str(exc)}})
         raise SystemExit(2) from None
-    raise SystemExit(serve(allowed, command))
+    raise SystemExit(serve(mode, allowed, command))
 
 
 if __name__ == "__main__":

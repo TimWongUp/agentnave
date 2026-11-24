@@ -85,25 +85,26 @@ def _skip_oversized_line(head: bytes) -> bool:
     )
 
 
-def _app_server_settings(options: Mapping[str, ProviderOption]) -> tuple[str, ...]:
-    """`--config` settings giving `codex app-server` the permissions `codex exec` runs with."""
+def _app_server_settings(options: Mapping[str, ProviderOption]) -> tuple[str, tuple[str, ...]]:
+    """The `codex exec` permission flags as app-server `--config` settings, plus how the bridge
+    resolves approval from the effective config (codex-rs/exec/src/lib.rs)."""
     if options.get("approve_for_me") is True:
-        # What `codex exec --approve-for-me` applies.
+        # What `codex exec --approve-for-me` adds to the config overrides.
         settings: tuple[str, ...] = (
-            'approval_policy="on-request"',
             'approvals_reviewer="auto_review"',
+            'approval_policy="on-request"',
             'sandbox_mode="workspace-write"',
         )
+        approval = "headless"
     elif options.get("dangerously_bypass_approvals_and_sandbox") is True:
-        # It overrides any sandbox option in exec too.
-        settings = ('approval_policy="never"', 'sandbox_mode="danger-full-access"')
+        # It overrides any sandbox option and keeps never even under auto review.
+        settings, approval = ('sandbox_mode="danger-full-access"',), "never"
     else:
-        # exec never asks for approval, whatever the user's config says; the sandbox stays the
-        # configured one unless the task names it.
-        settings = ('approval_policy="never"',)
-        if "sandbox" in options:
-            settings += (f'sandbox_mode="{options["sandbox"]}"',)
-    return tuple(arg for setting in settings for arg in ("--config", setting))
+        # exec never asks for approval unless the configured reviewer is auto review; the
+        # sandbox stays the configured one unless the task names it.
+        settings = (f'sandbox_mode="{options["sandbox"]}"',) if "sandbox" in options else ()
+        approval = "headless"
+    return approval, tuple(arg for setting in settings for arg in ("--config", setting))
 
 
 def _source() -> str | None:
@@ -250,7 +251,8 @@ class CodexAdapter(AdapterHooks):
 
     def _app_server_command(self, request: InvocationRequest, executable: str) -> PreparedCommand:
         """A bridge to `codex app-server` that can serve the thread's later turns (ADR-0120):
-        permissions are fixed at launch, model and effort travel with each turn."""
+        permission flags are fixed at launch and resolved again for each turn, model and effort
+        travel with each turn."""
         options = request.provider_options
         argv = [sys.executable, "-I", str(Path(__file__).with_name("codex_app_server.py"))]
         turn: dict[str, object] = {
@@ -262,7 +264,8 @@ class CodexAdapter(AdapterHooks):
             turn[name] = None if name not in options else str(options[name])
             if name in options:
                 argv.extend(("--turn-option", name))
-        argv.extend(("--", executable, "app-server", *_app_server_settings(options)))
+        approval, settings = _app_server_settings(options)
+        argv.extend(("--approval", approval, "--", executable, "app-server", *settings))
         return PreparedCommand(
             tuple(argv),
             request.cwd,
