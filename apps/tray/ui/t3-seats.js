@@ -23,6 +23,7 @@
   let draft = null; // Edited state; null while identical to baseline.
   let prefilled = false;
   let cardCount = 0;
+  let ruleOpen = false; // Kept across re-renders, like expanded.
   const expanded = new Set(); // Expanded card cids, kept in memory across re-renders.
 
   const catalogEntry = (kind) => S.roleCatalog().find((entry) => entry.group === kind);
@@ -819,6 +820,17 @@
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
+  function ruleFold(state) {
+    if (!state.enabled || !saved.rule) return null;
+    const fold = el("details", {
+      className: "s-group", open: ruleOpen,
+      onToggle: () => { ruleOpen = fold.open; },
+    },
+      el("summary", { className: "s-title is-fold" }, L("写入的规则", "Rules written")),
+      el("pre", { className: "s-card is-pre" }, saved.rule));
+    return fold;
+  }
+
   function render() {
     renderReview();
     const box = $("t3-seats-section");
@@ -868,7 +880,7 @@
         el("div", { className: "s-row" },
           el("label", { className: "s-label", htmlFor: "t3-seat-add" }, L("添加工位", "Add seat")),
           addMenu(state))));
-    box.replaceChildren(...[switchesCard, seatRows, addCardGroup].filter(Boolean));
+    box.replaceChildren(...[switchesCard, seatRows, addCardGroup, ruleFold(state)].filter(Boolean));
     S.syncScopeViews?.();
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }

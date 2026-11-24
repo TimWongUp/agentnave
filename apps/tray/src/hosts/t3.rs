@@ -53,6 +53,7 @@ fn state(root: &Path, host_state: &Mutex<Option<Hosts>>) -> Response {
         "document": document,
         "error": error,
         "t3": t3,
+        "rule": crate::rules::t3_rule(),
     }))
 }
 

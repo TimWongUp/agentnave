@@ -458,16 +458,19 @@ test("switch cannot open without candidates, dropdown hides legacy/hidden/stale,
 
 test("saves and discards via the shared orchestration save bar and updates rule files", async () => {
   const h = makeHarness({
-    t3State: { document: null, error: null, t3: SAMPLE_T3 },
+    t3State: { document: null, error: null, t3: SAMPLE_T3, rule: "T3 规则句" },
   });
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
+  const rule = () => h.section().children.find((c) => c.children[1]?.className === "s-card is-pre")?.children[1];
+  assert.equal(rule(), undefined);
 
   // Toggle enabled on -> dirty, save bar enabled -> save posts /app/t3-seats and refreshes rule files.
   h.find("t3/enabled").listeners.change({ target: { checked: true } });
   assert.equal(h.t3((t) => t.changed()), true);
   assert.equal(h.run('$("advanced-badge").hidden'), false);
   assert.equal(h.run('$("advanced-save").disabled'), false);
+  assert.equal(rule().children[0], "T3 规则句");
 
   // Discard restores cleanly.
   h.run('$("advanced-discard").listeners.click()');

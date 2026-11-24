@@ -100,6 +100,7 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
     assert_eq!(state["error"], Value::Null);
     assert_eq!(state["t3"]["detected"], true);
     assert_eq!(state["t3"]["instances"][0]["instance"], "codex");
+    assert_eq!(state["rule"], crate::rules::t3_rule());
 
     // Guardrails: missing action header, wrong method, non-JSON, enabled with 0 candidates.
     assert_eq!(

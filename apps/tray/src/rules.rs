@@ -268,6 +268,11 @@ pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
     Value::Object(modes)
 }
 
+/// The line T3 orchestration adds to the Claude and Codex blocks.
+pub(crate) fn t3_rule() -> &'static str {
+    catalog::section("t3_orchestration").trim()
+}
+
 /// The text each file that carries the block should hold.
 fn wanted(
     connected: &[App],
