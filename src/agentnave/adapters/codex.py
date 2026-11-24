@@ -9,11 +9,10 @@ import re
 import shutil
 import sys
 from collections.abc import Mapping
-from contextlib import suppress
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from stat import S_ISLNK, S_ISREG
+from stat import S_ISDIR, S_ISLNK, S_ISREG
 
 from agentnave.adapters.base import (
     AdapterHooks,
@@ -105,7 +104,10 @@ def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[object, ...]:
     (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project root
     marker `.git`. Cloud-managed config, macOS managed preferences, a registry-set requirements
     path and custom project root markers are not covered."""
-    directory = cwd.resolve()
+    try:
+        directory = cwd.resolve()
+    except OSError:
+        directory = cwd.absolute()
     # A relative CODEX_HOME is taken from the child's working directory, the task's.
     home = directory / (env.get("CODEX_HOME") or Path("~/.codex").expanduser())
     if sys.platform == "win32":
@@ -123,25 +125,40 @@ def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[object, ...]:
     files.extend(folder / "config.toml" for folder in projects)
     found: list[object] = [_stat(path, follow=True) for path in files]
     for folder in (system, home, *projects):
-        with suppress(OSError):
-            # Codex loads only regular files here, so a link is told apart from one.
-            found.extend(
-                _stat(path, follow=False) for path in sorted((folder / "rules").glob("*.rules"))
-            )
+        rules = folder / "rules"
+        try:
+            paths = sorted(rules.glob("*.rules"))
+        except OSError as exc:
+            found.append((str(rules), type(exc).__name__))
+            continue
+        # Codex loads only regular files here, so a link is told apart from one.
+        found.extend(_stat(path, follow=False) for path in paths)
     # The nearest ancestor with a `.git` (a directory needs its HEAD) is the project root.
-    found.extend(
-        (str(folder), (folder / ".git").exists(), (folder / ".git" / "HEAD").exists())
-        for folder in ancestors
-    )
+    for folder in ancestors:
+        marker = _stat(folder / ".git", follow=False)
+        found.append(marker)
+        if marker[1:2] == ("directory",):
+            found.append(_stat(folder / ".git" / "HEAD", follow=True))
     return tuple(found)
 
 
 def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
+    """The file's type, modification time and size; a path that cannot be read (missing,
+    not permitted) is recorded with its error, and never stops a dispatch."""
     try:
         stat = path.stat() if follow else path.lstat()
-    except OSError:
-        return (str(path),)
-    kind = "link" if S_ISLNK(stat.st_mode) else "file" if S_ISREG(stat.st_mode) else "other"
+    except OSError as exc:
+        return (str(path), type(exc).__name__)
+    mode = stat.st_mode
+    kind = (
+        "link"
+        if S_ISLNK(mode)
+        else "file"
+        if S_ISREG(mode)
+        else "directory"
+        if S_ISDIR(mode)
+        else "other"
+    )
     return (str(path), kind, stat.st_mtime_ns, stat.st_size)
 
 

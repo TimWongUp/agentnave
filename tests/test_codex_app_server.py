@@ -276,6 +276,26 @@ async def test_codex_app_server_exiting_between_turns_is_not_reused(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.name != "posix" or os.geteuid() == 0, reason="needs a directory it may not search"
+)
+async def test_codex_dispatch_runs_when_a_config_path_cannot_be_read(
+    fake_codex: Path, tmp_path: Path
+) -> None:
+    git = tmp_path / ".git"
+    git.mkdir()
+    (git / "HEAD").write_text("ref")
+    git.chmod(0)
+    manager = InvocationManager()
+    try:
+        result = await _codex(manager, tmp_path, "work")
+    finally:
+        git.chmod(0o755)
+        await manager.shutdown()
+    assert result.status is InvocationStatus.SUCCEEDED, result
+
+
+@pytest.mark.asyncio
 async def test_codex_turn_without_id_fails(
     fake_codex: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

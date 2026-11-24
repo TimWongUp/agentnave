@@ -570,10 +570,18 @@ def test_codex_config_fingerprint_sees_rule_links_and_project_roots(tmp_path: Pa
     os.utime(rules / "a.rules", ns=(times.st_atime_ns, times.st_mtime_ns))
     replaced = fingerprint()
     assert replaced != before
-    # So is removing the inner project root, which moves the project to an outer directory.
+    # So is removing the inner project root, which moves the project to an outer directory ...
     (inner / ".git" / "HEAD").unlink()
     (inner / ".git").rmdir()
-    assert fingerprint() != replaced
+    removed = fingerprint()
+    assert removed != replaced
+    # ... and a `.git` file (a worktree's) turning into a directory without HEAD, which is none.
+    (inner / ".git").write_text("gitdir: elsewhere")
+    pointer = fingerprint()
+    assert pointer != removed
+    (inner / ".git").unlink()
+    (inner / ".git").mkdir()
+    assert fingerprint() != pointer
 
 
 def _bridged(prepared: base.PreparedCommand) -> str:
