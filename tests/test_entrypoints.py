@@ -5635,6 +5635,44 @@ async def test_published_tool_descriptions_within_2000_chars_and_cover_private_d
     for name, tool in tools.items():
         description = tool.description or ""
         assert len(description) <= 2000, f"{name}: {len(description)}"
+    worker_seat = {
+        "id": "work-easy",
+        "kind": "worker",
+        "role": "通用执行",
+        "description": "改代码",
+        "provider": "claude",
+        "model": "sonnet",
+        "access": "write",
+        "difficulty": "easy",
+    }
+    (tmp_path / "decision-seats.json").write_text(
+        json.dumps({"version": 1, "seats": [worker_seat]})
+    )
+    async with Client(mcp) as client:
+        without_image = {tool.name: tool for tool in (await client.list_tools()).tools}
+    start_seat_desc = str(
+        without_image["start_agent"].input_schema["properties"]["seat"]["description"]
+    )
+    assert "seat='auto'" in start_seat_desc and "kind=image" not in start_seat_desc
+    image_seat = {
+        "id": "draw-anime",
+        "kind": "image",
+        "role": "动漫风",
+        "description": "动漫风",
+        "provider": "claude",
+        "model": "sonnet",
+        "access": "write",
+    }
+    (tmp_path / "decision-seats.json").write_text(
+        json.dumps({"version": 1, "seats": [worker_seat, image_seat]})
+    )
+    async with Client(mcp) as client:
+        with_image = {tool.name: tool for tool in (await client.list_tools()).tools}
+    image_seat_desc = str(
+        with_image["start_agent"].input_schema["properties"]["seat"]["description"]
+    )
+    assert "kind=image" in image_seat_desc and "access='write'" in image_seat_desc
+    assert "do not substitute" in image_seat_desc
     start_desc = tools["start_agent"].description or ""
     assert "title" in start_desc and "cwd" in start_desc and "self-contained" in start_desc
     assert "isolated_dirs" in start_desc and "succeeded" in start_desc

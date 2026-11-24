@@ -96,7 +96,9 @@ fn save_host_cli(root: &Path, host_state: &Mutex<Option<Hosts>>, payload: &Value
     } else {
         fields.insert("host_cli".into(), Value::Object(choices.clone()));
     }
-    if let Err(error) = crate::members::validate_orchestration(&document) {
+    if let Err(error) = crate::members::normalize_orchestration(&mut document)
+        .and_then(|()| crate::members::validate_orchestration(&document))
+    {
         return Response::error(400, &error);
     }
     if let Err(error) = crate::members::save_orchestration(root, &document) {
@@ -112,7 +114,9 @@ fn save_orchestration(root: &Path, host_state: &Mutex<Option<Hosts>>, payload: &
         fields.remove("effective_apps");
         fields.remove("host_cli");
     }
-    if let Err(error) = crate::members::validate_orchestration(&document) {
+    if let Err(error) = crate::members::normalize_orchestration(&mut document)
+        .and_then(|()| crate::members::validate_orchestration(&document))
+    {
         return Response::error(400, &error);
     }
     let guard = host_state.lock().unwrap_or_else(|p| p.into_inner());

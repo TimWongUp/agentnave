@@ -126,11 +126,20 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     let split = json!({"preset": "split"});
     let text = text_of(&split, "split").unwrap();
     assert!(text.contains("只在用户要求时开会") && !text.contains("boss 可以开 AgentNave 会议室"));
+    assert!(
+        text.contains("并行写入须用户本人对当前任务指明") && !text.contains("并行写入由 boss 判断")
+    );
     let meetings = json!({"preset": "split", "split_options": {"meetings": true}});
     let meetings = text_of(&meetings, "split").unwrap();
     assert!(
         meetings.contains("boss 可以开 AgentNave 会议室")
             && !meetings.contains("只在用户要求时开会")
+    );
+    let parallel_writes = json!({"preset": "split", "split_options": {"parallel_writes": true}});
+    let parallel_writes = text_of(&parallel_writes, "split").unwrap();
+    assert!(
+        parallel_writes.contains("并行写入由 boss 判断")
+            && !parallel_writes.contains("并行写入须用户本人对当前任务指明")
     );
     let lead = &catalog::catalog()["switches"]["lead_only"];
     let lead_asked = lead["when_false"].as_str().unwrap();
@@ -138,17 +147,8 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     let meetings_head = catalog::section("meetings_only_head");
     let meetings_tail = catalog::section("meetings_only_tail");
     let split_meetings_asked = catalog::section("meetings_when_asked");
-    let split_meetings_own = catalog::section("meetings_on_tradeoffs");
     assert!(text.contains(lead_asked) && !text.contains(lead_always));
-    let parallel = text_of(&json!({"preset": "parallel"}), "parallel").unwrap();
-    assert!(parallel.contains("boss 可以开 AgentNave 会议室"));
-    let quiet = json!({"preset": "parallel", "parallel_options": {"meetings": false}});
-    assert!(
-        text_of(&quiet, "parallel")
-            .unwrap()
-            .contains("只在用户要求时开会")
-    );
-    for mode in ["split", "parallel"] {
+    for mode in ["split", "decision"] {
         let lead = text_of(&json!({"preset": mode, "lead_only": true}), mode).unwrap();
         assert!(lead.contains(lead_always) && !lead.contains(lead_asked));
     }
@@ -183,7 +183,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     assert!(!meetings_only.contains("worker-writing-easy"));
     assert!(!meetings_only.contains("image-generator"));
     assert!(!meetings_only.contains(lead_asked) && !meetings_only.contains(lead_always));
-    for mode in ["meetings", "split", "parallel"] {
+    for mode in ["meetings", "split", "decision"] {
         assert!(
             !text_of(&json!({"preset": mode}), mode)
                 .unwrap()
@@ -209,12 +209,16 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         format!("{meetings_head}{split_meetings_asked}{partial_seats}{meetings_tail}")
     );
     assert!(text_of(&doc_partial, "split").unwrap().contains(&format!(
-        "{split_meetings_asked}{partial_seats}\n- 通用探索"
+        "{split_meetings_asked}{partial_seats}{}\n- 通用探索",
+        catalog::section("dispatch_split")
     )));
     assert!(
-        text_of(&doc_partial, "parallel")
+        text_of(&doc_partial, "decision")
             .unwrap()
-            .contains(&format!("{split_meetings_own}{partial_seats}\n- 通用探索"))
+            .contains(&format!(
+                "{split_meetings_asked}{partial_seats}{}",
+                catalog::section("dispatch_decision")
+            ))
     );
     assert!(
         !text_of(&doc_partial, "custom")
@@ -231,7 +235,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             ]
         }
     });
-    for mode in ["meetings", "split", "parallel"] {
+    for mode in ["meetings", "split", "decision"] {
         let generated = text_of(&doc_all, mode).unwrap();
         assert!(generated.contains(all_seats) && !generated.contains("其余由 boss 选"));
     }
@@ -240,7 +244,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         json!({"meeting": {"count": 5}}),
         json!({"meeting": {"count": 5, "seats": [null, null]}}),
     ] {
-        for mode in ["meetings", "split", "parallel"] {
+        for mode in ["meetings", "split", "decision"] {
             assert!(text_of(&doc_none, mode).unwrap().contains(no_seats));
         }
     }
@@ -363,14 +367,14 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     ];
     let backup = |_: &Path, _: &[u8]| Ok(());
     let document = json!({"version": 1, "preset": "off", "custom": "我的规则",
-        "apps": {"claude": "split", "grok": "parallel", "codex": "custom"}});
+        "apps": {"claude": "split", "grok": "decision", "codex": "custom"}});
     assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
 
     // Grok reads Claude's file, so it runs on the first app's mode rather than a second block.
     let shared = catalog::section("shared");
-    let parallel = catalog::section("parallel_writes");
+    let dispatch_decision = catalog::section("dispatch_decision");
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
-    assert!(claude.contains(shared) && !claude.contains(parallel));
+    assert!(claude.contains(shared) && !claude.contains(dispatch_decision));
     assert!(!h.join(".grok/AGENTS.md").exists());
     let codex = std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap();
     assert!(codex.contains("我的规则") && !codex.contains(shared));
@@ -533,13 +537,11 @@ fn role_switches_remove_generated_seats_without_losing_bindings_or_custom_text()
 #[test]
 fn image_rules_follow_the_optional_seat_and_clear_copied_custom_text() {
     let mut document = json!({"preset": "split"});
-    for mode in ["split", "parallel"] {
-        assert!(
-            !text_of(&document, mode)
-                .unwrap()
-                .contains("image-generator")
-        );
-    }
+    assert!(
+        !text_of(&document, "split")
+            .unwrap()
+            .contains("image-generator")
+    );
     document["image_generation"] = json!({"provider": "codex", "model": "chat"});
     let generated = text_of(&document, "split").unwrap();
     assert_eq!(generated.matches("image-generator").count(), 1);
@@ -617,8 +619,8 @@ fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
 #[test]
 fn custom_copies_learn_that_no_worktree_means_serial_writes() {
     let shared = catalog::section("shared");
-    let parallel = catalog::section("parallel_writes");
-    let old = "前提是各单元互不依赖、各用独立 worktree，做不到就串行。\n计划确认后，互不依赖的写入步骤并行派给多个可写工位，boss 合入当前分支。";
+    let parallel = catalog::section("parallel_writes_by_boss");
+    let old = "前提是各单元互不依赖、各用独立 worktree，做不到就串行。\n计划确认后，互不依赖的写入步骤各用独立 worktree 并行派给多个可写工位，boss 合入当前分支。";
     let migrated = roles::migrate_legacy(old);
     assert!(migrated.contains("项目规定不建 worktree（如要求直接在 main 修改）时也算做不到"));
     assert!(migrated.contains("各用独立的隔离目录，做不到就串行；项目规定不建 worktree"));
@@ -653,7 +655,7 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["decision", "meetings", "parallel", "split"]
+        ["decision", "meetings", "split"]
     );
     let lead = &rules["switches"]["lead_only"];
     assert!(lead["replaces_in"].as_array().unwrap().iter().all(|name| {
@@ -678,36 +680,42 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
 }
 
 #[test]
-fn the_decision_mode_has_its_own_text_and_leaves_the_others_as_they_were() {
+fn split_and_decision_share_body_and_switches_with_distinct_dispatch_tails() {
     let section = catalog::section;
     let lead = &catalog::catalog()["switches"]["lead_only"];
     let (asked, always) = (
         lead["when_false"].as_str().unwrap(),
         lead["when_true"].as_str().unwrap(),
     );
-    // The other modes are their sections in order, as before the mode existed.
     let image = json!({"provider": "claude", "model": "m"});
+    let image_line = section("image_generation");
     let doc = |mode: &str| {
         json!({"preset": mode, "enabled_roles": [], "image_generation": image,
         "decision_options": {"parallel_writes": true, "meetings": true}})
     };
-    let image_line = section("image_generation");
     assert_eq!(
         text_of(&doc("split"), "split").unwrap(),
         format!(
-            "{}{}{}{image_line}",
+            "{}{}{}{}{image_line}",
             section("shared"),
-            section("split_parallel_writes"),
-            section("meetings_when_asked")
+            section("parallel_writes_when_asked"),
+            section("meetings_when_asked"),
+            section("dispatch_split"),
         )
     );
     assert_eq!(
-        text_of(&doc("parallel"), "parallel").unwrap(),
+        text_of(
+            &json!({"preset": "split", "enabled_roles": [], "image_generation": image,
+                "split_options": {"parallel_writes": true, "meetings": true}}),
+            "split"
+        )
+        .unwrap(),
         format!(
-            "{}{}{}{image_line}",
+            "{}{}{}{}{image_line}",
             section("shared"),
-            section("parallel_writes"),
-            section("meetings_on_tradeoffs")
+            section("parallel_writes_by_boss"),
+            section("meetings_on_tradeoffs"),
+            section("dispatch_split"),
         )
     );
     assert_eq!(
@@ -719,59 +727,79 @@ fn the_decision_mode_has_its_own_text_and_leaves_the_others_as_they_were() {
             section("meetings_only_tail")
         )
     );
-    for mode in ["off", "decision"] {
+    for mode in ["off", "meetings", "split", "decision", "custom"] {
         assert!(PRESETS.contains(&mode));
     }
+    assert!(!PRESETS.contains(&"parallel"));
     assert_eq!(text_of(&json!({"preset": "off"}), "off"), None);
+    assert_eq!(text_of(&json!({"preset": "parallel"}), "parallel"), None);
 
-    // The decision text: its own base, the two options and the meeting line; no seat lines of the
-    // fixed groups, and no fixed image line even with an image seat bound (image seats are the
-    // catalog's).
+    // Decision shares `shared` + the two options + meeting defaults + `dispatch_decision`; no
+    // fixed group lines and no fixed image line even when an image seat is bound.
     let with = |options: Value| {
         json!({"preset": "decision", "enabled_roles": ["explorer", "worker"],
             "image_generation": image, "decision_options": options})
     };
-    let base = |parallel: &str, meetings: &str| {
+    let decision_text = |parallel: &str, meetings: &str| {
         format!(
-            "{}{}{}",
-            section("decision_shared"),
+            "{}{}{}{}",
+            section("shared"),
             section(parallel),
-            section(meetings)
+            section(meetings),
+            section("dispatch_decision"),
         )
     };
     let default = text_of(&with(json!({})), "decision").unwrap();
     assert_eq!(
         default,
-        base("split_parallel_writes", "meetings_when_asked")
+        decision_text("parallel_writes_when_asked", "meetings_when_asked")
     );
     assert!(!default.contains("explorer-easy") && !default.contains(image_line));
     assert!(!default.contains("`seat` 用 `image-generator`"));
     assert_eq!(
         text_of(&with(json!({"parallel_writes": true})), "decision").unwrap(),
-        base("parallel_writes", "meetings_when_asked")
+        decision_text("parallel_writes_by_boss", "meetings_when_asked")
     );
     assert_eq!(
         text_of(&with(json!({"meetings": true})), "decision").unwrap(),
-        base("split_parallel_writes", "meetings_on_tradeoffs")
+        decision_text("parallel_writes_when_asked", "meetings_on_tradeoffs")
     );
-    // Boss-only-orchestrates replaces the same line here as in the other modes.
     assert!(default.contains(asked) && !default.contains(always));
     let mut lead_only = with(json!({}));
     lead_only["lead_only"] = json!(true);
     let lead_only = text_of(&lead_only, "decision").unwrap();
     assert!(lead_only.contains(always) && !lead_only.contains(asked));
-    // The meeting line comes after the options, as in Split.
     let mut meeting = with(json!({}));
     meeting["meeting"] = json!({"count": 4});
     assert!(text_of(&meeting, "decision").unwrap().contains(&format!(
-        "{}{}",
+        "{}{}{}",
         section("meetings_when_asked"),
-        "\n- 开会默认 4 席"
+        "\n- 开会默认 4 席，成员由 boss 选；同一个 CLI 或模型可以占多席。用户点名的成员和人数优先，超过 6 席须用户指定。",
+        section("dispatch_decision"),
     )));
-    // The page shows the same pieces.
-    let parts = &presets(&json!({"preset": "decision"}))["decision_parts"];
-    assert_eq!(parts["base"], section("decision_shared"));
-    assert_eq!(parts["parallel_writes_own"], section("parallel_writes"));
+    // Payload drops parallel keys and gives split and decision matching part shapes.
+    let payload = presets(&json!({"preset": "split"}));
+    assert!(payload.get("parallel").is_none() && payload.get("parallel_base").is_none());
+    assert!(payload["role_base"].get("split").is_some());
+    assert!(payload["role_base"].get("parallel").is_none());
+    for (key, tail) in [
+        ("split_parts", "dispatch_split"),
+        ("decision_parts", "dispatch_decision"),
+    ] {
+        let parts = &payload[key];
+        assert_eq!(parts["base"], section("shared"));
+        assert_eq!(
+            parts["parallel_writes_asked"],
+            section("parallel_writes_when_asked")
+        );
+        assert_eq!(
+            parts["parallel_writes_own"],
+            section("parallel_writes_by_boss")
+        );
+        assert_eq!(parts["meetings_asked"], section("meetings_when_asked"));
+        assert_eq!(parts["meetings_own"], section("meetings_on_tradeoffs"));
+        assert_eq!(parts["tail"], section(tail));
+    }
 }
 
 #[test]
@@ -800,6 +828,6 @@ fn the_decision_mode_is_per_boss_and_shared_by_readers_of_one_file() {
     assert!(sync(&apps, &apps, h, &document, &[], &backup, false).is_empty());
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     let codex = std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap();
-    assert!(claude.contains(catalog::section("decision_shared")));
-    assert!(!codex.contains("决策模型") && codex.contains(catalog::section("shared")));
+    assert!(claude.contains(catalog::section("dispatch_decision")));
+    assert!(!codex.contains("决策模型") && codex.contains(catalog::section("dispatch_split")));
 }

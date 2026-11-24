@@ -18,12 +18,15 @@ const LEGACY_AUTH_LOAD: &str = "- 本偏好不新增推送、合并 PR、发布�
 fn small_tasks() -> String {
     let shared = super::catalog::section("shared");
     let start = shared
-        .find("用户点名 CLI 时也通过 AgentNave 派发")
-        .expect("named CLI sentence");
+        .find("- 派发是默认做法")
+        .expect("default dispatch line");
     let rest = &shared[start..];
     let end = rest.find("自己只拆分").expect("orchestration-only line");
     let end = end + rest[end..].find('\n').unwrap_or(rest.len() - end);
-    rest[..end].to_owned()
+    format!(
+        "用户点名 CLI 时也通过 AgentNave 派发，不在终端直接运行它。\n{}",
+        &rest[..end]
+    )
 }
 
 /// A group's directory line; with its optional medium seat bound, the line names that seat too.
@@ -77,18 +80,18 @@ pub(super) fn enabled_lines(document: &Value) -> String {
 /// their current wording; anything else the user wrote stays as it is.
 pub(super) fn migrate_legacy(text: &str) -> String {
     let shared = super::catalog::section("shared");
-    let dispatch = shared
+    let dispatch = super::catalog::section("dispatch_split")
         .lines()
         .find(|line| line.contains("同难度专项优先"))
-        .expect("shared dispatch instruction");
+        .expect("split dispatch instruction");
     let review = shared
         .lines()
-        .find(|line| line.starts_with("- 本偏好不决定何时评审"))
+        .find(|line| line.contains("不可用时由 boss 自行评审"))
         .expect("shared review instruction");
     let wait_verify = shared
         .lines()
-        .find(|line| line.starts_with("- 以回执 `next`"))
-        .expect("shared wait instruction");
+        .find(|line| line.starts_with("- boss 核对产物后验收"))
+        .expect("shared verify instruction");
     let auth_load = shared
         .lines()
         .find(|line| line.starts_with("- 本偏好不新增推送、合并 PR、发布、发送的授权"))
@@ -103,21 +106,26 @@ pub(super) fn migrate_legacy(text: &str) -> String {
             LEGACY_PARALLEL,
             &format!(
                 "{}{}",
-                super::catalog::section("parallel_writes").trim_start(),
+                super::catalog::section("parallel_writes_by_boss").trim_start(),
                 super::catalog::section("meetings_on_tradeoffs")
             ),
         )
-        .replace("互不依赖的写入步骤并行派给多个 Worker", "互不依赖的写入步骤并行派给多个可写工位")
         .replace(
+            "互不依赖的写入步骤并行派给多个 Worker",
             "互不依赖的写入步骤并行派给多个可写工位",
-            "互不依赖的写入步骤各用独立 worktree 并行派给多个可写工位",
         )
         .replace(
             "各用独立 worktree，做不到就串行。",
             "各用独立 worktree，做不到就串行；项目规定不建 worktree（如要求直接在 main 修改）时也算做不到。",
         )
-        .replace("同一组文件同一时间只有一个 Worker 在写", "同一组文件同一时间只有一个执行者在写")
-        .replace("各用独立 worktree，做不到就串行；", "各用独立的隔离目录，做不到就串行；")
+        .replace(
+            "同一组文件同一时间只有一个 Worker 在写",
+            "同一组文件同一时间只有一个执行者在写",
+        )
+        .replace(
+            "各用独立 worktree，做不到就串行；",
+            "各用独立的隔离目录，做不到就串行；",
+        )
         .replace(
             "互不依赖的写入步骤各用独立 worktree 并行派给多个可写工位",
             "互不依赖的写入步骤各用独立的隔离目录并行派给多个可写工位",
@@ -180,24 +188,19 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     assert!(specialist_and_wait.contains(CURRENT_SMALL_TASKS));
     assert!(!specialist_and_wait.contains("不在下列专项范围内"));
     assert!(super::catalog::section("shared").contains(CURRENT_SMALL_TASKS));
-    assert!(super::catalog::section("decision_shared").contains(CURRENT_SMALL_TASKS));
     assert_eq!(
         apply(&document, LEGACY_WRITING_SMALL_TASKS.to_owned()),
         CURRENT_SMALL_TASKS
     );
     assert!(!specialist_and_wait.contains("wait(wait_seconds=0)"));
-    assert!(
-        specialist_and_wait
-            .contains("以回执 `next` 和 `follow_up` 为准收齐结果；`succeeded` 不等于完成")
-    );
+    assert!(specialist_and_wait.contains("boss 核对产物后验收、合入当前分支"));
     let migrated_auth = apply(
         &document,
         format!("{LEGACY_AUTH_LOAD}\n用户自定义：保留这行。"),
     );
     assert!(!migrated_auth.contains("派发、开会、等待和验收前先加载"));
-    assert!(migrated_auth.contains("普通私聊按工具描述与回执 `next` 执行，不必先读 Skill"));
-    assert!(migrated_auth.contains("用户自定义：保留这行。"));
     assert!(
-        super::catalog::section("decision_shared").contains("普通私聊按工具描述与回执 `next` 执行")
+        migrated_auth.contains("本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数。")
     );
+    assert!(migrated_auth.contains("用户自定义：保留这行。"));
 }

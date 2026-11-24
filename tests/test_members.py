@@ -105,7 +105,7 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     rules = json.loads(
         Path(orchestration_roles.__file__).with_name("orchestration_rules.json").read_text("utf-8")
     )
-    assert set(rules["order"]) == {"meetings", "split", "parallel", "decision"}
+    assert set(rules["order"]) == {"meetings", "split", "decision"}
     known_steps = (
         set(rules["sections"])
         | set(rules["switches"]) - {"lead_only"}
@@ -114,9 +114,16 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     for steps in rules["order"].values():
         assert steps and set(steps) <= known_steps
     lead = rules["switches"]["lead_only"]
-    assert set(lead["replaces_in"]) == {"shared", "decision_shared"}
+    assert set(lead["replaces_in"]) == {"shared"}
     for name in lead["replaces_in"]:
         assert lead["when_false"] in rules["sections"][name]
+    # New split_options keys (parallel_writes) and legacy parallel preset both stay readable.
+    assert OrchestrationFile.model_validate(
+        {"version": 1, "preset": "split", "split_options": {"parallel_writes": True}}
+    ).enabled(Host("codex", "env"))
+    assert OrchestrationFile.model_validate({"version": 1, "preset": "parallel"}).enabled(
+        Host("codex", "env")
+    )
     # The decision text has no per-group seat lines.
     assert "enabled_roles" not in rules["order"]["decision"]
     assert set(rules["meeting_defaults"]["provider_names"]) == set(get_args(ProviderName.__value__))

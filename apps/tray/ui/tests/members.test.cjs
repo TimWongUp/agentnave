@@ -192,14 +192,21 @@ test("a boss's own-CLI choice saved from the boss page is kept by this page's la
 function rolesEditor(document, roles = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_roles.json`, "utf8"))) {
   const state = { saved: document, members: null };
   const presets = {
-    split: "whole", parallel: "whole+", image_generation: "\nimage", meetings: "H\nT",
+    split: "whole", decision: "whole-d", image_generation: "\nimage", meetings: "H\nT",
     meetings_parts: { head: "H", tail: "\nT" },
     meeting_parts: {
       default_count: 3, separator: "、", seat_provider: "{name}<{provider}>",
       all: "\nA{count}:{seats}", some: "\nS{count}:{seats}", none: "\nN{count}",
     },
-    role_base: { parallel: "base+" }, parallel_base: "base+",
-    split_parts: { base: "base", meetings_asked: "\nasked", meetings_own: "\nown" },
+    role_base: { split: "base" },
+    split_parts: {
+      base: "base", parallel_writes_asked: "\npw-asked", parallel_writes_own: "\npw-own",
+      meetings_asked: "\nasked", meetings_own: "\nown", tail: "\ntail-s",
+    },
+    decision_parts: {
+      base: "base", parallel_writes_asked: "\npw-asked", parallel_writes_own: "\npw-own",
+      meetings_asked: "\nasked", meetings_own: "\nown", tail: "\ntail-d",
+    },
     role_sections: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}`])),
     role_sections_medium: Object.fromEntries((roles || []).map((role) => [role.group, `\n${role.group}+medium`])),
   };
@@ -259,18 +266,18 @@ test("role switches default like old files, round-trip through save, and keep bi
   assert.equal(groups().length, 7);
   assert.equal(group("通用探索").children.length, 4);
   assert.equal(group("写作").children.length, 1, "a new role starts off with its seats out of sight");
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nasked\ntail-s\nexplorer\nworker\nworker_frontend");
 
   toggle("写作", true);
   assert.equal(group("写作").children.length, 5, "turning a role on shows its difficulty switch and its seats, split while only one is set");
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nexplorer\nworker\nworker_frontend\nworker_writing");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nasked\ntail-s\nexplorer\nworker\nworker_frontend\nworker_writing");
   assert.equal(app.run("orchestrationChanged()"), true);
   toggle("写作", false);
   assert.equal(app.run("orchestrationChanged()"), false, "back to what is saved leaves nothing unsaved");
   assert.equal(app.run('"enabled_roles" in orchestrationWanted()'), false);
 
   for (const name of ["通用探索", "通用执行", "界面制作"]) toggle(name, false);
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nasked\ntail-s");
   await app.run("saveOrchestration()");
   assert.deepEqual(state.saved.enabled_roles, []);
   assert.deepEqual(state.saved.worker_writing, { easy: binding }, "turning off keeps the binding");
@@ -330,9 +337,9 @@ test("meeting seats are picked one by one, shown in the three meeting presets, k
   assert.equal(preview("meetings"), `H\nS3:${one}\nT`);
   app.run('viewMode("split")');
   assert.equal(app.run('$("orchestration-meeting").hidden'), false);
-  assert.equal(preview("split"), `base\nasked\nS3:${one}`);
-  app.run('viewMode("parallel")');
-  assert.equal(preview("parallel"), `base+\nown\nS3:${one}`);
+  assert.equal(preview("split"), `base\npw-asked\nasked\nS3:${one}\ntail-s`);
+  app.run('viewMode("decision")');
+  assert.equal(preview("decision"), `base\npw-asked\nasked\nS3:${one}\ntail-d`);
   app.run('viewMode("custom")');
   assert.equal(app.run('$("orchestration-meeting").hidden'), true);
   app.run('viewMode("meetings")');
@@ -423,10 +430,10 @@ test("a specialist picks one seat for both difficulties until it is split", asyn
   split("写作", true);
   pick(2, "codex");
   assert.deepEqual(seats(), { easy: shared, medium: shared, hard: shared });
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nworker_writing+medium");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nasked\ntail-s\nworker_writing+medium");
   split("写作", false);
   assert.deepEqual(seats(), { easy: shared, hard: shared }, "joining drops the medium seat");
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked\nworker_writing");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nasked\ntail-s\nworker_writing");
   pick(1, "");
   assert.equal(seats(), null);
   assert.equal(app.run("orchestrationChanged()"), false);
@@ -1017,51 +1024,52 @@ test("meetings mode saves its opt-in switch and previews both branches", async (
   assert.equal(JSON.stringify(state.saved.meetings_options), '{"meetings":true}');
 });
 
-test("split work lets the boss call meetings only when its switch is on", async () => {
+test("split work shares the three switches with decision mode and saves its own split_options", async () => {
   const { app } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
   await app.run("loadOrchestration()");
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nasked");
-  const meetings = () => app.run('$("orchestration-split").children[0].children[1]');
+  assert.equal(app.run('$("orchestration-split").children.length'), 3);
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nasked\ntail-s");
+  const sw = (i) => () => app.run(`$("orchestration-split").children[${i}].children[1]`);
+  const [parallelWrites, meetings] = [sw(0), sw(1)];
+  parallelWrites().listeners.change({ target: { checked: true } });
+  assert.equal(app.run("JSON.stringify(orchestrationWanted().split_options)"), '{"parallel_writes":true}');
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-own\nasked\ntail-s");
   meetings().listeners.change({ target: { checked: true } });
+  assert.equal(app.run("JSON.stringify(orchestrationWanted().split_options)"), '{"parallel_writes":true,"meetings":true}');
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-own\nown\ntail-s");
+  parallelWrites().listeners.change({ target: { checked: false } });
   assert.equal(app.run("JSON.stringify(orchestrationWanted().split_options)"), '{"meetings":true}');
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nown");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nown\ntail-s");
   meetings().listeners.change({ target: { checked: false } });
   assert.equal(app.run("orchestrationWanted().split_options"), undefined);
-  app.run('viewMode("parallel")');
-  assert.equal(app.run('$("orchestration-split").children.length'), 2);
-  assert.equal(app.run('orchestrationPresetText("parallel")'), "base+\nown");
-  meetings().listeners.change({ target: { checked: false } });
-  assert.equal(app.run("JSON.stringify(orchestrationWanted().parallel_options)"), '{"meetings":false}');
-  assert.equal(app.run('orchestrationPresetText("parallel")'), "base+\nasked");
-  meetings().listeners.change({ target: { checked: true } });
-  assert.equal(app.run("orchestrationWanted().parallel_options"), undefined);
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\npw-asked\nasked\ntail-s");
 });
 
-test("the orchestration-only switch rewrites its line in split and parallel only", async () => {
+test("the orchestration-only switch rewrites its line in split and decision only", async () => {
   const { app } = rolesEditor({ version: 1, preset: "split", enabled_roles: [] });
   await app.run("loadOrchestration()");
   app.run(`orchestration.presets.split_parts.base = "base\\nlead-asked";
-    orchestration.presets.parallel_base = "par\\nlead-asked";
+    orchestration.presets.decision_parts.base = "base\\nlead-asked";
     orchestration.presets.lead = { asked: "lead-asked", always: "lead-always" }; renderOrchestration()`);
-  const lead = () => app.run('$("orchestration-split").children[1].children[1]');
+  const lead = () => app.run('$("orchestration-split").children[2].children[1]');
   lead().listeners.change({ target: { checked: true } });
   assert.equal(app.run("orchestrationWanted().lead_only"), true);
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-always\nasked");
-  assert.equal(app.run('orchestrationPresetText("parallel")'), "par\nlead-always\nown");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-always\npw-asked\nasked\ntail-s");
+  assert.equal(app.run('orchestrationPresetText("decision")'), "base\nlead-always\npw-asked\nasked\ntail-d");
   app.run('viewMode("custom")');
   assert.equal(app.run('$("orchestration-split").hidden'), true);
   app.run('viewMode("split")');
   lead().listeners.change({ target: { checked: false } });
   assert.equal(app.run("orchestrationWanted().lead_only"), undefined);
-  assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-asked\nasked");
+  assert.equal(app.run('orchestrationPresetText("split")'), "base\nlead-asked\npw-asked\nasked\ntail-s");
 });
 
 test("a switch put back to what is saved keeps the saved form of its key", async () => {
   const saved = { version: 1, preset: "split", enabled_roles: [], lead_only: false,
-    split_options: { meetings: false }, parallel_options: {} };
+    split_options: { meetings: false } };
   const { app } = rolesEditor(saved);
   await app.run("loadOrchestration()");
-  const [meetings, lead] = [0, 1].map((i) => () => app.run(`$("orchestration-split").children[${i}].children[1]`));
+  const [meetings, lead] = [1, 2].map((i) => () => app.run(`$("orchestration-split").children[${i}].children[1]`));
   for (const [switchOf, key] of [[meetings, "split_options"], [lead, "lead_only"]]) {
     switchOf().listeners.change({ target: { checked: true } });
     assert.equal(app.run("orchestrationChanged()"), true);
@@ -1069,12 +1077,75 @@ test("a switch put back to what is saved keeps the saved form of its key", async
     assert.deepEqual(JSON.parse(app.run(`JSON.stringify(orchestrationWanted()["${key}"])`)), saved[key]);
     assert.equal(app.run("orchestrationChanged()"), false);
   }
-  app.run('viewMode("parallel")');
-  meetings().listeners.change({ target: { checked: false } });
-  assert.equal(app.run("orchestrationChanged()"), true);
-  meetings().listeners.change({ target: { checked: true } });
-  assert.equal(app.run("JSON.stringify(orchestrationWanted().parallel_options)"), "{}");
-  assert.equal(app.run("orchestrationChanged()"), false);
+});
+
+test("JS preset preview matches orchestration_rules.json assembly verbatim for split and decision", async () => {
+  const rules = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_rules.json`, "utf8"));
+  const roles = JSON.parse(readFileSync(`${__dirname}/../../../../src/agentnave/orchestration_roles.json`, "utf8"));
+  const roleLine = (role, medium) => rules.enabled_roles[medium ? "line_medium" : "line"]
+    .replace("{name_zh}", role.name_zh)
+    .replace("{access_zh}", rules.enabled_roles.access_zh[role.access])
+    .replace("{scope_zh}", role.scope_zh)
+    .replace("{seat_prefix}", role.seat_prefix);
+  const dispatchParts = (tail) => ({
+    base: rules.sections.shared,
+    parallel_writes_asked: rules.sections.parallel_writes_when_asked,
+    parallel_writes_own: rules.sections.parallel_writes_by_boss,
+    meetings_asked: rules.sections.meetings_when_asked,
+    meetings_own: rules.sections.meetings_on_tradeoffs,
+    tail: rules.sections[tail],
+  });
+  const doc = {
+    version: 1, preset: "split", lead_only: true,
+    split_options: { parallel_writes: true, meetings: true },
+    decision_options: { parallel_writes: true, meetings: false },
+    meeting: { count: 4, seats: [{ provider: "codex" }, null, { provider: "claude" }] },
+    enabled_roles: ["explorer", "worker_writing"],
+    worker_writing: { medium: { provider: "codex", model: "chat-model" } },
+    image_generation: { provider: "codex", model: "chat-model" },
+  };
+  const { app } = rolesEditor(doc, roles);
+  await app.run("loadOrchestration()");
+  app.run(`orchestration.presets = ${JSON.stringify({
+    split: "x", decision: "x",
+    image_generation: rules.sections.image_generation,
+    meeting_parts: {
+      default_count: rules.meeting_defaults.default_count,
+      separator: rules.meeting_defaults.separator,
+      seat_provider: rules.meeting_defaults.seat_provider,
+      all: rules.meeting_defaults.all_named,
+      some: rules.meeting_defaults.some_named,
+      none: rules.meeting_defaults.none_named,
+    },
+    split_parts: dispatchParts("dispatch_split"),
+    decision_parts: dispatchParts("dispatch_decision"),
+    role_sections: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, false)])),
+    role_sections_medium: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, true)])),
+    lead: { asked: rules.switches.lead_only.when_false, always: rules.switches.lead_only.when_true },
+  })};`);
+  const assemble = (mode) => rules.order[mode].map((step) => {
+    if (step === "meeting_defaults") {
+      const names = ["Codex CLI（provider=`codex`）", "Claude Code（provider=`claude`）"].join(rules.meeting_defaults.separator);
+      return rules.meeting_defaults.some_named.replace("{count}", "4").replace("{seats}", names);
+    }
+    if (step === "enabled_roles") {
+      return roles.filter((r) => doc.enabled_roles.includes(r.group))
+        .map((r) => roleLine(r, Boolean(doc[r.group]?.medium))).join("");
+    }
+    if (step === "image_generation") return rules.sections.image_generation;
+    const sw = rules.switches[step];
+    if (sw) {
+      const val = sw.field.split(".").reduce((cur, k) => cur?.[k], doc);
+      return rules.sections[(val ?? sw.default) ? sw.when_true : sw.when_false];
+    }
+    let text = rules.sections[step];
+    if (doc.lead_only && rules.switches.lead_only.replaces_in.includes(step)) {
+      text = text.replace(rules.switches.lead_only.when_false, rules.switches.lead_only.when_true);
+    }
+    return text;
+  }).join("");
+  assert.equal(app.run('orchestrationPresetText("split")'), assemble("split"));
+  assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision"));
 });
 
 // The decision mode: its page, options, the first catalog and the key, on the same fake DOM.
@@ -1109,7 +1180,7 @@ function decisionEditor(preset, loaded, catalogError = null) {
   app.run(`orchestration.presets = {
     decision: "decision", image_generation: "|image", lead: { asked: "LEAD-ASKED", always: "LEAD-ALWAYS" },
     decision_parts: { base: "BASE|LEAD-ASKED|", parallel_writes_asked: "PW-ASKED|", parallel_writes_own: "PW-OWN|",
-      meetings_asked: "M-ASKED|", meetings_own: "M-OWN|" } };`);
+      meetings_asked: "M-ASKED|", meetings_own: "M-OWN|", tail: "TAIL|" } };`);
   app.run(`viewMode("${preset}")`);
   return { app, calls, decision };
 }
@@ -1179,11 +1250,11 @@ test("only the decision mode's page shows the catalog, its options and the key, 
   const options = () => app.run('$("orchestration-split")').children;
   const fixed = ["s-group", "s-group", "s-group"];
   app.run('$("custom-text").value = "我的规则"');
-  // Another mode's page is what it was: fixed seats, its own two switches, nothing of the catalog.
+  // Another mode's page is what it was: fixed seats, its three switches, nothing of the catalog.
   assert.deepEqual(kinds(), fixed);
-  assert.equal(options().length, 2);
+  assert.equal(options().length, 3);
   assert.equal(decision((d) => d.panel() === null), false);
-  for (const mode of ["off", "meetings", "parallel", "custom"]) {
+  for (const mode of ["off", "meetings", "custom"]) {
     app.run(`viewMode("${mode}")`);
     assert.ok(!kinds().some((kind) => /decision/.test(kind)), mode);
   }
@@ -1338,14 +1409,14 @@ test("the decision options are saved with the orchestration and shape its rules 
   await decision((d) => d.load());
   const toggle = (index, on) => app.run('$("orchestration-split")').children[index].children[1].listeners.change({ target: { checked: on } });
   const text = () => app.run('orchestrationPresetText("decision")');
-  assert.equal(text(), "BASE|LEAD-ASKED|PW-ASKED|M-ASKED|");
+  assert.equal(text(), "BASE|LEAD-ASKED|PW-ASKED|M-ASKED|TAIL|");
   toggle(0, true);
-  assert.equal(text(), "BASE|LEAD-ASKED|PW-OWN|M-ASKED|");
+  assert.equal(text(), "BASE|LEAD-ASKED|PW-OWN|M-ASKED|TAIL|");
   assert.deepEqual(JSON.parse(app.run("JSON.stringify(orchestrationWanted().decision_options)")), { parallel_writes: true });
   toggle(1, true);
-  assert.equal(text(), "BASE|LEAD-ASKED|PW-OWN|M-OWN|");
+  assert.equal(text(), "BASE|LEAD-ASKED|PW-OWN|M-OWN|TAIL|");
   toggle(2, true);
-  assert.equal(text(), "BASE|LEAD-ALWAYS|PW-OWN|M-OWN|");
+  assert.equal(text(), "BASE|LEAD-ALWAYS|PW-OWN|M-OWN|TAIL|");
   // Back to the defaults leaves no key, so nothing is unsaved.
   toggle(0, false);
   toggle(1, false);

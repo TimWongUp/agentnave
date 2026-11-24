@@ -59,7 +59,7 @@ description: 通过 AgentNave 开会、评审、转交、多个可写任务并�
 | 情况 | 读 |
 | --- | --- |
 | 规则块写明工位交给决策模型选（「决策模型」档） | [决策模型档](references/decision.md) |
-| 规则块列出了固定工位（分工协作、并行分工等） | [固定编排工位](references/fixed-seats.md) |
+| 规则块列出了固定工位（分工协作、开启了编排的自定义档等） | [固定编排工位](references/fixed-seats.md) |
 | 编排未开启，或用户点名 CLI、模型、专有参数；工位不可用或冷却 | [点名与冷却](references/models.md) |
 
 档位按规则块判断，派发前不用先查 `list_members`；规则块与实际配置不符时派发会被拒绝并说明原因，再按报错查 `list_members`。宿主全局规则里没有「AgentNave 编排偏好」一段时，先查一次 `list_members`：`orchestration.enabled=true` 读[没有规则块的宿主](references/headless.md)，否则按编排未开启处理。
