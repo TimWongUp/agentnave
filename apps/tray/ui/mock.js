@@ -217,11 +217,13 @@
       },
       split_parts: {
         base: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则", parallel_writes_asked: "\n- 并行写入须用户本人指明。", parallel_writes_own: "\n- 并行写入由 boss 判断。",
+        checks: "\n- （示例）评审与验收。",
         meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。", tail: "\n- （示例）按固定工位派发。",
       },
       decision: "## AgentNave 编排偏好\n\n- （示例）决策模型的规则",
       decision_parts: {
         base: "## AgentNave 编排偏好\n\n- （示例）决策模型的规则", parallel_writes_asked: "\n- 并行写入须用户本人指明。", parallel_writes_own: "\n- 并行写入由 boss 判断。",
+        checks: "\n- （示例）评审与验收。",
         meetings_asked: "\n- 只在用户要求时开会。", meetings_own: "\n- boss 可以主动开会。", tail: "\n- （示例）由决策模型选工位。",
       },
       meetings: "## AgentNave 编排偏好\n\n- （示例）只开会的规则", split: "## AgentNave 编排偏好\n\n- （示例）分工协作的规则" },

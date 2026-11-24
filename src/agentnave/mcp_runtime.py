@@ -509,6 +509,11 @@ AUTO_IMAGE_SEAT_NOTE = (
     "access='write', state image generation and style at the start of prompt, and specify "
     "the output path; do not substitute another seat if no image seat exists."
 )
+START_AGENTS_IMAGE_SEAT_NOTE = (
+    "For image generation tasks (kind=image seats in the catalog), set access='write', "
+    "state image generation and style at the start of prompt, and specify the output path; "
+    "do not substitute another seat if no image seat exists."
+)
 # Published only while the user's own seat catalog is effective for this boss; called while
 # off, they answer with the reason instead.
 _CUSTOM_SEAT_TOOLS = frozenset({"recommend_seat", "start_agents"})
@@ -625,6 +630,16 @@ def _describe_auto_seat(schema: dict[str, Any], *, has_image: bool) -> None:
         seat["description"] = f"{seat.get('description', '')} {note}".strip()
 
 
+def _describe_start_agents_image_seat(schema: dict[str, Any]) -> None:
+    """With image seats in the decision catalog, explain how start_agents tasks request one."""
+    tasks = schema.get("properties", {}).get("tasks")
+    if isinstance(tasks, dict):
+        tasks = cast(dict[str, Any], tasks)
+        tasks["description"] = (
+            f"{tasks.get('description', '')} {START_AGENTS_IMAGE_SEAT_NOTE}".strip()
+        )
+
+
 def _drop_custom_seat_output(schema: Any) -> None:
     """Without the catalog, reply schemas show nothing of the recommendation."""
     if isinstance(schema, list):
@@ -700,6 +715,8 @@ class _Server(MCPServer[Runtime]):
             _filter_role_schema(schema, groups, image_enabled, input_ids, medium)
             if decision and tool.name == "start_agent":
                 _describe_auto_seat(schema, has_image=has_image)
+            if decision and has_image and tool.name == "start_agents":
+                _describe_start_agents_image_seat(schema)
             if tool.name == "wait" and not long_wait_enabled():
                 _restrict_wait_windows(schema)
             if (

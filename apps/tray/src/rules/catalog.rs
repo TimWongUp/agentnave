@@ -152,6 +152,7 @@ fn dispatch_parts(tail: &str) -> Value {
         "base": section("shared"),
         "parallel_writes_asked": section("parallel_writes_when_asked"),
         "parallel_writes_own": section("parallel_writes_by_boss"),
+        "checks": section("shared_checks"),
         "meetings_asked": section("meetings_when_asked"),
         "meetings_own": section("meetings_on_tradeoffs"),
         "tail": section(tail),
