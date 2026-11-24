@@ -55,6 +55,10 @@ impl Hosts {
     /// start-up that happens once, recorded in `hosts.json` after it succeeded; uninstalling
     /// always does it. Returns what could not be removed.
     pub(crate) fn remove_retired(&mut self) -> Vec<Value> {
+        // A preview build never writes another CLI's configuration or the App's data.
+        if crate::PREVIEW {
+            return Vec::new();
+        }
         let startup = !self.uninstalling;
         if startup && (self.settings_error.is_some() || self.settings[DEVIN]["removed"] == true) {
             return Vec::new();
