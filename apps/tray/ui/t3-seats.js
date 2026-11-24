@@ -1,8 +1,8 @@
 "use strict";
 {
-  // Settings -> 编排 -> T3 Code (ADR-0121): independent T3 orchestration switch, random-candidates
-  // switch and T3 task seat cards. The T3 review roles sit on Settings -> 评审设置, after the seats
-  // used outside T3 Code. All saved to t3-seats.json from the shared save bar; never writes T3 Code's own files.
+  // Settings -> 编排 -> T3 Code (ADR-0121): T3 dispatch switch (following the active orchestration
+  // preset), random-candidates switch and T3 task seat cards. The T3 review roles sit on Settings ->
+  // 评审设置. All saved to t3-seats.json from the shared save bar; never writes T3 Code's own files.
 
   const S = AN.settings ||= {};
   const { $, el, sameJson } = S;
@@ -23,7 +23,6 @@
   let draft = null; // Edited state; null while identical to baseline.
   let prefilled = false;
   let cardCount = 0;
-  let ruleOpen = false; // Kept across re-renders, like expanded.
   const expanded = new Set(); // Expanded card cids, kept in memory across re-renders.
 
   const catalogEntry = (kind) => S.roleCatalog().find((entry) => entry.group === kind);
@@ -187,6 +186,7 @@
   const eligibleInstances = () => instances().filter((inst) => inst.available && !inst.stale);
   const visible = () => Boolean(saved && (saved.t3?.detected || saved.document || saved.error));
   const locked = () => !saved || Boolean(saved.error);
+  const enabled = () => Boolean(visible() && !locked() && shownState()?.enabled);
   const fileDocument = () => toDocument(shownState());
   const changed = () => Boolean(saved && !saved.error && draft && baseline)
     && !sameJson(canonState(draft), canonState(baseline));
@@ -820,17 +820,6 @@
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
-  function ruleFold(state) {
-    if (!state.enabled || !saved.rule) return null;
-    const fold = el("details", {
-      className: "s-group", open: ruleOpen,
-      onToggle: () => { ruleOpen = fold.open; },
-    },
-      el("summary", { className: "s-title is-fold" }, L("写入的规则", "Rules written")),
-      el("pre", { className: "s-card is-pre" }, saved.rule));
-    return fold;
-  }
-
   function render() {
     renderReview();
     const box = $("t3-seats-section");
@@ -838,18 +827,21 @@
     if (!visible()) {
       box.hidden = true;
       box.replaceChildren();
+      S.renderOrchestrationText?.();
       S.syncScopeViews?.();
       return;
     }
     const focusKey = document.activeElement?.dataset?.focusKey;
     if (saved.error) {
       box.replaceChildren(el("div", { className: "s-group t3-seats" }, errorAlert()));
+      S.renderOrchestrationText?.();
       S.syncScopeViews?.();
       return;
     }
     const state = shownState();
     if (!state) {
       box.replaceChildren();
+      S.renderOrchestrationText?.();
       S.syncScopeViews?.();
       return;
     }
@@ -880,13 +872,14 @@
         el("div", { className: "s-row" },
           el("label", { className: "s-label", htmlFor: "t3-seat-add" }, L("添加工位", "Add seat")),
           addMenu(state))));
-    box.replaceChildren(...[switchesCard, seatRows, addCardGroup, ruleFold(state)].filter(Boolean));
+    box.replaceChildren(...[switchesCard, seatRows, addCardGroup].filter(Boolean));
+    S.renderOrchestrationText?.();
     S.syncScopeViews?.();
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
   window.AgentNaveT3Seats = {
     load, render, renderReview, changed, seatsChanged, reviewChanged, problem, save, discard, addCard, prefill,
-    document: fileDocument, hasCandidates, visible,
+    document: fileDocument, hasCandidates, visible, enabled,
   };
 }

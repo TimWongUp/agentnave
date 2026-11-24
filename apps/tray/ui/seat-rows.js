@@ -48,23 +48,25 @@
 
   function syncScopeViews() {
     const show = t3Visible();
-    const isT3 = show && orchestrationScope() === "t3";
+    const showOrch = show && (S.orchestrationSupportsT3 ? S.orchestrationSupportsT3() : true);
+    const isOrchT3 = showOrch && orchestrationScope() === "t3";
+    const isRevT3 = show && orchestrationScope() === "t3";
 
     const orchGeneralDirty = Boolean(S.orchestrationChanged?.() || window.AgentNaveDecisionSeats?.changed?.());
     const orchT3Dirty = Boolean(window.AgentNaveT3Seats?.seatsChanged?.());
-    renderScopeBox($("orchestration-scope"), "orchestration", orchGeneralDirty, orchT3Dirty, show);
+    renderScopeBox($("orchestration-scope"), "orchestration", orchGeneralDirty, orchT3Dirty, showOrch);
     const orchGeneral = $("orchestration-general");
-    if (orchGeneral) orchGeneral.hidden = isT3;
+    if (orchGeneral) orchGeneral.hidden = isOrchT3;
     const t3Section = $("t3-seats-section");
-    if (t3Section) t3Section.hidden = !isT3;
+    if (t3Section) t3Section.hidden = !isOrchT3;
 
     const revGeneralDirty = Boolean(S.reviewSeatsChanged?.());
     const revT3Dirty = Boolean(window.AgentNaveT3Seats?.reviewChanged?.());
     renderScopeBox($("review-scope"), "review", revGeneralDirty, revT3Dirty, show);
     const revGeneral = $("review-seats-group");
-    if (revGeneral) revGeneral.hidden = isT3;
+    if (revGeneral) revGeneral.hidden = isRevT3;
     const t3Review = $("t3-review-seats");
-    if (t3Review) t3Review.hidden = !isT3;
+    if (t3Review) t3Review.hidden = !isRevT3;
   }
 
   function setOrchestrationScope(next) {

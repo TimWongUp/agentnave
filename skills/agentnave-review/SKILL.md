@@ -49,7 +49,7 @@ description: 代码评审流程：按失败风险定 R0–R3 级，通过 AgentN
 
 #### 选工位
 
-在 T3 Code 主线程且开启 T3 编排时，按 [T3 Code 评审派法](references/t3.md) 经 `recommend_seat` 和 `delegate_task` 派发。
+在 T3 Code 主线程、当前编排档位支持 T3 模式（分工协作、决策模型、自定义）且开启 T3 编排时，按 [T3 Code 评审派法](references/t3.md) 经 `recommend_seat` 和 `delegate_task` 派发。
 
 按顺序取第一个适用的来源：
 

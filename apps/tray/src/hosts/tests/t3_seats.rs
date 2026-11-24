@@ -100,7 +100,7 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
     assert_eq!(state["error"], Value::Null);
     assert_eq!(state["t3"]["detected"], true);
     assert_eq!(state["t3"]["instances"][0]["instance"], "codex");
-    assert_eq!(state["rule"], crate::rules::t3_rule());
+    assert!(state.get("rule").is_none());
 
     // Guardrails: missing action header, wrong method, non-JSON, enabled with 0 candidates.
     assert_eq!(
@@ -131,49 +131,89 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
     assert!(!root.join("t3-seats.json").exists());
 
     // Preserve existing user content in CLAUDE.md.
+    // While orchestration preset is off, enabling T3 writes no block anywhere.
     save(&home.join(".claude/CLAUDE.md"), "# 我的规则\n");
-    let res = post(&reader, "/app/t3-seats", &valid_doc(true));
-    assert_eq!(res.status, 200, "{}", String::from_utf8_lossy(&res.body));
-    let saved_res: Value = serde_json::from_slice(&res.body).unwrap();
+    let res_off = post(&reader, "/app/t3-seats", &valid_doc(true));
+    assert_eq!(
+        res_off.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&res_off.body)
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
+        "# 我的规则\n"
+    );
+    assert!(!home.join(".codex/AGENTS.md").exists());
+
+    // Switching orchestration to split activates T3 suffix on Claude (default + named) and Codex only.
+    let split_res = post(
+        &reader,
+        "/app/orchestration",
+        &json!({"version": 1, "preset": "split"}),
+    );
+    assert_eq!(
+        split_res.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&split_res.body)
+    );
+    let saved_res: Value = serde_json::from_slice(&split_res.body).unwrap();
     assert_eq!(saved_res["saved"], true);
     assert_eq!(saved_res["failures"], json!([]));
 
-    // Claude (default + named account) and Codex got the off+T3 block; ZCode and Grok's own file did not.
     let claude_md = fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap();
     assert!(claude_md.contains("# 我的规则"));
-    assert!(claude_md.contains("## AgentNave 编排偏好\n\n- 在 T3 Code 主线程"));
+    assert!(claude_md.contains("在 T3 Code 主线程"));
     assert_eq!(claude_md.matches("在 T3 Code 主线程").count(), 1);
     let codex_md = fs::read_to_string(home.join(".codex/AGENTS.md")).unwrap();
-    assert!(codex_md.contains("## AgentNave 编排偏好\n\n- 在 T3 Code 主线程"));
+    assert!(codex_md.contains("在 T3 Code 主线程"));
     let named_claude = home.join(".agentnave-accounts/claude/a1/CLAUDE.md");
     assert!(
         fs::read_to_string(&named_claude)
             .unwrap()
             .contains("在 T3 Code 主线程")
     );
-    assert!(!home.join(".zcode/AGENTS.md").exists());
+    assert!(
+        !fs::read_to_string(home.join(".zcode/AGENTS.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
+    );
     assert!(!home.join(".grok/AGENTS.md").exists());
 
-    // Rule files list reports current=true for Claude and Codex without false mismatch.
+    // Rule files list reports current=true for all target files without false mismatch.
     for row in saved_res["files"].as_array().unwrap() {
         if row["target"] == true {
             assert_eq!(row["current"], true, "{row}");
         }
     }
 
-    // Disabling switch restores CLAUDE.md and deletes Codex/named-account files that had only our block.
+    // Disabling switch removes T3 suffix while keeping the split orchestration block.
     let off = post(&reader, "/app/t3-seats", &valid_doc(false));
     assert_eq!(off.status, 200);
-    assert_eq!(
-        fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
-        "# 我的规则\n"
+    assert!(
+        !fs::read_to_string(home.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
     );
-    assert!(!home.join(".codex/AGENTS.md").exists());
-    assert!(!named_claude.exists());
+    assert!(
+        !fs::read_to_string(home.join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
+    );
+    assert!(
+        !fs::read_to_string(&named_claude)
+            .unwrap()
+            .contains("在 T3 Code 主线程")
+    );
 
-    // Turn back on, then delete t3-seats.json and refresh -> restores cleanly too.
+    // Turn back on, then delete t3-seats.json and refresh -> removes T3 suffix cleanly too.
     assert_eq!(post(&reader, "/app/t3-seats", &valid_doc(true)).status, 200);
-    assert!(home.join(".codex/AGENTS.md").exists());
+    assert!(
+        fs::read_to_string(home.join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
+    );
     fs::remove_file(root.join("t3-seats.json")).unwrap();
     assert_eq!(
         reader
@@ -181,16 +221,30 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
             .status,
         200
     );
-    assert_eq!(
-        fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap(),
-        "# 我的规则\n"
+    assert!(
+        !fs::read_to_string(home.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
     );
-    assert!(!home.join(".codex/AGENTS.md").exists());
+    assert!(
+        !fs::read_to_string(home.join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
+    );
 }
 
 #[test]
 fn broken_t3_seats_file_leaves_rules_alone_and_uninstall_still_cleans_up() {
     let (reader, _temp, _dir, root, home) = setup_t3_reader(false);
+    assert_eq!(
+        post(
+            &reader,
+            "/app/orchestration",
+            &json!({"version": 1, "preset": "split"}),
+        )
+        .status,
+        200
+    );
     assert_eq!(post(&reader, "/app/t3-seats", &valid_doc(true)).status, 200);
     let before = fs::read_to_string(home.join(".codex/AGENTS.md")).unwrap();
     assert!(before.contains("在 T3 Code 主线程"));
@@ -229,6 +283,7 @@ fn broken_t3_seats_file_leaves_rules_alone_and_uninstall_still_cleans_up() {
         .action("connect", &json!({"id": "codex"}))
         .unwrap();
     let data = uninstall_hosts.context.data.clone();
+    crate::members::save_orchestration(&data, &json!({"version": 1, "preset": "split"})).unwrap();
     crate::t3_seats::save(&data, &valid_doc(true)).unwrap();
     assert!(sync_orchestration(&data, &uninstall_hosts, &[]).is_empty());
     let codex_rules = uninstall_hosts.context.home.join(".codex/AGENTS.md");
@@ -246,6 +301,15 @@ fn broken_t3_seats_file_leaves_rules_alone_and_uninstall_still_cleans_up() {
 #[test]
 fn removing_a_host_removes_its_t3_rules_block() {
     let (reader, _temp, _dir, _root, home) = setup_t3_reader(false);
+    assert_eq!(
+        post(
+            &reader,
+            "/app/orchestration",
+            &json!({"version": 1, "preset": "split"}),
+        )
+        .status,
+        200
+    );
     assert_eq!(post(&reader, "/app/t3-seats", &valid_doc(true)).status, 200);
     assert!(home.join(".codex/AGENTS.md").exists());
     let removed = post(&reader, "/app/hosts/remove", &json!({"id": "codex"}));

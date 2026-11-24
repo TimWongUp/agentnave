@@ -5621,27 +5621,38 @@ def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
             assert trigger in text
 
     # T3 main (active) and child instructions stay within the 3,500-byte limit too.
-    from agentnave import t3, t3_recommend
+    from agentnave import t3, t3_mcp
+    from agentnave.t3_seats import T3OrchestrationMode
 
-    assert len(t3_recommend.T3_MAIN_INSTRUCTIONS) <= 600
-    first_sentence = t3_recommend.T3_MAIN_INSTRUCTIONS.split(". ", 1)[0] + "."
-    assert len(first_sentence) <= 210
-    assert "recommend_seat(tasks)" in first_sentence and "delegate_task" in first_sentence
+    t3_cases: tuple[tuple[T3OrchestrationMode, str], ...] = (
+        ("decision", "decision model picks seats"),
+        ("split", "with seat from list_members"),
+        ("custom", "with seat from list_members"),
+    )
+    for preset_mode, expected_picker in t3_cases:
+        prefix = t3_mcp.t3_main_instructions(preset_mode)
+        assert len(prefix) <= 600
+        first_sentence = prefix.split(". ", 1)[0] + "."
+        assert len(first_sentence) <= 210
+        assert "recommend_seat(tasks)" in first_sentence and "delegate_task" in first_sentence
+        assert "unless the user named a T3 account or model" in first_sentence
+        assert expected_picker in first_sentence
+        for host_name in ("claude", "codex"):
+            host = Host(host_name, "env")
+            t3_main = mcp_runtime.build_mcp_instructions(
+                host, longest_provider_selection, t3_mode="main", t3_preset=preset_mode
+            )
+            assert len(t3_main.encode("utf-8")) <= 3500, (preset_mode, host_name)
+            assert t3_main.startswith(prefix)
+            assert "only for meetings, reviews, or handover." in t3_main
+            assert "parallel write tasks" not in t3_main
+            assert "not_started" not in t3_main
+
     for host_name in ("claude", "codex"):
         host = Host(host_name, "env")
-        t3_main = mcp_runtime.build_mcp_instructions(
-            host, longest_provider_selection, t3_mode="main", t3_active=True
-        )
-        assert len(t3_main.encode("utf-8")) <= 3500, host_name
-        assert t3_main.startswith(t3_recommend.T3_MAIN_INSTRUCTIONS)
-        assert "T3 orchestration enabled by the user" in t3_main
-        assert "only for meetings, reviews, or handover." in t3_main
-        assert "parallel write tasks" not in t3_main
-        assert "not_started" not in t3_main
-
-        # Main thread when T3 orchestration is off uses the unchanged ordinary instructions.
+        # Main thread when T3 orchestration is off or mode has no T3 uses unchanged ordinary instructions.
         t3_inactive = mcp_runtime.build_mcp_instructions(
-            host, longest_provider_selection, t3_mode="main", t3_active=False
+            host, longest_provider_selection, t3_mode="main", t3_preset=None
         )
         assert t3_inactive == mcp_runtime.build_mcp_instructions(host, longest_provider_selection)
 
@@ -5923,7 +5934,12 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
     monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env", "codex"))
     monkeypatch.setenv("T3CODE_THREAD_ID", "thread-main-42")
     t3.reset_t3_mode_cache()
-    # Deliberately do NOT enable orchestration.json or set decision mode: T3 is independent.
+    orch_path = tmp_path / "agentnave" / "orchestration.json"
+
+    def _write_orch(preset: str) -> None:
+        orch_path.parent.mkdir(parents=True, exist_ok=True)
+        orch_path.write_text(json.dumps({"version": 1, "preset": preset}), encoding="utf-8")
+
     future_a = (
         (datetime.now(UTC) + timedelta(hours=1))
         .replace(microsecond=0)
@@ -6048,11 +6064,90 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
     _write_t3_seats(seats_doc)
 
     async with Client(mcp) as client:
-        # 1. list_tools hides start_agent/start_agents and publishes T3 recommend_seat & list_members.
+        # 0. Missing orchestration.json, off, and meetings keep T3 inactive (ordinary tools stay).
+        for inactive_preset in (None, "off", "meetings"):
+            if inactive_preset is not None:
+                _write_orch(inactive_preset)
+            inactive_tools = {
+                tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+            }
+            assert "start_agent" in inactive_tools
+            assert "recommend_seat" not in inactive_tools
+            ordinary_members = await client.call_tool("list_members", {})
+            assert ordinary_members.is_error is False
+            assert "t3_orchestration" not in cast(
+                dict[str, Any], ordinary_members.structured_content
+            )
+
+        # 0b. split / parallel / custom: T3 active, boss must pass seat (seat_required without decision key),
+        #     accepts fixed role names (worker-easy, explorer-easy) as well as raw seat ids.
+        for boss_preset, expected_mode in (
+            ("split", "split"),
+            ("parallel", "split"),
+            ("custom", "custom"),
+        ):
+            _write_orch(boss_preset)
+            boss_tools = {
+                tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+            }
+            assert "start_agent" not in boss_tools and "recommend_seat" in boss_tools
+            assert "seat_required" in (boss_tools["recommend_seat"].description or "")
+            assert "boss chooses seats" in (boss_tools["recommend_seat"].description or "")
+            assert "boss picks seats" in (boss_tools["list_members"].description or "")
+            assert len(boss_tools["recommend_seat"].description or "") <= 2000
+            assert len(boss_tools["list_members"].description or "") <= 2000
+            boss_members = cast(
+                dict[str, Any], (await client.call_tool("list_members", {})).structured_content
+            )
+            assert boss_members["t3_orchestration"]["mode"] == expected_mode
+            assert set(boss_members["t3_orchestration"]["seats"]) == {
+                "explorer-easy",
+                "worker-easy",
+                "worker-hard",
+                "write-dead",
+            }
+            missing_seat = await client.call_tool(
+                "recommend_seat", {"tasks": [{"task": "implement feature", "access": "write"}]}
+            )
+            assert missing_seat.is_error is True
+            missing_msg = str(missing_seat.content)
+            assert "seat_required" in missing_msg
+            assert "worker-easy" in missing_msg and "写常规代码" in missing_msg
+            assert "worker-hard" in missing_msg and "复杂架构实现" in missing_msg
+            assert decision.batches == [] and decision.calls == []
+        # Fixed role name (worker-easy) and raw id (write-a) both resolve and return canonical worker-easy.
+        _write_orch("split")
+        fixed_res = await client.call_tool(
+            "recommend_seat",
+            {
+                "tasks": [
+                    {"task": "small fix", "access": "write", "seat": "worker-easy"},
+                    {"task": "small fix by id", "access": "write", "seat": "write-a"},
+                ]
+            },
+        )
+        assert fixed_res.is_error is False, fixed_res.content
+        fixed_items = cast(
+            list[dict[str, Any]], cast(dict[str, Any], fixed_res.structured_content)["results"]
+        )
+        assert [item["seat"] for item in fixed_items] == ["worker-easy", "worker-easy"]
+        unknown_fixed = await client.call_tool(
+            "recommend_seat",
+            {"tasks": [{"task": "web lookup", "access": "read", "seat": "explorer-web-hard"}]},
+        )
+        assert unknown_fixed.is_error is True
+        assert "explorer-easy" in str(unknown_fixed.content)
+        assert "worker-easy" in str(unknown_fixed.content)
+
+        # 1. Decision mode: list_tools hides start_agent/start_agents and publishes decision T3 tools.
+        _write_orch("decision")
         tools = {tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools}
         assert "start_agent" not in tools and "start_agents" not in tools
         assert "recommend_seat" in tools and "list_members" in tools
         assert "tasks" in tools["recommend_seat"].input_schema["properties"]
+        assert "decision mode" in (tools["recommend_seat"].description or "")
+        assert "seat_required" in (tools["recommend_seat"].description or "")
+        assert "decision mode" in (tools["list_members"].description or "")
         assert len(tools["recommend_seat"].description or "") <= 2000
         assert len(tools["list_members"].description or "") <= 2000
 
@@ -6068,7 +6163,8 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
             msg = str(res.content)
             assert "recommend_seat" in msg and "delegate_task" in msg and "handover" in msg
 
-        # 3. list_members lists T3 seats, T3 review roles, and meeting members (no auth email).
+        # 3. list_members lists T3 seats (fixed names for standard roles, id for custom), review roles,
+        #    and meeting members (no auth email).
         members_res = await client.call_tool("list_members", {})
         assert members_res.is_error is False
         members_raw = json.dumps(members_res.structured_content)
@@ -6077,7 +6173,13 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         members_payload = cast(dict[str, Any], members_res.structured_content)
         t3_orch = cast(dict[str, Any], members_payload["t3_orchestration"])
         assert t3_orch["enabled"] is True
-        assert set(t3_orch["seats"]) == {"read-only", "write-a", "write-b", "write-dead"}
+        assert t3_orch["mode"] == "decision"
+        assert set(t3_orch["seats"]) == {
+            "explorer-easy",
+            "worker-easy",
+            "worker-hard",
+            "write-dead",
+        }
         assert t3_orch["seats"]["write-dead"]["available"] is False
         assert set(t3_orch["review"]) == {"correctness-reviewer", "security-reviewer"}
 
@@ -6094,7 +6196,7 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         item0 = legacy_items[0]
         assert len(str(item0["task"])) <= 80 and str(item0["task"]).endswith("…")
         assert item0["status"] == "selected"
-        assert item0["seat"] == "read-only" and item0["role"] == "探索"
+        assert item0["seat"] == "explorer-easy" and item0["role"] == "探索"
         assert item0["difficulty"] == "easy"
         assert item0["brief_suffix"] == READ_ONLY_INSTRUCTIONS
         uuid.UUID(str(item0["clientRequestId"]))
@@ -6128,20 +6230,20 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
             assert needle in next_text
         assert decision.batches == [] and decision.calls == []
 
-        # 5. Missing decision key when >=2 usable seats -> error lists usable seat ids and seat hint.
+        # 5. Missing decision key when >=2 usable seats -> error lists usable seat names and seat hint.
         no_key = await client.call_tool(
             "recommend_seat", {"tasks": [{"task": "implement feature", "access": "write"}]}
         )
         assert no_key.is_error is True
         no_key_msg = str(no_key.content)
         assert "no_key" in no_key_msg
-        assert "write-a" in no_key_msg and "write-b" in no_key_msg
+        assert "worker-easy" in no_key_msg and "worker-hard" in no_key_msg
         assert "write-dead" not in no_key_msg  # excluded before decision model
         assert "explicit seat" in no_key_msg
 
         # 6. With decision key: mixed batch (auto write + explicit review + unavailable review).
         _write_decision_key()
-        decision.answers = [Decision("write-b", {"write-b": 0.9, "write-a": 0.1}, 0.9)]
+        decision.answers = [Decision("worker-hard", {"worker-hard": 0.9, "worker-easy": 0.1}, 0.9)]
         batch_res = await client.call_tool(
             "recommend_seat",
             {
@@ -6155,7 +6257,7 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert batch_res.is_error is False, batch_res.content
         batch_payload = cast(dict[str, Any], batch_res.structured_content)
         r0, r1, r2 = cast(list[dict[str, Any]], batch_payload["results"])
-        assert r0["status"] == "selected" and r0["seat"] == "write-b"
+        assert r0["status"] == "selected" and r0["seat"] == "worker-hard"
         assert "brief_suffix" not in r0  # write task has no brief_suffix
         assert r1["status"] == "selected" and r1["seat"] == "correctness-reviewer"
         assert r1["brief_suffix"] == READ_ONLY_INSTRUCTIONS
@@ -6164,7 +6266,7 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert r2["earliest_reset_at"] == future_a  # earliest of future_a and future_b
         # Decision model saw only usable write seats (write-dead excluded).
         assert len(decision.batches) == 1
-        assert set(decision.batches[0][0][1]) == {"write-a", "write-b"}
+        assert set(decision.batches[0][0][1]) == {"worker-easy", "worker-hard"}
 
         # 7. Unconfigured review role -> error listing configured roles (no auto-swap); access mismatch.
         unconf_rev = await client.call_tool(
@@ -6247,10 +6349,17 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
 
         # 11. Toggling enabled=False dynamically restores ordinary tools on the next list_tools.
         _write_t3_seats({**seats_doc, "enabled": False})
-        restored = {
+        restored_decision = {
             tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
         }
-        assert "start_agent" in restored and "recommend_seat" not in restored
+        assert "start_agent" in restored_decision and "recommend_seat" in restored_decision
+        assert "tasks" not in restored_decision["recommend_seat"].input_schema["properties"]
+        _write_orch("split")
+        restored_split = {
+            tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+        }
+        assert "start_agent" in restored_split and "recommend_seat" not in restored_split
+        _write_orch("decision")
 
         # 12. Meeting wait guidance uses T3 background watch command when T3 orchestration is active.
         _write_t3_seats(seats_doc)

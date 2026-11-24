@@ -1119,6 +1119,7 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
     },
     split_parts: dispatchParts("dispatch_split"),
     decision_parts: dispatchParts("dispatch_decision"),
+    t3: Object.fromEntries(Object.entries(rules.t3_order).map(([m, steps]) => [m, steps.map((s) => rules.sections[s]).join("")])),
     role_sections: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, false)])),
     role_sections_medium: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, true)])),
     lead: { asked: rules.switches.lead_only.when_false, always: rules.switches.lead_only.when_true },
@@ -1146,6 +1147,13 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
   }).join("");
   assert.equal(app.run('orchestrationPresetText("split")'), assemble("split"));
   assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision"));
+  // With T3 orchestration enabled, JS appends the exact same t3_order sections as Rust.
+  const t3Suffix = (mode) => rules.t3_order[mode].map((s) => rules.sections[s]).join("");
+  app.run("window.AgentNaveT3Seats = { enabled: () => true };");
+  assert.equal(app.run('orchestrationPresetText("split")'), assemble("split") + t3Suffix("split"));
+  assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision") + t3Suffix("decision"));
+  assert.equal(app.run('orchestrationPresetText("custom")'), t3Suffix("custom").trim());
+  assert.equal(app.run('orchestrationPresetText("off")'), undefined);
 });
 
 // The decision mode: its page, options, the first catalog and the key, on the same fake DOM.

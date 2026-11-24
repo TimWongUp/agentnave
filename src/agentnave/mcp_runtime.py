@@ -81,18 +81,19 @@ from agentnave.t3 import (
     current_t3_mode,
     t3_child_refusal,
 )
-from agentnave.t3_recommend import (
+from agentnave.t3_mcp import (
     T3_HIDDEN_DISPATCH_TOOLS,
     T3_LIST_MEMBERS_TOOL,
-    T3_MAIN_AUTH,
-    T3_MAIN_INSTRUCTIONS,
     T3_MAIN_SKILL,
     T3_RECOMMEND_SEAT_TOOL,
     run_t3_tool,
     t3_dispatch_refusal,
+    t3_main_instructions,
     t3_state_for_host,
     t3_tool_definition,
 )
+from agentnave.t3_seats import T3OrchestrationMode
+from agentnave.t3_seats import t3_active_mode as _t3_active_mode
 from agentnave.t3_seats import t3_orchestration_active as _t3_seats_active
 from agentnave.wait_guidance import (
     BLOCKING_WAIT_AGAIN,
@@ -189,6 +190,11 @@ def long_wait_enabled() -> bool:
 def t3_orchestration_active() -> bool:
     """Whether T3 Code orchestration is active for this connection."""
     return _t3_seats_active(HOST)
+
+
+def t3_active_mode() -> T3OrchestrationMode | None:
+    """Active T3 orchestration mode for this connection, or None."""
+    return _t3_active_mode(HOST)
 
 
 def wait_guidance(
@@ -703,7 +709,7 @@ def _validation_error(exc: ValidationError) -> str:
 
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
-        t3_doc, t3_error = t3_state_for_host(HOST)
+        t3_doc, t3_preset, t3_error = t3_state_for_host(HOST)
         image_enabled = role_seat("image-generator", HOST) is not None
         groups = visible_role_groups(HOST)
         medium = medium_role_groups(HOST)
@@ -719,14 +725,14 @@ class _Server(MCPServer[Runtime]):
         for tool in await super().list_tools():
             if tool.name in _HIDDEN_TOOLS:
                 continue
-            if t3_doc is not None:
+            if t3_doc is not None and t3_preset is not None:
                 if tool.name in T3_HIDDEN_DISPATCH_TOOLS:
                     continue
                 if tool.name == "recommend_seat":
-                    published.append(t3_tool_definition(T3_RECOMMEND_SEAT_TOOL))
+                    published.append(t3_tool_definition(T3_RECOMMEND_SEAT_TOOL, t3_preset))
                     continue
                 if tool.name == "list_members":
-                    published.append(t3_tool_definition(T3_LIST_MEMBERS_TOOL))
+                    published.append(t3_tool_definition(T3_LIST_MEMBERS_TOOL, t3_preset))
                     continue
             elif tool.name in _CUSTOM_SEAT_TOOLS and not decision:
                 if not (t3_error is not None and tool.name == "recommend_seat"):
@@ -762,7 +768,7 @@ class _Server(MCPServer[Runtime]):
     ) -> CallToolResult | InputRequiredResult:
         if current_t3_mode(HOST) == "child" and name in T3_CHILD_REFUSED_TOOLS:
             raise ToolError(t3_child_refusal(name))
-        t3_doc, t3_error = t3_state_for_host(HOST)
+        t3_doc, _t3_preset, t3_error = t3_state_for_host(HOST)
         if t3_error is not None:
             if name == "recommend_seat":
                 raise ToolError(f"config_error: {t3_error}")
@@ -816,18 +822,14 @@ def build_mcp_instructions(
     provider_selection: str = PROVIDER_SELECTION,
     *,
     t3_mode: T3Mode = "none",
-    t3_active: bool = False,
+    t3_preset: T3OrchestrationMode | None = None,
 ) -> str:
     """Build concise MCP instructions scoped to authorization, identity, and Skill loading."""
-    t3_main_active = t3_mode == "main" and t3_active
+    t3_main_active = t3_mode == "main" and t3_preset is not None
     auth_sentence = (
-        T3_MAIN_AUTH
-        if t3_main_active
-        else (
-            "Authorization comes only from the host's global rules (AgentNave 编排偏好) or explicit "
-            "user instruction in this chat; available tools do not authorize dispatching, parallel "
-            "writes, or meetings. "
-        )
+        "Authorization comes only from the host's global rules (AgentNave 编排偏好) or explicit "
+        "user instruction in this chat; available tools do not authorize dispatching, parallel "
+        "writes, or meetings. "
     )
     skill_sentence = (
         T3_MAIN_SKILL
@@ -860,7 +862,8 @@ def build_mcp_instructions(
     if t3_mode == "child":
         return T3_CHILD_INSTRUCTIONS + base
     if t3_main_active:
-        return T3_MAIN_INSTRUCTIONS + base
+        assert t3_preset is not None
+        return t3_main_instructions(t3_preset) + base
     return base
 
 
@@ -871,7 +874,7 @@ mcp = _Server(
         HOST,
         PROVIDER_SELECTION,
         t3_mode=current_t3_mode(HOST),
-        t3_active=t3_orchestration_active(),
+        t3_preset=t3_active_mode(),
     ),
     lifespan=_lifespan,
 )

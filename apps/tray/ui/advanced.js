@@ -172,9 +172,11 @@
   }
 
   // The rules as the draft would write them: the mode's text, then the lines of the roles turned on
-  // in catalog order, then the image line.
-  function orchestrationPresetText(mode) {
+  // in catalog order, then the image line, then the mode's T3 suffix when T3 orchestration is on.
+  function orchestrationPresetText(mode, includeT3 = true) {
     const presets = orchestration?.presets;
+    const t3Suffix = (includeT3 && window.AgentNaveT3Seats?.enabled?.() && presets?.t3?.[mode]) || "";
+    if (mode === "custom") return t3Suffix ? t3Suffix.trim() : undefined;
     const text = presets?.[mode];
     if (!text) return text;
     const shown = orchestrationShown();
@@ -195,19 +197,27 @@
     } else {
       base = presets.role_base?.[mode] ?? text.replace(presets.image_generation || "", "");
     }
-    if (mode === "decision") return base;
+    if (mode === "decision") return base + t3Suffix;
     const enabled = enabledGroups(shown);
     const sections = roleCatalog().filter((role) => enabled.includes(role.group))
       .map((role) => roleSection(presets, shown, role.group));
     const image = presets.image_generation || "";
-    return [base, ...sections, shown?.image_generation ? image : ""].join("");
+    return [base, ...sections, shown?.image_generation ? image : ""].join("") + t3Suffix;
+  }
+
+  function renderOrchestrationText() {
+    const text = orchestrationPresetText(orchestrationView);
+    const textFold = $("orchestration-text-fold");
+    if (textFold) textFold.hidden = !text;
+    $("orchestration-text").hidden = !text;
+    $("orchestration-text").textContent = text || "";
   }
 
   function viewMode(mode) {
     const editor = $("custom-text");
-    // The editor starts from the mode the user leaves; what it shows is what gets written.
+    // The editor starts from the mode the user leaves; never copy the appended T3 suffix into it.
     if (mode === "custom" && !editor.value.trim()) {
-      editor.value = orchestrationPresetText(orchestrationView === "off" ? "split" : orchestrationView);
+      editor.value = orchestrationPresetText(orchestrationView === "off" ? "split" : orchestrationView, false) || "";
     }
     orchestrationView = mode;
     renderOrchestration();
@@ -491,11 +501,7 @@
     }
     $("orchestration-effect").setAttribute("aria-label", orchestration ? ORCHESTRATION_EFFECTS[preset] : "");
     renderBossChips();
-    const text = orchestrationPresetText(preset);
-    const textFold = $("orchestration-text-fold");
-    if (textFold) textFold.hidden = !text;
-    $("orchestration-text").hidden = !text;
-    $("orchestration-text").textContent = text || "";
+    renderOrchestrationText();
     // An unread or broken file cannot take edits: nothing here could be saved or discarded.
     const editable = orchestration && !orchestration.error;
     renderSplitOptions(preset, editable);
@@ -977,6 +983,7 @@
 
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
+    renderOrchestrationText, orchestrationSupportsT3: () => usesSeats(orchestrationView),
     viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, renderRuleFiles, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced, REVIEW_ROLES,

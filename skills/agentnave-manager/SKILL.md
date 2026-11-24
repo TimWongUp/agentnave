@@ -19,7 +19,7 @@ description: 通过 AgentNave 开会、评审、转交、多个可写任务并�
 
 私聊用 `start_agent`（一个 CLI 做一项任务，结果只回给 boss），会议室用 `run_round`（答案在席位间共享），两者都用 `wait` 收结果。其余工具：`answer_prompt` 代答弹框，`cancel` 取消，`decide_answers` 审核会议答案，`list`、`read_conversation` 读历史，`list_members` 查工位和组员，`clear_provider_cooldown` 解除冷却，`handover` 转交和接手。
 
-在 T3 Code 主线程且开启 T3 编排时，单独任务与评审改由 `recommend_seat` 选工位后交 T3 的 `delegate_task` 执行，本 Skill 仅用于开会、评审方法与跨 T3 的 `handover`（会议等待按回执 `next`）。
+在 T3 Code 主线程、当前编排档位支持 T3 模式（分工协作、决策模型、自定义）且开启 T3 编排时，单独任务与评审改由 `recommend_seat` 取候选后交 T3 的 `delegate_task` 执行（分工协作与自定义由 boss 传 `seat`，决策模型可省略 `seat` 由决策模型选，用户点名 T3 账号或模型时直接按点名派），本 Skill 仅用于开会、评审方法与跨 T3 的 `handover`（会议等待按回执 `next`）。
 
 下面的情况按需再读对应参考，同一上下文只读一次：
 

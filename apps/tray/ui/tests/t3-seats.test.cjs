@@ -214,7 +214,16 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
       files: [],
       bosses: [{ keys: ["claude"], ids: ["claude"], labels: ["Claude Code"], mark: "claude" }],
       roles: ${JSON.stringify(ROLES)},
-      presets: { split: "rule" },
+      presets: {
+        meetings: "meetings-rule",
+        split: "split-rule",
+        decision: "decision-rule",
+        t3: {
+          split: "\\n- T3-BOSS",
+          decision: "\\n- T3-DECISION",
+          custom: "\\n- T3-BOSS",
+        },
+      },
       document: ${JSON.stringify(orchestrationDoc || { version: 1, preset: "off" })},
     };
     reviewSeats = ${JSON.stringify(reviewSeats)};
@@ -456,26 +465,50 @@ test("switch cannot open without candidates, dropdown hides legacy/hidden/stale,
   assert.equal(empty.find("t3/enabled").disabled, true);
 });
 
-test("saves and discards via the shared orchestration save bar and updates rule files", async () => {
+test("saves and discards via the shared orchestration save bar, updates rule files, and unifies rules preview by mode", async () => {
   const h = makeHarness({
-    t3State: { document: null, error: null, t3: SAMPLE_T3, rule: "T3 规则句" },
+    t3State: { document: null, error: null, t3: SAMPLE_T3 },
   });
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
-  const rule = () => h.section().children.find((c) => c.children[1]?.className === "s-card is-pre")?.children[1];
-  assert.equal(rule(), undefined);
+  // No separate rule fold inside T3 section; unified orchestration-text-fold shows mode full text.
+  const hasT3RuleFold = () => h.section().children.some((c) => c.children?.[1]?.className === "s-card is-pre");
+  assert.equal(hasT3RuleFold(), false);
 
-  // Toggle enabled on -> dirty, save bar enabled -> save posts /app/t3-seats and refreshes rule files.
+  h.run('viewMode("split")');
+  assert.equal(h.run('$("orchestration-text-fold").hidden'), false);
+  assert.equal(h.run('$("orchestration-text").textContent'), "split-rule");
+
+  // Toggle enabled on -> dirty, save bar enabled, and unified rules fold appends split T3 text.
   h.find("t3/enabled").listeners.change({ target: { checked: true } });
   assert.equal(h.t3((t) => t.changed()), true);
   assert.equal(h.run('$("advanced-badge").hidden'), false);
   assert.equal(h.run('$("advanced-save").disabled'), false);
-  assert.equal(rule().children[0], "T3 规则句");
+  assert.equal(hasT3RuleFold(), false);
+  assert.equal(h.run('$("orchestration-text").textContent'), "split-rule\n- T3-BOSS");
 
-  // Discard restores cleanly.
+  // Decision mode uses decision T3 suffix; custom seeds editor without T3 suffix and shows T3 suffix in fold.
+  h.run('viewMode("decision")');
+  assert.equal(h.run('$("orchestration-text").textContent'), "decision-rule\n- T3-DECISION");
+  h.run('viewMode("custom")');
+  assert.equal(h.run('$("custom-text").value'), "decision-rule");
+  assert.equal(h.run('$("orchestration-text-fold").hidden'), false);
+  assert.equal(h.run('$("orchestration-text").textContent'), "- T3-BOSS");
+
+  // Meetings and off never append T3 text.
+  h.run('viewMode("meetings")');
+  assert.equal(h.run('$("orchestration-text").textContent'), "meetings-rule");
+  h.run('viewMode("off")');
+  assert.equal(h.run('$("orchestration-text-fold").hidden'), true);
+
+  // Discard restores cleanly and hides custom fold when T3 is off.
   h.run('$("advanced-discard").listeners.click()');
   assert.equal(h.t3((t) => t.changed()), false);
   assert.equal(h.find("t3/enabled").checked, false);
+  h.run('viewMode("custom")');
+  assert.equal(h.run('$("orchestration-text-fold").hidden'), true);
+  h.run('viewMode("split")');
+  assert.equal(h.run('$("orchestration-text").textContent'), "split-rule");
 
   // Toggle enabled + random on and save.
   h.find("t3/enabled").listeners.change({ target: { checked: true } });
@@ -565,11 +598,12 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   assert.equal(h.t3((t) => t.hasCandidates()), false);
 });
 
-test("shared General / T3 Code segment switch toggles both pages and shows badge-dot on the inactive edited segment", async () => {
+test("shared General / T3 Code segment follows orchestration mode (hidden on off/meetings), keeps review unaffected, and shows badge-dots", async () => {
   // Hidden when T3 is not visible.
   const hidden = makeHarness({
     t3State: { document: null, error: null, t3: { detected: false, instances: [] } },
   });
+  hidden.run('viewMode("split")');
   await hidden.t3((t) => t.load());
   assert.equal(hidden.run('$("orchestration-scope").hidden'), true);
   assert.equal(hidden.run('$("review-scope").hidden'), true);
@@ -578,12 +612,22 @@ test("shared General / T3 Code segment switch toggles both pages and shows badge
   assert.equal(hidden.run('$("t3-seats-section").hidden'), true);
   assert.equal(hidden.run('$("t3-review-seats").hidden'), true);
 
-  // Visible when T3 is detected: defaults to General and shares the selection across both pages.
+  // Visible when T3 is detected: orchestration scope hides on off/meetings while review scope stays visible.
   const h = makeHarness({
     t3State: { document: null, error: null, t3: SAMPLE_T3 },
   });
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
+  for (const noT3Mode of ["off", "meetings"]) {
+    h.run(`viewMode("${noT3Mode}")`);
+    assert.equal(h.run('$("orchestration-scope").hidden'), true, noT3Mode);
+    assert.equal(h.run('$("orchestration-general").hidden'), false, noT3Mode);
+    assert.equal(h.run('$("t3-seats-section").hidden'), true, noT3Mode);
+    assert.equal(h.run('$("review-scope").hidden'), false, noT3Mode);
+  }
+
+  // On split/decision/custom, orchestration scope appears and defaults to General.
+  h.run('viewMode("split")');
   assert.equal(h.run('$("orchestration-scope").hidden'), false);
   assert.equal(h.run('$("review-scope").hidden'), false);
   assert.equal(h.run('$("orchestration-general").hidden'), false);
@@ -609,6 +653,21 @@ test("shared General / T3 Code segment switch toggles both pages and shows badge
   assert.equal(h.run('$("t3-review-seats").hidden'), false);
   assert.equal(dotHidden("scope/orchestration/t3"), true);
 
+  // Switching to meetings hides orchestration scope & T3 seats, while Review stays on T3;
+  // switching to decision or custom brings orchestration scope & T3 seats right back.
+  h.run('viewMode("meetings")');
+  assert.equal(h.run('$("orchestration-scope").hidden'), true);
+  assert.equal(h.run('$("orchestration-general").hidden'), false);
+  assert.equal(h.run('$("t3-seats-section").hidden'), true);
+  assert.equal(h.run('$("review-scope").hidden'), false);
+  assert.equal(h.run('$("t3-review-seats").hidden'), false);
+  for (const t3Mode of ["decision", "custom", "split"]) {
+    h.run(`viewMode("${t3Mode}")`);
+    assert.equal(h.run('$("orchestration-scope").hidden'), false, t3Mode);
+    assert.equal(h.run('$("orchestration-general").hidden'), true, t3Mode);
+    assert.equal(h.run('$("t3-seats-section").hidden'), false, t3Mode);
+  }
+
   // Edit General orchestration and General review seats while viewing T3 -> General dots appear on both pages.
   h.run('setBossMode(orchestration.bosses[0], "split")');
   h.run('setReviewSeat("security-reviewer", { provider: "codex", model: "gpt-6.2-astra" })');
@@ -626,6 +685,7 @@ test("shared General / T3 Code segment switch toggles both pages and shows badge
 
   // Discard clears every badge-dot.
   h.run('$("advanced-discard").listeners.click()');
+  h.run('viewMode("split")');
   assert.equal(dotHidden("scope/orchestration/t3"), true);
   assert.equal(dotHidden("scope/review/t3"), true);
 });

@@ -136,6 +136,18 @@ pub(super) fn preset_text(document: &Value, mode: &str) -> Option<String> {
     Some(assemble_steps(document, steps, true))
 }
 
+pub(super) fn t3_suffix(mode: &str) -> Option<String> {
+    let steps = catalog()["t3_order"].get(mode)?.as_array()?;
+    let mut out = String::new();
+    for step in steps {
+        let name = step
+            .as_str()
+            .expect("t3_order step string in orchestration_rules.json");
+        out.push_str(section(name));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 fn split_role_base(document: &Value) -> String {
     let steps = catalog()["order"]["split"]
         .as_array()
@@ -165,6 +177,12 @@ pub(super) fn presets_payload(document: &Value) -> Value {
     let default_count = md["default_count"]
         .as_u64()
         .expect("meeting default_count in orchestration_rules.json");
+    let t3: serde_json::Map<String, Value> = rules["t3_order"]
+        .as_object()
+        .expect("t3_order object in orchestration_rules.json")
+        .keys()
+        .filter_map(|mode| Some((mode.clone(), json!(t3_suffix(mode)?))))
+        .collect();
     json!({"meetings": super::text_of(document, "meetings"),
         "split": super::text_of(document, "split"),
         "decision": super::text_of(document, "decision"),
@@ -179,5 +197,6 @@ pub(super) fn presets_payload(document: &Value) -> Value {
         "role_base": {"split": split_role_base(document)},
         "decision_parts": dispatch_parts("dispatch_decision"),
         "split_parts": dispatch_parts("dispatch_split"),
+        "t3": Value::Object(t3),
         "lead": {"asked": str_at(lead, "when_false"), "always": str_at(lead, "when_true")}})
 }

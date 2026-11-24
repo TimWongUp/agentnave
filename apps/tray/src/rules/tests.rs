@@ -692,7 +692,8 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
             "meeting_defaults",
             "order",
             "sections",
-            "switches"
+            "switches",
+            "t3_order"
         ]
     );
     assert_eq!(
@@ -880,7 +881,7 @@ fn the_decision_mode_is_per_boss_and_shared_by_readers_of_one_file() {
 }
 
 #[test]
-fn t3_rule_sentence_applies_only_to_claude_and_codex_across_all_modes_and_restores_cleanly() {
+fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     let home = tempfile::tempdir().unwrap();
     let h = &home.path().canonicalize().unwrap();
     let app = |key: &'static str, id: &'static str, label: &'static str, root: &str| App {
@@ -907,41 +908,42 @@ fn t3_rule_sentence_applies_only_to_claude_and_codex_across_all_modes_and_restor
         ),
         app("zcode", "zcode", "ZCode", ".zcode"),
     ];
-    let t3_line = catalog::section("t3_orchestration");
+    let boss_suffix = catalog::t3_suffix("split").unwrap();
+    let decision_suffix = catalog::t3_suffix("decision").unwrap();
+    let custom_suffix = catalog::t3_suffix("custom").unwrap();
+    assert_eq!(boss_suffix, custom_suffix);
+    assert!(boss_suffix.contains("从 `list_members` 公布的 T3 工位选一个填进 `seat`"));
+    assert!(decision_suffix.contains("由决策模型选工位"));
+    assert!(boss_suffix.contains("用户点名 T3 里的账号或模型时"));
+    assert!(decision_suffix.contains("用户点名 T3 里的账号或模型时"));
+    assert!(catalog::t3_suffix("off").is_none());
+    assert!(catalog::t3_suffix("meetings").is_none());
     let backup = |_: &Path, _: &[u8]| Ok(());
 
-    // 1. Off mode + T3 active: Claude (default & named) and Codex get heading + T3 sentence once;
-    //    Grok shares Claude's file (written once); Antigravity and ZCode get nothing.
+    // 1. Off mode + T3 active: NO block written anywhere (never writes a heading-only block).
     let own_claude = "# 我的 Claude 规则\n";
     std::fs::create_dir_all(h.join(".claude")).unwrap();
     std::fs::write(h.join(".claude/CLAUDE.md"), own_claude).unwrap();
     let off = json!({"preset": "off"});
+    assert!(wanted(&apps, h, &off, true).is_empty());
     assert!(sync(&apps, &apps, h, &off, true, &[], &backup, false).is_empty());
-    let expected_off_only = format!("## AgentNave 编排偏好\n{t3_line}");
-    let claude_content = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
-    assert!(claude_content.contains(&block(&expected_off_only)));
-    assert_eq!(claude_content.matches("在 T3 Code 主线程").count(), 1);
-    assert!(
-        std::fs::read_to_string(h.join(".agentnave-accounts/claude/a1/CLAUDE.md"))
-            .unwrap()
-            .contains(&block(&expected_off_only))
+    assert_eq!(
+        std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),
+        own_claude
     );
-    assert!(
-        std::fs::read_to_string(h.join(".codex/AGENTS.md"))
-            .unwrap()
-            .contains(&block(&expected_off_only))
-    );
+    assert!(!h.join(".agentnave-accounts/claude/a1/CLAUDE.md").exists());
+    assert!(!h.join(".codex/AGENTS.md").exists());
     assert!(!h.join(".grok/AGENTS.md").exists());
     assert!(!h.join(".gemini/AGENTS.md").exists());
     assert!(!h.join(".zcode/AGENTS.md").exists());
 
-    // rules::list matches written content without false "not written" mismatch.
-    let listed = list(&apps, &apps, h, &off, true);
-    for row in listed["files"].as_array().unwrap() {
-        assert_eq!(row["target"], row["current"], "{row}");
+    // 2. Meetings mode + T3 active: ordinary meetings block without any T3 text.
+    let meetings = json!({"preset": "meetings"});
+    for (_, text) in wanted(&apps, h, &meetings, true) {
+        assert!(!text.contains("在 T3 Code 主线程"));
     }
 
-    // 2. Grok alone (Claude not connected) does NOT get T3 sentence even if CLAUDE.md exists.
+    // 3. Grok alone (Claude not connected) does NOT get T3 suffix even in split mode.
     let only_grok = [app("grok", "grok", "Grok", ".grok")];
     let grok_wanted = wanted(&only_grok, h, &json!({"preset": "split"}), true);
     assert!(
@@ -950,31 +952,61 @@ fn t3_rule_sentence_applies_only_to_claude_and_codex_across_all_modes_and_restor
             .all(|(_, text)| !text.contains("在 T3 Code 主线程"))
     );
 
-    // 3. Preset modes (meetings, split, parallel, decision) append T3 sentence at the end for
-    //    Claude/Codex only, leaving non-Claude/Codex untouched and presets() clean.
-    for mode in ["meetings", "split", "parallel", "decision"] {
+    // 4. Split and decision modes append their mode-specific T3 suffix for Claude/Codex only;
+    //    non-Claude/Codex stay untouched and presets()[mode] stays clean while presets()["t3"][mode]
+    //    carries the exact suffix.
+    for (mode, expected_suffix) in [("split", &boss_suffix), ("decision", &decision_suffix)] {
         let doc = json!({"preset": mode});
+        let payload = presets(&doc);
         assert!(
-            !presets(&doc)[mode]
+            !payload[mode]
                 .as_str()
                 .unwrap()
                 .contains("在 T3 Code 主线程")
         );
+        assert_eq!(payload["t3"][mode].as_str(), Some(expected_suffix.as_str()));
         let rows = wanted(&apps, h, &doc, true);
         for (path, text) in &rows {
             let is_claude_or_codex = path.starts_with(h.join(".claude"))
                 || path.starts_with(h.join(".agentnave-accounts/claude/a1"))
                 || path.starts_with(h.join(".codex"));
             assert_eq!(
-                text.ends_with(t3_line),
+                text.ends_with(expected_suffix.as_str()),
                 is_claude_or_codex,
+                "{mode} {path:?}"
+            );
+            assert_eq!(
+                text.matches("在 T3 Code 主线程").count(),
+                usize::from(is_claude_or_codex),
                 "{mode} {path:?}"
             );
         }
     }
 
-    // 4. Custom mode: appended after user text, never stored in custom, and does not count against
-    //    the 8000-character custom limit.
+    // Sync split + T3 active and verify rules::list reports current == target.
+    let split_doc = json!({"preset": "split"});
+    assert!(sync(&apps, &apps, h, &split_doc, true, &[], &backup, false).is_empty());
+    let listed = list(&apps, &apps, h, &split_doc, true);
+    for row in listed["files"].as_array().unwrap() {
+        assert_eq!(row["target"], row["current"], "{row}");
+    }
+    let claude_split = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
+    assert!(claude_split.contains(own_claude));
+    assert!(claude_split.contains(boss_suffix.as_str()));
+    assert_eq!(claude_split.matches("在 T3 Code 主线程").count(), 1);
+    assert!(
+        std::fs::read_to_string(h.join(".agentnave-accounts/claude/a1/CLAUDE.md"))
+            .unwrap()
+            .contains(boss_suffix.as_str())
+    );
+    assert!(
+        std::fs::read_to_string(h.join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains(boss_suffix.as_str())
+    );
+
+    // 5. Custom mode: appended after user text using boss dispatch, never stored in custom, and
+    //    does not count against the 8000-character custom limit. Empty custom writes no block.
     let max_custom = "字".repeat(CUSTOM_LIMIT);
     assert!(check_custom(&max_custom).is_ok());
     let custom_doc = json!({"preset": "custom", "custom": max_custom, "enabled_roles": []});
@@ -983,27 +1015,34 @@ fn t3_rule_sentence_applies_only_to_claude_and_codex_across_all_modes_and_restor
             .unwrap()
             .contains("在 T3 Code 主线程")
     );
+    assert_eq!(
+        presets(&custom_doc)["t3"]["custom"].as_str(),
+        Some(custom_suffix.as_str())
+    );
     let custom_rows = wanted(&apps, h, &custom_doc, true);
     let codex_custom = custom_rows
         .iter()
         .find(|(path, _)| path == &h.join(".codex/AGENTS.md"))
         .unwrap();
     assert!(codex_custom.1.starts_with(&max_custom));
-    assert!(codex_custom.1.ends_with(t3_line));
+    assert!(codex_custom.1.ends_with(&custom_suffix));
 
-    // Empty custom text with T3 active falls back to heading + T3 sentence.
     let empty_custom = json!({"preset": "custom", "custom": "   "});
-    let empty_rows = wanted(&apps, h, &empty_custom, true);
-    assert_eq!(
-        empty_rows
-            .iter()
-            .find(|(path, _)| path == &h.join(".codex/AGENTS.md"))
-            .unwrap()
-            .1,
-        expected_off_only
-    );
+    assert!(wanted(&apps, h, &empty_custom, true).is_empty());
 
-    // 5. Turning T3 off restores CLAUDE.md to user's original content and removes empty files.
+    // 6. Turning T3 off removes the T3 suffix while keeping the split block; switching to off
+    //    restores CLAUDE.md to user's original content and removes empty files.
+    assert!(sync(&apps, &apps, h, &split_doc, false, &[], &backup, false).is_empty());
+    assert!(
+        !std::fs::read_to_string(h.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
+    );
+    assert!(
+        !std::fs::read_to_string(h.join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains("在 T3 Code 主线程")
+    );
     assert!(sync(&apps, &apps, h, &off, false, &[], &backup, false).is_empty());
     assert_eq!(
         std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),

@@ -268,11 +268,6 @@ pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
     Value::Object(modes)
 }
 
-/// The line T3 orchestration adds to the Claude and Codex blocks.
-pub(crate) fn t3_rule() -> &'static str {
-    catalog::section("t3_orchestration").trim()
-}
-
 /// The text each file that carries the block should hold.
 fn wanted(
     connected: &[App],
@@ -282,6 +277,7 @@ fn wanted(
 ) -> Vec<(PathBuf, String)> {
     let mut wanted = Vec::new();
     for group in groups(connected, home) {
+        let mode = mode_of(document, &group);
         for path in targets(&group, home) {
             let mut scoped = document.clone();
             let provider = document["image_generation"]["provider"].as_str();
@@ -301,16 +297,14 @@ fn wanted(
                 && group.iter().any(|app| {
                     matches!(app.id, "claude" | "codex") && would_read(app, home).contains(&path)
                 });
-            let text = match (text_of(&scoped, mode_of(document, &group)), t3_reader) {
+            let text = match (text_of(&scoped, mode), t3_reader) {
                 (Some(mut text), true) => {
-                    text.push_str(catalog::section("t3_orchestration"));
+                    if let Some(suffix) = catalog::t3_suffix(mode) {
+                        text.push_str(&suffix);
+                    }
                     Some(text)
                 }
-                (None, true) => Some(format!(
-                    "## AgentNave 编排偏好\n{}",
-                    catalog::section("t3_orchestration")
-                )),
-                (text, false) => text,
+                (text, _) => text,
             };
             if let Some(text) = text {
                 wanted.push((path, text));

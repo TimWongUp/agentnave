@@ -129,13 +129,18 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
     )
     # The decision text has no per-group seat lines.
     assert "enabled_roles" not in rules["order"]["decision"]
-    t3_line = rules["sections"]["t3_orchestration"]
-    assert t3_line.startswith(
-        "\n- 在 T3 Code 主线程（有 `delegate_task` 工具）里，用户已开启 T3 编排："
+    assert set(rules["t3_order"]) == {"split", "decision", "custom"}
+    for mode, steps in rules["t3_order"].items():
+        assert steps and set(steps) <= set(rules["sections"]), mode
+        combined = "".join(rules["sections"][step] for step in steps)
+        assert "`recommend_seat`" in combined and "`delegate_task`" in combined
+        assert "用户点名 T3 里的账号或模型时" in combined
+        assert "由 `delegate_task` 派出的线程只完成自己的任务，不再派发或开会。" in combined
+    assert "由决策模型选工位" in rules["sections"]["t3_dispatch_decision"]
+    assert (
+        "从 `list_members` 公布的 T3 工位选一个填进 `seat`" in rules["sections"]["t3_dispatch_boss"]
     )
-    assert "`recommend_seat`" in t3_line and "`delegate_task`" in t3_line
-    assert "由 `delegate_task` 派出的线程只完成自己的任务，不再派发或开会。" in t3_line
-    assert all("t3_orchestration" not in steps for steps in rules["order"].values())
+    assert all(not step.startswith("t3_") for steps in rules["order"].values() for step in steps)
     assert set(rules["meeting_defaults"]["provider_names"]) == set(get_args(ProviderName.__value__))
 
     providers_rs = (
@@ -2106,13 +2111,44 @@ def test_t3_seats_file_strict_validation_and_activation(
         with pytest.raises(ValidationError):
             T3SeatsFile.model_validate(bad)
 
-    # Broken t3-seats.json raises T3SeatsFileError in T3 main thread, but does not affect non-T3.
+    # Broken t3-seats.json raises T3SeatsFileError in T3 main thread ONLY when host mode supports T3.
     (tmp_path / "t3-seats.json").write_text("{broken json", encoding="utf-8")
-    with pytest.raises(T3SeatsFileError, match="t3-seats.json"):
-        effective_t3_seats(codex)
+    # Missing orchestration.json or off/meetings -> never touches t3-seats.json.
+    assert effective_t3_seats(codex) is None
+    assert not t3_orchestration_active(codex)
+    for inactive_mode in ("off", "meetings"):
+        (tmp_path / "orchestration.json").write_text(
+            json.dumps({"version": 1, "preset": inactive_mode}), encoding="utf-8"
+        )
+        assert effective_t3_seats(codex) is None
+        assert not t3_orchestration_active(codex)
+    # Active T3 modes (split, parallel, decision, custom) surface broken t3-seats.json.
+    for active_mode in ("split", "parallel", "decision", "custom"):
+        (tmp_path / "orchestration.json").write_text(
+            json.dumps({"version": 1, "preset": active_mode}), encoding="utf-8"
+        )
+        with pytest.raises(T3SeatsFileError, match="t3-seats.json"):
+            effective_t3_seats(codex)
+    # Valid t3-seats.json activates only for split/parallel/decision/custom.
+    (tmp_path / "t3-seats.json").write_text(json.dumps(valid), encoding="utf-8")
+    for active_mode in ("split", "parallel", "decision", "custom"):
+        (tmp_path / "orchestration.json").write_text(
+            json.dumps({"version": 1, "preset": active_mode}), encoding="utf-8"
+        )
+        assert effective_t3_seats(codex) is not None
+        assert t3_orchestration_active(codex)
+    # effective_apps without host app_id reads as None -> inactive.
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps({"version": 1, "preset": "split", "effective_apps": {"codex": "split"}}),
+        encoding="utf-8",
+    )
+    assert effective_t3_seats(codex) is None
+    assert effective_t3_seats(Host("codex", "env", "codex")) is not None
+    # Non-T3 connection stays inactive even in an active mode.
+    (tmp_path / "t3-seats.json").write_text("{broken json", encoding="utf-8")
     monkeypatch.delenv("T3CODE_THREAD_ID")
     t3.reset_t3_mode_cache()
-    assert effective_t3_seats(codex) is None
+    assert effective_t3_seats(Host("codex", "env", "codex")) is None
 
 
 def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
