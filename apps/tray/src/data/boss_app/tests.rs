@@ -1504,14 +1504,29 @@ fn t3_antigravity_acp_records_provide_cwd_but_are_not_resumable_cli_or_desktop()
         );",
     )
     .unwrap();
+    let (uri_proj, expected_proj, uri_key, expected_key) = if cfg!(windows) {
+        (
+            r#"["file:///C:/work/t3-proj"]"#,
+            r"C:\work\t3-proj",
+            r#"["file:///C:/work/t3-key"]"#,
+            r"C:\work\t3-key",
+        )
+    } else {
+        (
+            r#"["file:///work/t3-proj"]"#,
+            "/work/t3-proj",
+            r#"["file:///work/t3-key"]"#,
+            "/work/t3-key",
+        )
+    };
     conn.execute(
-        "INSERT INTO conversation_summaries VALUES (?1, 'T3 chat', '[\"file:///work/t3-proj\"]', '2026-11-24T10:00:00Z')",
-        [CODEX_SESSION],
+        "INSERT INTO conversation_summaries VALUES (?1, 'T3 chat', ?2, '2026-11-24T10:00:00Z')",
+        [CODEX_SESSION, uri_proj],
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO conversation_summaries VALUES (?1, 'T3 key-only', '[\"file:///work/t3-key\"]', '2026-11-24T10:00:00Z')",
-        [CLAUDE_SESSION],
+        "INSERT INTO conversation_summaries VALUES (?1, 'T3 key-only', ?2, '2026-11-24T10:00:00Z')",
+        [CLAUDE_SESSION, uri_key],
     )
     .unwrap();
     drop(conn);
@@ -1571,9 +1586,6 @@ fn t3_antigravity_acp_records_provide_cwd_but_are_not_resumable_cli_or_desktop()
     let apps = BossApps::new();
     assert!(apps.of(&ws_db, || homes.clone()).is_empty());
     let cwds = apps.cwds(&ws_db, || homes.clone());
-    assert_eq!(
-        cwds.get("ws-file").map(String::as_str),
-        Some("/work/t3-proj")
-    );
-    assert_eq!(cwds.get("ws-key").map(String::as_str), Some("/work/t3-key"));
+    assert_eq!(cwds.get("ws-file").map(String::as_str), Some(expected_proj));
+    assert_eq!(cwds.get("ws-key").map(String::as_str), Some(expected_key));
 }
