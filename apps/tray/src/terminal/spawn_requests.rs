@@ -414,18 +414,12 @@ impl Coordinator {
     }
 
     pub(super) fn poll(&self, terminals: &Terminals) {
-        let mut system = System::new();
-        system.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing(),
-        );
-        self.reconcile_settled(&system);
-        self.scan_requests(terminals, &system);
+        self.reconcile_settled();
+        self.scan_requests(terminals);
         let _ = self.publish_with(Some(terminals));
     }
 
-    fn scan_requests(&self, terminals: &Terminals, system: &System) {
+    fn scan_requests(&self, terminals: &Terminals) {
         let dir = self.root.join("spawn-requests");
         match verify_spawn_requests_dir(&dir) {
             Ok(()) => {
@@ -452,11 +446,11 @@ impl Coordinator {
         paths.sort();
 
         for path in paths {
-            self.process_request_file(&path, terminals, system);
+            self.process_request_file(&path, terminals);
         }
     }
 
-    fn process_request_file(&self, path: &Path, terminals: &Terminals, system: &System) {
+    fn process_request_file(&self, path: &Path, terminals: &Terminals) {
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             return;
         };
@@ -474,7 +468,7 @@ impl Coordinator {
         {
             return;
         }
-        if !verify_service_identity(&env.service, system) {
+        if !verify_service_identity(&env.service) {
             return;
         }
         if !matches!(env.kind.as_str(), "run" | "cancel") {
@@ -565,7 +559,7 @@ impl Coordinator {
         });
     }
 
-    fn reconcile_settled(&self, system: &System) {
+    fn reconcile_settled(&self) {
         let checks: Vec<(String, u32, Option<Instant>)> = {
             let state = self.lock();
             state
@@ -578,12 +572,15 @@ impl Coordinator {
         if checks.is_empty() {
             return;
         }
+        let service_pids: HashSet<u32> = checks.iter().map(|(_, pid, _)| *pid).collect();
+        let service_pids: Vec<u32> = service_pids.into_iter().collect();
+        let system = links::snapshot(&service_pids);
         let mut inbox_cache: HashMap<u32, Option<Value>> = HashMap::new();
         let mut remove_ids = Vec::new();
         for (req_id, svc_pid, finished_at) in checks {
             let settled_val = inbox_cache
                 .entry(svc_pid)
-                .or_insert_with(|| read_settled_for_service(&self.root, svc_pid, system));
+                .or_insert_with(|| read_settled_for_service(&self.root, svc_pid, &system));
             let confirmed = settled_val
                 .as_ref()
                 .is_some_and(|v| is_request_settled(v, self.pid, self.started_at, &req_id));
@@ -741,7 +738,8 @@ fn read_request_envelope(path: &Path) -> Option<SpawnRequestEnvelope> {
     serde_json::from_slice(&bytes).ok()
 }
 
-fn verify_service_identity(service: &ProcessIdentity, system: &System) -> bool {
+fn verify_service_identity(service: &ProcessIdentity) -> bool {
+    let system = links::snapshot(&[service.pid]);
     let Some(process) = system.process(Pid::from_u32(service.pid)) else {
         return false;
     };

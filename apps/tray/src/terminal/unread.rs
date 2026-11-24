@@ -8,11 +8,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use serde::Deserialize;
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::Pid;
 
 use super::{Terminals, links};
 
@@ -162,9 +162,7 @@ pub(super) fn inboxes(root: &Path) -> HashMap<String, RawBoss> {
     if dir.is_symlink() {
         return HashMap::new();
     }
-    let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let mut bosses: HashMap<String, RawBoss> = HashMap::new();
+    let mut files: Vec<(PathBuf, u32)> = Vec::new();
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let path = entry.path();
         let Some(pid) = path
@@ -177,6 +175,16 @@ pub(super) fn inboxes(root: &Path) -> HashMap<String, RawBoss> {
         if path.extension().is_none_or(|s| s != "json") {
             continue;
         }
+        files.push((path, pid));
+    }
+    if files.is_empty() {
+        return HashMap::new();
+    }
+    let pids: HashSet<u32> = files.iter().map(|(_, pid)| *pid).collect();
+    let pids: Vec<u32> = pids.into_iter().collect();
+    let system = links::snapshot(&pids);
+    let mut bosses: HashMap<String, RawBoss> = HashMap::new();
+    for (path, pid) in files {
         let Some(process) = system.process(Pid::from_u32(pid)) else {
             continue;
         };
