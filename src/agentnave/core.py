@@ -1236,6 +1236,7 @@ class InvocationManager:
             and not self._closed
             and kept.alive()
         ):
+            kept.settle(result.session_id)
             self._pool.keep(record.request.provider, result.session_id, kept)
         else:
             await kept.end()
@@ -1389,20 +1390,23 @@ class InvocationManager:
         self, record: _InvocationRecord, prepared: PreparedCommand
     ) -> tuple[PreparedCommand, LaunchSignature]:
         """The command to run and its launch signature, read once for both the choice and the
-        launch: a resume that no kept process can serve runs the Adapter's one-off command
-        instead, when it gave one (ADR-0120)."""
+        launch: a run that will not keep its process, or a resume that no kept process can
+        serve, runs the Adapter's one-off command instead, when it gave one (ADR-0120)."""
         request = record.request
-        signature = launch_signature(prepared, request.account)
+        signature = launch_signature(prepared, request.account, request.session_id)
+        unkept = prepared.unkept
+        if unkept is None:
+            return prepared, signature
         if (
-            prepared.unkept is None
-            or request.session_id is None
-            or (
-                not record.isolated
-                and self._pool.serves(request.provider, request.session_id, signature)
+            can_keep(prepared)
+            and not record.isolated
+            and (
+                request.session_id is None
+                or self._pool.serves(request.provider, request.session_id, signature)
             )
         ):
             return prepared, signature
-        return prepared.unkept, launch_signature(prepared.unkept, request.account)
+        return unkept, launch_signature(unkept, request.account, request.session_id)
 
     async def _launch(
         self,
@@ -1448,7 +1452,7 @@ class InvocationManager:
             self._spawn_locks[request.provider].release()
         if not keepable:
             return supervised, None
-        return supervised, KeptProcess.adopt(supervised, signature)
+        return supervised, KeptProcess.adopt(supervised, signature, prepared)
 
     async def _collect_run(
         self,

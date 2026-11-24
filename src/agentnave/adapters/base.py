@@ -97,7 +97,11 @@ class PreparedCommand:
     # config files), read again for every launch from the environment the process gets, so a
     # change starts a new process.
     launch_inputs: Callable[[Mapping[str, str]], object] | None = None
-    # For a keep_alive resume: the one-off command to run when no kept process serves the turn.
+    # For a keep_alive command: the native session's stored state (such as its log file's size
+    # and time), so a session continued elsewhere is not served by a stale kept process.
+    session_state: Callable[[Mapping[str, str], str], object] | None = None
+    # For a keep_alive command: the one-off command to run when its process would not be kept
+    # (an isolated run) or a resume that no kept process serves.
     unkept: PreparedCommand | None = None
 
 

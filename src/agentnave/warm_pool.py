@@ -23,12 +23,26 @@ MAX_KEPT = 3
 type LaunchSignature = tuple[object, ...]
 
 
-def launch_signature(prepared: PreparedCommand, account: str | None) -> LaunchSignature:
-    """What a reused process must have been started with: anything else needs a new one."""
+def _child_env(prepared: PreparedCommand) -> dict[str, str]:
+    env = {name: value for name, value in os.environ.items() if name not in prepared.unset_env}
+    return {**env, **prepared.extra_env}
+
+
+def session_state(prepared: PreparedCommand, session_id: str | None) -> object:
+    """The native session's stored state as the Adapter reads it, or None."""
+    if prepared.session_state is None or session_id is None:
+        return None
+    return prepared.session_state(_child_env(prepared), session_id)
+
+
+def launch_signature(
+    prepared: PreparedCommand, account: str | None, session_id: str | None = None
+) -> LaunchSignature:
+    """What a reused process must have been started with, and the state of the session it
+    serves: anything else needs a new one. The session state comes last (see KeptProcess)."""
     inputs = None
     if prepared.launch_inputs is not None:
-        env = {name: value for name, value in os.environ.items() if name not in prepared.unset_env}
-        inputs = prepared.launch_inputs({**env, **prepared.extra_env})
+        inputs = prepared.launch_inputs(_child_env(prepared))
     return (
         prepared.argv,
         str(prepared.cwd),
@@ -36,6 +50,7 @@ def launch_signature(prepared: PreparedCommand, account: str | None) -> LaunchSi
         tuple(sorted(prepared.extra_env.items())),
         account,
         inputs,
+        session_state(prepared, session_id),
     )
 
 
@@ -100,13 +115,22 @@ class KeptProcess:
     supervised: SupervisedProcess
     signature: LaunchSignature
     stderr: StderrDrain
+    prepared: PreparedCommand
 
     @classmethod
-    def adopt(cls, supervised: SupervisedProcess, signature: LaunchSignature) -> KeptProcess:
+    def adopt(
+        cls, supervised: SupervisedProcess, signature: LaunchSignature, prepared: PreparedCommand
+    ) -> KeptProcess:
         stream = supervised.process.stderr
         if stream is None:
             raise RuntimeError("provider subprocess pipes were not created")
-        return cls(supervised, signature, StderrDrain(stream))
+        return cls(supervised, signature, StderrDrain(stream), prepared)
+
+    def settle(self, session_id: str) -> None:
+        """Record the session's stored state as this process leaves it, so a resume finds out
+        when something else (another service's one-off run) has continued the session since;
+        what the process was started with stays as it was then."""
+        self.signature = (*self.signature[:-1], session_state(self.prepared, session_id))
 
     def alive(self) -> bool:
         return self.supervised.process.returncode is None and not self.supervised.completion.done()

@@ -70,6 +70,10 @@ _THREAD_OVERRIDES: dict[str, dict[str, Any]] = {
     "bypass": {"approvalPolicy": "never", "sandbox": "danger-full-access"},
 }
 _AUTO_REVIEWERS = frozenset({"auto_review", "guardian_subagent"})
+# The config warning the app-server sends when a rules file does not parse, where exec exits
+# before starting a turn (codex-rs/app-server/src/lib.rs exec_policy_config_warning;
+# codex-rs/exec/src/lib.rs, check_execpolicy_for_warnings).
+_RULES_ERROR = "Error parsing rules; custom rules not applied."
 _PAGINATED_UNSUPPORTED = "paginated threads require thread/turns/list and thread/items/list support"
 _CAMEL = re.compile(r"(?<=[a-z0-9])([A-Z])")
 _USAGE = (
@@ -120,7 +124,9 @@ class Connection:
         self._state = threading.Lock()
         self._in_turn = True
         self._gone = False
-        threading.Thread(target=self._read, daemon=True).start()
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
+        threading.Thread(target=self._watch, daemon=True).start()
 
     def send(self, value: dict[str, Any]) -> None:
         assert self.process.stdin is not None
@@ -147,12 +153,24 @@ class Connection:
         except (OSError, ValueError):
             pass
         finally:
-            with self._state:
-                self._gone = True
-                if not self._in_turn:
-                    # Idle, with no turn to fail: end, so the kept process is not left dead.
-                    os._exit(1)
-            self._messages.put(None)
+            self._lost()
+
+    def _watch(self) -> None:
+        """The app-server exiting ends the connection even while something it started still
+        holds its stdout open: what it wrote before exiting is read first."""
+        self.process.wait()
+        self._reader.join(timeout=1)
+        self._lost()
+
+    def _lost(self) -> None:
+        with self._state:
+            if self._gone:
+                return
+            self._gone = True
+            if not self._in_turn:
+                # Idle, with no turn to fail: end, so the kept process is not left dead.
+                os._exit(1)
+        self._messages.put(None)
 
     def begin_turn(self) -> None:
         with self._state:
@@ -205,6 +223,18 @@ class Connection:
                 raise RequestError(method, error.get("code"), error.get("message"))
             return _object(message.get("result"))
 
+    def arrived(self) -> list[dict[str, Any]]:
+        """What has arrived and not been read yet, kept for the turn."""
+        while True:
+            try:
+                message = self._messages.get_nowait()
+            except queue.Empty:
+                return list(self._backlog)
+            if message is None:
+                self._messages.put(None)
+                return list(self._backlog)
+            self._backlog.append(message)
+
     def notification(self) -> dict[str, Any]:
         return self._backlog.pop(0) if self._backlog else self._receive()
 
@@ -221,6 +251,7 @@ class Connection:
                 return
 
     def close(self) -> None:
+        self.begin_turn()  # the bridge is ending itself: an exit now is no idle loss
         if self.process.stdin is not None:
             with suppress(OSError):
                 self.process.stdin.close()
@@ -341,6 +372,15 @@ def turn_end(turn: dict[str, Any], usage: dict[str, Any] | None) -> dict[str, An
     return {"type": "turn.failed", "error": {"message": message or f"codex turn {status}"}}
 
 
+def fail_on_rules_error(connection: Connection) -> None:
+    """exec does not run a turn when a rules file does not parse; neither does the bridge."""
+    for message in connection.arrived():
+        params = _object(message.get("params"))
+        if message.get("method") == "configWarning" and params.get("summary") == _RULES_ERROR:
+            details = params.get("details")
+            raise RuntimeError(f"Error loading rules:\n{details}" if details else _RULES_ERROR)
+
+
 def run_turn(connection: Connection, thread: Thread, turn: dict[str, Any]) -> None:
     """turn/start as exec sends it: the cwd and approval policy, nothing else on permissions."""
     emit({"type": "thread.started", "thread_id": thread.id})
@@ -438,6 +478,7 @@ def serve(mode: str, allowed: frozenset[str], command: list[str]) -> int:
                 connection.forget_idle()
             if thread is None:
                 thread = open_thread(connection, turn, mode)
+                fail_on_rules_error(connection)
             elif turn.get("session_id") != thread.id:
                 raise ValueError(f"this Codex process serves thread {thread.id} only")
             run_turn(connection, thread, turn)

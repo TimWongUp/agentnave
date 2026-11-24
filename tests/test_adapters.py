@@ -512,11 +512,10 @@ def test_codex_fixed_permissions_keep_an_app_server_on_every_turn(tmp_path: Path
             assert prepared.keep_alive and _bridged(prepared) == mode
             assert prepared.stdin is not None
             assert json.loads(prepared.stdin)["session_id"] == session_id
-            # With no kept process to serve it, a resume runs exec resume instead.
+            # A run that is not kept, or a resume no kept process serves, runs exec instead.
             unkept = prepared.unkept
-            assert (unkept is None) is (session_id is None)
-            if unkept is not None:
-                assert unkept.argv[1:3] == ("exec", "resume") and not unkept.keep_alive
+            assert unkept is not None and unkept.argv[1] == "exec" and not unkept.keep_alive
+            assert (unkept.argv[2] == "resume") is (session_id is not None)
     resolved: tuple[dict[str, str | int | float | bool], ...] = (
         {"sandbox": "workspace-write"},
         {"approve_for_me": False},
@@ -542,17 +541,17 @@ def test_codex_config_fingerprint_covers_rules_and_a_relative_codex_home(tmp_pat
     project.mkdir(parents=True)
     (project / "b.rules").write_text("y")
     env = {"CODEX_HOME": "home"}
-    before = codex._config_files(tmp_path, env)  # pyright: ignore[reportPrivateUsage]
+    before = codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
     paths = {cast(tuple[object, ...], entry)[0] for entry in before}
     assert {str(rules.resolve() / "a.rules"), str(project.resolve() / "b.rules")} <= paths
     (project / "b.rules").write_text("changed")
-    assert codex._config_files(tmp_path, env) != before  # pyright: ignore[reportPrivateUsage]
+    assert codex._launch_inputs(tmp_path, "codex", env) != before  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
 def test_codex_config_fingerprint_sees_rule_links_and_project_roots(tmp_path: Path) -> None:
     def fingerprint() -> tuple[object, ...]:
-        return codex._config_files(inner, {"CODEX_HOME": str(tmp_path / "home")})  # pyright: ignore[reportPrivateUsage]
+        return codex._launch_inputs(inner, "codex", {"CODEX_HOME": str(tmp_path / "home")})  # pyright: ignore[reportPrivateUsage]
 
     inner = tmp_path / "outer" / "inner"
     rules = inner / ".codex" / "rules"
@@ -582,6 +581,43 @@ def test_codex_config_fingerprint_sees_rule_links_and_project_roots(tmp_path: Pa
     (inner / ".git").unlink()
     (inner / ".git").mkdir()
     assert fingerprint() != pointer
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable permissions")
+def test_codex_launch_inputs_cover_every_toml_and_the_executable(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    executable = _fake_executable(tmp_path / "bin", "codex")
+    env = {"CODEX_HOME": str(home), "PATH": str(executable.parent)}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    (home / "environments.toml").write_text("include_local = false")
+    with_environments = inputs()
+    assert with_environments != before
+    replacement = _fake_executable(tmp_path / "other", "codex")
+    replacement.write_text("#!/bin/sh\necho upgraded\n")
+    os.replace(replacement, executable)
+    assert inputs() != with_environments
+
+
+def test_codex_rollout_state_follows_the_sessions_log(tmp_path: Path) -> None:
+    day = tmp_path / "home" / "sessions" / "2026" / "11" / "24"
+    day.mkdir(parents=True)
+    rollout = day / "rollout-2026-11-24T10-00-00-thread-1.jsonl"
+    rollout.write_text("one")
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def state(session_id: str) -> tuple[object, ...]:
+        return codex._rollout_state(tmp_path, env, session_id)  # pyright: ignore[reportPrivateUsage]
+
+    before = state("thread-1")
+    assert [cast(tuple[object, ...], entry)[0] for entry in before] == [str(rollout.resolve())]
+    assert state("thread-2") == ()
+    rollout.write_text("one, two")
+    assert state("thread-1") != before
 
 
 def _bridged(prepared: base.PreparedCommand) -> str:

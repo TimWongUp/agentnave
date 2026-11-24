@@ -44,6 +44,9 @@ for line in sys.stdin:
             out({"id": message["id"], "error": {"code": -1, "message": "not signed in"}})
         else:
             out({"id": message["id"], "result": {}})
+    elif method == "initialized" and os.environ.get("FAKE_CODEX_RULES_ERROR"):
+        out({"method": "configWarning", "params": {
+            "summary": "Error parsing rules; custom rules not applied.", "details": "bad.rules"}})
     elif method == "thread/start":
         thread = f"thread-{os.getpid()}"
         params = message["params"]
@@ -78,6 +81,11 @@ for line in sys.stdin:
         out({"method": "turn/completed", "params": {"threadId": thread,
              "turn": {"id": turn, "status": "completed", "items": []}}})
         pending = None
+        if os.environ.get("FAKE_CODEX_ORPHAN_STDOUT"):
+            import subprocess
+            subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"],
+                             stdin=subprocess.DEVNULL)
+            break  # gone, while what it started still holds its stdout
         if os.environ.get("FAKE_CODEX_EXIT_IDLE"):
             time.sleep(0.3)  # gone while idle, well after the turn ended
             break
@@ -293,6 +301,54 @@ async def test_codex_dispatch_runs_when_a_config_path_cannot_be_read(
         git.chmod(0o755)
         await manager.shutdown()
     assert result.status is InvocationStatus.SUCCEEDED, result
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_gone_with_its_stdout_held_is_not_reused(
+    fake_codex: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_ORPHAN_STDOUT", "1")
+    manager = InvocationManager()
+    try:
+        first = await _codex(manager, tmp_path, "first")
+        assert first.status is InvocationStatus.SUCCEEDED, first
+        await asyncio.sleep(2)
+        second = await _codex(manager, tmp_path, "second", first.session_id)
+    finally:
+        await manager.shutdown()
+    assert second.status is InvocationStatus.SUCCEEDED, second
+    assert second.output == "exec"
+
+
+@pytest.mark.asyncio
+async def test_codex_rules_that_do_not_parse_fail_before_a_turn(
+    fake_codex: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_CODEX_RULES_ERROR", "1")
+    manager = InvocationManager()
+    try:
+        result = await _codex(manager, tmp_path, "work")
+    finally:
+        await manager.shutdown()
+    assert result.status is InvocationStatus.FAILED
+    assert result.error is not None and "Error loading rules" in result.error.message
+    assert not _sent(fake_codex, "turn/start")
+
+
+@pytest.mark.asyncio
+async def test_codex_isolated_run_starts_exec_not_an_app_server(
+    fake_codex: Path, tmp_path: Path
+) -> None:
+    manager = InvocationManager()
+    request = InvocationRequest(
+        "codex", "work", tmp_path, provider_options={"approve_for_me": True}
+    )
+    try:
+        result = await manager.wait(manager.start(request, isolated=True), 30)
+    finally:
+        await manager.shutdown()
+    assert result is not None and result.output == "exec", result
+    assert [entry["argv"][0] for entry in _logged(fake_codex) if "argv" in entry] == ["exec"]
 
 
 @pytest.mark.asyncio

@@ -97,42 +97,51 @@ def _fixed_permissions(options: Mapping[str, ProviderOption]) -> str | None:
     return None
 
 
-def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[object, ...]:
-    """What Codex 0.171 reads permissions from for cwd, as sizes and modification times
-    (codex-rs/config/src/loader): the user and project config, the system config, requirements,
-    the legacy managed config, the `rules/*.rules` exec policies of every layer folder
+def _directory(cwd: Path) -> Path:
+    try:
+        return cwd.resolve()
+    except OSError:
+        return cwd.absolute()
+
+
+def _codex_home(cwd: Path, env: Mapping[str, str]) -> Path:
+    # A relative CODEX_HOME is taken from the child's working directory, the task's.
+    return _directory(cwd) / (env.get("CODEX_HOME") or Path("~/.codex").expanduser())
+
+
+def _globbed(folder: Path, pattern: str, *, follow: bool) -> list[tuple[object, ...]]:
+    try:
+        paths = sorted(folder.glob(pattern))
+    except OSError as exc:
+        return [(str(folder), type(exc).__name__)]
+    return [_stat(path, follow=follow) for path in paths]
+
+
+def _launch_inputs(cwd: Path, executable: str, env: Mapping[str, str]) -> tuple[object, ...]:
+    """What Codex 0.171 reads permissions from for cwd, as types, sizes and modification times
+    (codex-rs/config/src/loader): the Codex executable, every top-level `*.toml` of the user,
+    system and project config folders, the `rules/*.rules` exec policies of each of them
     (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project root
     marker `.git`. Cloud-managed config, macOS managed preferences, a registry-set requirements
     path and custom project root markers are not covered."""
-    try:
-        directory = cwd.resolve()
-    except OSError:
-        directory = cwd.absolute()
-    # A relative CODEX_HOME is taken from the child's working directory, the task's.
-    home = directory / (env.get("CODEX_HOME") or Path("~/.codex").expanduser())
+    directory = _directory(cwd)
+    home = _codex_home(cwd, env)
     if sys.platform == "win32":
         data = env.get("ProgramData") or env.get("PROGRAMDATA") or r"C:\ProgramData"
         system = Path(data, "OpenAI", "Codex")
-        files = [system / "config.toml", system / "requirements.toml", home / "managed_config.toml"]
     else:
         system = Path("/etc/codex")
-        files = [
-            system / name for name in ("config.toml", "requirements.toml", "managed_config.toml")
-        ]
-    files.append(home / "config.toml")
     ancestors = (directory, *directory.parents)
-    projects = [folder / ".codex" for folder in ancestors]
-    files.extend(folder / "config.toml" for folder in projects)
-    found: list[object] = [_stat(path, follow=True) for path in files]
-    for folder in (system, home, *projects):
-        rules = folder / "rules"
-        try:
-            paths = sorted(rules.glob("*.rules"))
-        except OSError as exc:
-            found.append((str(rules), type(exc).__name__))
-            continue
-        # Codex loads only regular files here, so a link is told apart from one.
-        found.extend(_stat(path, follow=False) for path in paths)
+    found: list[object] = [
+        _stat(
+            Path(os.path.realpath(shutil.which(executable, path=env.get("PATH")) or executable)),
+            follow=True,
+        )
+    ]
+    for folder in (system, home, *(ancestor / ".codex" for ancestor in ancestors)):
+        found.extend(_globbed(folder, "*.toml", follow=True))
+        # Codex loads only regular rule files, so a link is told apart from one.
+        found.extend(_globbed(folder / "rules", "*.rules", follow=False))
     # The nearest ancestor with a `.git` (a directory needs its HEAD) is the project root.
     for folder in ancestors:
         marker = _stat(folder / ".git", follow=False)
@@ -140,6 +149,18 @@ def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[object, ...]:
         if marker[1:2] == ("directory",):
             found.append(_stat(folder / ".git" / "HEAD", follow=True))
     return tuple(found)
+
+
+def _rollout_state(cwd: Path, env: Mapping[str, str], session_id: str) -> tuple[object, ...]:
+    """The session's rollout files (`sessions/YYYY/MM/DD/rollout-<time>-<id>*.jsonl` and their
+    archived copies, codex-rs/rollout/src/recorder.rs): any other process continuing the
+    session writes to them."""
+    home = _codex_home(cwd, env)
+    name = f"rollout-*-{glob.escape(session_id)}*"
+    return (
+        *_globbed(home / "sessions", f"*/*/*/{name}", follow=True),
+        *_globbed(home / "archived_sessions", name, follow=True),
+    )
 
 
 def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
@@ -303,17 +324,16 @@ class CodexAdapter(AdapterHooks):
         mode = _fixed_permissions(request.provider_options)
         if mode is None or discussion:
             return exec_command
-        # A kept process serves the next turns of the thread it started; any other resume runs
-        # exec resume, which sends the permissions it resolves itself (ADR-0120).
-        unkept = exec_command if request.session_id is not None else None
-        return self._app_server_command(request, executable, mode, unkept)
+        # A kept process serves the next turns of the thread it started; a run that would not
+        # be kept, and any other resume, runs exec, which resolves its permissions itself.
+        return self._app_server_command(request, executable, mode, exec_command)
 
     def _app_server_command(
         self,
         request: InvocationRequest,
         executable: str,
         mode: str,
-        unkept: PreparedCommand | None,
+        unkept: PreparedCommand,
     ) -> PreparedCommand:
         """A bridge to `codex app-server` that can serve the thread's later turns (ADR-0120),
         started with exec's config overrides; model and effort travel with each turn."""
@@ -345,7 +365,8 @@ class CodexAdapter(AdapterHooks):
             capture_line=_capture_line,
             skip_oversized_line=_skip_oversized_line,
             keep_alive=True,
-            launch_inputs=partial(_config_files, request.cwd),
+            launch_inputs=partial(_launch_inputs, request.cwd, executable),
+            session_state=partial(_rollout_state, request.cwd),
             unkept=unkept,
         )
 

@@ -166,6 +166,33 @@ async def test_launch_inputs_are_read_once_for_choosing_and_launching(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_session_continued_elsewhere_is_not_served_by_the_kept_process(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "rollout.jsonl"
+    log.write_text("turn 1")
+
+    def state(_env: Mapping[str, str], _session_id: str) -> object:
+        return log.read_text()
+
+    manager = InvocationManager()
+    try:
+        kept = replace(_turn(tmp_path, "work", None), session_state=state)
+        first = await _run_prepared(manager, InvocationRequest("codex", "work", tmp_path), kept)
+        request = InvocationRequest("codex", "again", tmp_path, session_id=first.session_id)
+        unkept = replace(_turn(tmp_path, "again", first.session_id, "unkept"), keep_alive=False)
+        resume = replace(kept, stdin=_line(first.session_id, "again"), unkept=unkept)
+        # Another service's one-off run wrote to the session since this one kept its process.
+        log.write_text("turn 1, turn 2 elsewhere")
+        resumed = await _run_prepared(manager, request, resume)
+        assert _pid(resumed) != _pid(first) and _turn_number(resumed) == 1
+        if os.name == "posix":
+            assert await _gone(_pid(first))
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_resume_without_a_kept_process_runs_the_unkept_command(tmp_path: Path) -> None:
     manager = InvocationManager()
     try:
