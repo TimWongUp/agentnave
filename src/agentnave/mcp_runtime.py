@@ -70,7 +70,7 @@ from agentnave.models import (
 )
 from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import NativePrompt
-from agentnave.orchestration_roles import AUTO_SEAT, role_catalog, seat_role
+from agentnave.orchestration_roles import AUTO_SEAT, IMAGE_KIND, role_catalog, seat_role
 from agentnave.push_capability import PUSH_AGAIN, PUSH_NEXT, app_can_push
 from agentnave.retention import Retention
 from agentnave.store import Review
@@ -530,6 +530,11 @@ AUTO_SEAT_NOTE = (
     "with isolation (an investigation that may turn into implementation in the same thread) "
     "is chosen among write seats and stays read-only."
 )
+AUTO_IMAGE_SEAT_NOTE = (
+    "For image generation (kind=image seats in the catalog), also use seat='auto' and "
+    "access='write', state image generation and style at the start of prompt, and specify "
+    "the output path; do not substitute another seat if no image seat exists."
+)
 # Published only while the user's own seat catalog is effective for this boss; called while
 # off, they answer with the reason instead.
 _CUSTOM_SEAT_TOOLS = frozenset({"recommend_seat", "start_agents"})
@@ -637,12 +642,13 @@ def _filter_role_schema(
         _filter_role_schema(value, groups, image_enabled, custom_ids, medium)
 
 
-def _describe_auto_seat(schema: dict[str, Any]) -> None:
+def _describe_auto_seat(schema: dict[str, Any], *, has_image: bool) -> None:
     """With the user's own seats, start_agent also takes seat='auto'; say what it sends out."""
     seat = schema.get("properties", {}).get("seat")
     if isinstance(seat, dict):
         seat = cast(dict[str, Any], seat)
-        seat["description"] = f"{seat.get('description', '')} {AUTO_SEAT_NOTE}".strip()
+        note = f"{AUTO_SEAT_NOTE} {AUTO_IMAGE_SEAT_NOTE}" if has_image else AUTO_SEAT_NOTE
+        seat["description"] = f"{seat.get('description', '')} {note}".strip()
 
 
 def _drop_custom_seat_output(schema: Any) -> None:
@@ -706,6 +712,7 @@ class _Server(MCPServer[Runtime]):
         decision = orchestration_decision(HOST)
         custom = custom_seats(HOST)
         custom_ids = list(custom) if custom is not None else [] if decision else None
+        has_image = bool(custom and any(seat.kind == IMAGE_KIND for seat in custom.values()))
         # "auto" lets start_agent choose; only the arguments name it, not the saved history.
         input_ids = None if custom_ids is None else [*custom_ids, AUTO_SEAT]
         published: list[Any] = []
@@ -731,7 +738,7 @@ class _Server(MCPServer[Runtime]):
             output = json.loads(json.dumps(tool.output_schema))
             _filter_role_schema(schema, groups, image_enabled, input_ids, medium)
             if decision and tool.name == "start_agent":
-                _describe_auto_seat(schema)
+                _describe_auto_seat(schema, has_image=has_image)
             if tool.name == "wait" and not long_wait_enabled():
                 _restrict_wait_windows(schema)
             if (

@@ -1,10 +1,11 @@
 # ADR-0117：普通私聊派发不必先读 Skill，用法放进工具描述与回执
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-23
 - T3 主线程与子线程的 MCP 说明由 [ADR-0121](0121-t3-code-orchestration.md) 修订。
 - 修订 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 的「归属」：原来 MCP 说明要求派发或组织协作之前先加载 `agentnave-manager`，现在只在少见场景才要求加载；规则块只放授权这一条不变。
 - 沿用 [ADR-0028](0028-follow-cli-default-model.md)、[ADR-0032](0032-cli-permission-tiers.md)：不新增默认值和权限参数；[ADR-0043](0043-service-prompt-instructions.md)：给组员的非交互说明仍由服务附加；[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)：Claude 同系列映射的规则不变，只是把它写进回执；[ADR-0056](0056-claude-interactive-runtime.md) 的不保活和 [ADR-0114](0114-tui-runtime-like-a-user.md) 的宿主自唤醒也不变。
+- 「何时加载 Skill」同时写进规则块的条款由 [ADR-0122](0122-merge-split-and-parallel-presets.md) 修订。
 
 ## 背景
 
