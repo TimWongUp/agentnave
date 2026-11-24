@@ -500,7 +500,7 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   // Add custom card -> missing specialty blocks save; fill specialty -> missing tier blocks save.
   h.t3((t) => t.addCard("custom"));
   assert.match(h.t3((t) => t.problem()), /缺少专业/);
-  const cid = h.section().children[1].children[0].children[0].children[0].children[0].dataset.focusKey.split("/")[1];
+  const cid = h.section().children[1].children[1].children[0].children[0].children[0].children[0].dataset.focusKey.split("/")[1];
   h.find(`t3/${cid}/role`).listeners.input({ target: { value: "前端" } });
   assert.match(h.t3((t) => t.problem()), /至少要绑定一档/);
 

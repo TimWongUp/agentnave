@@ -22,6 +22,7 @@
   let baseline = null; // Normalized editor state of saved.document, or first-time prefill baseline.
   let draft = null; // Edited state; null while identical to baseline.
   let prefilled = false;
+  let tasksOpen = false;
   let reviewOpen = false;
   let cardCount = 0;
 
@@ -736,6 +737,22 @@
     groupList(L("自定义工位", "Custom seats"), [[CUSTOM, L("自定义工位", "Custom seat")]]));
   }
 
+  function taskSection(state) {
+    return el("details", {
+      className: "s-group t3-task-fold", open: tasksOpen,
+      onToggle: (e) => { tasksOpen = Boolean(e.target.open); },
+    },
+    el("summary", { className: "s-title is-fold", dataset: { focusKey: "t3/task-fold" } },
+      L("任务工位", "Task seats"),
+      el("span", { className: "s-title-aside" }, String(state.cards.length))),
+    ...state.cards.map(seatCard),
+    el("div", { className: "s-group" },
+      el("div", { className: "s-card" },
+        el("div", { className: "s-row" },
+          el("label", { className: "s-label", htmlFor: "t3-seat-add" }, L("添加工位", "Add seat")),
+          addMenu(state)))));
+  }
+
   function reviewSection(state) {
     const roles = reviewRoles();
     const configured = roles.filter(([role]) => (state.review[role] || []).length > 0).length;
@@ -797,17 +814,7 @@
             dataset: { focusKey: "t3/random" }, checked: state.random_candidates,
             onChange: (e) => mutate((next) => { next.random_candidates = e.target.checked; }),
           }))));
-    const addCardRow = el("div", { className: "s-group" },
-      el("div", { className: "s-card" },
-        el("div", { className: "s-row" },
-          el("label", { className: "s-label", htmlFor: "t3-seat-add" }, L("添加工位", "Add seat")),
-          addMenu(state))));
-    box.replaceChildren(
-      switchesCard,
-      ...state.cards.map(seatCard),
-      addCardRow,
-      reviewSection(state),
-    );
+    box.replaceChildren(switchesCard, taskSection(state), reviewSection(state));
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
