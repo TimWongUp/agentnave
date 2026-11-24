@@ -88,6 +88,11 @@ class PreparedCommand:
     temp_dir_env: str | None = None
     # This command reports its model in its own result; do not consult external session logs.
     model_from_result_only: bool = False
+    # The process can serve later turns of the same native session (ADR-0120): stdin carries
+    # one turn per line and stays open, the Adapter's terminal event ends each turn, nothing is
+    # written to stdout between turns, and the service may keep the process after a turn that
+    # succeeded and write the next resume's stdin to it instead of starting another.
+    keep_alive: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +226,9 @@ class AdapterHooks:
         still record provider cooldown, but are suppressed from running-time ``execution_blocked``
         alerts so the caller is notified once at terminal settlement (ADR-0039 / ADR-0104). Only
         declare it for single-turn runs: never for multi-turn or stdin-kept interactive runtimes,
-        where a turn's end is not the process's.
+        where a turn's end is not the process's. A ``keep_alive`` command is the exception: there
+        it ends one turn, which is settled at once with no grace, and the process may be kept for
+        the next one (ADR-0120).
         """
         return False
 
