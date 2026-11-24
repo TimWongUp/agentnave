@@ -25,7 +25,7 @@
 | 0019 | [不提供运行中消息](0019-no-running-messages.md) | 部分取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0056](0056-claude-interactive-runtime.md)、[ADR-0057](0057-boss-answers-native-prompts.md) |
 | 0020 | [首次预填各 CLI 的主力模型](0020-prefill-main-model-defaults.md) | 已被 ADR-0028 取代 | [ADR-0028](0028-follow-cli-default-model.md) |
 | 0021 | [关闭自选时保留各 CLI 的默认模型](0021-keep-default-models-when-unrestricted.md) | 部分取代 | [ADR-0028](0028-follow-cli-default-model.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0054](0054-members-need-confirmation.md) |
-| 0022 | [新会话自动消除宿主重新加载提醒](0022-auto-clear-host-reload.md) | 部分修订 | 含服务升级工具变化修订；仅接受带结束时间回执、不把无结束标记的已退出回执作为加载证据由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 修订 |
+| 0022 | [新会话自动消除宿主重新加载提醒](0022-auto-clear-host-reload.md) | 部分修订 | 含服务升级工具变化修订；仅接受带结束时间回执、不把无结束标记的已退出回执作为加载证据由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 修订；具名账号接入行不显示「待确认生效」由 [ADR-0118](0118-link-existing-claude-account-dirs.md) 修订 |
 | 0023 | [私聊续接改为显式开启](0023-explicit-desk-continuation.md) | 已被 ADR-0025 取代 | [ADR-0024](0024-consolidated-tools-and-private-review.md)、[ADR-0025](0025-session-desks-and-running-limit.md) |
 | 0024 | [工具收敛为 8 个，审核改为公开／不公开](0024-consolidated-tools-and-private-review.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md)、[ADR-0045](0045-remove-browser-dashboard.md)、[ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0081](0081-account-cooldown-duration.md) |
 | 0025 | [工位即原生线程，并发上限决定显示上限](0025-session-desks-and-running-limit.md) | 部分取代 | [ADR-0038](0038-role-applies-app-seat.md)、[ADR-0062](0062-service-owned-member-names.md)；终端模式下的上限口径由 [ADR-0109](0109-in-app-derived-sessions.md) 修订 |
@@ -121,4 +121,4 @@
 | 0115 | [托盘显示 Git 与 PR 状态，并提供基础 Git 操作](0115-tray-git-status-and-basic-ops.md) | 已接受 | 修订 ADR-0113（Git 与 PR 的只读状态与基础操作回到托盘）、ADR-0098（用户打开规则后自动清理隔离目录）；补充 ADR-0029、ADR-0092 |
 | 0116 | [运行中任务长时间无实质进展时提醒 boss 一次](0116-progress-stall-reminder.md) | 已接受 | 补充 ADR-0049；沿用 ADR-0114 的到限提醒方式 |
 | 0117 | [普通私聊派发不必先读 Skill，用法放进工具描述与回执](0117-private-dispatch-without-skill.md) | 已接受 | 修订 ADR-0068 的「归属」；沿用 ADR-0028、0032、0043、0056、0074、0114 |
-| 0118 | [App 添加 Claude 账号可关联已有配置目录](0118-link-existing-claude-account-dirs.md) | 已接受 | 修订 ADR-0108（恢复关联已有目录）、ADR-0029（允许手填账号配置目录）；沿用 ADR-0108 外部目录账号边界 |
+| 0118 | [App 添加 Claude 账号可关联已有配置目录](0118-link-existing-claude-account-dirs.md) | 已接受 | 修订 ADR-0108（恢复关联已有目录）、ADR-0029（允许手填账号配置目录）、ADR-0022（具名账号接入行不显示「待确认生效」）；沿用 ADR-0108 外部目录账号边界 |

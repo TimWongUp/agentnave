@@ -124,3 +124,37 @@ fn syncing_an_account_connects_it_and_writes_the_rules_into_its_folder() {
     let hosts = guard.as_ref().unwrap();
     assert!(host(hosts, "claude@a1").read().unwrap().entry.is_none());
 }
+
+#[test]
+fn an_account_without_its_own_connection_is_not_left_unverified() {
+    let (_temp, mut hosts, _accounts) = with_accounts();
+    for id in ["claude", "claude@a1"] {
+        hosts.action("connect", &json!({"id": id})).unwrap();
+    }
+    // Some Claude runs, or the processes cannot be read: neither tells which account it is.
+    for running in [None, Some(HashMap::from([("claude", u64::MAX / 1000)]))] {
+        hosts.processes = Mutex::new(processes::Probe::fixed(running));
+        assert_eq!(
+            hosts.state(&host(&hosts, "claude@a1"))["reload"]["state"],
+            "idle"
+        );
+        assert_eq!(
+            hosts.state(&host(&hosts, "claude"))["reload"]["state"],
+            "unverified"
+        );
+    }
+    // Its own connection from before the change still asks for a reload.
+    save(
+        &hosts.context.home.join(".agentnave/connections/old.json"),
+        &json!({
+            "version":1,"host":"claude","host_app":"claude@a1","started_ms":1,
+            "runtime_tools_hash":"a".repeat(64),"host_tools_hash":"a".repeat(64),
+            "runtime_version":"0.22.0"
+        })
+        .to_string(),
+    );
+    assert_eq!(
+        hosts.state(&host(&hosts, "claude@a1"))["reload"]["state"],
+        "required"
+    );
+}
