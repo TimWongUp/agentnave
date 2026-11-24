@@ -227,7 +227,7 @@ impl Context {
     }
 }
 
-/// The optional Skills the 技能 page offers, with each SKILL.md.
+/// The optional Skills the 评审设置 page offers, with each SKILL.md.
 pub fn skill_catalog() -> Value {
     skill::catalog()
 }

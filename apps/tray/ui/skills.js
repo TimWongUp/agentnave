@@ -1,7 +1,7 @@
 "use strict";
 {
 "use strict";
-// Settings -> 技能. Optional Skills from GET /app/skills, switched per host with POST
+// Settings -> 评审设置. Optional Skills from GET /app/skills, switched per host with POST
 // /app/hosts/skill when 保存设置 is pressed; until then a picked switch only sits in S.want.
 // The review gate's seats are drawn by advanced.js (renderReviewSeats) into the card built here.
 const { h, $, load, post, L } = AN;
@@ -9,12 +9,13 @@ const S = { catalog: null, hosts: null, open: new Set(), want: new Map(), saving
 // A save starts and ends a new generation, so a refresh that began before either never overwrites what the save returned.
 let generation = 0;
 
-// Settings each Skill adds under its own row; the review gate's seats are drawn by advanced.js.
+// Groups each Skill adds below its own; the review gate's seats are drawn by advanced.js and t3-seats.js.
 const SETTINGS = {
   "agentnave-review": () => [
-    h("div.s-row.is-stack", {}, h("span.s-label.is-head", {}, L("评审工位", "Review seats"),
-      AN.settings.settingTip(L("选“自动”时由 boss 按员工挑选；你在对话里点名的 CLI 和模型优先于这里。boss 应用用不了所选 CLI 时改用它自己的子代理，所选模型不在员工里时改找提供同一模型的其他 CLI。", "When set to “Auto”, the boss picks from configured employees; CLIs and models you name in chat take precedence. If the boss app cannot use the chosen CLI, it falls back to its own subagent; if the chosen model is not in employees, it looks for another CLI offering the same model.")))),
-    h("div.s-wrap", { id: "review-seats" }),
+    h("div.s-group", {}, h("h2.s-title", {}, L("评审工位", "Review seats"),
+      AN.settings.settingTip(L("选“自动”时由 boss 按员工挑选；你在对话里点名的 CLI 和模型优先于这里。boss 应用用不了所选 CLI 时改用它自己的子代理，所选模型不在员工里时改找提供同一模型的其他 CLI。", "When set to “Auto”, the boss picks from configured employees; CLIs and models you name in chat take precedence. If the boss app cannot use the chosen CLI, it falls back to its own subagent; if the chosen model is not in employees, it looks for another CLI offering the same model."))),
+    h("div.s-card", {}, h("div.s-wrap", { id: "review-seats" }))),
+    h("div.s-group", { id: "t3-review-seats", hidden: true }),
   ],
 };
 
@@ -56,34 +57,33 @@ function chip(skill, host) {
 function row(skill) {
   const chips = S.hosts.map((host) => chip(skill, host)).filter(Boolean);
   const installed = S.hosts.filter((host) => host.skills?.[skill.name]?.enabled && host.skills[skill.name].state !== "blocked").length;
-  const open = S.open.has(skill.name);
-  const reading = S.open.has(`${skill.name}/content`);
-  const toggle = (key) => () => {
-    if (S.open.has(key)) S.open.delete(key);
-    else S.open.add(key);
+  const reading = S.open.has(skill.name);
+  const more = h("button", { type: "button", "aria-expanded": String(reading), "data-focus-key": `${skill.name}/content` }, reading ? L("收起写法", "Hide content") : L("查看写法", "View content"));
+  more.addEventListener("click", () => {
+    if (reading) S.open.delete(skill.name);
+    else S.open.add(skill.name);
     render();
-  };
-  const head = h("button.s-title.is-fold", { type: "button", "aria-expanded": String(open), "data-focus-key": `${skill.name}/open` },
-    skill.title, AN.settings.settingTip(skill.description),
-    h("span.s-title-aside", {}, installed ? L(`已装到 ${installed} 个应用`, `Installed in ${installed} ${installed === 1 ? "app" : "apps"}`) : L("未使用", "Not used")));
-  head.addEventListener("click", toggle(skill.name));
-  const more = h("button", { type: "button", "aria-expanded": String(reading) }, reading ? L("收起写法", "Hide content") : L("查看写法", "View content"));
-  more.addEventListener("click", toggle(`${skill.name}/content`));
+  });
   const hint = L("点选后按保存设置才会安装或停用。新接入的应用会自动出现。", "Click to select, then press Save settings to install or disable. Newly connected apps appear automatically.");
-  return h("div.s-group", { "data-open": String(open) }, head, open && h("div.s-card", {},
+  const head = h("h2.s-title", {}, skill.title, AN.settings.settingTip(skill.description),
+    h("span.s-title-aside", {}, installed ? L(`已装到 ${installed} 个应用`, `Installed in ${installed} ${installed === 1 ? "app" : "apps"}`) : L("未使用", "Not used")));
+  const card = h("div.s-card", {},
     h("div.s-row", {}, h("span.s-label", {}, L("安装到", "Install to"), AN.settings.settingTip(hint)),
       chips.length ? h("div.skill-chips", {}, chips) : h("span.s-muted", {}, L("还没有可安装的应用；在“boss”里接入后会出现在这里。", "No apps available yet; connect apps in “Boss” to see them here."))),
+    h("div.s-row", {}, h("span.s-label", {}, L("写法", "Content")), more),
+    reading && h("div.s-row.is-stack", {}, h("pre.skill-content", {}, skill.content)));
+  return [
+    h("div.s-group", {}, head, card),
     // A Skill's settings show while some host has it on.
     ...(S.hosts.some((host) => switched(skill, host)?.on) ? SETTINGS[skill.name]?.() || [] : []),
-    h("div.s-row", {}, h("span.s-label", {}, L("写法", "Content")), more),
-    reading && h("div.s-row.is-stack", {}, h("pre.skill-content", {}, skill.content))));
+  ];
 }
 
 function render() {
   const box = $("skill-list");
   if (!S.catalog || !S.hosts) return;
   const focusKey = document.activeElement?.dataset?.focusKey;
-  box.replaceChildren(...S.catalog.skills.map(row));
+  box.replaceChildren(...S.catalog.skills.flatMap(row));
   if (typeof AN.settings.renderReviewSeats === "function") AN.settings.renderReviewSeats();
   if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
 }
@@ -136,7 +136,7 @@ async function refresh() {
     render();
     AN.settings.renderAdvancedBar();
   } catch (e) {
-    $("skill-list").replaceChildren(h("p.s-muted", {}, L(`读取技能失败：${e.message || "未知错误"}`, `Failed to load skills: ${e.message || "Unknown error"}`)));
+    $("skill-list").replaceChildren(h("p.s-muted", {}, L(`读取评审设置失败：${e.message || "未知错误"}`, `Failed to load review settings: ${e.message || "Unknown error"}`)));
   }
 }
 

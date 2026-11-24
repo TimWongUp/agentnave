@@ -234,7 +234,7 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
     run,
     calls,
     t3: (fn) => run(`(${fn})(window.AgentNaveT3Seats)`),
-    find: (key) => findKey(run('$("t3-seats-section")'), key),
+    find: (key) => findKey(run('$("t3-seats-section")'), key) || findKey(run('$("t3-review-seats")'), key),
     section: () => run('$("t3-seats-section")'),
     doc: () => JSON.parse(run("JSON.stringify(window.AgentNaveT3Seats.document())")),
   };
@@ -490,7 +490,7 @@ test("surfaces save errors without losing draft edits", async () => {
   assert.equal(h.t3((t) => t.changed()), true);
 });
 
-test("supports adding/removing up to 4 candidates, reasoning selection to default, custom card validation, and 9 review roles in fold", async () => {
+test("supports adding/removing up to 4 candidates, reasoning selection to default, custom card validation, and 9 review roles on the review page", async () => {
   const h = makeHarness({
     t3State: { document: { version: 1, enabled: false, random_candidates: false, seats: [], review: {} }, error: null, t3: SAMPLE_T3 },
   });
@@ -523,18 +523,24 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   h.find(`t3/${cid}/medium/c1/remove`).listeners.click();
   assert.equal(h.doc().seats[0].candidates.length, 3);
 
-  // Review fold contains all 9 review roles and preserves open state on edit.
-  const reviewFold = h.section().children.at(-1);
-  assert.equal(reviewFold.tagName, "details");
-  assert.equal(reviewFold.children[1].children.length, 9);
-  reviewFold.listeners.toggle({ target: { open: true } });
+  // The 9 review roles sit on the review page; an edit there marks only that page.
+  assert.equal(h.run('$("t3-review-seats")').children[1].children.length, 9);
+  assert.equal(h.t3((t) => t.reviewChanged()), false);
   h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "codex" } });
   assert.equal(h.doc().review["security-reviewer"].length, 1);
-  assert.equal(h.section().children.at(-1).attrs.open, "");
+  assert.equal(h.t3((t) => t.reviewChanged()), true);
+  h.t3((t) => t.discard());
+  h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "codex" } });
+  assert.equal(h.t3((t) => t.seatsChanged()), false);
+  h.t3((t) => t.addCard("custom"));
+  assert.equal(h.t3((t) => t.seatsChanged()), true);
+  const readded = h.section().children[1].children[1].children[0].children[0].children[0].children[0].dataset.focusKey.split("/")[1];
+  h.find(`t3/${readded}/role`).listeners.input({ target: { value: "前端" } });
+  h.find(`t3/${readded}/medium/c0/instance`).listeners.change({ target: { value: "claudeAgent" } });
 
   // Turning enabled on then clearing all candidates blocks save with Chinese reason.
   h.find("t3/enabled").listeners.change({ target: { checked: true } });
-  h.find(`t3/${cid}/medium/c0/instance`).listeners.change({ target: { value: "" } });
+  h.find(`t3/${readded}/medium/c0/instance`).listeners.change({ target: { value: "" } });
   h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "" } });
   h.t3((t) => t.addCard("explorer")); // ensure problem checks candidate gate after cards
   // Remove empty cards so only enabled-without-candidates triggers.

@@ -1,8 +1,8 @@
 "use strict";
 {
   // Settings -> 编排 -> T3 Code (ADR-0121): independent T3 orchestration switch, random-candidates
-  // switch, T3 task seat cards and T3 review roles. Saved to t3-seats.json from the shared
-  // orchestration save bar; never writes T3 Code's own files.
+  // switch and T3 task seat cards. The T3 review roles sit on Settings -> 评审设置, after the seats
+  // used outside T3 Code. All saved to t3-seats.json from the shared save bar; never writes T3 Code's own files.
 
   const S = AN.settings ||= {};
   const { $, el, sameJson } = S;
@@ -23,7 +23,6 @@
   let draft = null; // Edited state; null while identical to baseline.
   let prefilled = false;
   let tasksOpen = false;
-  let reviewOpen = false;
   let cardCount = 0;
 
   const catalogEntry = (kind) => S.roleCatalog().find((entry) => entry.group === kind);
@@ -190,6 +189,11 @@
   const fileDocument = () => toDocument(shownState());
   const changed = () => Boolean(saved && !saved.error && draft && baseline)
     && !sameJson(canonState(draft), canonState(baseline));
+  // The two pages the settings sit on, so each can mark its own unsaved edits.
+  const reviewChanged = () => changed() && !sameJson(canon(toDocument(draft)).review, canon(toDocument(baseline)).review);
+  const seatsChanged = () => changed()
+    && !sameJson({ ...canonState(draft), doc: { ...canonState(draft).doc, review: {} } },
+      { ...canonState(baseline), doc: { ...canonState(baseline).doc, review: {} } });
 
   function hasCandidates(doc = fileDocument()) {
     return (doc.seats || []).some((seat) => (seat.candidates || []).length > 0)
@@ -753,29 +757,32 @@
           addMenu(state)))));
   }
 
-  function reviewSection(state) {
-    const roles = reviewRoles();
-    const configured = roles.filter(([role]) => (state.review[role] || []).length > 0).length;
-    const rows = roles.map(([role, name, hint, unset]) => candidateBlock(
+  // The review roles sit on the review page, after the seats used outside T3 Code.
+  function renderReview() {
+    const box = $("t3-review-seats");
+    if (!box) return;
+    const state = visible() && !saved.error ? shownState() : null;
+    box.hidden = !state;
+    if (!state) return box.replaceChildren();
+    const focusKey = document.activeElement?.dataset?.focusKey;
+    const rows = reviewRoles().map(([role, name, hint, unset]) => candidateBlock(
       `t3/review/${role}`,
       el("span", { className: "s-label" }, name, S.settingTip(hint)),
-      L(`${name}评审`, `${name} review`),
+      L(`T3 ${name}评审`, `T3 ${name} review`),
       state.review[role] || [],
       (nextList) => setReviewCandidates(role, nextList),
       unset || L("未设置", "Not set"),
       false,
     ));
-    return el("details", {
-      className: "s-group t3-review-fold", open: reviewOpen,
-      onToggle: (e) => { reviewOpen = Boolean(e.target.open); },
-    },
-    el("summary", { className: "s-title is-fold", dataset: { focusKey: "t3/review-fold" } },
-      L("评审角色", "Review roles"),
-      el("span", { className: "s-title-aside" }, L(`${configured} / ${roles.length}`, `${configured} / ${roles.length}`))),
-    el("div", { className: "s-card" }, ...rows));
+    box.replaceChildren(
+      el("h2", { className: "s-title" }, L("T3 Code 评审工位", "T3 Code review seats")),
+      el("div", { className: "s-card" }, ...rows),
+    );
+    if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
   function render() {
+    renderReview();
     const box = $("t3-seats-section");
     if (!box) return;
     if (!visible()) {
@@ -814,12 +821,12 @@
             dataset: { focusKey: "t3/random" }, checked: state.random_candidates,
             onChange: (e) => mutate((next) => { next.random_candidates = e.target.checked; }),
           }))));
-    box.replaceChildren(switchesCard, taskSection(state), reviewSection(state));
+    box.replaceChildren(switchesCard, taskSection(state));
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
   window.AgentNaveT3Seats = {
-    load, render, changed, problem, save, discard, addCard, prefill,
+    load, render, renderReview, changed, seatsChanged, reviewChanged, problem, save, discard, addCard, prefill,
     document: fileDocument, hasCandidates, visible,
   };
 }

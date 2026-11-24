@@ -1,6 +1,6 @@
 "use strict";
 {
-  // Settings -> 技能 and 编排: Skills, orchestration and review seats. Viewing and picking
+  // Settings -> 评审设置 and 编排: Skills, orchestration and review seats. Viewing and picking
   // only change the drafts here; nothing is written until 保存设置. Sections save independently, so
   // one that fails stays unsaved for another try while the others land.
 
@@ -849,17 +849,19 @@
         el("div", { className: "s-seat" }, ...seatSelects(role, label, seat, set, unset))), role, label, seat, set);
     });
     box.replaceChildren(uniform, ...rows);
+    window.AgentNaveT3Seats?.renderReview();
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
   // What 保存设置 would write, by section.
   function advancedChanges() {
     return [
-      window.AgentNaveSkills?.changed() && AN.L("技能安装", "Skills"),
+      window.AgentNaveSkills?.changed() && AN.L("评审 Skill 安装", "Review Skill"),
       seatsChanged() && AN.L("评审工位", "Review seats"),
       orchestrationChanged() && AN.L("编排", "Orchestration"),
       window.AgentNaveDecisionSeats?.changed() && AN.L("决策模型推荐工位", "Decision-model seats"),
-      window.AgentNaveT3Seats?.changed() && AN.L("T3 Code", "T3 Code"),
+      window.AgentNaveT3Seats?.seatsChanged() && "T3 Code",
+      window.AgentNaveT3Seats?.reviewChanged() && AN.L("T3 评审工位", "T3 review seats"),
     ].filter(Boolean);
   }
 
@@ -874,8 +876,8 @@
     const t3Problem = window.AgentNaveT3Seats?.changed() ? window.AgentNaveT3Seats.problem() : null;
     const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked) || Boolean(decisionProblem) || Boolean(t3Problem);
     $("advanced-dirty").textContent = changes.length ? AN.L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
-    $("advanced-badge").hidden = !(orchestrationChanged() || window.AgentNaveDecisionSeats?.changed() || window.AgentNaveT3Seats?.changed());
-    $("skills-badge").hidden = !(window.AgentNaveSkills?.changed() || seatsChanged());
+    $("advanced-badge").hidden = !(orchestrationChanged() || window.AgentNaveDecisionSeats?.changed() || window.AgentNaveT3Seats?.seatsChanged());
+    $("skills-badge").hidden = !(window.AgentNaveSkills?.changed() || seatsChanged() || window.AgentNaveT3Seats?.reviewChanged());
     $("advanced-save").disabled = S.busy || !changes.length || invalid;
     $("advanced-discard").disabled = S.busy || !changes.length;
     const feedback = $("advanced-feedback");

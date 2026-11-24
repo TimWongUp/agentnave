@@ -16,7 +16,7 @@ pub(super) const MANAGER: Files = FILES;
 pub(super) const MEETING: Files = MEETING_FILES;
 /// Installed with the manager, beside it: nobody switches these on before they are needed.
 pub(super) const REQUIRED: &[(&str, Files)] = &[("agentnave-handover", HANDOVER_FILES)];
-/// Skills the user installs per host from the 技能 page; add a tree here and in build.rs.
+/// Skills the user installs per host from the 评审设置 page; add a tree here and in build.rs.
 pub(super) const OPTIONAL: &[(&str, Files)] = &[("agentnave-review", REVIEW_FILES)];
 
 /// `GET /app/skills`: each optional Skill's name, its SKILL.md title and description, and the
