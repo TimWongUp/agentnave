@@ -16,6 +16,8 @@ _OPAQUE_FIELDS = frozenset(
         "tool_input",
         "questions",
         "answers",
+        # A T3 delegate_task target is copied verbatim; its empty options mean T3's default effort.
+        "target",
     }
 )
 _BODY_FIELDS = frozenset({"output", "text", "prompt", "tool_input"})
@@ -67,12 +69,9 @@ def without_empty_fields(value: object) -> object:
                 item = {k: identity[k] for k in _IDENTITY_FIELDS if identity.get(k) is not None}
             if key not in _OPAQUE_FIELDS:
                 item = without_empty_fields(item)
-            # T3 delegate_task target.options must keep [] so T3 resets reasoning instead of
-            # inheriting the main thread's (ADR-0121); dict options (list_members) stay omitted.
-            keep_empty = (key in _REQUIRED_CONTAINERS and isinstance(item, (dict, list))) or (
-                key == "options" and isinstance(item, list)
-            )
-            if keep_empty or (item is not None and item != "" and item != [] and item != {}):
+            if (key in _REQUIRED_CONTAINERS and isinstance(item, (dict, list))) or (
+                item is not None and item != "" and item != [] and item != {}
+            ):
                 projected[key] = item
         return projected
     if isinstance(value, list):

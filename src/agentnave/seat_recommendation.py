@@ -159,9 +159,6 @@ def task_text(task: str, access: Access, staged: bool = False) -> str:
     return f"{text}\n{_STAGED_TASK}" if staged else text
 
 
-_task_text = task_text
-
-
 @dataclass(frozen=True)
 class _Catalog:
     """What a recommendation chooses from: the decision model and the seats in the user's file."""
@@ -236,10 +233,10 @@ async def recommend(
         raise usable
     if len(usable) == 1:
         return _noted(_only(*next(iter(usable.items()))), staged)
-    client = _client(catalog.decision_model)
+    client = client_for_model(catalog.decision_model)
     try:
         decision = await asyncio.to_thread(
-            client.decide, _task_text(task, access, staged), _described(usable)
+            client.decide, task_text(task, access, staged), _described(usable)
         )
     except DecisionError as exc:
         raise RecommendationError(exc.code, exc.message) from None
@@ -269,10 +266,10 @@ async def recommend_many(
         else:
             pending.append((index, usable))
     if pending:
-        client = _client(catalog.decision_model)
+        client = client_for_model(catalog.decision_model)
         questions = [
             DecisionQuestion(
-                _task_text(tasks[index][0], tasks[index][1], staged[index]), _described(usable)
+                task_text(tasks[index][0], tasks[index][1], staged[index]), _described(usable)
             )
             for index, usable in pending
         ]
@@ -301,9 +298,6 @@ def client_for_model(model: str) -> DecisionClient:
             f"No API key is set for {model}; choose a seat from list_members yourself.",
         )
     return new_client(model, key)
-
-
-_client = client_for_model
 
 
 def _described(usable: Mapping[str, CustomSeatStatus]) -> dict[str, str]:
