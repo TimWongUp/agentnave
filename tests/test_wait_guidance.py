@@ -531,7 +531,7 @@ async def test_mcp_codex_blocking_wait_includes_exec_yield_and_seq_increment(
         await client.call_tool("cancel", {"id": started_payload["invocation_id"]})
 
 
-def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
+def test_t3_main_wait_guidance_for_claude_and_codex_ignores_cli_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_claude_env(monkeypatch)
@@ -539,7 +539,7 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
     claude = Host("claude", "env")
     codex = Host("codex", "env")
 
-    # T3 active + Claude: Bash run_in_background + timeout 7200000 + t3_background_wait.
+    # T3 main thread + Claude: Bash run_in_background + timeout 7200000 + t3_background_wait.
     claude_next = wait_guidance.build_wait_guidance(
         claude,
         root=tmp_path,
@@ -548,7 +548,7 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
         boss_key="s-boss",
         can_push=_always_push,
         watch_supported=_watch_none,
-        t3_active=True,
+        t3_main=True,
     )
     assert "-I -m agentnave.inbox_watch" in claude_next
     assert "42 1700000000.500000 s-boss" in claude_next
@@ -571,12 +571,12 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
         again=True,
         can_push=_always_push,
         watch_supported=_watch_none,
-        t3_active=True,
+        t3_main=True,
     )
     assert claude_again.startswith("Still pending:")
     assert "t3_background_wait" in claude_again
 
-    # T3 active + Codex: background terminal without polling, ignores can_push and watch_supported.
+    # T3 main thread + Codex: background terminal without polling, ignores can_push and watch_supported.
     codex_next = wait_guidance.build_wait_guidance(
         codex,
         root=tmp_path,
@@ -585,7 +585,7 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
         boss_key="s-boss",
         can_push=_always_push,
         watch_supported=_watch_none,
-        t3_active=True,
+        t3_main=True,
     )
     assert "-I -m agentnave.inbox_watch" in codex_next
     assert "background terminal" in codex_next
@@ -605,12 +605,12 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
         again=True,
         can_push=_always_push,
         watch_supported=_watch_none,
-        t3_active=True,
+        t3_main=True,
     )
     assert codex_again.startswith("Still pending:")
     assert "background terminal" in codex_again
 
-    # Without boss_key or when t3_active=False, existing host guidance is unchanged.
+    # Without boss_key or when t3_main=False, existing host guidance is unchanged.
     assert (
         wait_guidance.build_wait_guidance(
             codex,
@@ -619,7 +619,7 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
             started_at=1700000000.5,
             boss_key=None,
             can_push=_never_push,
-            t3_active=True,
+            t3_main=True,
         )
         == wait_guidance.CODEX_WAIT_NEXT
     )
@@ -631,11 +631,11 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
             started_at=1700000000.5,
             boss_key="s-boss",
             can_push=_always_push,
-            t3_active=False,
+            t3_main=False,
         )
         == wait_guidance.CLAUDE_LONG_WAIT_NEXT
     )
-    # Non-Claude/Codex hosts are unchanged even with t3_active=True.
+    # Non-Claude/Codex hosts are unchanged even with t3_main=True.
     assert (
         wait_guidance.build_wait_guidance(
             Host("pi", "env"),
@@ -643,7 +643,7 @@ def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
             pid=42,
             started_at=1700000000.5,
             boss_key="s-boss",
-            t3_active=True,
+            t3_main=True,
         )
         == wait_guidance.WAIT_NEXT
     )

@@ -405,10 +405,10 @@ def build_wait_guidance(
     again: bool = False,
     can_push: Callable[[Path, str | None], bool] = app_can_push,
     watch_supported: Callable[[str], bool] = watch_host_cli_supported,
-    t3_active: bool = False,
+    t3_main: bool = False,
 ) -> str:
     """Select receipt `next` text according to host self-wake capabilities (ADR-0114, ADR-0121)."""
-    if t3_active and host.name in ("claude", "codex") and boss_key is not None:
+    if t3_main and host.name in ("claude", "codex") and boss_key is not None:
         cmd = watch_command(root, pid, started_at, boss_key)
         return t3_watch_guidance(cmd, host_name=host.name, again=again)
     if host.name == "claude":

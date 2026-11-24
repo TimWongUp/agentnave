@@ -94,7 +94,6 @@ from agentnave.t3_mcp import (
 )
 from agentnave.t3_seats import T3OrchestrationMode
 from agentnave.t3_seats import t3_active_mode as _t3_active_mode
-from agentnave.t3_seats import t3_orchestration_active as _t3_seats_active
 from agentnave.wait_guidance import (
     BLOCKING_WAIT_AGAIN,
     CLAUDE_LONG_WAIT_AGAIN,
@@ -187,11 +186,6 @@ def long_wait_enabled() -> bool:
     return long_wait_enabled_for_host(HOST)
 
 
-def t3_orchestration_active() -> bool:
-    """Whether T3 Code orchestration is active for this connection."""
-    return _t3_seats_active(HOST)
-
-
 def t3_active_mode() -> T3OrchestrationMode | None:
     """Active T3 orchestration mode for this connection, or None."""
     return _t3_active_mode(HOST)
@@ -215,7 +209,7 @@ def wait_guidance(
         again=again,
         can_push=app_can_push,
         watch_supported=watch_host_cli_supported,
-        t3_active=t3_orchestration_active(),
+        t3_main=current_t3_mode(HOST) == "main",
     )
 
 

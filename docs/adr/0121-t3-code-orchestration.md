@@ -7,7 +7,7 @@
   - [ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0089](0089-seat-fallback-order.md)、[ADR-0093](0093-decision-seat-random-candidates.md)：T3 主线程用单独的工位目录；选工位时当场定好候选顺序，由 boss 交给 T3 执行（第 3、4 节）。
   - [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md)、[ADR-0108](0108-multi-account-isolation.md)：T3 主线程不做宿主同类处理，账号由 T3 实例表示（第 3 节）。
   - [ADR-0030](0030-optional-review-gate-skill.md)、[ADR-0038](0038-role-applies-app-seat.md)：T3 主线程的评审工位读 T3 工位文件（第 3 节）。
-  - [ADR-0114](0114-tui-runtime-like-a-user.md)：T3 主线程可用后台命令等会议；派出的进程剥离 T3 标识（第 1、6 节）。
+  - [ADR-0114](0114-tui-runtime-like-a-user.md)：T3 主线程可用后台命令等会议和派发；派出的进程剥离 T3 标识（第 1、6 节）。
   - [ADR-0117](0117-private-dispatch-without-skill.md)：T3 主线程与子线程用各自的 MCP 说明（第 5 节）。
 - 不改变：[ADR-0031](0031-prompt-only-orchestration.md) 的单向编排；[ADR-0032](0032-cli-permission-tiers.md) 不追加权限参数；[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md) 的 Skill 安装；[ADR-0099](0099-handover-links-workspaces.md) 的转交。
 
@@ -32,7 +32,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    - 线程 ID 以 `thread:delegated-task:` 开头是 T3 派出的子线程，其余是主线程。
    - 服务启动的 Provider 进程与托盘终端剥离 `T3CODE_` 开头的变量，避免误判。`T3CODE_HOME` 由服务自己读取后再剥离。
    - 第一版只认 Claude 和 Codex 宿主。
-2. **T3 跟随编排档位**。档位决定谁选工位、三个开关决定授权（[ADR-0122](0122-merge-split-and-parallel-presets.md)），T3 开关只决定在 T3 主线程里由谁执行：分工协作和自定义由 boss 选 T3 工位，决策模型由决策模型选；只开会和关闭两档没有 T3 模式，在 T3 里和别处一样。不识别、开关没开、当前 boss 的档位没有 T3 模式或 T3 工位目录没有可用工位时，一切照旧。T3 内置终端、桌面端、命令行、派生会话都按普通连接处理。子线程不受开关影响，总是只给子线程说明。
+2. **T3 跟随编排档位**。档位决定谁选工位、三个开关决定授权（[ADR-0122](0122-merge-split-and-parallel-presets.md)），T3 开关只决定在 T3 主线程里由谁执行：分工协作和自定义由 boss 选 T3 工位，决策模型由决策模型选；只开会和关闭两档没有 T3 模式，在 T3 里和别处一样。不识别、开关没开、当前 boss 的档位没有 T3 模式或 T3 工位目录没有可用工位时，除第 6 节的后台等外一切照旧。T3 内置终端、桌面端、命令行、派生会话都按普通连接处理。子线程不受开关影响，总是只给子线程说明。
 3. **T3 工位目录单独一份**，数据根文件 `t3-seats.json`，App 写、服务读：开关、同档候选随机开关、任务工位、评审工位。任务工位的专业、说明、读写、难度沿用自定义工位的含义，各自保存，不引用现有卡片。
    - 候选只存 T3 账号实例 ID、T3 模型名和推理档；每个工位 1–4 个候选（还没选模型的工位可以保存，但不进候选；没有可用工位时不能打开开关），账号就是实例，同一 CLI 的两个账号是两个候选。
    - 推理档只认 T3 标为推理的选项，以及 `effort`、`reasoningEffort`；不存权限、沙箱、模式类选项。没选推理档时明确传空列表。
@@ -57,7 +57,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    > - 在 T3 Code 主线程（有 `delegate_task` 工具）里，用户已开启 T3 编排，派发只按本条，不用 `start_agent`、`start_agents`。任何单独派发（包括原生子代理、小任务、只读调查和评审）前都先调 AgentNave `recommend_seat`，【决策模型：由决策模型选工位】【分工协作、自定义：按任务类型和难度从 `list_members` 公布的 T3 工位选一个填进 `seat`】，多项互不依赖的任务一次交出；工具还没列出就先加载或稍等，不因此改用原生子代理。回执带 T3 目标的，用户指定一律用 `delegate_task` 按回执派发，同 CLI、同模型也不用原生子代理，回执列出的候选就是允许换用的范围；候选都不可用就告诉用户。隔离、等待和收件按 T3；开会不用先选工位。
    > - 用户点名 T3 里的账号或模型时，直接按点名用 `delegate_task` 派发，不用先选工位；点名的用不了就告诉用户，不换别的。
    > - 由 `delegate_task` 派出的线程只完成自己的任务，不再派发或开会。
-6. **会议等待**。T3 主线程里 Claude 与 Codex 用后台命令等收件箱，命令结束由 T3 叫醒；提前返回（如卡住提醒）处理后要重新挂上。
+6. **后台等**。只要识别为 T3 主线程，不看 T3 编排是否打开，Claude 与 Codex 的会议和 AgentNave 派发都用后台命令等收件箱，命令结束由 T3 叫醒；其他宿主在 T3 里没有识别，等待不变；提前返回（如卡住提醒）处理后要重新挂上。
 7. **转交**。T3 内换账号、分叉、新线程用 T3 的；跨出或跨进 T3 用 AgentNave 转交；没说去哪就问。T3 里换账号后聊天 ID 会变，旧会议不能续开，第一版接受。
 8. **App 读 T3 的模型列表**。App 读 `T3CODE_HOME`（缺省 `~/.t3`）下的实例缓存和隐藏模型设置，只取列模型需要的字段，不读也不展示邮箱、账号和凭据；T3 已移除的实例可能残留缓存，已保存的候选读不到时保留并标出。首次开启按现有工位复制一次专业、难度、读写和评审角色，模型只在精确匹配时填，Claude 工位没绑账号的展开到所有已登录的 Claude 实例；没有现有工位时给两个起步工位。没检测到 T3 时不显示这一块。档位和三个开关在页面顶部，普通与 T3 共用；「通用 / T3 Code」只切换工位，当前档位没有 T3 模式时不显示。「写入的规则」显示实际写入的全文。
 

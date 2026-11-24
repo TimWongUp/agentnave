@@ -6361,8 +6361,8 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert "start_agent" in restored_split and "recommend_seat" not in restored_split
         _write_orch("decision")
 
-        # 12. Meeting wait guidance uses T3 background watch command when T3 orchestration is active.
-        _write_t3_seats(seats_doc)
+        # 12. T3 main threads wait in the background even with T3 orchestration off.
+        _write_t3_seats({**seats_doc, "enabled": False})
         _install_fake_claude(tmp_path, monkeypatch)
         round_res = await client.call_tool(
             "run_round",
