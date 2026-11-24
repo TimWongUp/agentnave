@@ -2125,11 +2125,11 @@ def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
         (caches / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
 
     # Missing, corrupt JSON, non-object, wrong types -> unknown (not excluded).
-    assert check_instance("missing", now=now).available is True
+    assert check_instance("missing", "m", now=now).available is True
     (caches / "corrupt.json").write_text("{not-json", encoding="utf-8")
-    assert check_instance("corrupt", now=now).available is True
+    assert check_instance("corrupt", "m", now=now).available is True
     write("array", [1, 2, 3])
-    assert check_instance("array", now=now).available is True
+    assert check_instance("array", "m", now=now).available is True
     write(
         "wrong-types",
         {
@@ -2141,31 +2141,33 @@ def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
             "usageLimits": {
                 "windows": [
                     {"id": "five_hour", "usedPercent": True, "resetsAt": "2026-11-24T12:00:00Z"},
-                    {"id": "seven_day", "usedPercent": 100, "resetsAt": "2026-11-24T12:00:00"},
+                    {"id": "seven_day", "usedPercent": "100"},
+                    "nope",
+                    {"usedPercent": 100},
                 ]
             },
         },
     )
-    assert check_instance("wrong-types", now=now).available is True
+    assert check_instance("wrong-types", "m", now=now).available is True
 
     # Path traversal and symlink outside caches/ -> treated as unknown, never read.
     outside = tmp_path / "escape.json"
     outside.write_text(json.dumps({"enabled": False}), encoding="utf-8")
     for bad_name in ("../escape", "a/b", "a\\b", "..", ".", "bad\x00name"):
-        assert check_instance(bad_name, now=now).available is True
+        assert check_instance(bad_name, "m", now=now).available is True
     link = caches / "sym.json"
     link.symlink_to(outside)
-    assert check_instance("sym", now=now).available is True
+    assert check_instance("sym", "m", now=now).available is True
 
     # Explicit exclusions (and auth.email never leaks).
     write("disabled", {"enabled": False})
-    assert not check_instance("disabled", now=now).available
+    assert not check_instance("disabled", "m", now=now).available
     write("uninstalled", {"enabled": True, "installed": False})
-    assert not check_instance("uninstalled", now=now).available
+    assert not check_instance("uninstalled", "m", now=now).available
     write("errored", {"enabled": True, "installed": True, "status": "error"})
-    assert not check_instance("errored", now=now).available
+    assert not check_instance("errored", "m", now=now).available
     write("status-disabled", {"status": "disabled"})
-    assert not check_instance("status-disabled", now=now).available
+    assert not check_instance("status-disabled", "m", now=now).available
     write(
         "unauth",
         {
@@ -2176,7 +2178,7 @@ def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
             "auth": {"status": "unauthenticated", "email": "private-user@example.com"},
         },
     )
-    unauth = check_instance("unauth", now=now)
+    unauth = check_instance("unauth", "m", now=now)
     assert not unauth.available
     assert "private-user@example.com" not in (unauth.reason or "")
 
@@ -2197,7 +2199,7 @@ def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
             },
         },
     )
-    claude_full = check_instance("claude-full", now=now)
+    claude_full = check_instance("claude-full", "m", now=now)
     assert not claude_full.available
     assert claude_full.resets_at == datetime(2026, 11, 26, 0, 0, 0, tzinfo=UTC)
     assert "secret@example.com" not in (claude_full.reason or "")
@@ -2215,9 +2217,8 @@ def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
             },
         },
     )
-    assert check_instance("claude-expired", now=now).available is True
+    assert check_instance("claude-expired", "m", now=now).available is True
 
-    # Codex primary/secondary checked; claudeAgent ignores primary; other drivers ignore limits.
     write(
         "codex-full",
         {
@@ -2229,20 +2230,54 @@ def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
             },
         },
     )
-    codex_full = check_instance("codex-full", now=now)
+    codex_full = check_instance("codex-full", "m", now=now)
     assert not codex_full.available
     assert codex_full.resets_at == datetime(2026, 11, 24, 11, 30, 0, tzinfo=UTC)
 
-    write(
-        "other-driver",
-        {
-            "driver": "acp",
-            "usageLimits": {
-                "windows": [
-                    {"id": "primary", "usedPercent": 100, "resetsAt": "2026-11-24T11:30:00Z"},
-                    {"id": "five_hour", "usedPercent": 100, "resetsAt": "2026-11-24T11:30:00Z"},
-                ]
-            },
-        },
-    )
-    assert check_instance("other-driver", now=now).available is True
+
+@pytest.mark.parametrize(
+    ("driver", "windows", "stopped", "free"),
+    [
+        # A scoped Claude week stops its own model; overage spend stops none.
+        ("claudeAgent", ["seven_day_opus"], ["claude-opus-5-5"], ["claude-sonnet-5-5"]),
+        ("claudeAgent", ["monthly_spend"], [], ["claude-opus-5-5"]),
+        # The Codex credit cap only matters without plan windows.
+        ("codex", ["individual"], ["gpt-6-luna"], []),
+        ("codex", ["individual", "-primary"], [], ["gpt-6-luna"]),
+        ("grok", ["subscription"], ["grok-4.6"], []),
+        (
+            "antigravity",
+            ["gemini-weekly"],
+            ["gemini-4-neon"],
+            ["claude-opus-5-5", "gemini-4-argon"],
+        ),
+        ("antigravity", ["gemini-argon-5h"], ["gemini-4-argon"], ["gemini-4-neon"]),
+        ("antigravity", ["3p-weekly"], ["claude-opus-5-5"], ["gemini-4-neon"]),
+        ("cursor", ["apiPercentUsed"], ["gpt-6-luna"], ["auto"]),
+        ("cursor", ["apiPercentUsed", "autoPercentUsed"], ["auto"], []),
+        ("opencode", ["go_weekly"], ["opencode-go/x"], ["openai/y"]),
+        ("muse", ["weekly"], ["anything"], []),
+        ("opencode", ["scoped@a/b"], ["a/b"], ["a/c"]),
+    ],
+)
+def test_t3_quota_stops_only_the_models_each_full_window_covers(
+    driver: str, windows: list[str], stopped: list[str], free: list[str]
+) -> None:
+    from datetime import UTC, datetime
+
+    from agentnave.t3_quota import exhausted_windows
+
+    limits = {
+        "windows": [
+            {
+                "id": name.removeprefix("-").split("@")[0],
+                # A leading "-" is a window with room left; "@" scopes it to one model.
+                "usedPercent": 10 if name.startswith("-") else 100,
+                **({"modelIds": [name.split("@")[1]]} if "@" in name else {}),
+            }
+            for name in windows
+        ]
+    }
+    now = datetime(2026, 11, 24, 10, tzinfo=UTC)
+    assert all(exhausted_windows(driver, limits, model, now) for model in stopped)
+    assert not any(exhausted_windows(driver, limits, model, now) for model in free)

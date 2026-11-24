@@ -259,12 +259,12 @@ def _decision_model_name() -> str:
 
 def _filter_candidates(
     candidates: Sequence[T3Candidate],
-    probe: Callable[[str], InstanceAvailability],
+    probe: Callable[[str, str], InstanceAvailability],
 ) -> _CandidateFilter:
     usable: list[T3Candidate] = []
     excluded: list[tuple[T3Candidate, InstanceAvailability]] = []
     for candidate in candidates:
-        status = probe(candidate.instance)
+        status = probe(candidate.instance, candidate.model)
         if status.available:
             usable.append(candidate)
         else:
@@ -312,7 +312,7 @@ def _resolve_explicit_seat(
     item: T3RecommendTask,
     doc: T3SeatsFile,
     seats_by_id: Mapping[str, T3Seat],
-    probe: Callable[[str], InstanceAvailability],
+    probe: Callable[[str, str], InstanceAvailability],
 ) -> _Selection | _Unavailable:
     assert item.seat is not None
     seat_name = item.seat
@@ -376,7 +376,7 @@ def _resolve_explicit_seat(
 def _auto_candidates_for_access(
     access: Literal["read", "write"],
     doc: T3SeatsFile,
-    probe: Callable[[str], InstanceAvailability],
+    probe: Callable[[str, str], InstanceAvailability],
 ) -> tuple[dict[str, tuple[T3Seat, _CandidateFilter]], _Unavailable | None]:
     matching = [seat for seat in doc.seats if seat.access == access and seat.candidates]
     if not matching:
@@ -529,17 +529,17 @@ async def recommend_t3_seats(
     tasks: Sequence[T3RecommendTask],
     doc: T3SeatsFile,
     *,
-    probe_instance: Callable[[str], InstanceAvailability] | None = None,
+    probe_instance: Callable[[str, str], InstanceAvailability] | None = None,
     rng: random.Random | None = None,
 ) -> T3RecommendSeatPayload:
     """Core T3 seat recommendation across 1-8 tasks."""
-    cache: dict[str, InstanceAvailability] = {}
+    cache: dict[tuple[str, str], InstanceAvailability] = {}
     base_probe = check_instance if probe_instance is None else probe_instance
 
-    def probe(instance: str) -> InstanceAvailability:
-        if instance not in cache:
-            cache[instance] = base_probe(instance)
-        return cache[instance]
+    def probe(instance: str, model: str) -> InstanceAvailability:
+        if (instance, model) not in cache:
+            cache[instance, model] = base_probe(instance, model)
+        return cache[instance, model]
 
     seats_by_id = {seat.id: seat for seat in doc.seats}
     resolved: list[_Selection | _Unavailable | None] = [None] * len(tasks)
@@ -632,7 +632,7 @@ async def t3_recommend_seat(
 
 
 def _candidate_statuses(
-    candidates: Sequence[T3Candidate], probe: Callable[[str], InstanceAvailability]
+    candidates: Sequence[T3Candidate], probe: Callable[[str, str], InstanceAvailability]
 ) -> tuple[list[T3CandidateStatus], Literal[False] | None, str | None]:
     if not candidates:
         return [], False, "no candidates configured"
@@ -640,7 +640,7 @@ def _candidate_statuses(
     reasons: list[str] = []
     any_usable = False
     for cand in candidates:
-        status = probe(cand.instance)
+        status = probe(cand.instance, cand.model)
         if status.available:
             any_usable = True
         else:
@@ -696,12 +696,12 @@ async def t3_list_members(
         raise ToolError(str(exc)) from exc
     if doc is None:
         raise ToolError("T3 orchestration is not active for this connection.")
-    cache: dict[str, InstanceAvailability] = {}
+    cache: dict[tuple[str, str], InstanceAvailability] = {}
 
-    def probe(instance: str) -> InstanceAvailability:
-        if instance not in cache:
-            cache[instance] = check_instance(instance)
-        return cache[instance]
+    def probe(instance: str, model: str) -> InstanceAvailability:
+        if (instance, model) not in cache:
+            cache[instance, model] = check_instance(instance, model)
+        return cache[instance, model]
 
     seat_statuses: dict[str, T3SeatStatus] = {}
     for seat in doc.seats:
