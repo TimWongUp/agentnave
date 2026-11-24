@@ -18,11 +18,12 @@ from agentnave.core import READ_ONLY_INSTRUCTIONS
 from agentnave.decision_model import DecisionError, DecisionQuestion
 from agentnave.decision_seats import DecisionSeatsFileError, read_decision_seats
 from agentnave.members import ReviewRole
-from agentnave.orchestration_roles import CustomSeatDifficulty
+from agentnave.orchestration_roles import CustomSeatDifficulty, StrictModel
 from agentnave.t3_cache import InstanceAvailability, check_instance, format_utc
 from agentnave.t3_seats import (
     REVIEW_ROLES,
     T3Candidate,
+    T3Option,
     T3OrchestrationMode,
     T3Seat,
     T3SeatsFile,
@@ -37,14 +38,20 @@ T3_RECOMMEND_NEXT = (
     "Nothing was started. Before your first delegate_task in this thread, call T3's "
     "orchestrator_capabilities as T3 requires (a target not listed there may still be usable). "
     "For each selected item, call T3's delegate_task once copying target (including options: [] "
-    "when empty) and clientRequestId verbatim; never substitute built-in subagents or "
-    "start_agent even for the same CLI or model. Put the full self-contained brief in "
-    "delegate_task and append brief_suffix verbatim when present. Only if T3 creates no task "
-    "and explicitly rejects the instance, model, or option, retry once with the next candidate "
-    "using the same clientRequestId (never drop a rejected option silently) and tell the user "
-    "which candidate ran. Never retry or switch candidates if a taskId was returned, or on "
-    "timeout, disconnect, or permission denial. If all candidates fail or an item is "
-    "unavailable, tell the user instead of falling back to built-in subagents or start_agent."
+    "when empty) and clientRequestId verbatim; each seat's account, model, and reasoning options "
+    "are user-chosen settings, so use delegate_task even for the same CLI instead of built-in "
+    "subagents or start_agent. Put the full self-contained brief in delegate_task and append "
+    "brief_suffix verbatim when present. Only if T3 creates no task and explicitly rejects the "
+    "instance, model, or option, retry once with the next candidate using the same "
+    "clientRequestId (never drop a rejected option silently) and tell the user which candidate "
+    "ran. Never retry or switch candidates if a taskId was returned, or on timeout, disconnect, "
+    "or permission denial. If all candidates fail or an item is unavailable, tell the user "
+    "instead of falling back to built-in subagents or start_agent."
+)
+
+T3_CATALOG_NEXT = (
+    "Nothing was started. Choose the T3 seat(s) or review role(s) you need from this catalog and "
+    "call recommend_seat with tasks to get ordered delegate_task targets."
 )
 
 T3_ALL_UNAVAILABLE_NEXT = (
@@ -82,12 +89,38 @@ class T3RecommendTask(BaseModel):
         Field(
             min_length=1,
             description=(
-                "T3 seat name: fixed role name (e.g. worker-easy), custom seat id, or review role "
-                "name. Required in split/custom modes; optional in decision mode (skips decision "
-                "model)."
+                "T3 seat name from the catalog returned by recommend_seat(): fixed role name "
+                "(e.g. worker-easy), custom seat id, or review role name. Required in split/custom "
+                "modes; optional in decision mode (skips decision model)."
             ),
         ),
     ] = None
+
+
+class T3CandidateStatus(StrictModel):
+    instance: str
+    model: str
+    options: list[T3Option] = Field(default_factory=list[T3Option])
+    available: bool
+    reason: str | None = None
+    resets_at: str | None = None
+
+
+class T3SeatStatus(StrictModel):
+    kind: str
+    role: str
+    description: str
+    access: Literal["read", "write"]
+    difficulty: CustomSeatDifficulty | None = None
+    candidates: list[T3CandidateStatus] = Field(default_factory=list[T3CandidateStatus])
+    available: Literal[False] | None = None
+    reason: str | None = None
+
+
+class T3ReviewRoleStatus(StrictModel):
+    candidates: list[T3CandidateStatus] = Field(default_factory=list[T3CandidateStatus])
+    available: Literal[False] | None = None
+    reason: str | None = None
 
 
 class T3TargetOptionPayload(TypedDict):
@@ -120,7 +153,11 @@ class T3RecommendItemPayload(TypedDict):
 
 
 class T3RecommendSeatPayload(TypedDict):
-    results: list[T3RecommendItemPayload]
+    results: NotRequired[list[T3RecommendItemPayload]]
+    mode: NotRequired[T3OrchestrationMode]
+    random_candidates: NotRequired[bool]
+    seats: NotRequired[dict[str, T3SeatStatus]]
+    review: NotRequired[dict[ReviewRole, T3ReviewRoleStatus]]
     next: str
 
 
@@ -537,6 +574,78 @@ async def recommend_t3_seats(
     return {
         "results": results,
         "next": T3_RECOMMEND_NEXT if any_selected else T3_ALL_UNAVAILABLE_NEXT,
+    }
+
+
+def _candidate_statuses(
+    candidates: Sequence[T3Candidate], probe: Callable[[str, str], InstanceAvailability]
+) -> tuple[list[T3CandidateStatus], Literal[False] | None, str | None]:
+    if not candidates:
+        return [], False, "no candidates configured"
+    items: list[T3CandidateStatus] = []
+    reasons: list[str] = []
+    any_usable = False
+    for cand in candidates:
+        status = probe(cand.instance, cand.model)
+        if status.available:
+            any_usable = True
+        else:
+            reasons.append(f"{cand.instance}/{cand.model}: {status.reason or 'unavailable'}")
+        items.append(
+            T3CandidateStatus(
+                instance=cand.instance,
+                model=cand.model,
+                options=list(cand.options),
+                available=status.available,
+                reason=status.reason,
+                resets_at=format_utc(status.resets_at) if status.resets_at is not None else None,
+            )
+        )
+    if any_usable:
+        return items, None, None
+    return items, False, "; ".join(reasons[:4])
+
+
+def catalog_t3_seats(
+    doc: T3SeatsFile,
+    *,
+    mode: T3OrchestrationMode,
+    probe_instance: Callable[[str, str], InstanceAvailability] | None = None,
+) -> T3RecommendSeatPayload:
+    """Return configured T3 task seats and review roles without calling the decision model."""
+    cache: dict[tuple[str, str], InstanceAvailability] = {}
+    base_probe = check_instance if probe_instance is None else probe_instance
+
+    def probe(instance: str, model: str) -> InstanceAvailability:
+        if (instance, model) not in cache:
+            cache[instance, model] = base_probe(instance, model)
+        return cache[instance, model]
+
+    seat_statuses: dict[str, T3SeatStatus] = {}
+    for seat in doc.seats:
+        items, avail, reason = _candidate_statuses(seat.candidates, probe)
+        seat_statuses[t3_seat_name(seat)] = T3SeatStatus(
+            kind=seat.kind,
+            role=seat.role,
+            description=seat.description,
+            access=seat.access,
+            difficulty=seat.difficulty,
+            candidates=items,
+            available=avail,
+            reason=reason,
+        )
+    review_statuses: dict[ReviewRole, T3ReviewRoleStatus] = {}
+    for role, candidates in doc.review.items():
+        if not candidates:
+            continue
+        items, avail, reason = _candidate_statuses(candidates, probe)
+        review_statuses[role] = T3ReviewRoleStatus(candidates=items, available=avail, reason=reason)
+    return {
+        "mode": mode,
+        "random_candidates": doc.random_candidates,
+        "seats": seat_statuses,
+        "review": review_statuses,
+        "next": T3_CATALOG_NEXT,
     }
 
 

@@ -5626,8 +5626,8 @@ def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
 
     t3_cases: tuple[tuple[T3OrchestrationMode, str], ...] = (
         ("decision", "decision model picks seats"),
-        ("split", "with seat from list_members"),
-        ("custom", "with seat from list_members"),
+        ("split", "with seat from recommend_seat()"),
+        ("custom", "with seat from recommend_seat()"),
     )
     for preset_mode, expected_picker in t3_cases:
         prefix = t3_mcp.t3_main_instructions(preset_mode)
@@ -5635,8 +5635,9 @@ def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
         first_sentence = prefix.split(". ", 1)[0] + "."
         assert len(first_sentence) <= 210
         assert "recommend_seat(tasks)" in first_sentence and "delegate_task" in first_sentence
-        assert "unless the user named a T3 account or model" in first_sentence
+        assert "unless the user named a CLI, T3 account or model" in first_sentence
         assert expected_picker in first_sentence
+        assert "list_members is for meeting members only" in prefix
         for host_name in ("claude", "codex"):
             host = Host(host_name, "env")
             t3_main = mcp_runtime.build_mcp_instructions(
@@ -6100,21 +6101,50 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
                 tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
             }
             assert "start_agent" not in boss_tools and "recommend_seat" in boss_tools
-            assert "seat_required" in (boss_tools["recommend_seat"].description or "")
-            assert "boss chooses seats" in (boss_tools["recommend_seat"].description or "")
-            assert "boss picks seats" in (boss_tools["list_members"].description or "")
-            assert len(boss_tools["recommend_seat"].description or "") <= 2000
-            assert len(boss_tools["list_members"].description or "") <= 2000
+            boss_rec_desc = boss_tools["recommend_seat"].description or ""
+            assert "seat_required" in boss_rec_desc
+            assert "boss chooses seats" in boss_rec_desc
+            assert "no image generation seat" in boss_rec_desc
+            assert "list_members" not in boss_rec_desc
+            boss_list_desc = boss_tools["list_members"].description or ""
+            assert "meeting (discussion) CLIs only" in boss_list_desc
+            assert "recommend_seat()" in boss_list_desc
+            assert len(boss_rec_desc) <= 2000
+            assert len(boss_list_desc) <= 2000
             boss_members = cast(
                 dict[str, Any], (await client.call_tool("list_members", {})).structured_content
             )
-            assert boss_members["t3_orchestration"]["mode"] == expected_mode
-            assert set(boss_members["t3_orchestration"]["seats"]) == {
-                "explorer-easy",
-                "worker-easy",
-                "worker-hard",
-                "write-dead",
-            }
+            assert "t3_orchestration" not in boss_members
+            empty_cases: tuple[dict[str, Any], ...] = ({}, {"tasks": []})
+            for empty_args in empty_cases:
+                catalog_res = await client.call_tool("recommend_seat", empty_args)
+                assert catalog_res.is_error is False, catalog_res.content
+                catalog_payload = cast(dict[str, Any], catalog_res.structured_content)
+                assert catalog_payload["mode"] == expected_mode
+                assert catalog_payload["random_candidates"] is False
+                assert set(catalog_payload["seats"]) == {
+                    "explorer-easy",
+                    "worker-easy",
+                    "worker-hard",
+                    "write-dead",
+                }
+                assert set(catalog_payload["review"]) == {
+                    "correctness-reviewer",
+                    "security-reviewer",
+                }
+                assert "results" not in catalog_payload
+                assert "Nothing was started" in str(catalog_payload["next"])
+                assert "tasks" in str(catalog_payload["next"])
+            too_many = await client.call_tool(
+                "recommend_seat",
+                {
+                    "tasks": [
+                        {"task": f"t{i}", "access": "write", "seat": "worker-easy"}
+                        for i in range(9)
+                    ]
+                },
+            )
+            assert too_many.is_error is True
             missing_seat = await client.call_tool(
                 "recommend_seat", {"tasks": [{"task": "implement feature", "access": "write"}]}
             )
@@ -6156,7 +6186,8 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert "tasks" in tools["recommend_seat"].input_schema["properties"]
         assert "decision mode" in (tools["recommend_seat"].description or "")
         assert "seat_required" in (tools["recommend_seat"].description or "")
-        assert "decision mode" in (tools["list_members"].description or "")
+        assert "no image generation seat" in (tools["recommend_seat"].description or "")
+        assert tools["list_members"].description == boss_tools["list_members"].description
         assert len(tools["recommend_seat"].description or "") <= 2000
         assert len(tools["list_members"].description or "") <= 2000
 
@@ -6172,25 +6203,30 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
             msg = str(res.content)
             assert "recommend_seat" in msg and "delegate_task" in msg and "handover" in msg
 
-        # 3. list_members lists T3 seats (fixed names for standard roles, id for custom), review roles,
-        #    and meeting members (no auth email).
+        # 3. list_members lists meeting members only (no T3 seats); recommend_seat() without tasks
+        #    returns T3 seats and review roles (no auth email, no decision model call).
         members_res = await client.call_tool("list_members", {})
         assert members_res.is_error is False
-        members_raw = json.dumps(members_res.structured_content)
-        assert "never-leak@example.com" not in members_raw
-        assert "ok1@example.com" not in members_raw
         members_payload = cast(dict[str, Any], members_res.structured_content)
-        t3_orch = cast(dict[str, Any], members_payload["t3_orchestration"])
-        assert t3_orch["enabled"] is True
-        assert t3_orch["mode"] == "decision"
-        assert set(t3_orch["seats"]) == {
+        assert "t3_orchestration" not in members_payload
+        catalog_res = await client.call_tool("recommend_seat", {})
+        assert catalog_res.is_error is False
+        catalog_raw = json.dumps(catalog_res.structured_content)
+        assert "never-leak@example.com" not in catalog_raw
+        assert "ok1@example.com" not in catalog_raw
+        t3_cat = cast(dict[str, Any], catalog_res.structured_content)
+        assert t3_cat["mode"] == "decision"
+        assert t3_cat["random_candidates"] is False
+        assert set(t3_cat["seats"]) == {
             "explorer-easy",
             "worker-easy",
             "worker-hard",
             "write-dead",
         }
-        assert t3_orch["seats"]["write-dead"]["available"] is False
-        assert set(t3_orch["review"]) == {"correctness-reviewer", "security-reviewer"}
+        assert t3_cat["seats"]["write-dead"]["available"] is False
+        assert set(t3_cat["review"]) == {"correctness-reviewer", "security-reviewer"}
+        assert "clientRequestId" not in catalog_raw
+        assert decision.batches == [] and decision.calls == []
 
         # 4. Single usable seat works WITHOUT decision key; legacy {task, access} works as 1 item.
         long_task = "检查" * 50
@@ -6231,6 +6267,7 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
             "Nothing was started",
             "orchestrator_capabilities",
             "delegate_task",
+            "user-chosen settings",
             "clientRequestId",
             "brief_suffix",
             "taskId",

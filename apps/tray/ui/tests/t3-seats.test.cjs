@@ -638,12 +638,19 @@ test("shared General / T3 Code segment follows orchestration mode (hidden on off
   const dotHidden = (key) => h.find(key).children[1].hidden;
   assert.equal(dotHidden("scope/orchestration/general"), true);
   assert.equal(dotHidden("scope/orchestration/t3"), true);
+  assert.equal(h.find("scope/orchestration/t3").children[0], "T3 Code");
+  assert.equal(h.find("scope/orchestration/t3").dataset.reserve, "T3 Code · 已开");
+  assert.equal(h.find("scope/review/t3").children[0], "T3 Code");
 
-  // Edit T3 task settings while viewing General -> badge-dot appears only on T3 segment in Orchestration.
+  // Edit T3 task settings while viewing General -> badge-dot appears only on T3 segment in Orchestration,
+  // and toggling T3 enabled immediately updates the T3 button label on both pages while keeping reserve width.
   h.find("t3/enabled").listeners.change({ target: { checked: true } });
   assert.equal(dotHidden("scope/orchestration/t3"), false);
   assert.equal(dotHidden("scope/orchestration/general"), true);
   assert.equal(dotHidden("scope/review/t3"), true);
+  assert.equal(h.find("scope/orchestration/t3").children[0], "T3 Code · 已开");
+  assert.equal(h.find("scope/orchestration/t3").dataset.reserve, "T3 Code · 已开");
+  assert.equal(h.find("scope/review/t3").children[0], "T3 Code · 已开");
 
   // Switch to T3 Code -> switches BOTH Orchestration and Review Settings; T3 dot hides while active.
   h.find("scope/orchestration/t3").listeners.click();
@@ -683,11 +690,13 @@ test("shared General / T3 Code segment follows orchestration mode (hidden on off
   h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "codex" } });
   assert.equal(dotHidden("scope/review/t3"), false);
 
-  // Discard clears every badge-dot.
+  // Discard clears every badge-dot and restores the T3 Code button label.
   h.run('$("advanced-discard").listeners.click()');
   h.run('viewMode("split")');
   assert.equal(dotHidden("scope/orchestration/t3"), true);
   assert.equal(dotHidden("scope/review/t3"), true);
+  assert.equal(h.find("scope/orchestration/t3").children[0], "T3 Code");
+  assert.equal(h.find("scope/review/t3").children[0], "T3 Code");
 });
 
 test("T3 seat rows summarize primary model display names, preserve expand state, force-open invalid cards, and save collapsed edits", async () => {

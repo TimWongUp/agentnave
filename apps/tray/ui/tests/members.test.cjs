@@ -1121,11 +1121,12 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
     split_parts: dispatchParts("dispatch_split"),
     decision_parts: dispatchParts("dispatch_decision"),
     t3: Object.fromEntries(Object.entries(rules.t3_order).map(([m, steps]) => [m, steps.map((s) => rules.sections[s]).join("")])),
+    non_t3_heading: rules.sections.t3_non_t3_heading,
     role_sections: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, false)])),
     role_sections_medium: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, true)])),
     lead: { asked: rules.switches.lead_only.when_false, always: rules.switches.lead_only.when_true },
   })};`);
-  const assemble = (mode) => rules.order[mode].map((step) => {
+  const assemble = (mode, withT3 = false) => rules.order[mode].map((step) => {
     if (step === "meeting_defaults") {
       const names = ["Codex CLI（provider=`codex`）", "Claude Code（provider=`claude`）"].join(rules.meeting_defaults.separator);
       return rules.meeting_defaults.some_named.replace("{count}", "4").replace("{seats}", names);
@@ -1141,6 +1142,9 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
       return rules.sections[(val ?? sw.default) ? sw.when_true : sw.when_false];
     }
     let text = rules.sections[step];
+    if (withT3 && (step === "dispatch_split" || step === "dispatch_decision")) {
+      text = rules.sections.t3_non_t3_heading + text;
+    }
     if (doc.lead_only && rules.switches.lead_only.replaces_in.includes(step)) {
       text = text.replace(rules.switches.lead_only.when_false, rules.switches.lead_only.when_true);
     }
@@ -1148,11 +1152,12 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
   }).join("");
   assert.equal(app.run('orchestrationPresetText("split")'), assemble("split"));
   assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision"));
-  // With T3 orchestration enabled, JS appends the exact same t3_order sections as Rust.
+  // With T3 orchestration enabled, JS inserts non_t3_heading and appends the exact same t3_order sections as Rust.
   const t3Suffix = (mode) => rules.t3_order[mode].map((s) => rules.sections[s]).join("");
   app.run("window.AgentNaveT3Seats = { enabled: () => true };");
-  assert.equal(app.run('orchestrationPresetText("split")'), assemble("split") + t3Suffix("split"));
-  assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision") + t3Suffix("decision"));
+  assert.equal(app.run('orchestrationPresetText("split")'), assemble("split", true) + t3Suffix("split"));
+  assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision", true) + t3Suffix("decision"));
+  assert.equal(app.run('orchestrationPresetText("split", false)'), assemble("split"));
   assert.equal(app.run('orchestrationPresetText("custom")'), t3Suffix("custom").trim());
   assert.equal(app.run('orchestrationPresetText("off")'), undefined);
 });

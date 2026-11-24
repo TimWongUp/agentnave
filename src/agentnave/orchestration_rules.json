@@ -37,9 +37,11 @@
     "image_generation": "\n- 生成图片派生图工位，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务。",
     "dispatch_decision": "\n- 派发用 AgentNave，`seat` 用 `auto` 并传 `access`，由决策模型从 `list_members` 公布的目录选工位；本次允许同时执行的独立任务用 `start_agents` 一次交出。用户点名 CLI 时也通过 AgentNave，不在终端直接运行它。选得明显不合适时从目录改选并说明理由，选不出或调用失败时由 boss 从目录自选、自己完成或报告能力不足，不静默换模型。目录里没有生图工位时不拿其他工位顶替。\n- 用户在 AgentNave App 中保存的工位模型和推理档设置视同明确选择，宿主自带子代理也须遵从；Claude 宿主只提供系列别名时，选择工位即授权使用同系列别名。宿主不能在已授权范围内满足设置时按工位不可用处理，不自动回退，用户明确授权特定替代后才采用该替代。",
     "dispatch_split": "\n- 派发用 AgentNave，用户点名 CLI 时也一样，不在终端直接运行它。按任务类型和难度选择下列可见工位；同难度专项优先，专项未设或不可用时选择同难度的通用工位，通用也不可用时由 boss 自己完成或报告能力不足；兜底不跨难度、不静默换模型。\n- 用户在 AgentNave App 中保存的工位模型和推理档设置视同明确选择，宿主自带子代理也须遵从；Claude 宿主只提供系列别名时，选择工位即授权使用同系列别名。宿主不能在已授权范围内满足设置时按工位不可用处理，不自动回退，用户明确授权特定替代后才采用该替代。",
-    "t3_dispatch_decision": "\n- 在 T3 Code 主线程（有 `delegate_task` 工具）里，用户已开启 T3 编排，派发只按本条，不用 `start_agent`、`start_agents`。任何单独派发（包括原生子代理、小任务、只读调查和评审）前都先调 AgentNave `recommend_seat`，由决策模型选工位，多项互不依赖的任务一次交出；工具还没列出就先加载或稍等，不因此改用原生子代理。回执带 T3 目标的，用户指定一律用 `delegate_task` 按回执派发，同 CLI、同模型也不用原生子代理，回执列出的候选就是允许换用的范围；候选都不可用就告诉用户。隔离、等待和收件按 T3；开会不用先选工位。",
-    "t3_dispatch_boss": "\n- 在 T3 Code 主线程（有 `delegate_task` 工具）里，用户已开启 T3 编排，派发只按本条，不用 `start_agent`、`start_agents`。任何单独派发（包括原生子代理、小任务、只读调查和评审）前都先调 AgentNave `recommend_seat`，按任务类型和难度从 `list_members` 公布的 T3 工位选一个填进 `seat`，多项互不依赖的任务一次交出；工具还没列出就先加载或稍等，不因此改用原生子代理。回执带 T3 目标的，用户指定一律用 `delegate_task` 按回执派发，同 CLI、同模型也不用原生子代理，回执列出的候选就是允许换用的范围；候选都不可用就告诉用户。隔离、等待和收件按 T3；开会不用先选工位。",
-    "t3_common": "\n- 用户点名 T3 里的账号或模型时，直接按点名用 `delegate_task` 派发，不用先选工位；点名的用不了就告诉用户，不换别的。\n- 由 `delegate_task` 派出的线程只完成自己的任务，不再派发或开会。"
+    "t3_non_t3_heading": "\n\n### 不在 T3 Code 里时这样派\n",
+    "t3_head": "\n\n### 在 T3 Code 里这样派，不用上面的派法和工位\n\n- 用户已在设置中开启 T3 编排：按本档主动派发（含只读调查和评审），不用 `start_agent`、`start_agents`。",
+    "t3_pick_decision": "\n- 派发前先调 AgentNave `recommend_seat`，由决策模型选工位，评审把角色名填进 `seat`；只把本次允许同时执行的独立任务一次交出。工具还没列出就先加载或稍等，仍不可用就告诉用户，不跳过选位直接派，也不因此把该派的任务自己做完。",
+    "t3_pick_boss": "\n- 派发前先调 AgentNave `recommend_seat`：不带任务先取 T3 工位，按任务类型和难度选一个填进 `seat`，评审填角色名；只把本次允许同时执行的独立任务一次交出。工具还没列出就先加载或稍等，仍不可用就告诉用户，不跳过选位直接派，也不因此把该派的任务自己做完。",
+    "t3_tail": "\n- 工位的账号、模型和推理档是用户指定的设置，选好后按回执用 `delegate_task` 派发，与你同 CLI 也一样。\n- 用户点名 CLI、T3 账号或模型时，按 T3 自己的模型列表直接用 `delegate_task` 派发，不用先选工位；只点名 CLI 时由 boss 从中选模型并说明用了哪个；用不了就告诉用户，不换别的。\n- 隔离、等待和收件按 T3。开会仍用 AgentNave，按会议回执收件；`list_members` 只用来选会议成员，不用来派发。"
   },
   "switches": {
     "lead_only": {
@@ -111,16 +113,19 @@
   },
   "t3_order": {
     "split": [
-      "t3_dispatch_boss",
-      "t3_common"
+      "t3_head",
+      "t3_pick_boss",
+      "t3_tail"
     ],
     "decision": [
-      "t3_dispatch_decision",
-      "t3_common"
+      "t3_head",
+      "t3_pick_decision",
+      "t3_tail"
     ],
     "custom": [
-      "t3_dispatch_boss",
-      "t3_common"
+      "t3_head",
+      "t3_pick_boss",
+      "t3_tail"
     ]
   }
 }

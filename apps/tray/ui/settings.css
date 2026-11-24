@@ -3,6 +3,7 @@
 
 /* Navigation */
 .badge-dot { display: inline-block; width: 6px; height: 6px; background: var(--warn); border-radius: 50%; margin-left: 6px; vertical-align: middle; }
+.scope-bar .segment-btn[data-reserve]::after { content: attr(data-reserve); display: block; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; font-weight: 600; }
 
 /* Badges & Tags */
 .badge { display: inline-flex; align-items: center; font-size: 11px; padding: 1px 7px; border-radius: 99px; font-weight: 500; white-space: nowrap; }

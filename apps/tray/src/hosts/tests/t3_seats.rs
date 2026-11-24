@@ -162,22 +162,24 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
     assert_eq!(saved_res["saved"], true);
     assert_eq!(saved_res["failures"], json!([]));
 
+    let t3_heading = "### 在 T3 Code 里这样派，不用上面的派法和工位";
     let claude_md = fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap();
     assert!(claude_md.contains("# 我的规则"));
-    assert!(claude_md.contains("在 T3 Code 主线程"));
-    assert_eq!(claude_md.matches("在 T3 Code 主线程").count(), 1);
+    assert!(claude_md.contains("### 不在 T3 Code 里时这样派"));
+    assert!(claude_md.contains(t3_heading));
+    assert_eq!(claude_md.matches(t3_heading).count(), 1);
     let codex_md = fs::read_to_string(home.join(".codex/AGENTS.md")).unwrap();
-    assert!(codex_md.contains("在 T3 Code 主线程"));
+    assert!(codex_md.contains(t3_heading));
     let named_claude = home.join(".agentnave-accounts/claude/a1/CLAUDE.md");
     assert!(
         fs::read_to_string(&named_claude)
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
     assert!(
         !fs::read_to_string(home.join(".zcode/AGENTS.md"))
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
     assert!(!home.join(".grok/AGENTS.md").exists());
 
@@ -188,31 +190,30 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
         }
     }
 
-    // Disabling switch removes T3 suffix while keeping the split orchestration block.
+    // Disabling switch removes T3 sections while keeping the split orchestration block.
     let off = post(&reader, "/app/t3-seats", &valid_doc(false));
     assert_eq!(off.status, 200);
+    let claude_off = fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap();
     assert!(
-        !fs::read_to_string(home.join(".claude/CLAUDE.md"))
-            .unwrap()
-            .contains("在 T3 Code 主线程")
+        !claude_off.contains(t3_heading) && !claude_off.contains("### 不在 T3 Code 里时这样派")
     );
     assert!(
         !fs::read_to_string(home.join(".codex/AGENTS.md"))
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
     assert!(
         !fs::read_to_string(&named_claude)
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
 
-    // Turn back on, then delete t3-seats.json and refresh -> removes T3 suffix cleanly too.
+    // Turn back on, then delete t3-seats.json and refresh -> removes T3 sections cleanly too.
     assert_eq!(post(&reader, "/app/t3-seats", &valid_doc(true)).status, 200);
     assert!(
         fs::read_to_string(home.join(".codex/AGENTS.md"))
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
     fs::remove_file(root.join("t3-seats.json")).unwrap();
     assert_eq!(
@@ -224,12 +225,12 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
     assert!(
         !fs::read_to_string(home.join(".claude/CLAUDE.md"))
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
     assert!(
         !fs::read_to_string(home.join(".codex/AGENTS.md"))
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
 }
 
@@ -246,8 +247,9 @@ fn broken_t3_seats_file_leaves_rules_alone_and_uninstall_still_cleans_up() {
         200
     );
     assert_eq!(post(&reader, "/app/t3-seats", &valid_doc(true)).status, 200);
+    let t3_heading = "### 在 T3 Code 里这样派，不用上面的派法和工位";
     let before = fs::read_to_string(home.join(".codex/AGENTS.md")).unwrap();
-    assert!(before.contains("在 T3 Code 主线程"));
+    assert!(before.contains(t3_heading));
 
     // Corrupt t3-seats.json: GET reports error, refresh does NOT modify/delete rules.
     fs::write(root.join("t3-seats.json"), "{broken").unwrap();
@@ -290,7 +292,7 @@ fn broken_t3_seats_file_leaves_rules_alone_and_uninstall_still_cleans_up() {
     assert!(
         fs::read_to_string(&codex_rules)
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains(t3_heading)
     );
     fs::write(data.join("t3-seats.json"), "{broken").unwrap();
     let failures = uninstall_hosts.uninstall();

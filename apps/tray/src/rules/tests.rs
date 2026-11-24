@@ -915,11 +915,14 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     let boss_suffix = catalog::t3_suffix("split").unwrap();
     let decision_suffix = catalog::t3_suffix("decision").unwrap();
     let custom_suffix = catalog::t3_suffix("custom").unwrap();
+    let non_t3_heading = catalog::section("t3_non_t3_heading");
+    assert_eq!(non_t3_heading, "\n\n### 不在 T3 Code 里时这样派\n");
     assert_eq!(boss_suffix, custom_suffix);
-    assert!(boss_suffix.contains("从 `list_members` 公布的 T3 工位选一个填进 `seat`"));
+    assert!(boss_suffix.starts_with("\n\n### 在 T3 Code 里这样派，不用上面的派法和工位\n\n"));
+    assert!(boss_suffix.contains("不带任务先取 T3 工位"));
     assert!(decision_suffix.contains("由决策模型选工位"));
-    assert!(boss_suffix.contains("用户点名 T3 里的账号或模型时"));
-    assert!(decision_suffix.contains("用户点名 T3 里的账号或模型时"));
+    assert!(boss_suffix.contains("用户点名 CLI、T3 账号或模型时"));
+    assert!(decision_suffix.contains("用户点名 CLI、T3 账号或模型时"));
     assert!(catalog::t3_suffix("off").is_none());
     assert!(catalog::t3_suffix("meetings").is_none());
     let backup = |_: &Path, _: &[u8]| Ok(());
@@ -941,49 +944,58 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     assert!(!h.join(".gemini/AGENTS.md").exists());
     assert!(!h.join(".zcode/AGENTS.md").exists());
 
-    // 2. Meetings mode + T3 active: ordinary meetings block without any T3 text.
+    // 2. Meetings mode + T3 active: ordinary meetings block without any T3 heading or text.
     let meetings = json!({"preset": "meetings"});
     for (_, text) in wanted(&apps, h, &meetings, true) {
-        assert!(!text.contains("在 T3 Code 主线程"));
+        assert!(!text.contains("### 不在 T3 Code 里时这样派"));
+        assert!(!text.contains("### 在 T3 Code 里这样派"));
     }
 
-    // 3. Grok alone (Claude not connected) does NOT get T3 suffix even in split mode.
+    // 3. Grok alone (Claude not connected) does NOT get T3 sectioning even in split mode.
     let only_grok = [app("grok", "grok", "Grok", ".grok")];
     let grok_wanted = wanted(&only_grok, h, &json!({"preset": "split"}), true);
-    assert!(
-        grok_wanted
-            .iter()
-            .all(|(_, text)| !text.contains("在 T3 Code 主线程"))
-    );
+    assert!(grok_wanted.iter().all(|(_, text)| {
+        !text.contains("### 不在 T3 Code 里时这样派") && !text.contains("### 在 T3 Code 里这样派")
+    }));
 
-    // 4. Split and decision modes append their mode-specific T3 suffix for Claude/Codex only;
-    //    non-Claude/Codex stay untouched and presets()[mode] stays clean while presets()["t3"][mode]
-    //    carries the exact suffix.
-    for (mode, expected_suffix) in [("split", &boss_suffix), ("decision", &decision_suffix)] {
+    // 4. Split and decision modes split dispatch into two h3 sections for Claude/Codex only;
+    //    non-Claude/Codex and T3-off stay verbatim without headings, and presets() carries
+    //    non_t3_heading + mode-specific t3 suffixes.
+    for (mode, dispatch_key, expected_suffix) in [
+        ("split", "dispatch_split", &boss_suffix),
+        ("decision", "dispatch_decision", &decision_suffix),
+    ] {
         let doc = json!({"preset": mode});
+        let plain = text_of(&doc, mode).unwrap();
         let payload = presets(&doc);
-        assert!(
-            !payload[mode]
-                .as_str()
-                .unwrap()
-                .contains("在 T3 Code 主线程")
-        );
+        assert!(!payload[mode].as_str().unwrap().contains("### "));
+        assert_eq!(payload["non_t3_heading"].as_str(), Some(non_t3_heading));
         assert_eq!(payload["t3"][mode].as_str(), Some(expected_suffix.as_str()));
+        let dispatch_section = catalog::section(dispatch_key);
+        let expected_t3 = format!(
+            "{}{expected_suffix}",
+            plain.replacen(
+                dispatch_section,
+                &format!("{non_t3_heading}{dispatch_section}"),
+                1
+            )
+        );
+        assert!(!expected_t3.contains("\n\n\n"), "{mode} has triple newline");
+        assert!(expected_t3.contains("\n\n### 不在 T3 Code 里时这样派\n\n- "));
+        assert!(expected_t3.contains("\n\n### 在 T3 Code 里这样派，不用上面的派法和工位\n\n- "));
+        for (_, text) in wanted(&apps, h, &doc, false) {
+            assert_eq!(text, plain, "{mode} with T3 off must match plain");
+        }
         let rows = wanted(&apps, h, &doc, true);
         for (path, text) in &rows {
             let is_claude_or_codex = path.starts_with(h.join(".claude"))
                 || path.starts_with(h.join(".agentnave-accounts/claude/a1"))
                 || path.starts_with(h.join(".codex"));
-            assert_eq!(
-                text.ends_with(expected_suffix.as_str()),
-                is_claude_or_codex,
-                "{mode} {path:?}"
-            );
-            assert_eq!(
-                text.matches("在 T3 Code 主线程").count(),
-                usize::from(is_claude_or_codex),
-                "{mode} {path:?}"
-            );
+            if is_claude_or_codex {
+                assert_eq!(text, &expected_t3, "{mode} {path:?}");
+            } else {
+                assert_eq!(text, &plain, "{mode} {path:?}");
+            }
         }
     }
 
@@ -996,8 +1008,9 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     }
     let claude_split = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert!(claude_split.contains(own_claude));
+    assert!(claude_split.contains("### 不在 T3 Code 里时这样派"));
     assert!(claude_split.contains(boss_suffix.as_str()));
-    assert_eq!(claude_split.matches("在 T3 Code 主线程").count(), 1);
+    assert_eq!(claude_split.matches("### 在 T3 Code 里这样派").count(), 1);
     assert!(
         std::fs::read_to_string(h.join(".agentnave-accounts/claude/a1/CLAUDE.md"))
             .unwrap()
@@ -1009,15 +1022,15 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
             .contains(boss_suffix.as_str())
     );
 
-    // 5. Custom mode: appended after user text using boss dispatch, never stored in custom, and
-    //    does not count against the 8000-character custom limit. Empty custom writes no block.
+    // 5. Custom mode: user body gets NO heading; blank line + T3 section appended for Claude/Codex,
+    //    never stored in custom, and does not count against the 8000-character custom limit.
     let max_custom = "字".repeat(CUSTOM_LIMIT);
     assert!(check_custom(&max_custom).is_ok());
     let custom_doc = json!({"preset": "custom", "custom": max_custom, "enabled_roles": []});
     assert!(
         !text_of(&custom_doc, "custom")
             .unwrap()
-            .contains("在 T3 Code 主线程")
+            .contains("### 在 T3 Code 里这样派")
     );
     assert_eq!(
         presets(&custom_doc)["t3"]["custom"].as_str(),
@@ -1028,25 +1041,20 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
         .iter()
         .find(|(path, _)| path == &h.join(".codex/AGENTS.md"))
         .unwrap();
-    assert!(codex_custom.1.starts_with(&max_custom));
-    assert!(codex_custom.1.ends_with(&custom_suffix));
+    assert_eq!(codex_custom.1, format!("{max_custom}{custom_suffix}"));
+    assert!(!codex_custom.1.contains("### 不在 T3 Code 里时这样派"));
 
     let empty_custom = json!({"preset": "custom", "custom": "   "});
     assert!(wanted(&apps, h, &empty_custom, true).is_empty());
 
-    // 6. Turning T3 off removes the T3 suffix while keeping the split block; switching to off
+    // 6. Turning T3 off removes both T3 headings while keeping the split block; switching to off
     //    restores CLAUDE.md to user's original content and removes empty files.
     assert!(sync(&apps, &apps, h, &split_doc, false, &[], &backup, false).is_empty());
-    assert!(
-        !std::fs::read_to_string(h.join(".claude/CLAUDE.md"))
-            .unwrap()
-            .contains("在 T3 Code 主线程")
-    );
-    assert!(
-        !std::fs::read_to_string(h.join(".codex/AGENTS.md"))
-            .unwrap()
-            .contains("在 T3 Code 主线程")
-    );
+    for file in [".claude/CLAUDE.md", ".codex/AGENTS.md"] {
+        let content = std::fs::read_to_string(h.join(file)).unwrap();
+        assert!(!content.contains("### 不在 T3 Code 里时这样派"));
+        assert!(!content.contains("### 在 T3 Code 里这样派"));
+    }
     assert!(sync(&apps, &apps, h, &off, false, &[], &backup, false).is_empty());
     assert_eq!(
         std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),

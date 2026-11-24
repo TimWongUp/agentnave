@@ -297,14 +297,19 @@ fn wanted(
                 && group.iter().any(|app| {
                     matches!(app.id, "claude" | "codex") && would_read(app, home).contains(&path)
                 });
-            let text = match (text_of(&scoped, mode), t3_reader) {
-                (Some(mut text), true) => {
-                    if let Some(suffix) = catalog::t3_suffix(mode) {
-                        text.push_str(&suffix);
-                    }
-                    Some(text)
+            let text = if t3_reader {
+                if let Some(text) = catalog::preset_text_for_t3(&scoped, mode) {
+                    (!text.is_empty()).then_some(text)
+                } else {
+                    text_of(&scoped, mode).map(|mut text| {
+                        if let Some(suffix) = catalog::t3_suffix(mode) {
+                            text.push_str(&suffix);
+                        }
+                        text
+                    })
                 }
-                (text, _) => text,
+            } else {
+                text_of(&scoped, mode)
             };
             if let Some(text) = text {
                 wanted.push((path, text));

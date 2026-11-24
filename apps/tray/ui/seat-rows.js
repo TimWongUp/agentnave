@@ -15,22 +15,24 @@
   function scopeSwitch(page, generalDirty, t3Dirty) {
     const active = orchestrationScope();
     const unsavedTitle = L("有未保存的修改", "Unsaved changes");
+    const t3On = Boolean(window.AgentNaveT3Seats?.enabled?.());
+    const t3OnLabel = L("T3 Code · 已开", "T3 Code · On");
     const choices = [
-      ["general", L("通用", "General"), Boolean(generalDirty)],
-      ["t3", "T3 Code", Boolean(t3Dirty)],
+      ["general", L("通用", "General"), Boolean(generalDirty), null],
+      ["t3", t3On ? t3OnLabel : "T3 Code", Boolean(t3Dirty), t3OnLabel],
     ];
     return el("div", {
       className: "segment-control",
       role: "radiogroup",
       "aria-label": L("配置范围", "Configuration scope"),
-    }, ...choices.map(([id, text, dirty]) => {
+    }, ...choices.map(([id, text, dirty, reserve]) => {
       const selected = active === id;
       return el("button", {
         type: "button",
         className: `segment-btn${selected ? " active" : ""}`,
         role: "radio",
         "aria-checked": String(selected),
-        dataset: { scope: id, focusKey: `scope/${page}/${id}` },
+        dataset: { scope: id, focusKey: `scope/${page}/${id}`, ...(reserve ? { reserve } : {}) },
         onClick: () => setOrchestrationScope(id),
       }, text, el("span", { className: "badge-dot", title: unsavedTitle, hidden: selected || !dirty }));
     }));

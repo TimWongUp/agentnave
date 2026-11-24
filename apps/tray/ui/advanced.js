@@ -172,10 +172,12 @@
   }
 
   // The rules as the draft would write them: the mode's text, then the lines of the roles turned on
-  // in catalog order, then the image line, then the mode's T3 suffix when T3 orchestration is on.
+  // in catalog order, then the image line, with T3 sectioning when T3 orchestration is on.
   function orchestrationPresetText(mode, includeT3 = true) {
     const presets = orchestration?.presets;
-    const t3Suffix = (includeT3 && window.AgentNaveT3Seats?.enabled?.() && presets?.t3?.[mode]) || "";
+    const t3On = Boolean(includeT3 && window.AgentNaveT3Seats?.enabled?.() && presets?.t3?.[mode]);
+    const t3Suffix = t3On ? presets.t3[mode] : "";
+    const nonT3Heading = t3On ? (presets.non_t3_heading || "") : "";
     if (mode === "custom") return t3Suffix ? t3Suffix.trim() : undefined;
     const text = presets?.[mode];
     if (!text) return text;
@@ -193,6 +195,7 @@
         + (parts.checks || "")
         + (options?.meetings ? parts.meetings_own : parts.meetings_asked)
         + meetingLine(shown)
+        + nonT3Heading
         + (parts.tail || "");
       if (shown?.lead_only && presets.lead) base = base.replace(presets.lead.asked, presets.lead.always);
     } else {
