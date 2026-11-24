@@ -6425,6 +6425,9 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         )
         assert round_res.is_error is False, round_res.content
         round_payload = cast(dict[str, Any], round_res.structured_content)
-        assert "-I -m agentnave.inbox_watch" in str(round_payload["next"])
-        assert "background terminal" in str(round_payload["next"])
+        # Windows keeps the normal wait.
+        waits_in_background = sys.platform != "win32"
+        next_text = str(round_payload["next"])
+        assert ("-I -m agentnave.inbox_watch" in next_text) is waits_in_background
+        assert ("background terminal" in next_text) is waits_in_background
         await client.call_tool("cancel", {"id": round_payload["round"]["round_id"]})

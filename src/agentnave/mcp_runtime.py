@@ -209,7 +209,8 @@ def wait_guidance(
         again=again,
         can_push=app_can_push,
         watch_supported=watch_host_cli_supported,
-        t3_main=current_t3_mode(HOST) == "main",
+        # The command's quoting is only known to survive POSIX shells (ADR-0121).
+        t3_main=current_t3_mode(HOST) == "main" and sys.platform != "win32",
     )
 
 

@@ -186,7 +186,7 @@
   const eligibleInstances = () => instances().filter((inst) => inst.available && !inst.stale);
   const visible = () => Boolean(saved && (saved.t3?.detected || saved.document || saved.error));
   const locked = () => !saved || Boolean(saved.error);
-  const enabled = () => Boolean(visible() && !locked() && shownState()?.enabled);
+  const enabled = () => Boolean(visible() && !locked() && shownState()?.enabled && hasCandidates());
   const fileDocument = () => toDocument(shownState());
   const changed = () => Boolean(saved && !saved.error && draft && baseline)
     && !sameJson(canonState(draft), canonState(baseline));
