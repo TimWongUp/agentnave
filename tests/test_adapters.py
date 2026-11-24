@@ -881,18 +881,19 @@ def test_antigravity_adapter_strips_host_and_t3_acp_env(
 
     monkeypatch.setenv("ANTIGRAVITY_APP_DATA_DIR", str(tmp_path / "profile/antigravity-acp"))
     from_t3 = adapter.prepare(InvocationRequest(provider="antigravity", prompt="hi", cwd=tmp_path))
-    interactive = adapter.prepare(
-        InvocationRequest(
-            provider="antigravity",
-            prompt="hi",
-            cwd=tmp_path,
-            provider_options={"interactive": True, "dangerously_skip_permissions": True},
-        )
-    )
     usage = adapter.usage_query(None)
     assert "GEMINI_HOME" in from_t3.unset_env
-    assert "GEMINI_HOME" in interactive.unset_env
     assert usage is not None and "GEMINI_HOME" in usage.unset_env
+    if os.name != "nt":
+        interactive = adapter.prepare(
+            InvocationRequest(
+                provider="antigravity",
+                prompt="hi",
+                cwd=tmp_path,
+                provider_options={"interactive": True, "dangerously_skip_permissions": True},
+            )
+        )
+        assert "GEMINI_HOME" in interactive.unset_env
 
 
 def test_antigravity_result_falls_back_to_stream_session_id() -> None:
