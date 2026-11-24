@@ -126,10 +126,36 @@ def _deepseek_file(session_id: str) -> Path | None:
     return max(files, key=lambda path: path.stat().st_mtime_ns) if files else None
 
 
-def _antigravity_file(native_id: str) -> Path | None:
-    root = Path.home() / ".gemini"
+def _antigravity_roots() -> list[Path]:
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    app_data = os.environ.get("ANTIGRAVITY_APP_DATA_DIR", "").strip()
+    if app_data:
+        candidate = Path(app_data)
+        if candidate.is_absolute() and candidate not in seen:
+            seen.add(candidate)
+            roots.append(candidate)
+    gemini_home = os.environ.get("GEMINI_HOME", "").strip()
+    if gemini_home:
+        base = Path(gemini_home)
+        if base.is_absolute():
+            for folder in ("antigravity-acp", "antigravity-cli", "antigravity"):
+                candidate = base / folder
+                if candidate not in seen:
+                    seen.add(candidate)
+                    roots.append(candidate)
+    default_base = Path.home() / ".gemini"
     for folder in ("antigravity", "antigravity-cli"):
-        path = root / folder / "brain" / native_id / ".system_generated/logs/transcript_full.jsonl"
+        candidate = default_base / folder
+        if candidate not in seen:
+            seen.add(candidate)
+            roots.append(candidate)
+    return roots
+
+
+def _antigravity_file(native_id: str) -> Path | None:
+    for root in _antigravity_roots():
+        path = root / "brain" / native_id / ".system_generated/logs/transcript_full.jsonl"
         if path.is_file():
             return path
     return None
@@ -239,10 +265,9 @@ def _transcript_model(spec: _Transcript, native_id: str, since: datetime | None)
 
 
 def _antigravity_model(native_id: str) -> str | None:
-    # The desktop app and the agy CLI keep conversations apart, one SQLite file each.
-    root = Path.home() / ".gemini"
-    for folder in ("antigravity", "antigravity-cli"):
-        path = root / folder / "conversations" / f"{native_id}.db"
+    # Desktop, agy CLI, and T3 Code ACP each keep conversations apart, one SQLite file each.
+    for root in _antigravity_roots():
+        path = root / "conversations" / f"{native_id}.db"
         if not path.is_file():
             continue
         with closing(_read_only(path)) as db:
