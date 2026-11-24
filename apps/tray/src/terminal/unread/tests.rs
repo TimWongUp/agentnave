@@ -2,6 +2,7 @@ use super::*;
 use serde_json::json;
 #[cfg(unix)]
 use std::time::SystemTime;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
 #[cfg(unix)]
 fn running_terminal(
@@ -130,6 +131,24 @@ fn ignores_stale_mtime_mismatched_started_at_and_symlinked_inbox_files() {
         std::os::unix::fs::symlink(&target, &path).unwrap();
         assert!(!inboxes(temp.path()).contains_key("boss-legacy"));
     }
+
+    // A file naming a dead PID is ignored rather than read.
+    fs::write(
+        dir.join("999999.json"),
+        json!({
+            "version": 1,
+            "pid": 999999,
+            "bosses": {
+                "boss-dead": {
+                    "waiting": false,
+                    "items": [{"key": "dead", "kind": "task_end"}]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(!inboxes(temp.path()).contains_key("boss-dead"));
 }
 
 #[test]

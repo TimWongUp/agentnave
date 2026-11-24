@@ -3,7 +3,7 @@
 //! chats it spoke for. A relay inside a terminal's process tree speaks for that terminal, and each
 //! chat's workspace is the one it owns in the history database.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -30,6 +30,56 @@ pub(super) fn same_process(process: &sysinfo::Process, started_ms: Option<u64>) 
             .is_some_and(|started| started != 0 && at > (started / 1000).saturating_add(2)))
 }
 
+/// A fresh snapshot holding only these PIDs, never the whole process table.
+pub(super) fn snapshot(pids: &[u32]) -> System {
+    let mut system = System::new();
+    refresh(&mut system, pids, true);
+    system
+}
+
+fn refresh(system: &mut System, pids: &[u32], remove_dead: bool) {
+    if pids.is_empty() {
+        return;
+    }
+    let pids: Vec<Pid> = pids.iter().copied().map(Pid::from_u32).collect();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&pids),
+        remove_dead,
+        ProcessRefreshKind::nothing(),
+    );
+}
+
+/// A snapshot of each relay and its ancestors up to the terminal that owns it, looked up one
+/// generation at a time instead of scanning the whole process table.
+fn ancestry(relays: &[Relay], terminals: &[(u64, u32)]) -> System {
+    let mut system = System::new();
+    let mut seen: HashSet<u32> = HashSet::new();
+    let mut frontier: Vec<u32> = relays
+        .iter()
+        .map(|relay| relay.pid)
+        .filter(|pid| seen.insert(*pid))
+        .collect();
+    for _ in 0..DEPTH {
+        if frontier.is_empty() {
+            break;
+        }
+        refresh(&mut system, &frontier, false);
+        let mut parents = Vec::new();
+        for pid in frontier {
+            if terminals.iter().any(|(_, cli)| *cli == pid) {
+                continue;
+            }
+            if let Some(parent) = system.process(Pid::from_u32(pid)).and_then(|p| p.parent())
+                && seen.insert(parent.as_u32())
+            {
+                parents.push(parent.as_u32());
+            }
+        }
+        frontier = parents;
+    }
+    system
+}
+
 /// For each terminal (id, CLI pid), its workspaces, the one it spoke for last at the end.
 pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, Vec<String>> {
     if terminals.is_empty() || !sysinfo::IS_SUPPORTED_SYSTEM {
@@ -39,8 +89,7 @@ pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, 
     if relays.is_empty() {
         return HashMap::new();
     }
-    let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let system = ancestry(&relays, terminals);
     let mut chats: HashMap<u64, Vec<String>> = HashMap::new();
     for relay in relays {
         if let Some(process) = system.process(Pid::from_u32(relay.pid))
@@ -62,11 +111,16 @@ pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, 
 
 /// Current boss chat keys by live terminal, before translating them into workspaces.
 pub(super) fn bosses(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, String> {
-    let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let mut found = HashMap::new();
+    if terminals.is_empty() || !sysinfo::IS_SUPPORTED_SYSTEM {
+        return HashMap::new();
+    }
     let mut active = relays(&root.join("connections"));
+    if active.is_empty() {
+        return HashMap::new();
+    }
     active.sort_by_key(|relay| relay.modified);
+    let system = ancestry(&active, terminals);
+    let mut found = HashMap::new();
     for relay in active {
         if let Some(process) = system.process(Pid::from_u32(relay.pid))
             && same_process(process, relay.started_ms)
