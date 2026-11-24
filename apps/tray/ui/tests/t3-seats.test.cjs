@@ -199,7 +199,7 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
     if (context.AN.settings) mirrorSettings(context);
   };
-  for (const file of ["provider-health.js", "settings-state.js", "member-models.js", "advanced.js", "decision-seats.js", "t3-seats.js"]) {
+  for (const file of ["provider-health.js", "settings-state.js", "member-models.js", "seat-rows.js", "advanced.js", "decision-seats.js", "t3-seats.js"]) {
     load(file);
   }
   run(`
@@ -234,8 +234,15 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
     run,
     calls,
     t3: (fn) => run(`(${fn})(window.AgentNaveT3Seats)`),
-    find: (key) => findKey(run('$("t3-seats-section")'), key) || findKey(run('$("t3-review-seats")'), key),
+    find: (key) => findKey(run('$("t3-seats-section")'), key)
+      || findKey(run('$("t3-review-seats")'), key)
+      || findKey(run('$("orchestration-scope")'), key)
+      || findKey(run('$("review-scope")'), key),
     section: () => run('$("t3-seats-section")'),
+    seatRows: () => {
+      const group = run('$("t3-seats-section")').children.find((c) => c.className?.includes("t3-seat-list"));
+      return group ? group.children[0].children : [];
+    },
     doc: () => JSON.parse(run("JSON.stringify(window.AgentNaveT3Seats.document())")),
   };
 }
@@ -418,6 +425,10 @@ test("switch cannot open without candidates, dropdown hides legacy/hidden/stale,
     t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 },
   });
   await h.t3((t) => t.load());
+  // Valid loaded card starts collapsed; expand it to inspect candidate controls.
+  assert.equal(h.seatRows()[0].dataset.expanded, "false");
+  h.find("t3/t3c1/toggle").listeners.click();
+  assert.equal(h.seatRows()[0].dataset.expanded, "true");
 
   const instSel = h.find("t3/t3c1/hard/c0/instance");
   const instOpts = instSel.children.flat().map((o) => [o.attrs.value, o.children[0]]);
@@ -497,10 +508,11 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
 
-  // Add custom card -> missing specialty blocks save; fill specialty -> missing tier blocks save.
+  // Add custom card -> auto-expands; missing specialty blocks save; fill specialty -> missing tier blocks save.
   h.t3((t) => t.addCard("custom"));
   assert.match(h.t3((t) => t.problem()), /缺少专业/);
-  const cid = h.section().children[1].children[1].children[0].children[0].children[0].children[0].dataset.focusKey.split("/")[1];
+  const cid = h.seatRows()[0].dataset.cid;
+  assert.equal(h.seatRows()[0].dataset.expanded, "true");
   h.find(`t3/${cid}/role`).listeners.input({ target: { value: "前端" } });
   assert.match(h.t3((t) => t.problem()), /至少要绑定一档/);
 
@@ -523,7 +535,8 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   h.find(`t3/${cid}/medium/c1/remove`).listeners.click();
   assert.equal(h.doc().seats[0].candidates.length, 3);
 
-  // The 9 review roles sit on the review page; an edit there marks only that page.
+  // The 9 review roles sit on the review page under the shared "评审工位" heading; an edit there marks only that page.
+  assert.equal(h.run('$("t3-review-seats")').children[0].children[0], "评审工位");
   assert.equal(h.run('$("t3-review-seats")').children[1].children.length, 9);
   assert.equal(h.t3((t) => t.reviewChanged()), false);
   h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "codex" } });
@@ -534,7 +547,7 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   assert.equal(h.t3((t) => t.seatsChanged()), false);
   h.t3((t) => t.addCard("custom"));
   assert.equal(h.t3((t) => t.seatsChanged()), true);
-  const readded = h.section().children[1].children[1].children[0].children[0].children[0].children[0].dataset.focusKey.split("/")[1];
+  const readded = h.seatRows()[0].dataset.cid;
   h.find(`t3/${readded}/role`).listeners.input({ target: { value: "前端" } });
   h.find(`t3/${readded}/medium/c0/instance`).listeners.change({ target: { value: "claudeAgent" } });
 
@@ -547,5 +560,135 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   const remaining = h.doc();
   assert.equal(remaining.enabled, true);
   assert.equal(h.t3((t) => t.hasCandidates()), false);
+});
+
+test("shared General / T3 Code segment switch toggles both pages and shows badge-dot on the inactive edited segment", async () => {
+  // Hidden when T3 is not visible.
+  const hidden = makeHarness({
+    t3State: { document: null, error: null, t3: { detected: false, instances: [] } },
+  });
+  await hidden.t3((t) => t.load());
+  assert.equal(hidden.run('$("orchestration-scope").hidden'), true);
+  assert.equal(hidden.run('$("review-scope").hidden'), true);
+  assert.equal(hidden.run('$("orchestration-general").hidden'), false);
+  assert.equal(hidden.run('$("review-seats-group").hidden'), false);
+  assert.equal(hidden.run('$("t3-seats-section").hidden'), true);
+  assert.equal(hidden.run('$("t3-review-seats").hidden'), true);
+
+  // Visible when T3 is detected: defaults to General and shares the selection across both pages.
+  const h = makeHarness({
+    t3State: { document: null, error: null, t3: SAMPLE_T3 },
+  });
+  h.run("bindAdvanced()");
+  await h.t3((t) => t.load());
+  assert.equal(h.run('$("orchestration-scope").hidden'), false);
+  assert.equal(h.run('$("review-scope").hidden'), false);
+  assert.equal(h.run('$("orchestration-general").hidden'), false);
+  assert.equal(h.run('$("t3-seats-section").hidden'), true);
+  assert.equal(h.run('$("review-seats-group").hidden'), false);
+  assert.equal(h.run('$("t3-review-seats").hidden'), true);
+
+  const dotHidden = (key) => h.find(key).children[1].hidden;
+  assert.equal(dotHidden("scope/orchestration/general"), true);
+  assert.equal(dotHidden("scope/orchestration/t3"), true);
+
+  // Edit T3 task settings while viewing General -> badge-dot appears only on T3 segment in Orchestration.
+  h.find("t3/enabled").listeners.change({ target: { checked: true } });
+  assert.equal(dotHidden("scope/orchestration/t3"), false);
+  assert.equal(dotHidden("scope/orchestration/general"), true);
+  assert.equal(dotHidden("scope/review/t3"), true);
+
+  // Switch to T3 Code -> switches BOTH Orchestration and Review Settings; T3 dot hides while active.
+  h.find("scope/orchestration/t3").listeners.click();
+  assert.equal(h.run('$("orchestration-general").hidden'), true);
+  assert.equal(h.run('$("t3-seats-section").hidden'), false);
+  assert.equal(h.run('$("review-seats-group").hidden'), true);
+  assert.equal(h.run('$("t3-review-seats").hidden'), false);
+  assert.equal(dotHidden("scope/orchestration/t3"), true);
+
+  // Edit General orchestration and General review seats while viewing T3 -> General dots appear on both pages.
+  h.run('setBossMode(orchestration.bosses[0], "split")');
+  h.run('setReviewSeat("security-reviewer", { provider: "codex", model: "gpt-6.2-astra" })');
+  assert.equal(dotHidden("scope/orchestration/general"), false);
+  assert.equal(dotHidden("scope/review/general"), false);
+
+  // Switch back to General from Review scope button -> T3 orchestration dot returns; edit T3 review shows T3 review dot.
+  h.find("scope/review/general").listeners.click();
+  assert.equal(h.run('$("orchestration-general").hidden'), false);
+  assert.equal(h.run('$("review-seats-group").hidden'), false);
+  assert.equal(dotHidden("scope/orchestration/t3"), false);
+  assert.equal(dotHidden("scope/orchestration/general"), true);
+  h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "codex" } });
+  assert.equal(dotHidden("scope/review/t3"), false);
+
+  // Discard clears every badge-dot.
+  h.run('$("advanced-discard").listeners.click()');
+  assert.equal(dotHidden("scope/orchestration/t3"), true);
+  assert.equal(dotHidden("scope/review/t3"), true);
+});
+
+test("T3 seat rows summarize primary model display names, preserve expand state, force-open invalid cards, and save collapsed edits", async () => {
+  const savedDoc = {
+    version: 1,
+    enabled: false,
+    random_candidates: false,
+    seats: [
+      {
+        id: "t3-1",
+        kind: "worker",
+        role: "通用执行",
+        description: "改代码",
+        access: "write",
+        difficulty: "easy",
+        candidates: [{ instance: "claudeAgent", model: "claude-opus-4-6", options: [] }],
+      },
+      {
+        id: "t3-2",
+        kind: "worker",
+        role: "通用执行",
+        description: "改代码",
+        access: "write",
+        difficulty: "hard",
+        candidates: [
+          { instance: "antigravity", model: "gemini-4-neon", options: [] },
+          { instance: "codex", model: "gpt-6.2-astra", options: [] },
+        ],
+      },
+    ],
+    review: {},
+  };
+  const h = makeHarness({ t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 } });
+  h.run("bindAdvanced()");
+  await h.t3((t) => t.load());
+
+  // No outer t3-task-fold; one seat row starting collapsed with model display names (primary only).
+  assert.equal(h.find("t3/task-fold"), null);
+  assert.equal(h.seatRows().length, 1);
+  assert.equal(h.seatRows()[0].dataset.expanded, "false");
+  const summaryOf = (row) => row.children[0].children[1].children[1].children[0];
+  assert.equal(summaryOf(h.seatRows()[0]), "简单 Claude Opus 4.6 · 困难 Gemini 4 Neon");
+
+  // Expand, change medium tier, collapse again -> edits stay intact on save.
+  const cid = h.seatRows()[0].dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  assert.equal(h.seatRows()[0].dataset.expanded, "true");
+  h.find(`t3/${cid}/medium/c0/instance`).listeners.change({ target: { value: "codex" } });
+  assert.equal(h.seatRows()[0].dataset.expanded, "true", "re-render keeps row expanded");
+  assert.equal(summaryOf(h.seatRows()[0]), "简单 Claude Opus 4.6 · 中等 GPT 6.2 Astra · 困难 Gemini 4 Neon");
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  assert.equal(h.seatRows()[0].dataset.expanded, "false");
+
+  await h.run('$("advanced-save").listeners.click()');
+  const postCall = h.calls.find((c) => c.url === "/app/t3-seats" && c.method === "POST");
+  assert.equal(postCall.body.seats.length, 3, "collapsed seat row saves all 3 tiers");
+
+  // Adding a seat with no tiers forces it open and shows 未设置 until configured.
+  h.t3((t) => t.addCard("explorer"));
+  const added = h.seatRows()[1];
+  assert.equal(added.dataset.expanded, "true");
+  assert.equal(added.dataset.invalid, "true");
+  assert.equal(summaryOf(added), "未设置");
+  h.find(`t3/${added.dataset.cid}/toggle`).listeners.click();
+  assert.equal(h.seatRows()[1].dataset.expanded, "true", "invalid card cannot be collapsed");
 });
 

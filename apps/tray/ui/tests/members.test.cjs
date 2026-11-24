@@ -1105,6 +1105,7 @@ function decisionEditor(preset, loaded, catalogError = null) {
         image_generation: ${JSON.stringify(seat("codex", "chat-model"))} } };
   `);
   const decision = (code) => app.run(`(${code})(window.AgentNaveDecisionSeats)`);
+  app.load("seat-rows.js");
   app.load("decision-seats.js");
   app.run(`orchestration.presets = {
     decision: "decision", image_generation: "|image", lead: { asked: "LEAD-ASKED", always: "LEAD-ALWAYS" },
@@ -1119,9 +1120,20 @@ const NO_FILE = { document: null, error: null, key_set: false, key_error: null }
 const boss = (app) => app.run("AN.settings.orchestration.bosses[0]");
 
 const seatsOf = (app) => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)"));
-// The catalog panel is the first group (picture, key, switch), one group per card, then the add menu.
-const cardsOf = (app) => roleChildren(app)[0].children.slice(1, -1).map((group) => group.children[0]);
-const cardHead = (card) => { const [label, control] = card.children[0].children; return [label.children[0], ...control.children]; };
+// The catalog panel is the first group (picture, key, switch), one card holding all expandable seat rows (when non-empty), then the add menu.
+const cardsOf = (app) => {
+  const middle = roleChildren(app)[0].children.slice(1, -1);
+  return middle.length ? middle[0].children[0].children : [];
+};
+const rowHead = (row) => {
+  const [lead, meta, remove] = row.children[0].children;
+  const toggle = lead.children[0];
+  const tip = lead.children[1] || null;
+  const [access, summary] = meta.children;
+  return { toggle, name: toggle.children[1], tip, access, summary, remove };
+};
+const rowBody = (row) => row.children[1]?.children || [];
+const toggleRow = (row) => rowHead(row).toggle.listeners.click();
 
 test("a boss put into the decision mode makes the first catalog from the fixed seats once", async () => {
   const { app, decision } = decisionEditor("split", NO_FILE);
@@ -1221,6 +1233,10 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   add("image");
   add("gardening");
   assert.equal(cardsOf(app).length, 3);
+  // All seat rows sit in one s-card between the top group and the add menu.
+  assert.equal(roleChildren(app)[0].children.length, 3);
+  // Newly added cards auto-expand.
+  assert.deepEqual(Array.from(cardsOf(app)).map((row) => row.dataset.expanded), ["true", "true", "true"]);
   // The menu lists general seats, specialist seats, custom seats and image seats; a group or the image
   // card already on the page is disabled, custom stays open.
   const menu = roleChildren(app)[0].children.at(-1).children[0].children[0].children[1];
@@ -1233,38 +1249,36 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.equal(option("custom").disabled, false);
   assert.equal(option("image").disabled, true);
   const [group, custom, image] = Array.from(cardsOf(app));
-  const head = cardHead;
-  // A group's card is named and fixed: its title and access are text; a custom card takes a specialty and
-  // an access; the image card is titled and writable. The head has name, access, tiers (not on the image card) and delete.
-  assert.deepEqual([group, custom, image].map((card) => head(card).length), [4, 4, 3]);
-  assert.deepEqual([group, custom, image].map((card) => head(card)[0].tagName), ["strong", "input", "strong"]);
-  assert.deepEqual([group, custom, image].map((card) => head(card)[1].tagName), ["span", "select", "span"]);
-  assert.match(JSON.stringify(head(image)[0]), /生图工位/);
-  assert.match(JSON.stringify(head(image)[1]), /可写/);
+  assert.match(JSON.stringify(rowHead(image).name), /生图工位/);
+  assert.match(JSON.stringify(rowHead(image).access), /可写/);
   // A group says what it is for (the text the decision model gets); custom and image cards have none.
-  assert.match(JSON.stringify(group.children[0].children[0]), /写文章/);
-  // Three level rows on a group or custom card, one row and an add button on the image card.
-  assert.deepEqual([group, custom, image].map((card) => card.children.length), [4, 4, 3]);
-  assert.match(JSON.stringify(image.children[2]), /添加方向/);
-  // Tiers set, beside the access: none is flagged, then the count follows the levels bound.
-  assert.match(JSON.stringify(head(group)[2]), /未设置/);
-  assert.match(head(group)[2].className, /unset/);
+  assert.match(JSON.stringify(rowHead(group).tip), /写文章/);
+  assert.equal(rowHead(custom).tip, null);
+  assert.equal(rowHead(image).tip, null);
+  // Expanded body: 3 tier rows for group; custom has specialty+access row first + 3 tier rows; image has 1 row + add button.
+  assert.deepEqual([group, custom, image].map((card) => rowBody(card).length), [3, 4, 2]);
+  assert.match(JSON.stringify(rowBody(image)[1]), /添加方向/);
+  // Unset summary is flagged, then updates to list bound tiers by primary model name.
+  assert.match(JSON.stringify(rowHead(group).summary), /未设置/);
+  assert.match(rowHead(group).summary.className, /is-unset/);
   assert.match(decision((d) => d.problem()), /第 1 张卡片.*至少要绑定一档/);
-  pick(group.children[2], "codex");
-  assert.match(JSON.stringify(head(Array.from(cardsOf(app))[0])[2]), /已设 1 档/);
-  assert.doesNotMatch(head(Array.from(cardsOf(app))[0])[2].className, /unset/);
+  pick(rowBody(group)[1], "codex");
+  assert.equal(rowHead(Array.from(cardsOf(app))[0]).summary.children[0], "中等 chat-model");
+  assert.doesNotMatch(rowHead(Array.from(cardsOf(app))[0]).summary.className, /is-unset/);
   assert.equal(decision((d) => d.problem()), "第 2 张卡片缺少专业");
-  fill(head(custom)[0], "数据库迁移");
+  const customInputs = (card) => rowBody(card)[0].children[1].children;
+  fill(customInputs(Array.from(cardsOf(app))[1])[0], "数据库迁移");
   assert.match(decision((d) => d.problem()), /第 2 张卡片（数据库迁移）至少要绑定一档/);
-  pick(custom.children[3], "codex");
+  pick(rowBody(Array.from(cardsOf(app))[1])[3], "codex");
   // The image card: its rows are checked one by one.
-  const imageRow = (n) => Array.from(cardsOf(app))[2].children[n];
-  assert.equal(imageRow(1).children.length, 2);
+  const imageRow = (n) => rowBody(Array.from(cardsOf(app))[2])[n];
+  assert.equal(imageRow(0).children.length, 2);
   assert.equal(decision((d) => d.problem()), "生图工位第 1 行缺少专业");
-  fill(imageRow(1).children[0].children[0], "漫画风格");
+  fill(imageRow(0).children[0].children[0], "漫画风格");
   assert.match(decision((d) => d.problem()), /生图工位第 1 行（漫画风格）还没选 CLI 和模型/);
-  pick(imageRow(1), "codex");
+  pick(imageRow(0), "codex");
   assert.equal(decision((d) => d.problem()), null);
+  assert.equal(rowHead(Array.from(cardsOf(app))[2]).summary.children[0], "漫画风格");
   const shape = ({ kind, role, description, access, difficulty }) => [kind, role, description, access, difficulty];
   assert.deepEqual(seatsOf(app).map(shape), [
     ["worker_writing", "写作", "写文章", "write", "medium"],
@@ -1274,46 +1288,46 @@ test("cards: a group once, custom as often as wanted, one image card with a row 
   assert.ok(seatsOf(app).every((seat) => seat.provider === "codex" && seat.model === "chat-model"));
   // A second specialty is a second row of the same card, saved as one more image seat; the same
   // specialty twice is refused.
-  Array.from(cardsOf(app))[2].children[2].children[0].listeners.click();
+  rowBody(Array.from(cardsOf(app))[2])[1].children[0].listeners.click();
   assert.equal(cardsOf(app).length, 3);
-  assert.equal(Array.from(cardsOf(app))[2].children.length, 4);
+  assert.equal(rowBody(Array.from(cardsOf(app))[2]).length, 3);
   assert.equal(decision((d) => d.problem()), "生图工位第 2 行缺少专业");
-  fill(imageRow(2).children[0].children[0], "漫画风格");
+  fill(imageRow(1).children[0].children[0], "漫画风格");
   assert.match(decision((d) => d.problem()), /生图工位第 2 行（漫画风格）还没选 CLI 和模型/);
-  pick(imageRow(2), "codex");
+  pick(imageRow(1), "codex");
   assert.equal(decision((d) => d.problem()), "生图工位第 2 行的专业“漫画风格”与前面重复");
-  fill(imageRow(2).children[0].children[0], "写实");
+  fill(imageRow(1).children[0].children[0], "写实");
   assert.equal(decision((d) => d.problem()), null);
   const images = seatsOf(app).filter((seat) => seat.kind === "image");
   assert.deepEqual(images.map((seat) => seat.role), ["漫画风格", "写实"]);
   assert.equal(new Set(images.map((seat) => seat.id)).size, 2);
   assert.ok(images.every((seat) => !("difficulty" in seat)));
   // A row goes with its own delete button; with none left the card cannot be saved.
-  imageRow(1).children[1].children.at(-1).listeners.click();
+  imageRow(0).children[1].children.at(-1).listeners.click();
   assert.deepEqual(seatsOf(app).filter((seat) => seat.kind === "image").map((seat) => seat.role), ["写实"]);
-  imageRow(1).children[1].children.at(-1).listeners.click();
+  imageRow(0).children[1].children.at(-1).listeners.click();
   assert.equal(decision((d) => d.problem()), "生图工位至少要有一行");
-  Array.from(cardsOf(app))[2].children[1].children[0].listeners.click();
-  fill(imageRow(1).children[0].children[0], "写实");
-  pick(imageRow(1), "codex");
+  rowBody(Array.from(cardsOf(app))[2])[0].children[0].listeners.click();
+  fill(imageRow(0).children[0].children[0], "写实");
+  pick(imageRow(0), "codex");
   assert.equal(decision((d) => d.problem()), null);
   // Two custom cards may not share a specialty.
   add("custom");
-  fill(head(Array.from(cardsOf(app))[3])[0], "数据库迁移");
-  pick(Array.from(cardsOf(app))[3].children[1], "codex");
+  fill(customInputs(Array.from(cardsOf(app))[3])[0], "数据库迁移");
+  pick(rowBody(Array.from(cardsOf(app))[3])[1], "codex");
   assert.match(decision((d) => d.problem()), /两张自定义卡片的专业都是“数据库迁移”/);
   // A custom card's access is its own to set.
-  head(Array.from(cardsOf(app))[3])[1].listeners.change({ target: { value: "read" } });
+  customInputs(Array.from(cardsOf(app))[3])[1].listeners.change({ target: { value: "read" } });
   assert.equal(seatsOf(app).at(-1).access, "read");
   // Taking a level off a card leaves its other levels, and a card goes with its delete button.
-  pick(Array.from(cardsOf(app))[1].children[3], "");
+  pick(rowBody(Array.from(cardsOf(app))[1])[3], "");
   assert.equal(seatsOf(app).filter((seat) => seat.kind === "custom" && seat.role === "数据库迁移").length, 1);
-  head(Array.from(cardsOf(app))[3]).at(-1).listeners.click();
+  rowHead(Array.from(cardsOf(app))[3]).remove.listeners.click();
   assert.equal(cardsOf(app).length, 3);
   // The image card may be added again once it is gone, with its one empty row.
-  head(Array.from(cardsOf(app))[2]).at(-1).listeners.click();
+  rowHead(Array.from(cardsOf(app))[2]).remove.listeners.click();
   add("image");
-  assert.equal(Array.from(cardsOf(app)).at(-1).children.length, 3);
+  assert.equal(rowBody(Array.from(cardsOf(app)).at(-1)).length, 2);
 });
 
 test("the saved image seats come back as one card with a row for each, in the file's order", async () => {
@@ -1325,7 +1339,12 @@ test("the saved image seats come back as one card with a row for each, in the fi
   await decision((d) => d.load());
   const cards = Array.from(cardsOf(app));
   assert.equal(cards.length, 2);
-  const rows = cards[0].children.slice(1, -1);
+  // Loaded valid cards start collapsed, showing their summary.
+  assert.equal(cards[0].dataset.expanded, "false");
+  assert.equal(rowHead(cards[0]).summary.children[0], "漫画风格 · 写实");
+  assert.equal(rowHead(cards[1]).summary.children[0], "简单 chat-model");
+  toggleRow(cards[0]);
+  const rows = rowBody(Array.from(cardsOf(app))[0]).slice(0, -1);
   assert.equal(rows.length, 2);
   assert.deepEqual(Array.from(rows.map((row) => row.children[0].children[0].attrs.value)), ["漫画风格", "写实"]);
   assert.equal(decision((d) => d.changed()), false);
@@ -1373,15 +1392,17 @@ test("a card read from the file goes back unchanged, and a changed specialty tak
   assert.equal(decision((d) => d.changed()), false);
   // A new specialty names its own seats; putting the old one back restores what the file said.
   const card = () => Array.from(cardsOf(app))[0];
-  cardHead(card())[0].listeners.input({ target: { value: "数据迁移" } });
+  toggleRow(card());
+  const customInput = (row) => rowBody(row)[0].children[1].children[0];
+  customInput(card()).listeners.input({ target: { value: "数据迁移" } });
   assert.deepEqual(Array.from(seatsOf(app).filter((one) => one.kind === "custom").map((one) => one.description)), ["数据迁移", "数据迁移"]);
-  cardHead(card())[0].listeners.input({ target: { value: "数据库迁移" } });
+  customInput(card()).listeners.input({ target: { value: "数据库迁移" } });
   assert.equal(decision((d) => d.changed()), false);
-  // A card made now has its role for a description.
+  // A card made now has its role for a description and starts expanded.
   app.run('window.AgentNaveDecisionSeats.addCard("custom")');
   const fresh = Array.from(cardsOf(app)).at(-1);
-  cardHead(fresh)[0].listeners.input({ target: { value: "写作" } });
-  fresh.children[1].children[1].children[0].listeners.change({ target: { value: "codex" } });
+  customInput(fresh).listeners.input({ target: { value: "写作" } });
+  rowBody(fresh)[1].children[1].children[0].listeners.change({ target: { value: "codex" } });
   assert.equal(seatsOf(app).find((one) => one.role === "写作").description, "写作");
 });
 
@@ -1573,8 +1594,8 @@ test("a catalog seat's fallbacks come back as saved, and the add button sits in 
   await decision((d) => d.load());
   assert.equal(decision((d) => d.changed()), false);
   assert.deepEqual(JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats)")), [seat]);
-  const card = cardsOf(app)[0];
-  const rows = card.children.filter((child) => child.className === "s-wrap");
+  toggleRow(cardsOf(app)[0]);
+  const rows = rowBody(cardsOf(app)[0]).filter((child) => child.className === "s-wrap");
   assert.equal(rows.length, 1, "only the easy level has a fallback line");
   assert.equal(rows[0].children[1].className, "s-row is-sub");
   assert.equal(rows[0].children[0].children.at(-1).tagName, "button");
@@ -1586,18 +1607,63 @@ test("an image seat row adds and removes fallbacks, with the delete button kept 
   const { app, decision } = decisionEditor("decision", saved);
   app.run('detected.codex.models = [{ id: "chat-model" }, { id: "m2" }]');
   await decision((d) => d.load());
-  const imageRow = () => cardsOf(app)[0].children[1];
+  toggleRow(cardsOf(app)[0]);
+  const imageRow = () => rowBody(cardsOf(app)[0])[0];
   const fallbacks = () => JSON.parse(app.run("JSON.stringify(window.AgentNaveDecisionSeats.document().seats[0].fallbacks || null)"));
   const [add, remove] = [imageRow().children.at(-1), imageRow().children[1].children.at(-1)];
   assert.equal(add.children[0], "添加备选");
   assert.equal(remove.children[0], "删除");
   add.listeners.click();
   assert.deepEqual(fallbacks(), [{ provider: "codex", model: "m2" }]);
-  const block = cardsOf(app)[0].children[1];
+  const block = rowBody(cardsOf(app)[0])[0];
   assert.equal(block.className, "s-wrap");
   assert.equal(block.children[0].children[1].children.at(-1).children[0], "删除");
   block.children[1].children[1].children.at(-1).listeners.click();
   assert.equal(fallbacks(), null, "no fallback left, no field");
+});
+
+test("expandable decision seat rows keep state across re-renders, force-open invalid cards, and summarize tiers", async () => {
+  const seat = (id, kind, role, difficulty, model) => ({ id, kind, role, description: role, provider: "codex", model, access: "write", difficulty });
+  const saved = { document: { version: 1, seats: [
+    seat("w-1", "worker", "通用执行", "easy", "m-easy"),
+    seat("w-2", "worker", "通用执行", "hard", "m-hard"),
+    seat("c-1", "custom", "脚本", "medium", "m-mid"),
+  ] }, error: null, key_set: false, key_error: null };
+  const { app, decision } = decisionEditor("decision", saved);
+  app.run('detected.codex.models = [{ id: "m-easy" }, { id: "m-mid" }, { id: "m-hard" }]');
+  await decision((d) => d.load());
+
+  // Loaded valid cards start collapsed with tier summaries omitting unset levels.
+  const rows = () => Array.from(cardsOf(app));
+  assert.deepEqual(rows().map((r) => r.dataset.expanded), ["false", "false"]);
+  assert.equal(rowHead(rows()[0]).summary.children[0], "简单 m-easy · 困难 m-hard");
+  assert.equal(rowHead(rows()[1]).summary.children[0], "中等 m-mid");
+
+  // Expanding multiple cards persists across re-renders (e.g. changing a tier pick).
+  toggleRow(rows()[0]);
+  toggleRow(rows()[1]);
+  assert.deepEqual(rows().map((r) => r.dataset.expanded), ["true", "true"]);
+  rowBody(rows()[0])[1].children[1].children[0].listeners.change({ target: { value: "codex" } });
+  assert.deepEqual(rows().map((r) => r.dataset.expanded), ["true", "true"]);
+  assert.equal(rowHead(rows()[0]).summary.children[0], "简单 m-easy · 中等 m-easy · 困难 m-hard");
+
+  // Collapsing card 1, then adding a duplicate custom card forces both colliding cards open.
+  toggleRow(rows()[1]);
+  assert.equal(rows()[1].dataset.expanded, "false");
+  app.run('window.AgentNaveDecisionSeats.addCard("custom")');
+  assert.equal(rows()[2].dataset.expanded, "true", "newly added card auto-expands");
+  // Trying to collapse an invalid card (missing specialty + no tiers) keeps it open.
+  toggleRow(rows()[2]);
+  assert.equal(rows()[2].dataset.expanded, "true");
+  // Typing a duplicate specialty forces the previously collapsed colliding card open too.
+  rowBody(rows()[2])[0].children[1].children[0].listeners.input({ target: { value: "脚本" } });
+  assert.equal(rows()[1].dataset.expanded, "true");
+  assert.equal(rows()[1].dataset.invalid, "true");
+
+  // Preset rule text fold is hidden for presets without text and shown (collapsed) when text exists.
+  assert.equal(app.run('$("orchestration-text-fold").hidden'), false);
+  app.run('viewMode("off")');
+  assert.equal(app.run('$("orchestration-text-fold").hidden'), true);
 });
 
 function accountCardsEditor(fetch) {

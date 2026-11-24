@@ -12,7 +12,8 @@ let generation = 0;
 // Groups each Skill adds below its own; the review gate's seats are drawn by advanced.js and t3-seats.js.
 const SETTINGS = {
   "agentnave-review": () => [
-    h("div.s-group", {}, h("h2.s-title", {}, L("评审工位", "Review seats"),
+    h("div.s-tools.scope-bar", { id: "review-scope", hidden: true }),
+    h("div.s-group", { id: "review-seats-group" }, h("h2.s-title", {}, L("评审工位", "Review seats"),
       AN.settings.settingTip(L("选“自动”时由 boss 按员工挑选；你在对话里点名的 CLI 和模型优先于这里。boss 应用用不了所选 CLI 时改用它自己的子代理，所选模型不在员工里时改找提供同一模型的其他 CLI。", "When set to “Auto”, the boss picks from configured employees; CLIs and models you name in chat take precedence. If the boss app cannot use the chosen CLI, it falls back to its own subagent; if the chosen model is not in employees, it looks for another CLI offering the same model."))),
     h("div.s-card", {}, h("div.s-wrap", { id: "review-seats" }))),
     h("div.s-group", { id: "t3-review-seats", hidden: true }),

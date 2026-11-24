@@ -495,6 +495,8 @@
     $("orchestration-effect").setAttribute("aria-label", orchestration ? ORCHESTRATION_EFFECTS[preset] : "");
     renderBossChips();
     const text = orchestrationPresetText(preset);
+    const textFold = $("orchestration-text-fold");
+    if (textFold) textFold.hidden = !text;
     $("orchestration-text").hidden = !text;
     $("orchestration-text").textContent = text || "";
     // An unread or broken file cannot take edits: nothing here could be saved or discarded.
@@ -522,6 +524,7 @@
     }
     renderRuleFiles();
     window.AgentNaveT3Seats?.render();
+    S.syncScopeViews?.();
   }
 
   function renderRuleFiles() {
@@ -850,6 +853,7 @@
     });
     box.replaceChildren(uniform, ...rows);
     window.AgentNaveT3Seats?.renderReview();
+    S.syncScopeViews?.();
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
@@ -892,6 +896,7 @@
       feedback.textContent = "";
       feedback.className = "save-feedback";
     }
+    S.syncScopeViews?.();
   }
 
   // An edit makes the last save's result stale.
@@ -978,7 +983,8 @@
     viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, renderRuleFiles, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced, REVIEW_ROLES,
-    orchestrationShown, bossMode, setBossMode, liveSeats, roleCatalog, roleName, orchestrationSeat, seatModels
+    orchestrationShown, bossMode, setBossMode, liveSeats, roleCatalog, roleName, orchestrationSeat, seatModels,
+    reviewSeatsChanged: seatsChanged,
   });
   S.share({
     orchestration: [() => orchestration, (v) => { orchestration = v; }],

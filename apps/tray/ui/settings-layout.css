@@ -74,6 +74,7 @@ label.s-label { cursor: pointer; }
 
 /* A card that holds one block of text: a template to read or rules to edit. */
 .s-card.is-pre { margin: 0 0 24px; padding: 14px var(--row-pad); white-space: pre-wrap; font: 12px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--ink); user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
+.s-group > .s-card.is-pre { margin: 0; }
 .s-card > textarea { display: block; width: 100%; min-height: 220px; box-sizing: border-box; padding: 14px var(--row-pad); border: 0; border-radius: 10px; background: transparent; color: var(--ink); font: 12px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace; resize: vertical; }
 /* A row whose body is a block of its own (an editor, a picker, a list). */
 .s-row.is-stack > button { justify-self: start; }

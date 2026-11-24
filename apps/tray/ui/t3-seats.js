@@ -22,8 +22,8 @@
   let baseline = null; // Normalized editor state of saved.document, or first-time prefill baseline.
   let draft = null; // Edited state; null while identical to baseline.
   let prefilled = false;
-  let tasksOpen = false;
   let cardCount = 0;
+  const expanded = new Set(); // Expanded card cids, kept in memory across re-renders.
 
   const catalogEntry = (kind) => S.roleCatalog().find((entry) => entry.group === kind);
   const reviewRoles = () => S.REVIEW_ROLES || [];
@@ -386,10 +386,13 @@
   function addCard(kind) {
     if (locked() || (kind !== CUSTOM && !catalogEntry(kind))) return;
     if (kind !== CUSTOM && shownState().cards.some((card) => card.kind === kind)) return;
-    mutate((state) => { state.cards.push(newCard(kind)); });
+    const card = newCard(kind);
+    expanded.add(card.cid);
+    mutate((state) => { state.cards.push(card); });
   }
 
   function removeCard(cid) {
+    expanded.delete(cid);
     mutate((state) => { state.cards = state.cards.filter((card) => card.cid !== cid); });
   }
 
@@ -517,7 +520,28 @@
     }
   }
 
+  function problemCids(list) {
+    const bad = new Set();
+    const seen = new Map();
+    for (const card of list) {
+      const own = card.kind === CUSTOM;
+      const title = own ? card.role.trim() : cardName(card);
+      if (own && !title) bad.add(card.cid);
+      if (own && title) {
+        if (seen.has(title)) {
+          bad.add(card.cid);
+          bad.add(seen.get(title));
+        } else {
+          seen.set(title, card.cid);
+        }
+      }
+      if (!Object.keys(card.seats).length) bad.add(card.cid);
+    }
+    return bad;
+  }
+
   function discard() {
+    expanded.clear();
     draft = null;
     render();
   }
@@ -679,92 +703,105 @@
     return el("div", { className: "s-wrap" }, primaryRow, ...fallbackRows);
   }
 
-  function tiersSet(card) {
-    const n = Object.values(card.seats).filter((seat) => (seat.candidates || []).length > 0).length;
-    return el("span", { className: `s-muted ds-tiers${n ? "" : " unset"}` },
-      n ? L(`已设 ${n} 档`, `${n} ${n === 1 ? "tier" : "tiers"} set`) : L("未设置", "Not set"));
+  function primaryModelName(seat) {
+    const first = seat?.candidates?.[0];
+    if (!first) return "";
+    const inst = instances().find((x) => x.instance === first.instance);
+    const meta = inst?.models?.find((m) => m.slug === first.model);
+    return meta?.name || (AN.modelName ? AN.modelName(first.model) : first.model);
   }
 
-  function seatCard(card, index) {
+  function cardSummary(card) {
+    return S.summarizeTiers(DIFFICULTIES.map(([level, label]) => [label, primaryModelName(card.seats[level])]));
+  }
+
+  function customHeadRow(card, key, title, helpers) {
+    return S.customSeatHeadRow({
+      key, role: card.role, access: card.access, title, accessOptions: ACCESS, roleMax: ROLE_MAX,
+      onRoleInput: (value) => {
+        const prevBad = problemCids(shownState()?.cards || []);
+        editCard(card.cid, { role: value }, false);
+        const nextBad = problemCids(shownState()?.cards || []);
+        if ([...nextBad].some((id) => id !== card.cid && !prevBad.has(id) && !expanded.has(id))) return render();
+        helpers.setName(value.trim() || L("自定义工位", "Custom seat"), !value.trim());
+      },
+      onAccessChange: (value) => editCard(card.cid, { access: value }),
+    });
+  }
+
+  function seatRowDescriptor(card, index, invalidSet) {
     const key = `t3/${card.cid}`;
     const own = card.kind === CUSTOM;
-    const title = cardName(card) || L(`卡片 ${index + 1}`, `Card ${index + 1}`);
-    const name = el(own ? "input" : "strong", own ? {
-      type: "text", className: "ds-role", maxlength: String(ROLE_MAX), spellcheck: "false",
-      autocorrect: "off", autocapitalize: "off", autocomplete: "off", value: card.role,
-      "aria-label": L("专业", "Specialty"), placeholder: L("专业", "Specialty"),
-      dataset: { focusKey: `${key}/role` },
-      onInput: (e) => editCard(card.cid, { role: e.target.value }, false),
-    } : {}, ...(own ? [] : [title]));
-    const access = own
-      ? makeSelect(`${key}/access`, L(`${title}的读写类型`, `Access of ${title}`), card.access,
-        ACCESS.map(([v, text]) => [v, text, false]), (value) => editCard(card.cid, { access: value }))
-      : el("span", { className: "s-muted" }, accessName(accessOf(card)));
-    const remove = el("button", {
-      type: "button", className: "ds-remove",
-      "aria-label": L(`删除${title}`, `Delete ${title}`),
-      onClick: () => removeCard(card.cid),
-    }, L("删除", "Delete"));
-    const scope = scopeOf(card);
-    const head = el("div", { className: "s-row" },
-      el("div", { className: "s-label" }, name, scope ? S.settingTip(scope) : null),
-      el("div", { className: "s-control" }, access, tiersSet(card), remove));
-    const body = DIFFICULTIES.map(([level, label]) => candidateBlock(
-      `${key}/${level}`,
-      el("span", { className: "s-label" }, label),
-      `${title} · ${label}`,
-      card.seats[level]?.candidates || [],
-      (nextList) => setTierCandidates(card.cid, level, nextList),
-      L("未设置", "Not set"),
-      true,
-    ));
-    return el("div", { className: "s-group decision-seat t3-seat" }, el("div", { className: "s-card" }, head, ...body));
+    const named = cardName(card);
+    const title = named || L(`卡片 ${index + 1}`, `Card ${index + 1}`);
+    const summary = cardSummary(card);
+    return {
+      cid: card.cid,
+      focusPrefix: key,
+      name: named || L("自定义工位", "Custom seat"),
+      nameUnset: own && !named,
+      ariaTitle: title,
+      tip: scopeOf(card),
+      access: accessName(accessOf(card)),
+      summary: summary.text,
+      summaryUnset: summary.unset,
+      invalid: invalidSet.has(card.cid),
+      isInvalid: () => problemCids(shownState()?.cards || []).has(card.cid),
+      onRemove: () => removeCard(card.cid),
+      renderBody: (helpers) => [
+        ...(own ? [customHeadRow(card, key, title, helpers)] : []),
+        ...DIFFICULTIES.map(([level, label]) => candidateBlock(
+          `${key}/${level}`,
+          el("span", { className: "s-label" }, label),
+          `${title} · ${label}`,
+          card.seats[level]?.candidates || [],
+          (nextList) => setTierCandidates(card.cid, level, nextList),
+          L("未设置", "Not set"),
+          true,
+        )),
+      ],
+    };
   }
 
   function addMenu(state) {
-    const groups = S.roleCatalog();
-    const taken = new Set(state.cards.map((card) => card.kind));
-    const option = (value, label) => el("option", { value, disabled: taken.has(value) && value !== CUSTOM }, label);
-    const groupList = (title, entries) => entries.length
-      ? el("optgroup", { label: title }, ...entries.map(([value, label]) => option(value, label))) : null;
-    const named = (general) => groups
-      .filter((entry) => !entry.fallback_group === general)
-      .map((entry) => [entry.group, S.roleName(entry)]);
-    return el("select", {
-      className: "decision-add", id: "t3-seat-add", "aria-label": L("添加工位", "Add seat"),
-      dataset: { focusKey: "t3/add" }, disabled: toSeats(state.cards).length >= MAX_SEATS,
-      onChange: (e) => e.target.value && addCard(e.target.value),
-    },
-    el("option", { value: "", selected: true }, L("添加工位", "Add seat")),
-    groupList(L("通用工位", "General seats"), named(true)),
-    groupList(L("专业工位", "Specialist seats"), named(false)),
-    groupList(L("自定义工位", "Custom seats"), [[CUSTOM, L("自定义工位", "Custom seat")]]));
+    return S.seatAddMenu({
+      id: "t3-seat-add", focusKey: "t3/add", disabled: toSeats(state.cards).length >= MAX_SEATS,
+      taken: new Set(state.cards.map((card) => card.kind)), groups: S.roleCatalog(), onAdd: addCard,
+    });
   }
 
-  function taskSection(state) {
-    return el("details", {
-      className: "s-group t3-task-fold", open: tasksOpen,
-      onToggle: (e) => { tasksOpen = Boolean(e.target.open); },
-    },
-    el("summary", { className: "s-title is-fold", dataset: { focusKey: "t3/task-fold" } },
-      L("任务工位", "Task seats"),
-      el("span", { className: "s-title-aside" }, String(state.cards.length))),
-    ...state.cards.map(seatCard),
-    el("div", { className: "s-group" },
-      el("div", { className: "s-card" },
-        el("div", { className: "s-row" },
-          el("label", { className: "s-label", htmlFor: "t3-seat-add" }, L("添加工位", "Add seat")),
-          addMenu(state)))));
+  function errorAlert() {
+    return el("div", { className: "s-alert is-bad" },
+      el("div", { className: "s-alert-body" },
+        el("strong", {}, L("t3-seats.json 存在错误", "t3-seats.json has errors")),
+        el("p", {}, saved.error)));
   }
 
-  // The review roles sit on the review page, after the seats used outside T3 Code.
+  // The review roles sit on the review page, toggled by the shared General / T3 Code segment control.
   function renderReview() {
     const box = $("t3-review-seats");
     if (!box) return;
-    const state = visible() && !saved.error ? shownState() : null;
-    box.hidden = !state;
-    if (!state) return box.replaceChildren();
+    if (!visible()) {
+      box.hidden = true;
+      box.replaceChildren();
+      S.syncScopeViews?.();
+      return;
+    }
     const focusKey = document.activeElement?.dataset?.focusKey;
+    if (saved.error) {
+      box.replaceChildren(
+        el("h2", { className: "s-title" }, L("评审工位", "Review seats")),
+        errorAlert(),
+      );
+      S.syncScopeViews?.();
+      return;
+    }
+    const state = shownState();
+    if (!state) {
+      box.replaceChildren();
+      S.syncScopeViews?.();
+      return;
+    }
     const rows = reviewRoles().map(([role, name, hint, unset]) => candidateBlock(
       `t3/review/${role}`,
       el("span", { className: "s-label" }, name, S.settingTip(hint)),
@@ -775,9 +812,10 @@
       false,
     ));
     box.replaceChildren(
-      el("h2", { className: "s-title" }, L("T3 Code 评审工位", "T3 Code review seats")),
+      el("h2", { className: "s-title" }, L("评审工位", "Review seats")),
       el("div", { className: "s-card" }, ...rows),
     );
+    S.syncScopeViews?.();
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
@@ -788,24 +826,23 @@
     if (!visible()) {
       box.hidden = true;
       box.replaceChildren();
+      S.syncScopeViews?.();
       return;
     }
-    box.hidden = false;
     const focusKey = document.activeElement?.dataset?.focusKey;
     if (saved.error) {
-      box.replaceChildren(el("div", { className: "s-group t3-seats" },
-        el("h2", { className: "s-title" }, "T3 Code"),
-        el("div", { className: "s-alert is-bad" },
-          el("div", { className: "s-alert-body" },
-            el("strong", {}, L("t3-seats.json 存在错误", "t3-seats.json has errors")),
-            el("p", {}, saved.error)))));
+      box.replaceChildren(el("div", { className: "s-group t3-seats" }, errorAlert()));
+      S.syncScopeViews?.();
       return;
     }
     const state = shownState();
-    if (!state) return box.replaceChildren();
+    if (!state) {
+      box.replaceChildren();
+      S.syncScopeViews?.();
+      return;
+    }
     const canEnable = state.enabled || hasCandidates(toDocument(state));
     const switchesCard = el("div", { className: "s-group t3-seats" },
-      el("h2", { className: "s-title" }, "T3 Code"),
       el("div", { className: "s-card" },
         el("div", { className: "s-row" },
           el("label", { className: "s-label", htmlFor: "t3-enabled" }, L("在 T3 Code 里由 T3 派发", "Dispatch via T3 in T3 Code")),
@@ -821,7 +858,18 @@
             dataset: { focusKey: "t3/random" }, checked: state.random_candidates,
             onChange: (e) => mutate((next) => { next.random_candidates = e.target.checked; }),
           }))));
-    box.replaceChildren(switchesCard, taskSection(state));
+    const invalidSet = problemCids(state.cards);
+    const seatRows = S.renderSeatRows(
+      state.cards.map((card, index) => seatRowDescriptor(card, index, invalidSet)),
+      { expanded, onToggle: () => render(), groupClass: "t3-seat-list" },
+    );
+    const addCardGroup = el("div", { className: "s-group" },
+      el("div", { className: "s-card" },
+        el("div", { className: "s-row" },
+          el("label", { className: "s-label", htmlFor: "t3-seat-add" }, L("添加工位", "Add seat")),
+          addMenu(state))));
+    box.replaceChildren(...[switchesCard, seatRows, addCardGroup].filter(Boolean));
+    S.syncScopeViews?.();
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
 
