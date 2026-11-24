@@ -186,7 +186,7 @@ _Avoid_: 动态工位、智能调度
 
 ## T3 编排（T3 Orchestration）
 
-T3 Code 主线程里的编排方式：单独指派由 T3 的 `delegate_task` 执行，AgentNave 只选工位、开会和转交。它是 App 里默认关的独立开关，不受编排档位约束，T3 以外不生效；T3 派出的子线程只完成自己的任务（[ADR-0121](docs/adr/0121-t3-code-orchestration.md)）。
+T3 Code 主线程里的编排方式：单独指派由 T3 的 `delegate_task` 执行，AgentNave 只选工位、开会和转交。它跟随编排档位：分工协作、自定义由 boss 选 T3 工位，决策模型由决策模型选，只开会和关闭没有 T3 模式；由 App 里默认关的开关打开，T3 以外不生效；T3 派出的子线程只完成自己的任务（[ADR-0121](docs/adr/0121-t3-code-orchestration.md)）。
 _Avoid_: T3 档位（它不是编排档位之一）
 
 ## T3 工位（T3 Seat）
