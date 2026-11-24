@@ -8,7 +8,9 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 
 from agentnave.adapters.base import (
     AdapterHooks,
@@ -27,7 +29,7 @@ from agentnave.adapters.base import (
 )
 from agentnave.adapters.quota_reset import parse_reset
 from agentnave.adapters.usage_reset import CODEX_REQUESTS, codex_answered, codex_output_reset
-from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity, ProviderOption
 
 _DESKTOP_CODEX_PATHS = (
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
@@ -81,6 +83,27 @@ def _skip_oversized_line(head: bytes) -> bool:
         and _TOOL_ITEM.search(head) is not None
         and _KEPT_EVENT.search(head) is None
     )
+
+
+def _app_server_settings(options: Mapping[str, ProviderOption]) -> tuple[str, ...]:
+    """`--config` settings giving `codex app-server` the permissions `codex exec` runs with."""
+    if options.get("approve_for_me") is True:
+        # What `codex exec --approve-for-me` applies.
+        settings: tuple[str, ...] = (
+            'approval_policy="on-request"',
+            'approvals_reviewer="auto_review"',
+            'sandbox_mode="workspace-write"',
+        )
+    elif options.get("dangerously_bypass_approvals_and_sandbox") is True:
+        # It overrides any sandbox option in exec too.
+        settings = ('approval_policy="never"', 'sandbox_mode="danger-full-access"')
+    else:
+        # exec never asks for approval, whatever the user's config says; the sandbox stays the
+        # configured one unless the task names it.
+        settings = ('approval_policy="never"',)
+        if "sandbox" in options:
+            settings += (f'sandbox_mode="{options["sandbox"]}"',)
+    return tuple(arg for setting in settings for arg in ("--config", setting))
 
 
 def _source() -> str | None:
@@ -220,6 +243,42 @@ class CodexAdapter(AdapterHooks):
         if source is not None and executable == "codex":
             name = "桌面端内置" if source == "desktop" else "独立"
             raise FileNotFoundError(f"指定的 Codex {name} CLI 不可用；请在员工设置中更换来源")
+        if not discussion:
+            return self._app_server_command(request, executable)
+        # app-server cannot ignore the user's config, so restricted runs stay on exec, unkept.
+        return self._exec_command(request, executable, options, discussion)
+
+    def _app_server_command(self, request: InvocationRequest, executable: str) -> PreparedCommand:
+        """A bridge to `codex app-server` that can serve the thread's later turns (ADR-0120):
+        permissions are fixed at launch, model and effort travel with each turn."""
+        options = request.provider_options
+        argv = [sys.executable, "-I", str(Path(__file__).with_name("codex_app_server.py"))]
+        turn: dict[str, object] = {
+            "session_id": request.session_id,
+            "cwd": str(request.cwd),
+            "prompt": request.prompt,
+        }
+        for name in ("model", "effort"):
+            turn[name] = None if name not in options else str(options[name])
+            if name in options:
+                argv.extend(("--turn-option", name))
+        argv.extend(("--", executable, "app-server", *_app_server_settings(options)))
+        return PreparedCommand(
+            tuple(argv),
+            request.cwd,
+            json.dumps(turn, ensure_ascii=False).encode() + b"\n",
+            capture_line=_capture_line,
+            skip_oversized_line=_skip_oversized_line,
+            keep_alive=True,
+        )
+
+    def _exec_command(
+        self,
+        request: InvocationRequest,
+        executable: str,
+        options: tuple[str, ...],
+        discussion: bool,
+    ) -> PreparedCommand:
         argv = [executable, "exec"]
         if request.session_id is not None:
             argv.append("resume")
