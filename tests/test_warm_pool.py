@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from test_terminal_execution import setup_tray, wait_for_file
 
 from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
@@ -240,5 +241,26 @@ async def test_resume_waits_for_the_sessions_ending_process(
             pass
         else:
             pytest.fail("the new process started while the old one was still ending")
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@posix_only
+async def test_terminal_resume_ends_the_kept_process_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launch, _ = setup_tray(tmp_path, monkeypatch)
+    manager = InvocationManager()
+    try:
+        first = await _run(manager, tmp_path)
+        request = InvocationRequest("codex", "again", tmp_path, session_id=first.session_id)
+        invocation_id = manager.start(
+            request, prepared=PreparedCommand((), tmp_path), terminal=launch
+        )
+        # The tray is asked to open the session only once nothing else serves it.
+        await wait_for_file(tmp_path / "spawn-requests" / f"{invocation_id}.json")
+        with pytest.raises(ProcessLookupError):
+            os.kill(_pid(first), 0)
     finally:
         await manager.shutdown()

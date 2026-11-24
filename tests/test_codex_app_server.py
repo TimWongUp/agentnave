@@ -135,16 +135,23 @@ async def test_codex_turns_share_one_app_server_thread(fake_codex: Path, tmp_pat
 
     logged = _logged(fake_codex)
     launches = [entry for entry in logged if "argv" in entry]
-    assert [entry["argv"] for entry in launches] == [["app-server"]]
+    # The config overrides `codex exec --approve-for-me` adds.
+    assert [entry["argv"] for entry in launches] == [
+        [
+            "app-server",
+            "--config",
+            'approvals_reviewer="auto_review"',
+            "--config",
+            'approval_policy="on-request"',
+            "--config",
+            'sandbox_mode="workspace-write"',
+        ]
+    ]
     methods = [entry.get("method") for entry in logged if "argv" not in entry]
     assert methods.count("initialize") == methods.count("thread/start") == 1
     assert methods.count("turn/start") == 2 and "thread/resume" not in methods
-    # Every thread and turn request carries the mode's permissions, never the config's.
-    allowed = {
-        "approvalPolicy": "on-request",
-        "approvalsReviewer": "auto_review",
-        "runtimeWorkspaceRoots": [str(tmp_path)],
-    }
+    # Approval and sandbox mode are fixed; network and writable roots expand from the config.
+    allowed = {"approvalPolicy": "on-request", "approvalsReviewer": "auto_review"}
     (start,) = _sent(fake_codex, "thread/start")
     assert start == {
         "cwd": str(tmp_path),
@@ -155,13 +162,7 @@ async def test_codex_turns_share_one_app_server_thread(fake_codex: Path, tmp_pat
     turn_starts = _sent(fake_codex, "turn/start")
     for turn_start in turn_starts:
         assert {key: turn_start[key] for key in allowed} == allowed
-        assert turn_start["sandboxPolicy"] == {
-            "type": "workspaceWrite",
-            "writableRoots": [],
-            "networkAccess": False,
-            "excludeTmpdirEnvVar": False,
-            "excludeSlashTmp": False,
-        }
+        assert "sandboxPolicy" not in turn_start and "runtimeWorkspaceRoots" not in turn_start
     (text_input,) = turn_starts[0]["input"]
     assert text_input["type"] == "text" and text_input["text_elements"] == []
     assert cast(str, text_input["text"]).endswith("first")
@@ -171,33 +172,64 @@ async def test_codex_turns_share_one_app_server_thread(fake_codex: Path, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_codex_bypass_resume_sends_full_access_with_never(
-    fake_codex: Path, tmp_path: Path
+@pytest.mark.parametrize(
+    ("option", "thread", "turn"),
+    [
+        (
+            "approve_for_me",
+            {
+                "approvalPolicy": "on-request",
+                "approvalsReviewer": "auto_review",
+                "sandbox": "workspace-write",
+            },
+            {"approvalPolicy": "on-request", "approvalsReviewer": "auto_review"},
+        ),
+        (
+            "dangerously_bypass_approvals_and_sandbox",
+            {
+                "approvalPolicy": "never",
+                "approvalsReviewer": "user",
+                "sandbox": "danger-full-access",
+            },
+            {
+                "approvalPolicy": "never",
+                "approvalsReviewer": "user",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+            },
+        ),
+    ],
+)
+async def test_codex_cold_resume_sends_the_modes_permissions(
+    fake_codex: Path,
+    tmp_path: Path,
+    option: str,
+    thread: dict[str, object],
+    turn: dict[str, object],
 ) -> None:
     manager = InvocationManager()
-    options: dict[str, ProviderOption] = {"dangerously_bypass_approvals_and_sandbox": True}
     try:
-        result = await _codex(manager, tmp_path, "resume", "thread-earlier", options)
+        result = await _codex(manager, tmp_path, "resume", "thread-earlier", {option: True})
         assert result.status is InvocationStatus.SUCCEEDED, result
         assert result.session_id == "thread-earlier"
     finally:
         await manager.shutdown()
-    allowed = {
-        "approvalPolicy": "never",
-        "approvalsReviewer": "user",
-        "runtimeWorkspaceRoots": [str(tmp_path)],
-    }
+    # Roots are always sent on a resume, which would otherwise restore the thread's last ones.
     (resume,) = _sent(fake_codex, "thread/resume")
     assert resume == {
         "threadId": "thread-earlier",
         "excludeTurns": True,
         "cwd": str(tmp_path),
-        "sandbox": "danger-full-access",
-        **allowed,
+        "runtimeWorkspaceRoots": [str(tmp_path)],
+        **thread,
     }
     (turn_start,) = _sent(fake_codex, "turn/start")
-    assert {key: turn_start[key] for key in allowed} == allowed
-    assert turn_start["sandboxPolicy"] == {"type": "dangerFullAccess"}
+    sent = {
+        key: turn_start[key]
+        for key in ("approvalPolicy", "approvalsReviewer", "sandboxPolicy", "runtimeWorkspaceRoots")
+        if key in turn_start
+    }
+    bypass = option != "approve_for_me"
+    assert sent == {**turn, **({"runtimeWorkspaceRoots": [str(tmp_path)]} if bypass else {})}
 
 
 @pytest.mark.asyncio

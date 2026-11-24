@@ -772,14 +772,7 @@ class InvocationManager:
                     session_id=request.session_id,
                 )
                 self.terminal_runs[invocation_id] = run
-                record.task = asyncio.create_task(
-                    execute_run(
-                        run,
-                        lambda result: self._settle_session(record, result),
-                        self.terminal_reconcilers,
-                        on_settled,
-                    )
-                )
+                record.task = asyncio.create_task(self._execute_terminal(record, run, on_settled))
         except BaseException:
             if claim is not None:
                 release_and_remove(claim, Path(claim.name))
@@ -1369,6 +1362,23 @@ class InvocationManager:
                     record.process = None
                     record.tool_names.clear()
                     record.prompts.close()
+
+    async def _execute_terminal(
+        self,
+        record: _InvocationRecord,
+        run: TerminalRun,
+        on_settled: Callable[[str, InvocationStatus], None] | None,
+    ) -> InvocationResult:
+        request = record.request
+        if request.session_id is not None:
+            # The tray resumes the native session itself: no kept process may still serve it.
+            await self._pool.release(request.provider, request.session_id)
+        return await execute_run(
+            run,
+            lambda result: self._settle_session(record, result),
+            self.terminal_reconcilers,
+            on_settled,
+        )
 
     async def _launch(
         self, record: _InvocationRecord, prepared: PreparedCommand, scratch: str | None

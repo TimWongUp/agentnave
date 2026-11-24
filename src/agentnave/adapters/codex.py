@@ -255,6 +255,15 @@ class CodexAdapter(AdapterHooks):
             if name in options:
                 argv.extend(("--turn-option", name))
         argv.extend(("--permissions", mode, "--", executable, "app-server"))
+        if mode == "approve-for-me":
+            # The config overrides `codex exec --approve-for-me` adds, so the sandbox expands
+            # from the same layers as exec's.
+            for setting in (
+                'approvals_reviewer="auto_review"',
+                'approval_policy="on-request"',
+                'sandbox_mode="workspace-write"',
+            ):
+                argv.extend(("--config", setting))
         return PreparedCommand(
             tuple(argv),
             request.cwd,

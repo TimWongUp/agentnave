@@ -6,8 +6,9 @@ stdin carries one JSON turn per line: {"session_id", "cwd", "prompt", "model", "
 first line starts the thread (or loads `session_id`); later lines must name that thread. Only the
 options named by --turn-option may be set, so a process is reused only by turns that set the same
 ones: a value can change between turns, but a setting cannot be cleared once a turn set it.
-MODE fixes approval, reviewer and sandbox (see PERMISSIONS); they are sent with every thread and
-turn request, so neither a resumed thread nor a kept process runs with settings left from before.
+MODE fixes approval, reviewer and sandbox mode (see _THREAD_PERMISSIONS); they are sent with every
+thread and turn request, so neither a resumed thread nor a kept process runs with settings left
+from before.
 
 stdout carries the events `codex exec --json` prints, ending every turn with exactly one
 `turn.completed` or `turn.failed`; nothing is written between turns. A protocol failure ends the
@@ -26,7 +27,7 @@ import subprocess
 import sys
 import threading
 from contextlib import suppress
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from agentnave import __version__
 from agentnave.windows_supervisor import popen_args
@@ -54,23 +55,29 @@ _ITEM_FIELDS = (
     ("tool", "tool"),
     ("query", "query"),
 )
-# What `codex exec --approve-for-me` and `--dangerously-bypass-approvals-and-sandbox` fix: the
-# approval policy, its reviewer (unused under never), the thread's sandbox mode and a turn's
-# sandbox policy. Workspace-write writes only the cwd, without network access.
-PERMISSIONS: dict[str, tuple[str, str, str, dict[str, Any]]] = {
-    "approve-for-me": (
-        "on-request",
-        "auto_review",
-        "workspace-write",
-        {
-            "type": "workspaceWrite",
-            "writableRoots": [],
-            "networkAccess": False,
-            "excludeTmpdirEnvVar": False,
-            "excludeSlashTmp": False,
-        },
-    ),
-    "bypass": ("never", "user", "danger-full-access", {"type": "dangerFullAccess"}),
+# What `codex exec --approve-for-me` and `--dangerously-bypass-approvals-and-sandbox` fix, sent
+# on thread/start and thread/resume, and on every turn/start. The reviewer is unused under never.
+# Auto review sends no sandbox policy with a turn: the thread's workspace-write mode keeps the
+# configured network access and writable roots, as exec's does.
+_THREAD_PERMISSIONS: dict[str, dict[str, Any]] = {
+    "approve-for-me": {
+        "approvalPolicy": "on-request",
+        "approvalsReviewer": "auto_review",
+        "sandbox": "workspace-write",
+    },
+    "bypass": {
+        "approvalPolicy": "never",
+        "approvalsReviewer": "user",
+        "sandbox": "danger-full-access",
+    },
+}
+_TURN_PERMISSIONS: dict[str, dict[str, Any]] = {
+    "approve-for-me": {"approvalPolicy": "on-request", "approvalsReviewer": "auto_review"},
+    "bypass": {
+        "approvalPolicy": "never",
+        "approvalsReviewer": "user",
+        "sandboxPolicy": {"type": "dangerFullAccess"},
+    },
 }
 _CAMEL = re.compile(r"(?<=[a-z0-9])([A-Z])")
 _USAGE = (
@@ -245,27 +252,36 @@ def handshake(connection: Connection) -> None:
     connection.send({"method": "initialized"})
 
 
-def permissions(mode: str, cwd: str, *, turn: bool) -> dict[str, Any]:
-    """The mode's permissions as thread/start and thread/resume, or turn/start, take them."""
-    approval, reviewer, sandbox, policy = PERMISSIONS[mode]
-    return {
-        "approvalPolicy": approval,
-        "approvalsReviewer": reviewer,
-        "runtimeWorkspaceRoots": [cwd],
-        **({"sandboxPolicy": policy} if turn else {"sandbox": sandbox}),
-    }
+def permissions(mode: str, cwd: str, request: Literal["start", "resume", "turn"]) -> dict[str, Any]:
+    """The mode's permissions as the request takes them.
+
+    Workspace roots: a resume would otherwise bring back the ones the thread last ran with. Under
+    auto review a new thread gets exec's (the cwd and the configured writable roots), and a resume
+    gets only the cwd, which still leaves the configured roots writable through its sandbox."""
+    fields = dict((_TURN_PERMISSIONS if request == "turn" else _THREAD_PERMISSIONS)[mode])
+    if mode == "bypass" or request == "resume":
+        fields["runtimeWorkspaceRoots"] = [cwd]
+    return fields
 
 
 def open_thread(connection: Connection, turn: dict[str, Any], mode: str) -> str:
-    params: dict[str, Any] = {"cwd": turn["cwd"], **permissions(mode, turn["cwd"], turn=False)}
+    params: dict[str, Any] = {"cwd": turn["cwd"]}
     if turn.get("model") is not None:
         params["model"] = turn["model"]
     session_id = turn.get("session_id")
     if session_id is None:
-        result = connection.request("thread/start", params)
+        result = connection.request(
+            "thread/start", {**params, **permissions(mode, turn["cwd"], "start")}
+        )
     else:
         result = connection.request(
-            "thread/resume", {"threadId": session_id, "excludeTurns": True, **params}
+            "thread/resume",
+            {
+                "threadId": session_id,
+                "excludeTurns": True,
+                **params,
+                **permissions(mode, turn["cwd"], "resume"),
+            },
         )
     thread_id = _object(result.get("thread")).get("id")
     if not isinstance(thread_id, str) or not thread_id:
@@ -313,7 +329,7 @@ def run_turn(connection: Connection, thread_id: str, turn: dict[str, Any], mode:
         "threadId": thread_id,
         "input": [{"type": "text", "text": turn["prompt"], "text_elements": []}],
         "cwd": turn["cwd"],
-        **permissions(mode, turn["cwd"], turn=True),
+        **permissions(mode, turn["cwd"], "turn"),
     }
     for name in TURN_OPTIONS:
         if turn.get(name) is not None:
@@ -375,7 +391,7 @@ def parse_args(argv: list[str]) -> tuple[str, frozenset[str], list[str]]:
         or len(options) != 2 * (len(names) + len(modes))
         or set(names) - set(TURN_OPTIONS)
         or len(modes) != 1
-        or modes[0] not in PERMISSIONS
+        or modes[0] not in _THREAD_PERMISSIONS
     ):
         raise ValueError(_USAGE)
     return modes[0], frozenset(names), command

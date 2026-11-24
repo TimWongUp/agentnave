@@ -537,7 +537,7 @@ def _bridged(prepared: base.PreparedCommand) -> str:
         "-I",
         str(Path(codex.__file__).with_name("codex_app_server.py")),
     )
-    assert argv[split - 2] == "--permissions" and argv[split + 2 :] == ("app-server",)
+    assert argv[split - 2] == "--permissions" and argv[split + 2] == "app-server"
     return argv[split - 1]
 
 

@@ -163,6 +163,13 @@ class WarmPool:
         if ending:
             await asyncio.gather(*ending, return_exceptions=True)
 
+    async def release(self, provider: str, session_id: str) -> None:
+        """End the session's kept process, if any, for a run that resumes it elsewhere."""
+        kept = self.take(provider, session_id)
+        if kept is not None:
+            await kept.end()
+        await self.ended(provider, session_id)
+
     def keep(self, provider: str, session_id: str, kept: KeptProcess) -> None:
         """Keep a process for its session's next turn, restarting its keep period."""
         key = (provider, session_id)
