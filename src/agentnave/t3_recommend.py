@@ -302,6 +302,12 @@ def order_candidates(
     return ordered
 
 
+def _seat_label(seat: T3Seat) -> str:
+    """A seat id with its display name, so a boss can match the name a user said."""
+    parts = [part for part in (seat.role, seat.difficulty) if part]
+    return f"{seat.id} ({', '.join(parts)})"
+
+
 def _resolve_explicit_seat(
     item: T3RecommendTask,
     doc: T3SeatsFile,
@@ -335,7 +341,7 @@ def _resolve_explicit_seat(
         return _Selection(seat_id=seat_name, role=seat_name, difficulty=None, filtered=filtered)
     seat_def = seats_by_id.get(seat_name)
     if seat_def is None:
-        task_ids = [seat.id for seat in doc.seats if seat.candidates]
+        task_ids = [_seat_label(seat) for seat in doc.seats if seat.candidates]
         review_ids = sorted(role for role, items in doc.review.items() if items)
         raise ToolError(
             f"Unknown T3 seat {seat_name!r}. Configured task seats: {', '.join(task_ids) or 'none'}; "
@@ -346,7 +352,9 @@ def _resolve_explicit_seat(
             f"T3 seat {seat_name!r} has access={seat_def.access!r}, not {item.access!r}."
         )
     if not seat_def.candidates:
-        same_access = [s.id for s in doc.seats if s.access == item.access and s.candidates]
+        same_access = [
+            _seat_label(s) for s in doc.seats if s.access == item.access and s.candidates
+        ]
         raise ToolError(
             f"T3 seat {seat_name!r} has no configured candidates. Configured access={item.access} "
             f"seats: {', '.join(same_access) or 'none'}."
