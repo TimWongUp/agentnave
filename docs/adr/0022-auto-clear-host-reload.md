@@ -3,6 +3,7 @@
 - 状态：部分修订
 - 日期：2026-10-22
 - 「短连接证据修订」仅接受带结束时间回执、「已退出连接的快速排除」不把无结束标记的已退出回执作为加载证据，由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 修订。
+- 「首次接入」中没有可见连接时显示「待确认生效」，对具名账号的接入行由 [ADR-0118](0118-link-existing-claude-account-dirs.md) 修订。
 
 ## 背景
 

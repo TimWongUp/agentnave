@@ -271,7 +271,12 @@ impl Hosts {
             if started > 0 && changed["at_ms"].as_u64().is_some_and(|at| started.saturating_mul(1000) <= at));
         if old_process {
             ("required", "host_running")
-        } else if pending && !matches!(process, processes::State::Stopped) {
+        } else if pending
+            && !matches!(process, processes::State::Stopped)
+            // A running CLI cannot be told apart by account, so it says nothing about this row
+            // (ADR-0118).
+            && !split::is_account_row(host.id)
+        {
             ("unverified", "unverified")
         } else if !pending && upgrade_at.is_some() {
             ("required", "tools_upgrade")
