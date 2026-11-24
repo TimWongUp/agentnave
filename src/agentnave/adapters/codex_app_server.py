@@ -1,13 +1,13 @@
 """One `codex app-server` thread, turn after turn, owned by the provider supervisor (ADR-0120).
 
-Usage: codex_app_server.py [--approval headless|never] [--turn-option NAME]... -- <app-server argv>
+Usage: codex_app_server.py --permissions MODE [--turn-option NAME]... -- <app-server argv>
 
 stdin carries one JSON turn per line: {"session_id", "cwd", "prompt", "model", "effort"}. The
 first line starts the thread (or loads `session_id`); later lines must name that thread. Only the
 options named by --turn-option may be set, so a process is reused only by turns that set the same
 ones: a value can change between turns, but a setting cannot be cleared once a turn set it.
-Permissions are read again for every turn and sent with it (see codex_permissions), so neither a
-resumed thread nor a kept process runs with settings left from before.
+MODE fixes approval, reviewer and sandbox (see PERMISSIONS); they are sent with every thread and
+turn request, so neither a resumed thread nor a kept process runs with settings left from before.
 
 stdout carries the events `codex exec --json` prints, ending every turn with exactly one
 `turn.completed` or `turn.failed`; nothing is written between turns. A protocol failure ends the
@@ -29,8 +29,6 @@ from contextlib import suppress
 from typing import Any, cast
 
 from agentnave import __version__
-from agentnave.adapters import codex_permissions
-from agentnave.adapters.codex_permissions import APPROVAL_MODES, ApprovalMode, Permissions
 from agentnave.windows_supervisor import popen_args
 
 LINE_LIMIT = 64 * 1024 * 1024
@@ -56,8 +54,28 @@ _ITEM_FIELDS = (
     ("tool", "tool"),
     ("query", "query"),
 )
+# What `codex exec --approve-for-me` and `--dangerously-bypass-approvals-and-sandbox` fix: the
+# approval policy, its reviewer (unused under never), the thread's sandbox mode and a turn's
+# sandbox policy. Workspace-write writes only the cwd, without network access.
+PERMISSIONS: dict[str, tuple[str, str, str, dict[str, Any]]] = {
+    "approve-for-me": (
+        "on-request",
+        "auto_review",
+        "workspace-write",
+        {
+            "type": "workspaceWrite",
+            "writableRoots": [],
+            "networkAccess": False,
+            "excludeTmpdirEnvVar": False,
+            "excludeSlashTmp": False,
+        },
+    ),
+    "bypass": ("never", "user", "danger-full-access", {"type": "dangerFullAccess"}),
+}
 _CAMEL = re.compile(r"(?<=[a-z0-9])([A-Z])")
-_USAGE = "usage: codex_app_server.py [--approval MODE] [--turn-option NAME]... -- <app-server argv>"
+_USAGE = (
+    "usage: codex_app_server.py --permissions MODE [--turn-option NAME]... -- <app-server argv>"
+)
 
 
 def emit(event: dict[str, Any]) -> None:
@@ -227,14 +245,19 @@ def handshake(connection: Connection) -> None:
     connection.send({"method": "initialized"})
 
 
-def permissions(connection: Connection, cwd: str, mode: ApprovalMode) -> Permissions:
-    """This turn's permissions, from the config as it is on disk now, for this cwd."""
-    read = connection.request("config/read", {"cwd": cwd, "includeLayers": False})
-    return codex_permissions.resolve(_object(read.get("config")), cwd, mode)
+def permissions(mode: str, cwd: str, *, turn: bool) -> dict[str, Any]:
+    """The mode's permissions as thread/start and thread/resume, or turn/start, take them."""
+    approval, reviewer, sandbox, policy = PERMISSIONS[mode]
+    return {
+        "approvalPolicy": approval,
+        "approvalsReviewer": reviewer,
+        "runtimeWorkspaceRoots": [cwd],
+        **({"sandboxPolicy": policy} if turn else {"sandbox": sandbox}),
+    }
 
 
-def open_thread(connection: Connection, turn: dict[str, Any], allowed: Permissions) -> str:
-    params: dict[str, Any] = {"cwd": turn["cwd"], **allowed.thread_params()}
+def open_thread(connection: Connection, turn: dict[str, Any], mode: str) -> str:
+    params: dict[str, Any] = {"cwd": turn["cwd"], **permissions(mode, turn["cwd"], turn=False)}
     if turn.get("model") is not None:
         params["model"] = turn["model"]
     session_id = turn.get("session_id")
@@ -284,15 +307,13 @@ def turn_end(turn: dict[str, Any], usage: dict[str, Any] | None) -> dict[str, An
     return {"type": "turn.failed", "error": {"message": message or f"codex turn {status}"}}
 
 
-def run_turn(
-    connection: Connection, thread_id: str, turn: dict[str, Any], allowed: Permissions
-) -> None:
+def run_turn(connection: Connection, thread_id: str, turn: dict[str, Any], mode: str) -> None:
     emit({"type": "thread.started", "thread_id": thread_id})
     params: dict[str, Any] = {
         "threadId": thread_id,
         "input": [{"type": "text", "text": turn["prompt"], "text_elements": []}],
         "cwd": turn["cwd"],
-        **allowed.turn_params(),
+        **permissions(mode, turn["cwd"], turn=True),
     }
     for name in TURN_OPTIONS:
         if turn.get(name) is not None:
@@ -341,27 +362,26 @@ def read_turn(allowed: frozenset[str]) -> dict[str, Any] | None:
     return turn
 
 
-def parse_args(argv: list[str]) -> tuple[ApprovalMode, frozenset[str], list[str]]:
+def parse_args(argv: list[str]) -> tuple[str, frozenset[str], list[str]]:
     if "--" not in argv:
         raise ValueError(_USAGE)
     split = argv.index("--")
     options, command = argv[:split], argv[split + 1 :]
     pairs = list(zip(options[::2], options[1::2], strict=False))
     names = [value for flag, value in pairs if flag == "--turn-option"]
-    approvals = [value for flag, value in pairs if flag == "--approval"]
+    modes = [value for flag, value in pairs if flag == "--permissions"]
     if (
         not command
-        or len(options) != 2 * (len(names) + len(approvals))
+        or len(options) != 2 * (len(names) + len(modes))
         or set(names) - set(TURN_OPTIONS)
-        or len(approvals) > 1
-        or set(approvals) - set(APPROVAL_MODES)
+        or len(modes) != 1
+        or modes[0] not in PERMISSIONS
     ):
         raise ValueError(_USAGE)
-    mode = cast(ApprovalMode, approvals[0] if approvals else "headless")
-    return mode, frozenset(names), command
+    return modes[0], frozenset(names), command
 
 
-def serve(mode: ApprovalMode, allowed: frozenset[str], command: list[str]) -> int:
+def serve(mode: str, allowed: frozenset[str], command: list[str]) -> int:
     connection: Connection | None = None
     thread_id: str | None = None
     try:
@@ -371,12 +391,11 @@ def serve(mode: ApprovalMode, allowed: frozenset[str], command: list[str]) -> in
                 handshake(connection)
             connection.begin_turn()
             connection.forget_idle()
-            granted = permissions(connection, turn["cwd"], mode)
             if thread_id is None:
-                thread_id = open_thread(connection, turn, granted)
+                thread_id = open_thread(connection, turn, mode)
             elif turn.get("session_id") != thread_id:
                 raise ValueError(f"this Codex process serves thread {thread_id} only")
-            run_turn(connection, thread_id, turn, granted)
+            run_turn(connection, thread_id, turn, mode)
             if not connection.end_turn():
                 return 1
         return 0

@@ -85,26 +85,14 @@ def _skip_oversized_line(head: bytes) -> bool:
     )
 
 
-def _app_server_settings(options: Mapping[str, ProviderOption]) -> tuple[str, tuple[str, ...]]:
-    """The `codex exec` permission flags as app-server `--config` settings, plus how the bridge
-    resolves approval from the effective config (codex-rs/exec/src/lib.rs)."""
+def _fixed_permissions(options: Mapping[str, ProviderOption]) -> str | None:
+    """The bridge's permission mode when the options alone fix approval, reviewer and sandbox
+    (ADR-0120); otherwise Codex resolves them from the user's config, so exec runs the task."""
     if options.get("approve_for_me") is True:
-        # What `codex exec --approve-for-me` adds to the config overrides.
-        settings: tuple[str, ...] = (
-            'approvals_reviewer="auto_review"',
-            'approval_policy="on-request"',
-            'sandbox_mode="workspace-write"',
-        )
-        approval = "headless"
-    elif options.get("dangerously_bypass_approvals_and_sandbox") is True:
-        # It overrides any sandbox option and keeps never even under auto review.
-        settings, approval = ('sandbox_mode="danger-full-access"',), "never"
-    else:
-        # exec never asks for approval unless the configured reviewer is auto review; the
-        # sandbox stays the configured one unless the task names it.
-        settings = (f'sandbox_mode="{options["sandbox"]}"',) if "sandbox" in options else ()
-        approval = "headless"
-    return approval, tuple(arg for setting in settings for arg in ("--config", setting))
+        return "approve-for-me"
+    if options.get("dangerously_bypass_approvals_and_sandbox") is True:
+        return "bypass"
+    return None
 
 
 def _source() -> str | None:
@@ -244,14 +232,16 @@ class CodexAdapter(AdapterHooks):
         if source is not None and executable == "codex":
             name = "桌面端内置" if source == "desktop" else "独立"
             raise FileNotFoundError(f"指定的 Codex {name} CLI 不可用；请在员工设置中更换来源")
-        if not discussion:
-            return self._app_server_command(request, executable)
-        # app-server cannot ignore the user's config, so restricted runs stay on exec, unkept.
+        mode = _fixed_permissions(request.provider_options)
+        if mode is not None and not discussion:
+            return self._app_server_command(request, executable, mode)
         return self._exec_command(request, executable, options, discussion)
 
-    def _app_server_command(self, request: InvocationRequest, executable: str) -> PreparedCommand:
+    def _app_server_command(
+        self, request: InvocationRequest, executable: str, mode: str
+    ) -> PreparedCommand:
         """A bridge to `codex app-server` that can serve the thread's later turns (ADR-0120):
-        permission flags are fixed at launch and resolved again for each turn, model and effort
+        it sends the mode's permissions with every thread and turn request; model and effort
         travel with each turn."""
         options = request.provider_options
         argv = [sys.executable, "-I", str(Path(__file__).with_name("codex_app_server.py"))]
@@ -264,8 +254,7 @@ class CodexAdapter(AdapterHooks):
             turn[name] = None if name not in options else str(options[name])
             if name in options:
                 argv.extend(("--turn-option", name))
-        approval, settings = _app_server_settings(options)
-        argv.extend(("--approval", approval, "--", executable, "app-server", *settings))
+        argv.extend(("--permissions", mode, "--", executable, "app-server"))
         return PreparedCommand(
             tuple(argv),
             request.cwd,

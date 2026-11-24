@@ -288,32 +288,22 @@ def test_codex_adapter_passes_only_transport_and_explicit_options(
         )
     )
 
-    # Permission flags are fixed at launch; model and effort travel with each turn (ADR-0120).
     assert prepared.argv == (
-        sys.executable,
-        "-I",
-        str(Path(codex.__file__).with_name("codex_app_server.py")),
-        "--turn-option",
-        "model",
-        "--turn-option",
-        "effort",
-        "--approval",
-        "headless",
-        "--",
         "codex",
-        "app-server",
+        "exec",
+        "resume",
+        "--json",
+        "--skip-git-repo-check",
+        "--model",
+        "gpt-5.6-sol",
+        "--config",
+        "model_reasoning_effort=high",
         "--config",
         'sandbox_mode="workspace-write"',
+        "0199a213-81c0-7800-8aa1-bbab2a035a53",
+        "-",
     )
-    assert prepared.keep_alive
-    assert prepared.stdin is not None and prepared.stdin.endswith(b"\n")
-    assert json.loads(prepared.stdin) == {
-        "session_id": "0199a213-81c0-7800-8aa1-bbab2a035a53",
-        "cwd": str(tmp_path),
-        "prompt": "do the task",
-        "model": "gpt-5.6-sol",
-        "effort": "high",
-    }
+    assert prepared.stdin == b"do the task"
 
 
 @pytest.mark.parametrize("legacy_git_check", [None, False, True])
@@ -332,12 +322,7 @@ def test_codex_adapter_does_not_supply_model_defaults(
         )
     )
 
-    split = prepared.argv.index("--")
-    assert prepared.argv[split - 2 :] == ("--approval", "headless", "--", "codex", "app-server")
-    assert "--turn-option" not in prepared.argv
-    assert prepared.stdin is not None
-    turn = json.loads(prepared.stdin)
-    assert (turn["model"], turn["effort"], turn["session_id"]) == (None, None, None)
+    assert prepared.argv == ("codex", "exec", "--json", "--skip-git-repo-check", "-")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="macOS bundle selection uses POSIX executability")
@@ -353,12 +338,19 @@ def test_codex_adapter_prefers_executable_desktop_bundle(
     monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(unavailable), str(desktop)))
 
     prepared = CodexAdapter().prepare(request(tmp_path, "codex", session_id="session-1"))
-    assert _codex_cli(prepared) == str(desktop)
-    assert prepared.stdin is not None and json.loads(prepared.stdin)["session_id"] == "session-1"
+    assert prepared.argv == (
+        str(desktop),
+        "exec",
+        "resume",
+        "--json",
+        "--skip-git-repo-check",
+        "session-1",
+        "-",
+    )
     assert CodexAdapter().is_installed()
 
     desktop.unlink()
-    assert _codex_cli(CodexAdapter().prepare(request(tmp_path, "codex"))) == "codex"
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == "codex"
     assert not CodexAdapter().is_installed()
 
 
@@ -376,11 +368,11 @@ def test_codex_source_selects_only_requested_installation(
     monkeypatch.setattr(codex, "_source", lambda: source)
 
     adapter = CodexAdapter()
-    assert _codex_cli(adapter.prepare(request(tmp_path, "codex"))) == str(desktop)
+    assert adapter.prepare(request(tmp_path, "codex")).argv[0] == str(desktop)
     source = "standalone"
-    assert _codex_cli(adapter.prepare(request(tmp_path, "codex"))) == str(standalone)
+    assert adapter.prepare(request(tmp_path, "codex")).argv[0] == str(standalone)
     source = "desktop"
-    assert _codex_cli(adapter.prepare(request(tmp_path, "codex"))) == str(desktop)
+    assert adapter.prepare(request(tmp_path, "codex")).argv[0] == str(desktop)
 
     desktop.unlink()
     with pytest.raises(FileNotFoundError, match="桌面端内置 CLI 不可用"):
@@ -400,13 +392,7 @@ def test_codex_adapter_uses_path_outside_macos(
     desktop.chmod(0o755)
     monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(desktop),))
 
-    assert _codex_cli(CodexAdapter().prepare(request(tmp_path, "codex"))) == "codex"
-
-
-def _codex_cli(prepared: base.PreparedCommand) -> str:
-    """The Codex CLI a command runs: behind the app-server bridge, or exec's own argv[0]."""
-    argv = prepared.argv
-    return argv[argv.index("--") + 1] if "--" in argv else argv[0]
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == "codex"
 
 
 def _fake_executable(directory: Path, name: str) -> Path:
@@ -438,11 +424,11 @@ def test_provider_executable_prefers_path_then_common_dirs(
     assert GrokAdapter().prepare(request(tmp_path, "grok")).argv[0] == str(on_path)
 
     common_codex = _fake_executable(home / ".local" / "bin", "codex")
-    assert _codex_cli(CodexAdapter().prepare(request(tmp_path, "codex"))) == str(common_codex)
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == str(common_codex)
     monkeypatch.setattr(codex.sys, "platform", "darwin")
     desktop = _fake_executable(tmp_path / "desktop", "codex")
     monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", (str(desktop),))
-    assert _codex_cli(CodexAdapter().prepare(request(tmp_path, "codex"))) == str(desktop)
+    assert CodexAdapter().prepare(request(tmp_path, "codex")).argv[0] == str(desktop)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows keeps the inherited environment")
@@ -501,33 +487,58 @@ def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None)
     options: dict[str, str | int | float | bool] = (
         {} if value is None else {"dangerously_bypass_approvals_and_sandbox": value}
     )
-    prepared = CodexAdapter().prepare(
-        request(tmp_path, "codex", provider_options={**options, "sandbox": "read-only"})
+    prepared = CodexAdapter().prepare(request(tmp_path, "codex", provider_options=options))
+    # Without it the permissions are the config's to resolve: exec runs the task, unkept.
+    assert prepared.keep_alive is (value is True)
+    if value is True:
+        assert _bridged(prepared) == "bypass"
+    else:
+        assert prepared.argv[1] == "exec"
+        assert "--dangerously-bypass-approvals-and-sandbox" not in prepared.argv
+
+
+def test_codex_fixed_permissions_keep_an_app_server_on_every_turn(tmp_path: Path) -> None:
+    """Only options that fix every permission keep an app-server (ADR-0120)."""
+    fixed: tuple[tuple[dict[str, str | int | float | bool], str], ...] = (
+        ({"approve_for_me": True}, "approve-for-me"),
+        ({"dangerously_bypass_approvals_and_sandbox": True, "sandbox": "read-only"}, "bypass"),
     )
-    # Like exec's flag, the bypass overrides a sandbox option and keeps approval at never.
-    bypass = 'sandbox_mode="danger-full-access"' in prepared.argv
-    assert bypass is (value is True)
-    assert ('sandbox_mode="read-only"' in prepared.argv) is (value is not True)
-    approval = prepared.argv[prepared.argv.index("--approval") + 1]
-    assert approval == ("never" if value is True else "headless")
-
-
-def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None:
-    options: dict[str, str | int | float | bool] = {"approve_for_me": True}
-    # app-server has no --approve-for-me; the settings exec applies go through --config.
-    for session_id in (None, "thread-1"):
+    for options, mode in fixed:
+        for session_id in (None, "thread-1"):
+            prepared = CodexAdapter().prepare(
+                request(tmp_path, "codex", session_id=session_id, provider_options=options)
+            )
+            assert prepared.keep_alive and _bridged(prepared) == mode
+            assert prepared.stdin is not None
+            assert json.loads(prepared.stdin)["session_id"] == session_id
+    resolved: tuple[dict[str, str | int | float | bool], ...] = (
+        {"sandbox": "workspace-write"},
+        {"approve_for_me": False},
+    )
+    for other_options in resolved:
         prepared = CodexAdapter().prepare(
-            request(tmp_path, "codex", session_id=session_id, provider_options=options)
+            request(tmp_path, "codex", provider_options=other_options)
         )
-        assert "--approve-for-me" not in prepared.argv
-        assert 'approval_policy="on-request"' in prepared.argv
-        assert 'approvals_reviewer="auto_review"' in prepared.argv
-        assert 'sandbox_mode="workspace-write"' in prepared.argv
+        assert prepared.argv[1] == "exec" and not prepared.keep_alive
+    approve: dict[str, str | int | float | bool] = {"approve_for_me": True}
     for other in ({"sandbox": "read-only"}, {"dangerously_bypass_approvals_and_sandbox": True}):
         with pytest.raises(ValueError, match="cannot be combined"):
             CodexAdapter().prepare(
-                request(tmp_path, "codex", provider_options={**options, **other})
+                request(tmp_path, "codex", provider_options={**approve, **other})
             )
+
+
+def _bridged(prepared: base.PreparedCommand) -> str:
+    """The permission mode of an app-server bridge command."""
+    argv = prepared.argv
+    split = argv.index("--")
+    assert argv[:3] == (
+        sys.executable,
+        "-I",
+        str(Path(codex.__file__).with_name("codex_app_server.py")),
+    )
+    assert argv[split - 2] == "--permissions" and argv[split + 2 :] == ("app-server",)
+    return argv[split - 1]
 
 
 def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:
@@ -1567,10 +1578,6 @@ def test_restricted_profiles_resume_without_enabling_tools(tmp_path: Path, provi
     command = adapter.prepare(restricted)
     try:
         argv = command.argv
-        if provider == "codex":
-            # app-server cannot ignore the user's config: restricted runs stay on exec, unkept.
-            assert argv[1:3] == ("exec", "resume") and "--ignore-user-config" in argv
-            assert not command.keep_alive
         if provider in ("claude", "grok", "codebuddy"):
             assert "--resume=own-seat-session" in argv
             assert argv[argv.index("--tools") + 1] == ""
