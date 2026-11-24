@@ -449,6 +449,9 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "HERDR_SESSION",
         "HERDR_SOCKET",
         "Herdr_Pane_Id",
+        "T3CODE_THREAD_ID",
+        "T3CODE_HOME",
+        "T3code_Thread_Id",
         "TERM_PROGRAM",
     ] {
         assert!(parent_session(name), "{name}");
@@ -459,6 +462,8 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "CODEBUDDY_CONFIG_DIR",
         "HERDR",
         "MY_HERDR_FLAG",
+        "T3CODE",
+        "MY_T3CODE_FLAG",
         "HOME",
         "PATH",
     ] {
@@ -468,15 +473,25 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
     let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
     cmd.env("HERDR_PANE_ID", "pane-1");
     cmd.env("HERDR_SESSION", "sess-1");
+    cmd.env("T3CODE_THREAD_ID", "thread-1");
+    cmd.env("T3CODE_HOME", "/tmp/t3");
     cmd.env("KEEP_ME", "ok");
     super::session::strip_parent_session(
         &mut cmd,
-        ["HERDR_PANE_ID", "HERDR_SESSION", "KEEP_ME"]
-            .into_iter()
-            .map(std::ffi::OsString::from),
+        [
+            "HERDR_PANE_ID",
+            "HERDR_SESSION",
+            "T3CODE_THREAD_ID",
+            "T3CODE_HOME",
+            "KEEP_ME",
+        ]
+        .into_iter()
+        .map(std::ffi::OsString::from),
     );
     assert_eq!(cmd.get_env("HERDR_PANE_ID"), None);
     assert_eq!(cmd.get_env("HERDR_SESSION"), None);
+    assert_eq!(cmd.get_env("T3CODE_THREAD_ID"), None);
+    assert_eq!(cmd.get_env("T3CODE_HOME"), None);
     assert_eq!(cmd.get_env("KEEP_ME").and_then(|v| v.to_str()), Some("ok"));
 }
 

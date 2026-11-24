@@ -25,6 +25,8 @@ async def test_provider_does_not_inherit_host_listener(
         "SERVER__HOST": "127.0.0.1",
         "HERDR_PANE_ID": "pane-42",
         "HERDR_SESSION": "sess-9",
+        "T3CODE_THREAD_ID": "thread-1",
+        "T3CODE_HOME": str(tmp_path / "t3"),
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
     }
     for name, value in inherited.items():
@@ -46,6 +48,8 @@ async def test_provider_does_not_inherit_host_listener(
         "SERVER__HOST": None,
         "HERDR_PANE_ID": None,
         "HERDR_SESSION": None,
+        "T3CODE_THREAD_ID": None,
+        "T3CODE_HOME": None,
         "CODEBUDDY_CONFIG_DIR": str(tmp_path),
         # POSIX names the supervisor's own session, which the provider tree shares.
         "AGENTNAVE_DISPATCHED": "1" if os.name == "nt" else str(supervised.process.pid),

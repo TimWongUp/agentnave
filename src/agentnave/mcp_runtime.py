@@ -74,6 +74,13 @@ from agentnave.orchestration_roles import AUTO_SEAT, role_catalog, seat_role
 from agentnave.push_capability import PUSH_AGAIN, PUSH_NEXT, app_can_push
 from agentnave.retention import Retention
 from agentnave.store import Review
+from agentnave.t3 import (
+    T3_CHILD_INSTRUCTIONS,
+    T3_CHILD_REFUSED_TOOLS,
+    T3Mode,
+    current_t3_mode,
+    t3_child_refusal,
+)
 from agentnave.wait_guidance import (
     BLOCKING_WAIT_AGAIN,
     CLAUDE_LONG_WAIT_AGAIN,
@@ -166,6 +173,11 @@ def long_wait_enabled() -> bool:
     return long_wait_enabled_for_host(HOST)
 
 
+def t3_orchestration_active() -> bool:
+    """Whether T3 Code orchestration is active for this connection (extended in t3_seats)."""
+    return False
+
+
 def wait_guidance(
     *,
     again: bool = False,
@@ -184,6 +196,7 @@ def wait_guidance(
         again=again,
         can_push=app_can_push,
         watch_supported=watch_host_cli_supported,
+        t3_active=t3_orchestration_active(),
     )
 
 
@@ -714,6 +727,8 @@ class _Server(MCPServer[Runtime]):
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Runtime, Any] | None = None
     ) -> CallToolResult | InputRequiredResult:
+        if current_t3_mode(HOST) == "child" and name in T3_CHILD_REFUSED_TOOLS:
+            raise ToolError(t3_child_refusal(name))
         if name == "start_agent" and "terminal" in arguments and not terminal_available():
             raise ToolError("terminal is not supported by this connection")
         tool = self._tool_manager.get_tool(name)
@@ -741,9 +756,14 @@ class _Server(MCPServer[Runtime]):
         return result
 
 
-def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECTION) -> str:
+def build_mcp_instructions(
+    host: Host,
+    provider_selection: str = PROVIDER_SELECTION,
+    *,
+    t3_mode: T3Mode = "none",
+) -> str:
     """Build concise MCP instructions scoped to authorization, identity, and Skill loading."""
-    return (
+    base = (
         "AgentNave runs local CLI subagents and saves history. "
         "History survives restart; processes do not; invocation handles expire after 7 days. "
         "Native CLI permissions are the security boundary; isolation is not a sandbox. "
@@ -766,12 +786,15 @@ def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECT
         "prefer explicit IDs over env injection (which may go stale after chat switches). "
         + provider_selection
     )
+    if t3_mode == "child":
+        return T3_CHILD_INSTRUCTIONS + base
+    return base
 
 
 mcp = _Server(
     "AgentNave",
     version=__version__,
-    instructions=build_mcp_instructions(HOST, PROVIDER_SELECTION),
+    instructions=build_mcp_instructions(HOST, PROVIDER_SELECTION, t3_mode=current_t3_mode(HOST)),
     lifespan=_lifespan,
 )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp_types import CallToolResult, InputRequiredResult, TextContent
 
-from agentnave import mcp_server, members
+from agentnave import mcp_server, members, t3
 from agentnave.adapters import base, codex
 from agentnave.core import InvocationManager
 
@@ -55,8 +56,12 @@ def manager_chat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "AGENTNAVE_HOST_APP",
         "AGENTNAVE_DISPATCHED",
         "AGENTNAVE_EXCLUDED_PROVIDERS",
+        "CLAUDE_CODE_ENTRYPOINT",
     ):
         monkeypatch.delenv(name, raising=False)
+    for name in [key for key in os.environ if key.upper().startswith("T3CODE_")]:
+        monkeypatch.delenv(name, raising=False)
+    t3.reset_t3_mode_cache()
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "agentnave-data"))
 
 

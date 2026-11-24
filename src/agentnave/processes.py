@@ -74,9 +74,9 @@ async def spawn_process(
 # Claude Code withholds these from its own children, MCP servers included, so a subagent's
 # login would otherwise depend on which host started the service (ADR-0058).
 WITHHELD_CREDENTIALS = ("CLAUDE_CODE_OAUTH_TOKEN",)
-# Outer terminal-pane wrappers such as herdr export session bindings that nested CLIs must not
-# inherit and overwrite (ADR-0114).
-STRIP_ENV_PREFIXES = ("HERDR_",)
+# Outer terminal-pane wrappers (herdr) and T3 Code sessions export bindings that nested CLIs must
+# not inherit (ADR-0114, ADR-0121). The server itself keeps reading T3CODE_HOME from os.environ.
+STRIP_ENV_PREFIXES = ("HERDR_", "T3CODE_")
 INHERITED_HOST_ENV = (
     "AGENTNAVE_HOST",
     "AGENTNAVE_HOST_APP",

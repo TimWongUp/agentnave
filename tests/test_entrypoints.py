@@ -5732,3 +5732,48 @@ async def test_native_seat_receipt_uses_antigravity_host_guidance(
     assert receipt["message"] == mcp_runtime.native_seat_guidance(
         Host("antigravity", "env"), "gemini-3.8-pro", None
     )
+
+
+@pytest.mark.asyncio
+async def test_t3_child_thread_refuses_orchestration_tools_and_keeps_readonly_and_instructions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import t3
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setenv("T3CODE_THREAD_ID", "thread:delegated-task:child-1")
+    t3.reset_t3_mode_cache()
+
+    # Child instructions sit at the front and stay within the 3,500-byte budget.
+    for host_name in ("claude", "codex"):
+        text = mcp_runtime.build_mcp_instructions(
+            Host(host_name, "env"), mcp_runtime.PROVIDER_SELECTION, t3_mode="child"
+        )
+        assert text.startswith(t3.T3_CHILD_INSTRUCTIONS)
+        assert len(text.encode("utf-8")) <= 3500
+
+    # Child thread refuses the 6 orchestration/handover tools regardless of any T3 switch.
+    refused_calls: list[tuple[str, dict[str, Any]]] = [
+        ("recommend_seat", {"task": "check", "access": "read"}),
+        ("start_agent", {"prompt": "hi", "cwd": str(tmp_path)}),
+        ("start_agents", {"tasks": [], "cwd": str(tmp_path)}),
+        ("run_round", {"prompt": "hi"}),
+        ("decide_answers", {"round_id": "r1", "decisions": {"a": "publish"}}),
+        ("handover", {}),
+    ]
+    async with Client(mcp) as client:
+        for name, args in refused_calls:
+            res = await client.call_tool(name, args)
+            assert res.is_error is True, name
+            msg = str(res.content)
+            assert "T3 Code delegated child thread" in msg
+            assert name in msg
+
+        # Read-only tools still work normally.
+        listed = await client.call_tool("list", {"scope": "all"})
+        assert listed.is_error is False
+        members_res = await client.call_tool("list_members", {})
+        assert members_res.is_error is False
+        waited = await client.call_tool("wait", {"wait_seconds": 0})
+        assert waited.is_error is False

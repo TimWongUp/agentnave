@@ -86,6 +86,18 @@ def _is_wrapper(executable: str) -> bool:
     )
 
 
+def argv_host(argv: Sequence[str]) -> HostName | None:
+    """Host matched by a single process argv (executable or wrapper script)."""
+    if not argv:
+        return None
+    if (host := _match(argv[0])) is not None:
+        return host
+    if not _is_wrapper(argv[0]):
+        return None
+    script = next((arg for arg in argv[1:] if not arg.startswith("-")), None)
+    return _match(script) if script is not None else None
+
+
 def _detect_parent(
     parent_pid: int,
     read_parent: Callable[[int], int],
@@ -102,13 +114,10 @@ def _detect_parent(
         except (OSError, ValueError):
             argv = ()  # Parent identity may still be readable; continue up the chain.
         if argv:
-            if (host := _match(argv[0])) is not None:
+            if (host := argv_host(argv)) is not None:
                 return Host(host, "parent")
             if not _is_wrapper(argv[0]):
                 return Host()
-            script = next((arg for arg in argv[1:] if not arg.startswith("-")), None)
-            if script is not None and (host := _match(script)) is not None:
-                return Host(host, "parent")
         try:
             pid = read_parent(pid)
         except (OSError, ValueError):

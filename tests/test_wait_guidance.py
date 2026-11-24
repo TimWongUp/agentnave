@@ -529,3 +529,121 @@ async def test_mcp_codex_blocking_wait_includes_exec_yield_and_seq_increment(
         elapsed_payload = cast(dict[str, object], elapsed.structured_content)
         assert elapsed_payload["next"] == f"{wait_guidance.CODEX_WAIT_AGAIN} Next wait: seq=2."
         await client.call_tool("cancel", {"id": started_payload["invocation_id"]})
+
+
+def test_t3_active_wait_guidance_for_claude_and_codex_ignores_cli_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_claude_env(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    claude = Host("claude", "env")
+    codex = Host("codex", "env")
+
+    # T3 active + Claude: Bash run_in_background + timeout 7200000 + t3_background_wait.
+    claude_next = wait_guidance.build_wait_guidance(
+        claude,
+        root=tmp_path,
+        pid=42,
+        started_at=1700000000.5,
+        boss_key="s-boss",
+        can_push=_always_push,
+        watch_supported=_watch_none,
+        t3_active=True,
+    )
+    assert "-I -m agentnave.inbox_watch" in claude_next
+    assert "42 1700000000.500000 s-boss" in claude_next
+    assert "Bash" in claude_next
+    assert "run_in_background=true" in claude_next
+    assert "timeout=7200000" in claude_next
+    assert "t3_background_wait" in claude_next
+    assert "T3 will wake you" in claude_next
+    assert "start the watch command again" in claude_next
+    for outcome in ("ready", "expired", "already_watching", "all_done", "service_gone"):
+        assert outcome in claude_next
+    assert claude_next not in wait_guidance.BLOCKING_WAIT_AGAIN
+
+    claude_again = wait_guidance.build_wait_guidance(
+        claude,
+        root=tmp_path,
+        pid=42,
+        started_at=1700000000.5,
+        boss_key="s-boss",
+        again=True,
+        can_push=_always_push,
+        watch_supported=_watch_none,
+        t3_active=True,
+    )
+    assert claude_again.startswith("Still pending:")
+    assert "t3_background_wait" in claude_again
+
+    # T3 active + Codex: background terminal without polling, ignores can_push and watch_supported.
+    codex_next = wait_guidance.build_wait_guidance(
+        codex,
+        root=tmp_path,
+        pid=42,
+        started_at=1700000000.5,
+        boss_key="s-boss",
+        can_push=_always_push,
+        watch_supported=_watch_none,
+        t3_active=True,
+    )
+    assert "-I -m agentnave.inbox_watch" in codex_next
+    assert "background terminal" in codex_next
+    assert "without polling" in codex_next
+    assert "t3_background_wait" not in codex_next
+    assert "T3 will wake you" in codex_next
+    assert "start the watch command again" in codex_next
+    for outcome in ("ready", "expired", "already_watching", "all_done", "service_gone"):
+        assert outcome in codex_next
+
+    codex_again = wait_guidance.build_wait_guidance(
+        codex,
+        root=tmp_path,
+        pid=42,
+        started_at=1700000000.5,
+        boss_key="s-boss",
+        again=True,
+        can_push=_always_push,
+        watch_supported=_watch_none,
+        t3_active=True,
+    )
+    assert codex_again.startswith("Still pending:")
+    assert "background terminal" in codex_again
+
+    # Without boss_key or when t3_active=False, existing host guidance is unchanged.
+    assert (
+        wait_guidance.build_wait_guidance(
+            codex,
+            root=tmp_path,
+            pid=42,
+            started_at=1700000000.5,
+            boss_key=None,
+            can_push=_never_push,
+            t3_active=True,
+        )
+        == wait_guidance.CODEX_WAIT_NEXT
+    )
+    assert (
+        wait_guidance.build_wait_guidance(
+            claude,
+            root=tmp_path,
+            pid=42,
+            started_at=1700000000.5,
+            boss_key="s-boss",
+            can_push=_always_push,
+            t3_active=False,
+        )
+        == wait_guidance.CLAUDE_LONG_WAIT_NEXT
+    )
+    # Non-Claude/Codex hosts are unchanged even with t3_active=True.
+    assert (
+        wait_guidance.build_wait_guidance(
+            Host("pi", "env"),
+            root=tmp_path,
+            pid=42,
+            started_at=1700000000.5,
+            boss_key="s-boss",
+            t3_active=True,
+        )
+        == wait_guidance.WAIT_NEXT
+    )
