@@ -6,6 +6,7 @@ import stat
 import sys
 import uuid
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -542,10 +543,37 @@ def test_codex_config_fingerprint_covers_rules_and_a_relative_codex_home(tmp_pat
     (project / "b.rules").write_text("y")
     env = {"CODEX_HOME": "home"}
     before = codex._config_files(tmp_path, env)  # pyright: ignore[reportPrivateUsage]
-    paths = {entry[0] for entry in before if isinstance(entry, tuple)}
+    paths = {cast(tuple[object, ...], entry)[0] for entry in before}
     assert {str(rules.resolve() / "a.rules"), str(project.resolve() / "b.rules")} <= paths
     (project / "b.rules").write_text("changed")
     assert codex._config_files(tmp_path, env) != before  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_config_fingerprint_sees_rule_links_and_project_roots(tmp_path: Path) -> None:
+    def fingerprint() -> tuple[object, ...]:
+        return codex._config_files(inner, {"CODEX_HOME": str(tmp_path / "home")})  # pyright: ignore[reportPrivateUsage]
+
+    inner = tmp_path / "outer" / "inner"
+    rules = inner / ".codex" / "rules"
+    rules.mkdir(parents=True)
+    target = tmp_path / "target.rules"
+    target.write_text("x")
+    (rules / "a.rules").symlink_to(target)
+    (inner / ".git").mkdir()
+    (inner / ".git" / "HEAD").write_text("ref")
+    before = fingerprint()
+    # A link replaced by a regular file with the same content is a change: Codex skips links.
+    (rules / "a.rules").unlink()
+    (rules / "a.rules").write_text("x")
+    times = target.stat()
+    os.utime(rules / "a.rules", ns=(times.st_atime_ns, times.st_mtime_ns))
+    replaced = fingerprint()
+    assert replaced != before
+    # So is removing the inner project root, which moves the project to an outer directory.
+    (inner / ".git" / "HEAD").unlink()
+    (inner / ".git").rmdir()
+    assert fingerprint() != replaced
 
 
 def _bridged(prepared: base.PreparedCommand) -> str:

@@ -13,6 +13,7 @@ from contextlib import suppress
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+from stat import S_ISLNK, S_ISREG
 
 from agentnave.adapters.base import (
     AdapterHooks,
@@ -97,12 +98,13 @@ def _fixed_permissions(options: Mapping[str, ProviderOption]) -> str | None:
     return None
 
 
-def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[tuple[str, int, int] | str, ...]:
-    """The size and modification time of every file Codex 0.171 reads permissions from for cwd
+def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[object, ...]:
+    """What Codex 0.171 reads permissions from for cwd, as sizes and modification times
     (codex-rs/config/src/loader): the user and project config, the system config, requirements,
-    the legacy managed config, and the `rules/*.rules` exec policies of every layer folder
-    (codex-rs/core/src/exec_policy.rs). Cloud-managed config and macOS managed preferences are
-    not files and are not covered."""
+    the legacy managed config, the `rules/*.rules` exec policies of every layer folder
+    (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project root
+    marker `.git`. Cloud-managed config, macOS managed preferences, a registry-set requirements
+    path and custom project root markers are not covered."""
     directory = cwd.resolve()
     # A relative CODEX_HOME is taken from the child's working directory, the task's.
     home = directory / (env.get("CODEX_HOME") or Path("~/.codex").expanduser())
@@ -116,20 +118,31 @@ def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[tuple[str, int, in
             system / name for name in ("config.toml", "requirements.toml", "managed_config.toml")
         ]
     files.append(home / "config.toml")
-    projects = [folder / ".codex" for folder in (directory, *directory.parents)]
+    ancestors = (directory, *directory.parents)
+    projects = [folder / ".codex" for folder in ancestors]
     files.extend(folder / "config.toml" for folder in projects)
+    found: list[object] = [_stat(path, follow=True) for path in files]
     for folder in (system, home, *projects):
         with suppress(OSError):
-            files.extend(sorted((folder / "rules").glob("*.rules")))
-    found: list[tuple[str, int, int] | str] = []
-    for path in files:
-        try:
-            stat = path.stat()
-        except OSError:
-            found.append(str(path))
-        else:
-            found.append((str(path), stat.st_mtime_ns, stat.st_size))
+            # Codex loads only regular files here, so a link is told apart from one.
+            found.extend(
+                _stat(path, follow=False) for path in sorted((folder / "rules").glob("*.rules"))
+            )
+    # The nearest ancestor with a `.git` (a directory needs its HEAD) is the project root.
+    found.extend(
+        (str(folder), (folder / ".git").exists(), (folder / ".git" / "HEAD").exists())
+        for folder in ancestors
+    )
     return tuple(found)
+
+
+def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
+    try:
+        stat = path.stat() if follow else path.lstat()
+    except OSError:
+        return (str(path),)
+    kind = "link" if S_ISLNK(stat.st_mode) else "file" if S_ISREG(stat.st_mode) else "other"
+    return (str(path), kind, stat.st_mtime_ns, stat.st_size)
 
 
 def _source() -> str | None:
