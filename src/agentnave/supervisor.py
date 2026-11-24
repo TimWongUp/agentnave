@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import suppress
 
 
 def _hold_sigterm(_signum: int, _frame: object) -> None:
@@ -20,11 +21,16 @@ def _restore_sigterm() -> None:
 
 
 def _write_status(status_fd: int, payload: dict[str, object]) -> None:
+    """Report to the server; a server that is gone (killed) is no reason to stop here, since
+    the thread watching it still has to end the process group."""
     data = (json.dumps(payload, ensure_ascii=False) + "\n").encode()
     try:
         os.write(status_fd, data[:16_384])
+    except OSError:
+        pass
     finally:
-        os.close(status_fd)
+        with suppress(OSError):
+            os.close(status_fd)
 
 
 def _end_with_parent(parent: int) -> None:
