@@ -3,6 +3,7 @@
 - 状态：部分修订；固定档小事边界去掉「且不在已开启的专项范围内……专项范围内的任务都派出」条款，由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；「成篇文案……都派出」加上「写作所需的上下文已全在 boss 手里时 boss 自己写」的例外，由 [ADR-0110](0110-boss-writes-when-holding-context.md) 修订。
 - 日期：2026-11-09
 - 扩展 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)：派不派的边界属于「决定派不派之前就必须知道的约束」，写进规则块；不改两档的区分。修订 ADR-0068 中「并行分工」固定由 boss 判断开会的条款。
+- 「boss 只负责编排」由分工协作、并行分工两档共用的条款由 [ADR-0122](0122-merge-split-and-parallel-presets.md) 修订。
 
 ## 背景
 

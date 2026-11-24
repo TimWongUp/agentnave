@@ -11,6 +11,7 @@
 - 预设正文写工位用法、按任务难度二选一的条款由 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 修订：规则块只放授权，方法进 Skill。
 - 编排档位由 [ADR-0083](0083-meetings-only-preset.md) 扩展：在「关闭」与「分工协作」之间增加「只开会」。
 - 「决策模型」档下「服务不加调度」的适用范围由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订：服务可按 boss 请求推荐工位，派发仍由 boss 发起。
+- 档位集合（分工协作与并行分工合并）由 [ADR-0122](0122-merge-split-and-parallel-presets.md) 修订。
 
 ## 背景
 
