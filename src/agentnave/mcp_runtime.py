@@ -227,47 +227,49 @@ NATIVE_SEAT_NEXT = (
 _CLAUDE_FAMILY_ALIASES = ("opus", "sonnet", "haiku", "fable")
 
 
-def _claude_family_alias(model: str) -> str | None:
+def _claude_exact_family_alias(model: str) -> str | None:
     normalized = model.strip().lower()
-    if normalized in _CLAUDE_FAMILY_ALIASES:
-        return normalized
-    for alias in _CLAUDE_FAMILY_ALIASES:
-        if alias in normalized:
-            return alias
-    return None
+    if normalized.endswith("[1m]"):
+        normalized = normalized[:-4]
+    return normalized if normalized in _CLAUDE_FAMILY_ALIASES else None
+
+
+def _claude_family_alias(model: str) -> str | None:
+    return next((alias for alias in _CLAUDE_FAMILY_ALIASES if alias in model.lower()), None)
 
 
 def _claude_native_seat_guidance(model: str | None, effort: str | None) -> str:
     effort_note = f", effort={effort}" if effort else "; omit effort"
-    if model and "[1m]" in model.lower():
-        return (
-            f"Seat model '{model}' requires [1m] long context, which Claude Code's Agent tool "
-            "family aliases (opus, sonnet, haiku, fable) do not carry: treat this seat as "
-            "unavailable (do not drop [1m] or auto-substitute) and follow fallback rules."
-        )
-    if not model:
+    normalized = model.strip().lower() if model else ""
+    if not normalized:
         return (
             "Dispatch it with Claude Code's Agent tool (check live schema; family aliases: "
-            f"opus, sonnet, haiku, fable){effort_note}. Family aliases lack [1m] long context; "
-            "if the task requires [1m], treat this seat as unavailable."
+            f"opus, sonnet, haiku, fable){effort_note}. If the alias is rejected, treat this "
+            "seat as unavailable."
         )
-    alias = _claude_family_alias(model)
+    exact_alias = _claude_exact_family_alias(normalized)
+    if exact_alias is not None:
+        return (
+            f"Dispatch it with Claude Code's Agent tool (check live schema) using model={exact_alias}"
+            f"{effort_note}. If the alias is rejected, treat this seat as unavailable."
+        )
+    if "[1m]" in normalized:
+        return (
+            "Claude Code's Agent tool only accepts family aliases (opus, sonnet, haiku, fable), "
+            f"which may point to another version than '{model}': treat this seat as unavailable "
+            "(do not drop [1m] or auto-substitute) and follow fallback rules."
+        )
+    alias = _claude_family_alias(normalized)
     if alias is None:
         return (
-            "Claude Code's Agent tool only accepts family aliases (opus, sonnet, haiku, fable) "
-            f"without [1m]; '{model}' cannot be mapped to a family alias, so unless the live "
-            f"schema accepts '{model}' directly{effort_note}, treat this seat as unavailable and "
-            "follow fallback rules."
+            "Claude Code's Agent tool only accepts family aliases (opus, sonnet, haiku, fable); "
+            f"'{model}' cannot be mapped to a family alias, so unless the live schema accepts "
+            f"'{model}' directly{effort_note}, treat this seat as unavailable and follow fallback rules."
         )
-    mapping = (
-        f"model={alias}"
-        if alias == model.strip().lower()
-        else f"model={alias} (mapped from {model}; saving this seat authorizes the family alias)"
-    )
+    mapping = f"model={alias} (mapped from {model}; saving this seat authorizes the family alias)"
     return (
         f"Dispatch it with Claude Code's Agent tool (check live schema) using {mapping}"
-        f"{effort_note}. Family aliases do not carry [1m] long context; if the task requires "
-        "[1m] or the alias is rejected, treat this seat as unavailable."
+        f"{effort_note}. If the alias is rejected, treat this seat as unavailable."
     )
 
 

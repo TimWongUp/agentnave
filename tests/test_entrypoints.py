@@ -5649,14 +5649,34 @@ async def test_published_tool_descriptions_within_2000_chars_and_cover_private_d
 
 
 def test_native_seat_guidance_by_boss_host() -> None:
-    # Claude: family alias mapping, omit empty effort, and [1m] unavailability.
+    # Claude: family alias mapping (including [1m] on family aliases), omit empty effort,
+    # and pinned-version [1m] unavailability.
     claude = Host("claude", "env")
     opus_msg = mcp_runtime.native_seat_guidance(claude, "claude-opus-5-5", "high")
     assert "Agent tool" in opus_msg and "model=opus" in opus_msg and "effort=high" in opus_msg
+    assert "long context" not in opus_msg and "requires [1m]" not in opus_msg
     alias_msg = mcp_runtime.native_seat_guidance(claude, "sonnet", None)
     assert "model=sonnet" in alias_msg and "omit effort" in alias_msg
+    assert "long context" not in alias_msg and "requires [1m]" not in alias_msg
+    opus_1m_msg = mcp_runtime.native_seat_guidance(claude, "  OPUS[1M] ", "high")
+    assert opus_1m_msg == mcp_runtime.native_seat_guidance(claude, "opus", "high")
+    assert "model=opus" in opus_1m_msg and "effort=high" in opus_1m_msg
+    assert "long context" not in opus_1m_msg and "requires [1m]" not in opus_1m_msg
+    for raw, family in (
+        ("opus[1m]", "opus"),
+        ("sonnet[1m]", "sonnet"),
+        ("haiku[1m]", "haiku"),
+        ("fable[1m]", "fable"),
+    ):
+        msg = mcp_runtime.native_seat_guidance(claude, raw, None)
+        assert f"model={family}" in msg and "omit effort" in msg
+        assert "long context" not in msg and "requires [1m]" not in msg
+    none_msg = mcp_runtime.native_seat_guidance(claude, None, None)
+    assert "long context" not in none_msg and "requires [1m]" not in none_msg
+    assert "alias is rejected" in none_msg
     long_ctx_msg = mcp_runtime.native_seat_guidance(claude, "claude-sonnet-4-5[1m]", "medium")
     assert "[1m]" in long_ctx_msg and "unavailable" in long_ctx_msg
+    assert "another version" in long_ctx_msg and "long context" not in long_ctx_msg
     assert "model=sonnet" not in long_ctx_msg
 
     # Codex: spawn_agent with model and optional reasoning_effort.
