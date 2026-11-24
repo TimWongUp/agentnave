@@ -61,7 +61,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 - 启动组员前，服务从子进程环境移除父宿主内部 HTTP 服务的监听地址，避免组员复用父进程已占用的端口；服务与 Claude／Antigravity 交互 helper 也不向子进程继承 `HERDR_*` 环境变量，避免嵌套 CLI 覆盖外层终端窗格的会话绑定（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）；均不改服务自身环境或组员的原生配置目录。
 - WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
-- macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
+- macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；声明保留能力的 Provider 例外，回合正常结束后进程组留在保留期内供同一原生会话续接，到期、被挤出或服务退出时清理（[ADR-0120](../adr/0120-idle-keep-for-resume.md)）。服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
 - 服务与托盘写用户仓库只有两类：一是用户在托盘对 CLI 会话点按确认的基础 Git 操作（提交、拉取快进、推送、开 PR、合并 PR，[ADR-0115](../adr/0115-tray-git-status-and-basic-ops.md)）；二是隔离目录：boss 要求隔离时服务写主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude` 和 `agentnave/` 前缀的受管分支；任务或席位在隔离目录里运行时，在 git 公共目录下的 `agentnave/` 写仓库锁和目录使用租约（派生会话的租约由托盘持有到终端关闭，[ADR-0109](../adr/0109-in-app-derived-sessions.md)）。只读任务成功完成且相对起点无任何改动、无其他租约时，服务自动释放该隔离目录，并在后续续接同一原生会话时原位重建；其余可用的目录在 boss 释放后由服务删除，或由用户在托盘 App 在同一仓库锁与租约协议下手动删除（使用中禁止删除，两步摘要确认，丢弃被 git 忽略的文件），或由托盘按用户打开的规则在同一协议下自动清理，服务自己另只回滚没建成的半成品、续完目录已删掉的收尾。建目录、检查与删除时不执行仓库配置的 hooks、filter 与文件监视程序，也不进入嵌套仓库（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)、[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)、[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）。
 - AgentNave 不是沙箱。主动杀 supervisor、创建新 OS session 或其他同用户逃逸不在隔离范围内；Provider 原生权限才是安全边界。

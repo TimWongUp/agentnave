@@ -98,7 +98,7 @@
 | 0092 | [无改动的隔离目录在成功结算时自动释放，续接时原位重建](0092-auto-release-untouched-isolated-dirs.md) | 已接受 | 修订 ADR-0085 的「只显式释放」与「不自动回收未释放的目录」；自动清理收起的目录按保留分支重建由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充 |
 | 0093 | [「决策模型」档自定义任务工位支持同档可用候选随机选](0093-decision-seat-random-candidates.md) | 部分修订 | 修订 ADR-0089 在「决策模型」档自定义任务工位上的顺位挑选与回执含义、ADR-0038 在该类工位开启随机选时的续接模型优先级；扩展 ADR-0087；2026-11-20 自身修订：优先避开本进程该工位运行中的候选模型；在用候选按账号维度追踪由 [ADR-0108](0108-multi-account-isolation.md) 修订；回执 `note` 由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 补充 |
 | 0094 | [Antigravity 宿主的同类 CLI 私聊任务默认由 AgentNave 启动](0094-antigravity-host-cli-defaults-to-launch.md) | 已接受 | 修订 [ADR-0090](0090-quota-group-cooldown-and-host-cli-choice.md) 的私聊同类默认值 |
-| 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049；终态事件不再先报运行中阻断由 [ADR-0104](0104-in-app-boss-push.md) 2026-11-22 补充；2026-11-23 自身修订：宽限缩短为 0.5 秒 |
+| 0095 | [Provider 终态后的进程退出宽限](0095-provider-terminal-grace.md) | 已接受 | 补充 ADR-0049；终态事件不再先报运行中阻断由 [ADR-0104](0104-in-app-boss-push.md) 2026-11-22 补充；2026-11-23 自身修订：宽限缩短为 0.5 秒；保留期内的运行不适用，见 [ADR-0120](0120-idle-keep-for-resume.md) |
 | 0096 | [清除宿主自身的遗留排除项，重连后消除连接中断提示](0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md) | 已接受 | 修订 ADR-0015、ADR-0088、ADR-0090；扩展 ADR-0012；已结束连接的范围由 [ADR-0097](0097-relay-termination-signal-and-exited-tool-receipts.md) 补充 |
 | 0097 | [中继收到终止信号视为宿主关闭，已退出的加载回执仍作证据](0097-relay-termination-signal-and-exited-tool-receipts.md) | 已接受 | 修订 ADR-0022；补充 ADR-0096 |
 | 0098 | [托盘可在仓库锁与租约协议下手动删除隔离目录](0098-tray-deletes-isolated-dirs.md) | 部分修订 | 修订 ADR-0085 的 App 清理边界；扩展 ADR-0012；「不做自动回收」由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 修订 |
@@ -123,3 +123,4 @@
 | 0117 | [普通私聊派发不必先读 Skill，用法放进工具描述与回执](0117-private-dispatch-without-skill.md) | 已接受 | 修订 ADR-0068 的「归属」；沿用 ADR-0028、0032、0043、0056、0074、0114 |
 | 0118 | [App 添加 Claude 账号可关联已有配置目录](0118-link-existing-claude-account-dirs.md) | 已接受 | 修订 ADR-0108（恢复关联已有目录）、ADR-0029（允许手填账号配置目录）、ADR-0022（具名账号接入行不显示「待确认生效」）；沿用 ADR-0108 外部目录账号边界 |
 | 0119 | [撤掉 Devin CLI 支持](0119-remove-devin.md) | 已接受 | 撤销 ADR-0070 |
+| 0120 | [Provider 进程答完后保留一段时间，供续接复用](0120-idle-keep-for-resume.md) | 已接受 | 修订架构基线的进程组清理；补充 ADR-0095、ADR-0025、ADR-0010 |
