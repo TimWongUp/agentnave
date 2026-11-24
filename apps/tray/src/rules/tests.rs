@@ -744,9 +744,10 @@ fn split_and_decision_share_body_and_switches_with_distinct_dispatch_tails() {
     assert_eq!(
         text_of(&doc("split"), "split").unwrap(),
         format!(
-            "{}{}{}{}{image_line}",
+            "{}{}{}{}{}{image_line}",
             section("shared"),
             section("parallel_writes_when_asked"),
+            section("shared_checks"),
             section("meetings_when_asked"),
             section("dispatch_split"),
         )
@@ -759,9 +760,10 @@ fn split_and_decision_share_body_and_switches_with_distinct_dispatch_tails() {
         )
         .unwrap(),
         format!(
-            "{}{}{}{}{image_line}",
+            "{}{}{}{}{}{image_line}",
             section("shared"),
             section("parallel_writes_by_boss"),
+            section("shared_checks"),
             section("meetings_on_tradeoffs"),
             section("dispatch_split"),
         )
@@ -790,9 +792,10 @@ fn split_and_decision_share_body_and_switches_with_distinct_dispatch_tails() {
     };
     let decision_text = |parallel: &str, meetings: &str| {
         format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             section("shared"),
             section(parallel),
+            section("shared_checks"),
             section(meetings),
             section("dispatch_decision"),
         )
@@ -844,6 +847,7 @@ fn split_and_decision_share_body_and_switches_with_distinct_dispatch_tails() {
             parts["parallel_writes_own"],
             section("parallel_writes_by_boss")
         );
+        assert_eq!(parts["checks"], section("shared_checks"));
         assert_eq!(parts["meetings_asked"], section("meetings_when_asked"));
         assert_eq!(parts["meetings_own"], section("meetings_on_tradeoffs"));
         assert_eq!(parts["tail"], section(tail));

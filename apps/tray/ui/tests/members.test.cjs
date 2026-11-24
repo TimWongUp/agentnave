@@ -1091,6 +1091,7 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
     base: rules.sections.shared,
     parallel_writes_asked: rules.sections.parallel_writes_when_asked,
     parallel_writes_own: rules.sections.parallel_writes_by_boss,
+    checks: rules.sections.shared_checks,
     meetings_asked: rules.sections.meetings_when_asked,
     meetings_own: rules.sections.meetings_on_tradeoffs,
     tail: rules.sections[tail],

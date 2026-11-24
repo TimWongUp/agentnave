@@ -80,17 +80,18 @@ pub(super) fn enabled_lines(document: &Value) -> String {
 /// their current wording; anything else the user wrote stays as it is.
 pub(super) fn migrate_legacy(text: &str) -> String {
     let shared = super::catalog::section("shared");
+    let shared_checks = super::catalog::section("shared_checks");
     let dispatch = super::catalog::section("dispatch_split")
         .lines()
         .find(|line| line.contains("同难度专项优先"))
         .expect("split dispatch instruction");
-    let review = shared
+    let review = shared_checks
         .lines()
         .find(|line| line.contains("不可用时由 boss 自行评审"))
         .expect("shared review instruction");
-    let wait_verify = shared
+    let wait_verify = shared_checks
         .lines()
-        .find(|line| line.starts_with("- boss 核对产物后验收"))
+        .find(|line| line.starts_with("- `succeeded` 不等于完成"))
         .expect("shared verify instruction");
     let auth_load = shared
         .lines()
@@ -193,7 +194,9 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
         CURRENT_SMALL_TASKS
     );
     assert!(!specialist_and_wait.contains("wait(wait_seconds=0)"));
-    assert!(specialist_and_wait.contains("boss 核对产物后验收、合入当前分支"));
+    assert!(
+        specialist_and_wait.contains("boss 核对结论与产物后验收；用隔离目录写的改动先逐项核对")
+    );
     let migrated_auth = apply(
         &document,
         format!("{LEGACY_AUTH_LOAD}\n用户自定义：保留这行。"),

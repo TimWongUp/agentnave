@@ -5696,6 +5696,10 @@ async def test_published_tool_descriptions_within_2000_chars_and_cover_private_d
         without_image["start_agent"].input_schema["properties"]["seat"]["description"]
     )
     assert "seat='auto'" in start_seat_desc and "kind=image" not in start_seat_desc
+    many_tasks_desc = str(
+        without_image["start_agents"].input_schema["properties"]["tasks"]["description"]
+    )
+    assert "kind=image" not in many_tasks_desc
     image_seat = {
         "id": "draw-anime",
         "kind": "image",
@@ -5715,6 +5719,11 @@ async def test_published_tool_descriptions_within_2000_chars_and_cover_private_d
     )
     assert "kind=image" in image_seat_desc and "access='write'" in image_seat_desc
     assert "do not substitute" in image_seat_desc
+    many_image_desc = str(
+        with_image["start_agents"].input_schema["properties"]["tasks"]["description"]
+    )
+    assert "kind=image" in many_image_desc and "access='write'" in many_image_desc
+    assert "seat='auto'" not in many_image_desc and "do not substitute" in many_image_desc
     start_desc = tools["start_agent"].description or ""
     assert "title" in start_desc and "cwd" in start_desc and "self-contained" in start_desc
     assert "isolated_dirs" in start_desc and "succeeded" in start_desc
