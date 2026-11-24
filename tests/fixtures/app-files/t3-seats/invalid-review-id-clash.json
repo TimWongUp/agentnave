@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "seats": [
+    {
+      "id": "correctness-reviewer",
+      "kind": "custom",
+      "role": "评审",
+      "description": "评审",
+      "access": "read",
+      "difficulty": "easy",
+      "candidates": []
+    }
+  ]
+}

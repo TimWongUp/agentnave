@@ -460,6 +460,7 @@ pub(crate) fn parent_session(name: &str) -> bool {
     name.starts_with("CLAUDE_CODE_")
         || name.starts_with("ANTIGRAVITY_")
         || name.starts_with("HERDR_")
+        || name.starts_with("T3CODE_")
         || PARENT_SESSION.contains(&name.as_str())
 }
 

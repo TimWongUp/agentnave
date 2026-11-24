@@ -36,7 +36,12 @@
     "meetings_on_tradeoffs": "\n- 有实质取舍或分歧时，boss 可以开 AgentNave 会议室出决定，会上不改代码。",
     "image_generation": "\n- 生成图片派生图工位，`seat` 用 `image-generator`，prompt 写清图像需求和产物路径，由它的对话模型自行调用生图服务。",
     "dispatch_decision": "\n- 用 AgentNave 派发，`seat` 用 `auto` 并传 `access`，由决策模型选工位；允许同时执行的独立任务用 `start_agents` 一次交出。用户点名 CLI 时也通过 AgentNave，不在终端直接运行。明显选错或选不出时从 `list_members` 目录改选并说明，再不行就自己完成或报告；不静默换模型，没有生图工位不拿别的顶替。\n- App 里保存的工位模型和推理档视同用户明确选择，宿主自带子代理也须遵从；Claude 宿主只提供系列别名时，选择工位即授权使用同系列别名。满足不了就按工位不可用处理，替代须用户授权。",
-    "dispatch_split": "\n- 用 AgentNave 派发，用户点名 CLI 时也一样，不在终端直接运行。按任务类型和难度选下列工位；同难度专项优先，没有或不可用时用同难度的通用工位，再不行就自己完成或报告；不跨难度、不静默换模型。\n- App 里保存的工位模型和推理档视同用户明确选择，宿主自带子代理也须遵从；Claude 宿主只提供系列别名时，选择工位即授权使用同系列别名。满足不了就按工位不可用处理，替代须用户授权。"
+    "dispatch_split": "\n- 用 AgentNave 派发，用户点名 CLI 时也一样，不在终端直接运行。按任务类型和难度选下列工位；同难度专项优先，没有或不可用时用同难度的通用工位，再不行就自己完成或报告；不跨难度、不静默换模型。\n- App 里保存的工位模型和推理档视同用户明确选择，宿主自带子代理也须遵从；Claude 宿主只提供系列别名时，选择工位即授权使用同系列别名。满足不了就按工位不可用处理，替代须用户授权。",
+    "t3_non_t3_heading": "\n\n### 不在 T3 Code 里时这样派\n",
+    "t3_head": "\n\n### 在 T3 Code 里这样派，不用上面的派法和工位\n",
+    "t3_pick_decision": "\n- 任何派出的任务（含只读调查和评审）先调 AgentNave `recommend_seat` 由决策模型选工位，再按回执用 `delegate_task`；工位是用户指定的设置，同 CLI 也这样派，不用 `start_agent`、`start_agents`。评审把角色名填进 `seat`，只把允许同时执行的独立任务一次交出。",
+    "t3_pick_boss": "\n- 任何派出的任务（含只读调查和评审）先调 AgentNave `recommend_seat`：不带任务先取 T3 工位，按任务类型和难度选一个填进 `seat`，再按回执用 `delegate_task`；工位是用户指定的设置，同 CLI 也这样派，不用 `start_agent`、`start_agents`。评审把角色名填进 `seat`，只把允许同时执行的独立任务一次交出。",
+    "t3_tail": "\n- 选位工具没列出就先加载或稍等，仍不可用就告诉用户，不跳过选位，也不因此自己做完。\n- 用户点名 CLI、T3 账号或模型时，按 T3 的模型列表直接派，说明用了哪个模型；用不了就告诉用户，不换别的。\n- 开会仍用 AgentNave 并按会议回执收件，`list_members` 只用来选会议成员；其余等待、隔离和收件按 T3。"
   },
   "switches": {
     "lead_only": {
@@ -105,5 +110,22 @@
       "read": "只读",
       "write": "可写"
     }
+  },
+  "t3_order": {
+    "split": [
+      "t3_head",
+      "t3_pick_boss",
+      "t3_tail"
+    ],
+    "decision": [
+      "t3_head",
+      "t3_pick_decision",
+      "t3_tail"
+    ],
+    "custom": [
+      "t3_head",
+      "t3_pick_boss",
+      "t3_tail"
+    ]
   }
 }

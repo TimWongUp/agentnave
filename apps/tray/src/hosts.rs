@@ -10,6 +10,8 @@ mod decision;
 mod faults;
 mod hooks;
 pub(crate) use decision::decision_request;
+mod t3;
+pub(crate) use t3::t3_request;
 mod installed;
 #[cfg(all(test, windows, feature = "windows-live-tests"))]
 mod live_tests;
@@ -225,7 +227,7 @@ impl Context {
     }
 }
 
-/// The optional Skills the 技能 page offers, with each SKILL.md.
+/// The optional Skills the 评审设置 page offers, with each SKILL.md.
 pub fn skill_catalog() -> Value {
     skill::catalog()
 }
@@ -494,7 +496,7 @@ impl Hosts {
     }
     /// Write the orchestration block into the connected apps' rules and take it out of the rest,
     /// backing up each file first. Returns the files that could not be written.
-    pub fn sync_rules(&self, document: &Value, also: &[PathBuf]) -> Vec<Value> {
+    pub fn sync_rules(&self, document: &Value, t3_active: bool, also: &[PathBuf]) -> Vec<Value> {
         let home = &self.context.home;
         let connected = if self.uninstalling {
             Vec::new()
@@ -506,6 +508,7 @@ impl Hosts {
             &connected,
             home,
             document,
+            t3_active,
             also,
             &self.rules_backup(),
             self.service_behind(),

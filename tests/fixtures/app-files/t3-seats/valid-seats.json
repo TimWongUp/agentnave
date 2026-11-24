@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "enabled": true,
+  "random_candidates": true,
+  "seats": [
+    {
+      "id": "s-1a2b3c",
+      "kind": "explorer",
+      "role": "通用探索",
+      "description": "读代码与定位问题",
+      "access": "read",
+      "difficulty": "medium",
+      "candidates": [
+        {
+          "instance": "claudeAgent",
+          "model": "claude-opus-4-6",
+          "options": [{"id": "effort", "value": "high"}]
+        },
+        {
+          "instance": "codex",
+          "model": "gpt-6.2-astra",
+          "options": []
+        }
+      ]
+    },
+    {
+      "id": "s-draft",
+      "kind": "custom",
+      "role": "数据库迁移",
+      "description": "PostgreSQL 迁移脚本",
+      "access": "write",
+      "difficulty": "hard",
+      "candidates": []
+    }
+  ],
+  "review": {
+    "correctness-reviewer": [
+      {
+        "instance": "codex",
+        "model": "gpt-6.2-astra",
+        "options": [{"id": "reasoningEffort", "value": "xhigh"}]
+      }
+    ],
+    "security-reviewer": []
+  }
+}

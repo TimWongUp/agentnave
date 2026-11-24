@@ -6,6 +6,7 @@ runtime grouping, visibility and access. Contract tests check the aliases agains
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import cache
 from pathlib import Path
 from typing import Any, Literal, cast, get_args
@@ -186,24 +187,13 @@ def _printable_text(text: str, limit: int, what: str) -> str:
     return cleaned
 
 
-class CustomSeat(StrictModel):
-    """One seat of the user's own catalog in decision-seats.json (ADR-0087).
-
-    The identifier is both the `seat` value and the decision candidate id. One card of the App is
-    the seats sharing a kind and a role, one per difficulty.
-    """
+class SeatMetadata(StrictModel):
+    """Shared seat identity and classification metadata for custom and T3 task seats."""
 
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     kind: str
     role: str
     description: str
-    provider: ProviderName
-    model: str = Field(pattern=r"\S")
-    effort: str = ""
-    account: str | None = Field(default=None, pattern=ACCOUNT_ID, exclude_if=lambda v: v is None)
-    fallbacks: list[SeatChoice] = Field(
-        default_factory=list[SeatChoice], max_length=3, exclude_if=lambda value: not value
-    )
     access: Literal["read", "write"]
     # Image seats have none; every other kind has one.
     difficulty: CustomSeatDifficulty | None = None
@@ -229,9 +219,7 @@ class CustomSeat(StrictModel):
         return _printable_text(description, _CUSTOM_DESCRIPTION_MAX_LENGTH, "description")
 
     @model_validator(mode="after")
-    def group_access(self) -> CustomSeat:
-        check_choice(self.provider, self.account)
-        self.review_seat()  # Validate uniqueness of the configured choices.
+    def validate_seat_metadata(self) -> SeatMetadata:
         group = next((role for role in role_catalog() if role.group == self.kind), None)
         if group is not None and group.access != self.access:
             raise ValueError(f"a {self.kind} seat is {group.access}-only by its group")
@@ -240,6 +228,50 @@ class CustomSeat(StrictModel):
                 raise ValueError("an image seat is write access and has no difficulty")
         elif self.difficulty is None:
             raise ValueError(f"a {self.kind} seat needs a difficulty")
+        return self
+
+
+def validate_seat_cards(seats: Sequence[SeatMetadata]) -> None:
+    """Validate unique seat IDs and per-card consistency across a task-seat catalog."""
+    ids = [seat.id for seat in seats]
+    if len(ids) != len(set(ids)):
+        raise ValueError("seat ids must be unique")
+    cards = [(seat.kind, seat.role, seat.difficulty) for seat in seats]
+    if len(cards) != len(set(cards)):
+        raise ValueError("a card has one seat per difficulty")
+    # A card shows one access, so the seats of one card must agree on it.
+    accesses: dict[tuple[str, str], str] = {}
+    for seat in seats:
+        if accesses.setdefault((seat.kind, seat.role), seat.access) != seat.access:
+            raise ValueError(f"the {seat.role!r} card must have one access")
+    roles: dict[str, str] = {}
+    for seat in seats:
+        if (
+            seat.kind not in (CUSTOM_KIND, IMAGE_KIND)
+            and roles.setdefault(seat.kind, seat.role) != seat.role
+        ):
+            raise ValueError(f"a {seat.kind} seat has one role")
+
+
+class CustomSeat(SeatMetadata):
+    """One seat of the user's own catalog in decision-seats.json (ADR-0087).
+
+    The identifier is both the `seat` value and the decision candidate id. One card of the App is
+    the seats sharing a kind and a role, one per difficulty.
+    """
+
+    provider: ProviderName
+    model: str = Field(pattern=r"\S")
+    effort: str = ""
+    account: str | None = Field(default=None, pattern=ACCOUNT_ID, exclude_if=lambda v: v is None)
+    fallbacks: list[SeatChoice] = Field(
+        default_factory=list[SeatChoice], max_length=3, exclude_if=lambda value: not value
+    )
+
+    @model_validator(mode="after")
+    def group_access(self) -> CustomSeat:
+        check_choice(self.provider, self.account)
+        self.review_seat()  # Validate uniqueness of the configured choices.
         return self
 
     def review_seat(self) -> ReviewSeat:
@@ -266,27 +298,12 @@ class DecisionSeatsFile(BaseModel):
     @field_validator("seats")
     @classmethod
     def unique_ids(cls, seats: list[CustomSeat]) -> list[CustomSeat]:
-        ids = [seat.id for seat in seats]
-        if len(ids) != len(set(ids)):
-            raise ValueError("seat ids must be unique")
-        reserved = sorted(set(ids) & {*get_args(OrchestrationRole.__value__), AUTO_SEAT})
+        validate_seat_cards(seats)
+        reserved = sorted(
+            {seat.id for seat in seats} & {*get_args(OrchestrationRole.__value__), AUTO_SEAT}
+        )
         if reserved:
             raise ValueError(f"seat id {reserved[0]!r} is reserved")
-        cards = [(seat.kind, seat.role, seat.difficulty) for seat in seats]
-        if len(cards) != len(set(cards)):
-            raise ValueError("a card has one seat per difficulty")
-        # A card shows one access, so the seats of one card must agree on it.
-        accesses: dict[tuple[str, str], str] = {}
-        for seat in seats:
-            if accesses.setdefault((seat.kind, seat.role), seat.access) != seat.access:
-                raise ValueError(f"the {seat.role!r} card must have one access")
-        roles: dict[str, str] = {}
-        for seat in seats:
-            if (
-                seat.kind not in (CUSTOM_KIND, IMAGE_KIND)
-                and roles.setdefault(seat.kind, seat.role) != seat.role
-            ):
-                raise ValueError(f"a {seat.kind} seat has one role")
         return seats
 
 

@@ -71,7 +71,7 @@ fn discovers_t3_antigravity_profile_and_connects_with_shared_skills_and_rules() 
 
     // Global rules write to `~/.gemini/AGENTS.md` without blocking on T3's symlink.
     let doc = json!({"version": 1, "preset": "split"});
-    let failures = hosts.sync_rules(&doc, &[]);
+    let failures = hosts.sync_rules(&doc, false, &[]);
     assert!(
         failures.is_empty(),
         "unexpected rule failures: {failures:?}"

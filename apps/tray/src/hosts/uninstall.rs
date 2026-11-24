@@ -16,7 +16,7 @@ impl Hosts {
         }
         // Use an explicitly disabled document: malformed saved orchestration must not prevent
         // removing managed blocks, nor may a failed host retain its authorization block.
-        for failure in self.sync_rules(&json!({"preset": "off"}), &[]) {
+        for failure in self.sync_rules(&json!({"preset": "off"}), false, &[]) {
             failures.push(json!({"host": failure["path"], "error": failure["error"]}));
         }
         failures

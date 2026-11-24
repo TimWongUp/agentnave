@@ -27,6 +27,7 @@
   let keyMessage = null; // { text, error }
   let cardCount = 0;
   let rowCount = 0;
+  const expanded = new Set(); // Expanded card cids, kept in memory across re-renders.
 
   // The file is a flat list, one seat per difficulty; the page shows one card for each kind and
   // specialty: { cid, kind, role, access, seats: { easy | medium | hard: { id, provider, model, effort? } } }.
@@ -162,7 +163,10 @@
   }
 
   const editCard = (cid, patch, rerender = true) => edit(cards().map((card) => (card.cid === cid ? { ...card, ...patch } : card)), rerender);
-  const removeCard = (cid) => edit(cards().filter((card) => card.cid !== cid));
+  const removeCard = (cid) => {
+    expanded.delete(cid);
+    edit(cards().filter((card) => card.cid !== cid));
+  };
   const editRow = (cid, rid, patch, rerender = true) => editCard(cid,
     { rows: cards().find((card) => card.cid === cid).rows.map((row) => (row.rid === rid ? { ...row, ...patch } : row)) }, rerender);
   function setRowSeat(cid, rid, next) {
@@ -181,7 +185,9 @@
   // `what` is a group of the role catalog, "custom" or "image".
   function addCard(what) {
     if (locked() || (what !== CUSTOM && what !== IMAGE && !catalogEntry(what)) || cards().some((card) => card.kind === what && what !== CUSTOM)) return;
-    edit([...cards(), newCard(what)]);
+    const card = newCard(what);
+    expanded.add(card.cid);
+    edit([...cards(), card]);
   }
 
   const IMAGE_NAME = () => L("生图工位", "Image seats");
@@ -280,7 +286,29 @@
     render();
   }
 
+  function problemCids(list) {
+    const bad = new Set();
+    const seen = new Map();
+    for (const card of list) {
+      if (card.kind === IMAGE) {
+        if (imageProblem(card)) bad.add(card.cid);
+        continue;
+      }
+      const own = card.kind === CUSTOM;
+      const title = own ? card.role.trim() : cardName(card);
+      if (own && !title) bad.add(card.cid);
+      if (own && title && seen.has(title)) {
+        bad.add(card.cid);
+        if (seen.get(title).kind === CUSTOM) bad.add(seen.get(title).cid);
+      }
+      if (title && !seen.has(title)) seen.set(title, card);
+      if (!Object.keys(card.seats).length) bad.add(card.cid);
+    }
+    return bad;
+  }
+
   function discard() {
+    expanded.clear();
     draft = null;
     randomDraft = null;
     prefilled = false;
@@ -301,11 +329,6 @@
     }
     keyBusy = false;
     render();
-  }
-
-  function select(key, label, value, options, onPick) {
-    return el("select", { dataset: { focusKey: key }, "aria-label": label, onChange: (e) => onPick(e.target.value) },
-      options.map(([v, text]) => el("option", { value: v, selected: v === value }, text)));
   }
 
   function keyRow() {
@@ -339,21 +362,28 @@
     return S.seatBlock(el("div", { className: "s-row is-sub" }, el("span", { className: "s-label" }, label), el("div", { className: "s-seat" }, ...row)), key, `${title} · ${label}`, seat, set);
   }
 
-  // The tiers a three-tier card has set; no tier means no seat to choose from.
-  function tiersSet(card) {
-    const n = Object.keys(card.seats).length;
-    return el("span", { className: `s-muted ds-tiers${n ? "" : " unset"}` },
-      n ? L(`已设 ${n} 档`, `${n} ${n === 1 ? "tier" : "tiers"} set`) : L("未设置", "Not set"));
+  const modelDisplay = (seat) => (seat?.model ? (AN.modelName ? AN.modelName(seat.model) : seat.model) : "");
+
+  function cardSummary(card) {
+    if (card.kind === IMAGE) return S.summarizeNames(card.rows.map((row) => row.role));
+    return S.summarizeTiers(DIFFICULTIES.map(([level, label]) => [label, modelDisplay(card.seats[level])]));
   }
 
   // One image specialty: its name and its CLI, model and effort on one line, and its delete button.
-  function imageRow(card, row, index) {
+  function imageRow(card, row, index, helpers) {
     const key = `decision/${card.cid}/${row.rid}`;
     const name = row.role.trim() || L(`生图工位第 ${index + 1} 行`, `Image seats row ${index + 1}`);
     const specialty = el("input", {
       type: "text", className: "ds-role", maxlength: String(ROLE_MAX), spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", value: row.role,
       "aria-label": L("专业", "Specialty"), placeholder: L("专业", "Specialty"), dataset: { focusKey: `${key}/role` },
-      onInput: (e) => editRow(card.cid, row.rid, { role: e.target.value }, false),
+      onInput: (e) => {
+        editRow(card.cid, row.rid, { role: e.target.value }, false);
+        const current = cards().find((one) => one.cid === card.cid);
+        if (current) {
+          const summary = cardSummary(current);
+          helpers.setSummary(summary.text, summary.unset);
+        }
+      },
     });
     const set = (next) => setRowSeat(card.cid, row.rid, next);
     const selects = S.seatSelects(key, name, row.seat, set, L("未设置", "Not set"));
@@ -366,46 +396,63 @@
     return block;
   }
 
-  // A group of the role catalog is named and fixed and says what it is for; a custom card asks for its
-  // specialty; the image card has a row for each specialty.
-  function seatCard(card, index) {
+  function customHeadRow(card, key, title, helpers) {
+    return S.customSeatHeadRow({
+      key, role: card.role, access: card.access, title, accessOptions: ACCESS, roleMax: ROLE_MAX,
+      onRoleInput: (value) => {
+        const prevBad = problemCids(cards());
+        editCard(card.cid, { role: value }, false);
+        const nextBad = problemCids(cards());
+        if ([...nextBad].some((id) => id !== card.cid && !prevBad.has(id) && !expanded.has(id))) return render();
+        helpers.setName(value.trim() || L("自定义工位", "Custom seat"), !value.trim());
+      },
+      onAccessChange: (value) => editCard(card.cid, { access: value }),
+    });
+  }
+
+  function seatRowDescriptor(card, index, invalidSet) {
     const key = `decision/${card.cid}`;
     const own = card.kind === CUSTOM;
-    const title = cardName(card) || L(`卡片 ${index + 1}`, `Card ${index + 1}`);
-    const name = el(own ? "input" : "strong", own ? {
-      type: "text", className: "ds-role", maxlength: String(ROLE_MAX), spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", value: card.role,
-      "aria-label": L("专业", "Specialty"), placeholder: L("专业", "Specialty"), dataset: { focusKey: `${key}/role` },
-      onInput: (e) => editCard(card.cid, { role: e.target.value }, false),
-    } : {}, ...(own ? [] : [title]));
-    const access = card.kind === CUSTOM
-      ? select(`${key}/access`, L(`${title}的读写类型`, `Access of ${title}`), card.access, ACCESS, (value) => editCard(card.cid, { access: value }))
-      : el("span", { className: "s-muted" }, accessName(accessOf(card)));
-    const remove = el("button", { type: "button", className: "ds-remove", "aria-label": L(`删除${title}`, `Delete ${title}`), onClick: () => removeCard(card.cid) }, L("删除", "Delete"));
-    const scope = scopeOf(card);
-    const head = el("div", { className: "s-row" },
-      el("div", { className: "s-label" }, name, scope ? AN.settings.settingTip(scope) : null),
-      el("div", { className: "s-control" }, access, card.kind === IMAGE ? null : tiersSet(card), remove));
-    const body = card.kind === IMAGE
-      ? [...card.rows.map((row, at) => imageRow(card, row, at)),
-        el("div", { className: "s-row is-stack" }, el("button", { type: "button", className: "ds-add-row", disabled: toSeats(cards()).length >= MAX_SEATS, onClick: () => addRow(card.cid) }, L("添加方向", "Add specialty")))]
-      : DIFFICULTIES.map(([level, label]) => levelRow(card, level, label, title));
-    return el("div", { className: "s-group decision-seat" }, el("div", { className: "s-card" }, head, ...body));
+    const named = cardName(card);
+    const title = named || L(`卡片 ${index + 1}`, `Card ${index + 1}`);
+    const summary = cardSummary(card);
+    return {
+      cid: card.cid,
+      focusPrefix: key,
+      name: named || L("自定义工位", "Custom seat"),
+      nameUnset: own && !named,
+      ariaTitle: title,
+      tip: scopeOf(card),
+      access: accessName(accessOf(card)),
+      summary: summary.text,
+      summaryUnset: summary.unset,
+      invalid: invalidSet.has(card.cid),
+      isInvalid: () => problemCids(cards()).has(card.cid),
+      onRemove: () => removeCard(card.cid),
+      renderBody: (helpers) => (card.kind === IMAGE
+        ? [...card.rows.map((row, at) => imageRow(card, row, at, helpers)),
+          el("div", { className: "s-row is-sub is-stack" }, el("button", { type: "button", className: "ds-add-row", disabled: toSeats(cards()).length >= MAX_SEATS, onClick: () => addRow(card.cid) }, L("添加方向", "Add specialty")))]
+        : [...(own ? [customHeadRow(card, key, title, helpers)] : []),
+          ...DIFFICULTIES.map(([level, label]) => levelRow(card, level, label, title))]),
+    };
+  }
+
+  function seatRowsCard() {
+    const list = cards();
+    const invalidSet = problemCids(list);
+    return S.renderSeatRows(list.map((card, index) => seatRowDescriptor(card, index, invalidSet)), {
+      expanded,
+      onToggle: () => render(),
+      groupClass: "decision-seat-list",
+    });
   }
 
   // The one way to add a card: a group of the role catalog not on a card yet, or a card of its own.
   function addMenu() {
-    const groups = S.roleCatalog();
-    const taken = new Set(cards().map((card) => card.kind));
-    const option = (value, label) => el("option", { value, disabled: taken.has(value) && value !== CUSTOM }, label);
-    const list = (title, entries) => entries.length ? el("optgroup", { label: title }, ...entries.map(([value, label]) => option(value, label))) : null;
-    const named = (general) => groups.filter((entry) => !entry.fallback_group === general).map((entry) => [entry.group, S.roleName(entry)]);
-    return el("select", {
-      className: "decision-add", id: "decision-add", dataset: { focusKey: "decision/add" },
-      disabled: toSeats(cards()).length >= MAX_SEATS, onChange: (e) => e.target.value && addCard(e.target.value),
-    }, el("option", { value: "", selected: true }, L("添加工位", "Add seat")),
-    list(L("通用工位", "General seats"), named(true)), list(L("专业工位", "Specialist seats"), named(false)),
-    list(L("自定义工位", "Custom seats"), [[CUSTOM, L("自定义工位", "Custom seat")]]),
-    list(IMAGE_NAME(), [[IMAGE, IMAGE_NAME()]]));
+    return S.seatAddMenu({
+      id: "decision-add", focusKey: "decision/add", disabled: toSeats(cards()).length >= MAX_SEATS,
+      taken: new Set(cards().map((card) => card.kind)), groups: S.roleCatalog(), includeImage: true, onAdd: addCard,
+    });
   }
 
   // What stands in for the fixed seats on the decision mode's page, or null while the catalog cannot be
@@ -437,7 +484,7 @@
     return el("div", { className: "s-wrap decision-seats" },
       el("div", { className: "s-group" }, el("div", { className: "s-card" },
         el("div", { className: "s-row is-stack" }, flow()), keyRow(), randomRow())),
-      ...cards().map(seatCard),
+      seatRowsCard(),
       el("div", { className: "s-group" }, el("div", { className: "s-card" },
         el("div", { className: "s-row" }, el("label", { className: "s-label", htmlFor: "decision-add" }, L("添加工位", "Add seat")), addMenu()))));
   }

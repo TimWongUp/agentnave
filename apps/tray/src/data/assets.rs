@@ -220,6 +220,10 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/avatar-settings.js").to_vec(),
         ),
+        "seat-rows.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/seat-rows.js").to_vec(),
+        ),
         "advanced.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/advanced.js").to_vec(),
@@ -231,6 +235,10 @@ fn settings_asset(resource: &str) -> Response {
         "decision-seats.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/decision-seats.js").to_vec(),
+        ),
+        "t3-seats.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/t3-seats.js").to_vec(),
         ),
         "pane-loader.js" => Response::ok(
             "text/javascript; charset=utf-8",

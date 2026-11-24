@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-30
+- T3 主线程的评审工位与任务工位由 [ADR-0121](0121-t3-code-orchestration.md) 改读 T3 工位文件。
 - CLI 模型边界与编排优先级由 [ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) 修订。
 - 扩展 [ADR-0013](0013-members-defaults-and-host-identity.md) 的默认值套用，补充 [ADR-0030](0030-optional-review-gate-skill.md) 与 [ADR-0037](0037-app-writes-orchestration-rules.md)：评审工位与 Explorer／Worker 工位原本只由 `list_members` 回报。
 - 非交互与只读派发说明由 [ADR-0043](0043-service-prompt-instructions.md) 补充

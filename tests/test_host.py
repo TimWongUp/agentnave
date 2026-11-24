@@ -457,6 +457,204 @@ def test_zcode_reads_only_native_assistant_model(
     assert _match("/Applications/ZCode.app/Contents/MacOS/ZCode") == "zcode"
 
 
+def test_t3_mode_detection_rules_ancestors_platform_and_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import t3
+    from agentnave.host import Host
+
+    claude = Host("claude", "env")
+    codex = Host("codex", "env")
+    t3_claude_env = {
+        "CLAUDE_CODE_ENTRYPOINT": "t3-code",
+        "T3CODE_THREAD_ID": "thread-main-1",
+    }
+    single_claude_parents = {40: 30, 30: 20, 20: 10, 10: 1}
+    single_claude_argv: dict[int, tuple[str, ...]] = {
+        40: ("/usr/bin/python3.12", "-P", "-c", "relay"),
+        30: ("/Users/test/.local/share/claude/versions/2.1.295",),
+        20: ("/usr/bin/node", "/Applications/T3 Code.app/Contents/Resources/bin.mjs"),
+        10: ("/Applications/T3 Code.app/Contents/MacOS/T3 Code",),
+    }
+
+    # Claude main & child threads.
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env=t3_claude_env,
+            parent_pid=40,
+            read_parent=single_claude_parents.__getitem__,
+            read_argv=single_claude_argv.__getitem__,
+            platform="darwin",
+        )
+        == "main"
+    )
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env={
+                "CLAUDE_CODE_ENTRYPOINT": "t3-code",
+                "T3CODE_THREAD_ID": "thread:delegated-task:abc",
+            },
+            parent_pid=40,
+            read_parent=single_claude_parents.__getitem__,
+            read_argv=single_claude_argv.__getitem__,
+            platform="darwin",
+        )
+        == "child"
+    )
+
+    # Missing/blank T3CODE_THREAD_ID or wrong Claude entrypoint -> none.
+    for bad_env in (
+        {"CLAUDE_CODE_ENTRYPOINT": "t3-code"},
+        {"CLAUDE_CODE_ENTRYPOINT": "t3-code", "T3CODE_THREAD_ID": "   "},
+        {"CLAUDE_CODE_ENTRYPOINT": "cli", "T3CODE_THREAD_ID": "thread-1"},
+        {"T3CODE_THREAD_ID": "thread-1"},
+    ):
+        assert (
+            t3.detect_t3_mode(
+                claude,
+                env=bad_env,
+                parent_pid=40,
+                read_parent=single_claude_parents.__getitem__,
+                read_argv=single_claude_argv.__getitem__,
+                platform="darwin",
+            )
+            == "none"
+        )
+
+    # Nested `claude -p` even across a non-wrapper process in between -> none.
+    nested_parents = {60: 50, 50: 40, 40: 30, 30: 20, 20: 1}
+    nested_argv: dict[int, tuple[str, ...]] = {
+        60: ("/usr/bin/python3.12", "relay"),
+        50: ("/usr/local/bin/claude", "-p", "nested"),
+        40: ("/usr/local/bin/custom-runner",),  # non-wrapper: scan must keep walking past this
+        30: ("/bin/zsh",),
+        20: ("/usr/bin/node", "/pkg/claude.js"),
+    }
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env=t3_claude_env,
+            parent_pid=60,
+            read_parent=nested_parents.__getitem__,
+            read_argv=nested_argv.__getitem__,
+            platform="darwin",
+        )
+        == "none"
+    )
+
+    # Nested inside a delegated child thread it stays a child.
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env={**t3_claude_env, "T3CODE_THREAD_ID": "thread:delegated-task:abc"},
+            parent_pid=60,
+            read_parent=nested_parents.__getitem__,
+            read_argv=nested_argv.__getitem__,
+            platform="darwin",
+        )
+        == "child"
+    )
+
+    # Windows skips ancestor scanning (accepts rare nested false positive per ADR-0121).
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env=t3_claude_env,
+            parent_pid=60,
+            read_parent=nested_parents.__getitem__,
+            read_argv=nested_argv.__getitem__,
+            platform="win32",
+        )
+        == "main"
+    )
+
+    # Ancestor read failure stops scanning and decides from what was already seen.
+    def failing_argv(pid: int) -> Sequence[str]:
+        if pid == 40:
+            raise PermissionError("denied")
+        return nested_argv[pid]
+
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env=t3_claude_env,
+            parent_pid=60,
+            read_parent=nested_parents.__getitem__,
+            read_argv=failing_argv,
+            platform="darwin",
+        )
+        == "main"
+    )
+
+    # Cycle and depth limit (32) do not loop and stop safely.
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env=t3_claude_env,
+            parent_pid=20,
+            read_parent=lambda _: 20,
+            read_argv=lambda _: ("/bin/sh",),
+            platform="darwin",
+        )
+        == "main"
+    )
+    # Second claude beyond 32 levels is not reached.
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env=t3_claude_env,
+            parent_pid=100,
+            read_parent=lambda p: p - 1,
+            read_argv=lambda p: ("claude",) if p in (99, 60) else ("sh",),
+            platform="darwin",
+        )
+        == "main"
+    )
+
+    # Codex only checks T3CODE_THREAD_ID (no entrypoint or ancestor check).
+    assert t3.detect_t3_mode(codex, env={"T3CODE_THREAD_ID": "thread-1"}) == "main"
+    assert t3.detect_t3_mode(codex, env={"T3CODE_THREAD_ID": "thread:delegated-task:x"}) == "child"
+    assert t3.detect_t3_mode(codex, env={"T3CODE_THREAD_ID": "  "}) == "none"
+    assert t3.detect_t3_mode(codex, env={}) == "none"
+
+    # Other hosts are not recognized in v1.
+    for other in ("antigravity", "grok", "pi", "codebuddy", "deepseek", "zcode", None):
+        assert (
+            t3.detect_t3_mode(
+                Host(other, "env") if other else Host(),
+                env={
+                    "CLAUDE_CODE_ENTRYPOINT": "t3-code",
+                    "T3CODE_THREAD_ID": "thread-1",
+                },
+            )
+            == "none"
+        )
+
+    # T3CODE_HOME resolution.
+    assert t3.t3_home({"T3CODE_HOME": f" {tmp_path} "}) == tmp_path
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    assert t3.t3_home({}) == tmp_path / ".t3"
+    assert t3.t3_home({"T3CODE_HOME": "   "}) == tmp_path / ".t3"
+
+    # Process-level caching detects once per process until reset.
+    calls: list[Host] = []
+
+    def counting_detect(h: Host) -> t3.T3Mode:
+        calls.append(h)
+        return "main"
+
+    t3.reset_t3_mode_cache()
+    monkeypatch.setattr(t3, "detect_t3_mode", counting_detect)
+    assert t3.current_t3_mode(codex) == "main"
+    assert t3.current_t3_mode(claude) == "main"
+    assert len(calls) == 1
+    t3.reset_t3_mode_cache()
+    assert t3.current_t3_mode(claude) == "main"
+    assert len(calls) == 2
+
+
 def test_antigravity_sessions_read_t3_acp_env_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

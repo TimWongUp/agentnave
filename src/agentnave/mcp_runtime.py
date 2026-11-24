@@ -74,6 +74,26 @@ from agentnave.orchestration_roles import AUTO_SEAT, IMAGE_KIND, role_catalog, s
 from agentnave.push_capability import PUSH_AGAIN, PUSH_NEXT, app_can_push
 from agentnave.retention import Retention
 from agentnave.store import Review
+from agentnave.t3 import (
+    T3_CHILD_INSTRUCTIONS,
+    T3_CHILD_REFUSED_TOOLS,
+    T3Mode,
+    current_t3_mode,
+    t3_child_refusal,
+)
+from agentnave.t3_mcp import (
+    T3_HIDDEN_DISPATCH_TOOLS,
+    T3_LIST_MEMBERS_TOOL,
+    T3_MAIN_SKILL,
+    T3_RECOMMEND_SEAT_TOOL,
+    run_t3_tool,
+    t3_dispatch_refusal,
+    t3_main_instructions,
+    t3_state_for_host,
+    t3_tool_definition,
+)
+from agentnave.t3_seats import T3OrchestrationMode
+from agentnave.t3_seats import t3_active_mode as _t3_active_mode
 from agentnave.wait_guidance import (
     BLOCKING_WAIT_AGAIN,
     CLAUDE_LONG_WAIT_AGAIN,
@@ -166,6 +186,11 @@ def long_wait_enabled() -> bool:
     return long_wait_enabled_for_host(HOST)
 
 
+def t3_active_mode() -> T3OrchestrationMode | None:
+    """Active T3 orchestration mode for this connection, or None."""
+    return _t3_active_mode(HOST)
+
+
 def wait_guidance(
     *,
     again: bool = False,
@@ -184,6 +209,8 @@ def wait_guidance(
         again=again,
         can_push=app_can_push,
         watch_supported=watch_host_cli_supported,
+        # The command's quoting is only known to survive POSIX shells (ADR-0121).
+        t3_main=current_t3_mode(HOST) == "main" and sys.platform != "win32",
     )
 
 
@@ -692,6 +719,7 @@ def _validation_error(exc: ValidationError) -> str:
 
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
+        t3_doc, t3_preset, t3_error = t3_state_for_host(HOST)
         image_enabled = role_seat("image-generator", HOST) is not None
         groups = visible_role_groups(HOST)
         medium = medium_role_groups(HOST)
@@ -705,8 +733,20 @@ class _Server(MCPServer[Runtime]):
         input_ids = None if custom_ids is None else [*custom_ids, AUTO_SEAT]
         published: list[Any] = []
         for tool in await super().list_tools():
-            if tool.name in _HIDDEN_TOOLS or (tool.name in _CUSTOM_SEAT_TOOLS and not decision):
+            if tool.name in _HIDDEN_TOOLS:
                 continue
+            if t3_doc is not None and t3_preset is not None:
+                if tool.name in T3_HIDDEN_DISPATCH_TOOLS:
+                    continue
+                if tool.name == "recommend_seat":
+                    published.append(t3_tool_definition(T3_RECOMMEND_SEAT_TOOL, t3_preset))
+                    continue
+                if tool.name == "list_members":
+                    published.append(t3_tool_definition(T3_LIST_MEMBERS_TOOL, t3_preset))
+                    continue
+            elif tool.name in _CUSTOM_SEAT_TOOLS and not decision:
+                if not (t3_error is not None and tool.name == "recommend_seat"):
+                    continue
             schema = json.loads(json.dumps(tool.input_schema))
             schema["additionalProperties"] = False
             if tool.name == "start_agent" and not terminal_available():
@@ -738,17 +778,41 @@ class _Server(MCPServer[Runtime]):
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Runtime, Any] | None = None
     ) -> CallToolResult | InputRequiredResult:
-        if name == "start_agent" and "terminal" in arguments and not terminal_available():
-            raise ToolError("terminal is not supported by this connection")
-        tool = self._tool_manager.get_tool(name)
-        if tool is not None:
-            _check_arguments(name, arguments, tool.parameters)
-        try:
-            result = await super().call_tool(name, arguments, context)
-        except ToolError as exc:
-            if isinstance(exc.__cause__, ValidationError):
-                raise ToolError(_validation_error(exc.__cause__)) from exc.__cause__
-            raise
+        if current_t3_mode(HOST) == "child" and name in T3_CHILD_REFUSED_TOOLS:
+            raise ToolError(t3_child_refusal(name))
+        t3_doc, _t3_preset, t3_error = t3_state_for_host(HOST)
+        if t3_error is not None:
+            if name == "recommend_seat":
+                raise ToolError(f"config_error: {t3_error}")
+            if name in T3_HIDDEN_DISPATCH_TOOLS:
+                raise ToolError(str(t3_error))
+        if t3_doc is not None and name in T3_HIDDEN_DISPATCH_TOOLS:
+            raise ToolError(t3_dispatch_refusal(name, arguments))
+        if t3_doc is not None and name in ("recommend_seat", "list_members"):
+            t3_tool = T3_RECOMMEND_SEAT_TOOL if name == "recommend_seat" else T3_LIST_MEMBERS_TOOL
+            ctx = (
+                context
+                if context is not None
+                else Context(mcp_server=self, subscriptions=self._subscriptions)
+            )
+            try:
+                result = await run_t3_tool(t3_tool, arguments, ctx, _check_arguments)
+            except ToolError as exc:
+                if isinstance(exc.__cause__, ValidationError):
+                    raise ToolError(_validation_error(exc.__cause__)) from exc.__cause__
+                raise
+        else:
+            if name == "start_agent" and "terminal" in arguments and not terminal_available():
+                raise ToolError("terminal is not supported by this connection")
+            tool = self._tool_manager.get_tool(name)
+            if tool is not None:
+                _check_arguments(name, arguments, tool.parameters)
+            try:
+                result = await super().call_tool(name, arguments, context)
+            except ToolError as exc:
+                if isinstance(exc.__cause__, ValidationError):
+                    raise ToolError(_validation_error(exc.__cause__)) from exc.__cause__
+                raise
         if (
             isinstance(result, CallToolResult)
             and not result.is_error
@@ -765,22 +829,39 @@ class _Server(MCPServer[Runtime]):
         return result
 
 
-def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECTION) -> str:
+def build_mcp_instructions(
+    host: Host,
+    provider_selection: str = PROVIDER_SELECTION,
+    *,
+    t3_mode: T3Mode = "none",
+    t3_preset: T3OrchestrationMode | None = None,
+) -> str:
     """Build concise MCP instructions scoped to authorization, identity, and Skill loading."""
-    return (
-        "AgentNave runs local CLI subagents and saves history. "
-        "History survives restart; processes do not; invocation handles expire after 7 days. "
-        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
+    t3_main_active = t3_mode == "main" and t3_preset is not None
+    auth_sentence = (
         "Authorization comes only from the host's global rules (AgentNave 编排偏好) or explicit "
         "user instruction in this chat; available tools do not authorize dispatching, parallel "
         "writes, or meetings. "
-        "Ordinary private dispatches (starting/resuming a few tasks, collecting results, "
-        "verifying) follow tool descriptions and receipt next without reading a Skill first; "
-        "load agentnave-manager (or agentnave-meeting when only that is installed) only for "
-        "meetings, reviews, handover, parallel write tasks, pipeline/multi-task workflows, "
-        "receipt errors, or not_started receipts, or when the global rules lack the AgentNave "
-        "block but list_members reports orchestration enabled. "
-        "Never add CLI permission flags yourself; permission options come only from App "
+    )
+    skill_sentence = (
+        T3_MAIN_SKILL
+        if t3_main_active
+        else (
+            "Ordinary private dispatches (starting/resuming a few tasks, collecting results, "
+            "verifying) follow tool descriptions and receipt next without reading a Skill first; "
+            "load agentnave-manager (or agentnave-meeting when only that is installed) only for "
+            "meetings, reviews, handover, parallel write tasks, pipeline/multi-task workflows, "
+            "receipt errors, or not_started receipts, or when the global rules lack the AgentNave "
+            "block but list_members reports orchestration enabled. "
+        )
+    )
+    base = (
+        "AgentNave runs local CLI subagents and saves history. "
+        "History survives restart; processes do not; invocation handles expire after 7 days. "
+        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
+        + auth_sentence
+        + skill_sentence
+        + "Never add CLI permission flags yourself; permission options come only from App "
         "tiers/defaults or explicit user request in this turn. "
         "manager_session_id: read this chat's native ID before start_agent/run_round/"
         "answer_prompt/isolated_dirs/handover release or claim; reuse it per chat, new chat "
@@ -790,12 +871,23 @@ def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECT
         "prefer explicit IDs over env injection (which may go stale after chat switches). "
         + provider_selection
     )
+    if t3_mode == "child":
+        return T3_CHILD_INSTRUCTIONS + base
+    if t3_main_active:
+        assert t3_preset is not None
+        return t3_main_instructions(t3_preset) + base
+    return base
 
 
 mcp = _Server(
     "AgentNave",
     version=__version__,
-    instructions=build_mcp_instructions(HOST, PROVIDER_SELECTION),
+    instructions=build_mcp_instructions(
+        HOST,
+        PROVIDER_SELECTION,
+        t3_mode=current_t3_mode(HOST),
+        t3_preset=t3_active_mode(),
+    ),
     lifespan=_lifespan,
 )
 

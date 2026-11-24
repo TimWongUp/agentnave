@@ -8,6 +8,7 @@ mod faults;
 mod meeting_skill;
 mod reload_guidance;
 mod t3_antigravity;
+mod t3_seats;
 mod timeouts;
 mod tools_upgrade;
 mod uninstall;
@@ -96,7 +97,11 @@ fn rules_sync_removes_blocks_for_an_uninstalled_cli() {
         &path,
         "保留\n<!-- AGENTNAVE:START -->\n旧规则\n<!-- AGENTNAVE:END -->\n",
     );
-    assert!(hosts.sync_rules(&json!({"preset":"off"}), &[]).is_empty());
+    assert!(
+        hosts
+            .sync_rules(&json!({"preset":"off"}), false, &[])
+            .is_empty()
+    );
     let text = fs::read_to_string(path).unwrap();
     assert!(text.contains("保留"));
     assert!(!text.contains("AGENTNAVE:START"));

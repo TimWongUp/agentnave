@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.context import Context
 from mcp_types import CallToolResult, InputRequiredResult, TextContent
 
-from agentnave import mcp_server, members
+from agentnave import mcp_server, members, t3
 from agentnave.adapters import base, codex
 from agentnave.core import InvocationManager
 
@@ -55,17 +56,24 @@ def manager_chat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "AGENTNAVE_HOST_APP",
         "AGENTNAVE_DISPATCHED",
         "AGENTNAVE_EXCLUDED_PROVIDERS",
+        "CLAUDE_CODE_ENTRYPOINT",
     ):
         monkeypatch.delenv(name, raising=False)
+    for name in [key for key in os.environ if key.upper().startswith("T3CODE_")]:
+        monkeypatch.delenv(name, raising=False)
+    t3.reset_t3_mode_cache()
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "agentnave-data"))
 
 
 @pytest.fixture(autouse=True)
 def check_mcp_reply_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Check every successful in-process tool reply against its published contract."""
+    from agentnave import mcp_runtime, t3_seats
+
     server = mcp_server.mcp
     call_tool = server.call_tool
     validators: dict[str, Validator] = {}
+    t3_validators: dict[str, Validator] = {}
 
     async def checked_call(
         name: str,
@@ -74,12 +82,22 @@ def check_mcp_reply_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> CallToolResult | InputRequiredResult:
         result = await call_tool(name, arguments, context)
         if isinstance(result, CallToolResult) and not result.is_error:
-            if not validators:
-                # Include list_invocations, hidden from agents but called by the relay.
-                for tool in await MCPServer.list_tools(server):
-                    assert tool.output_schema is not None
-                    validators[tool.name] = Draft202012Validator(tool.output_schema)
-            validators[name].validate(result.structured_content)
+            if name in ("recommend_seat", "list_members") and t3_seats.t3_orchestration_active(
+                mcp_runtime.HOST
+            ):
+                if name not in t3_validators:
+                    published = {tool.name: tool for tool in await server.list_tools()}
+                    schema = published[name].output_schema
+                    assert schema is not None
+                    t3_validators[name] = Draft202012Validator(schema)
+                t3_validators[name].validate(result.structured_content)
+            else:
+                if not validators:
+                    # Include list_invocations, hidden from agents but called by the relay.
+                    for tool in await MCPServer.list_tools(server):
+                        assert tool.output_schema is not None
+                        validators[tool.name] = Draft202012Validator(tool.output_schema)
+                validators[name].validate(result.structured_content)
             assert len(result.content) == 1
             text = result.content[0]
             assert isinstance(text, TextContent)

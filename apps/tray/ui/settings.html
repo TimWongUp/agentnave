@@ -29,8 +29,10 @@
 <script src="./member-updates.js" defer></script>
 <script src="./account-settings.js" defer></script>
 <script src="./member-cards.js" defer></script>
+<script src="./seat-rows.js" defer></script>
 <script src="./advanced.js" defer></script>
 <script src="./decision-seats.js" defer></script>
+<script src="./t3-seats.js" defer></script>
 <script src="./update-settings.js" defer></script>
 <script src="./settings.js" defer></script>
 <script src="./about-settings.js" defer></script>
@@ -59,7 +61,7 @@
   <a draggable="false" id="nav-avatars" href="#avatars" data-en="Appearance">外观</a>
   <a draggable="false" id="nav-voice" href="#voice" data-en="Voice">语音</a>
   <a draggable="false" id="nav-storage" href="#storage" data-en="Data & Storage">数据与存储</a>
-  <a draggable="false" id="nav-advanced" href="#advanced" data-en="Skills">技能<span id="skills-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+  <a draggable="false" id="nav-advanced" href="#advanced" data-en="Review">评审设置<span id="skills-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
   <a draggable="false" id="nav-about" href="#about" data-en="About">关于<span id="update-badge" class="badge-dot" hidden></span></a>
 </nav>
 <main>
@@ -150,8 +152,15 @@
       <div id="orchestration-meeting" class="s-wrap" hidden></div>
     </div></div>
     <div class="s-group"><h2 class="s-title" data-en="Apply to">应用到</h2><div class="s-card"><div class="s-row is-stack"><div id="orchestration-bosses" class="skill-chips"></div></div></div></div>
-    <div id="orchestration-roles" class="s-wrap" hidden></div>
-    <pre id="orchestration-text" class="s-group s-card is-pre" hidden></pre>
+    <div id="orchestration-scope" class="s-tools scope-bar" hidden></div>
+    <div id="orchestration-general">
+      <div id="orchestration-roles" class="s-wrap" hidden></div>
+    </div>
+    <div id="t3-seats-section" class="s-wrap" hidden></div>
+    <details id="orchestration-text-fold" class="s-group" hidden>
+      <summary class="s-title is-fold" data-en="Rules written">写入的规则</summary>
+      <pre id="orchestration-text" class="s-card is-pre"></pre>
+    </details>
     <div id="orchestration-custom" class="s-group" hidden><div class="s-card"><textarea id="custom-text" aria-label="自定义编排规则" data-en-label="Custom orchestration rules" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off"></textarea></div></div>
     <div class="s-group">
       <h2 class="s-title" data-en="boss global rules files">boss 全局规则文件<span class="setting-tip" tabindex="0" role="note" aria-label="App 只改这些文件里 AgentNave 标记之间的一段，其他内容原样保留，改写前先备份。" data-en-label="The App only edits the section between the AgentNave markers in these files, leaves everything else as it is, and backs up before rewriting.">?</span></h2>

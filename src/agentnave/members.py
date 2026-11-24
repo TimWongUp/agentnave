@@ -34,6 +34,7 @@ from agentnave.orchestration_roles import (
 )
 from agentnave.orchestration_roles import (
     OrchestrationGroup,
+    OrchestrationPreset,
     StrictModel,
     role_catalog,
     seat_role,
@@ -522,21 +523,22 @@ def _custom():
     return decision_seats
 
 
-def orchestration_enabled(host: Host) -> bool:
+def orchestration_mode(host: Host) -> OrchestrationPreset | None:
+    """The host's orchestration mode, or None when unconfigured or broken."""
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     except MemberFileError:
-        return False  # list_members reports a broken file; never invent an enabled mode.
-    return roles is not None and roles.enabled(host)
+        return None
+    return roles.mode(host) if roles is not None else None
+
+
+def orchestration_enabled(host: Host) -> bool:
+    return orchestration_mode(host) not in (None, "off", "meetings")
 
 
 def orchestration_decision(host: Host) -> bool:
     """Whether the host's mode is decision, which swaps the fixed seat groups for the user's own."""
-    try:
-        roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
-    except MemberFileError:
-        return False
-    return roles is not None and roles.decision(host)
+    return orchestration_mode(host) == "decision"
 
 
 def _fixed_seats(host: Host) -> OrchestrationFile | None:
