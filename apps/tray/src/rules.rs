@@ -269,7 +269,12 @@ pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
 }
 
 /// The text each file that carries the block should hold.
-fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, String)> {
+fn wanted(
+    connected: &[App],
+    home: &Path,
+    document: &Value,
+    t3_active: bool,
+) -> Vec<(PathBuf, String)> {
     let mut wanted = Vec::new();
     for group in groups(connected, home) {
         for path in targets(&group, home) {
@@ -287,7 +292,22 @@ fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, Str
             if own_reader {
                 scoped["image_generation"] = Value::Null;
             }
-            if let Some(text) = text_of(&scoped, mode_of(document, &group)) {
+            let t3_reader = t3_active
+                && group.iter().any(|app| {
+                    matches!(app.id, "claude" | "codex") && would_read(app, home).contains(&path)
+                });
+            let text = match (text_of(&scoped, mode_of(document, &group)), t3_reader) {
+                (Some(mut text), true) => {
+                    text.push_str(catalog::section("t3_orchestration"));
+                    Some(text)
+                }
+                (None, true) => Some(format!(
+                    "## AgentNave 编排偏好\n{}",
+                    catalog::section("t3_orchestration")
+                )),
+                (text, false) => text,
+            };
+            if let Some(text) = text {
                 wanted.push((path, text));
             }
         }
@@ -436,16 +456,18 @@ pub fn existing(installed: &[App], home: &Path) -> Vec<PathBuf> {
 /// rules file an installed app could read, and of `also` (files read before a host moved).
 /// Returns the files that could not be written. With `hold`, a file due a new block keeps what it
 /// has and is reported instead; taking a block out still goes ahead.
+#[allow(clippy::too_many_arguments)]
 pub fn sync(
     installed: &[App],
     connected: &[App],
     home: &Path,
     document: &Value,
+    t3_active: bool,
     also: &[PathBuf],
     backup: &Backup<'_>,
     hold: bool,
 ) -> Vec<Value> {
-    let wanted = wanted(connected, home, document);
+    let wanted = wanted(connected, home, document, t3_active);
     let mut paths: Vec<PathBuf> = wanted.iter().map(|(path, _)| path.clone()).collect();
     for path in existing(installed, home)
         .into_iter()
@@ -471,8 +493,14 @@ pub fn sync(
         .collect()
 }
 
-pub fn list(installed: &[App], connected: &[App], home: &Path, document: &Value) -> Value {
-    let wanted = wanted(connected, home, document);
+pub fn list(
+    installed: &[App],
+    connected: &[App],
+    home: &Path,
+    document: &Value,
+    t3_active: bool,
+) -> Value {
+    let wanted = wanted(connected, home, document, t3_active);
     let files: Vec<Value> = files(installed, home)
         .into_iter()
         .map(|(path, readers)| {

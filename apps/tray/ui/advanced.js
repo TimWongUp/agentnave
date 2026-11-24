@@ -136,7 +136,8 @@
       showNotice(AN.L(`无法读取编排设置：${error.message}`, `Failed to load orchestration settings: ${error.message}`), true);
     }
     renderOrchestration();
-    window.AgentNaveDecisionSeats?.load();
+    const decisionLoaded = window.AgentNaveDecisionSeats?.load();
+    window.AgentNaveT3Seats?.load(decisionLoaded);
     // Review seats depend on whether any boss orchestrates.
     renderReviewSeats();
     renderAdvancedBar();
@@ -520,6 +521,7 @@
       if (focusKey) roles.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
     }
     renderRuleFiles();
+    window.AgentNaveT3Seats?.render();
   }
 
   function renderRuleFiles() {
@@ -857,6 +859,7 @@
       seatsChanged() && AN.L("评审工位", "Review seats"),
       orchestrationChanged() && AN.L("编排", "Orchestration"),
       window.AgentNaveDecisionSeats?.changed() && AN.L("决策模型推荐工位", "Decision-model seats"),
+      window.AgentNaveT3Seats?.changed() && AN.L("T3 Code", "T3 Code"),
     ].filter(Boolean);
   }
 
@@ -868,16 +871,18 @@
     const changes = advancedChanges();
     const blocked = blockedSeat();
     const decisionProblem = window.AgentNaveDecisionSeats?.changed() ? window.AgentNaveDecisionSeats.problem() : null;
-    const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked) || Boolean(decisionProblem);
+    const t3Problem = window.AgentNaveT3Seats?.changed() ? window.AgentNaveT3Seats.problem() : null;
+    const invalid = (orchestrationChanged() && customEmpty()) || Boolean(blocked) || Boolean(decisionProblem) || Boolean(t3Problem);
     $("advanced-dirty").textContent = changes.length ? AN.L(`未保存：${changes.join("、")}`, `Unsaved: ${changes.join(", ")}`) : "";
-    $("advanced-badge").hidden = !(orchestrationChanged() || window.AgentNaveDecisionSeats?.changed());
+    $("advanced-badge").hidden = !(orchestrationChanged() || window.AgentNaveDecisionSeats?.changed() || window.AgentNaveT3Seats?.changed());
     $("skills-badge").hidden = !(window.AgentNaveSkills?.changed() || seatsChanged());
     $("advanced-save").disabled = S.busy || !changes.length || invalid;
     $("advanced-discard").disabled = S.busy || !changes.length;
     const feedback = $("advanced-feedback");
     if (invalid) {
-      feedback.textContent = blocked ? seatConflictText(blocked) : decisionProblem && !(orchestrationChanged() && customEmpty()) ? decisionProblem
-        : AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules");
+      feedback.textContent = blocked ? seatConflictText(blocked)
+        : (orchestrationChanged() && customEmpty()) ? AN.L("自定义规则不能为空；不想写入时选「关闭」", "Custom rules cannot be empty; choose “Off” if you don’t want to write rules")
+        : decisionProblem || t3Problem;
       feedback.className = "save-feedback error";
       feedback.dataset.validation = "true";
     } else if (feedback.dataset.validation === "true") {
@@ -907,6 +912,7 @@
     if (orchestration) orchestrationView = savedView();
     window.AgentNaveSkills?.discard();
     window.AgentNaveDecisionSeats?.discard();
+    window.AgentNaveT3Seats?.discard();
     renderOrchestration();
     renderReviewSeats();
     advancedEdited();
@@ -915,6 +921,7 @@
   async function saveAdvanced() {
     if (S.busy || !advancedChanges().length || (orchestrationChanged() && customEmpty()) || blockedSeat()) return;
     if (window.AgentNaveDecisionSeats?.changed() && window.AgentNaveDecisionSeats.problem()) return;
+    if (window.AgentNaveT3Seats?.changed() && window.AgentNaveT3Seats.problem()) return;
     S.busy = true;
     $("pane-advanced").inert = $("pane-orchestration").inert = true;
     S.updateControls();
@@ -939,6 +946,7 @@
     const catalogSaved = await attempt(() => window.AgentNaveDecisionSeats?.changed(), AN.L("决策模型推荐工位", "Decision-model seats"), window.AgentNaveDecisionSeats?.save);
     if (catalogSaved) await attempt(orchestrationChanged, AN.L("编排", "Orchestration"), saveOrchestration);
     else if (orchestrationChanged()) failures.push(AN.L("编排：档位未保存，因为决策模型推荐工位没有保存成功", "Orchestration: modes not saved, because the decision-model seats were not saved"));
+    await attempt(() => window.AgentNaveT3Seats?.changed(), AN.L("T3 Code", "T3 Code"), window.AgentNaveT3Seats?.save);
     failures.push(...await window.AgentNaveSkills.save());
     S.busy = false;
     $("pane-advanced").inert = $("pane-orchestration").inert = false;
@@ -965,9 +973,9 @@
 
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
-    viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, seatsShown, seatConflicts,
+    viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, renderRuleFiles, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
-    advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced,
+    advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced, REVIEW_ROLES,
     orchestrationShown, bossMode, setBossMode, liveSeats, roleCatalog, roleName, orchestrationSeat, seatModels
   });
   S.share({

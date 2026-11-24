@@ -58,7 +58,7 @@
     // The confirmation sits in the save bar of the page holding the edits.
     const tab = S.dirty || !S.advancedChanges().length ? "members"
       : ["orchestration", "advanced"].includes(S.currentTab) ? S.currentTab
-      : S.orchestrationChanged() ? "orchestration" : "advanced";
+      : (S.orchestrationChanged() || window.AgentNaveDecisionSeats?.changed() || window.AgentNaveT3Seats?.changed()) ? "orchestration" : "advanced";
     if (S.currentTab !== tab) {
       setTab(tab);
       history.replaceState(null, "", `#${tab}`);

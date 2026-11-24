@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "review": {
+    "unknown-reviewer": [
+      {"instance": "codex", "model": "gpt-6.2-astra"}
+    ]
+  }
+}

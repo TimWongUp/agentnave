@@ -32,13 +32,16 @@ pub(crate) fn orchestration_request(
         });
     }
     if path == "/app/rules" || path == "/app/rules/open" {
-        let home = dirs::home_dir().unwrap_or_default();
-        let apps = host_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        let guard = host_state.lock().unwrap_or_else(|p| p.into_inner());
+        let home = guard
+            .as_ref()
+            .map(|hosts| hosts.context.home.clone())
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
+        let apps = guard
             .as_ref()
             .map(crate::hosts::Hosts::rule_apps)
             .unwrap_or_default();
+        drop(guard);
         return crate::rules::request(method, path, action, body, &apps, &home, || {
             rule_files(root, host_state)
         });
@@ -162,21 +165,31 @@ pub(crate) fn sync_orchestration(
             failures.push(json!({"path": root.join("orchestration.json"), "error": error}));
         }
     }
-    failures.extend(hosts.sync_rules(&document, also));
+    if let Ok(t3) = crate::t3_seats::read(root) {
+        let t3_active = t3.as_ref().is_some_and(crate::t3_seats::is_active);
+        failures.extend(hosts.sync_rules(&document, t3_active, also));
+    }
     failures.extend(hosts.sync_main_skills());
     failures
 }
 /// The global rules files with whether each carries the current orchestration block.
-fn rule_files(root: &Path, host_state: &Mutex<Option<Hosts>>) -> Value {
-    let home = dirs::home_dir().unwrap_or_default();
+pub(super) fn rule_files(root: &Path, host_state: &Mutex<Option<Hosts>>) -> Value {
     let guard = host_state.lock().unwrap_or_else(|p| p.into_inner());
+    let home = guard
+        .as_ref()
+        .map(|hosts| hosts.context.home.clone())
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default());
     let (installed, connected) = guard
         .as_ref()
         .map(|hosts| (hosts.rule_apps(), hosts.connected_rule_apps()))
         .unwrap_or_default();
     let document =
         crate::members::read_orchestration(root).unwrap_or_else(|_| json!({"preset": "off"}));
-    crate::rules::list(&installed, &connected, &home, &document)
+    let t3_active = crate::t3_seats::read(root)
+        .ok()
+        .flatten()
+        .is_some_and(|doc| crate::t3_seats::is_active(&doc));
+    crate::rules::list(&installed, &connected, &home, &document, t3_active)
 }
 pub(crate) fn skill_request(method: &str) -> Response {
     if method != "GET" {

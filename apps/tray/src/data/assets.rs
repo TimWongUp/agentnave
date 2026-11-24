@@ -232,6 +232,10 @@ fn settings_asset(resource: &str) -> Response {
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/decision-seats.js").to_vec(),
         ),
+        "t3-seats.js" => Response::ok(
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../ui/t3-seats.js").to_vec(),
+        ),
         "pane-loader.js" => Response::ok(
             "text/javascript; charset=utf-8",
             include_bytes!("../../ui/pane-loader.js").to_vec(),

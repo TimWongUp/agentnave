@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "seats": [
+    {
+      "id": "s-1",
+      "kind": "custom",
+      "role": "写代码",
+      "description": "写代码",
+      "access": "write",
+      "difficulty": "medium",
+      "candidates": [
+        {"instance": "a", "model": "m1"},
+        {"instance": "b", "model": "m2"},
+        {"instance": "c", "model": "m3"},
+        {"instance": "d", "model": "m4"},
+        {"instance": "e", "model": "m5"}
+      ]
+    }
+  ]
+}

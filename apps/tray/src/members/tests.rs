@@ -548,6 +548,7 @@ fn app_file_samples_agree_with_the_server() {
             "orchestration" => validate_orchestration,
             "permissions" => validate_permissions,
             "decision-seats" => crate::decision_seats::validate,
+            "t3-seats" => crate::t3_seats::validate,
             "settings" => |document| crate::settings::validate(document).map(drop),
             "accounts" => crate::accounts::validate,
             other => panic!("no check for {other} samples"),

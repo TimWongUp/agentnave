@@ -46,6 +46,7 @@ from agentnave.orchestration_roles import (
     OrchestrationStatus,
     role_catalog,
 )
+from agentnave.t3_seats import T3SeatsFile
 from agentnave.task_start import role_access
 
 APP_FILES = Path(__file__).parent / "fixtures" / "app-files"
@@ -58,6 +59,7 @@ APP_MODELS: dict[
         | PermissionFile
         | DecisionSeatsFile
         | AccountsFile
+        | T3SeatsFile
     ],
 ] = {
     "accounts": AccountsFile,
@@ -66,6 +68,7 @@ APP_MODELS: dict[
     "review": ReviewFile,
     "orchestration": OrchestrationFile,
     "permissions": PermissionFile,
+    "t3-seats": T3SeatsFile,
 }
 
 
@@ -119,6 +122,13 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
         assert lead["when_false"] in rules["sections"][name]
     # The decision text has no per-group seat lines.
     assert "enabled_roles" not in rules["order"]["decision"]
+    t3_line = rules["sections"]["t3_orchestration"]
+    assert t3_line.startswith(
+        "\n- 在 T3 Code 主线程（有 `delegate_task` 工具）里，用户已开启 T3 编排："
+    )
+    assert "`recommend_seat`" in t3_line and "`delegate_task`" in t3_line
+    assert "由 `delegate_task` 派出的线程只完成自己的任务，不再派发或开会。" in t3_line
+    assert all("t3_orchestration" not in steps for steps in rules["order"].values())
     assert set(rules["meeting_defaults"]["provider_names"]) == set(get_args(ProviderName.__value__))
 
     providers_rs = (

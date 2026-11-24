@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "seats": [
+    {
+      "id": "s-1",
+      "kind": "custom",
+      "role": "写代码",
+      "description": "写代码",
+      "access": "write",
+      "difficulty": "medium",
+      "candidates": [
+        {"instance": " codex ", "model": "gpt-6.2-astra"}
+      ]
+    }
+  ]
+}
