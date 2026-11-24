@@ -115,6 +115,10 @@ pub(super) fn migrate_legacy(text: &str) -> String {
             "互不依赖的写入步骤并行派给多个可写工位",
         )
         .replace(
+            "互不依赖的写入步骤并行派给多个可写工位",
+            "互不依赖的写入步骤各用独立 worktree 并行派给多个可写工位",
+        )
+        .replace(
             "各用独立 worktree，做不到就串行。",
             "各用独立 worktree，做不到就串行；项目规定不建 worktree（如要求直接在 main 修改）时也算做不到。",
         )
