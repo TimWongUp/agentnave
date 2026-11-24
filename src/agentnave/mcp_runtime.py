@@ -235,14 +235,7 @@ def _claude_exact_family_alias(model: str) -> str | None:
 
 
 def _claude_family_alias(model: str) -> str | None:
-    exact = _claude_exact_family_alias(model)
-    if exact is not None:
-        return exact
-    normalized = model.strip().lower()
-    for alias in _CLAUDE_FAMILY_ALIASES:
-        if alias in normalized:
-            return alias
-    return None
+    return next((alias for alias in _CLAUDE_FAMILY_ALIASES if alias in model.lower()), None)
 
 
 def _claude_native_seat_guidance(model: str | None, effort: str | None) -> str:
