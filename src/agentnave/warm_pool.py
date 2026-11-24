@@ -141,7 +141,7 @@ class WarmPool:
         self.limit = limit
         # Least recently used first.
         self._entries: OrderedDict[tuple[str, str], _Entry] = OrderedDict()
-        self._ending: set[asyncio.Task[None]] = set()
+        self._ending: dict[asyncio.Task[None], tuple[str, str]] = {}
         self._closed = False
 
     def __len__(self) -> int:
@@ -155,15 +155,23 @@ class WarmPool:
         entry.release()
         return entry.kept
 
+    async def ended(self, provider: str, session_id: str) -> None:
+        """Wait until no process of the session is still ending, so a new one never shares the
+        native session with an old one on its way out."""
+        key = (provider, session_id)
+        ending = [task for task, owner in self._ending.items() if owner == key]
+        if ending:
+            await asyncio.gather(*ending, return_exceptions=True)
+
     def keep(self, provider: str, session_id: str, kept: KeptProcess) -> None:
         """Keep a process for its session's next turn, restarting its keep period."""
-        if self._closed:
-            self._end(kept)
-            return
         key = (provider, session_id)
+        if self._closed:
+            self._end(key, kept)
+            return
         previous = self.take(provider, session_id)
         if previous is not None and previous is not kept:
-            self._end(previous)
+            self._end(key, previous)
 
         def on_exit(_completion: asyncio.Task[ProviderCompletion]) -> None:
             self._expire(key, kept)
@@ -172,17 +180,17 @@ class WarmPool:
         kept.supervised.completion.add_done_callback(on_exit)
         self._entries[key] = _Entry(kept, timer, on_exit)
         while len(self._entries) > self.limit:
-            _, oldest = self._entries.popitem(last=False)
+            oldest_key, oldest = self._entries.popitem(last=False)
             oldest.release()
-            self._end(oldest.kept)
+            self._end(oldest_key, oldest.kept)
 
     async def close(self) -> None:
         """End every kept process and wait for all of them, including those already ending."""
         self._closed = True
         while self._entries:
-            _, entry = self._entries.popitem(last=False)
+            key, entry = self._entries.popitem(last=False)
             entry.release()
-            self._end(entry.kept)
+            self._end(key, entry.kept)
         await asyncio.gather(*self._ending, return_exceptions=True)
 
     def _expire(self, key: tuple[str, str], kept: KeptProcess) -> None:
@@ -191,9 +199,9 @@ class WarmPool:
             return
         del self._entries[key]
         entry.release()
-        self._end(kept)
+        self._end(key, kept)
 
-    def _end(self, kept: KeptProcess) -> None:
+    def _end(self, key: tuple[str, str], kept: KeptProcess) -> None:
         task = asyncio.create_task(kept.end())
-        self._ending.add(task)
-        task.add_done_callback(self._ending.discard)
+        self._ending[task] = key
+        task.add_done_callback(lambda done: self._ending.pop(done, None))

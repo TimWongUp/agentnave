@@ -621,7 +621,7 @@ class Groups:
                 account=seat.account,
             )
             run.invocation_id = (
-                self.manager.start(req, on_settled=on_settled)
+                self.manager.start(req, on_settled=on_settled, isolated=True)
                 if on_settled is not None
                 else self.manager.start(req)
             )

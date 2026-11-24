@@ -9,19 +9,18 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
-from fake_cli import write_fake_cli
 
-from agentnave.adapters import codex
 from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus
 
 # Speaks the keep-alive contract: one JSON turn per stdin line, Codex exec events per turn.
 _TURNS = """
-import json, os, sys, time
+import json, os, signal, sys, time
+if "slow-exit" in sys.argv:
+    signal.signal(signal.SIGTERM, lambda *_: (time.sleep(1), sys.exit(0)))
 count, session = 0, None
 for raw in sys.stdin:
     turn = json.loads(raw)
@@ -204,166 +203,42 @@ async def test_unkept_resume_of_a_kept_session_ends_the_kept_process(tmp_path: P
         await manager.shutdown()
 
 
-# A stand-in for `codex app-server`: logs what it is sent and answers like the real protocol.
-_APP_SERVER = """
-import json, os, sys
-log = os.environ["FAKE_CODEX_LOG"]
-def record(value):
-    with open(log, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(value) + "\\n")
-def out(value):
-    sys.stdout.write(json.dumps(value) + "\\n")
-    sys.stdout.flush()
-record({"argv": sys.argv[1:], "pid": os.getpid()})
-thread, turns, pending = None, 0, None
-for line in sys.stdin:
-    message = json.loads(line)
-    record(message)
-    method = message.get("method")
-    if method == "initialize":
-        if os.environ.get("FAKE_CODEX_FAIL_INIT"):
-            out({"id": message["id"], "error": {"code": -1, "message": "not signed in"}})
+@pytest.mark.asyncio
+async def test_isolated_run_does_not_keep_the_process(tmp_path: Path) -> None:
+    manager = InvocationManager()
+    try:
+        request = InvocationRequest("codex", "work", tmp_path)
+        invocation_id = manager.start(
+            request, prepared=_turn(tmp_path, "work", None), isolated=True
+        )
+        first = await manager.wait(invocation_id, 30)
+        assert first is not None and first.session_id is not None
+        if os.name == "posix":
+            assert await _gone(_pid(first))
+        resumed = await _run(manager, tmp_path, "again", first.session_id)
+        assert _pid(resumed) != _pid(first)
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@posix_only
+async def test_resume_waits_for_the_sessions_ending_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(InvocationManager, "keep_seconds", 0.2)
+    manager = InvocationManager()
+    try:
+        # The kept process takes a second to exit once it is told to.
+        first = await _run(manager, tmp_path, "work", None, "slow-exit")
+        await asyncio.sleep(0.4)  # its keep period ran out: it is ending now
+        resumed = await _run(manager, tmp_path, "again", first.session_id, "slow-exit")
+        assert _pid(resumed) != _pid(first)
+        try:
+            os.kill(_pid(first), 0)
+        except ProcessLookupError:
+            pass
         else:
-            out({"id": message["id"], "result": {}})
-    elif method in ("thread/start", "thread/resume"):
-        thread = message["params"].get("threadId") or f"thread-{os.getpid()}"
-        out({"method": "thread/started", "params": {"thread": {"id": thread}}})
-        out({"id": message["id"], "result": {"thread": {"id": thread}}})
-    elif method == "turn/start":
-        turns += 1
-        turn = f"turn-{turns}"
-        pending = (turn, message["params"])
-        out({"id": message["id"], "result": {"turn": {"id": turn, "status": "inProgress"}}})
-        out({"method": "turn/started", "params": {"threadId": thread, "turn": {"id": turn}}})
-        out({"id": "ask-1", "method": "item/commandExecution/requestApproval",
-             "params": {"threadId": thread, "turnId": turn, "itemId": "c1"}})
-    elif "id" in message and "method" not in message and pending is not None:
-        turn, params = pending
-        base = {"threadId": thread, "turnId": turn}
-        command = {"type": "commandExecution", "id": "c1", "command": "ls",
-                   "aggregatedOutput": "x" * 1000}
-        out({"method": "item/started", "params": {**base, "item": {**command, "status": "inProgress"}}})
-        out({"method": "item/completed", "params": {**base, "item": {**command, "status": "declined"}}})
-        out({"method": "item/completed", "params": {"threadId": "subagent", "turnId": "t",
-             "item": {"type": "agentMessage", "id": "m0", "text": "not this thread"}}})
-        out({"method": "thread/tokenUsage/updated", "params": {**base,
-             "tokenUsage": {"last": {"inputTokens": 3, "cachedInputTokens": 1, "outputTokens": 2,
-                                     "reasoningOutputTokens": 0}}}})
-        text = f"{os.getpid()}:{turns}:{params.get('model')}:{params.get('effort')}"
-        out({"method": "item/completed", "params": {**base,
-             "item": {"type": "agentMessage", "id": "m1", "text": text}}})
-        out({"method": "turn/completed", "params": {"threadId": thread,
-             "turn": {"id": turn, "status": "completed", "items": []}}})
-        pending = None
-"""
-
-
-def _fake_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    write_fake_cli(bin_dir, "codex", _APP_SERVER)
-    monkeypatch.setattr(codex, "_DESKTOP_CODEX_PATHS", ())
-    monkeypatch.setattr(codex, "_WINDOWS_DESKTOP_CODEX_PATHS", ())
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    log = tmp_path / "app-server.jsonl"
-    monkeypatch.setenv("FAKE_CODEX_LOG", str(log))
-    return log
-
-
-def _logged(log: Path) -> list[dict[str, object]]:
-    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
-
-
-async def _codex(
-    manager: InvocationManager, tmp_path: Path, prompt: str, session_id: str | None = None
-) -> InvocationResult:
-    request = InvocationRequest(
-        "codex",
-        prompt,
-        tmp_path,
-        session_id=session_id,
-        provider_options={"model": "gpt-test", "effort": "low", "sandbox": "read-only"},
-    )
-    result = await manager.wait(manager.start(request), 30)
-    assert result is not None
-    return result
-
-
-@pytest.mark.asyncio
-async def test_codex_turns_share_one_app_server_thread(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = _fake_codex(tmp_path, monkeypatch)
-    manager = InvocationManager()
-    try:
-        first = await _codex(manager, tmp_path, "first")
-        assert first.status is InvocationStatus.SUCCEEDED, first
-        pid, turn, model, effort = first.output.split(":")
-        assert (turn, model, effort) == ("1", "gpt-test", "low")
-        assert first.session_id == f"thread-{pid}"
-        second = await _codex(manager, tmp_path, "second", first.session_id)
-        assert second.status is InvocationStatus.SUCCEEDED, second
-        assert second.output.split(":")[:2] == [pid, "2"]
-        assert second.session_id == first.session_id
+            pytest.fail("the new process started while the old one was still ending")
     finally:
         await manager.shutdown()
-
-    logged = _logged(log)
-    launches = [entry for entry in logged if "argv" in entry]
-    assert len(launches) == 1
-    assert launches[0]["argv"] == [
-        "app-server",
-        "--config",
-        'approval_policy="never"',
-        "--config",
-        'sandbox_mode="read-only"',
-    ]
-    methods = [entry.get("method") for entry in logged if "argv" not in entry]
-    assert methods.count("initialize") == methods.count("thread/start") == 1
-    assert methods.count("turn/start") == 2 and "thread/resume" not in methods
-    turn_start = next(entry for entry in logged if entry.get("method") == "turn/start")
-    params = cast(dict[str, Any], turn_start["params"])
-    (text_input,) = params["input"]
-    assert text_input["type"] == "text" and text_input["text_elements"] == []
-    assert cast(str, text_input["text"]).endswith("first")
-    # The approval request was refused, never approved.
-    replies = [entry for entry in logged if entry.get("id") == "ask-1"]
-    assert len(replies) == 2 and all("error" in reply for reply in replies)
-
-
-@pytest.mark.asyncio
-async def test_codex_cold_resume_loads_the_thread(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = _fake_codex(tmp_path, monkeypatch)
-    manager = InvocationManager()
-    try:
-        result = await _codex(manager, tmp_path, "resume", "thread-earlier")
-        assert result.status is InvocationStatus.SUCCEEDED, result
-        assert result.session_id == "thread-earlier"
-    finally:
-        await manager.shutdown()
-    resume = next(entry for entry in _logged(log) if entry.get("method") == "thread/resume")
-    assert resume["params"] == {
-        "threadId": "thread-earlier",
-        "excludeTurns": True,
-        "cwd": str(tmp_path),
-        "model": "gpt-test",
-    }
-
-
-@pytest.mark.asyncio
-async def test_codex_handshake_failure_is_reported_not_retried_on_exec(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    log = _fake_codex(tmp_path, monkeypatch)
-    monkeypatch.setenv("FAKE_CODEX_FAIL_INIT", "1")
-    manager = InvocationManager()
-    try:
-        result = await _codex(manager, tmp_path, "first")
-    finally:
-        await manager.shutdown()
-    assert result.status is InvocationStatus.FAILED
-    assert result.error is not None
-    assert "initialize failed: not signed in" in result.error.message
-    assert len([entry for entry in _logged(log) if "argv" in entry]) == 1

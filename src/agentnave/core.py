@@ -173,6 +173,8 @@ class _InvocationRecord:
     # A process whose turn ended with it still running, until the run's outcome decides
     # whether it is kept for the next resume (ADR-0120).
     kept: KeptProcess | None = None
+    # Runs in an isolated dir, which is released after the run: its process is never kept.
+    isolated: bool = False
 
     def raise_attention(self, error: InvocationError) -> None:
         """Queue a running-time blocker for the next wait and wake the inbox."""
@@ -706,9 +708,11 @@ class InvocationManager:
         claim: IO[bytes] | None = None,
         on_settled: Callable[[str, InvocationStatus], None] | None = None,
         terminal: TerminalLaunch | None = None,
+        isolated: bool = False,
     ) -> str:
         """Start one run; it owns claim (a reserve() result, taken here when omitted) from this
-        call on and releases it once its process tree has ended."""
+        call on and releases it once its process tree has ended. An isolated run (in an
+        isolated dir) never keeps its process (ADR-0120)."""
         if claim is None:
             claim = self.reserve(request)
         try:
@@ -721,6 +725,7 @@ class InvocationManager:
                 start_seq=self._next_seq(),
                 session_id=request.session_id or prepared.session_id,
                 on_inbox_change=self.on_inbox_change,
+                isolated=isolated,
             )
             if prepared.keep_stdin_open:
                 record.prompts.encode = adapter.encode_prompt_answer
@@ -1372,15 +1377,17 @@ class InvocationManager:
         held as kept when the Adapter declared it can serve later turns. None: cancelled first."""
         request = record.request
         signature = launch_signature(prepared, request.account)
+        keepable = can_keep(prepared) and not record.isolated
         if record.cancel_event.is_set():
             return None
         if request.session_id is not None:
             kept = self._pool.take(request.provider, request.session_id)
             if kept is not None:
-                if can_keep(prepared) and kept.signature == signature and kept.alive():
+                if keepable and kept.signature == signature and kept.alive():
                     return kept.supervised, kept
                 # Started differently: it must not share the native session with a new process.
                 await kept.end()
+            await self._pool.ended(request.provider, request.session_id)
         if not await self._wait_to_spawn(record):
             return None
         try:
@@ -1402,7 +1409,7 @@ class InvocationManager:
             self._last_spawn[request.provider] = time.monotonic()
         finally:
             self._spawn_locks[request.provider].release()
-        if not can_keep(prepared):
+        if not keepable:
             return supervised, None
         return supervised, KeptProcess.adopt(supervised, signature)
 
