@@ -148,8 +148,11 @@ impl Hosts {
             {
                 root.path = profile;
             }
-            // A named account's folder is the user's own choice, so there is nothing to confirm.
-            if self.manual_roots.contains(id) || split::is_account_row(id) {
+            // A named account's folder or discovered T3 profile is already concrete on disk.
+            if self.manual_roots.contains(id)
+                || split::is_account_row(id)
+                || split::is_t3_antigravity_row(id)
+            {
                 root.confirmed = true;
             }
             let mut paths = vec![root.path.join(file)];
@@ -174,13 +177,14 @@ impl Hosts {
                 })
                 .unwrap_or_else(|| paths.last().unwrap())
                 .clone();
+            let skill = Some(skill_path(id, &root.path, h));
             Host {
                 home: self.context.home.clone(),
                 id,
                 boss,
                 label,
                 binary,
-                skill: Some(root.path.join("skills/agentnave-manager")),
+                skill,
                 root,
                 config,
                 format,
@@ -190,8 +194,40 @@ impl Hosts {
         };
         let mut hosts: Vec<Host> = specs.into_iter().map(&build).collect();
         // The readers of each row's file show on its card, not in its name (ADR-0071).
-        let rows = split::rows(&self.context, &hosts, &self.codex_homes);
+        let rows = split::rows(
+            &self.context,
+            &hosts,
+            &self.codex_homes,
+            &self.t3_antigravity_homes,
+        );
         hosts.extend(rows.into_iter().map(&build));
         hosts
     }
+}
+
+/// T3 Code symlinks `<profile>/config/skills` to `~/.gemini/config/skills`. Resolve a safe link
+/// (or a not-yet-linked T3 profile) to the shared directory so Skill installation neither fails
+/// as blocked nor replaces T3's link; unsafe links stay unresolved so `safe_path` still rejects.
+fn skill_path(id: &str, root: &Path, home: &Path) -> PathBuf {
+    let skills = root.join("skills");
+    if !split::is_t3_antigravity_row(id) {
+        return skills.join("agentnave-manager");
+    }
+    if skills.is_symlink() {
+        if let Ok(target) = fs::read_link(&skills) {
+            let resolved = if target.is_absolute() {
+                target
+            } else {
+                root.join(target)
+            };
+            if resolved.starts_with(home) && safe_path(&resolved, home).is_ok() {
+                return resolved.join("agentnave-manager");
+            }
+        }
+        return skills.join("agentnave-manager");
+    }
+    if skills.exists() {
+        return skills.join("agentnave-manager");
+    }
+    home.join(".gemini/config/skills/agentnave-manager")
 }

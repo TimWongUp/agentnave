@@ -7,6 +7,7 @@ mod decision_seats;
 mod faults;
 mod meeting_skill;
 mod reload_guidance;
+mod t3_antigravity;
 mod timeouts;
 mod tools_upgrade;
 mod uninstall;

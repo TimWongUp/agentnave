@@ -20,6 +20,7 @@ pub(super) const VARIABLES: &[&str] = &[
     "GROK_HOME",
     "HERMES_HOME",
     "DSH_HOME",
+    "T3CODE_HOME",
     "UV_TOOL_DIR",
     "UV_TOOL_BIN_DIR",
     "XDG_BIN_HOME",

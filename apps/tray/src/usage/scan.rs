@@ -86,7 +86,11 @@ pub(super) fn roots(homes: &Homes) -> Vec<(&'static str, PathBuf, usize)> {
         }
     }
 
-    for (_, root) in homes.other.iter().filter(|(host, _)| host == "antigravity") {
+    for (_, root) in homes
+        .other
+        .iter()
+        .filter(|(host, _)| matches!(host.as_str(), "antigravity" | "antigravity-acp"))
+    {
         push_unique(&mut dirs, &mut seen, "antigravity", root.join("brain"), 5);
     }
     push_unique(
