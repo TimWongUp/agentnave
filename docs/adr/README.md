@@ -73,7 +73,7 @@
 | 0067 | [按宿主后台与插话边界将等待窗口定为 270 秒](0067-wait-270s-window-and-host-background-limits.md) | 部分修订 | 修订 ADR-0007、ADR-0015、ADR-0066；[ADR-0077](0077-claude-long-wait.md)；agy 等待方式由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订 |
 | 0068 | [规则块只放授权，编排方法进 Skill；两档按并行写入由谁拍板区分](0068-rules-hold-authorization-skill-holds-method.md) | 部分修订 | 修订 ADR-0037、ADR-0051、ADR-0065；[ADR-0073](0073-dispatch-by-default-with-small-task-boundary.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)、[ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md)、[ADR-0091](0091-meetings-only-skill-and-auto-meeting-switch.md)、[ADR-0117](0117-private-dispatch-without-skill.md) |
 | 0069 | [专项收敛为五个并带范围，界面制作改为普通专项，专项默认一个模型](0069-interface-seat-as-specialist-and-single-model-specialists.md) | 已接受 | 修订 ADR-0052、ADR-0065 |
-| 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已接受 | — |
+| 0070 | [Devin 改用 ACP 运行](0070-devin-runs-over-acp.md) | 已撤销 | [ADR-0119](0119-remove-devin.md) |
 | 0071 | [跨平台按配置行归属连接并展示读取者](0071-cross-platform-host-readers-and-receipts.md) | 已接受 | 修订 ADR-0040 |
 | 0072 | [Antigravity CLI 在权限放开时改用交互模式运行](0072-antigravity-interactive-runtime.md) | 部分修订 | [ADR-0078](0078-startup-confirmations.md)、[ADR-0079](0079-agy-screen-activity.md)、[ADR-0102](0102-agy-native-status.md)；省额度前提更正见 [ADR-0111](0111-self-drawn-conversation-view.md)；空闲受阻适用阶段由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订 |
 | 0073 | [开启编排后派发是默认做法，「小事」写成可判断的边界；「只负责编排」是默认关的开关](0073-dispatch-by-default-with-small-task-boundary.md) | 部分修订 | 扩展并修订 ADR-0068；固定档专项不再排除在小事外由 [ADR-0107](0107-specialist-scope-closing-and-fallback-note.md) 修订；上下文已全在 boss 手里的定稿写作例外由 [ADR-0110](0110-boss-writes-when-holding-context.md) 修订；2026-11-21 对照实测复核确认维持默认派发边界不变 |
@@ -122,3 +122,4 @@
 | 0116 | [运行中任务长时间无实质进展时提醒 boss 一次](0116-progress-stall-reminder.md) | 已接受 | 补充 ADR-0049；沿用 ADR-0114 的到限提醒方式 |
 | 0117 | [普通私聊派发不必先读 Skill，用法放进工具描述与回执](0117-private-dispatch-without-skill.md) | 已接受 | 修订 ADR-0068 的「归属」；沿用 ADR-0028、0032、0043、0056、0074、0114 |
 | 0118 | [App 添加 Claude 账号可关联已有配置目录](0118-link-existing-claude-account-dirs.md) | 已接受 | 修订 ADR-0108（恢复关联已有目录）、ADR-0029（允许手填账号配置目录）、ADR-0022（具名账号接入行不显示「待确认生效」）；沿用 ADR-0108 外部目录账号边界 |
+| 0119 | [撤掉 Devin CLI 支持](0119-remove-devin.md) | 已接受 | 撤销 ADR-0070 |
