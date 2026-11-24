@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -61,6 +62,18 @@ async def _run(
     return result
 
 
+def _line(session_id: str | None, prompt: str) -> bytes:
+    return json.dumps({"session_id": session_id, "prompt": prompt}).encode() + b"\n"
+
+
+async def _run_prepared(
+    manager: InvocationManager, request: InvocationRequest, prepared: PreparedCommand
+) -> InvocationResult:
+    result = await manager.wait(manager.start(request, prepared=prepared), 30)
+    assert result is not None
+    return result
+
+
 def _pid(result: InvocationResult) -> int:
     assert result.status is InvocationStatus.SUCCEEDED, result
     return int(result.output.split(":")[0])
@@ -102,6 +115,51 @@ async def test_resume_within_keep_period_reuses_the_process(tmp_path: Path) -> N
         await manager.shutdown()
     if os.name == "posix":
         assert await _gone(_pid(first))
+
+
+@pytest.mark.asyncio
+async def test_changed_launch_inputs_start_a_new_process(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text("a")
+
+    def inputs(_env: Mapping[str, str]) -> object:
+        return config.read_text()
+
+    manager = InvocationManager()
+    try:
+        kept = replace(_turn(tmp_path, "work", None), launch_inputs=inputs)
+        # The same launch reuses the process while its inputs stay the same ...
+        first = await _run_prepared(manager, InvocationRequest("codex", "work", tmp_path), kept)
+        same = replace(kept, stdin=_line(first.session_id, "again"))
+        request = InvocationRequest("codex", "again", tmp_path, session_id=first.session_id)
+        assert _pid(await _run_prepared(manager, request, same)) == _pid(first)
+        # ... and a changed config file starts a new one.
+        config.write_text("b")
+        changed = await _run_prepared(manager, request, same)
+        assert _pid(changed) != _pid(first)
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_resume_without_a_kept_process_runs_the_unkept_command(tmp_path: Path) -> None:
+    manager = InvocationManager()
+    try:
+        first = await _run(manager, tmp_path)
+        request = InvocationRequest("codex", "again", tmp_path, session_id=first.session_id)
+        unkept = replace(_turn(tmp_path, "again", first.session_id, "unkept"), keep_alive=False)
+        resume = replace(_turn(tmp_path, "again", first.session_id), unkept=unkept)
+        # A kept process serves the resume ...
+        assert _pid(await _run_prepared(manager, request, resume)) == _pid(first)
+        # ... and with none kept for the session, the one-off command runs, unkept.
+        other = InvocationRequest("codex", "again", tmp_path, session_id="never-kept")
+        cold = replace(resume, unkept=replace(unkept, stdin=_line("never-kept", "again")))
+        result = await _run_prepared(manager, other, cold)
+        assert _pid(result) != _pid(first) and _turn_number(result) == 1
+        if os.name == "posix":
+            assert await _gone(_pid(result))
+    finally:
+        await manager.shutdown()
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,12 @@ class PreparedCommand:
     # written to stdout between turns, and the service may keep the process after a turn that
     # succeeded and write the next resume's stdin to it instead of starting another.
     keep_alive: bool = False
+    # For a keep_alive command: what else a kept process depends on (such as the provider's
+    # config files), read again for every launch from the environment the process gets, so a
+    # change starts a new process.
+    launch_inputs: Callable[[Mapping[str, str]], object] | None = None
+    # For a keep_alive resume: the one-off command to run when no kept process serves the turn.
+    unkept: PreparedCommand | None = None
 
 
 @dataclass(frozen=True, slots=True)

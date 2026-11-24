@@ -511,6 +511,11 @@ def test_codex_fixed_permissions_keep_an_app_server_on_every_turn(tmp_path: Path
             assert prepared.keep_alive and _bridged(prepared) == mode
             assert prepared.stdin is not None
             assert json.loads(prepared.stdin)["session_id"] == session_id
+            # With no kept process to serve it, a resume runs exec resume instead.
+            unkept = prepared.unkept
+            assert (unkept is None) is (session_id is None)
+            if unkept is not None:
+                assert unkept.argv[1:3] == ("exec", "resume") and not unkept.keep_alive
     resolved: tuple[dict[str, str | int | float | bool], ...] = (
         {"sandbox": "workspace-write"},
         {"approve_for_me": False},

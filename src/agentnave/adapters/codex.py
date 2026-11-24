@@ -10,6 +10,7 @@ import shutil
 import sys
 from collections.abc import Mapping
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 from agentnave.adapters.base import (
@@ -93,6 +94,35 @@ def _fixed_permissions(options: Mapping[str, ProviderOption]) -> str | None:
     if options.get("dangerously_bypass_approvals_and_sandbox") is True:
         return "bypass"
     return None
+
+
+def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[tuple[str, int, int] | str, ...]:
+    """The size and modification time of every file Codex 0.171 reads permissions from for cwd
+    (codex-rs/config/src/loader): the user and project config, the system config, requirements
+    and the legacy managed config. Cloud-managed config and macOS managed preferences are not
+    files and are not covered."""
+    home = Path(env.get("CODEX_HOME") or Path("~/.codex").expanduser())
+    if sys.platform == "win32":
+        data = env.get("ProgramData") or env.get("PROGRAMDATA") or r"C:\ProgramData"
+        system = Path(data, "OpenAI", "Codex")
+        paths = [system / "config.toml", system / "requirements.toml", home / "managed_config.toml"]
+    else:
+        system = Path("/etc/codex")
+        paths = [
+            system / name for name in ("config.toml", "requirements.toml", "managed_config.toml")
+        ]
+    paths.append(home / "config.toml")
+    directory = cwd.resolve()
+    paths.extend(folder / ".codex" / "config.toml" for folder in (directory, *directory.parents))
+    found: list[tuple[str, int, int] | str] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:
+            found.append(str(path))
+        else:
+            found.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(found)
 
 
 def _source() -> str | None:
@@ -232,17 +262,24 @@ class CodexAdapter(AdapterHooks):
         if source is not None and executable == "codex":
             name = "桌面端内置" if source == "desktop" else "独立"
             raise FileNotFoundError(f"指定的 Codex {name} CLI 不可用；请在员工设置中更换来源")
+        exec_command = self._exec_command(request, executable, options, discussion)
         mode = _fixed_permissions(request.provider_options)
-        if mode is not None and not discussion:
-            return self._app_server_command(request, executable, mode)
-        return self._exec_command(request, executable, options, discussion)
+        if mode is None or discussion:
+            return exec_command
+        # A kept process serves the next turns of the thread it started; any other resume runs
+        # exec resume, which sends the permissions it resolves itself (ADR-0120).
+        unkept = exec_command if request.session_id is not None else None
+        return self._app_server_command(request, executable, mode, unkept)
 
     def _app_server_command(
-        self, request: InvocationRequest, executable: str, mode: str
+        self,
+        request: InvocationRequest,
+        executable: str,
+        mode: str,
+        unkept: PreparedCommand | None,
     ) -> PreparedCommand:
-        """A bridge to `codex app-server` that can serve the thread's later turns (ADR-0120):
-        it sends the mode's permissions with every thread and turn request; model and effort
-        travel with each turn."""
+        """A bridge to `codex app-server` that can serve the thread's later turns (ADR-0120),
+        started with exec's config overrides; model and effort travel with each turn."""
         options = request.provider_options
         argv = [sys.executable, "-I", str(Path(__file__).with_name("codex_app_server.py"))]
         turn: dict[str, object] = {
@@ -271,6 +308,8 @@ class CodexAdapter(AdapterHooks):
             capture_line=_capture_line,
             skip_oversized_line=_skip_oversized_line,
             keep_alive=True,
+            launch_inputs=partial(_config_files, request.cwd),
+            unkept=unkept,
         )
 
     def _exec_command(

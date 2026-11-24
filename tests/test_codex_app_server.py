@@ -1,4 +1,4 @@
-"""The Codex app-server bridge: one thread over turns, with fixed permissions on each."""
+"""The Codex app-server bridge: one thread over turns, sent what `codex exec` sends."""
 
 from __future__ import annotations
 
@@ -12,11 +12,12 @@ import pytest
 from fake_cli import write_fake_cli
 
 from agentnave.adapters import codex
-from agentnave.adapters.codex_app_server import cancelled_elicitation
+from agentnave.adapters.codex_app_server import cancelled_elicitation, warning
 from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus, ProviderOption
 
-# A stand-in for `codex app-server`: logs what it is sent and answers like the real protocol.
+# A stand-in for `codex app-server` (and `codex exec`): logs what it is sent and answers like the
+# real protocol. The thread's resolved approval and reviewer come from its --config overrides.
 _APP_SERVER = """
 import json, os, sys, time
 log = os.environ["FAKE_CODEX_LOG"]
@@ -26,7 +27,13 @@ def record(value):
 def out(value):
     sys.stdout.write(json.dumps(value) + "\\n")
     sys.stdout.flush()
-record({"argv": sys.argv[1:], "pid": os.getpid()})
+record({"argv": sys.argv[1:], "pid": os.getpid(), "cwd": os.getcwd()})
+if sys.argv[1] == "exec":
+    out({"type": "thread.started", "thread_id": sys.argv[-2]})
+    out({"type": "item.completed", "item": {"type": "agent_message", "text": "exec"}})
+    out({"type": "turn.completed"})
+    sys.exit(0)
+settings = dict(arg.split("=", 1) for arg in sys.argv[2:] if "=" in arg)
 thread, turns, pending = None, 0, None
 for line in sys.stdin:
     message = json.loads(line)
@@ -37,10 +44,16 @@ for line in sys.stdin:
             out({"id": message["id"], "error": {"code": -1, "message": "not signed in"}})
         else:
             out({"id": message["id"], "result": {}})
-    elif method in ("thread/start", "thread/resume"):
-        thread = message["params"].get("threadId") or f"thread-{os.getpid()}"
+    elif method == "thread/start":
+        thread = f"thread-{os.getpid()}"
+        params = message["params"]
+        approval = params.get("approvalPolicy") or json.loads(
+            settings.get("approval_policy", '"on-request"'))
+        reviewer = os.environ.get("FAKE_CODEX_REVIEWER") or json.loads(
+            settings.get("approvals_reviewer", '"user"'))
         out({"method": "thread/started", "params": {"thread": {"id": thread}}})
-        out({"id": message["id"], "result": {"thread": {"id": thread}}})
+        out({"id": message["id"], "result": {"thread": {"id": thread},
+             "approvalPolicy": approval, "approvalsReviewer": reviewer}})
     elif method == "turn/start":
         turns += 1
         turn = f"turn-{turns}"
@@ -135,34 +148,45 @@ async def test_codex_turns_share_one_app_server_thread(fake_codex: Path, tmp_pat
 
     logged = _logged(fake_codex)
     launches = [entry for entry in logged if "argv" in entry]
-    # The config overrides `codex exec --approve-for-me` adds.
-    assert [entry["argv"] for entry in launches] == [
-        [
-            "app-server",
-            "--config",
-            'approvals_reviewer="auto_review"',
-            "--config",
-            'approval_policy="on-request"',
-            "--config",
-            'sandbox_mode="workspace-write"',
-        ]
+    # Started in the task's directory with the config overrides `codex exec --approve-for-me` adds.
+    assert [(entry["argv"], entry["cwd"]) for entry in launches] == [
+        (
+            [
+                "app-server",
+                "--config",
+                'approvals_reviewer="auto_review"',
+                "--config",
+                'approval_policy="on-request"',
+                "--config",
+                'sandbox_mode="workspace-write"',
+            ],
+            os.path.realpath(tmp_path),
+        )
     ]
     methods = [entry.get("method") for entry in logged if "argv" not in entry]
     assert methods.count("initialize") == methods.count("thread/start") == 1
     assert methods.count("turn/start") == 2 and "thread/resume" not in methods
-    # Approval and sandbox mode are fixed; network and writable roots expand from the config.
-    allowed = {"approvalPolicy": "on-request", "approvalsReviewer": "auto_review"}
+    # As exec sends them: no cwd and no permissions on thread/start, which leaves them to the
+    # config; every turn sends the cwd and the approval policy the thread resolved.
     (start,) = _sent(fake_codex, "thread/start")
     assert start == {
-        "cwd": str(tmp_path),
+        "ephemeral": False,
+        "historyMode": "paginated",
+        "threadSource": "user",
         "model": "gpt-test",
-        "sandbox": "workspace-write",
-        **allowed,
     }
     turn_starts = _sent(fake_codex, "turn/start")
     for turn_start in turn_starts:
-        assert {key: turn_start[key] for key in allowed} == allowed
-        assert "sandboxPolicy" not in turn_start and "runtimeWorkspaceRoots" not in turn_start
+        assert set(turn_start) == {
+            "threadId",
+            "turnTrigger",
+            "input",
+            "cwd",
+            "approvalPolicy",
+            "model",
+            "effort",
+        }
+        assert (turn_start["cwd"], turn_start["approvalPolicy"]) == (str(tmp_path), "on-request")
     (text_input,) = turn_starts[0]["input"]
     assert text_input["type"] == "text" and text_input["text_elements"] == []
     assert cast(str, text_input["text"]).endswith("first")
@@ -173,63 +197,60 @@ async def test_codex_turns_share_one_app_server_thread(fake_codex: Path, tmp_pat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("option", "thread", "turn"),
+    ("option", "reviewer", "thread", "approval"),
     [
-        (
-            "approve_for_me",
-            {
-                "approvalPolicy": "on-request",
-                "approvalsReviewer": "auto_review",
-                "sandbox": "workspace-write",
-            },
-            {"approvalPolicy": "on-request", "approvalsReviewer": "auto_review"},
-        ),
+        # exec asks for nothing unless the resolved reviewer is auto review.
+        ("approve_for_me", "user", {}, "never"),
+        # --dangerously-bypass-approvals-and-sandbox: exec's harness overrides, never kept.
         (
             "dangerously_bypass_approvals_and_sandbox",
-            {
-                "approvalPolicy": "never",
-                "approvalsReviewer": "user",
-                "sandbox": "danger-full-access",
-            },
-            {
-                "approvalPolicy": "never",
-                "approvalsReviewer": "user",
-                "sandboxPolicy": {"type": "dangerFullAccess"},
-            },
+            "auto_review",
+            {"approvalPolicy": "never", "sandbox": "danger-full-access"},
+            "never",
         ),
     ],
 )
-async def test_codex_cold_resume_sends_the_modes_permissions(
+async def test_codex_threads_and_turns_carry_execs_permission_fields(
     fake_codex: Path,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     option: str,
+    reviewer: str,
     thread: dict[str, object],
-    turn: dict[str, object],
+    approval: str,
 ) -> None:
+    monkeypatch.setenv("FAKE_CODEX_REVIEWER", reviewer)
     manager = InvocationManager()
     try:
-        result = await _codex(manager, tmp_path, "resume", "thread-earlier", {option: True})
+        result = await _codex(manager, tmp_path, "work", options={option: True})
         assert result.status is InvocationStatus.SUCCEEDED, result
-        assert result.session_id == "thread-earlier"
     finally:
         await manager.shutdown()
-    # Roots are always sent on a resume, which would otherwise restore the thread's last ones.
-    (resume,) = _sent(fake_codex, "thread/resume")
-    assert resume == {
-        "threadId": "thread-earlier",
-        "excludeTurns": True,
-        "cwd": str(tmp_path),
-        "runtimeWorkspaceRoots": [str(tmp_path)],
+    (start,) = _sent(fake_codex, "thread/start")
+    assert start == {
+        "ephemeral": False,
+        "historyMode": "paginated",
+        "threadSource": "user",
         **thread,
     }
     (turn_start,) = _sent(fake_codex, "turn/start")
-    sent = {
-        key: turn_start[key]
-        for key in ("approvalPolicy", "approvalsReviewer", "sandboxPolicy", "runtimeWorkspaceRoots")
-        if key in turn_start
-    }
-    bypass = option != "approve_for_me"
-    assert sent == {**turn, **({"runtimeWorkspaceRoots": [str(tmp_path)]} if bypass else {})}
+    assert "sandboxPolicy" not in turn_start and "approvalsReviewer" not in turn_start
+    assert turn_start["approvalPolicy"] == approval
+
+
+@pytest.mark.asyncio
+async def test_codex_resume_without_a_kept_process_runs_exec_resume(
+    fake_codex: Path, tmp_path: Path
+) -> None:
+    manager = InvocationManager()
+    try:
+        result = await _codex(manager, tmp_path, "resume", "thread-earlier")
+    finally:
+        await manager.shutdown()
+    assert result.status is InvocationStatus.SUCCEEDED, result
+    assert result.output == "exec"
+    (launch,) = [entry["argv"] for entry in _logged(fake_codex) if "argv" in entry]
+    assert launch[:2] == ["exec", "resume"] and launch[-2:] == ["thread-earlier", "-"]
 
 
 @pytest.mark.asyncio
@@ -244,10 +265,11 @@ async def test_codex_app_server_exiting_between_turns_is_not_reused(
         await asyncio.sleep(1.5)
         second = await _codex(manager, tmp_path, "second", first.session_id)
         assert second.status is InvocationStatus.SUCCEEDED, second
-        assert second.output.split(":")[0] != first.output.split(":")[0]
+        assert second.output == "exec"
     finally:
         await manager.shutdown()
-    assert len([entry for entry in _logged(fake_codex) if "argv" in entry]) == 2
+    launches = [entry["argv"][0] for entry in _logged(fake_codex) if "argv" in entry]
+    assert launches == ["app-server", "exec"]
 
 
 @pytest.mark.asyncio
@@ -278,6 +300,15 @@ async def test_codex_handshake_failure_is_reported_not_retried_on_exec(
     assert result.error is not None
     assert "initialize failed: not signed in" in result.error.message
     assert len([entry for entry in _logged(fake_codex) if "argv" in entry]) == 1
+
+
+def test_config_warnings_are_reported_as_exec_reports_them() -> None:
+    config = {"method": "configWarning", "params": {"summary": "downgraded", "details": "why"}}
+    assert warning(config, "t") == "downgraded (why)"
+    assert warning({"method": "warning", "params": {"message": "m"}}, "t") == "m"
+    assert (
+        warning({"method": "warning", "params": {"threadId": "other", "message": "m"}}, "t") is None
+    )
 
 
 def test_elicitation_is_cancelled_as_non_interactive_for_tool_approvals() -> None:

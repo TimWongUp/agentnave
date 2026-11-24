@@ -8,6 +8,7 @@ used longest ago goes first), when it exits on its own, or when the service clos
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import suppress
@@ -24,12 +25,17 @@ type LaunchSignature = tuple[object, ...]
 
 def launch_signature(prepared: PreparedCommand, account: str | None) -> LaunchSignature:
     """What a reused process must have been started with: anything else needs a new one."""
+    inputs = None
+    if prepared.launch_inputs is not None:
+        env = {name: value for name, value in os.environ.items() if name not in prepared.unset_env}
+        inputs = prepared.launch_inputs({**env, **prepared.extra_env})
     return (
         prepared.argv,
         str(prepared.cwd),
         tuple(sorted(prepared.unset_env)),
         tuple(sorted(prepared.extra_env.items())),
         account,
+        inputs,
     )
 
 
@@ -154,6 +160,11 @@ class WarmPool:
             return None
         entry.release()
         return entry.kept
+
+    def serves(self, provider: str, session_id: str, signature: LaunchSignature) -> bool:
+        """Whether a kept process started this way can serve the session's next turn."""
+        entry = self._entries.get((provider, session_id))
+        return entry is not None and entry.kept.signature == signature and entry.kept.alive()
 
     async def ended(self, provider: str, session_id: str) -> None:
         """Wait until no process of the session is still ending, so a new one never shares the

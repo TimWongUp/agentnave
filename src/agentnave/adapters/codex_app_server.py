@@ -3,12 +3,17 @@
 Usage: codex_app_server.py --permissions MODE [--turn-option NAME]... -- <app-server argv>
 
 stdin carries one JSON turn per line: {"session_id", "cwd", "prompt", "model", "effort"}. The
-first line starts the thread (or loads `session_id`); later lines must name that thread. Only the
-options named by --turn-option may be set, so a process is reused only by turns that set the same
-ones: a value can change between turns, but a setting cannot be cleared once a turn set it.
-MODE fixes approval, reviewer and sandbox mode (see _THREAD_PERMISSIONS); they are sent with every
-thread and turn request, so neither a resumed thread nor a kept process runs with settings left
-from before.
+first line starts a thread; later lines must name it (a cold resume runs `codex exec resume`
+instead, see ADR-0120). Only the options named by --turn-option may be set, so a process is reused
+only by turns that set the same ones: a value can change between turns, but a setting cannot be
+cleared once a turn set it.
+
+Requests carry what `codex exec` 0.171 sends its embedded app-server (codex-rs/exec/src/lib.rs):
+no cwd on thread/start (the process's own directory is the default, so starting a thread never
+records project trust), MODE's harness overrides (see _THREAD_OVERRIDES) and nothing else about
+permissions, so the app-server resolves them from the same config layers exec would; each
+turn/start carries the cwd and exec's approval policy. Config warnings are reported as exec
+reports them, on every turn.
 
 stdout carries the events `codex exec --json` prints, ending every turn with exactly one
 `turn.completed` or `turn.failed`; nothing is written between turns. A protocol failure ends the
@@ -27,7 +32,8 @@ import subprocess
 import sys
 import threading
 from contextlib import suppress
-from typing import Any, Literal, cast
+from dataclasses import dataclass, field
+from typing import Any, cast
 
 from agentnave import __version__
 from agentnave.windows_supervisor import popen_args
@@ -55,30 +61,16 @@ _ITEM_FIELDS = (
     ("tool", "tool"),
     ("query", "query"),
 )
-# What `codex exec --approve-for-me` and `--dangerously-bypass-approvals-and-sandbox` fix, sent
-# on thread/start and thread/resume, and on every turn/start. The reviewer is unused under never.
-# Auto review sends no sandbox policy with a turn: the thread's workspace-write mode keeps the
-# configured network access and writable roots, as exec's does.
-_THREAD_PERMISSIONS: dict[str, dict[str, Any]] = {
-    "approve-for-me": {
-        "approvalPolicy": "on-request",
-        "approvalsReviewer": "auto_review",
-        "sandbox": "workspace-write",
-    },
-    "bypass": {
-        "approvalPolicy": "never",
-        "approvalsReviewer": "user",
-        "sandbox": "danger-full-access",
-    },
+# The harness overrides `codex exec` builds its config with besides the --config overrides
+# (codex-rs/exec/src/lib.rs, build_exec_config): --dangerously-bypass-approvals-and-sandbox sets
+# never and full access; --approve-for-me only adds --config overrides, which the app-server is
+# started with.
+_THREAD_OVERRIDES: dict[str, dict[str, Any]] = {
+    "approve-for-me": {},
+    "bypass": {"approvalPolicy": "never", "sandbox": "danger-full-access"},
 }
-_TURN_PERMISSIONS: dict[str, dict[str, Any]] = {
-    "approve-for-me": {"approvalPolicy": "on-request", "approvalsReviewer": "auto_review"},
-    "bypass": {
-        "approvalPolicy": "never",
-        "approvalsReviewer": "user",
-        "sandboxPolicy": {"type": "dangerFullAccess"},
-    },
-}
+_AUTO_REVIEWERS = frozenset({"auto_review", "guardian_subagent"})
+_PAGINATED_UNSUPPORTED = "paginated threads require thread/turns/list and thread/items/list support"
 _CAMEL = re.compile(r"(?<=[a-z0-9])([A-Z])")
 _USAGE = (
     "usage: codex_app_server.py --permissions MODE [--turn-option NAME]... -- <app-server argv>"
@@ -96,6 +88,13 @@ def _snake(name: str) -> str:
 
 def _object(value: object) -> dict[str, Any]:
     return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+class RequestError(RuntimeError):
+    def __init__(self, method: str, code: object, message: object) -> None:
+        super().__init__(f"codex app-server {method} failed: {message}")
+        self.code = code
+        self.message = message
 
 
 class Connection:
@@ -203,7 +202,7 @@ class Connection:
                 continue
             if "error" in message:
                 error = _object(message.get("error"))
-                raise RuntimeError(f"codex app-server {method} failed: {error.get('message')}")
+                raise RequestError(method, error.get("code"), error.get("message"))
             return _object(message.get("result"))
 
     def notification(self) -> dict[str, Any]:
@@ -252,41 +251,63 @@ def handshake(connection: Connection) -> None:
     connection.send({"method": "initialized"})
 
 
-def permissions(mode: str, cwd: str, request: Literal["start", "resume", "turn"]) -> dict[str, Any]:
-    """The mode's permissions as the request takes them.
-
-    Workspace roots: a resume would otherwise bring back the ones the thread last ran with. Under
-    auto review a new thread gets exec's (the cwd and the configured writable roots), and a resume
-    gets only the cwd, which still leaves the configured roots writable through its sandbox."""
-    fields = dict((_TURN_PERMISSIONS if request == "turn" else _THREAD_PERMISSIONS)[mode])
-    if mode == "bypass" or request == "resume":
-        fields["runtimeWorkspaceRoots"] = [cwd]
-    return fields
+@dataclass(slots=True)
+class Thread:
+    id: str
+    # What exec sends with every turn: never unless the resolved reviewer is auto review, which
+    # keeps the resolved policy; `--dangerously-bypass-approvals-and-sandbox` keeps never.
+    approval: object
+    warnings: list[str] = field(default_factory=list[str])
 
 
-def open_thread(connection: Connection, turn: dict[str, Any], mode: str) -> str:
-    params: dict[str, Any] = {"cwd": turn["cwd"]}
+def open_thread(connection: Connection, turn: dict[str, Any], mode: str) -> Thread:
+    """thread/start as exec sends it (thread_start_params_from_config)."""
+    if turn.get("session_id") is not None:
+        raise ValueError("a Codex app-server process starts its own thread; resume runs exec")
+    params: dict[str, Any] = {
+        **_THREAD_OVERRIDES[mode],
+        "ephemeral": False,
+        "historyMode": "paginated",
+        "threadSource": "user",
+    }
     if turn.get("model") is not None:
         params["model"] = turn["model"]
-    session_id = turn.get("session_id")
-    if session_id is None:
-        result = connection.request(
-            "thread/start", {**params, **permissions(mode, turn["cwd"], "start")}
-        )
-    else:
-        result = connection.request(
-            "thread/resume",
-            {
-                "threadId": session_id,
-                "excludeTurns": True,
-                **params,
-                **permissions(mode, turn["cwd"], "resume"),
-            },
-        )
+    try:
+        result = connection.request("thread/start", params)
+    except RequestError as exc:
+        if exc.code != -32600 or exc.message != _PAGINATED_UNSUPPORTED:
+            raise
+        del params["historyMode"]
+        result = connection.request("thread/start", params)
     thread_id = _object(result.get("thread")).get("id")
     if not isinstance(thread_id, str) or not thread_id:
         raise RuntimeError("codex app-server returned no thread id")
-    return thread_id
+    reviewer = result.get("approvalsReviewer")
+    approval = (
+        result.get("approvalPolicy")
+        if mode != "bypass" and reviewer in _AUTO_REVIEWERS
+        else "never"
+    )
+    return Thread(thread_id, approval)
+
+
+def warning(message: dict[str, Any], thread_id: str) -> str | None:
+    """A warning exec reports as an error item (event_processor_with_jsonl_output.rs)."""
+    method = message.get("method")
+    params = _object(message.get("params"))
+    if method in ("configWarning", "deprecationNotice"):
+        summary, details = params.get("summary"), params.get("details")
+        if not isinstance(summary, str):
+            return None
+        return f"{summary} ({details})" if isinstance(details, str) and details else summary
+    if method == "warning" and params.get("threadId") in (None, thread_id):
+        text = params.get("message")
+        return text if isinstance(text, str) else None
+    return None
+
+
+def emit_warning(text: str) -> None:
+    emit({"type": "item.completed", "item": {"type": "error", "message": text}})
 
 
 def item_event(kind: str, item: dict[str, Any]) -> dict[str, Any] | None:
@@ -323,13 +344,18 @@ def turn_end(turn: dict[str, Any], usage: dict[str, Any] | None) -> dict[str, An
     return {"type": "turn.failed", "error": {"message": message or f"codex turn {status}"}}
 
 
-def run_turn(connection: Connection, thread_id: str, turn: dict[str, Any], mode: str) -> None:
-    emit({"type": "thread.started", "thread_id": thread_id})
+def run_turn(connection: Connection, thread: Thread, turn: dict[str, Any]) -> None:
+    """turn/start as exec sends it: the cwd and approval policy, nothing else on permissions."""
+    emit({"type": "thread.started", "thread_id": thread.id})
+    # A new exec process reports the config's warnings again on every run.
+    for text in thread.warnings:
+        emit_warning(text)
     params: dict[str, Any] = {
-        "threadId": thread_id,
+        "threadId": thread.id,
+        "turnTrigger": "exec",
         "input": [{"type": "text", "text": turn["prompt"], "text_elements": []}],
         "cwd": turn["cwd"],
-        **permissions(mode, turn["cwd"], "turn"),
+        "approvalPolicy": thread.approval,
     }
     for name in TURN_OPTIONS:
         if turn.get(name) is not None:
@@ -341,9 +367,14 @@ def run_turn(connection: Connection, thread_id: str, turn: dict[str, Any], mode:
     usage: dict[str, Any] | None = None
     while True:
         message = connection.notification()
+        if (text := warning(message, thread.id)) is not None:
+            emit_warning(text)
+            if message.get("method") != "warning":
+                thread.warnings.append(text)
+            continue
         method = message.get("method")
         params = _object(message.get("params"))
-        if params.get("threadId") != thread_id:
+        if params.get("threadId") != thread.id:
             continue  # another thread's work, such as a subagent's, is reported by its items
         turn_payload = _object(params.get("turn"))
         if params.get("turnId", turn_payload.get("id", turn_id)) != turn_id:
@@ -391,7 +422,7 @@ def parse_args(argv: list[str]) -> tuple[str, frozenset[str], list[str]]:
         or len(options) != 2 * (len(names) + len(modes))
         or set(names) - set(TURN_OPTIONS)
         or len(modes) != 1
-        or modes[0] not in _THREAD_PERMISSIONS
+        or modes[0] not in _THREAD_OVERRIDES
     ):
         raise ValueError(_USAGE)
     return modes[0], frozenset(names), command
@@ -399,19 +430,20 @@ def parse_args(argv: list[str]) -> tuple[str, frozenset[str], list[str]]:
 
 def serve(mode: str, allowed: frozenset[str], command: list[str]) -> int:
     connection: Connection | None = None
-    thread_id: str | None = None
+    thread: Thread | None = None
     try:
         while (turn := read_turn(allowed)) is not None:
             if connection is None:
                 connection = Connection(command)
                 handshake(connection)
             connection.begin_turn()
-            connection.forget_idle()
-            if thread_id is None:
-                thread_id = open_thread(connection, turn, mode)
-            elif turn.get("session_id") != thread_id:
-                raise ValueError(f"this Codex process serves thread {thread_id} only")
-            run_turn(connection, thread_id, turn, mode)
+            if thread is not None:
+                connection.forget_idle()
+            if thread is None:
+                thread = open_thread(connection, turn, mode)
+            elif turn.get("session_id") != thread.id:
+                raise ValueError(f"this Codex process serves thread {thread.id} only")
+            run_turn(connection, thread, turn)
             if not connection.end_turn():
                 return 1
         return 0

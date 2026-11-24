@@ -697,7 +697,10 @@ class InvocationManager:
         # (the permission-mode fallback and the interactive runtime run inside it); this
         # process's own environment is never touched.
         if account_env := accounts.env_for(adapter, request.account):
-            return replace(prepared, extra_env={**prepared.extra_env, **account_env})
+            unkept = prepared.unkept
+            if unkept is not None:
+                unkept = replace(unkept, extra_env={**unkept.extra_env, **account_env})
+            return replace(prepared, extra_env={**prepared.extra_env, **account_env}, unkept=unkept)
         return prepared
 
     def start(
@@ -1285,6 +1288,7 @@ class InvocationManager:
         kept = None
         tasks: list[asyncio.Task[object]] = []
         scratch = None
+        prepared = self._command_for(record, prepared)
         try:
             if prepared.temp_dir_env:
                 scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
@@ -1379,6 +1383,19 @@ class InvocationManager:
             self.terminal_reconcilers,
             on_settled,
         )
+
+    def _command_for(self, record: _InvocationRecord, prepared: PreparedCommand) -> PreparedCommand:
+        """A resume that no kept process can serve runs the Adapter's one-off command instead,
+        when it gave one (ADR-0120)."""
+        request = record.request
+        if prepared.unkept is None or request.session_id is None:
+            return prepared
+        signature = launch_signature(prepared, request.account)
+        if not record.isolated and self._pool.serves(
+            request.provider, request.session_id, signature
+        ):
+            return prepared
+        return prepared.unkept
 
     async def _launch(
         self, record: _InvocationRecord, prepared: PreparedCommand, scratch: str | None
