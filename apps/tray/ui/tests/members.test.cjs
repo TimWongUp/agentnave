@@ -2068,6 +2068,30 @@ test("add account wizard links a discovered or typed folder as an external accou
   assert.equal(app.run("AN.settings.accounts[0].managed"), false);
 });
 
+test("add account wizard keeps a failed folder scan out of another mode and retries it", async () => {
+  const scans = [];
+  const app = accountCardsEditor(async (url) => {
+    if (url === "/app/accounts/discover") return new Promise((resolve) => scans.push(resolve));
+    return { ok: true, json: async () => ({ logged_in: false, method: "none" }) };
+  });
+  const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(setImmediate); };
+  const key = (name) => app.run(`findKey(__dialogs[0].children, "claude/accounts/${name}")`);
+  app.run(`
+    renderCards();
+    findKey($("cli-cards").children, "select/cli:claude").listeners.click();
+  `);
+  app.run('findKey($("cli-cards").children, "claude/accounts/add").listeners.click()');
+  await flush();
+  key("mode-existing").listeners.click();
+  key("mode-path").listeners.click();
+  scans[0]({ ok: false, json: async () => ({ error: "boom" }) });
+  await flush();
+  assert.doesNotMatch(JSON.stringify(app.run("__dialogs[0].children")), /boom/);
+  key("mode-existing").listeners.click();
+  await flush();
+  assert.equal(scans.length, 2);
+});
+
 test("add account wizard shows a link error in place and keeps the typed path", async () => {
   const app = accountCardsEditor(async (url, options = {}) => {
     if (url === "/app/accounts/link") return { ok: false, status: 400, json: async () => ({ error: "目录不存在" }) };

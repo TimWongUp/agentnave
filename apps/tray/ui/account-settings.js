@@ -485,14 +485,18 @@
     if (d.candidates) return;
     d.candidates = { loading: true };
     renderAddExtra();
+    let failure = "";
     try {
       const data = await (await fetch("/app/accounts/discover", { cache: "no-store" })).json();
-      d.candidates = data.error ? { error: data.error } : { list: data.candidates || [] };
+      failure = data.error || "";
+      // A failed read is not kept, so choosing this mode again retries it.
+      d.candidates = failure ? null : { list: data.candidates || [] };
     } catch (error) {
-      d.candidates = { error: String(error?.message || error) };
+      failure = String(error?.message || error);
+      d.candidates = null;
     }
-    if (addDialog !== d) return;
-    if (d.candidates.error) setDialogError(`${L("无法读取目录：", "Could not read folders: ")}${d.candidates.error}`);
+    if (addDialog !== d || d.step !== 1 || d.mode !== "existing") return;
+    if (failure) setDialogError(`${L("无法读取目录：", "Could not read folders: ")}${failure}`);
     renderAddExtra();
   }
 
