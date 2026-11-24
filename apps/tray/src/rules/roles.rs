@@ -12,6 +12,8 @@ const CURRENT_SMALL_TASKS: &str = "boss 只自己做小事：读一两个文件�
 const LEGACY_WAIT_VERIFY: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取；`succeeded` 不等于完成，boss 核对产物后验收；高风险改动由 boss 针对具体的出错方式补做检查。";
 const LEGACY_MEETINGS_WAIT: &str = "- 以回执 `next` 为准：未注明 App 会提示时，结束本轮前用 `wait` 收齐；注明时可直接结束，收到提示后用收件箱 `wait(wait_seconds=0)` 收取。";
 const LEGACY_AUTH_LOAD: &str = "- 本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数；派发、开会、等待和验收前先加载 agentnave-manager Skill 并按它执行。";
+/// Standalone, so migrating a custom text never adds the dispatch authorization of `shared`.
+const CURRENT_AUTH: &str = "- 本偏好不新增推送、合并 PR、发布、发送的授权，也不追加权限参数。";
 
 /// What replaced the old one-line "small tasks" rule: from the named-CLI sentence through the
 /// orchestration-only line.
@@ -21,7 +23,9 @@ fn small_tasks() -> String {
         .find("- 派发是默认做法")
         .expect("default dispatch line");
     let rest = &shared[start..];
-    let end = rest.find("自己只拆分").expect("orchestration-only line");
+    let end = rest
+        .find("调查、实现和写作全部派出")
+        .expect("orchestration-only line");
     let end = end + rest[end..].find('\n').unwrap_or(rest.len() - end);
     format!(
         "用户点名 CLI 时也通过 AgentNave 派发，不在终端直接运行它。\n{}",
@@ -79,7 +83,6 @@ pub(super) fn enabled_lines(document: &Value) -> String {
 /// The exact sentences of our older generated presets, including copies in Custom, replaced by
 /// their current wording; anything else the user wrote stays as it is.
 pub(super) fn migrate_legacy(text: &str) -> String {
-    let shared = super::catalog::section("shared");
     let shared_checks = super::catalog::section("shared_checks");
     let dispatch = super::catalog::section("dispatch_split")
         .lines()
@@ -87,16 +90,12 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         .expect("split dispatch instruction");
     let review = shared_checks
         .lines()
-        .find(|line| line.contains("不可用时由 boss 自行评审"))
+        .find(|line| line.contains("再不行由 boss 评审"))
         .expect("shared review instruction");
     let wait_verify = shared_checks
         .lines()
         .find(|line| line.starts_with("- `succeeded` 不等于完成"))
         .expect("shared verify instruction");
-    let auth_load = shared
-        .lines()
-        .find(|line| line.starts_with("- 本偏好不新增推送、合并 PR、发布、发送的授权"))
-        .expect("shared auth/load instruction");
     let meetings_wait = super::catalog::section("meetings_only_tail").trim();
     text.replace(LEGACY_DISPATCH, dispatch)
         .replace(LEGACY_ASSIGNMENT, "")
@@ -135,7 +134,7 @@ pub(super) fn migrate_legacy(text: &str) -> String {
         .replace(LEGACY_REVIEW, review)
         .replace(LEGACY_WAIT_VERIFY, wait_verify)
         .replace(LEGACY_MEETINGS_WAIT, meetings_wait)
-        .replace(LEGACY_AUTH_LOAD, auth_load)
+        .replace(LEGACY_AUTH_LOAD, CURRENT_AUTH)
 }
 
 pub(super) fn apply(document: &Value, text: String) -> String {
@@ -170,7 +169,7 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
     let migrated = apply(&document, legacy);
     assert!(migrated.contains("只负责编排") && !migrated.contains("小事自己做，但"));
     assert!(migrated.contains("同难度专项优先"));
-    assert!(migrated.contains("兜底不跨难度"));
+    assert!(migrated.contains("不跨难度、不静默换模型"));
     assert!(!migrated.contains("Worker"));
     assert!(migrated.contains("用户正文"));
     let section = sections(false)["worker_writing"]
@@ -194,9 +193,7 @@ fn custom_migration_keeps_dispatch_and_cleans_generated_first_lines() {
         CURRENT_SMALL_TASKS
     );
     assert!(!specialist_and_wait.contains("wait(wait_seconds=0)"));
-    assert!(
-        specialist_and_wait.contains("boss 核对结论与产物后验收；用隔离目录写的改动先逐项核对")
-    );
+    assert!(specialist_and_wait.contains("boss 核对结论与产物，隔离目录的改动核对后合入"));
     let migrated_auth = apply(
         &document,
         format!("{LEGACY_AUTH_LOAD}\n用户自定义：保留这行。"),

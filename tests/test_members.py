@@ -136,7 +136,7 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
         assert combined.startswith("\n\n### 在 T3 Code 里这样派，不用上面的派法和工位\n\n")
         assert "`recommend_seat`" in combined and "`delegate_task`" in combined
         assert "用户点名 CLI、T3 账号或模型时" in combined
-        assert "`list_members` 只用来选会议成员，不用来派发。" in combined
+        assert "`list_members` 只用来选会议成员" in combined
     assert rules["sections"]["t3_non_t3_heading"] == "\n\n### 不在 T3 Code 里时这样派\n"
     assert "由决策模型选工位" in rules["sections"]["t3_pick_decision"]
     assert "不带任务先取 T3 工位" in rules["sections"]["t3_pick_boss"]

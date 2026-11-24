@@ -127,7 +127,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     let text = text_of(&split, "split").unwrap();
     assert!(text.contains("只在用户要求时开会") && !text.contains("boss 可以开 AgentNave 会议室"));
     assert!(
-        text.contains("并行写入须用户本人对当前任务指明") && !text.contains("并行写入由 boss 判断")
+        text.contains("须用户本人对当前任务指明") && !text.contains("由 boss 在计划确认后决定")
     );
     let meetings = json!({"preset": "split", "split_options": {"meetings": true}});
     let meetings = text_of(&meetings, "split").unwrap();
@@ -138,8 +138,8 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     let parallel_writes = json!({"preset": "split", "split_options": {"parallel_writes": true}});
     let parallel_writes = text_of(&parallel_writes, "split").unwrap();
     assert!(
-        parallel_writes.contains("并行写入由 boss 判断")
-            && !parallel_writes.contains("并行写入须用户本人对当前任务指明")
+        parallel_writes.contains("由 boss 在计划确认后决定")
+            && !parallel_writes.contains("须用户本人对当前任务指明")
     );
     let lead = &catalog::catalog()["switches"]["lead_only"];
     let lead_asked = lead["when_false"].as_str().unwrap();
@@ -570,7 +570,7 @@ fn role_switches_remove_generated_seats_without_losing_bindings_or_custom_text()
     assert!(!custom.contains("worker-writing"));
     assert!(!custom.contains("Explorer"));
     assert!(!custom.contains("Worker"));
-    assert!(custom.contains("不可用时由 boss 自行评审"));
+    assert!(custom.contains("再不行由 boss 评审"));
     assert!(custom.contains("用户自写要求：保留引用来源。"));
     assert_eq!(document["worker_writing"]["easy"]["model"], "haiku");
     document["image_generation"] = json!({"provider":"codex","model":"chat"});
