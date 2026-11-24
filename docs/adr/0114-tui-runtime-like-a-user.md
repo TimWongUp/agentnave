@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-11-23
+- T3 主线程的会议后台等待与 T3 标识剥离由 [ADR-0121](0121-t3-code-orchestration.md) 修订。
 - 修订：
   - [ADR-0003](0003-agent-only-stdio-mcp-server.md)：`agentnave-mcp` 之外，服务包内多一个 boss 可在后台运行的只读等待模块（第 3 节）。
   - [ADR-0043](0043-service-prompt-instructions.md)、[ADR-0107](0107-specialist-scope-closing-and-fallback-note.md)、[ADR-0057](0057-boss-answers-native-prompts.md)：派发说明改用户口吻、按「本次能否答题」选措辞（第 2 节）。
