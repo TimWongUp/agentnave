@@ -22,7 +22,12 @@ from agentnave.decision_model import (
 from agentnave.decision_seats import effective_decision_seats
 from agentnave.host import Host
 from agentnave.members import MemberFileError, SettingsFileError, list_members
-from agentnave.orchestration_roles import IMAGE_KIND, CustomSeatDifficulty, CustomSeatStatus
+from agentnave.orchestration_roles import (
+    IMAGE_KIND,
+    CustomSeatDifficulty,
+    CustomSeatStatus,
+    SeatMetadata,
+)
 
 # What the decision model reads of a task: all of it up to this many characters, otherwise
 # the beginning and the end with the middle left out.
@@ -113,7 +118,7 @@ _DIFFICULTY_MEANING: dict[CustomSeatDifficulty, str] = {
 }
 
 
-def describe(seat: CustomSeatStatus) -> str:
+def describe(seat: CustomSeatStatus | SeatMetadata) -> str:
     """All the decision model learns about a seat: its specialty, difficulty and access."""
     named = seat.role if seat.description == seat.role else f"{seat.role}: {seat.description}"
     if seat.kind == IMAGE_KIND:
@@ -149,9 +154,12 @@ def _staged(access: Access, isolated: bool) -> bool:
     return access == "read" and isolated
 
 
-def _task_text(task: str, access: Access, staged: bool = False) -> str:
+def task_text(task: str, access: Access, staged: bool = False) -> str:
     text = f"Task:\n{clip_for_decision(task)}\nRequired access: {access}"
     return f"{text}\n{_STAGED_TASK}" if staged else text
+
+
+_task_text = task_text
 
 
 @dataclass(frozen=True)
@@ -281,7 +289,7 @@ async def recommend_many(
     return [result for result in results if result is not None]
 
 
-def _client(model: str) -> DecisionClient:
+def client_for_model(model: str) -> DecisionClient:
     key_name = _MODELS[model][0]
     try:
         key = read_decision_key(key_name)
@@ -293,6 +301,9 @@ def _client(model: str) -> DecisionClient:
             f"No API key is set for {model}; choose a seat from list_members yourself.",
         )
     return new_client(model, key)
+
+
+_client = client_for_model
 
 
 def _described(usable: Mapping[str, CustomSeatStatus]) -> dict[str, str]:

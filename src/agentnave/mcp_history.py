@@ -233,6 +233,15 @@ async def list_members(
     except (OSError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
     payload = MemberListPayload.model_validate(members.model_dump())
+    from agentnave.t3_recommend import t3_state_for_host
+
+    _, t3_error = t3_state_for_host(runtime.HOST)
+    if t3_error is not None:
+        payload.orchestration_error = (
+            f"{payload.orchestration_error} {t3_error}"
+            if payload.orchestration_error
+            else str(t3_error)
+        )
     if provider is not None:
         try:
             document = read_members()

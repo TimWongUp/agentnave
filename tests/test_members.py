@@ -1893,3 +1893,346 @@ def test_app_files_naming_a_retired_cli_are_read_without_it(
     assert decision is not None and [(s.id, s.provider) for s in decision.seats] == [
         ("scout", "claude")
     ]
+
+
+def _t3_seat_dict(seat_id: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "id": seat_id,
+        "kind": "custom",
+        "role": f"Role {seat_id}",
+        "description": f"Role {seat_id}",
+        "access": "write",
+        "difficulty": "medium",
+        "candidates": [
+            {
+                "instance": "inst-a",
+                "model": "model-a",
+                "options": [{"id": "effort", "value": "high"}],
+            }
+        ],
+        **extra,
+    }
+
+
+def test_t3_seats_file_strict_validation_and_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import t3
+    from agentnave.t3_seats import (
+        T3SeatsFile,
+        T3SeatsFileError,
+        effective_t3_seats,
+        read_t3_seats,
+        t3_orchestration_active,
+    )
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    codex = Host("codex", "env")
+
+    # Missing file -> inactive.
+    assert read_t3_seats() is None
+    monkeypatch.setenv("T3CODE_THREAD_ID", "main-1")
+    t3.reset_t3_mode_cache()
+    assert effective_t3_seats(codex) is None
+    assert not t3_orchestration_active(codex)
+
+    # Valid file with task seat, 0-candidate draft seat, image seat, and review role.
+    valid: dict[str, Any] = {
+        "version": 1,
+        "enabled": True,
+        "random_candidates": True,
+        "seats": [
+            _t3_seat_dict("coder"),
+            _t3_seat_dict("draft", candidates=[]),
+            {
+                "id": "artist",
+                "kind": "image",
+                "role": "画图",
+                "description": "生成插画",
+                "access": "write",
+                "candidates": [{"instance": "inst-b", "model": "img-1", "options": []}],
+            },
+        ],
+        "review": {
+            "correctness-reviewer": [{"instance": "inst-c", "model": "rev-1", "options": []}]
+        },
+    }
+    doc = T3SeatsFile.model_validate(valid)
+    assert doc.is_active()
+
+    # Active when only review has candidates; inactive when enabled=False or all 0 candidates.
+    review_only = T3SeatsFile.model_validate(
+        {
+            "version": 1,
+            "enabled": True,
+            "seats": [_t3_seat_dict("draft", candidates=[])],
+            "review": {"security-reviewer": [{"instance": "inst-c", "model": "rev-1"}]},
+        }
+    )
+    assert review_only.is_active()
+    assert not T3SeatsFile.model_validate({**valid, "enabled": False}).is_active()
+    assert not T3SeatsFile.model_validate(
+        {
+            "version": 1,
+            "enabled": True,
+            "seats": [_t3_seat_dict("draft", candidates=[])],
+            "review": {"security-reviewer": []},
+        }
+    ).is_active()
+
+    # Forbidden option ids (case-insensitive) and option count / value rules.
+    for forbidden in (
+        "mode",
+        "sandbox",
+        "multitask",
+        "permission",
+        "permissionMode",
+        "approvalPolicy",
+        "runtimeMode",
+        "fastMode",
+        "ultracode",
+        "serviceTier",
+        "cyberAccessProgram",
+        "SANDBOX",
+        "PermissionMode",
+    ):
+        with pytest.raises(ValidationError, match="not allowed"):
+            T3SeatsFile.model_validate(
+                {
+                    "version": 1,
+                    "seats": [
+                        _t3_seat_dict(
+                            "bad-opt",
+                            candidates=[
+                                {
+                                    "instance": "i",
+                                    "model": "m",
+                                    "options": [{"id": forbidden, "value": "x"}],
+                                }
+                            ],
+                        )
+                    ],
+                }
+            )
+
+    invalid_docs: list[dict[str, Any]] = [
+        {**valid, "extra_field": 1},  # StrictModel forbids extra keys
+        {**valid, "version": 2},
+        {**valid, "version": True},
+        {"version": 1, "seats": [_t3_seat_dict("dup"), _t3_seat_dict("dup", role="Other")]},
+        {"version": 1, "seats": [_t3_seat_dict("correctness-reviewer")]},  # review role clash
+        {"version": 1, "review": {"unknown-reviewer": [{"instance": "i", "model": "m"}]}},
+        {
+            "version": 1,
+            "seats": [
+                _t3_seat_dict(
+                    "too-many",
+                    candidates=[{"instance": f"i{n}", "model": "m"} for n in range(5)],
+                )
+            ],
+        },
+        {
+            "version": 1,
+            "review": {
+                "correctness-reviewer": [{"instance": f"i{n}", "model": "m"} for n in range(5)]
+            },
+        },
+        {
+            "version": 1,
+            "seats": [_t3_seat_dict("ws-inst", candidates=[{"instance": " i ", "model": "m"}])],
+        },
+        {
+            "version": 1,
+            "seats": [_t3_seat_dict("ws-model", candidates=[{"instance": "i", "model": " m"}])],
+        },
+        {
+            "version": 1,
+            "seats": [
+                _t3_seat_dict(
+                    "two-opts",
+                    candidates=[
+                        {
+                            "instance": "i",
+                            "model": "m",
+                            "options": [
+                                {"id": "effort", "value": "high"},
+                                {"id": "reasoningEffort", "value": "max"},
+                            ],
+                        }
+                    ],
+                )
+            ],
+        },
+        {
+            "version": 1,
+            "seats": [
+                _t3_seat_dict(
+                    "empty-val",
+                    candidates=[
+                        {
+                            "instance": "i",
+                            "model": "m",
+                            "options": [{"id": "effort", "value": "   "}],
+                        }
+                    ],
+                )
+            ],
+        },
+        # Reused CustomSeat metadata checks: explorer group is read-only; image has no difficulty.
+        {"version": 1, "seats": [_t3_seat_dict("bad-group", kind="explorer", access="write")]},
+        {
+            "version": 1,
+            "seats": [_t3_seat_dict("bad-img", kind="image", access="write", difficulty="easy")],
+        },
+    ]
+    for bad in invalid_docs:
+        with pytest.raises(ValidationError):
+            T3SeatsFile.model_validate(bad)
+
+    # Broken t3-seats.json raises T3SeatsFileError in T3 main thread, but does not affect non-T3.
+    (tmp_path / "t3-seats.json").write_text("{broken json", encoding="utf-8")
+    with pytest.raises(T3SeatsFileError, match="t3-seats.json"):
+        effective_t3_seats(codex)
+    monkeypatch.delenv("T3CODE_THREAD_ID")
+    t3.reset_t3_mode_cache()
+    assert effective_t3_seats(codex) is None
+
+
+def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from agentnave.t3_cache import check_instance
+
+    home = tmp_path / "t3-home"
+    caches = home / "caches"
+    caches.mkdir(parents=True)
+    monkeypatch.setenv("T3CODE_HOME", str(home))
+    now = datetime(2026, 11, 24, 10, 0, 0, tzinfo=UTC)
+
+    def write(name: str, payload: object) -> None:
+        (caches / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    # Missing, corrupt JSON, non-object, wrong types -> unknown (not excluded).
+    assert check_instance("missing", now=now).available is True
+    (caches / "corrupt.json").write_text("{not-json", encoding="utf-8")
+    assert check_instance("corrupt", now=now).available is True
+    write("array", [1, 2, 3])
+    assert check_instance("array", now=now).available is True
+    write(
+        "wrong-types",
+        {
+            "driver": "claudeAgent",
+            "enabled": "false",
+            "installed": 0,
+            "status": 123,
+            "auth": {"status": 0, "email": "hidden@example.com"},
+            "usageLimits": {
+                "windows": [
+                    {"id": "five_hour", "usedPercent": True, "resetsAt": "2026-11-24T12:00:00Z"},
+                    {"id": "seven_day", "usedPercent": 100, "resetsAt": "2026-11-24T12:00:00"},
+                ]
+            },
+        },
+    )
+    assert check_instance("wrong-types", now=now).available is True
+
+    # Path traversal and symlink outside caches/ -> treated as unknown, never read.
+    outside = tmp_path / "escape.json"
+    outside.write_text(json.dumps({"enabled": False}), encoding="utf-8")
+    for bad_name in ("../escape", "a/b", "a\\b", "..", ".", "bad\x00name"):
+        assert check_instance(bad_name, now=now).available is True
+    link = caches / "sym.json"
+    link.symlink_to(outside)
+    assert check_instance("sym", now=now).available is True
+
+    # Explicit exclusions (and auth.email never leaks).
+    write("disabled", {"enabled": False})
+    assert not check_instance("disabled", now=now).available
+    write("uninstalled", {"enabled": True, "installed": False})
+    assert not check_instance("uninstalled", now=now).available
+    write("errored", {"enabled": True, "installed": True, "status": "error"})
+    assert not check_instance("errored", now=now).available
+    write("status-disabled", {"status": "disabled"})
+    assert not check_instance("status-disabled", now=now).available
+    write(
+        "unauth",
+        {
+            "driver": "claudeAgent",
+            "enabled": True,
+            "installed": True,
+            "status": "ready",
+            "auth": {"status": "unauthenticated", "email": "private-user@example.com"},
+        },
+    )
+    unauth = check_instance("unauth", now=now)
+    assert not unauth.available
+    assert "private-user@example.com" not in (unauth.reason or "")
+
+    # Quota rules: claudeAgent checks five_hour/seven_day; codex checks primary/secondary.
+    write(
+        "claude-full",
+        {
+            "driver": "claudeAgent",
+            "enabled": True,
+            "installed": True,
+            "status": "ready",
+            "auth": {"status": "authenticated", "email": "secret@example.com"},
+            "usageLimits": {
+                "windows": [
+                    {"id": "five_hour", "usedPercent": 100, "resetsAt": "2026-11-24T12:00:00Z"},
+                    {"id": "seven_day", "usedPercent": 105, "resetsAt": "2026-11-26T00:00:00Z"},
+                ]
+            },
+        },
+    )
+    claude_full = check_instance("claude-full", now=now)
+    assert not claude_full.available
+    assert claude_full.resets_at == datetime(2026, 11, 26, 0, 0, 0, tzinfo=UTC)
+    assert "secret@example.com" not in (claude_full.reason or "")
+
+    # Past reset or usedPercent < 100 -> not excluded.
+    write(
+        "claude-expired",
+        {
+            "driver": "claudeAgent",
+            "usageLimits": {
+                "windows": [
+                    {"id": "five_hour", "usedPercent": 100, "resetsAt": "2026-11-24T09:59:59Z"},
+                    {"id": "seven_day", "usedPercent": 99.9, "resetsAt": "2026-11-26T00:00:00Z"},
+                ]
+            },
+        },
+    )
+    assert check_instance("claude-expired", now=now).available is True
+
+    # Codex primary/secondary checked; claudeAgent ignores primary; other drivers ignore limits.
+    write(
+        "codex-full",
+        {
+            "driver": "codex",
+            "usageLimits": {
+                "windows": [
+                    {"id": "primary", "usedPercent": 100, "resetsAt": "2026-11-24T11:30:00Z"},
+                ]
+            },
+        },
+    )
+    codex_full = check_instance("codex-full", now=now)
+    assert not codex_full.available
+    assert codex_full.resets_at == datetime(2026, 11, 24, 11, 30, 0, tzinfo=UTC)
+
+    write(
+        "other-driver",
+        {
+            "driver": "acp",
+            "usageLimits": {
+                "windows": [
+                    {"id": "primary", "usedPercent": 100, "resetsAt": "2026-11-24T11:30:00Z"},
+                    {"id": "five_hour", "usedPercent": 100, "resetsAt": "2026-11-24T11:30:00Z"},
+                ]
+            },
+        },
+    )
+    assert check_instance("other-driver", now=now).available is True

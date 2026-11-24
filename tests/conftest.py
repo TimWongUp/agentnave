@@ -68,9 +68,12 @@ def manager_chat(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 @pytest.fixture(autouse=True)
 def check_mcp_reply_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     """Check every successful in-process tool reply against its published contract."""
+    from agentnave import mcp_runtime, t3_seats
+
     server = mcp_server.mcp
     call_tool = server.call_tool
     validators: dict[str, Validator] = {}
+    t3_validators: dict[str, Validator] = {}
 
     async def checked_call(
         name: str,
@@ -79,12 +82,22 @@ def check_mcp_reply_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> CallToolResult | InputRequiredResult:
         result = await call_tool(name, arguments, context)
         if isinstance(result, CallToolResult) and not result.is_error:
-            if not validators:
-                # Include list_invocations, hidden from agents but called by the relay.
-                for tool in await MCPServer.list_tools(server):
-                    assert tool.output_schema is not None
-                    validators[tool.name] = Draft202012Validator(tool.output_schema)
-            validators[name].validate(result.structured_content)
+            if name in ("recommend_seat", "list_members") and t3_seats.t3_orchestration_active(
+                mcp_runtime.HOST
+            ):
+                if name not in t3_validators:
+                    published = {tool.name: tool for tool in await server.list_tools()}
+                    schema = published[name].output_schema
+                    assert schema is not None
+                    t3_validators[name] = Draft202012Validator(schema)
+                t3_validators[name].validate(result.structured_content)
+            else:
+                if not validators:
+                    # Include list_invocations, hidden from agents but called by the relay.
+                    for tool in await MCPServer.list_tools(server):
+                        assert tool.output_schema is not None
+                        validators[tool.name] = Draft202012Validator(tool.output_schema)
+                validators[name].validate(result.structured_content)
             assert len(result.content) == 1
             text = result.content[0]
             assert isinstance(text, TextContent)
