@@ -4,6 +4,7 @@
 - 日期：2026-11-09
 - 修订 [ADR-0037](0037-app-writes-orchestration-rules.md) 中预设正文写工位用法、「按任务难度二选一」的条款，[ADR-0051](0051-parallel-preset-without-recheck.md) 中两档内容的条款，[ADR-0065](0065-predefined-specialist-roles.md) 中「不跨难度」的适用范围；不改变 [ADR-0031](0031-prompt-only-orchestration.md)：服务仍不调度。
 - 「决策模型」档下「服务仍不调度」「选工位的方法放 Skill」的适用范围由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订；授权规则仍只在规则块里。
+- 两档按并行写入由谁拍板区分的条款由 [ADR-0122](0122-merge-split-and-parallel-presets.md) 修订。
 
 ## 背景
 

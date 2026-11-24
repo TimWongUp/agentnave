@@ -136,15 +136,27 @@ pub(super) fn preset_text(document: &Value, mode: &str) -> Option<String> {
     Some(assemble_steps(document, steps, true))
 }
 
-fn parallel_role_base(document: &Value) -> String {
-    let steps = catalog()["order"]["parallel"]
+fn split_role_base(document: &Value) -> String {
+    let steps = catalog()["order"]["split"]
         .as_array()
-        .expect("parallel order in orchestration_rules.json");
+        .expect("split order in orchestration_rules.json");
     let end = steps
         .iter()
         .position(|step| step.as_str() == Some("enabled_roles"))
         .unwrap_or(steps.len());
     assemble_steps(document, &steps[..end], false)
+}
+
+fn dispatch_parts(tail: &str) -> Value {
+    json!({
+        "base": section("shared"),
+        "parallel_writes_asked": section("parallel_writes_when_asked"),
+        "parallel_writes_own": section("parallel_writes_by_boss"),
+        "checks": section("shared_checks"),
+        "meetings_asked": section("meetings_when_asked"),
+        "meetings_own": section("meetings_on_tradeoffs"),
+        "tail": section(tail),
+    })
 }
 
 pub(super) fn presets_payload(document: &Value) -> Value {
@@ -154,10 +166,8 @@ pub(super) fn presets_payload(document: &Value) -> Value {
     let default_count = md["default_count"]
         .as_u64()
         .expect("meeting default_count in orchestration_rules.json");
-    let shared = section("shared");
     json!({"meetings": super::text_of(document, "meetings"),
         "split": super::text_of(document, "split"),
-        "parallel": super::text_of(document, "parallel"),
         "decision": super::text_of(document, "decision"),
         "meeting": meeting_line(document),
         "meetings_parts": {"head": section("meetings_only_head"), "tail": section("meetings_only_tail"), "meetings_asked": section("meetings_when_asked"), "meetings_own": section("meetings_on_tradeoffs")},
@@ -167,15 +177,8 @@ pub(super) fn presets_payload(document: &Value) -> Value {
         "image_generation": section("image_generation"),
         "role_sections": super::roles::sections(false),
         "role_sections_medium": super::roles::sections(true),
-        "role_base": {"parallel": parallel_role_base(document)},
-        "parallel_base": format!("{shared}{}", section("parallel_writes")),
-        "decision_parts": {"base": section("decision_shared"),
-            "parallel_writes_asked": section("split_parallel_writes"),
-            "parallel_writes_own": section("parallel_writes"),
-            "meetings_asked": section("meetings_when_asked"),
-            "meetings_own": section("meetings_on_tradeoffs")},
-        "split_parts": {"base": format!("{shared}{}", section("split_parallel_writes")),
-            "meetings_asked": section("meetings_when_asked"),
-            "meetings_own": section("meetings_on_tradeoffs")},
+        "role_base": {"split": split_role_base(document)},
+        "decision_parts": dispatch_parts("dispatch_decision"),
+        "split_parts": dispatch_parts("dispatch_split"),
         "lead": {"asked": str_at(lead, "when_false"), "always": str_at(lead, "when_true")}})
 }

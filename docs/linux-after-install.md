@@ -149,7 +149,7 @@ cat > "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/orchestration.json" <<'J'
            "hard":{"provider":"<组员>","model":"<模型 ID>"}}}
 J
 ```
-验证：`list_members.orchestration.enabled` 符合预期，4 个工位都在。没有 App 写入规则块时，`agentnave-manager` 按 `references/headless.md` 默认走分工协作；用户若明确要求并行分工、只开会、主动开会、`lead_only` 或开会默认席位，再从安装包内的 `orchestration_rules.json` 按 `order` 拼出对应文字放进你的指令入口（§3.2）。
+验证：`list_members.orchestration.enabled` 符合预期，4 个工位都在。没有 App 写入规则块时，`agentnave-manager` 按 `references/headless.md` 默认走分工协作；用户若明确要求决策模型、只开会、并行写入由 boss 判断、主动开会、`lead_only` 或开会默认席位，再从安装包内的 `orchestration_rules.json` 按 `order` 拼出对应文字放进你的指令入口（§3.2）。
 
 ## 6. 要不要加评审功能（agentnave-review skill）
 
