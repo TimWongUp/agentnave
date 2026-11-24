@@ -264,3 +264,25 @@ async def test_terminal_resume_ends_the_kept_process_first(
             os.kill(_pid(first), 0)
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.asyncio
+@posix_only
+async def test_terminal_resume_cancelled_while_the_kept_process_ends_starts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launch, _ = setup_tray(tmp_path, monkeypatch)
+    manager = InvocationManager()
+    try:
+        # The kept process takes a second to exit, so the cancel lands while it ends.
+        first = await _run(manager, tmp_path, "work", None, "slow-exit")
+        request = InvocationRequest("codex", "again", tmp_path, session_id=first.session_id)
+        invocation_id = manager.start(
+            request, prepared=PreparedCommand((), tmp_path), terminal=launch
+        )
+        await asyncio.sleep(0.2)
+        cancelled = await manager.cancel(invocation_id)
+        assert cancelled.status is InvocationStatus.CANCELLED
+        assert not (tmp_path / "spawn-requests" / f"{invocation_id}.json").exists()
+    finally:
+        await manager.shutdown()
