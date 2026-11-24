@@ -37,7 +37,6 @@ PROVIDER_BIN_DIRS = (
     "~/AppData/Roaming/npm",
     "~/AppData/Local/Programs/nodejs",
     "~/AppData/Local/ZCode/bin",
-    "~/AppData/Local/devin/cli/bin",
 )
 
 

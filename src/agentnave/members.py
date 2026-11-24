@@ -56,6 +56,7 @@ from agentnave.orchestration_roles import (
 from agentnave.orchestration_roles import (
     SeatReplacement as SeatReplacement,
 )
+from agentnave.retired_providers import without_retired
 from agentnave.seat_fallbacks import statuses as _review_status
 
 type Mode = Literal["task", "discussion"]
@@ -154,10 +155,6 @@ PERMISSION_TIERS: dict[str, dict[PermissionTier, dict[str, ProviderOption]]] = {
         "auto": {"permission_mode": "danger-full-access"},
         "full": {"permission_mode": "danger-full-access"},
     },
-    "devin": {
-        "auto": {"permission_mode": "smart"},
-        "full": {"permission_mode": "dangerous"},
-    },
 }
 # Options that decide what a CLI may run unasked. A caller passing any of them keeps the
 # CLI's tier out; a tier replaces saved model options among them.
@@ -169,7 +166,6 @@ PERMISSION_KEYS: dict[str, frozenset[str]] = {
     "antigravity": frozenset({"mode", "sandbox", "dangerously_skip_permissions"}),
     "codex": frozenset({"approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"}),
     "deepseek": frozenset({"permission_mode"}),
-    "devin": frozenset({"permission_mode", "sandbox"}),
 }
 
 
@@ -367,7 +363,7 @@ def _read_app_file[T: BaseModel](name: str, model: type[T], error: type[ValueErr
     except (OSError, ValueError) as exc:
         raise error(f"Unable to read {name}: {exc}. {_repair(name)}") from exc
     try:
-        return model.model_validate_json(content)
+        return model.model_validate_json(without_retired(name, content))
     except ValueError as exc:
         raise error(f"Invalid {name}: {exc}. {_repair(name)}") from exc
 

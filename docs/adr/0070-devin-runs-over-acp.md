@@ -1,6 +1,6 @@
 # ADR-0070：Devin 改用 ACP 运行
 
-- 状态：已接受
+- 状态：已撤销，见 [ADR-0119](0119-remove-devin.md)（撤掉 Devin CLI 支持）
 - 日期：2026-11-09
 - 扩展 [ADR-0057](0057-boss-answers-native-prompts.md)：Devin 运行中的权限请求同样交给 boss 代答。
 

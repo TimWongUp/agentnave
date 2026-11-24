@@ -529,20 +529,6 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 360_000
             );
         }
-        if id == "devin" {
-            let entry = h.read().unwrap().entry.unwrap();
-            assert_eq!(entry["transport"], "stdio");
-            assert_eq!(entry["args"], json!([]));
-            let config = if cfg!(windows) {
-                hosts
-                    .context
-                    .home
-                    .join("AppData/Roaming/devin/mcp_config.json")
-            } else {
-                hosts.context.home.join(".config/devin/mcp_config.json")
-            };
-            assert_eq!(h.config, config);
-        }
         assert_eq!(
             result["host"]["tested"],
             [
@@ -554,7 +540,6 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
                 "antigravity",
                 "pi",
                 "deepseek",
-                "devin",
                 "hermes"
             ]
             .contains(&id)
@@ -588,7 +573,7 @@ fn all_host_formats_connect_refresh_and_remove_without_running_host_clis() {
 }
 
 #[test]
-fn devin_config_root_uses_absolute_environment_paths_only() {
+fn retired_devin_config_root_uses_absolute_environment_paths_only() {
     let (_temp, mut hosts) = fixture();
     let variable = if cfg!(windows) {
         "APPDATA"
@@ -603,7 +588,7 @@ fn devin_config_root_uses_absolute_environment_paths_only() {
     for value in ["", "relative"] {
         hosts.context.env.insert(variable.into(), value.into());
         assert_eq!(
-            host(&hosts, "devin").config,
+            hosts.retired_devin().config,
             hosts
                 .context
                 .home
@@ -611,13 +596,26 @@ fn devin_config_root_uses_absolute_environment_paths_only() {
                 .join("devin/mcp_config.json")
         );
     }
+    // A relative value does not hide an absolute one the login shell reports.
+    if !cfg!(windows) {
+        let reported = hosts.context.home.join("shell-config");
+        hosts.shell = Some(Ok(BTreeMap::from([(
+            variable.to_owned(),
+            reported.display().to_string(),
+        )])));
+        assert_eq!(
+            hosts.retired_devin().config,
+            reported.join("devin/mcp_config.json")
+        );
+        hosts.shell = Some(Ok(BTreeMap::new()));
+    }
     let configured = hosts.context.home.join("custom-config");
     hosts
         .context
         .env
         .insert(variable.into(), configured.display().to_string());
     assert_eq!(
-        host(&hosts, "devin").config,
+        hosts.retired_devin().config,
         configured.join("devin/mcp_config.json")
     );
 }

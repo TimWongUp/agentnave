@@ -129,7 +129,6 @@ numbers, for example `1, 3`:
 6. Pi Coding Agent (`pi`)
 7. DeepSeek Harness (`dsh`; on macOS bundled in `DeepSeek Harness.app`)
 8. ZCode (`zcode app-server --stdio`; on macOS the official `ZCode.app` Node bundle is also supported with Node.js installed)
-9. Devin CLI (`devin`)
 
 The user may also answer “none”. If a selection was requested, wait for the answer before locating provider executables; do not
 probe every provider, scan the disk, or infer the selection from the host or model name.
@@ -152,7 +151,7 @@ feature in the MCP server. AgentNave continues to inherit the configured `PATH` 
 
 ## 2. Host identity and provider exclusions
 
-服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|hermes|zcode|devin`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装在 OpenCode 配置目录 `skills/agentnave-manager`（默认 `~/.config/opencode/skills/agentnave-manager`）的 Skill 也需手动删除；两者的历史会话仍可读取）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
+服务在启动时先读取 `AGENTNAVE_HOST`，否则在 macOS／Linux 沿祖先进程最多 32 层识别宿主；Windows 只读取该环境变量。允许值为 `codex|claude|codebuddy|workbuddy|grok|antigravity|pi|deepseek|hermes|zcode`，未知值使启动失败（v0.46.0 起不再支持 Gemini CLI 宿主，`gemini` 也属未知值，旧配置的处理见下文升级说明；OpenCode 未经实测，已不再作为宿主接入，`opencode` 同样是未知值，旧的 OpenCode 条目请在其配置中删除 `mcp.agentnave`，App 曾装在 OpenCode 配置目录 `skills/agentnave-manager`（默认 `~/.config/opencode/skills/agentnave-manager`）的 Skill 也需手动删除；两者的历史会话仍可读取；Devin CLI 也已撤掉，`devin` 同为未知值，App 启动时会删除它先前写入的接入内容，历史同样可读）；无法自动识别时保持未知、不自我排除。`list_members` 的 `host`／`host_source` 可核对识别结果。
 
 宿主自身 CLI 的私聊任务由 App 中该 boss 的「同款 CLI」选择决定：交给宿主自带子代理、由 AgentNave 启动或跳过（默认随宿主能力，Antigravity 由 AgentNave 启动，其他交给宿主自带子代理）。`AGENTNAVE_EXCLUDED_PROVIDERS` 只用来排除其他 Provider，与当前宿主相同的项不起作用；旧版文档让每个宿主写入排除自身的值，App 接入或自检时会自动从条目中去掉这一项，手动接入也无需再写。排除项仅限制 task；discussion 仍按 App 中的组员名单决定。除带 `AGENTNAVE_HOST=gemini` 或 `AGENTNAVE_HOST=opencode` 的旧条目外，已有 MCP 配置无需修改。
 
@@ -240,10 +239,7 @@ MCP 配置路径的全部祖先（家目录本身除外）及目标都拒绝符�
 | pi | JSON 定点编辑 | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/mcp.json` | 同配置根目录的 `skills` | true |
 | deepseek | YAML 补丁列表项 | `${DSH_HOME:-~/.dsh}/cordis.patch.yml`，`- insert:` 插入 `id: agentnave` 的 `@deepseek-ai/dsh-mcp-client` | 同配置根目录的 `skills` | true |
 | hermes | YAML 定点块编辑 | 活动 profile 的 `config.yaml`，未启用 profile 时为 `${HERMES_HOME:-~/.hermes}/config.yaml` | 同活动配置根目录的 `skills` | true |
-| devin（CLI／桌面端） | JSON 定点编辑 | `~/.config/devin/mcp_config.json`（Windows：`%APPDATA%\\devin\\mcp_config.json`） | 同配置根目录的 `skills` | true |
 | zcode | JSON/JSONC 定点编辑 | `~/.zcode/cli/config.json`，`mcp.servers` | `~/.zcode/skills` | false |
-
-Devin 桌面端可能导入 `~/.claude.json` 中的 MCP 服务。接入后用 `devin mcp list` 核对 `agentnave` 的来源是 Devin 自己的 `mcp_config.json`，重载桌面端后在 MCP 页面核对同一来源，再调用 `list_members` 确认 `host` 为 `devin`；仅显示 Connected 不代表宿主身份正确。
 
 layers 返回用户、覆盖和已知项目层。移除删除所有用户级定义，逐文件备份并在回执列出；不会在移除高层后悄然退回另一用户层。项目级只读检查限于 App 启动目录及其祖先，实际宿主的其他项目目录仍须手动核对。多文件不是原子整体，冲突时保留外部新内容，依据回执重试余下层。
 
@@ -423,7 +419,6 @@ configuration directories.
 | Antigravity | `~/.gemini/config/skills` |
 | Hermes | `~/.hermes/skills` |
 | ZCode | `~/.zcode/skills` |
-| Devin CLI／桌面端 | `~/.config/devin/skills`（Windows：`%APPDATA%\\devin\\skills`） |
 | Pi | `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` |
 | DeepSeek Harness | `${DSH_HOME:-~/.dsh}/skills` |
 

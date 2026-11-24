@@ -27,7 +27,12 @@ from agentnave.members import (
     role_seat,
     validate_task_seat,
 )
-from agentnave.models import InvocationRequest, ProviderOption
+from agentnave.models import (
+    RETIRED_PROVIDERS,
+    InvocationRequest,
+    ProviderOption,
+    retired_provider_error,
+)
 from agentnave.orchestration_roles import IMAGE_KIND, CustomSeat, ReviewSeat, seat_role
 from agentnave.seat_fallbacks import IMAGE_HOST_CLI_REASON
 from agentnave.store import Record, TaskRecord
@@ -260,6 +265,8 @@ class StartArguments:
     terminal: bool = False
 
     def inherit(self, task: TaskRecord) -> None:
+        if task.provider in RETIRED_PROVIDERS:
+            raise retired_provider_error(task.provider)
         self.provider = self._inherited(
             self.provider, cast(ProviderName, task.provider), "provider"
         )

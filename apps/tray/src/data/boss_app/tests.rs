@@ -580,17 +580,6 @@ fn boss_cwds_cover_supported_hosts_and_preserve_handover_origin() {
     )
     .unwrap();
 
-    let devin_db = at("devin/sessions.db");
-    fs::create_dir_all(devin_db.parent().unwrap()).unwrap();
-    let dc = rusqlite::Connection::open(&devin_db).unwrap();
-    dc.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY, working_directory TEXT);")
-        .unwrap();
-    dc.execute("INSERT INTO sessions VALUES ('dev-1', '/work/devin')", [])
-        .unwrap();
-    drop(dc);
-    let devin_transcript = at("devin/transcripts/dev-1.json");
-    write(&devin_transcript, "{}");
-
     let zcode_db = at("zcode/db.sqlite");
     fs::create_dir_all(zcode_db.parent().unwrap()).unwrap();
     let zc = rusqlite::Connection::open(&zcode_db).unwrap();
@@ -716,15 +705,6 @@ fn boss_cwds_cover_supported_hosts_and_preserve_handover_origin() {
         None,
     );
     insert_ws(
-        &boss_key("devin", "dev-1"),
-        &boss_key("devin", "dev-1"),
-        None,
-        "devin",
-        Some(&devin_transcript),
-        None,
-        None,
-    );
-    insert_ws(
         &boss_key("zcode", "zc-1"),
         &boss_key("zcode", "zc-1"),
         None,
@@ -797,7 +777,6 @@ fn boss_cwds_cover_supported_hosts_and_preserve_handover_origin() {
     assert_eq!(cwds["ws-pi"], "/work/pi");
     assert_eq!(cwds["ws-grok"], "/work/grok");
     assert_eq!(cwds["ws-dsh"], "/work/dsh");
-    assert_eq!(cwds[&boss_key("devin", "dev-1")], "/work/devin");
     assert_eq!(cwds[&boss_key("zcode", "zc-1")], "/work/zcode");
     assert_eq!(cwds[&boss_key("hermes", "hm-1")], "/work/hermes");
     assert!(!cwds.contains_key(&boss_key("hermes", "hm-null")));
@@ -1135,14 +1114,14 @@ fn other_clis_name_their_chats_in_their_own_records() {
     );
     // A record that is missing, or a CLI whose records are not read, has no name.
     assert_eq!(name("pi", "pi/missing.jsonl"), None);
-    assert_eq!(name("devin", "cb/projects/p/x.jsonl"), None);
+    assert_eq!(name("zcode", "cb/projects/p/x.jsonl"), None);
 
     // And through the workspace's saved record.
     let connection = connection();
     for (workspace, host, record) in [
         ("w-grok", "grok", "grok/sessions/e/s1/chat_history.jsonl"),
         ("w-pi", "pi", "pi/sessions/p/2026_id.jsonl"),
-        ("w-claude-only", "devin", "cb/projects/p/x.jsonl"),
+        ("w-claude-only", "zcode", "cb/projects/p/x.jsonl"),
     ] {
         connection
             .execute(

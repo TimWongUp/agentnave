@@ -175,30 +175,6 @@ fn command_listings_are_parsed_from_their_fixed_formats() {
     );
     assert_eq!(models[0]["label"], "Gemini 3.8 Flash (High)");
 
-    let devin = "Claude Opus 4.6 (claude-opus-4.6)\n  \
-            claude-opus-4-6-thinking   Claude Opus 4.6 Thinking  [$5 / 1M Input]\n  \
-            claude-opus-4-6            Claude Opus 4.6  [$5 / 1M Input]\n\n\
-            Pass a family slug, alias, or model UID to `--model`\n";
-    let models = devin_models(devin);
-    assert_eq!(
-        ids(&models),
-        ["claude-opus-4-6-thinking", "claude-opus-4-6"]
-    );
-    assert_eq!(models[0]["label"], "Claude Opus 4.6 Thinking");
-    assert_eq!(models[1]["label"], "Claude Opus 4.6");
-    let devin_json = r#"{"families":[{"variants":[{"model_uid":"gpt-5.4","label":"GPT-5.4"}]}]}"#;
-    let models = devin_models(devin_json);
-    assert_eq!(ids(&models), ["gpt-5.4"]);
-    assert_eq!(models[0]["label"], "GPT-5.4");
-    let devin_json = r#"{"families":[{"family_uid":"fusion","variants":[{"model_uid":"fusion-gpt-sidekick-swe","label":"Fusion"}]},{"family_uid":"swe","variants":[{"model_uid":"swe-2-medium","label":"SWE-2 Medium"}]}]}"#;
-    assert_eq!(ids(&devin_models(devin_json)), ["swe-2-medium"]);
-    assert_eq!(
-        ids(&devin_models(
-            "Fusion\n  fusion-gpt-sidekick-swe  Fusion\nSWE\n  swe-2-medium  SWE-2 Medium\n"
-        )),
-        ["swe-2-medium"]
-    );
-
     let pi = "provider     model                 context  max-out  thinking  images\n\
             gateway       codex/gpt-5.6-luna    272K     128K     yes       yes\n\
             opencode-go  glm-5.3               1M       131.1K   yes       no\n";

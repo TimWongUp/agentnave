@@ -138,7 +138,7 @@ fn candidates(app: &App, home: &Path) -> (bool, Vec<PathBuf>) {
                 vec![root.join("AGENTS.md"), shared.join("AGENTS.md")],
             )
         }
-        "devin" | "zcode" => (false, at(&["AGENTS.md"])),
+        "zcode" => (false, at(&["AGENTS.md"])),
         "hermes" => (false, at(&["SOUL.md"])),
         _ => (false, Vec::new()),
     }

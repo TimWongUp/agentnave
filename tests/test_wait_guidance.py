@@ -450,7 +450,7 @@ def test_codex_push_and_pi_and_other_hosts_foreground_wait(tmp_path: Path) -> No
         assert token in wait_guidance.CODEX_WAIT_AGAIN
 
     # Pi and other hosts never use PUSH_NEXT or watch command even if can_push/watch_supported are True.
-    for name in ("pi", "codebuddy", "deepseek", "devin", "zcode", None):
+    for name in ("pi", "codebuddy", "deepseek", "zcode", None):
         host = Host(name, "env") if name else Host()
         assert (
             wait_guidance.build_wait_guidance(

@@ -8,7 +8,6 @@
     antigravity: "Antigravity CLI",
     pi: "Pi Coding Agent",
     deepseek: "DeepSeek Harness",
-    devin: "Devin CLI",
     zcode: "ZCode",
   };
   // Each record of one CLI's entry, or of one named account's, which has the same shape; `account`

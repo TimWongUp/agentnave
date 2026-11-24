@@ -31,7 +31,6 @@ type ProviderName = Literal[
     "codebuddy",
     "codex",
     "deepseek",
-    "devin",
     "grok",
     "pi",
     "zcode",

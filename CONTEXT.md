@@ -39,7 +39,7 @@ App 左栏唯一的分组层级，由托盘从会话记录和本机目录得出�
 
 ## Provider
 
-AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent、DeepSeek Harness、Devin CLI 与 ZCode。Codex CLI 可独立安装，也可由 ChatGPT 桌面应用附带；安装来源不产生新的 Provider 身份。
+AgentNave 可启动的本地 CLI 智能体。目前支持 Antigravity CLI、Claude Code、CodeBuddy Code、Codex CLI、Grok CLI、Pi Coding Agent、DeepSeek Harness 与 ZCode。Codex CLI 可独立安装，也可由 ChatGPT 桌面应用附带；安装来源不产生新的 Provider 身份。
 
 ## 账号（Account）
 

@@ -29,7 +29,7 @@ description: 转交和接手 boss 会话。用户说「转交这个会话」时�
 
 1. **看待接手标记。** 有 `handover` 工具时（列表里的 `title` 是工作区首次派发时的名字，老工作区后续的会议或任务标题在认领后的 `conversations` 里）：
    - 用户给出了工作区 ID（`s-` 开头，App 复制的口令里带）：直接调 `handover(workspace_id=..., manager_session_id=...)` 认领，不再按时间和目录筛。
-   - 其余情况先调 `handover()`。用户点名了某个宿主或工作区时，只看与之相符的：`from_host` 用内部名——`codex`（Codex）、`claude`（Claude Code／Claude 桌面）、`codebuddy`（CodeBuddy Code）、`workbuddy`（WorkBuddy）、`grok`（Grok CLI）、`antigravity`（Antigravity／agy）、`pi`（Pi）、`deepseek`（DeepSeek Harness／dsh）、`devin`（Devin CLI）、`hermes`（Hermes）、`zcode`（ZCode），旧记录可能有 `gemini`、`opencode`；`from_host` 为空的待接手项不要筛掉，`cwd` 相符就列为候选让用户确认。
+   - 其余情况先调 `handover()`。用户点名了某个宿主或工作区时，只看与之相符的：`from_host` 用内部名——`codex`（Codex）、`claude`（Claude Code／Claude 桌面）、`codebuddy`（CodeBuddy Code）、`workbuddy`（WorkBuddy）、`grok`（Grok CLI）、`antigravity`（Antigravity／agy）、`pi`（Pi）、`deepseek`（DeepSeek Harness／dsh）、`hermes`（Hermes）、`zcode`（ZCode），旧记录可能有 `gemini`、`opencode`、`devin`；`from_host` 为空的待接手项不要筛掉，`cwd` 相符就列为候选让用户确认。
    - 只有一个待接手，`released` 在一天内，`cwd` 与当前目录相同，且与用户的说法不矛盾：调 `handover(workspace_id=..., manager_session_id=...)` 认领。
    - 仍有多个或不相符：列出每一个的 `title`、`from_host`、`cwd`、`released`，让用户选。
 2. **没有可接手的标记时找老会话。** 用户点名了宿主，按 [各宿主的会话位置](references/sessions.md) 找，排除本聊天自己的记录（本聊天的会话 ID 即传给 `manager_session_id` 的那个原生 ID；拿不到原生 ID 时，最近一条记录如果就是本聊天刚发的请求就跳过）；同一目录有多个候选时只列最近几个（时间和标题或首句摘要）让用户选。没点名就问用户接手哪个宿主的会话。找不到时，告诉用户查过哪些位置。

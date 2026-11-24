@@ -57,7 +57,7 @@
   }
 
   // Supported CLI providers
-  const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "devin", "zcode"];
+  const PROVIDERS = ["codex", "claude", "codebuddy", "grok", "antigravity", "pi", "deepseek", "zcode"];
   const PROVIDER_NAMES = AN.providerHealth.names;
 
   // The options each CLI's permission tier governs. The service sends its own table as `permission_keys`;
@@ -70,7 +70,6 @@
     antigravity: ["mode", "sandbox", "dangerously_skip_permissions"],
     codex: ["approve_for_me", "dangerously_bypass_approvals_and_sandbox", "sandbox"],
     deepseek: ["permission_mode"],
-    devin: ["permission_mode", "sandbox"],
     pi: [],
   };
   let permissionKeys = null;
@@ -197,7 +196,6 @@
       any: L("CLI 自带的自动审核放行常规命令和改动，明显危险的操作仍会被拦下。", "The CLI’s built-in auto-review allows routine commands and edits while blocking obviously dangerous operations."),
       codex: L("Codex 自动审核放行命令，读写限在工作目录内。", "Codex auto-review allows commands while keeping reads and writes within the working directory."),
       claude: L("Claude Code 自动审核放行常规命令和改动，明显危险的操作仍会被拦下；这台电脑或账号用不了自动审核时，改为完全放开。", "Claude Code’s auto-review allows routine commands and edits while blocking obviously dangerous operations; where auto-review is unavailable, it runs with full access instead."),
-      devin: L("Devin 的 smart 模式自动执行快速模型判断安全的操作，其余操作由 boss 决定是否放行。", "Devin's smart mode runs actions a fast model judges safe; boss decides on the rest."),
     },
     full: {
       any: L("不再审核，直接执行任何命令和改动。只在你信任派给它的任务时选。", "Runs any command or edit without review. Choose only when you trust the dispatched tasks."),
@@ -471,7 +469,7 @@
     for (const [provider, cli] of Object.entries(currentDoc.clis || {})) {
       for (const [model, shared] of Object.entries(cli.models)) check(shared, provider, model, L("共享", "Shared"));
       const pool = cli.allowed_models;
-      if (Array.isArray(pool) && !pool.some((id) => !S.hiddenModel(provider, id))) {
+      if (Array.isArray(pool) && pool.length === 0) {
         add(provider, L("可用模型", "Available models"), L("共享", "Shared"), L("至少选一个模型", "Select at least one model"));
       }
     }

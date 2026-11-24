@@ -4,12 +4,11 @@ import json
 import os
 import stat
 import uuid
-from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
-from agentnave.adapters import base, codex, devin_acp, get_adapter
+from agentnave.adapters import base, codex, get_adapter
 from agentnave.adapters import deepseek as deepseek_adapter
 from agentnave.adapters.antigravity import (
     AntigravityAdapter,
@@ -1847,91 +1846,6 @@ def test_zcode_result_requires_terminal_and_preserves_session(tmp_path: Path) ->
         "sess-known",
     )
     assert adapter.parse(1, events, b"transport failed").status is InvocationStatus.FAILED
-
-
-def test_devin_adapter_prepares_the_acp_helper_and_validates_options(tmp_path: Path) -> None:
-    adapter = get_adapter("devin")
-    options = {"model": "swe-2-flash-medium", "permission_mode": "dangerous", "sandbox": True}
-    prepared = adapter.prepare(
-        InvocationRequest(
-            "devin", "hello devin", tmp_path, session_id="adaptable-blue", provider_options=options
-        )
-    )
-    assert prepared.argv[1:] == ("-I", str(Path(devin_acp.__file__)))
-    assert prepared.keep_stdin_open
-    assert prepared.stdin is not None
-    assert json.loads(prepared.stdin) == {
-        "prompt": "hello devin",
-        "cwd": str(tmp_path),
-        "session_id": "adaptable-blue",
-        "options": options,
-    }
-
-    for bad, match in (
-        ({"unknown": "x"}, "unsupported devin options"),
-        # Trust is not checked over ACP, and `-p`-only modes have no ACP equivalent.
-        ({"respect_workspace_trust": False}, "unsupported devin options"),
-        ({"permission_mode": "auto"}, "devin permission_mode must be one of"),
-        ({"sandbox": "yes"}, "sandbox must be a boolean"),
-        ({"restricted_tools": True}, "restricted_tools requires a registered provider"),
-    ):
-        with pytest.raises(ValueError, match=match):
-            adapter.prepare(InvocationRequest("devin", "hi", tmp_path, provider_options=bad))
-
-
-def test_devin_parse_maps_acp_stop_reasons_and_errors() -> None:
-    adapter = get_adapter("devin")
-
-    def lines(*events: Mapping[str, object]) -> bytes:
-        return b"".join(json.dumps(event).encode() + b"\n" for event in events)
-
-    session = {"type": "session", "session_id": "adaptable-blue"}
-    done = adapter.parse(
-        0, lines(session, {"type": "result", "output": "ok", "failed": False}), b""
-    )
-    assert (done.status, done.output, done.session_id) == (
-        InvocationStatus.SUCCEEDED,
-        "ok",
-        "adaptable-blue",
-    )
-    for stop, error, status in (
-        ("cancelled", "Devin stopped: cancelled", InvocationStatus.CANCELLED),
-        ("refusal", "Devin stopped: refusal", InvocationStatus.BLOCKED),
-        ("max_tokens", "Devin stopped: max_tokens", InvocationStatus.FAILED),
-        (None, "Authentication required", InvocationStatus.BLOCKED),
-    ):
-        result = {"type": "result", "failed": True, "stop_reason": stop, "error": error}
-        parsed = adapter.parse(1, lines(session, result), b"")
-        assert (parsed.status, parsed.session_id) == (status, "adaptable-blue")
-        assert parsed.error_message == error
-    assert adapter.parse(1, lines({"type": "error", "message": "boom"}), b"").status is (
-        InvocationStatus.FAILED
-    )
-    assert adapter.parse(1, b"", b"").status is InvocationStatus.FAILED
-    # Devin that quits explains itself on stderr, not in the helper's closed-pipe error.
-    closed = {"type": "result", "failed": True, "error": devin_acp.CLOSED}
-    logged_out = adapter.parse(1, lines(closed), b"Not logged in. Run devin auth login\n")
-    assert logged_out.status is InvocationStatus.BLOCKED
-    assert logged_out.error_message == "Not logged in. Run devin auth login"
-
-
-def test_devin_activity_keeps_thinking_and_tool_inputs_private() -> None:
-    adapter = get_adapter("devin")
-    thinking = adapter.activity({"type": "thinking"})
-    assert thinking is not None and thinking.state == "reasoning"
-    tool = adapter.activity({"type": "tool", "id": "c1", "name": "exec", "status": "in_progress"})
-    assert tool is not None
-    assert (tool.kind, tool.tool_name, tool.tool_call_id, tool.state) == (
-        "tool",
-        "exec",
-        "c1",
-        "in_progress",
-    )
-    text = adapter.activity({"type": "text", "text": "partial"})
-    assert text is not None and text.message_delta and text.public_output == "partial"
-    assert adapter.event_model({"type": "model", "model": "swe-2-flash-medium"}) == (
-        "swe-2-flash-medium"
-    )
 
 
 @pytest.mark.parametrize(

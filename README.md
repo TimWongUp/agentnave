@@ -40,7 +40,7 @@
 
 ### 🙋 弹框由 boss 代答
 
-Claude 默认以交互模式运行，会话可在 Claude Code 中续接；也可以在 App 的员工卡片上关闭交互模式。运行中的权限框、提问框和计划确认交给 boss 回答，不用你守着。Devin 自动审批判断不了的操作也交给 boss。CLI 权限档位默认完全放开，也可以在 App 里改成自动审批。
+Claude 默认以交互模式运行，会话可在 Claude Code 中续接；也可以在 App 的员工卡片上关闭交互模式。运行中的权限框、提问框和计划确认交给 boss 回答，不用你守着。CLI 权限档位默认完全放开，也可以在 App 里改成自动审批。
 
 ### 🧭 工位和评审
 
@@ -58,8 +58,8 @@ Claude 默认以交互模式运行，会话可在 Claude Code 中续接；也可
 
 | 角色                              | 支持                                                                                                                                |
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **boss**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Devin CLI／桌面端、Hermes、Grok Bot（仅 Linux） |
-| **员工**（被派活的 CLI）          | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode、Devin CLI                         |
+| **boss**（接入 AgentNave、负责派活） | Claude 桌面端、Claude Code、Codex CLI、CodeBuddy Code、WorkBuddy 桌面端、Grok CLI、Antigravity、Pi、DeepSeek Harness、ZCode、Hermes、Grok Bot（仅 Linux） |
+| **员工**（被派活的 CLI）          | Claude Code、Codex CLI、CodeBuddy Code、Grok CLI、Antigravity CLI、Pi Coding Agent、DeepSeek Harness、ZCode                         |
 
 宿主不会把单个任务派给自己的 CLI，但会议里可以有它的席位。
 
@@ -116,7 +116,7 @@ AgentNave 只负责把活派出去、管好进程、把结果原样带回来。�
 | 保存任务和会议记录       | 失败了要不要重试               |
 | 主持会议的轮次           | 谁来答、按什么顺序、答得行不行 |
 
-AgentNave 默认让派出去的 CLI 完全放开权限，也可以在 App 里选择自动审批。Claude 以交互模式运行时和 Devin 运行时，仍要确认的弹框由 boss 代答。
+AgentNave 默认让派出去的 CLI 完全放开权限，也可以在 App 里选择自动审批。Claude 以交互模式运行时，仍要确认的弹框由 boss 代答。
 AgentNave 没有给人用的命令行，你只需要跟 boss 说话。
 
 <details>

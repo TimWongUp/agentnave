@@ -289,8 +289,9 @@ pub fn read(root: &Path) -> Result<Option<Value>, String> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("无法读取 {FILE}：{error}")),
     };
-    let document =
+    let mut document =
         serde_json::from_slice(&content).map_err(|error| format!("{FILE} 损坏：{error}"))?;
+    crate::retired_providers::decision_seats(&mut document);
     validate(&document).map_err(|error| format!("{FILE} 格式错误：{error}"))?;
     Ok(Some(document))
 }

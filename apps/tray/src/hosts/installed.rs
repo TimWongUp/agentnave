@@ -10,7 +10,6 @@ pub(super) fn desktop(context: &Context, boss: &str) -> Option<(&'static str, Op
             "workbuddy" => &["WorkBuddy.app"][..],
             "antigravity" => &["Antigravity.app"][..],
             "deepseek" => &["DeepSeek Harness.app"][..],
-            "devin" => &["Devin.app"][..],
             "zcode" => &["ZCode.app"][..],
             _ => &[],
         };

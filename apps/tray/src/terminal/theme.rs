@@ -1,5 +1,5 @@
-//! Which theme a CLI starts in, so it reads well on the terminal's skin (ADR-0103). Codex, Pi,
-//! Devin and Antigravity ask the terminal for its background and follow it. Claude Code is put on
+//! Which theme a CLI starts in, so it reads well on the terminal's skin (ADR-0103). Codex, Pi
+//! and Antigravity ask the terminal for its background and follow it. Claude Code is put on
 //! its automatic theme, which also hears the terminal's appearance-change notice and so follows
 //! the App live. Grok and CodeBuddy draw their own colours and are told the App's light or dark
 //! theme at launch. A theme the user chose in the CLI's own config is left alone.

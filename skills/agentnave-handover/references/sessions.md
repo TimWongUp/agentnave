@@ -14,8 +14,7 @@
 | DeepSeek Harness | `~/.dsh/sessions/--目录--/<ID>/session.v*.jsonl.zstd`（`<ID>` 已带 `session-` 前缀；`DSH_HOME`），用 `zstd -dc` 读               | 目录名                               | `user/message` 且 `data.source.kind` 为 `user` 的 `data.content[]`，以及 `assistant/message` 的 `data.message.content[]`，取 `type` 为 `text` 的块的 `text` |
 | Hermes           | `~/.hermes/state.db`（Windows 目录存在时默认 `%LOCALAPPDATA%\hermes\state.db`；`active_profile` 为非 `default` 有效名时在 `profiles/<profile>/state.db`；`HERMES_HOME`），只读打开 | 表 `sessions` 的 `cwd`、`source`、`title`、`last_activity_at`；`cwd` 常为空，按目录找不到时按 `last_activity_at` 列近期会话（附 `title`、`source`）让用户选 | 表 `messages` 按 `session_id` 查，`role` 为 `user`、`assistant`，`active = 1`                                   |
 | ZCode | `~/.zcode/cli/db/db.sqlite`（`~/.zcode/cli/config.json` 的 `storage.sessionDbPath` 可覆盖），表 `message` 和 `part`，只读打开 | 表 `session` 的 `directory` | 按 `time_created, sequence` 排；`message.data` 里 `semantics.origin` 为 `real_user` 是用户原话，`role` 为 `assistant` 是回复；文字取 `part.data` 中 `type` 为 `text`（非 `synthetic`）的 `text` |
-| Devin CLI | `~/.local/share/devin/cli/transcripts/<ID>.json`，找不到时查同目录 `sessions.db`（`DEVIN_SESSIONS_DIR` 可覆盖；Windows 默认 `%LOCALAPPDATA%\devin\cli`，POSIX 尊重 `XDG_DATA_HOME`），只读打开 | `sessions.db` 表 `sessions` 的 `working_directory`、`last_activity_at`、`title`（读 `.json` 时也用它核对目录） | `.json` 看 ATIF 的 `steps` 中 `source` 为 `user`／`agent` 的 `message`；`sessions.db` 查表 `message_nodes` 按 `row_id` 排的 `chat_message` JSON（`role` 为 `user`／`assistant` 的 `content`），仅接手对应会话 |
 
 Antigravity 的会话如果只有 `conversations/<ID>.db`，那是 protobuf，读不了，告诉用户。
 
-Hermes、ZCode、Devin 的数据库没有 `-wal` 文件时，普通只读打开可能失败，改用 `file:<路径>?immutable=1`。
+Hermes、ZCode 的数据库没有 `-wal` 文件时，普通只读打开可能失败，改用 `file:<路径>?immutable=1`。

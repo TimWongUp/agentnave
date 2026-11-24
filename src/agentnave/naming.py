@@ -31,7 +31,6 @@ _CLI = {
     "grok": "Grok",
     "pi": "Pi",
     "deepseek": "DeepSeek Harness",
-    "devin": "Devin",
     "zcode": "ZCode",
 }
 UNKNOWN_MODEL = "未记录模型"

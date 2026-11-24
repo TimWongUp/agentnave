@@ -27,6 +27,7 @@ mod provider_health;
 mod providers;
 mod proxy;
 mod response;
+mod retired_providers;
 mod rules;
 mod settings;
 mod stage;
