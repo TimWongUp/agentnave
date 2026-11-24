@@ -89,9 +89,12 @@ def detect_t3_mode(
     thread_id = source.get("T3CODE_THREAD_ID", "").strip()
     if not thread_id:
         return "none"
+    child = thread_id.startswith(DELEGATED_THREAD_PREFIX)
     if host.name == "claude":
         if source.get("CLAUDE_CODE_ENTRYPOINT") != "t3-code":
             return "none"
+        if child:  # A `claude` nested in a delegated thread stays within its limits.
+            return "child"
         effective_platform = sys.platform if platform is None else platform
         if effective_platform != "win32" and _has_second_claude_ancestor(
             os.getppid() if parent_pid is None else parent_pid,
@@ -101,7 +104,7 @@ def detect_t3_mode(
             return "none"
     elif host.name != "codex":
         return "none"
-    return "child" if thread_id.startswith(DELEGATED_THREAD_PREFIX) else "main"
+    return "child" if child else "main"
 
 
 def current_t3_mode(host: Host) -> T3Mode:

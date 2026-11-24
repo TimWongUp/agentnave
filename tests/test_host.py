@@ -544,6 +544,19 @@ def test_t3_mode_detection_rules_ancestors_platform_and_cache(
         == "none"
     )
 
+    # Nested inside a delegated child thread it stays a child.
+    assert (
+        t3.detect_t3_mode(
+            claude,
+            env={**t3_claude_env, "T3CODE_THREAD_ID": "thread:delegated-task:abc"},
+            parent_pid=60,
+            read_parent=nested_parents.__getitem__,
+            read_argv=nested_argv.__getitem__,
+            platform="darwin",
+        )
+        == "child"
+    )
+
     # Windows skips ancestor scanning (accepts rare nested false positive per ADR-0121).
     assert (
         t3.detect_t3_mode(

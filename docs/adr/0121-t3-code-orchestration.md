@@ -29,7 +29,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
 1. **识别 T3**。每个聊天有自己的服务进程，启动时判断一次：
    - Claude：宿主是 Claude，`CLAUDE_CODE_ENTRYPOINT=t3-code` 且 `T3CODE_THREAD_ID` 非空，并且祖先进程里没有第二个 `claude`（嵌套 `claude -p` 会继承这两个变量）。Windows 不查祖先，接受罕见误判。
    - Codex：宿主是 Codex 且 `T3CODE_THREAD_ID` 非空。
-   - 线程 ID 以 `thread:delegated-task:` 开头是 T3 派出的子线程，其余是主线程。
+   - 线程 ID 以 `thread:delegated-task:` 开头是 T3 派出的子线程（子线程里嵌套的 `claude` 也是），其余是主线程。
    - 服务启动的 Provider 进程与托盘终端剥离 `T3CODE_` 开头的变量，避免误判。`T3CODE_HOME` 由服务自己读取后再剥离。
    - 第一版只认 Claude 和 Codex 宿主。
 2. **T3 跟随编排档位**。档位决定谁选工位、三个开关决定授权（[ADR-0122](0122-merge-split-and-parallel-presets.md)），T3 开关只决定在 T3 主线程里由谁执行：分工协作和自定义由 boss 选 T3 工位，决策模型由决策模型选；只开会和关闭两档没有 T3 模式，在 T3 里和别处一样。不识别、开关没开、当前 boss 的档位没有 T3 模式或 T3 工位目录没有可用工位时，除第 6 节的后台等外一切照旧。T3 内置终端、桌面端、命令行、派生会话都按普通连接处理。子线程不受开关影响，总是只给子线程说明。
