@@ -173,8 +173,10 @@ impl BossApps {
             .iter()
             .filter_map(|boss| {
                 if boss.host == "antigravity" {
-                    // The service records an agy chat's file from the desktop app or the CLI only.
+                    // The service records an agy chat's file from desktop, CLI, or T3 Code ACP.
+                    // T3 Code ACP sessions are neither Antigravity Desktop nor resumable CLI chats.
                     let app = match boss.file.as_deref() {
+                        Some(file) if antigravity::is_acp_record(file) => return None,
                         Some(file) if antigravity::is_desktop_record(file) => ANTIGRAVITY_DESKTOP,
                         Some(_) => ANTIGRAVITY_CLI,
                         None => *found.antigravity.get(&boss.key)?,
@@ -693,7 +695,7 @@ pub(crate) fn native_session_in(
 ) -> Option<(String, PathBuf)> {
     if host == "antigravity" {
         if let Some(path) = file {
-            if antigravity::is_desktop_record(path) {
+            if antigravity::is_desktop_record(path) || antigravity::is_acp_record(path) {
                 return None;
             }
             if let Some(id) = antigravity::id_from_path(path)

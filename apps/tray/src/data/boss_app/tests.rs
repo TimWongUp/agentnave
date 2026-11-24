@@ -1474,3 +1474,118 @@ fn antigravity_summaries_tolerate_nulls_read_uncheckpointed_wal_and_decode_windo
         PathBuf::from(r"\\srv\share\app")
     );
 }
+
+#[test]
+fn t3_antigravity_acp_records_provide_cwd_but_are_not_resumable_cli_or_desktop() {
+    let dir = tempfile::tempdir().unwrap();
+    let acp_root = dir
+        .path()
+        .join(".t3/userdata/providers/antigravity/ac0a3dfd/antigravity-acp");
+    fs::create_dir_all(
+        acp_root
+            .join("brain")
+            .join(CODEX_SESSION)
+            .join(".system_generated/logs"),
+    )
+    .unwrap();
+    let transcript = acp_root
+        .join("brain")
+        .join(CODEX_SESSION)
+        .join(".system_generated/logs/transcript_full.jsonl");
+    write(&transcript, "{}\n");
+    let db = acp_root.join("conversation_summaries.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT,
+            workspace_uris TEXT,
+            last_modified_time TEXT
+        );",
+    )
+    .unwrap();
+    let (uri_proj, expected_proj, uri_key, expected_key) = if cfg!(windows) {
+        (
+            r#"["file:///C:/work/t3-proj"]"#,
+            r"C:\work\t3-proj",
+            r#"["file:///C:/work/t3-key"]"#,
+            r"C:\work\t3-key",
+        )
+    } else {
+        (
+            r#"["file:///work/t3-proj"]"#,
+            "/work/t3-proj",
+            r#"["file:///work/t3-key"]"#,
+            "/work/t3-key",
+        )
+    };
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, 'T3 chat', ?2, '2026-11-24T10:00:00Z')",
+        [CODEX_SESSION, uri_proj],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO conversation_summaries VALUES (?1, 'T3 key-only', ?2, '2026-11-24T10:00:00Z')",
+        [CLAUDE_SESSION, uri_key],
+    )
+    .unwrap();
+    drop(conn);
+
+    let key_with_file = boss_key("antigravity", CODEX_SESSION);
+    let key_only = boss_key("antigravity", CLAUDE_SESSION);
+    let homes = Homes {
+        other: vec![("antigravity-acp".to_owned(), acp_root.clone())],
+        ..Homes::default()
+    };
+
+    // Never resumable via AgentNave's embedded CLI terminal, nor mislabeled as desktop.
+    assert_eq!(
+        native_session_in(&homes, "antigravity", &key_with_file, Some(&transcript)),
+        None
+    );
+    assert_eq!(
+        native_session_in(&homes, "antigravity", &key_only, None),
+        None
+    );
+    assert_eq!(
+        desktop_session_in(&homes, "antigravity", &key_with_file, Some(&transcript)),
+        None
+    );
+
+    let ws_db = rusqlite::Connection::open_in_memory().unwrap();
+    ws_db
+        .execute_batch(
+            "CREATE TABLE workspaces (
+                id TEXT PRIMARY KEY,
+                origin TEXT,
+                owner TEXT,
+                owner_host TEXT,
+                owner_file TEXT,
+                previous_host TEXT,
+                previous_file TEXT
+            );
+            CREATE TABLE conversations (
+                manager_session TEXT,
+                host TEXT
+            );",
+        )
+        .unwrap();
+    ws_db
+        .execute(
+            "INSERT INTO workspaces VALUES ('ws-file', ?1, ?1, 'antigravity', ?2, NULL, NULL)",
+            rusqlite::params![&key_with_file, transcript.to_string_lossy().as_ref()],
+        )
+        .unwrap();
+    ws_db
+        .execute(
+            "INSERT INTO workspaces VALUES ('ws-key', ?1, ?1, 'antigravity', NULL, NULL, NULL)",
+            rusqlite::params![&key_only],
+        )
+        .unwrap();
+
+    let apps = BossApps::new();
+    assert!(apps.of(&ws_db, || homes.clone()).is_empty());
+    let cwds = apps.cwds(&ws_db, || homes.clone());
+    assert_eq!(cwds.get("ws-file").map(String::as_str), Some(expected_proj));
+    assert_eq!(cwds.get("ws-key").map(String::as_str), Some(expected_key));
+}

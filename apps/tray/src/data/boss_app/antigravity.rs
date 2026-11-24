@@ -58,6 +58,23 @@ pub(super) fn roots(homes: &super::Homes) -> Vec<PathBuf> {
     found
 }
 
+pub(super) fn acp_roots(homes: &super::Homes) -> Vec<PathBuf> {
+    homes
+        .other
+        .iter()
+        .filter(|(host, _)| host == "antigravity-acp")
+        .map(|(_, path)| path.clone())
+        .collect()
+}
+
+/// Whether `path` belongs to T3 Code's isolated Antigravity ACP profile (`.../antigravity-acp/`),
+/// which has no terminal resume entry in AgentNave.
+pub(super) fn is_acp_record(path: &Path) -> bool {
+    path.components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .any(|part| part == "antigravity-acp")
+}
+
 /// The desktop app's data folders beside each CLI root: `~/.gemini/antigravity-cli` sits next to
 /// `~/.gemini/antigravity` and `~/.gemini/antigravity-insiders`.
 pub(super) fn desktop_roots(cli_roots: &[PathBuf]) -> Vec<PathBuf> {

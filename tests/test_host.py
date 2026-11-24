@@ -455,3 +455,47 @@ def test_zcode_reads_only_native_assistant_model(
     )
     assert session_model(Host("zcode"), "../bad") is None
     assert _match("/Applications/ZCode.app/Contents/MacOS/ZCode") == "zcode"
+
+
+def test_antigravity_sessions_read_t3_acp_env_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    from agentnave.host import Host
+    from agentnave.native_sessions import session_file, session_model
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.delenv("ANTIGRAVITY_APP_DATA_DIR", raising=False)
+    monkeypatch.delenv("GEMINI_HOME", raising=False)
+
+    session = "11111111-2222-4333-8444-555555555555"
+    profile = tmp_path / ".t3/userdata/providers/antigravity/ac0a3dfd"
+    acp = profile / "antigravity-acp"
+    transcript = acp / "brain" / session / ".system_generated/logs/transcript_full.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("{}\n")
+
+    conv_db = acp / "conversations" / f"{session}.db"
+    conv_db.parent.mkdir(parents=True)
+    model = b"gemini-4-neon"
+    step = b"\xe2\x01" + bytes([len(model)]) + model
+    with sqlite3.connect(conv_db) as db:
+        db.execute("CREATE TABLE gen_metadata (idx integer, data blob)")
+        db.execute("INSERT INTO gen_metadata VALUES (0, ?)", (b"\x1a" + bytes([len(step)]) + step,))
+    db.close()
+
+    # Without env vars, the isolated T3 directory is not searched.
+    assert session_file(Host("antigravity"), session) is None
+    assert session_model(Host("antigravity"), session) is None
+
+    # GEMINI_HOME locates `<profile>/antigravity-acp`.
+    monkeypatch.setenv("GEMINI_HOME", str(profile))
+    assert session_file(Host("antigravity"), session) == transcript
+    assert session_model(Host("antigravity"), session) == "gemini-4-neon"
+
+    # ANTIGRAVITY_APP_DATA_DIR works directly even without GEMINI_HOME.
+    monkeypatch.delenv("GEMINI_HOME", raising=False)
+    monkeypatch.setenv("ANTIGRAVITY_APP_DATA_DIR", str(acp))
+    assert session_file(Host("antigravity"), session) == transcript
+    assert session_model(Host("antigravity"), session) == "gemini-4-neon"

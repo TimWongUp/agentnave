@@ -304,6 +304,7 @@ pub struct Hosts {
     failed: HashMap<String, String>,
     manual_roots: HashSet<String>,
     codex_homes: Vec<PathBuf>,
+    t3_antigravity_homes: Vec<PathBuf>,
     detected_at: String,
     cached: Value,
     processes: Mutex<processes::Probe>,
@@ -332,11 +333,13 @@ impl Hosts {
             failed: HashMap::new(),
             manual_roots: HashSet::new(),
             codex_homes: Vec::new(),
+            t3_antigravity_homes: Vec::new(),
             detected_at: timestamp(),
             cached: Value::Null,
             processes: Mutex::default(),
         };
         hosts.codex_homes = hosts.other_codex_homes();
+        hosts.t3_antigravity_homes = hosts.other_t3_antigravity_homes();
         hosts.cached = hosts.snapshot();
         hosts
     }
@@ -345,6 +348,16 @@ impl Hosts {
         main.map_or_else(Vec::new, |host| {
             split::codex_homes(&self.context.home, &host.root.path)
         })
+    }
+    fn other_t3_antigravity_homes(&self) -> Vec<PathBuf> {
+        let main = self
+            .registry()
+            .into_iter()
+            .find(|host| host.id == "antigravity");
+        let main_root = main
+            .map(|host| host.root.path)
+            .unwrap_or_else(|| self.context.home.join(".gemini/config"));
+        split::t3_antigravity_homes(&self.context, self.shell.as_ref(), &main_root)
     }
     fn launcher(&self) -> Option<PathBuf> {
         // POSIX hosts use the fixed exec script; Windows keeps the versioned executable.
@@ -417,13 +430,24 @@ impl Hosts {
                 "claude" => homes.claude.push(host.root.path),
                 "codex" => homes.codex.push(host.root.path),
                 "antigravity" => {
-                    let cli_home = host
-                        .root
-                        .path
-                        .parent()
-                        .map(|parent| parent.join("antigravity-cli"))
-                        .unwrap_or_else(|| self.context.home.join(".gemini/antigravity-cli"));
-                    homes.other.push(("antigravity".to_owned(), cli_home));
+                    if split::is_t3_antigravity_row(host.id) {
+                        if let Some(acp_home) = host
+                            .root
+                            .path
+                            .parent()
+                            .map(|parent| parent.join("antigravity-acp"))
+                        {
+                            homes.other.push(("antigravity-acp".to_owned(), acp_home));
+                        }
+                    } else {
+                        let cli_home = host
+                            .root
+                            .path
+                            .parent()
+                            .map(|parent| parent.join("antigravity-cli"))
+                            .unwrap_or_else(|| self.context.home.join(".gemini/antigravity-cli"));
+                        homes.other.push(("antigravity".to_owned(), cli_home));
+                    }
                 }
                 "codebuddy" | "workbuddy" | "grok" | "pi" | "deepseek" => {
                     homes.other.push((host.boss.to_owned(), host.root.path));
@@ -446,11 +470,18 @@ impl Hosts {
         self.registry().into_iter().map(Self::rule_app).collect()
     }
     fn rule_app(host: Host) -> crate::rules::App {
+        // T3 Code symlinks its Antigravity profile's GEMINI.md / AGENTS.md to `~/.gemini/`;
+        // share the real `~/.gemini/config` root so rules stay unified without hitting symlinks.
+        let root = if split::is_t3_antigravity_row(host.id) {
+            host.home.join(".gemini/config")
+        } else {
+            host.root.path
+        };
         crate::rules::App {
             key: host.id,
             id: host.boss,
             label: host.label,
-            root: host.root.path,
+            root,
         }
     }
     /// The installed boss apps that are connected, which alone get the orchestration block.
@@ -458,12 +489,7 @@ impl Hosts {
         self.registry()
             .into_iter()
             .filter(|host| self.state(host)["status"] == "connected")
-            .map(|host| crate::rules::App {
-                key: host.id,
-                id: host.boss,
-                label: host.label,
-                root: host.root.path,
-            })
+            .map(Self::rule_app)
             .collect()
     }
     /// Write the orchestration block into the connected apps' rules and take it out of the rest,
@@ -527,6 +553,9 @@ fn trust_hint(id: &str) -> &'static str {
     }
 }
 fn reload_hint(id: &str) -> &'static str {
+    if split::is_t3_antigravity_row(id) {
+        return "在 T3 Code 新建线程或重启 T3 Code";
+    }
     match id.split('@').next().unwrap_or(id) {
         "codex" => "重启 Codex（桌面版需完整退出）",
         "claude" => "重启 Claude Code",
