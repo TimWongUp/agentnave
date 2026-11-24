@@ -9,6 +9,7 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fake_cli import write_fake_cli
@@ -321,12 +322,10 @@ async def test_codex_turns_share_one_app_server_thread(
     assert methods.count("initialize") == methods.count("thread/start") == 1
     assert methods.count("turn/start") == 2 and "thread/resume" not in methods
     turn_start = next(entry for entry in logged if entry.get("method") == "turn/start")
-    params = turn_start["params"]
-    assert isinstance(params, dict)
-    assert params["input"] == [
-        {"type": "text", "text": params["input"][0]["text"], "text_elements": []}
-    ]
-    assert params["input"][0]["text"].endswith("first")
+    params = cast(dict[str, Any], turn_start["params"])
+    (text_input,) = params["input"]
+    assert text_input["type"] == "text" and text_input["text_elements"] == []
+    assert cast(str, text_input["text"]).endswith("first")
     # The approval request was refused, never approved.
     replies = [entry for entry in logged if entry.get("id") == "ask-1"]
     assert len(replies) == 2 and all("error" in reply for reply in replies)
