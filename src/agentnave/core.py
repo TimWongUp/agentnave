@@ -63,6 +63,7 @@ from agentnave.warm_pool import (
     KEEP_SECONDS,
     MAX_KEPT,
     KeptProcess,
+    LaunchSignature,
     WarmPool,
     can_keep,
     launch_signature,
@@ -1288,11 +1289,11 @@ class InvocationManager:
         kept = None
         tasks: list[asyncio.Task[object]] = []
         scratch = None
-        prepared = self._command_for(record, prepared)
+        prepared, signature = self._command_for(record, prepared)
         try:
             if prepared.temp_dir_env:
                 scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
-            launched = await self._launch(record, prepared, scratch)
+            launched = await self._launch(record, prepared, signature, scratch)
             if launched is None:
                 return _cancelled_before_spawn(record, prepared)
             supervised, kept = launched
@@ -1384,26 +1385,35 @@ class InvocationManager:
             on_settled,
         )
 
-    def _command_for(self, record: _InvocationRecord, prepared: PreparedCommand) -> PreparedCommand:
-        """A resume that no kept process can serve runs the Adapter's one-off command instead,
-        when it gave one (ADR-0120)."""
+    def _command_for(
+        self, record: _InvocationRecord, prepared: PreparedCommand
+    ) -> tuple[PreparedCommand, LaunchSignature]:
+        """The command to run and its launch signature, read once for both the choice and the
+        launch: a resume that no kept process can serve runs the Adapter's one-off command
+        instead, when it gave one (ADR-0120)."""
         request = record.request
-        if prepared.unkept is None or request.session_id is None:
-            return prepared
         signature = launch_signature(prepared, request.account)
-        if not record.isolated and self._pool.serves(
-            request.provider, request.session_id, signature
+        if (
+            prepared.unkept is None
+            or request.session_id is None
+            or (
+                not record.isolated
+                and self._pool.serves(request.provider, request.session_id, signature)
+            )
         ):
-            return prepared
-        return prepared.unkept
+            return prepared, signature
+        return prepared.unkept, launch_signature(prepared.unkept, request.account)
 
     async def _launch(
-        self, record: _InvocationRecord, prepared: PreparedCommand, scratch: str | None
+        self,
+        record: _InvocationRecord,
+        prepared: PreparedCommand,
+        signature: LaunchSignature,
+        scratch: str | None,
     ) -> tuple[SupervisedProcess, KeptProcess | None] | None:
         """The session's kept process when it was started the same way, else a new process,
         held as kept when the Adapter declared it can serve later turns. None: cancelled first."""
         request = record.request
-        signature = launch_signature(prepared, request.account)
         keepable = can_keep(prepared) and not record.isolated
         if record.cancel_event.is_set():
             return None

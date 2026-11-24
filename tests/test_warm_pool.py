@@ -142,6 +142,30 @@ async def test_changed_launch_inputs_start_a_new_process(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+async def test_launch_inputs_are_read_once_for_choosing_and_launching(tmp_path: Path) -> None:
+    readings = iter(["a", "a", "b"])
+
+    def inputs(_env: Mapping[str, str]) -> object:
+        return next(readings)
+
+    manager = InvocationManager()
+    try:
+        kept = replace(_turn(tmp_path, "work", None), launch_inputs=inputs)
+        first = await _run_prepared(manager, InvocationRequest("codex", "work", tmp_path), kept)
+        request = InvocationRequest("codex", "again", tmp_path, session_id=first.session_id)
+        unkept = replace(_turn(tmp_path, "again", first.session_id, "unkept"), keep_alive=False)
+        resume = replace(kept, stdin=_line(first.session_id, "again"), unkept=unkept)
+        # One reading serves both the choice and the launch: a later one cannot end the kept
+        # process the choice took ...
+        assert _pid(await _run_prepared(manager, request, resume)) == _pid(first)
+        # ... and a reading that differs from the kept process's runs the one-off command.
+        other = await _run_prepared(manager, request, resume)
+        assert _pid(other) != _pid(first) and _turn_number(other) == 1
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_resume_without_a_kept_process_runs_the_unkept_command(tmp_path: Path) -> None:
     manager = InvocationManager()
     try:

@@ -47,8 +47,8 @@ for line in sys.stdin:
     elif method == "thread/start":
         thread = f"thread-{os.getpid()}"
         params = message["params"]
-        approval = params.get("approvalPolicy") or json.loads(
-            settings.get("approval_policy", '"on-request"'))
+        approval = os.environ.get("FAKE_CODEX_ALLOWED_APPROVAL") or params.get(
+            "approvalPolicy") or json.loads(settings.get("approval_policy", '"on-request"'))
         reviewer = os.environ.get("FAKE_CODEX_REVIEWER") or json.loads(
             settings.get("approvals_reviewer", '"user"'))
         out({"method": "thread/started", "params": {"thread": {"id": thread}}})
@@ -201,12 +201,13 @@ async def test_codex_turns_share_one_app_server_thread(fake_codex: Path, tmp_pat
     [
         # exec asks for nothing unless the resolved reviewer is auto review.
         ("approve_for_me", "user", {}, "never"),
-        # --dangerously-bypass-approvals-and-sandbox: exec's harness overrides, never kept.
+        # --dangerously-bypass-approvals-and-sandbox: exec's harness overrides; each turn sends
+        # the policy the thread resolved them to, here what requirements allow.
         (
             "dangerously_bypass_approvals_and_sandbox",
             "auto_review",
             {"approvalPolicy": "never", "sandbox": "danger-full-access"},
-            "never",
+            "on-request",
         ),
     ],
 )
@@ -220,6 +221,8 @@ async def test_codex_threads_and_turns_carry_execs_permission_fields(
     approval: str,
 ) -> None:
     monkeypatch.setenv("FAKE_CODEX_REVIEWER", reviewer)
+    if option == "dangerously_bypass_approvals_and_sandbox":
+        monkeypatch.setenv("FAKE_CODEX_ALLOWED_APPROVAL", "on-request")
     manager = InvocationManager()
     try:
         result = await _codex(manager, tmp_path, "work", options={option: True})

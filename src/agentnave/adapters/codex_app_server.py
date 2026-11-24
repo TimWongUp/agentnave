@@ -254,8 +254,8 @@ def handshake(connection: Connection) -> None:
 @dataclass(slots=True)
 class Thread:
     id: str
-    # What exec sends with every turn: never unless the resolved reviewer is auto review, which
-    # keeps the resolved policy; `--dangerously-bypass-approvals-and-sandbox` keeps never.
+    # What exec sends with every turn: the thread's resolved policy under auto review or
+    # `--dangerously-bypass-approvals-and-sandbox` (whose never it was resolved from), else never.
     approval: object
     warnings: list[str] = field(default_factory=list[str])
 
@@ -282,13 +282,10 @@ def open_thread(connection: Connection, turn: dict[str, Any], mode: str) -> Thre
     thread_id = _object(result.get("thread")).get("id")
     if not isinstance(thread_id, str) or not thread_id:
         raise RuntimeError("codex app-server returned no thread id")
-    reviewer = result.get("approvalsReviewer")
-    approval = (
-        result.get("approvalPolicy")
-        if mode != "bypass" and reviewer in _AUTO_REVIEWERS
-        else "never"
-    )
-    return Thread(thread_id, approval)
+    # The policy the thread resolved is already the one requirements allow, as exec's is.
+    resolved = result.get("approvalPolicy")
+    auto_review = result.get("approvalsReviewer") in _AUTO_REVIEWERS
+    return Thread(thread_id, resolved if mode == "bypass" or auto_review else "never")
 
 
 def warning(message: dict[str, Any], thread_id: str) -> str | None:

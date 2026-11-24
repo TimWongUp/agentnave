@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 from collections.abc import Mapping
+from contextlib import suppress
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -98,24 +99,30 @@ def _fixed_permissions(options: Mapping[str, ProviderOption]) -> str | None:
 
 def _config_files(cwd: Path, env: Mapping[str, str]) -> tuple[tuple[str, int, int] | str, ...]:
     """The size and modification time of every file Codex 0.171 reads permissions from for cwd
-    (codex-rs/config/src/loader): the user and project config, the system config, requirements
-    and the legacy managed config. Cloud-managed config and macOS managed preferences are not
-    files and are not covered."""
-    home = Path(env.get("CODEX_HOME") or Path("~/.codex").expanduser())
+    (codex-rs/config/src/loader): the user and project config, the system config, requirements,
+    the legacy managed config, and the `rules/*.rules` exec policies of every layer folder
+    (codex-rs/core/src/exec_policy.rs). Cloud-managed config and macOS managed preferences are
+    not files and are not covered."""
+    directory = cwd.resolve()
+    # A relative CODEX_HOME is taken from the child's working directory, the task's.
+    home = directory / (env.get("CODEX_HOME") or Path("~/.codex").expanduser())
     if sys.platform == "win32":
         data = env.get("ProgramData") or env.get("PROGRAMDATA") or r"C:\ProgramData"
         system = Path(data, "OpenAI", "Codex")
-        paths = [system / "config.toml", system / "requirements.toml", home / "managed_config.toml"]
+        files = [system / "config.toml", system / "requirements.toml", home / "managed_config.toml"]
     else:
         system = Path("/etc/codex")
-        paths = [
+        files = [
             system / name for name in ("config.toml", "requirements.toml", "managed_config.toml")
         ]
-    paths.append(home / "config.toml")
-    directory = cwd.resolve()
-    paths.extend(folder / ".codex" / "config.toml" for folder in (directory, *directory.parents))
+    files.append(home / "config.toml")
+    projects = [folder / ".codex" for folder in (directory, *directory.parents)]
+    files.extend(folder / "config.toml" for folder in projects)
+    for folder in (system, home, *projects):
+        with suppress(OSError):
+            files.extend(sorted((folder / "rules").glob("*.rules")))
     found: list[tuple[str, int, int] | str] = []
-    for path in paths:
+    for path in files:
         try:
             stat = path.stat()
         except OSError:

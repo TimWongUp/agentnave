@@ -533,6 +533,21 @@ def test_codex_fixed_permissions_keep_an_app_server_on_every_turn(tmp_path: Path
             )
 
 
+def test_codex_config_fingerprint_covers_rules_and_a_relative_codex_home(tmp_path: Path) -> None:
+    rules = tmp_path / "home" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "a.rules").write_text("x")
+    project = tmp_path / ".codex" / "rules"
+    project.mkdir(parents=True)
+    (project / "b.rules").write_text("y")
+    env = {"CODEX_HOME": "home"}
+    before = codex._config_files(tmp_path, env)  # pyright: ignore[reportPrivateUsage]
+    paths = {entry[0] for entry in before if isinstance(entry, tuple)}
+    assert {str(rules.resolve() / "a.rules"), str(project.resolve() / "b.rules")} <= paths
+    (project / "b.rules").write_text("changed")
+    assert codex._config_files(tmp_path, env) != before  # pyright: ignore[reportPrivateUsage]
+
+
 def _bridged(prepared: base.PreparedCommand) -> str:
     """The permission mode of an app-server bridge command."""
     argv = prepared.argv
