@@ -91,7 +91,7 @@ impl Hosts {
             &[],
             &self.context.home,
             &json!({"preset": "off"}),
-            false,
+            None,
             &[rules],
             &self.rules_backup(),
             false,

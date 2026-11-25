@@ -99,7 +99,7 @@ fn rules_sync_removes_blocks_for_an_uninstalled_cli() {
     );
     assert!(
         hosts
-            .sync_rules(&json!({"preset":"off"}), false, &[])
+            .sync_rules(&json!({"preset":"off"}), None, &[])
             .is_empty()
     );
     let text = fs::read_to_string(path).unwrap();

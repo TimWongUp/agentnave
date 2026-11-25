@@ -147,14 +147,64 @@ pub(super) fn preset_text(document: &Value, mode: &str) -> Option<String> {
     Some(assemble_steps(document, steps, true, false))
 }
 
-pub(super) fn preset_text_for_t3(document: &Value, mode: &str) -> Option<String> {
+/// A preset's text with its dispatch split into "outside T3 Code" and the T3 sections in `suffix`.
+pub(super) fn preset_text_for_t3(document: &Value, mode: &str, suffix: &str) -> Option<String> {
     let steps = catalog()["order"].get(mode)?.as_array()?;
-    let suffix = t3_suffix(mode);
-    let mut text = assemble_steps(document, steps, true, suffix.is_some());
-    if let Some(suffix) = suffix {
-        text.push_str(&suffix);
-    }
+    let mut text = assemble_steps(document, steps, true, true);
+    text.push_str(suffix);
     Some(text)
+}
+
+/// The T3 sections a file gets in `mode` when it is read by a selected CLI that AgentNave
+/// recognises inside T3 (`recognized`) and/or by selected ones it does not (`others`); None for the
+/// modes without a T3 mode.
+pub(super) fn t3_additions(mode: &str, recognized: bool, others: &[&str]) -> Option<String> {
+    let base = t3_suffix(mode)?;
+    let mut out = if recognized { base } else { String::new() };
+    out.push_str(&t3_others(others));
+    (!out.is_empty()).then_some(out)
+}
+
+/// The template of the section for CLIs AgentNave cannot recognise inside T3, `{names}` unfilled.
+fn t3_others_template() -> String {
+    catalog()["t3_other"]
+        .as_array()
+        .expect("t3_other array in orchestration_rules.json")
+        .iter()
+        .map(|step| section(step.as_str().expect("t3_other step string")))
+        .collect()
+}
+
+fn t3_others(ids: &[&str]) -> String {
+    if ids.is_empty() {
+        return String::new();
+    }
+    let md = &catalog()["meeting_defaults"];
+    let names: Vec<&str> = ids
+        .iter()
+        .filter_map(|id| md["provider_names"][*id].as_str())
+        .collect();
+    t3_others_template().replace("{names}", &names.join(str_at(md, "separator")))
+}
+
+/// The block of a boss that is on in T3 Code but off outside it: the shared rules limited to T3
+/// Code, then the T3 sections.
+pub(super) fn t3_only_text(document: &Value, recognized: bool, others: &[&str]) -> String {
+    let only = &catalog()["t3_only"];
+    let steps_of = |key: &str| -> Vec<Value> {
+        only[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("t3_only.{key} in orchestration_rules.json"))
+            .clone()
+    };
+    let mut text = assemble_steps(document, &steps_of("base"), true, false);
+    if recognized {
+        for step in steps_of("recognized") {
+            text.push_str(section(step.as_str().expect("t3_only step string")));
+        }
+    }
+    text.push_str(&t3_others(others));
+    text
 }
 
 pub(super) fn t3_suffix(mode: &str) -> Option<String> {
@@ -220,6 +270,8 @@ pub(super) fn presets_payload(document: &Value) -> Value {
         "decision_parts": dispatch_parts("dispatch_decision"),
         "split_parts": dispatch_parts("dispatch_split"),
         "t3": Value::Object(t3),
+        "t3_other": {"template": t3_others_template(), "names": md["provider_names"],
+            "separator": str_at(md, "separator")},
         "non_t3_heading": section("t3_non_t3_heading"),
         "lead": {"asked": str_at(lead, "when_false"), "always": str_at(lead, "when_true")}})
 }

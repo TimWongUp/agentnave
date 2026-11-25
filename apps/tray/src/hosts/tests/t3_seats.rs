@@ -190,6 +190,22 @@ fn t3_seats_route_validates_reads_t3_cache_and_syncs_rules_on_save_disable_and_d
         }
     }
 
+    // Grok reads Claude's file, so with no saved boss choice its own T3 section lands there too;
+    // a saved choice replaces that default.
+    let grok_heading = "### 在 T3 Code 里，Grok CLI 按 T3 自己的规则派";
+    assert_eq!(claude_md.matches(grok_heading).count(), 1);
+    let mut chosen = valid_doc(true);
+    chosen["bosses"] = json!(["claude"]);
+    assert_eq!(post(&reader, "/app/t3-seats", &chosen).status, 200);
+    let claude_only = fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap();
+    assert!(claude_only.contains(t3_heading) && !claude_only.contains(grok_heading));
+    chosen["bosses"] = json!([]);
+    assert_eq!(post(&reader, "/app/t3-seats", &chosen).status, 200);
+    let none = fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap();
+    assert!(!none.contains("### 不在 T3 Code 里时这样派") && !none.contains("### 在 T3 Code 里"));
+    chosen["bosses"] = json!(["claude", "codex"]);
+    assert_eq!(post(&reader, "/app/t3-seats", &chosen).status, 200);
+
     // Disabling switch removes T3 sections while keeping the split orchestration block.
     let off = post(&reader, "/app/t3-seats", &valid_doc(false));
     assert_eq!(off.status, 200);

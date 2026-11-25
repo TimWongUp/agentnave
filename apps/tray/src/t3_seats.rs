@@ -1,5 +1,5 @@
-//! t3-seats.json (ADR-0121): the T3 Code orchestration switch, random-candidates flag, task seat
-//! catalog and review roles. The App writes it; the Python service (`src/agentnave/t3_seats.py`)
+//! t3-seats.json (ADR-0121): the T3 Code orchestration switch, random-candidates flag, the bosses it
+//! is on for, task seat catalog and review roles. The App writes it; the Python service (`src/agentnave/t3_seats.py`)
 //! reads it on T3 main threads. Schema checks here mirror `T3SeatsFile` so any file the App writes
 //! is one the service accepts.
 
@@ -15,7 +15,14 @@ use std::path::Path;
 pub const FILE: &str = "t3-seats.json";
 const MAX_CANDIDATES: usize = 4;
 const MAX_OPTIONS: usize = 1;
-const TOP_FIELDS: [&str; 5] = ["version", "enabled", "random_candidates", "seats", "review"];
+const TOP_FIELDS: [&str; 6] = [
+    "version",
+    "enabled",
+    "random_candidates",
+    "bosses",
+    "seats",
+    "review",
+];
 const SEAT_FIELDS: [&str; 7] = [
     "id",
     "kind",
@@ -159,6 +166,23 @@ pub fn validate(document: &Value) -> Result<(), String> {
     for flag in ["enabled", "random_candidates"] {
         if top.get(flag).is_some_and(|value| !value.is_boolean()) {
             return Err(format!("{flag} 必须为布尔值"));
+        }
+    }
+    if let Some(bosses) = top.get("bosses") {
+        let list = bosses.as_array().ok_or("bosses 必须为数组")?;
+        for (index, boss) in list.iter().enumerate() {
+            let Some(id) = boss
+                .as_str()
+                .filter(|id| crate::rules::T3_BOSSES.contains(id))
+            else {
+                return Err(format!("bosses[{index}] 不是 T3 支持的 CLI"));
+            };
+            if list[..index]
+                .iter()
+                .any(|earlier| earlier.as_str() == Some(id))
+            {
+                return Err(format!("bosses 含重复的 {id}"));
+            }
         }
     }
     let seats = match top.get("seats") {
