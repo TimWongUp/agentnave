@@ -285,20 +285,9 @@ function createItem(g) {
   rec.el.addEventListener("contextmenu", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e));
   return rec;
 }
-function fallbackDerivedMeta(g) {
-  if (g.waking) return { text: L("正在恢复", "Resuming"), tone: "run", dormant: false };
-  const ds = g.derived_state || (g.blocked_kind ? "waiting" : g.status === "running" ? "running" : g.exit != null ? "exited" : "idle");
-  if (ds === "starting") return { text: L("启动中", "Starting"), tone: "run", dormant: false };
-  if (ds === "running") return { text: L("运行中", "Running"), tone: "run", dormant: false };
-  if (ds === "waiting") return { text: L("等待确认", "Needs attention"), tone: "review", dormant: false };
-  if (ds === "uncollected") return { text: L("待 boss 收取", "Awaiting boss"), tone: "review", dormant: false };
-  if (ds === "dormant") return { text: L("已收起", "Dormant"), tone: "idle", dormant: true };
-  if (ds === "exited") return { text: L("已结束", "Exited"), tone: "idle", dormant: false };
-  return { text: L("空闲", "Idle"), tone: "idle", dormant: false };
-}
 function updateItem(rec, g, flat = false) {
   // A failure asks nothing of the user, so the list does not call it out.
-  const dMeta = g.derived ? (ChatTerminal.derivedMeta ? ChatTerminal.derivedMeta(g) : fallbackDerivedMeta(g)) : null;
+  const dMeta = g.derived ? ChatTerminal.derivedMeta(g) : null;
   const shown = g.status === "failed" ? "idle" : AN.ongoing(g.status);
   const [word, groupTone] = pick(GROUP, shown);
   const tone = dMeta ? dMeta.tone : groupTone;
@@ -307,7 +296,7 @@ function updateItem(rec, g, flat = false) {
   const name = shownName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${g.derived ? " gi-child" : ""}${dMeta?.dormant ? " dormant" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${g.derived ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
@@ -409,28 +398,15 @@ function renderList() {
     ChatSidebar.syncActiveHighlight?.();
   }
 }
-function derivedNeedsReveal(c) {
-  if (!c) return false;
-  if (c.group === state.selected) return true;
-  if (c.derived_state) {
-    return (
-      c.derived_state === "running" ||
-      c.derived_state === "starting" ||
-      c.derived_state === "waiting" ||
-      c.derived_state === "uncollected"
-    );
-  }
-  return c.status === "running" || c.status === "waiting" || c.status === "review" || Boolean(c.blocked_kind) || Boolean(c.live);
-}
 // The cap may never hide a pending handover, work waiting on the reader, a pinned agent, the agent
-// already open, or an agent with an active derived session under it.
+// already open, or an agent with a derived terminal still open under it.
 function mustShow(g) {
   return (
     g.handover === "pending" ||
     urgent(g.status) ||
     g.group === state.selected ||
     isGroupPinned(g.group) ||
-    Boolean(ChatTerminal.derivedOf?.(g.group)?.some(derivedNeedsReveal))
+    Boolean(ChatTerminal.derivedOf?.(g.group)?.length)
   );
 }
 // A folded project keeps only pending handovers, urgent work, and the open agent visible.
@@ -590,15 +566,13 @@ function groupedNodes(groups, { prefs, query } = {}) {
     nodes.push(headNode(section, folded));
     for (const g of section.shown) {
       const children = ChatTerminal.derivedOf?.(g.group) || [];
-      const hasRevealChild = children.some(derivedNeedsReveal);
-      // A folded group still shows what needs the reader, is open, or has an active derived session.
-      const hidden = folded && !(stayVisibleWhenFolded(g) || hasRevealChild);
+      // A folded group still shows what needs the reader, is open, or has an open derived terminal.
+      const hidden = folded && !(stayVisibleWhenFolded(g) || children.length);
       nodes.push(itemNode(g, hidden, false));
       if (!hidden) order.push(g.group);
       for (const child of children) {
-        const childHidden = folded && !derivedNeedsReveal(child);
-        nodes.push(itemNode(child, childHidden, false));
-        if (!childHidden) order.push(child.group);
+        nodes.push(itemNode(child, false));
+        order.push(child.group);
       }
     }
     if (section.hidden)

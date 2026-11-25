@@ -784,6 +784,7 @@ All checks passed!
     { key: "thread:drv-pick", provider: "antigravity", model: "gemini-3.5-pro", role: "整理接口文档", state: "uncollected" },
     { key: "thread:drv-idle", provider: "claude", model: "claude-3-7-sonnet", role: "补单测覆盖", state: "idle" },
     { key: "thread:drv-dormant", provider: "codex", model: "gpt-6-mini", role: "重构缓存层", state: "dormant" },
+    { key: "thread:drv-old", provider: "claude", model: "claude-3-7-sonnet", role: "清理旧配置", state: "idle" },
   ];
   function desksOf(g, w) {
     const hostCli = g.host === "workbuddy" ? "codebuddy" : g.host;
@@ -1306,6 +1307,18 @@ All checks passed!
       target.blocked_kind = null;
       target.derived_since = nowSec();
       return { session: structuredClone(target) };
+    }
+    if (route === "/app/terminal/open-derived") {
+      const parent = mockTerminals.find((t) => !t.derived && t.workspaces?.includes(query.get("workspace")));
+      const desk = query.get("desk");
+      const session = {
+        id: Math.max(0, ...mockTerminals.map((t) => t.id)) + 1, provider: "claude", cwd: parent?.cwd || "/work/app", exit: null, active: false,
+        derived: true, derived_state: "idle", derived_since: nowSec(), derived_busy: false, has_draft: false, resumable: false,
+        parent_terminal_id: parent?.id ?? null, parent_workspace_id: query.get("workspace"), desk_key: desk, native: desk.replace(/^thread:/, ""), workspaces: [],
+        project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "清理旧配置",
+      };
+      mockTerminals.push(session);
+      return { session };
     }
     if (route === "/app/terminal/close" && at >= 0) {
       const [removed] = mockTerminals.splice(at, 1);
