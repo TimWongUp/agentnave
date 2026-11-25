@@ -112,7 +112,7 @@
 | 0106 | [托盘拥有本机 CLI 用量统计与折算花费面板](0106-tray-usage-panel.md) | 已接受 | 扩展 ADR-0012 的托盘数据根写入边界；保持 ADR-0026、ADR-0048 的服务与会话库隔离；遵守 ADR-0029；复用 ADR-0100 卸载开关与 ADR-0103 预览版及内嵌页约定；同步更新 CONTEXT「Tray App」 |
 | 0107 | [固定档专项不再排除在小事边界外，收尾改为服务语义汇报，顺位回执自带说明](0107-specialist-scope-closing-and-fallback-note.md) | 部分修订 | 修订 ADR-0073、ADR-0104；扩展 ADR-0043；补充 ADR-0089、ADR-0093；收尾句口吻由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订；2026-11-21 后续复核见 ADR-0073 |
 | 0108 | [支持按账号隔离运行，第一期开放 Claude](0108-multi-account-isolation.md) | 部分修订 | 关联已有目录由 [ADR-0118](0118-link-existing-claude-account-dirs.md) 恢复；修订 ADR-0029、ADR-0056、ADR-0062、ADR-0078、ADR-0081、ADR-0089、ADR-0090、ADR-0093、ADR-0100、ADR-0103；扩展 ADR-0048；T3 主线程的适用范围由 [ADR-0121](0121-t3-code-orchestration.md) 修订 |
-| 0109 | [派生会话是开在 App 终端里的子代理](0109-in-app-derived-sessions.md) | 部分修订 | 修订 ADR-0025、ADR-0085、ADR-0103、ADR-0105；扩展 ADR-0043、ADR-0104；沿用 ADR-0028、ADR-0032、ADR-0080、ADR-0098、ADR-0108；展示与驱动方式由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订（已随 ADR-0111 被 [ADR-0113](0113-chat-desktop-split-out.md) 取代而作废）；第 1、3、5、6、7、8 节由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订 |
+| 0109 | [派生会话是开在 App 终端里的子代理](0109-in-app-derived-sessions.md) | 部分修订 | 修订 ADR-0025、ADR-0085、ADR-0103、ADR-0105；扩展 ADR-0043、ADR-0104；沿用 ADR-0028、ADR-0032、ADR-0080、ADR-0098、ADR-0108；展示与驱动方式由 [ADR-0111](0111-self-drawn-conversation-view.md) 修订（已随 ADR-0111 被 [ADR-0113](0113-chat-desktop-split-out.md) 取代而作废）；第 1、3、5、6、7、8 节由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订；第 1、4、6、7、9 节与「终端的关闭交给用户」由 [ADR-0124](0124-derived-session-lifecycle.md) 修订 |
 | 0110 | [写作所需的上下文已全在 boss 手里时，定稿由 boss 自己写](0110-boss-writes-when-holding-context.md) | 已接受 | 修订 ADR-0073 |
 | 0111 | [托盘为 CLI 会话自绘对话视图，按 CLI 选驱动协议](0111-self-drawn-conversation-view.md) | 已被 ADR-0113 取代 | [ADR-0113](0113-chat-desktop-split-out.md)（对 ADR-0056、ADR-0072 依据的更正保留） |
 | 0112 | [手机经 Tailscale 访问托盘的远程入口](0112-mobile-remote-via-tailscale.md) | 已被 ADR-0113 取代 | [ADR-0113](0113-chat-desktop-split-out.md) |
@@ -126,3 +126,4 @@
 | 0120 | [Provider 进程答完后保留一段时间，供续接复用](0120-idle-keep-for-resume.md) | 已接受 | 修订架构基线的进程组清理；补充 ADR-0095、ADR-0025、ADR-0010 |
 | 0121 | [接入 T3 Code：T3 里由 T3 执行单独指派，AgentNave 只选工位、开会和转交](0121-t3-code-orchestration.md) | 已接受 | 修订 ADR-0030、0037、0038、0041、0068、0074、0087、0089、0090、0093、0108、0114、0117（仅 T3 主线程且开启时）；2026-11-25 自身修订：T3 工位目录支持生图工位、取消首次预填 |
 | 0122 | [并行分工并入分工协作，两个派活档共用正文和三个开关](0122-merge-split-and-parallel-presets.md) | 已接受 | 修订 ADR-0037、ADR-0051、ADR-0068、ADR-0073、ADR-0087、ADR-0117 |
+| 0124 | [派生会话空闲时收起、随 boss 关闭，在办公室单独成区](0124-derived-session-lifecycle.md) | 已接受 | 修订 ADR-0109；沿用 ADR-0114、ADR-0120 |
