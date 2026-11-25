@@ -1333,6 +1333,7 @@ test("a derived session of any state keeps its boss past the cap and shows under
       menu() { return false; },
       derivedMeta: () => ({ text: "", tone: "idle" }),
       derivedOf: parent => derived.filter(d => d.parent_workspace_id === parent),
+      rowPath: g => `/chat/${g.group}`,
       derivedAll: () => derived,
     },
     Actions: { picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {} },
@@ -4271,7 +4272,7 @@ test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/open-d
   const termState = await loadJson("/app/terminal/state?shown=3");
   assert.equal(termState.derived_titles["thread:drv-old"], "清理旧配置");
   const chatsPayload = await loadJson("/app/chats");
-  assert.equal(chatsPayload.groups[0].derived.length, 6);
+  assert.equal(chatsPayload.groups.find(g => g.group === "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50").derived.length, 6);
   const derivedStates = termState.sessions.filter(s => s.derived).map(s => s.derived_state);
   for (const s of ["running", "waiting", "uncollected", "idle", "dormant"]) {
     assert.ok(derivedStates.includes(s), `mock.js missing derived_state=${s}`);
@@ -4491,6 +4492,10 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), true);
   assert.equal(firstEl.classList.contains("on"), false);
 
+  // The whole-page link handler follows hrefs before the row's own click, so they must lead somewhere.
+  assert.equal(firstEl.attributes.href, "/chat/ws-hist#desk:thread%3Asaved");
+  assert.equal(context.state.items.get("ws-hist").el.attributes.href, "/chat/ws-hist");
+
   // Clicking historical row inside already-loaded parent calls openScope (no navigation, no revive).
   firstEl.listeners.click[0]({ button: 0, preventDefault() {} });
   assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), { kind: "desk", key: "thread:saved" });
@@ -4500,8 +4505,9 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), false);
   assert.equal(appNode.dataset.hasTerm, "1");
 
-  // Switching back to all messages restores boss highlight.
-  context.openScope({ kind: "all" });
+  // Clicking the boss row leaves the derived desk for boss and restores the boss highlight.
+  context.state.items.get("ws-hist").el.listeners.click[0]({ button: 0, preventDefault() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), { kind: "all" });
   assert.equal(firstEl.classList.contains("on"), false);
   assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), true);
 

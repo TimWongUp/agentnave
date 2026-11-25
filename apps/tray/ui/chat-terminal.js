@@ -12,6 +12,11 @@ const ChatTerminal = (() => {
       `_${hex || m.charCodeAt(0).toString(16).padStart(2, "0")}`,
     );
   const derivedRowId = (parentGroup, deskKey) => `${DERIVED_PREFIX}${encodeToken(parentGroup)}-${encodeToken(deskKey)}`;
+  // Where a derived row leads: its desk in the parent's office. A row without either keeps term-N.
+  const rowPath = (g) =>
+    g.derived === true && g.desk_key && g.parent_workspace_id
+      ? `/chat/${encodeURIComponent(g.parent_workspace_id)}#desk:${encodeURIComponent(g.desk_key)}`
+      : `/chat/${g.group}`;
   const isDerivedRowId = (id) => typeof id === "string" && id.startsWith(DERIVED_PREFIX);
   // CLIs whose ended terminal can continue its chat (the App's cli_args).
   const RESUMES = new Set(["claude", "codex", "grok", "antigravity"]);
@@ -841,7 +846,7 @@ const ChatTerminal = (() => {
       ) {
         openScope({ kind: "desk", key: row.desk_key }, state.items?.get?.(id)?.el);
       } else {
-        go(`/chat/${encodeURIComponent(parent)}#desk:${encodeURIComponent(row.desk_key)}`);
+        go(rowPath(row));
       }
       return true;
     }
@@ -874,7 +879,7 @@ const ChatTerminal = (() => {
         openScope({ kind: "desk", key: deskKey }, state.items?.get?.(row.group)?.el);
       } else {
         t.wantDeskTerminal = null;
-        go(`/chat/${encodeURIComponent(parent)}#desk:${encodeURIComponent(deskKey)}`);
+        go(rowPath(row));
       }
       void revive({ id: x?.id, group: parent, deskKey });
       return;
@@ -1165,5 +1170,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, revive, closeDerived, focusFrame, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, rowPath, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, revive, closeDerived, focusFrame, close, stop };
 })();

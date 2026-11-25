@@ -266,7 +266,11 @@ function createItem(g) {
     if (e.button) return;
     e.preventDefault();
     if (!Actions.pick(rec.id, e)) {
-      if (!ChatTerminal.openDerived?.(rec.id)) go(`/chat/${rec.id}`);
+      if (ChatTerminal.openDerived?.(rec.id)) return;
+      // The boss row of the office whose derived desk is open leads back to boss.
+      const back = state.loaded === rec.id && selectedDerivedDeskKey();
+      go(`/chat/${rec.id}`);
+      if (back && !ChatTerminal.openBoss?.()) openScope({ kind: "all" });
     }
   });
   const openIsolated = (e) => {
@@ -330,7 +334,7 @@ function updateItem(rec, g, flat = false) {
     rec.el,
     `gi ${colorClass(g.color)} tone-${tone}${isChild ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
-  setAttr(rec.el, "href", href(`/chat/${g.group}`));
+  setAttr(rec.el, "href", href(isChild ? ChatTerminal.rowPath(g) : `/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
   setAttr(
     rec.el,
