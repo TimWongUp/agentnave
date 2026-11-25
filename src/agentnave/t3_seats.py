@@ -1,8 +1,9 @@
 """App-owned T3 Code seat catalog (`t3-seats.json`, ADR-0121).
 
 Separate from `decision-seats.json` and `review.json`: T3 orchestration follows the host's
-orchestration preset (active in split/parallel, decision, and custom; inactive in off/meetings)
-and applies only to T3 Code main threads, never affecting non-T3 connections.
+orchestration preset (split/parallel, decision, custom) for the bosses the App selected in
+`bosses`, and applies only to T3 Code main threads, never affecting non-T3 connections. A selected
+boss whose preset is off dispatches like split inside T3 only; meetings has no T3 mode.
 """
 
 from __future__ import annotations
@@ -16,9 +17,9 @@ from agentnave.members import (
     MemberFileError,
     ReviewRole,
     _read_app_file,  # pyright: ignore[reportPrivateUsage]
-    orchestration_mode,
 )
 from agentnave.orchestration_roles import (
+    OrchestrationFile,
     SeatMetadata,
     StrictModel,
     role_catalog,
@@ -28,6 +29,10 @@ from agentnave.t3 import current_t3_mode
 
 T3_SEATS_FILE = "t3-seats.json"
 type T3OrchestrationMode = Literal["split", "decision", "custom"]
+# The CLIs both T3 Code and AgentNave support (claudeAgent, codex, antigravity, acpRegistry's
+# CodeBuddy, grok, pi); mirrored by `T3_BOSSES` in apps/tray/src/rules.rs.
+type T3Boss = Literal["claude", "codex", "antigravity", "codebuddy", "grok", "pi"]
+T3_BOSS_IDS: frozenset[str] = frozenset(get_args(T3Boss.__value__))
 
 # Options that control permissions, sandbox, execution mode, or service tiers must never be stored
 # in T3 seat candidates (ADR-0121).
@@ -115,8 +120,17 @@ class T3SeatsFile(StrictModel):
     version: int = Field(ge=1, le=1)
     enabled: bool = False
     random_candidates: bool = False
+    # None: follow the orchestration page (every supported CLI with any row that is not off).
+    bosses: list[T3Boss] | None = None
     seats: list[T3Seat] = Field(default_factory=list[T3Seat], max_length=255)
     review: dict[ReviewRole, T3ReviewCandidates] = {}
+
+    @field_validator("bosses")
+    @classmethod
+    def unique_bosses(cls, bosses: list[T3Boss] | None) -> list[T3Boss] | None:
+        if bosses is not None and len(set(bosses)) != len(bosses):
+            raise ValueError("bosses must be unique")
+        return bosses
 
     @field_validator("seats")
     @classmethod
@@ -135,15 +149,69 @@ class T3SeatsFile(StrictModel):
     def is_active(self) -> bool:
         return self.enabled and self.has_candidates()
 
+    def selects(self, boss: str | None, followed: frozenset[str]) -> bool:
+        """Whether T3 orchestration is on for this CLI; `followed` are the CLIs with a row not off."""
+        if boss not in T3_BOSS_IDS:
+            return False
+        if self.bosses is not None:
+            return boss in self.bosses
+        return boss in followed
+
+
+def _row_cli(key: str) -> str:
+    """The CLI of an orchestration row key: `claude`, `claude@a1`, `claude-desktop`, `codex@dir`.
+    Mirrors `providers::boss_of` in apps/tray/src/providers.rs."""
+    cli = key.split("@", 1)[0]
+    return "claude" if cli == "claude-desktop" else cli
+
+
+def _followed_clis(roles: OrchestrationFile | None) -> frozenset[str]:
+    """The supported CLIs with any row not off, as the App derives them while `bosses` is unsaved."""
+    if roles is None:
+        return frozenset()
+    rows = (
+        roles.effective_apps
+        if roles.effective_apps is not None
+        else {**dict.fromkeys(T3_BOSS_IDS, roles.preset), **roles.apps}
+    )
+    return frozenset(_row_cli(key) for key, mode in rows.items() if mode != "off")
+
+
+def _orchestration_state(host: Host) -> tuple[str | None, frozenset[str]]:
+    """The host's mode outside T3 (a missing orchestration.json reads as off, unreadable None) and
+    the CLIs that follow the orchestration page."""
+    try:
+        roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
+    except MemberFileError:
+        return None, frozenset()
+    return ("off" if roles is None else roles.mode(host)), _followed_clis(roles)
+
+
+def _preset_mode(general: str | None) -> T3OrchestrationMode | None:
+    """The T3 mode a preset has by itself ('parallel' -> 'split'); off and meetings have none."""
+    if general in ("split", "parallel"):
+        return "split"
+    if general in ("decision", "custom"):
+        return general
+    return None
+
+
+def _t3_mode(host: Host, document: T3SeatsFile) -> T3OrchestrationMode | None:
+    general, followed = _orchestration_state(host)
+    if not document.selects(host.name, followed):
+        return None
+    # A selected boss that is off outside T3 dispatches like split inside it.
+    return "split" if general == "off" else _preset_mode(general)
+
 
 def t3_host_mode(host: Host) -> T3OrchestrationMode | None:
-    """Host orchestration mode that supports T3 orchestration ('parallel' -> 'split'), or None."""
-    mode = orchestration_mode(host)
-    if mode in ("split", "parallel"):
-        return "split"
-    if mode in ("decision", "custom"):
-        return mode
-    return None
+    """The T3 mode this host would run in, or None. A broken file reads as the preset's own mode so
+    effective_t3_seats can report it on a boss that has one."""
+    try:
+        document = read_t3_seats()
+    except T3SeatsFileError:
+        return _preset_mode(_orchestration_state(host)[0])
+    return None if document is None else _t3_mode(host, document)
 
 
 def t3_seat_name(seat: T3Seat) -> str:
@@ -161,15 +229,24 @@ def read_t3_seats() -> T3SeatsFile | None:
 
 
 def effective_t3_seats(host: Host) -> T3SeatsFile | None:
-    """Return the active T3 catalog for a T3 main thread in a T3-capable mode, else None.
+    """Return the active T3 catalog for a T3 main thread the App selected, else None.
 
-    Non-T3 connections, T3 child threads, and off/meetings/unreadable modes never touch t3-seats.json.
-    A broken file on an active-mode T3 main thread raises T3SeatsFileError.
+    Non-T3 connections, T3 child threads, unselected bosses and meetings/unreadable modes never touch
+    t3-seats.json. A broken file on a split/decision/custom T3 main thread raises T3SeatsFileError;
+    for an off boss it reads as not selected.
     """
-    if current_t3_mode(host) != "main" or t3_host_mode(host) is None:
+    if current_t3_mode(host) != "main":
         return None
-    document = read_t3_seats()
-    if document is None or not document.is_active():
+    general = _orchestration_state(host)[0]
+    if general not in ("off", "split", "parallel", "decision", "custom"):
+        return None
+    try:
+        document = read_t3_seats()
+    except T3SeatsFileError:
+        if general == "off":
+            return None
+        raise
+    if document is None or not document.is_active() or _t3_mode(host, document) is None:
         return None
     return document
 

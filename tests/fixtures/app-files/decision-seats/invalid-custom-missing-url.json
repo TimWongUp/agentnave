@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "decision_provider": "custom",
+  "decision_model": "my-decider",
+  "seats": []
+}

@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "decision_provider": "openai",
+  "decision_model": "gpt-6-luna",
+  "decision_base_url": "https://a.example",
+  "seats": []
+}

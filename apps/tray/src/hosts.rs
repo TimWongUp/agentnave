@@ -496,7 +496,7 @@ impl Hosts {
     }
     /// Write the orchestration block into the connected apps' rules and take it out of the rest,
     /// backing up each file first. Returns the files that could not be written.
-    pub fn sync_rules(&self, document: &Value, t3_active: bool, also: &[PathBuf]) -> Vec<Value> {
+    pub fn sync_rules(&self, document: &Value, t3: Option<&Value>, also: &[PathBuf]) -> Vec<Value> {
         let home = &self.context.home;
         let connected = if self.uninstalling {
             Vec::new()
@@ -508,7 +508,7 @@ impl Hosts {
             &connected,
             home,
             document,
-            t3_active,
+            t3,
             also,
             &self.rules_backup(),
             self.service_behind(),

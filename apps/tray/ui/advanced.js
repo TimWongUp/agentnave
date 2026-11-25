@@ -32,6 +32,7 @@
   const ORCHESTRATION_NAMES = { off: AN.L("关闭", "Off"), meetings: AN.L("只开会", "Meetings only"), split: AN.L("分工协作", "Split"), decision: AN.L("决策模型", "Decision model"), custom: AN.L("自定义", "Custom") };
   let orchestration = null; // { document, error, presets, roles, files, bosses } from GET /app/orchestration: what is saved.
   let orchestrationDraft = null; // The document as picked, without the custom text, which the editor holds.
+  const T3_RECOGNIZED = ["claude", "codex", "antigravity", "codebuddy"]; // AgentNave tells these apart inside T3 Code
   let orchestrationView = "off"; // The mode being looked at; looking changes nothing.
   let ruleOpenError = null; // { path, message }: why a rules file did not open, shown on its row.
   let customTouched = false; // Typed into the editor, so its text is saved even with no boss on it yet.
@@ -171,12 +172,24 @@
     if (failed.length) throw new Error(AN.L(`已保存，但 ${failed.map((f) => `${f.path}（${f.error}）`).join("、")} 未能写入`, `Saved, but failed to write ${failed.map((f) => `${f.path} (${f.error})`).join(", ")}`));
   }
 
+  // The T3 sections the draft would add in a mode: the dispatch for the selected CLIs AgentNave
+  // recognises in T3 Code, then the section for the selected ones it does not.
+  function t3Sections(presets, mode) {
+    const t3 = window.AgentNaveT3Seats;
+    if (!t3?.enabled?.() || !presets?.t3?.[mode]) return "";
+    const ids = t3.bosses?.() || [];
+    const { template = "", names = {}, separator = "、" } = presets.t3_other || {};
+    const others = ids.filter((id) => names[id] && !T3_RECOGNIZED.includes(id));
+    return (ids.some((id) => T3_RECOGNIZED.includes(id)) ? presets.t3[mode] : "")
+      + (others.length ? template.replaceAll("{names}", others.map((id) => names[id]).join(separator)) : "");
+  }
+
   // The rules as the draft would write them: the mode's text, then the lines of the roles turned on
   // in catalog order, then the image line, with T3 sectioning when T3 orchestration is on.
   function orchestrationPresetText(mode, includeT3 = true) {
     const presets = orchestration?.presets;
-    const t3On = Boolean(includeT3 && window.AgentNaveT3Seats?.enabled?.() && presets?.t3?.[mode]);
-    const t3Suffix = t3On ? presets.t3[mode] : "";
+    const t3Suffix = includeT3 ? t3Sections(presets, mode) : "";
+    const t3On = Boolean(t3Suffix);
     const nonT3Heading = t3On ? (presets.non_t3_heading || "") : "";
     if (mode === "custom") return t3Suffix ? t3Suffix.trim() : undefined;
     const text = presets?.[mode];
@@ -224,6 +237,7 @@
       editor.value = orchestrationPresetText(orchestrationView === "off" ? "split" : orchestrationView, false) || "";
     }
     orchestrationView = mode;
+    if (mode === "decision") window.AgentNaveDecisionSeats?.viewed?.();
     renderOrchestration();
     renderAdvancedBar();
   }
@@ -987,7 +1001,8 @@
 
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
-    renderOrchestrationText, orchestrationSupportsT3: () => usesSeats(orchestrationView),
+    renderOrchestrationText, orchestrationSupportsT3: () => orchestrationView !== "meetings", // off still gets the T3-only block
+    viewingDecision: () => orchestrationView === "decision" && !$("pane-orchestration")?.hidden && document.documentElement?.dataset?.windowHidden !== "true",
     viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, renderRuleFiles, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced, REVIEW_ROLES,

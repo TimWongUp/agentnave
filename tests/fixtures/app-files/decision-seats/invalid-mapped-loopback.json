@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "decision_provider": "ollama",
+  "decision_model": "m",
+  "decision_base_url": "http://[::ffff:127.0.0.1]:11434",
+  "seats": []
+}

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from mcp import Client
@@ -146,6 +146,34 @@ def test_probe_watch_host_cli_agy_rules() -> None:
             platform="darwin",
         ), bad_argv
 
+    # T3 Code starts agy as `agy acp ...`: allow_acp accepts it, other gates still apply.
+    argvs[10] = ("agy", "acp", "--gemini-dir", "/t3/profile")
+    for version, expected in (("1.5.16\n", True), ("1.5.13\n", False)):
+        assert (
+            wait_guidance.probe_watch_host_cli(
+                "antigravity",
+                parent_pid=30,
+                read_parent=parent,
+                read_executable=executable,
+                read_argv=argv,
+                read_version=lambda _exe, v=version: v,
+                platform="darwin",
+                allow_acp=True,
+            )
+            is expected
+        )
+    argvs[10] = ("agy", "acp", "-p", "hi")
+    assert not wait_guidance.probe_watch_host_cli(
+        "antigravity",
+        parent_pid=30,
+        read_parent=parent,
+        read_executable=executable,
+        read_argv=argv,
+        read_version=lambda _exe: "1.5.16\n",
+        platform="darwin",
+        allow_acp=True,
+    )
+
     # Antigravity.app (both language_server and any binary inside Antigravity.app) returns False.
     argvs[10] = ("language_server_macos_arm64", "--subclient_type", "hub")
     exes[10] = "/Applications/Antigravity.app/Contents/Resources/app/language_server_macos_arm64"
@@ -228,6 +256,8 @@ def test_probe_watch_host_cli_grok_rules_and_versioned_binary() -> None:
         ("grok", "--prompt=hi"),
         ("grok", "--prompt-file", "/tmp/p.txt"),
         ("grok", "--prompt-file=/tmp/p.txt"),
+        # T3 Code's Grok launch: non-interactive `agent` subcommand, cannot self-wake.
+        ("grok", "agent", "--always-approve", "stdio"),
     ):
         argvs[10] = bad_argv
         assert not wait_guidance.probe_watch_host_cli(
@@ -258,7 +288,7 @@ def test_watch_host_cli_supported_is_cached_and_ignores_agentnave_host_env(
 ) -> None:
     calls: list[str] = []
 
-    def fake_probe(host_name: str) -> bool:
+    def fake_probe(host_name: str, *, allow_acp: bool = False) -> bool:
         calls.append(host_name)
         return host_name == "grok"
 
@@ -635,15 +665,50 @@ def test_t3_main_wait_guidance_for_claude_and_codex_ignores_cli_probe(
         )
         == wait_guidance.CLAUDE_LONG_WAIT_NEXT
     )
-    # Non-Claude/Codex hosts are unchanged even with t3_main=True.
+    # T3 main thread + Antigravity: run_command with a short WaitMsBeforeAsync, self-wakes, no
+    # t3_background_wait; an unsupported agy falls back to the ordinary blocking wait.
+    agy = Host("antigravity", "env")
+    agy_kwargs: dict[str, Any] = {
+        "root": tmp_path,
+        "pid": 42,
+        "started_at": 1700000000.5,
+        "boss_key": "s-boss",
+        "can_push": _never_push,
+        "watch_supported": _watch_none,
+        "t3_main": True,
+    }
+    agy_next = wait_guidance.build_wait_guidance(
+        agy, t3_watch_supported=lambda name: name == "antigravity", **agy_kwargs
+    )
+    assert "-I -m agentnave.inbox_watch" in agy_next
+    assert "42 1700000000.500000 s-boss" in agy_next
+    assert "run_command" in agy_next
+    assert "WaitMsBeforeAsync=500" in agy_next
+    assert "do not call a blocking wait, poll, or call t3-code's t3_background_wait" in agy_next
+    assert "Antigravity notifies you" in agy_next
+    assert "start the watch command again" in agy_next
+    assert agy_next not in wait_guidance.BLOCKING_WAIT_AGAIN
+    agy_again = wait_guidance.build_wait_guidance(
+        agy, again=True, t3_watch_supported=lambda _name: True, **agy_kwargs
+    )
+    assert agy_again.startswith("Still pending:")
+    assert "WaitMsBeforeAsync=500" in agy_again
     assert (
-        wait_guidance.build_wait_guidance(
-            Host("pi", "env"),
-            root=tmp_path,
-            pid=42,
-            started_at=1700000000.5,
-            boss_key="s-boss",
-            t3_main=True,
-        )
+        wait_guidance.build_wait_guidance(agy, t3_watch_supported=lambda _name: False, **agy_kwargs)
         == wait_guidance.WAIT_NEXT
     )
+
+    # Hosts without a T3 wait path are unchanged even with t3_main=True; CodeBuddy's background
+    # commands do not wake it, so its T3 main thread waits in the foreground.
+    for name in ("pi", "codebuddy"):
+        assert (
+            wait_guidance.build_wait_guidance(
+                Host(name, "env"),
+                root=tmp_path,
+                pid=42,
+                started_at=1700000000.5,
+                boss_key="s-boss",
+                t3_main=True,
+            )
+            == wait_guidance.WAIT_NEXT
+        )

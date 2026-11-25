@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "decision_provider": "custom",
+  "decision_model": "m",
+  "decision_base_url": "https://example.com:0/v1",
+  "seats": []
+}
