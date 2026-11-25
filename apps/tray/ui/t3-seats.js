@@ -16,12 +16,10 @@
   const MAX_SEATS = 255;
   const MAX_CANDIDATES = 4;
   const ROLE_MAX = 40;
-  const AGY_LEVEL_RE = /^(.+)-(low|medium|high|xhigh|max)$/;
 
   let saved = null; // { document | null, error | null, t3: { detected, instances } }
-  let baseline = null; // Normalized editor state of saved.document, or first-time prefill baseline.
+  let baseline = null; // Normalized editor state of saved.document; blank while nothing was ever saved.
   let draft = null; // Edited state; null while identical to baseline.
-  let prefilled = false;
   let cardCount = 0;
   let rowCount = 0;
   const expanded = new Set(); // Expanded card cids, kept in memory across re-renders.
@@ -100,11 +98,18 @@
         ...(seat.kind === CUSTOM && seat.description ? { description: seat.description } : {}),
       };
     }
-    return { cards };
+    return cards;
+  }
+
+  // The product's own specialties are always listed, in catalog order and blank until a model is picked;
+  // custom and image cards follow.
+  function withFixedCards(cards) {
+    const fixed = S.roleCatalog().map(({ group }) => cards.find((card) => card.kind === group) || newCard(group));
+    return [...fixed, ...cards.filter((card) => !catalogEntry(card.kind))];
   }
 
   function fromDocument(doc) {
-    const { cards } = toCards(doc?.seats || []);
+    const cards = withFixedCards(toCards(doc?.seats || []));
     const review = {};
     for (const [role, list] of Object.entries(doc?.review || {})) {
       if (Array.isArray(list) && list.length) review[role] = list.map(cloneCandidate);
@@ -218,7 +223,6 @@
 
   const shownState = () => draft || baseline;
   const instances = () => saved?.t3?.instances || [];
-  const eligibleInstances = () => instances().filter((inst) => inst.available && !inst.stale);
   const visible = () => Boolean(saved && (saved.t3?.detected || saved.document || saved.error));
   const locked = () => !saved || Boolean(saved.error);
   const enabled = () => Boolean(visible() && !locked() && shownState()?.enabled && hasCandidates());
@@ -250,179 +254,6 @@
     return new Set(state.cards.flatMap((card) => seatsOfCard(card).map((seat) => seat.id)));
   }
 
-  // ---- First-time prefill (Item 7) ----
-
-  function targetInstancesForPick(pick, pool) {
-    if (!pick?.provider || !pick?.model) return [];
-    switch (pick.provider) {
-      case "claude":
-        // Named AgentNave Claude accounts are not guessed against T3 instances.
-        return pick.account ? [] : pool.filter((inst) => inst.driver === "claudeAgent");
-      case "codex":
-        return pool.filter((inst) => inst.driver === "codex");
-      case "grok":
-        return pool.filter((inst) => inst.driver === "grok");
-      case "antigravity":
-        return pool.filter((inst) => inst.driver === "antigravity");
-      case "codebuddy":
-        return pool.filter((inst) => inst.driver === "acpRegistry" && inst.instance.startsWith("acpRegistry_codebuddy"));
-      default:
-        return [];
-    }
-  }
-
-  function matchModelInInstance(inst, provider, modelName, effort) {
-    const models = inst.models || [];
-    let matched = models.find((m) => m.slug === modelName)
-      || models.find((m) => Array.isArray(m.aliases) && m.aliases.includes(modelName));
-    let resolvedEffort = effort || "";
-    if (!matched && provider === "antigravity") {
-      const split = AGY_LEVEL_RE.exec(modelName);
-      if (split) {
-        const [, base, level] = split;
-        const baseModel = models.find((m) => m.slug === base);
-        if (baseModel) {
-          matched = baseModel;
-          resolvedEffort = level;
-        }
-      }
-    }
-    if (!matched) return null;
-    const options = [];
-    const reasoning = matched.reasoning;
-    if (resolvedEffort && reasoning?.id && reasoning.options?.some((opt) => opt.value === resolvedEffort)) {
-      options.push({ id: reasoning.id, value: resolvedEffort });
-    }
-    return { instance: inst.instance, model: matched.slug, options };
-  }
-
-  function convertPicksToT3(seat, pool) {
-    if (!seat?.provider || !seat?.model) return [];
-    const picks = [seat, ...(seat.fallbacks || [])];
-    const out = [];
-    const seen = new Set();
-    for (const pick of picks) {
-      for (const inst of targetInstancesForPick(pick, pool)) {
-        const candidate = matchModelInInstance(inst, pick.provider, pick.model, pick.effort);
-        if (!candidate) continue;
-        const key = pairKey(candidate.instance, candidate.model);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(candidate);
-        if (out.length >= MAX_CANDIDATES) return out;
-      }
-    }
-    return out;
-  }
-
-  function starterCandidates(pool) {
-    const out = [];
-    const seen = new Set();
-    for (const inst of pool) {
-      const models = inst.models || [];
-      const pick = models.find((m) => m.default) || models.find((m) => !m.legacy && !m.hidden);
-      if (!pick) continue;
-      const key = pairKey(inst.instance, pick.slug);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ instance: inst.instance, model: pick.slug, options: [] });
-      if (out.length >= MAX_CANDIDATES) break;
-    }
-    return out;
-  }
-
-  function prefill(pool = eligibleInstances()) {
-    const taken = new Set();
-    const decisionSeats = window.AgentNaveDecisionSeats?.document?.()?.seats || [];
-    const seats = [];
-    let taskSeats = 0; // Image seats do not count towards the two starter seats.
-    if (decisionSeats.length) {
-      for (const seat of decisionSeats) {
-        const converted = convertPicksToT3(seat, pool);
-        if (seat.kind === IMAGE) {
-          seats.push({
-            id: freshId(taken),
-            kind: IMAGE,
-            role: seat.role,
-            description: seat.description,
-            access: "write",
-            candidates: converted,
-          });
-          continue;
-        }
-        seats.push({
-          id: freshId(taken),
-          kind: seat.kind,
-          role: seat.role,
-          description: seat.description,
-          access: seat.access,
-          difficulty: seat.difficulty,
-          candidates: converted,
-        });
-        taskSeats += 1;
-      }
-    } else {
-      const orch = S.orchestrationShown?.();
-      if (orch && S.roleCatalog?.().length) {
-        const live = S.liveSeats(orch);
-        for (const entry of S.roleCatalog()) {
-          if (!live.some(({ role }) => role === entry.group)) continue;
-          for (const difficulty of levelsOf()) {
-            const seat = S.orchestrationSeat(orch, entry.group, difficulty);
-            if (!seat?.provider || !seat?.model) continue;
-            seats.push({
-              id: freshId(taken),
-              kind: entry.group,
-              role: entry.name_zh,
-              description: entry.scope_zh || entry.name_zh,
-              access: entry.access,
-              difficulty,
-              candidates: convertPicksToT3(seat, pool),
-            });
-            taskSeats += 1;
-          }
-        }
-        const image = S.orchestrationSeat(orch, "image_generation");
-        if (image?.provider && image?.model) {
-          seats.push({
-            id: freshId(taken),
-            kind: IMAGE,
-            role: L("生图", "Image generation"),
-            description: L("生图", "Image generation"),
-            access: "write",
-            candidates: convertPicksToT3(image, pool),
-          });
-        }
-      }
-    }
-    if (!taskSeats) {
-      const defaults = starterCandidates(pool);
-      const explorer = catalogEntry("explorer");
-      const worker = catalogEntry("worker");
-      seats.push(
-        {
-          id: freshId(taken), kind: "explorer", role: explorer?.name_zh || "通用探索",
-          description: explorer?.scope_zh || "通用探索", access: "read", difficulty: "medium",
-          candidates: defaults.map(cloneCandidate),
-        },
-        {
-          id: freshId(taken), kind: "worker", role: worker?.name_zh || "通用执行",
-          description: worker?.scope_zh || "通用执行", access: "write", difficulty: "medium",
-          candidates: defaults.map(cloneCandidate),
-        },
-      );
-    }
-    const reviewSource = S.seatsShown?.() || S.reviewSeats || {};
-    const review = {};
-    for (const [role] of reviewRoles()) {
-      const seat = reviewSource[role];
-      if (!seat?.provider || !seat?.model) continue;
-      const converted = convertPicksToT3(seat, pool);
-      if (converted.length) review[role] = converted;
-    }
-    return fromDocument({ version: 1, enabled: false, random_candidates: false, seats, review });
-  }
-
   // ---- Draft mutations ----
 
   function mutate(updater, rerender = true) {
@@ -438,20 +269,23 @@
   const blankImageRow = (fields = {}) => ({
     rid: `t3r${++rowCount}`, role: "", loadedRole: "", description: "", id: freshId(takenIds()), candidates: [], ...fields,
   });
-  const newCard = (kind) => ({
-    cid: `t3c${++cardCount}`,
-    kind,
-    role: catalogEntry(kind)?.name_zh || "",
-    loadedRole: "",
-    access: catalogEntry(kind)?.access || "write",
-    description: catalogEntry(kind)?.scope_zh || "",
-    seats: {},
-    ...(kind === IMAGE ? { rows: [blankImageRow()] } : {}),
-  });
+  function newCard(kind) {
+    const group = catalogEntry(kind);
+    return {
+      cid: `t3c${++cardCount}`,
+      kind,
+      role: group?.name_zh || "",
+      loadedRole: "",
+      access: group?.access || "write",
+      description: group?.scope_zh || "",
+      seats: {},
+      ...(kind === IMAGE ? { rows: [blankImageRow()] } : {}),
+    };
+  }
 
   function addCard(kind) {
-    if (locked() || (kind !== CUSTOM && kind !== IMAGE && !catalogEntry(kind))) return;
-    if (kind !== CUSTOM && shownState().cards.some((card) => card.kind === kind)) return;
+    if (locked() || (kind !== CUSTOM && kind !== IMAGE)) return;
+    if (kind === IMAGE && shownState().cards.some((card) => card.kind === IMAGE)) return;
     const card = newCard(kind);
     expanded.add(card.cid);
     mutate((state) => { state.cards.push(card); });
@@ -521,6 +355,11 @@
 
   // ---- Validation ----
 
+  // An added fallback waits for the user's own pick; until then nothing can be saved.
+  const blankCandidate = () => ({ instance: "", model: "", options: [] });
+  const isBlank = (candidate) => !candidate.instance;
+  const hasBlank = (seat) => (seat.candidates || []).some(isBlank);
+
   const IMAGE_NAME = () => L("生图工位", "Image seats");
   const cardName = (card) => {
     if (card.kind === IMAGE) return IMAGE_NAME();
@@ -561,7 +400,10 @@
       if (own && !title) return L(`T3 工位第 ${n} 张卡片缺少专业`, `T3 seat card ${n} has no specialty`);
       if (own && named.has(title)) return L(`T3 工位有两张自定义卡片的专业都是“${title}”`, `Two custom T3 cards have the specialty “${title}”`);
       if (own) named.add(title);
-      if (!Object.keys(card.seats).length) return L(`T3 工位第 ${n} 张卡片（${title}）至少要绑定一档`, `T3 seat card ${n} (${title}) needs at least one level set`);
+      if (own && !Object.keys(card.seats).length) return L(`T3 工位第 ${n} 张卡片（${title}）至少要绑定一档`, `T3 seat card ${n} (${title}) needs at least one level set`);
+    }
+    if ([...doc.seats, ...Object.values(doc.review).map((candidates) => ({ candidates }))].some(hasBlank)) {
+      return L("有备选还没选模型", "A fallback has no model yet");
     }
     if (doc.enabled && !hasCandidates(doc)) {
       return L("开启 T3 编排前，至少要为一个任务工位或评审角色选定候选模型", "Pick at least one candidate model for a task seat or review role before turning on T3 orchestration");
@@ -571,12 +413,9 @@
 
   // ---- Network I/O ----
 
-  async function load(waitFor) {
+  async function load() {
     try {
-      const [response] = await Promise.all([
-        fetch("/app/t3-seats", { cache: "no-store" }),
-        Promise.resolve(waitFor).catch(() => {}),
-      ]);
+      const response = await fetch("/app/t3-seats", { cache: "no-store" });
       if (!response.ok) throw new Error(L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
       const loaded = await response.json();
       const keep = changed();
@@ -586,15 +425,8 @@
         draft = null;
         if (saved.document) {
           baseline = fromDocument(saved.document);
-          prefilled = false;
-        } else if (!saved.error && saved.t3?.detected) {
-          if (!prefilled || !baseline) {
-            baseline = prefill();
-            prefilled = true;
-          }
         } else {
-          baseline = null;
-          prefilled = false;
+          baseline = !saved.error && saved.t3?.detected ? fromDocument(null) : null;
         }
       }
     } catch (error) {
@@ -616,7 +448,6 @@
     saved = { ...saved, document: doc, error: null };
     baseline = fromDocument(doc);
     draft = null;
-    prefilled = false;
     if (S.orchestration && data.files) {
       S.orchestration.files = data.files;
       if (data.bosses) S.orchestration.bosses = data.bosses;
@@ -634,7 +465,7 @@
     const seen = new Map();
     for (const card of list) {
       if (card.kind === IMAGE) {
-        if (imageCard.problem(card)) bad.add(card.cid);
+        if (imageCard.problem(card) || card.rows.some(hasBlank)) bad.add(card.cid);
         continue;
       }
       const own = card.kind === CUSTOM;
@@ -648,7 +479,8 @@
           seen.set(title, card.cid);
         }
       }
-      if (!Object.keys(card.seats).length) bad.add(card.cid);
+      if (own && !Object.keys(card.seats).length) bad.add(card.cid);
+      if (Object.values(card.seats).some(hasBlank)) bad.add(card.cid);
     }
     return bad;
   }
@@ -681,15 +513,6 @@
       || free[0];
   }
 
-  function freshCandidate(taken, ownInstance) {
-    const pool = [...eligibleInstances()].sort((a, b) => (a.instance === ownInstance) - (b.instance === ownInstance));
-    for (const inst of pool) {
-      const model = preferredModel(inst, taken);
-      if (model) return { instance: inst.instance, model: model.slug, options: [] };
-    }
-    return null;
-  }
-
   function makeSelect(key, label, value, options, onPick, disabled = false) {
     return el("select", {
       dataset: { focusKey: key }, "aria-label": label, disabled,
@@ -697,7 +520,8 @@
     }, options.map(([v, text, off]) => el("option", { value: v, selected: v === value, disabled: Boolean(off) }, text)));
   }
 
-  function candidateControls(key, rowName, candidate, taken, onChange, unsetLabel) {
+  function candidateControls(key, rowName, picked, taken, onChange, unsetLabel) {
+    const candidate = picked && !isBlank(picked) ? picked : null;
     const all = instances();
     const savedRefs = savedReferencedInstances();
     const curInstId = candidate?.instance || "";
@@ -705,7 +529,7 @@
     const listedInstances = all.filter((inst) => !inst.stale || savedRefs.has(inst.instance) || inst.instance === curInstId);
 
     const instOptions = [];
-    if (unsetLabel !== null) instOptions.push(["", unsetLabel, false]);
+    if (unsetLabel !== null || !candidate) instOptions.push(["", unsetLabel ?? L("未设置", "Not set"), false]);
     for (const inst of listedInstances) {
       const isCurrent = inst.instance === curInstId;
       const suffix = inst.stale ? L("（T3 未列出）", " (Not listed in T3)")
@@ -786,11 +610,10 @@
     };
     const mainControls = candidateControls(`${key}/c0`, rowName, main, takenBy(0), setMain, unsetLabel);
     if (main && list.length < MAX_CANDIDATES) {
-      const fresh = freshCandidate(takenBy(-1), main.instance);
       mainControls.push(el("button", {
-        type: "button", className: "t3-seat-action", disabled: !fresh,
+        type: "button", className: "t3-seat-action", disabled: list.some(isBlank),
         dataset: { focusKey: `${key}/add` },
-        onClick: () => fresh && onSetList([...list, fresh]),
+        onClick: () => onSetList([...list, blankCandidate()]),
       }, L("添加备选", "Add fallback")));
     }
     const primaryRow = el("div", { className: `s-row${sub ? " is-sub" : ""}` },
@@ -861,7 +684,7 @@
       summaryUnset: summary.unset,
       invalid: invalidSet.has(card.cid),
       isInvalid: () => problemCids(shownState()?.cards || []).has(card.cid),
-      onRemove: () => removeCard(card.cid),
+      onRemove: catalogEntry(card.kind) ? null : () => removeCard(card.cid),
       renderBody: (helpers) => (card.kind === IMAGE
         ? imageCard.body(card, key, helpers)
         : [...(own ? [customHeadRow(card, key, title, helpers)] : []),
@@ -880,7 +703,7 @@
   function addMenu(state) {
     return S.seatAddMenu({
       id: "t3-seat-add", focusKey: "t3/add", disabled: toSeats(state.cards).length >= MAX_SEATS,
-      taken: new Set(state.cards.map((card) => card.kind)), groups: S.roleCatalog(),
+      taken: new Set(), groups: [],
       includeImage: !state.cards.some((card) => card.kind === IMAGE), onAdd: addCard,
     });
   }
@@ -993,7 +816,7 @@
   }
 
   window.AgentNaveT3Seats = {
-    load, render, renderReview, changed, seatsChanged, reviewChanged, problem, save, discard, addCard, prefill,
+    load, render, renderReview, changed, seatsChanged, reviewChanged, problem, save, discard, addCard,
     document: fileDocument, hasCandidates, visible, enabled,
   };
 }

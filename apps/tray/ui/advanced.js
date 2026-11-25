@@ -135,8 +135,8 @@
       showNotice(AN.L(`无法读取编排设置：${error.message}`, `Failed to load orchestration settings: ${error.message}`), true);
     }
     renderOrchestration();
-    const decisionLoaded = window.AgentNaveDecisionSeats?.load();
-    window.AgentNaveT3Seats?.load(decisionLoaded);
+    window.AgentNaveDecisionSeats?.load();
+    window.AgentNaveT3Seats?.load();
     // Review seats depend on whether any boss orchestrates.
     renderReviewSeats();
     renderAdvancedBar();

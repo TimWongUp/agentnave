@@ -1,7 +1,7 @@
 //! Read-only probe of T3 Code's provider caches and hidden-model preferences (ADR-0121).
 //!
 //! Privacy boundary: only `instanceId`, `driver`, `displayName`, `status`, `installed`, `enabled`,
-//! `auth.status`, `checkedAt`, `models[].{slug, name, aliases, isLegacy, isDefault,
+//! `auth.status`, `checkedAt`, `models[].{slug, name, isLegacy, isDefault,
 //! capabilities.optionDescriptors}` and `providerModelPreferences.<instanceId>.hiddenModels` are
 //! read. Other `auth` fields (such as emails or workspace IDs) are never read, stored or logged.
 //! T3 Code files are never written.
@@ -190,16 +190,6 @@ fn extract_model(raw: &Value, hidden: Option<&HashSet<String>>) -> Option<Value>
         .and_then(Value::as_str)
         .filter(|name| !name.trim().is_empty())
         .unwrap_or(slug);
-    let aliases: Vec<&str> = fields
-        .get("aliases")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(Value::as_str)
-                .filter(|alias| !alias.trim().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
     let legacy = fields
         .get("isLegacy")
         .and_then(Value::as_bool)
@@ -213,7 +203,6 @@ fn extract_model(raw: &Value, hidden: Option<&HashSet<String>>) -> Option<Value>
     Some(json!({
         "slug": slug,
         "name": name,
-        "aliases": aliases,
         "legacy": legacy,
         "hidden": is_hidden,
         "default": default,
