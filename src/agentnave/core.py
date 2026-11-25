@@ -62,6 +62,7 @@ from agentnave.usage_probe import run_usage_query
 from agentnave.warm_pool import (
     KEEP_SECONDS,
     MAX_KEPT,
+    MAX_LIFETIME_SECONDS,
     KeptProcess,
     LaunchSignature,
     WarmPool,
@@ -655,11 +656,12 @@ class InvocationManager:
     progress_stall_seconds: float = PROGRESS_STALL_SECONDS
     keep_seconds: float = KEEP_SECONDS
     max_kept: int = MAX_KEPT
+    max_lifetime: float = MAX_LIFETIME_SECONDS
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
         # Processes kept between turns; they are not runs, so no running limit counts them.
-        self._pool = WarmPool(self.keep_seconds, self.max_kept)
+        self._pool = WarmPool(self.keep_seconds, self.max_kept, self.max_lifetime)
         self._seq = 0
         self._closed = False
         self.on_forget: Callable[[str], None] | None = None
@@ -1424,9 +1426,15 @@ class InvocationManager:
         if request.session_id is not None:
             kept = self._pool.take(request.provider, request.session_id)
             if kept is not None:
-                if keepable and kept.signature == signature and kept.alive():
+                if (
+                    keepable
+                    and kept.signature == signature
+                    and kept.remaining(self.max_lifetime) > 0
+                    and kept.alive()
+                ):
                     return kept.supervised, kept
-                # Started differently: it must not share the native session with a new process.
+                # Started differently or past its lifetime: it must not share the native
+                # session with a new process.
                 await kept.end()
             await self._pool.ended(request.provider, request.session_id)
         if not await self._wait_to_spawn(record):

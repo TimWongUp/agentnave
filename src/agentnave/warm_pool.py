@@ -1,14 +1,16 @@
 """Provider processes kept after a turn for the next resume of the same session (ADR-0120).
 
 A kept process still belongs to the supervisor that started it; the pool only decides when it
-ends: when its keep period runs out, when more processes are kept than the limit allows (the one
-used longest ago goes first), when it exits on its own, or when the service closes.
+ends: when its keep period runs out, when it has served its session for its lifetime, when more
+processes are kept than the limit allows (the one used longest ago goes first), when it exits on
+its own, or when the service closes.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import suppress
@@ -19,6 +21,8 @@ from agentnave.processes import ProviderCompletion, SupervisedProcess, terminate
 
 KEEP_SECONDS = 180.0
 MAX_KEPT = 3
+# A kept process serves its session for at most this long after it started (ADR-0120).
+MAX_LIFETIME_SECONDS = 900.0
 
 type LaunchSignature = tuple[object, ...]
 
@@ -116,6 +120,12 @@ class KeptProcess:
     signature: LaunchSignature
     stderr: StderrDrain
     prepared: PreparedCommand
+    # The process's start, which the lifetime counts from, not this record's (ADR-0120).
+    started: float = field(default_factory=time.monotonic)
+
+    def remaining(self, lifetime: float) -> float:
+        """Seconds the process may still serve its session for; it never gets a new lifetime."""
+        return lifetime - (time.monotonic() - self.started)
 
     @classmethod
     def adopt(
@@ -166,9 +176,15 @@ class _Entry:
 class WarmPool:
     """Kept processes by (provider, native session): one per session, at most `limit`."""
 
-    def __init__(self, keep_seconds: float = KEEP_SECONDS, limit: int = MAX_KEPT) -> None:
+    def __init__(
+        self,
+        keep_seconds: float = KEEP_SECONDS,
+        limit: int = MAX_KEPT,
+        lifetime: float = MAX_LIFETIME_SECONDS,
+    ) -> None:
         self.keep_seconds = keep_seconds
         self.limit = limit
+        self.lifetime = lifetime
         # Least recently used first.
         self._entries: OrderedDict[tuple[str, str], _Entry] = OrderedDict()
         self._ending: dict[asyncio.Task[None], tuple[str, str]] = {}
@@ -186,9 +202,16 @@ class WarmPool:
         return entry.kept
 
     def serves(self, provider: str, session_id: str, signature: LaunchSignature) -> bool:
-        """Whether a kept process started this way can serve the session's next turn."""
+        """Whether a kept process started this way can serve the session's next turn: same
+        signature, alive, and not past its lifetime (its timer may run late when the loop is
+        busy)."""
         entry = self._entries.get((provider, session_id))
-        return entry is not None and entry.kept.signature == signature and entry.kept.alive()
+        return (
+            entry is not None
+            and entry.kept.signature == signature
+            and entry.kept.remaining(self.lifetime) > 0
+            and entry.kept.alive()
+        )
 
     async def ended(self, provider: str, session_id: str) -> None:
         """Wait until no process of the session is still ending, so a new one never shares the
@@ -206,9 +229,11 @@ class WarmPool:
         await self.ended(provider, session_id)
 
     def keep(self, provider: str, session_id: str, kept: KeptProcess) -> None:
-        """Keep a process for its session's next turn, restarting its keep period."""
+        """Keep a process for its session's next turn, restarting its keep period; one past its
+        lifetime ends instead, and the keep period never runs past the lifetime."""
         key = (provider, session_id)
-        if self._closed:
+        remaining = kept.remaining(self.lifetime)
+        if self._closed or remaining <= 0:
             self._end(key, kept)
             return
         previous = self.take(provider, session_id)
@@ -218,7 +243,9 @@ class WarmPool:
         def on_exit(_completion: asyncio.Task[ProviderCompletion]) -> None:
             self._expire(key, kept)
 
-        timer = asyncio.get_running_loop().call_later(self.keep_seconds, self._expire, key, kept)
+        timer = asyncio.get_running_loop().call_later(
+            min(self.keep_seconds, remaining), self._expire, key, kept
+        )
         kept.supervised.completion.add_done_callback(on_exit)
         self._entries[key] = _Entry(kept, timer, on_exit)
         while len(self._entries) > self.limit:

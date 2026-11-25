@@ -10,13 +10,17 @@ import time
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_terminal_execution import setup_tray, wait_for_file
 
+from agentnave import warm_pool
 from agentnave.adapters.base import PreparedCommand
 from agentnave.core import InvocationManager
 from agentnave.models import InvocationRequest, InvocationResult, InvocationStatus
+from agentnave.processes import spawn_process
+from agentnave.warm_pool import KeptProcess, WarmPool
 
 # Speaks the keep-alive contract: one JSON turn per stdin line, Codex exec events per turn.
 _TURNS = """
@@ -29,6 +33,8 @@ for raw in sys.stdin:
     count += 1
     session = turn.get("session_id") or session or f"thread-{os.getpid()}"
     print(json.dumps({"type": "thread.started", "thread_id": session}), flush=True)
+    if turn["prompt"].startswith("sleep:"):
+        time.sleep(float(turn["prompt"].split(":", 1)[1]))
     if turn["prompt"] == "slow":
         time.sleep(60)
     if turn["prompt"] == "fail":
@@ -229,6 +235,66 @@ async def test_kept_process_ends_when_the_keep_period_runs_out(
         assert _turn_number(resumed) == 1
     finally:
         await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_turn_may_outlast_the_lifetime_and_the_next_resume_starts_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(InvocationManager, "max_lifetime", 0.8)
+    manager = InvocationManager()
+    try:
+        first = await _run(manager, tmp_path)
+        again = await _run(manager, tmp_path, "again", first.session_id)
+        assert (_pid(again), _turn_number(again)) == (_pid(first), 2)
+        # Resumed past its lifetime, the process still finishes the turn it is in ...
+        slow = await _run(manager, tmp_path, "sleep:1", first.session_id)
+        assert (_pid(slow), _turn_number(slow)) == (_pid(first), 3)
+        # ... and only then ends, so the next resume starts a new one.
+        if os.name == "posix":
+            assert await _gone(_pid(first))
+        resumed = await _run(manager, tmp_path, "again", first.session_id)
+        assert _pid(resumed) != _pid(first) and _turn_number(resumed) == 1
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_lifetime_shorter_than_the_keep_period_ends_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(InvocationManager, "keep_seconds", 30.0)
+    monkeypatch.setattr(InvocationManager, "max_lifetime", 0.5)
+    manager = InvocationManager()
+    try:
+        first = await _run(manager, tmp_path)
+        await asyncio.sleep(1)
+        if os.name == "posix":
+            assert await _gone(_pid(first))
+        resumed = await _run(manager, tmp_path, "again", first.session_id)
+        assert _pid(resumed) != _pid(first) and _turn_number(resumed) == 1
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_serves_rejects_a_process_past_its_lifetime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pool = WarmPool(keep_seconds=30, lifetime=5)
+    supervised = await spawn_process(
+        (sys.executable, "-c", "import time; time.sleep(60)"), tmp_path
+    )
+    kept = KeptProcess.adopt(supervised, (), _turn(tmp_path, "work", None))
+    try:
+        pool.keep("codex", "session", kept)
+        assert pool.serves("codex", "session", ())
+        # Its keep timer is still pending, but the process is past its lifetime.
+        later = SimpleNamespace(monotonic=lambda: kept.started + 6)
+        monkeypatch.setattr(warm_pool, "time", later)
+        assert not pool.serves("codex", "session", ())
+    finally:
+        await pool.close()
 
 
 @pytest.mark.asyncio

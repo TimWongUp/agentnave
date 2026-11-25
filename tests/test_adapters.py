@@ -620,6 +620,55 @@ def test_codex_rollout_state_follows_the_sessions_log(tmp_path: Path) -> None:
     assert state("thread-1") != before
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_launch_inputs_follow_a_linked_git_to_its_head(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    real_git = tmp_path / "real-git"
+    real_git.mkdir()
+    (real_git / "HEAD").write_text("ref")
+    (work / ".git").symlink_to(real_git)
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(work, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    entries = [cast(tuple[object, ...], entry) for entry in before]
+    # The lstat keeps saying it is a link, and its target's HEAD is part of the signature.
+    assert [entry[1] for entry in entries if entry[0] == str(work / ".git")] == ["link"]
+    assert any(entry[0] == str(work / ".git" / "HEAD") for entry in entries)
+    (real_git / "HEAD").unlink()
+    assert inputs() != before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_codex_launch_inputs_see_config_and_rules_permissions(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    rules = home / "rules"
+    rules.mkdir(parents=True)
+    config = home / "config.toml"
+    config.write_text("a")
+    (rules / "a.rules").write_text("x")
+    env = {"CODEX_HOME": str(home)}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    config.chmod(0)
+    try:
+        without_config = inputs()
+        assert without_config != before
+    finally:
+        config.chmod(0o644)
+    (rules / "a.rules").chmod(0)
+    try:
+        assert inputs() != without_config
+    finally:
+        (rules / "a.rules").chmod(0o644)
+
+
 def _bridged(prepared: base.PreparedCommand) -> str:
     """The permission mode of an app-server bridge command."""
     argv = prepared.argv

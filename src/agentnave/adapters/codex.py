@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from stat import S_ISDIR, S_ISLNK, S_ISREG
+from stat import S_IMODE, S_ISDIR, S_ISLNK, S_ISREG
 
 from agentnave.adapters.base import (
     AdapterHooks,
@@ -118,12 +118,13 @@ def _globbed(folder: Path, pattern: str, *, follow: bool) -> list[tuple[object, 
 
 
 def _launch_inputs(cwd: Path, executable: str, env: Mapping[str, str]) -> tuple[object, ...]:
-    """What Codex 0.171 reads permissions from for cwd, as types, sizes and modification times
-    (codex-rs/config/src/loader): the Codex executable, every top-level `*.toml` of the user,
-    system and project config folders, the `rules/*.rules` exec policies of each of them
-    (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project root
-    marker `.git`. Cloud-managed config, macOS managed preferences, a registry-set requirements
-    path and custom project root markers are not covered."""
+    """What Codex 0.171 reads permissions from for cwd, as types, permission bits, sizes and
+    modification times (codex-rs/config/src/loader): the Codex executable, every top-level
+    `*.toml` of the user, system and project config folders, the `rules/*.rules` exec policies of
+    each of them (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project
+    root marker `.git`; a link is recorded as one and followed to its target's HEAD. Cloud-managed
+    config, macOS managed preferences, a registry-set requirements path and custom project root
+    markers are not covered."""
     directory = _directory(cwd)
     home = _codex_home(cwd, env)
     if sys.platform == "win32":
@@ -146,7 +147,8 @@ def _launch_inputs(cwd: Path, executable: str, env: Mapping[str, str]) -> tuple[
     for folder in ancestors:
         marker = _stat(folder / ".git", follow=False)
         found.append(marker)
-        if marker[1:2] == ("directory",):
+        # Codex follows a linked `.git` to look for its HEAD.
+        if marker[1:2] in (("directory",), ("link",)):
             found.append(_stat(folder / ".git" / "HEAD", follow=True))
     return tuple(found)
 
@@ -164,8 +166,8 @@ def _rollout_state(cwd: Path, env: Mapping[str, str], session_id: str) -> tuple[
 
 
 def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
-    """The file's type, modification time and size; a path that cannot be read (missing,
-    not permitted) is recorded with its error, and never stops a dispatch."""
+    """The file's type, permissions, modification time and size; a path that cannot be read
+    (missing, not permitted) is recorded with its error, and never stops a dispatch."""
     try:
         stat = path.stat() if follow else path.lstat()
     except OSError as exc:
@@ -180,7 +182,7 @@ def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
         if S_ISDIR(mode)
         else "other"
     )
-    return (str(path), kind, stat.st_mtime_ns, stat.st_size)
+    return (str(path), kind, S_IMODE(mode), stat.st_mtime_ns, stat.st_size)
 
 
 def _source() -> str | None:
