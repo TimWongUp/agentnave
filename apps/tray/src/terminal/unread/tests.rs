@@ -437,6 +437,7 @@ fn derived_terminal_acting_as_boss_gets_badge_and_notice_without_pty_writes() {
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: None,
             launch_config: None,
         }),

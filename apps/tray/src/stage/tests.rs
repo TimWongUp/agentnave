@@ -234,13 +234,13 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
                 json!({
                     "mode": "task",
                     "tasks": [
-                        {"id": "e1", "provider": "codex", "model": "m", "thread": "early", "status": "succeeded", "time": "2026-11-12T00:30:00Z"},
+                        {"id": "e1", "provider": "codex", "model": "m", "thread": "early", "status": "succeeded", "time": "2026-11-12T00:30:00Z", "execution_mode": "background"},
                         {"id": "i1", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T02:00:00Z", "elapsed_ms": 14_400_000},
                         {"id": "i2", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T03:00:00Z"},
                         {"id": "i3", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T04:00:00Z"},
                         {"id": "i4", "provider": "codex", "model": "m", "status": "succeeded", "time": "2026-11-12T05:00:00Z"},
-                        {"id": "o1", "provider": "codex", "model": "m", "thread": "other", "status": "running", "time": "2026-11-12T05:30:00Z", "elapsed_ms": 2_400_000},
-                        {"id": "e2", "provider": "codex", "model": "m", "thread": "early", "status": "running", "time": "2026-11-12T06:00:00Z"},
+                        {"id": "o1", "provider": "codex", "model": "m", "thread": "other", "status": "running", "time": "2026-11-12T05:30:00Z", "elapsed_ms": 2_400_000, "execution_mode": "background"},
+                        {"id": "e2", "provider": "codex", "model": "m", "thread": "early", "status": "running", "time": "2026-11-12T06:00:00Z", "execution_mode": "terminal"},
                     ],
                 }),
             ),
@@ -304,6 +304,12 @@ fn panel_desks_include_idle_seats_and_order_by_latest_boss_prompt() {
     );
     let idle_seat = desks.iter().find(|d| d["key"] == "seat:m:b").unwrap();
     assert_eq!(idle_seat["last_prompted"], "2026-11-12T03:30:00.000000Z");
+    // A thread desk is derived by its latest call; calls without a mode and seats never are.
+    let derived = |key: &str| desks.iter().find(|d| d["key"] == key).unwrap()["derived"].clone();
+    assert_eq!(derived("thread:early"), true);
+    assert_eq!(derived("thread:other"), false);
+    assert_eq!(derived("task:tasks:i1"), false);
+    assert_eq!(derived("seat:m:a"), false);
 
     let chat = query("/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     assert_eq!(chat["desks"][0]["key"], "thread:other");

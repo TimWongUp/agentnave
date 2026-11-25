@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::super::codex_server::{self, InterruptRpcOutcome, ThreadStatus, TurnStartConfig};
+use super::super::lifecycle::{Relaunched, ResumeSlot, WakePlan};
 use super::super::session::Session;
 use super::super::spawn_requests::{
     BlockedReceipt, Coordinator, ParentRef, Receipt, ReceiptState, RunConfig, RunHandle,
@@ -283,47 +284,51 @@ pub(super) fn open_or_launch_codex(
     if account.is_some() {
         return Err("Codex 不支持多账号".to_owned());
     }
+    let mut held = None;
     if let Some(sid) = env.session_id.as_deref() {
         if coordinator.has_unsettled_run_for_session("codex", sid, &env.request_id) {
             return Err(UNSETTLED_DISPATCH_BUSY_ERR.to_owned());
         }
-        terminals.remove_exited_derived("codex", sid);
-        if let Some(existing) = terminals.find_derived_session("codex", sid) {
-            if let Some(err) = account_mismatch(existing.account.as_ref(), account.as_ref()) {
-                return Err(err);
+        match terminals.resume_slot("codex", sid)? {
+            ResumeSlot::Free => {}
+            ResumeSlot::Dormant(row) => held = Some(row),
+            ResumeSlot::Live(existing) => {
+                if let Some(err) = account_mismatch(existing.account.as_ref(), account.as_ref()) {
+                    return Err(err);
+                }
+                if let Some(err) = cwd_mismatch(&existing.cwd, cwd) {
+                    return Err(err);
+                }
+                if existing.session.has_draft()
+                    || matches!(
+                        existing.session.osc_snapshot().1.as_deref(),
+                        Some("working" | "blocked")
+                    )
+                    || existing.codex.as_ref().is_some_and(|c| {
+                        c.thread_status(sid)
+                            .is_some_and(|s| matches!(s, ThreadStatus::Active { .. }))
+                    })
+                {
+                    return Err("Codex 派生终端正在运行中".to_owned());
+                }
+                let (iso_id, lease) = acquire_isolation_for_terminal(
+                    coordinator,
+                    terminals,
+                    &env.request_id,
+                    cwd,
+                    cfg.isolation.as_ref(),
+                    true,
+                )?;
+                if handle.is_pre_start_cancelled() {
+                    return Err("启动前已取消".to_owned());
+                }
+                if let Some(lease) = lease {
+                    terminals.attach_derived_lease(existing.id, iso_id.as_deref(), lease);
+                }
+                let claimed =
+                    terminals.try_claim_derived_turn(existing.id, &env.invocation_id, None)?;
+                return Ok((claimed, true));
             }
-            if let Some(err) = cwd_mismatch(&existing.cwd, cwd) {
-                return Err(err);
-            }
-            if existing.session.has_draft()
-                || matches!(
-                    existing.session.osc_snapshot().1.as_deref(),
-                    Some("working" | "blocked")
-                )
-                || existing.codex.as_ref().is_some_and(|c| {
-                    c.thread_status(sid)
-                        .is_some_and(|s| matches!(s, ThreadStatus::Active { .. }))
-                })
-            {
-                return Err("Codex 派生终端正在运行中".to_owned());
-            }
-            let (iso_id, lease) = acquire_isolation_for_terminal(
-                coordinator,
-                terminals,
-                &env.request_id,
-                cwd,
-                cfg.isolation.as_ref(),
-                true,
-            )?;
-            if handle.is_pre_start_cancelled() {
-                return Err("启动前已取消".to_owned());
-            }
-            if let Some(lease) = lease {
-                terminals.attach_derived_lease(existing.id, iso_id.as_deref(), lease);
-            }
-            let claimed =
-                terminals.try_claim_derived_turn(existing.id, &env.invocation_id, None)?;
-            return Ok((claimed, true));
         }
     }
 
@@ -338,20 +343,84 @@ pub(super) fn open_or_launch_codex(
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
+    let reserved = terminals.reserve_id();
+    let CodexProcess {
+        session,
+        client,
+        ready_file,
+    } = launch_codex(
+        reserved,
+        cwd,
+        env.session_id.as_deref(),
+        cfg.isolation.is_some(),
+    )?;
+    let terminal_id = terminals.insert_reserved_derived(
+        reserved,
+        NewDerived {
+            provider: "codex".to_owned(),
+            cwd: cwd.to_path_buf(),
+            session: session.clone(),
+            native: env.session_id.clone(),
+            account: None,
+            codex: Some(client.clone()),
+            info: DerivedInfo {
+                parent_boss_key: parent.boss_key.clone(),
+                parent_workspace_id: parent.workspace_id.clone(),
+                busy: true,
+                blocked_kind: None,
+                isolation_id,
+                _lease: lease,
+                _log_dir: None,
+                _hook_dir: None,
+                codex_ready_file: ready_file,
+                life: Default::default(),
+                active_invocation_id: Some(env.invocation_id.clone()),
+                launch_config: None,
+            },
+        },
+    );
+    drop(held);
+    Ok((
+        DerivedHandle {
+            id: terminal_id,
+            provider: "codex".to_owned(),
+            cwd: cwd.to_path_buf(),
+            session,
+            native: env.session_id.clone(),
+            account: None,
+            launch_config: None,
+            hook_dir: None,
+            codex: Some(client),
+        },
+        false,
+    ))
+}
+
+struct CodexProcess {
+    session: Arc<Session>,
+    client: Arc<codex_server::Client>,
+    ready_file: Option<PathBuf>,
+}
+
+/// Starts Codex with its private app-server. `key` names the socket and must be fresh: the client
+/// of an earlier process may still remove the socket it used.
+fn launch_codex(
+    key: u64,
+    cwd: &Path,
+    resume: Option<&str>,
+    isolated: bool,
+) -> Result<CodexProcess, String> {
     let Some(program) = installed_path("codex") else {
         return Err("Codex CLI 没有安装".to_owned());
     };
-    let terminal_id = terminals.reserve_id();
-    let sock = codex_server::socket_path(terminal_id);
-    let ready_file = cfg
-        .isolation
-        .as_ref()
-        .map(|_| std::env::temp_dir().join(format!("agentnave-codex-ready-{terminal_id}.flag")));
+    let sock = codex_server::socket_path(key);
+    let ready_file =
+        isolated.then(|| std::env::temp_dir().join(format!("agentnave-codex-ready-{key}.flag")));
     if let Some(path) = &ready_file {
         let _ = fs::remove_file(path);
     }
     let (launch_program, launch_args) =
-        codex_server::launch_args(&program, &sock, cwd, env.session_id.as_deref(), &[]);
+        codex_server::launch_args(&program, &sock, cwd, resume, &[]);
     let extra_env = ready_file
         .as_ref()
         .map(|p| {
@@ -371,44 +440,64 @@ pub(super) fn open_or_launch_codex(
         derived: true,
     })?;
     let client = codex_server::Client::connect_in_background(sock, session.clone());
-    terminals.insert_reserved_derived(
-        terminal_id,
-        NewDerived {
-            provider: "codex".to_owned(),
-            cwd: cwd.to_path_buf(),
-            session: session.clone(),
-            native: env.session_id.clone(),
-            account: None,
-            codex: Some(client.clone()),
-            info: DerivedInfo {
-                parent_boss_key: parent.boss_key.clone(),
-                parent_workspace_id: parent.workspace_id.clone(),
-                busy: true,
-                blocked_kind: None,
-                isolation_id,
-                _lease: lease,
-                _log_dir: None,
-                _hook_dir: None,
-                codex_ready_file: ready_file,
-                active_invocation_id: Some(env.invocation_id.clone()),
-                launch_config: None,
-            },
-        },
-    );
-    Ok((
-        DerivedHandle {
-            id: terminal_id,
-            provider: "codex".to_owned(),
-            cwd: cwd.to_path_buf(),
-            session,
-            native: env.session_id.clone(),
-            account: None,
-            launch_config: None,
-            hook_dir: None,
-            codex: Some(client),
-        },
-        false,
-    ))
+    Ok(CodexProcess {
+        session,
+        client,
+        ready_file,
+    })
+}
+
+/// Starts a collapsed Codex session again. Model and permissions go with each turn, so the launch
+/// needs none; the thread is followed from the background once the TUI has loaded it.
+pub(super) fn relaunch_codex(terminals: &Terminals, plan: &WakePlan) -> Result<Relaunched, String> {
+    let started = launch_codex(
+        terminals.reserve_id(),
+        &plan.cwd,
+        Some(&plan.native),
+        plan.isolation_id.is_some(),
+    )?;
+    let relaunched = Relaunched {
+        session: started.session.clone(),
+        log_dir: None,
+        hook_dir: None,
+        codex: Some(started.client.clone()),
+    };
+    let plan = plan.clone();
+    thread::spawn(move || follow_woken(started, &plan));
+    Ok(relaunched)
+}
+
+/// Trusts the isolated directory as a dispatch does, then subscribes to the resumed thread, whose
+/// state is otherwise not pushed for turns the user starts.
+fn follow_woken(started: CodexProcess, plan: &WakePlan) {
+    let CodexProcess {
+        session,
+        client,
+        ready_file,
+    } = started;
+    let guard = ReadyFileGuard(ready_file);
+    if !wait_codex_connected(&client, &session, &Arc::new(RunHandle::new())) {
+        return;
+    }
+    if guard.0.is_some()
+        && let Err(err) = client.write_project_trust(&plan.cwd)
+    {
+        eprintln!("写入隔离目录 Codex 信任失败：{err}");
+    }
+    let ready_file = guard.0.clone();
+    drop(guard);
+    let deadline = Instant::now() + THREAD_WAIT_TIMEOUT;
+    while Instant::now() < deadline && session.exit().is_none() {
+        if client.loaded_threads().contains(&plan.native)
+            && client.resume_thread(&plan.native).is_ok()
+        {
+            break;
+        }
+        thread::sleep(RESUME_RETRY_GAP);
+    }
+    if let Some(path) = ready_file {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn wait_codex_connected(
@@ -655,10 +744,10 @@ fn monitor_codex_turn(
             }
             None => (outcome, err_msg),
         };
-        terminals.clear_derived_turn(launched.id, Some(thread_id));
         if exit.is_some() {
             terminals.release_derived_lease(launched.id);
         }
+        terminals.clear_derived_turn(launched.id, Some(thread_id));
         let (status, reason) = settle_turn(outcome, err_msg, exit);
         coordinator.mark_finished(req_id, status, reason.as_deref(), Some(thread_id));
         return;

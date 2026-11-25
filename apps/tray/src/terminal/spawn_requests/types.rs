@@ -148,6 +148,14 @@ pub(in crate::terminal) struct Receipt {
     pub terminal: Option<TerminalOutcome>,
 }
 
+/// The session a dispatched turn belongs to, as its receipt knows it.
+#[derive(Clone, Debug)]
+pub(in crate::terminal) struct RunReceipt {
+    pub invocation_id: String,
+    pub session_id: Option<String>,
+    pub provider: Option<String>,
+}
+
 pub(in crate::terminal) struct RunHandle {
     pre_start_cancelled: AtomicBool,
     interrupt_confirmed: AtomicBool,

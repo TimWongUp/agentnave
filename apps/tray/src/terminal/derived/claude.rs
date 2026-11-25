@@ -2,6 +2,7 @@
 
 mod monitor;
 mod screen;
+mod stop_trail;
 #[cfg(test)]
 pub(super) mod turn_state;
 #[cfg(not(test))]
@@ -32,6 +33,7 @@ pub(super) use monitor::monitor_claude_turn;
 #[cfg(all(test, unix))]
 pub(super) use monitor::monitor_claude_turn_with_config;
 pub(super) use screen::ClaudeScreen;
+pub(in crate::terminal) use stop_trail::StopTrail;
 pub(super) use turn_state::BG_WAIT_REMINDER_DELAY;
 #[cfg(all(test, unix))]
 pub(super) use turn_state::ClaudeMonitorConfig;
@@ -578,7 +580,14 @@ fn prepare_fallback_attempt(
             return None;
         }
     };
-    terminals.replace_derived_session(prev.id, new_session.clone(), Some(preset_sid), Some(dir));
+    let mode = attempt_cfg.permissions["permission_mode"].as_str();
+    terminals.replace_derived_session(
+        prev.id,
+        new_session.clone(),
+        Some(preset_sid),
+        Some(dir),
+        mode,
+    );
     let _ = coordinator.sync_derived_pids(terminals);
     prev.session = new_session;
     prev.native = Some(preset_sid.clone());

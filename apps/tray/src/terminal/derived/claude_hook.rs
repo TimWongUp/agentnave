@@ -59,7 +59,7 @@ pub(super) fn prepare_mode_hook() -> Result<tempfile::TempDir, String> {
     prepare_claude_hook(true)
 }
 
-pub(super) fn events_path(hook_dir: &Path) -> PathBuf {
+pub(in crate::terminal) fn events_path(hook_dir: &Path) -> PathBuf {
     hook_dir.join("events.jsonl")
 }
 

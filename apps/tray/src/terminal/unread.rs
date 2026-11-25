@@ -83,7 +83,6 @@ struct InboxFile {
 pub(super) struct RawBoss {
     pub(super) waiting: bool,
     pub(super) items: Vec<Item>,
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) in_flight: u64,
     pub(super) has_unread: bool,
     pub(super) unread_count: usize,
