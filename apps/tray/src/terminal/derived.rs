@@ -25,7 +25,6 @@ use super::spawn_requests::{
 };
 use super::{DerivedHandle, DerivedLaunchConfig, Terminals};
 use crate::isolated::leases::{self, HeldLease};
-
 pub(super) use claude::StopTrail;
 #[cfg(test)]
 use claude::build_claude_args;
@@ -33,6 +32,14 @@ pub(super) use claude_hook::events_path as claude_events_path;
 #[cfg(test)]
 use tui::build_agy_args;
 pub(super) use wake::relaunch;
+
+/// The screen a CLI's raw output draws, for live tests to read answers from.
+#[cfg(all(test, unix))]
+pub(super) fn rendered_screen(output: &[u8]) -> String {
+    let mut screen = claude::ClaudeScreen::new();
+    screen.feed(output);
+    screen.text()
+}
 
 const LEASE_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_STEP: Duration = Duration::from_millis(50);

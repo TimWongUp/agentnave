@@ -396,6 +396,20 @@ impl Client {
             .map(|(status, _)| status.clone())
     }
 
+    /// How many of the thread's turns the app-server's notifications reported completed.
+    #[cfg(test)]
+    pub(super) fn completed_turns_for_test(&self, tid: &str) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .turns
+            .iter()
+            .filter(|((thread, _), turn)| {
+                thread == tid && turn.completed_status.as_deref() == Some("completed")
+            })
+            .count()
+    }
+
     fn notify(&self, method: &str, params: Option<Value>) -> Result<(), String> {
         let writer = {
             let state = self.state.lock().unwrap_or_else(|p| p.into_inner());

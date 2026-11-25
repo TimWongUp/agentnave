@@ -25,6 +25,7 @@ const WS: &str = "s-work";
 const PARENT: &str = "s-parent";
 
 mod bosses;
+mod live;
 mod wake;
 
 /// A fake CLI that reports the states typed to it.
@@ -514,6 +515,10 @@ fn codex_is_collapsed_only_while_every_loaded_thread_is_freshly_known_idle() {
     // A subagent's thread works.
     office.idle_for(IDLE_GRACE);
     assert_eq!(office.state(id), "idle");
+    // Its screen reports working while it loads the thread; once known, the app-server decides.
+    report(&session, "working");
+    assert_eq!(office.state(id), "idle");
+    report(&session, "idle");
     // Known idle, but the user's turn has started since and was not pushed.
     states.lock().unwrap().remove("sub");
     codex.refresh_threads();

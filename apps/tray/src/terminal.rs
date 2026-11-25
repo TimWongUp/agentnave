@@ -199,10 +199,23 @@ impl Running {
         if self.derived.as_ref().is_some_and(|d| d.busy) {
             return true;
         }
-        if matches!(
-            self.session.osc_snapshot().1.as_deref(),
-            Some("working" | "blocked")
-        ) {
+        let osc = self.session.osc_snapshot().1;
+        // A resumed Codex screen reports working while it loads the thread; once the app-server
+        // reports the thread, that report alone tells whether a turn runs.
+        #[cfg(unix)]
+        let thread_known = self.derived.is_some()
+            && self
+                .codex
+                .as_ref()
+                .zip(self.native.as_deref())
+                .is_some_and(|(c, sid)| c.thread_status(sid).is_some());
+        #[cfg(not(unix))]
+        let thread_known = false;
+        if match osc.as_deref() {
+            Some("blocked") => true,
+            Some("working") => !thread_known,
+            _ => false,
+        } {
             return true;
         }
         #[cfg(unix)]
