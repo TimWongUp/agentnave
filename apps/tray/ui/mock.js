@@ -914,11 +914,14 @@ All checks passed!
         const conv = [...g.convs].sort((a, b) => Math.max(...b.specs.map((s) => s.end ?? w.s)) - Math.max(...a.specs.map((s) => s.end ?? w.s)))[0];
         const preview = last ? clip((last.kind === "typing" ? plain(last.text).slice(-1) : plain(last.text).slice(0, 1)).join(" "), 90) : "";
         const display_title = displayTitleOf(g);
+        const desks = desksOf(g, w);
         return {
           group: g.group, host: g.host, app: g.app || null, label: label(g), color: g.color, live: g.live, status, updated,
           cli_session: !g.app || !String(g.app).endsWith("-desktop"),
           handover: handoverOf(g), title: conv.title, display_title, title_id: conv.id, conversations: g.convs.length, preview,
-          desks_count: desksOf(g, w).length, rooms_count: roomsOf(g, w).length,
+          desks_count: desks.length,
+          derived: desks.filter((d) => d.derived).map(({ key, provider, model, effort, role, identity, art_model, first_seen, last_active, status }) => ({ key, provider, model, effort, role, identity, art_model, first_seen, last_active, status })),
+          rooms_count: roomsOf(g, w).length,
           isolated_count: isolatedOf(g, w).length,
           ...placeOf(g, w), boss_key: `${g.host}|${label(g)}`,
         };
@@ -1394,7 +1397,18 @@ All checks passed!
     if (path === "/app/git-pr/state") return mockGitPr();
     if (path === "/app/isolated/cleanup" && q.has("isolated")) return mockCleanup();
     if (path === "/app/isolated/cleanup") return { running: false, report: null, recent: [] };
-    if (path.split("?")[0] === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
+    if (path.split("?")[0] === "/app/terminal/state") return {
+      sessions: structuredClone(mockTerminals),
+      cwd: "/work/app",
+      derived_titles: {
+        "thread:drv-run": "修登录竞态",
+        "thread:drv-wait": "确认迁移脚本",
+        "thread:drv-pick": "整理接口文档",
+        "thread:drv-idle": "补单测覆盖",
+        "thread:drv-dormant": "重构缓存层",
+        "thread:drv-old": "清理旧配置",
+      },
+    };
     if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider, accounts: provider === "claude" ? mockAccounts.map(({ id, label }) => ({ id, label })) : [] })) };
     if (path === "/app/accounts") return { accounts: structuredClone(mockAccounts), error: null };
     if (path === "/app/accounts/discover") {

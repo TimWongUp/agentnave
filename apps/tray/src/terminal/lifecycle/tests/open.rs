@@ -408,3 +408,58 @@ fn a_launch_is_saved_once_for_only_the_owner_and_forgotten_with_its_history() {
     let saved: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
     assert_eq!(saved["sessions"], json!({}));
 }
+
+#[test]
+fn saved_title_persists_without_rewriting_unchanged_and_reads_old_records() {
+    let office = Office::new();
+    let root = office.root.path();
+    let config = root.join("config");
+    fs::create_dir_all(&config).unwrap();
+    // Old record without "title" field still loads cleanly.
+    let old = json!({"version": 1, "sessions": {format!("claude:{SID}"): {
+        "cwd": root, "model": "m", "effort": null,
+        "permissions": {"permission_mode": "auto"}, "account": null, "account_dir": null,
+        "isolation_id": null, "fallback_mode": null, "parent_workspace_id": WS,
+        "parent_boss_key": PARENT}}});
+    let file = office.saved_file();
+    fs::write(&file, old.to_string()).unwrap();
+    office.terminals.save_launches_in(&config);
+    assert_eq!(
+        office.terminals.saved_launch("claude", SID).unwrap().title,
+        None
+    );
+
+    // Live derived session observes a CLI title -> saved once, reported in derived_titles,
+    // and preserved if another beat runs before title lookup runs on a fresh process.
+    let (id, session) = office.derived("claude");
+    let launch = DerivedLaunchConfig {
+        cwd: root.to_path_buf(),
+        model: Some("m".to_owned()),
+        effort: None,
+        permissions: json!({"permission_mode": "auto"}),
+    };
+    office.with(id, |r| {
+        let derived = r.derived.as_mut().unwrap();
+        derived.launch_config = Some(launch);
+        derived.life.title = Some("修派生标题".to_owned());
+    });
+    office.beat(Duration::ZERO);
+    let saved: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(
+        saved["sessions"][format!("claude:{SID}")]["title"],
+        "修派生标题"
+    );
+    assert_eq!(
+        office
+            .terminals
+            .saved_titles()
+            .get(&desk())
+            .map(String::as_str),
+        Some("修派生标题")
+    );
+
+    fs::remove_file(&file).unwrap();
+    office.beat(Duration::from_secs(1));
+    assert!(!file.exists(), "unchanged title must not rewrite");
+    session.stop();
+}

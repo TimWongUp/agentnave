@@ -649,6 +649,7 @@ function renderAll(c, newGroup = false) {
   const leftTerm = wasTerm && !el.drawer?.classList?.contains?.("term-mode");
   renderConv(c, ctx, leftTerm);
   ChatTerminal.column(c.group, c.host, c.app);
+  if (typeof syncListSelection === "function") syncListSelection();
   renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);
@@ -665,7 +666,11 @@ function applyHash(ctx) {
   if (key.startsWith("desk:")) {
     // A link made while a task had no native session yet names its earlier task key.
     const desk = ctx.aliases.get(key.slice(5)) ?? key.slice(5);
-    if (ctx.desks.has(desk)) openScope({ kind: "desk", key: desk });
+    if (ctx.desks.has(desk)) {
+      const wantTerm = Boolean(ChatTerminal.consumeOpenDesk?.(state.chat?.group, desk));
+      openScope({ kind: "desk", key: desk }, null, wantTerm ? { terminal: true } : {});
+      if (wantTerm) ChatTerminal.focusFrame?.(ChatTerminal.ofDesk?.(state.chat?.group, desk)?.id);
+    }
   } else if (key.startsWith("conv:")) {
     const id = key.slice(5);
     const last = state.chat?.messages.findLast((m) => m.conversation === id);

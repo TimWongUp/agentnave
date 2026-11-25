@@ -285,25 +285,57 @@ function createItem(g) {
   rec.el.addEventListener("contextmenu", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e));
   return rec;
 }
+function selectedDerivedDeskKey() {
+  if (typeof state === "undefined" || state.drawer?.kind !== "desk" || !state.drawer.key) return null;
+  if (typeof el !== "undefined") {
+    if (el.drawer?.hidden) return null;
+    if (el.drawer?.classList?.contains?.("folded") && !state.convPeek) return null;
+  }
+  const key = state.drawer.key;
+  if (state.ctx?.desks?.get?.(key)?.derived) return key;
+  if (typeof ChatTerminal !== "undefined" && ChatTerminal?.derivedOf?.(state.selected)?.some((d) => d.desk_key === key)) {
+    return key;
+  }
+  return null;
+}
+const isDerivedItem = (g) => g?.derived === true;
+function isItemOn(g, deskKey = selectedDerivedDeskKey()) {
+  if (isDerivedItem(g)) {
+    return Boolean(deskKey && g.parent_workspace_id === state.selected && g.desk_key === deskKey) || g.group === state.selected;
+  }
+  return g.group === state.selected && !deskKey;
+}
+function syncListSelection() {
+  if (typeof state === "undefined" || !state.items) return;
+  const deskKey = selectedDerivedDeskKey();
+  for (const rec of state.items.values()) {
+    if (!rec.g) continue;
+    const on = isItemOn(rec.g, deskKey);
+    rec.el.classList?.toggle?.("on", on);
+    setAttr(rec.el, "aria-current", on ? "true" : null);
+  }
+}
 function updateItem(rec, g, flat = false) {
+  rec.g = g;
+  const isChild = isDerivedItem(g);
   // A failure asks nothing of the user, so the list does not call it out.
-  const dMeta = g.derived ? ChatTerminal.derivedMeta(g) : null;
+  const dMeta = isChild ? ChatTerminal.derivedMeta(g) : null;
   const shown = g.status === "failed" ? "idle" : AN.ongoing(g.status);
   const [word, groupTone] = pick(GROUP, shown);
   const tone = dMeta ? dMeta.tone : groupTone;
-  const on = g.group === state.selected;
+  const on = isItemOn(g);
   const pinned = isGroupPinned(g.group);
   const name = shownName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${g.derived ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${isChild ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
   setAttr(
     rec.el,
     "aria-label",
-    g.derived
+    isChild
       ? L(`${name}，派生终端 ${g.label}，${dMeta.text}`, `${name}, derived terminal in ${g.label}, ${dMeta.text}`)
       : L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`),
   );
@@ -322,7 +354,7 @@ function updateItem(rec, g, flat = false) {
   rec.pin.hidden = !pinned;
   setAttr(rec.pin, "title", pinned ? L("已置顶", "Pinned") : null);
   // In flat view, .gi-meta also displays the owning project name when not "other".
-  if (g.derived) {
+  if (isChild) {
     const project = flat ? projectTitleOf(g) : "";
     const metaText = [dMeta.text, project].filter(Boolean).join(" · ");
     rec.meta.hidden = false;
@@ -407,7 +439,7 @@ function mustShow(g) {
     urgent(g.status) ||
     g.group === state.selected ||
     isGroupPinned(g.group) ||
-    Boolean(ChatTerminal.derivedOf?.(g.group)?.length)
+    Boolean(ChatTerminal.derivedOf?.(g.group)?.some((d) => d.terminal != null))
   );
 }
 // A folded project keeps only pending handovers, urgent work, and the open agent visible.
@@ -567,13 +599,16 @@ function groupedNodes(groups, { prefs, query } = {}) {
     nodes.push(headNode(section, folded));
     for (const g of section.shown) {
       const children = ChatTerminal.derivedOf?.(g.group) || [];
-      // A folded group still shows what needs the reader, is open, or has an open derived terminal.
-      const hidden = folded && !(stayVisibleWhenFolded(g) || children.length);
+      const hasTermChildren = children.some((d) => d.terminal != null);
+      // A folded group still shows what needs the reader, is open, or has a derived terminal.
+      const hidden = folded && !(stayVisibleWhenFolded(g) || hasTermChildren);
       nodes.push(itemNode(g, hidden, false));
       if (!hidden) order.push(g.group);
+      const deskKey = selectedDerivedDeskKey();
       for (const child of children) {
-        nodes.push(itemNode(child, false));
-        order.push(child.group);
+        const childHidden = folded && child.terminal == null && !isItemOn(child, deskKey);
+        nodes.push(itemNode(child, childHidden));
+        if (!childHidden) order.push(child.group);
       }
     }
     if (section.hidden)

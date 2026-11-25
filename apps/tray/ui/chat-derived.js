@@ -49,24 +49,28 @@ const ChatDerived = (() => {
     if (el.derivedCount) setText(el.derivedCount, ` · ${derivedDesks.length}`);
   }
 
-  // Opening a desk is asking to continue it: a live terminal opens as is; one whose process ended
-  // (or that has no terminal row at all) shows its messages while the App brings it back.
+  // Opening a desk always shows its messages; resuming its terminal is an explicit action.
   function openDesk(d, openerEl) {
     const group = groupOf();
     if (!group) return;
-    const x = terminalFor(d, group);
-    const ds = x ? ChatTerminal.derivedStateOf(x) : "dormant";
-    const live = ds !== "dormant" && ds !== "exited";
-    if (typeof openScope === "function") openScope({ kind: "desk", key: d.key }, openerEl, live ? { terminal: true } : {});
-    if (live) ChatTerminal?.focusFrame?.(x.id);
-    else if (ds === "dormant") void ChatTerminal?.revive?.({ id: x?.id, group, deskKey: d.key });
+    if (typeof openScope === "function") openScope({ kind: "desk", key: d.key }, openerEl);
+  }
+
+  function resumeDesk(d, openerEl, x) {
+    const group = groupOf();
+    if (!group) return;
+    openDesk(d, openerEl);
+    void ChatTerminal?.revive?.({ id: x?.id, group, deskKey: d.key });
   }
 
   function deskMenu(d, openerEl, e) {
     if (typeof Actions === "undefined" || !Actions?.openMenu) return;
     const x = terminalFor(d);
+    const ds = x ? ChatTerminal.derivedStateOf(x) : "dormant";
+    const live = Boolean(x && ds !== "dormant" && ds !== "exited");
     Actions.openMenu(e, [
       { label: L("打开", "Open"), run: () => openDesk(d, openerEl) },
+      !live && { label: L("续接", "Resume"), run: () => resumeDesk(d, openerEl, x) },
       x && { label: L("关闭终端", "Close terminal"), danger: true, run: () => ChatTerminal?.close?.(x.id) },
     ].filter(Boolean));
   }

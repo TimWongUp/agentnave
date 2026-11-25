@@ -79,6 +79,8 @@ pub(super) struct Life {
     /// Its launch was assumed from the service history for want of a saved one: a re-dispatch
     /// with another launch starts it again instead of being refused.
     config_assumed: bool,
+    /// Last CLI title observed for this derived session so restarts keep the same name.
+    pub(super) title: Option<String>,
 }
 
 /// What is known of the CLI process a derived terminal currently runs.

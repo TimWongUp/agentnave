@@ -63,6 +63,9 @@ const Actions = {};
     buttons[(i + step + buttons.length) % buttons.length].focus();
   });
 
+  const isDerivedRow = (id) =>
+    String(id).startsWith("term-") || (typeof ChatTerminal !== "undefined" && Boolean(ChatTerminal?.isDerivedRowId?.(id)));
+
   // ---- picking several workspaces ----------------------------------------------------------
   function clearPicks() {
     picked.clear();
@@ -76,8 +79,9 @@ const Actions = {};
       if (picked.size) clearPicks();
       return false;
     }
+    if (isDerivedRow(id)) return false;
     // The open workspace counts as picked when a selection starts, as in Finder.
-    if (!picked.size && state.selected && state.selected !== id) picked.add(state.selected);
+    if (!picked.size && state.selected && state.selected !== id && !isDerivedRow(state.selected)) picked.add(state.selected);
     if (e.metaKey || e.ctrlKey) {
       if (picked.has(id)) picked.delete(id); else picked.add(id);
       anchor = id;
@@ -85,7 +89,9 @@ const Actions = {};
       const from = state.order.indexOf(anchor ?? state.selected);
       const to = state.order.indexOf(id);
       if (from < 0) picked.add(id);
-      else for (const g of state.order.slice(Math.min(from, to), Math.max(from, to) + 1)) picked.add(g);
+      else for (const g of state.order.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+        if (!isDerivedRow(g)) picked.add(g);
+      }
     }
     renderList();
     return true;
@@ -620,7 +626,7 @@ const Actions = {};
     await postSidebar("/app/projects/pin", { key, pinned }, L("未能更新项目置顶状态", "Failed to update project pin"));
   }
   async function pinGroup(group, pinned) {
-    if (String(group).startsWith("term-")) return;
+    if (isDerivedRow(group)) return;
     await postSidebar("/app/chats/pin", { group, pinned }, L("未能更新 agent 置顶状态", "Failed to update agent pin"));
   }
   async function reorderProjects(order) {
@@ -667,7 +673,7 @@ const Actions = {};
 
   // ---- menus ------------------------------------------------------------------------------
   function workspaceMenu(id, e) {
-    if (String(id).startsWith("term-")) return;
+    if (isDerivedRow(id)) return;
     if (picked.size && !picked.has(id)) clearPicks();
     if (picked.size > 1) {
       const ids = [...picked];
@@ -681,7 +687,9 @@ const Actions = {};
     if (!g) return;
     const pinned = isGroupPinned(id);
     const endedTerm = typeof ChatTerminal !== "undefined" ? ChatTerminal?.exitedOf?.(id) : null;
-    const derivedCount = typeof ChatTerminal !== "undefined" ? (ChatTerminal?.derivedOf?.(id)?.length || 0) : 0;
+    const derivedCount = typeof ChatTerminal !== "undefined"
+      ? (ChatTerminal?.liveDerivedCount?.(id) ?? (ChatTerminal?.derivedOf?.(id)?.filter((d) => d.terminal != null && d.derived_state !== "dormant" && d.derived_state !== "exited").length || 0))
+      : 0;
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       { label: pinned ? L("取消置顶", "Unpin") : L("置顶", "Pin"), run: () => pinGroup(id, !pinned) },

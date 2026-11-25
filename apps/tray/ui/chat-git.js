@@ -110,7 +110,7 @@ const ChatGit = (() => {
   // ---- eligibility, targets & status priority ---------------------------------------------
   function isCliSession(g) {
     if (!g) return false;
-    if (g.terminal != null || g.derived) return true;
+    if (g.terminal != null || g.derived === true) return true;
     if (typeof ChatTerminal !== "undefined" && ChatTerminal?.hasTerminal?.(g.group)) return true;
     return g.cli_session === true;
   }
@@ -122,13 +122,14 @@ const ChatGit = (() => {
       const tid = Number(g.group.slice(5));
       if (Number.isFinite(tid)) return { kind: "terminal", id: tid };
     }
+    if (g.derived === true) return null;
     return g.group ? { kind: "workspace", id: g.group } : null;
   }
 
   function isWorking(g, entry) {
     if (entry?.working) return true;
     if (!g) return false;
-    if (g.derived && g.status === "running") return true;
+    if (g.derived === true && g.status === "running") return true;
     if (g.terminal != null && store.prevTermBusy.get(g.terminal) === true) return true;
     return false;
   }
@@ -175,6 +176,7 @@ const ChatGit = (() => {
     if (typeof g.group === "string" && g.group.startsWith("term-")) {
       return store.snap.terminals?.[g.group.slice(5)] || null;
     }
+    if (g.derived === true) return null;
     return store.snap.workspaces?.[g.group] || null;
   }
 
@@ -633,8 +635,9 @@ const ChatGit = (() => {
     const derived = typeof ChatTerminal !== "undefined" ? (ChatTerminal?.derivedAll?.() || []) : [];
     const term = derived.find(
       (x) =>
-        (x.isolation_id && x.isolation_id === d.id) ||
-        (dirPath && x.cwd && (normalizePath(x.cwd) === dirPath || normalizePath(x.cwd).startsWith(`${dirPath}/`))),
+        (x.terminal != null || String(x.group || "").startsWith("term-")) &&
+        ((x.isolation_id && x.isolation_id === d.id) ||
+          (dirPath && x.cwd && (normalizePath(x.cwd) === dirPath || normalizePath(x.cwd).startsWith(`${dirPath}/`)))),
     );
     if (term) {
       const active = term.status === "running" || term.status === "waiting" || term.live;

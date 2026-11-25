@@ -6,10 +6,18 @@
 const ChatTerminal = (() => {
   const { h, L } = AN;
   const PREFIX = "term-";
+  const DERIVED_PREFIX = "drv-";
+  const encodeToken = (s) =>
+    encodeURIComponent(String(s)).replace(/[_!~*'().-]|%([0-9A-F]{2})/gi, (m, hex) =>
+      `_${hex || m.charCodeAt(0).toString(16).padStart(2, "0")}`,
+    );
+  const derivedRowId = (parentGroup, deskKey) => `${DERIVED_PREFIX}${encodeToken(parentGroup)}-${encodeToken(deskKey)}`;
+  const isDerivedRowId = (id) => typeof id === "string" && id.startsWith(DERIVED_PREFIX);
   // CLIs whose ended terminal can continue its chat (the App's cli_args).
   const RESUMES = new Set(["claude", "codex", "grok", "antigravity"]);
   const t = {
     list: [],
+    derivedTitles: {},
     listGen: 0,
     clis: null,
     cwd: null,
@@ -19,6 +27,8 @@ const ChatTerminal = (() => {
     waking: new Map(), // derived sessions being brought back: terminal id (or desk) -> { open: show the terminal when done }
     shown: null,
     openOnce: null,
+    wantDeskTerminal: null,
+    derivedRevive: null,
     away: false, // the window was hidden since the list was last read
   };
   AN.onVisibility?.(() => {
@@ -79,7 +89,11 @@ const ChatTerminal = (() => {
   const light = () => document.documentElement.dataset.theme === "light";
   const folder = (p) => (p || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p || "";
   const byId = (id) => t.list.find((x) => x.id === id);
-  const pendingId = (group) => (group?.startsWith(PREFIX) ? Number(group.slice(PREFIX.length)) : null);
+  const pendingId = (group) => {
+    if (typeof group !== "string" || !group.startsWith(PREFIX)) return null;
+    const raw = group.slice(PREFIX.length);
+    return /^\d+$/.test(raw) ? Number(raw) : null;
+  };
   // The terminal whose CLI is currently in this workspace (the latest confirmed one).
   const ofWorkspace = (group) => t.list.find((x) => !x.derived && x.workspaces.at(-1) === group);
   // A derived terminal's desk in its parent's office is the thread of its native session.
@@ -95,8 +109,8 @@ const ChatTerminal = (() => {
   const isDerivedDeskOpen = (group) =>
     typeof state !== "undefined" &&
     state?.drawer?.kind === "desk" &&
-    state?.chat?.group === group &&
-    Boolean(state?.ctx?.desks?.get?.(state.drawer.key)?.derived);
+    (state?.chat?.group === group || state?.loaded === group) &&
+    Boolean(state?.ctx?.desks?.get?.(state.drawer.key)?.derived || ofDesk(group, state.drawer.key));
   // The terminal this workspace's column shows: the open desk's own derived terminal, else the boss's.
   const terminalOf = (group) => {
     const pending = byId(pendingId(group));
@@ -143,6 +157,7 @@ const ChatTerminal = (() => {
     const before = shownId != null && byId(shownId);
     const processes = new Map(t.list.map((x) => [x.id, x.started]));
     t.list = current.sessions;
+    t.derivedTitles = current.derived_titles || {};
     t.cwd = current.cwd;
     continueShown(before);
     const now = new Date().toISOString();
@@ -160,10 +175,13 @@ const ChatTerminal = (() => {
   const DERIVED_STATES = new Set(["starting", "running", "waiting", "uncollected", "idle", "dormant", "exited"]);
   function derivedStateOf(x) {
     if (!x) return "idle";
+    if (x.exit != null) {
+      if (x.derived_state === "dormant" || x.derived_state === "exited") return x.derived_state;
+      return x.resumable ? "dormant" : "exited";
+    }
     if (x.derived_state && DERIVED_STATES.has(x.derived_state)) return x.derived_state;
     if (x.blocked_kind) return "waiting";
-    if (x.derived_busy && x.exit == null) return "running";
-    if (x.exit != null) return "exited";
+    if (x.derived_busy) return "running";
     return "idle";
   }
   function formatElapsed(sinceSec) {
@@ -200,10 +218,18 @@ const ChatTerminal = (() => {
     }
   }
 
-  function toItemRow(x) {
+  const deskDisplayName = (d) => (d ? (AN.deskName?.(d) || AN.handleOf?.(d) || d.role || d.model || "") : "");
+  function derivedTitleFor(deskKey, cliTitle, desk) {
+    return cliTitle || (deskKey && t.derivedTitles?.[deskKey]) || deskDisplayName(desk) || L("派生终端", "Derived terminal");
+  }
+
+  function toItemRow(x, opts = {}) {
     const derived = Boolean(x.derived);
     const ds = derived ? derivedStateOf(x) : null;
     const waking = derived && t.waking.has(x.id);
+    const deskKey = x.desk_key ?? opts.desk?.key ?? null;
+    const parentGroup = x.parent_workspace_id ?? null;
+    const rowId = opts.rowId || (derived && deskKey && parentGroup ? derivedRowId(parentGroup, deskKey) : PREFIX + x.id);
     const status = derived
       ? (waking || ds === "starting" || ds === "running")
         ? "running"
@@ -221,15 +247,20 @@ const ChatTerminal = (() => {
       : x.exit == null
         ? folder(x.cwd)
         : L("已结束", "Exited");
+    const displayTitle = x.display_title ?? (derived && deskKey ? (t.derivedTitles?.[deskKey] ?? null) : null);
+    const title = derived
+      ? derivedTitleFor(deskKey, x.display_title, opts.desk)
+      : (x.display_title || L("新 agent", "New agent"));
     return {
-      group: PREFIX + x.id,
+      group: rowId,
       terminal: x.id,
+      has_terminal: true,
       host: x.provider,
       app: x.provider,
       boss_art_model: x.art_model || "",
       label: cliLabel(x),
-      display_title: x.display_title ?? null,
-      title: x.display_title || (derived ? L("派生终端", "Derived terminal") : L("新 agent", "New agent")),
+      display_title: displayTitle,
+      title,
       status,
       live,
       created: t.since.get(x.id),
@@ -248,8 +279,8 @@ const ChatTerminal = (() => {
       has_draft: Boolean(x.has_draft),
       resumable: Boolean(x.resumable),
       parent_terminal_id: x.parent_terminal_id ?? null,
-      parent_workspace_id: x.parent_workspace_id ?? null,
-      desk_key: x.desk_key ?? null,
+      parent_workspace_id: parentGroup,
+      desk_key: deskKey,
       native: x.native ?? null,
       exit: x.exit ?? null,
       pending_results: x.pending_results ?? 0,
@@ -260,23 +291,94 @@ const ChatTerminal = (() => {
     };
   }
 
+  function historyItemRow(parent, d) {
+    const parentGroup = parent.group;
+    const deskKey = d.key;
+    const waking = t.waking.has(`${parentGroup}|${deskKey}`);
+    const ds = "idle";
+    const displayTitle = t.derivedTitles?.[deskKey] ?? null;
+    return {
+      group: derivedRowId(parentGroup, deskKey),
+      terminal: null,
+      has_terminal: false,
+      host: d.provider,
+      app: d.provider,
+      boss_art_model: d.art_model || "",
+      label: AN.cliName(d.provider),
+      display_title: displayTitle,
+      title: derivedTitleFor(deskKey, null, d),
+      status: waking ? "running" : "idle",
+      live: waking,
+      created: d.first_seen || parent.created || parent.updated,
+      updated: d.last_active || d.first_seen || parent.updated,
+      project_key: parent.project_key,
+      project_label: parent.project_label || "",
+      project_path: parent.project_path || "",
+      preview: derivedMeta({ derived_state: ds, waking }, { withElapsed: false }).text,
+      color: 0,
+      desks_count: 0,
+      rooms_count: 0,
+      isolated_count: 0,
+      derived: true,
+      derived_state: ds,
+      derived_since: null,
+      has_draft: false,
+      resumable: false,
+      parent_terminal_id: null,
+      parent_workspace_id: parentGroup,
+      desk_key: deskKey,
+      native: null,
+      exit: null,
+      pending_results: 0,
+      waking,
+      isolation_id: null,
+      cwd: "",
+      blocked_kind: null,
+    };
+  }
+
   // Agents that have never confirmed a workspace, shaped like workspaces so the list places them.
   function pending() {
     return t.list
       .filter((x) => !x.derived && !x.workspaces?.length)
-      .map(toItemRow);
+      .map((x) => toItemRow(x));
+  }
+
+  function matchesParent(x, parentGroup, tid) {
+    return (
+      x.derived &&
+      (x.parent_workspace_id === parentGroup || (!x.parent_workspace_id && tid != null && x.parent_terminal_id === tid))
+    );
   }
 
   function derivedOf(parentGroup) {
     if (!parentGroup) return [];
     const tid = pendingId(parentGroup);
-    return t.list
-      .filter(
-        (x) =>
-          x.derived &&
-          (x.parent_workspace_id === parentGroup || (!x.parent_workspace_id && tid != null && x.parent_terminal_id === tid)),
-      )
-      .map(toItemRow);
+    const parent = typeof state !== "undefined" && Array.isArray(state?.groupsData)
+      ? state.groupsData.find((g) => g.group === parentGroup)
+      : null;
+    const history = Array.isArray(parent?.derived) ? parent.derived : [];
+    const terms = t.list.filter((x) => matchesParent(x, parentGroup, tid));
+    const used = new Set();
+    const rows = [];
+    const matchFor = (key) => {
+      const idx = terms.findIndex(
+        (x, i) => !used.has(i) && ((x.desk_key && x.desk_key === key) || (x.native && `thread:${x.native}` === key)),
+      );
+      if (idx < 0) return null;
+      used.add(idx);
+      return terms[idx];
+    };
+    for (const d of history) {
+      const x = matchFor(d.key);
+      rows.push(x ? toItemRow(x, { rowId: derivedRowId(parentGroup, d.key), desk: d }) : historyItemRow(parent, d));
+    }
+    terms.forEach((x, i) => {
+      if (used.has(i)) return;
+      const rowId = x.desk_key && x.parent_workspace_id ? derivedRowId(x.parent_workspace_id, x.desk_key) : PREFIX + x.id;
+      rows.push(toItemRow(x, { rowId }));
+    });
+    return rows;
   }
 
   function derivedSummary(parentGroup) {
@@ -296,7 +398,36 @@ const ChatTerminal = (() => {
   }
 
   function derivedAll() {
-    return t.list.filter((x) => x.derived).map(toItemRow);
+    const parents = new Set(
+      typeof state !== "undefined" && Array.isArray(state?.groupsData)
+        ? state.groupsData.map((g) => g.group)
+        : [],
+    );
+    const orphans = [];
+    for (const x of t.list) {
+      if (!x.derived) continue;
+      if (x.parent_workspace_id) parents.add(x.parent_workspace_id);
+      else if (x.parent_terminal_id != null) parents.add(`${PREFIX}${x.parent_terminal_id}`);
+      else orphans.push(toItemRow(x));
+    }
+    const all = [];
+    for (const p of parents) all.push(...derivedOf(p));
+    all.push(...orphans);
+    return all;
+  }
+
+  function isDerivedLive(x) {
+    if (!x?.derived) return false;
+    const ds = derivedStateOf(x);
+    return ds !== "dormant" && ds !== "exited";
+  }
+
+  function liveDerivedCount(workspace) {
+    if (!workspace) return 0;
+    const tid = pendingId(workspace);
+    const resolved = tid != null ? (byId(tid)?.workspaces?.at(-1) || workspace) : workspace;
+    const resolvedTid = pendingId(resolved);
+    return t.list.filter((x) => matchesParent(x, resolved, resolvedTid) && isDerivedLive(x)).length;
   }
 
   // The office of an agent that has not dispatched (or a derived terminal): its boss and nothing else yet.
@@ -420,25 +551,34 @@ const ChatTerminal = (() => {
       rec.label.after(rec.term);
     }
     const x = g.terminal != null ? byId(g.terminal) : ofWorkspace(g.group);
-    rec.term.hidden = !x || x.exit != null || Boolean(g.derived);
+    rec.term.hidden = !x || x.exit != null || g.derived === true;
     rec.term.title = L("boss 在终端里运行", "boss runs in a terminal");
   }
   function menu(id, e) {
-    const x = byId(pendingId(id));
-    if (!x) return false;
-    if (x.derived) {
+    const derivedRow = isDerivedRowId(id)
+      ? derivedAll().find((g) => g.group === id)
+      : (() => {
+          const x = byId(pendingId(id));
+          return x?.derived ? toItemRow(x) : null;
+        })();
+    if (derivedRow) {
+      const x = derivedRow.terminal != null ? byId(derivedRow.terminal) : null;
+      const live = isDerivedLive(x);
       Actions.openMenu(e, [
         { label: L("打开", "Open"), run: () => openDerived(id) },
-        { label: L("关闭终端", "Close terminal"), danger: true, run: () => close(x.id) },
-      ]);
+        !live && { label: L("续接", "Resume"), run: () => resumeDerivedRow(derivedRow, x) },
+        x && { label: L("关闭终端", "Close terminal"), danger: true, run: () => close(x.id) },
+      ].filter(Boolean));
       return true;
     }
-    const derivedList = derivedOf(id);
+    const x = byId(pendingId(id));
+    if (!x) return false;
+    const derivedCount = liveDerivedCount(id);
     Actions.openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       x.exit == null && { label: L("结束 CLI", "Stop CLI"), run: () => stop(x.id) },
-      derivedList.length > 0 && {
-        label: L(`关闭全部派生终端（${derivedList.length}）`, `Close all derived terminals (${derivedList.length})`),
+      derivedCount > 0 && {
+        label: L(`关闭全部派生终端（${derivedCount}）`, `Close all derived terminals (${derivedCount})`),
         danger: true,
         run: () => closeDerived(id),
       },
@@ -670,37 +810,85 @@ const ChatTerminal = (() => {
       if (at >= 0) t.list[at] = session;
       else t.list.push(session);
       dropFrame(session.id);
-      if (job.open && state.selected === group && openDeskKey() === deskKey) {
-        t.terminal.set(group, true);
-        if (state.loaded !== group) t.openOnce = group;
+      if (job.open && state.selected === group) {
+        if (deskKey && state.loaded !== group && state.hashKey === `desk:${deskKey}`) {
+          t.wantDeskTerminal = { group, deskKey };
+        } else if (openDeskKey() === deskKey) {
+          t.terminal.set(group, true);
+          if (state.loaded !== group) t.openOnce = group;
+        }
       }
     }
     refreshOffice();
     return Boolean(session);
   }
-  // A derived session opens to continue: its terminal when it is running, else its messages while
-  // the App starts it again; one that has ended for good only has its messages.
-  function openDerived(group) {
-    const id = pendingId(group);
-    const x = id != null ? byId(id) : null;
+  // Clicking a derived row in the sidebar opens its desk's messages in the parent workspace
+  // without starting a process; rows without a desk key or known parent fall back to term-N.
+  function openDerived(id) {
+    const row = derivedAll().find((g) => g.group === id)
+      || (() => {
+        const x = byId(pendingId(id));
+        return x?.derived ? toItemRow(x) : null;
+      })();
+    if (!row?.derived) return false;
+    if (row.desk_key && row.parent_workspace_id) {
+      const parent = row.parent_workspace_id;
+      if (
+        typeof state !== "undefined" &&
+        state?.loaded === parent &&
+        state.ctx?.desks?.has?.(row.desk_key) &&
+        typeof openScope === "function"
+      ) {
+        openScope({ kind: "desk", key: row.desk_key }, state.items?.get?.(id)?.el);
+      } else {
+        go(`/chat/${encodeURIComponent(parent)}#desk:${encodeURIComponent(row.desk_key)}`);
+      }
+      return true;
+    }
+    const termId = row.terminal ?? pendingId(id);
+    const x = termId != null ? byId(termId) : null;
     if (!x?.derived) return false;
-    const ds = derivedStateOf(x);
-    const live = ds !== "dormant" && ds !== "exited";
-    t.terminal.set(group, live);
+    const live = isDerivedLive(x);
+    t.terminal.set(id, live);
+    if (state?.selected !== id) {
+      t.openOnce = id;
+      go(`/chat/${id}`);
+    } else {
+      state.convOpen = true;
+      if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
+      refreshOffice();
+      if (live) focusFrame(x.id);
+    }
+    return true;
+  }
+  function resumeDerivedRow(row, x) {
+    if (row?.desk_key && row?.parent_workspace_id) {
+      const parent = row.parent_workspace_id;
+      const deskKey = row.desk_key;
+      if (
+        typeof state !== "undefined" &&
+        state?.loaded === parent &&
+        state.ctx?.desks?.has?.(deskKey) &&
+        typeof openScope === "function"
+      ) {
+        openScope({ kind: "desk", key: deskKey }, state.items?.get?.(row.group)?.el);
+      } else {
+        t.wantDeskTerminal = null;
+        go(`/chat/${encodeURIComponent(parent)}#desk:${encodeURIComponent(deskKey)}`);
+      }
+      void revive({ id: x?.id, group: parent, deskKey });
+      return;
+    }
+    if (!x) return;
+    const group = row?.group || `${PREFIX}${x.id}`;
     if (state?.selected !== group) {
       t.openOnce = group;
       go(`/chat/${group}`);
     } else {
       state.convOpen = true;
       if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
-      if (ds !== "dormant") {
-        refreshOffice();
-        if (live) focusFrame(x.id);
-      }
     }
-    // reviving redraws the open column itself, so the messages show without another fetch
-    if (ds === "dormant") void revive({ id, group });
-    return true;
+    void revive({ id: x.id, group });
   }
   // Continues the chat an ended terminal was the boss of, or starts its CLI afresh, in its place.
   async function restart(id) {
@@ -760,7 +948,8 @@ const ChatTerminal = (() => {
   toTerminal.addEventListener("click", switchTo(true));
   stopButton.addEventListener("click", (event) => {
     const x = byId(t.owned);
-    if (t.handover) void newAgent(event, null, t.handover);
+    if (t.derivedRevive) void revive(t.derivedRevive);
+    else if (t.handover) void newAgent(event, null, t.handover);
     else if (x) void (x.exit == null ? stop(x.id) : restart(x.id));
     else if (t.resumable) void resume(t.resumable);
   });
@@ -790,22 +979,61 @@ const ChatTerminal = (() => {
     if (f.dataset.loaded) requestAnimationFrame(notify);
     else f.addEventListener("load", () => { f.dataset.loaded = "1"; notify(); }, { once: true });
   }
+  // Terminal width stays fixed whenever the workspace has any terminal row (boss or derived, live
+  // or exited) or any historical derived desk, so clicking desks or resuming never resizes the floor.
+  function usesTermWidth(group) {
+    if (!group) return false;
+    if (byId(pendingId(group)) || ofWorkspace(group)) return true;
+    if (derivedOf(group).length > 0) return true;
+    if (typeof state !== "undefined" && state?.chat?.group === group && Array.isArray(state?.chat?.desks)) {
+      return state.chat.desks.some((d) => d.derived);
+    }
+    return false;
+  }
+  function stateFor(group) {
+    const x = terminalOf(group);
+    const derivedDesk = isDerivedDeskOpen(group);
+    const isDerived = Boolean(derivedDesk || x?.derived);
+    const ds = x ? derivedStateOf(x) : "dormant";
+    const live = Boolean(x && ds !== "dormant" && ds !== "exited");
+    const on = t.terminal.get(group) ?? !derivedDesk;
+    // Keep the screen and mode switch while an active viewer watches the terminal exit on its own.
+    const watchingEnded = Boolean(isDerived && !live && x && t.shown === x.id && on);
+    const term = x && on && (!isDerived || live || watchingEnded) ? x : null;
+    return { x, derivedDesk, isDerived, ds, live, on, watchingEnded, term, hasWidth: usesTermWidth(group) };
+  }
   // The office's terminal `x`, shown in place of the messages when `on`. The switch and the stop
   // button depend only on the terminal, never on which side is showing, so neither moves.
-  function show(x, on) {
+  function show(x, on, group = state?.loaded, view = null) {
     const wasTerm = Boolean(el.drawer?.classList?.contains?.("term-mode"));
-    const term = x && on ? x : null;
-    el.drawer.classList.toggle("has-term", !!x);
-    if (el.app?.dataset) el.app.dataset.hasTerm = x ? "1" : "0";
+    const isDerived = view ? view.isDerived : Boolean((group && isDerivedDeskOpen(group)) || x?.derived);
+    const live = view ? view.live : Boolean(x && (!isDerived || isDerivedLive(x)));
+    const watchingEnded = view ? view.watchingEnded : Boolean(isDerived && !live && x && t.shown === x.id && on);
+    const term = view ? view.term : (x && on && (!isDerived || live || watchingEnded) ? x : null);
+    const hasWidth = view ? view.hasWidth : (group ? usesTermWidth(group) : Boolean(x));
+    el.drawer.classList.toggle("has-term", hasWidth);
+    if (el.app?.dataset) el.app.dataset.hasTerm = hasWidth ? "1" : "0";
     el.drawer.classList.toggle("term-mode", !!term);
-    modes.hidden = !x;
+    modes.hidden = isDerived ? !(live || watchingEnded) : !x;
     // One place for the terminal's action: stop it while it runs, start it again once it ended.
     // Without a terminal here, a chat its CLI can continue offers to, in the same place.
     const ended = x?.exit != null;
-    stopButton.hidden = Boolean(x?.derived || (!x && !t.resumable && !t.handover));
-    stopButton.classList.toggle("start", !x || ended);
-    const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
-    setText(stopButton, btnLabel);
+    const deskKey = openDeskKey();
+    const isReviving = Boolean(isDerived && group && reviving(group, deskKey));
+    if (isDerived) {
+      t.derivedRevive = !live ? { id: x?.id, group, deskKey } : null;
+      stopButton.hidden = live;
+      stopButton.disabled = !live && isReviving;
+      stopButton.classList.toggle("start", !live);
+      setText(stopButton, L("续接", "Resume"));
+    } else {
+      t.derivedRevive = null;
+      stopButton.hidden = Boolean(!x && !t.resumable && !t.handover);
+      stopButton.disabled = false;
+      stopButton.classList.toggle("start", !x || ended);
+      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
+      setText(stopButton, btnLabel);
+    }
     t.owned = x?.id ?? null;
     setAttr(toMessages, "aria-pressed", term ? "false" : "true");
     setAttr(toTerminal, "aria-pressed", term ? "true" : "false");
@@ -827,11 +1055,11 @@ const ChatTerminal = (() => {
     let subText;
     if (term.derived) {
       const termDs = derivedStateOf(term);
-      if (t.waking.has(term.id)) subText = L(`${cli} · 正在恢复`, `${cli} · Resuming`);
+      if (isReviving || t.waking.has(term.id)) subText = L("正在恢复", "Resuming");
       else if (termDs === "waiting") subText = L(`${cli} · 等待确认`, `${cli} · Needs attention`);
       else if (termDs === "uncollected") subText = term.pending_results ? L(`${term.pending_results} 项结果待 boss 收取`, `${term.pending_results} results waiting for boss`) : L(`${cli} · 待 boss 收取`, `${cli} · Awaiting boss`);
       else if (termDs === "starting") subText = L(`${cli} · 启动中`, `${cli} · Starting`);
-      else if (termDs === "exited") subText = L(`${cli} · 已结束`, `${cli} · Exited`);
+      else if (termDs === "exited" || termDs === "dormant") subText = L(`${cli} · 已结束`, `${cli} · Exited`);
       else subText = cli;
     } else {
       subText = term.blocked_kind
@@ -852,20 +1080,18 @@ const ChatTerminal = (() => {
     }
   }
   function prepare(group) {
-    const x = terminalOf(group);
-    const term = x && (t.terminal.get(group) ?? true) ? x : null;
-    el.drawer?.classList?.toggle?.("has-term", !!x);
-    if (el.app?.dataset) el.app.dataset.hasTerm = x ? "1" : "0";
-    el.drawer?.classList?.toggle?.("term-mode", !!term);
+    const view = stateFor(group);
+    el.drawer?.classList?.toggle?.("has-term", view.hasWidth);
+    if (el.app?.dataset) el.app.dataset.hasTerm = view.hasWidth ? "1" : "0";
+    el.drawer?.classList?.toggle?.("term-mode", !!view.term);
   }
   // After the conversation column is drawn for `group`: its terminal, shown unless the messages
   // were asked for.
   function column(group, host, app) {
-    const x = terminalOf(group);
-    const derivedDesk = isDerivedDeskOpen(group);
-    t.handover = !derivedDesk && (!x || x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
-    t.resumable = !derivedDesk && !x && !t.handover && RESUMES.has(host) ? group : null;
-    show(x, t.terminal.get(group) ?? true);
+    const view = stateFor(group);
+    t.handover = !view.isDerived && (!view.x || view.x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
+    t.resumable = !view.isDerived && !view.x && !t.handover && RESUMES.has(host) ? group : null;
+    show(view.x, view.on, group, view);
     if (t.shown == null && reviving(group, openDeskKey())) setText(el.drSub, L("正在恢复", "Resuming"));
   }
   function consumeOpen(group) {
@@ -873,11 +1099,16 @@ const ChatTerminal = (() => {
     t.openOnce = null;
     return true;
   }
+  function consumeOpenDesk(group, deskKey) {
+    if (!t.wantDeskTerminal || t.wantDeskTerminal.group !== group || t.wantDeskTerminal.deskKey !== deskKey) return false;
+    t.wantDeskTerminal = null;
+    return true;
+  }
   const hasTerminal = (group) => Boolean(byId(pendingId(group)) || ofWorkspace(group));
   const displayState = (group) => {
     const x = terminalOf(group);
-    const derived = derivedOf(group).map((d) => [d.terminal, byId(d.terminal)?.started, d.derived_state, d.waking, d.resumable, d.pending_results]);
-    return [x ? [x.id, x.started, x.exit != null, x.derived_state, t.waking.has(x.id)] : null, derived];
+    const derived = derivedOf(group).map((d) => [d.terminal, byId(d.terminal)?.started, d.derived_state, d.waking, d.resumable, d.pending_results, d.display_title]);
+    return [x ? [x.id, x.started, x.exit != null, x.derived_state, t.waking.has(x.id)] : null, derived, reviving(group, openDeskKey())];
   };
   const bossOpensTerminal = (group) => {
     const agent = byId(pendingId(group));
@@ -925,11 +1156,14 @@ const ChatTerminal = (() => {
     const x = byId(msg.session);
     if (x) {
       if (x.exit == null) x.exit = msg.code ?? 0;
+      if (x.derived && x.derived_state !== "dormant" && x.derived_state !== "exited") {
+        x.derived_state = x.resumable ? "dormant" : "exited";
+      }
       const current = state.loaded && terminalOf(state.loaded)?.id === x.id;
-      if (current) show(x, t.terminal.get(state.loaded) ?? true);
+      if (current) column(state.loaded, state.chat?.host, state.chat?.app);
     }
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, derivedStateOf, derivedMeta, derivedSummary, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, revive, closeDerived, focusFrame, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, revive, closeDerived, focusFrame, close, stop };
 })();
