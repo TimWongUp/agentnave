@@ -595,11 +595,13 @@ fn bosses_binds_a_relay_two_hops_below_its_terminal() {
         .spawn()
         .unwrap();
     assert_eq!(
-        super::links::bosses(root.path(), &[(7, std::process::id())]).get(&7),
+        super::links::chats(root.path(), &[(7, std::process::id())])
+            .get(&7)
+            .and_then(|keys| keys.last()),
         Some(&key)
     );
-    assert!(super::links::bosses(root.path(), &[(8, bystander.id())]).is_empty());
-    assert!(super::links::bosses(root.path(), &[]).is_empty());
+    assert!(super::links::chats(root.path(), &[(8, bystander.id())]).is_empty());
+    assert!(super::links::chats(root.path(), &[]).is_empty());
 
     bystander.kill().unwrap();
     bystander.wait().unwrap();

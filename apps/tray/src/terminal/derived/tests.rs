@@ -20,6 +20,8 @@ mod adr0114;
 mod esc_interrupt;
 #[cfg(unix)]
 mod security;
+#[cfg(unix)]
+mod wake_args;
 
 #[test]
 fn claude_args_merge_theme_and_permission_prompt_skip_into_single_settings() {
@@ -568,6 +570,7 @@ fn isolation_lease_holds_until_terminal_closes() {
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: None,
             launch_config: None,
         },
@@ -606,6 +609,7 @@ fn isolation_lease_holds_until_terminal_closes() {
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: Some("inv-fail".to_owned()),
             launch_config: None,
         },
@@ -652,6 +656,7 @@ fn isolation_lease_holds_until_terminal_closes() {
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: None,
             launch_config: None,
         },
@@ -1003,6 +1008,7 @@ time.sleep(5)
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: Some("inv-ok".to_owned()),
             launch_config: None,
         },
@@ -1084,6 +1090,7 @@ time.sleep(5)
                 _log_dir: None,
                 _hook_dir: None,
                 codex_ready_file: None,
+                life: Default::default(),
                 active_invocation_id: Some(inv_id.clone()),
                 launch_config: None,
             },
@@ -1174,6 +1181,7 @@ fn update_blocker_keeps_invocation_ownership_until_cleared() {
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: Some("inv-a1".to_owned()),
             launch_config: None,
         },
@@ -1249,6 +1257,7 @@ fn claude_monitor_fails_instead_of_succeeding_when_anchor_never_appears() {
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: Some("inv-b4".to_owned()),
             launch_config: None,
         },

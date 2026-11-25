@@ -430,6 +430,7 @@ fn codex_run_fails_startup_and_never_starts_turn_when_pid_publish_fails() {
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: None,
             launch_config: None,
         },

@@ -210,52 +210,20 @@ pub(super) fn spawn_tui_terminal(
     isolation_id: Option<String>,
     hook_dir: Option<tempfile::TempDir>,
 ) -> Result<(DerivedHandle, Option<PathBuf>), String> {
-    let Some(program) = installed_path(&cfg.provider) else {
-        return Err("这个 CLI 没有安装".to_owned());
-    };
     let hook_dir_path = hook_dir.as_ref().map(|d| d.path().to_path_buf());
-    let (mut args, mut extra_env, log_dir_opt, log_file_opt) = match kind {
-        TuiKind::Claude => {
-            let sid = preset_sid.as_deref().unwrap_or_default();
-            let args = claude::build_claude_args(
-                cfg,
-                env.session_id.as_deref(),
-                env.session_id.is_none().then_some(sid),
-                hook_dir_path.as_deref(),
-            );
-            (args, Vec::new(), None, None)
-        }
-        TuiKind::Antigravity => {
-            let dir = tempfile::Builder::new()
-                .prefix("agentnave-agy-")
-                .tempdir()
-                .map_err(|e| format!("无法创建 agy 日志目录：{e}"))?;
-            let log_path = dir.path().join("agy.log");
-            let args = build_agy_args(cfg, env.session_id.as_deref(), cwd, &log_path);
-            let extra = vec![
-                ("AGY_CLI_OSC7501".to_owned(), "on".to_owned()),
-                ("AGY_CLI_OSC7501_MESSAGES".to_owned(), "brief".to_owned()),
-            ];
-            (args, extra, Some(dir), Some(log_path))
-        }
-    };
-    let (launch_program, launch_args) = match &account {
-        Some(acc) => {
-            let (p, a, more) = account::launch_as(acc, program, args, true);
-            extra_env.extend(more);
-            (p, a)
-        }
-        None => (program, std::mem::take(&mut args)),
-    };
-    let session = Session::spawn(&Launch {
-        program: launch_program,
-        args: launch_args,
-        env: extra_env,
-        cwd: cwd.to_path_buf(),
-        cols: 100,
-        rows: 30,
-        derived: true,
-    })?;
+    let TuiProcess {
+        session,
+        log_dir,
+        log_path,
+    } = launch_tui(
+        cfg,
+        env.session_id.as_deref(),
+        preset_sid.as_deref(),
+        cwd,
+        account.as_ref(),
+        kind,
+        hook_dir_path.as_deref(),
+    )?;
     let launch_config = Some(DerivedLaunchConfig::from_run_config(recorded_cfg));
     let tid = terminals.register_derived(NewDerived {
         provider: cfg.provider.clone(),
@@ -272,9 +240,10 @@ pub(super) fn spawn_tui_terminal(
             blocked_kind: None,
             isolation_id,
             _lease: lease,
-            _log_dir: log_dir_opt,
+            _log_dir: log_dir,
             _hook_dir: hook_dir,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: Some(env.invocation_id.clone()),
             launch_config: launch_config.clone(),
         },
@@ -294,8 +263,71 @@ pub(super) fn spawn_tui_terminal(
             #[cfg(unix)]
             codex: None,
         },
-        log_file_opt,
+        log_path,
     ))
+}
+
+pub(super) struct TuiProcess {
+    pub(super) session: Arc<Session>,
+    pub(super) log_dir: Option<tempfile::TempDir>,
+    pub(super) log_path: Option<PathBuf>,
+}
+
+/// Starts the CLI on the session it resumes, or (Claude) on a new one under the ID `fresh`.
+pub(super) fn launch_tui(
+    cfg: &RunConfig,
+    resume: Option<&str>,
+    fresh: Option<&str>,
+    cwd: &Path,
+    account: Option<&Active>,
+    kind: TuiKind,
+    hook_dir: Option<&Path>,
+) -> Result<TuiProcess, String> {
+    let Some(program) = installed_path(&cfg.provider) else {
+        return Err("这个 CLI 没有安装".to_owned());
+    };
+    let (args, mut env, log_dir, log_path) = match kind {
+        TuiKind::Claude => {
+            let fresh = resume.is_none().then_some(fresh.unwrap_or_default());
+            let args = claude::build_claude_args(cfg, resume, fresh, hook_dir);
+            (args, Vec::new(), None, None)
+        }
+        TuiKind::Antigravity => {
+            let dir = tempfile::Builder::new()
+                .prefix("agentnave-agy-")
+                .tempdir()
+                .map_err(|e| format!("无法创建 agy 日志目录：{e}"))?;
+            let log_path = dir.path().join("agy.log");
+            let args = build_agy_args(cfg, resume, cwd, &log_path);
+            let env = vec![
+                ("AGY_CLI_OSC7501".to_owned(), "on".to_owned()),
+                ("AGY_CLI_OSC7501_MESSAGES".to_owned(), "brief".to_owned()),
+            ];
+            (args, env, Some(dir), Some(log_path))
+        }
+    };
+    let (program, args) = match account {
+        Some(acc) => {
+            let (program, args, more) = account::launch_as(acc, program, args, true);
+            env.extend(more);
+            (program, args)
+        }
+        None => (program, args),
+    };
+    let session = Session::spawn(&Launch {
+        program,
+        args,
+        env,
+        cwd: cwd.to_path_buf(),
+        cols: 100,
+        rows: 30,
+        derived: true,
+    })?;
+    Ok(TuiProcess {
+        session,
+        log_dir,
+        log_path,
+    })
 }
 
 pub(super) fn capture_baseline(
@@ -756,8 +788,9 @@ pub(super) fn finish_exited(
     had_settled: bool,
     cancelled: bool,
 ) {
-    terminals.clear_derived_turn(terminal_id, sid);
+    // The lease goes first: once the turn is cleared, the row may be started again with a new one.
     terminals.release_derived_lease(terminal_id);
+    terminals.clear_derived_turn(terminal_id, sid);
     let (status, reason) = if cancelled {
         ("cancelled", "派生终端已中断退出".to_owned())
     } else if code == 0 && had_settled {

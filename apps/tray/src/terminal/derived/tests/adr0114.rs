@@ -49,6 +49,7 @@ fn register_test_derived(
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: Some(inv_id.to_owned()),
             launch_config: None,
         },

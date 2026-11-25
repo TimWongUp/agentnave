@@ -109,8 +109,8 @@ pub(super) fn workspaces(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, 
         .collect()
 }
 
-/// Current boss chat keys by live terminal, before translating them into workspaces.
-pub(super) fn bosses(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, String> {
+/// Boss chat keys by live terminal, before translating them into workspaces; the current one last.
+pub(super) fn chats(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, Vec<String>> {
     if terminals.is_empty() || !sysinfo::IS_SUPPORTED_SYSTEM {
         return HashMap::new();
     }
@@ -120,14 +120,13 @@ pub(super) fn bosses(root: &Path, terminals: &[(u64, u32)]) -> HashMap<u64, Stri
     }
     active.sort_by_key(|relay| relay.modified);
     let system = ancestry(&active, terminals);
-    let mut found = HashMap::new();
+    let mut found: HashMap<u64, Vec<String>> = HashMap::new();
     for relay in active {
         if let Some(process) = system.process(Pid::from_u32(relay.pid))
             && same_process(process, relay.started_ms)
             && let Some(id) = terminal_of(&system, relay.pid, terminals)
-            && let Some(key) = relay.bosses.last()
         {
-            found.insert(id, key.clone());
+            found.entry(id).or_default().extend(relay.bosses);
         }
     }
     found

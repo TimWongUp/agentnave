@@ -13,6 +13,7 @@ mod codex_server;
 mod derived;
 mod elsewhere;
 mod input_gate;
+mod lifecycle;
 mod links;
 mod modes;
 mod session;
@@ -62,6 +63,8 @@ struct State {
     cwd: Option<PathBuf>,
     started: u64,
     links_checked: Option<(Instant, PathBuf)>,
+    /// When a page last reported that the user is looking at a terminal.
+    shown: HashMap<u64, Instant>,
 }
 
 pub(in crate::terminal) fn normalize_cwd(path: &Path) -> PathBuf {
@@ -111,6 +114,7 @@ pub(super) struct DerivedInfo {
     pub codex_ready_file: Option<PathBuf>,
     pub active_invocation_id: Option<String>,
     pub launch_config: Option<DerivedLaunchConfig>,
+    pub(in crate::terminal) life: lifecycle::Life,
 }
 
 impl Drop for DerivedInfo {
@@ -278,7 +282,12 @@ pub(crate) fn request(
     let (route, query) = path.split_once('?').unwrap_or((path, ""));
     let id = number(query, "session");
     match (method, route) {
-        ("GET", "/app/terminal/state") => Response::json(&terminals.describe()),
+        ("GET", "/app/terminal/state") => {
+            if let Some(shown) = number(query, "shown") {
+                terminals.mark_shown(shown);
+            }
+            Response::json(&terminals.describe())
+        }
         ("GET", "/app/terminal/clis") => Response::json(&installed()),
         ("GET", "/app/terminal/output") => {
             terminals.output(id, number(query, "from"), param(query, "view"))
@@ -303,13 +312,12 @@ pub(crate) fn request(
             let (cols, rows) = cells(&payload);
             terminals.with_session(id, |session| session.resize(cols, rows))
         }),
-        (_, "/app/terminal/stop") => response::action(method, action, || {
-            terminals.with_session(id, |session| {
-                session.stop();
-                Ok(())
-            })
-        }),
+        (_, "/app/terminal/stop") => response::action(method, action, || terminals.stop(id)),
         (_, "/app/terminal/close") => response::action(method, action, || terminals.close(id)),
+        (_, "/app/terminal/close-derived") => response::action(method, action, || {
+            terminals.close_derived(param(query, "workspace").unwrap_or_default())
+        }),
+        (_, "/app/terminal/wake") => response::action(method, action, || terminals.wake(id)),
         (_, "/app/terminal/restart") => {
             response::action(method, action, || terminals.restart(id, &Attach::of(query)))
         }
@@ -339,21 +347,7 @@ pub(crate) fn shutdown(app: &AppHandle) {
         let mut state = terminals.lock();
         std::mem::take(&mut state.open)
     };
-    #[cfg(unix)]
-    for codex in drained.iter().filter_map(|r| r.codex.as_ref()) {
-        codex.close();
-    }
-    for running in &drained {
-        if let Some(inv_id) = running
-            .derived
-            .as_ref()
-            .and_then(|d| d.active_invocation_id.as_deref())
-        {
-            wakeup::on_terminal_closed(inv_id);
-        }
-        running.session.stop();
-    }
-    drop(drained);
+    lifecycle::end_removed(drained);
     let logins: Vec<_> = {
         let mut state = terminals.lock();
         std::mem::take(&mut state.logins)
@@ -413,11 +407,19 @@ impl Terminals {
 
     pub(super) fn register_derived(&self, spec: NewDerived) -> u64 {
         let id = self.reserve_id();
-        self.insert_reserved_derived(id, spec);
-        id
+        self.insert_reserved_derived(id, spec)
     }
 
-    pub(super) fn insert_reserved_derived(&self, id: u64, spec: NewDerived) {
+    /// Adds a derived terminal under `id`, or puts it into the collapsed row held for its session;
+    /// returns the ID it has.
+    pub(super) fn insert_reserved_derived(&self, id: u64, spec: NewDerived) -> u64 {
+        let mut spec = match self.fill_held_row(spec) {
+            Ok(row) => return row,
+            Err(spec) => spec,
+        };
+        if let Some(invocation) = spec.info.active_invocation_id.as_deref() {
+            spec.info.life.claimed_by(invocation);
+        }
         let mut state = self.lock();
         state.cwd = Some(spec.cwd.clone());
         state.open.push(Running {
@@ -436,24 +438,7 @@ impl Terminals {
             codex: spec.codex,
             derived: Some(spec.info),
         });
-    }
-
-    pub(super) fn find_derived_session(
-        &self,
-        provider: &str,
-        native_id: &str,
-    ) -> Option<DerivedHandle> {
-        let state = self.lock();
-        state
-            .open
-            .iter()
-            .find(|r| {
-                r.derived.is_some()
-                    && r.provider == provider
-                    && r.native.as_deref() == Some(native_id)
-                    && r.session.exit().is_none()
-            })
-            .map(Running::to_derived_handle)
+        id
     }
 
     pub(super) fn derived_by_invocation(&self, invocation_id: &str) -> Option<DerivedHandle> {
@@ -479,28 +464,6 @@ impl Terminals {
         })
     }
 
-    pub(super) fn remove_exited_derived(&self, provider: &str, native_id: &str) {
-        let removed: Vec<Running> = {
-            let mut state = self.lock();
-            let mut gone = Vec::new();
-            let mut kept = Vec::with_capacity(state.open.len());
-            for r in state.open.drain(..) {
-                if r.derived.is_some()
-                    && r.provider == provider
-                    && r.native.as_deref() == Some(native_id)
-                    && r.session.exit().is_some()
-                {
-                    gone.push(r);
-                } else {
-                    kept.push(r);
-                }
-            }
-            state.open = kept;
-            gone
-        };
-        drop(removed);
-    }
-
     pub(super) fn try_claim_derived_turn(
         &self,
         terminal_id: u64,
@@ -520,12 +483,16 @@ impl Terminals {
         let Some(derived) = running.derived.as_mut() else {
             return Err("目标不是派生终端".to_owned());
         };
+        if derived.life.stopping() {
+            return Err(lifecycle::RESUME_PENDING_ERR.to_owned());
+        }
         if derived.busy || derived.active_invocation_id.is_some() {
             return Err("派生终端正忙，无法同时续派".to_owned());
         }
         derived.busy = true;
         derived.blocked_kind = None;
         derived.active_invocation_id = Some(invocation_id.to_owned());
+        derived.life.claimed_by(invocation_id);
         Ok(running.to_derived_handle())
     }
 
@@ -627,6 +594,7 @@ impl Terminals {
         session: Arc<Session>,
         native: Option<&str>,
         hook_dir: Option<tempfile::TempDir>,
+        mode: Option<&str>,
     ) {
         let mut state = self.lock();
         if let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id) {
@@ -636,10 +604,11 @@ impl Terminals {
                 running.title_located = false;
                 running.title_searched = None;
             }
-            if let Some(dir) = hook_dir
-                && let Some(derived) = running.derived.as_mut()
-            {
-                derived._hook_dir = Some(dir);
+            if let Some(derived) = running.derived.as_mut() {
+                derived.life.relaunched_in(mode);
+                if let Some(dir) = hook_dir {
+                    derived._hook_dir = Some(dir);
+                }
             }
         }
     }
@@ -934,10 +903,14 @@ impl Terminals {
                 links::remember(&mut running.workspaces, found);
             }
         }
+        state.observe_derived(root);
         let open = state
             .open
             .iter()
-            .map(|running| (running.id, running.cwd.clone(), running.describe(root)))
+            .map(|running| {
+                let value = state.describe_one(running, root);
+                (running.id, running.cwd.clone(), value)
+            })
             .collect();
         (state.cwd.clone().or_else(dirs::home_dir), open)
     }
@@ -1399,37 +1372,6 @@ impl Terminals {
             Ok(()) => Response::json(&json!({"ok": true})),
             Err(error) => Response::error(500, &error),
         }
-    }
-
-    /// Ends the terminal's CLI if it still runs and forgets the terminal.
-    fn close(&self, id: Option<u64>) -> Response {
-        let removed = {
-            let mut state = self.lock();
-            if let Some(at) = state.logins.iter().position(|login| Some(login.id) == id) {
-                let login = state.logins.remove(at);
-                drop(state);
-                login.session.stop();
-                return Response::json(&json!({"ok": true}));
-            }
-            let Some(at) = state.open.iter().position(|running| Some(running.id) == id) else {
-                return Response::error(404, "找不到这个终端");
-            };
-            state.open.remove(at)
-        };
-        #[cfg(unix)]
-        if let Some(codex) = &removed.codex {
-            codex.close();
-        }
-        if let Some(inv_id) = removed
-            .derived
-            .as_ref()
-            .and_then(|d| d.active_invocation_id.as_deref())
-        {
-            wakeup::on_terminal_closed(inv_id);
-        }
-        removed.session.stop();
-        drop(removed);
-        Response::json(&json!({"ok": true}))
     }
 
     /// Output after `from`; the bytes go as they are, with their place in the headers.

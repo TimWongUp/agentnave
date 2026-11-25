@@ -509,6 +509,7 @@ fn rejects_group_or_world_writable_spawn_requests_dir_and_publishes_derived_pids
             _log_dir: None,
             _hook_dir: None,
             codex_ready_file: None,
+            life: Default::default(),
             active_invocation_id: None,
             launch_config: None,
         },

@@ -233,6 +233,20 @@ impl Coordinator {
         })
     }
 
+    /// Every dispatched turn not yet settled, or whose settlement the service has not confirmed.
+    pub(super) fn open_runs(&self) -> Vec<RunReceipt> {
+        self.lock()
+            .receipts
+            .values()
+            .filter(|entry| entry.receipt.kind == "run")
+            .map(|entry| RunReceipt {
+                invocation_id: entry.receipt.invocation_id.clone(),
+                session_id: entry.receipt.session_id.clone(),
+                provider: entry.provider.clone(),
+            })
+            .collect()
+    }
+
     pub(super) fn run_receipt_by_invocation(&self, invocation_id: &str) -> Option<Receipt> {
         self.lock()
             .receipts

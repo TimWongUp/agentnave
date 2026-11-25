@@ -9,6 +9,7 @@ pub(super) mod native_logs;
 #[cfg(test)]
 mod tests;
 mod tui;
+mod wake;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::account::{self, Active};
+use super::lifecycle::ResumeSlot;
 use super::session::Session;
 use super::spawn_requests::{
     BlockedReceipt, Coordinator, ForwardItem, IsolationSpec, Receipt, RunConfig, RunHandle,
@@ -24,10 +26,13 @@ use super::spawn_requests::{
 use super::{DerivedHandle, DerivedLaunchConfig, Terminals};
 use crate::isolated::leases::{self, HeldLease};
 
+pub(super) use claude::StopTrail;
 #[cfg(test)]
 use claude::build_claude_args;
+pub(super) use claude_hook::events_path as claude_events_path;
 #[cfg(test)]
 use tui::build_agy_args;
+pub(super) use wake::relaunch;
 
 const LEASE_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_STEP: Duration = Duration::from_millis(50);
@@ -251,46 +256,51 @@ where
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
+    // Holds the collapsed row the new process goes into, until it is there.
+    let mut held = None;
     if let Some(sid) = env.session_id.as_deref() {
         if coordinator.has_unsettled_run_for_session(&cfg.provider, sid, &env.request_id) {
             return Err(UNSETTLED_DISPATCH_BUSY_ERR.to_owned());
         }
-        terminals.remove_exited_derived(&cfg.provider, sid);
-        if let Some(existing) = terminals.find_derived_session(&cfg.provider, sid) {
-            if let Some(err) = account_mismatch(existing.account.as_ref(), account) {
-                return Err(err);
+        match terminals.resume_slot(&cfg.provider, sid)? {
+            ResumeSlot::Free => {}
+            ResumeSlot::Dormant(row) => held = Some(row),
+            ResumeSlot::Live(existing) => {
+                if let Some(err) = account_mismatch(existing.account.as_ref(), account) {
+                    return Err(err);
+                }
+                if let Some(err) = launch_config_mismatch(existing.launch_config.as_ref(), cfg) {
+                    return Err(err);
+                }
+                if existing.session.has_draft()
+                    || matches!(
+                        existing.session.osc_snapshot().1.as_deref(),
+                        Some("working" | "blocked")
+                    )
+                {
+                    return Err("派生终端正在输入或运行中".to_owned());
+                }
+                let (iso_id, lease) = acquire_isolation_for_terminal(
+                    coordinator,
+                    terminals,
+                    &env.request_id,
+                    cwd,
+                    cfg.isolation.as_ref(),
+                    true,
+                )?;
+                if handle.is_pre_start_cancelled() {
+                    return Err("启动前已取消".to_owned());
+                }
+                if let Some(lease) = lease {
+                    terminals.attach_derived_lease(existing.id, iso_id.as_deref(), lease);
+                }
+                let claimed = terminals.try_claim_derived_turn(
+                    existing.id,
+                    &env.invocation_id,
+                    account.map(|a| a.id.as_str()),
+                )?;
+                return Ok((claimed, true));
             }
-            if let Some(err) = launch_config_mismatch(existing.launch_config.as_ref(), cfg) {
-                return Err(err);
-            }
-            if existing.session.has_draft()
-                || matches!(
-                    existing.session.osc_snapshot().1.as_deref(),
-                    Some("working" | "blocked")
-                )
-            {
-                return Err("派生终端正在输入或运行中".to_owned());
-            }
-            let (iso_id, lease) = acquire_isolation_for_terminal(
-                coordinator,
-                terminals,
-                &env.request_id,
-                cwd,
-                cfg.isolation.as_ref(),
-                true,
-            )?;
-            if handle.is_pre_start_cancelled() {
-                return Err("启动前已取消".to_owned());
-            }
-            if let Some(lease) = lease {
-                terminals.attach_derived_lease(existing.id, iso_id.as_deref(), lease);
-            }
-            let claimed = terminals.try_claim_derived_turn(
-                existing.id,
-                &env.invocation_id,
-                account.map(|a| a.id.as_str()),
-            )?;
-            return Ok((claimed, true));
         }
     }
 
@@ -305,7 +315,9 @@ where
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
-    spawn_new(lease, isolation_id).map(|h| (h, false))
+    let launched = spawn_new(lease, isolation_id);
+    drop(held);
+    launched.map(|h| (h, false))
 }
 
 pub(super) fn cleanup_derived_startup(
@@ -314,7 +326,7 @@ pub(super) fn cleanup_derived_startup(
     reused: bool,
     native: Option<&str>,
 ) {
-    if !reused || launched.session.exit().is_some() {
+    if !reused && !terminals.collapse_failed_start(launched.id) {
         terminals.remove_derived_terminal(launched.id);
     } else {
         terminals.clear_derived_turn(launched.id, native);
