@@ -22,7 +22,12 @@ from agentnave.decision_model import (
 from agentnave.decision_seats import effective_decision_seats
 from agentnave.host import Host
 from agentnave.members import MemberFileError, SettingsFileError, list_members
-from agentnave.orchestration_roles import IMAGE_KIND, CustomSeatDifficulty, CustomSeatStatus
+from agentnave.orchestration_roles import (
+    IMAGE_KIND,
+    CustomSeatDifficulty,
+    CustomSeatStatus,
+    SeatMetadata,
+)
 
 # What the decision model reads of a task: all of it up to this many characters, otherwise
 # the beginning and the end with the middle left out.
@@ -113,7 +118,7 @@ _DIFFICULTY_MEANING: dict[CustomSeatDifficulty, str] = {
 }
 
 
-def describe(seat: CustomSeatStatus) -> str:
+def describe(seat: CustomSeatStatus | SeatMetadata) -> str:
     """All the decision model learns about a seat: its specialty, difficulty and access."""
     named = seat.role if seat.description == seat.role else f"{seat.role}: {seat.description}"
     if seat.kind == IMAGE_KIND:
@@ -149,7 +154,7 @@ def _staged(access: Access, isolated: bool) -> bool:
     return access == "read" and isolated
 
 
-def _task_text(task: str, access: Access, staged: bool = False) -> str:
+def task_text(task: str, access: Access, staged: bool = False) -> str:
     text = f"Task:\n{clip_for_decision(task)}\nRequired access: {access}"
     return f"{text}\n{_STAGED_TASK}" if staged else text
 
@@ -228,10 +233,10 @@ async def recommend(
         raise usable
     if len(usable) == 1:
         return _noted(_only(*next(iter(usable.items()))), staged)
-    client = _client(catalog.decision_model)
+    client = client_for_model(catalog.decision_model)
     try:
         decision = await asyncio.to_thread(
-            client.decide, _task_text(task, access, staged), _described(usable)
+            client.decide, task_text(task, access, staged), _described(usable)
         )
     except DecisionError as exc:
         raise RecommendationError(exc.code, exc.message) from None
@@ -261,10 +266,10 @@ async def recommend_many(
         else:
             pending.append((index, usable))
     if pending:
-        client = _client(catalog.decision_model)
+        client = client_for_model(catalog.decision_model)
         questions = [
             DecisionQuestion(
-                _task_text(tasks[index][0], tasks[index][1], staged[index]), _described(usable)
+                task_text(tasks[index][0], tasks[index][1], staged[index]), _described(usable)
             )
             for index, usable in pending
         ]
@@ -281,7 +286,7 @@ async def recommend_many(
     return [result for result in results if result is not None]
 
 
-def _client(model: str) -> DecisionClient:
+def client_for_model(model: str) -> DecisionClient:
     key_name = _MODELS[model][0]
     try:
         key = read_decision_key(key_name)

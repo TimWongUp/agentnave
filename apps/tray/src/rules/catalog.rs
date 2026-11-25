@@ -90,7 +90,12 @@ fn replaces_in(lead: &'static Value, name: &str) -> bool {
         .any(|section| section.as_str() == Some(name))
 }
 
-fn assemble_steps(document: &Value, steps: &[Value], apply_lead: bool) -> String {
+fn assemble_steps(
+    document: &Value,
+    steps: &[Value],
+    apply_lead: bool,
+    with_t3_sections: bool,
+) -> String {
     let lead = &catalog()["switches"]["lead_only"];
     let lead_default = lead["default"]
         .as_bool()
@@ -113,6 +118,12 @@ fn assemble_steps(document: &Value, steps: &[Value], apply_lead: bool) -> String
                     out.push_str(section("image_generation"));
                 }
             }
+            "dispatch_split" | "dispatch_decision" => {
+                if with_t3_sections {
+                    out.push_str(section("t3_non_t3_heading"));
+                }
+                out.push_str(section(name));
+            }
             name if catalog()["switches"].get(name).is_some() => {
                 out.push_str(switched_section(document, name));
             }
@@ -133,18 +144,52 @@ fn assemble_steps(document: &Value, steps: &[Value], apply_lead: bool) -> String
 
 pub(super) fn preset_text(document: &Value, mode: &str) -> Option<String> {
     let steps = catalog()["order"].get(mode)?.as_array()?;
-    Some(assemble_steps(document, steps, true))
+    Some(assemble_steps(document, steps, true, false))
 }
 
-fn parallel_role_base(document: &Value) -> String {
-    let steps = catalog()["order"]["parallel"]
+pub(super) fn preset_text_for_t3(document: &Value, mode: &str) -> Option<String> {
+    let steps = catalog()["order"].get(mode)?.as_array()?;
+    let suffix = t3_suffix(mode);
+    let mut text = assemble_steps(document, steps, true, suffix.is_some());
+    if let Some(suffix) = suffix {
+        text.push_str(&suffix);
+    }
+    Some(text)
+}
+
+pub(super) fn t3_suffix(mode: &str) -> Option<String> {
+    let steps = catalog()["t3_order"].get(mode)?.as_array()?;
+    let mut out = String::new();
+    for step in steps {
+        let name = step
+            .as_str()
+            .expect("t3_order step string in orchestration_rules.json");
+        out.push_str(section(name));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn split_role_base(document: &Value) -> String {
+    let steps = catalog()["order"]["split"]
         .as_array()
-        .expect("parallel order in orchestration_rules.json");
+        .expect("split order in orchestration_rules.json");
     let end = steps
         .iter()
         .position(|step| step.as_str() == Some("enabled_roles"))
         .unwrap_or(steps.len());
-    assemble_steps(document, &steps[..end], false)
+    assemble_steps(document, &steps[..end], false, false)
+}
+
+fn dispatch_parts(tail: &str) -> Value {
+    json!({
+        "base": section("shared"),
+        "parallel_writes_asked": section("parallel_writes_when_asked"),
+        "parallel_writes_own": section("parallel_writes_by_boss"),
+        "checks": section("shared_checks"),
+        "meetings_asked": section("meetings_when_asked"),
+        "meetings_own": section("meetings_on_tradeoffs"),
+        "tail": section(tail),
+    })
 }
 
 pub(super) fn presets_payload(document: &Value) -> Value {
@@ -154,10 +199,14 @@ pub(super) fn presets_payload(document: &Value) -> Value {
     let default_count = md["default_count"]
         .as_u64()
         .expect("meeting default_count in orchestration_rules.json");
-    let shared = section("shared");
+    let t3: serde_json::Map<String, Value> = rules["t3_order"]
+        .as_object()
+        .expect("t3_order object in orchestration_rules.json")
+        .keys()
+        .filter_map(|mode| Some((mode.clone(), json!(t3_suffix(mode)?))))
+        .collect();
     json!({"meetings": super::text_of(document, "meetings"),
         "split": super::text_of(document, "split"),
-        "parallel": super::text_of(document, "parallel"),
         "decision": super::text_of(document, "decision"),
         "meeting": meeting_line(document),
         "meetings_parts": {"head": section("meetings_only_head"), "tail": section("meetings_only_tail"), "meetings_asked": section("meetings_when_asked"), "meetings_own": section("meetings_on_tradeoffs")},
@@ -167,15 +216,10 @@ pub(super) fn presets_payload(document: &Value) -> Value {
         "image_generation": section("image_generation"),
         "role_sections": super::roles::sections(false),
         "role_sections_medium": super::roles::sections(true),
-        "role_base": {"parallel": parallel_role_base(document)},
-        "parallel_base": format!("{shared}{}", section("parallel_writes")),
-        "decision_parts": {"base": section("decision_shared"),
-            "parallel_writes_asked": section("split_parallel_writes"),
-            "parallel_writes_own": section("parallel_writes"),
-            "meetings_asked": section("meetings_when_asked"),
-            "meetings_own": section("meetings_on_tradeoffs")},
-        "split_parts": {"base": format!("{shared}{}", section("split_parallel_writes")),
-            "meetings_asked": section("meetings_when_asked"),
-            "meetings_own": section("meetings_on_tradeoffs")},
+        "role_base": {"split": split_role_base(document)},
+        "decision_parts": dispatch_parts("dispatch_decision"),
+        "split_parts": dispatch_parts("dispatch_split"),
+        "t3": Value::Object(t3),
+        "non_t3_heading": section("t3_non_t3_heading"),
         "lead": {"asked": str_at(lead, "when_false"), "always": str_at(lead, "when_true")}})
 }

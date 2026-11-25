@@ -54,6 +54,7 @@ label.s-label { cursor: pointer; }
 .s-seat { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.65fr) 104px 96px; align-items: center; gap: 8px; width: 100%; min-width: 0; }
 .s-seat:has(> .ds-remove) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) 96px 92px 62px; }
 .s-seat:has(> .ds-remove) > .ds-remove { grid-column: 5; }
+.s-seat > .t3-seat-action { grid-column: 4; }
 .settings-page .s-seat > button { width: 100%; min-width: 0; padding: 0 8px; }
 .s-row :is(select, .voice-select, input[type="text"], input[type="url"], input[type="password"], input:not([type])) { width: 100%; max-width: var(--control-max); }
 .s-row .s-seat > select { width: 100%; min-width: 0; max-width: none; }
@@ -73,6 +74,7 @@ label.s-label { cursor: pointer; }
 
 /* A card that holds one block of text: a template to read or rules to edit. */
 .s-card.is-pre { margin: 0 0 24px; padding: 14px var(--row-pad); white-space: pre-wrap; font: 12px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--ink); user-select: text; -webkit-user-select: text; overflow-wrap: anywhere; }
+.s-group > .s-card.is-pre { margin: 0; }
 .s-card > textarea { display: block; width: 100%; min-height: 220px; box-sizing: border-box; padding: 14px var(--row-pad); border: 0; border-radius: 10px; background: transparent; color: var(--ink); font: 12px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace; resize: vertical; }
 /* A row whose body is a block of its own (an editor, a picker, a list). */
 .s-row.is-stack > button { justify-self: start; }
@@ -198,6 +200,7 @@ label.s-label { cursor: pointer; }
 }
 @media (max-width: 980px) {
   .s-seat { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .s-seat > .t3-seat-action { grid-column: auto; }
 }
 @media (max-width: 600px) {
   .s-row .segment-control { flex-wrap: wrap; }

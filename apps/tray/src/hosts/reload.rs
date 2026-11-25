@@ -273,9 +273,10 @@ impl Hosts {
             ("required", "host_running")
         } else if pending
             && !matches!(process, processes::State::Stopped)
-            // A running CLI cannot be told apart by account, so it says nothing about this row
-            // (ADR-0118).
+            // A running CLI cannot be told apart by account or T3 profile, so it says nothing
+            // about this row (ADR-0118).
             && !split::is_account_row(host.id)
+            && !split::is_t3_antigravity_row(host.id)
         {
             ("unverified", "unverified")
         } else if !pending && upgrade_at.is_some() {

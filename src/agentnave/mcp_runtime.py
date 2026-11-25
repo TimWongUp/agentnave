@@ -70,10 +70,30 @@ from agentnave.models import (
 )
 from agentnave.naming import MemberIdentity
 from agentnave.native_prompts import NativePrompt
-from agentnave.orchestration_roles import AUTO_SEAT, role_catalog, seat_role
+from agentnave.orchestration_roles import AUTO_SEAT, IMAGE_KIND, role_catalog, seat_role
 from agentnave.push_capability import PUSH_AGAIN, PUSH_NEXT, app_can_push
 from agentnave.retention import Retention
 from agentnave.store import Review
+from agentnave.t3 import (
+    T3_CHILD_INSTRUCTIONS,
+    T3_CHILD_REFUSED_TOOLS,
+    T3Mode,
+    current_t3_mode,
+    t3_child_refusal,
+)
+from agentnave.t3_mcp import (
+    T3_HIDDEN_DISPATCH_TOOLS,
+    T3_LIST_MEMBERS_TOOL,
+    T3_MAIN_SKILL,
+    T3_RECOMMEND_SEAT_TOOL,
+    run_t3_tool,
+    t3_dispatch_refusal,
+    t3_main_instructions,
+    t3_state_for_host,
+    t3_tool_definition,
+)
+from agentnave.t3_seats import T3OrchestrationMode
+from agentnave.t3_seats import t3_active_mode as _t3_active_mode
 from agentnave.wait_guidance import (
     BLOCKING_WAIT_AGAIN,
     CLAUDE_LONG_WAIT_AGAIN,
@@ -166,6 +186,11 @@ def long_wait_enabled() -> bool:
     return long_wait_enabled_for_host(HOST)
 
 
+def t3_active_mode() -> T3OrchestrationMode | None:
+    """Active T3 orchestration mode for this connection, or None."""
+    return _t3_active_mode(HOST)
+
+
 def wait_guidance(
     *,
     again: bool = False,
@@ -184,6 +209,8 @@ def wait_guidance(
         again=again,
         can_push=app_can_push,
         watch_supported=watch_host_cli_supported,
+        # The command's quoting is only known to survive POSIX shells (ADR-0121).
+        t3_main=current_t3_mode(HOST) == "main" and sys.platform != "win32",
     )
 
 
@@ -227,47 +254,49 @@ NATIVE_SEAT_NEXT = (
 _CLAUDE_FAMILY_ALIASES = ("opus", "sonnet", "haiku", "fable")
 
 
-def _claude_family_alias(model: str) -> str | None:
+def _claude_exact_family_alias(model: str) -> str | None:
     normalized = model.strip().lower()
-    if normalized in _CLAUDE_FAMILY_ALIASES:
-        return normalized
-    for alias in _CLAUDE_FAMILY_ALIASES:
-        if alias in normalized:
-            return alias
-    return None
+    if normalized.endswith("[1m]"):
+        normalized = normalized[:-4]
+    return normalized if normalized in _CLAUDE_FAMILY_ALIASES else None
+
+
+def _claude_family_alias(model: str) -> str | None:
+    return next((alias for alias in _CLAUDE_FAMILY_ALIASES if alias in model.lower()), None)
 
 
 def _claude_native_seat_guidance(model: str | None, effort: str | None) -> str:
     effort_note = f", effort={effort}" if effort else "; omit effort"
-    if model and "[1m]" in model.lower():
-        return (
-            f"Seat model '{model}' requires [1m] long context, which Claude Code's Agent tool "
-            "family aliases (opus, sonnet, haiku, fable) do not carry: treat this seat as "
-            "unavailable (do not drop [1m] or auto-substitute) and follow fallback rules."
-        )
-    if not model:
+    normalized = model.strip().lower() if model else ""
+    if not normalized:
         return (
             "Dispatch it with Claude Code's Agent tool (check live schema; family aliases: "
-            f"opus, sonnet, haiku, fable){effort_note}. Family aliases lack [1m] long context; "
-            "if the task requires [1m], treat this seat as unavailable."
+            f"opus, sonnet, haiku, fable){effort_note}. If the alias is rejected, treat this "
+            "seat as unavailable."
         )
-    alias = _claude_family_alias(model)
+    exact_alias = _claude_exact_family_alias(normalized)
+    if exact_alias is not None:
+        return (
+            f"Dispatch it with Claude Code's Agent tool (check live schema) using model={exact_alias}"
+            f"{effort_note}. If the alias is rejected, treat this seat as unavailable."
+        )
+    if "[1m]" in normalized:
+        return (
+            "Claude Code's Agent tool only accepts family aliases (opus, sonnet, haiku, fable), "
+            f"which may point to another version than '{model}': treat this seat as unavailable "
+            "(do not drop [1m] or auto-substitute) and follow fallback rules."
+        )
+    alias = _claude_family_alias(normalized)
     if alias is None:
         return (
-            "Claude Code's Agent tool only accepts family aliases (opus, sonnet, haiku, fable) "
-            f"without [1m]; '{model}' cannot be mapped to a family alias, so unless the live "
-            f"schema accepts '{model}' directly{effort_note}, treat this seat as unavailable and "
-            "follow fallback rules."
+            "Claude Code's Agent tool only accepts family aliases (opus, sonnet, haiku, fable); "
+            f"'{model}' cannot be mapped to a family alias, so unless the live schema accepts "
+            f"'{model}' directly{effort_note}, treat this seat as unavailable and follow fallback rules."
         )
-    mapping = (
-        f"model={alias}"
-        if alias == model.strip().lower()
-        else f"model={alias} (mapped from {model}; saving this seat authorizes the family alias)"
-    )
+    mapping = f"model={alias} (mapped from {model}; saving this seat authorizes the family alias)"
     return (
         f"Dispatch it with Claude Code's Agent tool (check live schema) using {mapping}"
-        f"{effort_note}. Family aliases do not carry [1m] long context; if the task requires "
-        "[1m] or the alias is rejected, treat this seat as unavailable."
+        f"{effort_note}. If the alias is rejected, treat this seat as unavailable."
     )
 
 
@@ -502,6 +531,16 @@ AUTO_SEAT_NOTE = (
     "with isolation (an investigation that may turn into implementation in the same thread) "
     "is chosen among write seats and stays read-only."
 )
+AUTO_IMAGE_SEAT_NOTE = (
+    "For image generation (kind=image seats in the catalog), also use seat='auto' and "
+    "access='write', state image generation and style at the start of prompt, and specify "
+    "the output path; do not substitute another seat if no image seat exists."
+)
+START_AGENTS_IMAGE_SEAT_NOTE = (
+    "For image generation tasks (kind=image seats in the catalog), set access='write', "
+    "state image generation and style at the start of prompt, and specify the output path; "
+    "do not substitute another seat if no image seat exists."
+)
 # Published only while the user's own seat catalog is effective for this boss; called while
 # off, they answer with the reason instead.
 _CUSTOM_SEAT_TOOLS = frozenset({"recommend_seat", "start_agents"})
@@ -609,12 +648,23 @@ def _filter_role_schema(
         _filter_role_schema(value, groups, image_enabled, custom_ids, medium)
 
 
-def _describe_auto_seat(schema: dict[str, Any]) -> None:
+def _describe_auto_seat(schema: dict[str, Any], *, has_image: bool) -> None:
     """With the user's own seats, start_agent also takes seat='auto'; say what it sends out."""
     seat = schema.get("properties", {}).get("seat")
     if isinstance(seat, dict):
         seat = cast(dict[str, Any], seat)
-        seat["description"] = f"{seat.get('description', '')} {AUTO_SEAT_NOTE}".strip()
+        note = f"{AUTO_SEAT_NOTE} {AUTO_IMAGE_SEAT_NOTE}" if has_image else AUTO_SEAT_NOTE
+        seat["description"] = f"{seat.get('description', '')} {note}".strip()
+
+
+def _describe_start_agents_image_seat(schema: dict[str, Any]) -> None:
+    """With image seats in the decision catalog, explain how start_agents tasks request one."""
+    tasks = schema.get("properties", {}).get("tasks")
+    if isinstance(tasks, dict):
+        tasks = cast(dict[str, Any], tasks)
+        tasks["description"] = (
+            f"{tasks.get('description', '')} {START_AGENTS_IMAGE_SEAT_NOTE}".strip()
+        )
 
 
 def _drop_custom_seat_output(schema: Any) -> None:
@@ -669,6 +719,7 @@ def _validation_error(exc: ValidationError) -> str:
 
 class _Server(MCPServer[Runtime]):
     async def list_tools(self) -> list[Any]:
+        t3_doc, t3_preset, t3_error = t3_state_for_host(HOST)
         image_enabled = role_seat("image-generator", HOST) is not None
         groups = visible_role_groups(HOST)
         medium = medium_role_groups(HOST)
@@ -677,12 +728,25 @@ class _Server(MCPServer[Runtime]):
         decision = orchestration_decision(HOST)
         custom = custom_seats(HOST)
         custom_ids = list(custom) if custom is not None else [] if decision else None
+        has_image = bool(custom and any(seat.kind == IMAGE_KIND for seat in custom.values()))
         # "auto" lets start_agent choose; only the arguments name it, not the saved history.
         input_ids = None if custom_ids is None else [*custom_ids, AUTO_SEAT]
         published: list[Any] = []
         for tool in await super().list_tools():
-            if tool.name in _HIDDEN_TOOLS or (tool.name in _CUSTOM_SEAT_TOOLS and not decision):
+            if tool.name in _HIDDEN_TOOLS:
                 continue
+            if t3_doc is not None and t3_preset is not None:
+                if tool.name in T3_HIDDEN_DISPATCH_TOOLS:
+                    continue
+                if tool.name == "recommend_seat":
+                    published.append(t3_tool_definition(T3_RECOMMEND_SEAT_TOOL, t3_preset))
+                    continue
+                if tool.name == "list_members":
+                    published.append(t3_tool_definition(T3_LIST_MEMBERS_TOOL, t3_preset))
+                    continue
+            elif tool.name in _CUSTOM_SEAT_TOOLS and not decision:
+                if not (t3_error is not None and tool.name == "recommend_seat"):
+                    continue
             schema = json.loads(json.dumps(tool.input_schema))
             schema["additionalProperties"] = False
             if tool.name == "start_agent" and not terminal_available():
@@ -690,7 +754,9 @@ class _Server(MCPServer[Runtime]):
             output = json.loads(json.dumps(tool.output_schema))
             _filter_role_schema(schema, groups, image_enabled, input_ids, medium)
             if decision and tool.name == "start_agent":
-                _describe_auto_seat(schema)
+                _describe_auto_seat(schema, has_image=has_image)
+            if decision and has_image and tool.name == "start_agents":
+                _describe_start_agents_image_seat(schema)
             if tool.name == "wait" and not long_wait_enabled():
                 _restrict_wait_windows(schema)
             if (
@@ -712,17 +778,41 @@ class _Server(MCPServer[Runtime]):
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Runtime, Any] | None = None
     ) -> CallToolResult | InputRequiredResult:
-        if name == "start_agent" and "terminal" in arguments and not terminal_available():
-            raise ToolError("terminal is not supported by this connection")
-        tool = self._tool_manager.get_tool(name)
-        if tool is not None:
-            _check_arguments(name, arguments, tool.parameters)
-        try:
-            result = await super().call_tool(name, arguments, context)
-        except ToolError as exc:
-            if isinstance(exc.__cause__, ValidationError):
-                raise ToolError(_validation_error(exc.__cause__)) from exc.__cause__
-            raise
+        if current_t3_mode(HOST) == "child" and name in T3_CHILD_REFUSED_TOOLS:
+            raise ToolError(t3_child_refusal(name))
+        t3_doc, _t3_preset, t3_error = t3_state_for_host(HOST)
+        if t3_error is not None:
+            if name == "recommend_seat":
+                raise ToolError(f"config_error: {t3_error}")
+            if name in T3_HIDDEN_DISPATCH_TOOLS:
+                raise ToolError(str(t3_error))
+        if t3_doc is not None and name in T3_HIDDEN_DISPATCH_TOOLS:
+            raise ToolError(t3_dispatch_refusal(name, arguments))
+        if t3_doc is not None and name in ("recommend_seat", "list_members"):
+            t3_tool = T3_RECOMMEND_SEAT_TOOL if name == "recommend_seat" else T3_LIST_MEMBERS_TOOL
+            ctx = (
+                context
+                if context is not None
+                else Context(mcp_server=self, subscriptions=self._subscriptions)
+            )
+            try:
+                result = await run_t3_tool(t3_tool, arguments, ctx, _check_arguments)
+            except ToolError as exc:
+                if isinstance(exc.__cause__, ValidationError):
+                    raise ToolError(_validation_error(exc.__cause__)) from exc.__cause__
+                raise
+        else:
+            if name == "start_agent" and "terminal" in arguments and not terminal_available():
+                raise ToolError("terminal is not supported by this connection")
+            tool = self._tool_manager.get_tool(name)
+            if tool is not None:
+                _check_arguments(name, arguments, tool.parameters)
+            try:
+                result = await super().call_tool(name, arguments, context)
+            except ToolError as exc:
+                if isinstance(exc.__cause__, ValidationError):
+                    raise ToolError(_validation_error(exc.__cause__)) from exc.__cause__
+                raise
         if (
             isinstance(result, CallToolResult)
             and not result.is_error
@@ -739,22 +829,39 @@ class _Server(MCPServer[Runtime]):
         return result
 
 
-def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECTION) -> str:
+def build_mcp_instructions(
+    host: Host,
+    provider_selection: str = PROVIDER_SELECTION,
+    *,
+    t3_mode: T3Mode = "none",
+    t3_preset: T3OrchestrationMode | None = None,
+) -> str:
     """Build concise MCP instructions scoped to authorization, identity, and Skill loading."""
-    return (
-        "AgentNave runs local CLI subagents and saves history. "
-        "History survives restart; processes do not; invocation handles expire after 7 days. "
-        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
+    t3_main_active = t3_mode == "main" and t3_preset is not None
+    auth_sentence = (
         "Authorization comes only from the host's global rules (AgentNave 编排偏好) or explicit "
         "user instruction in this chat; available tools do not authorize dispatching, parallel "
         "writes, or meetings. "
-        "Ordinary private dispatches (starting/resuming a few tasks, collecting results, "
-        "verifying) follow tool descriptions and receipt next without reading a Skill first; "
-        "load agentnave-manager (or agentnave-meeting when only that is installed) only for "
-        "meetings, reviews, handover, parallel write tasks, pipeline/multi-task workflows, "
-        "receipt errors, or not_started receipts, or when the global rules lack the AgentNave "
-        "block but list_members reports orchestration enabled. "
-        "Never add CLI permission flags yourself; permission options come only from App "
+    )
+    skill_sentence = (
+        T3_MAIN_SKILL
+        if t3_main_active
+        else (
+            "Ordinary private dispatches (starting/resuming a few tasks, collecting results, "
+            "verifying) follow tool descriptions and receipt next without reading a Skill first; "
+            "load agentnave-manager (or agentnave-meeting when only that is installed) only for "
+            "meetings, reviews, handover, parallel write tasks, pipeline/multi-task workflows, "
+            "receipt errors, or not_started receipts, or when the global rules lack the AgentNave "
+            "block but list_members reports orchestration enabled. "
+        )
+    )
+    base = (
+        "AgentNave runs local CLI subagents and saves history. "
+        "History survives restart; processes do not; invocation handles expire after 7 days. "
+        "Native CLI permissions are the security boundary; isolation is not a sandbox. "
+        + auth_sentence
+        + skill_sentence
+        + "Never add CLI permission flags yourself; permission options come only from App "
         "tiers/defaults or explicit user request in this turn. "
         "manager_session_id: read this chat's native ID before start_agent/run_round/"
         "answer_prompt/isolated_dirs/handover release or claim; reuse it per chat, new chat "
@@ -764,12 +871,23 @@ def build_mcp_instructions(host: Host, provider_selection: str = PROVIDER_SELECT
         "prefer explicit IDs over env injection (which may go stale after chat switches). "
         + provider_selection
     )
+    if t3_mode == "child":
+        return T3_CHILD_INSTRUCTIONS + base
+    if t3_main_active:
+        assert t3_preset is not None
+        return t3_main_instructions(t3_preset) + base
+    return base
 
 
 mcp = _Server(
     "AgentNave",
     version=__version__,
-    instructions=build_mcp_instructions(HOST, PROVIDER_SELECTION),
+    instructions=build_mcp_instructions(
+        HOST,
+        PROVIDER_SELECTION,
+        t3_mode=current_t3_mode(HOST),
+        t3_preset=t3_active_mode(),
+    ),
     lifespan=_lifespan,
 )
 

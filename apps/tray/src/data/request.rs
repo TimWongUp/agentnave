@@ -319,6 +319,9 @@ impl Reader {
         if matches!(path, "/app/decision-seats" | "/app/decision-key") {
             return crate::hosts::decision_request(&self.root, method, path, action, body);
         }
+        if path == "/app/t3-seats" {
+            return crate::hosts::t3_request(&self.root, &self.hosts, method, path, action, body);
+        }
         if matches!(
             path,
             "/app/conversations/rename"

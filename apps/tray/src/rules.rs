@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const PRESETS: [&str; 6] = ["off", "meetings", "split", "parallel", "decision", "custom"];
+pub const PRESETS: [&str; 5] = ["off", "meetings", "split", "decision", "custom"];
 const START: &str = "<!-- AGENTNAVE:START -->";
 const END: &str = "<!-- AGENTNAVE:END -->";
 const CUSTOM_LIMIT: usize = 8000;
@@ -269,9 +269,15 @@ pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
 }
 
 /// The text each file that carries the block should hold.
-fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, String)> {
+fn wanted(
+    connected: &[App],
+    home: &Path,
+    document: &Value,
+    t3_active: bool,
+) -> Vec<(PathBuf, String)> {
     let mut wanted = Vec::new();
     for group in groups(connected, home) {
+        let mode = mode_of(document, &group);
         for path in targets(&group, home) {
             let mut scoped = document.clone();
             let provider = document["image_generation"]["provider"].as_str();
@@ -287,7 +293,25 @@ fn wanted(connected: &[App], home: &Path, document: &Value) -> Vec<(PathBuf, Str
             if own_reader {
                 scoped["image_generation"] = Value::Null;
             }
-            if let Some(text) = text_of(&scoped, mode_of(document, &group)) {
+            let t3_reader = t3_active
+                && group.iter().any(|app| {
+                    matches!(app.id, "claude" | "codex") && would_read(app, home).contains(&path)
+                });
+            let text = if t3_reader {
+                if let Some(text) = catalog::preset_text_for_t3(&scoped, mode) {
+                    (!text.is_empty()).then_some(text)
+                } else {
+                    text_of(&scoped, mode).map(|mut text| {
+                        if let Some(suffix) = catalog::t3_suffix(mode) {
+                            text.push_str(&suffix);
+                        }
+                        text
+                    })
+                }
+            } else {
+                text_of(&scoped, mode)
+            };
+            if let Some(text) = text {
                 wanted.push((path, text));
             }
         }
@@ -436,16 +460,18 @@ pub fn existing(installed: &[App], home: &Path) -> Vec<PathBuf> {
 /// rules file an installed app could read, and of `also` (files read before a host moved).
 /// Returns the files that could not be written. With `hold`, a file due a new block keeps what it
 /// has and is reported instead; taking a block out still goes ahead.
+#[allow(clippy::too_many_arguments)]
 pub fn sync(
     installed: &[App],
     connected: &[App],
     home: &Path,
     document: &Value,
+    t3_active: bool,
     also: &[PathBuf],
     backup: &Backup<'_>,
     hold: bool,
 ) -> Vec<Value> {
-    let wanted = wanted(connected, home, document);
+    let wanted = wanted(connected, home, document, t3_active);
     let mut paths: Vec<PathBuf> = wanted.iter().map(|(path, _)| path.clone()).collect();
     for path in existing(installed, home)
         .into_iter()
@@ -471,8 +497,14 @@ pub fn sync(
         .collect()
 }
 
-pub fn list(installed: &[App], connected: &[App], home: &Path, document: &Value) -> Value {
-    let wanted = wanted(connected, home, document);
+pub fn list(
+    installed: &[App],
+    connected: &[App],
+    home: &Path,
+    document: &Value,
+    t3_active: bool,
+) -> Value {
+    let wanted = wanted(connected, home, document, t3_active);
     let files: Vec<Value> = files(installed, home)
         .into_iter()
         .map(|(path, readers)| {

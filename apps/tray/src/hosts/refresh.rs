@@ -14,6 +14,7 @@ impl Hosts {
         }
         let launcher_error = crate::update::ensure_active_launcher(&self.context.app).err();
         self.codex_homes = self.other_codex_homes();
+        self.t3_antigravity_homes = self.other_t3_antigravity_homes();
         self.remember_reloads();
         let mut settings = self.settings.clone();
         for host in self.registry() {
@@ -29,7 +30,8 @@ impl Hosts {
                 || self.settings_error.is_some()
                 || (self.shell.as_ref().is_some_and(Result::is_err)
                     && !self.manual_roots.contains(host.id)
-                    && !split::is_account_row(host.id))
+                    && !split::is_account_row(host.id)
+                    && !split::is_t3_antigravity_row(host.id))
             {
                 continue;
             }

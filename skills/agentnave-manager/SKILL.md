@@ -19,6 +19,8 @@ description: 通过 AgentNave 开会、评审、转交、多个可写任务并�
 
 私聊用 `start_agent`（一个 CLI 做一项任务，结果只回给 boss），会议室用 `run_round`（答案在席位间共享），两者都用 `wait` 收结果。其余工具：`answer_prompt` 代答弹框，`cancel` 取消，`decide_answers` 审核会议答案，`list`、`read_conversation` 读历史，`list_members` 查工位和组员，`clear_provider_cooldown` 解除冷却，`handover` 转交和接手。
 
+在 T3 Code 主线程、当前编排档位支持 T3 模式（分工协作、决策模型、自定义）且开启 T3 编排时，单独任务与评审改由 `recommend_seat` 取候选后交 T3 的 `delegate_task` 执行（分工协作与自定义先不带任务调 `recommend_seat` 取 T3 工位再传 `seat`，决策模型可省略 `seat` 由决策模型选；工位的账号、模型和推理档是用户指定的设置，同 CLI 也用 `delegate_task`；用户点名 CLI、T3 账号或模型时按 T3 自己的模型列表直接按点名派；`list_members` 只用来选会议成员），本 Skill 仅用于开会、评审方法与跨 T3 的 `handover`（会议等待按回执 `next`）。
+
 下面的情况按需再读对应参考，同一上下文只读一次：
 
 | 什么时候 | 读 |
@@ -59,7 +61,7 @@ description: 通过 AgentNave 开会、评审、转交、多个可写任务并�
 | 情况 | 读 |
 | --- | --- |
 | 规则块写明工位交给决策模型选（「决策模型」档） | [决策模型档](references/decision.md) |
-| 规则块列出了固定工位（分工协作、并行分工等） | [固定编排工位](references/fixed-seats.md) |
+| 规则块列出了固定工位（分工协作、开启了编排的自定义档等） | [固定编排工位](references/fixed-seats.md) |
 | 编排未开启，或用户点名 CLI、模型、专有参数；工位不可用或冷却 | [点名与冷却](references/models.md) |
 
 档位按规则块判断，派发前不用先查 `list_members`；规则块与实际配置不符时派发会被拒绝并说明原因，再按报错查 `list_members`。宿主全局规则里没有「AgentNave 编排偏好」一段时，先查一次 `list_members`：`orchestration.enabled=true` 读[没有规则块的宿主](references/headless.md)，否则按编排未开启处理。

@@ -1122,6 +1122,35 @@ def test_antigravity_model_comes_from_its_run_log_for_that_conversation(
     assert session_model("c1", since=datetime.now(UTC) + timedelta(hours=1)) is None
 
 
+def test_antigravity_adapter_strips_host_and_t3_acp_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTIGRAVITY_APP_DATA_DIR", raising=False)
+    monkeypatch.delenv("AGY_ACP_FORCE_FILE_STORAGE", raising=False)
+    adapter = AntigravityAdapter()
+    plain = adapter.prepare(InvocationRequest(provider="antigravity", prompt="hi", cwd=tmp_path))
+    assert "ANTIGRAVITY_CONVERSATION_ID" in plain.unset_env
+    assert "ANTIGRAVITY_LS_ADDRESS" in plain.unset_env
+    assert "ANTIGRAVITY_APP_DATA_DIR" in plain.unset_env
+    assert "GEMINI_HOME" not in plain.unset_env
+
+    monkeypatch.setenv("ANTIGRAVITY_APP_DATA_DIR", str(tmp_path / "profile/antigravity-acp"))
+    from_t3 = adapter.prepare(InvocationRequest(provider="antigravity", prompt="hi", cwd=tmp_path))
+    usage = adapter.usage_query(None)
+    assert "GEMINI_HOME" in from_t3.unset_env
+    assert usage is not None and "GEMINI_HOME" in usage.unset_env
+    if os.name != "nt":
+        interactive = adapter.prepare(
+            InvocationRequest(
+                provider="antigravity",
+                prompt="hi",
+                cwd=tmp_path,
+                provider_options={"interactive": True, "dangerously_skip_permissions": True},
+            )
+        )
+        assert "GEMINI_HOME" in interactive.unset_env
+
+
 def test_antigravity_result_falls_back_to_stream_session_id() -> None:
     stdout = b"\n".join(
         (

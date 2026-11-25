@@ -340,7 +340,86 @@ pub(crate) fn validate_fallbacks(fields: &Map<String, Value>, what: &str) -> Res
     Ok(())
 }
 
-/// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "parallel" | "decision" | "custom",
+fn validate_options_object<'a>(
+    value: &'a Value,
+    allowed: &[&str],
+    what: &str,
+) -> Result<&'a Map<String, Value>, String> {
+    let options = object(value, what)?;
+    only(options, allowed, what)?;
+    if !options.values().all(Value::is_boolean) {
+        return Err(format!("{what} 的值必须为 true 或 false"));
+    }
+    Ok(options)
+}
+
+/// Migrate legacy `parallel` preset and `parallel_options` in memory into `split` + `split_options`.
+/// Only `preset` and `apps` decide which modes were in use; `effective_apps` is renamed only.
+pub fn normalize_orchestration(document: &mut Value) -> Result<(), String> {
+    let Some(top) = document.as_object_mut() else {
+        return Ok(());
+    };
+    let parallel_meetings = match top.get("parallel_options") {
+        None => true,
+        Some(options) => validate_options_object(options, &["meetings"], "parallel_options")?
+            .get("meetings")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    };
+    let uses = |target: &str| {
+        top.get("preset").and_then(Value::as_str) == Some(target)
+            || top
+                .get("apps")
+                .and_then(Value::as_object)
+                .is_some_and(|apps| apps.values().any(|mode| mode.as_str() == Some(target)))
+    };
+    let (has_split, has_parallel) = (uses("split"), uses("parallel"));
+    if top.get("preset").and_then(Value::as_str) == Some("parallel") {
+        top.insert("preset".into(), json!("split"));
+    }
+    for key in ["apps", "effective_apps"] {
+        if let Some(apps) = top.get_mut(key).and_then(Value::as_object_mut) {
+            for mode in apps.values_mut() {
+                if mode.as_str() == Some("parallel") {
+                    *mode = json!("split");
+                }
+            }
+        }
+    }
+    top.remove("parallel_options");
+    if !has_parallel {
+        return Ok(());
+    }
+    let split_meetings = match top.get("split_options") {
+        None => false,
+        Some(options) => {
+            validate_options_object(options, &["parallel_writes", "meetings"], "split_options")?
+                .get("meetings")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        }
+    };
+    let (parallel_writes, meetings) = if has_split {
+        (false, split_meetings && parallel_meetings)
+    } else {
+        (true, parallel_meetings)
+    };
+    let mut next = Map::new();
+    if parallel_writes {
+        next.insert("parallel_writes".into(), Value::Bool(true));
+    }
+    if meetings {
+        next.insert("meetings".into(), Value::Bool(true));
+    }
+    if next.is_empty() {
+        top.remove("split_options");
+    } else {
+        top.insert("split_options".into(), Value::Object(next));
+    }
+    Ok(())
+}
+
+/// orchestration.json: `{"version": 1, "preset": "off" | "meetings" | "split" | "decision" | "custom",
 /// "custom": text, "apps": {row: mode}, "effective_apps": {row: mode},
 /// "host_cli": {row: "subagent" | "launch" | "skip"} (a row left out uses its host default), "enabled_roles": [group],
 /// group: {"easy" | "medium" | "hard": seat} (medium optional), "image_generation": seat,
@@ -364,7 +443,6 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
         "meeting",
         "meetings_options",
         "split_options",
-        "parallel_options",
         "decision_options",
         "lead_only",
     ];
@@ -422,16 +500,11 @@ pub fn validate_orchestration(document: &Value) -> Result<(), String> {
     }
     for (key, allowed) in [
         ("meetings_options", &["meetings"][..]),
-        ("split_options", &["meetings"]),
-        ("parallel_options", &["meetings"]),
+        ("split_options", &["parallel_writes", "meetings"]),
         ("decision_options", &["parallel_writes", "meetings"]),
     ] {
         if let Some(options) = top.get(key) {
-            let options = object(options, key)?;
-            only(options, allowed, key)?;
-            if !options.values().all(Value::is_boolean) {
-                return Err(format!("{key} 的值必须为 true 或 false"));
-            }
+            validate_options_object(options, allowed, key)?;
         }
     }
     if top.get("lead_only").is_some_and(|on| !on.is_boolean()) {
@@ -487,7 +560,8 @@ pub fn read_orchestration(root: &Path) -> Result<Value, String> {
     let mut document = serde_json::from_slice(&content)
         .map_err(|error| format!("{ORCHESTRATION_FILE} 损坏：{error}"))?;
     crate::retired_providers::orchestration(&mut document);
-    validate_orchestration(&document)
+    normalize_orchestration(&mut document)
+        .and_then(|()| validate_orchestration(&document))
         .map_err(|error| format!("{ORCHESTRATION_FILE} 格式错误：{error}"))?;
     Ok(document)
 }

@@ -5620,6 +5620,49 @@ def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
         for trigger in ("meetings", "reviews", "handover", "parallel write", "not_started"):
             assert trigger in text
 
+    # T3 main (active) and child instructions stay within the 3,500-byte limit too.
+    from agentnave import t3, t3_mcp
+    from agentnave.t3_seats import T3OrchestrationMode
+
+    t3_cases: tuple[tuple[T3OrchestrationMode, str], ...] = (
+        ("decision", "decision model picks seats"),
+        ("split", "with seat from recommend_seat()"),
+        ("custom", "with seat from recommend_seat()"),
+    )
+    for preset_mode, expected_picker in t3_cases:
+        prefix = t3_mcp.t3_main_instructions(preset_mode)
+        assert len(prefix) <= 600
+        first_sentence = prefix.split(". ", 1)[0] + "."
+        assert len(first_sentence) <= 210
+        assert "recommend_seat(tasks)" in first_sentence and "delegate_task" in first_sentence
+        assert "unless the user named a CLI, T3 account or model" in first_sentence
+        assert expected_picker in first_sentence
+        assert "list_members is for meeting members only" in prefix
+        for host_name in ("claude", "codex"):
+            host = Host(host_name, "env")
+            t3_main = mcp_runtime.build_mcp_instructions(
+                host, longest_provider_selection, t3_mode="main", t3_preset=preset_mode
+            )
+            assert len(t3_main.encode("utf-8")) <= 3500, (preset_mode, host_name)
+            assert t3_main.startswith(prefix)
+            assert "only for meetings, reviews, or handover." in t3_main
+            assert "parallel write tasks" not in t3_main
+            assert "not_started" not in t3_main
+
+    for host_name in ("claude", "codex"):
+        host = Host(host_name, "env")
+        # Main thread when T3 orchestration is off or mode has no T3 uses unchanged ordinary instructions.
+        t3_inactive = mcp_runtime.build_mcp_instructions(
+            host, longest_provider_selection, t3_mode="main", t3_preset=None
+        )
+        assert t3_inactive == mcp_runtime.build_mcp_instructions(host, longest_provider_selection)
+
+        t3_child = mcp_runtime.build_mcp_instructions(
+            host, longest_provider_selection, t3_mode="child"
+        )
+        assert len(t3_child.encode("utf-8")) <= 3500, host_name
+        assert t3_child.startswith(t3.T3_CHILD_INSTRUCTIONS)
+
 
 @pytest.mark.asyncio
 async def test_published_tool_descriptions_within_2000_chars_and_cover_private_dispatch(
@@ -5635,6 +5678,53 @@ async def test_published_tool_descriptions_within_2000_chars_and_cover_private_d
     for name, tool in tools.items():
         description = tool.description or ""
         assert len(description) <= 2000, f"{name}: {len(description)}"
+    worker_seat = {
+        "id": "work-easy",
+        "kind": "worker",
+        "role": "通用执行",
+        "description": "改代码",
+        "provider": "claude",
+        "model": "sonnet",
+        "access": "write",
+        "difficulty": "easy",
+    }
+    (tmp_path / "decision-seats.json").write_text(
+        json.dumps({"version": 1, "seats": [worker_seat]})
+    )
+    async with Client(mcp) as client:
+        without_image = {tool.name: tool for tool in (await client.list_tools()).tools}
+    start_seat_desc = str(
+        without_image["start_agent"].input_schema["properties"]["seat"]["description"]
+    )
+    assert "seat='auto'" in start_seat_desc and "kind=image" not in start_seat_desc
+    many_tasks_desc = str(
+        without_image["start_agents"].input_schema["properties"]["tasks"]["description"]
+    )
+    assert "kind=image" not in many_tasks_desc
+    image_seat = {
+        "id": "draw-anime",
+        "kind": "image",
+        "role": "动漫风",
+        "description": "动漫风",
+        "provider": "claude",
+        "model": "sonnet",
+        "access": "write",
+    }
+    (tmp_path / "decision-seats.json").write_text(
+        json.dumps({"version": 1, "seats": [worker_seat, image_seat]})
+    )
+    async with Client(mcp) as client:
+        with_image = {tool.name: tool for tool in (await client.list_tools()).tools}
+    image_seat_desc = str(
+        with_image["start_agent"].input_schema["properties"]["seat"]["description"]
+    )
+    assert "kind=image" in image_seat_desc and "access='write'" in image_seat_desc
+    assert "do not substitute" in image_seat_desc
+    many_image_desc = str(
+        with_image["start_agents"].input_schema["properties"]["tasks"]["description"]
+    )
+    assert "kind=image" in many_image_desc and "access='write'" in many_image_desc
+    assert "seat='auto'" not in many_image_desc and "do not substitute" in many_image_desc
     start_desc = tools["start_agent"].description or ""
     assert "title" in start_desc and "cwd" in start_desc and "self-contained" in start_desc
     assert "isolated_dirs" in start_desc and "succeeded" in start_desc
@@ -5649,14 +5739,34 @@ async def test_published_tool_descriptions_within_2000_chars_and_cover_private_d
 
 
 def test_native_seat_guidance_by_boss_host() -> None:
-    # Claude: family alias mapping, omit empty effort, and [1m] unavailability.
+    # Claude: family alias mapping (including [1m] on family aliases), omit empty effort,
+    # and pinned-version [1m] unavailability.
     claude = Host("claude", "env")
     opus_msg = mcp_runtime.native_seat_guidance(claude, "claude-opus-5-5", "high")
     assert "Agent tool" in opus_msg and "model=opus" in opus_msg and "effort=high" in opus_msg
+    assert "long context" not in opus_msg and "requires [1m]" not in opus_msg
     alias_msg = mcp_runtime.native_seat_guidance(claude, "sonnet", None)
     assert "model=sonnet" in alias_msg and "omit effort" in alias_msg
+    assert "long context" not in alias_msg and "requires [1m]" not in alias_msg
+    opus_1m_msg = mcp_runtime.native_seat_guidance(claude, "  OPUS[1M] ", "high")
+    assert opus_1m_msg == mcp_runtime.native_seat_guidance(claude, "opus", "high")
+    assert "model=opus" in opus_1m_msg and "effort=high" in opus_1m_msg
+    assert "long context" not in opus_1m_msg and "requires [1m]" not in opus_1m_msg
+    for raw, family in (
+        ("opus[1m]", "opus"),
+        ("sonnet[1m]", "sonnet"),
+        ("haiku[1m]", "haiku"),
+        ("fable[1m]", "fable"),
+    ):
+        msg = mcp_runtime.native_seat_guidance(claude, raw, None)
+        assert f"model={family}" in msg and "omit effort" in msg
+        assert "long context" not in msg and "requires [1m]" not in msg
+    none_msg = mcp_runtime.native_seat_guidance(claude, None, None)
+    assert "long context" not in none_msg and "requires [1m]" not in none_msg
+    assert "alias is rejected" in none_msg
     long_ctx_msg = mcp_runtime.native_seat_guidance(claude, "claude-sonnet-4-5[1m]", "medium")
     assert "[1m]" in long_ctx_msg and "unavailable" in long_ctx_msg
+    assert "another version" in long_ctx_msg and "long context" not in long_ctx_msg
     assert "model=sonnet" not in long_ctx_msg
 
     # Codex: spawn_agent with model and optional reasoning_effort.
@@ -5712,3 +5822,612 @@ async def test_native_seat_receipt_uses_antigravity_host_guidance(
     assert receipt["message"] == mcp_runtime.native_seat_guidance(
         Host("antigravity", "env"), "gemini-3.8-pro", None
     )
+
+
+@pytest.mark.asyncio
+async def test_t3_child_thread_refuses_orchestration_tools_and_keeps_readonly_and_instructions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import t3
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setenv("T3CODE_THREAD_ID", "thread:delegated-task:child-1")
+    t3.reset_t3_mode_cache()
+
+    # Child instructions sit at the front and stay within the 3,500-byte budget.
+    for host_name in ("claude", "codex"):
+        text = mcp_runtime.build_mcp_instructions(
+            Host(host_name, "env"), mcp_runtime.PROVIDER_SELECTION, t3_mode="child"
+        )
+        assert text.startswith(t3.T3_CHILD_INSTRUCTIONS)
+        assert len(text.encode("utf-8")) <= 3500
+
+    # Child thread refuses the 6 orchestration/handover tools regardless of any T3 switch.
+    refused_calls: list[tuple[str, dict[str, Any]]] = [
+        ("recommend_seat", {"task": "check", "access": "read"}),
+        ("start_agent", {"prompt": "hi", "cwd": str(tmp_path)}),
+        ("start_agents", {"tasks": [], "cwd": str(tmp_path)}),
+        ("run_round", {"prompt": "hi"}),
+        ("decide_answers", {"round_id": "r1", "decisions": {"a": "publish"}}),
+        ("handover", {}),
+    ]
+    async with Client(mcp) as client:
+        for name, args in refused_calls:
+            res = await client.call_tool(name, args)
+            assert res.is_error is True, name
+            msg = str(res.content)
+            assert "T3 Code delegated child thread" in msg
+            assert name in msg
+
+        # Read-only tools still work normally.
+        listed = await client.call_tool("list", {"scope": "all"})
+        assert listed.is_error is False
+        members_res = await client.call_tool("list_members", {})
+        assert members_res.is_error is False
+        waited = await client.call_tool("wait", {"wait_seconds": 0})
+        assert waited.is_error is False
+
+
+def _write_t3_seats(document: dict[str, Any]) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "t3-seats.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def _write_t3_cache(t3_home: Path, instance: str, payload: dict[str, Any]) -> None:
+    caches = t3_home / "caches"
+    caches.mkdir(parents=True, exist_ok=True)
+    (caches / f"{instance}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_non_t3_connection_tools_and_schemas_are_unchanged_with_t3_seats_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import t3
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env", "codex"))
+    t3.reset_t3_mode_cache()
+    async with Client(mcp) as client:
+        baseline = [
+            tool.model_dump() for tool in (await client.list_tools(cache_mode="refresh")).tools
+        ]
+        # Valid active t3-seats.json on a non-T3 connection changes nothing.
+        _write_t3_seats(
+            {
+                "version": 1,
+                "enabled": True,
+                "seats": [
+                    {
+                        "id": "w1",
+                        "kind": "custom",
+                        "role": "Worker",
+                        "description": "Worker",
+                        "access": "write",
+                        "difficulty": "easy",
+                        "candidates": [{"instance": "inst-1", "model": "m-1", "options": []}],
+                    }
+                ],
+            }
+        )
+        with_valid = [
+            tool.model_dump() for tool in (await client.list_tools(cache_mode="refresh")).tools
+        ]
+        assert with_valid == baseline
+        # Broken t3-seats.json on a non-T3 connection changes nothing and does not error.
+        (tmp_path / "t3-seats.json").write_text("{broken", encoding="utf-8")
+        with_broken = [
+            tool.model_dump() for tool in (await client.list_tools(cache_mode="refresh")).tools
+        ]
+        assert with_broken == baseline
+        listed = await client.call_tool("list_members", {})
+        assert listed.is_error is False
+        assert _payload(listed.structured_content).get("orchestration_error") is None
+
+
+@pytest.mark.asyncio
+async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    import random
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from agentnave import t3, t3_recommend
+    from agentnave.core import READ_ONLY_INSTRUCTIONS
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path / "agentnave"))
+    t3_root = tmp_path / "t3"
+    monkeypatch.setenv("T3CODE_HOME", str(t3_root))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env", "codex"))
+    monkeypatch.setenv("T3CODE_THREAD_ID", "thread-main-42")
+    t3.reset_t3_mode_cache()
+    orch_path = tmp_path / "agentnave" / "orchestration.json"
+
+    def _write_orch(preset: str) -> None:
+        orch_path.parent.mkdir(parents=True, exist_ok=True)
+        orch_path.write_text(json.dumps({"version": 1, "preset": preset}), encoding="utf-8")
+
+    future_a = (
+        (datetime.now(UTC) + timedelta(hours=1))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    future_b = (
+        (datetime.now(UTC) + timedelta(hours=3))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    _write_t3_cache(
+        t3_root,
+        "inst-exhausted",
+        {
+            "driver": "claudeAgent",
+            "enabled": True,
+            "installed": True,
+            "status": "ready",
+            "auth": {"status": "authenticated", "email": "never-leak@example.com"},
+            "usageLimits": {
+                "windows": [{"id": "five_hour", "usedPercent": 100, "resetsAt": future_a}]
+            },
+        },
+    )
+    _write_t3_cache(
+        t3_root,
+        "inst-exhausted-later",
+        {
+            "driver": "codex",
+            "enabled": True,
+            "installed": True,
+            "status": "ready",
+            "usageLimits": {
+                "windows": [{"id": "primary", "usedPercent": 100, "resetsAt": future_b}]
+            },
+        },
+    )
+    _write_t3_cache(
+        t3_root,
+        "inst-ok-1",
+        {
+            "driver": "claudeAgent",
+            "enabled": True,
+            "installed": True,
+            "status": "ready",
+            "auth": {"status": "authenticated", "email": "ok1@example.com"},
+        },
+    )
+
+    seats_doc: dict[str, Any] = {
+        "version": 1,
+        "enabled": True,
+        "random_candidates": False,
+        "seats": [
+            {
+                "id": "read-only",
+                "kind": "explorer",
+                "role": "探索",
+                "description": "读代码和调研",
+                "access": "read",
+                "difficulty": "easy",
+                "candidates": [
+                    {"instance": "inst-exhausted", "model": "claude-sonnet", "options": []},
+                    {
+                        "instance": "inst-ok-1",
+                        "model": "claude-opus",
+                        "options": [{"id": "effort", "value": "high"}],
+                    },
+                    {"instance": "inst-unknown", "model": "codex-5", "options": []},
+                ],
+            },
+            {
+                "id": "write-a",
+                "kind": "worker",
+                "role": "通用实现",
+                "description": "写常规代码",
+                "access": "write",
+                "difficulty": "easy",
+                "candidates": [{"instance": "inst-ok-1", "model": "claude-sonnet", "options": []}],
+            },
+            {
+                "id": "write-b",
+                "kind": "worker",
+                "role": "通用实现",
+                "description": "复杂架构实现",
+                "access": "write",
+                "difficulty": "hard",
+                "candidates": [
+                    {
+                        "instance": "inst-ok-2",
+                        "model": "gpt-6",
+                        "options": [{"id": "reasoningEffort", "value": "xhigh"}],
+                    }
+                ],
+            },
+            {
+                "id": "write-dead",
+                "kind": "custom",
+                "role": "挂掉工位",
+                "description": "全被排除",
+                "access": "write",
+                "difficulty": "medium",
+                "candidates": [
+                    {"instance": "inst-exhausted", "model": "m1", "options": []},
+                    {"instance": "inst-exhausted-later", "model": "m2", "options": []},
+                ],
+            },
+        ],
+        "review": {
+            "correctness-reviewer": [
+                {"instance": "inst-ok-1", "model": "claude-opus", "options": []},
+                {"instance": "inst-ok-2", "model": "gpt-6", "options": []},
+            ],
+            "security-reviewer": [
+                {"instance": "inst-exhausted-later", "model": "gpt-6", "options": []},
+                {"instance": "inst-exhausted", "model": "claude-opus", "options": []},
+            ],
+        },
+    }
+    _write_t3_seats(seats_doc)
+
+    async with Client(mcp) as client:
+        # 0. Missing orchestration.json, off, and meetings keep T3 inactive (ordinary tools stay).
+        for inactive_preset in (None, "off", "meetings"):
+            if inactive_preset is not None:
+                _write_orch(inactive_preset)
+            inactive_tools = {
+                tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+            }
+            assert "start_agent" in inactive_tools
+            assert "recommend_seat" not in inactive_tools
+            ordinary_members = await client.call_tool("list_members", {})
+            assert ordinary_members.is_error is False
+            assert "t3_orchestration" not in cast(
+                dict[str, Any], ordinary_members.structured_content
+            )
+
+        # 0b. split / parallel / custom: T3 active, boss must pass seat (seat_required without decision key),
+        #     accepts fixed role names (worker-easy, explorer-easy) as well as raw seat ids.
+        for boss_preset, expected_mode in (
+            ("split", "split"),
+            ("parallel", "split"),
+            ("custom", "custom"),
+        ):
+            _write_orch(boss_preset)
+            boss_tools = {
+                tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+            }
+            assert "start_agent" not in boss_tools and "recommend_seat" in boss_tools
+            boss_rec_desc = boss_tools["recommend_seat"].description or ""
+            assert "seat_required" in boss_rec_desc
+            assert "boss chooses seats" in boss_rec_desc
+            assert "no image generation seat" in boss_rec_desc
+            assert "list_members" not in boss_rec_desc
+            boss_list_desc = boss_tools["list_members"].description or ""
+            assert "meeting (discussion) CLIs only" in boss_list_desc
+            assert "recommend_seat()" in boss_list_desc
+            assert len(boss_rec_desc) <= 2000
+            assert len(boss_list_desc) <= 2000
+            boss_members = cast(
+                dict[str, Any], (await client.call_tool("list_members", {})).structured_content
+            )
+            assert "t3_orchestration" not in boss_members
+            empty_cases: tuple[dict[str, Any], ...] = ({}, {"tasks": []})
+            for empty_args in empty_cases:
+                catalog_res = await client.call_tool("recommend_seat", empty_args)
+                assert catalog_res.is_error is False, catalog_res.content
+                catalog_payload = cast(dict[str, Any], catalog_res.structured_content)
+                assert catalog_payload["mode"] == expected_mode
+                assert catalog_payload["random_candidates"] is False
+                assert set(catalog_payload["seats"]) == {
+                    "explorer-easy",
+                    "worker-easy",
+                    "worker-hard",
+                    "write-dead",
+                }
+                assert set(catalog_payload["review"]) == {
+                    "correctness-reviewer",
+                    "security-reviewer",
+                }
+                assert "results" not in catalog_payload
+                assert "Nothing was started" in str(catalog_payload["next"])
+                assert "tasks" in str(catalog_payload["next"])
+            too_many = await client.call_tool(
+                "recommend_seat",
+                {
+                    "tasks": [
+                        {"task": f"t{i}", "access": "write", "seat": "worker-easy"}
+                        for i in range(9)
+                    ]
+                },
+            )
+            assert too_many.is_error is True
+            missing_seat = await client.call_tool(
+                "recommend_seat", {"tasks": [{"task": "implement feature", "access": "write"}]}
+            )
+            assert missing_seat.is_error is True
+            missing_msg = str(missing_seat.content)
+            assert "seat_required" in missing_msg
+            assert "worker-easy" in missing_msg and "写常规代码" in missing_msg
+            assert "worker-hard" in missing_msg and "复杂架构实现" in missing_msg
+            assert decision.batches == [] and decision.calls == []
+        # Fixed role name (worker-easy) and raw id (write-a) both resolve and return canonical worker-easy.
+        _write_orch("split")
+        fixed_res = await client.call_tool(
+            "recommend_seat",
+            {
+                "tasks": [
+                    {"task": "small fix", "access": "write", "seat": "worker-easy"},
+                    {"task": "small fix by id", "access": "write", "seat": "write-a"},
+                ]
+            },
+        )
+        assert fixed_res.is_error is False, fixed_res.content
+        fixed_items = cast(
+            list[dict[str, Any]], cast(dict[str, Any], fixed_res.structured_content)["results"]
+        )
+        assert [item["seat"] for item in fixed_items] == ["worker-easy", "worker-easy"]
+        unknown_fixed = await client.call_tool(
+            "recommend_seat",
+            {"tasks": [{"task": "web lookup", "access": "read", "seat": "explorer-web-hard"}]},
+        )
+        assert unknown_fixed.is_error is True
+        assert "explorer-easy" in str(unknown_fixed.content)
+        assert "worker-easy" in str(unknown_fixed.content)
+
+        # 1. Decision mode: list_tools hides start_agent/start_agents and publishes decision T3 tools.
+        _write_orch("decision")
+        tools = {tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools}
+        assert "start_agent" not in tools and "start_agents" not in tools
+        assert "recommend_seat" in tools and "list_members" in tools
+        assert "tasks" in tools["recommend_seat"].input_schema["properties"]
+        assert "decision mode" in (tools["recommend_seat"].description or "")
+        assert "seat_required" in (tools["recommend_seat"].description or "")
+        assert "no image generation seat" in (tools["recommend_seat"].description or "")
+        assert tools["list_members"].description == boss_tools["list_members"].description
+        assert len(tools["recommend_seat"].description or "") <= 2000
+        assert len(tools["list_members"].description or "") <= 2000
+
+        # 2. start_agent / start_agents refused by name with guidance (including resume hint).
+        dispatch_refusals: list[tuple[str, dict[str, Any]]] = [
+            ("start_agent", {"prompt": "hi", "cwd": str(tmp_path)}),
+            ("start_agent", {"prompt": "hi", "session_id": "old-sess"}),
+            ("start_agents", {"tasks": [], "cwd": str(tmp_path)}),
+        ]
+        for name, args in dispatch_refusals:
+            res = await client.call_tool(name, args)
+            assert res.is_error is True
+            msg = str(res.content)
+            assert "recommend_seat" in msg and "delegate_task" in msg and "handover" in msg
+
+        # 3. list_members lists meeting members only (no T3 seats); recommend_seat() without tasks
+        #    returns T3 seats and review roles (no auth email, no decision model call).
+        members_res = await client.call_tool("list_members", {})
+        assert members_res.is_error is False
+        members_payload = cast(dict[str, Any], members_res.structured_content)
+        assert "t3_orchestration" not in members_payload
+        catalog_res = await client.call_tool("recommend_seat", {})
+        assert catalog_res.is_error is False
+        catalog_raw = json.dumps(catalog_res.structured_content)
+        assert "never-leak@example.com" not in catalog_raw
+        assert "ok1@example.com" not in catalog_raw
+        t3_cat = cast(dict[str, Any], catalog_res.structured_content)
+        assert t3_cat["mode"] == "decision"
+        assert t3_cat["random_candidates"] is False
+        assert set(t3_cat["seats"]) == {
+            "explorer-easy",
+            "worker-easy",
+            "worker-hard",
+            "write-dead",
+        }
+        assert t3_cat["seats"]["write-dead"]["available"] is False
+        assert set(t3_cat["review"]) == {"correctness-reviewer", "security-reviewer"}
+        assert "clientRequestId" not in catalog_raw
+        assert decision.batches == [] and decision.calls == []
+
+        # 4. Single usable seat works WITHOUT decision key; legacy {task, access} works as 1 item.
+        long_task = "检查" * 50
+        legacy_res = await client.call_tool(
+            "recommend_seat",
+            {"task": long_task, "access": "read", "manager_session_id": "boss-1"},
+        )
+        assert legacy_res.is_error is False, legacy_res.content
+        legacy_payload = cast(dict[str, Any], legacy_res.structured_content)
+        legacy_items = cast(list[dict[str, Any]], legacy_payload["results"])
+        assert len(legacy_items) == 1
+        item0 = legacy_items[0]
+        assert len(str(item0["task"])) <= 80 and str(item0["task"]).endswith("…")
+        assert item0["status"] == "selected"
+        assert item0["seat"] == "explorer-easy" and item0["role"] == "探索"
+        assert item0["difficulty"] == "easy"
+        assert item0["brief_suffix"] == READ_ONLY_INSTRUCTIONS
+        uuid.UUID(str(item0["clientRequestId"]))
+        # Exhausted candidate was filtered; options: [] is preserved verbatim on the 2nd usable one.
+        assert item0["candidates"] == [
+            {
+                "target": {
+                    "providerInstanceId": "inst-ok-1",
+                    "model": "claude-opus",
+                    "options": [{"id": "effort", "value": "high"}],
+                }
+            },
+            {
+                "target": {
+                    "providerInstanceId": "inst-unknown",
+                    "model": "codex-5",
+                    "options": [],
+                }
+            },
+        ]
+        next_text = str(legacy_payload["next"])
+        for needle in (
+            "Nothing was started",
+            "orchestrator_capabilities",
+            "delegate_task",
+            "user-chosen settings",
+            "clientRequestId",
+            "brief_suffix",
+            "taskId",
+            "start_agent",
+        ):
+            assert needle in next_text
+        assert decision.batches == [] and decision.calls == []
+
+        # 5. Missing decision key when >=2 usable seats -> error lists usable seat names and seat hint.
+        no_key = await client.call_tool(
+            "recommend_seat", {"tasks": [{"task": "implement feature", "access": "write"}]}
+        )
+        assert no_key.is_error is True
+        no_key_msg = str(no_key.content)
+        assert "no_key" in no_key_msg
+        assert "worker-easy" in no_key_msg and "worker-hard" in no_key_msg
+        assert "write-dead" not in no_key_msg  # excluded before decision model
+        assert "explicit seat" in no_key_msg
+
+        # 6. With decision key: mixed batch (auto write + explicit review + unavailable review).
+        _write_decision_key()
+        decision.answers = [Decision("worker-hard", {"worker-hard": 0.9, "worker-easy": 0.1}, 0.9)]
+        batch_res = await client.call_tool(
+            "recommend_seat",
+            {
+                "tasks": [
+                    {"task": "refactor core", "access": "write"},
+                    {"task": "review diff", "access": "read", "seat": "correctness-reviewer"},
+                    {"task": "security audit", "access": "read", "seat": "security-reviewer"},
+                ]
+            },
+        )
+        assert batch_res.is_error is False, batch_res.content
+        batch_payload = cast(dict[str, Any], batch_res.structured_content)
+        r0, r1, r2 = cast(list[dict[str, Any]], batch_payload["results"])
+        assert r0["status"] == "selected" and r0["seat"] == "worker-hard"
+        assert "brief_suffix" not in r0  # write task has no brief_suffix
+        assert r1["status"] == "selected" and r1["seat"] == "correctness-reviewer"
+        assert r1["brief_suffix"] == READ_ONLY_INSTRUCTIONS
+        assert r1["candidates"][0]["target"]["options"] == []
+        assert r2["status"] == "unavailable" and r2["seat"] == "security-reviewer"
+        assert r2["earliest_reset_at"] == future_a  # earliest of future_a and future_b
+        # Decision model saw only usable write seats (write-dead excluded).
+        assert len(decision.batches) == 1
+        assert set(decision.batches[0][0][1]) == {"worker-easy", "worker-hard"}
+
+        # 7. Unconfigured review role -> error listing configured roles (no auto-swap); access mismatch.
+        unconf_rev = await client.call_tool(
+            "recommend_seat",
+            {"tasks": [{"task": "check perf", "access": "read", "seat": "performance-reviewer"}]},
+        )
+        assert unconf_rev.is_error is True
+        assert "correctness-reviewer" in str(unconf_rev.content)
+        assert "security-reviewer" in str(unconf_rev.content)
+        bad_access = await client.call_tool(
+            "recommend_seat",
+            {"tasks": [{"task": "edit", "access": "write", "seat": "correctness-reviewer"}]},
+        )
+        assert bad_access.is_error is True and "read-only" in str(bad_access.content)
+        bad_seat_access = await client.call_tool(
+            "recommend_seat",
+            {"tasks": [{"task": "edit", "access": "read", "seat": "write-a"}]},
+        )
+        assert bad_seat_access.is_error is True and "access='write'" in str(bad_seat_access.content)
+
+        # 8. random_candidates=False keeps saved order without dedup across batch items.
+        ordered_res = await client.call_tool(
+            "recommend_seat",
+            {
+                "tasks": [
+                    {"task": "r1", "access": "read", "seat": "correctness-reviewer"},
+                    {"task": "r2", "access": "read", "seat": "correctness-reviewer"},
+                ]
+            },
+        )
+        assert ordered_res.is_error is False
+        ordered_items = cast(
+            list[dict[str, Any]], cast(dict[str, Any], ordered_res.structured_content)["results"]
+        )
+        assert (
+            ordered_items[0]["candidates"][0]["target"]["providerInstanceId"]
+            == ordered_items[1]["candidates"][0]["target"]["providerInstanceId"]
+            == "inst-ok-1"
+        )
+
+        # 9. random_candidates=True shuffles and avoids repeating first-slot (instance, model).
+        _write_t3_seats({**seats_doc, "random_candidates": True})
+        monkeypatch.setattr(t3_recommend, "new_rng", lambda: random.Random(7))
+        rand_res = await client.call_tool(
+            "recommend_seat",
+            {
+                "tasks": [
+                    {"task": "r1", "access": "read", "seat": "correctness-reviewer"},
+                    {"task": "r2", "access": "read", "seat": "correctness-reviewer"},
+                ]
+            },
+        )
+        assert rand_res.is_error is False
+        rand_items = cast(
+            list[dict[str, Any]], cast(dict[str, Any], rand_res.structured_content)["results"]
+        )
+        first_pair = (
+            rand_items[0]["candidates"][0]["target"]["providerInstanceId"],
+            rand_items[0]["candidates"][0]["target"]["model"],
+        )
+        second_pair = (
+            rand_items[1]["candidates"][0]["target"]["providerInstanceId"],
+            rand_items[1]["candidates"][0]["target"]["model"],
+        )
+        assert first_pair != second_pair
+
+        # 10. Broken t3-seats.json on T3 main thread reports clear errors on recommend/start/list_members.
+        (tmp_path / "agentnave" / "t3-seats.json").write_text("{broken", encoding="utf-8")
+        broken_rec = await client.call_tool(
+            "recommend_seat", {"tasks": [{"task": "x", "access": "read"}]}
+        )
+        assert broken_rec.is_error is True and "config_error" in str(broken_rec.content)
+        broken_start = await client.call_tool("start_agent", {"prompt": "x", "cwd": str(tmp_path)})
+        assert broken_start.is_error is True and "t3-seats.json" in str(broken_start.content)
+        broken_members = await client.call_tool("list_members", {})
+        assert broken_members.is_error is False
+        assert "t3-seats.json" in str(
+            cast(dict[str, Any], broken_members.structured_content).get("orchestration_error")
+        )
+
+        # 11. Toggling enabled=False dynamically restores ordinary tools on the next list_tools.
+        _write_t3_seats({**seats_doc, "enabled": False})
+        restored_decision = {
+            tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+        }
+        assert "start_agent" in restored_decision and "recommend_seat" in restored_decision
+        assert "tasks" not in restored_decision["recommend_seat"].input_schema["properties"]
+        _write_orch("split")
+        restored_split = {
+            tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+        }
+        assert "start_agent" in restored_split and "recommend_seat" not in restored_split
+        _write_orch("decision")
+
+        # 12. T3 main threads wait in the background even with T3 orchestration off.
+        _write_t3_seats({**seats_doc, "enabled": False})
+        _install_fake_claude(tmp_path, monkeypatch)
+        round_res = await client.call_tool(
+            "run_round",
+            {
+                "title": "T3 Meeting",
+                "cwd": str(tmp_path),
+                "members": [
+                    {"id": "a", "provider": "claude"},
+                    {"id": "b", "provider": "claude"},
+                ],
+                "seats": ["a"],
+                "prompt": "SLEEP",
+            },
+        )
+        assert round_res.is_error is False, round_res.content
+        round_payload = cast(dict[str, Any], round_res.structured_content)
+        # Windows keeps the normal wait.
+        waits_in_background = sys.platform != "win32"
+        next_text = str(round_payload["next"])
+        assert ("-I -m agentnave.inbox_watch" in next_text) is waits_in_background
+        assert ("background terminal" in next_text) is waits_in_background
+        await client.call_tool("cancel", {"id": round_payload["round"]["round_id"]})

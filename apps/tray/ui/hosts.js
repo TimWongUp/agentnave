@@ -111,6 +111,7 @@ function sourceText(s) {
   if (s === "store") return L("应用商店", "App store");
   if (s === "package") return L("系统软件包", "System package");
   if (s === "app") return L("应用包", "App bundle");
+  if (s === "t3") return L("T3 Code 配置目录", "T3 Code profile directory");
   return s?.startsWith("/") ? L(`应用：${s}`, `App: ${s}`) : s || "—";
 }
 const spinBtn = (label, cls = "") =>

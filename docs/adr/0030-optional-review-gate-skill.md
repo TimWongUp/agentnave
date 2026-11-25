@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-25
+- T3 主线程的评审工位由 [ADR-0121](0121-t3-code-orchestration.md) 读 T3 工位文件。
 - 外部 Skill 不改动、开关置灰的规则由 [ADR-0036](0036-app-owns-service-skills.md) 修订
 - 评审工位只由 `list_members` 回报及模型须在员工名单内的限制由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊自动套用工位设置，工位默认值豁免名单范围。
 - 同类宿主工位不可用的条款由 [ADR-0037](0037-app-writes-orchestration-rules.md) 修订：标为原生工位，交宿主自带子代理。

@@ -16,6 +16,8 @@ _OPAQUE_FIELDS = frozenset(
         "tool_input",
         "questions",
         "answers",
+        # A T3 delegate_task target is copied verbatim; its empty options mean T3's default effort.
+        "target",
     }
 )
 _BODY_FIELDS = frozenset({"output", "text", "prompt", "tool_input"})

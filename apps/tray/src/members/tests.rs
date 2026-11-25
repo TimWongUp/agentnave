@@ -492,21 +492,120 @@ fn orchestration_role_switches_keep_every_group_and_refuse_bad_lists() {
 
 #[test]
 fn the_decision_mode_and_its_options_are_checked_like_the_other_modes() {
-    let with =
-        |options: Value| json!({"version": 1, "preset": "decision", "decision_options": options});
-    assert!(validate_orchestration(&with(json!({}))).is_ok());
-    assert!(
-        validate_orchestration(&with(json!({"parallel_writes": true, "meetings": false}))).is_ok()
-    );
-    for bad in [
-        json!({"parallel_writes": "yes"}),
-        json!({"lead_only": true}),
-        json!([true]),
-    ] {
-        assert!(validate_orchestration(&with(bad.clone())).is_err(), "{bad}");
+    for (preset, key) in [("split", "split_options"), ("decision", "decision_options")] {
+        let with = |options: Value| json!({"version": 1, "preset": preset, key: options});
+        assert!(validate_orchestration(&with(json!({}))).is_ok());
+        assert!(
+            validate_orchestration(&with(json!({"parallel_writes": true, "meetings": false})))
+                .is_ok()
+        );
+        for bad in [
+            json!({"parallel_writes": "yes"}),
+            json!({"lead_only": true}),
+            json!([true]),
+        ] {
+            assert!(validate_orchestration(&with(bad.clone())).is_err(), "{bad}");
+        }
     }
     let apps = json!({"version": 1, "preset": "off", "apps": {"codex": "decision"}});
     assert!(validate_orchestration(&apps).is_ok());
+    assert!(validate_orchestration(&json!({"version": 1, "preset": "parallel"})).is_err());
+    assert!(
+        validate_orchestration(
+            &json!({"version": 1, "preset": "split", "parallel_options": {"meetings": false}})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn legacy_parallel_preset_migrates_in_memory_and_round_trips_on_save() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join(ORCHESTRATION_FILE);
+
+    // 1. Only parallel: parallel_writes on, meetings defaults to true.
+    let raw_only = json!({"version": 1, "preset": "parallel",
+        "effective_apps": {"claude": "parallel", "codex": "off"}});
+    let raw_bytes = serde_json::to_vec(&raw_only).unwrap();
+    fs::write(&file, &raw_bytes).unwrap();
+    let migrated = read_orchestration(root.path()).unwrap();
+    assert_eq!(
+        migrated,
+        json!({"version": 1, "preset": "split",
+            "effective_apps": {"claude": "split", "codex": "off"},
+            "split_options": {"parallel_writes": true, "meetings": true}})
+    );
+    // Reading never rewrites the file on disk.
+    assert_eq!(fs::read(&file).unwrap(), raw_bytes);
+
+    // Only parallel with meetings explicitly false: false is omitted.
+    let raw_quiet = json!({"version": 1, "preset": "off", "apps": {"codex": "parallel"},
+        "parallel_options": {"meetings": false}});
+    fs::write(&file, serde_json::to_vec(&raw_quiet).unwrap()).unwrap();
+    assert_eq!(
+        read_orchestration(root.path()).unwrap(),
+        json!({"version": 1, "preset": "off", "apps": {"codex": "split"},
+            "split_options": {"parallel_writes": true}})
+    );
+
+    // 2. Both split and parallel: parallel_writes off; meetings only on when both were on.
+    let raw_both_off = json!({"version": 1, "preset": "split", "apps": {"codex": "parallel"}});
+    fs::write(&file, serde_json::to_vec(&raw_both_off).unwrap()).unwrap();
+    assert_eq!(
+        read_orchestration(root.path()).unwrap(),
+        json!({"version": 1, "preset": "split", "apps": {"codex": "split"}})
+    );
+
+    let raw_both_on = json!({"version": 1, "preset": "split", "apps": {"codex": "parallel"},
+        "split_options": {"meetings": true}});
+    fs::write(&file, serde_json::to_vec(&raw_both_on).unwrap()).unwrap();
+    assert_eq!(
+        read_orchestration(root.path()).unwrap(),
+        json!({"version": 1, "preset": "split", "apps": {"codex": "split"},
+            "split_options": {"meetings": true}})
+    );
+
+    let raw_both_mixed = json!({"version": 1, "preset": "split", "apps": {"codex": "parallel"},
+        "split_options": {"meetings": true}, "parallel_options": {"meetings": false}});
+    fs::write(&file, serde_json::to_vec(&raw_both_mixed).unwrap()).unwrap();
+    assert_eq!(
+        read_orchestration(root.path()).unwrap(),
+        json!({"version": 1, "preset": "split", "apps": {"codex": "split"}})
+    );
+
+    // 3. No parallel in preset/apps (effective_apps only): split_options untouched, stale parallel_options dropped.
+    let raw_stale = json!({"version": 1, "preset": "split",
+        "effective_apps": {"codex": "parallel"},
+        "split_options": {"meetings": false}, "parallel_options": {"meetings": false}});
+    fs::write(&file, serde_json::to_vec(&raw_stale).unwrap()).unwrap();
+    assert_eq!(
+        read_orchestration(root.path()).unwrap(),
+        json!({"version": 1, "preset": "split",
+            "effective_apps": {"codex": "split"},
+            "split_options": {"meetings": false}})
+    );
+
+    // Bad parallel_options is still rejected.
+    let raw_bad =
+        json!({"version": 1, "preset": "parallel", "parallel_options": {"meetings": "no"}});
+    fs::write(&file, serde_json::to_vec(&raw_bad).unwrap()).unwrap();
+    assert!(read_orchestration(root.path()).is_err());
+
+    // POST /app/orchestration with legacy parallel is normalized, saved in new form, and round-trips.
+    let reader = Reader::new(root.path().to_path_buf());
+    let response = reader.request(
+        "POST",
+        "/app/orchestration",
+        Some("1"),
+        &serde_json::to_vec(&raw_quiet).unwrap(),
+    );
+    assert_eq!(response.status, 200);
+    let on_disk: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(on_disk["preset"], "off");
+    assert_eq!(on_disk["apps"]["codex"], "split");
+    assert_eq!(on_disk["split_options"], json!({"parallel_writes": true}));
+    assert!(on_disk.get("parallel_options").is_none());
+    assert_eq!(read_orchestration(root.path()).unwrap(), on_disk);
 }
 
 #[test]
@@ -545,9 +644,14 @@ fn app_file_samples_agree_with_the_server() {
         let check: fn(&Value) -> Result<(), String> = match name.as_str() {
             "members" => validate,
             "review" => validate_review,
-            "orchestration" => validate_orchestration,
+            "orchestration" => |document| {
+                let mut document = document.clone();
+                normalize_orchestration(&mut document)?;
+                validate_orchestration(&document)
+            },
             "permissions" => validate_permissions,
             "decision-seats" => crate::decision_seats::validate,
+            "t3-seats" => crate::t3_seats::validate,
             "settings" => |document| crate::settings::validate(document).map(drop),
             "accounts" => crate::accounts::validate,
             other => panic!("no check for {other} samples"),

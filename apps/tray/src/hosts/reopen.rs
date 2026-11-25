@@ -2,6 +2,9 @@
 use super::*;
 
 pub(super) fn instructions(host: &Host) -> Value {
+    if split::is_t3_antigravity_row(host.id) {
+        return json!({"app":"在 T3 Code 新建线程或重启 T3 Code"});
+    }
     match host.boss {
         "claude" => json!({
             "daemon":"停止 Claude 后台服务，释放预热会话的旧连接；这会结束后台会话",

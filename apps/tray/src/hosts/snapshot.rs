@@ -3,8 +3,9 @@ use super::*;
 impl Hosts {
     fn clients(&self, host: &Host) -> Vec<Value> {
         let mut clients = Vec::new();
-        // An extra Codex home proves a configuration exists, not which installed reader uses it.
-        if host.id.starts_with("codex@") {
+        // An extra Codex home or T3 Antigravity profile is read by that specific runtime,
+        // not the generic desktop app or PATH CLI.
+        if host.id.starts_with("codex@") || split::is_t3_antigravity_row(host.id) {
             return clients;
         }
         // A named Claude account is read by the CLI alone; the desktop app keeps its own folder.
@@ -58,6 +59,18 @@ impl Hosts {
                 return (true, source, path);
             }
             return (false, "config", None);
+        }
+        if split::is_t3_antigravity_row(host.id) {
+            let exists = host
+                .root
+                .path
+                .parent()
+                .is_some_and(|dir| dir.join("antigravity-acp").is_dir());
+            return if exists {
+                (true, "t3", None)
+            } else {
+                (false, "config", None)
+            };
         }
         let separate_desktop =
             host.id == "claude" && self.registry().iter().any(|row| row.id == "claude-desktop");
@@ -191,7 +204,8 @@ impl Hosts {
         } else if !host.root.confirmed
             || (self.shell.as_ref().is_some_and(Result::is_err)
                 && !self.manual_roots.contains(host.id)
-                && !split::is_account_row(host.id))
+                && !split::is_account_row(host.id)
+                && !split::is_t3_antigravity_row(host.id))
         {
             Some(attention(
                 "root_unconfirmed",

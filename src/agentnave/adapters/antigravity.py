@@ -30,6 +30,31 @@ from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivi
 
 _LABEL = re.compile(rb'Propagating selected model override to backend: label="([^"\n]{1,80})"')
 _LABEL_TEXT = re.compile(r"([A-Za-z0-9.]+(?: [A-Za-z0-9.]+)*)(?: \(([A-Za-z0-9 ]+)\))?")
+# Per-session / parent-daemon variables exported by an outer Antigravity (or T3 ACP) host.
+_HOST_SESSION_ENV = (
+    "ANTIGRAVITY_AGENT",
+    "ANTIGRAVITY_AGENTAPI_EXE",
+    "ANTIGRAVITY_APP_DATA_DIR",
+    "ANTIGRAVITY_CONVERSATION_ID",
+    "ANTIGRAVITY_CSRF_TOKEN",
+    "ANTIGRAVITY_LS_ADDRESS",
+    "ANTIGRAVITY_LS_VERSION",
+    "ANTIGRAVITY_PROJECT_ID",
+    "ANTIGRAVITY_SOURCE_METADATA",
+    "ANTIGRAVITY_TRAJECTORY_ID",
+    "AGY_ACP_FORCE_FILE_STORAGE",
+)
+
+
+def _antigravity_unset_env() -> tuple[str, ...]:
+    """Strip parent Antigravity host session vars, plus T3 Code's isolated GEMINI_HOME."""
+    app_data = os.environ.get("ANTIGRAVITY_APP_DATA_DIR", "").strip()
+    in_t3_acp = Path(app_data).name == "antigravity-acp" or bool(
+        os.environ.get("AGY_ACP_FORCE_FILE_STORAGE", "").strip()
+    )
+    if in_t3_acp:
+        return (*_HOST_SESSION_ENV, "GEMINI_HOME")
+    return _HOST_SESSION_ENV
 
 
 def session_model(conversation_id: str | None, *, since: datetime) -> str | None:
@@ -195,7 +220,13 @@ class AntigravityAdapter(AdapterHooks):
                     "--disable-slash-commands=true",
                 )
             )
-        return PreparedCommand(tuple(argv), request.cwd, prompt, capture_line=_result_capture())
+        return PreparedCommand(
+            tuple(argv),
+            request.cwd,
+            prompt,
+            capture_line=_result_capture(),
+            unset_env=_antigravity_unset_env(),
+        )
 
     def _prepare_interactive(self, request: InvocationRequest) -> PreparedCommand:
         """Only with permissions skipped: the runtime answers no permission dialog (ADR-0072)."""
@@ -209,6 +240,7 @@ class AntigravityAdapter(AdapterHooks):
             request.cwd,
             prompt.encode(),
             capture_line=_result_capture(),
+            unset_env=_antigravity_unset_env(),
             model_from_result_only=True,
         )
 
@@ -237,6 +269,7 @@ class AntigravityAdapter(AdapterHooks):
         return UsageQuery(
             (self.executable_path(), "-p", "/usage"),
             lambda output, now: antigravity_reset(output.decode(errors="replace"), model, now),
+            unset_env=_antigravity_unset_env(),
         )
 
     def activity(self, event: dict[str, object]) -> ProviderActivity | None:

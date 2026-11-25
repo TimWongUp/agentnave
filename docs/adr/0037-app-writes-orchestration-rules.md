@@ -2,6 +2,7 @@
 
 - 状态：部分取代
 - 日期：2026-10-30
+- T3 编排开启时，分工协作、决策模型、自定义档的规则块多一段 T3 派法，由 [ADR-0121](0121-t3-code-orchestration.md) 修订。
 - 取代 [ADR-0024](0024-consolidated-tools-and-private-review.md) 中“App 只给可复制模板、不创建或写入全局规则文件”的条款；为 [ADR-0029](0029-settings-without-free-text.md) 增加唯一的手填例外。不改变 [ADR-0031](0031-prompt-only-orchestration.md)：编排仍只靠规则文字约束 boss，服务不加调度。
 - 一档对全部宿主生效的条款由 [ADR-0041](0041-orchestration-mode-per-boss.md) 取代
 - 工位只由 `list_members` 回报的条款由 [ADR-0038](0038-role-applies-app-seat.md) 修订：私聊自动套用工位设置。
@@ -11,6 +12,7 @@
 - 预设正文写工位用法、按任务难度二选一的条款由 [ADR-0068](0068-rules-hold-authorization-skill-holds-method.md) 修订：规则块只放授权，方法进 Skill。
 - 编排档位由 [ADR-0083](0083-meetings-only-preset.md) 扩展：在「关闭」与「分工协作」之间增加「只开会」。
 - 「决策模型」档下「服务不加调度」的适用范围由 [ADR-0087](0087-decision-model-recommends-seats.md) 修订：服务可按 boss 请求推荐工位，派发仍由 boss 发起。
+- 档位集合（分工协作与并行分工合并）由 [ADR-0122](0122-merge-split-and-parallel-presets.md) 修订。
 
 ## 背景
 

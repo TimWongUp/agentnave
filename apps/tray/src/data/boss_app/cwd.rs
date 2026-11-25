@@ -354,9 +354,11 @@ fn antigravity_cwd(boss: &Boss, homes: &Homes) -> Option<String> {
     }
     let cli_roots = antigravity::roots(homes);
     let desktop_roots = antigravity::desktop_roots(&cli_roots);
+    let acp_roots = antigravity::acp_roots(homes);
     cli_roots
         .iter()
         .chain(desktop_roots.iter())
+        .chain(acp_roots.iter())
         .find_map(|root| query(root, &boss.key))
 }
 

@@ -449,6 +449,9 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "HERDR_SESSION",
         "HERDR_SOCKET",
         "Herdr_Pane_Id",
+        "T3CODE_THREAD_ID",
+        "T3CODE_HOME",
+        "T3code_Thread_Id",
         "TERM_PROGRAM",
     ] {
         assert!(parent_session(name), "{name}");
@@ -459,6 +462,8 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
         "CODEBUDDY_CONFIG_DIR",
         "HERDR",
         "MY_HERDR_FLAG",
+        "T3CODE",
+        "MY_T3CODE_FLAG",
         "HOME",
         "PATH",
     ] {
@@ -468,15 +473,25 @@ fn a_parent_session_is_not_passed_on_but_the_users_settings_are() {
     let mut cmd = portable_pty::CommandBuilder::new("/bin/sh");
     cmd.env("HERDR_PANE_ID", "pane-1");
     cmd.env("HERDR_SESSION", "sess-1");
+    cmd.env("T3CODE_THREAD_ID", "thread-1");
+    cmd.env("T3CODE_HOME", "/tmp/t3");
     cmd.env("KEEP_ME", "ok");
     super::session::strip_parent_session(
         &mut cmd,
-        ["HERDR_PANE_ID", "HERDR_SESSION", "KEEP_ME"]
-            .into_iter()
-            .map(std::ffi::OsString::from),
+        [
+            "HERDR_PANE_ID",
+            "HERDR_SESSION",
+            "T3CODE_THREAD_ID",
+            "T3CODE_HOME",
+            "KEEP_ME",
+        ]
+        .into_iter()
+        .map(std::ffi::OsString::from),
     );
     assert_eq!(cmd.get_env("HERDR_PANE_ID"), None);
     assert_eq!(cmd.get_env("HERDR_SESSION"), None);
+    assert_eq!(cmd.get_env("T3CODE_THREAD_ID"), None);
+    assert_eq!(cmd.get_env("T3CODE_HOME"), None);
     assert_eq!(cmd.get_env("KEEP_ME").and_then(|v| v.to_str()), Some("ok"));
 }
 
@@ -521,6 +536,76 @@ fn a_relay_under_a_terminal_names_its_workspaces() {
     relay.wait().unwrap();
     assert_eq!(found.get(&7), Some(&vec!["s-handed".to_owned(), older]));
     assert_eq!(found.get(&8), None);
+}
+
+/// A relay at least two hops below a terminal's CLI is bound to it by walking the ancestry a
+/// generation at a time; a relay under an unrelated process is not, and no terminals bind nothing.
+#[cfg(unix)]
+#[test]
+fn bosses_binds_a_relay_two_hops_below_its_terminal() {
+    let root = tempfile::tempdir().unwrap();
+    let key = format!("s-{}", "d".repeat(32));
+    let connections = root.path().join("connections");
+    std::fs::create_dir_all(&connections).unwrap();
+    let pid_file = root.path().join("relay.pid");
+    // The outer shell stays resident, so `sleep` is a grandchild of this process standing in for
+    // a terminal's CLI instead of being exec-optimised into it.
+    let mut shell = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            &format!("sleep 30 & echo $! > '{}'; wait", pid_file.display()),
+        ])
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let relay = loop {
+        let appeared = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+            .filter(|pid| {
+                super::links::snapshot(&[*pid])
+                    .process(sysinfo::Pid::from_u32(*pid))
+                    .is_some()
+            });
+        if let Some(pid) = appeared {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "relay process never appeared");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let parent = super::links::snapshot(&[relay])
+        .process(sysinfo::Pid::from_u32(relay))
+        .and_then(|process| process.parent())
+        .expect("relay parent");
+    let grandparent = super::links::snapshot(&[parent.as_u32()])
+        .process(parent)
+        .and_then(|process| process.parent())
+        .expect("shell parent");
+    assert_ne!(parent.as_u32(), std::process::id());
+    assert_eq!(grandparent.as_u32(), std::process::id());
+
+    std::fs::write(
+        connections.join(format!("{relay}-x.json")),
+        serde_json::json!({"host": "codex", "bosses": [&key]}).to_string(),
+    )
+    .unwrap();
+
+    let mut bystander = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    assert_eq!(
+        super::links::bosses(root.path(), &[(7, std::process::id())]).get(&7),
+        Some(&key)
+    );
+    assert!(super::links::bosses(root.path(), &[(8, bystander.id())]).is_empty());
+    assert!(super::links::bosses(root.path(), &[]).is_empty());
+
+    bystander.kill().unwrap();
+    bystander.wait().unwrap();
+    unsafe { libc::kill(relay as i32, libc::SIGKILL) };
+    let _ = shell.kill();
+    let _ = shell.wait();
 }
 
 /// Confirmed workspaces stay attached to a terminal across relay exit and CLI exit (latest last)

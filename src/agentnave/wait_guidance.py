@@ -337,24 +337,55 @@ def watch_command(root: Path, pid: int, started_at: float, boss_key: str) -> str
     return shlex.join(argv)
 
 
+_WATCH_OUTCOMES = (
+    "On `ready` or `expired`, call inbox wait(wait_seconds=0) with the same "
+    "manager_session_id (if work remains pending, follow its next); on "
+    "`already_watching` or `all_done`, end this turn; on `service_gone`, check this "
+    "connection with wait(wait_seconds=0) or list."
+)
+
+
 def watch_guidance(command: str, *, cli: WatchHostName = "antigravity", again: bool = False) -> str:
-    outcomes = (
-        "On `ready` or `expired`, call inbox wait(wait_seconds=0) with the same "
-        "manager_session_id (if work remains pending, follow its next); on "
-        "`already_watching` or `all_done`, end this turn; on `service_gone`, check this "
-        "connection with wait(wait_seconds=0) or list."
-    )
     if cli == "grok":
         body = (
             "run this command verbatim via run_terminal_command with block_until_ms: 0 so it "
             f"moves to the background immediately (do not call a blocking wait): {command}. "
-            f"When it exits, handle its output immediately. {outcomes}"
+            f"When it exits, handle its output immediately. {_WATCH_OUTCOMES}"
         )
     else:
         body = (
             "run this command verbatim (it moves to the background automatically after 10s; do "
             f"not call a blocking wait): {command}. If it returns in the foreground within 10s, "
-            f"handle its output immediately without waiting for a background wake-up. {outcomes}"
+            f"handle its output immediately without waiting for a background wake-up. {_WATCH_OUTCOMES}"
+        )
+    if again:
+        return (
+            "Still pending: reply to any new user message first, and handle any prompt_pending or "
+            f"review_needed, then {body}"
+        )
+    return body[0].upper() + body[1:]
+
+
+def t3_watch_guidance(
+    command: str, *, host_name: Literal["claude", "codex"], again: bool = False
+) -> str:
+    """Background inbox_watch guidance for Claude and Codex main threads in T3 Code (ADR-0121)."""
+    early_return = (
+        "If it returns early (for example on a stall reminder, prompt_pending, or review_needed), "
+        "handle that update and start the watch command again while work remains pending."
+    )
+    if host_name == "claude":
+        body = (
+            "run this command verbatim with Bash (run_in_background=true, timeout=7200000; do not "
+            f"call a blocking wait): {command}. Then call t3-code's t3_background_wait with its "
+            "returned task ID and end your turn — T3 will wake you when the command exits. "
+            f"{early_return} {_WATCH_OUTCOMES}"
+        )
+    else:
+        body = (
+            "run this command verbatim in a background terminal and end your turn without polling "
+            f"(do not call a blocking wait): {command}. T3 will wake you when the command exits. "
+            f"{early_return} {_WATCH_OUTCOMES}"
         )
     if again:
         return (
@@ -374,8 +405,12 @@ def build_wait_guidance(
     again: bool = False,
     can_push: Callable[[Path, str | None], bool] = app_can_push,
     watch_supported: Callable[[str], bool] = watch_host_cli_supported,
+    t3_main: bool = False,
 ) -> str:
-    """Select receipt `next` text according to host self-wake capabilities (ADR-0114)."""
+    """Select receipt `next` text according to host self-wake capabilities (ADR-0114, ADR-0121)."""
+    if t3_main and host.name in ("claude", "codex") and boss_key is not None:
+        cmd = watch_command(root, pid, started_at, boss_key)
+        return t3_watch_guidance(cmd, host_name=host.name, again=again)
     if host.name == "claude":
         if os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli":
             if claude_background_disabled():

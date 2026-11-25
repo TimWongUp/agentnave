@@ -35,7 +35,7 @@ STRIP_ENV = (
 )
 
 
-STRIP_ENV_PREFIXES = ("HERDR_",)
+STRIP_ENV_PREFIXES = ("HERDR_", "T3CODE_")
 
 
 def _stripped_env(name: str) -> bool:

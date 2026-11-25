@@ -32,6 +32,8 @@ mod rules;
 mod settings;
 mod stage;
 mod storage;
+mod t3_models;
+mod t3_seats;
 mod terminal;
 mod time_format;
 mod tool_dirs;
@@ -548,6 +550,7 @@ mod tests {
             ("POST", "/app/members"),
             ("POST", "/app/decision-seats"),
             ("POST", "/app/decision-key"),
+            ("POST", "/app/t3-seats"),
             ("POST", "/app/provider-health/clear"),
             ("POST", "/app/accounts/create"),
             ("POST", "/app/accounts/link"),
@@ -596,6 +599,7 @@ mod tests {
         }
         assert!(preview_refuses(true, "POST", "/app/voice/unknown"));
         assert!(!preview_refuses(true, "GET", "/settings/members"));
+        assert!(!preview_refuses(true, "GET", "/app/t3-seats"));
         assert!(!preview_refuses(true, "GET", "/app/accounts"));
         assert!(!preview_refuses(true, "GET", "/app/accounts/status?id=a1"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
