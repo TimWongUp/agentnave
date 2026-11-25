@@ -1982,6 +1982,27 @@ def test_t3_seats_file_strict_validation_and_activation(
     doc = T3SeatsFile.model_validate(valid)
     assert doc.is_active()
 
+    # Image seats are write-only, carry no difficulty (null or absent), and repeat by specialty.
+    image_seats = T3SeatsFile.model_validate(
+        {
+            "version": 1,
+            "seats": [
+                {**valid["seats"][2], "difficulty": None},
+                {
+                    "id": "artist-photo",
+                    "kind": "image",
+                    "role": "写实",
+                    "description": "写实照片",
+                    "access": "write",
+                },
+            ],
+        }
+    )
+    assert [(seat.role, seat.difficulty) for seat in image_seats.seats] == [
+        ("画图", None),
+        ("写实", None),
+    ]
+
     # Active when only review has candidates; inactive when enabled=False or all 0 candidates.
     review_only = T3SeatsFile.model_validate(
         {

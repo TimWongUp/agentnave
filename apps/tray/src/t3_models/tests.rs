@@ -71,7 +71,6 @@ fn whitelist_strips_private_auth_fields_and_filters_instances_models_and_options
                 {
                     "slug": "claude-opus-4-6",
                     "name": "Claude Opus 4.6",
-                    "aliases": ["opus", "claude-opus"],
                     "isDefault": true,
                     "isLegacy": false,
                     "capabilities": {
@@ -213,7 +212,6 @@ fn whitelist_strips_private_auth_fields_and_filters_instances_models_and_options
     assert_eq!(claude["name"], "Claude Code");
     let opus = &claude["models"][0];
     assert_eq!(opus["slug"], "claude-opus-4-6");
-    assert_eq!(opus["aliases"], json!(["opus", "claude-opus"]));
     assert_eq!(opus["default"], true);
     assert_eq!(opus["legacy"], false);
     assert_eq!(opus["hidden"], false);

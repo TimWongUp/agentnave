@@ -50,7 +50,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - Provider 进程不继承 boss 的宿主身份与连接标识（`AGENTNAVE_HOST`、`AGENTNAVE_HOST_APP`、`AGENTNAVE_HOST_SESSION_ID`、`AGENTNAVE_EXCLUDED_PROVIDERS` 及中继的连接会话变量），中继代表的宿主只来自子 CLI 自己 MCP 条目的环境，服务的宿主识别仍可回退到祖先进程（[ADR-0096](../adr/0096-auto-heal-legacy-self-exclusion-and-recovered-faults.md)）。T3 的 `T3CODE_` 变量同样不传给 Provider 进程与托盘终端（[ADR-0121](../adr/0121-t3-code-orchestration.md)）。
 - Provider 进程不继承 `CLAUDE_CODE_OAUTH_TOKEN` 与宿主会话变量（覆盖交互与 `-p` 全路径），Claude 子代理一律用各自配置目录中 Claude Code 自己存的登录，不随 boss 宿主变化；AgentNave 不保存、不读取 Claude 凭据，保留 `ANTHROPIC_API_KEY`／`ANTHROPIC_AUTH_TOKEN`／自定义网关变量（共存派发附 warning，[ADR-0058](../adr/0058-claude-stored-login.md)、[ADR-0108](../adr/0108-multi-account-isolation.md)）。默认账号启动时不设也不清账号环境变量，原样继承服务进程环境；具名账号由服务在启动、权限回退、用量探测与结果回读全链路透传对应账号环境变量，不改服务自身环境。
 
-生图工位沿用普通 CLI 调用边界：App 选择对话 CLI 与模型，Provider CLI 拥有其生图工具、服务访问和产物生成；AgentNave 不维护生图模型目录或直接调用生图接口。同类 CLI 的宿主不接收生图工位；生图规则也不写进它会读取的规则文件，共享文件按所有读取方约束。
+生图工位沿用普通 CLI 调用边界：App 选择对话 CLI 与模型，Provider CLI 拥有其生图工具、服务访问和产物生成；AgentNave 不维护生图模型目录或直接调用生图接口。同类 CLI 的宿主不接收生图工位；生图规则也不写进它会读取的规则文件，共享文件按所有读取方约束。T3 主线程的生图工位来自 T3 工位目录，由 T3 执行，不做同类宿主处理（[ADR-0121](../adr/0121-t3-code-orchestration.md)）。
 
 ## Provider Adapter
 

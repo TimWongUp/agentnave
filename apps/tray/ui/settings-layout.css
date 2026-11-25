@@ -196,7 +196,7 @@ label.s-label { cursor: pointer; }
 }
 @media (max-width: 1020px) {
   .s-seat:has(> .ds-remove) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .s-seat:has(> .ds-remove) > .ds-remove { grid-column: auto; }
+  .s-seat:has(> .ds-remove) > :is(.ds-remove, .t3-seat-action) { grid-column: auto; }
 }
 @media (max-width: 980px) {
   .s-seat { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

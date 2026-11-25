@@ -25,6 +25,7 @@ from agentnave.members import (
     read_members,
 )
 from agentnave.members import list_members as read_member_list
+from agentnave.orchestration_roles import IMAGE_KIND
 from agentnave.t3 import current_t3_mode
 from agentnave.t3_recommend import (
     MAX_T3_TASKS,
@@ -77,8 +78,7 @@ _RECOMMEND_DESC_DECISION = (
     "With 1–8 tasks in decision mode, omit seat so the decision model picks among usable task "
     "seats with matching access (skipped when only one fits), or pass explicit seat (fixed role "
     "name such as worker-easy, custom T3 seat id from the catalog, or review role name) to skip "
-    "the decision model. T3 has no image generation seat: do not dispatch image generation "
-    "tasks—tell the user directly instead of substituting another writable seat. Returns ordered "
+    "the decision model. {image} Returns ordered "
     "T3 targets (options always included, [] when none), a uuid4 clientRequestId, and read-only "
     "brief_suffix when access='read'. Errors start with a code: seat_required, not_enabled, "
     "config_error, no_key, network, rate_limited, auth, rejected, or bad_response. Follow "
@@ -93,8 +93,7 @@ _RECOMMEND_DESC_BOSS = (
     "boss chooses seats: pass seat on every item using a fixed role name (such as worker-easy "
     "or explorer-web-hard), a custom T3 seat id from the catalog returned by recommend_seat(), "
     "or a review role name; omitting seat fails with seat_required and lists available seats "
-    "without calling any decision model. T3 has no image generation seat: do not dispatch image "
-    "generation tasks—tell the user directly instead of substituting another writable seat. "
+    "without calling any decision model. {image} "
     "Returns ordered T3 targets (options always included, [] when none), a uuid4 "
     "clientRequestId, and read-only brief_suffix when access='read'. Errors start with a code: "
     "seat_required, not_enabled, config_error. Follow receipt next to call T3's delegate_task "
@@ -107,6 +106,30 @@ _LIST_MEMBERS_DESC = (
     "meetings, not for dispatching tasks or reviews. To inspect T3 task seats and review "
     "roles, call recommend_seat() without tasks."
 )
+
+# The recommendation description names image seats only once the catalog holds one with a model.
+_NO_IMAGE_SEAT_HINT = (
+    "T3 has no image generation seat: do not dispatch image generation tasks—tell the user "
+    "directly instead of substituting another writable seat."
+)
+_IMAGE_SEAT_HINT = (
+    "For image generation use access='write', state image generation and style at the start of "
+    "task, and pick only a kind=image seat (decision mode may choose among them; otherwise pass "
+    "its seat id); do not substitute another seat. In the brief give the absolute output path and "
+    "allow the child's own image tool or native image subagent."
+)
+
+
+def _has_candidate_image_seat(doc: T3SeatsFile | None) -> bool:
+    return doc is not None and any(
+        seat.kind == IMAGE_KIND and seat.candidates for seat in doc.seats
+    )
+
+
+def _recommend_description(mode: T3OrchestrationMode, doc: T3SeatsFile | None) -> str:
+    base = _RECOMMEND_DESC_DECISION if mode == "decision" else _RECOMMEND_DESC_BOSS
+    hint = _IMAGE_SEAT_HINT if _has_candidate_image_seat(doc) else _NO_IMAGE_SEAT_HINT
+    return base.format(image=hint)
 
 
 def t3_main_instructions(mode: T3OrchestrationMode) -> str:
@@ -267,13 +290,15 @@ def t3_dispatch_refusal(tool_name: str, arguments: Mapping[str, Any]) -> str:
     )
 
 
-def t3_tool_definition(tool: Tool, mode: T3OrchestrationMode) -> MCPTool:
+def t3_tool_definition(
+    tool: Tool, mode: T3OrchestrationMode, doc: T3SeatsFile | None = None
+) -> MCPTool:
     """Build the published MCPTool representation for a T3-specific tool in the active mode."""
     schema = json.loads(json.dumps(tool.parameters))
     schema["additionalProperties"] = False
     output = json.loads(json.dumps(tool.output_schema)) if tool.output_schema else None
     if tool.name == "recommend_seat":
-        description = _RECOMMEND_DESC_DECISION if mode == "decision" else _RECOMMEND_DESC_BOSS
+        description = _recommend_description(mode, doc)
     elif tool.name == "list_members":
         description = _LIST_MEMBERS_DESC
     else:
