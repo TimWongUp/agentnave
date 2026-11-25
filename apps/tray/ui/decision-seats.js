@@ -22,6 +22,7 @@
 
   let saved = null; // { document | null, error, key_set, keys, key_previews, key_error, providers } from GET /app/decision-seats.
   let lastGoodDoc = undefined; // Last successfully loaded/saved document; error reloads do not clear providerDrafts.
+  let loadSeq = 0; // Stale GET /app/decision-seats replies arriving after a newer load or save are dropped.
   let sourceDraft = null; // { provider, model, base_url } when the source differs from saved; else null.
   const providerDrafts = new Map(); // provider -> { provider, model, base_url } kept while browsing other platforms in this draft.
   const catalogs = new Map(); // `${provider}|${base_url}` -> { state: "loading" | "ready" | "error", models, error }
@@ -313,10 +314,12 @@
   }
 
   async function load() {
+    const seq = ++loadSeq;
     try {
       const response = await fetch("/app/decision-seats", { cache: "no-store" });
       if (!response.ok) throw new Error(L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
       const loaded = await response.json();
+      if (seq !== loadSeq) return;
       const keep = changed();
       // A file error while an unsaved draft stands keeps the last good baseline.
       if (!(loaded.error && keep)) saved = loaded;
@@ -333,6 +336,7 @@
       }
       if (!loaded.error) lastGoodDoc = loaded.document;
     } catch (error) {
+      if (seq !== loadSeq) return;
       S.showNotice(L(`无法读取决策模型推荐工位设置：${error.message}`, `Failed to load decision-model seat settings: ${error.message}`), true);
     }
     render();
@@ -348,6 +352,7 @@
       if (!old || old.provider !== seat.provider || old.model !== seat.model || !sameJson(old.fallbacks || [], seat.fallbacks || [])) await S.listSeatModel(seat);
     }
     await post("/app/decision-seats", doc);
+    loadSeq++;
     saved = { ...saved, document: doc, error: null };
     lastGoodDoc = doc;
     draft = null;

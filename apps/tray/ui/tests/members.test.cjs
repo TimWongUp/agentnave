@@ -1884,6 +1884,33 @@ test("switching platforms keeps unsaved custom model draft, and delayed TypeSafe
   assert.equal(calls.filter((call) => call.url.startsWith("/app/decision-models")).length, afterOllama);
 });
 
+test("out-of-order GET /app/decision-seats replies never roll back saved state or clear in-session drafts", async () => {
+  const pending = [];
+  const app = advancedEditor(async (url) => {
+    if (url === "/app/decision-seats") return new Promise((resolve) => pending.push(resolve));
+    return { ok: true, json: async () => ({ models: [] }) };
+  });
+  app.run(`orchestration = { error: null, files: [], bosses: [{ keys: ["codex"], ids: ["codex"], labels: ["Codex"], mark: "codex" }], roles: [], document: { version: 1, preset: "decision", enabled_roles: [] } };`);
+  app.load("seat-rows.js");
+  app.load("decision-seats.js");
+  app.run('orchestration.presets = { decision: "decision" }; viewMode("decision");');
+  const decision = (code) => app.run(`(${code})(window.AgentNaveDecisionSeats)`);
+  const docA = { version: 1, decision_model: "gemini-decision-1", seats: [] };
+  const docB = { version: 1, decision_model: "gemini-decision-1", random_candidates: true, seats: [] };
+  const loadA = decision((d) => d.load());
+  const loadB = decision((d) => d.load());
+  pending[1]({ ok: true, json: async () => PLATFORM_FILE(docB) });
+  await loadB;
+  control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
+  control(app, "decision/model-id").listeners.input({ target: { value: "my-custom" } });
+  control(app, "decision/provider").listeners.change({ target: { value: "gemini" } });
+  pending[0]({ ok: true, json: async () => PLATFORM_FILE(docA) });
+  await loadA;
+  assert.equal(decisionFile(app).random_candidates, true, "stale reply A ignored");
+  control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
+  assert.equal(decisionFile(app).decision_model, "my-custom", "in-session draft preserved");
+});
+
 test("a local Ollama and a custom endpoint take an address, which is checked before saving", async () => {
   const { app, calls, decision } = decisionEditor("decision", PLATFORM_FILE(), null, (url) => (url.searchParams.get("provider") === "custom" ? { error: "模型目录返回 404" } : { models: [{ id: "system-one:1b", name: "system-one:1b" }] }));
   await decision((d) => d.load());
