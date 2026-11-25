@@ -3584,6 +3584,7 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   const menus = [];
   const navigated = [];
   let nextAsk = { value: "stop" };
+  const visibility = [];
   let wakeFail = false;
   let wakeGate = null; // holds a wake / open-derived response until released
   let elsewhere = false; // the first attach is refused: the chat is open in another app
@@ -3632,6 +3633,7 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
     activities: () => [],
     ongoing: s => s || "idle",
     isHidden: () => docHidden,
+    onVisibility: fn => visibility.push(fn),
     reducedMotion: { matches: false },
   };
   const FakeDate = class extends Date {
@@ -3884,6 +3886,28 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   assert.equal(termMode(), true);
   elsewhere = false;
   nextAsk = { value: "stop" };
+
+  // a terminal left on screen continues when the window comes back to find its process ended; one
+  // that ended while the reader was looking does not
+  const ended = () => { const x = sessions.find(v => v.id === 15); x.exit = 0; x.derived_state = "dormant"; };
+  for (const away of [true, false]) {
+    sessions.find(v => v.id === 15).exit = null;
+    sessions.find(v => v.id === 15).derived_state = "idle";
+    await context.ChatTerminal.refresh();
+    context.ChatTerminal.column("term-15", "codex", "codex");
+    const before = wakes();
+    if (away) {
+      docHidden = true;
+      visibility.forEach(fn => fn());
+      docHidden = false;
+      visibility.forEach(fn => fn());
+    }
+    ended();
+    await context.ChatTerminal.refresh();
+    await flush();
+    assert.equal(wakes() - before, away ? 1 : 0);
+  }
+  await redormant();
 
   // a desk with no terminal row opens through open-derived with the same attach params
   context.state.selected = context.state.loaded = "ws-1";

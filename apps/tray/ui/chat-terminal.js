@@ -19,7 +19,11 @@ const ChatTerminal = (() => {
     waking: new Map(), // derived sessions being brought back: terminal id (or desk) -> { open: show the terminal when done }
     shown: null,
     openOnce: null,
+    away: false, // the window was hidden since the list was last read
   };
+  AN.onVisibility?.(() => {
+    if (AN.isHidden()) t.away = true;
+  });
   const TERM_FONT = '13px "SF Mono", Menlo, Monaco, Consolas, "Noto Sans Mono CJK SC", monospace';
   const CELL_HEIGHT = Math.ceil(13 * 1.3);
   const PAD_X = 24;
@@ -117,6 +121,14 @@ const ChatTerminal = (() => {
     return t.shown;
   }
 
+  // A derived terminal left on screen while the window was hidden continues by itself if its
+  // process ended meanwhile; one the reader ended while looking stays ended.
+  function continueShown(before) {
+    const away = t.away;
+    t.away = false;
+    const x = away && before?.derived && derivedStateOf(before) !== "dormant" ? byId(before.id) : null;
+    if (x && derivedStateOf(x) === "dormant") void revive({ id: x.id, group: state.loaded, deskKey: openDeskKey() });
+  }
   async function refresh() {
     const gen = ++t.listGen;
     let current;
@@ -128,8 +140,10 @@ const ChatTerminal = (() => {
       return; // keep what is shown
     }
     if (gen !== t.listGen) return;
+    const before = shownId != null && byId(shownId);
     t.list = current.sessions;
     t.cwd = current.cwd;
+    continueShown(before);
     const now = new Date().toISOString();
     for (const x of t.list) if (!t.since.has(x.id)) t.since.set(x.id, now);
     for (const id of t.frames.keys()) if (!byId(id)) dropFrame(id);
