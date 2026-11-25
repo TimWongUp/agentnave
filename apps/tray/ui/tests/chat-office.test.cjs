@@ -1761,6 +1761,41 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
     assert.equal(calls.length, before, "cancelling must not stop");
   }
 
+  // Derived terminal confirmation rules: idle stops & closes directly; busy/blocked confirm on both stop & close; running members add warning.
+  sessions = [
+    ...sessions,
+    { id: 10, provider: "codex", cwd: "/repo/d1", exit: null, active: false, derived: true, derived_busy: false, blocked_kind: null, workspaces: [], display_title: null },
+    { id: 11, provider: "codex", cwd: "/repo/d2", exit: null, active: true, derived: true, derived_busy: true, blocked_kind: null, workspaces: [], display_title: null },
+    { id: 12, provider: "codex", cwd: "/repo/d3", exit: null, active: false, derived: true, derived_busy: false, blocked_kind: "permission", workspaces: [], display_title: null },
+    { id: 13, provider: "codex", cwd: "/repo/d4", exit: null, active: false, derived: true, derived_busy: false, blocked_kind: null, workspaces: ["ws-busy"], display_title: null },
+  ];
+  await context.ChatTerminal.refresh();
+  asks.length = 0;
+  await context.ChatTerminal.stop(10);
+  await context.ChatTerminal.close(10);
+  assert.equal(asks.length, 0);
+  assert.deepEqual(calls.slice(-2), ["/app/terminal/stop?session=10", "/app/terminal/close?session=10"]);
+
+  nextAnswer = null;
+  for (const [id, op] of [[11, "stop"], [11, "close"], [12, "stop"], [12, "close"]]) {
+    asks.length = 0;
+    const before = calls.length;
+    await context.ChatTerminal[op](id);
+    assert.equal(asks.length, 1);
+    assert.ok(asks[0].body.some(p => p.textContent.includes("这一轮还没做完，结束后会按中断回报给 boss。")));
+    assert.equal(asks[0].body.some(p => p.textContent.includes("还没有派过活")), false);
+    assert.equal(calls.length, before, `cancelling derived ${op} must not post`);
+  }
+  nextAnswer = { value: "stop" };
+  await context.ChatTerminal.close(11);
+  assert.equal(calls.at(-1), "/app/terminal/close?session=11");
+
+  nextAnswer = null;
+  asks.length = 0;
+  await context.ChatTerminal.stop(13);
+  assert.equal(asks.length, 1);
+  assert.ok(asks[0].body.some(p => p.textContent.includes("仍有组员在运行")));
+
   // Exited postMessage updates header immediately.
   context.ChatTerminal.column("ws-idle", "claude");
   assert.equal(stopButton.textContent, "结束终端");
@@ -3032,7 +3067,7 @@ test("ChatGit never renders literal null in hover card or clean git badge", () =
   assert.equal(hasLiteralNull(gitOnlyRec.prBadge), false);
 
   // Hover card with git only (no PRs) must not render "null" at bottom.
-  gitOnlyRec.prBadge.fire("pointerenter");
+  gitOnlyRec.prBadge.fire("click");
   const card = bodyChildren.find((n) => n.className === "git-pr-card");
   assert.ok(card && !card.hidden);
   assert.equal(hasLiteralNull(card), false);
@@ -3040,7 +3075,7 @@ test("ChatGit never renders literal null in hover card or clean git badge", () =
   // Hover card with PRs only (git: null) must not render "null" at top.
   const prsOnlyRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
   ChatGit.decorateItem(prsOnlyRec, { group: "ws-prs-only", cli_session: true });
-  prsOnlyRec.prBadge.fire("pointerenter");
+  prsOnlyRec.prBadge.fire("click");
   assert.equal(hasLiteralNull(card), false);
 });
 
@@ -3270,4 +3305,199 @@ test("renderMarkdown renders http(s) as external anchors, file:// as text withou
   const chatCss = readFileSync(`${__dirname}/../chat.css`, "utf8");
   assert.match(chatCss, /\.md a\s*\{/);
   assert.match(chatCss, /\.md \.md-file\s*\{/);
+});
+
+test("ChatGit delays hover open by 400ms, cancels on leave/hide/detach, switches cleanly, and keeps click/keyboard immediate", () => {
+  const docListeners = {};
+  const bodyChildren = [];
+  const mkNode = (tag, attributes = {}, ...children) => ({
+    tag,
+    tagName: tag.split(".")[0].toUpperCase(),
+    className: tag.split(".").slice(1).join(" "),
+    attributes: { ...attributes },
+    hidden: Boolean(attributes.hidden),
+    isConnected: false,
+    children: children.flat(Infinity).filter((x) => x != null && x !== false),
+    listeners: {},
+    style: {},
+    textContent: "",
+    setAttribute(k, v) { this.attributes[k] = v; },
+    getAttribute(k) { return this.attributes[k] ?? null; },
+    hasAttribute(k) { return Object.hasOwn(this.attributes, k); },
+    removeAttribute(k) { delete this.attributes[k]; },
+    addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
+    fire(name, ev = {}) {
+      const event = { target: this, preventDefault() {}, stopPropagation() {}, ...ev };
+      for (const fn of this.listeners[name] || []) fn(event);
+    },
+    append(...items) { this.children.push(...items.flat(Infinity).filter((x) => x != null && x !== false)); },
+    replaceChildren(...items) { this.children = items.flat(Infinity).filter((x) => x != null && x !== false); },
+    insertBefore(item, before) {
+      const idx = this.children.indexOf(before);
+      if (idx >= 0) this.children.splice(idx, 0, item);
+      else this.children.push(item);
+    },
+    closest() { return null; },
+    contains(x) { return x === this || this.children.some((c) => typeof c === "object" && c?.contains?.(x)); },
+    getBoundingClientRect() { return { left: 20, right: 120, top: 40, bottom: 60, width: 100, height: 20 }; },
+  });
+
+  let now = 1000;
+  let nextTimerId = 1;
+  const scheduled = new Map();
+  const refreshReasons = [];
+  const context = vm.createContext({
+    AN: {
+      h: mkNode,
+      L: (zh) => zh,
+      setText: (n, t) => { n.textContent = t; },
+      setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
+      relTime: () => "5 分钟前",
+      at: Date.parse,
+      deskName: () => "",
+      post: async (path, payload) => {
+        if (path === "/app/git-pr/refresh") refreshReasons.push(payload.reason);
+        return {};
+      },
+      load: async () => ({}),
+    },
+    document: {
+      body: { append(...nodes) { for (const n of nodes) { if (n) n.isConnected = true; bodyChildren.push(n); } } },
+      createElementNS: (_ns, tag) => mkNode(tag),
+      addEventListener(name, fn) { (docListeners[name] ||= []).push(fn); },
+    },
+    window: { addEventListener() {}, innerWidth: 1200, innerHeight: 800 },
+    Date: Object.assign(function (...args) { return new Date(...args); }, { now: () => now, parse: Date.parse }),
+    setTimeout: (fn, ms = 0) => {
+      const id = nextTimerId++;
+      scheduled.set(id, { id, fn, at: now + ms, delay: ms });
+      return id;
+    },
+    clearTimeout: (id) => { scheduled.delete(id); },
+  });
+  const advanceBy = (ms) => {
+    const target = now + ms;
+    while (true) {
+      const due = [...scheduled.values()].filter((t) => t.at <= target).sort((a, b) => a.at - b.at || a.id - b.id)[0];
+      if (!due) break;
+      scheduled.delete(due.id);
+      now = due.at;
+      due.fn();
+    }
+    now = target;
+  };
+
+  vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
+  const { ChatGit } = context;
+
+  ChatGit._applyForTest({
+    gh_status: "ready",
+    terminals: {},
+    workspaces: {
+      "ws-a": { git: { is_git: true, branch: "feat/a", changed_files: 1 }, prs: [] },
+      "ws-b": { git: { is_git: true, branch: "feat/b", changed_files: 2 }, prs: [] },
+    },
+    isolated: {},
+  });
+
+  const recA = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  const recB = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
+  ChatGit.decorateItem(recA, { group: "ws-a", cli_session: true });
+  ChatGit.decorateItem(recB, { group: "ws-b", cli_session: true });
+  recA.prBadge.isConnected = true;
+  recB.prBadge.isConnected = true;
+
+  // Hovering briefly and leaving before 400ms never opens the card or triggers refresh.
+  recA.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  const card = bodyChildren.find((n) => n.className === "git-pr-card");
+  assert.equal(card, undefined);
+  advanceBy(399);
+  assert.equal(refreshReasons.length, 0);
+  recA.prBadge.fire("pointerleave");
+  advanceBy(50);
+  assert.equal(bodyChildren.find((n) => n.className === "git-pr-card"), undefined);
+  assert.equal(refreshReasons.length, 0);
+
+  // Touch pointerenter does not open on hover.
+  recA.prBadge.fire("pointerenter", { pointerType: "touch" });
+  advanceBy(500);
+  assert.equal(bodyChildren.find((n) => n.className === "git-pr-card"), undefined);
+
+  // Staying 400ms opens card A and triggers hover refresh.
+  recA.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  advanceBy(399);
+  assert.equal(bodyChildren.find((n) => n.className === "git-pr-card"), undefined);
+  advanceBy(1);
+  const mountedCard = bodyChildren.find((n) => n.className === "git-pr-card");
+  assert.ok(mountedCard && !mountedCard.hidden);
+  assert.match(JSON.stringify(mountedCard.children), /feat\/a/);
+  assert.deepEqual(refreshReasons, ["hover"]);
+
+  // Moving from badge into open card keeps it open; moving back to badge A also keeps it open.
+  recA.prBadge.fire("pointerleave");
+  mountedCard.fire("pointerenter");
+  advanceBy(500);
+  assert.equal(mountedCard.hidden, false);
+  mountedCard.fire("pointerleave");
+  recA.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  advanceBy(500);
+  assert.equal(mountedCard.hidden, false);
+
+  // Moving from open card A to badge B closes card A at 360ms and opens card B at 400ms.
+  recA.prBadge.fire("pointerleave");
+  recB.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  advanceBy(359);
+  assert.equal(mountedCard.hidden, false);
+  assert.match(JSON.stringify(mountedCard.children), /feat\/a/);
+  advanceBy(1);
+  assert.equal(mountedCard.hidden, true);
+  advanceBy(39);
+  assert.equal(mountedCard.hidden, true);
+  advanceBy(1);
+  assert.equal(mountedCard.hidden, false);
+  assert.match(JSON.stringify(mountedCard.children), /feat\/b/);
+
+  // Escape (hideCard) cancels a pending hover open timer.
+  recB.prBadge.fire("pointerleave");
+  recA.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  for (const fn of docListeners.keydown || []) fn({ key: "Escape" });
+  assert.equal(mountedCard.hidden, true);
+  advanceBy(500);
+  assert.equal(mountedCard.hidden, true);
+
+  // Hiding or detaching badge cancels pending open timer.
+  recA.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  recA.prBadge.hidden = true;
+  advanceBy(500);
+  assert.equal(mountedCard.hidden, true);
+  recA.prBadge.hidden = false;
+
+  recA.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  recA.prBadge.isConnected = false;
+  advanceBy(500);
+  assert.equal(mountedCard.hidden, true);
+  recA.prBadge.isConnected = true;
+
+  // Click and Enter/Space open immediately and cancel pending timer.
+  recA.prBadge.fire("pointerenter", { pointerType: "mouse" });
+  recB.prBadge.fire("click");
+  assert.equal(mountedCard.hidden, false);
+  assert.match(JSON.stringify(mountedCard.children), /feat\/b/);
+  advanceBy(500);
+  assert.match(JSON.stringify(mountedCard.children), /feat\/b/, "cancelled pending A timer must not overwrite B");
+  recB.prBadge.fire("click");
+  assert.equal(mountedCard.hidden, true);
+  recA.prBadge.fire("keydown", { key: "Enter" });
+  assert.equal(mountedCard.hidden, false);
+  assert.match(JSON.stringify(mountedCard.children), /feat\/a/);
+});
+
+test("GROUP.waiting localizes derived waiting status with review tone without changing urgent()", () => {
+  const zh = common(false);
+  const en = common(true);
+  assert.deepEqual([...zh.pick(zh.GROUP, "waiting")], ["等待确认", "review"]);
+  assert.deepEqual([...en.pick(en.GROUP, "waiting")], ["Needs attention", "review"]);
+  assert.equal(zh.urgent("waiting"), false);
+  assert.equal(zh.urgent("review"), true);
+  assert.equal(zh.urgent("running"), true);
 });

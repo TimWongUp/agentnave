@@ -4,6 +4,7 @@
 const ChatGit = (() => {
   const { h, L, setAttr, relTime } = AN;
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const OPEN_DELAY_MS = 400;
   const CLOSE_DELAY_MS = 360;
   const FOCUS_COOLDOWN_MS = 2000;
   const HOVER_COOLDOWN_MS = 1000;
@@ -187,31 +188,59 @@ const ChatGit = (() => {
   let cardAnchor = null;
   let cardPinned = false;
   let closeTimer = 0;
+  let openTimer = 0;
+  let pendingAnchor = null;
+
+  function cancelPendingOpen(node = null) {
+    if (node && pendingAnchor !== node) return;
+    clearTimeout(openTimer);
+    openTimer = 0;
+    pendingAnchor = null;
+  }
+
+  function isTriggerVisible(node, wasConnected) {
+    if (!node || node.hidden) return false;
+    if (wasConnected && !node.isConnected) return false;
+    if (typeof document !== "undefined" && document.body?.isConnected && !node.isConnected) return false;
+    if (node.closest?.("[hidden]")) return false;
+    if (typeof node.getClientRects === "function" && node.getClientRects().length === 0) return false;
+    return true;
+  }
 
   function ensureCardMounted() {
     if (typeof document === "undefined" || !document.body || card.isConnected) return;
     document.body.append(card);
-    card.addEventListener("pointerenter", () => clearTimeout(closeTimer));
+    card.addEventListener("pointerenter", () => {
+      clearTimeout(closeTimer);
+      closeTimer = 0;
+    });
     card.addEventListener("pointerleave", () => { if (!cardPinned) hideCardSoon(); });
     document.addEventListener("pointerdown", (e) => {
       if (!card.hidden && !card.contains(e.target) && !cardAnchor?.contains?.(e.target)) hideCard();
+      else if (pendingAnchor && !pendingAnchor.contains?.(e.target) && !card.contains(e.target)) cancelPendingOpen();
     }, true);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !card.hidden) hideCard();
+      if (e.key === "Escape" && (!card.hidden || openTimer)) hideCard();
     });
   }
 
-  function hideCard() {
+  function closeCard() {
     clearTimeout(closeTimer);
+    closeTimer = 0;
     card.hidden = true;
     cardAnchor = null;
     cardPinned = false;
   }
 
+  function hideCard() {
+    cancelPendingOpen();
+    closeCard();
+  }
+
   function hideCardSoon() {
     if (cardPinned) return;
     clearTimeout(closeTimer);
-    closeTimer = setTimeout(hideCard, CLOSE_DELAY_MS);
+    closeTimer = setTimeout(closeCard, CLOSE_DELAY_MS);
   }
 
   function prStateLabel(state) {
@@ -407,7 +436,9 @@ const ChatGit = (() => {
   function showCard(anchor, payload, pin = false) {
     ensureCardMounted();
     if (!anchor || !payload?.entry) return;
+    if (pin || pendingAnchor === anchor) cancelPendingOpen();
     clearTimeout(closeTimer);
+    closeTimer = 0;
     const { entry, target, working } = payload;
     const ghReady = store.snap.gh_status === "ready";
     const prs = ghReady && Array.isArray(entry.prs) ? entry.prs : [];
@@ -454,6 +485,30 @@ const ChatGit = (() => {
     card.style.top = `${Math.round(top)}px`;
   }
 
+  function scheduleOpen(node) {
+    if (cardPinned && !card.hidden && cardAnchor !== node) return;
+    if (!card.hidden && cardAnchor === node) {
+      clearTimeout(closeTimer);
+      closeTimer = 0;
+      cancelPendingOpen();
+      return;
+    }
+    const payload = node._gpGetPayload?.();
+    if (!payload?.entry) return;
+    cancelPendingOpen();
+    const wasConnected = Boolean(node.isConnected);
+    pendingAnchor = node;
+    openTimer = setTimeout(() => {
+      if (pendingAnchor !== node) return;
+      openTimer = 0;
+      pendingAnchor = null;
+      if (cardPinned && !card.hidden && cardAnchor !== node) return;
+      if (!isTriggerVisible(node, wasConnected)) return;
+      const latest = node._gpGetPayload?.();
+      if (latest?.entry) showCard(node, latest, false);
+    }, OPEN_DELAY_MS);
+  }
+
   function bindHoverTrigger(node, getPayload) {
     if (node._gpBound) {
       node._gpGetPayload = getPayload;
@@ -461,15 +516,18 @@ const ChatGit = (() => {
     }
     node._gpBound = true;
     node._gpGetPayload = getPayload;
-    node.addEventListener("pointerenter", () => {
-      if (cardPinned && !card.hidden && cardAnchor !== node) return;
-      const payload = node._gpGetPayload?.();
-      if (payload?.entry) showCard(node, payload, false);
+    node.addEventListener("pointerenter", (e) => {
+      if (e?.pointerType === "touch") return;
+      scheduleOpen(node);
     });
-    node.addEventListener("pointerleave", hideCardSoon);
+    node.addEventListener("pointerleave", () => {
+      cancelPendingOpen(node);
+      hideCardSoon();
+    });
     node.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      cancelPendingOpen();
       const payload = node._gpGetPayload?.();
       if (!payload?.entry) return;
       if (!card.hidden && cardAnchor === node && cardPinned) hideCard();
@@ -480,6 +538,7 @@ const ChatGit = (() => {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
       e.stopPropagation();
+      cancelPendingOpen();
       const payload = node._gpGetPayload?.();
       if (payload?.entry) showCard(node, payload, true);
     });
@@ -503,6 +562,7 @@ const ChatGit = (() => {
     const summary = badgeSummary(entry);
     if (!summary) {
       rec.prBadge.hidden = true;
+      cancelPendingOpen(rec.prBadge);
       return;
     }
     rec.prBadge.hidden = false;
@@ -538,6 +598,7 @@ const ChatGit = (() => {
     const summary = badgeSummary(entry);
     if (!summary) {
       headRec.git.hidden = true;
+      cancelPendingOpen(headRec.git);
       return;
     }
     headRec.git.hidden = false;

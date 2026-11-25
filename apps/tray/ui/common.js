@@ -144,7 +144,7 @@
     failed: [L("失败", "Failed"), "bad"], blocked: [L("受阻", "Blocked"), "bad"], cancelled: [L("已取消", "Cancelled"), "idle"],
     interrupted: [L("已中断", "Interrupted"), "bad"], pending: [L("等待中", "Pending"), "idle"],
   };
-  const GROUP = { running: [L("运行中", "Running"), "run"], review: [L("待审核", "Review"), "review"], failed: [L("有失败", "Failed"), "bad"], idle: [L("空闲", "Idle"), "idle"] };
+  const GROUP = { running: [L("运行中", "Running"), "run"], review: [L("待审核", "Review"), "review"], waiting: [L("等待确认", "Needs attention"), "review"], failed: [L("有失败", "Failed"), "bad"], idle: [L("空闲", "Idle"), "idle"] };
   localizedTables.push(MEMBER, GROUP);
   const pick = (table, status) => table[status] || [status || "—", "idle"];
   const urgent = (status) => status === "running" || status === "review";

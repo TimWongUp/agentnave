@@ -325,11 +325,19 @@ const ChatTerminal = (() => {
     return state.groupsData?.find((g) => g.group === ws)?.status === "running";
   }
   async function confirmStop(x) {
-    const resumable = canResume(x);
     const running = hasRunningMembers(x);
-    if (resumable && !running) return true;
+    const turnActive = x.derived && x.exit == null && Boolean(x.derived_busy || x.blocked_kind || x.active);
+    const resumable = !x.derived && canResume(x);
+    if (x.derived ? (!turnActive && !running) : (resumable && !running)) return true;
     const reasons = [];
-    if (!x.workspaces?.length) {
+    if (x.derived) {
+      if (turnActive) {
+        reasons.push(h("p.act-note", {}, L(
+          "这一轮还没做完，结束后会按中断回报给 boss。",
+          "This turn has not finished yet; stopping will report it as interrupted to the boss.",
+        )));
+      }
+    } else if (!x.workspaces?.length) {
       reasons.push(h("p.act-note", {}, L(
         "这个新 agent 还没有派过活，结束终端后不能在 App 里续接这段对话。",
         "This new agent has not dispatched any work yet; stopping the terminal means it cannot be resumed from the App.",
@@ -397,6 +405,7 @@ const ChatTerminal = (() => {
   }
   async function close(id) {
     const closing = byId(id);
+    if (closing?.derived && !(await confirmStop(closing))) return;
     if (!(await reply(await act(`/app/terminal/close?session=${id}`, "")))) return;
     const shown = pendingId(state.selected) === id;
     await refresh();
