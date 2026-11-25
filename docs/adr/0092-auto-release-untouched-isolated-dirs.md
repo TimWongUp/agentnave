@@ -1,6 +1,6 @@
 # ADR-0092：无改动的隔离目录在成功结算时自动释放，续接时原位重建
 
-- 状态：已接受；由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充：托盘自动清理收起的目录续接时按保留的受管分支重建
+- 状态：已接受；由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充：托盘自动清理收起的目录续接时按保留的受管分支重建；重建时「不执行 hooks」由 [ADR-0125](0125-isolated-dirs-follow-git-worktree.md) 修订
 - 日期：2026-11-14
 - 修订 [ADR-0085](0085-service-managed-isolated-dirs.md) 中「只显式释放」与「不自动回收未释放的目录」两条规则。
 - 不改变 [ADR-0085](0085-service-managed-isolated-dirs.md) 的其余边界：默认不隔离、目录平铺在 `.agentnave-worktrees/`、仓库级锁与租约机制、`.worktreeinclude` 拷贝上限、不执行 hooks/setup 脚本、任何 boss 可跨工作区显式释放剩余目录。
