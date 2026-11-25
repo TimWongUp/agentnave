@@ -159,6 +159,28 @@ impl Desk {
                 .is_some_and(|last| now - last > FAILURE_SETTLES_AFTER)
     }
 
+    /// A derived session with a native thread, the only kind that can be continued. One that has
+    /// none yet is listed by its terminal, and one that never got it is an ordinary settled call.
+    pub(super) fn is_derived_thread(&self) -> bool {
+        self.derived.is_some_and(|(_, derived)| derived) && self.key.starts_with("thread:")
+    }
+
+    /// Lightweight desk fields needed to name and order derived rows in `/app/chats`.
+    pub(super) fn derived_summary(&self) -> Value {
+        json!({
+            "key": self.key,
+            "provider": self.provider,
+            "model": self.model,
+            "effort": self.effort,
+            "role": self.role,
+            "identity": self.identity,
+            "art_model": self.art_model(),
+            "first_seen": iso(self.first.unwrap_or_default()),
+            "last_active": iso(self.last.unwrap_or_default()),
+            "status": self.status(),
+        })
+    }
+
     pub(super) fn value(&self, host: Option<&str>) -> Value {
         let status = self.status();
         let meeting = self

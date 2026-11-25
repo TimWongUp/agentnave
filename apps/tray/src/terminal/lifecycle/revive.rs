@@ -203,6 +203,7 @@ impl Running {
             revived: true,
             boss: old_life.boss.filter(|_| same_parent),
             last_invocation: info.active_invocation_id.clone(),
+            title: old_life.title,
             ..Life::default()
         };
         self.cwd = spec.cwd;

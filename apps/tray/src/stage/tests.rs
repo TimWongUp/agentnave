@@ -546,3 +546,178 @@ fn chat_list_includes_earliest_created_and_falls_back_to_updated() {
         json!(["s-cccccccccccccccccccccccccccccccc"])
     );
 }
+
+#[test]
+fn chat_list_includes_derived_desks_sorted_by_first_seen_and_office_draws_all_derived() {
+    use serde_json::{Value, json};
+
+    let snapshots = || {
+        vec![origin_snapshot(
+            "c1",
+            "task",
+            json!({
+                "mode": "task",
+                "tasks": [
+                    {
+                        "id": "r1",
+                        "provider": "codex",
+                        "model": "m-reg-1",
+                        "status": "succeeded",
+                        "time": "2026-11-12T01:00:00Z",
+                        "execution_mode": "background"
+                    },
+                    {
+                        "id": "r2",
+                        "provider": "codex",
+                        "model": "m-reg-2",
+                        "status": "failed",
+                        "time": "2020-01-01T00:00:00Z",
+                        "execution_mode": "background"
+                    },
+                    {
+                        "id": "r3",
+                        "provider": "codex",
+                        "model": "m-reg-3",
+                        "status": "failed",
+                        "time": "2020-01-01T00:01:00Z",
+                        "execution_mode": "background"
+                    },
+                    {
+                        "id": "r4",
+                        "provider": "codex",
+                        "model": "m-reg-4",
+                        "status": "failed",
+                        "time": "2020-01-01T00:02:00Z",
+                        "execution_mode": "background"
+                    },
+                    {
+                        "id": "r5",
+                        "provider": "codex",
+                        "model": "m-reg-5",
+                        "status": "failed",
+                        "time": "2020-01-01T00:03:00Z",
+                        "execution_mode": "background"
+                    },
+                    {
+                        "id": "r6",
+                        "provider": "codex",
+                        "model": "m-reg-6",
+                        "status": "failed",
+                        "time": "2020-01-01T00:04:00Z",
+                        "execution_mode": "background"
+                    },
+                    {
+                        "id": "r7",
+                        "provider": "codex",
+                        "model": "m-reg-7",
+                        "status": "failed",
+                        "time": "2020-01-01T00:05:00Z",
+                        "execution_mode": "background"
+                    },
+                    {
+                        "id": "d2",
+                        "provider": "codex",
+                        "model": "m-drv-2",
+                        "role": "Later",
+                        "thread": "drv-2",
+                        "status": "failed",
+                        "time": "2020-01-01T00:00:00Z",
+                        "execution_mode": "terminal",
+                        "identity": {"provider": "codex", "model": "m-drv-2", "model_short": "m-drv-2", "handle": "@m-drv-2"}
+                    },
+                    {
+                        "id": "d0",
+                        "provider": "codex",
+                        "model": "m-never-started",
+                        "status": "failed",
+                        "time": "2020-01-01T00:00:30Z",
+                        "execution_mode": "terminal"
+                    },
+                    {
+                        "id": "d1",
+                        "provider": "claude",
+                        "model": "m-drv-1",
+                        "role": "Earlier",
+                        "thread": "drv-1",
+                        "status": "succeeded",
+                        "time": "2019-12-31T23:00:00Z",
+                        "execution_mode": "terminal",
+                        "identity": {"provider": "claude", "model": "m-drv-1", "model_short": "m-drv-1", "handle": "@m-drv-1"}
+                    }
+                ],
+            }),
+        )]
+    };
+    let places = super::Places {
+        dirs: &[],
+        origins: &Default::default(),
+        projects: &Default::default(),
+        links: &[],
+        manual_projects: &[],
+        sidebar: &Default::default(),
+        titles: &Default::default(),
+        renamed: &Default::default(),
+    };
+
+    let list_res = super::respond(
+        "/app/chats",
+        snapshots(),
+        true,
+        1,
+        &Default::default(),
+        &Default::default(),
+        &places,
+    );
+    let list_body: Value = serde_json::from_slice(&list_res.body).unwrap();
+    let derived = list_body["groups"][0]["derived"].as_array().unwrap();
+    let keys: Vec<_> = derived.iter().filter_map(|d| d["key"].as_str()).collect();
+    assert_eq!(keys, ["thread:drv-1", "thread:drv-2"]);
+    assert_eq!(derived[0]["provider"], "claude");
+    assert_eq!(derived[0]["model"], "m-drv-1");
+    assert_eq!(derived[0]["role"], "Earlier");
+    assert_eq!(derived[0]["identity"]["handle"], "@m-drv-1");
+    assert!(!derived[0]["first_seen"].as_str().unwrap().is_empty());
+    assert!(!derived[0]["last_active"].as_str().unwrap().is_empty());
+
+    // Office (panel=false, limit=1): a derived call that never got a session settles like any other; both derived desks stay drawn despite limit=1 and settled failure;
+    // regular limit=1 still draws r1 and optimizes settled failure r2.
+    let chat_res = super::respond(
+        "/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        snapshots(),
+        true,
+        1,
+        &Default::default(),
+        &Default::default(),
+        &places,
+    );
+    let chat_body: Value = serde_json::from_slice(&chat_res.body).unwrap();
+    let drawn: Vec<_> = chat_body["desks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["key"].as_str())
+        .collect();
+    assert!(drawn.contains(&"task:c1:r1"));
+    assert!(drawn.contains(&"thread:drv-1"));
+    assert!(drawn.contains(&"thread:drv-2"));
+    assert_eq!(drawn.len(), 3);
+    assert_eq!(chat_body["optimized"]["count"], 7);
+    assert_eq!(chat_body["optimized"]["desks"][0]["key"], "task:c1:r7");
+
+    // Panel (panel=true, PANEL_IDLE_DESKS=8): cap still applies across all desks (regular + derived).
+    let stage_res = super::respond(
+        "/app/stage",
+        snapshots(),
+        true,
+        1,
+        &Default::default(),
+        &Default::default(),
+        &places,
+    );
+    let stage_body: Value = serde_json::from_slice(&stage_res.body).unwrap();
+    assert_eq!(
+        stage_body["managers"][0]["desks"].as_array().unwrap().len(),
+        8
+    );
+    assert_eq!(stage_body["managers"][0]["optimized"]["count"], 2);
+}

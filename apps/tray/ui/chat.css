@@ -633,8 +633,8 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .dr-ico-img { width: 30px; height: 30px; object-fit: contain; display: block; }
 .dr-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dr-title { font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dr-sub { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dr-all { flex: none; padding: 4px 10px; border-radius: 99px; background: var(--card); color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.dr-sub { min-height: 18px; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dr-all { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 99px; background: var(--card); color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .dr-all:hover { color: var(--ink); background: var(--card-hover); }
 .dr-close { display: none; flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
 .dr-close:hover { background: var(--card-hover); color: var(--ink); }
@@ -960,16 +960,16 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .gi-term[hidden] { display: none; }
 .ctx-cli { display: flex; align-items: center; gap: 8px; }
 .ctx-cli .avatar, .ctx-cli .host-letter { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; }
-.dr-mode { flex: none; display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--hover); }
+.dr-mode { flex: none; display: flex; align-items: center; gap: 2px; height: 26px; padding: 2px; border-radius: 8px; background: var(--hover); }
 .dr-mode[hidden] { display: none; }
-.dr-mode button { padding: 3px 10px; border-radius: 6px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.dr-mode button { display: inline-flex; align-items: center; height: 22px; padding: 0 10px; border-radius: 6px; color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .dr-mode button:hover { color: var(--ink); }
 .dr-mode button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
-.dr-stop { flex: none; padding: 4px 10px; border-radius: 99px; color: var(--muted); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.dr-stop { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 99px; color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .dr-stop[hidden] { display: none; }
-.dr-stop:hover { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+.dr-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
 .dr-stop.start { color: var(--accent); }
-.dr-stop.start:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.dr-stop.start:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .dr-term { display: none; flex: 1; min-height: 0; position: relative; background: var(--term-bg); }
 .dr-term-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .dr-term-frame[hidden] { display: none; }

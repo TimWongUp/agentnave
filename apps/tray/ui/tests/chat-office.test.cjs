@@ -1333,6 +1333,7 @@ test("a derived session of any state keeps its boss past the cap and shows under
       menu() { return false; },
       derivedMeta: () => ({ text: "", tone: "idle" }),
       derivedOf: parent => derived.filter(d => d.parent_workspace_id === parent),
+      rowPath: g => `/chat/${g.group}`,
       derivedAll: () => derived,
     },
     Actions: { picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {} },
@@ -2065,7 +2066,8 @@ test("derived terminals nest under parent workspace without counting self-chat a
   const [blockedChild] = context.ChatTerminal.derivedOf("ws-parent");
   assert.equal(blockedChild.status, "waiting");
 
-  // A derived desk's card in the parent's office matches hashed desk_key and falls back to thread:<native>.
+  // A derived desk's card in the parent's office matches hashed desk_key and falls back to thread:<native>,
+  // defaulting to messages until the user switches to terminal.
   mockSessions[1].derived_busy = false;
   mockSessions[1].blocked_kind = null;
   mockSessions[1].native = "sid-1";
@@ -2074,6 +2076,8 @@ test("derived terminals nest under parent workspace without counting self-chat a
   state.loaded = "ws-parent";
   state.drawer = { kind: "desk", key: "thread:1fd2c8006815717d" };
   context.ChatTerminal.column("ws-parent", "claude", "claude");
+  assert.equal(context.ChatTerminal.showingDerived(), false);
+  drAll._after[0].children[1].listeners.click[0]();
   assert.equal(el.drTitle.textContent, "派生调试");
   assert.equal(context.ChatTerminal.showingDerived(), true);
   state.drawer = { kind: "desk", key: "thread:sid-1" };
@@ -2105,13 +2109,15 @@ test("derived terminals nest under parent workspace without counting self-chat a
   assert.equal(context.ChatTerminal.derivedOf("ws-parent")[0].title, "最新标题");
   context.AN.load = origLoad;
 
-  // Drawer shows derived title instead of "boss", and hides restart on ended derived terminal.
+  // Ended derived terminal not currently watched shows messages and offers Resume.
   mockSessions[1].exit = 0;
   mockSessions[1].derived_busy = false;
   await context.ChatTerminal.refresh();
   context.ChatTerminal.column("term-20", "codex", "codex");
-  assert.equal(el.drTitle.textContent, "派生调试");
-  assert.equal(drAll._after[1].hidden, true);
+  assert.equal(drAll._after[0].hidden, true);
+  assert.equal(drAll._after[1].hidden, false);
+  assert.equal(drAll._after[1].textContent, "续接");
+  assert.equal(drAll._after[1].classList.contains("start"), true);
 
   // Closing selected derived terminal returns to its parent workspace.
   mockSessions = [mockSessions[0]];
@@ -3764,8 +3770,10 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   const bossRec = context.state.items.get("ws-1");
   assert.equal(bossRec.meta.hidden, false);
   assert.equal(bossRec.meta.textContent, "3 运行 · 1 待确认");
-  const rec14 = context.state.items.get("term-14");
-  const rec15 = context.state.items.get("term-15");
+  const rec14 = context.state.items.get(d14.group);
+  const rec15 = context.state.items.get(d15.group);
+  assert.equal(d14.group.startsWith("drv-"), true);
+  assert.equal(d17.group, "term-17");
   assert.equal(rec14.meta.hidden, false);
   assert.equal(rec14.meta.textContent, "空闲");
   assert.equal(rec15.meta.hidden, false);
@@ -3794,23 +3802,27 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.refresh();
   assert.equal(loadUrls.at(-1), "/app/terminal/state");
 
-  // 3. A derived session has no stop/resume button in the column, whatever its state.
+  // 3. Live derived hides stop button and shows mode switch; dormant shows Resume button without mode switch.
   context.ChatTerminal.readMessages(true);
   context.ChatTerminal.column("term-11", "codex", "codex");
   const stopBtn = drAll._after[1];
+  const modesNode = drAll._after[0];
+  assert.equal(modesNode.hidden, false);
   assert.equal(stopBtn.hidden, true);
   context.ChatTerminal.column("term-15", "codex", "codex");
-  assert.equal(stopBtn.hidden, true);
+  assert.equal(modesNode.hidden, true);
+  assert.equal(stopBtn.hidden, false);
+  assert.equal(stopBtn.textContent, "续接");
+  assert.equal(stopBtn.classList.contains("start"), true);
 
-  // 4. Opening a derived session whose process ended wakes it (resumable or not) with the resume
-  // attach params while its messages show; polling alone never wakes; a second click is no second request.
+  // 4. Clicking a derived row navigates to its parent workspace desk without calling wake/open-derived;
+  // clicking the header Resume button wakes it while messages stay up and disables the button.
   const s15 = sessions.find(x => x.id === 15);
   const toMessagesBtn = drAll._after[0].children[0];
-  const toTerminalBtn = drAll._after[0].children[1];
   const flush = () => new Promise(r => setTimeout(r, 0));
   const wakes = () => postCalls.filter(u => u.startsWith("/app/terminal/wake")).length;
   const hold = () => { let release; wakeGate = new Promise(r => (release = r)); return () => { wakeGate = null; release(); }; };
-  const redormant = async () => { Object.assign(s15, { exit: 0, derived_state: "dormant", resumable: false }); await context.ChatTerminal.refresh(); };
+  const redormant = async () => { Object.assign(s15, { exit: 0, derived_state: "dormant", resumable: true }); await context.ChatTerminal.refresh(); };
   const termMode = () => drawer.classList.contains("term-mode");
   const sub = els.get("dr-sub");
   const inFrame15 = () => createdFrames.at(-1)?.attributes.src === "/terminal/?session=15";
@@ -3820,13 +3832,19 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.refresh();
   assert.equal(wakes(), 0, "polling never wakes");
 
-  context.ChatTerminal.column("term-15", "codex", "codex");
-  const oldFrame15 = createdFrames.at(-1);
-  assert.equal(oldFrame15.attributes.src, "/terminal/?session=15");
+  // Clicking a merged sidebar row with desk_key & parent_workspace_id opens #desk:<key> in parent without waking.
+  navigated.length = 0;
+  context.ChatTerminal.openDerived(d15.group);
+  assert.deepEqual(navigated, ["/chat/ws-1#desk:thread%3At15"]);
+  assert.equal(wakes(), 0);
 
-  // wake fails: the reason is shown, the messages stay
+  context.state.selected = context.state.loaded = "term-15";
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  assert.equal(termMode(), false);
+
+  // wake via Resume button fails: the reason is shown, the messages stay
   wakeFail = true;
-  context.ChatTerminal.openDerived("term-15");
+  stopBtn.listeners.click[0]({});
   await flush();
   assert.match(postCalls.at(-1), /^\/app\/terminal\/wake\?session=15&light=0&cols=100&rows=30$/);
   assert.deepEqual(says.at(-1), ["隔离目录已释放", true]);
@@ -3834,28 +3852,45 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   assert.equal(termMode(), false);
   wakeFail = false;
 
-  // two clicks while it resumes: one request, "正在恢复" in the header and the row, messages up
+  // two clicks while it resumes: one request, button disabled, "正在恢复" in the header and the row, messages up
   const release = hold();
   const before = wakes();
-  context.ChatTerminal.openDerived("term-15");
-  context.ChatTerminal.openDerived("term-15");
+  stopBtn.listeners.click[0]({});
+  stopBtn.listeners.click[0]({});
   await flush();
   assert.equal(wakes() - before, 1);
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(termMode(), false);
+  assert.equal(stopBtn.disabled, true);
   assert.equal(sub.textContent, "正在恢复");
   assert.equal(context.ChatTerminal.derivedMeta(context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 15)).text, "正在恢复");
   release();
   await flush();
-  assert.equal(oldFrame15.removed, true, "old iframe must be dropped on wake");
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(termMode(), true, "the terminal opens once it is up");
-  assert.ok(inFrame15() && createdFrames.at(-1) !== oldFrame15);
+  assert.equal(stopBtn.hidden, true);
+  assert.ok(inFrame15());
+  const oldFrame15 = createdFrames.at(-1);
+
+  // When an actively viewed derived terminal exits on its own, screen + switch stay and Resume appears.
+  await redormant();
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  assert.equal(termMode(), true);
+  assert.equal(modesNode.hidden, false);
+  assert.equal(stopBtn.hidden, false);
+  assert.equal(stopBtn.textContent, "续接");
+
+  // Switching to messages hides the mode switch while keeping Resume.
+  toMessagesBtn.listeners.click[0]();
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  assert.equal(termMode(), false);
+  assert.equal(modesNode.hidden, true);
+  assert.equal(stopBtn.hidden, false);
 
   // the reader leaves while it resumes: the terminal does not take the screen back
   await redormant();
   let release2 = hold();
-  context.ChatTerminal.openDerived("term-15");
+  stopBtn.listeners.click[0]({});
   await flush();
   context.state.selected = context.state.loaded = "ws-1";
   release2();
@@ -3865,8 +3900,10 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
 
   // the reader asks for the messages while it resumes: they stay, whatever the polling does
   await redormant();
+  context.state.selected = context.state.loaded = "term-15";
+  context.ChatTerminal.column("term-15", "codex", "codex");
   release2 = hold();
-  context.ChatTerminal.openDerived("term-15");
+  stopBtn.listeners.click[0]({});
   await flush();
   toMessagesBtn.listeners.click[0]();
   release2();
@@ -3875,20 +3912,20 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(termMode(), false);
 
-  // "终端" on the messages of a session without a process wakes it too, once; it already confirms
-  // elsewhere the way resume does
+  // Resume from messages confirms elsewhere when 409 elsewhere is returned
   await redormant();
   context.state.selected = context.state.loaded = "term-15";
   context.ChatTerminal.column("term-15", "codex", "codex");
   elsewhere = true;
   nextAsk = { value: "confirm" };
   const calls = wakes();
-  toTerminalBtn.listeners.click[0]();
+  stopBtn.listeners.click[0]({});
   await flush();
   assert.equal(wakes() - calls, 2, "refused once, then confirmed");
   assert.ok(postCalls.at(-1).endsWith("&confirm=1"));
   context.ChatTerminal.column("term-15", "codex", "codex");
   assert.equal(termMode(), true);
+  assert.equal(oldFrame15.removed, true, "old iframe must be dropped on wake");
   elsewhere = false;
   nextAsk = { value: "stop" };
 
@@ -3936,11 +3973,15 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   context.ChatTerminal.column("ws-1", "codex", "codex");
   assert.equal(termMode(), true);
 
-  // 5. Context menus: a derived row has Open and Close terminal only, in any state.
-  for (const id of [11, 15]) {
-    context.ChatTerminal.menu(`term-${id}`, {});
-    assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "关闭终端"]);
-  }
+  // 5. Context menus: live derived has Open & Close terminal; dormant has Open, Resume, Close terminal;
+  // boss menu counts only live derived terminals.
+  context.ChatTerminal.menu(d11.group, {});
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "关闭终端"]);
+  context.ChatTerminal.menu(d15.group, {});
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "续接", "关闭终端"]);
+  context.ChatTerminal.menu("term-1", {});
+  const closeAllBossItem = menus.at(-1).find(i => i.label.includes("关闭全部派生终端"));
+  assert.equal(closeAllBossItem.label, "关闭全部派生终端（7）");
   await redormant();
 
   // 6. Unified confirmStop: boss stop merges boss + derived active + draft counts in ONE ask; boss close skips confirm if no active/draft derived.
@@ -3965,6 +4006,12 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   assert.equal(asks.length, 0, "boss close with only idle derived sessions must not confirm");
   await context.ChatTerminal.closeDerived("ws-1");
   assert.equal(asks.length, 0, "closeDerived with all idle derived sessions must not confirm");
+
+  // When 0 live derived terminals remain, boss menu omits "关闭全部派生终端".
+  sessions = sessions.map(s => (s.derived ? { ...s, exit: 0, derived_state: "dormant" } : s));
+  await context.ChatTerminal.refresh();
+  context.ChatTerminal.menu("term-1", {});
+  assert.equal(menus.at(-1).some(i => i.label.includes("关闭全部派生终端")), false);
 });
 
 test("ChatDerived renders separate office derived zone, matches ofDesk states, reads an ended process as idle, and continues on click", async () => {
@@ -4116,17 +4163,16 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
   assert.equal(r3.el.dataset.mood, "review");
   assert.equal(r3.say.children[0], "待 boss 收取");
 
-  // Click a running desk -> opens its terminal and nothing is started; click one without a process
-  // -> its messages open and it is brought back (by row, or by desk when it has no row).
+  // Click any derived desk -> always opens messages and never calls revive.
   r1.el.listeners.click[0]();
-  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:h1" }, { terminal: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:h1" }, {}]);
   assert.equal(revived.length, 0);
   r2.el.listeners.click[0]();
   assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:n2" }, {}]);
-  assert.deepEqual(JSON.parse(JSON.stringify(revived.at(-1))), { id: 102, group: "ws-1", deskKey: "thread:n2" });
+  assert.equal(revived.length, 0);
   r4.el.listeners.click[0]();
   assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:missing" }, {}]);
-  assert.deepEqual(JSON.parse(JSON.stringify(revived.at(-1))), { group: "ws-1", deskKey: "thread:missing" });
+  assert.equal(revived.length, 0);
 
   // While one comes back, its desk says so.
   reviving = true;
@@ -4134,14 +4180,18 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
   assert.equal(r4.say.children[0], "正在恢复");
   reviving = false;
 
-  // Derived desk context menus: Open and Close terminal; a desk with no terminal row only has Open.
+  // Derived desk context menus: Open, Resume (when no live process), and Close terminal (when terminal row exists).
   const labels = () => JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label)));
   r1.el.listeners.contextmenu[0]({});
   assert.deepEqual(labels(), ["打开", "关闭终端"]);
   r2.el.listeners.contextmenu[0]({});
-  assert.deepEqual(labels(), ["打开", "关闭终端"]);
+  assert.deepEqual(labels(), ["打开", "续接", "关闭终端"]);
   r4.el.listeners.contextmenu[0]({});
-  assert.deepEqual(labels(), ["打开"]);
+  assert.deepEqual(labels(), ["打开", "续接"]);
+  // Clicking Resume in context menu opens messages and calls revive.
+  menus.at(-1).find(i => i.label === "续接").run();
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:missing" }, {}]);
+  assert.deepEqual(JSON.parse(JSON.stringify(revived.at(-1))), { group: "ws-1", deskKey: "thread:missing" });
 
   // When no derived desks exist, derived zone is hidden.
   const noDerived = { ...baseChat, desks: [baseChat.desks[0]] };
@@ -4220,6 +4270,9 @@ test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/open-d
   vm.runInContext(readFileSync(`${__dirname}/../mock.js`, "utf8"), context);
   const loadJson = async (url, method = "GET") => (await win.fetch(url, method === "POST" ? { method: "POST", body: "{}" } : {})).json();
   const termState = await loadJson("/app/terminal/state?shown=3");
+  assert.equal(termState.derived_titles["thread:drv-old"], "清理旧配置");
+  const chatsPayload = await loadJson("/app/chats");
+  assert.equal(chatsPayload.groups.find(g => g.group === "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50").derived.length, 6);
   const derivedStates = termState.sessions.filter(s => s.derived).map(s => s.derived_state);
   for (const s of ["running", "waiting", "uncollected", "idle", "dormant"]) {
     assert.ok(derivedStates.includes(s), `mock.js missing derived_state=${s}`);
@@ -4238,4 +4291,286 @@ test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/open-d
   assert.equal(afterStop.sessions.find(s => s.id === 6).derived_state, "dormant");
   const closed = await loadJson("/app/terminal/close-derived?workspace=s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", "POST");
   assert.equal(closed.closed, 6);
+});
+
+test("historical derived rows merge stably, keep terminal width, highlight when open, and follow project fold/cap", async () => {
+  const makeNode = (tag = "div") => {
+    const cls = new Set();
+    const n = {
+      tagName: String(tag).split(".")[0].toUpperCase(),
+      hidden: false, disabled: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], listeners: {},
+      style: { setProperty() {}, removeProperty() {} },
+      classList: {
+        set: cls,
+        add: (...names) => names.forEach(x => cls.add(x)),
+        remove: (...names) => names.forEach(x => cls.delete(x)),
+        toggle: (name, on) => (on === undefined ? (cls.has(name) ? (cls.delete(name), false) : (cls.add(name), true)) : on ? (cls.add(name), true) : (cls.delete(name), false)),
+        contains: name => cls.has(name),
+      },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = String(v); },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      hasAttribute(k) { return k in this.attributes; },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
+      replaceChildren(...nodes) { this.children = nodes.flat().filter(Boolean); },
+      append(...nodes) { this.children.push(...nodes.flat().filter(Boolean)); },
+      after(...nodes) { this._after = nodes; },
+      before() {},
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      scrollIntoView() {},
+      closest: () => null,
+      focus() {},
+      remove() { this.removed = true; },
+    };
+    return n;
+  };
+  const h = (tag, attrs = {}, ...children) => {
+    const node = makeNode(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "hidden") node.hidden = Boolean(v);
+      else node.setAttribute(k, v === true ? "" : v);
+    }
+    node.children = children.flat(Infinity).filter(x => x != null && x !== false);
+    if (node.children.every(x => typeof x === "string")) node.textContent = node.children.join("");
+    return node;
+  };
+
+  let sessions = [];
+  let derivedTitles = { "thread:saved": "保存的标题" };
+  const postCalls = [];
+  const menus = [];
+  const navigated = [];
+  const opened = [];
+  const storage = new Map();
+  const appNode = makeNode("div");
+  const drawer = makeNode("aside");
+  const drAll = makeNode("button");
+  const listNode = makeNode("div");
+  const els = new Map([
+    ["app", appNode], ["list", listNode], ["head", makeNode("header")], ["office", makeNode("div")], ["floor", makeNode("div")],
+    ["boss", makeNode("section")], ["desks", makeNode("div")], ["derived-zone", makeNode("section")], ["derived-desks", makeNode("div")],
+    ["derived-count", makeNode("span")], ["rooms", makeNode("div")], ["fx", makeNode("div")], ["desks-count", makeNode("span")],
+    ["ticker", makeNode("footer")], ["tick", makeNode("span")], ["drawer", drawer], ["conv-toggle", makeNode("button")],
+    ["side-toggle", makeNode("button")], ["dr-ico", makeNode("span")], ["dr-title", makeNode("span")], ["dr-sub", makeNode("span")],
+    ["dr-all", drAll], ["timeline", makeNode("div")], ["tl-inner", makeNode("div")], ["blank", makeNode("div")],
+    ["jump", makeNode("button")], ["banner", makeNode("div")],
+  ]);
+  const AN = {
+    h, $: id => els.get(id) || makeNode(id),
+    L: zh => zh,
+    load: async () => ({ sessions: structuredClone(sessions), cwd: "/repo", derived_titles: structuredClone(derivedTitles) }),
+    href: p => p,
+    GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+    pick: (tbl, k) => tbl[k] || [k || "—", "idle"],
+    urgent: s => s === "running" || s === "review",
+    avatar: () => makeNode("span"),
+    colorClass: () => "c0",
+    relTime: () => "刚刚",
+    clock: () => "10:00",
+    fullTime: () => "2026",
+    dayLabel: () => "今天",
+    setText: (n, v) => { n.textContent = v == null ? "" : String(v); },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const cls of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(cls);
+    },
+    reconcile: (p, nodes) => { p.children = [...nodes]; },
+    stickyOrder: items => items,
+    poll() {},
+    plain: x => x,
+    art: { character: () => "c" },
+    hostTile: p => makeNode(p),
+    cliName: p => ({ claude: "Claude Code", codex: "Codex" }[p] || p),
+    deskName: d => d.model || "",
+    deskParts: d => ({ name: d.model || "", effort: "" }),
+    handleOf: d => `@${d.model || ""}`,
+    fullHandle: d => d.key,
+    cliOf: d => d.provider,
+    chatName: g => g.display_title || g.title || g.group,
+    shownName: g => g.display_title || g.title || g.group,
+    activities: () => [],
+    ongoing: s => s || "idle",
+    isHidden: () => false,
+    onVisibility() {},
+    reducedMotion: { matches: false },
+  };
+  const context = vm.createContext({
+    AN, URLSearchParams, window: null,
+    document: { addEventListener() {}, documentElement: { lang: "zh", dataset: {} }, hidden: false },
+    localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) },
+    location: { search: "", pathname: "/", hash: "", origin: "null" },
+    history: { pushState() {}, replaceState() {} },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    addEventListener() {}, requestAnimationFrame() {}, setTimeout, clearTimeout, Date,
+    Actions: {
+      picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {},
+      openMenu: (_e, items) => menus.push(items), say() {}, ask: async () => ({ value: "stop" }),
+    },
+    fetch: async (url) => {
+      postCalls.push(url);
+      if (url.startsWith("/app/terminal/open-derived")) {
+        const s = { id: 99, provider: "claude", cwd: "/repo", exit: null, derived: true, derived_state: "idle", derived_since: 100, parent_workspace_id: "ws-hist", desk_key: "thread:saved", native: "saved", workspaces: [], display_title: "CLI新标题" };
+        sessions.push(s);
+        return { ok: true, status: 200, json: async () => ({ session: structuredClone(s) }) };
+      }
+      if (url.startsWith("/app/terminal/close?")) {
+        const sid = Number(url.split("session=")[1]);
+        sessions = sessions.filter(s => s.id !== sid);
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  context.window = context;
+  context.AN.h = (tag, attrs = {}, ...children) => (
+    String(tag).startsWith("iframe")
+      ? Object.assign(makeNode("iframe"), { attributes: { ...attrs }, contentWindow: { postMessage() {} } })
+      : h(tag, attrs, ...children)
+  );
+  vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.el = el; globalThis.state = state; globalThis.renderList = renderList; globalThis.syncListSelection = syncListSelection; globalThis.mustShow = mustShow; globalThis.toggleFold = toggleFold;`, context);
+  context.go = path => navigated.push(path);
+  context.openScope = (scope) => {
+    opened.push(scope);
+    context.state.drawer = scope;
+    context.ChatTerminal.readMessages(false);
+    context.ChatTerminal.column(context.state.loaded, "claude", "claude");
+    context.syncListSelection();
+  };
+  context.refresh = () => {};
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+
+  // Groups: ws-plain has neither terminals nor derived desks; ws-hist has 2 historical derived desks (one with saved title, one falling back to deskName).
+  const makeBoss = (group, project, extra = {}) => ({
+    group, title: group, status: "idle", updated: "2026-11-12T10:00:00Z", label: "Claude Code",
+    host: "claude", project_key: project, project_label: project.split("/").pop(), project_path: project, preview: "", ...extra,
+  });
+  context.state.groupsData = [
+    makeBoss("ws-plain", "/p0"),
+    makeBoss("ws-hist", "/p1", {
+      derived: [
+        { key: "thread:saved", provider: "claude", model: "opus", first_seen: "2026-11-12T01:00:00Z", last_active: "2026-11-12T02:00:00Z" },
+        { key: "thread:fallback", provider: "codex", model: "gpt-6.1", first_seen: "2026-11-12T03:00:00Z", last_active: "2026-11-12T04:00:00Z" },
+      ],
+    }),
+  ];
+  await context.ChatTerminal.refresh();
+  context.renderList();
+
+  // 1. Title priority + stable ID + idle appearance on historical-only rows.
+  const rows = context.ChatTerminal.derivedOf("ws-hist");
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].title, "保存的标题");
+  assert.equal(rows[1].title, "gpt-6.1");
+  assert.equal(rows[0].preview, "空闲");
+  assert.equal(rows[0].terminal, null);
+  const stableId = rows[0].group;
+  assert.equal(stableId.startsWith("drv-"), true);
+  const firstEl = context.state.items.get(stableId).el;
+
+  // 2. Width flag: ws-plain uses narrow width ("0"), ws-hist uses terminal width ("1") across boss/desk/messages/terminal.
+  context.state.selected = context.state.loaded = "ws-plain";
+  context.state.chat = { group: "ws-plain", desks: [] };
+  context.state.ctx = { desks: new Map() };
+  context.ChatTerminal.prepare("ws-plain");
+  context.ChatTerminal.column("ws-plain", "claude", "claude");
+  assert.equal(appNode.dataset.hasTerm, "0");
+
+  context.state.selected = context.state.loaded = "ws-hist";
+  context.state.chat = { group: "ws-hist", desks: [{ key: "thread:saved", derived: true }, { key: "thread:fallback", derived: true }] };
+  context.state.ctx = { desks: new Map([["thread:saved", { key: "thread:saved", derived: true }], ["thread:fallback", { key: "thread:fallback", derived: true }]]) };
+  context.state.drawer = { kind: "all" };
+  context.ChatTerminal.prepare("ws-hist");
+  context.ChatTerminal.column("ws-hist", "claude", "claude");
+  assert.equal(appNode.dataset.hasTerm, "1");
+
+  // 3. Highlight moves from boss to derived row when desk is open, and restores on switching back.
+  context.renderList();
+  assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), true);
+  assert.equal(firstEl.classList.contains("on"), false);
+
+  // The whole-page link handler follows hrefs before the row's own click, so they must lead somewhere.
+  assert.equal(firstEl.attributes.href, "/chat/ws-hist#desk:thread%3Asaved");
+  assert.equal(context.state.items.get("ws-hist").el.attributes.href, "/chat/ws-hist");
+
+  // Clicking historical row inside already-loaded parent calls openScope (no navigation, no revive).
+  firstEl.listeners.click[0]({ button: 0, preventDefault() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), { kind: "desk", key: "thread:saved" });
+  assert.equal(navigated.length, 0);
+  assert.equal(postCalls.length, 0);
+  assert.equal(firstEl.classList.contains("on"), true);
+  assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), false);
+  assert.equal(appNode.dataset.hasTerm, "1");
+
+  // Clicking the boss row leaves the derived desk for boss and restores the boss highlight.
+  context.state.items.get("ws-hist").el.listeners.click[0]({ button: 0, preventDefault() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), { kind: "all" });
+  assert.equal(firstEl.classList.contains("on"), false);
+  assert.equal(context.state.items.get("ws-hist").el.classList.contains("on"), true);
+
+  // 4. Context menu on history-only row is ["打开", "续接"]; resuming adds terminal row while preserving the exact same DOM element!
+  context.ChatTerminal.menu(stableId, {});
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "续接"]);
+  await context.ChatTerminal.revive({ group: "ws-hist", deskKey: "thread:saved" });
+  context.renderList();
+  const afterWake = context.ChatTerminal.derivedOf("ws-hist");
+  assert.equal(afterWake[0].group, stableId);
+  assert.equal(afterWake[0].terminal, 99);
+  assert.equal(afterWake[0].title, "CLI新标题");
+  assert.equal(context.state.items.get(stableId).el, firstEl, "DOM element must be reused in place");
+
+  // Closing terminal keeps row in list as idle with the same element and stable id.
+  await context.ChatTerminal.close(99);
+  context.renderList();
+  const afterClose = context.ChatTerminal.derivedOf("ws-hist");
+  assert.equal(afterClose[0].group, stableId);
+  assert.equal(afterClose[0].terminal, null);
+  assert.equal(context.state.items.get(stableId).el, firstEl);
+  assert.equal(appNode.dataset.hasTerm, "1");
+
+  // 5. Visibility: historical-only derived rows do NOT make boss mustShow and hide when project is folded;
+  // terminal-backed derived rows DO make boss mustShow and stay visible when folded.
+  context.state.selected = "ws-plain";
+  assert.equal(context.mustShow(context.state.groupsData[1]), false);
+  context.toggleFold("project:/p1");
+  assert.equal(context.state.items.get("ws-hist").el.getAttribute("data-folded"), "true");
+  assert.equal(firstEl.getAttribute("data-folded"), "true");
+
+  // Now attach a live terminal to thread:saved -> mustShow becomes true and both boss and terminal child stay visible when folded.
+  sessions.push({ id: 100, provider: "claude", cwd: "/repo", exit: null, derived: true, derived_state: "idle", parent_workspace_id: "ws-hist", desk_key: "thread:saved", native: "saved", workspaces: [] });
+  await context.ChatTerminal.refresh();
+  assert.equal(context.mustShow(context.state.groupsData[1]), true);
+  context.renderList();
+  assert.equal(context.state.items.get("ws-hist").el.getAttribute("data-folded"), null);
+  assert.equal(firstEl.getAttribute("data-folded"), null);
+  assert.equal(context.state.items.get(afterWake[1].group).el.getAttribute("data-folded"), "true");
+
+  // 6. Asking for the messages while the session is being brought back keeps them once it is up.
+  sessions = [];
+  await context.ChatTerminal.refresh();
+  context.state.selected = context.state.loaded = "ws-hist";
+  context.state.drawer = { kind: "desk", key: "thread:saved" };
+  const resuming = context.ChatTerminal.revive({ group: "ws-hist", deskKey: "thread:saved" });
+  firstEl.listeners.click[0]({ button: 0, preventDefault() {} });
+  await resuming;
+  context.ChatTerminal.column("ws-hist", "claude", "claude");
+  assert.equal(context.ChatTerminal.showing(), false);
+
+  // 7. A terminal opened before its session had an id stays open, then moves to its desk once history has it.
+  sessions = [{ id: 120, provider: "codex", cwd: "/repo", exit: null, derived: true, derived_state: "starting", parent_workspace_id: "ws-hist", desk_key: null, native: null, workspaces: [] }];
+  await context.ChatTerminal.refresh();
+  assert.equal(context.ChatTerminal.follow("term-120"), "term-120");
+  sessions[0].desk_key = "thread:fresh";
+  await context.ChatTerminal.refresh();
+  assert.equal(context.ChatTerminal.follow("term-120"), "term-120");
+  assert.equal(context.ChatTerminal.office("term-120").terminal, 120);
+  context.state.groupsData[1].derived.push({ key: "thread:fresh", provider: "codex", model: "gpt-6.1" });
+  assert.equal(context.ChatTerminal.follow("term-120"), "ws-hist");
+  assert.equal(context.state.hashKey, "desk:thread:fresh");
+  // asking for the messages meanwhile drops that wish
+  context.ChatTerminal.stayOnMessages("ws-hist", "thread:fresh");
+  assert.equal(context.ChatTerminal.consumeOpenDesk("ws-hist", "thread:fresh"), false);
 });

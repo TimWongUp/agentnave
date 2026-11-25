@@ -247,9 +247,15 @@ impl Group {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_micros() as i64);
-        let (mut rest, mut desks): (Vec<_>, Vec<_>) = self
-            .desks
-            .values()
+        let (derived_desks, regular): (Vec<_>, Vec<_>) = if panel {
+            (Vec::new(), self.desks.values().collect())
+        } else {
+            self.desks
+                .values()
+                .partition(|desk| desk.is_derived_thread())
+        };
+        let (mut rest, mut desks): (Vec<_>, Vec<_>) = regular
+            .into_iter()
             .partition(|desk| !panel && desk.failure_settled(now));
         let recent = |d: &Desk| if panel { d.prompted() } else { d.last };
         desks.sort_by_key(|d| (!d.active, Reverse(recent(d)), &d.key));
@@ -258,6 +264,8 @@ impl Group {
         rest.extend(desks.split_off(keep.min(desks.len())));
         rest.sort_by_key(|d| (Reverse(recent(d)), &d.key));
         if !panel {
+            // Derived desks stay in their own office zone without consuming the regular desk cap.
+            desks.extend(derived_desks);
             // Drawn desks put the newest first; the others keep their order as new ones arrive.
             desks.sort_by_key(|d| (Reverse(d.first.unwrap_or_default()), &d.key));
         }
@@ -272,6 +280,17 @@ impl Group {
                 .collect::<Vec<_>>(),
         });
         (shown, optimized)
+    }
+
+    /// Derived desks in this workspace, ordered stably by first appearance for the sidebar list.
+    pub(super) fn derived_list(&self) -> Vec<Value> {
+        let mut derived: Vec<_> = self
+            .desks
+            .values()
+            .filter(|desk| desk.is_derived_thread())
+            .collect();
+        derived.sort_by_key(|desk| (desk.first.unwrap_or_default(), &desk.key));
+        derived.into_iter().map(Desk::derived_summary).collect()
     }
     pub(super) fn rooms(&self) -> Vec<Value> {
         let mut rooms: Vec<_> = self.rooms.iter().collect();

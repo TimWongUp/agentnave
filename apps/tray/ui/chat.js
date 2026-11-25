@@ -649,6 +649,7 @@ function renderAll(c, newGroup = false) {
   const leftTerm = wasTerm && !el.drawer?.classList?.contains?.("term-mode");
   renderConv(c, ctx, leftTerm);
   ChatTerminal.column(c.group, c.host, c.app);
+  if (typeof syncListSelection === "function") syncListSelection();
   renderSideToggle();
   renderTicker(c, ctx);
   renderOffice(c, ctx, n, newGroup);
@@ -665,7 +666,11 @@ function applyHash(ctx) {
   if (key.startsWith("desk:")) {
     // A link made while a task had no native session yet names its earlier task key.
     const desk = ctx.aliases.get(key.slice(5)) ?? key.slice(5);
-    if (ctx.desks.has(desk)) openScope({ kind: "desk", key: desk });
+    if (ctx.desks.has(desk)) {
+      const wantTerm = Boolean(ChatTerminal.consumeOpenDesk?.(state.chat?.group, desk));
+      openScope({ kind: "desk", key: desk }, null, wantTerm ? { terminal: true } : {});
+      if (wantTerm) ChatTerminal.focusFrame?.(ChatTerminal.ofDesk?.(state.chat?.group, desk)?.id);
+    }
   } else if (key.startsWith("conv:")) {
     const id = key.slice(5);
     const last = state.chat?.messages.findLast((m) => m.conversation === id);
@@ -700,11 +705,17 @@ async function refresh() {
       : (chats.sidebar || null);
     state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
     const derived = ChatTerminal.derivedAll?.() || [];
+    // A workspace is found and counts as active through its derived sessions too.
+    for (const g of state.groupsData) {
+      const own = ChatTerminal.derivedOf?.(g.group) || [];
+      g.derived_live = own.some((d) => d.live);
+      g.derived_titles = own.map((d) => d.title).join("\n");
+    }
     const selectable = [...state.groupsData, ...derived];
     const followed = ChatTerminal.follow(state.selected);
     if (followed !== state.selected) {
       state.selected = followed;
-      history.replaceState({}, "", href(`/chat/${followed}`));
+      history.replaceState({}, "", href(`/chat/${followed}${state.hashKey ? `#${encodeURI(state.hashKey)}` : ""}`));
     }
     if (
       state.auto &&
@@ -713,7 +724,8 @@ async function refresh() {
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
+    const openDesk = state.drawer?.kind === "desk" ? state.drawer.key : null;
+    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, openDesk, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();

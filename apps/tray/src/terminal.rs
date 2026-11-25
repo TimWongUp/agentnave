@@ -891,12 +891,13 @@ impl Terminals {
                 native.is_none().then_some(found).flatten(),
                 located,
                 checked,
+                title.as_ref().map(|t| t.text.clone()),
             ));
             titles.extend(title.map(|title| (id, title)));
         }
         if !updates.is_empty() {
             let mut state = self.lock();
-            for (id, found, located, checked) in updates {
+            for (id, found, located, checked, title_text) in updates {
                 if let Some(running) = state.open.iter_mut().find(|running| running.id == id) {
                     running.title_searched = Some(checked);
                     if running.native.is_none() && found.is_some() {
@@ -904,6 +905,11 @@ impl Terminals {
                     }
                     if located {
                         running.title_located = true;
+                    }
+                    if let (Some(derived), Some(text)) = (running.derived.as_mut(), title_text)
+                        && !text.is_empty()
+                    {
+                        derived.life.title = Some(text);
                     }
                 }
             }
@@ -983,8 +989,23 @@ impl Terminals {
                 value["project_path"] = json!(project.path);
             }
         }
+        self.keep_launches();
+        let derived_titles = self.derived_titles(&open);
         let open: Vec<Value> = open.into_iter().map(|(_, _, value)| value).collect();
-        json!({"sessions": open, "cwd": cwd.map(|cwd| cwd.display().to_string())})
+        json!({"sessions": open, "cwd": cwd.map(|cwd| cwd.display().to_string()), "derived_titles": derived_titles})
+    }
+
+    fn derived_titles(&self, open: &[(u64, PathBuf, Value)]) -> BTreeMap<String, String> {
+        let mut map = self.saved_titles();
+        for (_, _, value) in open {
+            if value["derived"].as_bool() == Some(true)
+                && let Some(key) = value["desk_key"].as_str().filter(|s| !s.is_empty())
+                && let Some(title) = value["display_title"].as_str().filter(|s| !s.is_empty())
+            {
+                map.insert(key.to_owned(), title.to_owned());
+            }
+        }
+        map
     }
 
     fn pick(&self, app: &AppHandle) -> Response {

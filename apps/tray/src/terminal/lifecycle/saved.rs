@@ -28,6 +28,8 @@ pub(in crate::terminal) struct Saved {
     pub fallback_mode: Option<String>,
     pub parent_workspace_id: Option<String>,
     pub parent_boss_key: String,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 impl Saved {
@@ -99,7 +101,12 @@ impl Store {
     fn keep(&mut self, launches: Vec<(String, Saved)>) {
         let known = self.known();
         let mut changed = false;
-        for (key, saved) in launches {
+        for (key, mut saved) in launches {
+            if saved.title.is_none()
+                && let Some(existing) = known.get(&key)
+            {
+                saved.title.clone_from(&existing.title);
+            }
             if known.get(&key) != Some(&saved) {
                 known.insert(key, saved);
                 changed = true;
@@ -108,6 +115,21 @@ impl Store {
         if changed {
             self.save();
         }
+    }
+
+    fn titles(&mut self) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        for (key, saved) in self.known().iter() {
+            if let Some((provider, native)) = key.split_once(':')
+                && let Some(title) = saved.title.as_deref().filter(|t| !t.is_empty())
+            {
+                out.insert(
+                    super::super::thread_desk_key(provider, native),
+                    title.to_owned(),
+                );
+            }
+        }
+        out
     }
 
     /// Forgets the sessions the service history no longer has. Kept when that cannot be told.
@@ -185,6 +207,7 @@ impl State {
                     fallback_mode: derived.life.fallback_mode.clone(),
                     parent_workspace_id: derived.parent_workspace_id.clone(),
                     parent_boss_key: derived.parent_boss_key.clone(),
+                    title: derived.life.title.clone(),
                 };
                 Some((key(&running.provider, native), saved))
             })
@@ -212,7 +235,7 @@ impl Terminals {
     }
 
     /// Records the launches of the sessions running now.
-    pub(super) fn keep_launches(&self) {
+    pub(in crate::terminal) fn keep_launches(&self) {
         let launches = self.lock().launches();
         if !launches.is_empty() {
             self.store().keep(launches);
@@ -221,5 +244,9 @@ impl Terminals {
 
     pub(in crate::terminal) fn prune_saved_launches(&self, root: &Path) {
         self.store().prune(root);
+    }
+
+    pub(in crate::terminal) fn saved_titles(&self) -> BTreeMap<String, String> {
+        self.store().titles()
     }
 }

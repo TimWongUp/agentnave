@@ -866,6 +866,7 @@ fn list_response(
             value["created"] = json!(g.created_time());
             value["conversations"] = json!(g.conversations.len());
             value["desks_count"] = json!(g.desks.len());
+            value["derived"] = json!(g.derived_list());
             value["rooms_count"] = json!(g.rooms.len());
             value["preview"] = json!(preview.2);
             kept.insert(g.id.clone(), preview);
