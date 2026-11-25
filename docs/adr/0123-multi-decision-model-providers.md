@@ -21,10 +21,10 @@ ADR-0087 最初只接入了 Google `gemini-decision-1`。实际使用中，Googl
   - `openrouter`：OpenRouter（`POST /api/v1/systemone`），默认 `liquid/d1.2-ultra`，托盘按需从 `output_modalities=decisions` 拉取模型目录并提供精选推荐与手填模型 ID，需 `openrouter` 密钥。
   - `ollama`：Ollama 本机／兼容服务（默认 `http://127.0.0.1:11434`，可修改地址，免密钥；托盘按需从 `/api/tags` 筛选带 `decision` 能力的模型，服务调用 `/v1/systemone`）。
   - `custom`：自定义 System One 兼容端点（必填地址，可选 `custom` 密钥，支持尝试拉取模型列表或手填模型 ID；服务按地址规范补全 `/v1/systemone` 或 `/systemone`）。
-- **保持 `decision-seats.json` version 1 与向后兼容。** 新增可选字段 `decision_provider`（缺省为 `gemini`）与 `decision_base_url`（仅 `ollama` 与 `custom` 允许）。使用默认 `gemini` 时 App 省略这两个字段，不破坏旧版服务对既有文件的读取。`decision-keys.json` 沿用 `keys` 对象按平台名分存各平台密钥（`gemini`、`openai`、`typesafe`、`openrouter`、`custom`），服务只读、托盘仍不回传密钥原文；`POST /app/decision-key` 缺省 `provider` 时仍按 `gemini` 处理。
+- **保持 `decision-seats.json` version 1 与向后兼容。** 新增可选字段 `decision_provider`（缺省为 `gemini`）与 `decision_base_url`（仅 `ollama` 与 `custom` 允许）。使用默认 `gemini` 时 App 省略这两个字段，不破坏旧版服务对既有文件的读取。`decision-keys.json` 沿用 `keys` 对象按平台名分存各平台密钥（`gemini`、`openai`、`typesafe`、`openrouter`、`custom`），服务只读；托盘不回传密钥原文，仅向设置页返回脱敏预览字符（16 字符及以上显示前 4 位加 `…` 与后 4 位，8–15 字符仅显示 `••••` 加后 4 位，短于 8 字符显示 `••••`），方便辨认当前保存的是哪把密钥；`POST /app/decision-key` 缺省 `provider` 时仍按 `gemini` 处理。
 - **地址边界与联网时机。** `decision_base_url` 与口语摘要自定义地址采用同一校验规则：只允许 `https://` 或本机回环地址的 `http://`，拒绝账号信息、查询参数与片段；服务访问回环地址时绕过系统代理直连。托盘仅在设置页选中对应平台或点击刷新时才按需联网读取该平台模型目录，预览版允许只读查询目录，仍拒绝保存配置与密钥。
 - **服务按三套协议直连，不自动跨平台回落。** 服务内置 Google Decisions、OpenAI Decisions 与通用 System One 三个客户端，共用超时、单次网络重试与密钥脱敏约束；不接入 Magpie 网关；缺密钥、配置无效或调用失败仍报错，由 boss 从工位目录自选。
-- **设置页输入与提示边界。** 允许输入密钥、自定义／Ollama 地址以及可变平台的模型 ID；`gemini` 与 `openai` 仅提供固定选择。数据去向提示随所选平台准确说明（本机 `ollama` 提示派发内容不出本机，云端平台标明对应服务方，Gemini 保留免费层与地区提示）。
+- **设置页输入与提示边界。** 允许输入密钥、自定义／Ollama 地址以及可变平台的模型 ID；`gemini` 与 `openai` 仅提供固定选择。可变平台在有可选列表时默认只显示一行下拉选择与刷新，仅在选中「手动输入模型 ID…」或当前模型不在列表内时展开手填框（语音摘要模型同此交互）。数据去向提示随所选平台准确说明（本机 `ollama` 提示派发内容不出本机，云端平台标明对应服务方，Gemini 保留免费层与地区提示）。
 
 ## 取舍
 

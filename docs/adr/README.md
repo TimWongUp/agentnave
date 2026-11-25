@@ -47,7 +47,7 @@
 | 0041 | [编排档位按 boss 选择，读同一文件的 boss 共用一档](0041-orchestration-mode-per-boss.md) | 已接受 | [ADR-0083](0083-meetings-only-preset.md)、[ADR-0087](0087-decision-model-recommends-seats.md)；T3 主线程的适用范围由 [ADR-0121](0121-t3-code-orchestration.md) 修订 |
 | 0042 | [组员模型带档位，服务每次传模型与档位](0042-pass-cli-default-effort.md) | 已接受 | — |
 | 0043 | [服务统一追加非交互与只读说明](0043-service-prompt-instructions.md) | 部分修订 | [ADR-0062](0062-service-owned-member-names.md)、[ADR-0107](0107-specialist-scope-closing-and-fallback-note.md)；派发说明口吻由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订 |
-| 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 已接受 | — |
+| 0044 | [会议语音使用云端引擎并允许配置摘要接口](0044-meeting-voice-cloud-and-key-input.md) | 部分修订 | 2026-11-25 自身修订：允许返回脱敏密钥预览字符（见 [ADR-0123](0123-multi-decision-model-providers.md)） |
 | 0045 | [去掉浏览器看板](0045-remove-browser-dashboard.md) | 已接受 | [ADR-0046](0046-service-history-retention.md) |
 | 0046 | [历史自动清理由服务执行](0046-service-history-retention.md) | 部分修订 | 清理计时起点由 [ADR-0099](0099-handover-links-workspaces.md) 修订 |
 | 0047 | [App 按版本安装服务并在启动时跟进](0047-versioned-service-install.md) | 部分取代 | [ADR-0061](0061-fixed-service-launcher.md) |
