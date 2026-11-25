@@ -159,7 +159,8 @@ class T3SeatsFile(StrictModel):
 
 
 def _row_cli(key: str) -> str:
-    """The CLI of an orchestration row key: `claude`, `claude@a1`, `claude-desktop`, `codex@dir`."""
+    """The CLI of an orchestration row key: `claude`, `claude@a1`, `claude-desktop`, `codex@dir`.
+    Mirrors `providers::boss_of` in apps/tray/src/providers.rs."""
     cli = key.split("@", 1)[0]
     return "claude" if cli == "claude-desktop" else cli
 

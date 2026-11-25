@@ -2245,6 +2245,11 @@ def test_t3_bosses_select_which_hosts_run_t3_orchestration(
     assert effective_t3_seats(account) is not None
     assert t3_host_mode(Host("claude", "env", "claude")) == "split"
     assert t3_host_mode(Host("codex", "env", "codex")) is None
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps({"version": 1, "effective_apps": {"claude-desktop": "split", "claude": "off"}}),
+        encoding="utf-8",
+    )
+    assert t3_host_mode(Host("claude", "env", "claude")) == "split"
     # The tray lists and recognises the same CLIs as the server, the JS mirrors included.
     root = Path(__file__).resolve().parents[1] / "apps" / "tray"
 

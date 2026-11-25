@@ -12,7 +12,8 @@ pub const PROVIDERS: [&str; 8] = [
 /// `ProviderAdapter.default_host_cli_mode` on the Python side.
 pub const LAUNCH_HOST_CLIS: [&str; 1] = ["antigravity"];
 
-/// The host a row's connections run as; its service knows no other names.
+/// The host a row's connections run as; its service knows no other names. Mirrored by `_row_cli`
+/// in src/agentnave/t3_seats.py.
 pub(crate) fn boss_of(id: &str) -> &str {
     match id {
         "claude-desktop" => "claude",
