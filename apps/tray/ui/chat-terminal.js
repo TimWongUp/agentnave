@@ -876,8 +876,8 @@ const ChatTerminal = (() => {
   const hasTerminal = (group) => Boolean(byId(pendingId(group)) || ofWorkspace(group));
   const displayState = (group) => {
     const x = terminalOf(group);
-    const derived = derivedOf(group).map((d) => [d.terminal, d.derived_state, d.waking, d.resumable, d.pending_results]);
-    return [x ? [x.id, x.exit != null, x.derived_state, t.waking.has(x.id)] : null, derived];
+    const derived = derivedOf(group).map((d) => [d.terminal, byId(d.terminal)?.started, d.derived_state, d.waking, d.resumable, d.pending_results]);
+    return [x ? [x.id, x.started, x.exit != null, x.derived_state, t.waking.has(x.id)] : null, derived];
   };
   const bossOpensTerminal = (group) => {
     const agent = byId(pendingId(group));

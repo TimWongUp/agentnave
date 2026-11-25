@@ -495,6 +495,14 @@ impl Terminals {
         })
     }
 
+    #[cfg(unix)]
+    pub(super) fn is_working(&self, terminal_id: u64) -> bool {
+        self.lock()
+            .open
+            .iter()
+            .any(|r| r.id == terminal_id && r.is_working())
+    }
+
     pub(super) fn try_claim_derived_turn(
         &self,
         terminal_id: u64,
@@ -511,7 +519,7 @@ impl Terminals {
         if running.account.as_ref().map(|a| a.id.as_str()) != expected_account {
             return Err("派生会话原账号与请求账号不一致".to_owned());
         }
-        let Some(derived) = running.derived.as_mut() else {
+        let Some(derived) = running.derived.as_ref() else {
             return Err("目标不是派生终端".to_owned());
         };
         if derived.life.stopping() {
@@ -521,9 +529,12 @@ impl Terminals {
             return Err("派生终端正忙，无法同时续派".to_owned());
         }
         // The user may have started to type since the dispatch last looked.
-        if running.session.has_draft() || derived::shows_busy(&running.session) {
+        if running.session.has_draft() || running.is_working() {
             return Err(derived::LIVE_BUSY_ERR.to_owned());
         }
+        let Some(derived) = running.derived.as_mut() else {
+            return Err("目标不是派生终端".to_owned());
+        };
         derived.busy = true;
         derived.blocked_kind = None;
         derived.active_invocation_id = Some(invocation_id.to_owned());
@@ -634,6 +645,7 @@ impl Terminals {
         let mut state = self.lock();
         if let Some(running) = state.open.iter_mut().find(|r| r.id == terminal_id) {
             running.session = session;
+            running.started = SystemTime::now();
             if let Some(sid) = native {
                 running.native = Some(sid.to_owned());
                 running.title_located = false;

@@ -816,6 +816,11 @@ fn live_open_derived(provider: &Provider) {
     assert_eq!(live.native(opened), native);
     live.wait_state(opened, &["idle"], Duration::from_secs(90));
     live.track(opened);
+    // Shown as idle, it takes the boss's next turn.
+    let (again, _) = live.dispatch(Some(&native), "只回复一句话「收到」，不要使用任何工具。");
+    assert_eq!(again, native);
+    assert_eq!(live.derived(), opened);
+    live.wait_state(opened, &["idle", "uncollected"], Duration::from_secs(30));
     let answered = (0..3).any(|_| {
         live.user_turn(
             opened,

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::super::codex_server::{self, InterruptRpcOutcome, ThreadStatus, TurnStartConfig};
+use super::super::codex_server::{self, InterruptRpcOutcome, TurnStartConfig};
 use super::super::lifecycle::{Relaunched, ResumeSlot, Reviving, WakePlan};
 use super::super::session::Session;
 use super::super::spawn_requests::{
@@ -299,16 +299,7 @@ pub(super) fn open_or_launch_codex(
                 if let Some(err) = cwd_mismatch(&existing.cwd, cwd) {
                     return Err(err);
                 }
-                if existing.session.has_draft()
-                    || matches!(
-                        existing.session.osc_snapshot().1.as_deref(),
-                        Some("working" | "blocked")
-                    )
-                    || existing.codex.as_ref().is_some_and(|c| {
-                        c.thread_status(sid)
-                            .is_some_and(|s| matches!(s, ThreadStatus::Active { .. }))
-                    })
-                {
+                if existing.session.has_draft() || terminals.is_working(existing.id) {
                     return Err("Codex 派生终端正在运行中".to_owned());
                 }
                 let (iso_id, lease) = acquire_isolation_for_terminal(
