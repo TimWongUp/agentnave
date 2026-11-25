@@ -28,7 +28,7 @@ fn one_row_per_file_names_every_app_that_reads_it() {
         std::fs::create_dir_all(h.join(file).parent().unwrap()).unwrap();
         std::fs::write(h.join(file), "rules").unwrap();
     }
-    let listed = list(&apps, &[], h, &json!({"preset": "off"}), false);
+    let listed = list(&apps, &[], h, &json!({"preset": "off"}), None);
     let rows = listed["files"].as_array().unwrap();
     let row = |file: &str| {
         rows.iter()
@@ -75,7 +75,7 @@ fn one_row_per_file_names_every_app_that_reads_it() {
     )
     .unwrap();
     std::fs::write(h.join(".grok/Agents.md"), "rules").unwrap();
-    let listed = list(&apps, &[], h, &json!({"preset": "off"}), false);
+    let listed = list(&apps, &[], h, &json!({"preset": "off"}), None);
     let readers = |file: &str| {
         let rows = listed["files"].as_array().unwrap();
         let row = rows
@@ -248,19 +248,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             assert!(text_of(&doc_none, mode).unwrap().contains(no_seats));
         }
     }
-    assert!(
-        sync(
-            &installed,
-            &connected,
-            h,
-            &split,
-            false,
-            &[],
-            &backup,
-            false
-        )
-        .is_empty()
-    );
+    assert!(sync(&installed, &connected, h, &split, None, &[], &backup, false).is_empty());
     let claude_md = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert_eq!(
         claude_md,
@@ -276,7 +264,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             .unwrap()
             .contains(START)
     );
-    let listed = list(&installed, &connected, h, &split, false);
+    let listed = list(&installed, &connected, h, &split, None);
     let current: Vec<_> = listed["files"]
         .as_array()
         .unwrap()
@@ -294,19 +282,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
 
     // Unchanged settings write nothing; turning it off restores every file as it was.
     backups.borrow_mut().clear();
-    assert!(
-        sync(
-            &installed,
-            &connected,
-            h,
-            &split,
-            false,
-            &[],
-            &backup,
-            false
-        )
-        .is_empty()
-    );
+    assert!(sync(&installed, &connected, h, &split, None, &[], &backup, false).is_empty());
     assert!(backups.borrow().is_empty());
     assert!(
         sync(
@@ -314,7 +290,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
             &connected,
             h,
             &json!({"preset": "off"}),
-            false,
+            None,
             &[],
             &backup,
             false
@@ -330,34 +306,13 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
     // Neither file exists yet: Grok would read the one created for Claude, so it gets no other.
     std::fs::remove_file(h.join(".claude/CLAUDE.md")).unwrap();
     std::fs::remove_file(h.join(".grok/AGENTS.md")).unwrap();
-    assert!(
-        sync(
-            &installed,
-            &connected,
-            h,
-            &split,
-            false,
-            &[],
-            &backup,
-            false
-        )
-        .is_empty()
-    );
+    assert!(sync(&installed, &connected, h, &split, None, &[], &backup, false).is_empty());
     assert!(h.join(".claude/CLAUDE.md").is_file());
     assert!(!h.join(".grok/AGENTS.md").exists());
     // A lone marker is left for the user rather than guessed at.
     let broken = format!("mine\n{START}\nold\n");
     std::fs::write(h.join(".codex/AGENTS.md"), &broken).unwrap();
-    let failures = sync(
-        &installed,
-        &connected,
-        h,
-        &split,
-        false,
-        &[],
-        &backup,
-        false,
-    );
+    let failures = sync(&installed, &connected, h, &split, None, &[], &backup, false);
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0]["path"], json!(h.join(".codex/AGENTS.md")));
     assert_eq!(
@@ -385,7 +340,7 @@ fn the_block_goes_once_into_each_connected_app_and_leaves_the_rest_untouched() {
         &connected,
         h,
         &json!({"preset": "off"}),
-        false,
+        None,
         std::slice::from_ref(&moved),
         &backup,
         false,
@@ -415,7 +370,7 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     let backup = |_: &Path, _: &[u8]| Ok(());
     let document = json!({"version": 1, "preset": "off", "custom": "我的规则",
         "apps": {"claude": "split", "grok": "decision", "codex": "custom"}});
-    assert!(sync(&apps, &apps, h, &document, false, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &document, None, &[], &backup, false).is_empty());
 
     // Grok reads Claude's file, so it runs on the first app's mode rather than a second block.
     let shared = catalog::section("shared");
@@ -428,7 +383,7 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
     // ZCode has no mode of its own and follows the default.
     assert!(!h.join(".zcode/AGENTS.md").exists());
 
-    let listed = list(&apps, &apps, h, &document, false);
+    let listed = list(&apps, &apps, h, &document, None);
     assert_eq!(
         listed["bosses"]
             .as_array()
@@ -484,13 +439,13 @@ fn each_boss_gets_its_own_mode_and_apps_sharing_a_file_get_one() {
 
     // Turning one boss off leaves the other's block alone.
     let document = json!({"preset": "off", "custom": "我的规则", "apps": {"codex": "custom"}});
-    assert!(sync(&apps, &apps, h, &document, false, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &document, None, &[], &backup, false).is_empty());
     assert!(!h.join(".claude/CLAUDE.md").exists());
     assert!(h.join(".codex/AGENTS.md").exists());
 
     // Claude joining Grok's file later does not undo the mode already set on Grok.
     let document = json!({"preset": "off", "apps": {"grok": "split"}});
-    assert!(sync(&apps, &apps, h, &document, false, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &document, None, &[], &backup, false).is_empty());
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     assert!(claude.contains(shared));
 }
@@ -515,7 +470,7 @@ fn a_held_sync_keeps_the_old_block_until_the_service_catches_up() {
     std::fs::write(h.join(".claude/CLAUDE.md"), &old).unwrap();
     std::fs::write(h.join(".codex/AGENTS.md"), &old).unwrap();
 
-    let failures = sync(&apps, &apps, h, &split, false, &[], &backup, true);
+    let failures = sync(&apps, &apps, h, &split, None, &[], &backup, true);
     assert_eq!(failures.len(), 2);
     assert_eq!(
         std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),
@@ -524,12 +479,12 @@ fn a_held_sync_keeps_the_old_block_until_the_service_catches_up() {
 
     // Turning the block off does not wait: no tool argument depends on its absence.
     let off = json!({"preset": "off"});
-    assert!(sync(&apps, &apps, h, &off, false, &[], &backup, true).is_empty());
+    assert!(sync(&apps, &apps, h, &off, None, &[], &backup, true).is_empty());
     assert!(!h.join(".claude/CLAUDE.md").exists());
 
     // Once the service caught up the block goes in, and holding again reports nothing.
-    assert!(sync(&apps, &apps, h, &split, false, &[], &backup, false).is_empty());
-    assert!(sync(&apps, &apps, h, &split, false, &[], &backup, true).is_empty());
+    assert!(sync(&apps, &apps, h, &split, None, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &split, None, &[], &backup, true).is_empty());
 }
 
 #[test]
@@ -633,7 +588,7 @@ fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
     ];
     let mut document =
         json!({"preset": "split", "image_generation": {"provider": "codex", "model": "chat"}});
-    let rows = wanted(&apps, h, &document, false);
+    let rows = wanted(&apps, h, &document, None);
     for (path, text) in &rows {
         assert_eq!(
             text.contains("image-generator"),
@@ -641,7 +596,7 @@ fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
         );
     }
     document["image_generation"]["provider"] = json!("claude");
-    let rows = wanted(&apps, h, &document, false);
+    let rows = wanted(&apps, h, &document, None);
     assert!(
         rows.iter()
             .find(|(p, _)| p.starts_with(h.join(".claude")))
@@ -656,7 +611,7 @@ fn image_rule_is_hidden_from_its_own_cli_and_shared_readers() {
     );
     document["image_generation"]["provider"] = json!("codebuddy");
     assert!(
-        wanted(&apps, h, &document, false)
+        wanted(&apps, h, &document, None)
             .iter()
             .find(|(p, _)| p.starts_with(h.join(".workbuddy")))
             .is_some_and(|(_, text)| !text.contains("image-generator"))
@@ -693,7 +648,9 @@ fn custom_copies_learn_that_no_worktree_means_serial_writes() {
             "order",
             "sections",
             "switches",
-            "t3_order"
+            "t3_only",
+            "t3_order",
+            "t3_other"
         ]
     );
     assert_eq!(
@@ -877,7 +834,7 @@ fn the_decision_mode_is_per_boss_and_shared_by_readers_of_one_file() {
         json!({"claude": "decision", "grok": "decision", "codex": "split"})
     );
     let backup = |_: &Path, _: &[u8]| Ok(());
-    assert!(sync(&apps, &apps, h, &document, false, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &document, None, &[], &backup, false).is_empty());
     let claude = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
     let codex = std::fs::read_to_string(h.join(".codex/AGENTS.md")).unwrap();
     assert!(claude.contains(catalog::section("dispatch_decision")));
@@ -885,7 +842,7 @@ fn the_decision_mode_is_per_boss_and_shared_by_readers_of_one_file() {
 }
 
 #[test]
-fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
+fn t3_rule_follows_mode_for_claude_codex_antigravity_and_codebuddy_only_and_restores_cleanly() {
     let home = tempfile::tempdir().unwrap();
     let h = &home.path().canonicalize().unwrap();
     let app = |key: &'static str, id: &'static str, label: &'static str, root: &str| App {
@@ -910,8 +867,11 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
             "Antigravity",
             ".gemini/config",
         ),
+        app("codebuddy", "codebuddy", "CodeBuddy", ".codebuddy"),
         app("zcode", "zcode", "ZCode", ".zcode"),
     ];
+    // T3 orchestration on for the four CLIs AgentNave recognises in T3, not for Grok.
+    let t3 = json!({"bosses": ["claude", "codex", "antigravity", "codebuddy"]});
     let boss_suffix = catalog::t3_suffix("split").unwrap();
     let decision_suffix = catalog::t3_suffix("decision").unwrap();
     let custom_suffix = catalog::t3_suffix("custom").unwrap();
@@ -927,13 +887,27 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     assert!(catalog::t3_suffix("meetings").is_none());
     let backup = |_: &Path, _: &[u8]| Ok(());
 
-    // 1. Off mode + T3 active: NO block written anywhere (never writes a heading-only block).
+    // 1. Off mode + T3 active with no saved boss choice: nothing is selected, so NO block is written
+    //    anywhere (never a heading-only block).
+    let t3_default = json!({});
     let own_claude = "# 我的 Claude 规则\n";
     std::fs::create_dir_all(h.join(".claude")).unwrap();
     std::fs::write(h.join(".claude/CLAUDE.md"), own_claude).unwrap();
     let off = json!({"preset": "off"});
-    assert!(wanted(&apps, h, &off, true).is_empty());
-    assert!(sync(&apps, &apps, h, &off, true, &[], &backup, false).is_empty());
+    assert!(wanted(&apps, h, &off, Some(&t3_default)).is_empty());
+    assert!(
+        sync(
+            &apps,
+            &apps,
+            h,
+            &off,
+            Some(&t3_default),
+            &[],
+            &backup,
+            false
+        )
+        .is_empty()
+    );
     assert_eq!(
         std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),
         own_claude
@@ -942,24 +916,25 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     assert!(!h.join(".codex/AGENTS.md").exists());
     assert!(!h.join(".grok/AGENTS.md").exists());
     assert!(!h.join(".gemini/AGENTS.md").exists());
+    assert!(!h.join(".codebuddy/CODEBUDDY.md").exists());
     assert!(!h.join(".zcode/AGENTS.md").exists());
 
     // 2. Meetings mode + T3 active: ordinary meetings block without any T3 heading or text.
     let meetings = json!({"preset": "meetings"});
-    for (_, text) in wanted(&apps, h, &meetings, true) {
+    for (_, text) in wanted(&apps, h, &meetings, Some(&t3)) {
         assert!(!text.contains("### 不在 T3 Code 里时这样派"));
         assert!(!text.contains("### 在 T3 Code 里这样派"));
     }
 
-    // 3. Grok alone (Claude not connected) does NOT get T3 sectioning even in split mode.
+    // 3. Grok alone (Claude not connected) is not selected, so it gets no T3 sectioning in split mode.
     let only_grok = [app("grok", "grok", "Grok", ".grok")];
-    let grok_wanted = wanted(&only_grok, h, &json!({"preset": "split"}), true);
+    let grok_wanted = wanted(&only_grok, h, &json!({"preset": "split"}), Some(&t3));
     assert!(grok_wanted.iter().all(|(_, text)| {
         !text.contains("### 不在 T3 Code 里时这样派") && !text.contains("### 在 T3 Code 里这样派")
     }));
 
-    // 4. Split and decision modes split dispatch into two h3 sections for Claude/Codex only;
-    //    non-Claude/Codex and T3-off stay verbatim without headings, and presets() carries
+    // 4. Split and decision modes split dispatch into two h3 sections for Claude/Codex/Antigravity/CodeBuddy only;
+    //    other hosts and T3-off stay verbatim without headings, and presets() carries
     //    non_t3_heading + mode-specific t3 suffixes.
     for (mode, dispatch_key, expected_suffix) in [
         ("split", "dispatch_split", &boss_suffix),
@@ -983,15 +958,17 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
         assert!(!expected_t3.contains("\n\n\n"), "{mode} has triple newline");
         assert!(expected_t3.contains("\n\n### 不在 T3 Code 里时这样派\n\n- "));
         assert!(expected_t3.contains("\n\n### 在 T3 Code 里这样派，不用上面的派法和工位\n\n- "));
-        for (_, text) in wanted(&apps, h, &doc, false) {
+        for (_, text) in wanted(&apps, h, &doc, None) {
             assert_eq!(text, plain, "{mode} with T3 off must match plain");
         }
-        let rows = wanted(&apps, h, &doc, true);
+        let rows = wanted(&apps, h, &doc, Some(&t3));
         for (path, text) in &rows {
-            let is_claude_or_codex = path.starts_with(h.join(".claude"))
+            let is_t3_reader = path.starts_with(h.join(".claude"))
                 || path.starts_with(h.join(".agentnave-accounts/claude/a1"))
-                || path.starts_with(h.join(".codex"));
-            if is_claude_or_codex {
+                || path.starts_with(h.join(".codex"))
+                || path.starts_with(h.join(".gemini"))
+                || path.starts_with(h.join(".codebuddy"));
+            if is_t3_reader {
                 assert_eq!(text, &expected_t3, "{mode} {path:?}");
             } else {
                 assert_eq!(text, &plain, "{mode} {path:?}");
@@ -1001,8 +978,8 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
 
     // Sync split + T3 active and verify rules::list reports current == target.
     let split_doc = json!({"preset": "split"});
-    assert!(sync(&apps, &apps, h, &split_doc, true, &[], &backup, false).is_empty());
-    let listed = list(&apps, &apps, h, &split_doc, true);
+    assert!(sync(&apps, &apps, h, &split_doc, Some(&t3), &[], &backup, false).is_empty());
+    let listed = list(&apps, &apps, h, &split_doc, Some(&t3));
     for row in listed["files"].as_array().unwrap() {
         assert_eq!(row["target"], row["current"], "{row}");
     }
@@ -1021,6 +998,16 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
             .unwrap()
             .contains(boss_suffix.as_str())
     );
+    assert!(
+        std::fs::read_to_string(h.join(".gemini/AGENTS.md"))
+            .unwrap()
+            .contains(boss_suffix.as_str())
+    );
+    assert!(
+        std::fs::read_to_string(h.join(".codebuddy/CODEBUDDY.md"))
+            .unwrap()
+            .contains(boss_suffix.as_str())
+    );
 
     // 5. Custom mode: user body gets NO heading; blank line + T3 section appended for Claude/Codex,
     //    never stored in custom, and does not count against the 8000-character custom limit.
@@ -1036,7 +1023,7 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
         presets(&custom_doc)["t3"]["custom"].as_str(),
         Some(custom_suffix.as_str())
     );
-    let custom_rows = wanted(&apps, h, &custom_doc, true);
+    let custom_rows = wanted(&apps, h, &custom_doc, Some(&t3));
     let codex_custom = custom_rows
         .iter()
         .find(|(path, _)| path == &h.join(".codex/AGENTS.md"))
@@ -1045,21 +1032,135 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     assert!(!codex_custom.1.contains("### 不在 T3 Code 里时这样派"));
 
     let empty_custom = json!({"preset": "custom", "custom": "   "});
-    assert!(wanted(&apps, h, &empty_custom, true).is_empty());
+    assert!(wanted(&apps, h, &empty_custom, Some(&t3)).is_empty());
 
     // 6. Turning T3 off removes both T3 headings while keeping the split block; switching to off
     //    restores CLAUDE.md to user's original content and removes empty files.
-    assert!(sync(&apps, &apps, h, &split_doc, false, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &split_doc, None, &[], &backup, false).is_empty());
     for file in [".claude/CLAUDE.md", ".codex/AGENTS.md"] {
         let content = std::fs::read_to_string(h.join(file)).unwrap();
         assert!(!content.contains("### 不在 T3 Code 里时这样派"));
         assert!(!content.contains("### 在 T3 Code 里这样派"));
     }
-    assert!(sync(&apps, &apps, h, &off, false, &[], &backup, false).is_empty());
+    assert!(sync(&apps, &apps, h, &off, None, &[], &backup, false).is_empty());
     assert_eq!(
         std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap(),
         own_claude
     );
     assert!(!h.join(".codex/AGENTS.md").exists());
     assert!(!h.join(".agentnave-accounts/claude/a1/CLAUDE.md").exists());
+}
+
+#[test]
+fn t3_bosses_choose_who_gets_which_t3_section() {
+    let home = tempfile::tempdir().unwrap();
+    let h = &home.path().canonicalize().unwrap();
+    let app = |id: &'static str, label: &'static str, root: &str| App {
+        key: id,
+        id,
+        label,
+        root: h.join(root),
+    };
+    let apps = [
+        app("codex", "Codex", ".codex"),
+        app("grok", "Grok", ".grok"),
+        app("zcode", "ZCode", ".zcode"),
+    ];
+    let file = |rows: &[(PathBuf, String)], name: &str| {
+        rows.iter()
+            .find(|(path, _)| path == &h.join(name))
+            .map(|(_, text)| text.clone())
+    };
+    let split = json!({"preset": "split"});
+    let plain = text_of(&split, "split").unwrap();
+    let with = |recognized: bool, others: &[&str]| {
+        let suffix = catalog::t3_additions("split", recognized, others).unwrap();
+        catalog::preset_text_for_t3(&split, "split", &suffix).unwrap()
+    };
+
+    // Nothing saved: every supported CLI that is on follows; a CLI T3 does not support is left out.
+    let rows = wanted(&apps, h, &split, Some(&json!({})));
+    assert_eq!(file(&rows, ".codex/AGENTS.md"), Some(with(true, &[])));
+    let grok = file(&rows, ".grok/AGENTS.md").unwrap();
+    assert_eq!(grok, with(false, &["grok"]));
+    assert!(grok.contains("### 不在 T3 Code 里时这样派"));
+    assert!(grok.contains("### 在 T3 Code 里，Grok CLI 按 T3 自己的规则派"));
+    assert!(grok.contains("`run_round`") && grok.contains("`delegate_task`"));
+    assert!(!grok.contains("### 在 T3 Code 里这样派"));
+    assert_eq!(file(&rows, ".zcode/AGENTS.md"), Some(plain.clone()));
+    // A CLI that is off outside T3 is not selected by default.
+    let codex_only = json!({"preset": "off", "apps": {"codex": "split"}});
+    let rows = wanted(&apps, h, &codex_only, Some(&json!({})));
+    assert!(file(&rows, ".codex/AGENTS.md").is_some());
+    assert!(file(&rows, ".grok/AGENTS.md").is_none());
+
+    // A saved choice replaces the default, however the general page is set.
+    let rows = wanted(&apps, h, &split, Some(&json!({"bosses": ["grok"]})));
+    assert_eq!(file(&rows, ".codex/AGENTS.md"), Some(plain.clone()));
+    assert_eq!(file(&rows, ".grok/AGENTS.md"), Some(with(false, &["grok"])));
+    let rows = wanted(&apps, h, &split, Some(&json!({"bosses": []})));
+    assert!(rows.iter().all(|(_, text)| text == &plain));
+    let meetings = json!({"preset": "meetings"});
+    let meetings_text = text_of(&meetings, "meetings").unwrap();
+    let rows = wanted(
+        &apps,
+        h,
+        &meetings,
+        Some(&json!({"bosses": ["codex", "grok"]})),
+    );
+    assert!(rows.iter().all(|(_, text)| text == &meetings_text));
+
+    // On in T3 but off outside it: only the T3 rules, with the authorization limited to T3.
+    let off = json!({"preset": "off"});
+    let rows = wanted(&apps, h, &off, Some(&json!({"bosses": ["codex", "grok"]})));
+    assert_eq!(rows.len(), 2);
+    let codex = file(&rows, ".codex/AGENTS.md").unwrap();
+    assert_eq!(codex, catalog::t3_only_text(&off, &["codex"], &[]));
+    assert!(codex.contains("以上只对 T3 Code 里的 Codex CLI 适用"));
+    assert!(codex.contains("\n\n### 在 T3 Code 里这样派\n\n- "));
+    assert!(
+        !codex.contains("不用上面的派法和工位") && !codex.contains("### 不在 T3 Code 里时这样派")
+    );
+    assert!(!codex.contains("按 T3 自己的规则派"));
+    let grok = file(&rows, ".grok/AGENTS.md").unwrap();
+    assert_eq!(grok, catalog::t3_only_text(&off, &[], &["grok"]));
+    assert!(
+        grok.contains("以上只对 T3 Code 里的 Grok CLI 适用")
+            && !grok.contains("### 在 T3 Code 里这样派")
+    );
+
+    // One file read by both kinds: the T3 dispatch first, then the section naming the others.
+    std::fs::create_dir_all(h.join(".claude")).unwrap();
+    std::fs::write(h.join(".claude/CLAUDE.md"), "我的规则\n").unwrap();
+    let shared = [
+        app("claude", "Claude Code", ".claude"),
+        app("grok", "Grok", ".grok"),
+    ];
+    let rows = wanted(&shared, h, &split, Some(&json!({})));
+    assert_eq!(rows.len(), 1);
+    let both = file(&rows, ".claude/CLAUDE.md").unwrap();
+    assert_eq!(both, with(true, &["grok"]));
+    assert!(
+        both.find("### 在 T3 Code 里这样派").unwrap()
+            < both.find("### 在 T3 Code 里，Grok CLI 按").unwrap()
+    );
+
+    // A shared file with the general page off: the T3-only authorization names the selected
+    // readers only, so an unselected one (Claude here) cannot read it as its own.
+    let rows = wanted(&shared, h, &off, Some(&json!({"bosses": ["grok"]})));
+    let only_grok = file(&rows, ".claude/CLAUDE.md").unwrap();
+    assert_eq!(only_grok, catalog::t3_only_text(&off, &[], &["grok"]));
+    assert!(only_grok.contains("以上只对 T3 Code 里的 Grok CLI 适用；其他读到这里的 CLI"));
+    assert!(!only_grok.contains("Claude Code"));
+    let rows = wanted(
+        &shared,
+        h,
+        &off,
+        Some(&json!({"bosses": ["claude", "grok"]})),
+    );
+    assert!(
+        file(&rows, ".claude/CLAUDE.md")
+            .unwrap()
+            .contains("以上只对 T3 Code 里的 Claude Code、Grok CLI 适用")
+    );
 }

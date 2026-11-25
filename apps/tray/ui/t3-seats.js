@@ -1,7 +1,7 @@
 "use strict";
 {
-  // Settings -> 编排 -> T3 Code (ADR-0121): T3 dispatch switch (following the active orchestration
-  // preset), random-candidates switch and T3 task seat cards. The T3 review roles sit on Settings ->
+  // Settings -> 编排 -> T3 Code (ADR-0121): the bosses T3 orchestration is on for, the T3 dispatch
+  // switch (following the active orchestration preset), random-candidates switch and T3 task seat cards. The T3 review roles sit on Settings ->
   // 评审设置. All saved to t3-seats.json from the shared save bar; never writes T3 Code's own files.
 
   const S = AN.settings ||= {};
@@ -16,6 +16,8 @@
   const MAX_SEATS = 255;
   const MAX_CANDIDATES = 4;
   const ROLE_MAX = 40;
+  // The CLIs both T3 Code and AgentNave support (mirrors T3_BOSSES in rules.rs).
+  const T3_BOSSES = ["claude", "codex", "antigravity", "codebuddy", "grok", "pi"];
 
   let saved = null; // { document | null, error | null, t3: { detected, instances } }
   let baseline = null; // Normalized editor state of saved.document; blank while nothing was ever saved.
@@ -47,6 +49,7 @@
   const cloneState = (state) => ({
     enabled: state.enabled,
     random_candidates: state.random_candidates,
+    bosses: state.bosses ? [...state.bosses] : null,
     cards: state.cards.map(cloneCard),
     review: Object.fromEntries(Object.entries(state.review).map(([r, list]) => [r, list.map(cloneCandidate)])),
   });
@@ -118,6 +121,8 @@
     return {
       enabled: doc?.enabled === true,
       random_candidates: doc?.random_candidates === true,
+      // null: follows the orchestration page until the user picks.
+      bosses: Array.isArray(doc?.bosses) ? [...doc.bosses] : null,
       cards,
       review,
     };
@@ -167,6 +172,7 @@
       version: 1,
       enabled: Boolean(state.enabled),
       random_candidates: Boolean(state.random_candidates),
+      ...(state.bosses ? { bosses: [...state.bosses] } : {}),
       seats: toSeats(state.cards),
       review,
     };
@@ -191,7 +197,8 @@
         .sort(([a], [b]) => (a < b ? -1 : 1))
         .map(([role, list]) => [role, list.map(canonCandidate)]),
     );
-    return { version: 1, enabled: doc?.enabled === true, random_candidates: doc?.random_candidates === true, seats, review };
+    const bosses = Array.isArray(doc?.bosses) ? [...doc.bosses].sort() : null;
+    return { version: 1, enabled: doc?.enabled === true, random_candidates: doc?.random_candidates === true, bosses, seats, review };
   }
 
   const canonCard = (card) => ({
@@ -228,6 +235,26 @@
   const locked = () => !saved || Boolean(saved.error);
   const enabled = () => Boolean(visible() && !locked() && shownState()?.enabled && hasCandidates());
   const fileDocument = () => toDocument(shownState());
+
+  // One chip per supported CLI that is connected, as the orchestration page lists its bosses.
+  function bossChoices() {
+    const choices = new Map();
+    for (const boss of S.orchestration?.bosses || []) {
+      boss.ids.forEach((id, index) => {
+        if (T3_BOSSES.includes(id) && !choices.has(id)) choices.set(id, { id, label: boss.labels[index] });
+      });
+    }
+    return [...choices.values()];
+  }
+  // Until the user picks, the supported CLIs whose rows are not off on the orchestration page.
+  function followedBosses() {
+    const shown = S.orchestrationShown?.();
+    const groups = S.orchestration?.bosses || [];
+    return bossChoices().map(({ id }) => id)
+      .filter((id) => groups.some((boss) => boss.ids.includes(id) && S.bossMode(shown, boss) !== "off"));
+  }
+  const selectedBosses = (state) => state?.bosses ?? followedBosses();
+  const bosses = () => (visible() && !locked() && shownState() ? selectedBosses(shownState()) : []);
   const changed = () => Boolean(saved && !saved.error && draft && baseline)
     && !sameJson(canonState(draft), canonState(baseline));
   // The two pages the settings sit on, so each can mark its own unsaved edits.
@@ -782,6 +809,28 @@
       return;
     }
     const canEnable = state.enabled || hasCandidates(toDocument(state));
+    const chosen = selectedBosses(state);
+    const before = selectedBosses(baseline);
+    const toggleBoss = (id, on) => mutate((next) => {
+      const list = new Set(selectedBosses(next));
+      if (on) list.add(id); else list.delete(id);
+      const picked = T3_BOSSES.filter((one) => list.has(one));
+      // Back to what the orchestration page gives still follows it, rather than saving a list.
+      const followed = followedBosses();
+      next.bosses = baseline.bosses === null && sameJson(picked, T3_BOSSES.filter((one) => followed.includes(one)))
+        ? null : picked;
+    });
+    const bossChips = bossChoices().map(({ id, label }) => {
+      const on = chosen.includes(id);
+      return el("button", {
+        type: "button", className: "skill-chip", dataset: { focusKey: `t3/boss/${id}`, pending: String(on !== before.includes(id)) },
+        "aria-pressed": String(on), onClick: () => toggleBoss(id, !on),
+      }, AN.hostTile ? AN.hostTile(id, label) : null, label,
+      on !== before.includes(id) ? el("small", {}, L("待保存", "Unsaved")) : null);
+    });
+    const bossGroup = !bossChips.length ? null : el("div", { className: "s-group" },
+      el("h2", { className: "s-title" }, L("应用到", "Apply to")),
+      el("div", { className: "s-card" }, el("div", { className: "s-row is-stack" }, el("div", { className: "skill-chips" }, ...bossChips))));
     const switchesCard = el("div", { className: "s-group t3-seats" },
       el("div", { className: "s-card" },
         el("div", { className: "s-row" },
@@ -808,7 +857,7 @@
         el("div", { className: "s-row" },
           el("label", { className: "s-label", htmlFor: "t3-seat-add" }, L("添加工位", "Add seat")),
           addMenu(state))));
-    box.replaceChildren(...[switchesCard, seatRows, addCardGroup].filter(Boolean));
+    box.replaceChildren(...[bossGroup, switchesCard, seatRows, addCardGroup].filter(Boolean));
     S.renderOrchestrationText?.();
     S.syncScopeViews?.();
     if (focusKey) box.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
@@ -816,6 +865,6 @@
 
   window.AgentNaveT3Seats = {
     load, render, renderReview, changed, seatsChanged, reviewChanged, problem, save, discard, addCard,
-    document: fileDocument, hasCandidates, visible, enabled,
+    document: fileDocument, hasCandidates, visible, enabled, bosses,
   };
 }

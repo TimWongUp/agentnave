@@ -118,6 +118,8 @@ WATCH_CLI_RULES: dict[str, WatchCliRule] = {
         basename_pattern=re.compile(r"^grok(?:-\d+(?:\.\d+)*)?\Z", re.IGNORECASE),
         min_version=(1, 0, 92),
         non_interactive_flags=frozenset({"-p", "--print", "--prompt", "--prompt-file"}),
+        # T3 Code starts Grok as `grok agent ... stdio`: a non-interactive mode that cannot self-wake.
+        non_interactive_subcommands=frozenset({"agent"}),
     ),
 }
 
@@ -267,9 +269,12 @@ def probe_watch_host_cli(
     read_argv: Callable[[int], Sequence[str]] = read_process_argv,
     read_version: Callable[[str], str | None] = _read_cli_version,
     platform: str | None = None,
+    allow_acp: bool = False,
 ) -> bool:
     """Verify via parent executable path, argv, and `<exe> --version` that the calling host
     is an interactive CLI version that self-wakes on background commands (ADR-0114).
+
+    `allow_acp` accepts the `acp` subcommand T3 Code starts Antigravity with (ADR-0121).
 
     Never short-circuited by AGENTNAVE_HOST; fails closed on Windows, unreadable ancestors,
     GUI apps, non-interactive flags/subcommands, or unverified versions.
@@ -297,9 +302,12 @@ def probe_watch_host_cli(
         return False
     if rule.basename_pattern.fullmatch(path.name) is None:
         return False
-    if _has_non_interactive_args(
-        args, rule.non_interactive_flags, rule.non_interactive_subcommands
-    ):
+    subcommands = (
+        rule.non_interactive_subcommands - {"acp"}
+        if allow_acp
+        else rule.non_interactive_subcommands
+    )
+    if _has_non_interactive_args(args, rule.non_interactive_flags, subcommands):
         return False
     raw_version = read_version(executable)
     if not raw_version:
@@ -308,16 +316,22 @@ def probe_watch_host_cli(
     return version is not None and version >= rule.min_version
 
 
-def watch_host_cli_supported(host_name: str) -> bool:
+def watch_host_cli_supported(host_name: str, *, allow_acp: bool = False) -> bool:
     """Lazily probe once per server process whether `host_name` supports inbox_watch."""
     if host_name not in WATCH_CLI_RULES:
         return False
-    cached = _WATCH_HOST_CACHE.get(host_name)
+    key = f"{host_name}:acp" if allow_acp else host_name
+    cached = _WATCH_HOST_CACHE.get(key)
     if cached is not None:
         return cached
-    result = probe_watch_host_cli(host_name)
-    _WATCH_HOST_CACHE[host_name] = result
+    result = probe_watch_host_cli(host_name, allow_acp=allow_acp)
+    _WATCH_HOST_CACHE[key] = result
     return result
+
+
+def t3_watch_host_cli_supported(host_name: str) -> bool:
+    """The same probe for a CLI T3 Code runs over ACP (ADR-0121)."""
+    return watch_host_cli_supported(host_name, allow_acp=True)
 
 
 def watch_command(root: Path, pid: int, started_at: float, boss_key: str) -> str:
@@ -367,9 +381,10 @@ def watch_guidance(command: str, *, cli: WatchHostName = "antigravity", again: b
 
 
 def t3_watch_guidance(
-    command: str, *, host_name: Literal["claude", "codex"], again: bool = False
+    command: str, *, host_name: Literal["claude", "codex", "antigravity"], again: bool = False
 ) -> str:
-    """Background inbox_watch guidance for Claude and Codex main threads in T3 Code (ADR-0121)."""
+    """Background inbox_watch guidance for Claude, Codex and Antigravity main threads in T3 Code
+    (ADR-0121)."""
     early_return = (
         "If it returns early (for example on a stall reminder, prompt_pending, or review_needed), "
         "handle that update and start the watch command again while work remains pending."
@@ -380,6 +395,14 @@ def t3_watch_guidance(
             f"call a blocking wait): {command}. Then call t3-code's t3_background_wait with its "
             "returned task ID and end your turn — T3 will wake you when the command exits. "
             f"{early_return} {_WATCH_OUTCOMES}"
+        )
+    elif host_name == "antigravity":
+        body = (
+            "run this command verbatim via run_command with WaitMsBeforeAsync=500 so it moves to "
+            "the background immediately (do not call a blocking wait, poll, or call t3-code's "
+            f"t3_background_wait): {command}. Then end your turn — Antigravity notifies you when "
+            "the command exits. If it returns in the foreground within that time, handle its "
+            f"output immediately. {early_return} {_WATCH_OUTCOMES}"
         )
     else:
         body = (
@@ -406,9 +429,16 @@ def build_wait_guidance(
     can_push: Callable[[Path, str | None], bool] = app_can_push,
     watch_supported: Callable[[str], bool] = watch_host_cli_supported,
     t3_main: bool = False,
+    t3_watch_supported: Callable[[str], bool] = t3_watch_host_cli_supported,
 ) -> str:
     """Select receipt `next` text according to host self-wake capabilities (ADR-0114, ADR-0121)."""
-    if t3_main and host.name in ("claude", "codex") and boss_key is not None:
+    # Antigravity self-wakes only on versions that background run_command; older ones wait.
+    if (
+        t3_main
+        and boss_key is not None
+        and host.name in ("claude", "codex", "antigravity")
+        and (host.name != "antigravity" or t3_watch_supported("antigravity"))
+    ):
         cmd = watch_command(root, pid, started_at, boss_key)
         return t3_watch_guidance(cmd, host_name=host.name, again=again)
     if host.name == "claude":

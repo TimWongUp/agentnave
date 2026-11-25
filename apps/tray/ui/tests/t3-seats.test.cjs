@@ -223,6 +223,7 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
           decision: "\\n- T3-DECISION",
           custom: "\\n- T3-BOSS",
         },
+        t3_other: { template: "\\n- OTHERS {names}", names: { grok: "Grok CLI", pi: "Pi" }, separator: "、" },
       },
       document: ${JSON.stringify(orchestrationDoc || { version: 1, preset: "off" })},
     };
@@ -549,6 +550,7 @@ test("switch cannot open without candidates, dropdown hides legacy/hidden/stale,
 test("saves and discards via the shared orchestration save bar, updates rule files, and unifies rules preview by mode", async () => {
   const h = makeHarness({
     t3State: { document: SAVED_WORKER, error: null, t3: SAMPLE_T3 },
+    orchestrationDoc: { version: 1, preset: "split" },
   });
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
@@ -679,7 +681,7 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   assert.match(h.t3((t) => t.problem()), /开启 T3 编排前/);
 });
 
-test("shared General / T3 Code segment follows orchestration mode (hidden on off/meetings), keeps review unaffected, and shows badge-dots", async () => {
+test("shared General / T3 Code segment follows orchestration mode (hidden on meetings only), keeps review unaffected, and shows badge-dots", async () => {
   // Hidden when T3 is not visible.
   const hidden = makeHarness({
     t3State: { document: null, error: null, t3: { detected: false, instances: [] } },
@@ -693,19 +695,21 @@ test("shared General / T3 Code segment follows orchestration mode (hidden on off
   assert.equal(hidden.run('$("t3-seats-section").hidden'), true);
   assert.equal(hidden.run('$("t3-review-seats").hidden'), true);
 
-  // Visible when T3 is detected: orchestration scope hides on off/meetings while review scope stays visible.
+  // Visible when T3 is detected: orchestration scope hides on meetings only (off still gets the
+  // T3-only block) while review scope stays visible.
   const h = makeHarness({
     t3State: { document: SAVED_WORKER, error: null, t3: SAMPLE_T3 },
   });
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
-  for (const noT3Mode of ["off", "meetings"]) {
-    h.run(`viewMode("${noT3Mode}")`);
-    assert.equal(h.run('$("orchestration-scope").hidden'), true, noT3Mode);
-    assert.equal(h.run('$("orchestration-general").hidden'), false, noT3Mode);
-    assert.equal(h.run('$("t3-seats-section").hidden'), true, noT3Mode);
-    assert.equal(h.run('$("review-scope").hidden'), false, noT3Mode);
-  }
+  h.run('viewMode("meetings")');
+  assert.equal(h.run('$("orchestration-scope").hidden'), true);
+  assert.equal(h.run('$("orchestration-general").hidden'), false);
+  assert.equal(h.run('$("t3-seats-section").hidden'), true);
+  assert.equal(h.run('$("review-scope").hidden'), false);
+  h.run('viewMode("off")');
+  assert.equal(h.run('$("orchestration-scope").hidden'), false);
+  assert.equal(h.run('$("review-scope").hidden'), false);
 
   // On split/decision/custom, orchestration scope appears and defaults to General.
   h.run('viewMode("split")');
@@ -843,4 +847,73 @@ test("T3 seat rows summarize primary model display names, preserve expand state,
   assert.equal(summaryOf(added), "未设置");
   h.find(`t3/${added.dataset.cid}/toggle`).listeners.click();
   assert.equal(h.ownRows()[0].dataset.expanded, "true", "invalid card cannot be collapsed");
+});
+
+test("the T3 page picks its own bosses: only CLIs both support, following the orchestration page until picked", async () => {
+  const h = makeHarness({
+    t3State: { document: { ...SAVED_WORKER, enabled: true }, error: null, t3: SAMPLE_T3 },
+    orchestrationDoc: { version: 1, preset: "split", apps: { grok: "off" } },
+  });
+  const group = (id, label) => `{ keys: ["${id}"], ids: ["${id}"], labels: ["${label}"], mark: "${id}" }`;
+  h.run(`orchestration.bosses = [${group("claude", "Claude Code")}, ${group("codex", "Codex")}, ${group("grok", "Grok")}, ${group("workbuddy", "WorkBuddy")}];`);
+  h.run("bindAdvanced()");
+  await h.t3((t) => t.load());
+  const chip = (id) => h.find(`t3/boss/${id}`);
+  const on = (id) => chip(id).attrs["aria-pressed"] === "true";
+  const chosen = () => [...h.t3((t) => t.bosses())];
+
+  // Default: the supported bosses that are on; WorkBuddy, which T3 does not support, has no chip.
+  assert.ok(chip("claude") && chip("codex") && chip("grok"));
+  assert.equal(chip("workbuddy"), null);
+  assert.deepEqual([on("claude"), on("codex"), on("grok")], [true, true, false]);
+  assert.deepEqual(chosen(), ["claude", "codex"]);
+  assert.equal(h.t3((t) => t.changed()), false);
+  assert.equal("bosses" in h.doc(), false);
+  // Until picked it follows the orchestration page.
+  h.run('AN.settings.setBossMode(orchestration.bosses[2], "split")');
+  assert.equal(on("grok"), true);
+  h.run('AN.settings.setBossMode(orchestration.bosses[2], "off")');
+
+  // Picking saves an explicit list in the supported order, and the Rules preview follows it.
+  chip("grok").listeners.click();
+  assert.equal(chip("grok").dataset.pending, "true");
+  chip("claude").listeners.click();
+  assert.deepEqual(h.doc().bosses, ["codex", "grok"]);
+  assert.equal(h.t3((t) => t.changed()), true);
+  h.run('viewMode("split")');
+  assert.equal(h.run('$("orchestration-text").textContent'), "split-rule\n- T3-BOSS\n- OTHERS Grok CLI");
+  h.run('AN.settings.setBossMode(orchestration.bosses[0], "off")');
+  assert.deepEqual(chosen(), ["codex", "grok"]);
+  await h.run('$("advanced-save").listeners.click()');
+  const post = h.calls.find((c) => c.url === "/app/t3-seats" && c.method === "POST");
+  assert.deepEqual(post.body.bosses, ["codex", "grok"]);
+  assert.equal(h.t3((t) => t.changed()), false);
+  assert.equal(chip("claude").dataset.pending, "false");
+
+  // Picked once, the orchestration page no longer moves it.
+  h.run('AN.settings.setBossMode(orchestration.bosses[0], "split")');
+  assert.deepEqual(chosen(), ["codex", "grok"]);
+});
+
+test("picking the followed CLIs again goes back to following instead of saving a list", async () => {
+  const h = makeHarness({
+    t3State: { document: { ...SAVED_WORKER, enabled: true }, error: null, t3: SAMPLE_T3 },
+    orchestrationDoc: { version: 1, preset: "split", apps: { grok: "off" } },
+  });
+  const group = (id, label) => `{ keys: ["${id}"], ids: ["${id}"], labels: ["${label}"], mark: "${id}" }`;
+  h.run(`orchestration.bosses = [${group("claude", "Claude Code")}, ${group("codex", "Codex")}, ${group("grok", "Grok")}];`);
+  h.run("bindAdvanced()");
+  await h.t3((t) => t.load());
+  const chip = (id) => h.find(`t3/boss/${id}`);
+
+  chip("grok").listeners.click();
+  assert.deepEqual(h.doc().bosses, ["claude", "codex", "grok"]);
+  assert.equal(h.t3((t) => t.changed()), true);
+  chip("grok").listeners.click();
+  assert.equal("bosses" in h.doc() && h.doc().bosses !== null, false);
+  assert.equal(h.t3((t) => t.changed()), false);
+  assert.equal(chip("grok").dataset.pending, "false");
+  // Still following: a later orchestration change moves it.
+  h.run('AN.settings.setBossMode(orchestration.bosses[2], "split")');
+  assert.equal(chip("grok").attrs["aria-pressed"], "true");
 });

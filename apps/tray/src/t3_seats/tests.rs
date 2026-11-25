@@ -56,6 +56,25 @@ fn validation_matches_server_schema_and_save_gate() {
     assert!(validate_for_save(&valid).is_ok());
     assert!(is_active(&valid));
 
+    // The bosses T3 orchestration is on for: only CLIs both T3 and AgentNave support, each once.
+    // null reads as not saved, which the server schema accepts too.
+    for bosses in [json!(null), json!([]), json!(["claude", "grok", "pi"])] {
+        let mut chosen = valid.clone();
+        chosen["bosses"] = bosses;
+        assert!(validate(&chosen).is_ok());
+    }
+    for (bosses, message) in [
+        (json!(["workbuddy"]), "bosses[0]"),
+        (json!(["claude", 1]), "bosses[1]"),
+        (json!(["codex", "codex"]), "重复"),
+        (json!("claude"), "数组"),
+    ] {
+        let mut chosen = valid.clone();
+        chosen["bosses"] = bosses;
+        let err = validate(&chosen).unwrap_err();
+        assert!(err.contains(message), "{err}");
+    }
+
     // Schema allows enabled=true with 0 candidates (inactive on server), while save refuses it.
     let enabled_empty = json!({
         "version": 1,

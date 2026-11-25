@@ -1122,6 +1122,11 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
     decision_parts: dispatchParts("dispatch_decision"),
     t3: Object.fromEntries(Object.entries(rules.t3_order).map(([m, steps]) => [m, steps.map((s) => rules.sections[s]).join("")])),
     non_t3_heading: rules.sections.t3_non_t3_heading,
+    t3_other: {
+      template: rules.t3_other.map((step) => rules.sections[step]).join(""),
+      names: rules.meeting_defaults.provider_names,
+      separator: rules.meeting_defaults.separator,
+    },
     role_sections: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, false)])),
     role_sections_medium: Object.fromEntries(roles.map((r) => [r.group, roleLine(r, true)])),
     lead: { asked: rules.switches.lead_only.when_false, always: rules.switches.lead_only.when_true },
@@ -1154,12 +1159,21 @@ test("JS preset preview matches orchestration_rules.json assembly verbatim for s
   assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision"));
   // With T3 orchestration enabled, JS inserts non_t3_heading and appends the exact same t3_order sections as Rust.
   const t3Suffix = (mode) => rules.t3_order[mode].map((s) => rules.sections[s]).join("");
-  app.run("window.AgentNaveT3Seats = { enabled: () => true };");
+  app.run('window.AgentNaveT3Seats = { enabled: () => true, bosses: () => ["codex"] };');
   assert.equal(app.run('orchestrationPresetText("split")'), assemble("split", true) + t3Suffix("split"));
   assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision", true) + t3Suffix("decision"));
   assert.equal(app.run('orchestrationPresetText("split", false)'), assemble("split"));
   assert.equal(app.run('orchestrationPresetText("custom")'), t3Suffix("custom").trim());
   assert.equal(app.run('orchestrationPresetText("off")'), undefined);
+  // Selected CLIs AgentNave cannot recognise in T3 get their own section, named, after the dispatch.
+  const others = (names) => rules.t3_other.map((step) => rules.sections[step]).join("").replaceAll("{names}", names);
+  app.run('window.AgentNaveT3Seats = { enabled: () => true, bosses: () => ["codex", "grok", "pi"] };');
+  assert.equal(app.run('orchestrationPresetText("split")'), assemble("split", true) + t3Suffix("split") + others("Grok CLI、Pi Coding Agent"));
+  assert.equal(app.run('orchestrationPresetText("custom")'), (t3Suffix("custom") + others("Grok CLI、Pi Coding Agent")).trim());
+  app.run('window.AgentNaveT3Seats = { enabled: () => true, bosses: () => ["grok"] };');
+  assert.equal(app.run('orchestrationPresetText("decision")'), assemble("decision", true) + others("Grok CLI"));
+  app.run('window.AgentNaveT3Seats = { enabled: () => true, bosses: () => [] };');
+  assert.equal(app.run('orchestrationPresetText("split")'), assemble("split"));
 });
 
 // The decision mode: its page, options, the first catalog and the key, on the same fake DOM.

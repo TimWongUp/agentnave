@@ -137,6 +137,13 @@ def test_role_catalog_covers_wire_seats_and_top_level_bindings() -> None:
         assert "`recommend_seat`" in combined and "`delegate_task`" in combined
         assert "用户点名 CLI、T3 账号或模型时" in combined
         assert "`list_members` 只用来选会议成员" in combined
+    only = rules["t3_only"]
+    assert only["base"] and set(only["base"]) <= known_steps
+    assert only["recognized"] and set(only["recognized"]) <= set(rules["sections"])
+    other = "".join(rules["sections"][step] for step in rules["t3_other"])
+    assert other.count("{names}") == 2
+    assert "`orchestrator_capabilities`" in other and "`delegate_task`" in other
+    assert "`run_round`" in other and "阻塞的 `wait`" in other
     assert rules["sections"]["t3_non_t3_heading"] == "\n\n### 不在 T3 Code 里时这样派\n"
     assert "由决策模型选工位" in rules["sections"]["t3_pick_decision"]
     assert "不带任务先取 T3 工位" in rules["sections"]["t3_pick_boss"]
@@ -2128,9 +2135,14 @@ def test_t3_seats_file_strict_validation_and_activation(
             "seats": [_t3_seat_dict("bad-img", kind="image", access="write", difficulty="easy")],
         },
     ]
+    invalid_docs += [
+        {"version": 1, "bosses": ["workbuddy"]},
+        {"version": 1, "bosses": ["codex", "codex"]},
+    ]
     for bad in invalid_docs:
         with pytest.raises(ValidationError):
             T3SeatsFile.model_validate(bad)
+    assert T3SeatsFile.model_validate({"version": 1, "bosses": []}).bosses == []
 
     # Broken t3-seats.json raises T3SeatsFileError in T3 main thread ONLY when host mode supports T3.
     (tmp_path / "t3-seats.json").write_text("{broken json", encoding="utf-8")
@@ -2170,6 +2182,101 @@ def test_t3_seats_file_strict_validation_and_activation(
     monkeypatch.delenv("T3CODE_THREAD_ID")
     t3.reset_t3_mode_cache()
     assert effective_t3_seats(Host("codex", "env", "codex")) is None
+
+
+def test_t3_bosses_select_which_hosts_run_t3_orchestration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import t3
+    from agentnave.t3_seats import T3_BOSS_IDS, effective_t3_seats, t3_host_mode
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("T3CODE_THREAD_ID", "main-1")
+    t3.reset_t3_mode_cache()
+    codex = Host("codex", "env", "codex")
+    seats: dict[str, Any] = {
+        "version": 1,
+        "enabled": True,
+        "seats": [_t3_seat_dict("coder")],
+    }
+
+    def configure(preset: str, bosses: list[str] | None) -> None:
+        (tmp_path / "orchestration.json").write_text(
+            json.dumps({"version": 1, "preset": preset}), encoding="utf-8"
+        )
+        document = seats if bosses is None else {**seats, "bosses": bosses}
+        (tmp_path / "t3-seats.json").write_text(json.dumps(document), encoding="utf-8")
+
+    # No saved choice: follows the orchestration page, so only a boss that is not off.
+    configure("decision", None)
+    assert t3_host_mode(codex) == "decision"
+    assert effective_t3_seats(codex) is not None
+    configure("off", None)
+    assert t3_host_mode(codex) is None
+    assert effective_t3_seats(codex) is None
+    # A saved choice replaces that: not listed means general rules in T3, listed but off means T3 only.
+    configure("custom", ["grok"])
+    assert t3_host_mode(codex) is None
+    assert effective_t3_seats(codex) is None
+    configure("off", ["codex"])
+    assert t3_host_mode(codex) == "split"
+    assert effective_t3_seats(codex) is not None
+    # Meetings has no T3 mode however it is selected.
+    configure("meetings", ["codex"])
+    assert t3_host_mode(codex) is None
+    assert effective_t3_seats(codex) is None
+    # A boss T3 and AgentNave do not both support is never selected.
+    configure("split", None)
+    assert t3_host_mode(Host("workbuddy", "env", "workbuddy")) is None
+    # Unsaved choice follows the CLI: one row on selects the CLI's other, off rows too, which run
+    # like split inside T3 (a row key is `<cli>`, `<cli>@<folder>` or `claude-desktop`).
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "effective_apps": {"claude": "split", "claude@a1": "off", "codex": "off"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "t3-seats.json").write_text(json.dumps(seats), encoding="utf-8")
+    account = Host("claude", "env", "claude@a1")
+    assert t3_host_mode(account) == "split"
+    assert effective_t3_seats(account) is not None
+    assert t3_host_mode(Host("claude", "env", "claude")) == "split"
+    assert t3_host_mode(Host("codex", "env", "codex")) is None
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps({"version": 1, "effective_apps": {"claude-desktop": "split", "claude": "off"}}),
+        encoding="utf-8",
+    )
+    assert t3_host_mode(Host("claude", "env", "claude")) == "split"
+    # The tray lists and recognises the same CLIs as the server, the JS mirrors included.
+    root = Path(__file__).resolve().parents[1] / "apps" / "tray"
+
+    def strings(path: str, pattern: str) -> set[str]:
+        match = re.search(pattern, (root / path).read_text("utf-8"))
+        assert match is not None, (path, pattern)
+        return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    rust_bosses = r"pub const T3_BOSSES:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\];"
+    rust_recognized = r"const T3_RECOGNIZED:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\];"
+    js_bosses = r"const T3_BOSSES\s*=\s*\[([^\]]*)\];"
+    js_recognized = r"const T3_RECOGNIZED\s*=\s*\[([^\]]*)\];"
+    assert strings("src/rules.rs", rust_bosses) == T3_BOSS_IDS
+    assert strings("ui/t3-seats.js", js_bosses) == T3_BOSS_IDS
+    recognized = {
+        boss
+        for boss in T3_BOSS_IDS
+        if t3.detect_t3_mode(
+            Host(cast(Any, boss), "env"),
+            env={"T3CODE_THREAD_ID": "main-1", "CLAUDE_CODE_ENTRYPOINT": "t3-code"},
+            parent_pid=1,
+        )
+        == "main"
+    }
+    assert recognized
+    assert strings("src/rules.rs", rust_recognized) == recognized
+    assert strings("ui/advanced.js", js_recognized) == recognized
 
 
 def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(

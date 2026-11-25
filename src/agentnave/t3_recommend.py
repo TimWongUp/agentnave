@@ -55,6 +55,15 @@ T3_RECOMMEND_NEXT = (
     "instead of falling back to built-in subagents or start_agent."
 )
 
+# T3 gives Codex and Pi a direct delegate_task; Antigravity (ACP) drops it from its tool list and
+# rejects the MCP call, so it goes straight to T3's own terminal fallback (ADR-0121).
+T3_ANTIGRAVITY_DELEGATE_NEXT = (
+    " Antigravity: delegate_task is not in your tool list, so do not try the MCP call; run T3's "
+    'ACP fallback in the terminal instead: ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" '
+    '${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call delegate_task '
+    "'<delegate_task arguments as one JSON object>'."
+)
+
 T3_CATALOG_NEXT = (
     "Nothing was started. Choose the T3 seat(s) or review role(s) you need from this catalog and "
     "call recommend_seat with tasks to get ordered delegate_task targets."

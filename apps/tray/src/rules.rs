@@ -16,6 +16,13 @@ const START: &str = "<!-- AGENTNAVE:START -->";
 const END: &str = "<!-- AGENTNAVE:END -->";
 const CUSTOM_LIMIT: usize = 8000;
 
+/// The CLIs both T3 Code and AgentNave support, which T3 orchestration can be switched on for
+/// (ADR-0121): claudeAgent, codex, antigravity, acpRegistry's CodeBuddy, grok and pi. Mirrored by
+/// `T3_BOSS_IDS` in `src/agentnave/t3_seats.py`.
+pub const T3_BOSSES: [&str; 6] = ["claude", "codex", "antigravity", "codebuddy", "grok", "pi"];
+/// The ones AgentNave recognises inside T3 (`detect_t3_mode`); the rest follow T3's own rules.
+const T3_RECOGNIZED: [&str; 4] = ["claude", "codex", "antigravity", "codebuddy"];
+
 /// Each preset's rules text, for the settings page and the custom editor's starting text.
 pub fn presets(document: &Value) -> Value {
     catalog::presets_payload(document)
@@ -268,13 +275,39 @@ pub fn effective(connected: &[App], home: &Path, document: &Value) -> Value {
     Value::Object(modes)
 }
 
-/// The text each file that carries the block should hold.
+/// The CLIs T3 orchestration is on for: the choice saved in `t3-seats.json`, else every supported
+/// CLI with a connected row that is not off.
+fn t3_selected(connected: &[App], home: &Path, document: &Value, t3: &Value) -> Vec<String> {
+    if let Some(list) = t3["bosses"].as_array() {
+        return list
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+    }
+    let mut ids: Vec<String> = Vec::new();
+    for group in groups(connected, home) {
+        if mode_of(document, &group) == "off" {
+            continue;
+        }
+        for app in group {
+            if T3_BOSSES.contains(&app.id) && !ids.iter().any(|id| id == app.id) {
+                ids.push(app.id.to_owned());
+            }
+        }
+    }
+    ids
+}
+
+/// The text each file that carries the block should hold. `t3` is the T3 Code settings while T3
+/// orchestration is on: a file read by a selected CLI also carries the T3 sections.
 fn wanted(
     connected: &[App],
     home: &Path,
     document: &Value,
-    t3_active: bool,
+    t3: Option<&Value>,
 ) -> Vec<(PathBuf, String)> {
+    let selected = t3.map_or_else(Vec::new, |t3| t3_selected(connected, home, document, t3));
     let mut wanted = Vec::new();
     for group in groups(connected, home) {
         let mode = mode_of(document, &group);
@@ -293,23 +326,31 @@ fn wanted(
             if own_reader {
                 scoped["image_generation"] = Value::Null;
             }
-            let t3_reader = t3_active
-                && group.iter().any(|app| {
-                    matches!(app.id, "claude" | "codex") && would_read(app, home).contains(&path)
-                });
-            let text = if t3_reader {
-                if let Some(text) = catalog::preset_text_for_t3(&scoped, mode) {
-                    (!text.is_empty()).then_some(text)
-                } else {
-                    text_of(&scoped, mode).map(|mut text| {
-                        if let Some(suffix) = catalog::t3_suffix(mode) {
-                            text.push_str(&suffix);
-                        }
-                        text
-                    })
+            // The selected CLIs reading this file, by whether AgentNave recognises them in T3.
+            let (mut recognized, mut others): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+            for app in &group {
+                let on = selected.iter().any(|id| id == app.id);
+                if !on || !would_read(app, home).contains(&path) {
+                    continue;
                 }
-            } else {
-                text_of(&scoped, mode)
+                if T3_RECOGNIZED.contains(&app.id) {
+                    if !recognized.contains(&app.id) {
+                        recognized.push(app.id);
+                    }
+                } else if T3_BOSSES.contains(&app.id) && !others.contains(&app.id) {
+                    others.push(app.id);
+                }
+            }
+            let text = match catalog::t3_additions(mode, !recognized.is_empty(), &others) {
+                Some(suffix) => match catalog::preset_text_for_t3(&scoped, mode, &suffix) {
+                    Some(text) => (!text.is_empty()).then_some(text),
+                    None => text_of(&scoped, mode).map(|text| text + &suffix),
+                },
+                // On in T3 Code but off outside it: only the T3 rules.
+                None if mode == "off" && !(recognized.is_empty() && others.is_empty()) => {
+                    Some(catalog::t3_only_text(&scoped, &recognized, &others))
+                }
+                None => text_of(&scoped, mode),
             };
             if let Some(text) = text {
                 wanted.push((path, text));
@@ -466,12 +507,12 @@ pub fn sync(
     connected: &[App],
     home: &Path,
     document: &Value,
-    t3_active: bool,
+    t3: Option<&Value>,
     also: &[PathBuf],
     backup: &Backup<'_>,
     hold: bool,
 ) -> Vec<Value> {
-    let wanted = wanted(connected, home, document, t3_active);
+    let wanted = wanted(connected, home, document, t3);
     let mut paths: Vec<PathBuf> = wanted.iter().map(|(path, _)| path.clone()).collect();
     for path in existing(installed, home)
         .into_iter()
@@ -502,9 +543,9 @@ pub fn list(
     connected: &[App],
     home: &Path,
     document: &Value,
-    t3_active: bool,
+    t3: Option<&Value>,
 ) -> Value {
-    let wanted = wanted(connected, home, document, t3_active);
+    let wanted = wanted(connected, home, document, t3);
     let files: Vec<Value> = files(installed, home)
         .into_iter()
         .map(|(path, readers)| {
