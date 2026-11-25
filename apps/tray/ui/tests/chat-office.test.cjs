@@ -1795,7 +1795,7 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
     const before = calls.length;
     await context.ChatTerminal[op](id);
     assert.equal(asks.length, 1);
-    assert.ok(asks[0].body.some(p => p.textContent.includes("这一轮还没做完，结束后会按中断回报给 boss。")));
+    assert.ok(asks[0].body.some(p => p.textContent.includes("这一轮还没做完，结束后会向 boss 回报未完成。")));
     assert.equal(asks[0].body.some(p => p.textContent.includes("还没有派过活")), false);
     assert.equal(calls.length, before, `cancelling derived ${op} must not post`);
   }

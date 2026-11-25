@@ -472,8 +472,8 @@ const ChatTerminal = (() => {
     if (x?.derived) {
       if (activeDerived) {
         reasons.push(h("p.act-note", {}, L(
-          "这一轮还没做完，结束后会按中断回报给 boss。",
-          "This turn has not finished yet; stopping will report it as interrupted to the boss.",
+          "这一轮还没做完，结束后会向 boss 回报未完成。",
+          "This turn has not finished yet; stopping will report it to the boss as unfinished.",
         )));
       }
       if (draftDerived) {
@@ -510,8 +510,8 @@ const ChatTerminal = (() => {
       }
       if (activeDerived > 0) {
         reasons.push(h("p.act-note.warn", {}, L(
-          `有 ${activeDerived} 个派生会话还没做完，结束后会按中断回报给 boss。`,
-          `${activeDerived} derived session(s) have not finished yet; stopping will report them as interrupted to the boss.`,
+          `有 ${activeDerived} 个派生会话还没做完，结束后会向 boss 回报未完成。`,
+          `${activeDerived} derived session(s) have not finished yet; stopping will report them to the boss as unfinished.`,
         )));
       }
       if (draftDerived > 0) {
