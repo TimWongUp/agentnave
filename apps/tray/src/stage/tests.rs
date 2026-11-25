@@ -626,6 +626,14 @@ fn chat_list_includes_derived_desks_sorted_by_first_seen_and_office_draws_all_de
                         "identity": {"provider": "codex", "model": "m-drv-2", "model_short": "m-drv-2", "handle": "@m-drv-2"}
                     },
                     {
+                        "id": "d0",
+                        "provider": "codex",
+                        "model": "m-never-started",
+                        "status": "failed",
+                        "time": "2020-01-01T00:00:30Z",
+                        "execution_mode": "terminal"
+                    },
+                    {
                         "id": "d1",
                         "provider": "claude",
                         "model": "m-drv-1",
@@ -671,7 +679,7 @@ fn chat_list_includes_derived_desks_sorted_by_first_seen_and_office_draws_all_de
     assert!(!derived[0]["first_seen"].as_str().unwrap().is_empty());
     assert!(!derived[0]["last_active"].as_str().unwrap().is_empty());
 
-    // Office (panel=false, limit=1): both derived desks stay drawn despite limit=1 and settled failure;
+    // Office (panel=false, limit=1): a derived call that never got a session settles like any other; both derived desks stay drawn despite limit=1 and settled failure;
     // regular limit=1 still draws r1 and optimizes settled failure r2.
     let chat_res = super::respond(
         "/app/chats/s-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -693,7 +701,7 @@ fn chat_list_includes_derived_desks_sorted_by_first_seen_and_office_draws_all_de
     assert!(drawn.contains(&"thread:drv-1"));
     assert!(drawn.contains(&"thread:drv-2"));
     assert_eq!(drawn.len(), 3);
-    assert_eq!(chat_body["optimized"]["count"], 6);
+    assert_eq!(chat_body["optimized"]["count"], 7);
     assert_eq!(chat_body["optimized"]["desks"][0]["key"], "task:c1:r7");
 
     // Panel (panel=true, PANEL_IDLE_DESKS=8): cap still applies across all desks (regular + derived).
@@ -711,5 +719,5 @@ fn chat_list_includes_derived_desks_sorted_by_first_seen_and_office_draws_all_de
         stage_body["managers"][0]["desks"].as_array().unwrap().len(),
         8
     );
-    assert_eq!(stage_body["managers"][0]["optimized"]["count"], 1);
+    assert_eq!(stage_body["managers"][0]["optimized"]["count"], 2);
 }

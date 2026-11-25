@@ -53,6 +53,7 @@ const ChatDerived = (() => {
   function openDesk(d, openerEl) {
     const group = groupOf();
     if (!group) return;
+    ChatTerminal?.stayOnMessages?.(group, d.key);
     if (typeof openScope === "function") openScope({ kind: "desk", key: d.key }, openerEl);
   }
 
@@ -70,7 +71,7 @@ const ChatDerived = (() => {
     const live = Boolean(x && ds !== "dormant" && ds !== "exited");
     Actions.openMenu(e, [
       { label: L("打开", "Open"), run: () => openDesk(d, openerEl) },
-      !live && { label: L("续接", "Resume"), run: () => resumeDesk(d, openerEl, x) },
+      !live && (x || d.key?.startsWith("thread:")) && { label: L("续接", "Resume"), run: () => resumeDesk(d, openerEl, x) },
       x && { label: L("关闭终端", "Close terminal"), danger: true, run: () => ChatTerminal?.close?.(x.id) },
     ].filter(Boolean));
   }

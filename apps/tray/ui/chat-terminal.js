@@ -437,7 +437,10 @@ const ChatTerminal = (() => {
 
   // The office of an agent that has not dispatched (or a derived terminal): its boss and nothing else yet.
   function office(group) {
-    const row = pending().find((g) => g.group === group) || derivedAll().find((g) => g.group === group);
+    const x = byId(pendingId(group));
+    const row = pending().find((g) => g.group === group)
+      || derivedAll().find((g) => g.group === group)
+      || (x?.derived ? toItemRow(x, { rowId: group }) : null);
     if (!row) throw Object.assign(new Error("404"), { status: 404 });
     return {
       ...row,
@@ -455,11 +458,20 @@ const ChatTerminal = (() => {
     };
   }
 
-  // An agent that dispatched opens as its workspace, showing its terminal as it did.
+  // An agent that dispatched opens as its workspace, showing its terminal as it did; a derived
+  // terminal opened before its session had an id moves to its desk once the history has it.
   function follow(selected) {
     const id = pendingId(selected);
     const x = id != null ? byId(id) : null;
-    if (!x || x.derived || !x.workspaces.length) return selected;
+    if (x?.derived) {
+      const parent = x.desk_key && state.groupsData?.find((g) => g.group === x.parent_workspace_id);
+      if (!parent?.derived?.some((d) => d.key === x.desk_key)) return selected;
+      if (t.terminal.get(selected) ?? true) t.wantDeskTerminal = { group: parent.group, deskKey: x.desk_key };
+      state.hashKey = `desk:${x.desk_key}`;
+      state.focused = false;
+      return parent.group;
+    }
+    if (!x || !x.workspaces.length) return selected;
     const group = x.workspaces.at(-1);
     t.terminal.set(group, true);
     return group;
@@ -796,7 +808,10 @@ const ChatTerminal = (() => {
   // them only if the reader is still on this session and has not asked for the messages since.
   async function revive({ id, group, deskKey = null }) {
     const key = id ?? `${group}|${deskKey}`;
-    if (t.waking.has(key)) return false;
+    if (t.waking.has(key)) {
+      t.waking.get(key).open = true;
+      return false;
+    }
     const job = { open: true };
     t.waking.set(key, job);
     redrawWaking();
@@ -827,6 +842,11 @@ const ChatTerminal = (() => {
     refreshOffice();
     return Boolean(session);
   }
+  // The reader asked for this desk's messages while it is being brought back: stay on them.
+  function stayOnMessages(group, deskKey) {
+    const job = t.waking.get(ofDesk(group, deskKey)?.id) || t.waking.get(`${group}|${deskKey}`);
+    if (job) job.open = false;
+  }
   // Clicking a derived row in the sidebar opens its desk's messages in the parent workspace
   // without starting a process; rows without a desk key or known parent fall back to term-N.
   function openDerived(id) {
@@ -838,6 +858,7 @@ const ChatTerminal = (() => {
     if (!row?.derived) return false;
     if (row.desk_key && row.parent_workspace_id) {
       const parent = row.parent_workspace_id;
+      stayOnMessages(parent, row.desk_key);
       if (
         typeof state !== "undefined" &&
         state?.loaded === parent &&
@@ -855,9 +876,10 @@ const ChatTerminal = (() => {
     if (!x?.derived) return false;
     const live = isDerivedLive(x);
     t.terminal.set(id, live);
-    if (state?.selected !== id) {
+    // The row's own link may have navigated already, so what counts is what is loaded.
+    if (state?.loaded !== id) {
       t.openOnce = id;
-      go(`/chat/${id}`);
+      if (state?.selected !== id) go(`/chat/${id}`);
     } else {
       state.convOpen = true;
       if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
@@ -886,9 +908,9 @@ const ChatTerminal = (() => {
     }
     if (!x) return;
     const group = row?.group || `${PREFIX}${x.id}`;
-    if (state?.selected !== group) {
+    if (state?.loaded !== group) {
       t.openOnce = group;
-      go(`/chat/${group}`);
+      if (state?.selected !== group) go(`/chat/${group}`);
     } else {
       state.convOpen = true;
       if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
@@ -1026,8 +1048,9 @@ const ChatTerminal = (() => {
     const deskKey = openDeskKey();
     const isReviving = Boolean(isDerived && group && reviving(group, deskKey));
     if (isDerived) {
-      t.derivedRevive = !live ? { id: x?.id, group, deskKey } : null;
-      stopButton.hidden = live;
+      const canRevive = !live && Boolean(x || deskKey?.startsWith("thread:"));
+      t.derivedRevive = canRevive ? { id: x?.id, group, deskKey } : null;
+      stopButton.hidden = !canRevive;
       stopButton.disabled = !live && isReviving;
       stopButton.classList.toggle("start", !live);
       setText(stopButton, L("续接", "Resume"));
@@ -1170,5 +1193,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, rowPath, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, revive, closeDerived, focusFrame, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, rowPath, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, stayOnMessages, revive, closeDerived, focusFrame, close, stop };
 })();

@@ -250,7 +250,9 @@ impl Group {
         let (derived_desks, regular): (Vec<_>, Vec<_>) = if panel {
             (Vec::new(), self.desks.values().collect())
         } else {
-            self.desks.values().partition(|desk| desk.is_derived())
+            self.desks
+                .values()
+                .partition(|desk| desk.is_derived_thread())
         };
         let (mut rest, mut desks): (Vec<_>, Vec<_>) = regular
             .into_iter()
@@ -285,7 +287,7 @@ impl Group {
         let mut derived: Vec<_> = self
             .desks
             .values()
-            .filter(|desk| desk.is_derived())
+            .filter(|desk| desk.is_derived_thread())
             .collect();
         derived.sort_by_key(|desk| (desk.first.unwrap_or_default(), &desk.key));
         derived.into_iter().map(Desk::derived_summary).collect()

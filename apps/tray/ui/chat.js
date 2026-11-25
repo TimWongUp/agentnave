@@ -705,11 +705,17 @@ async function refresh() {
       : (chats.sidebar || null);
     state.groupsData = [...chats.groups, ...ChatTerminal.pending()];
     const derived = ChatTerminal.derivedAll?.() || [];
+    // A workspace is found and counts as active through its derived sessions too.
+    for (const g of state.groupsData) {
+      const own = ChatTerminal.derivedOf?.(g.group) || [];
+      g.derived_live = own.some((d) => d.live);
+      g.derived_titles = own.map((d) => d.title).join("\n");
+    }
     const selectable = [...state.groupsData, ...derived];
     const followed = ChatTerminal.follow(state.selected);
     if (followed !== state.selected) {
       state.selected = followed;
-      history.replaceState({}, "", href(`/chat/${followed}`));
+      history.replaceState({}, "", href(`/chat/${followed}${state.hashKey ? `#${encodeURI(state.hashKey)}` : ""}`));
     }
     if (
       state.auto &&
@@ -718,7 +724,8 @@ async function refresh() {
     )
       state.selected = state.groupsData[0]?.group ?? null;
     if (!narrow.matches && state.selected) el.app.dataset.view = "chat";
-    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, tickOf(), document.documentElement.lang]);
+    const openDesk = state.drawer?.kind === "desk" ? state.drawer.key : null;
+    const listKey = JSON.stringify([state.groupsData, derived, state.projects, state.sidebar, state.selected, openDesk, tickOf(), document.documentElement.lang]);
     if (listKey !== state.listKey) {
       state.listKey = listKey;
       renderList();

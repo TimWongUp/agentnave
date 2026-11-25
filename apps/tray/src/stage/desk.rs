@@ -159,8 +159,10 @@ impl Desk {
                 .is_some_and(|last| now - last > FAILURE_SETTLES_AFTER)
     }
 
-    pub(super) fn is_derived(&self) -> bool {
-        self.derived.is_some_and(|(_, derived)| derived)
+    /// A derived session with a native thread, the only kind that can be continued. One that has
+    /// none yet is listed by its terminal, and one that never got it is an ordinary settled call.
+    pub(super) fn is_derived_thread(&self) -> bool {
+        self.derived.is_some_and(|(_, derived)| derived) && self.key.starts_with("thread:")
     }
 
     /// Lightweight desk fields needed to name and order derived rows in `/app/chats`.

@@ -54,7 +54,7 @@
   }
 
   function isActiveGroup(g) {
-    return g.status === "running" || g.status === "review" || g.handover === "pending" || Boolean(g.live);
+    return g.status === "running" || g.status === "review" || g.handover === "pending" || Boolean(g.live) || Boolean(g.derived_live);
   }
 
   function parseQuery(query) {
@@ -80,6 +80,7 @@
       key !== OTHER ? key : "",
       g.display_title,
       g.title,
+      g.derived_titles,
       g.host,
       g.app,
       g.label,

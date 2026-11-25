@@ -197,6 +197,10 @@ test("sorting, filtering, pinning, aliases, flat view, and folded status dot pri
   // Active filter keeps running, review, pending handover, and live items only
   const activeFlat = plain(arrangeFlat(groups, { ...env, projects, sidebar, prefs: { view: "flat", filter: "active" } }));
   assert.deepEqual(activeFlat.map(g => g.group), ["g5", "g1", "g4"]);
+  // a workspace counts as active, and is found, through its derived sessions
+  const own = [ws("boss", "/w/p", "2026-11-12T00:00:00Z", "idle", { derived_live: true, derived_titles: "清理配置" })];
+  assert.equal(plain(arrangeFlat(own, { ...env, prefs: { filter: "active" } })).length, 1);
+  assert.equal(plain(arrangeFlat(own, { ...env, query: "清理" })).length, 1);
 
   // Flat view pins pending handover first, then pinned_groups, then urgentFirst + updated
   const allFlat = plain(arrangeFlat(groups, { ...env, projects, sidebar, prefs: { view: "flat" } }));

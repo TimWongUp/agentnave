@@ -4547,4 +4547,28 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   assert.equal(context.state.items.get("ws-hist").el.getAttribute("data-folded"), null);
   assert.equal(firstEl.getAttribute("data-folded"), null);
   assert.equal(context.state.items.get(afterWake[1].group).el.getAttribute("data-folded"), "true");
+
+  // 6. Asking for the messages while the session is being brought back keeps them once it is up.
+  sessions = [];
+  await context.ChatTerminal.refresh();
+  context.state.selected = context.state.loaded = "ws-hist";
+  context.state.drawer = { kind: "desk", key: "thread:saved" };
+  const resuming = context.ChatTerminal.revive({ group: "ws-hist", deskKey: "thread:saved" });
+  firstEl.listeners.click[0]({ button: 0, preventDefault() {} });
+  await resuming;
+  context.ChatTerminal.column("ws-hist", "claude", "claude");
+  assert.equal(context.ChatTerminal.showing(), false);
+
+  // 7. A terminal opened before its session had an id stays open, then moves to its desk once history has it.
+  sessions = [{ id: 120, provider: "codex", cwd: "/repo", exit: null, derived: true, derived_state: "starting", parent_workspace_id: "ws-hist", desk_key: null, native: null, workspaces: [] }];
+  await context.ChatTerminal.refresh();
+  assert.equal(context.ChatTerminal.follow("term-120"), "term-120");
+  sessions[0].desk_key = "thread:fresh";
+  await context.ChatTerminal.refresh();
+  assert.equal(context.ChatTerminal.follow("term-120"), "term-120");
+  assert.equal(context.ChatTerminal.office("term-120").terminal, 120);
+  context.state.groupsData[1].derived.push({ key: "thread:fresh", provider: "codex", model: "gpt-6.1" });
+  assert.equal(context.ChatTerminal.follow("term-120"), "ws-hist");
+  assert.equal(context.state.hashKey, "desk:thread:fresh");
+  assert.equal(context.ChatTerminal.consumeOpenDesk("ws-hist", "thread:fresh"), true);
 });
