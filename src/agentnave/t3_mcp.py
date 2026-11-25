@@ -29,6 +29,8 @@ from agentnave.orchestration_roles import IMAGE_KIND
 from agentnave.t3 import current_t3_mode
 from agentnave.t3_recommend import (
     MAX_T3_TASKS,
+    T3_ANTIGRAVITY_DELEGATE_NEXT,
+    T3_RECOMMEND_NEXT,
     T3RecommendSeatPayload,
     T3RecommendTask,
     catalog_t3_seats,
@@ -181,7 +183,10 @@ async def t3_recommend_seat(
         raise ToolError("not_enabled: T3 orchestration is not active for this connection.")
     if not tasks:
         return catalog_t3_seats(doc, mode=mode)
-    return await recommend_t3_seats(tasks, doc, mode=mode)
+    payload = await recommend_t3_seats(tasks, doc, mode=mode)
+    if runtime.HOST.name == "antigravity" and payload["next"] == T3_RECOMMEND_NEXT:
+        payload["next"] += T3_ANTIGRAVITY_DELEGATE_NEXT
+    return payload
 
 
 def _discussion_only_members(members: Sequence[ListedMember]) -> list[ListedMember]:

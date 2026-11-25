@@ -3,7 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-24
 - 2026-11-25 自身修订：T3 工位目录支持生图工位（第 3、4 节），原条款「没有生图工位，T3 里不派生图」作废。Codex 与 Antigravity 在 T3 子线程里实测能出图并存到指定路径；Antigravity 经自带的生图子代理出图，所以简报附言要放行它。生图候选不限定哪家 CLI，能不能出图由 T3 里的 CLI 决定。
-- 2026-11-25 自身修订：T3 里的 Antigravity（`agy acp`）与 Codex 同样识别为主线程与子线程，后台等收件箱（第 1、6 节），第一版「只认 Claude 和 Codex」作废。
+- 2026-11-25 自身修订：T3 里的 Antigravity（`agy acp`）与 Codex 同样识别为主线程与子线程，后台等收件箱（第 1、6 节），第一版「只认 Claude 和 Codex」作废；它的选工位回执直接指向 T3 的 ACP 终端派发（第 4 节）。
 - 2026-11-25 自身修订：取消首次预填（第 8 节），首次打开只有空白的通用探索、通用执行和生图工位；添加的备选不自动选模型。
 - 修订（仅在 T3 主线程且用户开启 T3 编排时）：
   - [ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)：T3 编排跟随该 boss 的编排档位；开启时分工协作、决策模型、自定义三档的规则块多一节 T3 派法（第 2、5 节）。
@@ -25,7 +25,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
 - T3 里的 Claude 总在首步之后才连上 AgentNave，MCP 说明赶不上首次派发；规则文件和会话启动时的内容赶得上。
 - 用本篇第 5 节前身的规则句，Opus、Sonnet 和 Codex 的 gpt-6.2-astra、gpt-6-luna 共派 14 次，全部先选工位再用 `delegate_task`，没有改用原生子代理；Haiku 当 boss 时 3 次里 2 次绕过。
 - 后台命令结束后 T3 会叫醒主线程，Claude 与 Codex 都是。
-- 2026-11-25 在 T3 Code Beta、agy 1.5.16（macOS）上实测：T3 用 `agy acp --gemini-dir <profile> --app-data-dir antigravity-acp` 启动 agy，agy 及其拉起的服务进程环境里有 `T3CODE_THREAD_ID`（子线程以 `thread:delegated-task:` 开头）；agy 的 `run_command` 要填 `WaitMsBeforeAsync`，超时后命令转后台，命令结束时 agy 自己注入通知并开始新一轮，同一个 T3 run 里不需要 T3 叫醒。
+- 2026-11-25 在 T3 Code Beta、agy 1.5.16（macOS）上实测：T3 用 `agy acp --gemini-dir <profile> --app-data-dir antigravity-acp` 启动 agy，agy 及其拉起的服务进程环境里有 `T3CODE_THREAD_ID`（子线程以 `thread:delegated-task:` 开头）；agy 的 `run_command` 要填 `WaitMsBeforeAsync`，超时后命令转后台，命令结束时 agy 自己注入通知并开始新一轮，同一个 T3 run 里不需要 T3 叫醒。T3 给 Codex（`t3-code-direct`）和 Pi 直接提供 `orchestrator_capabilities`、`delegate_task`、`task_status`；agy 的工具列表里少了 `delegate_task`、`schedule_task`、`t3_thread_launch`、`html_render`，直接调用报 `not enabled`，按 T3 说明里的 `acp-mcp-call` 终端备用调用能派出，子任务完成后 T3 以新消息叫醒 agy。
 - T3 只拒绝模型不识别的推理档；没有的推理档不传时，同实例同模型的子任务会沿用主线程的档位，明确传空列表才用默认。
 
 ## 决定
@@ -50,6 +50,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    - 三份列表各管一件事：`recommend_seat` 不带任务调用时返回 T3 工位与评审工位目录，按档位派发只看它；用户点名时只看 T3 自己的模型列表；`list_members` 只列会议成员，只在开会时用。
    - `start_agent`、`start_agents` 在 T3 主线程直接拒绝并指路。开会、收件、转交和历史工具不变。
    - T3 任务由 T3 展示，不进 AgentNave 历史、冷却和同目录提醒。只读靠回执附的只读说明写进简报，不是权限隔离。
+   - T3 里的 Antigravity 拿不到可直接调用的 `delegate_task`，`recommend_seat` 回执在派法后加一句：不试 MCP 调用，直接用 T3 的 `acp-mcp-call` 终端备用调用派发。
    - T3 子线程里，选工位、派发、开会和转交工具都拒绝，说明它只完成自己的任务。
 5. **规则与说明**。
    - 开关打开且档位有 T3 模式时，App 在 Claude、Codex 和 Antigravity 各自规则块里把派法分成两节：共用条目只写一份，后面依次是「不在 T3 Code 里时这样派」（普通派法、固定工位行和生图行）和「在 T3 Code 里这样派」（见下，第一条按档位取一种）。自定义档只在用户正文后追加 T3 一节，不改正文、不给正文加标题。开关关着或其他档位不加任何标题。按「在不在 T3 Code 里」分节，不按有没有 `delegate_task` 工具：T3 的系统说明从首步就写明运行环境，工具可能晚加载。首次派发只靠这一节。
