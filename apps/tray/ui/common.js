@@ -144,7 +144,7 @@
     failed: [L("失败", "Failed"), "bad"], blocked: [L("受阻", "Blocked"), "bad"], cancelled: [L("已取消", "Cancelled"), "idle"],
     interrupted: [L("已中断", "Interrupted"), "bad"], pending: [L("等待中", "Pending"), "idle"],
   };
-  const GROUP = { running: [L("运行中", "Running"), "run"], review: [L("待审核", "Review"), "review"], failed: [L("有失败", "Failed"), "bad"], idle: [L("空闲", "Idle"), "idle"] };
+  const GROUP = { running: [L("运行中", "Running"), "run"], review: [L("待审核", "Review"), "review"], waiting: [L("等待确认", "Needs attention"), "review"], failed: [L("有失败", "Failed"), "bad"], idle: [L("空闲", "Idle"), "idle"] };
   localizedTables.push(MEMBER, GROUP);
   const pick = (table, status) => table[status] || [status || "—", "idle"];
   const urgent = (status) => status === "running" || status === "review";
@@ -204,12 +204,14 @@
     else if (node.getAttribute(name) !== value) node.setAttribute(name, value);
   };
   const setClass = (node, className) => { if (node.className !== className) node.className = className; };
-  // Make parent's children equal `nodes`, touching the DOM only where the order differs.
+  // Make parent's children equal `nodes`, touching the DOM only where the order differs. What is
+  // gone leaves first, so the rows after it stay put: moving a pressed row loses its click.
   function reconcile(parent, nodes) {
+    const kept = new Set(nodes);
+    for (const child of [...parent.children]) if (!kept.has(child)) child.remove();
     nodes.forEach((node, i) => {
       if (parent.children[i] !== node) parent.insertBefore(node, parent.children[i] || null);
     });
-    while (parent.children.length > nodes.length) parent.lastElementChild.remove();
   }
   // Stable order: ids keep their slot; new ids go first; rows only move when `rank` changes
   // (running/review before the rest). Server order is used only to seed new ids.

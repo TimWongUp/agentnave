@@ -120,6 +120,7 @@
     if (typeof state === "undefined" || typeof go !== "function") return;
     const target = activeId && state.order.includes(activeId) ? activeId : (isSearching() ? state.order[0] : null);
     if (!target) return;
+    if (typeof ChatTerminal !== "undefined" && ChatTerminal?.openDerived?.(target)) return;
     go(`/chat/${encodeURIComponent(target)}`);
   }
 

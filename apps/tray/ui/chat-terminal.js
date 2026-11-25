@@ -16,9 +16,14 @@ const ChatTerminal = (() => {
     since: new Map(), // terminal id -> when the office first saw it, to order the list
     terminal: new Map(), // workspace -> whether its column shows the terminal
     frames: new Map(), // terminal id -> its frame, kept so the screen survives switching
+    waking: new Map(), // derived sessions being brought back: terminal id (or desk) -> { open: show the terminal when done }
     shown: null,
     openOnce: null,
+    away: false, // the window was hidden since the list was last read
   };
+  AN.onVisibility?.(() => {
+    if (AN.isHidden()) t.away = true;
+  });
   const TERM_FONT = '13px "SF Mono", Menlo, Monaco, Consolas, "Noto Sans Mono CJK SC", monospace';
   const CELL_HEIGHT = Math.ceil(13 * 1.3);
   const PAD_X = 24;
@@ -87,50 +92,132 @@ const ChatTerminal = (() => {
             ((x.desk_key && x.desk_key === key) || (x.native && `thread:${x.native}` === key)),
         )
       : undefined;
+  const isDerivedDeskOpen = (group) =>
+    typeof state !== "undefined" &&
+    state?.drawer?.kind === "desk" &&
+    state?.chat?.group === group &&
+    Boolean(state?.ctx?.desks?.get?.(state.drawer.key)?.derived);
   // The terminal this workspace's column shows: the open desk's own derived terminal, else the boss's.
-  const terminalOf = (group) =>
-    byId(pendingId(group)) || (state.drawer?.kind === "desk" && ofDesk(group, state.drawer.key)) || ofWorkspace(group);
+  const terminalOf = (group) => {
+    const pending = byId(pendingId(group));
+    if (pending) return pending;
+    if (typeof state !== "undefined" && state?.drawer?.kind === "desk") {
+      const derived = ofDesk(group, state.drawer.key);
+      if (derived) return derived;
+      if (isDerivedDeskOpen(group)) return null;
+    }
+    return ofWorkspace(group);
+  };
 
+  function activeShownId() {
+    const hidden = typeof AN.isHidden === "function" ? AN.isHidden() : Boolean(typeof document !== "undefined" && document.hidden);
+    if (hidden) return null;
+    if (t.shown == null) return null;
+    if (!el.drawer?.classList?.contains?.("term-mode")) return null;
+    if (el.drawer?.hidden) return null;
+    if (el.drawer?.classList?.contains?.("folded") && typeof state !== "undefined" && !state?.convPeek) return null;
+    const f = t.frames.get(t.shown);
+    if (!f || f.hidden) return null;
+    return t.shown;
+  }
+
+  // A derived terminal left on screen while the window was hidden continues by itself if its
+  // process ended meanwhile; one the reader ended while looking stays ended.
+  function continueShown(before) {
+    const away = t.away;
+    t.away = false;
+    const x = away && before?.derived && derivedStateOf(before) !== "dormant" ? byId(before.id) : null;
+    if (x && derivedStateOf(x) === "dormant") void revive({ id: x.id, group: state.loaded, deskKey: openDeskKey() });
+  }
   async function refresh() {
     const gen = ++t.listGen;
     let current;
+    const shownId = activeShownId();
+    const url = shownId != null ? `/app/terminal/state?shown=${encodeURIComponent(shownId)}` : "/app/terminal/state";
     try {
-      current = await AN.load("/app/terminal/state");
+      current = await AN.load(url);
     } catch {
       return; // keep what is shown
     }
     if (gen !== t.listGen) return;
+    const before = shownId != null && byId(shownId);
+    const processes = new Map(t.list.map((x) => [x.id, x.started]));
     t.list = current.sessions;
     t.cwd = current.cwd;
+    continueShown(before);
     const now = new Date().toISOString();
     for (const x of t.list) if (!t.since.has(x.id)) t.since.set(x.id, now);
-    for (const id of t.frames.keys()) if (!byId(id)) dropFrame(id);
+    // a frame stops reading once its process has ended, so one started in the same row needs its own
+    for (const id of t.frames.keys()) {
+      const x = byId(id);
+      if (!x || (processes.has(id) && processes.get(id) !== x.started)) dropFrame(id);
+    }
   }
 
   // The CLI's name, with the named account it runs as after it.
   const cliLabel = (x) => AN.cliName(x.provider) + (x.account_label ? L(`（${x.account_label}）`, ` (${x.account_label})`) : "");
 
+  const DERIVED_STATES = new Set(["starting", "running", "waiting", "uncollected", "idle", "dormant", "exited"]);
+  function derivedStateOf(x) {
+    if (!x) return "idle";
+    if (x.derived_state && DERIVED_STATES.has(x.derived_state)) return x.derived_state;
+    if (x.blocked_kind) return "waiting";
+    if (x.derived_busy && x.exit == null) return "running";
+    if (x.exit != null) return "exited";
+    return "idle";
+  }
+  function formatElapsed(sinceSec) {
+    if (typeof sinceSec !== "number" || !Number.isFinite(sinceSec) || sinceSec <= 0) return "";
+    const sec = Math.max(0, Math.floor(Date.now() / 1000 - sinceSec));
+    if (sec < 60) return `${sec}s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h${String(min % 60).padStart(2, "0")}m`;
+  }
+  // "dormant" (its process ended after idling) is not a state to the reader: it reads as idle.
+  function derivedMeta(g, { withElapsed = true } = {}) {
+    if (g.waking || (g.terminal != null && t.waking.has(g.terminal))) {
+      return { text: L("正在恢复", "Resuming"), tone: "run" };
+    }
+    const ds = g.derived_state || derivedStateOf(g);
+    switch (ds) {
+      case "starting":
+        return { text: L("启动中", "Starting"), tone: "run" };
+      case "running": {
+        const elapsed = withElapsed ? formatElapsed(g.derived_since) : "";
+        const base = L("运行中", "Running");
+        return { text: elapsed ? `${base} · ${elapsed}` : base, tone: "run" };
+      }
+      case "waiting":
+        return { text: L("等待确认", "Needs attention"), tone: "review" };
+      case "uncollected":
+        return { text: L("待 boss 收取", "Awaiting boss"), tone: "review" };
+      case "exited":
+        return { text: L("已结束", "Exited"), tone: "idle" };
+      default:
+        return { text: L("空闲", "Idle"), tone: "idle" };
+    }
+  }
+
   function toItemRow(x) {
     const derived = Boolean(x.derived);
-    const busy = Boolean(x.derived_busy && x.exit == null);
+    const ds = derived ? derivedStateOf(x) : null;
+    const waking = derived && t.waking.has(x.id);
     const status = derived
-      ? x.blocked_kind
-        ? "waiting"
-        : busy
-          ? "running"
+      ? (waking || ds === "starting" || ds === "running")
+        ? "running"
+        : (ds === "waiting" || ds === "uncollected")
+          ? "waiting"
           : "idle"
       : x.exit == null
         ? "running"
         : "idle";
-    const live = derived ? busy : x.exit == null;
+    const live = derived
+      ? (waking || ds === "starting" || ds === "running" || ds === "waiting")
+      : x.exit == null;
     const preview = derived
-      ? x.blocked_kind
-        ? L("等待确认", "Needs attention")
-        : busy
-          ? cliLabel(x)
-          : x.exit == null
-            ? folder(x.cwd)
-            : L("已结束", "Exited")
+      ? derivedMeta({ ...x, derived_state: ds, waking }, { withElapsed: false }).text
       : x.exit == null
         ? folder(x.cwd)
         : L("已结束", "Exited");
@@ -156,7 +243,17 @@ const ChatTerminal = (() => {
       rooms_count: 0,
       isolated_count: 0,
       derived,
+      derived_state: ds,
+      derived_since: x.derived_since ?? null,
+      has_draft: Boolean(x.has_draft),
+      resumable: Boolean(x.resumable),
+      parent_terminal_id: x.parent_terminal_id ?? null,
       parent_workspace_id: x.parent_workspace_id ?? null,
+      desk_key: x.desk_key ?? null,
+      native: x.native ?? null,
+      exit: x.exit ?? null,
+      pending_results: x.pending_results ?? 0,
+      waking,
       isolation_id: x.isolation_id ?? null,
       cwd: x.cwd || "",
       blocked_kind: x.blocked_kind ?? null,
@@ -172,9 +269,30 @@ const ChatTerminal = (() => {
 
   function derivedOf(parentGroup) {
     if (!parentGroup) return [];
+    const tid = pendingId(parentGroup);
     return t.list
-      .filter((x) => x.derived && x.parent_workspace_id === parentGroup)
+      .filter(
+        (x) =>
+          x.derived &&
+          (x.parent_workspace_id === parentGroup || (!x.parent_workspace_id && tid != null && x.parent_terminal_id === tid)),
+      )
       .map(toItemRow);
+  }
+
+  function derivedSummary(parentGroup) {
+    const list = derivedOf(parentGroup);
+    if (!list.length) return null;
+    let running = 0;
+    let waiting = 0;
+    for (const item of list) {
+      if (item.derived_state === "running" || item.derived_state === "starting") running += 1;
+      else if (item.derived_state === "waiting") waiting += 1;
+    }
+    if (!running && !waiting) return null;
+    const parts = [];
+    if (running) parts.push(L(`${running} 运行`, `${running} running`));
+    if (waiting) parts.push(L(`${waiting} 待确认`, `${waiting} waiting`));
+    return { running, waiting, text: parts.join(" · ") };
   }
 
   function derivedAll() {
@@ -308,9 +426,22 @@ const ChatTerminal = (() => {
   function menu(id, e) {
     const x = byId(pendingId(id));
     if (!x) return false;
+    if (x.derived) {
+      Actions.openMenu(e, [
+        { label: L("打开", "Open"), run: () => openDerived(id) },
+        { label: L("关闭终端", "Close terminal"), danger: true, run: () => close(x.id) },
+      ]);
+      return true;
+    }
+    const derivedList = derivedOf(id);
     Actions.openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       x.exit == null && { label: L("结束 CLI", "Stop CLI"), run: () => stop(x.id) },
+      derivedList.length > 0 && {
+        label: L(`关闭全部派生终端（${derivedList.length}）`, `Close all derived terminals (${derivedList.length})`),
+        danger: true,
+        run: () => closeDerived(id),
+      },
       { label: L("关闭终端", "Close terminal"), danger: true, run: () => close(x.id) },
     ].filter(Boolean));
     return true;
@@ -324,34 +455,106 @@ const ChatTerminal = (() => {
     }
     return state.groupsData?.find((g) => g.group === ws)?.status === "running";
   }
-  async function confirmStop(x) {
-    const resumable = canResume(x);
-    const running = hasRunningMembers(x);
-    if (resumable && !running) return true;
+  function affectedDerivedOf(target) {
+    if (Array.isArray(target?.derivedSessions)) return target.derivedSessions;
+    if (target?.derived) return [target];
+    if (!target) return [];
+    const wsSet = new Set(target.workspaces || []);
+    return t.list.filter((s) => {
+      if (!s.derived) return false;
+      if (s.parent_terminal_id != null) return s.parent_terminal_id === target.id;
+      return Boolean(s.parent_workspace_id && wsSet.has(s.parent_workspace_id));
+    });
+  }
+  function isDerivedActive(s) {
+    const ds = derivedStateOf(s);
+    return ds === "running" || ds === "starting" || ds === "waiting";
+  }
+  async function confirmStop(target, { mode = "stop" } = {}) {
+    const isBatch = Array.isArray(target?.derivedSessions);
+    const x = isBatch ? null : target;
+    const derivedList = affectedDerivedOf(target);
+    const activeDerived = derivedList.filter(isDerivedActive).length;
+    const draftDerived = derivedList.filter((s) => Boolean(s.has_draft)).length;
+
+    if (mode === "close" && x && !x.derived && !activeDerived && !draftDerived) return true;
+
+    const running = x ? hasRunningMembers(x) : false;
+    const resumable = x && !x.derived && canResume(x);
+
     const reasons = [];
-    if (!x.workspaces?.length) {
-      reasons.push(h("p.act-note", {}, L(
-        "这个新 agent 还没有派过活，结束终端后不能在 App 里续接这段对话。",
-        "This new agent has not dispatched any work yet; stopping the terminal means it cannot be resumed from the App.",
-      )));
-    } else if (!resumable) {
-      reasons.push(h("p.act-note", {}, L(
-        `App 暂不支持在终端里续接 ${AN.cliName(x.provider)} 的对话，结束后无法从这里接回。`,
-        `The App cannot resume ${AN.cliName(x.provider)} conversations yet; stopping ends this terminal session.`,
-      )));
+    if (x?.derived) {
+      if (activeDerived) {
+        reasons.push(h("p.act-note", {}, L(
+          "这一轮还没做完，结束后会向 boss 回报未完成。",
+          "This turn has not finished yet; stopping will report it to the boss as unfinished.",
+        )));
+      }
+      if (draftDerived) {
+        reasons.push(h("p.act-note.warn", {}, L(
+          "1 个有未发出的草稿。",
+          "1 derived session has an unsent draft.",
+        )));
+      }
+      if (running) {
+        reasons.push(h("p.act-note.warn", {}, L(
+          "这个 agent 目前仍有组员在运行任务。",
+          "This agent still has members running tasks.",
+        )));
+      }
+    } else {
+      if (mode === "stop" && x) {
+        if (!x.workspaces?.length) {
+          reasons.push(h("p.act-note", {}, L(
+            "这个新 agent 还没有派过活，结束终端后不能在 App 里续接这段对话。",
+            "This new agent has not dispatched any work yet; stopping the terminal means it cannot be resumed from the App.",
+          )));
+        } else if (!resumable) {
+          reasons.push(h("p.act-note", {}, L(
+            `App 暂不支持在终端里续接 ${AN.cliName(x.provider)} 的对话，结束后无法从这里接回。`,
+            `The App cannot resume ${AN.cliName(x.provider)} conversations yet; stopping ends this terminal session.`,
+          )));
+        }
+        if (running) {
+          reasons.push(h("p.act-note.warn", {}, L(
+            "这个 agent 目前仍有组员在运行任务。",
+            "This agent still has members running tasks.",
+          )));
+        }
+      }
+      if (activeDerived > 0) {
+        reasons.push(h("p.act-note.warn", {}, L(
+          `有 ${activeDerived} 个派生会话还没做完，结束后会向 boss 回报未完成。`,
+          `${activeDerived} derived session(s) have not finished yet; stopping will report them to the boss as unfinished.`,
+        )));
+      }
+      if (draftDerived > 0) {
+        reasons.push(h("p.act-note.warn", {}, L(
+          `${draftDerived} 个有未发出的草稿。`,
+          `${draftDerived} derived session(s) have unsent drafts.`,
+        )));
+      }
     }
-    if (running) {
-      reasons.push(h("p.act-note.warn", {}, L(
-        "这个 agent 目前仍有组员在运行任务。",
-        "This agent still has members running tasks.",
-      )));
-    }
+
+    if (!reasons.length) return true;
+
+    const title = isBatch
+      ? L("关闭全部派生终端？", "Close all derived terminals?")
+      : x?.derived
+        ? L("关闭派生终端？", "Close derived terminal?")
+        : (mode === "close" ? L("关闭终端？", "Close terminal?") : L("结束终端？", "Stop terminal?"));
+    const confirmLabel = isBatch
+      ? L("关闭全部", "Close all")
+      : x?.derived
+        ? L("关闭终端", "Close terminal")
+        : (mode === "close" ? L("关闭终端", "Close terminal") : L("结束终端", "Stop terminal"));
+
     const answer = await Actions.ask({
-      title: L("结束终端？", "Stop terminal?"),
+      title,
       body: reasons,
       buttons: [
         { label: L("取消", "Cancel"), focus: true },
-        { label: L("结束终端", "Stop terminal"), danger: true, value: "stop" },
+        { label: confirmLabel, danger: true, value: "stop" },
       ],
     });
     return answer?.value === "stop";
@@ -390,13 +593,14 @@ const ChatTerminal = (() => {
   }
   async function stop(id) {
     const x = byId(id);
-    if (x && !(await confirmStop(x))) return;
+    if (x && !(await confirmStop(x, { mode: "stop" }))) return;
     await reply(await act(`/app/terminal/stop?session=${id}`, ""));
     await refresh();
     refreshOffice();
   }
   async function close(id) {
     const closing = byId(id);
+    if (closing && !(await confirmStop(closing, { mode: "close" }))) return;
     if (!(await reply(await act(`/app/terminal/close?session=${id}`, "")))) return;
     const shown = pendingId(state.selected) === id;
     await refresh();
@@ -406,6 +610,97 @@ const ChatTerminal = (() => {
       return go(back ? `/chat/${back}` : "/chat/", true);
     }
     refreshOffice();
+  }
+  async function closeDerived(workspace) {
+    const tid = pendingId(workspace);
+    const affected = t.list.filter(
+      (s) =>
+        s.derived &&
+        (s.parent_workspace_id === workspace || (!s.parent_workspace_id && tid != null && s.parent_terminal_id === tid)),
+    );
+    if (!affected.length) return null;
+    if (!(await confirmStop({ workspace, derivedSessions: affected }, { mode: "close-derived" }))) return null;
+    const apiWs = tid != null ? (byId(tid)?.workspaces?.at(-1) || workspace) : workspace;
+    const result = await reply(await act(`/app/terminal/close-derived?workspace=${encodeURIComponent(apiWs)}`, ""));
+    if (!result) return null;
+    const affectedIds = new Set(affected.map((s) => s.id));
+    const selectedId = pendingId(state.selected);
+    await refresh();
+    if (selectedId != null && affectedIds.has(selectedId)) {
+      return go(workspace.startsWith(PREFIX) ? "/chat/" : `/chat/${workspace}`, true);
+    }
+    refreshOffice();
+    return result;
+  }
+  function redrawWaking() {
+    if (typeof state !== "undefined") {
+      state.listKey = null;
+      state.chatKey = null;
+    }
+    if (typeof renderList === "function") renderList();
+    if (typeof state !== "undefined" && state?.chat && typeof renderAll === "function") renderAll(state.chat);
+  }
+  const openDeskKey = () => (state?.drawer?.kind === "desk" ? state.drawer.key : null);
+  // Whether a derived session is being brought back (ADR-0124): by terminal row, or by desk when it has none.
+  const reviving = (group, deskKey = null) => {
+    const x = deskKey ? ofDesk(group, deskKey) : byId(pendingId(group));
+    return t.waking.has(x ? x.id : `${group}|${deskKey}`);
+  };
+  // Starts a derived session's process again from its native session: `wake` for a terminal row,
+  // `open-derived` for a desk that has none. The messages stay up meanwhile; the terminal replaces
+  // them only if the reader is still on this session and has not asked for the messages since.
+  async function revive({ id, group, deskKey = null }) {
+    const key = id ?? `${group}|${deskKey}`;
+    if (t.waking.has(key)) return false;
+    const job = { open: true };
+    t.waking.set(key, job);
+    redrawWaking();
+    const base = id != null
+      ? `/app/terminal/wake?session=${id}`
+      : `/app/terminal/open-derived?workspace=${encodeURIComponent(group)}&desk=${encodeURIComponent(deskKey)}`;
+    let session = null;
+    try {
+      session = (await postAttach(base))?.session ?? null;
+    } catch (error) {
+      Actions.say(String(error?.message || error), true);
+    }
+    t.waking.delete(key);
+    if (session) {
+      const at = t.list.findIndex((s) => s.id === session.id);
+      if (at >= 0) t.list[at] = session;
+      else t.list.push(session);
+      dropFrame(session.id);
+      if (job.open && state.selected === group && openDeskKey() === deskKey) {
+        t.terminal.set(group, true);
+        if (state.loaded !== group) t.openOnce = group;
+      }
+    }
+    refreshOffice();
+    return Boolean(session);
+  }
+  // A derived session opens to continue: its terminal when it is running, else its messages while
+  // the App starts it again; one that has ended for good only has its messages.
+  function openDerived(group) {
+    const id = pendingId(group);
+    const x = id != null ? byId(id) : null;
+    if (!x?.derived) return false;
+    const ds = derivedStateOf(x);
+    const live = ds !== "dormant" && ds !== "exited";
+    t.terminal.set(group, live);
+    if (state?.selected !== group) {
+      t.openOnce = group;
+      go(`/chat/${group}`);
+    } else {
+      state.convOpen = true;
+      if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
+      if (ds !== "dormant") {
+        refreshOffice();
+        if (live) focusFrame(x.id);
+      }
+    }
+    // reviving redraws the open column itself, so the messages show without another fetch
+    if (ds === "dormant") void revive({ id, group });
+    return true;
   }
   // Continues the chat an ended terminal was the boss of, or starts its CLI afresh, in its place.
   async function restart(id) {
@@ -445,6 +740,14 @@ const ChatTerminal = (() => {
   el.tl.after(box);
   const switchTo = (on) => () => {
     if (!state.loaded) return;
+    // A derived session whose process is gone (or coming back) shows the terminal once it is up.
+    const x = byId(t.owned);
+    const job = x?.derived ? t.waking.get(x.id) : null;
+    if (job) job.open = on;
+    if (on && x?.derived && (job || derivedStateOf(x) === "dormant")) {
+      if (!job) void revive({ id: x.id, group: state.loaded, deskKey: openDeskKey() });
+      return;
+    }
     t.terminal.set(state.loaded, on);
     if (state.chat && typeof renderAll === "function") {
       renderAll(state.chat);
@@ -499,9 +802,10 @@ const ChatTerminal = (() => {
     // One place for the terminal's action: stop it while it runs, start it again once it ended.
     // Without a terminal here, a chat its CLI can continue offers to, in the same place.
     const ended = x?.exit != null;
-    stopButton.hidden = Boolean((!x && !t.resumable && !t.handover) || (x?.derived && ended));
+    stopButton.hidden = Boolean(x?.derived || (!x && !t.resumable && !t.handover));
     stopButton.classList.toggle("start", !x || ended);
-    setText(stopButton, t.handover ? L("转交到终端", "Hand over to terminal") : !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal"));
+    const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
+    setText(stopButton, btnLabel);
     t.owned = x?.id ?? null;
     setAttr(toMessages, "aria-pressed", term ? "false" : "true");
     setAttr(toTerminal, "aria-pressed", term ? "true" : "false");
@@ -520,16 +824,25 @@ const ChatTerminal = (() => {
     el.drIco.replaceChildren(AN.hostTile(term.provider));
     setText(el.drTitle, term.derived ? (term.display_title || L("派生终端", "Derived terminal")) : "boss");
     const cli = cliLabel(term);
-    setText(
-      el.drSub,
-      term.blocked_kind
+    let subText;
+    if (term.derived) {
+      const termDs = derivedStateOf(term);
+      if (t.waking.has(term.id)) subText = L(`${cli} · 正在恢复`, `${cli} · Resuming`);
+      else if (termDs === "waiting") subText = L(`${cli} · 等待确认`, `${cli} · Needs attention`);
+      else if (termDs === "uncollected") subText = term.pending_results ? L(`${term.pending_results} 项结果待 boss 收取`, `${term.pending_results} results waiting for boss`) : L(`${cli} · 待 boss 收取`, `${cli} · Awaiting boss`);
+      else if (termDs === "starting") subText = L(`${cli} · 启动中`, `${cli} · Starting`);
+      else if (termDs === "exited") subText = L(`${cli} · 已结束`, `${cli} · Exited`);
+      else subText = cli;
+    } else {
+      subText = term.blocked_kind
         ? L(`${cli} · 等待确认`, `${cli} · Needs attention`)
         : term.pending_results
           ? L(`${term.pending_results} 项结果待 boss 收取`, `${term.pending_results} results waiting for boss`)
           : term.exit == null
             ? cli
-            : L(`${cli} · 已结束`, `${cli} · Exited`),
-    );
+            : L(`${cli} · 已结束`, `${cli} · Exited`);
+    }
+    setText(el.drSub, subText);
     setAttr(el.drSub, "title", term.cwd || null);
     el.drAll.hidden = true;
     setAttr(el.drawer, "aria-label", term.derived ? L("派生终端", "derived terminal") : L("boss 终端", "boss terminal"));
@@ -549,9 +862,11 @@ const ChatTerminal = (() => {
   // were asked for.
   function column(group, host, app) {
     const x = terminalOf(group);
-    t.handover = (!x || x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
-    t.resumable = !x && !t.handover && RESUMES.has(host) ? group : null;
+    const derivedDesk = isDerivedDeskOpen(group);
+    t.handover = !derivedDesk && (!x || x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
+    t.resumable = !derivedDesk && !x && !t.handover && RESUMES.has(host) ? group : null;
     show(x, t.terminal.get(group) ?? true);
+    if (t.shown == null && reviving(group, openDeskKey())) setText(el.drSub, L("正在恢复", "Resuming"));
   }
   function consumeOpen(group) {
     if (t.openOnce !== group) return false;
@@ -561,7 +876,8 @@ const ChatTerminal = (() => {
   const hasTerminal = (group) => Boolean(byId(pendingId(group)) || ofWorkspace(group));
   const displayState = (group) => {
     const x = terminalOf(group);
-    return x ? [x.id, x.exit != null] : null;
+    const derived = derivedOf(group).map((d) => [d.terminal, byId(d.terminal)?.started, d.derived_state, d.waking, d.resumable, d.pending_results]);
+    return [x ? [x.id, x.started, x.exit != null, x.derived_state, t.waking.has(x.id)] : null, derived];
   };
   const bossOpensTerminal = (group) => {
     const agent = byId(pendingId(group));
@@ -595,8 +911,8 @@ const ChatTerminal = (() => {
     return true;
   }
   // Opening a desk, a room or everything is asking to read: the column turns to the messages.
-  function readMessages() {
-    if (state.loaded) t.terminal.set(state.loaded, false);
+  function readMessages(on = false) {
+    if (state.loaded) t.terminal.set(state.loaded, Boolean(on));
   }
   // Theme and language changes reach the frames as they reach settings.
   addEventListener("agentnave:preferences", (event) => {
@@ -615,5 +931,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, derivedStateOf, derivedMeta, derivedSummary, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, revive, closeDerived, focusFrame, close, stop };
 })();

@@ -84,6 +84,9 @@ const el = {
   floor: $("floor"),
   boss: $("boss"),
   desks: $("desks"),
+  derivedZone: $("derived-zone"),
+  derivedDesks: $("derived-desks"),
+  derivedCount: $("derived-count"),
   rooms: $("rooms"),
   fx: $("fx"),
   deskCount: $("desks-count"),
@@ -262,7 +265,9 @@ function createItem(g) {
   rec.el.addEventListener("click", (e) => {
     if (e.button) return;
     e.preventDefault();
-    if (!Actions.pick(rec.id, e)) go(`/chat/${rec.id}`);
+    if (!Actions.pick(rec.id, e)) {
+      if (!ChatTerminal.openDerived?.(rec.id)) go(`/chat/${rec.id}`);
+    }
   });
   const openIsolated = (e) => {
     e.preventDefault();
@@ -282,8 +287,10 @@ function createItem(g) {
 }
 function updateItem(rec, g, flat = false) {
   // A failure asks nothing of the user, so the list does not call it out.
+  const dMeta = g.derived ? ChatTerminal.derivedMeta(g) : null;
   const shown = g.status === "failed" ? "idle" : AN.ongoing(g.status);
-  const [word, tone] = pick(GROUP, shown);
+  const [word, groupTone] = pick(GROUP, shown);
+  const tone = dMeta ? dMeta.tone : groupTone;
   const on = g.group === state.selected;
   const pinned = isGroupPinned(g.group);
   const name = shownName(g);
@@ -297,7 +304,7 @@ function updateItem(rec, g, flat = false) {
     rec.el,
     "aria-label",
     g.derived
-      ? L(`${name}，派生终端 ${g.label}，${word}`, `${name}, derived terminal in ${g.label}, ${word}`)
+      ? L(`${name}，派生终端 ${g.label}，${dMeta.text}`, `${name}, derived terminal in ${g.label}, ${dMeta.text}`)
       : L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`),
   );
   const place = itemPlace(g);
@@ -315,22 +322,35 @@ function updateItem(rec, g, flat = false) {
   rec.pin.hidden = !pinned;
   setAttr(rec.pin, "title", pinned ? L("已置顶", "Pinned") : null);
   // In flat view, .gi-meta also displays the owning project name when not "other".
-  const handover = g.handover === "pending" || g.handover === "changed";
-  const blocked = Boolean(g.derived && g.blocked_kind);
-  if (flat) {
-    const project = projectTitleOf(g);
-    const parts = [];
-    if (g.handover === "pending") parts.push(L("待接手", "Awaiting handover"));
-    else if (g.handover === "changed") parts.push(L("boss 已更换", "boss changed"));
-    if (handover) parts.push(g.label);
-    else if (blocked) parts.push(L("等待确认", "Needs attention"));
-    if (project) parts.push(project);
-    const metaText = parts.filter(Boolean).join(" · ");
-    rec.meta.hidden = !metaText;
+  if (g.derived) {
+    const project = flat ? projectTitleOf(g) : "";
+    const metaText = [dMeta.text, project].filter(Boolean).join(" · ");
+    rec.meta.hidden = false;
+    setClass(rec.meta, `gi-meta tone-${tone}`);
     setText(rec.meta, metaText);
   } else {
-    rec.meta.hidden = !handover && !blocked;
-    setText(rec.meta, handover ? `${handoverWord(g)}${place}` : blocked ? L("等待确认", "Needs attention") : "");
+    const handover = g.handover === "pending" || g.handover === "changed";
+    const summary = ChatTerminal.derivedSummary?.(g.group);
+    setClass(rec.meta, "gi-meta");
+    if (flat) {
+      const project = projectTitleOf(g);
+      const parts = [];
+      if (g.handover === "pending") parts.push(L("待接手", "Awaiting handover"));
+      else if (g.handover === "changed") parts.push(L("boss 已更换", "boss changed"));
+      if (handover) parts.push(g.label);
+      if (summary) parts.push(summary.text);
+      if (project) parts.push(project);
+      const metaText = parts.filter(Boolean).join(" · ");
+      rec.meta.hidden = !metaText;
+      setText(rec.meta, metaText);
+    } else {
+      const parts = [];
+      if (handover) parts.push(`${handoverWord(g)}${place}`);
+      if (summary) parts.push(summary.text);
+      const metaText = parts.join(" · ");
+      rec.meta.hidden = !metaText;
+      setText(rec.meta, metaText);
+    }
   }
   const cleaned = typeof ChatIsolatedCleanup !== "undefined" ? ChatIsolatedCleanup.doneCount(g.group) : 0;
   rec.bottom.hidden = rec.iso.hidden = !g.isolated_count && !cleaned;
@@ -359,8 +379,9 @@ function sidebarQuery() {
 }
 function renderList() {
   const groups = state.groupsData;
-  const by = new Map(groups.map((g) => [g.group, g]));
-  for (const id of state.items.keys()) if (!by.has(id)) state.items.delete(id);
+  // derived terminals have rows here without being groups of their own
+  const listed = new Set([...groups, ...(ChatTerminal.derivedAll?.() || [])].map((g) => g.group));
+  for (const id of state.items.keys()) if (!listed.has(id)) state.items.delete(id);
   state.liveMore.clear();
   const prefs = sidebarPrefs();
   const query = sidebarQuery();

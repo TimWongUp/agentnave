@@ -461,15 +461,19 @@ impl Hosts {
     }
     /// The boss apps installed here with their resolved roots, for the global rules list.
     pub fn rule_apps(&self) -> Vec<crate::rules::App> {
-        self.registry()
-            .into_iter()
-            .filter(|host| self.detect(host).0)
-            .map(Self::rule_app)
-            .collect()
+        self.rule_apps_where(|host| self.detect(host).0)
     }
     /// Include removed CLIs when removing stale managed blocks from their rules files.
     fn all_rule_apps(&self) -> Vec<crate::rules::App> {
-        self.registry().into_iter().map(Self::rule_app).collect()
+        self.rule_apps_where(|_| true)
+    }
+    fn rule_apps_where(&self, keep: impl Fn(&Host) -> bool) -> Vec<crate::rules::App> {
+        let hosts = self.registry();
+        let kept: Vec<bool> = hosts.iter().map(keep).collect();
+        let mut apps: Vec<_> = hosts.into_iter().map(Self::rule_app).collect();
+        crate::rules::share_linked(&mut apps, &self.context.home);
+        let apps = apps.into_iter().zip(kept);
+        apps.filter_map(|(app, kept)| kept.then_some(app)).collect()
     }
     fn rule_app(host: Host) -> crate::rules::App {
         // T3 Code symlinks its Antigravity profile's GEMINI.md / AGENTS.md to `~/.gemini/`;
@@ -488,11 +492,7 @@ impl Hosts {
     }
     /// The installed boss apps that are connected, which alone get the orchestration block.
     pub fn connected_rule_apps(&self) -> Vec<crate::rules::App> {
-        self.registry()
-            .into_iter()
-            .filter(|host| self.state(host)["status"] == "connected")
-            .map(Self::rule_app)
-            .collect()
+        self.rule_apps_where(|host| self.state(host)["status"] == "connected")
     }
     /// Write the orchestration block into the connected apps' rules and take it out of the rest,
     /// backing up each file first. Returns the files that could not be written.

@@ -8,6 +8,7 @@ function counts(c) {
 }
 // Mood picks the character frame; word is the plain status shown under the desk.
 function deskMood(d, ctx) {
+  if (d.derived && typeof ChatDerived !== "undefined" && ChatDerived.mood) return ChatDerived.mood(d, ctx);
   const acts = activities(d);
   const meeting =
     acts.find((a) => a.kind === "meeting" && ctx.fullRooms.has(a.room)) ||
@@ -463,15 +464,28 @@ function createDesk(d) {
     rec.scene,
     h("div.label", {}, rec.nm, h("div.cli", {}, rec.cliText), rec.role),
   );
-  rec.el.addEventListener("click", () =>
-    openScope({ kind: "desk", key: d.key }, rec.el),
-  );
+  rec.d = d;
+  rec.el.addEventListener("click", () => {
+    const current = rec.d || d;
+    if (current.derived && typeof ChatDerived !== "undefined" && ChatDerived.openDesk) {
+      ChatDerived.openDesk(current, rec.el);
+      return;
+    }
+    openScope({ kind: "desk", key: current.key }, rec.el);
+  });
+  rec.el.addEventListener("contextmenu", (e) => {
+    const current = rec.d || d;
+    if (current.derived && typeof ChatDerived !== "undefined" && ChatDerived.deskMenu) {
+      ChatDerived.deskMenu(current, rec.el, e);
+    }
+  });
   return rec;
 }
 function updateDesk(rec, d, ctx) {
+  rec.d = d;
   let s = deskMood(d, ctx);
   // The backend reports a finished task as idle; a desk that just stopped working cheers briefly.
-  const settled = s.mood === "idle" && !s.away;
+  const settled = !d.derived && s.mood === "idle" && !s.away;
   if (rec.mood?.mood === "working" && settled) rec.doneUntil = Date.now() + DONE_FOR;
   if (settled && rec.doneUntil > Date.now())
     s = { ...s, mood: "done", say: L("搞定", "Done") };
@@ -626,7 +640,7 @@ function updateRoom(rec, r, ctx) {
 const DESK_FRAME = 18; // a desk's side padding and border around its scene
 const DESK_PAD = 16; // the same padding alone, inside the card's border
 function deskSceneWidth() {
-  const desk = el.desks.querySelector(".desk");
+  const desk = el.desks.querySelector(".desk") || el.derivedDesks?.querySelector?.(".desk");
   if (desk) return desk.clientWidth - DESK_PAD;
   const grid = getComputedStyle(el.desks);
   const cols = parseInt(grid.getPropertyValue("--cols"), 10) || 1;
@@ -660,12 +674,13 @@ function layoutRooms() {
   if ((state.deskCap ?? "") !== cap) {
     state.deskCap = cap;
     el.desks.style.setProperty("--desk-scene", cap);
+    el.derivedDesks?.style?.setProperty("--desk-scene", cap);
   }
   const bossWidth = deskWidth > 0 ? `${Math.round(deskWidth * BOSS_SCALE)}px` : "";
   if (state.bossRec && state.bossRec.scene.style.width !== bossWidth)
     state.bossRec.scene.style.width = bossWidth;
   // Desks scale with the floor, so seats take the size their figures have at the desks.
-  const fig = el.desks.querySelector(".desk > .scene > .fig")?.offsetWidth || FIG;
+  const fig = (el.desks.querySelector(".desk > .scene > .fig") || el.derivedDesks?.querySelector?.(".desk > .scene > .fig"))?.offsetWidth || FIG;
   for (const rec of state.roomRecs.values()) {
     const m = rec.scene;
     if (!m.isConnected) continue;
@@ -735,6 +750,8 @@ function renderOffice(c, ctx, n, newGroup) {
       map.clear();
     state.bossRec = null;
     el.desks.replaceChildren();
+    el.derivedDesks?.replaceChildren?.();
+    if (el.derivedZone) el.derivedZone.hidden = true;
     el.rooms.replaceChildren();
     el.office.scrollTop = 0;
     laidOutFor = "";
@@ -783,7 +800,10 @@ function renderOffice(c, ctx, n, newGroup) {
 
   for (const key of state.deskRecs.keys())
     if (!ctx.drawn.has(key)) state.deskRecs.delete(key);
-  const deskNodes = c.desks.map((d) => {
+  const splitDerived = typeof ChatDerived !== "undefined" && ChatDerived.renderZone;
+  const regularDesks = splitDerived ? c.desks.filter((d) => !d.derived) : c.desks;
+  const derivedDesks = splitDerived ? c.desks.filter((d) => d.derived) : [];
+  const deskNodes = regularDesks.map((d) => {
     let rec = state.deskRecs.get(d.key);
     if (!rec) state.deskRecs.set(d.key, (rec = createDesk(d)));
     updateDesk(rec, d, ctx);
@@ -799,9 +819,10 @@ function renderOffice(c, ctx, n, newGroup) {
     );
   if (c.optimized?.count) deskNodes.push(optimizedNode(c.optimized, ctx));
   reconcile(el.desks, deskNodes);
-  setText(el.deskCount, c.desks.length ? ` · ${c.desks.length}` : "");
+  setText(el.deskCount, regularDesks.length ? ` · ${regularDesks.length}` : "");
+  if (splitDerived) ChatDerived.renderZone(derivedDesks, ctx, { createDesk, updateDesk });
   renderSides(state.bossRec, c, ctx);
-  layoutIfChanged(JSON.stringify([c.desks.length, !state.bossRec.meets.hidden, rooms.map((r) => [r.id, r.seats.length])]));
+  layoutIfChanged(JSON.stringify([regularDesks.length, derivedDesks.length, !state.bossRec.meets.hidden, rooms.map((r) => [r.id, r.seats.length])]));
   walk(!newGroup && state.ready, sat);
 }
 

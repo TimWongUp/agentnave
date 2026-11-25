@@ -29,6 +29,7 @@
 <script src="/chat/chat-state.js" defer></script>
 <script src="/chat/laptop.js" defer></script>
 <script src="/chat/chat-usage.js" defer></script>
+<script src="/chat/chat-derived.js" defer></script>
 <script src="/chat/chat-office.js" defer></script>
 <script src="/chat/chat-messages.js" defer></script>
 <script src="/chat/chat-terminal.js" defer></script>
@@ -67,6 +68,10 @@
         <section class="zone wide desks-zone" aria-labelledby="desks-title">
           <h2 class="zone-h" id="desks-title" data-en="Open desks">开放工位<span id="desks-count" class="zone-count"></span></h2>
           <div id="desks" class="desks"></div>
+        </section>
+        <section id="derived-zone" class="zone wide desks-zone derived-zone" aria-labelledby="derived-title" hidden>
+          <h2 class="zone-h" id="derived-title" data-en="Derived">派生<span id="derived-count" class="zone-count"></span></h2>
+          <div id="derived-desks" class="desks"></div>
         </section>
         <div id="fx" class="fx" aria-hidden="true"></div>
       </div>

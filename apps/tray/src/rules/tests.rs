@@ -1164,3 +1164,50 @@ fn t3_bosses_choose_who_gets_which_t3_section() {
             .contains("以上只对 T3 Code 里的 Claude Code、Grok CLI 适用")
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn rules_linked_to_another_row_of_the_app_are_written_and_listed_once() {
+    use std::os::unix::fs::symlink;
+    let home = tempfile::tempdir().unwrap();
+    let h = &home.path().canonicalize().unwrap();
+    let app = |key, label, root: &str| App {
+        key,
+        id: "claude",
+        label,
+        root: h.join(root),
+    };
+    for dir in [".claude", ".claude_personal", ".claude_other"] {
+        std::fs::create_dir_all(h.join(dir)).unwrap();
+    }
+    std::fs::write(h.join(".claude/CLAUDE.md"), "# 我的规则\n").unwrap();
+    std::fs::write(h.join("elsewhere.md"), "别处\n").unwrap();
+    let personal = h.join(".claude_personal/CLAUDE.md");
+    symlink(h.join(".claude/CLAUDE.md"), &personal).unwrap();
+    symlink(h.join("elsewhere.md"), h.join(".claude_other/CLAUDE.md")).unwrap();
+    let mut apps = [
+        app("claude:personal", "Claude（个人）", ".claude_personal"),
+        app("claude", "Claude", ".claude"),
+        app("claude:other", "Claude（其他）", ".claude_other"),
+    ];
+    share_linked(&mut apps, h);
+    let backup = |_: &Path, _: &[u8]| Ok(());
+    for preset in ["split", "off"] {
+        let document = json!({"version": 1, "preset": preset});
+        let blocked = sync(&apps, &apps, h, &document, None, &[], &backup, false);
+        // A link to a file no row reads directly is still left to the user.
+        let blocked: Vec<_> = blocked.iter().map(|row| row["path"].clone()).collect();
+        assert_eq!(blocked, [json!(h.join(".claude_other/CLAUDE.md"))]);
+        let content = std::fs::read_to_string(h.join(".claude/CLAUDE.md")).unwrap();
+        assert_eq!(
+            content.matches(START).count(),
+            usize::from(preset == "split")
+        );
+        assert!(personal.is_symlink());
+        let listed = list(&apps, &apps, h, &document, None);
+        let row = &listed["files"][0];
+        assert_eq!(row["path"], json!(h.join(".claude/CLAUDE.md")));
+        assert_eq!(row["readers"], json!(["Claude（个人）", "Claude"]));
+        assert_eq!(listed["files"].as_array().unwrap().len(), 2);
+    }
+}

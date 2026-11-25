@@ -189,6 +189,31 @@ fn reads(app: &App, home: &Path) -> Vec<PathBuf> {
     }
 }
 
+/// An app whose rules are links to those of another row of the same app (a Claude account folder
+/// linked to `~/.claude`) reads that row's files, so they are written and listed once.
+pub fn share_linked(apps: &mut [App], home: &Path) {
+    let real = |paths: &[PathBuf]| -> Vec<PathBuf> {
+        let real = paths.iter().filter_map(|path| path.canonicalize().ok());
+        real.collect()
+    };
+    for index in 0..apps.len() {
+        let own = reads(&apps[index], home);
+        let target = real(&own);
+        if target.is_empty() || !own.iter().any(|path| path.is_symlink()) {
+            continue;
+        }
+        let source = apps.iter().find(|app| {
+            let read = reads(app, home);
+            app.id == apps[index].id
+                && !read.iter().any(|path| path.is_symlink())
+                && real(&read) == target
+        });
+        if let Some(root) = source.map(|app| app.root.clone()) {
+            apps[index].root = root;
+        }
+    }
+}
+
 /// Each file an app actually reads, or its usual file when it has none yet.
 fn files(apps: &[App], home: &Path) -> Vec<(PathBuf, Vec<&'static str>)> {
     let mut out: Vec<(PathBuf, Vec<&'static str>)> = Vec::new();

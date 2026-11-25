@@ -174,7 +174,7 @@ fn query_group(query: Option<&str>) -> Option<String> {
     (!group.is_empty()).then_some(group)
 }
 
-fn percent_decode(input: &str) -> Option<String> {
+pub(crate) fn percent_decode(input: &str) -> Option<String> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

@@ -243,7 +243,13 @@ async def start_agent(
     ] = None,
     manager_model: ManagerModel = None,
     manager_session_id: ManagerSessionId = None,
-    terminal: Annotated[bool | None, Field(description="Run this task in an App terminal.")] = None,
+    terminal: Annotated[
+        bool | None,
+        Field(
+            description="Run this task in an App terminal the user can open. Before starting a new "
+            "one, ask the user whether to and which seat or CLI, unless they asked for it this turn."
+        ),
+    ] = None,
     wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,
     *,
     ctx: Context[Runtime],

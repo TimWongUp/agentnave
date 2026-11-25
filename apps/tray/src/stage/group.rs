@@ -818,6 +818,7 @@ impl Group {
             entry.seen(started_at);
             entry.prompt(started);
             entry.declare(started_at, opt_text(task, "access"));
+            entry.executed(started_at, text(task, "execution_mode"));
             entry.observe(timestamp(time).unwrap_or_default(), status);
             entry.reported(timestamp(time).unwrap_or_default(), task);
             if active(status) {

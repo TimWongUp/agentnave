@@ -627,6 +627,12 @@ mod tests {
         assert!(!preview_refuses(true, "POST", "/app/terminal/start"));
         assert!(preview_refuses(true, "POST", "/app/terminal/handover"));
         assert!(!preview_refuses(true, "POST", "/app/terminal/input"));
+        assert!(!preview_refuses(true, "POST", "/app/terminal/wake"));
+        assert!(!preview_refuses(
+            true,
+            "POST",
+            "/app/terminal/close-derived"
+        ));
         assert!(!preview_refuses(true, "POST", "/app/projects/pick"));
         assert!(!preview_refuses(true, "POST", "/app/projects/add"));
         assert!(!preview_refuses(true, "POST", "/app/projects/remove"));

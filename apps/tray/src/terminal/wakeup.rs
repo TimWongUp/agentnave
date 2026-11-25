@@ -4,13 +4,11 @@ use super::codex_server::{Client as CodexClient, Delivery};
 #[cfg(any(unix, test))]
 use super::unread::Item;
 use super::unread::{self, RawBoss, UnreadNotice};
-use super::{Terminals, links};
-#[cfg(unix)]
-use std::collections::HashMap;
+use super::{Terminals, lifecycle, links};
 #[cfg(unix)]
 use std::sync::Arc;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::Path,
     sync::{
@@ -52,13 +50,28 @@ fn coordinator_slot() -> &'static Mutex<Option<super::spawn_requests::Coordinato
     COORDINATOR.get_or_init(|| Mutex::new(None))
 }
 
-pub(super) fn on_terminal_closed(invocation_id: &str) {
-    let coord = coordinator_slot()
+#[cfg(all(test, unix))]
+pub(super) fn set_coordinator(coordinator: super::spawn_requests::Coordinator) {
+    *coordinator_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(coordinator);
+}
+
+fn coordinator() -> Option<super::spawn_requests::Coordinator> {
+    coordinator_slot()
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .clone();
-    if let Some(coord) = coord {
+        .clone()
+}
+
+pub(super) fn on_terminal_closed(invocation_id: &str) {
+    if let Some(coord) = coordinator() {
         coord.on_terminal_closed(invocation_id);
+    }
+}
+
+/// Publishes a derived terminal's new process before its CLI can speak to the service.
+pub(super) fn sync_derived_pids(terminals: &Terminals) {
+    if let Some(coord) = coordinator() {
+        let _ = coord.sync_derived_pids(terminals);
     }
 }
 
@@ -82,12 +95,15 @@ pub(super) fn start(app: AppHandle) {
     }
     *coordinator_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(coordinator.clone());
     thread::spawn(move || {
+        terminals.prune_saved_launches(&root);
         let mut state = WakeupState::default();
         while !STOP.load(Ordering::SeqCst) {
             coordinator.poll(&terminals);
-            scan_with(&terminals, &root, &mut state, Instant::now(), |notice| {
+            let now = Instant::now();
+            let seen = scan_with(&terminals, &root, &mut state, now, |notice| {
                 crate::alerts::notify_unread(&app, notice.count, notice.derived);
             });
+            lifecycle::tick(&terminals, &coordinator, &root, &seen, now);
             thread::sleep(Duration::from_millis(250));
         }
     });
@@ -103,7 +119,7 @@ pub(super) fn shutdown() {
     );
 }
 
-fn prune_state(raw: &std::collections::HashMap<String, RawBoss>, state: &mut WakeupState) {
+fn prune_state(raw: &HashMap<String, RawBoss>, state: &mut WakeupState) {
     let live_keys: HashSet<&str> = raw
         .values()
         .filter(|boss| boss.has_unread)
@@ -311,14 +327,25 @@ pub(super) fn scan(terminals: &Terminals, root: &Path, state: &mut WakeupState) 
     scan_with(terminals, root, state, Instant::now(), |_| {});
 }
 
+/// What a scan saw, for the lifecycle of derived terminals.
+pub(super) struct Observed {
+    /// The boss chats each live terminal's CLI holds, the current one last.
+    pub(super) chats: HashMap<u64, Vec<String>>,
+    pub(super) inboxes: HashMap<String, RawBoss>,
+}
+
 pub(super) fn scan_with(
     terminals: &Terminals,
     root: &Path,
     state: &mut WakeupState,
     now: Instant,
     notify: impl FnMut(UnreadNotice),
-) {
-    let links = links::bosses(root, &terminals.live_pids());
+) -> Observed {
+    let chats = links::chats(root, &terminals.live_pids());
+    let links: HashMap<u64, String> = chats
+        .iter()
+        .filter_map(|(id, keys)| Some((*id, keys.last()?.clone())))
+        .collect();
     let raw = unread::inboxes(root);
     prune_state(&raw, state);
     #[cfg(unix)]
@@ -328,6 +355,10 @@ pub(super) fn scan_with(
         raw
     };
     state.unread.scan(terminals, &links, &raw, now, notify);
+    Observed {
+        chats,
+        inboxes: raw,
+    }
 }
 
 #[cfg(any(unix, test))]

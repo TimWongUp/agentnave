@@ -3,6 +3,7 @@
 - 状态：部分修订
 - 日期：2026-11-22
 - 第 1、3、5、6、7、8 节由 [ADR-0114](0114-tui-runtime-like-a-user.md) 修订：派生入口只看 `terminal_providers`；说明改用户口吻；一轮等本轮后台任务结束并按起止锚点拼接结果；有未结算派发时续派返回忙；`inbox/`／`push/` 新增字段。
+- 第 1、2、4、6、7、9 节与取舍「终端的关闭交给用户」由 [ADR-0124](0124-derived-session-lifecycle.md) 修订：派生会话空闲时结束进程、随时可续，随 boss 关闭、办公室单独成区；`terminal_notes` 与 `read_conversation` 按会话读取暂不做。
 - 修订：[ADR-0103](0103-tray-embedded-terminal.md) 的「终端只由用户在办公室里开」；[ADR-0025](0025-session-desks-and-running-limit.md) 的同时运行上限口径（终端模式只在 boss 派发的那一轮计入）；[ADR-0085](0085-service-managed-isolated-dirs.md) 的隔离目录租约持有方与自动释放时机；[ADR-0105](0105-codex-app-server-terminal-push.md) 的托盘 `app-server` 客户端（订阅线程回合、按轮中断、带来源标记投递）。
 - 扩展：[ADR-0043](0043-service-prompt-instructions.md) 的服务派发说明（终端模式改用自己的一段）；[ADR-0104](0104-in-app-boss-push.md) 的 `inbox/`、`push/` 合同。
 - 沿用：[ADR-0028](0028-follow-cli-default-model.md)、[ADR-0032](0032-cli-permission-tiers.md)、[ADR-0108](0108-multi-account-isolation.md)（默认值、权限档位与账号在服务入口解析）；[ADR-0080](0080-tray-video-loopback-http.md)（托盘不监听端口）；[ADR-0098](0098-tray-deletes-isolated-dirs.md)（仓库锁与租约协议）。

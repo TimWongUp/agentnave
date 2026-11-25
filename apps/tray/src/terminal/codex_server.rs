@@ -396,6 +396,20 @@ impl Client {
             .map(|(status, _)| status.clone())
     }
 
+    /// How many of the thread's turns the app-server's notifications reported completed.
+    #[cfg(test)]
+    pub(super) fn completed_turns_for_test(&self, tid: &str) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .turns
+            .iter()
+            .filter(|((thread, _), turn)| {
+                thread == tid && turn.completed_status.as_deref() == Some("completed")
+            })
+            .count()
+    }
+
     fn notify(&self, method: &str, params: Option<Value>) -> Result<(), String> {
         let writer = {
             let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -450,12 +464,13 @@ impl Client {
         Ok(Ok(reply["result"].clone()))
     }
 
-    fn refresh_threads(&self) {
+    /// Reads the loaded threads and their states anew; false when they could not be listed.
+    pub(super) fn refresh_threads(&self) -> bool {
         let Ok(Ok(result)) = self.request("thread/loaded/list", Some(json!({}))) else {
-            return;
+            return false;
         };
         let Some(ids) = result["data"].as_array() else {
-            return;
+            return false;
         };
         let tids: Vec<String> = ids
             .iter()
@@ -490,6 +505,7 @@ impl Client {
                 state.threads.insert(tid, (status, seq));
             }
         }
+        true
     }
 
     fn resolve_thread(&self, target_boss_key: &str) -> Option<(String, ThreadStatus)> {
@@ -618,6 +634,20 @@ impl Client {
             .threads
             .get(tid)
             .map(|(status, _)| status.clone())
+    }
+
+    /// The thread is known to be idle, and no other one loaded beside it (a subagent's) works.
+    pub(super) fn is_idle(&self, tid: &str) -> bool {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.connected
+            && state
+                .threads
+                .get(tid)
+                .is_some_and(|(status, _)| *status == ThreadStatus::Idle)
+            && !state
+                .threads
+                .values()
+                .any(|(status, _)| matches!(status, ThreadStatus::Active { .. }))
     }
 
     pub(super) fn turn_event(&self, tid: &str, turn_id: &str) -> Option<TurnEventState> {
