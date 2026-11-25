@@ -1243,7 +1243,27 @@ impl Terminals {
             return None;
         }
         let root = crate::data_files::data_root();
-        let found = elsewhere::find(&root, key, &self.live_pids())?;
+        Self::refuse_elsewhere(elsewhere::find(&root, key, &self.live_pids())?)
+    }
+
+    /// The same for a derived session.
+    fn unless_derived_elsewhere(
+        &self,
+        provider: &str,
+        native: &str,
+        attach: &Attach,
+    ) -> Option<Response> {
+        let key = crate::data::boss_app::boss_key(provider, native);
+        if let Some(refusal) = self.unless_elsewhere(&key, attach) {
+            return Some(refusal);
+        }
+        if attach.confirm {
+            return None;
+        }
+        Self::refuse_elsewhere(elsewhere::started_on(native, &self.live_pids())?)
+    }
+
+    fn refuse_elsewhere(found: elsewhere::Elsewhere) -> Option<Response> {
         let place = found.app.as_deref().unwrap_or("别的程序");
         let state = if found.paused {
             "已暂停"

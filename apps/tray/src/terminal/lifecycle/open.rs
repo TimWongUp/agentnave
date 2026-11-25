@@ -15,7 +15,6 @@ use super::super::{
 };
 use super::revive::{PENDING_WAKE_ERR, Reviving, assumed_config, start};
 use super::{Life, Relaunched, WakePlan};
-use crate::data::boss_app::boss_key;
 use crate::isolated::leases::HeldLease;
 use crate::response::Response;
 use crate::time_format::timestamp;
@@ -104,7 +103,7 @@ impl Terminals {
             &crate::data_files::data_root(),
             workspace,
             desk,
-            |key| self.unless_elsewhere(key, attach),
+            |provider, native| self.unless_derived_elsewhere(provider, native, attach),
             |plan| derived::relaunch(self, plan),
         )
     }
@@ -114,7 +113,7 @@ impl Terminals {
         root: &Path,
         workspace: &str,
         desk: &str,
-        elsewhere: impl FnOnce(&str) -> Option<Response>,
+        elsewhere: impl FnOnce(&str, &str) -> Option<Response>,
         launch: impl FnOnce(&WakePlan) -> Result<Relaunched, String>,
     ) -> Response {
         if !crate::data_files::valid_id(workspace) || desk.is_empty() {
@@ -129,7 +128,7 @@ impl Terminals {
             Ok(Opening::New(held)) => held,
             Err(refusal) => return refusal,
         };
-        if let Some(refusal) = elsewhere(&boss_key(&found.provider, &found.native)) {
+        if let Some(refusal) = elsewhere(&found.provider, &found.native) {
             return refusal;
         }
         let planned = match self.plan_for(root, found) {

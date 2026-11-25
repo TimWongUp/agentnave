@@ -15,7 +15,6 @@ use super::super::{
     normalize_cwd, wakeup,
 };
 use super::{Life, account_error};
-use crate::data::boss_app::boss_key;
 use crate::isolated::leases::{self, HeldLease};
 use crate::response::Response;
 
@@ -338,7 +337,7 @@ impl Terminals {
         self.wake_in(
             &crate::data_files::data_root(),
             id,
-            |key| self.unless_elsewhere(key, attach),
+            |provider, native| self.unless_derived_elsewhere(provider, native, attach),
             |plan| derived::relaunch(self, plan),
         )
     }
@@ -348,7 +347,7 @@ impl Terminals {
         &self,
         root: &Path,
         id: Option<u64>,
-        elsewhere: impl FnOnce(&str) -> Option<Response>,
+        elsewhere: impl FnOnce(&str, &str) -> Option<Response>,
         launch: impl FnOnce(&WakePlan) -> Result<Relaunched, String>,
     ) -> Response {
         let (mut plan, held, id) = match self.begin_wake(root, id) {
@@ -356,7 +355,7 @@ impl Terminals {
             Ok(Wake::Live(live)) => return Response::json(&json!({"session": live})),
             Err(refusal) => return refusal,
         };
-        if let Some(refusal) = elsewhere(&boss_key(&plan.provider, &plan.native)) {
+        if let Some(refusal) = elsewhere(&plan.provider, &plan.native) {
             return refusal;
         }
         plan.complete(self);

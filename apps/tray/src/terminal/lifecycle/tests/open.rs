@@ -45,7 +45,7 @@ pub(super) fn terminal_task(provider: &str, cwd: &Path, time: &str) -> Value {
 impl Office {
     fn open(&self, launch: impl FnOnce(&WakePlan) -> Result<Relaunched, String>) -> Response {
         self.terminals
-            .open_derived_in(self.root.path(), WS, &desk(), |_| None, launch)
+            .open_derived_in(self.root.path(), WS, &desk(), |_, _| None, launch)
     }
 
     fn saved_file(&self) -> PathBuf {
@@ -124,7 +124,7 @@ fn what_the_history_cannot_tell_or_the_session_cannot_reach_is_refused_with_why(
             root,
             WS,
             desk,
-            |_| None,
+            |_, _| None,
             |_| panic!("nothing starts"),
         );
         (
@@ -150,8 +150,8 @@ fn what_the_history_cannot_tell_or_the_session_cannot_reach_is_refused_with_why(
         root,
         WS,
         &agy,
-        |key| {
-            assert_eq!(key, boss_key("antigravity", SID));
+        |provider, native| {
+            assert_eq!((provider, native), ("antigravity", SID));
             Some(Response::error(409, "这段聊天正在别的程序里打开（运行中）"))
         },
         |_| panic!("not before the user confirms"),

@@ -405,7 +405,7 @@ impl Live {
         let reply = self.office.terminals.wake_in(
             self.root(),
             Some(id),
-            |_| None,
+            |_, _| None,
             move |plan| {
                 let started = derived::relaunch(&terminals, plan)?;
                 started.session.record_writes();
@@ -803,7 +803,7 @@ fn live_open_derived(provider: &Provider) {
         live.root(),
         WS,
         &crate::terminal::thread_desk_key(provider.name, &native),
-        |_| None,
+        |_, _| None,
         move |plan| derived::relaunch(&terminals, plan),
     );
     assert_eq!(

@@ -24,7 +24,7 @@ fn waking_starts_one_process_in_the_same_row_and_submits_nothing() {
     let root = office.root.path();
     let live = office
         .terminals
-        .wake_in(root, Some(id), |_| None, |_| panic!("it runs already"));
+        .wake_in(root, Some(id), |_, _| None, |_| panic!("it runs already"));
     assert_eq!(body(&live)["session"]["derived_state"], "idle");
 
     session.stop();
@@ -35,7 +35,7 @@ fn waking_starts_one_process_in_the_same_row_and_submits_nothing() {
         office.terminals.wake_in(
             root,
             Some(id),
-            |_| None,
+            |_, _| None,
             |plan| {
                 started.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(plan.native, SID);
@@ -78,7 +78,7 @@ fn what_cannot_be_woken_says_why_and_can_be_tried_again() {
         let reply = office.terminals.wake_in(
             root,
             Some(id),
-            |_| None,
+            |_, _| None,
             |_| match launch {
                 Ok(()) => panic!("nothing may start"),
                 Err(error) => Err(error.to_owned()),
@@ -156,7 +156,7 @@ fn an_isolated_session_holds_its_lease_only_while_its_process_runs() {
     let reply = office.terminals.wake_in(
         office.root.path(),
         Some(id),
-        |_| None,
+        |_, _| None,
         |_| {
             assert!(held(), "taken before the CLI starts in it");
             Ok(relaunched(woken.clone()))
