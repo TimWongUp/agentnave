@@ -204,12 +204,14 @@
     else if (node.getAttribute(name) !== value) node.setAttribute(name, value);
   };
   const setClass = (node, className) => { if (node.className !== className) node.className = className; };
-  // Make parent's children equal `nodes`, touching the DOM only where the order differs.
+  // Make parent's children equal `nodes`, touching the DOM only where the order differs. What is
+  // gone leaves first, so the rows after it stay put: moving a pressed row loses its click.
   function reconcile(parent, nodes) {
+    const kept = new Set(nodes);
+    for (const child of [...parent.children]) if (!kept.has(child)) child.remove();
     nodes.forEach((node, i) => {
       if (parent.children[i] !== node) parent.insertBefore(node, parent.children[i] || null);
     });
-    while (parent.children.length > nodes.length) parent.lastElementChild.remove();
   }
   // Stable order: ids keep their slot; new ids go first; rows only move when `rank` changes
   // (running/review before the rest). Server order is used only to seed new ids.

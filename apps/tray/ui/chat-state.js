@@ -379,8 +379,9 @@ function sidebarQuery() {
 }
 function renderList() {
   const groups = state.groupsData;
-  const by = new Map(groups.map((g) => [g.group, g]));
-  for (const id of state.items.keys()) if (!by.has(id)) state.items.delete(id);
+  // derived terminals have rows here without being groups of their own
+  const listed = new Set([...groups, ...(ChatTerminal.derivedAll?.() || [])].map((g) => g.group));
+  for (const id of state.items.keys()) if (!listed.has(id)) state.items.delete(id);
   state.liveMore.clear();
   const prefs = sidebarPrefs();
   const query = sidebarQuery();

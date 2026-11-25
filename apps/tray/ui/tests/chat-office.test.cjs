@@ -1333,6 +1333,7 @@ test("a derived session of any state keeps its boss past the cap and shows under
       menu() { return false; },
       derivedMeta: () => ({ text: "", tone: "idle" }),
       derivedOf: parent => derived.filter(d => d.parent_workspace_id === parent),
+      derivedAll: () => derived,
     },
     Actions: { picked: new Set(), pick: () => false, workspaceMenu() {}, projectMenu() {} },
     addEventListener() {},
@@ -1381,6 +1382,10 @@ test("a derived session of any state keeps its boss past the cap and shows under
   derived = [child(20, "waiting"), child(21, "idle"), child(22, "dormant"), child(23, "exited")];
   assert.deepEqual(shown(), ["/chat/g-parent", "/chat/term-20", "/chat/term-21", "/chat/term-22", "/chat/term-23"]);
   assert.deepEqual([...context.state.order], ["g-parent", "term-20", "term-21", "term-22", "term-23"]);
+  // A redraw keeps the row: one made anew under the pointer would lose the click.
+  const row = context.state.items.get("term-20").el;
+  derived = [child(20, "running"), child(21, "idle")];
+  assert.equal(rows().includes(row), true);
   derived = [];
   assert.deepEqual(shown(), []);
 });
