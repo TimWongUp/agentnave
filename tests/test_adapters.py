@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import uuid
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -487,26 +489,279 @@ def test_codex_yolo_requires_explicit_option(tmp_path: Path, value: bool | None)
         {} if value is None else {"dangerously_bypass_approvals_and_sandbox": value}
     )
     prepared = CodexAdapter().prepare(request(tmp_path, "codex", provider_options=options))
-    flag = "--dangerously-bypass-approvals-and-sandbox"
-    assert (flag in prepared.argv) is (value is True)
+    # Without it the permissions are the config's to resolve: exec runs the task, unkept.
+    assert prepared.keep_alive is (value is True)
+    if value is True:
+        assert _bridged(prepared) == "bypass"
+    else:
+        assert prepared.argv[1] == "exec"
+        assert "--dangerously-bypass-approvals-and-sandbox" not in prepared.argv
 
 
-def test_codex_approve_for_me_maps_to_settings_on_resume(tmp_path: Path) -> None:
-    options: dict[str, str | int | float | bool] = {"approve_for_me": True}
-    fresh = CodexAdapter().prepare(request(tmp_path, "codex", provider_options=options))
-    assert "--approve-for-me" in fresh.argv
-    # `exec resume` has no such flag; the same settings go through --config.
-    resumed = CodexAdapter().prepare(
-        request(tmp_path, "codex", session_id="thread-1", provider_options=options)
+def test_codex_fixed_permissions_keep_an_app_server_on_every_turn(tmp_path: Path) -> None:
+    """Only options that fix every permission keep an app-server (ADR-0120)."""
+    fixed: tuple[tuple[dict[str, str | int | float | bool], str], ...] = (
+        ({"approve_for_me": True}, "approve-for-me"),
+        ({"dangerously_bypass_approvals_and_sandbox": True, "sandbox": "read-only"}, "bypass"),
     )
-    assert "--approve-for-me" not in resumed.argv
-    assert 'approvals_reviewer="auto_review"' in resumed.argv
-    assert 'sandbox_mode="workspace-write"' in resumed.argv
+    for options, mode in fixed:
+        for session_id in (None, "thread-1"):
+            prepared = CodexAdapter().prepare(
+                request(tmp_path, "codex", session_id=session_id, provider_options=options)
+            )
+            assert prepared.keep_alive and _bridged(prepared) == mode
+            assert prepared.stdin is not None
+            assert json.loads(prepared.stdin)["session_id"] == session_id
+            # A run that is not kept, or a resume no kept process serves, runs exec instead.
+            unkept = prepared.unkept
+            assert unkept is not None and unkept.argv[1] == "exec" and not unkept.keep_alive
+            assert (unkept.argv[2] == "resume") is (session_id is not None)
+    resolved: tuple[dict[str, str | int | float | bool], ...] = (
+        {"sandbox": "workspace-write"},
+        {"approve_for_me": False},
+    )
+    for other_options in resolved:
+        prepared = CodexAdapter().prepare(
+            request(tmp_path, "codex", provider_options=other_options)
+        )
+        assert prepared.argv[1] == "exec" and not prepared.keep_alive
+    approve: dict[str, str | int | float | bool] = {"approve_for_me": True}
     for other in ({"sandbox": "read-only"}, {"dangerously_bypass_approvals_and_sandbox": True}):
         with pytest.raises(ValueError, match="cannot be combined"):
             CodexAdapter().prepare(
-                request(tmp_path, "codex", provider_options={**options, **other})
+                request(tmp_path, "codex", provider_options={**approve, **other})
             )
+
+
+def test_codex_config_fingerprint_covers_rules_and_a_relative_codex_home(tmp_path: Path) -> None:
+    rules = tmp_path / "home" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "a.rules").write_text("x")
+    project = tmp_path / ".codex" / "rules"
+    project.mkdir(parents=True)
+    (project / "b.rules").write_text("y")
+    env = {"CODEX_HOME": "home"}
+    before = codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+    paths = {cast(tuple[object, ...], entry)[0] for entry in before}
+    assert {str(rules.resolve() / "a.rules"), str(project.resolve() / "b.rules")} <= paths
+    (project / "b.rules").write_text("changed")
+    assert codex._launch_inputs(tmp_path, "codex", env) != before  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_config_fingerprint_sees_rule_links_and_project_roots(tmp_path: Path) -> None:
+    def fingerprint() -> tuple[object, ...]:
+        return codex._launch_inputs(inner, "codex", {"CODEX_HOME": str(tmp_path / "home")})  # pyright: ignore[reportPrivateUsage]
+
+    inner = tmp_path / "outer" / "inner"
+    rules = inner / ".codex" / "rules"
+    rules.mkdir(parents=True)
+    target = tmp_path / "target.rules"
+    target.write_text("x")
+    (rules / "a.rules").symlink_to(target)
+    (inner / ".git").mkdir()
+    (inner / ".git" / "HEAD").write_text("ref")
+    before = fingerprint()
+    # A link replaced by a regular file with the same content is a change: Codex skips links.
+    (rules / "a.rules").unlink()
+    (rules / "a.rules").write_text("x")
+    times = target.stat()
+    os.utime(rules / "a.rules", ns=(times.st_atime_ns, times.st_mtime_ns))
+    replaced = fingerprint()
+    assert replaced != before
+    # So is removing the inner project root, which moves the project to an outer directory ...
+    (inner / ".git" / "HEAD").unlink()
+    (inner / ".git").rmdir()
+    removed = fingerprint()
+    assert removed != replaced
+    # ... and a `.git` file (a worktree's) turning into a directory without HEAD, which is none.
+    (inner / ".git").write_text("gitdir: elsewhere")
+    pointer = fingerprint()
+    assert pointer != removed
+    (inner / ".git").unlink()
+    (inner / ".git").mkdir()
+    assert fingerprint() != pointer
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable permissions")
+def test_codex_launch_inputs_cover_every_toml_and_the_executable(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    executable = _fake_executable(tmp_path / "bin", "codex")
+    env = {"CODEX_HOME": str(home), "PATH": str(executable.parent)}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    (home / "environments.toml").write_text("include_local = false")
+    with_environments = inputs()
+    assert with_environments != before
+    replacement = _fake_executable(tmp_path / "other", "codex")
+    replacement.write_text("#!/bin/sh\necho upgraded\n")
+    os.replace(replacement, executable)
+    assert inputs() != with_environments
+
+
+def test_codex_rollout_state_follows_the_sessions_log(tmp_path: Path) -> None:
+    day = tmp_path / "home" / "sessions" / "2026" / "11" / "24"
+    day.mkdir(parents=True)
+    rollout = day / "rollout-2026-11-24T10-00-00-thread-1.jsonl"
+    rollout.write_text("one")
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def state(session_id: str) -> tuple[object, ...]:
+        return codex._rollout_state(tmp_path, env, session_id)  # pyright: ignore[reportPrivateUsage]
+
+    before = state("thread-1")
+    assert [cast(tuple[object, ...], entry)[0] for entry in before] == [str(rollout.resolve())]
+    assert state("thread-2") == ()
+    rollout.write_text("one, two")
+    assert state("thread-1") != before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_launch_inputs_follow_a_linked_git_to_its_head(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    real_git = tmp_path / "real-git"
+    real_git.mkdir()
+    (real_git / "HEAD").write_text("ref")
+    (work / ".git").symlink_to(real_git)
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(work, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    entries = [cast(tuple[object, ...], entry) for entry in before]
+    # The lstat keeps saying it is a link, and its target is recorded as well as its HEAD.
+    kinds = [entry[1] for entry in entries if entry[0] == str(work / ".git")]
+    assert kinds == ["link", "directory"]
+    assert any(entry[0] == str(work / ".git" / "HEAD") for entry in entries)
+    (real_git / "HEAD").unlink()
+    assert inputs() != before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_codex_launch_inputs_see_config_and_rules_permissions(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    rules = home / "rules"
+    rules.mkdir(parents=True)
+    config = home / "config.toml"
+    config.write_text("a")
+    (rules / "a.rules").write_text("x")
+    env = {"CODEX_HOME": str(home)}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    config.chmod(0)
+    try:
+        assert inputs() != before
+    finally:
+        config.chmod(0o644)
+    # Restoring config.toml advances its ctime, so snapshot fresh before testing rules.
+    before_rules = inputs()
+    (rules / "a.rules").chmod(0)
+    try:
+        assert inputs() != before_rules
+    finally:
+        (rules / "a.rules").chmod(0o644)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_launch_inputs_track_a_linked_git_target_file(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    target = tmp_path / "gitdir-pointer"
+    target.write_text("gitdir: elsewhere")
+    (work / ".git").symlink_to(target)
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(work, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    entries = [cast(tuple[object, ...], entry) for entry in before]
+    # The link is recorded as one, and its target file's own state is recorded too.
+    kinds = [entry[1] for entry in entries if entry[0] == str(work / ".git")]
+    assert kinds == ["link", "file"]
+    target.chmod(0)
+    try:
+        assert inputs() != before
+    finally:
+        target.chmod(0o644)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_directory_handles_a_symlink_loop(tmp_path: Path) -> None:
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    assert codex._directory(loop).is_absolute()  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(
+        codex._launch_inputs(loop, "codex", {"CODEX_HOME": str(tmp_path / "home")}),  # pyright: ignore[reportPrivateUsage]
+        tuple,
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permissions")
+def test_codex_launch_inputs_see_an_unlistable_config_folder(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    config = home / "config.toml"
+    config.write_text("a")
+    env = {"CODEX_HOME": str(home)}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    home.chmod(0o111)
+    try:
+        # Codex still opens config.toml by name, so its state stays in the signature even
+        # though the folder itself cannot be listed.
+        unlisted = inputs()
+        assert unlisted != before
+        config.write_text("a much longer value")
+        changed = inputs()
+        assert changed != unlisted
+        config.chmod(0)
+        assert inputs() != changed
+    finally:
+        home.chmod(0o755)
+        config.chmod(0o644)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permissions")
+def test_codex_launch_inputs_see_an_unreadable_rules_folder(tmp_path: Path) -> None:
+    rules = tmp_path / "home" / "rules"
+    rules.mkdir(parents=True)
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    rules.chmod(0)
+    try:
+        assert inputs() != before
+    finally:
+        rules.chmod(0o755)
+
+
+def _bridged(prepared: base.PreparedCommand) -> str:
+    """The permission mode of an app-server bridge command."""
+    argv = prepared.argv
+    split = argv.index("--")
+    assert argv[:3] == (
+        sys.executable,
+        "-I",
+        str(Path(codex.__file__).with_name("codex_app_server.py")),
+    )
+    assert argv[split - 2] == "--permissions" and argv[split + 2] == "app-server"
+    return argv[split - 1]
 
 
 def test_codex_yolo_requires_boolean(tmp_path: Path) -> None:

@@ -16,7 +16,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 ## 进程与模块
 
-- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）；macOS／Linux 的宿主配置指向 App 维护的固定启动器 `service/bin/agentnave-mcp`，切换版本只改它指向的版本，不改宿主配置（[ADR-0061](../adr/0061-fixed-service-launcher.md)）。服务包内另提供一个只读等待模块，由支持后台命令自唤醒的宿主按回执原样在后台运行，只读 `inbox/` 快照而不建 MCP 连接；是否发放该命令由服务沿父进程链探测宿主真实可执行路径、启动参数与版本并缓存决定，不受 `AGENTNAVE_HOST` 短路（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
+- `agentnave-mcp` 先启动只用标准库的中继（`relay.py`），由它运行真正的服务并转发 STDIO；中继所在环境原地重装且空闲时换用新子进程，宿主不断线。App 把每个版本装进独立目录，宿主重连后才用新版本（[ADR-0047](../adr/0047-versioned-service-install.md)）；macOS／Linux 的宿主配置指向 App 维护的固定启动器 `service/bin/agentnave-mcp`，切换版本只改它指向的版本，不改宿主配置（[ADR-0061](../adr/0061-fixed-service-launcher.md)）。服务包内另提供一个只读等待模块，由支持后台命令自唤醒的宿主按回执原样在后台运行，只读 `inbox/` 快照而不建 MCP 连接；是否发放该命令由服务沿父进程链探测宿主真实可执行路径、启动参数与版本并缓存决定，不受 `AGENTNAVE_HOST` 短路（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。空闲由服务的 `restart_safe` 判定：持有会话锁、有未落盘回写或有终态未送达的轮次时不换；新增只在进程内存、换进程会丢的状态也要计入它，保留中的 Provider 进程除外（丢了只是下次冷启动，[ADR-0120](../adr/0120-idle-keep-for-resume.md)）；中继另查在途请求与运行中或结果未读的 Invocation（[ADR-0010](../adr/0010-launcher-relay-swaps-upgraded-server.md)）。
 - 服务运行在自己的会话里：挂起宿主时中继随之停住，不再转发调用和回执，已启动的任务继续跑。服务只在 stdin 关闭时结束，宿主进程组的信号到不了它。
 - 服务内的依赖方向：`mcp_server`（工具与回执投影）→ `Conversations`（历史、工作区、转发）→ `Groups`（轮次）→ `InvocationManager`（进程生命周期）；`InvocationManager` 一边调用 Provider Adapter 准备命令与解析结果，一边经 `processes` 启动、取消 supervisor，Adapter 不拥有进程。宿主识别（`host`）与 Adapter 互不导入，按 CLI 读取原生会话记录的代码放在两者都不依赖的中性模块。
 - Claude 默认以交互模式运行：Provider 进程是服务自带的 helper，在 macOS／Linux 使用伪终端、在 Windows 使用 ConPTY 驱动 `claude`，并把 transcript 与 hooks 归一成事件；受限工具路径用 `-p`。Windows 的 helper 和后代仍归 supervisor 的 Job Object 所有。交互运行会自动信任目录并确认环境里的 API key，这些记录由 Claude Code 永久写进用户配置（[ADR-0056](../adr/0056-claude-interactive-runtime.md)、[ADR-0086](../adr/0086-windows-claude-interactive.md)）。一轮以同一子回合的 `Stop` 钩子与 `turn_duration` 配对结束，且要等本轮会唤醒主回合的后台任务结束；后台任务完成通知引起的子回合属于同一次派发，回复按顺序拼接；Claude 不报后台任务列表的老版本退回 transcript 记账（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。
@@ -36,7 +36,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 - 声明支持原生弹框的 Adapter 可保持运行中 stdin 通道，只传回 CLI 自己发起的弹框答复；核心不识别 Provider 协议，决策归当前拥有工作区的 boss。待答弹框唤醒任务、会议与收件箱等待，等待期间不计持续重试，取消先拒绝再终止（[ADR-0057](../adr/0057-boss-answers-native-prompts.md)）。
 - 服务把弹框与答复审计写入任务或席位已有的 JSON 记录，属于服务与托盘共用的历史合同，不引入新表结构；工具输入在交给 boss 和保存前打码。
 - 同一 Provider 的同一原生 session 不得同时续接，且现存记录中已归属其他工作区（含私聊任务与会议席位）或属于不同解析后配置目录（跨账号）的原生 session 不得跨工作区或跨账号续接：数据根下的原生会话锁让共用数据根的各服务互斥（[ADR-0099](../adr/0099-handover-links-workspaces.md)、[ADR-0108](../adr/0108-multi-account-isolation.md)）。
-- 同时运行的 CLI 进程数（私聊加席位；终端模式只计 boss 派发的那一轮）受 App 设置的上限约束，只在接纳时检查（[ADR-0025](../adr/0025-session-desks-and-running-limit.md)、[ADR-0109](../adr/0109-in-app-derived-sessions.md)）。
+- 同时运行的 CLI 进程数（私聊加席位；终端模式只计 boss 派发的那一轮）受 App 设置的上限约束，只在接纳时检查；保留中的进程不计入，被复用时按一次运行重新接纳（[ADR-0120](../adr/0120-idle-keep-for-resume.md)、[ADR-0025](../adr/0025-session-desks-and-running-limit.md)、[ADR-0109](../adr/0109-in-app-derived-sessions.md)）。
 - 转发只注入本工作区或已认领的直接交接来源工作区里已成功任务与已提交条目（有方向、不传递，跨工作区引用注明来源工作区），并声明为数据；历史只保存 boss 原文（[ADR-0099](../adr/0099-handover-links-workspaces.md)）。
 
 ## 参数与默认值
@@ -62,7 +62,7 @@ AgentNave 是供 Agent Manager 通过本地 STDIO MCP 使用的服务，在 Mana
 
 - 启动组员前，服务从子进程环境移除父宿主内部 HTTP 服务的监听地址，避免组员复用父进程已占用的端口；服务与 Claude／Antigravity 交互 helper 也不向子进程继承 `HERDR_*` 环境变量，避免嵌套 CLI 覆盖外层终端窗格的会话绑定（[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）；均不改服务自身环境或组员的原生配置目录。
 - WorkBuddy 派发的 CodeBuddy 不继承宿主产品的认证配置，使用 CodeBuddy 自身的产品配置与已有登录；普通 CodeBuddy 调用保留用户指定的产品环境。
-- macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；服务被强杀时 supervisor 自行终止进程组。
+- macOS／Linux：每次 Invocation 由专用 supervisor 持有 POSIX 进程组，正常结束也先清理整组；声明保留能力的 Provider 例外，回合正常结束后进程组留在保留期内供同一原生会话续接，到期、被挤出或服务退出时清理（[ADR-0120](../adr/0120-idle-keep-for-resume.md)）。服务被强杀时 supervisor 自行终止进程组。
 - Windows：专用 supervisor 挂起创建 Provider，先加入 kill-on-close Job Object 再恢复；任何一步失败都以 `launch_error` 失败，不降级为无树级所有权的启动（[ADR-0004](../adr/0004-windows-job-object-supervision.md)）。
 - 服务与托盘写用户仓库只有两类：一是用户在托盘对 CLI 会话点按确认的基础 Git 操作（提交、拉取快进、推送、开 PR、合并 PR，[ADR-0115](../adr/0115-tray-git-status-and-basic-ops.md)）；二是隔离目录：boss 要求隔离时服务写主工作树根的 `.agentnave-worktrees/`、仓库的 `info/exclude` 和 `agentnave/` 前缀的受管分支；任务或席位在隔离目录里运行时，在 git 公共目录下的 `agentnave/` 写仓库锁和目录使用租约（派生会话的租约由托盘持有到终端关闭，[ADR-0109](../adr/0109-in-app-derived-sessions.md)）。只读任务成功完成且相对起点无任何改动、无其他租约时，服务自动释放该隔离目录，并在后续续接同一原生会话时原位重建；其余可用的目录在 boss 释放后由服务删除，或由用户在托盘 App 在同一仓库锁与租约协议下手动删除（使用中禁止删除，两步摘要确认，丢弃被 git 忽略的文件），或由托盘按用户打开的规则在同一协议下自动清理，服务自己另只回滚没建成的半成品、续完目录已删掉的收尾。建目录、检查与删除时不执行仓库配置的 hooks、filter 与文件监视程序，也不进入嵌套仓库（[ADR-0085](../adr/0085-service-managed-isolated-dirs.md)、[ADR-0092](../adr/0092-auto-release-untouched-isolated-dirs.md)、[ADR-0098](../adr/0098-tray-deletes-isolated-dirs.md)）。
 - AgentNave 不是沙箱。主动杀 supervisor、创建新 OS session 或其他同用户逃逸不在隔离范围内；Provider 原生权限才是安全边界。

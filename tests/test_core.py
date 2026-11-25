@@ -1948,7 +1948,10 @@ async def test_codex_terminal_event_ends_sleeping_process(tmp_path: Path) -> Non
     script = f"import time; print({json.dumps(chr(10).join(map(json.dumps, events)))}, flush=True); time.sleep(60)"
     manager = InvocationManager()
     request = InvocationRequest("codex", "work", tmp_path)
-    prepared = replace(manager.prepare(request), argv=(sys.executable, "-c", script))
+    # A run that is not kept (restricted runs stay on exec): the grace applies (ADR-0120).
+    prepared = replace(
+        manager.prepare(request), argv=(sys.executable, "-c", script), keep_alive=False
+    )
     started = time.monotonic()
     try:
         # 0.5s terminal grace + ~0.2s POSIX exit tail (no full 2s process-tree grace).

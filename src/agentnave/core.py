@@ -59,6 +59,16 @@ from agentnave.progress_stall import (
 from agentnave.push_capability import TrayIdentity
 from agentnave.terminal_execution import TerminalLaunch, TerminalRun, execute_run
 from agentnave.usage_probe import run_usage_query
+from agentnave.warm_pool import (
+    KEEP_SECONDS,
+    MAX_KEPT,
+    MAX_LIFETIME_SECONDS,
+    KeptProcess,
+    LaunchSignature,
+    WarmPool,
+    can_keep,
+    launch_signature,
+)
 
 _MAX_STDOUT_BYTES = 1024 * 1024
 _MAX_EVENT_BYTES = 8 * 1024 * 1024
@@ -162,6 +172,11 @@ class _InvocationRecord:
     background_reply: str | None = None
     background_reminder_sent: bool = False
     progress: ProgressTracker = field(default_factory=ProgressTracker)
+    # A process whose turn ended with it still running, until the run's outcome decides
+    # whether it is kept for the next resume (ADR-0120).
+    kept: KeptProcess | None = None
+    # Runs in an isolated dir, which is released after the run: its process is never kept.
+    isolated: bool = False
 
     def raise_attention(self, error: InvocationError) -> None:
         """Queue a running-time blocker for the next wait and wake the inbox."""
@@ -318,6 +333,8 @@ class _InvocationRecord:
 class _CapturedStream:
     data: bytes
     exceeded: bool
+    # Bytes read past the end of a kept process's turn; the process broke its contract.
+    trailing: bytes = b""
 
 
 def _retry_streak_start(since: float | None, last: float | None, now: float) -> float:
@@ -409,7 +426,8 @@ async def _background_reminder_guard(
 @dataclass
 class _RunIO:
     stdout_task: asyncio.Task[_CapturedStream]
-    stderr_task: asyncio.Task[_CapturedStream]
+    # None for a keep-alive run, whose stderr is drained by its process for its whole life.
+    stderr_task: asyncio.Task[_CapturedStream] | None
     stdin_task: asyncio.Task[None]
     completion_task: asyncio.Task[ProviderCompletion]
     cancel_task: asyncio.Task[bool]
@@ -421,26 +439,61 @@ class _RunIO:
     output_exceeded: asyncio.Event
     stdout_diagnostics: _StreamDiagnostics
     stderr_diagnostics: _StreamDiagnostics
+    kept: KeptProcess | None = None
 
     @property
     def tasks(self) -> tuple[asyncio.Task[object], ...]:
-        return (
+        """The tasks this run ends; a keep-alive process's exit watch outlives the run."""
+        tasks: list[asyncio.Task[object] | None] = [
             self.stdout_task,
             self.stderr_task,
             self.stdin_task,
-            self.completion_task,
+            None if self.kept is not None else self.completion_task,
             self.cancel_task,
             self.exceeded_task,
             self.stall_task,
             self.terminal_task,
             self.bg_reminder_task,
             self.progress_task,
-        )
+        ]
+        return tuple(task for task in tasks if task is not None)
+
+
+@dataclass(slots=True)
+class _Launched:
+    """The process a run got, the command it actually runs, and the scratch dir it owns."""
+
+    supervised: SupervisedProcess
+    kept: KeptProcess | None
+    prepared: PreparedCommand
+    scratch: str | None = None
 
 
 async def _terminal_grace(event: asyncio.Event) -> None:
     await event.wait()
     await asyncio.sleep(_TERMINAL_GRACE_SECONDS)
+
+
+async def _turn_end(event: asyncio.Event, stdout_task: asyncio.Task[_CapturedStream]) -> None:
+    """A keep-alive turn ends once its terminal event is read: the reader stops right there."""
+    await event.wait()
+    await asyncio.wait({stdout_task})
+
+
+def _retain_line(line: bytes) -> bytes:
+    return line + b"\n"
+
+
+def _drain_turn_stderr(
+    kept: KeptProcess, diagnostics: _StreamDiagnostics, exceeded: asyncio.Event
+) -> None:
+    """Retain what a kept process writes to stderr during this turn, with the usual limit."""
+
+    def over_limit() -> None:
+        diagnostics.exceeded_reason = "capture_limit"
+        exceeded.set()
+
+    kept.stderr.begin(_MAX_STDERR_BYTES, diagnostics.observe, over_limit)
 
 
 def _start_run_io(
@@ -450,7 +503,10 @@ def _start_run_io(
     supervised: SupervisedProcess,
     bg_reminder_task: asyncio.Task[None],
     progress_task: asyncio.Task[None],
+    kept: KeptProcess | None = None,
 ) -> _RunIO:
+    """Start one run's readers, stdin writer and guards. A kept process runs one turn: its
+    stdout is read up to the turn's terminal event and its stdin stays open (ADR-0120)."""
     process = supervised.process
     assert process.stdout is not None and process.stderr is not None and process.stdin is not None
     output_exceeded = asyncio.Event()
@@ -462,22 +518,31 @@ def _start_run_io(
             _MAX_STDOUT_BYTES,
             output_exceeded,
             lambda line: record.observe_event(line, adapter),
-            prepared.capture_line,
+            prepared.capture_line or (_retain_line if kept is not None else None),
             prepared.skip_oversized_line,
             event_limit=_MAX_EVENT_BYTES,
             diagnostics=stdout_diagnostics,
+            until=record.terminal_event if kept is not None else None,
         )
     )
-    stderr_task = asyncio.create_task(
-        _read_limited(
-            process.stderr,
-            _MAX_STDERR_BYTES,
-            output_exceeded,
-            diagnostics=stderr_diagnostics,
+    stderr_task = None
+    if kept is not None:
+        _drain_turn_stderr(kept, stderr_diagnostics, output_exceeded)
+    else:
+        stderr_task = asyncio.create_task(
+            _read_limited(
+                process.stderr,
+                _MAX_STDERR_BYTES,
+                output_exceeded,
+                diagnostics=stderr_diagnostics,
+            )
         )
-    )
     stdin_task = asyncio.create_task(
-        _write_stdin(process.stdin, prepared.stdin, keep_open=prepared.keep_stdin_open)
+        _write_stdin(
+            process.stdin,
+            prepared.stdin,
+            keep_open=prepared.keep_stdin_open or kept is not None,
+        )
     )
     completion_task = supervised.completion
     cancel_task = asyncio.create_task(record.cancel_event.wait())
@@ -491,12 +556,17 @@ def _start_run_io(
         cancel_task=cancel_task,
         exceeded_task=exceeded_task,
         stall_task=stall_task,
-        terminal_task=asyncio.create_task(_terminal_grace(record.terminal_event)),
+        terminal_task=asyncio.create_task(
+            _terminal_grace(record.terminal_event)
+            if kept is None
+            else _turn_end(record.terminal_event, stdout_task)
+        ),
         bg_reminder_task=bg_reminder_task,
         progress_task=progress_task,
         output_exceeded=output_exceeded,
         stdout_diagnostics=stdout_diagnostics,
         stderr_diagnostics=stderr_diagnostics,
+        kept=kept,
     )
 
 
@@ -594,9 +664,14 @@ class InvocationManager:
     spawn_interval: tuple[float, float] = (1.0, 3.0)
     background_wait_reminder_seconds: float = BACKGROUND_WAIT_REMINDER_SECONDS
     progress_stall_seconds: float = PROGRESS_STALL_SECONDS
+    keep_seconds: float = KEEP_SECONDS
+    max_kept: int = MAX_KEPT
+    max_lifetime: float = MAX_LIFETIME_SECONDS
 
     def __init__(self) -> None:
         self._records: dict[str, _InvocationRecord] = {}
+        # Processes kept between turns; they are not runs, so no running limit counts them.
+        self._pool = WarmPool(self.keep_seconds, self.max_kept, self.max_lifetime)
         self._seq = 0
         self._closed = False
         self.on_forget: Callable[[str], None] | None = None
@@ -635,7 +710,10 @@ class InvocationManager:
         # (the permission-mode fallback and the interactive runtime run inside it); this
         # process's own environment is never touched.
         if account_env := accounts.env_for(adapter, request.account):
-            return replace(prepared, extra_env={**prepared.extra_env, **account_env})
+            unkept = prepared.unkept
+            if unkept is not None:
+                unkept = replace(unkept, extra_env={**unkept.extra_env, **account_env})
+            return replace(prepared, extra_env={**prepared.extra_env, **account_env}, unkept=unkept)
         return prepared
 
     def start(
@@ -646,9 +724,11 @@ class InvocationManager:
         claim: IO[bytes] | None = None,
         on_settled: Callable[[str, InvocationStatus], None] | None = None,
         terminal: TerminalLaunch | None = None,
+        isolated: bool = False,
     ) -> str:
         """Start one run; it owns claim (a reserve() result, taken here when omitted) from this
-        call on and releases it once its process tree has ended."""
+        call on and releases it once its process tree has ended. An isolated run (in an
+        isolated dir) never keeps its process (ADR-0120)."""
         if claim is None:
             claim = self.reserve(request)
         try:
@@ -661,6 +741,7 @@ class InvocationManager:
                 start_seq=self._next_seq(),
                 session_id=request.session_id or prepared.session_id,
                 on_inbox_change=self.on_inbox_change,
+                isolated=isolated,
             )
             if prepared.keep_stdin_open:
                 record.prompts.encode = adapter.encode_prompt_answer
@@ -707,14 +788,7 @@ class InvocationManager:
                     session_id=request.session_id,
                 )
                 self.terminal_runs[invocation_id] = run
-                record.task = asyncio.create_task(
-                    execute_run(
-                        run,
-                        lambda result: self._settle_session(record, result),
-                        self.terminal_reconcilers,
-                        on_settled,
-                    )
-                )
+                record.task = asyncio.create_task(self._execute_terminal(record, run, on_settled))
         except BaseException:
             if claim is not None:
                 release_and_remove(claim, Path(claim.name))
@@ -1040,6 +1114,7 @@ class InvocationManager:
             return_exceptions=True,
         )
         await asyncio.gather(*self.terminal_reconcilers, return_exceptions=True)
+        await self._pool.close()
 
     def ack_terminal_request(self, request_id: str, tray: TrayIdentity) -> None:
         ack: dict[str, object] = {
@@ -1121,6 +1196,7 @@ class InvocationManager:
             result = await self._run(record, adapter, prepared, invocation_id)
             result = self._settle_session(record, result)
             outcome = result.status
+            await self._keep_or_end(record, result)
             reported = record.reported_model
             if (
                 not reported
@@ -1148,12 +1224,34 @@ class InvocationManager:
                 ),
             )
         finally:
+            await self._keep_or_end(record, None)
             if on_settled is not None:
                 try:
                     # Off the event loop: settlement runs git and takes repository locks.
                     await asyncio.shield(asyncio.to_thread(on_settled, invocation_id, outcome))
                 except Exception:
                     logging.getLogger(__name__).exception("Post-invocation settlement failed")
+
+    async def _keep_or_end(
+        self, record: _InvocationRecord, result: InvocationResult | None
+    ) -> None:
+        """Keep the process of a turn that succeeded for its session's next resume; a cancelled,
+        failed or blocked run's process ends now, as every other run's does (ADR-0120)."""
+        kept, record.kept = record.kept, None
+        if kept is None:
+            return
+        if (
+            result is not None
+            and result.status is InvocationStatus.SUCCEEDED
+            and result.session_id
+            and not record.cancel_event.is_set()
+            and not self._closed
+            and kept.alive()
+        ):
+            kept.settle(result.session_id)
+            self._pool.keep(record.request.provider, result.session_id, kept)
+        else:
+            await kept.end()
 
     async def _observe(
         self,
@@ -1201,32 +1299,16 @@ class InvocationManager:
     ) -> InvocationResult:
         started = record.started_at
         supervised = None
+        kept = None
         tasks: list[asyncio.Task[object]] = []
         scratch = None
+        prepared, signature = self._command_for(record, prepared)
         try:
-            if not await self._wait_to_spawn(record):
+            launched = await self._launch(record, prepared, signature)
+            if launched is None:
                 return _cancelled_before_spawn(record, prepared)
-            try:
-                if record.cancel_event.is_set():
-                    return _cancelled_before_spawn(record, prepared)
-                if prepared.temp_dir_env:
-                    scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
-                supervised = await spawn_process(
-                    prepared.argv,
-                    prepared.cwd,
-                    unset_env=prepared.unset_env,
-                    extra_env={
-                        **prepared.extra_env,
-                        **(
-                            {prepared.temp_dir_env: scratch}
-                            if prepared.temp_dir_env and scratch
-                            else {}
-                        ),
-                    },
-                )
-                self._last_spawn[record.request.provider] = time.monotonic()
-            finally:
-                self._spawn_locks[record.request.provider].release()
+            supervised, kept = launched.supervised, launched.kept
+            prepared, scratch = launched.prepared, launched.scratch
             process = supervised.process
             record.process = process
             if prepared.keep_stdin_open:
@@ -1253,7 +1335,7 @@ class InvocationManager:
                 )
             )
             io = _start_run_io(
-                record, adapter, prepared, supervised, bg_reminder_task, progress_task
+                record, adapter, prepared, supervised, bg_reminder_task, progress_task, kept
             )
             tasks.extend(io.tasks)
 
@@ -1270,7 +1352,11 @@ class InvocationManager:
         finally:
             try:
                 try:
-                    if supervised is not None and supervised.process.returncode is None:
+                    if record.kept is not None:
+                        pass  # the run's outcome decides whether the process is kept
+                    elif kept is not None:
+                        await kept.end()
+                    elif supervised is not None and supervised.process.returncode is None:
                         await terminate_process_tree(
                             supervised.process, completion=supervised.completion
                         )
@@ -1293,6 +1379,112 @@ class InvocationManager:
                     record.process = None
                     record.tool_names.clear()
                     record.prompts.close()
+
+    async def _execute_terminal(
+        self,
+        record: _InvocationRecord,
+        run: TerminalRun,
+        on_settled: Callable[[str, InvocationStatus], None] | None,
+    ) -> InvocationResult:
+        request = record.request
+        if request.session_id is not None:
+            # The tray resumes the native session itself: no kept process may still serve it.
+            await self._pool.release(request.provider, request.session_id)
+        return await execute_run(
+            run,
+            lambda result: self._settle_session(record, result),
+            self.terminal_reconcilers,
+            on_settled,
+        )
+
+    def _command_for(
+        self, record: _InvocationRecord, prepared: PreparedCommand
+    ) -> tuple[PreparedCommand, LaunchSignature]:
+        """The command to run and its launch signature, read once for both the choice and the
+        launch: a run that will not keep its process, or a resume that no kept process can
+        serve, runs the Adapter's one-off command instead, when it gave one (ADR-0120). The
+        launch falls back to that command if the kept process is unusable by then."""
+        request = record.request
+        signature = launch_signature(prepared, request.account, request.session_id)
+        unkept = prepared.unkept
+        if unkept is None:
+            return prepared, signature
+        if (
+            can_keep(prepared)
+            and not record.isolated
+            and (
+                request.session_id is None
+                or self._pool.serves(request.provider, request.session_id, signature)
+            )
+        ):
+            return prepared, signature
+        return unkept, launch_signature(unkept, request.account, request.session_id)
+
+    async def _launch(
+        self,
+        record: _InvocationRecord,
+        prepared: PreparedCommand,
+        signature: LaunchSignature,
+    ) -> _Launched | None:
+        """The session's kept process when it was started the same way, else a new process. A
+        new process runs the Adapter's one-off command when the kept process turned out
+        unusable or the run cannot keep a long connection (ADR-0120). None: cancelled first."""
+        request = record.request
+        keepable = can_keep(prepared) and not record.isolated
+        if record.cancel_event.is_set():
+            return None
+        if request.session_id is not None:
+            kept = self._pool.take(request.provider, request.session_id)
+            if kept is not None:
+                if (
+                    keepable
+                    and kept.signature == signature
+                    and kept.remaining(self.max_lifetime) > 0
+                    and kept.alive()
+                ):
+                    return _Launched(kept.supervised, kept, prepared)
+                # Started differently, past its lifetime or gone: it must not share the native
+                # session with a new process.
+                await kept.end()
+            if prepared.unkept is not None:
+                # No kept process serves this resume, so run the one-off command rather than
+                # ask a process that starts a new thread to resume the session (ADR-0120).
+                prepared = prepared.unkept
+                signature = launch_signature(prepared, request.account, request.session_id)
+                keepable = can_keep(prepared) and not record.isolated
+            await self._pool.ended(request.provider, request.session_id)
+        if not await self._wait_to_spawn(record):
+            return None
+        scratch = None
+        try:
+            if record.cancel_event.is_set():
+                return None
+            if prepared.temp_dir_env:
+                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
+            supervised = await spawn_process(
+                prepared.argv,
+                prepared.cwd,
+                unset_env=prepared.unset_env,
+                extra_env={
+                    **prepared.extra_env,
+                    **(
+                        {prepared.temp_dir_env: scratch}
+                        if prepared.temp_dir_env and scratch
+                        else {}
+                    ),
+                },
+            )
+            self._last_spawn[request.provider] = time.monotonic()
+        except BaseException:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+            raise
+        finally:
+            self._spawn_locks[request.provider].release()
+        if not keepable:
+            return _Launched(supervised, None, prepared, scratch)
+        kept = KeptProcess.adopt(supervised, signature, prepared)
+        return _Launched(supervised, kept, prepared, scratch)
 
     async def _collect_run(
         self,
@@ -1321,12 +1513,7 @@ class InvocationManager:
         for guard in (io.bg_reminder_task, io.progress_task):
             if not guard.done():
                 guard.cancel()
-        await terminate_process_tree(
-            process,
-            0.2 if io.completion_task in done else 2.0,
-            completion=io.completion_task,
-        )
-        stdout, stderr = await _finish_streams(io.stdout_task, io.stderr_task)
+        stdout, stderr = await _end_streams(record, process, io, done, turn_ended=terminal is None)
         terminal, error = _drained_limit(terminal, error, stdout, stderr, io)
         parse_returncode = provider_returncode
         if parse_returncode is None:
@@ -1458,7 +1645,10 @@ async def _read_limited(
     *,
     event_limit: int | None = None,
     diagnostics: _StreamDiagnostics | None = None,
+    until: asyncio.Event | None = None,
 ) -> _CapturedStream:
+    """Read a stream to its end, or, with until, to the line that sets it (a kept process's
+    turn end, which needs capture_line)."""
     diagnostics = diagnostics if diagnostics is not None else _StreamDiagnostics()
     if capture_line is not None:
         return await _read_filtered(
@@ -1470,6 +1660,7 @@ async def _read_limited(
             skip_oversized_line,
             limit if event_limit is None else event_limit,
             diagnostics,
+            until,
         )
     data = bytearray()
     pending = bytearray()
@@ -1504,6 +1695,7 @@ async def _read_filtered(
     skip_oversized_line: Callable[[bytes], bool] | None,
     event_limit: int,
     diagnostics: _StreamDiagnostics,
+    until: asyncio.Event | None = None,
 ) -> _CapturedStream:
     data = bytearray()
     pending = bytearray()
@@ -1542,6 +1734,8 @@ async def _read_filtered(
                 capture(bytes(line))
             if exceeded:
                 break
+            if until is not None and until.is_set():
+                return _CapturedStream(bytes(data), False, bytes(pending))
         # Bound a single unterminated event independently of retained result bytes.
         if len(pending) > event_limit:
             # Once discarding, pending holds only the tail of the line being dropped.
@@ -1575,6 +1769,40 @@ async def _write_stdin(
             writer.close()
             with suppress(BrokenPipeError, ConnectionResetError):
                 await writer.wait_closed()
+
+
+async def _end_streams(
+    record: _InvocationRecord,
+    process: asyncio.subprocess.Process,
+    io: _RunIO,
+    done: Container[asyncio.Task[object]],
+    *,
+    turn_ended: bool,
+) -> tuple[_CapturedStream, _CapturedStream]:
+    """A kept process whose turn ended is left running with this turn's output taken (its
+    outcome decides whether it is kept, ADR-0120); any other run's process tree is stopped first
+    and its pipes drained."""
+    kept = io.kept
+    if kept is not None and turn_ended and io.completion_task not in done:
+        stdout = io.stdout_task.result()
+        data, exceeded = kept.stderr.end()
+        if not stdout.trailing:
+            record.kept = kept
+        return stdout, _CapturedStream(data, exceeded)
+    await terminate_process_tree(
+        process,
+        0.2 if io.completion_task in done else 2.0,
+        completion=io.completion_task,
+    )
+    if kept is None:
+        assert io.stderr_task is not None
+        return await _finish_streams(io.stdout_task, io.stderr_task)
+    return await _finish_streams(io.stdout_task, asyncio.create_task(_kept_stderr(kept)))
+
+
+async def _kept_stderr(kept: KeptProcess) -> _CapturedStream:
+    data, exceeded = await kept.stderr.finish()
+    return _CapturedStream(data, exceeded)
 
 
 async def _finish_streams(

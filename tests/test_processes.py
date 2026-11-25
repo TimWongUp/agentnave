@@ -13,7 +13,7 @@ from typing import cast
 import pytest
 from fake_cli import write_fake_cli
 
-from agentnave import processes
+from agentnave import processes, supervisor
 
 
 @pytest.mark.asyncio
@@ -268,3 +268,13 @@ async def test_terminate_process_tree_waits_grace_and_sigkills_sigterm_ignoring_
             supervised.process, grace_seconds=0.01, completion=supervised.completion
         )
         await asyncio.gather(supervised.completion, return_exceptions=True)
+
+
+def test_supervisor_status_to_a_killed_server_does_not_stop_the_supervisor() -> None:
+    # The server was SIGKILLed: its end of the status pipe is gone. The supervisor must go on
+    # to end the process group instead of dying on the write.
+    read, write = os.pipe()
+    os.close(read)
+    supervisor._write_status(write, {"kind": "exit", "returncode": 0})  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(OSError):
+        os.close(write)  # already closed by the call

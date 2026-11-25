@@ -870,6 +870,8 @@ class Conversations(ConversationStore):
                     claim=startup.native_lock,
                     on_settled=on_settled,
                     terminal=terminal,
+                    # Settlement exists only for a run in an isolated dir.
+                    isolated=on_settled is not None,
                 )
             return self.manager.start(
                 request,

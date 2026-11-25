@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import fnmatch
 import glob
 import json
 import os
 import re
 import shutil
 import sys
+from collections.abc import Mapping
 from datetime import datetime
+from functools import partial
+from pathlib import Path
+from stat import S_IMODE, S_ISDIR, S_ISLNK, S_ISREG
 
 from agentnave.adapters.base import (
     AdapterHooks,
@@ -27,7 +32,7 @@ from agentnave.adapters.base import (
 )
 from agentnave.adapters.quota_reset import parse_reset
 from agentnave.adapters.usage_reset import CODEX_REQUESTS, codex_answered, codex_output_reset
-from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity
+from agentnave.models import InvocationRequest, InvocationStatus, ProviderActivity, ProviderOption
 
 _DESKTOP_CODEX_PATHS = (
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
@@ -80,6 +85,137 @@ def _skip_oversized_line(head: bytes) -> bool:
         _ITEM_EVENT.search(head) is not None
         and _TOOL_ITEM.search(head) is not None
         and _KEPT_EVENT.search(head) is None
+    )
+
+
+def _fixed_permissions(options: Mapping[str, ProviderOption]) -> str | None:
+    """The bridge's permission mode when the options alone fix approval, reviewer and sandbox
+    (ADR-0120); otherwise Codex resolves them from the user's config, so exec runs the task."""
+    if options.get("approve_for_me") is True:
+        return "approve-for-me"
+    if options.get("dangerously_bypass_approvals_and_sandbox") is True:
+        return "bypass"
+    return None
+
+
+def _directory(cwd: Path) -> Path:
+    try:
+        return cwd.resolve()
+    except (OSError, RuntimeError):
+        return cwd.absolute()
+
+
+def _codex_home(cwd: Path, env: Mapping[str, str]) -> Path:
+    # A relative CODEX_HOME is taken from the child's working directory, the task's.
+    return _directory(cwd) / (env.get("CODEX_HOME") or Path("~/.codex").expanduser())
+
+
+def _globbed(folder: Path, pattern: str, *, follow: bool) -> list[tuple[object, ...]]:
+    try:
+        paths = sorted(folder.glob(pattern))
+    except OSError as exc:
+        return [(str(folder), type(exc).__name__)]
+    return [_stat(path, follow=follow) for path in paths]
+
+
+# Codex opens these by name even when a config folder cannot be listed.
+_CONFIG_FILES = ("config.toml", "requirements.toml", "managed_config.toml")
+
+
+def _scanned(folder: Path, pattern: str, *, follow: bool) -> list[tuple[object, ...]]:
+    """One folder level's matching entries; a folder that cannot be read is recorded as its
+    error, so an empty, a missing and an unreadable folder are told apart (Path.glob would
+    swallow a directory PermissionError)."""
+    try:
+        with os.scandir(folder) as entries:
+            paths = sorted(
+                folder / entry.name for entry in entries if fnmatch.fnmatch(entry.name, pattern)
+            )
+    except OSError as exc:
+        return [(str(folder), type(exc).__name__)]
+    return [_stat(path, follow=follow) for path in paths]
+
+
+def _launch_inputs(cwd: Path, executable: str, env: Mapping[str, str]) -> tuple[object, ...]:
+    """What Codex 0.171 reads permissions from for cwd, as types, permission bits, modification
+    and change times and sizes (codex-rs/config/src/loader): the Codex executable, every
+    top-level `*.toml` of the user, system and project config folders (plus the fixed names Codex
+    opens when a folder cannot be listed), the `rules/*.rules` exec policies of each of them
+    (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project root marker
+    `.git`; a link is recorded as one, followed for its HEAD, and its target's state is recorded
+    too. Cloud-managed config, macOS managed preferences, a registry-set requirements path and
+    custom project root markers are not covered."""
+    directory = _directory(cwd)
+    home = _codex_home(cwd, env)
+    if sys.platform == "win32":
+        data = env.get("ProgramData") or env.get("PROGRAMDATA") or r"C:\ProgramData"
+        system = Path(data, "OpenAI", "Codex")
+    else:
+        system = Path("/etc/codex")
+    ancestors = (directory, *directory.parents)
+    found: list[object] = [
+        _stat(
+            Path(os.path.realpath(shutil.which(executable, path=env.get("PATH")) or executable)),
+            follow=True,
+        )
+    ]
+    for folder in (system, home, *(ancestor / ".codex" for ancestor in ancestors)):
+        tomls = _scanned(folder, "*.toml", follow=True)
+        found.extend(tomls)
+        # A folder that can be searched but not listed still lets Codex open known names.
+        if (str(folder), "PermissionError") in tomls:
+            found.extend(_stat(folder / name, follow=True) for name in _CONFIG_FILES)
+        # Codex loads only regular rule files, so a link is told apart from one.
+        found.extend(_scanned(folder / "rules", "*.rules", follow=False))
+    # The nearest ancestor with a `.git` (a directory needs its HEAD) is the project root.
+    for folder in ancestors:
+        marker = _stat(folder / ".git", follow=False)
+        found.append(marker)
+        if marker[1:2] == ("link",):
+            # Codex follows a linked `.git` for its HEAD; the target's own state counts too.
+            found.append(_stat(folder / ".git", follow=True))
+            found.append(_stat(folder / ".git" / "HEAD", follow=True))
+        elif marker[1:2] == ("directory",):
+            found.append(_stat(folder / ".git" / "HEAD", follow=True))
+    return tuple(found)
+
+
+def _rollout_state(cwd: Path, env: Mapping[str, str], session_id: str) -> tuple[object, ...]:
+    """The session's rollout files (`sessions/YYYY/MM/DD/rollout-<time>-<id>*.jsonl` and their
+    archived copies, codex-rs/rollout/src/recorder.rs): any other process continuing the
+    session writes to them."""
+    home = _codex_home(cwd, env)
+    name = f"rollout-*-{glob.escape(session_id)}*"
+    return (
+        *_globbed(home / "sessions", f"*/*/*/{name}", follow=True),
+        *_globbed(home / "archived_sessions", name, follow=True),
+    )
+
+
+def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
+    """The file's type, permissions, modification and change times and size; a path that cannot
+    be read (missing, not permitted) is recorded with its error, and never stops a dispatch."""
+    try:
+        stat = path.stat() if follow else path.lstat()
+    except OSError as exc:
+        return (str(path), type(exc).__name__)
+    mode = stat.st_mode
+    kind = (
+        "link"
+        if S_ISLNK(mode)
+        else "file"
+        if S_ISREG(mode)
+        else "directory"
+        if S_ISDIR(mode)
+        else "other"
+    )
+    return (
+        str(path),
+        kind,
+        S_IMODE(mode),
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_size,
     )
 
 
@@ -220,6 +356,63 @@ class CodexAdapter(AdapterHooks):
         if source is not None and executable == "codex":
             name = "桌面端内置" if source == "desktop" else "独立"
             raise FileNotFoundError(f"指定的 Codex {name} CLI 不可用；请在员工设置中更换来源")
+        exec_command = self._exec_command(request, executable, options, discussion)
+        mode = _fixed_permissions(request.provider_options)
+        if mode is None or discussion:
+            return exec_command
+        # A kept process serves the next turns of the thread it started; a run that would not
+        # be kept, and any other resume, runs exec, which resolves its permissions itself.
+        return self._app_server_command(request, executable, mode, exec_command)
+
+    def _app_server_command(
+        self,
+        request: InvocationRequest,
+        executable: str,
+        mode: str,
+        unkept: PreparedCommand,
+    ) -> PreparedCommand:
+        """A bridge to `codex app-server` that can serve the thread's later turns (ADR-0120),
+        started with exec's config overrides; model and effort travel with each turn."""
+        options = request.provider_options
+        argv = [sys.executable, "-I", str(Path(__file__).with_name("codex_app_server.py"))]
+        turn: dict[str, object] = {
+            "session_id": request.session_id,
+            "cwd": str(request.cwd),
+            "prompt": request.prompt,
+        }
+        for name in ("model", "effort"):
+            turn[name] = None if name not in options else str(options[name])
+            if name in options:
+                argv.extend(("--turn-option", name))
+        argv.extend(("--permissions", mode, "--", executable, "app-server"))
+        if mode == "approve-for-me":
+            # The config overrides `codex exec --approve-for-me` adds, so the sandbox expands
+            # from the same layers as exec's.
+            for setting in (
+                'approvals_reviewer="auto_review"',
+                'approval_policy="on-request"',
+                'sandbox_mode="workspace-write"',
+            ):
+                argv.extend(("--config", setting))
+        return PreparedCommand(
+            tuple(argv),
+            request.cwd,
+            json.dumps(turn, ensure_ascii=False).encode() + b"\n",
+            capture_line=_capture_line,
+            skip_oversized_line=_skip_oversized_line,
+            keep_alive=True,
+            launch_inputs=partial(_launch_inputs, request.cwd, executable),
+            session_state=partial(_rollout_state, request.cwd),
+            unkept=unkept,
+        )
+
+    def _exec_command(
+        self,
+        request: InvocationRequest,
+        executable: str,
+        options: tuple[str, ...],
+        discussion: bool,
+    ) -> PreparedCommand:
         argv = [executable, "exec"]
         if request.session_id is not None:
             argv.append("resume")

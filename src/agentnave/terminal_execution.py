@@ -271,6 +271,20 @@ class TerminalRun:
 
     async def run(self) -> InvocationResult:
         try:
+            # Stopped or cancelled before the request went out (while a kept process of the
+            # session ended): nothing was started, so nothing is published for the tray.
+            if self.stop.is_set():
+                return self._fail(
+                    "service_stopped", "Service exited before the terminal invocation started"
+                )
+            if self.cancel_requested.is_set():
+                return InvocationResult(
+                    InvocationStatus.CANCELLED,
+                    self.request.provider,
+                    "",
+                    self.session_id,
+                    int((time.monotonic() - self._time) * 1000),
+                )
             publish_request(self.launch.root, self.invocation_id, self._run_request())
             last_state = ""
             while not self.stop.is_set():
