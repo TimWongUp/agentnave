@@ -249,6 +249,7 @@
   // query or fragment (not even an empty one), no zero or empty port, at most 512 characters.
   function addressProblem(address) {
     const text = address.trim();
+    if (/[\x00-\x1f\x7f]/.test(text)) return L("API 地址无效", "The API address is not valid");
     let url;
     try { url = new URL(text); } catch { return L("API 地址无效", "The API address is not valid"); }
     const normalized = url.href.replace(/\/+$/, "");
@@ -323,16 +324,14 @@
       if (!keep) {
         draft = null;
         sourceDraft = null;
-        if (!loaded.error) {
-          if (lastGoodDoc !== undefined && !sameJson(loaded.document, lastGoodDoc)) providerDrafts.clear();
-          lastGoodDoc = loaded.document;
-        }
+        if (!loaded.error && lastGoodDoc !== undefined && !sameJson(loaded.document, lastGoodDoc)) providerDrafts.clear();
         randomDraft = null;
         prefilled = false;
         manualModel = false;
         // The first list is asked for only while the decision panel itself is open, not from another tab or mode.
         loadVisibleCatalog();
       }
+      if (!loaded.error) lastGoodDoc = loaded.document;
     } catch (error) {
       S.showNotice(L(`无法读取决策模型推荐工位设置：${error.message}`, `Failed to load decision-model seat settings: ${error.message}`), true);
     }

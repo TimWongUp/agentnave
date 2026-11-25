@@ -24,6 +24,9 @@ pub(crate) fn normalize_endpoint(base_url: &str, label: &str) -> Result<String, 
     if base_url.is_empty() {
         return Err(format!("请填写{label} 地址"));
     }
+    if base_url.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
+        return Err(format!("{label} 地址无效"));
+    }
     let url = reqwest::Url::parse(base_url).map_err(|_| format!("{label} 地址无效"))?;
     let authority = base_url
         .split_once("://")
@@ -72,6 +75,7 @@ mod tests {
             "https:example.invalid:",
             "https:///example.invalid:",
             "https://\\example.invalid:",
+            "https://\t/example.invalid:",
             "https://user@api.example.com/v1",
             "https://api.example.com/v1?",
             "https://api.example.com/v1#",

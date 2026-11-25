@@ -1900,7 +1900,7 @@ test("a local Ollama and a custom endpoint take an address, which is checked bef
   assert.deepEqual(decisionFile(app), { version: 1, decision_provider: "ollama", decision_model: "system-one:1b", seats: [] });
   address(" http://localhost:11434/v1/ ");
   assert.equal(decisionFile(app).decision_base_url, "http://localhost:11434/v1");
-  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "https://example.com/v1?", "https://example.com/v1#", "https://example.com:0/v1", "https://example.com:/v1", "https:example.invalid:", "https:///example.invalid:", "https://\\example.invalid:", "http://localhost:0", "http://[::ffff:127.0.0.1]:11434", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`, `https://example.com/${"é".repeat(100)}`]) {
+  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "https://example.com/v1?", "https://example.com/v1#", "https://example.com:0/v1", "https://example.com:/v1", "https:example.invalid:", "https:///example.invalid:", "https://\\example.invalid:", "https://\t/example.invalid:", "http://localhost:0", "http://[::ffff:127.0.0.1]:11434", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`, `https://example.com/${"é".repeat(100)}`]) {
     address(bad);
     assert.match(decision((d) => d.problem()), /API/, bad);
   }
