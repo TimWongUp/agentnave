@@ -18,7 +18,7 @@ from agentnave.core import READ_ONLY_INSTRUCTIONS
 from agentnave.decision_model import DecisionError, DecisionQuestion
 from agentnave.decision_seats import DecisionSeatsFileError, read_decision_seats
 from agentnave.members import ReviewRole
-from agentnave.orchestration_roles import CustomSeatDifficulty, StrictModel
+from agentnave.orchestration_roles import IMAGE_KIND, CustomSeatDifficulty, StrictModel
 from agentnave.t3_cache import InstanceAvailability, check_instance, format_utc
 from agentnave.t3_seats import (
     REVIEW_ROLES,
@@ -33,6 +33,13 @@ from agentnave.t3_seats import (
 MAX_T3_TASKS = 8
 _TASK_SUMMARY_MAX = 80
 _DEFAULT_DECISION_MODEL = "gemini-decision-1"
+
+T3_IMAGE_BRIEF_SUFFIX = (
+    "Generate the image with your own image tool or your native image-generation subagent; using "
+    "that native subagent is allowed here. Never draw it with code or another substitute. Copy the "
+    "finished file to the output path given above, keeping the real file extension, and report the "
+    "final absolute path and pixel size. If you cannot generate images, say so and stop."
+)
 
 T3_RECOMMEND_NEXT = (
     "Nothing was started. Before your first delegate_task in this thread, call T3's "
@@ -176,6 +183,7 @@ class _CandidateFilter:
 class _Selection:
     seat_id: str
     role: str
+    kind: str
     difficulty: CustomSeatDifficulty | None
     filtered: _CandidateFilter
     note: str | None = None
@@ -318,7 +326,9 @@ def _resolve_explicit_seat(
                 seat_id=seat_name,
                 role=seat_name,
             )
-        return _Selection(seat_id=seat_name, role=seat_name, difficulty=None, filtered=filtered)
+        return _Selection(
+            seat_id=seat_name, role=seat_name, kind="review", difficulty=None, filtered=filtered
+        )
     seat_def = seats_by_name.get(seat_name) or seats_by_id.get(seat_name)
     if seat_def is None:
         task_ids = [_seat_label(seat) for seat in doc.seats if seat.candidates]
@@ -350,7 +360,11 @@ def _resolve_explicit_seat(
             role=seat_def.role,
         )
     return _Selection(
-        seat_id=public_name, role=seat_def.role, difficulty=seat_def.difficulty, filtered=filtered
+        seat_id=public_name,
+        role=seat_def.role,
+        kind=seat_def.kind,
+        difficulty=seat_def.difficulty,
+        filtered=filtered,
     )
 
 
@@ -443,6 +457,7 @@ async def _run_decision_batch(
                 _Selection(
                     seat_id=t3_seat_name(seat_def),
                     role=seat_def.role,
+                    kind=seat_def.kind,
                     difficulty=seat_def.difficulty,
                     filtered=filtered,
                 ),
@@ -473,8 +488,14 @@ def _build_item_payload(
         if resolved.earliest_reset is not None:
             payload["earliest_reset_at"] = format_utc(resolved.earliest_reset)
         return payload
-    ordered = order_candidates(
-        resolved.filtered.usable, randomize=randomize, used_first=used_first, rng=rng
+    image = resolved.kind == IMAGE_KIND
+    # An image seat keeps its saved order: it is never shuffled and never reserves a first slot.
+    ordered = (
+        list(resolved.filtered.usable)
+        if image
+        else order_candidates(
+            resolved.filtered.usable, randomize=randomize, used_first=used_first, rng=rng
+        )
     )
     candidates_payload: list[T3TargetCandidatePayload] = [
         {
@@ -498,6 +519,8 @@ def _build_item_payload(
         payload["difficulty"] = resolved.difficulty
     if item.access == "read":
         payload["brief_suffix"] = READ_ONLY_INSTRUCTIONS
+    elif image:
+        payload["brief_suffix"] = T3_IMAGE_BRIEF_SUFFIX
     notes: list[str] = []
     if resolved.note:
         notes.append(resolved.note)
@@ -549,6 +572,7 @@ async def recommend_t3_seats(
             resolved[index] = _Selection(
                 seat_id=public_name,
                 role=seat_def.role,
+                kind=seat_def.kind,
                 difficulty=seat_def.difficulty,
                 filtered=filtered,
                 note="Only one usable seat has this access; the decision model was not called.",

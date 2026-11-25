@@ -739,7 +739,7 @@ class _Server(MCPServer[Runtime]):
                 if tool.name in T3_HIDDEN_DISPATCH_TOOLS:
                     continue
                 if tool.name == "recommend_seat":
-                    published.append(t3_tool_definition(T3_RECOMMEND_SEAT_TOOL, t3_preset))
+                    published.append(t3_tool_definition(T3_RECOMMEND_SEAT_TOOL, t3_preset, t3_doc))
                     continue
                 if tool.name == "list_members":
                     published.append(t3_tool_definition(T3_LIST_MEMBERS_TOOL, t3_preset))

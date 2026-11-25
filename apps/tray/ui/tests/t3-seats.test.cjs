@@ -24,13 +24,12 @@ const SAMPLE_T3 = {
         {
           slug: "claude-opus-4-6",
           name: "Claude Opus 4.6",
-          aliases: ["opus", "claude-opus"],
           legacy: false,
           hidden: false,
           default: true,
           reasoning: { id: "effort", label: "Reasoning", options: [{ value: "low", label: "Low" }, { value: "high", label: "High" }, { value: "max", label: "Max" }] },
         },
-        { slug: "claude-old", name: "Claude Old", aliases: [], legacy: true, hidden: false, default: false, reasoning: null },
+        { slug: "claude-old", name: "Claude Old", legacy: true, hidden: false, default: false, reasoning: null },
       ],
     },
     {
@@ -43,7 +42,6 @@ const SAMPLE_T3 = {
         {
           slug: "claude-opus-4-6",
           name: "Claude Opus 4.6",
-          aliases: ["opus", "claude-opus"],
           legacy: false,
           hidden: false,
           default: true,
@@ -61,13 +59,12 @@ const SAMPLE_T3 = {
         {
           slug: "gpt-6.2-astra",
           name: "GPT 6.2 Astra",
-          aliases: [],
           legacy: false,
           hidden: false,
           default: true,
           reasoning: { id: "reasoningEffort", label: "Reasoning", options: [{ value: "low", label: "Low" }, { value: "xhigh", label: "Extra High" }] },
         },
-        { slug: "gpt-hidden", name: "GPT Hidden", aliases: [], legacy: false, hidden: true, default: false, reasoning: null },
+        { slug: "gpt-hidden", name: "GPT Hidden", legacy: false, hidden: true, default: false, reasoning: null },
       ],
     },
     {
@@ -80,7 +77,6 @@ const SAMPLE_T3 = {
         {
           slug: "gemini-4-neon",
           name: "Gemini 4 Neon",
-          aliases: [],
           legacy: false,
           hidden: false,
           default: false,
@@ -98,7 +94,6 @@ const SAMPLE_T3 = {
         {
           slug: "grok-4",
           name: "Grok 4",
-          aliases: [],
           legacy: false,
           hidden: false,
           default: true,
@@ -112,7 +107,7 @@ const SAMPLE_T3 = {
       name: "CodeBuddy",
       available: true,
       stale: false,
-      models: [{ slug: "glm-5", name: "GLM 5", aliases: [], legacy: false, hidden: false, default: false, reasoning: null }],
+      models: [{ slug: "glm-5", name: "GLM 5", legacy: false, hidden: false, default: false, reasoning: null }],
     },
     {
       instance: "acpRegistry_other",
@@ -120,7 +115,7 @@ const SAMPLE_T3 = {
       name: "Other ACP",
       available: true,
       stale: false,
-      models: [{ slug: "glm-5", name: "GLM 5", aliases: [], legacy: false, hidden: false, default: false, reasoning: null }],
+      models: [{ slug: "glm-5", name: "GLM 5", legacy: false, hidden: false, default: false, reasoning: null }],
     },
     {
       instance: "codex_stale",
@@ -128,9 +123,14 @@ const SAMPLE_T3 = {
       name: "Stale Codex",
       available: true,
       stale: true,
-      models: [{ slug: "gpt-old", name: "GPT Old", aliases: [], legacy: false, hidden: false, default: true, reasoning: null }],
+      models: [{ slug: "gpt-old", name: "GPT Old", legacy: false, hidden: false, default: true, reasoning: null }],
     },
   ],
+};
+
+const SAVED_WORKER = {
+  version: 1, enabled: false, random_candidates: false, review: {},
+  seats: [{ id: "t3-w", kind: "worker", role: "通用执行", description: "改代码", access: "write", difficulty: "easy", candidates: [{ instance: "codex", model: "gpt-6.2-astra", options: [] }] }],
 };
 
 function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, reviewSeats = {}, postError = null, postFailures = [] } = {}) {
@@ -199,7 +199,7 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
     if (context.AN.settings) mirrorSettings(context);
   };
-  for (const file of ["provider-health.js", "settings-state.js", "member-models.js", "seat-rows.js", "advanced.js", "decision-seats.js", "t3-seats.js"]) {
+  for (const file of ["provider-health.js", "settings-state.js", "member-models.js", "seat-rows.js", "advanced.js", "decision-seats.js", "t3-seats-image.js", "t3-seats.js"]) {
     load(file);
   }
   run(`
@@ -239,6 +239,16 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
     return null;
   }
 
+  function findEnding(node, suffix) {
+    if (!node || typeof node !== "object") return null;
+    if (typeof node.dataset?.focusKey === "string" && node.dataset.focusKey.endsWith(suffix)) return node;
+    for (const child of [node.children].flat(Infinity)) {
+      const found = findEnding(child, suffix);
+      if (found) return found;
+    }
+    return null;
+  }
+
   return {
     run,
     calls,
@@ -247,11 +257,15 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
       || findKey(run('$("t3-review-seats")'), key)
       || findKey(run('$("orchestration-scope")'), key)
       || findKey(run('$("review-scope")'), key),
+    findEnding: (suffix) => findEnding(run('$("t3-seats-section")'), suffix),
     section: () => run('$("t3-seats-section")'),
     seatRows: () => {
       const group = run('$("t3-seats-section")').children.find((c) => c.className?.includes("t3-seat-list"));
       return group ? group.children[0].children : [];
     },
+    // The user's own cards (custom and image); the fixed ones have no delete button.
+    ownRows() { return this.seatRows().filter((row) => this.find(`t3/${row.dataset.cid}/remove`)); },
+    rowNamed(name) { return this.seatRows().find((row) => row.children[0].children[0].children[0].children[1].children[0] === name); },
     doc: () => JSON.parse(run("JSON.stringify(window.AgentNaveT3Seats.document())")),
   };
 }
@@ -267,146 +281,197 @@ test("hides entire T3 Code block when detected=false and no saved document", asy
   assert.equal(h.t3((t) => t.changed()), false);
 });
 
-test("prefills from decision-seats (skipping image seats) and maps providers, aliases, antigravity thought_level, codebuddy, and review", async () => {
-  const decisionSeats = [
-    {
-      id: "ds-1",
-      kind: "explorer",
-      role: "通用探索",
-      description: "读代码",
-      access: "read",
-      difficulty: "easy",
-      provider: "claude",
-      model: "claude-opus", // alias match; unbound account expands to ALL available Claude instances
-      effort: "high",
-      fallbacks: [
-        { provider: "claude", account: "a1", model: "claude-opus-4-6", effort: "high" }, // named account skipped
-        { provider: "codex", model: "gpt-6.2-astra", effort: "xhigh" },
-        { provider: "antigravity", model: "gemini-4-neon-xhigh" }, // suffix split -> thought_level
-        { provider: "grok", model: "grok-4", effort: "high" }, // capped at 4 candidates total
-      ],
-    },
-    {
-      id: "ds-2",
-      kind: "custom",
-      role: "专项脚本",
-      description: "写构建脚本",
-      access: "write",
-      difficulty: "hard",
-      provider: "codebuddy",
-      model: "glm-5",
-      effort: "high", // codebuddy has no reasoning options -> options: []
-      fallbacks: [{ provider: "deepseek", model: "v4" }], // unsupported CLI skipped
-    },
-    {
-      id: "ds-3",
-      kind: "custom",
-      role: "未匹配工位",
-      description: "只用 DeepSeek",
-      access: "write",
-      difficulty: "medium",
-      provider: "deepseek",
-      model: "v4",
-    },
-    {
-      id: "ds-img",
-      kind: "image",
-      role: "插画",
-      description: "插画",
-      access: "write",
-      provider: "codex",
-      model: "gpt-6.2-astra",
-    },
-  ];
-  const reviewSeats = {
-    "correctness-reviewer": {
-      provider: "antigravity",
-      model: "gemini-4-neon-max", // max not in options -> matched model without option
-      fallbacks: [{ provider: "grok", model: "grok-4", effort: "high" }],
-    },
-  };
+test("opens blank the first time: the general and image seats with nothing set, nothing carried over from other seats", async () => {
   const h = makeHarness({
     t3State: { document: null, error: null, t3: SAMPLE_T3 },
-    decisionState: { document: { version: 1, seats: decisionSeats }, error: null, key_set: false, key_error: null },
-    reviewSeats,
+    decisionState: {
+      document: { version: 1, seats: [{ id: "ds-1", kind: "custom", role: "专项脚本", description: "写构建脚本", access: "write", difficulty: "hard", provider: "codex", model: "gpt-6.2-astra" }] },
+      error: null, key_set: false, key_error: null,
+    },
+    orchestrationDoc: {
+      version: 1, preset: "split", explorer: { easy: { provider: "codex", model: "gpt-6.2-astra" } },
+      image_generation: { provider: "codex", model: "gpt-6.2-astra" },
+    },
+    reviewSeats: { "correctness-reviewer": { provider: "codex", model: "gpt-6.2-astra" } },
   });
+  h.run("bindAdvanced()");
   await h.run("window.AgentNaveDecisionSeats.load()");
   await h.t3((t) => t.load());
-
-  assert.equal(h.t3((t) => t.visible()), true);
-  // First-time prefill does not auto-save, does not enable, and does not falsely dirty the page.
-  assert.equal(h.calls.some((c) => c.method === "POST"), false);
   assert.equal(h.t3((t) => t.changed()), false);
-  const doc = h.doc();
-  assert.equal(doc.enabled, false);
-  assert.equal(doc.random_candidates, false);
-  assert.equal(doc.seats.length, 3, "image seat excluded, unmatched task seat kept empty");
-  assert.ok(doc.seats.every((s) => !["ds-1", "ds-2", "ds-3"].includes(s.id)), "fresh ids generated");
+  assert.deepEqual(h.doc(), { version: 1, enabled: false, random_candidates: false, seats: [], review: {} });
+  assert.equal(h.seatRows().length, 3);
+  assert.ok(["通用探索", "通用执行", "生图工位"].every((name) => h.rowNamed(name)));
+  assert.equal(h.ownRows().length, 0, "fixed seats cannot be deleted");
+  assert.ok(h.seatRows().every((row) => row.dataset.expanded === "false" && row.dataset.invalid === "false"));
+  assert.equal(h.find("t3/enabled").disabled, true);
 
-  // Seat 1: claude expanded to 2 instances + codex + antigravity (capped at 4; grok cut off).
-  assert.deepEqual(doc.seats[0].candidates, [
-    { instance: "claudeAgent", model: "claude-opus-4-6", options: [{ id: "effort", value: "high" }] },
-    { instance: "claudeAgent_work", model: "claude-opus-4-6", options: [{ id: "effort", value: "high" }] },
-    { instance: "codex", model: "gpt-6.2-astra", options: [{ id: "reasoningEffort", value: "xhigh" }] },
-    { instance: "antigravity", model: "gemini-4-neon", options: [{ id: "thought_level", value: "xhigh" }] },
-  ]);
-  // Seat 2: only acpRegistry_codebuddy* matched (acpRegistry_other skipped), no effort carried.
-  assert.equal(doc.seats[1].description, "写构建脚本");
-  assert.deepEqual(doc.seats[1].candidates, [
-    { instance: "acpRegistry_codebuddy_code", model: "glm-5", options: [] },
-  ]);
-  // Seat 3: unmatched seat stays empty.
-  assert.deepEqual(doc.seats[2].candidates, []);
-  // Review: antigravity -max dropped unsupported option, grok fallback carried reasoningEffort.
-  assert.deepEqual(doc.review["correctness-reviewer"], [
-    { instance: "antigravity", model: "gemini-4-neon", options: [] },
-    { instance: "grok", model: "grok-4", options: [{ id: "reasoningEffort", value: "high" }] },
-  ]);
+  // Only what was set is saved, and the blank fixed seats stay listed.
+  const cid = h.rowNamed("通用执行").dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  h.find(`t3/${cid}/easy/c0/instance`).listeners.change({ target: { value: "codex" } });
+  assert.equal(h.t3((t) => t.problem()), null);
+  await h.run('$("advanced-save").listeners.click()');
+  const post = h.calls.find((c) => c.url === "/app/t3-seats" && c.method === "POST");
+  assert.deepEqual(post.body.seats.map((seat) => [seat.kind, seat.difficulty]), [["worker", "easy"]]);
+  assert.equal(h.seatRows().length, 3);
+
+  // A specialist is the user's to add and delete, and needs a level before saving.
+  h.t3((t) => t.addCard("worker_frontend"));
+  assert.equal(h.ownRows().length, 1);
+  assert.match(h.t3((t) => t.problem()), /至少要绑定一档/);
+  h.find(`t3/${h.ownRows()[0].dataset.cid}/remove`).listeners.click();
+  assert.equal(h.t3((t) => t.changed()), false);
 });
 
-test("prefills from fixed seats when decision-seats is absent, and gives two starter medium seats when neither exists", async () => {
-  // Fixed seats fallback.
-  const fixed = makeHarness({
-    t3State: { document: null, error: null, t3: SAMPLE_T3 },
-    orchestrationDoc: {
-      version: 1,
-      preset: "split",
-      enabled_roles: ["explorer"],
-      explorer: { easy: { provider: "codex", model: "gpt-6.2-astra", effort: "low" } },
-    },
+test("an added fallback starts unset and blocks saving until the user picks it or removes it", async () => {
+  const h = makeHarness({ t3State: { document: null, error: null, t3: SAMPLE_T3 } });
+  await h.t3((t) => t.load());
+  const cid = h.rowNamed("通用执行").dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  h.find(`t3/${cid}/easy/c0/instance`).listeners.change({ target: { value: "codex" } });
+  h.find(`t3/${cid}/easy/add`).listeners.click();
+  assert.deepEqual(h.doc().seats[0].candidates[1], { instance: "", model: "", options: [] });
+  assert.match(h.t3((t) => t.problem()), /备选还没选模型/);
+  assert.equal(h.find(`t3/${cid}/easy/add`).disabled, true);
+  h.find(`t3/${cid}/easy/c1/instance`).listeners.change({ target: { value: "grok" } });
+  assert.equal(h.t3((t) => t.problem()), null);
+  assert.deepEqual(h.doc().seats[0].candidates[1], { instance: "grok", model: "grok-4", options: [] });
+  h.find(`t3/${cid}/easy/add`).listeners.click();
+  h.find(`t3/${cid}/easy/c2/remove`).listeners.click();
+  assert.equal(h.t3((t) => t.problem()), null);
+
+  // A review role's blank fallback blocks saving too.
+  h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "codex" } });
+  h.find("t3/review/security-reviewer/add").listeners.click();
+  assert.match(h.t3((t) => t.problem()), /备选还没选模型/);
+});
+
+test("round-trips image seats without marking the page dirty, treating difficulty null as absent", async () => {
+  const savedDoc = {
+    version: 1,
+    enabled: false,
+    random_candidates: false,
+    seats: [
+      {
+        id: "t3-img-1",
+        kind: "image",
+        role: "插画",
+        description: "手绘插画",
+        access: "write",
+        difficulty: null,
+        candidates: [{ instance: "codex", model: "gpt-6.2-astra", options: [] }],
+      },
+      {
+        id: "t3-img-2",
+        kind: "image",
+        role: "写实",
+        description: "写实照片",
+        access: "write",
+        candidates: [],
+      },
+    ],
+    review: {},
+  };
+  const h = makeHarness({ t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 } });
+  await h.t3((t) => t.load());
+  assert.equal(h.t3((t) => t.changed()), false);
+  assert.equal(h.seatRows().length, 3, "image seats share the one image card");
+
+  const doc = h.doc();
+  assert.equal(doc.seats.length, 2);
+  assert.deepEqual(doc.seats[0], {
+    id: "t3-img-1", kind: "image", role: "插画", description: "手绘插画", access: "write",
+    candidates: [{ instance: "codex", model: "gpt-6.2-astra", options: [] }],
   });
-  await fixed.t3((t) => t.load());
-  const fixedDoc = fixed.doc();
-  assert.equal(fixedDoc.seats.length, 1);
-  assert.equal(fixedDoc.seats[0].kind, "explorer");
-  assert.equal(fixedDoc.seats[0].difficulty, "easy");
-  assert.deepEqual(fixedDoc.seats[0].candidates, [
-    { instance: "codex", model: "gpt-6.2-astra", options: [{ id: "reasoningEffort", value: "low" }] },
+  assert.deepEqual(doc.seats[1], {
+    id: "t3-img-2", kind: "image", role: "写实", description: "写实照片", access: "write", candidates: [],
+  });
+
+  // Editing a row's specialty marks the page; the description follows the new specialty.
+  const cid = h.rowNamed("生图工位").dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  h.find(`t3/${cid}/t3r1/role`).listeners.input({ target: { value: "漫画" } });
+  assert.equal(h.t3((t) => t.changed()), true);
+  const edited = h.doc().seats.find((seat) => seat.id === "t3-img-1");
+  assert.equal(edited.role, "漫画");
+  assert.equal(edited.description, "漫画");
+});
+
+test("adds and removes image rows, rejects empty or repeated specialties, and saves rows still waiting for a model", async () => {
+  const h = makeHarness({
+    t3State: { document: { version: 1, enabled: false, random_candidates: false, seats: [], review: {} }, error: null, t3: SAMPLE_T3 },
+  });
+  h.run("bindAdvanced()");
+  await h.t3((t) => t.load());
+
+  const cid = h.rowNamed("生图工位").dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  h.find(`t3/${cid}/add-row`).listeners.click();
+  assert.match(h.t3((t) => t.problem()), /缺少专业/);
+  h.find(`t3/${cid}/t3r1/role`).listeners.input({ target: { value: "插画" } });
+  // A row without a model may be saved and shows as unset.
+  assert.equal(h.t3((t) => t.problem()), null);
+  h.t3((t) => t.render());
+  assert.equal(h.rowNamed("生图工位").children[0].children[1].children[1].children[0], "插画");
+  const waiting = h.doc().seats[0];
+  assert.equal(waiting.kind, "image");
+  assert.deepEqual(waiting.candidates, []);
+
+  // Pick a model for the first row.
+  h.find(`t3/${cid}/t3r1/c0/instance`).listeners.change({ target: { value: "codex" } });
+  assert.deepEqual(h.doc().seats[0].candidates, [
+    { instance: "codex", model: "gpt-6.2-astra", options: [] },
   ]);
 
-  // Empty everything -> two starter medium seats using each available non-stale instance's default model (max 4).
-  const starter = makeHarness({
-    t3State: { document: null, error: null, t3: SAMPLE_T3 },
-  });
-  await starter.t3((t) => t.load());
-  const starterDoc = starter.doc();
-  assert.deepEqual(
-    starterDoc.seats.map((s) => [s.kind, s.role, s.access, s.difficulty]),
-    [
-      ["explorer", "通用探索", "read", "medium"],
-      ["worker", "通用执行", "write", "medium"],
+  // A second row with no specialty blocks the card; a repeated specialty does too.
+  h.find(`t3/${cid}/add-row`).listeners.click();
+  assert.match(h.t3((t) => t.problem()), /第 2 行缺少专业/);
+  h.find(`t3/${cid}/t3r2/role`).listeners.input({ target: { value: "插画" } });
+  assert.match(h.t3((t) => t.problem()), /重复/);
+  h.find(`t3/${cid}/t3r2/role`).listeners.input({ target: { value: "写实" } });
+  assert.equal(h.t3((t) => t.problem()), null);
+  assert.deepEqual(h.doc().seats.map((seat) => seat.role), ["插画", "写实"]);
+  assert.equal(new Set(h.doc().seats.map((seat) => seat.id)).size, 2, "each row keeps a unique id");
+
+  // Deleting every row leaves the blank fixed card, with nothing to save.
+  h.find(`t3/${cid}/t3r2/remove`).listeners.click();
+  h.find(`t3/${cid}/t3r1/remove`).listeners.click();
+  assert.equal(h.t3((t) => t.problem()), null);
+  assert.equal(h.t3((t) => t.changed()), false);
+});
+
+test("counts image rows' instances as saved references, keeping their stale instances listed", async () => {
+  const savedDoc = {
+    version: 1,
+    enabled: false,
+    random_candidates: false,
+    seats: [
+      {
+        id: "t3-img-1",
+        kind: "image",
+        role: "插画",
+        description: "手绘插画",
+        access: "write",
+        candidates: [{ instance: "codex_stale", model: "gpt-old", options: [] }],
+      },
+      {
+        id: "t3-img-2",
+        kind: "image",
+        role: "写实",
+        description: "写实照片",
+        access: "write",
+        candidates: [{ instance: "claudeAgent", model: "claude-opus-4-6", options: [] }],
+      },
     ],
-  );
-  assert.equal(starterDoc.seats[0].candidates.length, 4);
-  assert.deepEqual(
-    starterDoc.seats[0].candidates.map((c) => [c.instance, c.model]),
-    [
-      ["claudeAgent", "claude-opus-4-6"],
-      ["claudeAgent_work", "claude-opus-4-6"],
-      ["codex", "gpt-6.2-astra"],
-      ["antigravity", "gemini-4-neon"],
-    ],
-  );
+    review: {},
+  };
+  const h = makeHarness({ t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 } });
+  await h.t3((t) => t.load());
+  const cid = h.rowNamed("生图工位").dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  // The second row does not use the stale instance itself, so it is listed only through the saved reference.
+  const instOpts = h.find(`t3/${cid}/t3r2/c0/instance`).children.flat().map((o) => o.attrs.value);
+  assert.ok(instOpts.includes("codex_stale"));
 });
 
 test("switch cannot open without candidates, dropdown hides legacy/hidden/stale, and unlisted saved entries stay marked", async () => {
@@ -435,9 +500,9 @@ test("switch cannot open without candidates, dropdown hides legacy/hidden/stale,
   });
   await h.t3((t) => t.load());
   // Valid loaded card starts collapsed; expand it to inspect candidate controls.
-  assert.equal(h.seatRows()[0].dataset.expanded, "false");
+  assert.equal(h.ownRows()[0].dataset.expanded, "false");
   h.find("t3/t3c1/toggle").listeners.click();
-  assert.equal(h.seatRows()[0].dataset.expanded, "true");
+  assert.equal(h.ownRows()[0].dataset.expanded, "true");
 
   const instSel = h.find("t3/t3c1/hard/c0/instance");
   const instOpts = instSel.children.flat().map((o) => [o.attrs.value, o.children[0]]);
@@ -467,7 +532,7 @@ test("switch cannot open without candidates, dropdown hides legacy/hidden/stale,
 
 test("saves and discards via the shared orchestration save bar, updates rule files, and unifies rules preview by mode", async () => {
   const h = makeHarness({
-    t3State: { document: null, error: null, t3: SAMPLE_T3 },
+    t3State: { document: SAVED_WORKER, error: null, t3: SAMPLE_T3 },
   });
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
@@ -526,7 +591,7 @@ test("saves and discards via the shared orchestration save bar, updates rule fil
 
 test("surfaces save errors without losing draft edits", async () => {
   const h = makeHarness({
-    t3State: { document: null, error: null, t3: SAMPLE_T3 },
+    t3State: { document: SAVED_WORKER, error: null, t3: SAMPLE_T3 },
     postError: "磁盘已满",
   });
   h.run("bindAdvanced()");
@@ -547,8 +612,8 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   // Add custom card -> auto-expands; missing specialty blocks save; fill specialty -> missing tier blocks save.
   h.t3((t) => t.addCard("custom"));
   assert.match(h.t3((t) => t.problem()), /缺少专业/);
-  const cid = h.seatRows()[0].dataset.cid;
-  assert.equal(h.seatRows()[0].dataset.expanded, "true");
+  const cid = h.ownRows()[0].dataset.cid;
+  assert.equal(h.ownRows()[0].dataset.expanded, "true");
   h.find(`t3/${cid}/role`).listeners.input({ target: { value: "前端" } });
   assert.match(h.t3((t) => t.problem()), /至少要绑定一档/);
 
@@ -563,9 +628,10 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   assert.deepEqual(h.doc().seats[0].candidates[0].options, []);
 
   // Add 3 fallbacks -> capped at 4, then remove one.
-  h.find(`t3/${cid}/medium/add`).listeners.click();
-  h.find(`t3/${cid}/medium/add`).listeners.click();
-  h.find(`t3/${cid}/medium/add`).listeners.click();
+  for (const [index, instance] of ["claudeAgent_work", "codex", "grok"].entries()) {
+    h.find(`t3/${cid}/medium/add`).listeners.click();
+    h.find(`t3/${cid}/medium/c${index + 1}/instance`).listeners.change({ target: { value: instance } });
+  }
   assert.equal(h.doc().seats[0].candidates.length, 4);
   assert.equal(h.find(`t3/${cid}/medium/add`), null);
   h.find(`t3/${cid}/medium/c1/remove`).listeners.click();
@@ -583,7 +649,7 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   assert.equal(h.t3((t) => t.seatsChanged()), false);
   h.t3((t) => t.addCard("custom"));
   assert.equal(h.t3((t) => t.seatsChanged()), true);
-  const readded = h.seatRows()[0].dataset.cid;
+  const readded = h.ownRows()[0].dataset.cid;
   h.find(`t3/${readded}/role`).listeners.input({ target: { value: "前端" } });
   h.find(`t3/${readded}/medium/c0/instance`).listeners.change({ target: { value: "claudeAgent" } });
 
@@ -591,11 +657,10 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   h.find("t3/enabled").listeners.change({ target: { checked: true } });
   h.find(`t3/${readded}/medium/c0/instance`).listeners.change({ target: { value: "" } });
   h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "" } });
-  h.t3((t) => t.addCard("explorer")); // ensure problem checks candidate gate after cards
-  // Remove empty cards so only enabled-without-candidates triggers.
-  const remaining = h.doc();
-  assert.equal(remaining.enabled, true);
+  h.find(`t3/${readded}/remove`).listeners.click();
+  assert.equal(h.doc().enabled, true);
   assert.equal(h.t3((t) => t.hasCandidates()), false);
+  assert.match(h.t3((t) => t.problem()), /开启 T3 编排前/);
 });
 
 test("shared General / T3 Code segment follows orchestration mode (hidden on off/meetings), keeps review unaffected, and shows badge-dots", async () => {
@@ -614,7 +679,7 @@ test("shared General / T3 Code segment follows orchestration mode (hidden on off
 
   // Visible when T3 is detected: orchestration scope hides on off/meetings while review scope stays visible.
   const h = makeHarness({
-    t3State: { document: null, error: null, t3: SAMPLE_T3 },
+    t3State: { document: SAVED_WORKER, error: null, t3: SAMPLE_T3 },
   });
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
@@ -735,32 +800,31 @@ test("T3 seat rows summarize primary model display names, preserve expand state,
 
   // No outer t3-task-fold; one seat row starting collapsed with model display names (primary only).
   assert.equal(h.find("t3/task-fold"), null);
-  assert.equal(h.seatRows().length, 1);
-  assert.equal(h.seatRows()[0].dataset.expanded, "false");
+  assert.equal(h.ownRows().length, 0);
+  assert.equal(h.rowNamed("通用执行").dataset.expanded, "false");
   const summaryOf = (row) => row.children[0].children[1].children[1].children[0];
-  assert.equal(summaryOf(h.seatRows()[0]), "简单 Claude Opus 4.6 · 困难 Gemini 4 Neon");
+  assert.equal(summaryOf(h.rowNamed("通用执行")), "简单 Claude Opus 4.6 · 困难 Gemini 4 Neon");
 
   // Expand, change medium tier, collapse again -> edits stay intact on save.
-  const cid = h.seatRows()[0].dataset.cid;
+  const cid = h.rowNamed("通用执行").dataset.cid;
   h.find(`t3/${cid}/toggle`).listeners.click();
-  assert.equal(h.seatRows()[0].dataset.expanded, "true");
+  assert.equal(h.rowNamed("通用执行").dataset.expanded, "true");
   h.find(`t3/${cid}/medium/c0/instance`).listeners.change({ target: { value: "codex" } });
-  assert.equal(h.seatRows()[0].dataset.expanded, "true", "re-render keeps row expanded");
-  assert.equal(summaryOf(h.seatRows()[0]), "简单 Claude Opus 4.6 · 中等 GPT 6.2 Astra · 困难 Gemini 4 Neon");
+  assert.equal(h.rowNamed("通用执行").dataset.expanded, "true", "re-render keeps row expanded");
+  assert.equal(summaryOf(h.rowNamed("通用执行")), "简单 Claude Opus 4.6 · 中等 GPT 6.2 Astra · 困难 Gemini 4 Neon");
   h.find(`t3/${cid}/toggle`).listeners.click();
-  assert.equal(h.seatRows()[0].dataset.expanded, "false");
+  assert.equal(h.rowNamed("通用执行").dataset.expanded, "false");
 
   await h.run('$("advanced-save").listeners.click()');
   const postCall = h.calls.find((c) => c.url === "/app/t3-seats" && c.method === "POST");
   assert.equal(postCall.body.seats.length, 3, "collapsed seat row saves all 3 tiers");
 
-  // Adding a seat with no tiers forces it open and shows 未设置 until configured.
-  h.t3((t) => t.addCard("explorer"));
-  const added = h.seatRows()[1];
+  // A custom card with no tiers is forced open and shows 未设置 until configured.
+  h.t3((t) => t.addCard("custom"));
+  const added = h.ownRows()[0];
   assert.equal(added.dataset.expanded, "true");
   assert.equal(added.dataset.invalid, "true");
   assert.equal(summaryOf(added), "未设置");
   h.find(`t3/${added.dataset.cid}/toggle`).listeners.click();
-  assert.equal(h.seatRows()[1].dataset.expanded, "true", "invalid card cannot be collapsed");
+  assert.equal(h.ownRows()[0].dataset.expanded, "true", "invalid card cannot be collapsed");
 });
-

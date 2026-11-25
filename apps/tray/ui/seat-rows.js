@@ -119,7 +119,8 @@
       title: item.summary,
     }, item.summary);
 
-    const removeBtn = el("button", {
+    // A fixed seat has no remove button; the column stays so every row lines up.
+    const removeBtn = !item.onRemove ? null : el("button", {
       type: "button",
       className: "ds-remove seat-row-remove",
       "aria-label": L(`删除${item.ariaTitle}`, `Delete ${item.ariaTitle}`),
