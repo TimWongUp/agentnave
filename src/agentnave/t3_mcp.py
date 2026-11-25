@@ -78,8 +78,7 @@ _RECOMMEND_DESC_DECISION = (
     "With 1–8 tasks in decision mode, omit seat so the decision model picks among usable task "
     "seats with matching access (skipped when only one fits), or pass explicit seat (fixed role "
     "name such as worker-easy, custom T3 seat id from the catalog, or review role name) to skip "
-    "the decision model. T3 has no image generation seat: do not dispatch image generation "
-    "tasks—tell the user directly instead of substituting another writable seat. Returns ordered "
+    "the decision model. {image} Returns ordered "
     "T3 targets (options always included, [] when none), a uuid4 clientRequestId, and read-only "
     "brief_suffix when access='read'. Errors start with a code: seat_required, not_enabled, "
     "config_error, no_key, network, rate_limited, auth, rejected, or bad_response. Follow "
@@ -94,8 +93,7 @@ _RECOMMEND_DESC_BOSS = (
     "boss chooses seats: pass seat on every item using a fixed role name (such as worker-easy "
     "or explorer-web-hard), a custom T3 seat id from the catalog returned by recommend_seat(), "
     "or a review role name; omitting seat fails with seat_required and lists available seats "
-    "without calling any decision model. T3 has no image generation seat: do not dispatch image "
-    "generation tasks—tell the user directly instead of substituting another writable seat. "
+    "without calling any decision model. {image} "
     "Returns ordered T3 targets (options always included, [] when none), a uuid4 "
     "clientRequestId, and read-only brief_suffix when access='read'. Errors start with a code: "
     "seat_required, not_enabled, config_error. Follow receipt next to call T3's delegate_task "
@@ -130,9 +128,8 @@ def _has_candidate_image_seat(doc: T3SeatsFile | None) -> bool:
 
 def _recommend_description(mode: T3OrchestrationMode, doc: T3SeatsFile | None) -> str:
     base = _RECOMMEND_DESC_DECISION if mode == "decision" else _RECOMMEND_DESC_BOSS
-    if not _has_candidate_image_seat(doc):
-        return base
-    return base.replace(_NO_IMAGE_SEAT_HINT, _IMAGE_SEAT_HINT)
+    hint = _IMAGE_SEAT_HINT if _has_candidate_image_seat(doc) else _NO_IMAGE_SEAT_HINT
+    return base.format(image=hint)
 
 
 def t3_main_instructions(mode: T3OrchestrationMode) -> str:
