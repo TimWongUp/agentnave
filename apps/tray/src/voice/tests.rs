@@ -159,6 +159,7 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
     let public = storage::public_state(defaults.clone(), &keys);
     assert_eq!(public["keys"]["elevenlabs"], true);
     assert!(!public.to_string().contains("fake-only-key"));
+    assert_eq!(public["key_previews"], json!({"elevenlabs": "••••-key"}));
     storage::save_key(root, &json!({"engine":"summary","key":"fake-summary-key"})).unwrap();
     let public = storage::public_state(
         storage::read_settings(root).unwrap(),
@@ -166,6 +167,21 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
     );
     assert_eq!(public["keys"]["summary"], true);
     assert!(!public.to_string().contains("fake-summary-key"));
+    assert_eq!(public["key_previews"]["summary"], "fake…-key");
+    // A platform key, whatever its length, is shown masked; the ChatGPT tokens are no API key.
+    let platform = summary::PLATFORMS[0].id;
+    let name = summary::platform_key(platform);
+    let long_key = "sk-platform-0123456789abcdef";
+    storage::save_key(root, &json!({"engine": name, "key": long_key})).unwrap();
+    let mut keys = storage::read_keys(root).unwrap();
+    keys["chatgpt"] = json!({"access_token": "chatgpt-token-0123456789abcdef"});
+    let public = storage::public_state(storage::read_settings(root).unwrap(), &keys);
+    assert_eq!(public["key_previews"][&name], "sk-p…cdef");
+    assert!(public["key_previews"].get("chatgpt").is_none());
+    for text in [long_key, "chatgpt-token-0123456789abcdef"] {
+        assert!(!public["key_previews"].to_string().contains(text));
+    }
+    storage::save_key(root, &json!({"engine": name, "key": ""})).unwrap();
     if !crate::PREVIEW {
         let response = get(root, "/app/voice");
         assert_eq!(response.status, 200);
@@ -188,10 +204,9 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
         );
     }
     storage::save_key(root, &json!({"engine":"elevenlabs","key":""})).unwrap();
-    assert_eq!(
-        storage::public_state(defaults.clone(), &storage::read_keys(root).unwrap())["keys"]["elevenlabs"],
-        false
-    );
+    let cleared = storage::public_state(defaults.clone(), &storage::read_keys(root).unwrap());
+    assert_eq!(cleared["keys"]["elevenlabs"], false);
+    assert!(cleared["key_previews"].get("elevenlabs").is_none());
     let mut enabled = defaults;
     enabled["enabled"] = json!(true);
     storage::save_settings(root, &enabled).unwrap();

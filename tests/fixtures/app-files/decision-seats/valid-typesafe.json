@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "decision_provider": "typesafe",
+  "decision_model": "jev-latest",
+  "seats": []
+}

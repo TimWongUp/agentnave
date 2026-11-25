@@ -8,6 +8,7 @@
 - 「候选只含真正能派的工位」的可用判断由 [ADR-0089](0089-seat-fallback-order.md) 扩展：自定义工位有任一备选顺位可用即算可派；自定义任务工位开启同档候选随机选时的挑选方式见 [ADR-0093](0093-decision-seat-random-candidates.md)。
 - 不改变：[ADR-0028](0028-follow-cli-default-model.md)、[ADR-0032](0032-cli-permission-tiers.md)、[ADR-0063](0063-cli-model-pool-and-orchestration-precedence.md) 的参数来源、权限档位和模型池；[ADR-0031](0031-prompt-only-orchestration.md) 的单向编排；授权规则仍只在规则块里。
 - 决策模型档有自己的规则块正文的条款由 [ADR-0122](0122-merge-split-and-parallel-presets.md) 修订。
+- 「先只接 Gemini Decision 1」与单一 Gemini 密钥／外发说明的条款由 [ADR-0123](0123-multi-decision-model-providers.md) 修订：扩展为多平台与本机 System One 端点。
 
 ## 背景
 

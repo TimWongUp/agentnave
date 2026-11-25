@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import subprocess
@@ -3479,15 +3480,17 @@ class _FakeDecisionClient:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.result: Decision | DecisionError | None = None
         self.delay = 0.0
-        self.created: list[tuple[str, str]] = []
+        self.created: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
         self.calls: list[tuple[str, dict[str, str]]] = []
         # decide_many: the answers to give, in question order, or a failure of the whole request.
         self.answers: Sequence[Decision | DecisionError] | DecisionError | None = None
         self.batches: list[list[tuple[str, dict[str, str]]]] = []
-        monkeypatch.setattr(seat_recommendation, "new_client", self._create)
+        # Only the network clients are replaced: source routing, key lookup and endpoints stay real.
+        for name in ("GeminiDecisionClient", "OpenAIDecisionClient", "SystemOneDecisionClient"):
+            monkeypatch.setattr(seat_recommendation, name, functools.partial(self._create, name))
 
-    def _create(self, model: str, key: str) -> _FakeDecisionClient:
-        self.created.append((model, key))
+    def _create(self, name: str, *args: object, **kwargs: object) -> _FakeDecisionClient:
+        self.created.append((name, args, kwargs))
         return self
 
     def decide(self, text: str, candidates: Mapping[str, str]) -> Decision:
@@ -3653,7 +3656,7 @@ async def test_own_seats_publish_dispatch_and_recommend_end_to_end(
         ]
         # Only the summary, the access and each candidate's specialty, difficulty with what it
         # asks of the work, and access.
-        assert decision.created == [("gemini-decision-1", "test-key-123")]
+        assert decision.created == [("GeminiDecisionClient", ("test-key-123",), {})]
         (text, sent), *_ = decision.calls
         assert text == "Task:\n给设置页加一个开关\nRequired access: write"
         assert sent == {

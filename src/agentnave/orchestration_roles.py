@@ -23,6 +23,15 @@ from pydantic import (
 )
 
 from agentnave.accounts import check_choice
+from agentnave.decision_sources import (
+    BASE_URL_PROVIDERS,
+    DECISION_DEFAULT_MODELS,
+    DEFAULT_DECISION_PROVIDER,
+    DEFAULT_OLLAMA_BASE_URL,
+    FIXED_DECISION_MODELS,
+    DecisionProvider,
+    validate_decision_base_url,
+)
 from agentnave.host import Host
 from agentnave.models import ACCOUNT_ID, ProviderOption
 
@@ -39,7 +48,6 @@ type ProviderName = Literal[
 # A fixed group's medium seat is optional; only a bound one is published.
 type Difficulty = Literal["easy", "medium", "hard"]
 type CustomSeatDifficulty = Literal["easy", "medium", "hard"]
-type DecisionModelName = Literal["gemini-decision-1"]
 type OrchestrationPreset = Literal["off", "meetings", "split", "parallel", "decision", "custom"]
 type OrchestrationGroup = Literal[
     "explorer",
@@ -284,16 +292,62 @@ class CustomSeat(SeatMetadata):
         )
 
 
+_DECISION_MODEL_MAX_LENGTH = 200
+
+
 class DecisionSeatsFile(BaseModel):
     """App-owned custom seat catalog; a boss uses it while its orchestration mode is decision."""
 
     model_config = ConfigDict(extra="ignore", strict=True)
 
     version: int = Field(ge=1, le=1)
-    decision_model: DecisionModelName = "gemini-decision-1"
+    decision_provider: DecisionProvider = DEFAULT_DECISION_PROVIDER
+    decision_model: str = ""
+    decision_base_url: str | None = None
     random_candidates: bool = False
     # Two to 255 candidates is what the decision model accepts.
     seats: list[CustomSeat] = Field(default_factory=list[CustomSeat], max_length=255)
+
+    @model_validator(mode="after")
+    def validate_decision_target(self) -> DecisionSeatsFile:
+        provider = self.decision_provider
+        if "decision_model" not in self.model_fields_set:
+            if provider not in DECISION_DEFAULT_MODELS:
+                raise ValueError(f"decision_model is required for decision_provider={provider!r}")
+            self.decision_model = DECISION_DEFAULT_MODELS[provider]
+        else:
+            model = self.decision_model.strip()
+            fixed = FIXED_DECISION_MODELS.get(provider)
+            if fixed is not None:
+                if model != fixed:
+                    raise ValueError(f"decision_model for {provider!r} must be {fixed!r}")
+            elif (
+                not model
+                or len(model) > _DECISION_MODEL_MAX_LENGTH
+                or not all("!" <= ch <= "~" for ch in model)
+            ):
+                raise ValueError(
+                    f"decision_model must contain 1–{_DECISION_MODEL_MAX_LENGTH} visible ASCII "
+                    "characters"
+                )
+            self.decision_model = model
+
+        raw_url = self.decision_base_url.strip() if self.decision_base_url is not None else ""
+        if provider not in BASE_URL_PROVIDERS:
+            if raw_url:
+                raise ValueError(
+                    f"decision_base_url is only allowed for ollama and custom, not {provider!r}"
+                )
+            self.decision_base_url = None
+        elif provider == "ollama":
+            self.decision_base_url = (
+                validate_decision_base_url(raw_url) if raw_url else DEFAULT_OLLAMA_BASE_URL
+            )
+        else:
+            if not raw_url:
+                raise ValueError("decision_base_url is required for decision_provider='custom'")
+            self.decision_base_url = validate_decision_base_url(raw_url)
+        return self
 
     @field_validator("seats")
     @classmethod

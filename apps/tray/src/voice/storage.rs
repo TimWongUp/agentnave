@@ -1,4 +1,5 @@
 use super::*;
+use crate::private_keys::{mask_key, write_private_json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
@@ -62,10 +63,24 @@ pub(super) fn public_state(mut settings: Value, keys: &Value) -> Value {
         "minimax":keys["minimax"].as_str().is_some_and(|s| !s.is_empty()),
         "summary":keys["summary"].as_str().is_some_and(|s| !s.is_empty())
     });
-    for platform in summary::PLATFORMS {
-        let name = summary::platform_key(platform.id);
-        settings["keys"][&name] = json!(keys[&name].as_str().is_some_and(|s| !s.is_empty()));
+    let names = ["elevenlabs", "minimax", "summary"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(
+            summary::PLATFORMS
+                .iter()
+                .map(|platform| summary::platform_key(platform.id)),
+        );
+    let mut previews = serde_json::Map::new();
+    for name in names {
+        let key = keys[&name].as_str().unwrap_or_default();
+        settings["keys"][&name] = json!(!key.is_empty());
+        // The ChatGPT sign-in tokens live in the same file but are no API key, so they are not listed.
+        if !key.trim().is_empty() {
+            previews.insert(name, json!(mask_key(key)));
+        }
     }
+    settings["key_previews"] = Value::Object(previews);
     settings["summary_platforms"] = summary::platform_list();
     settings["chatgpt"] = summary::chatgpt::state(keys);
     settings
@@ -373,69 +388,10 @@ fn persona_settings(value: Option<&Value>) -> Result<Value, String> {
 fn valid_model_id(id: &str) -> bool {
     id.is_empty() || (id.len() <= 300 && !id.trim().is_empty() && !id.chars().any(char::is_control))
 }
-/// Replaces a file under `root` that only the current user may read; `*-keys.json` names also get
-/// a restricted ACL on Windows.
-pub(crate) fn write(root: &Path, name: &str, value: &Value) -> Result<(), String> {
-    let save = || -> std::io::Result<()> {
-        fs::create_dir_all(root)?;
-        let mut file = tempfile::NamedTempFile::new_in(root)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.as_file()
-                .set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
-        #[cfg(windows)]
-        if name.ends_with("-keys.json") {
-            restrict_windows_acl(file.path())?;
-        }
-        file.write_all(value.to_string().as_bytes())?;
-        file.as_file().sync_all()?;
-        file.persist(root.join(name)).map_err(|e| e.error)?;
-        Ok(())
-    };
-    save().map_err(|_| format!("无法保存 {name}"))
-}
-
-/// Windows has no file mode to copy: remove inherited access and grant the current user alone
-/// before writing secret bytes into the temporary file.
-#[cfg(windows)]
-fn restrict_windows_acl(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::process::CommandExt;
-
-    let user = std::env::var("USERNAME").unwrap_or_default();
-    if user.trim().is_empty() {
-        return Err(std::io::Error::other("无法限制语音密钥文件权限"));
-    }
-    let icacls = std::env::var_os("SystemRoot")
-        .map(|root| std::path::PathBuf::from(root).join(r"System32\icacls.exe"))
-        .filter(|candidate| candidate.is_file())
-        .unwrap_or_else(|| std::path::PathBuf::from("icacls.exe"));
-    let run = |principal: &str| {
-        std::process::Command::new(&icacls)
-            .arg(path.as_os_str())
-            .arg("/inheritance:r")
-            .arg("/grant:r")
-            .arg(format!("{principal}:(F)"))
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .status()
-    };
-    if let Ok(domain) = std::env::var("USERDOMAIN")
-        && !domain.trim().is_empty()
-        && run(&format!("{domain}\\{user}"))?.success()
-    {
-        return Ok(());
-    }
-    if run(&user)?.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other("无法限制语音密钥文件权限"))
-    }
-}
 pub(super) fn save_settings(root: &Path, value: &Value) -> Result<(), String> {
     let value = validate(value)?;
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
-    write(root, "voice.json", &value)
+    write_private_json(root, "voice.json", &value)
 }
 pub(super) fn save_key(root: &Path, value: &Value) -> Result<(), String> {
     let engine = value["engine"]
@@ -456,7 +412,7 @@ pub(super) fn save_key(root: &Path, value: &Value) -> Result<(), String> {
     } else {
         object.insert(engine.into(), key.into());
     }
-    write(root, "voice-keys.json", &keys)
+    write_private_json(root, "voice-keys.json", &keys)
 }
 /// Changes the key file under the write lock; the ChatGPT sign-in keeps its tokens there too.
 pub(super) fn edit_keys(
@@ -466,7 +422,7 @@ pub(super) fn edit_keys(
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut keys = read_keys(root)?;
     edit(&mut keys)?;
-    write(root, "voice-keys.json", &keys)
+    write_private_json(root, "voice-keys.json", &keys)
 }
 pub(super) fn cached(root: &Path, key: &str, extension: &str) -> Option<Vec<u8>> {
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());

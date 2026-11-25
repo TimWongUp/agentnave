@@ -316,7 +316,10 @@ impl Reader {
                 body,
             );
         }
-        if matches!(path, "/app/decision-seats" | "/app/decision-key") {
+        if matches!(
+            path.split('?').next().unwrap_or(path),
+            "/app/decision-seats" | "/app/decision-key" | "/app/decision-models"
+        ) {
             return crate::hosts::decision_request(&self.root, method, path, action, body);
         }
         if path == "/app/t3-seats" {

@@ -1,5 +1,6 @@
-//! decision-seats.json and decision-keys.json (ADR-0087, ADR-0093): the user's own seat catalog,
-//! the random-candidates switch and the decision model's API key. The App writes them (without the
+//! decision-seats.json and decision-keys.json (ADR-0087, ADR-0093, ADR-0123): the user's own seat
+//! catalog, the decision source and model, the random-candidates switch and each source's API key.
+//! The App writes them (without the
 //! App, decision-seats.json may be written by hand); the Python service reads them on every call.
 //! The checks here mirror the service's, so a file this module writes is one the service accepts.
 //!
@@ -7,6 +8,7 @@
 //! this file.
 
 mod keys;
+mod models;
 
 use crate::data_files::write_atomic;
 use crate::orchestration_roles::{
@@ -18,10 +20,11 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
-pub(crate) use keys::{key_state, save_key};
+pub(crate) use keys::{key_previews, keys_state, no_keys, save_key};
+use models::{Address, Model, Source, source};
+pub(crate) use models::{fetch_models, providers};
 
 const FILE: &str = "decision-seats.json";
-const DECISION_MODEL: &str = "gemini-decision-1";
 const SEAT_FIELDS: [&str; 11] = [
     "id",
     "kind",
@@ -80,26 +83,79 @@ fn validate_seat(seat: &Value, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// decision-seats.json: `{"version": 1, "decision_model": "gemini-decision-1",
-/// "random_candidates"?: bool, "seats": [{id, kind, role, description, provider, account?, model,
-/// effort?, fallbacks?, access, difficulty}]}`, one seat per difficulty of a card: `kind` is a group of the
-/// role catalog, "custom" or "image". An image seat is a card of one seat, write access and no
-/// difficulty.
+/// The address of a source that takes one, as it is saved; the checks are those of the summary
+/// service's custom address.
+fn normalize_address(address: &str) -> Result<String, String> {
+    let address = address.trim();
+    if address.chars().count() > 512 {
+        return Err("决策模型 API 地址过长".into());
+    }
+    crate::endpoint::normalize_endpoint(address, "决策模型 API")
+}
+
+/// The source the file names, the default one while it names none.
+fn source_of(top: &serde_json::Map<String, Value>) -> Result<&'static Source, String> {
+    let id = match top.get("decision_provider") {
+        None => models::DEFAULT_SOURCE,
+        Some(Value::String(id)) => id,
+        Some(_) => return Err("决策来源必须为字符串".into()),
+    };
+    source(id).ok_or_else(|| "决策来源不受支持".into())
+}
+
+fn validate_source(top: &serde_json::Map<String, Value>) -> Result<(), String> {
+    let source = source_of(top)?;
+    let address = match top.get("decision_base_url") {
+        None | Some(Value::Null) => "",
+        Some(Value::String(address)) => address.as_str(),
+        Some(_) => return Err("decision_base_url 必须为字符串".into()),
+    };
+    match source.address {
+        Address::None if !address.trim().is_empty() => {
+            return Err(format!("{} 不使用自定义 API 地址", source.id));
+        }
+        Address::Required => drop(normalize_address(address)?),
+        Address::Optional(_) if !address.trim().is_empty() => drop(normalize_address(address)?),
+        _ => {}
+    }
+    let model = match top.get("decision_model") {
+        None => None,
+        Some(Value::String(model)) => Some(model.trim()),
+        Some(_) => return Err("决策模型必须为字符串".into()),
+    };
+    match (&source.model, model) {
+        (Model::Fixed(fixed), Some(model)) if model != *fixed => Err("决策模型不受支持".into()),
+        (Model::Free, None) => Err("请填写决策模型".into()),
+        (_, Some(model)) if !models::valid_model_id(model) => {
+            Err("决策模型需为 1 到 200 个可见 ASCII 字符".into())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// decision-seats.json: `{"version": 1, "decision_provider"?: "gemini" | "openai" | "typesafe" |
+/// "openrouter" | "ollama" | "custom", "decision_model"?, "decision_base_url"?: only for "ollama"
+/// and "custom", "random_candidates"?: bool, "seats": [{id, kind, role, description, provider,
+/// account?, model, effort?, fallbacks?, access, difficulty}]}`, one seat per difficulty of a card:
+/// `kind` is a group of the role catalog, "custom" or "image". An image seat is a card of one seat,
+/// write access and no difficulty.
 pub fn validate(document: &Value) -> Result<(), String> {
     let top = object(document, FILE)?;
-    let allowed = ["version", "decision_model", "random_candidates", "seats"];
+    let allowed = [
+        "version",
+        "decision_provider",
+        "decision_model",
+        "decision_base_url",
+        "random_candidates",
+        "seats",
+    ];
     if let Some(key) = top.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(format!("{FILE} 含未知字段 {key}"));
     }
     if document["version"].as_u64() != Some(1) {
         return Err(format!("{FILE} 的 version 必须为 1"));
     }
-    if top
-        .get("decision_model")
-        .is_some_and(|model| model != DECISION_MODEL)
-    {
-        return Err("决策模型不受支持".into());
-    }
+    validate_source(top)?;
     if top
         .get("random_candidates")
         .is_some_and(|value| !value.is_boolean())
@@ -119,14 +175,39 @@ pub fn validate(document: &Value) -> Result<(), String> {
     validate_seat_cards(seats)
 }
 
-/// The document as the page sends it, made ready to save: roles trimmed, as the service does,
-/// and the decision model named.
+/// The document as the page sends it, made ready to save: roles trimmed, as the service does, the
+/// source's own model named when the page names none, and the default source left implicit.
 pub fn normalize(document: &mut Value) {
     // Anything but an object is left as it is, for `validate` to refuse.
     let Some(top) = document.as_object_mut() else {
         return;
     };
-    top.entry("decision_model").or_insert(json!(DECISION_MODEL));
+    // A source that is not one is left for `validate` too.
+    if let Ok(source) = source_of(top) {
+        if let Some(model) = top.get("decision_model").and_then(Value::as_str) {
+            top.insert("decision_model".into(), json!(model.trim()));
+        }
+        if let Some(default) = source.default_model() {
+            top.entry("decision_model").or_insert(json!(default));
+        }
+        if source.id == models::DEFAULT_SOURCE {
+            top.remove("decision_provider");
+            if top
+                .get("decision_base_url")
+                .and_then(Value::as_str)
+                .is_some_and(|address| address.trim().is_empty())
+            {
+                top.remove("decision_base_url");
+            }
+        } else if let Some(address) = top.get("decision_base_url").and_then(Value::as_str) {
+            // The address as it is saved when it is a good one; a bad one is left for `validate`.
+            match normalize_address(address) {
+                Ok(address) => top.insert("decision_base_url".into(), json!(address)),
+                Err(_) if address.trim().is_empty() => top.remove("decision_base_url"),
+                Err(_) => None,
+            };
+        }
+    }
     for seat in top
         .get_mut("seats")
         .and_then(Value::as_array_mut)

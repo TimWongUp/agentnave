@@ -1085,6 +1085,7 @@ All checks passed!
     model: "eleven_turbo_v2_5",
     models: { elevenlabs: "eleven_turbo_v2_5", minimax: "speech-01-turbo" },
     keys: { elevenlabs: true, minimax: false },
+    key_previews: { elevenlabs: "sk_3…a8b2" },
     voices: {},
     personas: {},
     chatgpt: { signed_in: true, signing_in: false, user: "preview@example.com", plan: "Plus", error: null },
@@ -1104,7 +1105,34 @@ All checks passed!
       prompt: "",
     },
   };
-  const mockDecision = { document: null, error: null, key_set: false, key_error: null };
+  const mockProvider = (id, name_zh, name_en, key, default_model, models, extra = {}) => ({
+    id, name_zh, name_en, key, fixed_model: false, default_model, models: models.map((model) => ({ id: model, name: model })),
+    catalog: false, custom_url: false, url_required: false, default_base_url: null, ...extra,
+  });
+  // The tray's mask: the first and last four of a long key, the last four of a middling one, nothing of a short one.
+  const maskKey = (key) => {
+    const chars = Array.from(key.trim());
+    return chars.length >= 16 ? `${chars.slice(0, 4).join("")}…${chars.slice(-4).join("")}` : chars.length >= 8 ? `••••${chars.slice(-4).join("")}` : chars.length ? "••••" : "";
+  };
+  const mockDecision = {
+    document: null, error: null, key_set: false, key_error: null,
+    keys: { gemini: false, openai: false, typesafe: false, openrouter: false, custom: false },
+    key_previews: {},
+    providers: [
+      mockProvider("gemini", "Google Gemini", "Google Gemini", "required", "gemini-decision-1", [], { fixed_model: true }),
+      mockProvider("openai", "OpenAI", "OpenAI", "required", "gpt-6-luna", [], { fixed_model: true }),
+      mockProvider("typesafe", "TypeSafe AI", "TypeSafe AI", "required", "jev-latest", ["jev-latest", "jev-1.14.0"], { catalog: true }),
+      mockProvider("openrouter", "OpenRouter", "OpenRouter", "required", "liquid/d1.2-ultra", ["liquid/d1.2-ultra", "liquid/d1.2", "microsoft/microsoft-decision-1.1", "typesafe/jev-1.14", "perplexity/pplx-decider-v1.3:free", "parallel/decisions-fast", "google/gemini-decision-1", "openai/gpt-6-luna-decisions"], { catalog: true }),
+      mockProvider("ollama", "本机 Ollama", "Local Ollama", "none", null, [], { catalog: true, custom_url: true, default_base_url: "http://127.0.0.1:11434" }),
+      mockProvider("custom", "自定义端点", "Custom endpoint", "optional", null, [], { catalog: true, custom_url: true, url_required: true }),
+    ],
+  };
+  const mockDecisionModels = {
+    typesafe: ["jev-1.14.0", "jev-latest", "jev-mini"],
+    openrouter: ["liquid/d1.2", "liquid/d1.2-ultra", "perplexity/pplx-decider-v1.3:free", "zeta/decider-small"],
+    ollama: ["system-one:1b", "system-one:7b"],
+    custom: ["decider-large", "decider-small"],
+  };
   // Terminals the office started (ADR-0103): the first one's CLI is the boss of the first workspace.
   const mockTerminals = [
     { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: null },
@@ -1263,7 +1291,11 @@ All checks passed!
     if (path === "/app/provider-health") return { providers: structuredClone(mockHealth), accounts: Object.fromEntries(mockAccounts.map((a) => [a.id, a.label])) };
     if (path.split("?")[0] === "/settings/members") return structuredClone(mockMembersData);
     if (path === "/app/orchestration") return structuredClone(mockOrchestration);
-    if (path === "/app/decision-seats") return structuredClone(mockDecision);
+    if (path === "/app/decision-seats") return { ...structuredClone(mockDecision), key_set: mockDecision.keys[mockDecision.document?.decision_provider || "gemini"] === true };
+    if (path.split("?")[0] === "/app/decision-models") {
+      const provider = new URLSearchParams(path.split("?")[1]).get("provider");
+      return { provider, models: (mockDecisionModels[provider] || []).map((id) => ({ id, name: id })) };
+    }
     if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true, antigravity_interactive: true } };
     if (path === "/app/preferences") return preferencesView();
     if (path === "/app/characters" || path === "/avatars/avatar-settings") return {};
@@ -1402,7 +1434,13 @@ All checks passed!
     if (path === "/app/review") { mockMembersData.review = structuredClone(body); return { saved: true }; }
     if (path === "/app/permissions") { mockMembersData.permissions = structuredClone(body); return { saved: true }; }
     if (path === "/app/decision-seats") { mockDecision.document = structuredClone(body); return { saved: true }; }
-    if (path === "/app/decision-key") { mockDecision.key_set = Boolean(body.key); return { key_set: mockDecision.key_set }; }
+    if (path === "/app/decision-key") {
+      const provider = body.provider || "gemini";
+      mockDecision.keys[provider] = Boolean(body.key);
+      if (body.key) mockDecision.key_previews[provider] = maskKey(body.key);
+      else delete mockDecision.key_previews[provider];
+      return { provider, key_set: mockDecision.keys[provider], keys: { ...mockDecision.keys }, key_previews: { ...mockDecision.key_previews } };
+    }
     if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
     if (path === "/app/orchestration/host-cli") {
       const choices = { ...mockOrchestration.document.host_cli };
@@ -1472,6 +1510,8 @@ All checks passed!
     }
     if (path === "/app/voice/key") {
       mockVoice.keys[body.engine] = Boolean(body.key);
+      if (body.key) mockVoice.key_previews[body.engine] = maskKey(body.key);
+      else delete mockVoice.key_previews[body.engine];
       return structuredClone(mockVoice);
     }
     if (path === "/app/voice/summary/models") return [{ id: "gpt-5.4-mini", owned_by: "openai", reasoning_levels: ["low", "medium"] }];

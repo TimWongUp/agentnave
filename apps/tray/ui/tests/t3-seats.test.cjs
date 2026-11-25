@@ -324,6 +324,22 @@ test("opens blank the first time: the general and image seats with nothing set, 
   assert.equal(h.t3((t) => t.changed()), false);
 });
 
+test("the decision source shared with T3 comes back as saved and does not make T3 or the page dirty", async () => {
+  const written = { version: 1, decision_provider: "openrouter", decision_model: "liquid/d1.2", seats: [] };
+  const h = makeHarness({
+    t3State: { document: null, error: null, t3: SAMPLE_T3 },
+    decisionState: { document: written, error: null, key_set: false, keys: { gemini: false }, key_error: null, providers: [
+      { id: "gemini", name_zh: "Google Gemini", name_en: "Google Gemini", key: "required", fixed_model: true, default_model: "gemini-decision-1", models: [], catalog: false, custom_url: false },
+      { id: "openrouter", name_zh: "OpenRouter", name_en: "OpenRouter", key: "required", fixed_model: false, default_model: "liquid/d1.2-ultra", models: [], catalog: true, custom_url: false },
+    ] },
+  });
+  await h.run("window.AgentNaveDecisionSeats.load()");
+  await h.t3((t) => t.load());
+  assert.deepEqual(JSON.parse(h.run("JSON.stringify(window.AgentNaveDecisionSeats.document())")), written);
+  assert.equal(h.run("window.AgentNaveDecisionSeats.changed()"), false);
+  assert.equal(h.t3((t) => t.changed()), false);
+});
+
 test("an added fallback starts unset and blocks saving until the user picks it or removes it", async () => {
   const h = makeHarness({ t3State: { document: null, error: null, t3: SAMPLE_T3 } });
   await h.t3((t) => t.load());
