@@ -657,9 +657,10 @@ test("supports adding/removing up to 4 candidates, reasoning selection to defaul
   h.find("t3/enabled").listeners.change({ target: { checked: true } });
   h.find(`t3/${readded}/medium/c0/instance`).listeners.change({ target: { value: "" } });
   h.find("t3/review/security-reviewer/c0/instance").listeners.change({ target: { value: "" } });
-  const remaining = h.doc();
-  assert.equal(remaining.enabled, true);
+  h.find(`t3/${readded}/remove`).listeners.click();
+  assert.equal(h.doc().enabled, true);
   assert.equal(h.t3((t) => t.hasCandidates()), false);
+  assert.match(h.t3((t) => t.problem()), /开启 T3 编排前/);
 });
 
 test("shared General / T3 Code segment follows orchestration mode (hidden on off/meetings), keeps review unaffected, and shows badge-dots", async () => {

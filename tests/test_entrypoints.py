@@ -5929,10 +5929,10 @@ async def test_t3_image_seat_keeps_its_saved_order_and_carries_the_image_brief()
         calls = 0
 
         def shuffle(self, x: MutableSequence[Any]) -> None:
+            # Keeps the order, so only a first slot the image seat reserved could move the coder's.
             CountingRng.calls += 1
-            super().shuffle(x)
 
-    rng = CountingRng(1)
+    rng = CountingRng()
     payload = await recommend_t3_seats(
         [
             T3RecommendTask(task="draw a cat", access="write", seat="art"),
@@ -5946,10 +5946,23 @@ async def test_t3_image_seat_keeps_its_saved_order_and_carries_the_image_brief()
     results = cast(list[dict[str, Any]], cast(dict[str, Any], payload)["results"])
     art, code = results
     assert [item["target"]["model"] for item in art["candidates"]] == ["m-a", "m-b"]
-    assert [item["target"]["model"] for item in code["candidates"]] == ["m-b", "m-a"]
+    assert [item["target"]["model"] for item in code["candidates"]] == ["m-a", "m-b"]
     assert rng.calls == 1, "only the ordinary seat takes part in shuffling"
     assert art["brief_suffix"] == T3_IMAGE_BRIEF_SUFFIX
     assert "brief_suffix" not in code
+
+    # The decision mode's only usable writable seat takes the same path.
+    only = await recommend_t3_seats(
+        [T3RecommendTask(task="draw a cat", access="write")],
+        doc.model_copy(update={"seats": doc.seats[:1]}),
+        mode="decision",
+        probe_instance=lambda instance, model: InstanceAvailability(available=True),
+        rng=rng,
+    )
+    alone = cast(list[dict[str, Any]], cast(dict[str, Any], only)["results"])[0]
+    assert [item["target"]["model"] for item in alone["candidates"]] == ["m-a", "m-b"]
+    assert alone["brief_suffix"] == T3_IMAGE_BRIEF_SUFFIX
+    assert rng.calls == 1
 
 
 def test_t3_recommend_description_names_image_seats_only_when_one_has_a_model() -> None:
