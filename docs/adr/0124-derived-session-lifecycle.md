@@ -4,6 +4,7 @@
 - 日期：2026-11-25
 - 修订：[ADR-0109](0109-in-app-derived-sessions.md)
   - 第 1 节「派生终端在 App 左栏挂在派发它的 agent 下方」：补上状态、折叠与办公室分区（本篇第 1 节）。
+  - 第 2 节「这条只写在 Manager Skill 里」：改写进工具参数描述（第 4 节）。
   - 第 4 节「派生终端的进程归托盘所有」：归属不变，补上托盘何时结束它（第 2、3 节）。
   - 第 6 节与第 9 节：`terminal_notes`、已读位置持久化、`read_conversation` 按派生会话读取暂不做（第 4 节）。
   - 第 7 节：隔离租约持有到进程结束（含收起）；增加用户点开恢复。
@@ -42,7 +43,7 @@ Claude 桌面端的派生会话每个是独立 CLI 进程，隐藏且答完后�
 
 ### 4. 第二阶段范围
 
-第二阶段改为：本篇第 1–3 节、Manager Skill 的「派生前先问用户」规则，以及三家预览版验收。`terminal_notes`、已读位置与 `read_conversation` 按会话读取暂不做。
+第二阶段改为：本篇第 1–3 节、「派生前先问用户」规则，以及三家预览版验收。该规则写进 `terminal` 参数的描述，不写进 Manager Skill：普通派发不必先读 Skill（[ADR-0117](0117-private-dispatch-without-skill.md)），只写在 Skill 里 boss 看不到。`terminal_notes`、已读位置与 `read_conversation` 按会话读取暂不做。
 
 ## 取舍
 
