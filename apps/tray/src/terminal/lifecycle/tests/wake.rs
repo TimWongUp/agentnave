@@ -1,7 +1,7 @@
 use super::*;
 use crate::isolated::leases;
 
-fn relaunched(session: Arc<Session>) -> Relaunched {
+pub(super) fn relaunched(session: Arc<Session>) -> Relaunched {
     Relaunched {
         session,
         log_dir: None,
@@ -10,7 +10,7 @@ fn relaunched(session: Arc<Session>) -> Relaunched {
     }
 }
 
-fn body(reply: &crate::response::Response) -> Value {
+pub(super) fn body(reply: &crate::response::Response) -> Value {
     serde_json::from_slice(&reply.body).unwrap()
 }
 
@@ -24,7 +24,7 @@ fn waking_starts_one_process_in_the_same_row_and_submits_nothing() {
     let root = office.root.path();
     let live = office
         .terminals
-        .wake_in(root, Some(id), |_| panic!("it runs already"));
+        .wake_in(root, Some(id), |_| None, |_| panic!("it runs already"));
     assert_eq!(body(&live)["session"]["derived_state"], "idle");
 
     session.stop();
@@ -32,13 +32,18 @@ fn waking_starts_one_process_in_the_same_row_and_submits_nothing() {
     let woken = cli();
     woken.record_writes();
     let wake = || {
-        office.terminals.wake_in(root, Some(id), |plan| {
-            started.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(plan.native, SID);
-            assert_eq!(plan.cwd, root);
-            thread::sleep(Duration::from_millis(200));
-            Ok(relaunched(woken.clone()))
-        })
+        office.terminals.wake_in(
+            root,
+            Some(id),
+            |_| None,
+            |plan| {
+                started.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(plan.native, SID);
+                assert_eq!(plan.cwd, root);
+                thread::sleep(Duration::from_millis(200));
+                Ok(relaunched(woken.clone()))
+            },
+        )
     };
     let replies: Vec<_> = thread::scope(|scope| {
         let clicks: Vec<_> = (0..2).map(|_| scope.spawn(wake)).collect();
@@ -54,7 +59,7 @@ fn waking_starts_one_process_in_the_same_row_and_submits_nothing() {
     assert!(woken.recorded_writes().is_empty());
     assert!(office.terminals.derived_by_invocation("inv-1").is_none());
 
-    // Opened only to look, it is collapsed again after its three minutes.
+    // Opened only to look, its process ends again after its fifteen minutes.
     report(&woken, "idle");
     office.idle_for(IDLE_GRACE);
     assert_eq!(office.state(id), "dormant");
@@ -70,10 +75,15 @@ fn what_cannot_be_woken_says_why_and_can_be_tried_again() {
     session.stop();
     ended(&session);
     let refused = |id: u64, launch: Result<(), &str>| {
-        let reply = office.terminals.wake_in(root, Some(id), |_| match launch {
-            Ok(()) => panic!("nothing may start"),
-            Err(error) => Err(error.to_owned()),
-        });
+        let reply = office.terminals.wake_in(
+            root,
+            Some(id),
+            |_| None,
+            |_| match launch {
+                Ok(()) => panic!("nothing may start"),
+                Err(error) => Err(error.to_owned()),
+            },
+        );
         (
             reply.status,
             body(&reply)["error"].as_str().unwrap().to_owned(),
@@ -95,7 +105,8 @@ fn what_cannot_be_woken_says_why_and_can_be_tried_again() {
         (409, "隔离目录已释放，无法恢复".to_owned())
     );
     assert_eq!(office.state(id), "dormant");
-    assert_eq!(office.row(id)["resumable"], false);
+    // Why it cannot come back is told when it is opened.
+    assert_eq!(office.row(id)["resumable"], true);
     office.with(id, |r| {
         r.account = Some(Active {
             id: "gone".to_owned(),
@@ -142,10 +153,15 @@ fn an_isolated_session_holds_its_lease_only_while_its_process_runs() {
     assert!(!held());
 
     let woken = cli();
-    let reply = office.terminals.wake_in(office.root.path(), Some(id), |_| {
-        assert!(held(), "taken before the CLI starts in it");
-        Ok(relaunched(woken.clone()))
-    });
+    let reply = office.terminals.wake_in(
+        office.root.path(),
+        Some(id),
+        |_| None,
+        |_| {
+            assert!(held(), "taken before the CLI starts in it");
+            Ok(relaunched(woken.clone()))
+        },
+    );
     assert_eq!(reply.status, 200);
     office.beat(IDLE_GRACE);
     assert!(held());

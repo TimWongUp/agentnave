@@ -95,6 +95,7 @@ pub(super) fn start(app: AppHandle) {
     }
     *coordinator_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(coordinator.clone());
     thread::spawn(move || {
+        terminals.prune_saved_launches(&root);
         let mut state = WakeupState::default();
         while !STOP.load(Ordering::SeqCst) {
             coordinator.poll(&terminals);

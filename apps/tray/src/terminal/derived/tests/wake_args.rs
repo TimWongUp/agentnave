@@ -22,6 +22,7 @@ fn a_wake_keeps_the_launch_but_starts_in_the_mode_claude_fell_back_to() {
         config: Some(DerivedLaunchConfig::from_run_config(&launched)),
         fallback_mode: None,
         isolation_id: None,
+        assumed: false,
     };
     let cfg = wake::wake_config(&plan).unwrap();
     assert_eq!(cfg.permissions, json!({"permission_mode": "auto"}));
@@ -42,6 +43,9 @@ fn a_wake_keeps_the_launch_but_starts_in_the_mode_claude_fell_back_to() {
     let settings: Value = serde_json::from_str(&args[settings + 1]).unwrap();
     assert!(settings["hooks"]["Stop"].is_array());
     assert!(settings["hooks"].get("UserPromptSubmit").is_none());
+    // Without a launch, the CLI's own settings.
     plan.config = None;
-    assert!(wake::wake_config(&plan).is_err());
+    plan.fallback_mode = None;
+    let cfg = wake::wake_config(&plan).unwrap();
+    assert_eq!((cfg.permissions, cfg.model), (json!({}), None));
 }

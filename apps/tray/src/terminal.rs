@@ -52,6 +52,8 @@ const LINKS_TTL: Duration = Duration::from_secs(5);
 #[derive(Clone, Default)]
 pub(crate) struct Terminals {
     state: Arc<Mutex<State>>,
+    /// What each derived session was started with, kept across restarts.
+    saved: Arc<Mutex<lifecycle::Store>>,
 }
 
 #[derive(Default)]
@@ -65,6 +67,8 @@ struct State {
     links_checked: Option<(Instant, PathBuf)>,
     /// When a page last reported that the user is looking at a terminal.
     shown: HashMap<u64, Instant>,
+    /// Derived sessions `(provider, native)` without a row whose process is being started.
+    opening: HashSet<(String, String)>,
 }
 
 pub(in crate::terminal) fn normalize_cwd(path: &Path) -> PathBuf {
@@ -330,7 +334,18 @@ pub(crate) fn request(
         (_, "/app/terminal/close-derived") => response::action(method, action, || {
             terminals.close_derived(param(query, "workspace").unwrap_or_default())
         }),
-        (_, "/app/terminal/wake") => response::action(method, action, || terminals.wake(id)),
+        (_, "/app/terminal/wake") => {
+            response::action(method, action, || terminals.wake(id, &Attach::of(query)))
+        }
+        (_, "/app/terminal/open-derived") => response::action(method, action, || {
+            terminals.open_derived(
+                param(query, "workspace").unwrap_or_default(),
+                &param(query, "desk")
+                    .and_then(crate::usage::percent_decode)
+                    .unwrap_or_default(),
+                &Attach::of(query),
+            )
+        }),
         (_, "/app/terminal/restart") => {
             response::action(method, action, || terminals.restart(id, &Attach::of(query)))
         }

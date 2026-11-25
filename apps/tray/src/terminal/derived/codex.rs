@@ -290,8 +290,7 @@ pub(super) fn open_or_launch_codex(
             return Err(UNSETTLED_DISPATCH_BUSY_ERR.to_owned());
         }
         match terminals.resume_slot("codex", sid)? {
-            ResumeSlot::Free => {}
-            ResumeSlot::Dormant(row) => held = Some(row),
+            ResumeSlot::Free(slot) | ResumeSlot::Dormant(slot) => held = Some(slot),
             ResumeSlot::Live(existing) => {
                 if let Some(err) = account_mismatch(existing.account.as_ref(), account.as_ref()) {
                     return Err(err);
@@ -447,7 +446,7 @@ fn launch_codex(
     })
 }
 
-/// Starts a collapsed Codex session again. Model and permissions go with each turn, so the launch
+/// Starts a Codex session whose process has ended again. Model and permissions go with each turn, so the launch
 /// needs none; the thread is followed from the background once the TUI has loaded it.
 pub(super) fn relaunch_codex(terminals: &Terminals, plan: &WakePlan) -> Result<Relaunched, String> {
     let started = launch_codex(

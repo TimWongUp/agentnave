@@ -26,6 +26,7 @@ const PARENT: &str = "s-parent";
 
 mod bosses;
 mod live;
+mod open;
 mod wake;
 
 /// A fake CLI that reports the states typed to it.
@@ -301,7 +302,7 @@ fn a_derived_session_has_one_state_whoever_started_the_turn() {
 }
 
 #[test]
-fn three_quiet_minutes_collapse_an_idle_session_and_keep_its_row() {
+fn fifteen_quiet_minutes_end_an_idle_sessions_process_and_keep_its_row() {
     for provider in ["claude", "antigravity"] {
         let mut office = Office::new();
         let (id, session) = office.derived(provider);
@@ -402,7 +403,7 @@ fn anything_unfinished_or_untold_keeps_the_process() {
 }
 
 #[test]
-fn looking_at_a_terminal_restarts_its_three_minutes() {
+fn looking_at_a_terminal_restarts_its_fifteen_minutes() {
     let office = Office::new();
     let (id, session) = office.derived("claude");
     office.beat(Duration::ZERO);
@@ -469,7 +470,7 @@ fn a_redispatch_and_a_collapse_never_cross() {
     assert_eq!(office.state(id), "starting");
     assert!(office.row(id)["exit"].is_null());
 
-    // A start that fails leaves the row collapsed instead of taking it away.
+    // A start that fails leaves the row with its process ended instead of taking it away.
     let handle = office.terminals.derived_by_invocation("inv-3").unwrap();
     derived::cleanup_derived_startup(&office.terminals, &handle, false, Some(SID));
     ended(&revived);
