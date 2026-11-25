@@ -496,7 +496,7 @@ function updateDesk(rec, d, ctx) {
   const sel = activeSelection();
   setClass(
     rec.el,
-    `desk${s.away ? " away" : ""}${s.dormant ? " dormant" : ""}${d.private_allowed === false ? " only" : ""}${sel?.kind === "desk" && sel.key === d.key ? " sel" : ""}`,
+    `desk${s.away ? " away" : ""}${d.private_allowed === false ? " only" : ""}${sel?.kind === "desk" && sel.key === d.key ? " sel" : ""}`,
   );
   setSay(rec.say, s.say);
   const { name: bare, effort } = deskParts(d);

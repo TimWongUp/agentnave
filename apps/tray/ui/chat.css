@@ -95,8 +95,6 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
 .gi.gi-child .gi-meta { color: var(--tone, var(--muted)); font-variant-numeric: tabular-nums; line-height: 16px; min-height: 16px; }
-.gi.gi-child.dormant { opacity: 0.56; transition: opacity 0.15s; }
-.gi.gi-child.dormant:hover, .gi.gi-child.dormant.on { opacity: 0.85; }
 .gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 12px; color: var(--muted); }
 .gi-label { min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -574,10 +572,6 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .desk { position: relative; display: flex; flex-direction: column; justify-content: flex-start; width: 100%; min-width: 0; border-radius: 14px; background: transparent; border: 1px solid transparent; padding: 32px 8px 3px; text-align: center; cursor: pointer; transition: background 0.2s; }
 .desk:hover, .desk.sel { background: var(--card-hover); }
 .desk.sel { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
-.desk.dormant > .scene, .desk.dormant > .label, .desk.dormant > .desk-tags { opacity: 0.46; transition: opacity 0.2s; }
-.desk.dormant > .say { opacity: 0.85; }
-.desk.dormant:hover > .scene, .desk.dormant:hover > .label, .desk.dormant:hover > .desk-tags,
-.desk.dormant.sel > .scene, .desk.dormant.sel > .label, .desk.dormant.sel > .desk-tags { opacity: 0.78; }
 .desk.away .scene > .fig { opacity: 0; }
 .desk-tags { position: absolute; top: 7px; left: 8px; z-index: 7; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 46%; pointer-events: none; }
 .desk-tags .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
