@@ -1,7 +1,7 @@
-//! Collapses derived terminals that stayed idle, and clears away those whose boss is gone. Runs on
-//! the background scan's beat, after spawn requests were taken in on the same thread: a dispatch
-//! accepted by then has its receipt, which keeps its terminal, and one accepted later finds the
-//! terminal marked as ending and waits to revive it.
+//! Ends the process of derived terminals that stayed idle, and clears away those whose boss is
+//! gone. Runs on the background scan's beat, after spawn requests were taken in on the same
+//! thread: a dispatch accepted by then has its receipt, which keeps its terminal, and one accepted
+//! later finds the terminal marked as ending and waits to start it again.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -15,8 +15,8 @@ use super::boss::{Boss, end_removed};
 use super::{DerivedState, Ending};
 use crate::data::boss_app::boss_key;
 
-/// How long nothing may keep a derived terminal before it is collapsed.
-pub(super) const IDLE_GRACE: Duration = Duration::from_secs(3 * 60);
+/// How long nothing may keep a derived terminal before its process is ended.
+pub(super) const IDLE_GRACE: Duration = Duration::from_secs(15 * 60);
 
 /// What one beat of the background scan saw.
 pub(super) struct Beat<'a> {
@@ -60,6 +60,7 @@ impl Terminals {
             (state.due(beat), state.leases_of_ended())
         };
         drop(leases);
+        self.keep_launches();
         if due.is_empty() {
             return;
         }

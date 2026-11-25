@@ -102,8 +102,8 @@ pub(in crate::terminal) fn end_removed(removed: Vec<Running>) {
 }
 
 impl Terminals {
-    /// Ends the terminal's CLI and keeps its row. A derived one is collapsed at once; a boss takes
-    /// the derived terminals it dispatched with it.
+    /// Ends the terminal's CLI and keeps its row. A derived one's process ends at once; a boss
+    /// takes the derived terminals it dispatched with it.
     pub(in crate::terminal) fn stop(&self, id: Option<u64>) -> Response {
         let (fallen, ending, invocation) = {
             let mut state = self.lock();

@@ -1,5 +1,5 @@
-//! Starts a collapsed derived terminal again in its own row: for the user, who opens it and
-//! nothing is submitted, or for a re-dispatch by the boss.
+//! Starts a derived terminal whose process has ended again in its own row: for the user, who opens
+//! it and nothing is submitted, or for a re-dispatch by the boss.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,9 +11,11 @@ use serde_json::{Value, json};
 use super::super::account::Active;
 use super::super::session::Session;
 use super::super::{
-    DerivedHandle, DerivedLaunchConfig, NewDerived, Running, State, Terminals, derived, wakeup,
+    Attach, DerivedHandle, DerivedLaunchConfig, NewDerived, Running, State, Terminals, derived,
+    normalize_cwd, wakeup,
 };
 use super::{Life, account_error};
+use crate::data::boss_app::boss_key;
 use crate::isolated::leases::{self, HeldLease};
 use crate::response::Response;
 
@@ -21,37 +23,73 @@ use crate::response::Response;
 const PENDING_WAIT: Duration = Duration::from_secs(5);
 const PENDING_STEP: Duration = Duration::from_millis(50);
 const LEASE_WAIT: Duration = Duration::from_secs(3);
-const PENDING_WAKE_ERR: &str = "终端正在收起或恢复，请稍后再试";
-pub(in crate::terminal) const RESUME_PENDING_ERR: &str = "派生终端正在收起或恢复，请稍后续派";
+pub(super) const PENDING_WAKE_ERR: &str = "终端正在结束或启动进程，请稍后再试";
+pub(in crate::terminal) const RESUME_PENDING_ERR: &str = "派生终端正在结束或启动进程，请稍后续派";
 
 /// The row of a session a boss re-dispatches to.
 pub(in crate::terminal) enum ResumeSlot {
-    /// No row: a terminal of its own is opened.
-    Free,
+    /// No row: a terminal of its own is opened, the session held until it is there.
+    Free(Reviving),
     Live(Box<DerivedHandle>),
-    /// A collapsed row, held for the process about to be started in it.
+    /// A row whose process has ended, held for the process about to be started in it.
     Dormant(Reviving),
 }
 
-/// A collapsed row held for one new process; let go of when dropped without one.
+/// A session held for one new process, so no second one starts on it meanwhile: its row, or the
+/// session alone while it has none. Let go of when dropped.
 pub(in crate::terminal) struct Reviving {
     terminals: Terminals,
-    id: u64,
+    held: Held,
+}
+
+enum Held {
+    Row(u64),
+    Session(String, String),
+}
+
+impl Reviving {
+    fn row(terminals: &Terminals, id: u64) -> Self {
+        Self {
+            terminals: terminals.clone(),
+            held: Held::Row(id),
+        }
+    }
+
+    /// Holds a session that has no row, unless something else already does.
+    pub(super) fn session(
+        terminals: &Terminals,
+        state: &mut State,
+        provider: &str,
+        native: &str,
+    ) -> Option<Self> {
+        let key = (provider.to_owned(), native.to_owned());
+        state.opening.insert(key.clone()).then(|| Self {
+            terminals: terminals.clone(),
+            held: Held::Session(key.0, key.1),
+        })
+    }
 }
 
 impl Drop for Reviving {
     fn drop(&mut self) {
         let mut state = self.terminals.lock();
-        if let Some(running) = state.open.iter_mut().find(|r| r.id == self.id)
-            && running.session.exit().is_some()
-            && let Some(derived) = running.derived.as_mut()
-        {
-            derived.life.reviving = false;
+        match &self.held {
+            Held::Row(id) => {
+                if let Some(running) = state.open.iter_mut().find(|r| r.id == *id)
+                    && running.session.exit().is_some()
+                    && let Some(derived) = running.derived.as_mut()
+                {
+                    derived.life.reviving = false;
+                }
+            }
+            Held::Session(provider, native) => {
+                state.opening.remove(&(provider.clone(), native.clone()));
+            }
         }
     }
 }
 
-/// What a collapsed session is started again with.
+/// What a session whose process has ended is started again with.
 #[derive(Clone)]
 pub(in crate::terminal) struct WakePlan {
     pub provider: String,
@@ -62,6 +100,39 @@ pub(in crate::terminal) struct WakePlan {
     /// The permission mode Claude fell back to when it was first started.
     pub fallback_mode: Option<String>,
     pub isolation_id: Option<String>,
+    /// `config` was assumed for want of a saved launch.
+    pub assumed: bool,
+}
+
+impl WakePlan {
+    /// Fills in a launch the row does not have: the saved one, else the CLI's own settings.
+    fn complete(&mut self, terminals: &Terminals) {
+        if self.config.is_some() {
+            return;
+        }
+        if let Some(saved) = terminals.saved_launch(&self.provider, &self.native) {
+            self.config = Some(saved.config());
+            self.fallback_mode = self.fallback_mode.take().or(saved.fallback_mode);
+            return;
+        }
+        self.config = Some(assumed_config(&self.cwd, None, None));
+        self.assumed = true;
+    }
+}
+
+/// The launch of a session nothing was saved for: where and on what model it ran, with the
+/// permissions the CLI itself is set to.
+pub(super) fn assumed_config(
+    cwd: &Path,
+    model: Option<String>,
+    effort: Option<String>,
+) -> DerivedLaunchConfig {
+    DerivedLaunchConfig {
+        cwd: normalize_cwd(cwd),
+        model,
+        effort,
+        permissions: json!({}),
+    }
 }
 
 /// A CLI started again, and what lives as long as it does.
@@ -76,7 +147,7 @@ pub(in crate::terminal) struct Relaunched {
 /// What a wake finds at a row: a terminal that already runs, or a plan with the row held for it.
 enum Wake {
     Live(Value),
-    Begin(Box<WakePlan>, Reviving),
+    Begin(Box<WakePlan>, Reviving, u64),
 }
 
 impl Running {
@@ -99,6 +170,7 @@ impl Running {
             config: derived.launch_config.clone(),
             fallback_mode: derived.life.fallback_mode.clone(),
             isolation_id: derived.isolation_id.clone(),
+            assumed: false,
         })
     }
 
@@ -139,7 +211,7 @@ impl Running {
 }
 
 impl State {
-    fn derived_row(&mut self, provider: &str, native: &str) -> Option<&mut Running> {
+    pub(super) fn derived_row(&mut self, provider: &str, native: &str) -> Option<&mut Running> {
         self.open
             .iter_mut()
             .filter(|r| {
@@ -161,19 +233,22 @@ impl Terminals {
         loop {
             {
                 let mut state = self.lock();
-                let Some(running) = state.derived_row(provider, native) else {
-                    return Ok(ResumeSlot::Free);
-                };
-                let stopping = running.derived.as_ref().is_some_and(|d| d.life.stopping());
-                if running.session.exit().is_none() && !stopping {
-                    return Ok(ResumeSlot::Live(Box::new(running.to_derived_handle())));
-                }
-                if running.can_revive() {
-                    running.hold_for_revival();
-                    return Ok(ResumeSlot::Dormant(Reviving {
-                        terminals: self.clone(),
-                        id: running.id,
-                    }));
+                match state.derived_row(provider, native) {
+                    None => {
+                        if let Some(held) = Reviving::session(self, &mut state, provider, native) {
+                            return Ok(ResumeSlot::Free(held));
+                        }
+                    }
+                    Some(running) => {
+                        let stopping = running.derived.as_ref().is_some_and(|d| d.life.stopping());
+                        if running.session.exit().is_none() && !stopping {
+                            return Ok(ResumeSlot::Live(Box::new(running.to_derived_handle())));
+                        }
+                        if running.can_revive() {
+                            running.hold_for_revival();
+                            return Ok(ResumeSlot::Dormant(Reviving::row(self, running.id)));
+                        }
+                    }
                 }
             }
             if Instant::now() >= deadline {
@@ -206,8 +281,43 @@ impl Terminals {
         Ok(id)
     }
 
-    /// A start that failed in a row that was there before leaves it collapsed. False when the row
-    /// is no older than the failed process.
+    /// Ends the process of a session whose launch was only assumed, for a re-dispatch with another
+    /// launch, and holds the row for the process started in its place. None when its launch was
+    /// given, which a re-dispatch must keep to.
+    pub(in crate::terminal) fn retire_assumed(
+        &self,
+        id: u64,
+        provider: &str,
+        native: &str,
+    ) -> Option<Result<Reviving, String>> {
+        let ending = {
+            let mut state = self.lock();
+            let running = state.open.iter_mut().find(|r| r.id == id)?;
+            let derived = running.derived.as_ref()?;
+            if !derived.life.config_assumed && derived.launch_config.is_some() {
+                return None;
+            }
+            if derived.in_turn()
+                || running.session.has_draft()
+                || derived::shows_busy(&running.session)
+            {
+                return Some(Err(derived::LIVE_BUSY_ERR.to_owned()));
+            }
+            if derived.life.stopping() || running.session.exit().is_some() {
+                return Some(Err(RESUME_PENDING_ERR.to_owned()));
+            }
+            running.begin_stop()
+        };
+        ending.end();
+        Some(match self.resume_slot(provider, native) {
+            Ok(ResumeSlot::Dormant(held) | ResumeSlot::Free(held)) => Ok(held),
+            Ok(ResumeSlot::Live(_)) => Err(RESUME_PENDING_ERR.to_owned()),
+            Err(error) => Err(error),
+        })
+    }
+
+    /// A start that failed in a row that was there before leaves its process ended and the row
+    /// in place. False when the row is no older than the failed process.
     pub(in crate::terminal) fn collapse_failed_start(&self, id: u64) -> bool {
         let ending = {
             let mut state = self.lock();
@@ -223,30 +333,39 @@ impl Terminals {
         true
     }
 
-    /// Opens a collapsed session again in its row. Nothing is submitted to it.
-    pub(in crate::terminal) fn wake(&self, id: Option<u64>) -> Response {
-        self.wake_in(&crate::data_files::data_root(), id, |plan| {
-            derived::relaunch(self, plan)
-        })
+    /// Opens a session whose process has ended again in its row. Nothing is submitted to it.
+    pub(in crate::terminal) fn wake(&self, id: Option<u64>, attach: &Attach) -> Response {
+        self.wake_in(
+            &crate::data_files::data_root(),
+            id,
+            |key| self.unless_elsewhere(key, attach),
+            |plan| derived::relaunch(self, plan),
+        )
     }
 
+    /// `elsewhere` answers instead when the session runs outside this App's terminals.
     pub(super) fn wake_in(
         &self,
         root: &Path,
         id: Option<u64>,
+        elsewhere: impl FnOnce(&str) -> Option<Response>,
         launch: impl FnOnce(&WakePlan) -> Result<Relaunched, String>,
     ) -> Response {
-        let (plan, held) = match self.begin_wake(root, id) {
-            Ok(Wake::Begin(plan, held)) => (plan, held),
+        let (mut plan, held, id) = match self.begin_wake(root, id) {
+            Ok(Wake::Begin(plan, held, id)) => (plan, held, id),
             Ok(Wake::Live(live)) => return Response::json(&json!({"session": live})),
             Err(refusal) => return refusal,
         };
-        let relaunched = prepare(root, &plan).and_then(|lease| Ok((lease, launch(&plan)?)));
-        let (lease, started) = match relaunched {
+        if let Some(refusal) = elsewhere(&boss_key(&plan.provider, &plan.native)) {
+            return refusal;
+        }
+        plan.complete(self);
+        let (lease, started) = match start(root, &plan, launch) {
             Ok(pair) => pair,
             Err(error) => return Response::error(409, &error),
         };
-        let reply = self.install_woken(root, held.id, lease, started);
+        let reply = self.install_woken(root, id, &plan, lease, started);
+        drop(held);
         wakeup::sync_derived_pids(self);
         reply
     }
@@ -285,17 +404,15 @@ impl Terminals {
         };
         let running = &mut state.open[at];
         running.hold_for_revival();
-        let held = Reviving {
-            terminals: self.clone(),
-            id: running.id,
-        };
-        Ok(Some(Wake::Begin(Box::new(plan), held)))
+        let held = Reviving::row(self, running.id);
+        Ok(Some(Wake::Begin(Box::new(plan), held, running.id)))
     }
 
     fn install_woken(
         &self,
         root: &Path,
         id: u64,
+        plan: &WakePlan,
         lease: Option<HeldLease>,
         started: Relaunched,
     ) -> Response {
@@ -309,7 +426,7 @@ impl Terminals {
             started.session.stop();
             return Response::error(409, "终端已关闭");
         };
-        let old = running.wake_with(lease, started);
+        let old = running.wake_with(plan, lease, started);
         state.observe_derived(root);
         let described = state
             .open
@@ -323,7 +440,12 @@ impl Terminals {
 }
 
 impl Running {
-    fn wake_with(&mut self, lease: Option<HeldLease>, started: Relaunched) -> impl Sized + use<> {
+    fn wake_with(
+        &mut self,
+        plan: &WakePlan,
+        lease: Option<HeldLease>,
+        started: Relaunched,
+    ) -> impl Sized + use<> {
         let session = std::mem::replace(&mut self.session, started.session);
         #[cfg(unix)]
         {
@@ -335,6 +457,12 @@ impl Running {
             derived.life.process = Default::default();
             derived.life.reviving = false;
             derived.life.revived = true;
+            // Opened by the user: in use, even when its boss is gone.
+            derived.life.outlived_boss = true;
+            if derived.launch_config.is_none() {
+                derived.launch_config = plan.config.clone();
+                derived.life.config_assumed = plan.assumed;
+            }
             (
                 std::mem::replace(&mut derived._lease, lease),
                 std::mem::replace(&mut derived._log_dir, started.log_dir),
@@ -343,6 +471,16 @@ impl Running {
         });
         (session, old)
     }
+}
+
+/// Checks the session, takes its lease and starts its CLI.
+pub(super) fn start(
+    root: &Path,
+    plan: &WakePlan,
+    launch: impl FnOnce(&WakePlan) -> Result<Relaunched, String>,
+) -> Result<(Option<HeldLease>, Relaunched), String> {
+    let lease = prepare(root, plan)?;
+    Ok((lease, launch(plan)?))
 }
 
 /// Checks that the session can go on where and as whom it ran, and takes the lease of its

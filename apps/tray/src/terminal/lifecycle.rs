@@ -1,10 +1,12 @@
-//! Derived terminals from busy to idle, collapsed and back (ADR-0124): the one state the pages
-//! show, which terminal the user is looking at, and what `lifecycle/` does with both. Everything
-//! here lives in memory only.
+//! Derived terminals from busy to idle, their process ended and started again (ADR-0124): the one
+//! state the pages show, which terminal the user is looking at, and what `lifecycle/` does with
+//! both. Everything here lives in memory only, but for the launches `saved` keeps.
 
 mod boss;
 mod idle;
+mod open;
 mod revive;
+mod saved;
 #[cfg(all(test, unix))]
 mod tests;
 
@@ -22,7 +24,8 @@ use super::{Running, State, Terminals, account};
 
 pub(super) use boss::end_removed;
 pub(super) use idle::tick;
-pub(super) use revive::{RESUME_PENDING_ERR, Relaunched, ResumeSlot, WakePlan};
+pub(super) use revive::{RESUME_PENDING_ERR, Relaunched, ResumeSlot, Reviving, WakePlan};
+pub(super) use saved::Store;
 
 /// How long a page's report of the terminal the user is looking at holds.
 const SHOWN_TTL: Duration = Duration::from_secs(10);
@@ -60,18 +63,22 @@ pub(super) struct Life {
     pub(super) process: Process,
     /// A wake or a re-dispatch is starting a new process for this row.
     reviving: bool,
-    /// The row was there before its current process, so a failed start leaves it collapsed.
+    /// The row was there before its current process, so a failed start leaves its process ended
+    /// and the row in place.
     revived: bool,
     /// The last turn the boss dispatched, and whether its result still waits in the boss's inbox.
     last_invocation: Option<String>,
     uncollected: bool,
     /// The boss terminal it was last seen to belong to.
     boss: Option<u64>,
-    /// The boss was already gone while this one was still in use.
+    /// The boss was already gone while this one was still in use, or when the user opened it.
     outlived_boss: bool,
     state: Option<(DerivedState, f64)>,
     /// The permission mode Claude fell back to, which a wake starts in again.
     fallback_mode: Option<String>,
+    /// Its launch was assumed from the service history for want of a saved one: a re-dispatch
+    /// with another launch starts it again instead of being refused.
+    config_assumed: bool,
 }
 
 /// What is known of the CLI process a derived terminal currently runs.
@@ -83,7 +90,7 @@ pub(super) struct Process {
     worked: bool,
     /// It was told to end and may still be on its way out.
     stopping: bool,
-    /// Since when nothing has kept it from being collapsed.
+    /// Since when nothing has kept its process from being ended.
     quiet_since: Option<Instant>,
     stops: StopTrail,
 }
@@ -202,7 +209,7 @@ impl Running {
     }
 
     /// Marks a derived terminal's process as ending, so no turn is dispatched to it any more.
-    /// `Ending::end` then ends it and the row stays as a collapsed session.
+    /// `Ending::end` then ends it and the row stays, its session to be taken up again.
     fn begin_stop(&mut self) -> Ending {
         if let Some(derived) = self.derived.as_mut() {
             derived.life.process.stopping = true;
@@ -259,7 +266,8 @@ impl State {
         value["derived_state"] = json!(state.as_str());
         value["derived_since"] = json!(since);
         value["has_draft"] = json!(running.session.has_draft());
-        value["resumable"] = json!(state == DerivedState::Dormant && running.cwd.is_dir());
+        // Whatever keeps it from coming back is told when it is opened.
+        value["resumable"] = json!(state == DerivedState::Dormant);
         value["parent_terminal_id"] = json!(self.boss_of(running, &HashMap::new()));
         value
     }

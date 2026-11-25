@@ -60,7 +60,7 @@ fn a_boss_that_exits_by_itself_leaves_what_is_in_use_until_it_is_idle() {
     assert_eq!(office.state(drafted), "idle");
     assert_eq!(office.row(busy)["parent_terminal_id"], boss);
 
-    // Done, it stays three more minutes and then goes with its row.
+    // Done, it stays fifteen more minutes and then goes with its row.
     let stop = json!({"hook_event_name": "Stop", "session_id": "busy", "background_tasks": []});
     office.hook(busy, stop);
     report(&busy_session, "done");

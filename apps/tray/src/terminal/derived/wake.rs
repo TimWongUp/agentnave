@@ -1,7 +1,10 @@
-//! Starts a collapsed derived session's CLI again on its native session, submitting nothing.
+//! Starts the CLI of a derived session whose process has ended again on its native session,
+//! submitting nothing.
 
 use super::super::Terminals;
 use super::super::lifecycle::{Relaunched, WakePlan};
+use serde_json::json;
+
 use super::super::spawn_requests::RunConfig;
 use super::claude_hook;
 #[cfg(unix)]
@@ -50,13 +53,10 @@ fn relaunch_tui(
 }
 
 /// The launch the session began with, in the permission mode it ended up in: without a prompt to
-/// check the mode by, there is no falling back this time.
+/// check the mode by, there is no falling back this time. Without one, the CLI's own settings.
 pub(super) fn wake_config(plan: &WakePlan) -> Result<RunConfig, String> {
-    let config = plan
-        .config
-        .as_ref()
-        .ok_or_else(|| "这个派生会话的启动配置已不在，请由 boss 续派恢复".to_owned())?;
-    let mut permissions = config.permissions.clone();
+    let config = plan.config.as_ref();
+    let mut permissions = config.map_or_else(|| json!({}), |c| c.permissions.clone());
     if let Some(options) = permissions.as_object_mut() {
         options.remove("permission_fallback");
         if let Some(mode) = &plan.fallback_mode {
@@ -69,8 +69,8 @@ pub(super) fn wake_config(plan: &WakePlan) -> Result<RunConfig, String> {
         account_dir: None,
         cwd: plan.cwd.display().to_string(),
         isolation: None,
-        model: config.model.clone(),
-        effort: config.effort.clone(),
+        model: config.and_then(|c| c.model.clone()),
+        effort: config.and_then(|c| c.effort.clone()),
         permissions,
     })
 }

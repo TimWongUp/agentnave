@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::account::{self, Active};
-use super::lifecycle::ResumeSlot;
+use super::lifecycle::{ResumeSlot, Reviving};
 use super::session::Session;
 use super::spawn_requests::{
     BlockedReceipt, Coordinator, ForwardItem, IsolationSpec, Receipt, RunConfig, RunHandle,
@@ -263,50 +263,28 @@ where
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
-    // Holds the collapsed row the new process goes into, until it is there.
+    // Holds the session, or its row, the new process goes into, until it is there.
     let mut held = None;
     if let Some(sid) = env.session_id.as_deref() {
         if coordinator.has_unsettled_run_for_session(&cfg.provider, sid, &env.request_id) {
             return Err(UNSETTLED_DISPATCH_BUSY_ERR.to_owned());
         }
         match terminals.resume_slot(&cfg.provider, sid)? {
-            ResumeSlot::Free => {}
-            ResumeSlot::Dormant(row) => held = Some(row),
+            ResumeSlot::Free(slot) | ResumeSlot::Dormant(slot) => held = Some(slot),
             ResumeSlot::Live(existing) => {
-                if let Some(err) = account_mismatch(existing.account.as_ref(), account) {
-                    return Err(err);
-                }
-                if let Some(err) = launch_config_mismatch(existing.launch_config.as_ref(), cfg) {
-                    return Err(err);
-                }
-                if existing.session.has_draft()
-                    || matches!(
-                        existing.session.osc_snapshot().1.as_deref(),
-                        Some("working" | "blocked")
-                    )
-                {
-                    return Err("派生终端正在输入或运行中".to_owned());
-                }
-                let (iso_id, lease) = acquire_isolation_for_terminal(
+                let live = Live {
                     coordinator,
                     terminals,
-                    &env.request_id,
+                    env,
+                    cfg,
                     cwd,
-                    cfg.isolation.as_ref(),
-                    true,
-                )?;
-                if handle.is_pre_start_cancelled() {
-                    return Err("启动前已取消".to_owned());
+                    account,
+                    handle,
+                };
+                match live.take(&existing, sid)? {
+                    Taken::Claimed(claimed) => return Ok((*claimed, true)),
+                    Taken::Restart(slot) => held = Some(slot),
                 }
-                if let Some(lease) = lease {
-                    terminals.attach_derived_lease(existing.id, iso_id.as_deref(), lease);
-                }
-                let claimed = terminals.try_claim_derived_turn(
-                    existing.id,
-                    &env.invocation_id,
-                    account.map(|a| a.id.as_str()),
-                )?;
-                return Ok((claimed, true));
             }
         }
     }
@@ -325,6 +303,66 @@ where
     let launched = spawn_new(lease, isolation_id);
     drop(held);
     launched.map(|h| (h, false))
+}
+
+/// A re-dispatch to a session whose terminal runs.
+struct Live<'a> {
+    coordinator: &'a Coordinator,
+    terminals: &'a Terminals,
+    env: &'a SpawnRequestEnvelope,
+    cfg: &'a RunConfig,
+    cwd: &'a Path,
+    account: Option<&'a Active>,
+    handle: &'a Arc<RunHandle>,
+}
+
+enum Taken {
+    Claimed(Box<DerivedHandle>),
+    /// Its process is ending to start again with the re-dispatch's launch.
+    Restart(Reviving),
+}
+
+impl Live<'_> {
+    /// Takes the turn in the running terminal. One started on an assumed launch starts again with
+    /// the re-dispatch's when the two differ.
+    fn take(&self, existing: &DerivedHandle, sid: &str) -> Result<Taken, String> {
+        if let Some(err) = account_mismatch(existing.account.as_ref(), self.account) {
+            return Err(err);
+        }
+        if let Some(err) = launch_config_mismatch(existing.launch_config.as_ref(), self.cfg) {
+            return match self
+                .terminals
+                .retire_assumed(existing.id, &self.cfg.provider, sid)
+            {
+                Some(held) => held.map(Taken::Restart),
+                None => Err(err),
+            };
+        }
+        if existing.session.has_draft() || shows_busy(&existing.session) {
+            return Err(LIVE_BUSY_ERR.to_owned());
+        }
+        let (iso_id, lease) = acquire_isolation_for_terminal(
+            self.coordinator,
+            self.terminals,
+            &self.env.request_id,
+            self.cwd,
+            self.cfg.isolation.as_ref(),
+            true,
+        )?;
+        if self.handle.is_pre_start_cancelled() {
+            return Err("启动前已取消".to_owned());
+        }
+        if let Some(lease) = lease {
+            self.terminals
+                .attach_derived_lease(existing.id, iso_id.as_deref(), lease);
+        }
+        let claimed = self.terminals.try_claim_derived_turn(
+            existing.id,
+            &self.env.invocation_id,
+            self.account.map(|a| a.id.as_str()),
+        )?;
+        Ok(Taken::Claimed(Box::new(claimed)))
+    }
 }
 
 pub(super) fn cleanup_derived_startup(
@@ -349,6 +387,16 @@ pub(super) fn account_mismatch(
         (Some(a), Some(b)) if a.id == b.id && a.dir == b.dir => None,
         _ => Some("派生会话原账号与请求账号不一致".to_owned()),
     }
+}
+
+pub(super) const LIVE_BUSY_ERR: &str = "派生终端正在输入或运行中";
+
+/// Its screen shows a turn running or a box waiting for an answer.
+pub(super) fn shows_busy(session: &Session) -> bool {
+    matches!(
+        session.osc_snapshot().1.as_deref(),
+        Some("working" | "blocked")
+    )
 }
 
 pub(super) const LAUNCH_CONFIG_MISMATCH_ERR: &str =

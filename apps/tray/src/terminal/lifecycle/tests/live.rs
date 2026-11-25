@@ -2,7 +2,7 @@
 //! CLIs, one provider per test: dispatch, collapse, wake, a turn the user types, re-dispatch, stop
 //! then re-dispatch, and the boss's end. It goes through the tray's own code (`execute_run`,
 //! `Terminals::wake_in`, `collapse_idle`, `stop`), with the data root in a temp directory and the
-//! three-minute grace driven by an injected clock. Costs quota; each test runs a handful of turns
+//! fifteen-minute grace driven by an injected clock. Costs quota; each test runs a handful of turns
 //! on the cheap model.
 //!
 //! `cargo test live_lifecycle -- --ignored --test-threads=1 --nocapture`
@@ -348,7 +348,7 @@ impl Live {
         }
     }
 
-    /// Three idle minutes on the injected clock end the process and keep the row.
+    /// Fifteen idle minutes on the injected clock end the process and keep the row.
     fn collapse(&mut self, id: u64, tree: &[u32]) {
         // The grace starts at the first beat that finds nothing holding it.
         let began = Instant::now();
@@ -377,7 +377,7 @@ impl Live {
         assert_eq!(
             self.office.state(id),
             "idle",
-            "collapsed before its three minutes"
+            "collapsed before its fifteen minutes"
         );
         assert!(self.session(id).exit().is_none());
         self.tick(Duration::from_secs(2));
@@ -386,7 +386,7 @@ impl Live {
         while session.exit().is_none() {
             assert!(
                 Instant::now() < deadline,
-                "not collapsed after three idle minutes; state {}; has_draft {}; osc {:?}; codex {}",
+                "not collapsed after fifteen idle minutes; state {}; has_draft {}; osc {:?}; codex {}",
                 self.office.state(id),
                 session.has_draft(),
                 session.osc_snapshot(),
@@ -402,14 +402,16 @@ impl Live {
     /// The user opens the collapsed row: the same ID, nothing submitted, no screen to answer.
     fn wake(&mut self, id: u64) {
         let terminals = self.office.terminals.clone();
-        let reply = self
-            .office
-            .terminals
-            .wake_in(self.root(), Some(id), move |plan| {
+        let reply = self.office.terminals.wake_in(
+            self.root(),
+            Some(id),
+            |_| None,
+            move |plan| {
                 let started = derived::relaunch(&terminals, plan)?;
                 started.session.record_writes();
                 Ok(started)
-            });
+            },
+        );
         assert_eq!(
             reply.status,
             200,
@@ -641,7 +643,7 @@ fn live_lifecycle(provider: &Provider) {
     let tree1 = live.track(id);
     println!("[{}] 1 ok: native={native} tree={tree1:?}", provider.name);
 
-    // 2. Three idle minutes (injected) end the whole process tree and keep the row.
+    // 2. Fifteen idle minutes (injected) end the whole process tree and keep the row.
     live.collapse(id, &tree1);
     println!("[{}] 2 ok: collapsed, row {id} dormant", provider.name);
 
@@ -727,4 +729,113 @@ fn live_lifecycle(provider: &Provider) {
 /// How many turns of the thread the app-server's notifications reported completed.
 fn codex_completed_turns(codex: &codex_server::Client, native: &str) -> usize {
     codex.completed_turns_for_test(native)
+}
+
+#[test]
+#[ignore = "真实 Claude CLI，消耗额度，需要显式授权"]
+fn live_open_derived_claude() {
+    live_open_derived(&Provider {
+        name: "claude",
+        model: "claude-haiku-5-5",
+        effort: None,
+    });
+}
+
+#[test]
+#[ignore = "真实 Codex CLI，消耗额度，需要显式授权"]
+fn live_open_derived_codex() {
+    live_open_derived(&Provider {
+        name: "codex",
+        model: "gpt-6-luna",
+        effort: Some("low"),
+    });
+}
+
+#[test]
+#[ignore = "真实 Antigravity CLI，消耗额度，需要显式授权"]
+fn live_open_derived_antigravity() {
+    live_open_derived(&Provider {
+        name: "antigravity",
+        model: "gemini-3.8-flash-low",
+        effort: None,
+    });
+}
+
+/// The App forgets every row (as on a restart); opening the desk takes the session up again from
+/// the service history and the saved launch, and it still knows what it was told.
+fn live_open_derived(provider: &Provider) {
+    let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    let mut live = Live::new(provider);
+    let code = format!("OKAPI{}", std::process::id() % 10_000);
+    let want = format!("a1={}", code.to_lowercase());
+    let (_, boss_session) = live.office.boss(&[WS]);
+    live.office
+        .terminals
+        .save_launches_in(&live.root().join("config"));
+    let (native, _) = live.dispatch(
+        None,
+        &format!("请记住暗号 {code}。只回复一句话「已记住」，不要使用任何工具，不要读写文件。"),
+    );
+    let id = live.derived();
+    live.wait_state(id, &["idle", "uncollected"], Duration::from_secs(30));
+    live.tick(Duration::ZERO);
+    assert!(
+        live.office
+            .terminals
+            .saved_launch(provider.name, &native)
+            .is_some()
+    );
+    let tree = live.track(id);
+
+    let rows = std::mem::take(&mut live.office.terminals.lock().open);
+    super::super::end_removed(rows);
+    live.wait_gone(&tree, "after the rows were forgotten");
+    super::open::history(
+        live.root(),
+        &[
+            json!({"provider": provider.name, "session_id": native, "execution_mode": "terminal",
+            "cwd": CWD, "model": provider.model, "effort": provider.effort,
+            "time": "2026-11-25T01:00:00+00:00"}),
+        ],
+    );
+    let terminals = live.office.terminals.clone();
+    let reply = live.office.terminals.open_derived_in(
+        live.root(),
+        WS,
+        &crate::terminal::thread_desk_key(provider.name, &native),
+        |_| None,
+        move |plan| derived::relaunch(&terminals, plan),
+    );
+    assert_eq!(
+        reply.status,
+        200,
+        "{}",
+        String::from_utf8_lossy(&reply.body)
+    );
+    let opened = live.derived();
+    assert_eq!(live.native(opened), native);
+    live.wait_state(opened, &["idle"], Duration::from_secs(90));
+    live.track(opened);
+    let answered = (0..3).any(|_| {
+        live.user_turn(
+            opened,
+            "我之前让你记住的暗号是什么？只回复一行 a1=<暗号全部转成小写>，不要使用任何工具。",
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !normalized(&live.rendered(opened)).contains(&want) {
+            if Instant::now() >= deadline {
+                println!(
+                    "[{}] no answer: {}",
+                    provider.name,
+                    tail(&live.rendered(opened))
+                );
+                return false;
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+        true
+    });
+    assert!(answered, "the opened session did not remember the code");
+    println!("[{}] opened from the desk and answered", provider.name);
+    boss_session.stop();
 }
