@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -184,7 +184,9 @@ pub(crate) fn providers() -> Value {
 /// The status the route answers with, and why.
 pub(crate) type Failure = (u16, String);
 
-static CACHE: LazyLock<Mutex<HashMap<String, Vec<Value>>>> =
+type CacheKey = (PathBuf, &'static str, String, String);
+
+static CACHE: LazyLock<Mutex<HashMap<CacheKey, Vec<Value>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The models a source lists now, from this session's memory unless `refresh` asks again.
@@ -290,21 +292,20 @@ fn auth_denied_message(
 
 /// Where this session's answers are kept apart: the data root, the source and its address, and
 /// the key that was sent (as a hash), so a changed key never reads an answer given to another.
-fn cache_key(root: &Path, source: &Source, base: &str, key: Option<&str>) -> String {
+fn cache_key(root: &Path, source: &Source, base: &str, key: Option<&str>) -> CacheKey {
     let key = key.map_or_else(String::new, |key| {
         format!("{:x}", Sha256::digest(key.as_bytes()))
     });
-    format!("{}|{}|{}|{}", root.to_string_lossy(), source.id, base, key)
+    (root.to_path_buf(), source.id, base.to_owned(), key)
 }
 
 /// Forgets this data root's cached lists; a saved or cleared key changes what a source answers,
-/// without disturbing unrelated data roots.
+/// without disturbing unrelated data roots (even when one path is a prefix of another).
 pub(super) fn clear_cache_for(root: &Path) {
-    let prefix = format!("{}|", root.to_string_lossy());
-    lock_cache().retain(|key, _| !key.starts_with(&prefix));
+    lock_cache().retain(|(cached_root, _, _, _), _| cached_root != root);
 }
 
-fn lock_cache() -> std::sync::MutexGuard<'static, HashMap<String, Vec<Value>>> {
+fn lock_cache() -> std::sync::MutexGuard<'static, HashMap<CacheKey, Vec<Value>>> {
     CACHE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -408,14 +409,20 @@ fn fetch(
     let document: Value =
         serde_json::from_slice(&bytes).map_err(|_| (502, "模型目录返回了无效 JSON".to_string()))?;
     let mut models = parse(&document);
-    // Drop any model entry that echoes back the Bearer key sent to the catalog endpoint.
+    // Drop any model entry whose fields (id, name, price, etc.) echo back the sent Bearer key.
     if let Some(secret) = key.map(str::trim).filter(|k| !k.is_empty()) {
-        let echoes = |text: &str| text == secret || (secret.len() >= 8 && text.contains(secret));
-        models.retain(|item| {
-            !item["id"].as_str().is_some_and(echoes) && !item["name"].as_str().is_some_and(echoes)
-        });
+        models.retain(|item| !value_echoes_secret(item, secret));
     }
     Ok(models)
+}
+
+pub(super) fn value_echoes_secret(value: &Value, secret: &str) -> bool {
+    match value {
+        Value::String(text) => text == secret || (secret.len() >= 8 && text.contains(secret)),
+        Value::Array(items) => items.iter().any(|item| value_echoes_secret(item, secret)),
+        Value::Object(map) => map.values().any(|item| value_echoes_secret(item, secret)),
+        _ => false,
+    }
 }
 
 fn entry(id: &str, name: Option<&str>) -> Value {

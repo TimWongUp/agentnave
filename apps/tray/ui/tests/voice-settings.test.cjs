@@ -190,4 +190,7 @@ test("failed summary platform switch preserves an open manual model input and ty
   pickerOptions(app, "摘要平台").find((item) => app.text(item) === "自定义").listeners.click();
   await new Promise(setImmediate);
   assert.equal(app.labelled("手填摘要模型 ID").value, "my-draft-model");
+  // Re-clicking the already-selected manual option keeps the typed draft too.
+  pickerOptions(app, "摘要模型").at(-1).listeners.click();
+  assert.equal(app.labelled("手填摘要模型 ID").value, "my-draft-model");
 });

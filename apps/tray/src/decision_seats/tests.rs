@@ -955,11 +955,13 @@ mod catalog {
     #[test]
     fn saving_a_key_clears_only_its_own_root_and_echoed_keys_are_dropped() {
         let dir_a = tempfile::tempdir().unwrap();
-        let dir_b = tempfile::tempdir().unwrap();
         let (base, seen) = serve(|_| {
             (
                 200,
-                json!({"data": [{"id": "sk-secret-echo-1234", "name": "ok"}, {"id": "real-decider", "name": "Decider"}]}),
+                json!({"data": [
+                    {"id": "sk-secret-echo-1234", "name": "ok"},
+                    {"id": "real-decider", "name": "Decider"}
+                ]}),
             )
         });
         save_custom(dir_a.path(), &base);
@@ -973,13 +975,36 @@ mod catalog {
             listed,
             vec![json!({"id": "real-decider", "name": "real-decider"})]
         );
-        // Saving a key in another data root must not clear dir_a's cache.
+        assert!(models::value_echoes_secret(
+            &json!({"id": "m", "name": "m", "price": "sk-secret-echo-1234"}),
+            "sk-secret-echo-1234"
+        ));
+        // Saving a key in another data root (even one sharing a `root|` prefix on POSIX) must not clear dir_a's cache.
+        let parent = tempfile::tempdir().unwrap();
+        let dir_prefix = parent.path().join("root");
+        let sibling_name = if cfg!(windows) {
+            "root-other"
+        } else {
+            "root|other"
+        };
+        let dir_sibling = parent.path().join(sibling_name);
+        std::fs::create_dir_all(&dir_prefix).unwrap();
+        std::fs::create_dir_all(&dir_sibling).unwrap();
+        save_custom(&dir_sibling, &base);
         save_key(
-            dir_b.path(),
+            &dir_sibling,
+            &json!({"provider": "custom", "key": "sk-secret-echo-1234"}),
+        )
+        .unwrap();
+        fetch_models(&dir_sibling, "custom", None, true).unwrap();
+        save_key(
+            &dir_prefix,
             &json!({"provider": "gemini", "key": "gm-other"}),
         )
         .unwrap();
+        fetch_models(&dir_sibling, "custom", None, false).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 2);
         fetch_models(dir_a.path(), "custom", None, false).unwrap();
-        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 }

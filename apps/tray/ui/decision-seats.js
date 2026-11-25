@@ -253,8 +253,8 @@
     const normalized = url.href.replace(/\/+$/, "");
     if (text.length > 512 || normalized.length > 512) return L("API 地址过长", "The API address is too long");
     if (url.username || url.password || /[?#]/.test(text) || /^[a-z][a-z0-9+.-]*:\/*[^/]*@/i.test(text)) return L("API 地址不能包含账号、查询参数或片段", "The API address cannot hold an account, query or fragment");
-    const authority = text.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] ?? "";
-    if (url.port === "0" || authority.endsWith(":")) return L("API 地址无效", "The API address is not valid");
+    const authority = text.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1];
+    if (authority === undefined || url.port === "0" || authority.endsWith(":")) return L("API 地址无效", "The API address is not valid");
     const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     const loopback = host === "localhost" || /^127(\.\d{1,3}){3}$/.test(host) || host === "::1";
     if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return L("API 只允许 HTTPS，或本机上的 HTTP", "The API takes HTTPS, or HTTP on this machine");
@@ -316,13 +316,14 @@
       if (!response.ok) throw new Error(L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
       const loaded = await response.json();
       const keep = changed();
+      const prevDoc = saved?.document;
       // A file error while an unsaved draft stands keeps the last good baseline.
       if (!(loaded.error && keep)) saved = loaded;
       if (loaded.error) S.showNotice(L(`${loaded.error}；请先修复或删除这个文件`, `${loaded.error}; fix or delete this file first`), true);
       if (!keep) {
         draft = null;
         sourceDraft = null;
-        providerDrafts.clear();
+        if (!sameJson(loaded.document, prevDoc)) providerDrafts.clear();
         randomDraft = null;
         prefilled = false;
         manualModel = false;
@@ -425,7 +426,9 @@
     keyDraft = "";
     keyMessage = null;
     manualModel = false;
-    if (listsOnChoice(meta.id)) startCatalog(next, false);
+    const savedBase = next.provider === savedSource().provider ? savedSource().base_url : "";
+    const addressUnedited = !meta.custom_url || next.base_url.trim() === savedBase;
+    if (S.viewingDecision?.() && listsOnChoice(meta.id) && addressUnedited) startCatalog(next, false);
     render();
     S.advancedEdited();
   }

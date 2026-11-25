@@ -376,7 +376,6 @@
       const items = typable ? [...choices, { id: MANUAL_MODEL, name: L("手动输入模型 ID…", "Enter model ID manually…") }] : choices;
       const select = picker(L("摘要模型", "Summary model"), items, typing ? MANUAL_MODEL : config.summary.model, async id => {
         if (id === MANUAL_MODEL) {
-          drafts.model = null;
           manualSummary = true;
           render();
           document.getElementById("summary-model-id")?.focus?.();

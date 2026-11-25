@@ -1002,7 +1002,7 @@
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
     renderOrchestrationText, orchestrationSupportsT3: () => orchestrationView !== "meetings", // off still gets the T3-only block
-    viewingDecision: () => orchestrationView === "decision" && !$("pane-orchestration")?.hidden,
+    viewingDecision: () => orchestrationView === "decision" && !$("pane-orchestration")?.hidden && document.documentElement?.dataset?.windowHidden !== "true",
     viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, renderRuleFiles, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced, REVIEW_ROLES,

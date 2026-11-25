@@ -272,6 +272,7 @@ fn models_at(base: &str, key: &str) -> Result<Vec<SummaryModel>, String> {
             !echoes(&model.id)
                 && !echoes(&model.display_name)
                 && !model.owned_by.as_deref().is_some_and(echoes)
+                && !model.reasoning_levels.iter().any(|level| echoes(level))
         });
     }
     if models.is_empty() {

@@ -35,8 +35,11 @@ pub(crate) fn normalize_endpoint(base_url: &str, label: &str) -> Result<String, 
     if has_userinfo || url.query().is_some() || url.fragment().is_some() {
         return Err(format!("{label} 地址不能包含账号、查询参数或片段"));
     }
-    // A port of zero, or a colon with no port after it, which the parser drops without a word.
-    if url.port() == Some(0) || authority.is_some_and(|authority| authority.ends_with(':')) {
+    // Require `scheme://`, and reject a zero port or a colon with no port after it.
+    let Some(authority) = authority else {
+        return Err(format!("{label} 地址无效"));
+    };
+    if url.port() == Some(0) || authority.ends_with(':') {
         return Err(format!("{label} 地址无效"));
     }
     if url.scheme() != "https" && !(url.scheme() == "http" && is_loopback_url(&url)) {
@@ -62,6 +65,7 @@ mod tests {
             "https://example.com:0/v1",
             "https://h:",
             "https://h:/v1",
+            "https:example.invalid:",
             "https://user@api.example.com/v1",
             "https://api.example.com/v1?",
             "https://api.example.com/v1#",

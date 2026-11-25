@@ -1850,18 +1850,25 @@ test("switching platforms keeps unsaved custom model draft, and delayed TypeSafe
   control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
   assert.equal(decisionFile(app).decision_model, "new-m");
   assert.equal(decision((d) => d.changed()), true);
-  // Start saving TypeSafe key, then switch to Custom with an unsaved address before the reply lands.
+  // Unchanged reload after returning to saved platform keeps in-session custom draft; recalling an edited Ollama address does not auto-fetch.
+  control(app, "decision/provider").listeners.change({ target: { value: "ollama" } });
+  await settle();
+  const afterOllama = calls.filter((call) => call.url.startsWith("/app/decision-models")).length;
+  control(app, "decision/address").listeners.input({ target: { value: "http://127.0.0.1:19999" } });
+  control(app, "decision/provider").listeners.change({ target: { value: "openai" } });
+  control(app, "decision/provider").listeners.change({ target: { value: "ollama" } });
+  await settle();
+  assert.equal(calls.filter((call) => call.url.startsWith("/app/decision-models")).length, afterOllama, "edited Ollama address waits for Refresh");
+  // Start saving TypeSafe key, then hide the embedded settings window before the reply lands.
   control(app, "decision/provider").listeners.change({ target: { value: "typesafe" } });
   const [input, save] = topRow(app, "TypeSafe AI 密钥").children[1].children[0].children;
   input.listeners.input({ target: { value: "ts-secret" } });
   const saving = save.listeners.click();
-  control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
-  control(app, "decision/address").listeners.input({ target: { value: "https://unsaved.example/v1" } });
-  app.run('$("pane-orchestration").hidden = true;');
+  app.run('document.documentElement = { dataset: { windowHidden: "true" } };');
   resolveKey();
   await saving;
   await settle();
-  assert.equal(calls.filter((call) => call.url.startsWith("/app/decision-models")).length, 0);
+  assert.equal(calls.filter((call) => call.url.startsWith("/app/decision-models")).length, afterOllama);
 });
 
 test("a local Ollama and a custom endpoint take an address, which is checked before saving", async () => {
@@ -1880,7 +1887,7 @@ test("a local Ollama and a custom endpoint take an address, which is checked bef
   assert.deepEqual(decisionFile(app), { version: 1, decision_provider: "ollama", decision_model: "system-one:1b", seats: [] });
   address(" http://localhost:11434/v1/ ");
   assert.equal(decisionFile(app).decision_base_url, "http://localhost:11434/v1");
-  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "https://example.com/v1?", "https://example.com/v1#", "https://example.com:0/v1", "https://example.com:/v1", "http://localhost:0", "http://[::ffff:127.0.0.1]:11434", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`, `https://example.com/${"é".repeat(100)}`]) {
+  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "https://example.com/v1?", "https://example.com/v1#", "https://example.com:0/v1", "https://example.com:/v1", "https:example.invalid:", "http://localhost:0", "http://[::ffff:127.0.0.1]:11434", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`, `https://example.com/${"é".repeat(100)}`]) {
     address(bad);
     assert.match(decision((d) => d.problem()), /API/, bad);
   }
