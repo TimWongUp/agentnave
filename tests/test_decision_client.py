@@ -679,8 +679,14 @@ def test_truncated_http_200_body_triggers_single_network_retry() -> None:
                 conn, _ = server.accept()
             except TimeoutError:
                 continue
-            with conn:
-                conn.recv(4096)
+            with conn, conn.makefile("rb") as request:
+                # Closing with any of the request unread resets the connection on Windows.
+                length = 0
+                while line := request.readline().strip():
+                    name, _, value = line.partition(b":")
+                    if name.lower() == b"content-length":
+                        length = int(value)
+                request.read(length)
                 attempts += 1
                 if attempts == 1:
                     # Declare full length, send truncated JSON, and close socket.
