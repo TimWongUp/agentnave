@@ -115,7 +115,7 @@ fn validate_source(top: &serde_json::Map<String, Value>) -> Result<(), String> {
             return Err(format!("{} 不使用自定义 API 地址", source.id));
         }
         Address::Required => drop(normalize_address(address)?),
-        Address::Optional(_) if !address.is_empty() => drop(normalize_address(address)?),
+        Address::Optional(_) if !address.trim().is_empty() => drop(normalize_address(address)?),
         _ => {}
     }
     let model = match top.get("decision_model") {
@@ -192,7 +192,13 @@ pub fn normalize(document: &mut Value) {
         }
         if source.id == models::DEFAULT_SOURCE {
             top.remove("decision_provider");
-            top.remove("decision_base_url");
+            if top
+                .get("decision_base_url")
+                .and_then(Value::as_str)
+                .is_some_and(|address| address.trim().is_empty())
+            {
+                top.remove("decision_base_url");
+            }
         } else if let Some(address) = top.get("decision_base_url").and_then(Value::as_str) {
             // The address as it is saved when it is a good one; a bad one is left for `validate`.
             match normalize_address(address) {

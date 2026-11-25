@@ -415,6 +415,9 @@ fn the_page_copy_names_the_model_of_its_source_and_leaves_the_default_source_imp
         assert_eq!(keys(&file), ["decision_model", "seats", "version"]);
         assert_eq!(file["decision_model"], "gemini-decision-1");
     }
+    let bad_gemini =
+        normal(json!({"decision_provider": "gemini", "decision_base_url": "https://a.example"}));
+    assert!(validate(&bad_gemini).is_err());
     let file = normal(json!({"decision_provider": "openai"}));
     assert_eq!(file["decision_provider"], "openai");
     assert_eq!(file["decision_model"], "gpt-6-luna");
