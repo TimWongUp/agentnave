@@ -21,7 +21,6 @@
   const ROLE_MAX = 40;
 
   let saved = null; // { document | null, error, key_set, keys, key_previews, key_error, providers } from GET /app/decision-seats.
-  let lastGoodDoc = undefined; // Last successfully loaded/saved document; error reloads do not clear providerDrafts.
   let loadSeq = 0; // Stale GET /app/decision-seats replies arriving after a newer load or save are dropped.
   let sourceDraft = null; // { provider, model, base_url } when the source differs from saved; else null.
   const providerDrafts = new Map(); // provider -> { provider, model, base_url } kept while browsing other platforms in this draft.
@@ -327,14 +326,12 @@
       if (!keep) {
         draft = null;
         sourceDraft = null;
-        if (!loaded.error && lastGoodDoc !== undefined && !sameJson(loaded.document, lastGoodDoc)) providerDrafts.clear();
         randomDraft = null;
         prefilled = false;
         manualModel = false;
         // The first list is asked for only while the decision panel itself is open, not from another tab or mode.
         loadVisibleCatalog();
       }
-      if (!loaded.error) lastGoodDoc = loaded.document;
     } catch (error) {
       if (seq !== loadSeq) return;
       S.showNotice(L(`无法读取决策模型推荐工位设置：${error.message}`, `Failed to load decision-model seat settings: ${error.message}`), true);
@@ -354,7 +351,6 @@
     await post("/app/decision-seats", doc);
     loadSeq++;
     saved = { ...saved, document: doc, error: null };
-    lastGoodDoc = doc;
     draft = null;
     sourceDraft = null;
     providerDrafts.clear();

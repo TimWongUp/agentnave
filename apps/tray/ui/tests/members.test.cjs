@@ -1886,8 +1886,9 @@ test("switching platforms keeps unsaved custom model draft, and delayed TypeSafe
 
 test("out-of-order GET /app/decision-seats replies never roll back saved state or clear in-session drafts", async () => {
   const pending = [];
-  const app = advancedEditor(async (url) => {
-    if (url === "/app/decision-seats") return new Promise((resolve) => pending.push(resolve));
+  const app = advancedEditor(async (url, options = {}) => {
+    if (url === "/app/decision-seats" && !options.method) return new Promise((resolve) => pending.push(resolve));
+    if (url === "/app/decision-seats" && options.method === "POST") return { ok: true, json: async () => ({ saved: true }) };
     return { ok: true, json: async () => ({ models: [] }) };
   });
   app.run(`orchestration = { error: null, files: [], bosses: [{ keys: ["codex"], ids: ["codex"], labels: ["Codex"], mark: "codex" }], roles: [], document: { version: 1, preset: "decision", enabled_roles: [] } };`);
@@ -1909,6 +1910,19 @@ test("out-of-order GET /app/decision-seats replies never roll back saved state o
   assert.equal(decisionFile(app).random_candidates, true, "stale reply A ignored");
   control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
   assert.equal(decisionFile(app).decision_model, "my-custom", "in-session draft preserved");
+  // Saving a mixed-case address whose backend-normalized reload differs in case keeps later drafts.
+  control(app, "decision/provider").listeners.change({ target: { value: "ollama" } });
+  control(app, "decision/address").listeners.input({ target: { value: "http://LOCALHOST:11434" } });
+  control(app, "decision/model-id").listeners.input({ target: { value: "system-one:1b" } });
+  await decision((d) => d.save());
+  control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
+  control(app, "decision/model-id").listeners.input({ target: { value: "after-save-draft" } });
+  control(app, "decision/provider").listeners.change({ target: { value: "ollama" } });
+  const normalizedLoad = decision((d) => d.load());
+  pending.at(-1)({ ok: true, json: async () => PLATFORM_FILE({ version: 1, decision_provider: "ollama", decision_model: "system-one:1b", decision_base_url: "http://localhost:11434", seats: [] }) });
+  await normalizedLoad;
+  control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
+  assert.equal(decisionFile(app).decision_model, "after-save-draft");
 });
 
 test("a local Ollama and a custom endpoint take an address, which is checked before saving", async () => {
