@@ -213,9 +213,7 @@ def test_flat_layout_from_isolated_dir_and_subdir_mapping_and_user_branch_safety
     dirs.close()
 
 
-def test_rejects_option_refs_unborn_bare_submodules_and_custom_filters_and_emits_warnings(
-    tmp_path: Path,
-) -> None:
+def test_rejects_unborn_bare_and_option_like_refs(tmp_path: Path) -> None:
     dirs = IsolatedDirs(tmp_path / "data")
 
     # 1. Unborn (no-commit) repository rejected.
@@ -238,50 +236,94 @@ def test_rejects_option_refs_unborn_bare_submodules_and_custom_filters_and_emits
         with pytest.raises(IsolationError):
             dirs.create(repo, workspace_id="ws-1", ref=bad_ref)
     assert dirs.unreleased_count("ws-1") == 0
+    dirs.close()
 
-    # 4. Hooks + LFS + dirty source worktree produce warnings without running hooks or failing LFS.
-    hook_marker = tmp_path / "hook-ran"
-    hook = repo / ".git" / "hooks" / "post-checkout"
-    hook.write_text(f"#!/bin/sh\ntouch '{hook_marker.as_posix()}'\nexit 1\n", encoding="utf-8")
-    hook.chmod(0o755)
-    (repo / ".gitattributes").write_text(
-        "*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8"
-    )
-    _git(repo, "add", ".gitattributes")
-    _git(repo, "commit", "-m", "enable lfs")
-    _git(repo, "config", "filter.lfs.process", "nonexistent-git-lfs filter-process")
-    _git(repo, "config", "filter.lfs.required", "true")
-    (repo / "dirty.txt").write_text("unsaved\n", encoding="utf-8")
 
-    warned = dirs.create(repo, workspace_id="ws-1")
-    warned.lease.release()
-    assert not hook_marker.exists()
-    joined_warnings = " | ".join(warned.warnings)
-    assert "hooks" in joined_warnings.lower()
-    assert "lfs" in joined_warnings.lower()
-    assert "Uncommitted changes" in joined_warnings and "dirty.txt" in joined_warnings
-    assert dirs.release(warned.id, workspace_id="ws-1").status == "deleted"
+def test_post_checkout_hook_runs_when_the_isolated_directory_is_created(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "hook-ran"
+    _script(repo / ".git" / "hooks" / "post-checkout", f"touch '{marker.as_posix()}'\nexit 0\n")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    assert marker.exists()
+    assert dirs.release(created.id, workspace_id="ws-1").status == "deleted"
+    dirs.close()
 
-    # 5. Custom non-LFS filter referenced in .gitattributes is rejected.
-    (repo / "dirty.txt").unlink()
-    _git(repo, "config", "filter.lfs.process", "")
-    _git(repo, "config", "filter.lfs.required", "false")
-    _git(repo, "config", "filter.secret.smudge", "cat")
-    (repo / "sub").mkdir()
-    (repo / "sub" / ".gitattributes").write_text("*.enc filter=secret\n", encoding="utf-8")
-    _git(repo, "add", "sub/.gitattributes")
-    _git(repo, "commit", "-m", "custom filter")
-    with pytest.raises(IsolationError, match="secret"):
+
+@pytest.mark.parametrize("failing", ["hook", "filter"])
+def test_failing_hook_or_filter_fails_creation_and_rolls_back(tmp_path: Path, failing: str) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    if failing == "hook":
+        _script(repo / ".git" / "hooks" / "post-checkout", "exit 1\n")
+    else:
+        (repo / ".gitattributes").write_text("*.enc filter=secret\n", encoding="utf-8")
+        (repo / "a.enc").write_text("secret\n", encoding="utf-8")
+        _git(repo, "config", "filter.secret.clean", "cat")
+        _git(repo, "config", "filter.secret.smudge", "cat")
+        _git(repo, "add", ".gitattributes", "a.enc")
+        _git(repo, "commit", "-m", "encrypted file")
+        _git(repo, "config", "filter.secret.smudge", _script(tmp_path / "smudge.sh", "exit 1\n"))
+        _git(repo, "config", "filter.secret.required", "true")
+    dirs = IsolatedDirs(tmp_path / "data")
+    with pytest.raises(IsolationError):
         dirs.create(repo, workspace_id="ws-1")
+    assert dirs.unreleased_count("ws-1") == 0
+    assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
+    assert _git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/agentnave/") == ""
+    dirs.close()
 
-    # 6. Target commit with submodule (mode 160000) is rejected.
-    sub_repo = _init_repo(tmp_path / "sub_repo")
-    sub_oid = _git(sub_repo, "rev-parse", "HEAD")
-    clean_repo = _init_repo(tmp_path / "with_submod")
-    _git(clean_repo, "update-index", "--add", "--cacheinfo", f"160000,{sub_oid},vendor/sub")
-    _git(clean_repo, "commit", "-m", "add gitlink")
-    with pytest.raises(IsolationError, match="160000|submodule"):
-        dirs.create(clean_repo, workspace_id="ws-1")
+
+def test_custom_filter_runs_on_create_and_an_untouched_worktree_is_released(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    marker = tmp_path / "smudge-ran"
+    _git(repo, "config", "filter.secret.clean", "cat")
+    _git(repo, "config", "filter.secret.smudge", "cat")
+    _git(repo, "config", "filter.secret.required", "true")
+    (repo / ".gitattributes").write_text("*.enc filter=secret\n", encoding="utf-8")
+    (repo / "a.enc").write_text("secret\n", encoding="utf-8")
+    _git(repo, "add", ".gitattributes", "a.enc")
+    _git(repo, "commit", "-m", "encrypted file")
+    smudge = _script(tmp_path / "smudge.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    _git(repo, "config", "filter.secret.smudge", smudge)
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    assert marker.exists()
+    assert (created.worktree_path / "a.enc").read_text(encoding="utf-8") == "secret\n"
+    summary, warnings = dirs.settle_task(
+        created.id, workspace_id="ws-1", lease=created.lease, auto_release=True
+    )
+    assert warnings == []
+    assert summary.auto_released is True and not created.worktree_path.exists()
+    dirs.close()
+
+
+def test_submodule_stays_uninitialized_and_the_worktree_is_still_released(tmp_path: Path) -> None:
+    sub_repo = _init_repo(tmp_path / "sub")
+    repo = _init_repo(tmp_path / "repo")
+    _git(
+        repo,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        sub_repo.as_posix(),
+        "vendor/sub",
+    )
+    _git(repo, "commit", "-m", "add submodule")
+    dirs = IsolatedDirs(tmp_path / "data")
+    created = dirs.create(repo, workspace_id="ws-1")
+    created.lease.release()
+    submodule = created.worktree_path / "vendor" / "sub"
+    assert submodule.is_dir() and not any(submodule.iterdir())
+    # A gitlink counts as a nested repository for release, so the first call asks for confirmation.
+    first = dirs.release(created.id, workspace_id="ws-1")
+    assert first.status == "confirmation_required" and first.nested_repos == ("vendor/sub",)
+    done = dirs.release(created.id, workspace_id="ws-1", confirmation=first.confirmation)
+    assert done.status == "deleted"
+    assert not created.worktree_path.exists()
     dirs.close()
 
 
@@ -447,8 +489,8 @@ def test_recovery_and_change_summary_edge_cases(tmp_path: Path) -> None:
     assert not wt_clean.worktree_path.exists()
     assert dirs.store.get(wt_clean.id) is None
 
-    # Interrupted between `worktree add --no-checkout` and the checkout: no index yet, maybe a
-    # lock left by a checkout that died. Only the .git link proves nothing was written.
+    # Interrupted during the checkout: no index yet, maybe a lock left by a checkout that died.
+    # Only the .git link proves nothing was written.
     for files_left, outcome in ((False, "rolled_back"), (True, "needs_attention")):
         wt_bare = dirs.create(repo, workspace_id="ws-1")
         wt_bare.lease.release()
@@ -507,33 +549,6 @@ def test_repository_configured_executables_never_run(tmp_path: Path) -> None:
     token = dirs.release(created.id, workspace_id="ws-1").confirmation
     assert dirs.release(created.id, workspace_id="ws-1", confirmation=token).status == "deleted"
     assert not marker.exists()
-    dirs.close()
-
-
-def test_filters_from_info_attributes_and_attributes_file_are_rejected(tmp_path: Path) -> None:
-    dirs = IsolatedDirs(tmp_path / "data")
-    for source in ("info", "attributesfile"):
-        repo = _init_repo(tmp_path / f"repo-{source}")
-        (repo / "a.enc").write_text("secret\n", encoding="utf-8")
-        _git(repo, "add", "a.enc")
-        _git(repo, "commit", "-m", "encrypted file")
-        marker = tmp_path / f"smudge-{source}"
-        smudge = _script(tmp_path / f"smudge-{source}.sh", f"touch '{marker.as_posix()}'\ncat\n")
-        _git(repo, "config", "filter.secret.smudge", smudge)
-        if source == "info":
-            info = repo / ".git" / "info"
-            info.mkdir(exist_ok=True)
-            (info / "attributes").write_text("*.enc filter=secret\n", encoding="utf-8")
-        else:
-            attributes = tmp_path / "global-attributes"
-            attributes.write_text("*.enc filter=secret\n", encoding="utf-8")
-            _git(repo, "config", "core.attributesFile", attributes.as_posix())
-        with pytest.raises(IsolationError, match="secret"):
-            dirs.create(repo, workspace_id="ws-1")
-        assert not marker.exists()
-        assert not (repo / ".agentnave-worktrees").exists() or not any(
-            (repo / ".agentnave-worktrees").iterdir()
-        )
     dirs.close()
 
 
@@ -788,30 +803,16 @@ def test_every_git_call_disables_filter_drivers_whatever_the_attributes_say(
     assert not marker.exists()
 
 
-def test_relative_attributes_file_is_resolved_like_git_does(tmp_path: Path) -> None:
-    repo = _filter_repo(tmp_path / "repo", "a.enc", "# none\n")
-    marker = tmp_path / "smudge-ran"
-    smudge = _script(tmp_path / "smudge.sh", f"touch '{marker.as_posix()}'\ncat\n")
-    (repo / "attrs").write_text("*.enc filter=secret\n", encoding="utf-8")
-    _git(repo, "config", "core.attributesFile", "attrs")
-    _git(repo, "config", "filter.secret.smudge", smudge)
-    dirs = IsolatedDirs(tmp_path / "data")
-    with pytest.raises(IsolationError, match="secret"):
-        dirs.create(repo, workspace_id="ws-1")
-    assert not marker.exists()
-    dirs.close()
-
-
-def test_lfs_clean_filter_is_not_exempt(tmp_path: Path) -> None:
+def test_lfs_clean_filter_is_not_run_by_checks(tmp_path: Path) -> None:
     repo = _filter_repo(tmp_path / "repo", "a.bin", "*.bin filter=lfs\n")
     marker = tmp_path / "clean-ran"
     clean = _script(tmp_path / "clean.sh", f"touch '{marker.as_posix()}'\ncat\n")
     _git(repo, "config", "filter.lfs.clean", clean)
-    (repo / "a.bin").write_text("bbbb\n", encoding="utf-8")
     dirs = IsolatedDirs(tmp_path / "data")
     created = dirs.create(repo, workspace_id="ws-1")
     created.lease.release()
-    assert any("LFS" in warning for warning in created.warnings)
+    (created.worktree_path / "a.bin").write_text("bbbb\n", encoding="utf-8")
+    assert dirs.summarize_changes(created.id).summary_status == "complete"
     assert not marker.exists()
     dirs.close()
 
@@ -1158,26 +1159,6 @@ def test_registry_failure_fallback_matches_isolated_paths_in_any_letter_case(
     claimed = dirs.claim_for_cwd(shouted)
     assert claimed is not None  # leased by path; not started without one
     claimed.lease.release()
-    dirs.close()
-
-
-def test_filters_added_by_a_conditional_include_on_the_new_branch_never_run(
-    tmp_path: Path,
-) -> None:
-    repo = _filter_repo(tmp_path / "repo", "a.enc", "*.enc filter=cond\n")
-    marker = tmp_path / "cond-ran"
-    script = _script(tmp_path / "filter.sh", f"touch '{marker.as_posix()}'\ncat\n")
-    extra = tmp_path / "extra.config"
-    extra.write_text(
-        f'[filter "cond"]\n\tsmudge = {script}\n\tprocess = {script}\n\trequired = true\n',
-        encoding="utf-8",
-    )
-    _git(repo, "config", "includeIf.onbranch:agentnave/*.path", extra.as_posix())
-    dirs = IsolatedDirs(tmp_path / "data")
-    created = dirs.create(repo, workspace_id="ws-1")
-    created.lease.release()
-    assert (created.worktree_path / "a.enc").read_text(encoding="utf-8") == "aaaa\n"
-    assert not marker.exists()
     dirs.close()
 
 
