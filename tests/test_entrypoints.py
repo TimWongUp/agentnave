@@ -5882,6 +5882,128 @@ def _write_t3_cache(t3_home: Path, instance: str, payload: dict[str, Any]) -> No
 
 
 @pytest.mark.asyncio
+async def test_t3_image_seat_keeps_its_saved_order_and_carries_the_image_brief() -> None:
+    import random
+    from collections.abc import MutableSequence
+
+    from agentnave.t3_cache import InstanceAvailability
+    from agentnave.t3_recommend import (
+        T3_IMAGE_BRIEF_SUFFIX,
+        T3RecommendTask,
+        recommend_t3_seats,
+    )
+    from agentnave.t3_seats import T3SeatsFile
+
+    candidates: list[dict[str, Any]] = [
+        {"instance": "i-a", "model": "m-a", "options": []},
+        {"instance": "i-b", "model": "m-b", "options": []},
+    ]
+    doc = T3SeatsFile.model_validate(
+        {
+            "version": 1,
+            "enabled": True,
+            "random_candidates": True,
+            "seats": [
+                {
+                    "id": "art",
+                    "kind": "image",
+                    "role": "插画",
+                    "description": "插画",
+                    "access": "write",
+                    "candidates": candidates,
+                },
+                {
+                    "id": "coder",
+                    "kind": "worker",
+                    "role": "实现",
+                    "description": "改代码",
+                    "access": "write",
+                    "difficulty": "easy",
+                    "candidates": candidates,
+                },
+            ],
+        }
+    )
+
+    class CountingRng(random.Random):
+        calls = 0
+
+        def shuffle(self, x: MutableSequence[Any]) -> None:
+            CountingRng.calls += 1
+            super().shuffle(x)
+
+    rng = CountingRng(1)
+    payload = await recommend_t3_seats(
+        [
+            T3RecommendTask(task="draw a cat", access="write", seat="art"),
+            T3RecommendTask(task="write code", access="write", seat="coder"),
+        ],
+        doc,
+        mode="split",
+        probe_instance=lambda instance, model: InstanceAvailability(available=True),
+        rng=rng,
+    )
+    results = cast(list[dict[str, Any]], cast(dict[str, Any], payload)["results"])
+    art, code = results
+    assert [item["target"]["model"] for item in art["candidates"]] == ["m-a", "m-b"]
+    assert [item["target"]["model"] for item in code["candidates"]] == ["m-b", "m-a"]
+    assert rng.calls == 1, "only the ordinary seat takes part in shuffling"
+    assert art["brief_suffix"] == T3_IMAGE_BRIEF_SUFFIX
+    assert "brief_suffix" not in code
+
+
+def test_t3_recommend_description_names_image_seats_only_when_one_has_a_model() -> None:
+    from agentnave import t3_mcp
+    from agentnave.t3_seats import T3OrchestrationMode, T3SeatsFile
+
+    worker: dict[str, Any] = {
+        "id": "w",
+        "kind": "worker",
+        "role": "实现",
+        "description": "改代码",
+        "access": "write",
+        "difficulty": "easy",
+        "candidates": [{"instance": "i", "model": "m", "options": []}],
+    }
+    image: dict[str, Any] = {
+        "id": "art",
+        "kind": "image",
+        "role": "插画",
+        "description": "插画",
+        "access": "write",
+        "candidates": [{"instance": "i", "model": "m", "options": []}],
+    }
+    without_image = T3SeatsFile.model_validate({"version": 1, "seats": [worker]})
+    image_without_model = T3SeatsFile.model_validate(
+        {"version": 1, "seats": [worker, {**image, "candidates": []}]}
+    )
+    with_image = T3SeatsFile.model_validate({"version": 1, "seats": [worker, image]})
+
+    modes: tuple[tuple[T3OrchestrationMode, str], ...] = (
+        ("decision", "decision mode"),
+        ("split", "boss chooses seats"),
+    )
+    for mode, marker in modes:
+        for doc in (None, without_image, image_without_model):
+            description = t3_mcp.t3_tool_definition(
+                t3_mcp.T3_RECOMMEND_SEAT_TOOL, mode, doc
+            ).description
+            assert description is not None
+            assert "no image generation seat" in description
+            assert "pick only a kind=image seat" not in description
+            assert marker in description
+            assert len(description) <= 2000
+        description = t3_mcp.t3_tool_definition(
+            t3_mcp.T3_RECOMMEND_SEAT_TOOL, mode, with_image
+        ).description
+        assert description is not None
+        assert "pick only a kind=image seat" in description
+        assert "no image generation seat" not in description
+        assert marker in description
+        assert len(description) <= 2000
+
+
+@pytest.mark.asyncio
 async def test_non_t3_connection_tools_and_schemas_are_unchanged_with_t3_seats_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6190,6 +6312,31 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert tools["list_members"].description == boss_tools["list_members"].description
         assert len(tools["recommend_seat"].description or "") <= 2000
         assert len(tools["list_members"].description or "") <= 2000
+
+        # 1b. A configured image seat swaps the image sentence in the published description.
+        _write_t3_seats(
+            {
+                **seats_doc,
+                "seats": [
+                    *seats_doc["seats"],
+                    {
+                        "id": "artist",
+                        "kind": "image",
+                        "role": "插画",
+                        "description": "插画",
+                        "access": "write",
+                        "candidates": [{"instance": "inst-ok-1", "model": "claude-opus"}],
+                    },
+                ],
+            }
+        )
+        image_tools = {
+            tool.name: tool for tool in (await client.list_tools(cache_mode="refresh")).tools
+        }
+        image_desc = image_tools["recommend_seat"].description or ""
+        assert "pick only a kind=image seat" in image_desc
+        assert "no image generation seat" not in image_desc
+        _write_t3_seats(seats_doc)
 
         # 2. start_agent / start_agents refused by name with guidance (including resume hint).
         dispatch_refusals: list[tuple[str, dict[str, Any]]] = [

@@ -199,7 +199,7 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
     run(readFileSync(`${__dirname}/../${file}`, "utf8"));
     if (context.AN.settings) mirrorSettings(context);
   };
-  for (const file of ["provider-health.js", "settings-state.js", "member-models.js", "seat-rows.js", "advanced.js", "decision-seats.js", "t3-seats.js"]) {
+  for (const file of ["provider-health.js", "settings-state.js", "member-models.js", "seat-rows.js", "advanced.js", "decision-seats.js", "t3-seats-image.js", "t3-seats.js"]) {
     load(file);
   }
   run(`
@@ -239,6 +239,16 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
     return null;
   }
 
+  function findEnding(node, suffix) {
+    if (!node || typeof node !== "object") return null;
+    if (typeof node.dataset?.focusKey === "string" && node.dataset.focusKey.endsWith(suffix)) return node;
+    for (const child of [node.children].flat(Infinity)) {
+      const found = findEnding(child, suffix);
+      if (found) return found;
+    }
+    return null;
+  }
+
   return {
     run,
     calls,
@@ -247,6 +257,7 @@ function makeHarness({ t3State, decisionState = null, orchestrationDoc = null, r
       || findKey(run('$("t3-review-seats")'), key)
       || findKey(run('$("orchestration-scope")'), key)
       || findKey(run('$("review-scope")'), key),
+    findEnding: (suffix) => findEnding(run('$("t3-seats-section")'), suffix),
     section: () => run('$("t3-seats-section")'),
     seatRows: () => {
       const group = run('$("t3-seats-section")').children.find((c) => c.className?.includes("t3-seat-list"));
@@ -267,7 +278,7 @@ test("hides entire T3 Code block when detected=false and no saved document", asy
   assert.equal(h.t3((t) => t.changed()), false);
 });
 
-test("prefills from decision-seats (skipping image seats) and maps providers, aliases, antigravity thought_level, codebuddy, and review", async () => {
+test("prefills from decision-seats (image seats included) and maps providers, aliases, antigravity thought_level, codebuddy, and review", async () => {
   const decisionSeats = [
     {
       id: "ds-1",
@@ -340,7 +351,7 @@ test("prefills from decision-seats (skipping image seats) and maps providers, al
   const doc = h.doc();
   assert.equal(doc.enabled, false);
   assert.equal(doc.random_candidates, false);
-  assert.equal(doc.seats.length, 3, "image seat excluded, unmatched task seat kept empty");
+  assert.equal(doc.seats.length, 4, "three task seats plus the image seat");
   assert.ok(doc.seats.every((s) => !["ds-1", "ds-2", "ds-3"].includes(s.id)), "fresh ids generated");
 
   // Seat 1: claude expanded to 2 instances + codex + antigravity (capped at 4; grok cut off).
@@ -357,6 +368,14 @@ test("prefills from decision-seats (skipping image seats) and maps providers, al
   ]);
   // Seat 3: unmatched seat stays empty.
   assert.deepEqual(doc.seats[2].candidates, []);
+  // Seat 4: the decision catalog's image seat comes over as one image row, with no difficulty.
+  assert.equal(doc.seats[3].kind, "image");
+  assert.equal(doc.seats[3].role, "插画");
+  assert.equal(doc.seats[3].access, "write");
+  assert.equal(Object.hasOwn(doc.seats[3], "difficulty"), false);
+  assert.deepEqual(doc.seats[3].candidates, [
+    { instance: "codex", model: "gpt-6.2-astra", options: [] },
+  ]);
   // Review: antigravity -max dropped unsupported option, grok fallback carried reasoningEffort.
   assert.deepEqual(doc.review["correctness-reviewer"], [
     { instance: "antigravity", model: "gemini-4-neon", options: [] },
@@ -407,6 +426,167 @@ test("prefills from fixed seats when decision-seats is absent, and gives two sta
       ["antigravity", "gemini-4-neon"],
     ],
   );
+});
+
+test("brings the fixed image seat over as one row and still gives starter seats, since image seats do not count", async () => {
+  const h = makeHarness({
+    t3State: { document: null, error: null, t3: SAMPLE_T3 },
+    orchestrationDoc: {
+      version: 1,
+      preset: "split",
+      image_generation: { provider: "codex", model: "gpt-6.2-astra", effort: "low" },
+    },
+  });
+  await h.t3((t) => t.load());
+  const doc = h.doc();
+  const image = doc.seats.find((seat) => seat.kind === "image");
+  assert.ok(image, "the fixed image seat becomes a row");
+  assert.equal(image.role, "生图");
+  assert.equal(image.access, "write");
+  assert.equal(Object.hasOwn(image, "difficulty"), false);
+  assert.deepEqual(image.candidates, [
+    { instance: "codex", model: "gpt-6.2-astra", options: [{ id: "reasoningEffort", value: "low" }] },
+  ]);
+  assert.deepEqual(
+    doc.seats.filter((seat) => seat.kind !== "image").map((seat) => seat.kind),
+    ["explorer", "worker"],
+  );
+});
+
+test("round-trips image seats without marking the page dirty, treating difficulty null as absent", async () => {
+  const savedDoc = {
+    version: 1,
+    enabled: false,
+    random_candidates: false,
+    seats: [
+      {
+        id: "t3-img-1",
+        kind: "image",
+        role: "插画",
+        description: "手绘插画",
+        access: "write",
+        difficulty: null,
+        candidates: [{ instance: "codex", model: "gpt-6.2-astra", options: [] }],
+      },
+      {
+        id: "t3-img-2",
+        kind: "image",
+        role: "写实",
+        description: "写实照片",
+        access: "write",
+        candidates: [],
+      },
+    ],
+    review: {},
+  };
+  const h = makeHarness({ t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 } });
+  await h.t3((t) => t.load());
+  assert.equal(h.t3((t) => t.changed()), false);
+  assert.equal(h.seatRows().length, 1, "image seats share the one image card");
+
+  const doc = h.doc();
+  assert.equal(doc.seats.length, 2);
+  assert.deepEqual(doc.seats[0], {
+    id: "t3-img-1", kind: "image", role: "插画", description: "手绘插画", access: "write",
+    candidates: [{ instance: "codex", model: "gpt-6.2-astra", options: [] }],
+  });
+  assert.deepEqual(doc.seats[1], {
+    id: "t3-img-2", kind: "image", role: "写实", description: "写实照片", access: "write", candidates: [],
+  });
+
+  // Editing a row's specialty marks the page; the description follows the new specialty.
+  const cid = h.seatRows()[0].dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  h.find(`t3/${cid}/t3r1/role`).listeners.input({ target: { value: "漫画" } });
+  assert.equal(h.t3((t) => t.changed()), true);
+  const edited = h.doc().seats.find((seat) => seat.id === "t3-img-1");
+  assert.equal(edited.role, "漫画");
+  assert.equal(edited.description, "漫画");
+});
+
+test("adds and removes image rows, rejects empty or repeated specialties, and saves rows still waiting for a model", async () => {
+  const h = makeHarness({
+    t3State: { document: { version: 1, enabled: false, random_candidates: false, seats: [], review: {} }, error: null, t3: SAMPLE_T3 },
+  });
+  h.run("bindAdvanced()");
+  await h.t3((t) => t.load());
+
+  // The add menu offers the image card until one exists.
+  const collect = (node) => [
+    node,
+    ...((node?.children || []).flatMap((child) => (child && typeof child === "object" ? collect(child) : []))),
+  ];
+  const imageOption = () => collect(h.find("t3/add")).filter((node) => node.attrs?.value === "image");
+  assert.equal(imageOption().length, 1);
+  h.t3((t) => t.addCard("image"));
+  assert.equal(imageOption().length, 0, "no second image card");
+  assert.match(h.t3((t) => t.problem()), /缺少专业/);
+
+  const cid = h.seatRows()[0].dataset.cid;
+  assert.equal(h.seatRows()[0].dataset.expanded, "true");
+  h.find(`t3/${cid}/t3r1/role`).listeners.input({ target: { value: "插画" } });
+  // A row without a model may be saved and shows as unset.
+  assert.equal(h.t3((t) => t.problem()), null);
+  h.t3((t) => t.render());
+  assert.equal(h.seatRows()[0].children[0].children[1].children[1].children[0], "插画");
+  const waiting = h.doc().seats[0];
+  assert.equal(waiting.kind, "image");
+  assert.deepEqual(waiting.candidates, []);
+
+  // Pick a model for the first row.
+  h.find(`t3/${cid}/t3r1/c0/instance`).listeners.change({ target: { value: "codex" } });
+  assert.deepEqual(h.doc().seats[0].candidates, [
+    { instance: "codex", model: "gpt-6.2-astra", options: [] },
+  ]);
+
+  // A second row with no specialty blocks the card; a repeated specialty does too.
+  h.find(`t3/${cid}/add-row`).listeners.click();
+  assert.match(h.t3((t) => t.problem()), /第 2 行缺少专业/);
+  h.find(`t3/${cid}/t3r2/role`).listeners.input({ target: { value: "插画" } });
+  assert.match(h.t3((t) => t.problem()), /重复/);
+  h.find(`t3/${cid}/t3r2/role`).listeners.input({ target: { value: "写实" } });
+  assert.equal(h.t3((t) => t.problem()), null);
+  assert.deepEqual(h.doc().seats.map((seat) => seat.role), ["插画", "写实"]);
+  assert.equal(new Set(h.doc().seats.map((seat) => seat.id)).size, 2, "each row keeps a unique id");
+
+  // Deleting the last row leaves a card that cannot be saved.
+  h.find(`t3/${cid}/t3r2/remove`).listeners.click();
+  h.find(`t3/${cid}/t3r1/remove`).listeners.click();
+  assert.match(h.t3((t) => t.problem()), /至少要有一行/);
+});
+
+test("counts image rows' instances as saved references, keeping their stale instances listed", async () => {
+  const savedDoc = {
+    version: 1,
+    enabled: false,
+    random_candidates: false,
+    seats: [
+      {
+        id: "t3-img-1",
+        kind: "image",
+        role: "插画",
+        description: "手绘插画",
+        access: "write",
+        candidates: [{ instance: "codex_stale", model: "gpt-old", options: [] }],
+      },
+      {
+        id: "t3-img-2",
+        kind: "image",
+        role: "写实",
+        description: "写实照片",
+        access: "write",
+        candidates: [{ instance: "claudeAgent", model: "claude-opus-4-6", options: [] }],
+      },
+    ],
+    review: {},
+  };
+  const h = makeHarness({ t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 } });
+  await h.t3((t) => t.load());
+  const cid = h.seatRows()[0].dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  // The second row does not use the stale instance itself, so it is listed only through the saved reference.
+  const instOpts = h.find(`t3/${cid}/t3r2/c0/instance`).children.flat().map((o) => o.attrs.value);
+  assert.ok(instOpts.includes("codex_stale"));
 });
 
 test("switch cannot open without candidates, dropdown hides legacy/hidden/stale, and unlisted saved entries stay marked", async () => {

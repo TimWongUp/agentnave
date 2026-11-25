@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "enabled": true,
+  "random_candidates": false,
+  "seats": [
+    {
+      "id": "s-illustration",
+      "kind": "image",
+      "role": "插画",
+      "description": "手绘插画",
+      "access": "write",
+      "difficulty": null,
+      "candidates": [
+        {
+          "instance": "codex",
+          "model": "gpt-6.2-astra",
+          "options": []
+        }
+      ]
+    },
+    {
+      "id": "s-photo",
+      "kind": "image",
+      "role": "写实",
+      "description": "写实照片",
+      "access": "write",
+      "candidates": []
+    }
+  ],
+  "review": {}
+}
