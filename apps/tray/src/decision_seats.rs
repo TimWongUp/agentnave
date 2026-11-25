@@ -90,7 +90,7 @@ fn normalize_address(address: &str) -> Result<String, String> {
     if address.chars().count() > 512 {
         return Err("决策模型 API 地址过长".into());
     }
-    crate::voice::normalize_endpoint(address, "决策模型 API")
+    crate::endpoint::normalize_endpoint(address, "决策模型 API")
 }
 
 /// The source the file names, the default one while it names none.
@@ -106,7 +106,7 @@ fn source_of(top: &serde_json::Map<String, Value>) -> Result<&'static Source, St
 fn validate_source(top: &serde_json::Map<String, Value>) -> Result<(), String> {
     let source = source_of(top)?;
     let address = match top.get("decision_base_url") {
-        None => "",
+        None | Some(Value::Null) => "",
         Some(Value::String(address)) => address.as_str(),
         Some(_) => return Err("decision_base_url 必须为字符串".into()),
     };
@@ -120,7 +120,7 @@ fn validate_source(top: &serde_json::Map<String, Value>) -> Result<(), String> {
     }
     let model = match top.get("decision_model") {
         None => None,
-        Some(Value::String(model)) => Some(model.as_str()),
+        Some(Value::String(model)) => Some(model.trim()),
         Some(_) => return Err("决策模型必须为字符串".into()),
     };
     match (&source.model, model) {

@@ -322,11 +322,14 @@
     const input = h("input", { id: "summary-model-id", value: drafts.model ?? fallback, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", placeholder: L("模型 ID", "Model ID"), disabled: busy, "aria-label": L("手填摘要模型 ID", "Custom summary model ID") });
     input.addEventListener("input", () => { drafts.model = input.value; });
     const put = h("button", { type: "button", disabled: busy }, L("使用", "Use"));
-    put.addEventListener("click", () => {
+    put.addEventListener("click", async () => {
       if (!input.value.trim()) return;
       drafts.model = input.value.trim();
-      manualSummary = false;
-      summarySave({ model: drafts.model, ...(drafts.model === config.summary.model ? {} : { effort: "" }) });
+      // The typed box stays when the save fails, so the id can be fixed and tried again.
+      if (await summarySave({ model: drafts.model, ...(drafts.model === config.summary.model ? {} : { effort: "" }) })) {
+        manualSummary = false;
+        render();
+      }
     });
     return [input, put];
   }

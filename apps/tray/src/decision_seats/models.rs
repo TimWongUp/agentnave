@@ -2,10 +2,11 @@
 //! the file checks share; the catalogs are read on demand, one GET at a time, and nothing here
 //! writes a file. A key goes into a request header and nowhere else.
 
+use crate::endpoint::is_loopback_url;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Read;
-use std::net::IpAddr;
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -193,12 +194,22 @@ pub(crate) fn fetch_models(
     base_url: Option<&str>,
     refresh: bool,
 ) -> Result<Vec<Value>, Failure> {
+    fetch_catalog(root, provider, base_url, refresh, crate::PREVIEW)
+}
+
+pub(super) fn fetch_catalog(
+    root: &Path,
+    provider: &str,
+    base_url: Option<&str>,
+    refresh: bool,
+    preview: bool,
+) -> Result<Vec<Value>, Failure> {
     let source = source(provider)
         .filter(|source| source.catalog)
         .ok_or((400, "这个来源没有可读取的模型目录".to_string()))?;
     let base = catalog_base(root, source, base_url)?;
-    let key = super::keys::key_of(root, source.id);
-    let cache_key = format!("{}|{}|{}", source.id, base, key.is_some());
+    let key = request_key(root, source, &base, preview)?;
+    let cache_key = cache_key(root, source, &base, key.as_deref());
     if !refresh && let Some(models) = lock_cache().get(&cache_key) {
         return Ok(models.clone());
     }
@@ -229,8 +240,54 @@ pub(crate) fn fetch_models(
     Ok(models)
 }
 
+/// The key a catalog request carries, if any. The preview never reads the installed App's keys, and
+/// a custom endpoint gets its saved key only at the very address the key was saved with, so a key
+/// cannot be sent to an address the user has not paired it with.
+pub(super) fn request_key(
+    root: &Path,
+    source: &Source,
+    base: &str,
+    preview: bool,
+) -> Result<Option<String>, Failure> {
+    match source.id {
+        "typesafe" if preview => Err((403, "预览版不使用正式版密钥读取目录".into())),
+        "openrouter" | "custom" if preview => Ok(None),
+        "ollama" => Ok(None),
+        "custom" if saved_address(root, source).as_deref() != Some(base) => Ok(None),
+        _ => Ok(super::keys::key_of(root, source.id)),
+    }
+}
+
+/// Where this session's answers are kept apart: the data root, the source and its address, and
+/// the key that was sent (as a hash), so a changed key never reads an answer given to another.
+fn cache_key(root: &Path, source: &Source, base: &str, key: Option<&str>) -> String {
+    let key = key.map_or_else(String::new, |key| {
+        format!("{:x}", Sha256::digest(key.as_bytes()))
+    });
+    format!("{}|{}|{}|{}", root.to_string_lossy(), source.id, base, key)
+}
+
+/// Forgets every list read so far; a saved or cleared key changes what a source answers.
+pub(super) fn clear_cache() {
+    lock_cache().clear();
+}
+
 fn lock_cache() -> std::sync::MutexGuard<'static, HashMap<String, Vec<Value>>> {
     CACHE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The address the saved file gives the source, as saved, when the file's source is this one.
+fn saved_address_raw(root: &Path, source: &Source) -> Option<String> {
+    super::read(root)
+        .ok()
+        .flatten()
+        .filter(|document| document["decision_provider"].as_str() == Some(source.id))
+        .and_then(|document| document["decision_base_url"].as_str().map(str::to_owned))
+}
+
+/// That address as the App calls it, or None while it is not a good one.
+fn saved_address(root: &Path, source: &Source) -> Option<String> {
+    super::normalize_address(&saved_address_raw(root, source)?).ok()
 }
 
 /// The address a catalog is read from: the page's own, else the saved file's for the same source,
@@ -239,11 +296,7 @@ fn catalog_base(root: &Path, source: &Source, given: Option<&str>) -> Result<Str
     if !source.takes_address() {
         return Ok(String::new());
     }
-    let saved = super::read(root)
-        .ok()
-        .flatten()
-        .filter(|document| document["decision_provider"].as_str() == Some(source.id))
-        .and_then(|document| document["decision_base_url"].as_str().map(str::to_owned));
+    let saved = saved_address_raw(root, source);
     let chosen = given
         .map(str::trim)
         .filter(|address| !address.is_empty())
@@ -271,14 +324,6 @@ pub(super) fn custom_models_url(base: &str) -> String {
     }
 }
 
-fn is_loopback(url: &reqwest::Url) -> bool {
-    let host = url.host_str().unwrap_or("").trim_matches(['[', ']']);
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
-}
-
 fn fetch(
     url: &str,
     key: Option<&str>,
@@ -291,7 +336,7 @@ fn fetch(
         .timeout(TIMEOUT)
         .redirect(reqwest::redirect::Policy::none());
     // A server on this machine is never behind the system proxy.
-    if is_loopback(&target) {
+    if is_loopback_url(&target) {
         client = client.no_proxy();
     }
     let client = client.build().map_err(|_| unreachable())?;
@@ -374,7 +419,8 @@ pub(super) fn parse_typesafe(document: &Value) -> Vec<Value> {
     sorted(named.chain(listed).map(|id| entry(id, None)).collect())
 }
 
-/// Ollama's `/api/tags`: only what says it can decide.
+/// Ollama's `/api/tags`: only what says it can decide and runs on that machine; a model with a
+/// `remote_host` is a name that Ollama forwards to a cloud service.
 pub(super) fn parse_ollama(document: &Value) -> Vec<Value> {
     sorted(
         document["models"]
@@ -385,6 +431,9 @@ pub(super) fn parse_ollama(document: &Value) -> Vec<Value> {
                 model["capabilities"]
                     .as_array()
                     .is_some_and(|list| list.iter().any(|one| one == "decision"))
+                    && model["remote_host"]
+                        .as_str()
+                        .is_none_or(|host| host.trim().is_empty())
             })
             .filter_map(|model| {
                 let id = model["name"].as_str().or_else(|| model["model"].as_str())?;

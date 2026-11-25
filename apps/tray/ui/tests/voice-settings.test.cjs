@@ -30,6 +30,7 @@ function page(config, models = [], english = false) {
     location: { hash: "#voice" }, addEventListener() {}, window: {},
     fetch: async (path, options = {}) => {
       if (options.method === "POST") posts.push({ path, body: JSON.parse(options.body) });
+      if (path === "/app/voice" && options.method === "POST" && state.failSave) return { ok: false, status: 500, json: async () => ({ error: "保存失败" }) };
       if (path === "/app/voice" && options.method === "POST") {
         const sent = JSON.parse(options.body);
         state.config = { ...state.config, ...sent, summary: { ...state.config.summary, ...sent.summary } };
@@ -92,6 +93,27 @@ test("the summary model is a list, and its id is typed only on demand", async ()
   assert.ok(typed());
   assert.equal(typed().value, "vendor/custom-1");
   pickerOptions(app, "摘要模型")[1].listeners.click();
+  await new Promise(setImmediate);
+  assert.equal(saves(app).at(-1).body.summary.model, "gpt-b");
+  assert.equal(app.rowOf("摘要模型 ID"), undefined);
+});
+
+test("a typed summary model that fails to save stays in its box for another try", async () => {
+  const app = page(provider("gpt-a"), LISTED);
+  await app.open();
+  pickerOptions(app, "摘要模型").at(-1).listeners.click();
+  const typed = () => app.labelled("手填摘要模型 ID");
+  typed().value = "gpt-b";
+  typed().listeners.input();
+  app.state.failSave = true;
+  app.rowOf("摘要模型 ID").children[1].children[1].listeners.click();
+  await new Promise(setImmediate);
+  assert.ok(typed(), "the box is still there");
+  assert.equal(app.text(app.labelled("摘要模型")).includes(MANUAL), true);
+  assert.equal(typed().value, "gpt-b");
+  // Trying again after the cause is gone saves it and puts the list back.
+  app.state.failSave = false;
+  app.rowOf("摘要模型 ID").children[1].children[1].listeners.click();
   await new Promise(setImmediate);
   assert.equal(saves(app).at(-1).body.summary.model, "gpt-b");
   assert.equal(app.rowOf("摘要模型 ID"), undefined);

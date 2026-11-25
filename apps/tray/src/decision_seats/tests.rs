@@ -378,6 +378,9 @@ fn an_address_is_https_or_loopback_without_credentials_query_or_fragment() {
         "https:user:pass@api.example.com",
         "https://api.example.com/v1?key=1",
         "https://api.example.com/v1#frag",
+        "https://api.example.com:0/v1",
+        "https://api.example.com:/v1",
+        "http://[::ffff:127.0.0.1]:11434",
         "not a url",
         &format!("https://api.example.com/{}", "a".repeat(512)),
     ] {
@@ -701,6 +704,8 @@ mod catalog {
                     {"name": "llama:8b", "capabilities": ["completion"]},
                     {"name": "old:1b"},
                     {"model": "sys:7b", "capabilities": ["decision"]},
+                    {"name": "cloud:1t", "capabilities": ["decision"], "remote_host": "https://ollama.com:443"},
+                    {"name": "kept:1b", "capabilities": ["decision"], "remote_host": ""},
                 ]}),
             ),
             _ => (404, json!({})),
@@ -712,7 +717,7 @@ mod catalog {
                 .collect()
         };
         let listed = fetch_models(dir.path(), "ollama", Some(&base), false).unwrap();
-        assert_eq!(ids(&listed), ["sys:1b", "sys:7b"]);
+        assert_eq!(ids(&listed), ["kept:1b", "sys:1b", "sys:7b"]);
         // The route's own suffixes are not part of the server's address.
         for given in [
             format!("{base}/v1"),
@@ -746,8 +751,24 @@ mod catalog {
         );
     }
 
+    /// Saves a file whose source is a custom endpoint at `base`.
+    fn save_custom(root: &Path, base: &str) {
+        let mut file = with_source(json!({"decision_provider": "custom", "decision_model": "m",
+            "decision_base_url": base}));
+        normalize(&mut file);
+        save(root, &file).unwrap();
+    }
+
+    fn authorization(request: &str) -> Option<String> {
+        request
+            .to_lowercase()
+            .lines()
+            .find(|line| line.starts_with("authorization:"))
+            .map(str::to_owned)
+    }
+
     #[test]
-    fn a_custom_endpoint_is_asked_for_its_models_with_the_saved_key() {
+    fn a_custom_endpoint_is_asked_for_its_models_with_the_saved_key_at_the_saved_address_only() {
         let dir = tempfile::tempdir().unwrap();
         let (base, seen) = serve(|path| match path {
             "/v1/models" | "/models" | "/other/v1/models" => {
@@ -756,61 +777,128 @@ mod catalog {
             _ => (404, json!({})),
         });
         let first = |models: Vec<Value>| models[0]["id"].as_str().unwrap().to_owned();
-        // Without a key nothing is sent; with one, as a bearer token.
+        let last = || authorization(seen.lock().unwrap().last().unwrap());
+        // Nothing is sent without a key.
         assert_eq!(
             first(fetch_models(dir.path(), "custom", Some(&base), true).unwrap()),
             "m-1"
         );
-        assert!(
-            !seen.lock().unwrap()[0]
-                .to_lowercase()
-                .contains("authorization")
-        );
+        assert_eq!(last(), None);
+        // A key kept for no custom address is sent to none: the one typed on the page is new.
         save_key(dir.path(), &json!({"provider": "custom", "key": "sk-abc"})).unwrap();
         fetch_models(dir.path(), "custom", Some(&base), true).unwrap();
-        let sent = seen.lock().unwrap()[1].to_lowercase();
-        assert!(sent.contains("authorization: bearer sk-abc"), "{sent}");
+        assert_eq!(last(), None);
+        // Saved with this address, the key goes to it as a bearer token ...
+        save_custom(dir.path(), &base);
+        fetch_models(dir.path(), "custom", Some(&base), true).unwrap();
+        assert_eq!(last().as_deref(), Some("authorization: bearer sk-abc"));
+        // ... also when the page gives the same address another way, or none at all.
+        for given in [Some(format!("{base}/")), None] {
+            fetch_models(dir.path(), "custom", given.as_deref(), true).unwrap();
+            assert_eq!(
+                last().as_deref(),
+                Some("authorization: bearer sk-abc"),
+                "{given:?}"
+            );
+        }
+        // Another address, even on the same machine, gets no key.
+        let other = base.replace("127.0.0.1", "localhost");
+        fetch_models(dir.path(), "custom", Some(&other), true).unwrap();
+        assert_eq!(last(), None);
+        for given in [format!("{base}/v1"), format!("{base}/other/v1")] {
+            fetch_models(dir.path(), "custom", Some(&given), true).unwrap();
+            assert_eq!(last(), None, "{given}");
+        }
         // The address as the service takes it: with /v1, with /systemone, or bare.
-        for given in [
-            format!("{base}/v1"),
-            format!("{base}/v1/systemone"),
-            format!("{base}/systemone"),
-        ] {
+        let before = seen.lock().unwrap().len();
+        for given in [format!("{base}/v1/systemone"), format!("{base}/systemone")] {
             fetch_models(dir.path(), "custom", Some(&given), true).unwrap();
         }
-        fetch_models(
-            dir.path(),
-            "custom",
-            Some(&format!("{base}/other/v1")),
-            true,
-        )
-        .unwrap();
         let paths: Vec<String> = seen
             .lock()
             .unwrap()
             .iter()
+            .skip(before)
             .map(|request| request.split_whitespace().nth(1).unwrap().to_owned())
             .collect();
+        assert_eq!(paths, ["/v1/models", "/v1/models"]);
+        // The key of another source does not stand in, nor does the address of another source.
+        save_key(dir.path(), &json!({"provider": "custom", "key": ""})).unwrap();
+        save_key(
+            dir.path(),
+            &json!({"provider": "openai", "key": "sk-other"}),
+        )
+        .unwrap();
+        fetch_models(dir.path(), "custom", Some(&base), true).unwrap();
+        assert_eq!(last(), None);
+    }
+
+    #[test]
+    fn a_changed_key_is_never_answered_from_what_an_old_one_was_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, seen) = serve(|_| (200, json!({"data": [{"id": "m"}]})));
+        save_custom(dir.path(), &base);
+        save_key(dir.path(), &json!({"provider": "custom", "key": "sk-one"})).unwrap();
+        fetch_models(dir.path(), "custom", None, false).unwrap();
+        fetch_models(dir.path(), "custom", None, false).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 1, "remembered");
+        save_key(dir.path(), &json!({"provider": "custom", "key": "sk-two"})).unwrap();
+        fetch_models(dir.path(), "custom", None, false).unwrap();
+        let sent = seen.lock().unwrap();
+        assert_eq!(sent.len(), 2, "asked again under the new key");
         assert_eq!(
-            paths,
-            [
-                "/v1/models",
-                "/v1/models",
-                "/v1/models",
-                "/v1/models",
-                "/v1/models",
-                "/other/v1/models"
-            ]
+            authorization(&sent[1]).as_deref(),
+            Some("authorization: bearer sk-two")
         );
-        // The saved address stands in when the page gives none, for the same source only.
-        let mut file = with_source(json!({"decision_provider": "custom", "decision_model": "m",
-            "decision_base_url": base}));
-        normalize(&mut file);
-        save(dir.path(), &file).unwrap();
-        assert_eq!(
-            first(fetch_models(dir.path(), "custom", None, true).unwrap()),
-            "m-1"
-        );
+        drop(sent);
+        // Another data root never reads this one's answers.
+        let elsewhere = tempfile::tempdir().unwrap();
+        fetch_models(elsewhere.path(), "custom", Some(&base), false).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 3);
+        // Clearing the key is a change too.
+        save_key(dir.path(), &json!({"provider": "custom", "key": ""})).unwrap();
+        fetch_models(dir.path(), "custom", None, false).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 4);
+        assert_eq!(authorization(&seen.lock().unwrap()[3]), None);
+    }
+
+    #[test]
+    fn the_preview_never_reads_the_installed_apps_keys_for_a_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, seen) = serve(|_| (200, json!({"data": [{"id": "m"}]})));
+        save_custom(dir.path(), &base);
+        for provider in ["custom", "typesafe", "openrouter"] {
+            save_key(
+                dir.path(),
+                &json!({"provider": provider, "key": "sk-installed"}),
+            )
+            .unwrap();
+        }
+        // A custom endpoint is read without its key, even at the address it was saved with.
+        models::fetch_catalog(dir.path(), "custom", None, true, true).unwrap();
+        assert_eq!(authorization(&seen.lock().unwrap()[0]), None);
+        fetch_models(dir.path(), "custom", None, true).unwrap();
+        assert!(authorization(&seen.lock().unwrap()[1]).is_some());
+        // TypeSafe has no catalog without the key, which the preview does not use.
+        let (status, message) =
+            models::fetch_catalog(dir.path(), "typesafe", None, true, true).unwrap_err();
+        assert_eq!(status, 403);
+        assert!(message.contains("预览版"), "{message}");
+        // OpenRouter's public catalog and a keyless Ollama stay as they were, with no key.
+        let source = |id| models::source(id).unwrap();
+        for (id, preview, key) in [
+            ("openrouter", true, None),
+            ("openrouter", false, Some("sk-installed")),
+            ("ollama", true, None),
+            ("ollama", false, None),
+            ("typesafe", false, Some("sk-installed")),
+        ] {
+            assert_eq!(
+                models::request_key(dir.path(), source(id), "", preview).unwrap(),
+                key.map(str::to_owned),
+                "{id} {preview}"
+            );
+        }
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::private_keys::{mask_key, write_private_json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
@@ -51,25 +52,6 @@ pub(super) fn read_settings(root: &Path) -> Result<Value, String> {
 pub(super) fn read_keys(root: &Path) -> Result<Value, String> {
     read(root, "voice-keys.json", json!({}))
 }
-/// How a saved API key is shown back: enough to recognize it, never enough to use it. A key of 16
-/// characters or more keeps its first and last four, one of 8 to 15 only its last four, and a
-/// shorter one nothing; an empty key has nothing to show.
-pub(crate) fn mask_key(key: &str) -> String {
-    let key = key.trim();
-    let chars: Vec<char> = key.chars().collect();
-    let tail = |from: usize| chars[from..].iter().collect::<String>();
-    match chars.len() {
-        0 => String::new(),
-        16.. => format!(
-            "{}…{}",
-            chars[..4].iter().collect::<String>(),
-            tail(chars.len() - 4)
-        ),
-        8.. => format!("••••{}", tail(chars.len() - 4)),
-        _ => "••••".into(),
-    }
-}
-
 pub(super) fn public_state(mut settings: Value, keys: &Value) -> Value {
     let engine = settings["engine"]
         .as_str()
@@ -406,69 +388,10 @@ fn persona_settings(value: Option<&Value>) -> Result<Value, String> {
 fn valid_model_id(id: &str) -> bool {
     id.is_empty() || (id.len() <= 300 && !id.trim().is_empty() && !id.chars().any(char::is_control))
 }
-/// Replaces a file under `root` that only the current user may read; `*-keys.json` names also get
-/// a restricted ACL on Windows.
-pub(crate) fn write(root: &Path, name: &str, value: &Value) -> Result<(), String> {
-    let save = || -> std::io::Result<()> {
-        fs::create_dir_all(root)?;
-        let mut file = tempfile::NamedTempFile::new_in(root)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.as_file()
-                .set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
-        #[cfg(windows)]
-        if name.ends_with("-keys.json") {
-            restrict_windows_acl(file.path())?;
-        }
-        file.write_all(value.to_string().as_bytes())?;
-        file.as_file().sync_all()?;
-        file.persist(root.join(name)).map_err(|e| e.error)?;
-        Ok(())
-    };
-    save().map_err(|_| format!("无法保存 {name}"))
-}
-
-/// Windows has no file mode to copy: remove inherited access and grant the current user alone
-/// before writing secret bytes into the temporary file.
-#[cfg(windows)]
-fn restrict_windows_acl(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::process::CommandExt;
-
-    let user = std::env::var("USERNAME").unwrap_or_default();
-    if user.trim().is_empty() {
-        return Err(std::io::Error::other("无法限制语音密钥文件权限"));
-    }
-    let icacls = std::env::var_os("SystemRoot")
-        .map(|root| std::path::PathBuf::from(root).join(r"System32\icacls.exe"))
-        .filter(|candidate| candidate.is_file())
-        .unwrap_or_else(|| std::path::PathBuf::from("icacls.exe"));
-    let run = |principal: &str| {
-        std::process::Command::new(&icacls)
-            .arg(path.as_os_str())
-            .arg("/inheritance:r")
-            .arg("/grant:r")
-            .arg(format!("{principal}:(F)"))
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .status()
-    };
-    if let Ok(domain) = std::env::var("USERDOMAIN")
-        && !domain.trim().is_empty()
-        && run(&format!("{domain}\\{user}"))?.success()
-    {
-        return Ok(());
-    }
-    if run(&user)?.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other("无法限制语音密钥文件权限"))
-    }
-}
 pub(super) fn save_settings(root: &Path, value: &Value) -> Result<(), String> {
     let value = validate(value)?;
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
-    write(root, "voice.json", &value)
+    write_private_json(root, "voice.json", &value)
 }
 pub(super) fn save_key(root: &Path, value: &Value) -> Result<(), String> {
     let engine = value["engine"]
@@ -489,7 +412,7 @@ pub(super) fn save_key(root: &Path, value: &Value) -> Result<(), String> {
     } else {
         object.insert(engine.into(), key.into());
     }
-    write(root, "voice-keys.json", &keys)
+    write_private_json(root, "voice-keys.json", &keys)
 }
 /// Changes the key file under the write lock; the ChatGPT sign-in keeps its tokens there too.
 pub(super) fn edit_keys(
@@ -499,7 +422,7 @@ pub(super) fn edit_keys(
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut keys = read_keys(root)?;
     edit(&mut keys)?;
-    write(root, "voice-keys.json", &keys)
+    write_private_json(root, "voice-keys.json", &keys)
 }
 pub(super) fn cached(root: &Path, key: &str, extension: &str) -> Option<Vec<u8>> {
     let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());

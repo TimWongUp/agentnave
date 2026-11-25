@@ -1720,6 +1720,64 @@ test("choosing another platform fills its own model, shows only what it takes an
   assert.equal(decisionFile(app).decision_provider, "openrouter");
 });
 
+test("going back to Gemini saves its own model whatever the saved platform was", async () => {
+  const written = { version: 1, decision_provider: "openai", decision_model: "gpt-6-luna", decision_base_url: "https://old.example.com/v1", seats: [] };
+  const { app, calls, decision } = decisionEditor("decision", PLATFORM_FILE(written));
+  await decision((d) => d.load());
+  control(app, "decision/provider").listeners.change({ target: { value: "gemini" } });
+  assert.equal(decision((d) => d.changed()), true);
+  assert.equal(decision((d) => d.problem()), null);
+  await decision((d) => d.save());
+  const post = calls.filter((call) => call.url === "/app/decision-seats" && call.method === "POST").at(-1);
+  assert.deepEqual(post.body, { version: 1, decision_model: "gemini-decision-1", seats: [] });
+  assert.equal(decision((d) => d.changed()), false);
+});
+
+test("the model list is asked for on load, on choosing, after a key and on refresh, never by drawing the page", async () => {
+  const { app, calls, decision } = decisionEditor("decision", PLATFORM_FILE({ version: 1, decision_provider: "ollama", decision_model: "system-one:1b", seats: [] }), null, () => ({ models: [{ id: "system-one:1b", name: "system-one:1b" }] }));
+  const asked = () => calls.filter((call) => call.url.startsWith("/app/decision-models")).length;
+  await decision((d) => d.load());
+  await settle();
+  assert.equal(asked(), 1, "once the file is in");
+  // A half-typed address and any number of redraws ask nothing.
+  const address = (value) => control(app, "decision/address").listeners.input({ target: { value } });
+  address("http://localhost:1");
+  address("http://localhost:11");
+  app.run("renderOrchestration()");
+  app.run("renderOrchestration()");
+  await settle();
+  assert.equal(asked(), 1);
+  // Refresh asks for the address as it stands.
+  control(app, "decision/model-refresh").listeners.click();
+  await settle();
+  assert.equal(asked(), 2);
+  assert.match(calls.filter((call) => call.url.startsWith("/app/decision-models")).at(-1).url, /base_url=http%3A%2F%2Flocalhost%3A11&refresh=1$/);
+  // Choosing another platform asks for its list once.
+  control(app, "decision/provider").listeners.change({ target: { value: "openrouter" } });
+  await settle();
+  assert.equal(asked(), 3);
+  app.run("renderOrchestration()");
+  assert.equal(asked(), 3);
+  // A draft that stands when the file is read again keeps the page from asking.
+  await decision((d) => d.load());
+  assert.equal(asked(), 3);
+});
+
+test("the choose-a-model entry cannot be picked, and an empty pick changes nothing", async () => {
+  const { app, decision } = decisionEditor("decision", PLATFORM_FILE(), null, () => ({ models: [{ id: "zeta/decider-small", name: "zeta/decider-small" }] }));
+  await decision((d) => d.load());
+  control(app, "decision/provider").listeners.change({ target: { value: "openrouter" } });
+  await settle();
+  const options = control(app, "decision/model").children.filter((child) => child && child.tagName === "option");
+  assert.equal(options[0].attrs.value, "");
+  assert.equal(options[0].attrs.disabled, "");
+  control(app, "decision/model").listeners.change({ target: { value: "__manual__" } });
+  assert.ok(control(app, "decision/model-id"));
+  control(app, "decision/model").listeners.change({ target: { value: "" } });
+  assert.equal(decisionFile(app).decision_model, "liquid/d1.2-ultra");
+  assert.equal(control(app, "decision/model-id"), null, "back to the list, nothing chosen");
+});
+
 test("each platform keeps its own key, saved at once and never shown again", async () => {
   const { app, calls, decision } = decisionEditor("decision", PLATFORM_FILE(null, { gemini: true }));
   await decision((d) => d.load());
@@ -1772,13 +1830,13 @@ test("a local Ollama and a custom endpoint take an address, which is checked bef
   // The default address is asked for when none is typed, and what is typed is not required.
   assert.deepEqual(calls.filter((call) => call.url.startsWith("/app/decision-models")).map((call) => call.url), [`/app/decision-models?provider=ollama&base_url=${encodeURIComponent("http://127.0.0.1:11434")}`]);
   assert.equal(control(app, "decision/address").attrs.placeholder, "http://127.0.0.1:11434");
-  assert.match(JSON.stringify(topRow(app, "决策平台")), /不出本机/);
+  assert.match(JSON.stringify(topRow(app, "决策平台")), /本机地址且运行本地模型时，内容不出本机/);
   control(app, "decision/model").listeners.change({ target: { value: "system-one:1b" } });
   assert.equal(decision((d) => d.problem()), null);
   assert.deepEqual(decisionFile(app), { version: 1, decision_provider: "ollama", decision_model: "system-one:1b", seats: [] });
   address(" http://localhost:11434/v1/ ");
   assert.equal(decisionFile(app).decision_base_url, "http://localhost:11434/v1");
-  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`]) {
+  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "https://example.com/v1?", "https://example.com/v1#", "https://example.com:0/v1", "https://example.com:/v1", "http://localhost:0", "http://[::ffff:127.0.0.1]:11434", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`]) {
     address(bad);
     assert.match(decision((d) => d.problem()), /API/, bad);
   }
