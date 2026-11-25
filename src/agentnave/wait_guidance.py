@@ -118,6 +118,8 @@ WATCH_CLI_RULES: dict[str, WatchCliRule] = {
         basename_pattern=re.compile(r"^grok(?:-\d+(?:\.\d+)*)?\Z", re.IGNORECASE),
         min_version=(1, 0, 92),
         non_interactive_flags=frozenset({"-p", "--print", "--prompt", "--prompt-file"}),
+        # T3 Code starts Grok as `grok agent ... stdio`: a non-interactive mode that cannot self-wake.
+        non_interactive_subcommands=frozenset({"agent"}),
     ),
 }
 

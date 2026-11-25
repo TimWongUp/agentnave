@@ -295,7 +295,7 @@ fn wanted(
             }
             let t3_reader = t3_active
                 && group.iter().any(|app| {
-                    matches!(app.id, "claude" | "codex" | "antigravity")
+                    matches!(app.id, "claude" | "codex" | "antigravity" | "codebuddy")
                         && would_read(app, home).contains(&path)
                 });
             let text = if t3_reader {

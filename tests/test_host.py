@@ -625,8 +625,14 @@ def test_t3_mode_detection_rules_ancestors_platform_and_cache(
     assert t3.detect_t3_mode(agy, env={"T3CODE_THREAD_ID": "thread:delegated-task:x"}) == "child"
     assert t3.detect_t3_mode(agy, env={}) == "none"
 
-    # Other hosts are not recognized.
-    for other in ("grok", "pi", "codebuddy", "deepseek", "zcode", None):
+    # CodeBuddy (`--acp`) follows the Codex rule.
+    buddy = Host("codebuddy", "env")
+    assert t3.detect_t3_mode(buddy, env={"T3CODE_THREAD_ID": "thread-1"}) == "main"
+    assert t3.detect_t3_mode(buddy, env={"T3CODE_THREAD_ID": "thread:delegated-task:x"}) == "child"
+    assert t3.detect_t3_mode(buddy, env={}) == "none"
+
+    # Other hosts are not recognized; Grok's processes never carry T3CODE_THREAD_ID.
+    for other in ("grok", "pi", "deepseek", "zcode", None):
         assert (
             t3.detect_t3_mode(
                 Host(other, "env") if other else Host(),

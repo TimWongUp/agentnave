@@ -885,7 +885,7 @@ fn the_decision_mode_is_per_boss_and_shared_by_readers_of_one_file() {
 }
 
 #[test]
-fn t3_rule_follows_mode_for_claude_codex_and_antigravity_only_and_restores_cleanly() {
+fn t3_rule_follows_mode_for_claude_codex_antigravity_and_codebuddy_only_and_restores_cleanly() {
     let home = tempfile::tempdir().unwrap();
     let h = &home.path().canonicalize().unwrap();
     let app = |key: &'static str, id: &'static str, label: &'static str, root: &str| App {
@@ -910,6 +910,7 @@ fn t3_rule_follows_mode_for_claude_codex_and_antigravity_only_and_restores_clean
             "Antigravity",
             ".gemini/config",
         ),
+        app("codebuddy", "codebuddy", "CodeBuddy", ".codebuddy"),
         app("zcode", "zcode", "ZCode", ".zcode"),
     ];
     let boss_suffix = catalog::t3_suffix("split").unwrap();
@@ -942,6 +943,7 @@ fn t3_rule_follows_mode_for_claude_codex_and_antigravity_only_and_restores_clean
     assert!(!h.join(".codex/AGENTS.md").exists());
     assert!(!h.join(".grok/AGENTS.md").exists());
     assert!(!h.join(".gemini/AGENTS.md").exists());
+    assert!(!h.join(".codebuddy/CODEBUDDY.md").exists());
     assert!(!h.join(".zcode/AGENTS.md").exists());
 
     // 2. Meetings mode + T3 active: ordinary meetings block without any T3 heading or text.
@@ -958,7 +960,7 @@ fn t3_rule_follows_mode_for_claude_codex_and_antigravity_only_and_restores_clean
         !text.contains("### 不在 T3 Code 里时这样派") && !text.contains("### 在 T3 Code 里这样派")
     }));
 
-    // 4. Split and decision modes split dispatch into two h3 sections for Claude/Codex/Antigravity only;
+    // 4. Split and decision modes split dispatch into two h3 sections for Claude/Codex/Antigravity/CodeBuddy only;
     //    other hosts and T3-off stay verbatim without headings, and presets() carries
     //    non_t3_heading + mode-specific t3 suffixes.
     for (mode, dispatch_key, expected_suffix) in [
@@ -991,7 +993,8 @@ fn t3_rule_follows_mode_for_claude_codex_and_antigravity_only_and_restores_clean
             let is_t3_reader = path.starts_with(h.join(".claude"))
                 || path.starts_with(h.join(".agentnave-accounts/claude/a1"))
                 || path.starts_with(h.join(".codex"))
-                || path.starts_with(h.join(".gemini"));
+                || path.starts_with(h.join(".gemini"))
+                || path.starts_with(h.join(".codebuddy"));
             if is_t3_reader {
                 assert_eq!(text, &expected_t3, "{mode} {path:?}");
             } else {
@@ -1024,6 +1027,11 @@ fn t3_rule_follows_mode_for_claude_codex_and_antigravity_only_and_restores_clean
     );
     assert!(
         std::fs::read_to_string(h.join(".gemini/AGENTS.md"))
+            .unwrap()
+            .contains(boss_suffix.as_str())
+    );
+    assert!(
+        std::fs::read_to_string(h.join(".codebuddy/CODEBUDDY.md"))
             .unwrap()
             .contains(boss_suffix.as_str())
     );

@@ -256,6 +256,8 @@ def test_probe_watch_host_cli_grok_rules_and_versioned_binary() -> None:
         ("grok", "--prompt=hi"),
         ("grok", "--prompt-file", "/tmp/p.txt"),
         ("grok", "--prompt-file=/tmp/p.txt"),
+        # T3 Code's Grok launch: non-interactive `agent` subcommand, cannot self-wake.
+        ("grok", "agent", "--always-approve", "stdio"),
     ):
         argvs[10] = bad_argv
         assert not wait_guidance.probe_watch_host_cli(
@@ -696,15 +698,17 @@ def test_t3_main_wait_guidance_for_claude_and_codex_ignores_cli_probe(
         == wait_guidance.WAIT_NEXT
     )
 
-    # Hosts without a T3 wait path are unchanged even with t3_main=True.
-    assert (
-        wait_guidance.build_wait_guidance(
-            Host("pi", "env"),
-            root=tmp_path,
-            pid=42,
-            started_at=1700000000.5,
-            boss_key="s-boss",
-            t3_main=True,
+    # Hosts without a T3 wait path are unchanged even with t3_main=True; CodeBuddy's background
+    # commands do not wake it, so its T3 main thread waits in the foreground.
+    for name in ("pi", "codebuddy"):
+        assert (
+            wait_guidance.build_wait_guidance(
+                Host(name, "env"),
+                root=tmp_path,
+                pid=42,
+                started_at=1700000000.5,
+                boss_key="s-boss",
+                t3_main=True,
+            )
+            == wait_guidance.WAIT_NEXT
         )
-        == wait_guidance.WAIT_NEXT
-    )
