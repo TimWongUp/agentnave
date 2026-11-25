@@ -126,4 +126,4 @@
 | 0120 | [Provider 进程答完后保留一段时间，供续接复用](0120-idle-keep-for-resume.md) | 已接受 | 修订架构基线的进程组清理；补充 ADR-0095、ADR-0025、ADR-0010 |
 | 0121 | [接入 T3 Code：T3 里由 T3 执行单独指派，AgentNave 只选工位、开会和转交](0121-t3-code-orchestration.md) | 已接受 | 修订 ADR-0030、0037、0038、0041、0068、0074、0087、0089、0090、0093、0108、0114、0117（仅 T3 主线程且开启时）；2026-11-25 自身修订：T3 工位目录支持生图工位、T3 页有独立的 boss 勾选、取消首次预填 |
 | 0122 | [并行分工并入分工协作，两个派活档共用正文和三个开关](0122-merge-split-and-parallel-presets.md) | 已接受 | 修订 ADR-0037、ADR-0051、ADR-0068、ADR-0073、ADR-0087、ADR-0117 |
-| 0123 | [决策模型支持多平台与本机 System One 端点](0123-multi-decision-model-providers.md) | 已接受 | 修订 ADR-0029、ADR-0087；沿用 ADR-0093、ADR-0121 |
+| 0123 | [决策模型支持多平台与本机 System One 端点](0123-multi-decision-model-providers.md) | 已接受 | 修订 ADR-0029、ADR-0044、ADR-0087；沿用 ADR-0093、ADR-0121 |

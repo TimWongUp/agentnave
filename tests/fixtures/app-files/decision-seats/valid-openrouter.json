@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "decision_provider": "openrouter",
+  "decision_model": "liquid/d1.2-ultra",
+  "seats": []
+}
