@@ -170,8 +170,8 @@ pub(crate) fn sync_orchestration(
         }
     }
     if let Ok(t3) = crate::t3_seats::read(root) {
-        let t3_active = t3.as_ref().is_some_and(crate::t3_seats::is_active);
-        failures.extend(hosts.sync_rules(&document, t3_active, also));
+        let t3 = t3.filter(crate::t3_seats::is_active);
+        failures.extend(hosts.sync_rules(&document, t3.as_ref(), also));
     }
     failures.extend(hosts.sync_main_skills());
     failures
@@ -189,11 +189,11 @@ pub(super) fn rule_files(root: &Path, host_state: &Mutex<Option<Hosts>>) -> Valu
         .unwrap_or_default();
     let document =
         crate::members::read_orchestration(root).unwrap_or_else(|_| json!({"preset": "off"}));
-    let t3_active = crate::t3_seats::read(root)
+    let t3 = crate::t3_seats::read(root)
         .ok()
         .flatten()
-        .is_some_and(|doc| crate::t3_seats::is_active(&doc));
-    crate::rules::list(&installed, &connected, &home, &document, t3_active)
+        .filter(crate::t3_seats::is_active);
+    crate::rules::list(&installed, &connected, &home, &document, t3.as_ref())
 }
 pub(crate) fn skill_request(method: &str) -> Response {
     if method != "GET" {
