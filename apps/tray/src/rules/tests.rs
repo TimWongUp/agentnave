@@ -885,7 +885,7 @@ fn the_decision_mode_is_per_boss_and_shared_by_readers_of_one_file() {
 }
 
 #[test]
-fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
+fn t3_rule_follows_mode_for_claude_codex_and_antigravity_only_and_restores_cleanly() {
     let home = tempfile::tempdir().unwrap();
     let h = &home.path().canonicalize().unwrap();
     let app = |key: &'static str, id: &'static str, label: &'static str, root: &str| App {
@@ -958,8 +958,8 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
         !text.contains("### 不在 T3 Code 里时这样派") && !text.contains("### 在 T3 Code 里这样派")
     }));
 
-    // 4. Split and decision modes split dispatch into two h3 sections for Claude/Codex only;
-    //    non-Claude/Codex and T3-off stay verbatim without headings, and presets() carries
+    // 4. Split and decision modes split dispatch into two h3 sections for Claude/Codex/Antigravity only;
+    //    other hosts and T3-off stay verbatim without headings, and presets() carries
     //    non_t3_heading + mode-specific t3 suffixes.
     for (mode, dispatch_key, expected_suffix) in [
         ("split", "dispatch_split", &boss_suffix),
@@ -988,10 +988,11 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
         }
         let rows = wanted(&apps, h, &doc, true);
         for (path, text) in &rows {
-            let is_claude_or_codex = path.starts_with(h.join(".claude"))
+            let is_t3_reader = path.starts_with(h.join(".claude"))
                 || path.starts_with(h.join(".agentnave-accounts/claude/a1"))
-                || path.starts_with(h.join(".codex"));
-            if is_claude_or_codex {
+                || path.starts_with(h.join(".codex"))
+                || path.starts_with(h.join(".gemini"));
+            if is_t3_reader {
                 assert_eq!(text, &expected_t3, "{mode} {path:?}");
             } else {
                 assert_eq!(text, &plain, "{mode} {path:?}");
@@ -1018,6 +1019,11 @@ fn t3_rule_follows_mode_for_claude_and_codex_only_and_restores_cleanly() {
     );
     assert!(
         std::fs::read_to_string(h.join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains(boss_suffix.as_str())
+    );
+    assert!(
+        std::fs::read_to_string(h.join(".gemini/AGENTS.md"))
             .unwrap()
             .contains(boss_suffix.as_str())
     );

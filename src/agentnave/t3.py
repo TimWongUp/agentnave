@@ -102,7 +102,7 @@ def detect_t3_mode(
             read_argv,
         ):
             return "none"
-    elif host.name != "codex":
+    elif host.name not in ("codex", "antigravity"):
         return "none"
     return "child" if child else "main"
 

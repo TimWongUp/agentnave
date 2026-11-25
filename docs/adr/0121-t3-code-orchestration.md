@@ -3,6 +3,7 @@
 - 状态：已接受
 - 日期：2026-11-24
 - 2026-11-25 自身修订：T3 工位目录支持生图工位（第 3、4 节），原条款「没有生图工位，T3 里不派生图」作废。Codex 与 Antigravity 在 T3 子线程里实测能出图并存到指定路径；Antigravity 经自带的生图子代理出图，所以简报附言要放行它。生图候选不限定哪家 CLI，能不能出图由 T3 里的 CLI 决定。
+- 2026-11-25 自身修订：T3 里的 Antigravity（`agy acp`）与 Codex 同样识别为主线程与子线程，后台等收件箱（第 1、6 节），第一版「只认 Claude 和 Codex」作废。
 - 2026-11-25 自身修订：取消首次预填（第 8 节），首次打开只有空白的通用探索、通用执行和生图工位；添加的备选不自动选模型。
 - 修订（仅在 T3 主线程且用户开启 T3 编排时）：
   - [ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0041](0041-orchestration-mode-per-boss.md)、[ADR-0068](0068-rules-hold-authorization-skill-holds-method.md)、[ADR-0074](0074-app-seat-model-source-and-claude-family-aliases.md)：T3 编排跟随该 boss 的编排档位；开启时分工协作、决策模型、自定义三档的规则块多一节 T3 派法（第 2、5 节）。
@@ -15,7 +16,7 @@
 
 ## 背景
 
-用户在 T3 Code 里用 Claude 和 Codex 当 boss。T3 有自己的子代理、账号、隔离目录、等待和任务展示，AgentNave 有工位目录、决策模型选工位、会议和跨应用转交。两边都能派单独任务，规则互相冲突：T3 的说明要求同一家 CLI 用原生子代理，AgentNave 的规则要求经 AgentNave 派发。
+用户在 T3 Code 里用 Claude、Codex 和 Antigravity 当 boss。T3 有自己的子代理、账号、隔离目录、等待和任务展示，AgentNave 有工位目录、决策模型选工位、会议和跨应用转交。两边都能派单独任务，规则互相冲突：T3 的说明要求同一家 CLI 用原生子代理，AgentNave 的规则要求经 AgentNave 派发。
 
 T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等），模型名、账号和档位也是它自己的一套，两边共用一份列表对不上。
 
@@ -24,16 +25,17 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
 - T3 里的 Claude 总在首步之后才连上 AgentNave，MCP 说明赶不上首次派发；规则文件和会话启动时的内容赶得上。
 - 用本篇第 5 节前身的规则句，Opus、Sonnet 和 Codex 的 gpt-6.2-astra、gpt-6-luna 共派 14 次，全部先选工位再用 `delegate_task`，没有改用原生子代理；Haiku 当 boss 时 3 次里 2 次绕过。
 - 后台命令结束后 T3 会叫醒主线程，Claude 与 Codex 都是。
+- 2026-11-25 在 T3 Code Beta、agy 1.5.16（macOS）上实测：T3 用 `agy acp --gemini-dir <profile> --app-data-dir antigravity-acp` 启动 agy，agy 及其拉起的服务进程环境里有 `T3CODE_THREAD_ID`（子线程以 `thread:delegated-task:` 开头）；agy 的 `run_command` 要填 `WaitMsBeforeAsync`，超时后命令转后台，命令结束时 agy 自己注入通知并开始新一轮，同一个 T3 run 里不需要 T3 叫醒。
 - T3 只拒绝模型不识别的推理档；没有的推理档不传时，同实例同模型的子任务会沿用主线程的档位，明确传空列表才用默认。
 
 ## 决定
 
 1. **识别 T3**。每个聊天有自己的服务进程，启动时判断一次：
    - Claude：宿主是 Claude，`CLAUDE_CODE_ENTRYPOINT=t3-code` 且 `T3CODE_THREAD_ID` 非空，并且祖先进程里没有第二个 `claude`（嵌套 `claude -p` 会继承这两个变量）。Windows 不查祖先，接受罕见误判。
-   - Codex：宿主是 Codex 且 `T3CODE_THREAD_ID` 非空。
+   - Codex、Antigravity：宿主是 Codex 或 Antigravity 且 `T3CODE_THREAD_ID` 非空，不查祖先进程。
    - 线程 ID 以 `thread:delegated-task:` 开头是 T3 派出的子线程（子线程里嵌套的 `claude` 也是），其余是主线程。
    - 服务启动的 Provider 进程与托盘终端剥离 `T3CODE_` 开头的变量，避免误判。`T3CODE_HOME` 由服务自己读取后再剥离。
-   - 第一版只认 Claude 和 Codex 宿主。
+   - 其他宿主不识别。
 2. **T3 跟随编排档位**。档位决定谁选工位、三个开关决定授权（[ADR-0122](0122-merge-split-and-parallel-presets.md)），T3 开关只决定在 T3 主线程里由谁执行：分工协作和自定义由 boss 选 T3 工位，决策模型由决策模型选；只开会和关闭两档没有 T3 模式，在 T3 里和别处一样。不识别、开关没开、当前 boss 的档位没有 T3 模式或 T3 工位目录没有可用工位时，除第 6 节的后台等外一切照旧。T3 内置终端、桌面端、命令行、派生会话都按普通连接处理。子线程不受开关影响，总是只给子线程说明。
 3. **T3 工位目录单独一份**，数据根文件 `t3-seats.json`，App 写、服务读：开关、同档候选随机开关、任务工位、评审工位。任务工位的专业、说明、读写、难度沿用自定义工位的含义，各自保存，不引用现有卡片。
    - 候选只存 T3 账号实例 ID、T3 模型名和推理档；每个工位 1–4 个候选（还没选模型的工位可以保存，但不进候选；没有可用工位时不能打开开关），账号就是实例，同一 CLI 的两个账号是两个候选。
@@ -50,7 +52,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    - T3 任务由 T3 展示，不进 AgentNave 历史、冷却和同目录提醒。只读靠回执附的只读说明写进简报，不是权限隔离。
    - T3 子线程里，选工位、派发、开会和转交工具都拒绝，说明它只完成自己的任务。
 5. **规则与说明**。
-   - 开关打开且档位有 T3 模式时，App 在 Claude 和 Codex 各自规则块里把派法分成两节：共用条目只写一份，后面依次是「不在 T3 Code 里时这样派」（普通派法、固定工位行和生图行）和「在 T3 Code 里这样派」（见下，第一条按档位取一种）。自定义档只在用户正文后追加 T3 一节，不改正文、不给正文加标题。开关关着或其他档位不加任何标题。按「在不在 T3 Code 里」分节，不按有没有 `delegate_task` 工具：T3 的系统说明从首步就写明运行环境，工具可能晚加载。首次派发只靠这一节。
+   - 开关打开且档位有 T3 模式时，App 在 Claude、Codex 和 Antigravity 各自规则块里把派法分成两节：共用条目只写一份，后面依次是「不在 T3 Code 里时这样派」（普通派法、固定工位行和生图行）和「在 T3 Code 里这样派」（见下，第一条按档位取一种）。自定义档只在用户正文后追加 T3 一节，不改正文、不给正文加标题。开关关着或其他档位不加任何标题。按「在不在 T3 Code 里」分节，不按有没有 `delegate_task` 工具：T3 的系统说明从首步就写明运行环境，工具可能晚加载。首次派发只靠这一节。
    - 授权、小事边界、并行写入、开会、评审和验收都用该档正文，T3 只换派法。
    - 用户点名 CLI、T3 账号或模型时不选工位，按 T3 的模型列表直接派；只点名 CLI 时由 boss 选模型并说明，不保证是工位里存的那个。
    - MCP 说明在 T3 主线程和子线程各用一段专用文字放在最前面；普通连接的说明不变。
@@ -65,7 +67,7 @@ T3 支持的提供方远多于 AgentNave（含 ACP Registry 里的 CodeBuddy 等
    > - 用户点名 CLI、T3 账号或模型时，按 T3 的模型列表直接派，说明用了哪个模型；用不了就告诉用户，不换别的。
    > - 开会仍用 AgentNave 并按会议回执收件，`list_members` 只用来选会议成员；其余等待、隔离和收件按 T3。
 
-6. **后台等**。只要识别为 T3 主线程，不看 T3 编排是否打开，Claude 与 Codex 的会议和 AgentNave 派发都用后台命令等收件箱，命令结束由 T3 叫醒；Windows 上命令的引号没有核实过能在 T3 用的终端里运行，等待不变；其他宿主在 T3 里没有识别，等待不变；提前返回（如卡住提醒）处理后要重新挂上。
+6. **后台等**。只要识别为 T3 主线程，不看 T3 编排是否打开，Claude、Codex 和 Antigravity 的会议和 AgentNave 派发都用后台命令等收件箱；Claude 与 Codex 在命令结束时由 T3 叫醒，Antigravity 用 `run_command` 把 `WaitMsBeforeAsync` 设成 500 让命令转后台，命令结束时 agy 自己唤醒，不调用 `t3_background_wait`；Antigravity 仍要求 `agy --version` 不低于 [ADR-0114](0114-tui-runtime-like-a-user.md) 的门槛，探测不通过时退回阻塞等待，探测只放行 T3 启动用的 `acp` 子命令；Windows 上命令的引号没有核实过能在 T3 用的终端里运行，等待不变；其他宿主在 T3 里没有识别，等待不变；提前返回（如卡住提醒）处理后要重新挂上。
 7. **转交**。T3 内换账号、分叉、新线程用 T3 的；跨出或跨进 T3 用 AgentNave 转交；没说去哪就问。T3 里换账号后聊天 ID 会变，旧会议不能续开，第一版接受。
 8. **App 读 T3 的模型列表**。App 读 `T3CODE_HOME`（缺省 `~/.t3`）下的实例缓存和隐藏模型设置，只取列模型需要的字段，不读也不展示邮箱、账号和凭据；T3 已移除的实例可能残留缓存，已保存的候选读不到时保留并标出。通用探索、通用执行和生图工位始终列出、不能删除，没填的不保存；首次打开全部留空，不从其他工位带入，专业工位和自定义工位由用户添加。添加的备选由用户自己选账号和模型，没选完不能保存。没检测到 T3 时不显示这一块。档位和三个开关在页面顶部，普通与 T3 共用；「通用 / T3 Code」只切换工位，当前档位没有 T3 模式时不显示。「写入的规则」显示实际写入的全文。
 
