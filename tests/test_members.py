@@ -2228,13 +2228,50 @@ def test_t3_bosses_select_which_hosts_run_t3_orchestration(
     # A boss T3 and AgentNave do not both support is never selected.
     configure("split", None)
     assert t3_host_mode(Host("workbuddy", "env", "workbuddy")) is None
-    # The tray lists the same bosses.
-    rules_rs = (
-        Path(__file__).resolve().parents[1] / "apps" / "tray" / "src" / "rules.rs"
-    ).read_text("utf-8")
-    match = re.search(r"pub const T3_BOSSES:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\];", rules_rs)
-    assert match is not None
-    assert set(re.findall(r'"([^"]+)"', match.group(1))) == T3_BOSS_IDS
+    # Unsaved choice follows the CLI: one row on selects the CLI's other, off rows too, which run
+    # like split inside T3 (a row key is `<cli>`, `<cli>@<folder>` or `claude-desktop`).
+    (tmp_path / "orchestration.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "effective_apps": {"claude": "split", "claude@a1": "off", "codex": "off"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "t3-seats.json").write_text(json.dumps(seats), encoding="utf-8")
+    account = Host("claude", "env", "claude@a1")
+    assert t3_host_mode(account) == "split"
+    assert effective_t3_seats(account) is not None
+    assert t3_host_mode(Host("claude", "env", "claude")) == "split"
+    assert t3_host_mode(Host("codex", "env", "codex")) is None
+    # The tray lists and recognises the same CLIs as the server, the JS mirrors included.
+    root = Path(__file__).resolve().parents[1] / "apps" / "tray"
+
+    def strings(path: str, pattern: str) -> set[str]:
+        match = re.search(pattern, (root / path).read_text("utf-8"))
+        assert match is not None, (path, pattern)
+        return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    rust_bosses = r"pub const T3_BOSSES:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\];"
+    rust_recognized = r"const T3_RECOGNIZED:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\];"
+    js_bosses = r"const T3_BOSSES\s*=\s*\[([^\]]*)\];"
+    js_recognized = r"const T3_RECOGNIZED\s*=\s*\[([^\]]*)\];"
+    assert strings("src/rules.rs", rust_bosses) == T3_BOSS_IDS
+    assert strings("ui/t3-seats.js", js_bosses) == T3_BOSS_IDS
+    recognized = {
+        boss
+        for boss in T3_BOSS_IDS
+        if t3.detect_t3_mode(
+            Host(cast(Any, boss), "env"),
+            env={"T3CODE_THREAD_ID": "main-1", "CLAUDE_CODE_ENTRYPOINT": "t3-code"},
+            parent_pid=1,
+        )
+        == "main"
+    }
+    assert recognized
+    assert strings("src/rules.rs", rust_recognized) == recognized
+    assert strings("ui/advanced.js", js_recognized) == recognized
 
 
 def test_t3_cache_filtering_unknown_passthrough_path_safety_and_privacy(

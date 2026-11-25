@@ -120,7 +120,7 @@ class T3SeatsFile(StrictModel):
     version: int = Field(ge=1, le=1)
     enabled: bool = False
     random_candidates: bool = False
-    # None: follow the orchestration page (every supported boss that is not off).
+    # None: follow the orchestration page (every supported CLI with any row that is not off).
     bosses: list[T3Boss] | None = None
     seats: list[T3Seat] = Field(default_factory=list[T3Seat], max_length=255)
     review: dict[ReviewRole, T3ReviewCandidates] = {}
@@ -149,22 +149,41 @@ class T3SeatsFile(StrictModel):
     def is_active(self) -> bool:
         return self.enabled and self.has_candidates()
 
-    def selects(self, boss: str | None, general: str | None) -> bool:
-        """Whether T3 orchestration is on for this CLI, given its mode outside T3."""
+    def selects(self, boss: str | None, followed: frozenset[str]) -> bool:
+        """Whether T3 orchestration is on for this CLI; `followed` are the CLIs with a row not off."""
         if boss not in T3_BOSS_IDS:
             return False
         if self.bosses is not None:
             return boss in self.bosses
-        return general not in (None, "off")
+        return boss in followed
 
 
-def _general_mode(host: Host) -> str | None:
-    """The host's mode outside T3 (a missing orchestration.json reads as off), None if unreadable."""
+def _row_cli(key: str) -> str:
+    """The CLI of an orchestration row key: `claude`, `claude@a1`, `claude-desktop`, `codex@dir`."""
+    cli = key.split("@", 1)[0]
+    return "claude" if cli == "claude-desktop" else cli
+
+
+def _followed_clis(roles: OrchestrationFile | None) -> frozenset[str]:
+    """The supported CLIs with any row not off, as the App derives them while `bosses` is unsaved."""
+    if roles is None:
+        return frozenset()
+    rows = (
+        roles.effective_apps
+        if roles.effective_apps is not None
+        else {**dict.fromkeys(T3_BOSS_IDS, roles.preset), **roles.apps}
+    )
+    return frozenset(_row_cli(key) for key, mode in rows.items() if mode != "off")
+
+
+def _orchestration_state(host: Host) -> tuple[str | None, frozenset[str]]:
+    """The host's mode outside T3 (a missing orchestration.json reads as off, unreadable None) and
+    the CLIs that follow the orchestration page."""
     try:
         roles = _read_app_file("orchestration.json", OrchestrationFile, MemberFileError)
     except MemberFileError:
-        return None
-    return "off" if roles is None else roles.mode(host)
+        return None, frozenset()
+    return ("off" if roles is None else roles.mode(host)), _followed_clis(roles)
 
 
 def _preset_mode(general: str | None) -> T3OrchestrationMode | None:
@@ -177,8 +196,8 @@ def _preset_mode(general: str | None) -> T3OrchestrationMode | None:
 
 
 def _t3_mode(host: Host, document: T3SeatsFile) -> T3OrchestrationMode | None:
-    general = _general_mode(host)
-    if not document.selects(host.name, general):
+    general, followed = _orchestration_state(host)
+    if not document.selects(host.name, followed):
         return None
     # A selected boss that is off outside T3 dispatches like split inside it.
     return "split" if general == "off" else _preset_mode(general)
@@ -190,7 +209,7 @@ def t3_host_mode(host: Host) -> T3OrchestrationMode | None:
     try:
         document = read_t3_seats()
     except T3SeatsFileError:
-        return _preset_mode(_general_mode(host))
+        return _preset_mode(_orchestration_state(host)[0])
     return None if document is None else _t3_mode(host, document)
 
 
@@ -217,7 +236,7 @@ def effective_t3_seats(host: Host) -> T3SeatsFile | None:
     """
     if current_t3_mode(host) != "main":
         return None
-    general = _general_mode(host)
+    general = _orchestration_state(host)[0]
     if general not in ("off", "split", "parallel", "decision", "custom"):
         return None
     try:

@@ -327,26 +327,28 @@ fn wanted(
                 scoped["image_generation"] = Value::Null;
             }
             // The selected CLIs reading this file, by whether AgentNave recognises them in T3.
-            let (mut recognized, mut others) = (false, Vec::new());
+            let (mut recognized, mut others): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
             for app in &group {
                 let on = selected.iter().any(|id| id == app.id);
                 if !on || !would_read(app, home).contains(&path) {
                     continue;
                 }
                 if T3_RECOGNIZED.contains(&app.id) {
-                    recognized = true;
+                    if !recognized.contains(&app.id) {
+                        recognized.push(app.id);
+                    }
                 } else if T3_BOSSES.contains(&app.id) && !others.contains(&app.id) {
                     others.push(app.id);
                 }
             }
-            let text = match catalog::t3_additions(mode, recognized, &others) {
+            let text = match catalog::t3_additions(mode, !recognized.is_empty(), &others) {
                 Some(suffix) => match catalog::preset_text_for_t3(&scoped, mode, &suffix) {
                     Some(text) => (!text.is_empty()).then_some(text),
                     None => text_of(&scoped, mode).map(|text| text + &suffix),
                 },
                 // On in T3 Code but off outside it: only the T3 rules.
-                None if mode == "off" && (recognized || !others.is_empty()) => {
-                    Some(catalog::t3_only_text(&scoped, recognized, &others))
+                None if mode == "off" && !(recognized.is_empty() && others.is_empty()) => {
+                    Some(catalog::t3_only_text(&scoped, &recognized, &others))
                 }
                 None => text_of(&scoped, mode),
             };

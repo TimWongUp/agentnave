@@ -1115,16 +1115,19 @@ fn t3_bosses_choose_who_gets_which_t3_section() {
     let rows = wanted(&apps, h, &off, Some(&json!({"bosses": ["codex", "grok"]})));
     assert_eq!(rows.len(), 2);
     let codex = file(&rows, ".codex/AGENTS.md").unwrap();
-    assert_eq!(codex, catalog::t3_only_text(&off, true, &[]));
-    assert!(codex.contains("以上只在 T3 Code 里适用"));
+    assert_eq!(codex, catalog::t3_only_text(&off, &["codex"], &[]));
+    assert!(codex.contains("以上只对 T3 Code 里的 Codex CLI 适用"));
     assert!(codex.contains("\n\n### 在 T3 Code 里这样派\n\n- "));
     assert!(
         !codex.contains("不用上面的派法和工位") && !codex.contains("### 不在 T3 Code 里时这样派")
     );
     assert!(!codex.contains("按 T3 自己的规则派"));
     let grok = file(&rows, ".grok/AGENTS.md").unwrap();
-    assert_eq!(grok, catalog::t3_only_text(&off, false, &["grok"]));
-    assert!(grok.contains("以上只在 T3 Code 里适用") && !grok.contains("### 在 T3 Code 里这样派"));
+    assert_eq!(grok, catalog::t3_only_text(&off, &[], &["grok"]));
+    assert!(
+        grok.contains("以上只对 T3 Code 里的 Grok CLI 适用")
+            && !grok.contains("### 在 T3 Code 里这样派")
+    );
 
     // One file read by both kinds: the T3 dispatch first, then the section naming the others.
     std::fs::create_dir_all(h.join(".claude")).unwrap();
@@ -1140,5 +1143,24 @@ fn t3_bosses_choose_who_gets_which_t3_section() {
     assert!(
         both.find("### 在 T3 Code 里这样派").unwrap()
             < both.find("### 在 T3 Code 里，Grok CLI 按").unwrap()
+    );
+
+    // A shared file with the general page off: the T3-only authorization names the selected
+    // readers only, so an unselected one (Claude here) cannot read it as its own.
+    let rows = wanted(&shared, h, &off, Some(&json!({"bosses": ["grok"]})));
+    let only_grok = file(&rows, ".claude/CLAUDE.md").unwrap();
+    assert_eq!(only_grok, catalog::t3_only_text(&off, &[], &["grok"]));
+    assert!(only_grok.contains("以上只对 T3 Code 里的 Grok CLI 适用；其他读到这里的 CLI"));
+    assert!(!only_grok.contains("Claude Code"));
+    let rows = wanted(
+        &shared,
+        h,
+        &off,
+        Some(&json!({"bosses": ["claude", "grok"]})),
+    );
+    assert!(
+        file(&rows, ".claude/CLAUDE.md")
+            .unwrap()
+            .contains("以上只对 T3 Code 里的 Claude Code、Grok CLI 适用")
     );
 }

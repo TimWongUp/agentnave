@@ -57,7 +57,8 @@ fn validation_matches_server_schema_and_save_gate() {
     assert!(is_active(&valid));
 
     // The bosses T3 orchestration is on for: only CLIs both T3 and AgentNave support, each once.
-    for bosses in [json!([]), json!(["claude", "grok", "pi"])] {
+    // null reads as not saved, which the server schema accepts too.
+    for bosses in [json!(null), json!([]), json!(["claude", "grok", "pi"])] {
         let mut chosen = valid.clone();
         chosen["bosses"] = bosses;
         assert!(validate(&chosen).is_ok());

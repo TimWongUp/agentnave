@@ -1000,7 +1000,7 @@
 
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
-    renderOrchestrationText, orchestrationSupportsT3: () => usesSeats(orchestrationView),
+    renderOrchestrationText, orchestrationSupportsT3: () => orchestrationView !== "meetings", // off still gets the T3-only block
     viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, renderRuleFiles, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced, REVIEW_ROLES,

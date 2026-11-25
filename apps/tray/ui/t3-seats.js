@@ -814,7 +814,11 @@
     const toggleBoss = (id, on) => mutate((next) => {
       const list = new Set(selectedBosses(next));
       if (on) list.add(id); else list.delete(id);
-      next.bosses = T3_BOSSES.filter((one) => list.has(one));
+      const picked = T3_BOSSES.filter((one) => list.has(one));
+      // Back to what the orchestration page gives still follows it, rather than saving a list.
+      const followed = followedBosses();
+      next.bosses = baseline.bosses === null && sameJson(picked, T3_BOSSES.filter((one) => followed.includes(one)))
+        ? null : picked;
     });
     const bossChips = bossChoices().map(({ id, label }) => {
       const on = chosen.includes(id);

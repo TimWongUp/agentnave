@@ -187,9 +187,20 @@ fn t3_others(ids: &[&str]) -> String {
     t3_others_template().replace("{names}", &names.join(str_at(md, "separator")))
 }
 
-/// The block of a boss that is on in T3 Code but off outside it: the shared rules limited to T3
-/// Code, then the T3 sections.
-pub(super) fn t3_only_text(document: &Value, recognized: bool, others: &[&str]) -> String {
+/// The provider names of the CLIs T3 orchestration is on for, in `T3_BOSSES` order.
+fn t3_reader_names(recognized: &[&str], others: &[&str]) -> String {
+    let md = &catalog()["meeting_defaults"];
+    let names: Vec<&str> = super::T3_BOSSES
+        .iter()
+        .filter(|id| recognized.contains(id) || others.contains(id))
+        .filter_map(|id| md["provider_names"][*id].as_str())
+        .collect();
+    names.join(str_at(md, "separator"))
+}
+
+/// The block of a boss that is on in T3 Code but off outside it: the shared rules limited to the
+/// selected readers (`recognized` and `others`) in T3 Code, then the T3 sections.
+pub(super) fn t3_only_text(document: &Value, recognized: &[&str], others: &[&str]) -> String {
     let only = &catalog()["t3_only"];
     let steps_of = |key: &str| -> Vec<Value> {
         only[key]
@@ -197,8 +208,18 @@ pub(super) fn t3_only_text(document: &Value, recognized: bool, others: &[&str]) 
             .unwrap_or_else(|| panic!("t3_only.{key} in orchestration_rules.json"))
             .clone()
     };
-    let mut text = assemble_steps(document, &steps_of("base"), true, false);
-    if recognized {
+    // The scope sentence names the readers it authorizes, filled in apart from the user's own text.
+    let (scope, base): (Vec<Value>, Vec<Value>) = steps_of("base")
+        .into_iter()
+        .partition(|step| step.as_str() == Some("t3_only_scope"));
+    let mut text = assemble_steps(document, &base, true, false);
+    for step in scope {
+        text.push_str(
+            &section(step.as_str().expect("t3_only step string"))
+                .replace("{names}", &t3_reader_names(recognized, others)),
+        );
+    }
+    if !recognized.is_empty() {
         for step in steps_of("recognized") {
             text.push_str(section(step.as_str().expect("t3_only step string")));
         }

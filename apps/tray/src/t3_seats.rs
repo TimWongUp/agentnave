@@ -168,7 +168,7 @@ pub fn validate(document: &Value) -> Result<(), String> {
             return Err(format!("{flag} 必须为布尔值"));
         }
     }
-    if let Some(bosses) = top.get("bosses") {
+    if let Some(bosses) = top.get("bosses").filter(|bosses| !bosses.is_null()) {
         let list = bosses.as_array().ok_or("bosses 必须为数组")?;
         for (index, boss) in list.iter().enumerate() {
             let Some(id) = boss
