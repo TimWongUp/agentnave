@@ -2,29 +2,6 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn a_key_is_masked_by_its_length_and_never_shown_whole() {
-    let cases = [
-        ("", ""),
-        ("   ", ""),
-        ("a", "••••"),
-        ("1234567", "••••"),
-        ("12345678", "••••5678"),
-        ("AIza-secret-key", "••••-key"),
-        ("123456789012345", "••••2345"),
-        ("1234567890123456", "1234…3456"),
-        ("  sk-proj-0123456789a8b  ", "sk-p…9a8b"),
-        ("密钥密钥密钥密钥密钥密钥密钥密钥", "密钥密钥…密钥密钥"),
-    ];
-    for (key, masked) in cases {
-        assert_eq!(mask_key(key), masked, "{key:?}");
-        assert!(
-            key.trim().is_empty() || !masked.contains(key.trim()),
-            "{key:?}"
-        );
-    }
-}
-
-#[test]
 fn prose_removes_nonspoken_content_and_truncates_at_a_sentence() {
     let input = "# 标题\n**你好**，`行内内容`。\n```rust\nsecret();\n```\n| 名称 | 内容 |\n| --- | --- |\n路径 /tmp/a.rs 链接 https://example.org/x\n- [文档](https://example.org) <b>保留</b>";
     assert_eq!(

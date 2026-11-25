@@ -122,7 +122,7 @@
     return {
       version: 1,
       ...(provider === "gemini" ? {} : { decision_provider: provider }),
-      decision_model: provider === "gemini" ? saved?.document?.decision_model || "gemini-decision-1" : meta.fixed_model ? meta.default_model : model.trim(),
+      decision_model: meta.fixed_model ? meta.default_model : model.trim(),
       ...(meta.custom_url && address ? { decision_base_url: address } : {}),
       ...(randomCandidates() ? { random_candidates: true } : {}),
       seats: toSeats(cards()),
@@ -244,13 +244,15 @@
   }
 
   // What keeps an address from being saved, or null: HTTPS, or HTTP on this machine, no account,
-  // query or fragment, at most 512 characters.
+  // query or fragment (not even an empty one), no zero or empty port, at most 512 characters.
   function addressProblem(address) {
     const text = address.trim();
     let url;
     try { url = new URL(text); } catch { return L("API 地址无效", "The API address is not valid"); }
     if (text.length > 512) return L("API 地址过长", "The API address is too long");
-    if (url.username || url.password || url.search || url.hash || /^[a-z][a-z0-9+.-]*:\/*[^/]*@/i.test(text)) return L("API 地址不能包含账号、查询参数或片段", "The API address cannot hold an account, query or fragment");
+    if (url.username || url.password || /[?#]/.test(text) || /^[a-z][a-z0-9+.-]*:\/*[^/]*@/i.test(text)) return L("API 地址不能包含账号、查询参数或片段", "The API address cannot hold an account, query or fragment");
+    const authority = text.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] ?? "";
+    if (url.port === "0" || authority.endsWith(":")) return L("API 地址无效", "The API address is not valid");
     const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     const loopback = host === "localhost" || /^127(\.\d{1,3}){3}$/.test(host) || host === "::1";
     if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return L("API 只允许 HTTPS，或本机上的 HTTP", "The API takes HTTPS, or HTTP on this machine");
@@ -321,6 +323,8 @@
         randomDraft = null;
         prefilled = false;
         manualModel = false;
+        // The first list is asked for once the file is in, not whenever the page is drawn.
+        if (!locked() && listsOnChoice(source().provider)) startCatalog(source(), false);
       }
     } catch (error) {
       S.showNotice(L(`无法读取决策模型推荐工位设置：${error.message}`, `Failed to load decision-model seat settings: ${error.message}`), true);
@@ -457,7 +461,7 @@
       openai: [L("发给 OpenAI 的决策模型。", "sent to OpenAI's decision model.")],
       typesafe: [L("发给 TypeSafe AI 的决策模型。", "sent to TypeSafe AI's decision model.")],
       openrouter: [L("发给 OpenRouter，由它转给你选的决策模型的服务方。", "sent to OpenRouter, which passes them on to the provider of the decision model you chose.")],
-      ollama: [L("只发给上面填的 Ollama 地址；填的是本机地址时，内容不出本机。", "sent only to the Ollama address above; with a local address nothing leaves this machine.")],
+      ollama: [L("只发给上面填的 Ollama 地址；填的是本机地址且运行本地模型时，内容不出本机。", "sent only to the Ollama address above; with a local address and a locally run model, nothing leaves this machine.")],
       custom: [L("发给上面填的自定义地址对应的服务。", "sent to the service at the custom address above.")],
     }[meta.id];
     return `${what}${where[0]}${kept}`;
@@ -521,9 +525,10 @@
           render();
           document.getElementById("decision-model-id")?.focus?.();
         } else if (e.target.value) chooseModel(e.target.value);
+        else render();
       },
     },
-    el("option", { value: "", selected: !known && !typing }, L("选择模型", "Choose a model")),
+    el("option", { value: "", disabled: true, selected: !known && !typing }, L("选择模型", "Choose a model")),
     recommended.length ? el("optgroup", { label: L("推荐", "Recommended") }, recommended.map((model) => modelOption(model, typing))) : null,
     others.length ? el("optgroup", { label: L("可用模型", "Available") }, others.map((model) => modelOption(model, typing))) : null,
     el("option", { value: MANUAL, selected: typing }, L("手动输入模型 ID…", "Enter model ID manually…"))) : null;
@@ -581,7 +586,6 @@
   // The platform, its address and model, and its key, which a local Ollama has none of.
   function sourceRows() {
     const meta = sourceMeta(source().provider);
-    if (listsOnChoice(meta.id)) startCatalog(source(), false);
     return [sourceRow(), meta.custom_url && addressRow(meta), modelRow(meta), meta.key !== "none" && keyRow(meta)];
   }
 

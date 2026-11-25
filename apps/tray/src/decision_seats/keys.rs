@@ -64,7 +64,10 @@ pub(crate) fn key_previews(root: &Path) -> Value {
             .filter(|source| source.has_key())
             .filter_map(|source| {
                 let key = text(&keys, source.id)?;
-                Some((source.id.to_owned(), json!(crate::voice::mask_key(&key))))
+                Some((
+                    source.id.to_owned(),
+                    json!(crate::private_keys::mask_key(&key)),
+                ))
             })
             .collect(),
     )
@@ -105,6 +108,7 @@ pub(crate) fn save_key(root: &Path, payload: &Value) -> Result<&'static str, Str
         keys.insert(source.id.into(), key.into());
     }
     let document = json!({"version": 1, "keys": keys});
-    crate::voice::write_private_json(root, KEYS_FILE, &document)?;
+    crate::private_keys::write_private_json(root, KEYS_FILE, &document)?;
+    super::models::clear_cache();
     Ok(source.id)
 }

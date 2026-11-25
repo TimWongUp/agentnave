@@ -6,9 +6,7 @@ mod minimax;
 pub mod player;
 mod scene;
 mod storage;
-pub(crate) use storage::{mask_key, write as write_private_json};
 mod summary;
-pub(crate) use summary::normalize_endpoint;
 #[cfg(test)]
 mod tests;
 pub mod text;
