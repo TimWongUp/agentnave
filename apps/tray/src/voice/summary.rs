@@ -165,10 +165,16 @@ fn response_value(request: RequestBuilder, key: &str) -> Result<Value, String> {
 }
 
 pub(super) fn normalize_base_url(base_url: &str) -> Result<String, String> {
+    normalize_endpoint(base_url, "摘要 API")
+}
+
+/// An address the App will call: HTTPS, or HTTP on this machine, without credentials, query or
+/// fragment, and without a trailing slash. `what` names the address in the error.
+pub(crate) fn normalize_endpoint(base_url: &str, what: &str) -> Result<String, String> {
     if base_url.is_empty() {
-        return Err("请填写摘要 API 地址".into());
+        return Err(format!("请填写{what} 地址"));
     }
-    let url = reqwest::Url::parse(base_url).map_err(|_| "摘要 API 地址无效")?;
+    let url = reqwest::Url::parse(base_url).map_err(|_| format!("{what} 地址无效"))?;
     // The parsed form also catches shorthands like `https:user:pass@host`.
     let has_userinfo = !url.username().is_empty()
         || url.password().is_some()
@@ -177,7 +183,7 @@ pub(super) fn normalize_base_url(base_url: &str) -> Result<String, String> {
             .and_then(|(_, rest)| rest.split('/').next())
             .is_some_and(|authority| authority.contains('@'));
     if has_userinfo || url.query().is_some() || url.fragment().is_some() {
-        return Err("摘要 API 地址不能包含账号、查询参数或片段".into());
+        return Err(format!("{what} 地址不能包含账号、查询参数或片段"));
     }
     let host = url.host_str().unwrap_or("").trim_matches(['[', ']']);
     let loopback = host.eq_ignore_ascii_case("localhost")
@@ -185,7 +191,7 @@ pub(super) fn normalize_base_url(base_url: &str) -> Result<String, String> {
             .parse::<IpAddr>()
             .is_ok_and(|address| address.is_loopback());
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        return Err("摘要 API 只允许 HTTPS，或本机回环地址上的 HTTP".into());
+        return Err(format!("{what} 只允许 HTTPS，或本机回环地址上的 HTTP"));
     }
     Ok(url.as_str().trim_end_matches('/').to_string())
 }

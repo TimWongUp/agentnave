@@ -1,10 +1,12 @@
 "use strict";
 {
   // Settings -> 编排 -> 决策模型 (experiment): the user's own seat catalog, which stands in for the
-  // fixed seats on that mode's page, and the decision model's key. The catalog is a draft like the
-  // rest of the page and saves from its one bar; the key is stored at once, as the voice keys are, and
-  // never read back: the page only learns whether one is set. Which bosses use the catalog is their
-  // mode, saved with the orchestration.
+  // fixed seats on that mode's page, and the decision source (ADR-0123): platform, model and, for a
+  // local or custom endpoint, its address. The catalog and the source are a draft like the rest of the
+  // page and save from its one bar; a key is stored at once, as the voice keys are, and never read
+  // back: the page only learns whether one is set for each platform. Model lists are read from the
+  // platform only when it is chosen or refreshed. Which bosses use the catalog is their mode, saved
+  // with the orchestration.
 
   const S = AN.settings ||= {};
   const { $, el, sameJson } = S;
@@ -18,7 +20,9 @@
   const MAX_SEATS = 255;
   const ROLE_MAX = 40;
 
-  let saved = null; // { document | null, error, key_set, key_error } from GET /app/decision-seats.
+  let saved = null; // { document | null, error, key_set, keys, key_error, providers } from GET /app/decision-seats.
+  let sourceDraft = null; // { provider, model, base_url } when the source differs from saved; else null.
+  const catalogs = new Map(); // `${provider}|${base_url}` -> { state: "loading" | "ready" | "error", models, error }
   let draft = null; // The cards as edited; null while they are what is saved.
   let randomDraft = null; // Boolean when the random-candidates switch differs from saved; else null.
   let prefilled = false; // The first catalog was already made in this draft.
@@ -96,14 +100,35 @@
   }
   const savedRandom = () => saved?.document?.random_candidates === true;
   const randomCandidates = () => (randomDraft === null ? savedRandom() : randomDraft);
-  const fileDocument = () => ({
-    version: 1,
-    decision_model: saved?.document?.decision_model || "gemini-decision-1",
-    ...(randomCandidates() ? { random_candidates: true } : {}),
-    seats: toSeats(cards()),
-  });
+
+  // The decision sources the service offers, as the tray described them; Gemini alone while it did not.
+  const GEMINI = { id: "gemini", name_zh: "Google Gemini", name_en: "Google Gemini", key: "required", fixed_model: true, default_model: "gemini-decision-1", models: [], catalog: false, custom_url: false };
+  const sources = () => (saved?.providers?.length ? saved.providers : [GEMINI]);
+  const sourceMeta = (id) => sources().find((one) => one.id === id) || sources()[0];
+  const sourceName = (meta) => L(meta.name_zh, meta.name_en);
+  const savedSource = () => {
+    const document = saved?.document;
+    const meta = sourceMeta(document?.decision_provider || "gemini");
+    return { provider: meta.id, model: meta.fixed_model ? meta.default_model : document?.decision_model || meta.default_model || "", base_url: document?.decision_base_url || "" };
+  };
+  const source = () => sourceDraft || savedSource();
+  const keySet = (id) => (saved?.keys ? saved.keys[id] === true : id === "gemini" && Boolean(saved?.key_set));
+  const sourceChanged = () => Boolean(sourceDraft) && !sameJson(sourceDraft, savedSource());
+  const fileDocument = () => {
+    const { provider, model, base_url } = source();
+    const meta = sourceMeta(provider);
+    const address = base_url.trim().replace(/\/+$/, "");
+    return {
+      version: 1,
+      ...(provider === "gemini" ? {} : { decision_provider: provider }),
+      decision_model: provider === "gemini" ? saved?.document?.decision_model || "gemini-decision-1" : meta.fixed_model ? meta.default_model : model.trim(),
+      ...(meta.custom_url && address ? { decision_base_url: address } : {}),
+      ...(randomCandidates() ? { random_candidates: true } : {}),
+      seats: toSeats(cards()),
+    };
+  };
   const cardsChanged = () => Boolean(draft) && !sameJson(canon(toSeats(draft)), canon(saved.document?.seats || []));
-  const changed = () => Boolean(saved) && !saved.error && (cardsChanged() || randomCandidates() !== savedRandom());
+  const changed = () => Boolean(saved) && !saved.error && (cardsChanged() || sourceChanged() || randomCandidates() !== savedRandom());
   const locked = () => !saved || Boolean(saved.error) || !S.orchestration || Boolean(S.orchestration.error);
 
   const takenIds = () => new Set(cards().flatMap((card) => seatsOfCard(card).map((seat) => seat.id)));
@@ -217,8 +242,38 @@
     return null;
   }
 
+  // What keeps an address from being saved, or null: HTTPS, or HTTP on this machine, no account,
+  // query or fragment, at most 512 characters.
+  function addressProblem(address) {
+    const text = address.trim();
+    let url;
+    try { url = new URL(text); } catch { return L("API 地址无效", "The API address is not valid"); }
+    if (text.length > 512) return L("API 地址过长", "The API address is too long");
+    if (url.username || url.password || url.search || url.hash || /^[a-z][a-z0-9+.-]*:\/*[^/]*@/i.test(text)) return L("API 地址不能包含账号、查询参数或片段", "The API address cannot hold an account, query or fragment");
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    const loopback = host === "localhost" || /^127(\.\d{1,3}){3}$/.test(host) || host === "::1";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) return L("API 只允许 HTTPS，或本机上的 HTTP", "The API takes HTTPS, or HTTP on this machine");
+    return null;
+  }
+
+  // What keeps the source from being saved, or null.
+  function sourceProblem() {
+    const { provider, model, base_url } = source();
+    const meta = sourceMeta(provider);
+    if (meta.custom_url && (meta.url_required || base_url.trim())) {
+      if (!base_url.trim()) return L("请填写 API 地址", "Enter the API address");
+      const found = addressProblem(base_url);
+      if (found) return found;
+    }
+    if (!meta.fixed_model && !model.trim()) return L("请填写决策模型", "Enter a decision model");
+    if (!meta.fixed_model && !/^[\x21-\x7e]{1,200}$/.test(model.trim())) return L("决策模型只能是 1 到 200 个可见 ASCII 字符", "The decision model must be 1 to 200 visible ASCII characters");
+    return null;
+  }
+
   // What keeps the draft from being saved, or null.
   function problem() {
+    const found = sourceProblem();
+    if (found) return found;
     const list = cards();
     if (toSeats(list).length > MAX_SEATS) return L(`工位最多 ${MAX_SEATS} 个`, `At most ${MAX_SEATS} seats`);
     const named = new Set();
@@ -261,6 +316,7 @@
       if (loaded.error) S.showNotice(L(`${loaded.error}；请先修复或删除这个文件`, `${loaded.error}; fix or delete this file first`), true);
       if (!keep) {
         draft = null;
+        sourceDraft = null;
         randomDraft = null;
         prefilled = false;
       }
@@ -282,6 +338,7 @@
     await post("/app/decision-seats", doc);
     saved = { ...saved, document: doc, error: null };
     draft = null;
+    sourceDraft = null;
     randomDraft = null;
     render();
   }
@@ -310,20 +367,72 @@
   function discard() {
     expanded.clear();
     draft = null;
+    sourceDraft = null;
     randomDraft = null;
     prefilled = false;
     keyDraft = "";
+    keyMessage = null;
   }
 
+  // The platform's own model list: read when it is chosen or refreshed, and kept until the page closes.
+  const catalogKey = ({ provider, base_url }) => `${provider}|${base_url.trim()}`;
+  const catalogOf = (one) => catalogs.get(catalogKey(one));
+  const sameSource = (one) => catalogKey(one) === catalogKey(source());
+
+  async function startCatalog(one, refresh) {
+    const meta = sourceMeta(one.provider);
+    const key = catalogKey(one);
+    const before = catalogs.get(key);
+    if (!meta.catalog || before?.state === "loading" || (before && !refresh)) return;
+    catalogs.set(key, { state: "loading", models: before?.models || [], error: null });
+    const address = one.base_url.trim() || meta.default_base_url || "";
+    const query = `provider=${encodeURIComponent(one.provider)}${address ? `&base_url=${encodeURIComponent(address)}` : ""}${refresh ? "&refresh=1" : ""}`;
+    try {
+      const response = await fetch(`/app/decision-models?${query}`, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error) throw new Error(data.error || L(`读取失败（${response.status}）`, `Load failed (${response.status})`));
+      catalogs.set(key, { state: "ready", models: data.models || [], error: null });
+    } catch (error) {
+      catalogs.set(key, { state: "error", models: before?.models || [], error: error.message });
+    }
+    if (sameSource(one)) render();
+  }
+
+  // Platforms whose list comes with choosing them: the open ones, and TypeSafe once its key is saved.
+  const listsOnChoice = (provider) => provider === "openrouter" || provider === "ollama" || (provider === "typesafe" && keySet(provider));
+
+  function chooseSource(next) {
+    const meta = sourceMeta(next.provider);
+    sourceDraft = sameJson(next, savedSource()) ? null : next;
+    keyDraft = "";
+    keyMessage = null;
+    if (listsOnChoice(meta.id)) startCatalog(next, false);
+    render();
+    S.advancedEdited();
+  }
+  const chooseProvider = (id) => {
+    const meta = sourceMeta(id);
+    chooseSource(id === savedSource().provider ? savedSource() : { provider: id, model: meta.default_model || "", base_url: "" });
+  };
+  const chooseModel = (model, rerender = true) => {
+    sourceDraft = { ...source(), model };
+    if (sameJson(sourceDraft, savedSource())) sourceDraft = null;
+    if (rerender) render();
+    S.advancedEdited();
+  };
+
   async function storeKey(key) {
+    const provider = source().provider;
     keyBusy = true;
     keyMessage = null;
     render();
     try {
-      const data = await post("/app/decision-key", { key });
+      const data = await post("/app/decision-key", { provider, key });
+      saved.keys = data.keys || { ...(saved.keys || { gemini: Boolean(saved.key_set) }), [provider]: data.key_set };
       saved.key_set = data.key_set;
       keyDraft = "";
       keyMessage = { text: key ? L("密钥已保存", "Key saved") : L("密钥已清除", "Key cleared"), error: false };
+      if (key && provider === "typesafe") startCatalog(source(), true);
     } catch (error) {
       keyMessage = { text: error.message, error: true };
     }
@@ -331,26 +440,128 @@
     render();
   }
 
-  function keyRow() {
-    const label = L("Gemini 密钥", "Gemini API key");
+  // Where the dispatch goes, said for the platform in use: the tip of the platform's row.
+  function sentTip(meta) {
+    const kept = L("决策模型不接触 CLI，也不改任务内容；任务跑完后，boss 照常自己去收结果。", "The decision model never touches a CLI or changes the task; when the work is done, the boss collects the result as usual.");
+    const what = L("派发任务时，派发内容（过长时只取开头和结尾）和各工位的名称、专业说明、难度、读写类型会", "When a task is dispatched, its prompt (only the beginning and end when long) and each seat's name, specialty, difficulty and access type are ");
+    const where = {
+      gemini: [
+        L("发给 Google 的决策模型；Gemini 免费层的输入可能被用于改进产品；可用地区以 Google 公布的为准。", "sent to Google's decision model. On the Gemini free tier, inputs may be used to improve Google's products. Availability by region follows what Google publishes."),
+      ],
+      openai: [L("发给 OpenAI 的决策模型。", "sent to OpenAI's decision model.")],
+      typesafe: [L("发给 TypeSafe AI 的决策模型。", "sent to TypeSafe AI's decision model.")],
+      openrouter: [L("发给 OpenRouter，由它转给你选的决策模型的服务方。", "sent to OpenRouter, which passes them on to the provider of the decision model you chose.")],
+      ollama: [L("只发给上面填的 Ollama 地址；填的是本机地址时，内容不出本机。", "sent only to the Ollama address above; with a local address nothing leaves this machine.")],
+      custom: [L("发给上面填的自定义地址对应的服务。", "sent to the service at the custom address above.")],
+    }[meta.id];
+    return `${what}${where[0]}${kept}`;
+  }
+
+  function sourceRow() {
+    const meta = sourceMeta(source().provider);
+    const select = el("select", {
+      id: "decision-source", "aria-label": L("决策平台", "Decision platform"), dataset: { focusKey: "decision/provider" },
+      onChange: (e) => chooseProvider(e.target.value),
+    }, sources().map((one) => el("option", { value: one.id, selected: one.id === meta.id }, sourceName(one))));
+    return el("div", { className: "s-row" },
+      el("label", { className: "s-label", htmlFor: "decision-source" }, L("决策平台", "Decision platform"), AN.settings.settingTip(sentTip(meta))),
+      el("div", { className: "s-field" }, select));
+  }
+
+  function addressRow(meta) {
+    const input = el("input", {
+      type: "text", id: "decision-address", maxlength: "512", spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off",
+      value: source().base_url, "aria-label": L("API 地址", "API address"), dataset: { focusKey: "decision/address" },
+      placeholder: meta.default_base_url || "https://api.example.com/v1",
+      onInput: (e) => {
+        sourceDraft = { ...source(), base_url: e.target.value };
+        if (sameJson(sourceDraft, savedSource())) sourceDraft = null;
+        S.advancedEdited();
+      },
+    });
+    return el("div", { className: "s-row" },
+      el("label", { className: "s-label", htmlFor: "decision-address" }, L("API 地址", "API address")),
+      el("div", { className: "s-field" }, input));
+  }
+
+  function modelOption(model) {
+    return el("option", { value: model.id, selected: model.id === source().model }, model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id);
+  }
+
+  // A platform with one model shows it; the others offer a choice from the built-in picks and the
+  // platform's own list, a refresh for that list, and the model's id to type.
+  function modelRow(meta) {
+    const current = source();
+    if (meta.fixed_model) {
+      return el("div", { className: "s-row" },
+        el("span", { className: "s-label" }, L("决策模型", "Decision model")),
+        el("code", { className: "s-value is-mono" }, meta.default_model));
+    }
+    const listed = catalogOf(current);
+    const recommended = meta.models || [];
+    const others = (listed?.models || []).filter((model) => !recommended.some((one) => one.id === model.id));
+    const known = [...recommended, ...others].some((model) => model.id === current.model);
+    const choose = el("select", {
+      id: "decision-model", "aria-label": L("决策模型", "Decision model"), dataset: { focusKey: "decision/model" },
+      onChange: (e) => e.target.value && chooseModel(e.target.value),
+    },
+    el("option", { value: "", selected: !known }, L("选择模型", "Choose a model")),
+    recommended.length ? el("optgroup", { label: L("推荐", "Recommended") }, recommended.map(modelOption)) : null,
+    others.length ? el("optgroup", { label: L("可用模型", "Available") }, others.map(modelOption)) : null);
+    const refresh = el("button", {
+      type: "button", dataset: { focusKey: "decision/model-refresh" },
+      disabled: listed?.state === "loading",
+      onClick: () => {
+        // What is typed since this row was drawn counts; a custom endpoint is nowhere to ask until its address is typed.
+        const now = source();
+        if (meta.url_required && !now.base_url.trim()) catalogs.set(catalogKey(now), { state: "error", models: [], error: L("请填写 API 地址", "Enter the API address") });
+        else startCatalog(now, true);
+        render();
+      },
+    }, L("刷新", "Refresh"));
+    const typed = el("input", {
+      type: "text", maxlength: "200", spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off",
+      value: current.model, "aria-label": L("模型 ID", "Model ID"), placeholder: L("模型 ID", "Model ID"), dataset: { focusKey: "decision/model-id" },
+      onInput: (e) => {
+        chooseModel(e.target.value, false);
+        choose.value = [...recommended, ...others].some((model) => model.id === e.target.value) ? e.target.value : "";
+      },
+    });
+    return el("div", { className: "s-row" },
+      el("label", { className: "s-label", htmlFor: "decision-model" }, L("决策模型", "Decision model")),
+      el("div", { className: "s-stack" },
+        el("div", { className: "s-field" }, choose, refresh),
+        el("div", { className: "s-field" }, typed),
+        listed?.state === "loading" && el("p", { className: "s-muted", role: "status" }, L("正在读取模型列表…", "Loading models…")),
+        listed?.state === "error" && el("p", { className: "s-muted is-bad", role: "status" }, listed.error)));
+  }
+
+  function keyRow(meta) {
+    const name = sourceName(meta);
+    const label = L(`${name} 密钥${meta.key === "optional" ? "（可选）" : ""}`, `${name} API key${meta.key === "optional" ? " (optional)" : ""}`);
+    const set = keySet(meta.id);
     const save = el("button", { type: "button", disabled: keyBusy || !keyDraft.trim(), onClick: () => storeKey(keyDraft) }, L("保存", "Save"));
     const input = el("input", {
       type: "password", autocomplete: "off", spellcheck: "false", autocorrect: "off", autocapitalize: "off", maxlength: "4096", "aria-label": label, disabled: keyBusy,
-      dataset: { focusKey: "decision/key" },
-      placeholder: saved.key_set ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key"),
+      dataset: { focusKey: "decision/key" }, id: "decision-key",
+      placeholder: set ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key"),
       onInput: (e) => { keyDraft = e.target.value; save.disabled = keyBusy || !keyDraft.trim(); },
     });
     input.value = keyDraft;
-    const clear = el("button", { type: "button", disabled: keyBusy || !saved.key_set, onClick: () => storeKey("") }, L("清除", "Clear"));
-    const sent = L(
-      "派发任务时，派发内容（过长时只取开头和结尾）和各工位的名称、专业说明、难度、读写类型会发给 Google 的决策模型；Gemini 免费层的输入可能被用于改进产品；可用地区以 Google 公布的为准。决策模型不接触 CLI，也不改任务内容；任务跑完后，boss 照常自己去收结果。",
-      "When a task is dispatched, its prompt (only the beginning and end when long) and each seat's name, specialty, difficulty and access type are sent to Google's decision model. On the Gemini free tier, inputs may be used to improve Google's products. Availability by region follows what Google publishes. The decision model never touches a CLI or changes the task; when the work is done, the boss collects the result as usual.");
+    const clear = el("button", { type: "button", disabled: keyBusy || !set, onClick: () => storeKey("") }, L("清除", "Clear"));
     return el("div", { className: "s-row" },
-      el("span", { className: "s-label" }, label, AN.settings.settingTip(sent)),
+      el("label", { className: "s-label", htmlFor: "decision-key" }, label),
       el("div", { className: "s-stack" },
         el("div", { className: "s-field" }, input, save, clear),
         saved.key_error && el("p", { className: "s-muted is-bad" }, saved.key_error),
         keyMessage && el("p", { className: `s-muted${keyMessage.error ? " is-bad" : ""}`, role: "status" }, keyMessage.text)));
+  }
+
+  // The platform, its address and model, and its key, which a local Ollama has none of.
+  function sourceRows() {
+    const meta = sourceMeta(source().provider);
+    if (listsOnChoice(meta.id)) startCatalog(source(), false);
+    return [sourceRow(), meta.custom_url && addressRow(meta), modelRow(meta), meta.key !== "none" && keyRow(meta)];
   }
 
   // One row of a card: the level's name and its CLI, model and effort.
@@ -483,7 +694,7 @@
     if (locked()) return null;
     return el("div", { className: "s-wrap decision-seats" },
       el("div", { className: "s-group" }, el("div", { className: "s-card" },
-        el("div", { className: "s-row is-stack" }, flow()), keyRow(), randomRow())),
+        el("div", { className: "s-row is-stack" }, flow()), ...sourceRows(), randomRow())),
       seatRowsCard(),
       el("div", { className: "s-group" }, el("div", { className: "s-card" },
         el("div", { className: "s-row" }, el("label", { className: "s-label", htmlFor: "decision-add" }, L("添加工位", "Add seat")), addMenu()))));

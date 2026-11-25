@@ -263,8 +263,10 @@ fn register_protocol(
         let app = ctx.app_handle().clone();
         let path = match request.uri().path() {
             // These routes read their query.
-            path if matches!(path, "/app/storage/preview" | "/app/accounts/status")
-                || path.starts_with("/app/terminal/") =>
+            path if matches!(
+                path,
+                "/app/storage/preview" | "/app/accounts/status" | "/app/decision-models"
+            ) || path.starts_with("/app/terminal/") =>
             {
                 request
                     .uri()
@@ -601,6 +603,11 @@ mod tests {
         assert!(!preview_refuses(true, "GET", "/settings/members"));
         assert!(!preview_refuses(true, "GET", "/app/t3-seats"));
         assert!(!preview_refuses(true, "GET", "/app/accounts"));
+        assert!(!preview_refuses(
+            true,
+            "GET",
+            "/app/decision-models?provider=ollama"
+        ));
         assert!(!preview_refuses(true, "GET", "/app/accounts/status?id=a1"));
         assert!(!preview_refuses(true, "POST", "/app/window/drag"));
         assert!(!preview_refuses(true, "POST", "/app/window/minimize"));
