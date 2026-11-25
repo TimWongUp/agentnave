@@ -899,6 +899,16 @@ mod catalog {
                 "{id} {preview}"
             );
         }
+        // A 401 when the key was withheld explains why instead of blaming the saved key.
+        let (locked_base, _) = serve(|_| (401, json!({"error": "unauthorized"})));
+        let (_, unsaved_msg) =
+            models::fetch_catalog(dir.path(), "custom", Some(&locked_base), true, false)
+                .unwrap_err();
+        assert!(unsaved_msg.contains("先保存当前地址"), "{unsaved_msg}");
+        let (_, preview_msg) =
+            models::fetch_catalog(dir.path(), "custom", Some(&locked_base), true, true)
+                .unwrap_err();
+        assert!(preview_msg.contains("预览版"), "{preview_msg}");
     }
 
     #[test]

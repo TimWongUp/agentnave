@@ -213,10 +213,12 @@ pub(super) fn fetch_catalog(
     if !refresh && let Some(models) = lock_cache().get(&cache_key) {
         return Ok(models.clone());
     }
+    let auth_denied = auth_denied_message(root, source, &base, key.as_deref(), preview);
     let models = match source.id {
         "openrouter" => fetch(
             "https://openrouter.ai/api/v1/models?output_modalities=decisions",
             key.as_deref(),
+            &auth_denied,
             parse_openrouter,
         ),
         "typesafe" => {
@@ -226,23 +228,30 @@ pub(super) fn fetch_catalog(
             fetch(
                 "https://api.typesafe.ai/v1/models",
                 Some(key),
+                &auth_denied,
                 parse_typesafe,
             )
         }
         "ollama" => fetch(
             &format!("{}/api/tags", ollama_root(&base)),
             None,
+            &auth_denied,
             parse_ollama,
         ),
-        _ => fetch(&custom_models_url(&base), key.as_deref(), parse_listed),
+        _ => fetch(
+            &custom_models_url(&base),
+            key.as_deref(),
+            &auth_denied,
+            parse_listed,
+        ),
     }?;
     lock_cache().insert(cache_key, models.clone());
     Ok(models)
 }
 
 /// The key a catalog request carries, if any. The preview never reads the installed App's keys, and
-/// a custom endpoint gets its saved key only at the very address the key was saved with, so a key
-/// cannot be sent to an address the user has not paired it with.
+/// a custom endpoint gets its saved key only at the address currently saved for it, so a key
+/// cannot be sent to an address the user has not saved for that endpoint.
 pub(super) fn request_key(
     root: &Path,
     source: &Source,
@@ -256,6 +265,31 @@ pub(super) fn request_key(
         "custom" if saved_address(root, source).as_deref() != Some(base) => Ok(None),
         _ => Ok(super::keys::key_of(root, source.id)),
     }
+}
+
+/// What a 401/403 from the catalog means when the request did or did not carry a key.
+fn auth_denied_message(
+    root: &Path,
+    source: &Source,
+    base: &str,
+    sent_key: Option<&str>,
+    preview: bool,
+) -> String {
+    if sent_key.is_some() {
+        return "平台拒绝了密钥，请检查已保存的密钥".into();
+    }
+    if preview && matches!(source.id, "openrouter" | "custom") {
+        return "预览版不使用正式版密钥，该目录需要认证".into();
+    }
+    if source.id == "custom" {
+        if saved_address(root, source).as_deref() != Some(base)
+            && super::keys::key_of(root, "custom").is_some()
+        {
+            return "该端点需要认证，请先保存当前地址后再刷新目录".into();
+        }
+        return "该端点需要认证，请先保存自定义端点密钥".into();
+    }
+    "模型目录拒绝了未认证请求".into()
 }
 
 /// Where this session's answers are kept apart: the data root, the source and its address, and
@@ -327,6 +361,7 @@ pub(super) fn custom_models_url(base: &str) -> String {
 fn fetch(
     url: &str,
     key: Option<&str>,
+    auth_denied: &str,
     parse: fn(&Value) -> Vec<Value>,
 ) -> Result<Vec<Value>, Failure> {
     let unreachable = || (502, "无法连接模型目录，请检查地址、网络或代理".to_string());
@@ -350,7 +385,7 @@ fn fetch(
     let status = response.status();
     if !status.is_success() {
         let message = match status.as_u16() {
-            401 | 403 => "平台拒绝了密钥，请检查已保存的密钥".to_string(),
+            401 | 403 => auth_denied.to_string(),
             code => format!("模型目录返回 {code}"),
         };
         return Err((502, message));

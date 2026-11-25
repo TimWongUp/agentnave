@@ -1,8 +1,8 @@
 """The single source of decision-model providers: names, models, key rules and endpoint checks.
 
 A bottom layer (ADR-0123): it imports only the standard library, so the App-file readers, the
-provider clients and seat recommendation all depend on it and never on each other. Provider
-wire formats stay in their own decision_* modules.
+provider clients and seat recommendation share one source of truth without reverse imports.
+Provider wire formats stay in their own decision_* modules.
 """
 
 from __future__ import annotations
