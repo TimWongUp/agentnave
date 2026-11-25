@@ -659,13 +659,14 @@ def test_codex_launch_inputs_see_config_and_rules_permissions(tmp_path: Path) ->
     before = inputs()
     config.chmod(0)
     try:
-        without_config = inputs()
-        assert without_config != before
+        assert inputs() != before
     finally:
         config.chmod(0o644)
+    # Restoring config.toml advances its ctime, so snapshot fresh before testing rules.
+    before_rules = inputs()
     (rules / "a.rules").chmod(0)
     try:
-        assert inputs() != before
+        assert inputs() != before_rules
     finally:
         (rules / "a.rules").chmod(0o644)
 
