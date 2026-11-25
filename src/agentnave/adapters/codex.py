@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import glob
 import json
 import os
@@ -100,7 +101,7 @@ def _fixed_permissions(options: Mapping[str, ProviderOption]) -> str | None:
 def _directory(cwd: Path) -> Path:
     try:
         return cwd.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return cwd.absolute()
 
 
@@ -117,14 +118,33 @@ def _globbed(folder: Path, pattern: str, *, follow: bool) -> list[tuple[object, 
     return [_stat(path, follow=follow) for path in paths]
 
 
+# Codex opens these by name even when a config folder cannot be listed.
+_CONFIG_FILES = ("config.toml", "requirements.toml", "managed_config.toml")
+
+
+def _scanned(folder: Path, pattern: str, *, follow: bool) -> list[tuple[object, ...]]:
+    """One folder level's matching entries; a folder that cannot be read is recorded as its
+    error, so an empty, a missing and an unreadable folder are told apart (Path.glob would
+    swallow a directory PermissionError)."""
+    try:
+        with os.scandir(folder) as entries:
+            paths = sorted(
+                folder / entry.name for entry in entries if fnmatch.fnmatch(entry.name, pattern)
+            )
+    except OSError as exc:
+        return [(str(folder), type(exc).__name__)]
+    return [_stat(path, follow=follow) for path in paths]
+
+
 def _launch_inputs(cwd: Path, executable: str, env: Mapping[str, str]) -> tuple[object, ...]:
-    """What Codex 0.171 reads permissions from for cwd, as types, permission bits, sizes and
-    modification times (codex-rs/config/src/loader): the Codex executable, every top-level
-    `*.toml` of the user, system and project config folders, the `rules/*.rules` exec policies of
-    each of them (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project
-    root marker `.git`; a link is recorded as one and followed to its target's HEAD. Cloud-managed
-    config, macOS managed preferences, a registry-set requirements path and custom project root
-    markers are not covered."""
+    """What Codex 0.171 reads permissions from for cwd, as types, permission bits, modification
+    and change times and sizes (codex-rs/config/src/loader): the Codex executable, every
+    top-level `*.toml` of the user, system and project config folders (plus the fixed names Codex
+    opens when a folder cannot be listed), the `rules/*.rules` exec policies of each of them
+    (codex-rs/core/src/exec_policy.rs), and which ancestors hold the default project root marker
+    `.git`; a link is recorded as one, followed for its HEAD, and its target's state is recorded
+    too. Cloud-managed config, macOS managed preferences, a registry-set requirements path and
+    custom project root markers are not covered."""
     directory = _directory(cwd)
     home = _codex_home(cwd, env)
     if sys.platform == "win32":
@@ -140,15 +160,22 @@ def _launch_inputs(cwd: Path, executable: str, env: Mapping[str, str]) -> tuple[
         )
     ]
     for folder in (system, home, *(ancestor / ".codex" for ancestor in ancestors)):
-        found.extend(_globbed(folder, "*.toml", follow=True))
+        tomls = _scanned(folder, "*.toml", follow=True)
+        found.extend(tomls)
+        # A folder that can be searched but not listed still lets Codex open known names.
+        if (str(folder), "PermissionError") in tomls:
+            found.extend(_stat(folder / name, follow=True) for name in _CONFIG_FILES)
         # Codex loads only regular rule files, so a link is told apart from one.
-        found.extend(_globbed(folder / "rules", "*.rules", follow=False))
+        found.extend(_scanned(folder / "rules", "*.rules", follow=False))
     # The nearest ancestor with a `.git` (a directory needs its HEAD) is the project root.
     for folder in ancestors:
         marker = _stat(folder / ".git", follow=False)
         found.append(marker)
-        # Codex follows a linked `.git` to look for its HEAD.
-        if marker[1:2] in (("directory",), ("link",)):
+        if marker[1:2] == ("link",):
+            # Codex follows a linked `.git` for its HEAD; the target's own state counts too.
+            found.append(_stat(folder / ".git", follow=True))
+            found.append(_stat(folder / ".git" / "HEAD", follow=True))
+        elif marker[1:2] == ("directory",):
             found.append(_stat(folder / ".git" / "HEAD", follow=True))
     return tuple(found)
 
@@ -166,8 +193,8 @@ def _rollout_state(cwd: Path, env: Mapping[str, str], session_id: str) -> tuple[
 
 
 def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
-    """The file's type, permissions, modification time and size; a path that cannot be read
-    (missing, not permitted) is recorded with its error, and never stops a dispatch."""
+    """The file's type, permissions, modification and change times and size; a path that cannot
+    be read (missing, not permitted) is recorded with its error, and never stops a dispatch."""
     try:
         stat = path.stat() if follow else path.lstat()
     except OSError as exc:
@@ -182,7 +209,14 @@ def _stat(path: Path, *, follow: bool) -> tuple[object, ...]:
         if S_ISDIR(mode)
         else "other"
     )
-    return (str(path), kind, S_IMODE(mode), stat.st_mtime_ns, stat.st_size)
+    return (
+        str(path),
+        kind,
+        S_IMODE(mode),
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_size,
+    )
 
 
 def _source() -> str | None:

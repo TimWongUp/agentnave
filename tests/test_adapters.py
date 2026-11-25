@@ -635,8 +635,9 @@ def test_codex_launch_inputs_follow_a_linked_git_to_its_head(tmp_path: Path) -> 
 
     before = inputs()
     entries = [cast(tuple[object, ...], entry) for entry in before]
-    # The lstat keeps saying it is a link, and its target's HEAD is part of the signature.
-    assert [entry[1] for entry in entries if entry[0] == str(work / ".git")] == ["link"]
+    # The lstat keeps saying it is a link, and its target is recorded as well as its HEAD.
+    kinds = [entry[1] for entry in entries if entry[0] == str(work / ".git")]
+    assert kinds == ["link", "directory"]
     assert any(entry[0] == str(work / ".git" / "HEAD") for entry in entries)
     (real_git / "HEAD").unlink()
     assert inputs() != before
@@ -664,9 +665,89 @@ def test_codex_launch_inputs_see_config_and_rules_permissions(tmp_path: Path) ->
         config.chmod(0o644)
     (rules / "a.rules").chmod(0)
     try:
-        assert inputs() != without_config
+        assert inputs() != before
     finally:
         (rules / "a.rules").chmod(0o644)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_launch_inputs_track_a_linked_git_target_file(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    target = tmp_path / "gitdir-pointer"
+    target.write_text("gitdir: elsewhere")
+    (work / ".git").symlink_to(target)
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(work, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    entries = [cast(tuple[object, ...], entry) for entry in before]
+    # The link is recorded as one, and its target file's own state is recorded too.
+    kinds = [entry[1] for entry in entries if entry[0] == str(work / ".git")]
+    assert kinds == ["link", "file"]
+    target.chmod(0)
+    try:
+        assert inputs() != before
+    finally:
+        target.chmod(0o644)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges on Windows")
+def test_codex_directory_handles_a_symlink_loop(tmp_path: Path) -> None:
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    assert codex._directory(loop).is_absolute()  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(
+        codex._launch_inputs(loop, "codex", {"CODEX_HOME": str(tmp_path / "home")}),  # pyright: ignore[reportPrivateUsage]
+        tuple,
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permissions")
+def test_codex_launch_inputs_see_an_unlistable_config_folder(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    config = home / "config.toml"
+    config.write_text("a")
+    env = {"CODEX_HOME": str(home)}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    home.chmod(0o111)
+    try:
+        # Codex still opens config.toml by name, so its state stays in the signature even
+        # though the folder itself cannot be listed.
+        unlisted = inputs()
+        assert unlisted != before
+        config.write_text("a much longer value")
+        changed = inputs()
+        assert changed != unlisted
+        config.chmod(0)
+        assert inputs() != changed
+    finally:
+        home.chmod(0o755)
+        config.chmod(0o644)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permissions")
+def test_codex_launch_inputs_see_an_unreadable_rules_folder(tmp_path: Path) -> None:
+    rules = tmp_path / "home" / "rules"
+    rules.mkdir(parents=True)
+    env = {"CODEX_HOME": str(tmp_path / "home")}
+
+    def inputs() -> tuple[object, ...]:
+        return codex._launch_inputs(tmp_path, "codex", env)  # pyright: ignore[reportPrivateUsage]
+
+    before = inputs()
+    rules.chmod(0)
+    try:
+        assert inputs() != before
+    finally:
+        rules.chmod(0o755)
 
 
 def _bridged(prepared: base.PreparedCommand) -> str:

@@ -47,6 +47,22 @@ for raw in sys.stdin:
 """
 
 
+# A one-off command: reports one turn and exits, like a cold `exec resume`.
+_ONE_OFF = """
+import json, os
+print(json.dumps({"type": "thread.started", "thread_id": "one-off"}), flush=True)
+item = {"type": "agent_message", "text": f"one-off:{os.getpid()}"}
+print(json.dumps({"type": "item.completed", "item": item}), flush=True)
+print(json.dumps({"type": "turn.completed"}), flush=True)
+"""
+
+
+def _one_off(tmp_path: Path, session_id: str | None, prompt: str) -> PreparedCommand:
+    return PreparedCommand(
+        (sys.executable, "-c", _ONE_OFF), tmp_path, _line(session_id, prompt), keep_alive=False
+    )
+
+
 def _turn(tmp_path: Path, prompt: str, session_id: str | None, *variant: str) -> PreparedCommand:
     line = json.dumps({"session_id": session_id, "prompt": prompt}).encode() + b"\n"
     return PreparedCommand(
@@ -295,6 +311,45 @@ async def test_serves_rejects_a_process_past_its_lifetime(
         assert not pool.serves("codex", "session", ())
     finally:
         await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_falls_back_when_the_kept_process_expires_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = InvocationManager()
+    try:
+        prepared = _turn(tmp_path, "work", None)
+        first = await _run_prepared(manager, InvocationRequest("codex", "work", tmp_path), prepared)
+        assert first.session_id is not None
+
+        # `serves` still says yes, but by the time `_launch` checks, the lifetime is over.
+        def serves(
+            _self: WarmPool,
+            _provider: str,
+            _session_id: str,
+            _signature: tuple[object, ...],
+        ) -> bool:
+            return True
+
+        monkeypatch.setattr(WarmPool, "serves", serves)
+        later = SimpleNamespace(monotonic=lambda: time.monotonic() + 901)
+        monkeypatch.setattr(warm_pool, "time", later)
+        request = InvocationRequest("codex", "again", tmp_path, session_id=first.session_id)
+        resume = replace(
+            prepared,
+            stdin=_line(first.session_id, "again"),
+            unkept=_one_off(tmp_path, first.session_id, "again"),
+        )
+        result = await _run_prepared(manager, request, resume)
+        assert result.status is InvocationStatus.SUCCEEDED, result
+        # The one-off command ran instead of a new app-server asked to resume a session.
+        assert result.output.startswith("one-off:")
+        if os.name == "posix":
+            assert await _gone(_pid(first))
+            assert await _gone(int(result.output.split(":")[1]))
+    finally:
+        await manager.shutdown()
 
 
 @pytest.mark.asyncio

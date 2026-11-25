@@ -459,6 +459,16 @@ class _RunIO:
         return tuple(task for task in tasks if task is not None)
 
 
+@dataclass(slots=True)
+class _Launched:
+    """The process a run got, the command it actually runs, and the scratch dir it owns."""
+
+    supervised: SupervisedProcess
+    kept: KeptProcess | None
+    prepared: PreparedCommand
+    scratch: str | None = None
+
+
 async def _terminal_grace(event: asyncio.Event) -> None:
     await event.wait()
     await asyncio.sleep(_TERMINAL_GRACE_SECONDS)
@@ -1294,12 +1304,11 @@ class InvocationManager:
         scratch = None
         prepared, signature = self._command_for(record, prepared)
         try:
-            if prepared.temp_dir_env:
-                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
-            launched = await self._launch(record, prepared, signature, scratch)
+            launched = await self._launch(record, prepared, signature)
             if launched is None:
                 return _cancelled_before_spawn(record, prepared)
-            supervised, kept = launched
+            supervised, kept = launched.supervised, launched.kept
+            prepared, scratch = launched.prepared, launched.scratch
             process = supervised.process
             record.process = process
             if prepared.keep_stdin_open:
@@ -1393,7 +1402,8 @@ class InvocationManager:
     ) -> tuple[PreparedCommand, LaunchSignature]:
         """The command to run and its launch signature, read once for both the choice and the
         launch: a run that will not keep its process, or a resume that no kept process can
-        serve, runs the Adapter's one-off command instead, when it gave one (ADR-0120)."""
+        serve, runs the Adapter's one-off command instead, when it gave one (ADR-0120). The
+        launch falls back to that command if the kept process is unusable by then."""
         request = record.request
         signature = launch_signature(prepared, request.account, request.session_id)
         unkept = prepared.unkept
@@ -1415,10 +1425,10 @@ class InvocationManager:
         record: _InvocationRecord,
         prepared: PreparedCommand,
         signature: LaunchSignature,
-        scratch: str | None,
-    ) -> tuple[SupervisedProcess, KeptProcess | None] | None:
-        """The session's kept process when it was started the same way, else a new process,
-        held as kept when the Adapter declared it can serve later turns. None: cancelled first."""
+    ) -> _Launched | None:
+        """The session's kept process when it was started the same way, else a new process. A
+        new process runs the Adapter's one-off command when the kept process turned out
+        unusable or the run cannot keep a long connection (ADR-0120). None: cancelled first."""
         request = record.request
         keepable = can_keep(prepared) and not record.isolated
         if record.cancel_event.is_set():
@@ -1432,16 +1442,25 @@ class InvocationManager:
                     and kept.remaining(self.max_lifetime) > 0
                     and kept.alive()
                 ):
-                    return kept.supervised, kept
-                # Started differently or past its lifetime: it must not share the native
+                    return _Launched(kept.supervised, kept, prepared)
+                # Started differently, past its lifetime or gone: it must not share the native
                 # session with a new process.
                 await kept.end()
+            if prepared.unkept is not None:
+                # No kept process serves this resume, so run the one-off command rather than
+                # ask a process that starts a new thread to resume the session (ADR-0120).
+                prepared = prepared.unkept
+                signature = launch_signature(prepared, request.account, request.session_id)
+                keepable = can_keep(prepared) and not record.isolated
             await self._pool.ended(request.provider, request.session_id)
         if not await self._wait_to_spawn(record):
             return None
+        scratch = None
         try:
             if record.cancel_event.is_set():
                 return None
+            if prepared.temp_dir_env:
+                scratch = tempfile.mkdtemp(prefix="agentnave-invocation-")
             supervised = await spawn_process(
                 prepared.argv,
                 prepared.cwd,
@@ -1456,11 +1475,16 @@ class InvocationManager:
                 },
             )
             self._last_spawn[request.provider] = time.monotonic()
+        except BaseException:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+            raise
         finally:
             self._spawn_locks[request.provider].release()
         if not keepable:
-            return supervised, None
-        return supervised, KeptProcess.adopt(supervised, signature, prepared)
+            return _Launched(supervised, None, prepared, scratch)
+        kept = KeptProcess.adopt(supervised, signature, prepared)
+        return _Launched(supervised, kept, prepared, scratch)
 
     async def _collect_run(
         self,
