@@ -32,6 +32,8 @@ pub(super) struct Desk {
     pub(super) reported: Option<(i64, String)>,
     // The latest declared access tier; the server records declarations without enforcing them.
     pub(super) access: Option<(i64, String)>,
+    // Whether the latest call ran as a derived session in an App terminal (ADR-0124).
+    pub(super) derived: Option<(i64, bool)>,
 }
 
 impl Desk {
@@ -64,6 +66,13 @@ impl Desk {
             && self.access.as_ref().is_none_or(|(old_at, _)| at >= *old_at)
         {
             self.access = Some((at, access));
+        }
+    }
+
+    /// Where the desk's latest call ran; one recorded before execution modes ran in the background.
+    pub(super) fn executed(&mut self, at: i64, mode: &str) {
+        if self.derived.is_none_or(|(old_at, _)| at >= old_at) {
+            self.derived = Some((at, mode == "terminal"));
         }
     }
 
@@ -170,6 +179,7 @@ impl Desk {
             "effort": self.effort,
             "role": self.role,
             "access": self.access.as_ref().map(|(_, access)| access),
+            "derived": self.derived.is_some_and(|(_, derived)| derived),
             "identity": self.identity,
             "art_model": self.art_model(),
             "activities": self.activities.iter().rev().collect::<Vec<_>>(),
