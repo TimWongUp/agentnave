@@ -4,7 +4,7 @@
   // fixed seats on that mode's page, and the decision source (ADR-0123): platform, model and, for a
   // local or custom endpoint, its address. The catalog and the source are a draft like the rest of the
   // page and save from its one bar; a key is stored at once, as the voice keys are, and never read
-  // back: the page only learns whether one is set for each platform. Model lists are read from the
+  // back: the page only learns whether one is set for each platform, and a masked preview of it. Model lists are read from the
   // platform only when it is chosen or refreshed. Which bosses use the catalog is their mode, saved
   // with the orchestration.
 
@@ -20,7 +20,7 @@
   const MAX_SEATS = 255;
   const ROLE_MAX = 40;
 
-  let saved = null; // { document | null, error, key_set, keys, key_error, providers } from GET /app/decision-seats.
+  let saved = null; // { document | null, error, key_set, keys, key_previews, key_error, providers } from GET /app/decision-seats.
   let sourceDraft = null; // { provider, model, base_url } when the source differs from saved; else null.
   const catalogs = new Map(); // `${provider}|${base_url}` -> { state: "loading" | "ready" | "error", models, error }
   let draft = null; // The cards as edited; null while they are what is saved.
@@ -28,6 +28,7 @@
   let prefilled = false; // The first catalog was already made in this draft.
   let keyDraft = "";
   let keyBusy = false;
+  let manualModel = false; // The model id is typed: chosen in the list's last entry, or typed since.
   let keyMessage = null; // { text, error }
   let cardCount = 0;
   let rowCount = 0;
@@ -319,6 +320,7 @@
         sourceDraft = null;
         randomDraft = null;
         prefilled = false;
+        manualModel = false;
       }
     } catch (error) {
       S.showNotice(L(`无法读取决策模型推荐工位设置：${error.message}`, `Failed to load decision-model seat settings: ${error.message}`), true);
@@ -340,6 +342,7 @@
     draft = null;
     sourceDraft = null;
     randomDraft = null;
+    manualModel = false;
     render();
   }
 
@@ -370,6 +373,7 @@
     sourceDraft = null;
     randomDraft = null;
     prefilled = false;
+    manualModel = false;
     keyDraft = "";
     keyMessage = null;
   }
@@ -406,6 +410,7 @@
     sourceDraft = sameJson(next, savedSource()) ? null : next;
     keyDraft = "";
     keyMessage = null;
+    manualModel = false;
     if (listsOnChoice(meta.id)) startCatalog(next, false);
     render();
     S.advancedEdited();
@@ -429,6 +434,7 @@
     try {
       const data = await post("/app/decision-key", { provider, key });
       saved.keys = data.keys || { ...(saved.keys || { gemini: Boolean(saved.key_set) }), [provider]: data.key_set };
+      saved.key_previews = data.key_previews || {};
       saved.key_set = data.key_set;
       keyDraft = "";
       keyMessage = { text: key ? L("密钥已保存", "Key saved") : L("密钥已清除", "Key cleared"), error: false };
@@ -484,12 +490,16 @@
       el("div", { className: "s-field" }, input));
   }
 
-  function modelOption(model) {
-    return el("option", { value: model.id, selected: model.id === source().model }, model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id);
+  function modelOption(model, typing) {
+    return el("option", { value: model.id, selected: !typing && model.id === source().model }, model.name && model.name !== model.id ? `${model.name} · ${model.id}` : model.id);
   }
 
-  // A platform with one model shows it; the others offer a choice from the built-in picks and the
-  // platform's own list, a refresh for that list, and the model's id to type.
+  const MANUAL = "__manual__";
+
+  // A platform with one model shows it. The others offer a choice from the built-in picks and the
+  // platform's own list, with a refresh for that list; the model's id is typed only after the list's
+  // last entry asks for it or when the model is not in the list, and is the whole row while there is
+  // no list.
   function modelRow(meta) {
     const current = source();
     if (meta.fixed_model) {
@@ -501,13 +511,22 @@
     const recommended = meta.models || [];
     const others = (listed?.models || []).filter((model) => !recommended.some((one) => one.id === model.id));
     const known = [...recommended, ...others].some((model) => model.id === current.model);
-    const choose = el("select", {
+    const hasList = recommended.length + others.length > 0;
+    const typing = hasList && (manualModel || (current.model.trim() !== "" && !known));
+    const choose = hasList ? el("select", {
       id: "decision-model", "aria-label": L("决策模型", "Decision model"), dataset: { focusKey: "decision/model" },
-      onChange: (e) => e.target.value && chooseModel(e.target.value),
+      onChange: (e) => {
+        manualModel = e.target.value === MANUAL;
+        if (manualModel) {
+          render();
+          document.getElementById("decision-model-id")?.focus?.();
+        } else if (e.target.value) chooseModel(e.target.value);
+      },
     },
-    el("option", { value: "", selected: !known }, L("选择模型", "Choose a model")),
-    recommended.length ? el("optgroup", { label: L("推荐", "Recommended") }, recommended.map(modelOption)) : null,
-    others.length ? el("optgroup", { label: L("可用模型", "Available") }, others.map(modelOption)) : null);
+    el("option", { value: "", selected: !known && !typing }, L("选择模型", "Choose a model")),
+    recommended.length ? el("optgroup", { label: L("推荐", "Recommended") }, recommended.map((model) => modelOption(model, typing))) : null,
+    others.length ? el("optgroup", { label: L("可用模型", "Available") }, others.map((model) => modelOption(model, typing))) : null,
+    el("option", { value: MANUAL, selected: typing }, L("手动输入模型 ID…", "Enter model ID manually…"))) : null;
     const refresh = el("button", {
       type: "button", dataset: { focusKey: "decision/model-refresh" },
       disabled: listed?.state === "loading",
@@ -519,19 +538,19 @@
         render();
       },
     }, L("刷新", "Refresh"));
-    const typed = el("input", {
-      type: "text", maxlength: "200", spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off",
+    const typed = hasList && !typing ? null : el("input", {
+      type: "text", id: "decision-model-id", maxlength: "200", spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off",
       value: current.model, "aria-label": L("模型 ID", "Model ID"), placeholder: L("模型 ID", "Model ID"), dataset: { focusKey: "decision/model-id" },
       onInput: (e) => {
+        if (hasList) manualModel = true;
         chooseModel(e.target.value, false);
-        choose.value = [...recommended, ...others].some((model) => model.id === e.target.value) ? e.target.value : "";
       },
     });
     return el("div", { className: "s-row" },
-      el("label", { className: "s-label", htmlFor: "decision-model" }, L("决策模型", "Decision model")),
+      el("label", { className: "s-label", htmlFor: hasList ? "decision-model" : "decision-model-id" }, L("决策模型", "Decision model")),
       el("div", { className: "s-stack" },
-        el("div", { className: "s-field" }, choose, refresh),
-        el("div", { className: "s-field" }, typed),
+        el("div", { className: "s-field" }, hasList ? choose : typed, refresh),
+        hasList && typed && el("div", { className: "s-field" }, typed),
         listed?.state === "loading" && el("p", { className: "s-muted", role: "status" }, L("正在读取模型列表…", "Loading models…")),
         listed?.state === "error" && el("p", { className: "s-muted is-bad", role: "status" }, listed.error)));
   }
@@ -540,11 +559,13 @@
     const name = sourceName(meta);
     const label = L(`${name} 密钥${meta.key === "optional" ? "（可选）" : ""}`, `${name} API key${meta.key === "optional" ? " (optional)" : ""}`);
     const set = keySet(meta.id);
+    const preview = set ? saved.key_previews?.[meta.id] || "" : "";
     const save = el("button", { type: "button", disabled: keyBusy || !keyDraft.trim(), onClick: () => storeKey(keyDraft) }, L("保存", "Save"));
     const input = el("input", {
       type: "password", autocomplete: "off", spellcheck: "false", autocorrect: "off", autocapitalize: "off", maxlength: "4096", "aria-label": label, disabled: keyBusy,
       dataset: { focusKey: "decision/key" }, id: "decision-key",
-      placeholder: set ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key"),
+      placeholder: set ? (preview ? L(`${preview} · 粘贴新密钥可替换`, `${preview} · Paste a new key to replace`) : L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace")) : L("粘贴密钥", "Paste API key"),
+      title: preview || null,
       onInput: (e) => { keyDraft = e.target.value; save.disabled = keyBusy || !keyDraft.trim(); },
     });
     input.value = keyDraft;

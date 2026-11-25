@@ -20,7 +20,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
-pub(crate) use keys::{keys_state, no_keys, save_key};
+pub(crate) use keys::{key_previews, keys_state, no_keys, save_key};
 use models::{Address, Model, Source, source};
 pub(crate) use models::{fetch_models, providers};
 

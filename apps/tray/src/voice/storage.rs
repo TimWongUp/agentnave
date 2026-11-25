@@ -51,6 +51,25 @@ pub(super) fn read_settings(root: &Path) -> Result<Value, String> {
 pub(super) fn read_keys(root: &Path) -> Result<Value, String> {
     read(root, "voice-keys.json", json!({}))
 }
+/// How a saved API key is shown back: enough to recognize it, never enough to use it. A key of 16
+/// characters or more keeps its first and last four, one of 8 to 15 only its last four, and a
+/// shorter one nothing; an empty key has nothing to show.
+pub(crate) fn mask_key(key: &str) -> String {
+    let key = key.trim();
+    let chars: Vec<char> = key.chars().collect();
+    let tail = |from: usize| chars[from..].iter().collect::<String>();
+    match chars.len() {
+        0 => String::new(),
+        16.. => format!(
+            "{}…{}",
+            chars[..4].iter().collect::<String>(),
+            tail(chars.len() - 4)
+        ),
+        8.. => format!("••••{}", tail(chars.len() - 4)),
+        _ => "••••".into(),
+    }
+}
+
 pub(super) fn public_state(mut settings: Value, keys: &Value) -> Value {
     let engine = settings["engine"]
         .as_str()
@@ -62,10 +81,24 @@ pub(super) fn public_state(mut settings: Value, keys: &Value) -> Value {
         "minimax":keys["minimax"].as_str().is_some_and(|s| !s.is_empty()),
         "summary":keys["summary"].as_str().is_some_and(|s| !s.is_empty())
     });
-    for platform in summary::PLATFORMS {
-        let name = summary::platform_key(platform.id);
-        settings["keys"][&name] = json!(keys[&name].as_str().is_some_and(|s| !s.is_empty()));
+    let names = ["elevenlabs", "minimax", "summary"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(
+            summary::PLATFORMS
+                .iter()
+                .map(|platform| summary::platform_key(platform.id)),
+        );
+    let mut previews = serde_json::Map::new();
+    for name in names {
+        let key = keys[&name].as_str().unwrap_or_default();
+        settings["keys"][&name] = json!(!key.is_empty());
+        // The ChatGPT sign-in tokens live in the same file but are no API key, so they are not listed.
+        if !key.trim().is_empty() {
+            previews.insert(name, json!(mask_key(key)));
+        }
     }
+    settings["key_previews"] = Value::Object(previews);
     settings["summary_platforms"] = summary::platform_list();
     settings["chatgpt"] = summary::chatgpt::state(keys);
     settings

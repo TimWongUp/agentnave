@@ -2,6 +2,29 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn a_key_is_masked_by_its_length_and_never_shown_whole() {
+    let cases = [
+        ("", ""),
+        ("   ", ""),
+        ("a", "••••"),
+        ("1234567", "••••"),
+        ("12345678", "••••5678"),
+        ("AIza-secret-key", "••••-key"),
+        ("123456789012345", "••••2345"),
+        ("1234567890123456", "1234…3456"),
+        ("  sk-proj-0123456789a8b  ", "sk-p…9a8b"),
+        ("密钥密钥密钥密钥密钥密钥密钥密钥", "密钥密钥…密钥密钥"),
+    ];
+    for (key, masked) in cases {
+        assert_eq!(mask_key(key), masked, "{key:?}");
+        assert!(
+            key.trim().is_empty() || !masked.contains(key.trim()),
+            "{key:?}"
+        );
+    }
+}
+
+#[test]
 fn prose_removes_nonspoken_content_and_truncates_at_a_sentence() {
     let input = "# 标题\n**你好**，`行内内容`。\n```rust\nsecret();\n```\n| 名称 | 内容 |\n| --- | --- |\n路径 /tmp/a.rs 链接 https://example.org/x\n- [文档](https://example.org) <b>保留</b>";
     assert_eq!(
@@ -159,6 +182,7 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
     let public = storage::public_state(defaults.clone(), &keys);
     assert_eq!(public["keys"]["elevenlabs"], true);
     assert!(!public.to_string().contains("fake-only-key"));
+    assert_eq!(public["key_previews"], json!({"elevenlabs": "••••-key"}));
     storage::save_key(root, &json!({"engine":"summary","key":"fake-summary-key"})).unwrap();
     let public = storage::public_state(
         storage::read_settings(root).unwrap(),
@@ -166,6 +190,21 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
     );
     assert_eq!(public["keys"]["summary"], true);
     assert!(!public.to_string().contains("fake-summary-key"));
+    assert_eq!(public["key_previews"]["summary"], "fake…-key");
+    // A platform key, whatever its length, is shown masked; the ChatGPT tokens are no API key.
+    let platform = summary::PLATFORMS[0].id;
+    let name = summary::platform_key(platform);
+    let long_key = "sk-platform-0123456789abcdef";
+    storage::save_key(root, &json!({"engine": name, "key": long_key})).unwrap();
+    let mut keys = storage::read_keys(root).unwrap();
+    keys["chatgpt"] = json!({"access_token": "chatgpt-token-0123456789abcdef"});
+    let public = storage::public_state(storage::read_settings(root).unwrap(), &keys);
+    assert_eq!(public["key_previews"][&name], "sk-p…cdef");
+    assert!(public["key_previews"].get("chatgpt").is_none());
+    for text in [long_key, "chatgpt-token-0123456789abcdef"] {
+        assert!(!public["key_previews"].to_string().contains(text));
+    }
+    storage::save_key(root, &json!({"engine": name, "key": ""})).unwrap();
     if !crate::PREVIEW {
         let response = get(root, "/app/voice");
         assert_eq!(response.status, 200);
@@ -188,10 +227,9 @@ fn settings_and_keys_validate_and_never_echo_secrets() {
         );
     }
     storage::save_key(root, &json!({"engine":"elevenlabs","key":""})).unwrap();
-    assert_eq!(
-        storage::public_state(defaults.clone(), &storage::read_keys(root).unwrap())["keys"]["elevenlabs"],
-        false
-    );
+    let cleared = storage::public_state(defaults.clone(), &storage::read_keys(root).unwrap());
+    assert_eq!(cleared["keys"]["elevenlabs"], false);
+    assert!(cleared["key_previews"].get("elevenlabs").is_none());
     let mut enabled = defaults;
     enabled["enabled"] = json!(true);
     storage::save_settings(root, &enabled).unwrap();

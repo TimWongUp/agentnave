@@ -1175,7 +1175,9 @@ function decisionEditor(preset, loaded, catalogError = null, catalog = () => ({ 
     if (url === "/app/decision-seats" && !options.method) return { ok: true, json: async () => loaded };
     if (url === "/app/decision-key") {
       const { provider = "gemini", key } = JSON.parse(options.body);
-      return { ok: true, json: async () => ({ provider, key_set: key !== "", keys: { ...(loaded.keys || {}), [provider]: key !== "" } }) };
+      const previews = loaded.key_previews && { ...loaded.key_previews, ...(key ? { [provider]: "sk-p…9a8b" } : {}) };
+      if (!key && previews) delete previews[provider];
+      return { ok: true, json: async () => ({ provider, key_set: key !== "", keys: { ...(loaded.keys || {}), [provider]: key !== "" }, ...(previews ? { key_previews: previews } : {}) }) };
     }
     return { ok: true, json: async () => ({ saved: true, files: [], bosses: JSON.parse(app.run("JSON.stringify(orchestration.bosses)")) }) };
   });
@@ -1680,6 +1682,9 @@ test("choosing another platform fills its own model, shows only what it takes an
   // A model from the list, or typed by hand, goes into the file; an empty one blocks saving.
   control(app, "decision/model").listeners.change({ target: { value: "zeta/decider-small" } });
   assert.equal(decisionFile(app).decision_model, "zeta/decider-small");
+  assert.equal(control(app, "decision/model-id"), null, "a model from the list needs no typing");
+  control(app, "decision/model").listeners.change({ target: { value: "__manual__" } });
+  assert.equal(control(app, "decision/model-id").attrs.value, "zeta/decider-small");
   control(app, "decision/model-id").listeners.input({ target: { value: "vendor/custom:free" } });
   assert.equal(decisionFile(app).decision_model, "vendor/custom:free");
   assert.equal(decision((d) => d.problem()), null);
@@ -1794,7 +1799,8 @@ test("a saved platform comes back as it was written and is no draft", async () =
   assert.equal(decision((d) => d.changed()), false);
   assert.deepEqual(decisionFile(app), written);
   assert.equal(control(app, "decision/address").attrs.value, "http://127.0.0.1:11434");
-  assert.equal(control(app, "decision/model-id").attrs.value, "system-one:7b");
+  assert.equal(control(app, "decision/model-id"), null);
+  assert.equal(control(app, "decision/model").children.flatMap((child) => child.children || [child]).find((option) => option.attrs?.selected === "").attrs.value, "system-one:7b");
   // The tray that does not know the platforms yet still gives the one it always had.
   const old = decisionEditor("decision", { document: null, error: null, key_set: true, key_error: null });
   await old.decision((d) => d.load());
@@ -2566,4 +2572,108 @@ test("account removal confirmation shows folder deletion only for managed accoun
   await new Promise(setImmediate);
   await new Promise(setImmediate);
   assert.deepEqual(calls[1], { id: "a1", delete_dir: true });
+});
+
+// What a select shows as chosen, among its options and the options inside its groups.
+const chosenOption = (select) => select.children.flatMap((child) => (child.tagName === "optgroup" ? child.children : [child])).find((option) => option.attrs.selected === "").attrs.value;
+
+test("the model id is typed only on demand, and alone while there is no list", async () => {
+  const written = { version: 1, decision_provider: "openrouter", decision_model: "liquid/d1.2", seats: [] };
+  const { app, decision } = decisionEditor("decision", PLATFORM_FILE(written), null, () => ({ models: [{ id: "zeta/decider-small", name: "Zeta Small" }] }));
+  await decision((d) => d.load());
+  await settle();
+  const choose = (id) => control(app, "decision/provider").listeners.change({ target: { value: id } });
+  const model = () => control(app, "decision/model");
+  const typed = () => control(app, "decision/model-id");
+  const lastOption = () => model().children.at(-1);
+  // A model in the list is one select and its refresh; the last entry asks for the typed id.
+  assert.equal(typed(), null);
+  assert.equal(chosenOption(model()), "liquid/d1.2");
+  assert.equal(lastOption().attrs.value, "__manual__");
+  assert.equal(lastOption().children[0], "手动输入模型 ID…");
+  assert.ok(control(app, "decision/model-refresh"));
+  model().listeners.change({ target: { value: "__manual__" } });
+  assert.equal(chosenOption(model()), "__manual__");
+  assert.equal(typed().attrs.value, "liquid/d1.2", "the model in use stays until something else is typed");
+  typed().listeners.input({ target: { value: "vendor/custom:free" } });
+  assert.equal(decisionFile(app).decision_model, "vendor/custom:free");
+  // Picking a listed model closes the typed row again.
+  model().listeners.change({ target: { value: "zeta/decider-small" } });
+  assert.equal(typed(), null);
+  assert.equal(chosenOption(model()), "zeta/decider-small");
+  // Asking for it and leaving by another platform, or by dropping the draft, closes it too.
+  model().listeners.change({ target: { value: "__manual__" } });
+  assert.ok(typed());
+  choose("typesafe");
+  assert.equal(typed(), null);
+  choose("openrouter");
+  assert.equal(typed(), null);
+  decision((d) => d.discard());
+  app.run("renderOrchestration()");
+  assert.equal(typed(), null);
+  // A model that is in no list opens the row without asking, and shows as the typed entry.
+  decisionFile(app);
+  const unknown = decisionEditor("decision", PLATFORM_FILE({ ...written, decision_model: "vendor/custom:free" }), null, () => ({ models: [] }));
+  await unknown.decision((d) => d.load());
+  await settle();
+  assert.equal(control(unknown.app, "decision/model-id").attrs.value, "vendor/custom:free");
+  assert.equal(chosenOption(control(unknown.app, "decision/model")), "__manual__");
+  unknown.decision((d) => d.discard());
+});
+
+test("without any list the model id is the row's one field, and the list brings the select back", async () => {
+  const { app, calls, decision } = decisionEditor("decision", PLATFORM_FILE(), null, (url) => (url.searchParams.get("provider") === "custom" ? { models: [{ id: "decider-large", name: "decider-large" }] } : { models: [] }));
+  await decision((d) => d.load());
+  const choose = (id) => control(app, "decision/provider").listeners.change({ target: { value: id } });
+  // Ollama has nothing pulled yet: no empty select, only the id and the refresh in one field row.
+  choose("ollama");
+  await settle();
+  assert.equal(control(app, "decision/model"), null);
+  const field = topRows(app).find((row) => findKey(row, "decision/model-refresh")).children[1].children[0];
+  assert.deepEqual(Array.from(field.children.map((child) => child.dataset.focusKey)), ["decision/model-id", "decision/model-refresh"]);
+  // A custom endpoint is asked for its list; once it answers, the select takes over and the typed id stays.
+  choose("custom");
+  await settle();
+  assert.equal(control(app, "decision/model"), null);
+  control(app, "decision/address").listeners.input({ target: { value: "http://127.0.0.1:8080/v1" } });
+  control(app, "decision/model-id").listeners.input({ target: { value: "decider-small" } });
+  control(app, "decision/model-refresh").listeners.click();
+  await settle();
+  assert.equal(calls.filter((call) => call.url.startsWith("/app/decision-models")).at(-1).url.includes("provider=custom"), true);
+  assert.equal(chosenOption(control(app, "decision/model")), "__manual__");
+  assert.equal(control(app, "decision/model-id").attrs.value, "decider-small");
+  control(app, "decision/model").listeners.change({ target: { value: "decider-large" } });
+  assert.equal(control(app, "decision/model-id"), null);
+  assert.equal(decisionFile(app).decision_model, "decider-large");
+});
+
+test("a saved key is shown by its masked preview, which is never the field's value", async () => {
+  const withPreview = { ...PLATFORM_FILE(null, { gemini: true, openai: true }), key_previews: { gemini: "AIza…KLMN", openai: "••••-key" } };
+  const { app, decision, calls } = decisionEditor("decision", withPreview);
+  await decision((d) => d.load());
+  const input = () => topRow(app, "密钥").children[1].children[0].children[0];
+  assert.equal(input().attrs.placeholder, "AIza…KLMN · 粘贴新密钥可替换");
+  assert.equal(input().attrs.title, "AIza…KLMN");
+  assert.equal(input().value, "");
+  control(app, "decision/provider").listeners.change({ target: { value: "openai" } });
+  assert.equal(input().attrs.placeholder, "••••-key · 粘贴新密钥可替换");
+  // A platform without a key says to paste one, and shows no preview or title.
+  control(app, "decision/provider").listeners.change({ target: { value: "typesafe" } });
+  assert.equal(input().attrs.placeholder, "粘贴密钥");
+  assert.equal(input().attrs.title, undefined);
+  // Saving takes the new preview from the answer; clearing takes it away.
+  input().listeners.input({ target: { value: "sk-proj-0123456789a8b" } });
+  const [, save] = topRow(app, "密钥").children[1].children[0].children;
+  await save.listeners.click();
+  assert.equal(input().attrs.placeholder, "sk-p…9a8b · 粘贴新密钥可替换");
+  assert.equal(input().value, "");
+  assert.ok(!JSON.stringify(roleChildren(app)).includes("0123456789a8b"));
+  await topRow(app, "密钥").children[1].children[0].children[2].listeners.click();
+  assert.equal(input().attrs.placeholder, "粘贴密钥");
+  assert.equal(calls.filter((call) => call.url === "/app/decision-key").length, 2);
+  // A tray that does not send previews keeps the old wording.
+  control(app, "decision/provider").listeners.change({ target: { value: "gemini" } });
+  const old = decisionEditor("decision", PLATFORM_FILE(null, { gemini: true }));
+  await old.decision((d) => d.load());
+  assert.equal(topRow(old.app, "密钥").children[1].children[0].children[0].attrs.placeholder, "已保存，粘贴新密钥可替换");
 });

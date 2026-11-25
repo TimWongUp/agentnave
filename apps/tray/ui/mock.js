@@ -1085,6 +1085,7 @@ All checks passed!
     model: "eleven_turbo_v2_5",
     models: { elevenlabs: "eleven_turbo_v2_5", minimax: "speech-01-turbo" },
     keys: { elevenlabs: true, minimax: false },
+    key_previews: { elevenlabs: "sk_3…a8b2" },
     voices: {},
     personas: {},
     chatgpt: { signed_in: true, signing_in: false, user: "preview@example.com", plan: "Plus", error: null },
@@ -1108,9 +1109,15 @@ All checks passed!
     id, name_zh, name_en, key, fixed_model: false, default_model, models: models.map((model) => ({ id: model, name: model })),
     catalog: false, custom_url: false, url_required: false, default_base_url: null, ...extra,
   });
+  // The tray's mask: the first and last four of a long key, the last four of a middling one, nothing of a short one.
+  const maskKey = (key) => {
+    const chars = Array.from(key.trim());
+    return chars.length >= 16 ? `${chars.slice(0, 4).join("")}…${chars.slice(-4).join("")}` : chars.length >= 8 ? `••••${chars.slice(-4).join("")}` : chars.length ? "••••" : "";
+  };
   const mockDecision = {
     document: null, error: null, key_set: false, key_error: null,
     keys: { gemini: false, openai: false, typesafe: false, openrouter: false, custom: false },
+    key_previews: {},
     providers: [
       mockProvider("gemini", "Google Gemini", "Google Gemini", "required", "gemini-decision-1", [], { fixed_model: true }),
       mockProvider("openai", "OpenAI", "OpenAI", "required", "gpt-6-luna", [], { fixed_model: true }),
@@ -1430,7 +1437,9 @@ All checks passed!
     if (path === "/app/decision-key") {
       const provider = body.provider || "gemini";
       mockDecision.keys[provider] = Boolean(body.key);
-      return { provider, key_set: mockDecision.keys[provider], keys: { ...mockDecision.keys } };
+      if (body.key) mockDecision.key_previews[provider] = maskKey(body.key);
+      else delete mockDecision.key_previews[provider];
+      return { provider, key_set: mockDecision.keys[provider], keys: { ...mockDecision.keys }, key_previews: { ...mockDecision.key_previews } };
     }
     if (path === "/app/orchestration") { mockOrchestration.document = structuredClone(body); return { ...structuredClone(mockOrchestration), failures: [] }; }
     if (path === "/app/orchestration/host-cli") {
@@ -1501,6 +1510,8 @@ All checks passed!
     }
     if (path === "/app/voice/key") {
       mockVoice.keys[body.engine] = Boolean(body.key);
+      if (body.key) mockVoice.key_previews[body.engine] = maskKey(body.key);
+      else delete mockVoice.key_previews[body.engine];
       return structuredClone(mockVoice);
     }
     if (path === "/app/voice/summary/models") return [{ id: "gpt-5.4-mini", owned_by: "openai", reasoning_levels: ["low", "medium"] }];

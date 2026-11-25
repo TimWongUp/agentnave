@@ -2,7 +2,7 @@
 {
   const { h, art, L } = AN;
   const root = document.getElementById("voice-settings");
-  let config = null, voices = [], models = [], summaryModels = [], cacheBytes = 0, busy = false, clearingCache = false, loaded = false, audio = null, audioUrl = null, controller = null;
+  let config = null, voices = [], models = [], summaryModels = [], cacheBytes = 0, busy = false, clearingCache = false, loaded = false, audio = null, audioUrl = null, controller = null, manualSummary = false;
   const drafts = { base: null, model: null, prompts: new Map(), keys: new Map() };
   const status = (message) => { document.getElementById("notice").textContent = message; };
   function normalizeConfig(raw) {
@@ -132,8 +132,12 @@
     finally { busy = false; render(); }
   }
   function keyRow(engine = config.engine, label = engine === "minimax" ? "MiniMax" : "ElevenLabs") {
+    const preview = config.keys[engine] ? config.key_previews?.[engine] || "" : "";
     const input = h("input", { type: "password", autocomplete: "off", spellcheck: "false", autocorrect: "off", autocapitalize: "off", maxlength: "4096", "aria-label": L(`${engine} API 密钥`, `${engine} API key`), disabled: busy,
-      placeholder: config.keys[engine] ? L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace") : L("粘贴密钥", "Paste API key") });
+      title: preview || null,
+      placeholder: config.keys[engine]
+        ? (preview ? L(`${preview} · 粘贴新密钥可替换`, `${preview} · Paste a new key to replace`) : L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace"))
+        : L("粘贴密钥", "Paste API key") });
     input.value = drafts.keys.get(engine) ?? "";
     input.addEventListener("input", () => drafts.keys.set(engine, input.value));
     const put = h("button", { type: "button", disabled: busy }, L("保存", "Save"));
@@ -248,9 +252,11 @@
     return h("div.voice-prompt-editor", {}, input, actions);
   }
   const platformIcon = id => h("img.voice-platform-icon", { alt: "", src: art.url(["magpie", "custom"].includes(id) ? "logo-default.svg" : `platform/${id}.svg`) });
+  const MANUAL_MODEL = "__manual__";
   function summarySource() {
     return picker(L("摘要平台", "Summary platform"), config.summary_platforms, config.summary.provider, id => {
       drafts.model = null;
+      manualSummary = false;
       summarySave({ provider: id, ...(id === config.summary.provider ? {} : { model: "", effort: "" }) });
     }, platformIcon);
   }
@@ -309,17 +315,20 @@
     select.addEventListener("change", () => summarySave({ effort: select.value }));
     return row(L("努力程度", "Effort"), select);
   }
-  function manualSummaryModel() {
+  // The model id is typed: in the whole row while there is no list, and in a row of its own once
+  // the list's last entry asked for it or the model is not in the list.
+  function summaryModelInput() {
     const fallback = summaryModels.some(item => item.id === config.summary.model) ? "" : config.summary.model;
-    const input = h("input", { value: drafts.model ?? fallback, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", placeholder: L("或手填模型 ID", "Or enter model ID"), disabled: busy, "aria-label": L("手填摘要模型 ID", "Custom summary model ID") });
+    const input = h("input", { id: "summary-model-id", value: drafts.model ?? fallback, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off", placeholder: L("模型 ID", "Model ID"), disabled: busy, "aria-label": L("手填摘要模型 ID", "Custom summary model ID") });
     input.addEventListener("input", () => { drafts.model = input.value; });
     const put = h("button", { type: "button", disabled: busy }, L("使用", "Use"));
     put.addEventListener("click", () => {
       if (!input.value.trim()) return;
       drafts.model = input.value.trim();
+      manualSummary = false;
       summarySave({ model: drafts.model, ...(drafts.model === config.summary.model ? {} : { effort: "" }) });
     });
-    return row(L("摘要模型 ID", "Summary model ID"), h("div.s-field", {}, input, put));
+    return [input, put];
   }
   function modelSettings() {
     const enabled = h("input.switch-input", { type: "checkbox", checked: config.summary.enabled, disabled: busy, "aria-label": L("使用摘要模型", "Use summary model") });
@@ -353,11 +362,23 @@
       finally { busy = false; render(); }
     });
     const choices = summaryModels.map(model => ({ id: model.id, name: summaryModelLabel(model) }));
-    const select = picker(L("摘要模型", "Summary model"), choices, config.summary.model, id => {
-      drafts.model = null; summarySave({ model: id, ...(id === config.summary.model ? {} : { effort: "" }) });
-    });
-    parts.push(row(L("摘要模型", "Summary model"), h("div.s-field", {}, select, refresh)), summaryEffort());
-    if (provider !== "magpie") parts.push(manualSummaryModel());
+    // Magpie's model is only chosen from its catalog.
+    const typable = provider !== "magpie";
+    if (typable && !choices.length) {
+      parts.push(row(L("摘要模型", "Summary model"), h("div.s-field", {}, ...summaryModelInput(), refresh)), summaryEffort());
+    } else {
+      const typing = typable && (manualSummary || Boolean(config.summary.model && !choices.some(item => item.id === config.summary.model)));
+      const items = typable ? [...choices, { id: MANUAL_MODEL, name: L("手动输入模型 ID…", "Enter model ID manually…") }] : choices;
+      const select = picker(L("摘要模型", "Summary model"), items, typing ? MANUAL_MODEL : config.summary.model, id => {
+        drafts.model = null;
+        manualSummary = id === MANUAL_MODEL;
+        if (manualSummary) { render(); document.getElementById("summary-model-id")?.focus?.(); return; }
+        summarySave({ model: id, ...(id === config.summary.model ? {} : { effort: "" }) });
+      });
+      parts.push(row(L("摘要模型", "Summary model"), h("div.s-field", {}, select, refresh)));
+      if (typing) parts.push(row(L("摘要模型 ID", "Summary model ID"), h("div.s-field", {}, ...summaryModelInput())));
+      parts.push(summaryEffort());
+    }
     return section("summary-model", L("摘要模型设置", "Summary model settings"), ...parts);
   }
   function cacheRow() {

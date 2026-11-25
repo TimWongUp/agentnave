@@ -32,8 +32,8 @@ pub(crate) fn decision_request(
 }
 
 /// The saved file (null while missing), why it cannot be edited, which sources have a key (the
-/// `key_set` of the one in use), and the sources the page can offer; a key is never part of the
-/// answer.
+/// `key_set` of the one in use), the masked text of each saved key, and the sources the page can
+/// offer; a key itself is never part of the answer.
 fn state(root: &Path) -> Response {
     let (document, error) = match decision_seats::read(root) {
         Ok(document) => (document.unwrap_or(Value::Null), Value::Null),
@@ -46,7 +46,7 @@ fn state(root: &Path) -> Response {
     let current = document["decision_provider"].as_str().unwrap_or("gemini");
     Response::json(&json!({"document": document, "error": error,
         "key_set": keys[current] == true, "keys": keys, "key_error": key_error,
-        "providers": decision_seats::providers()}))
+        "key_previews": decision_seats::key_previews(root), "providers": decision_seats::providers()}))
 }
 
 fn save_key(root: &Path, payload: &Value) -> Response {
@@ -54,7 +54,8 @@ fn save_key(root: &Path, payload: &Value) -> Response {
         .and_then(|provider| decision_seats::keys_state(root).map(|keys| (provider, keys)));
     match saved {
         Ok((provider, keys)) => Response::json(&json!({"provider": provider,
-            "key_set": keys[provider] == true, "keys": keys})),
+            "key_set": keys[provider] == true, "keys": keys,
+            "key_previews": decision_seats::key_previews(root)})),
         Err(error) => Response::error(400, &error),
     }
 }

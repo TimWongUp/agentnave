@@ -1,7 +1,7 @@
 //! decision-keys.json: `{"version": 1, "keys": {"gemini": key, "openai": key, ...}}`, one key for
 //! each source that takes one, readable by the current user only. The App writes it and the service
 //! reads it; nothing here or in a response ever holds a key's text beyond the moment it is written
-//! or sent as a request header.
+//! or sent as a request header; a response shows a saved key only as `key_previews`' masked text.
 
 use super::models::{SOURCES, source};
 use serde_json::{Map, Value, json};
@@ -50,6 +50,24 @@ fn states(keys: &Map<String, Value>) -> Value {
 /// Whether each source that takes a key has one; the keys themselves never leave this module.
 pub(crate) fn keys_state(root: &Path) -> Result<Value, String> {
     Ok(states(&read_keys(root)?))
+}
+
+/// Each saved key as `mask_key` shows it, for the sources that have one; empty while the file
+/// cannot be read.
+pub(crate) fn key_previews(root: &Path) -> Value {
+    let Ok(keys) = read_keys(root) else {
+        return json!({});
+    };
+    Value::Object(
+        SOURCES
+            .iter()
+            .filter(|source| source.has_key())
+            .filter_map(|source| {
+                let key = text(&keys, source.id)?;
+                Some((source.id.to_owned(), json!(crate::voice::mask_key(&key))))
+            })
+            .collect(),
+    )
 }
 
 /// What the page is told while the file cannot be read.

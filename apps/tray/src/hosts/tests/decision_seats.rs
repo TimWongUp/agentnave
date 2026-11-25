@@ -144,6 +144,30 @@ fn the_key_is_stored_privately_and_never_answered() {
     let state: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(state["key_set"], true);
     assert_eq!(state["document"], Value::Null);
+    // The key is only recognizable: its masked text is answered, never its characters.
+    assert_eq!(state["key_previews"], json!({"gemini": "••••-key"}));
+    let stored = reader.request(
+        "POST",
+        "/app/decision-key",
+        Some("1"),
+        br#"{"provider":"openrouter","key":"sk-or-v1-abcdef0123456789"}"#,
+    );
+    let stored = String::from_utf8(stored.body).unwrap();
+    assert!(!stored.contains("abcdef0123456789"), "{stored}");
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["key_set"], true);
+    assert_eq!(
+        stored["key_previews"],
+        json!({"gemini": "••••-key", "openrouter": "sk-o…6789"})
+    );
+    assert_eq!(
+        post(
+            &reader,
+            "/app/decision-key",
+            &json!({"provider": "openrouter", "key": ""})
+        ),
+        200
+    );
     // Clearing keeps the file readable by the service.
     assert_eq!(post(&reader, "/app/decision-key", &json!({"key": ""})), 200);
     let file: Value =
@@ -152,6 +176,7 @@ fn the_key_is_stored_privately_and_never_answered() {
     let state = reader.request("GET", "/app/decision-seats", None, b"");
     let state: Value = serde_json::from_slice(&state.body).unwrap();
     assert_eq!(state["key_set"], false);
+    assert_eq!(state["key_previews"], json!({}));
     // A key with control characters, or a damaged file, is refused and the file left alone.
     assert_eq!(
         post(&reader, "/app/decision-key", &json!({"key": "a\nb"})),
@@ -172,6 +197,10 @@ fn the_key_is_stored_privately_and_never_answered() {
         fs::read_to_string(root.join("decision-keys.json")).unwrap(),
         "{broken"
     );
+    // A damaged file shows no previews, only the error.
+    let (_, state) = get(&reader, "/app/decision-seats");
+    assert_eq!(state["key_previews"], json!({}));
+    assert!(state["key_error"].is_string());
 }
 
 fn get(reader: &Reader, path: &str) -> (u16, Value) {

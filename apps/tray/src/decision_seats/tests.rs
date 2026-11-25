@@ -516,6 +516,23 @@ fn each_source_keeps_its_own_key_and_none_is_answered() {
 }
 
 #[test]
+fn saved_keys_are_previewed_masked_and_only_for_the_keys_that_are_set() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(key_previews(dir.path()), json!({}));
+    let long = "AIzaSyD-abcdefghijklmnopqrstuvwxyzKLMN";
+    save_key(dir.path(), &json!({"provider": "gemini", "key": long})).unwrap();
+    save_key(dir.path(), &json!({"provider": "custom", "key": "short"})).unwrap();
+    let previews = key_previews(dir.path());
+    assert_eq!(previews, json!({"gemini": "AIza…KLMN", "custom": "••••"}));
+    assert!(!previews.to_string().contains(long));
+    // Clearing a key drops its entry; a damaged file previews nothing.
+    save_key(dir.path(), &json!({"provider": "custom", "key": ""})).unwrap();
+    assert_eq!(key_previews(dir.path()), json!({"gemini": "AIza…KLMN"}));
+    std::fs::write(dir.path().join("decision-keys.json"), "{broken").unwrap();
+    assert_eq!(key_previews(dir.path()), json!({}));
+}
+
+#[test]
 fn the_sources_are_described_for_the_page() {
     let list = providers();
     let ids: Vec<_> = list
