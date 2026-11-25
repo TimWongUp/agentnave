@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from agentnave.decision_model import Decision, DecisionError, DecisionQuestion
-from agentnave.orchestration_roles import is_loopback_host
+from agentnave.decision_sources import is_loopback_host
 
 QUESTION = "seat"
 INSTRUCTIONS = (

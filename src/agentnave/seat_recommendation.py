@@ -10,7 +10,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from agentnave.decision_gemini import MODEL as GEMINI_MODEL
 from agentnave.decision_gemini import GeminiDecisionClient
 from agentnave.decision_model import (
     Decision,
@@ -20,9 +19,16 @@ from agentnave.decision_model import (
     DecisionQuestion,
     read_decision_key,
 )
-from agentnave.decision_openai import MODEL as OPENAI_MODEL
 from agentnave.decision_openai import OpenAIDecisionClient
 from agentnave.decision_seats import effective_decision_seats
+from agentnave.decision_sources import (
+    DEFAULT_DECISION_PROVIDER,
+    DEFAULT_OLLAMA_BASE_URL,
+    GEMINI_MODEL,
+    NO_KEY_PROVIDERS,
+    OPTIONAL_KEY_PROVIDERS,
+    DecisionProvider,
+)
 from agentnave.decision_systemone import (
     OPENROUTER_ENDPOINT,
     TYPESAFE_ENDPOINT,
@@ -32,12 +38,9 @@ from agentnave.decision_systemone import (
 from agentnave.host import Host
 from agentnave.members import MemberFileError, SettingsFileError, list_members
 from agentnave.orchestration_roles import (
-    DEFAULT_DECISION_PROVIDER,
-    DEFAULT_OLLAMA_BASE_URL,
     IMAGE_KIND,
     CustomSeatDifficulty,
     CustomSeatStatus,
-    DecisionProvider,
     DecisionSeatsFile,
     SeatMetadata,
 )
@@ -123,32 +126,21 @@ def _native_settings(seat: CustomSeatStatus) -> dict[str, str | None]:
     return {"model": seat.model or None, "effort": seat.effort or None}
 
 
-def new_client(model: str, key: str) -> DecisionClient:
-    """Create a built-in client for a fixed model name; tests replace this."""
-    if model == OPENAI_MODEL:
-        return OpenAIDecisionClient(key, model=model)
-    if model == GEMINI_MODEL:
-        return GeminiDecisionClient(key)
-    raise KeyError(model)
-
-
-_DEFAULT_NEW_CLIENT = new_client
-
-
-def _build_client(config: DecisionModelConfig, key: str | None) -> DecisionClient:
+def new_client(config: DecisionModelConfig, api_key: str) -> DecisionClient:
+    """The one factory: the client for a decision source; an empty key means none is set."""
     if config.provider == "gemini":
-        return GeminiDecisionClient(key or "")
+        return GeminiDecisionClient(api_key)
     if config.provider == "openai":
-        return OpenAIDecisionClient(key or "", model=config.model)
+        return OpenAIDecisionClient(api_key, model=config.model)
     if config.provider == "typesafe":
-        return SystemOneDecisionClient(TYPESAFE_ENDPOINT, config.model, api_key=key)
+        return SystemOneDecisionClient(TYPESAFE_ENDPOINT, config.model, api_key=api_key)
     if config.provider == "openrouter":
-        return SystemOneDecisionClient(OPENROUTER_ENDPOINT, config.model, api_key=key)
+        return SystemOneDecisionClient(OPENROUTER_ENDPOINT, config.model, api_key=api_key)
     if config.provider == "ollama":
         endpoint = resolve_systemone_endpoint(config.base_url or DEFAULT_OLLAMA_BASE_URL)
         return SystemOneDecisionClient(endpoint, config.model, api_key=None)
     endpoint = resolve_systemone_endpoint(config.base_url or "")
-    return SystemOneDecisionClient(endpoint, config.model, api_key=key)
+    return SystemOneDecisionClient(endpoint, config.model, api_key=api_key)
 
 
 # What is still undecided when the work starts. Each seat's line carries its own meaning, so a
@@ -338,13 +330,13 @@ async def recommend_many(
 
 
 def _resolve_key(provider: DecisionProvider, model: str) -> str | None:
-    if provider == "ollama":
+    if provider in NO_KEY_PROVIDERS:
         return None
     try:
         key = read_decision_key(provider)
     except DecisionKeysFileError as exc:
         raise RecommendationError("config_error", str(exc)) from exc
-    if key is None and provider != "custom":
+    if key is None and provider not in OPTIONAL_KEY_PROVIDERS:
         raise RecommendationError(
             "no_key",
             f"No API key is set for {provider} ({model}); choose a seat from list_members "
@@ -354,20 +346,8 @@ def _resolve_key(provider: DecisionProvider, model: str) -> str | None:
 
 
 def client_for_config(config: DecisionModelConfig) -> DecisionClient:
-    """Resolve API key policy and construct the DecisionClient for config."""
-    key = _resolve_key(config.provider, config.model)
-    if new_client is not _DEFAULT_NEW_CLIENT:
-        return new_client(config.model, key or "")
-    return _build_client(config, key)
-
-
-def client_for_model(model: str) -> DecisionClient:
-    """Backward-compatible entry point for fixed Gemini/OpenAI model names."""
-    if model == OPENAI_MODEL:
-        return client_for_config(DecisionModelConfig(provider="openai", model=model))
-    if model == GEMINI_MODEL:
-        return client_for_config(DecisionModelConfig(provider="gemini", model=model))
-    raise KeyError(model)
+    """Resolve the API key policy for config, then build its client."""
+    return new_client(config, _resolve_key(config.provider, config.model) or "")
 
 
 def _described(usable: Mapping[str, CustomSeatStatus]) -> dict[str, str]:
@@ -435,7 +415,6 @@ __all__ = [
     "Recommendation",
     "RecommendationError",
     "client_for_config",
-    "client_for_model",
     "clip_for_decision",
     "decision_config",
     "new_client",

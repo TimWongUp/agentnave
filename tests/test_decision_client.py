@@ -469,15 +469,13 @@ def test_openai_decisions_client_arrays_refusal_probabilities_and_batch(
         ENDPOINT as OPENAI_ENDPOINT,
     )
     from agentnave.decision_openai import (
-        MODEL as OPENAI_MODEL,
-    )
-    from agentnave.decision_openai import (
         OpenAIDecisionClient,
         build_batch_request,
         build_request,
         parse_batch_response,
         parse_response,
     )
+    from agentnave.decision_sources import OPENAI_MODEL
 
     assert OPENAI_ENDPOINT == "https://api.openai.com/v1/decisions"
     assert OPENAI_MODEL == "gpt-6-luna"

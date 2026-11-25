@@ -6,8 +6,6 @@ runtime grouping, visibility and access. Contract tests check the aliases agains
 
 from __future__ import annotations
 
-import ipaddress
-import urllib.parse
 from collections.abc import Sequence
 from functools import cache
 from pathlib import Path
@@ -25,6 +23,15 @@ from pydantic import (
 )
 
 from agentnave.accounts import check_choice
+from agentnave.decision_sources import (
+    BASE_URL_PROVIDERS,
+    DECISION_DEFAULT_MODELS,
+    DEFAULT_DECISION_PROVIDER,
+    DEFAULT_OLLAMA_BASE_URL,
+    FIXED_DECISION_MODELS,
+    DecisionProvider,
+    validate_decision_base_url,
+)
 from agentnave.host import Host
 from agentnave.models import ACCOUNT_ID, ProviderOption
 
@@ -41,8 +48,6 @@ type ProviderName = Literal[
 # A fixed group's medium seat is optional; only a bound one is published.
 type Difficulty = Literal["easy", "medium", "hard"]
 type CustomSeatDifficulty = Literal["easy", "medium", "hard"]
-type DecisionProvider = Literal["gemini", "openai", "typesafe", "openrouter", "ollama", "custom"]
-type DecisionModelName = str
 type OrchestrationPreset = Literal["off", "meetings", "split", "parallel", "decision", "custom"]
 type OrchestrationGroup = Literal[
     "explorer",
@@ -287,76 +292,7 @@ class CustomSeat(SeatMetadata):
         )
 
 
-DEFAULT_DECISION_PROVIDER: DecisionProvider = "gemini"
-DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-DECISION_DEFAULT_MODELS: dict[DecisionProvider, str] = {
-    "gemini": "gemini-decision-1",
-    "openai": "gpt-6-luna",
-    "typesafe": "jev-latest",
-    "openrouter": "liquid/d1.2-ultra",
-}
-FIXED_DECISION_MODELS: dict[DecisionProvider, str] = {
-    "gemini": "gemini-decision-1",
-    "openai": "gpt-6-luna",
-}
-_BASE_URL_PROVIDERS = frozenset({"ollama", "custom"})
 _DECISION_MODEL_MAX_LENGTH = 200
-_DECISION_BASE_URL_MAX_LENGTH = 512
-
-
-def is_loopback_host(host: str) -> bool:
-    """True for localhost, 127.0.0.1, ::1, and any loopback IP address."""
-    stripped = host.strip("[]")
-    if stripped.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(stripped).is_loopback
-    except ValueError:
-        return False
-
-
-def validate_decision_base_url(raw: str) -> str:
-    """Validate and normalize a decision endpoint base URL (matching the tray rules)."""
-    cleaned = raw.strip().rstrip("/")
-    if not cleaned:
-        raise ValueError("decision_base_url must not be empty")
-    if len(cleaned) > _DECISION_BASE_URL_MAX_LENGTH:
-        raise ValueError(
-            f"decision_base_url must be at most {_DECISION_BASE_URL_MAX_LENGTH} characters"
-        )
-    if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in cleaned):
-        raise ValueError("decision_base_url must not contain spaces or control characters")
-    try:
-        parsed = urllib.parse.urlsplit(cleaned)
-    except ValueError as exc:
-        raise ValueError("decision_base_url must be a valid URL") from exc
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError("decision_base_url must be an http or https URL with a host")
-    authority = cleaned.split("://", 1)[1].split("/", 1)[0]
-    if (
-        parsed.username is not None
-        or parsed.password is not None
-        or "@" in parsed.netloc
-        or "@" in authority
-        or "\\" in authority
-    ):
-        raise ValueError("decision_base_url must not contain userinfo")
-    if parsed.query or parsed.fragment or "?" in cleaned or "#" in cleaned:
-        raise ValueError("decision_base_url must not contain query or fragment")
-    try:
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError("decision_base_url has an invalid port") from exc
-    if authority.endswith(":") or port == 0:
-        raise ValueError("decision_base_url has an invalid port")
-    host = parsed.hostname
-    if not host:
-        raise ValueError("decision_base_url must contain a host")
-    if parsed.scheme == "http" and not is_loopback_host(host):
-        raise ValueError(
-            "decision_base_url allows http only for loopback hosts (localhost, 127.0.0.1, ::1)"
-        )
-    return cleaned
 
 
 class DecisionSeatsFile(BaseModel):
@@ -397,7 +333,7 @@ class DecisionSeatsFile(BaseModel):
             self.decision_model = model
 
         raw_url = self.decision_base_url.strip() if self.decision_base_url is not None else ""
-        if provider not in _BASE_URL_PROVIDERS:
+        if provider not in BASE_URL_PROVIDERS:
             if raw_url:
                 raise ValueError(
                     f"decision_base_url is only allowed for ollama and custom, not {provider!r}"

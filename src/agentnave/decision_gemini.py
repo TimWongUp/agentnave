@@ -22,21 +22,19 @@ from agentnave.decision_http import (
     post_json,
 )
 from agentnave.decision_model import Decision, DecisionError, DecisionQuestion
+from agentnave.decision_sources import GEMINI_MODEL
 
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/decisions"
-MODEL = "gemini-decision-1"
-# The name this model's key has in decision-keys.json.
-KEY_NAME = "gemini"
 
 
 def build_request(text: str, candidates: Mapping[str, str]) -> dict[str, Any]:
     """One choice question; the criteria are the candidate ids with their descriptions."""
-    return build_keyed_request(MODEL, text, candidates, text_key="input")
+    return build_keyed_request(GEMINI_MODEL, text, candidates, text_key="input")
 
 
 def build_batch_request(questions: Sequence[DecisionQuestion]) -> dict[str, Any]:
     """One request, one choice question per input; each names the task it is about."""
-    return build_keyed_batch_request(MODEL, questions, text_key="input")
+    return build_keyed_batch_request(GEMINI_MODEL, questions, text_key="input")
 
 
 def parse_batch_response(

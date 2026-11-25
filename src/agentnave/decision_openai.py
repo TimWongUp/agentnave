@@ -18,10 +18,9 @@ from agentnave.decision_http import (
     validate_choice,
 )
 from agentnave.decision_model import Decision, DecisionError, DecisionQuestion
+from agentnave.decision_sources import OPENAI_MODEL
 
 ENDPOINT = "https://api.openai.com/v1/decisions"
-MODEL = "gpt-6-luna"
-KEY_NAME = "openai"
 
 
 def _choices(candidates: Mapping[str, str]) -> list[dict[str, str]]:
@@ -29,7 +28,7 @@ def _choices(candidates: Mapping[str, str]) -> list[dict[str, str]]:
 
 
 def build_request(
-    text: str, candidates: Mapping[str, str], *, model: str = MODEL
+    text: str, candidates: Mapping[str, str], *, model: str = OPENAI_MODEL
 ) -> dict[str, Any]:
     """One OpenAI Decisions choice question."""
     return {
@@ -47,7 +46,7 @@ def build_request(
 
 
 def build_batch_request(
-    questions: Sequence[DecisionQuestion], *, model: str = MODEL
+    questions: Sequence[DecisionQuestion], *, model: str = OPENAI_MODEL
 ) -> dict[str, Any]:
     """One OpenAI Decisions request with an array of named choice questions."""
     ids = batch_question_ids(len(questions))
@@ -166,7 +165,7 @@ class OpenAIDecisionClient:
     def __init__(
         self,
         api_key: str,
-        model: str = MODEL,
+        model: str = OPENAI_MODEL,
         endpoint: str = ENDPOINT,
         timeout: float = TIMEOUT_SECONDS,
     ) -> None:
