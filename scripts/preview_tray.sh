@@ -20,8 +20,10 @@ NAME=${AGENTNAVE_PREVIEW_NAME:-AgentNave 预览${SLOT:+ $SLOT}}
 APP="$HOME/Applications/$NAME.app"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' "$TRAY/Cargo.toml" | head -n 1)
 
-# Its own target dir, so the preview flags never mix with a normal build.
+# Its own target dir, so the preview flags never mix with a normal build. Optimized, as the installed
+# app is: unoptimized, each page of data takes five times as long.
 AGENTNAVE_PREVIEW=1 \
+CARGO_PROFILE_DEV_OPT_LEVEL=2 \
 TAURI_CONFIG="{\"identifier\":\"$ID\",\"productName\":\"$NAME\"}" \
 CARGO_TARGET_DIR="$TRAY/target/preview" \
   cargo build --manifest-path "$TRAY/Cargo.toml"
