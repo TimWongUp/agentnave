@@ -141,12 +141,17 @@ const ChatTerminal = (() => {
     }
     if (gen !== t.listGen) return;
     const before = shownId != null && byId(shownId);
+    const processes = new Map(t.list.map((x) => [x.id, x.started]));
     t.list = current.sessions;
     t.cwd = current.cwd;
     continueShown(before);
     const now = new Date().toISOString();
     for (const x of t.list) if (!t.since.has(x.id)) t.since.set(x.id, now);
-    for (const id of t.frames.keys()) if (!byId(id)) dropFrame(id);
+    // a frame stops reading once its process has ended, so one started in the same row needs its own
+    for (const id of t.frames.keys()) {
+      const x = byId(id);
+      if (!x || (processes.has(id) && processes.get(id) !== x.started)) dropFrame(id);
+    }
   }
 
   // The CLI's name, with the named account it runs as after it.
@@ -682,11 +687,16 @@ const ChatTerminal = (() => {
     const ds = derivedStateOf(x);
     const live = ds !== "dormant" && ds !== "exited";
     t.terminal.set(group, live);
-    if (live) t.openOnce = group;
-    if (state?.selected !== group) go(`/chat/${group}`);
-    else if (ds !== "dormant") {
-      refreshOffice();
-      if (live) focusFrame(x.id);
+    if (state?.selected !== group) {
+      t.openOnce = group;
+      go(`/chat/${group}`);
+    } else {
+      state.convOpen = true;
+      if (!state.convPeek && typeof setCollapsed === "function") setCollapsed(false);
+      if (ds !== "dormant") {
+        refreshOffice();
+        if (live) focusFrame(x.id);
+      }
     }
     // reviving redraws the open column itself, so the messages show without another fetch
     if (ds === "dormant") void revive({ id, group });

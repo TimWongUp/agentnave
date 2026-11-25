@@ -256,6 +256,8 @@ impl Running {
             .map(|sid| thread_desk_key(&self.provider, sid));
         json!({"id": self.id, "provider": self.provider, "art_model": art_model, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": active,
+            // Tells the processes apart that ran in this row.
+            "started": self.started.duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64()),
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
             "account": self.account.as_ref().map(|account| &account.id),
             "account_label": self.account.as_ref().map(|account| &account.label),
