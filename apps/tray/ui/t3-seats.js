@@ -65,7 +65,7 @@
       if (seat.kind === IMAGE) {
         let card = cards.find((one) => one.kind === IMAGE);
         if (!card) {
-          card = { cid: `t3c${++cardCount}`, kind: IMAGE, role: "", access: "write", description: "", seats: {}, rows: [] };
+          card = newCard(IMAGE);
           cards.push(card);
         }
         card.rows.push({
@@ -101,11 +101,12 @@
     return cards;
   }
 
-  // The product's own specialties are always listed, in catalog order and blank until a model is picked;
-  // custom and image cards follow.
+  // The general seats and the image card are always listed, blank until set; the rest the user adds.
+  const FIXED_KINDS = () => [...S.roleCatalog().filter((entry) => !entry.fallback_group).map((entry) => entry.group), IMAGE];
+  const isFixed = (card) => FIXED_KINDS().includes(card.kind);
   function withFixedCards(cards) {
-    const fixed = S.roleCatalog().map(({ group }) => cards.find((card) => card.kind === group) || newCard(group));
-    return [...fixed, ...cards.filter((card) => !catalogEntry(card.kind))];
+    const fixed = FIXED_KINDS().map((kind) => cards.find((card) => card.kind === kind) || newCard(kind));
+    return [...fixed, ...cards.filter((card) => !isFixed(card))];
   }
 
   function fromDocument(doc) {
@@ -265,7 +266,6 @@
     S.advancedEdited?.();
   }
 
-  // The image card starts with one empty row; its rows are its seats.
   const blankImageRow = (fields = {}) => ({
     rid: `t3r${++rowCount}`, role: "", loadedRole: "", description: "", id: freshId(takenIds()), candidates: [], ...fields,
   });
@@ -279,13 +279,13 @@
       access: group?.access || "write",
       description: group?.scope_zh || "",
       seats: {},
-      ...(kind === IMAGE ? { rows: [blankImageRow()] } : {}),
+      ...(kind === IMAGE ? { rows: [] } : {}),
     };
   }
 
   function addCard(kind) {
-    if (locked() || (kind !== CUSTOM && kind !== IMAGE)) return;
-    if (kind === IMAGE && shownState().cards.some((card) => card.kind === IMAGE)) return;
+    if (locked() || (kind !== CUSTOM && !catalogEntry(kind))) return;
+    if (kind !== CUSTOM && shownState().cards.some((card) => card.kind === kind)) return;
     const card = newCard(kind);
     expanded.add(card.cid);
     mutate((state) => { state.cards.push(card); });
@@ -400,7 +400,7 @@
       if (own && !title) return L(`T3 工位第 ${n} 张卡片缺少专业`, `T3 seat card ${n} has no specialty`);
       if (own && named.has(title)) return L(`T3 工位有两张自定义卡片的专业都是“${title}”`, `Two custom T3 cards have the specialty “${title}”`);
       if (own) named.add(title);
-      if (own && !Object.keys(card.seats).length) return L(`T3 工位第 ${n} 张卡片（${title}）至少要绑定一档`, `T3 seat card ${n} (${title}) needs at least one level set`);
+      if (!isFixed(card) && !Object.keys(card.seats).length) return L(`T3 工位第 ${n} 张卡片（${title}）至少要绑定一档`, `T3 seat card ${n} (${title}) needs at least one level set`);
     }
     if ([...doc.seats, ...Object.values(doc.review).map((candidates) => ({ candidates }))].some(hasBlank)) {
       return L("有备选还没选模型", "A fallback has no model yet");
@@ -479,7 +479,7 @@
           seen.set(title, card.cid);
         }
       }
-      if (own && !Object.keys(card.seats).length) bad.add(card.cid);
+      if (!isFixed(card) && !Object.keys(card.seats).length) bad.add(card.cid);
       if (Object.values(card.seats).some(hasBlank)) bad.add(card.cid);
     }
     return bad;
@@ -684,7 +684,7 @@
       summaryUnset: summary.unset,
       invalid: invalidSet.has(card.cid),
       isInvalid: () => problemCids(shownState()?.cards || []).has(card.cid),
-      onRemove: catalogEntry(card.kind) ? null : () => removeCard(card.cid),
+      onRemove: isFixed(card) ? null : () => removeCard(card.cid),
       renderBody: (helpers) => (card.kind === IMAGE
         ? imageCard.body(card, key, helpers)
         : [...(own ? [customHeadRow(card, key, title, helpers)] : []),
@@ -703,8 +703,7 @@
   function addMenu(state) {
     return S.seatAddMenu({
       id: "t3-seat-add", focusKey: "t3/add", disabled: toSeats(state.cards).length >= MAX_SEATS,
-      taken: new Set(), groups: [],
-      includeImage: !state.cards.some((card) => card.kind === IMAGE), onAdd: addCard,
+      taken: new Set(state.cards.map((card) => card.kind)), groups: S.roleCatalog().filter((entry) => entry.fallback_group), onAdd: addCard,
     });
   }
 

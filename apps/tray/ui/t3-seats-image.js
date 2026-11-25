@@ -10,7 +10,6 @@
   }) {
     // What keeps the rows from being saved, or null: a row may wait for its model.
     function problem(card) {
-      if (!card.rows.length) return L("生图工位至少要有一行", "Image seats need at least one row");
       const seen = new Set();
       for (const [index, row] of card.rows.entries()) {
         const n = index + 1;

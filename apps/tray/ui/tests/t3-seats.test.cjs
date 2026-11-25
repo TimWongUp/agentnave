@@ -281,7 +281,7 @@ test("hides entire T3 Code block when detected=false and no saved document", asy
   assert.equal(h.t3((t) => t.changed()), false);
 });
 
-test("opens blank the first time: the product's own specialties with no model, nothing carried over from other seats", async () => {
+test("opens blank the first time: the general and image seats with nothing set, nothing carried over from other seats", async () => {
   const h = makeHarness({
     t3State: { document: null, error: null, t3: SAMPLE_T3 },
     decisionState: {
@@ -299,7 +299,8 @@ test("opens blank the first time: the product's own specialties with no model, n
   await h.t3((t) => t.load());
   assert.equal(h.t3((t) => t.changed()), false);
   assert.deepEqual(h.doc(), { version: 1, enabled: false, random_candidates: false, seats: [], review: {} });
-  assert.equal(h.seatRows().length, ROLES.length);
+  assert.equal(h.seatRows().length, 3);
+  assert.ok(["通用探索", "通用执行", "生图工位"].every((name) => h.rowNamed(name)));
   assert.equal(h.ownRows().length, 0, "fixed seats cannot be deleted");
   assert.ok(h.seatRows().every((row) => row.dataset.expanded === "false" && row.dataset.invalid === "false"));
   assert.equal(h.find("t3/enabled").disabled, true);
@@ -312,7 +313,14 @@ test("opens blank the first time: the product's own specialties with no model, n
   await h.run('$("advanced-save").listeners.click()');
   const post = h.calls.find((c) => c.url === "/app/t3-seats" && c.method === "POST");
   assert.deepEqual(post.body.seats.map((seat) => [seat.kind, seat.difficulty]), [["worker", "easy"]]);
-  assert.equal(h.seatRows().length, ROLES.length);
+  assert.equal(h.seatRows().length, 3);
+
+  // A specialist is the user's to add and delete, and needs a level before saving.
+  h.t3((t) => t.addCard("worker_frontend"));
+  assert.equal(h.ownRows().length, 1);
+  assert.match(h.t3((t) => t.problem()), /至少要绑定一档/);
+  h.find(`t3/${h.ownRows()[0].dataset.cid}/remove`).listeners.click();
+  assert.equal(h.t3((t) => t.changed()), false);
 });
 
 test("an added fallback starts unset and blocks saving until the user picks it or removes it", async () => {
@@ -367,7 +375,7 @@ test("round-trips image seats without marking the page dirty, treating difficult
   const h = makeHarness({ t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 } });
   await h.t3((t) => t.load());
   assert.equal(h.t3((t) => t.changed()), false);
-  assert.equal(h.ownRows().length, 1, "image seats share the one image card");
+  assert.equal(h.seatRows().length, 3, "image seats share the one image card");
 
   const doc = h.doc();
   assert.equal(doc.seats.length, 2);
@@ -380,7 +388,7 @@ test("round-trips image seats without marking the page dirty, treating difficult
   });
 
   // Editing a row's specialty marks the page; the description follows the new specialty.
-  const cid = h.ownRows()[0].dataset.cid;
+  const cid = h.rowNamed("生图工位").dataset.cid;
   h.find(`t3/${cid}/toggle`).listeners.click();
   h.find(`t3/${cid}/t3r1/role`).listeners.input({ target: { value: "漫画" } });
   assert.equal(h.t3((t) => t.changed()), true);
@@ -396,24 +404,15 @@ test("adds and removes image rows, rejects empty or repeated specialties, and sa
   h.run("bindAdvanced()");
   await h.t3((t) => t.load());
 
-  // The add menu offers the image card until one exists.
-  const collect = (node) => [
-    node,
-    ...((node?.children || []).flatMap((child) => (child && typeof child === "object" ? collect(child) : []))),
-  ];
-  const imageOption = () => collect(h.find("t3/add")).filter((node) => node.attrs?.value === "image");
-  assert.equal(imageOption().length, 1);
-  h.t3((t) => t.addCard("image"));
-  assert.equal(imageOption().length, 0, "no second image card");
+  const cid = h.rowNamed("生图工位").dataset.cid;
+  h.find(`t3/${cid}/toggle`).listeners.click();
+  h.find(`t3/${cid}/add-row`).listeners.click();
   assert.match(h.t3((t) => t.problem()), /缺少专业/);
-
-  const cid = h.ownRows()[0].dataset.cid;
-  assert.equal(h.ownRows()[0].dataset.expanded, "true");
   h.find(`t3/${cid}/t3r1/role`).listeners.input({ target: { value: "插画" } });
   // A row without a model may be saved and shows as unset.
   assert.equal(h.t3((t) => t.problem()), null);
   h.t3((t) => t.render());
-  assert.equal(h.ownRows()[0].children[0].children[1].children[1].children[0], "插画");
+  assert.equal(h.rowNamed("生图工位").children[0].children[1].children[1].children[0], "插画");
   const waiting = h.doc().seats[0];
   assert.equal(waiting.kind, "image");
   assert.deepEqual(waiting.candidates, []);
@@ -434,10 +433,11 @@ test("adds and removes image rows, rejects empty or repeated specialties, and sa
   assert.deepEqual(h.doc().seats.map((seat) => seat.role), ["插画", "写实"]);
   assert.equal(new Set(h.doc().seats.map((seat) => seat.id)).size, 2, "each row keeps a unique id");
 
-  // Deleting the last row leaves a card that cannot be saved.
+  // Deleting every row leaves the blank fixed card, with nothing to save.
   h.find(`t3/${cid}/t3r2/remove`).listeners.click();
   h.find(`t3/${cid}/t3r1/remove`).listeners.click();
-  assert.match(h.t3((t) => t.problem()), /至少要有一行/);
+  assert.equal(h.t3((t) => t.problem()), null);
+  assert.equal(h.t3((t) => t.changed()), false);
 });
 
 test("counts image rows' instances as saved references, keeping their stale instances listed", async () => {
@@ -467,7 +467,7 @@ test("counts image rows' instances as saved references, keeping their stale inst
   };
   const h = makeHarness({ t3State: { document: savedDoc, error: null, t3: SAMPLE_T3 } });
   await h.t3((t) => t.load());
-  const cid = h.ownRows()[0].dataset.cid;
+  const cid = h.rowNamed("生图工位").dataset.cid;
   h.find(`t3/${cid}/toggle`).listeners.click();
   // The second row does not use the stale instance itself, so it is listed only through the saved reference.
   const instOpts = h.find(`t3/${cid}/t3r2/c0/instance`).children.flat().map((o) => o.attrs.value);
