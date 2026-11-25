@@ -84,6 +84,9 @@ const el = {
   floor: $("floor"),
   boss: $("boss"),
   desks: $("desks"),
+  derivedZone: $("derived-zone"),
+  derivedDesks: $("derived-desks"),
+  derivedCount: $("derived-count"),
   rooms: $("rooms"),
   fx: $("fx"),
   deskCount: $("desks-count"),
@@ -262,7 +265,9 @@ function createItem(g) {
   rec.el.addEventListener("click", (e) => {
     if (e.button) return;
     e.preventDefault();
-    if (!Actions.pick(rec.id, e)) go(`/chat/${rec.id}`);
+    if (!Actions.pick(rec.id, e)) {
+      if (!ChatTerminal.openDerived?.(rec.id)) go(`/chat/${rec.id}`);
+    }
   });
   const openIsolated = (e) => {
     e.preventDefault();
@@ -280,16 +285,29 @@ function createItem(g) {
   rec.el.addEventListener("contextmenu", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e));
   return rec;
 }
+function fallbackDerivedMeta(g) {
+  if (g.waking) return { text: L("正在恢复", "Resuming"), tone: "run", dormant: false };
+  const ds = g.derived_state || (g.blocked_kind ? "waiting" : g.status === "running" ? "running" : g.exit != null ? "exited" : "idle");
+  if (ds === "starting") return { text: L("启动中", "Starting"), tone: "run", dormant: false };
+  if (ds === "running") return { text: L("运行中", "Running"), tone: "run", dormant: false };
+  if (ds === "waiting") return { text: L("等待确认", "Needs attention"), tone: "review", dormant: false };
+  if (ds === "uncollected") return { text: L("待 boss 收取", "Awaiting boss"), tone: "review", dormant: false };
+  if (ds === "dormant") return { text: L("已收起", "Dormant"), tone: "idle", dormant: true };
+  if (ds === "exited") return { text: L("已结束", "Exited"), tone: "idle", dormant: false };
+  return { text: L("空闲", "Idle"), tone: "idle", dormant: false };
+}
 function updateItem(rec, g, flat = false) {
   // A failure asks nothing of the user, so the list does not call it out.
+  const dMeta = g.derived ? (ChatTerminal.derivedMeta ? ChatTerminal.derivedMeta(g) : fallbackDerivedMeta(g)) : null;
   const shown = g.status === "failed" ? "idle" : AN.ongoing(g.status);
-  const [word, tone] = pick(GROUP, shown);
+  const [word, groupTone] = pick(GROUP, shown);
+  const tone = dMeta ? dMeta.tone : groupTone;
   const on = g.group === state.selected;
   const pinned = isGroupPinned(g.group);
   const name = shownName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${g.derived ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${g.derived ? " gi-child" : ""}${dMeta?.dormant ? " dormant" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(`/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
@@ -297,7 +315,7 @@ function updateItem(rec, g, flat = false) {
     rec.el,
     "aria-label",
     g.derived
-      ? L(`${name}，派生终端 ${g.label}，${word}`, `${name}, derived terminal in ${g.label}, ${word}`)
+      ? L(`${name}，派生终端 ${g.label}，${dMeta.text}`, `${name}, derived terminal in ${g.label}, ${dMeta.text}`)
       : L(`${name}，${handoverWord(g)}boss 在 ${g.label}，${word}`, `${name}, ${handoverWord(g)}boss in ${g.label}, ${word}`),
   );
   const place = itemPlace(g);
@@ -315,22 +333,35 @@ function updateItem(rec, g, flat = false) {
   rec.pin.hidden = !pinned;
   setAttr(rec.pin, "title", pinned ? L("已置顶", "Pinned") : null);
   // In flat view, .gi-meta also displays the owning project name when not "other".
-  const handover = g.handover === "pending" || g.handover === "changed";
-  const blocked = Boolean(g.derived && g.blocked_kind);
-  if (flat) {
-    const project = projectTitleOf(g);
-    const parts = [];
-    if (g.handover === "pending") parts.push(L("待接手", "Awaiting handover"));
-    else if (g.handover === "changed") parts.push(L("boss 已更换", "boss changed"));
-    if (handover) parts.push(g.label);
-    else if (blocked) parts.push(L("等待确认", "Needs attention"));
-    if (project) parts.push(project);
-    const metaText = parts.filter(Boolean).join(" · ");
-    rec.meta.hidden = !metaText;
+  if (g.derived) {
+    const project = flat ? projectTitleOf(g) : "";
+    const metaText = [dMeta.text, project].filter(Boolean).join(" · ");
+    rec.meta.hidden = false;
+    setClass(rec.meta, `gi-meta tone-${tone}`);
     setText(rec.meta, metaText);
   } else {
-    rec.meta.hidden = !handover && !blocked;
-    setText(rec.meta, handover ? `${handoverWord(g)}${place}` : blocked ? L("等待确认", "Needs attention") : "");
+    const handover = g.handover === "pending" || g.handover === "changed";
+    const summary = ChatTerminal.derivedSummary?.(g.group);
+    setClass(rec.meta, "gi-meta");
+    if (flat) {
+      const project = projectTitleOf(g);
+      const parts = [];
+      if (g.handover === "pending") parts.push(L("待接手", "Awaiting handover"));
+      else if (g.handover === "changed") parts.push(L("boss 已更换", "boss changed"));
+      if (handover) parts.push(g.label);
+      if (summary) parts.push(summary.text);
+      if (project) parts.push(project);
+      const metaText = parts.filter(Boolean).join(" · ");
+      rec.meta.hidden = !metaText;
+      setText(rec.meta, metaText);
+    } else {
+      const parts = [];
+      if (handover) parts.push(`${handoverWord(g)}${place}`);
+      if (summary) parts.push(summary.text);
+      const metaText = parts.join(" · ");
+      rec.meta.hidden = !metaText;
+      setText(rec.meta, metaText);
+    }
   }
   const cleaned = typeof ChatIsolatedCleanup !== "undefined" ? ChatIsolatedCleanup.doneCount(g.group) : 0;
   rec.bottom.hidden = rec.iso.hidden = !g.isolated_count && !cleaned;
@@ -378,15 +409,28 @@ function renderList() {
     ChatSidebar.syncActiveHighlight?.();
   }
 }
+function derivedNeedsReveal(c) {
+  if (!c) return false;
+  if (c.group === state.selected) return true;
+  if (c.derived_state) {
+    return (
+      c.derived_state === "running" ||
+      c.derived_state === "starting" ||
+      c.derived_state === "waiting" ||
+      c.derived_state === "uncollected"
+    );
+  }
+  return c.status === "running" || c.status === "waiting" || c.status === "review" || Boolean(c.blocked_kind) || Boolean(c.live);
+}
 // The cap may never hide a pending handover, work waiting on the reader, a pinned agent, the agent
-// already open, or an agent with a derived terminal still open under it.
+// already open, or an agent with an active derived session under it.
 function mustShow(g) {
   return (
     g.handover === "pending" ||
     urgent(g.status) ||
     g.group === state.selected ||
     isGroupPinned(g.group) ||
-    Boolean(ChatTerminal.derivedOf?.(g.group)?.length)
+    Boolean(ChatTerminal.derivedOf?.(g.group)?.some(derivedNeedsReveal))
   );
 }
 // A folded project keeps only pending handovers, urgent work, and the open agent visible.
@@ -546,13 +590,15 @@ function groupedNodes(groups, { prefs, query } = {}) {
     nodes.push(headNode(section, folded));
     for (const g of section.shown) {
       const children = ChatTerminal.derivedOf?.(g.group) || [];
-      // A folded group still shows what needs the reader, is open, or has an open derived terminal.
-      const hidden = folded && !(stayVisibleWhenFolded(g) || children.length);
+      const hasRevealChild = children.some(derivedNeedsReveal);
+      // A folded group still shows what needs the reader, is open, or has an active derived session.
+      const hidden = folded && !(stayVisibleWhenFolded(g) || hasRevealChild);
       nodes.push(itemNode(g, hidden, false));
       if (!hidden) order.push(g.group);
       for (const child of children) {
-        nodes.push(itemNode(child, false));
-        order.push(child.group);
+        const childHidden = folded && !derivedNeedsReveal(child);
+        nodes.push(itemNode(child, childHidden, false));
+        if (!childHidden) order.push(child.group);
       }
     }
     if (section.hidden)

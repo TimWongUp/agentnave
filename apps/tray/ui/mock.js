@@ -762,20 +762,29 @@ All checks passed!
     return [...out, ...typing].slice(-300);
   }
 
-  // The running limit caps drawn desks (?limit=N previews "已优化"); busy desks always show.
+  // The running limit caps drawn regular desks (?limit=N previews "已优化"); busy and derived desks always show.
   function limited(all, countOnly = false) {
     const limit = Number(q.get("limit") || 8);
+    const derived = all.filter((d) => d.derived);
+    const regular = all.filter((d) => !d.derived);
     const busy = (d) => d.status === "running";
     const stampOf = (d) => Date.parse(countOnly ? d.last_prompted || d.last_active : d.last_active);
-    const order = [...all].sort((a, b) => Number(busy(b)) - Number(busy(a)) || stampOf(b) - stampOf(a));
-    const cap = countOnly ? all.filter(busy).length + limit : Math.max(limit, all.filter(busy).length);
+    const order = [...regular].sort((a, b) => Number(busy(b)) - Number(busy(a)) || stampOf(b) - stampOf(a));
+    const cap = countOnly ? regular.filter(busy).length + limit : Math.max(limit, regular.filter(busy).length);
     const keep = new Set(order.slice(0, cap).map((d) => d.key));
     const rest = order.filter((d) => !keep.has(d.key));
     return {
-      desks: (countOnly ? order : all).filter((d) => keep.has(d.key)),
+      desks: [...(countOnly ? order : regular).filter((d) => keep.has(d.key)), ...derived],
       optimized: countOnly ? { count: rest.length } : { count: rest.length, desks: rest },
     };
   }
+  const MOCK_DERIVED_DESKS = [
+    { key: "thread:drv-run", provider: "claude", model: "claude-opus-5-5", role: "修登录竞态", state: "running" },
+    { key: "thread:drv-wait", provider: "codex", model: "gpt-6.1-sol", role: "确认迁移脚本", state: "waiting" },
+    { key: "thread:drv-pick", provider: "antigravity", model: "gemini-3.5-pro", role: "整理接口文档", state: "uncollected" },
+    { key: "thread:drv-idle", provider: "claude", model: "claude-3-7-sonnet", role: "补单测覆盖", state: "idle" },
+    { key: "thread:drv-dormant", provider: "codex", model: "gpt-6-mini", role: "重构缓存层", state: "dormant" },
+  ];
   function desksOf(g, w) {
     const hostCli = g.host === "workbuddy" ? "codebuddy" : g.host;
     const map = new Map();
@@ -795,7 +804,7 @@ All checks passed!
           if (e.status === "running") d.running++;
         } else if (isActive(e.status) && (!d.meeting || e.at >= d.meeting.at)) d.meeting = { at: e.at, room: conv.id, seat: seatOf(conv, sp), status: e.status };
       }
-    return [...map.values()]
+    const baseDesks = [...map.values()]
       .sort((a, b) => b.first - a.first || (a.sp.desk < b.sp.desk ? -1 : 1))
       .map((d) => ({
         key: d.sp.desk, provider: d.sp.provider, model: d.sp.model, role: d.sp.role, access: d.sp.access ?? null, identity: d.sp.identity,
@@ -805,7 +814,23 @@ All checks passed!
         kind: d.threads ? "task" : "seat", room: d.threads ? null : d.meeting?.room || null,
         private: { tasks: d.threads, running: d.running },
         meeting: d.meeting ? { room: d.meeting.room, seat: d.meeting.seat, status: d.meeting.status } : { room: null, seat: null, status: null },
+        derived: false,
       }));
+    if (g.group === "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50") {
+      for (const dd of MOCK_DERIVED_DESKS) {
+        const sp = spec(dd.provider, dd.model, { role: dd.role });
+        baseDesks.push({
+          key: dd.key, provider: dd.provider, model: dd.model, role: dd.role, access: "write", identity: sp.identity,
+          first_seen: stamp(w, -300), last_active: nowIso(), last_prompted: stamp(w, -120),
+          status: dd.state === "running" || dd.state === "waiting" ? "running" : "idle",
+          private_allowed: true, kind: "task", room: null,
+          private: { tasks: 1, running: dd.state === "running" ? 1 : 0 },
+          meeting: { room: null, seat: null, status: null },
+          derived: true,
+        });
+      }
+    }
+    return baseDesks;
   }
 
   function roomsOf(g, w) {
@@ -1106,10 +1131,45 @@ All checks passed!
   };
   const mockDecision = { document: null, error: null, key_set: false, key_error: null };
   // Terminals the office started (ADR-0103): the first one's CLI is the boss of the first workspace.
+  const nowSec = () => Math.floor(Date.now() / 1000);
   const mockTerminals = [
     { id: 1, provider: "claude", cwd: "/work/app", exit: null, active: true, workspaces: ["s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50"], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: null },
     { id: 2, provider: "codex", cwd: "/work/docs", exit: null, active: false, workspaces: [], project_key: "/work/docs", project_label: "docs", project_path: "/work/docs", display_title: "整理迁移文档" },
-    ...(q.has("isolated") || q.has("gitpr") ? [{ id: 3, provider: "claude", cwd: "/work/app/.agentnave-worktrees/wt-3f9a1c2b4d5e", exit: null, active: true, derived: true, derived_busy: true, parent_workspace_id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", isolation_id: "wt-3f9a1c2b4d5e", workspaces: [], project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "修登录竞态" }] : []),
+    {
+      id: 3, provider: "claude", cwd: "/work/app/.agentnave-worktrees/wt-3f9a1c2b4d5e", exit: null, active: true,
+      derived: true, derived_state: "running", derived_since: nowSec() - 95, derived_busy: true,
+      has_draft: false, resumable: true, parent_terminal_id: 1, parent_workspace_id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50",
+      desk_key: "thread:drv-run", native: "drv-run", isolation_id: "wt-3f9a1c2b4d5e", workspaces: [],
+      project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "修登录竞态",
+    },
+    {
+      id: 4, provider: "codex", cwd: "/work/app", exit: null, active: false,
+      derived: true, derived_state: "waiting", derived_since: nowSec() - 42, derived_busy: false, blocked_kind: "permission",
+      has_draft: false, resumable: true, parent_terminal_id: 1, parent_workspace_id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50",
+      desk_key: "thread:drv-wait", native: "drv-wait", workspaces: [],
+      project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "确认迁移脚本",
+    },
+    {
+      id: 5, provider: "antigravity", cwd: "/work/app", exit: null, active: false,
+      derived: true, derived_state: "uncollected", derived_since: nowSec() - 180, derived_busy: false, pending_results: 2,
+      has_draft: false, resumable: true, parent_terminal_id: 1, parent_workspace_id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50",
+      desk_key: "thread:drv-pick", native: "drv-pick", workspaces: [],
+      project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "整理接口文档",
+    },
+    {
+      id: 6, provider: "claude", cwd: "/work/app", exit: null, active: false,
+      derived: true, derived_state: "idle", derived_since: nowSec() - 65, derived_busy: false,
+      has_draft: false, resumable: true, parent_terminal_id: 1, parent_workspace_id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50",
+      desk_key: "thread:drv-idle", native: "drv-idle", workspaces: [],
+      project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "补单测覆盖",
+    },
+    {
+      id: 7, provider: "codex", cwd: "/work/app", exit: 0, active: false,
+      derived: true, derived_state: "dormant", derived_since: nowSec() - 320, derived_busy: false,
+      has_draft: false, resumable: true, parent_terminal_id: 1, parent_workspace_id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50",
+      desk_key: "thread:drv-dormant", native: "drv-dormant", workspaces: [],
+      project_key: "/work/app", project_label: "app", project_path: "/work/app", display_title: "重构缓存层",
+    },
   ];
   const mockGitPr = () => {
     const ghStatus = q.get("gh") === "off" ? "not_installed" : "ready";
@@ -1197,8 +1257,51 @@ All checks passed!
       return { session };
     }
     const at = mockTerminals.findIndex((t) => t.id === id);
-    if (route === "/app/terminal/stop" && at >= 0) mockTerminals[at].exit = 0;
-    if (route === "/app/terminal/close" && at >= 0) mockTerminals.splice(at, 1);
+    if (route === "/app/terminal/stop" && at >= 0) {
+      const target = mockTerminals[at];
+      target.exit = 0;
+      if (target.derived) {
+        target.derived_state = "dormant";
+        target.derived_busy = false;
+        target.blocked_kind = null;
+        target.derived_since = nowSec();
+      }
+    }
+    if (route === "/app/terminal/wake") {
+      if (at < 0 || !mockTerminals[at].resumable) {
+        throw Object.assign(new Error("该派生会话不可恢复"), { status: 409 });
+      }
+      const target = mockTerminals[at];
+      target.exit = null;
+      target.derived_state = "idle";
+      target.derived_busy = false;
+      target.blocked_kind = null;
+      target.derived_since = nowSec();
+      return { session: structuredClone(target) };
+    }
+    if (route === "/app/terminal/close" && at >= 0) {
+      const [removed] = mockTerminals.splice(at, 1);
+      if (removed && !removed.derived) {
+        const wsSet = new Set(removed.workspaces || []);
+        for (let i = mockTerminals.length - 1; i >= 0; i--) {
+          const s = mockTerminals[i];
+          if (s.derived && (s.parent_terminal_id === removed.id || wsSet.has(s.parent_workspace_id))) {
+            mockTerminals.splice(i, 1);
+          }
+        }
+      }
+    }
+    if (route === "/app/terminal/close-derived") {
+      const workspace = query.get("workspace");
+      let closed = 0;
+      for (let i = mockTerminals.length - 1; i >= 0; i--) {
+        if (mockTerminals[i].derived && mockTerminals[i].parent_workspace_id === workspace) {
+          mockTerminals.splice(i, 1);
+          closed += 1;
+        }
+      }
+      return { closed };
+    }
     if (route === "/app/terminal/resume") {
       if (q.has("elsewhere") && query.get("confirm") !== "1") {
         throw Object.assign(new Error("这段聊天正在Ghostty里打开（运行中）"), { status: 409, elsewhere: { app: "Ghostty", paused: false } });
@@ -1250,7 +1353,7 @@ All checks passed!
     if (path === "/app/git-pr/state") return mockGitPr();
     if (path === "/app/isolated/cleanup" && q.has("isolated")) return mockCleanup();
     if (path === "/app/isolated/cleanup") return { running: false, report: null, recent: [] };
-    if (path === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
+    if (path.split("?")[0] === "/app/terminal/state") return { sessions: structuredClone(mockTerminals), cwd: "/work/app" };
     if (path === "/app/terminal/clis") return { clis: ["claude", "codex", "antigravity", "grok"].map((provider) => ({ provider, accounts: provider === "claude" ? mockAccounts.map(({ id, label }) => ({ id, label })) : [] })) };
     if (path === "/app/accounts") return { accounts: structuredClone(mockAccounts), error: null };
     if (path === "/app/accounts/discover") {

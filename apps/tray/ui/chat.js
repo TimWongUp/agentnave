@@ -35,7 +35,7 @@ function measureAll() {
 }
 
 // ---------------------------------------------------------------- conversation column
-function openScope(scope, opener) {
+function openScope(scope, opener, options = {}) {
   if (opener) state.opener = opener;
   const officeTop = el.office?.scrollTop ?? 0;
   const floorW = el.floor?.clientWidth ?? 0;
@@ -43,7 +43,7 @@ function openScope(scope, opener) {
   const anchorTop = anchor?.getBoundingClientRect?.().top ?? null;
   state.drawer = scope;
   state.convOpen = true;
-  ChatTerminal.readMessages();
+  ChatTerminal.readMessages(Boolean(options.terminal));
   // picking a desk or room is asking to read it; a click inside the peeking column keeps it folded
   if (!state.convPeek) setCollapsed(false);
   if (state.chat) renderAll(state.chat);

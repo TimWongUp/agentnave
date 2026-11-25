@@ -681,11 +681,17 @@ const Actions = {};
     if (!g) return;
     const pinned = isGroupPinned(id);
     const endedTerm = typeof ChatTerminal !== "undefined" ? ChatTerminal?.exitedOf?.(id) : null;
+    const derivedCount = typeof ChatTerminal !== "undefined" ? (ChatTerminal?.derivedOf?.(id)?.length || 0) : 0;
     openMenu(e, [
       { label: L("打开", "Open"), run: () => go(`/chat/${id}`) },
       { label: pinned ? L("取消置顶", "Unpin") : L("置顶", "Pin"), run: () => pinGroup(id, !pinned) },
       g.title_id && { label: L("改名…", "Rename…"), run: () => rename(g.title_id, chatName(g), L("agent", "agent")) },
       endedTerm && { label: L("关闭终端", "Close terminal"), run: () => ChatTerminal.close(endedTerm.id) },
+      derivedCount > 0 && {
+        label: L(`关闭全部派生终端（${derivedCount}）`, `Close all derived terminals (${derivedCount})`),
+        danger: true,
+        run: () => ChatTerminal.closeDerived(id),
+      },
       g.handover === "pending"
         ? g.conversations && { label: L("取消交接", "Cancel handover"), run: () => cancelHandover(id) }
         : { label: L("交给其他 boss 接手…", "Hand over to another boss…"), run: () => handOver(id) },

@@ -743,8 +743,10 @@ const ChatGit = (() => {
         userLabel,
       );
       btn.addEventListener("click", () => {
-        if (user.kind === "terminal" && typeof go === "function") go(`/chat/${user.group}`);
-        else if (user.kind === "desk" && typeof openScope === "function") openScope({ kind: "desk", key: user.key }, btn);
+        if (user.kind === "terminal") {
+          if (typeof ChatTerminal !== "undefined" && ChatTerminal?.openDerived?.(user.group)) return;
+          if (typeof go === "function") go(`/chat/${user.group}`);
+        } else if (user.kind === "desk" && typeof openScope === "function") openScope({ kind: "desk", key: user.key }, btn);
       });
       nodes.push(h("div.iso-user", {}, btn));
     }

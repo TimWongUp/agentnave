@@ -1278,7 +1278,7 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
   assert.equal(context.state.heads.get("project:/w/deep").el.classList.contains("flash"), true);
 });
 
-test("open derived terminals stay under their parent when idle, past the cap and in a folded project", () => {
+test("active derived sessions (running/starting/waiting/uncollected) reveal parent past cap and when folded, while idle/dormant/exited fold with project", () => {
   const classes = (set = new Set()) => ({
     set,
     add: (...names) => names.forEach(n => set.add(n)),
@@ -1304,7 +1304,7 @@ test("open derived terminals stay under their parent when idle, past the cap and
   const context = vm.createContext({
     AN: {
       h, $: id => els.get(id) || makeNode(id), L: zh => zh,
-      load: async () => ({}), href: p => p, GROUP: { idle: ["空闲", "idle"] },
+      load: async () => ({}), href: p => p, GROUP: { idle: ["空闲", "idle"], waiting: ["等待确认", "review"] },
       pick: (_map, key) => ["空闲", key || "idle"], urgent: s => s === "running",
       avatar: () => makeNode("span"), colorClass: () => "c0", relTime: () => "刚刚",
       clock: () => "", fullTime: () => "", dayLabel: () => "",
@@ -1350,12 +1350,16 @@ test("open derived terminals stay under their parent when idle, past the cap and
     group, title: group, status: "idle", updated, label: "Codex", boss_key: "codex|codex", host: "codex",
     project_key: "/w/calc", project_label: "calc", project_path: "/w/calc", preview: "", desks_count: 0, rooms_count: 0,
   });
-  const child = (live) => ({
-    group: "term-20", terminal: 20, host: "antigravity", app: "antigravity", label: "Antigravity", title: "Add Sub Function",
-    status: live ? "running" : "idle", live, updated: "2026-11-12T10:00:00Z", derived: true,
-    parent_workspace_id: "g-parent", blocked_kind: null, project_key: "/w/calc", project_label: "calc", project_path: "/w/calc", preview: "",
+  const child = (id, derived_state, extra = {}) => ({
+    group: `term-${id}`, terminal: id, host: "antigravity", app: "antigravity", label: "Antigravity", title: `Task ${id}`,
+    status: derived_state === "running" || derived_state === "starting" ? "running" : (derived_state === "waiting" || derived_state === "uncollected" ? "waiting" : "idle"),
+    live: derived_state === "running" || derived_state === "starting" || derived_state === "waiting",
+    updated: "2026-11-12T10:00:00Z", derived: true, derived_state,
+    parent_workspace_id: "g-parent", blocked_kind: derived_state === "waiting" ? "permission" : null,
+    project_key: "/w/calc", project_label: "calc", project_path: "/w/calc", preview: "",
+    ...extra,
   });
-  // The parent is the oldest of seven agents in its project, so only a running boss keeps it past the cap.
+  // The parent is the oldest of seven agents in its project, so only an active/uncollected derived child keeps it past the cap.
   const groups = [agent("g-parent", "2026-11-01T00:00:00Z")];
   for (let i = 0; i < 6; i++) groups.push(agent(`g-other${i}`, `2026-11-1${i}T00:00:00Z`));
   context.state.groupsData = groups;
@@ -1365,17 +1369,26 @@ test("open derived terminals stay under their parent when idle, past the cap and
   };
   const shown = () => rows().filter(n => n.attributes["data-folded"] !== "true").map(n => n.attributes.href);
 
-  derived = [child(true)];
-  assert.ok(shown().includes("/chat/term-20"), "running child shows under its parent");
-  derived = [child(false)];
-  assert.deepEqual(shown().slice(shown().indexOf("/chat/g-parent"), shown().indexOf("/chat/g-parent") + 2), ["/chat/g-parent", "/chat/term-20"]);
+  for (const ds of ["running", "starting", "waiting", "uncollected"]) {
+    derived = [child(20, ds)];
+    assert.ok(shown().includes("/chat/term-20"), `${ds} child shows under parent past cap`);
+    assert.ok(shown().includes("/chat/g-parent"), `${ds} child keeps parent past cap`);
+  }
+  for (const ds of ["idle", "dormant", "exited"]) {
+    derived = [child(20, ds)];
+    assert.equal(shown().includes("/chat/g-parent"), false, `${ds} child does not keep parent past cap`);
+    assert.equal(shown().includes("/chat/term-20"), false, `${ds} child does not show past cap`);
+  }
 
-  // Waiting for a permission answer, the row is the user's way in, even in a folded project.
-  derived = [{ ...child(true), status: "waiting", blocked_kind: "permission" }];
+  // Folded project: only running/starting/waiting/uncollected children reveal parent and themselves; idle/dormant siblings stay folded.
   context.state.folded.set("project:/w/calc", true);
+  derived = [child(20, "waiting"), child(21, "idle"), child(22, "dormant")];
   assert.deepEqual(shown(), ["/chat/g-parent", "/chat/term-20"]);
-  derived = [child(false)];
-  assert.deepEqual(shown(), ["/chat/g-parent", "/chat/term-20"]);
+  assert.equal(context.state.order.includes("term-21"), false);
+  assert.equal(context.state.order.includes("term-22"), false);
+
+  derived = [child(21, "idle"), child(22, "dormant"), child(23, "exited")];
+  assert.deepEqual(shown(), []);
   derived = [];
   assert.deepEqual(shown(), []);
 });
@@ -2083,7 +2096,7 @@ test("derived terminals nest under parent workspace without counting self-chat a
   const stalePromise = new Promise((resolve) => { resolveStale = resolve; });
   let loadCalls = 0;
   context.AN.load = async (path) => {
-    if (path !== "/app/terminal/state") return origLoad(path);
+    if (path.split("?")[0] !== "/app/terminal/state") return origLoad(path);
     loadCalls += 1;
     if (loadCalls === 1) return stalePromise;
     return { cwd: "/repo", sessions: [{ ...mockSessions[0] }, { ...mockSessions[1], display_title: "最新标题" }] };
@@ -3500,4 +3513,611 @@ test("GROUP.waiting localizes derived waiting status with review tone without ch
   assert.equal(zh.urgent("waiting"), false);
   assert.equal(zh.urgent("review"), true);
   assert.equal(zh.urgent("running"), true);
+});
+
+test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown query, wake/stop/close/confirmStop, and menus", async () => {
+  const makeNode = (tag = "div") => {
+    const cls = new Set();
+    const n = {
+      tagName: String(tag).split(".")[0].toUpperCase(),
+      hidden: false,
+      disabled: false,
+      textContent: "",
+      title: "",
+      className: "",
+      dataset: {},
+      attributes: {},
+      children: [],
+      listeners: {},
+      style: { setProperty() {}, removeProperty() {} },
+      classList: {
+        set: cls,
+        add: (...names) => names.forEach(x => cls.add(x)),
+        remove: (...names) => names.forEach(x => cls.delete(x)),
+        toggle: (name, on) => (on === undefined ? (cls.has(name) ? (cls.delete(name), false) : (cls.add(name), true)) : on ? (cls.add(name), true) : (cls.delete(name), false)),
+        contains: name => cls.has(name),
+      },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = String(v); },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      hasAttribute(k) { return k in this.attributes; },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
+      replaceChildren(...nodes) { this.children = nodes.flat().filter(Boolean); },
+      append(...nodes) { this.children.push(...nodes.flat().filter(Boolean)); },
+      after(...nodes) { this._after = nodes; },
+      before() {},
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      scrollIntoView() {},
+      closest: () => null,
+      focus() {},
+      remove() { this.removed = true; },
+    };
+    return n;
+  };
+  const h = (tag, attrs = {}, ...children) => {
+    const node = makeNode(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "hidden") node.hidden = Boolean(v);
+      else node.setAttribute(k, v === true ? "" : v);
+    }
+    node.children = children.flat(Infinity).filter(x => x != null && x !== false);
+    if (node.children.every(x => typeof x === "string")) node.textContent = node.children.join("");
+    return node;
+  };
+
+  let lang = "zh";
+  let docHidden = false;
+  let nowSec = 1_700_000_000;
+  let sessions = [
+    { id: 1, provider: "claude", cwd: "/repo", exit: null, active: true, workspaces: ["ws-1"], project_key: "/repo", project_label: "repo" },
+    { id: 2, provider: "codex", cwd: "/repo/pending", exit: null, active: false, workspaces: [], project_key: "/repo", project_label: "repo" },
+    { id: 10, provider: "claude", cwd: "/repo/w1", exit: null, derived: true, derived_state: "starting", derived_since: nowSec - 10, parent_terminal_id: 1, parent_workspace_id: "ws-1", desk_key: "thread:t10", native: "t10", resumable: true, has_draft: false, workspaces: [], display_title: "启动项" },
+    { id: 11, provider: "codex", cwd: "/repo/w2", exit: null, derived: true, derived_state: "running", derived_since: nowSec - 125, parent_terminal_id: 1, parent_workspace_id: "ws-1", desk_key: "thread:t11", native: "t11", resumable: true, has_draft: false, workspaces: [], display_title: "运行项" },
+    { id: 12, provider: "codex", cwd: "/repo/w3", exit: null, derived: true, derived_state: "waiting", derived_since: nowSec - 30, blocked_kind: "permission", parent_terminal_id: 1, parent_workspace_id: "ws-1", desk_key: "thread:t12", native: "t12", resumable: true, has_draft: true, workspaces: [], display_title: "确认项" },
+    { id: 13, provider: "antigravity", cwd: "/repo/w4", exit: null, derived: true, derived_state: "uncollected", derived_since: nowSec - 60, pending_results: 2, parent_terminal_id: 1, parent_workspace_id: "ws-1", desk_key: "thread:t13", native: "t13", resumable: true, has_draft: false, workspaces: [], display_title: "待收项" },
+    { id: 14, provider: "claude", cwd: "/repo/w5", exit: null, derived: true, derived_state: "idle", derived_since: nowSec - 15, parent_terminal_id: 1, parent_workspace_id: "ws-1", desk_key: "thread:t14", native: "t14", resumable: true, has_draft: false, workspaces: [], display_title: "空闲项" },
+    { id: 15, provider: "codex", cwd: "/repo/w6", exit: 0, derived: true, derived_state: "dormant", derived_since: nowSec - 300, parent_terminal_id: 1, parent_workspace_id: "ws-1", desk_key: "thread:t15", native: "t15", resumable: true, has_draft: false, workspaces: [], display_title: "收起项" },
+    { id: 16, provider: "codex", cwd: "/repo/w7", exit: 0, derived: true, derived_state: "exited", derived_since: nowSec - 400, parent_terminal_id: 1, parent_workspace_id: "ws-1", desk_key: "thread:t16", native: "t16", resumable: false, has_draft: false, workspaces: [], display_title: "结束项" },
+    // Legacy backend fallback (no derived_state)
+    { id: 17, provider: "claude", cwd: "/repo/w8", exit: null, derived: true, derived_busy: true, parent_terminal_id: 1, parent_workspace_id: "ws-1", workspaces: [], display_title: "旧运行" },
+    { id: 18, provider: "claude", cwd: "/repo/w9", exit: 0, derived: true, derived_busy: false, parent_terminal_id: 1, parent_workspace_id: "ws-1", workspaces: [], display_title: "旧结束" },
+  ];
+
+  const loadUrls = [];
+  const postCalls = [];
+  const says = [];
+  const asks = [];
+  const menus = [];
+  const navigated = [];
+  let nextAsk = { value: "stop" };
+  let wakeFail = false;
+
+  const drawer = makeNode("aside");
+  const drAll = makeNode("button");
+  const listNode = makeNode("div");
+  const appNode = makeNode("div");
+  const els = new Map([["app", appNode], ["list", listNode], ["head", makeNode("header")], ["office", makeNode("div")], ["floor", makeNode("div")], ["boss", makeNode("section")], ["desks", makeNode("div")], ["derived-zone", makeNode("section")], ["derived-desks", makeNode("div")], ["derived-count", makeNode("span")], ["rooms", makeNode("div")], ["fx", makeNode("div")], ["desks-count", makeNode("span")], ["ticker", makeNode("footer")], ["tick", makeNode("span")], ["drawer", drawer], ["conv-toggle", makeNode("button")], ["side-toggle", makeNode("button")], ["dr-ico", makeNode("span")], ["dr-title", makeNode("span")], ["dr-sub", makeNode("span")], ["dr-all", drAll], ["timeline", makeNode("div")], ["tl-inner", makeNode("div")], ["blank", makeNode("div")], ["jump", makeNode("button")], ["banner", makeNode("div")]]);
+
+  const AN = {
+    h, $: id => els.get(id) || makeNode(id),
+    L: (zh, en) => (lang === "en" ? en : zh),
+    load: async (url) => { loadUrls.push(url); return { sessions: structuredClone(sessions), cwd: "/repo" }; },
+    href: p => p,
+    GROUP: { running: ["运行中", "run"], review: ["待审核", "review"], waiting: ["等待确认", "review"], failed: ["有失败", "bad"], idle: ["空闲", "idle"] },
+    pick: (tbl, k) => tbl[k] || [k || "—", "idle"],
+    urgent: s => s === "running" || s === "review",
+    avatar: () => makeNode("span"),
+    colorClass: () => "c0",
+    relTime: () => "刚刚",
+    clock: () => "10:00",
+    fullTime: () => "2026",
+    dayLabel: () => "今天",
+    setText: (n, v) => { n.textContent = v == null ? "" : String(v); },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const cls of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(cls);
+    },
+    reconcile: (p, nodes) => { p.children = [...nodes]; },
+    stickyOrder: items => items,
+    poll() {},
+    plain: x => x,
+    art: { character: () => "c" },
+    hostTile: p => makeNode(p),
+    cliName: p => ({ claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" }[p] || p),
+    deskName: () => "",
+    deskParts: () => [],
+    handleOf: () => "",
+    fullHandle: () => "",
+    cliOf: () => "",
+    chatName: g => g.display_title || g.title || g.group,
+    shownName: g => g.display_title || g.title || g.group,
+    activities: () => [],
+    ongoing: s => s || "idle",
+    isHidden: () => docHidden,
+    reducedMotion: { matches: false },
+  };
+  const FakeDate = class extends Date {
+    constructor(...args) { super(...(args.length ? args : [nowSec * 1000])); }
+    static now() { return nowSec * 1000; }
+    static parse(s) { return Date.parse(s); }
+  };
+  const createdFrames = [];
+  const context = vm.createContext({
+    AN,
+    URLSearchParams,
+    window: null,
+    document: { addEventListener() {}, documentElement: { lang: "zh", dataset: {} }, get hidden() { return docHidden; } },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    location: { search: "", pathname: "/", hash: "", origin: "null" },
+    history: { pushState() {}, replaceState() {} },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    addEventListener() {},
+    requestAnimationFrame() {},
+    setTimeout, clearTimeout, Date: FakeDate,
+    Actions: {
+      picked: new Set(),
+      pick: () => false,
+      workspaceMenu() {},
+      projectMenu() {},
+      openMenu: (_e, items) => menus.push(items),
+      say: (msg, bad) => says.push([msg, bad]),
+      ask: async (opts) => { asks.push(opts); return nextAsk; },
+    },
+    fetch: async (url) => {
+      postCalls.push(url);
+      if (url.startsWith("/app/terminal/wake")) {
+        if (wakeFail) return { ok: false, status: 409, json: async () => ({ error: "隔离目录已释放" }) };
+        const s = sessions.find(x => x.id === 15);
+        s.exit = null;
+        s.derived_state = "idle";
+        s.derived_since = nowSec;
+        return { ok: true, status: 200, json: async () => ({ session: structuredClone(s) }) };
+      }
+      if (url.startsWith("/app/terminal/close-derived")) return { ok: true, status: 200, json: async () => ({ closed: 7 }) };
+      if (url.startsWith("/app/terminal/stop")) {
+        const sid = Number(url.split("session=")[1]);
+        const s = sessions.find(x => x.id === sid);
+        if (s) { s.exit = 0; if (s.derived) s.derived_state = "dormant"; }
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  context.window = context;
+  context.AN.h = (tag, attrs = {}, ...children) => {
+    if (String(tag).startsWith("iframe")) {
+      const f = Object.assign(makeNode("iframe"), {
+        attributes: { ...attrs },
+        contentWindow: { postMessage() {} },
+      });
+      createdFrames.push(f);
+      return f;
+    }
+    return h(tag, attrs, ...children);
+  };
+  vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nglobalThis.el = el; globalThis.state = state; globalThis.renderList = renderList;`, context);
+  context.go = path => {
+    navigated.push(path);
+    context.state.selected = path.split("/").pop();
+    context.state.loaded = context.state.selected;
+    context.ChatTerminal?.column(context.state.selected, "codex", "codex");
+  };
+  context.refresh = () => {};
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nglobalThis.ChatTerminal = ChatTerminal;`, context);
+
+  await context.ChatTerminal.refresh();
+  assert.equal(loadUrls.at(-1), "/app/terminal/state");
+
+  // 1. Check all 7 derived states + fallback + elapsed duration in ZH and EN, fixed rec.meta visible.
+  const d10 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 10);
+  const d11 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 11);
+  const d12 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 12);
+  const d13 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 13);
+  const d14 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 14);
+  const d15 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 15);
+  const d16 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 16);
+  const d17 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 17);
+  const d18 = context.ChatTerminal.derivedOf("ws-1").find(x => x.terminal === 18);
+  assert.equal(d17.derived_state, "running");
+  assert.equal(d18.derived_state, "exited");
+  assert.equal(context.ChatTerminal.derivedMeta(d10).text, "启动中");
+  assert.equal(context.ChatTerminal.derivedMeta(d11).text, "运行中 · 2m");
+  assert.equal(context.ChatTerminal.derivedMeta(d12).text, "等待确认");
+  assert.equal(context.ChatTerminal.derivedMeta(d13).text, "待 boss 收取");
+  assert.equal(context.ChatTerminal.derivedMeta(d14).text, "空闲");
+  assert.equal(context.ChatTerminal.derivedMeta(d15).text, "已收起");
+  assert.equal(context.ChatTerminal.derivedMeta(d16).text, "已结束");
+
+  lang = "en";
+  assert.equal(context.ChatTerminal.derivedMeta(d10).text, "Starting");
+  assert.equal(context.ChatTerminal.derivedMeta(d11).text, "Running · 2m");
+  assert.equal(context.ChatTerminal.derivedMeta(d12).text, "Needs attention");
+  assert.equal(context.ChatTerminal.derivedMeta(d13).text, "Awaiting boss");
+  assert.equal(context.ChatTerminal.derivedMeta(d14).text, "Idle");
+  assert.equal(context.ChatTerminal.derivedMeta(d15).text, "Dormant");
+  assert.equal(context.ChatTerminal.derivedMeta(d16).text, "Exited");
+  assert.equal(context.ChatTerminal.derivedSummary("ws-1").text, "3 running · 1 waiting");
+  lang = "zh";
+  assert.equal(context.ChatTerminal.derivedSummary("ws-1").text, "3 运行 · 1 待确认");
+
+  // Render list and verify boss row summary + derived row fixed meta + dormant class.
+  context.state.groupsData = [{
+    group: "ws-1", title: "主会话", status: "idle", updated: "2026-11-12T10:00:00Z", label: "Claude Code",
+    host: "claude", project_key: "/repo", project_label: "repo", project_path: "/repo", preview: "",
+  }];
+  context.renderList();
+  const bossRec = context.state.items.get("ws-1");
+  assert.equal(bossRec.meta.hidden, false);
+  assert.equal(bossRec.meta.textContent, "3 运行 · 1 待确认");
+  const rec14 = context.state.items.get("term-14");
+  const rec15 = context.state.items.get("term-15");
+  assert.equal(rec14.meta.hidden, false);
+  assert.equal(rec14.meta.textContent, "空闲");
+  assert.equal(rec15.meta.hidden, false);
+  assert.equal(rec15.meta.textContent, "已收起");
+  assert.equal(rec15.el.classList.contains("dormant"), true);
+
+  // 2. shown=<id> query parameter rules
+  context.state.loaded = "term-11";
+  context.ChatTerminal.column("term-11", "codex", "codex");
+  await context.ChatTerminal.refresh();
+  assert.equal(loadUrls.at(-1), "/app/terminal/state?shown=11");
+
+  docHidden = true;
+  await context.ChatTerminal.refresh();
+  assert.equal(loadUrls.at(-1), "/app/terminal/state");
+  docHidden = false;
+
+  drawer.classList.add("folded");
+  context.state.convPeek = false;
+  await context.ChatTerminal.refresh();
+  assert.equal(loadUrls.at(-1), "/app/terminal/state");
+  drawer.classList.remove("folded");
+
+  context.ChatTerminal.readMessages();
+  context.ChatTerminal.column("term-11", "codex", "codex");
+  await context.ChatTerminal.refresh();
+  assert.equal(loadUrls.at(-1), "/app/terminal/state");
+
+  // 3. Header stopButton: derived running -> 收起; dormant+resumable -> 恢复; non-resumable dormant -> hidden.
+  context.ChatTerminal.readMessages(true);
+  context.ChatTerminal.column("term-11", "codex", "codex");
+  const stopBtn = drAll._after[1];
+  assert.equal(stopBtn.hidden, false);
+  assert.equal(stopBtn.textContent, "收起");
+
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  assert.equal(stopBtn.hidden, false);
+  assert.equal(stopBtn.textContent, "恢复");
+
+  // Unrecoverable dormant derived session hides stopButton and opens messages on openDerived without wake.
+  const s15 = sessions.find(x => x.id === 15);
+  s15.resumable = false;
+  await context.ChatTerminal.refresh();
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  assert.equal(stopBtn.hidden, true);
+  const callsBeforeUnresumable = postCalls.length;
+  context.ChatTerminal.openDerived("term-15");
+  assert.equal(postCalls.length, callsBeforeUnresumable);
+  assert.equal(drawer.classList.contains("term-mode"), false);
+
+  // 4. Resumable dormant wake: failure keeps messages & says error; success drops old frame & opens terminal.
+  s15.resumable = true;
+  await context.ChatTerminal.refresh();
+  // Repeated refresh while term-15 is selected never auto-wakes.
+  context.state.selected = "term-15";
+  await context.ChatTerminal.refresh();
+  assert.equal(postCalls.length, callsBeforeUnresumable);
+
+  // Build an existing frame for 15 so we can verify dropFrame removes it.
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  const oldFrame15 = createdFrames.at(-1);
+  assert.equal(oldFrame15.attributes.src, "/terminal/?session=15");
+
+  wakeFail = true;
+  await context.ChatTerminal.wake(15, { group: "term-15" });
+  assert.deepEqual(says.at(-1), ["隔离目录已释放", true]);
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  assert.equal(drawer.classList.contains("term-mode"), false);
+
+  wakeFail = false;
+  await context.ChatTerminal.wake(15, { group: "term-15" });
+  assert.equal(oldFrame15.removed, true, "old iframe must be dropped on wake");
+  context.ChatTerminal.column("term-15", "codex", "codex");
+  assert.equal(drawer.classList.contains("term-mode"), true);
+  const newFrame15 = createdFrames.at(-1);
+  assert.notEqual(newFrame15, oldFrame15);
+  assert.equal(newFrame15.attributes.src, "/terminal/?session=15");
+
+  // 5. Context menus for derived row and pending boss row with derived sessions.
+  context.ChatTerminal.menu("term-11", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "收起", "关闭终端"]);
+  sessions.find(x => x.id === 15).derived_state = "dormant";
+  sessions.find(x => x.id === 15).exit = 0;
+  await context.ChatTerminal.refresh();
+  context.ChatTerminal.menu("term-15", {});
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "恢复", "关闭终端"]);
+
+  // 6. Unified confirmStop: boss stop merges boss + derived active + draft counts in ONE ask; boss close skips confirm if no active/draft derived.
+  asks.length = 0;
+  nextAsk = null;
+  await context.ChatTerminal.stop(1); // boss 1 has 3 active (10,11,12,17 -> 4 active) + 1 draft (12)
+  assert.equal(asks.length, 1);
+  assert.ok(asks[0].body.some(p => p.textContent.includes("有 4 个派生会话还没做完")));
+  assert.ok(asks[0].body.some(p => p.textContent.includes("1 个有未发出的草稿")));
+
+  // closeDerived confirms with counts when active/draft exist, and skips confirm when all idle/dormant/exited without drafts.
+  asks.length = 0;
+  await context.ChatTerminal.closeDerived("ws-1");
+  assert.equal(asks.length, 1);
+  assert.ok(asks[0].body.some(p => p.textContent.includes("4 个派生会话还没做完")));
+
+  // Make all derived idle with no draft -> closeDerived & boss close do NOT ask.
+  sessions = sessions.map(s => (s.derived ? { ...s, derived_state: "idle", derived_busy: false, blocked_kind: null, has_draft: false } : s));
+  await context.ChatTerminal.refresh();
+  asks.length = 0;
+  await context.ChatTerminal.close(1);
+  assert.equal(asks.length, 0, "boss close with only idle derived sessions must not confirm");
+  await context.ChatTerminal.closeDerived("ws-1");
+  assert.equal(asks.length, 0, "closeDerived with all idle derived sessions must not confirm");
+});
+
+test("ChatDerived renders separate office derived zone, matches ofDesk states, dims dormant, and handles click & menu", async () => {
+  const makeNode = (tag = "div") => {
+    const cls = new Set();
+    return {
+      tagName: String(tag).split(".")[0].toUpperCase(),
+      hidden: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], listeners: {},
+      style: { setProperty() {}, removeProperty() {} },
+      classList: {
+        set: cls,
+        add: (...names) => names.forEach(x => cls.add(x)),
+        remove: (...names) => names.forEach(x => cls.delete(x)),
+        toggle: (name, on) => (on === undefined ? (cls.has(name) ? (cls.delete(name), false) : (cls.add(name), true)) : on ? (cls.add(name), true) : (cls.delete(name), false)),
+        contains: name => cls.has(name),
+      },
+      setAttribute(k, v) { if (v == null) delete this.attributes[k]; else this.attributes[k] = String(v); },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      hasAttribute(k) { return k in this.attributes; },
+      removeAttribute(k) { delete this.attributes[k]; },
+      addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
+      replaceChildren(...nodes) { this.children = nodes.flat().filter(Boolean); },
+      append(...nodes) { this.children.push(...nodes.flat().filter(Boolean)); },
+      insertBefore(child, before) { child.parentNode = this; child.nextSibling = before; },
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      remove() {},
+    };
+  };
+  const h = (tag, attrs = {}, ...children) => {
+    const node = makeNode(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "hidden") node.hidden = Boolean(v);
+      else node.setAttribute(k, v === true ? "" : v);
+    }
+    node.children = children.flat(Infinity).filter(x => x != null && x !== false);
+    if (node.children.every(x => typeof x === "string")) node.textContent = node.children.join("");
+    return node;
+  };
+  const el = {
+    boss: makeNode("section"),
+    desks: Object.assign(makeNode("div"), { clientWidth: 560 }),
+    derivedZone: Object.assign(makeNode("section"), { hidden: true }),
+    derivedDesks: makeNode("div"),
+    derivedCount: makeNode("span"),
+    rooms: makeNode("div"),
+    fx: makeNode("div"),
+    deskCount: makeNode("span"),
+    office: makeNode("div"),
+    floor: makeNode("div"),
+  };
+  const state = {
+    groupsData: [], loaded: "ws-1",
+    bossRec: null, deskRecs: new Map(), roomRecs: new Map(), seatRecs: new Map(),
+    away: new Map(), closing: new Map(), known: new Set(), ready: true, drawer: { kind: "all" },
+  };
+  const opened = [];
+  const woken = [];
+  const menus = [];
+  let terminalSessions = [
+    { id: 101, derived: true, parent_workspace_id: "ws-1", desk_key: "thread:h1", native: "n1", derived_state: "running", resumable: true },
+    { id: 102, derived: true, parent_workspace_id: "ws-1", desk_key: "thread:h2", native: "n2", derived_state: "dormant", resumable: true },
+    { id: 103, derived: true, parent_workspace_id: "ws-1", desk_key: "thread:h3", native: "n3", derived_state: "uncollected", resumable: true },
+  ];
+  const ChatTerminal = {
+    ofDesk: (group, key) => terminalSessions.find(s => s.parent_workspace_id === group && (s.desk_key === key || `thread:${s.native}` === key)),
+    derivedStateOf: x => x.derived_state,
+    isWaking: () => false,
+    wake: async (id, target) => woken.push([id, target]),
+    stop: async () => {},
+    close: async () => {},
+    focusFrame() {},
+    showing: () => false,
+    running: () => false,
+    bossOpensTerminal: () => false,
+  };
+  const context = vm.createContext({
+    AN: {
+      h, L: zh => zh, at: Date.parse, ongoing: s => s, isHidden: () => false, dozing: () => false,
+      setText: (n, v) => { n.textContent = v; },
+      reconcile: (p, nodes) => { p.children = [...nodes]; },
+    },
+    h, L: zh => zh, el, state, FIG: 100, ChatTerminal,
+    ART: { character: () => "c", figure: makeNode, head: makeNode, lid: makeNode, url: p => p, version: () => 1, canWarp: () => false },
+    Laptop: { create: () => ({ laptop: { dress() {} } }) },
+    Actions: { roomMenu() {}, openMenu: (_e, items) => menus.push(items) },
+    GROUP: { idle: ["空闲", "idle"] }, pick: () => ["空闲", "idle"], urgent: () => false,
+    activities: () => [],
+    cliOf: () => "Codex", deskChar: () => "c", deskName: d => d.model, deskParts: d => ({ name: d.model, effort: "" }),
+    fullHandle: d => d.key, relTime: () => "刚刚", fullTime: () => "2026", shownName: g => g.display_title || g.title || g.label,
+    setText: (n, v) => { n.textContent = v; },
+    setAttr: (n, k, v) => n.setAttribute(k, v),
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const cls of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(cls);
+    },
+    reconcile: (p, nodes) => { p.children = [...nodes]; },
+    openScope: (scope, _opener, opts) => opened.push([scope, opts || {}]),
+    go() {}, window: { addEventListener() {} }, document: { documentElement: { classList: { contains: () => false } } },
+    ResizeObserver: class { observe() {} },
+    reduceMotion: { matches: false },
+    getComputedStyle: () => ({ getPropertyValue: () => "2", columnGap: "10px", gridTemplateColumns: "1fr" }),
+    Date,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-derived.js`, "utf8")}\nglobalThis.ChatDerived = ChatDerived;`, context);
+  vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
+
+  const baseChat = {
+    group: "ws-1", host: "claude", label: "Claude Code", display_title: "t",
+    desks: [
+      { key: "emp-1", provider: "codex", model: "gpt-6.1", derived: false, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+      { key: "thread:h1", provider: "claude", model: "opus", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+      { key: "thread:n2", provider: "codex", model: "gpt-6.1", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+      { key: "thread:h3", provider: "antigravity", model: "gemini", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+      { key: "thread:missing", provider: "claude", model: "haiku", derived: true, first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" },
+    ],
+    rooms: [], messages: [],
+  };
+  const ctx = {
+    desks: new Map(baseChat.desks.map(d => [d.key, d])),
+    drawn: new Set(baseChat.desks.map(d => d.key)),
+    rooms: new Map(),
+    fullRooms: new Set(),
+  };
+  context.renderOffice(baseChat, ctx, { running: 0, review: 0 }, false);
+
+  assert.equal(el.desks.children.length, 1);
+  assert.equal(el.deskCount.textContent, " · 1");
+  assert.equal(el.derivedZone.hidden, false);
+  assert.equal(el.derivedDesks.children.length, 4);
+  assert.equal(el.derivedCount.textContent, " · 4");
+
+  const r1 = state.deskRecs.get("thread:h1");
+  const r2 = state.deskRecs.get("thread:n2");
+  const r3 = state.deskRecs.get("thread:h3");
+  const r4 = state.deskRecs.get("thread:missing");
+  assert.equal(r1.el.dataset.mood, "working");
+  assert.equal(r1.say.children[0], "运行中");
+  assert.equal(r2.el.dataset.mood, "sleep");
+  assert.equal(r2.say.children[0], "已收起");
+  assert.equal(r2.el.classList.contains("dormant"), true);
+  assert.equal(r3.el.dataset.mood, "review");
+  assert.equal(r3.say.children[0], "待 boss 收取");
+  assert.equal(r4.el.classList.contains("dormant"), true);
+  assert.equal(r4.say.children[0], "已收起");
+
+  // Click running desk -> opens terminal; click dormant+resumable -> opens messages then wakes; click missing -> opens messages only.
+  r1.el.listeners.click[0]();
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:h1" }, { terminal: true }]);
+  r2.el.listeners.click[0]();
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:n2" }, {}]);
+  assert.deepEqual(JSON.parse(JSON.stringify(woken.at(-1))), [102, { group: "ws-1", deskKey: "thread:n2" }]);
+  r4.el.listeners.click[0]();
+  assert.deepEqual(JSON.parse(JSON.stringify(opened.at(-1))), [{ kind: "desk", key: "thread:missing" }, {}]);
+
+  // Derived desk context menu
+  r1.el.listeners.contextmenu[0]({});
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "收起", "关闭终端"]);
+  r2.el.listeners.contextmenu[0]({});
+  assert.deepEqual(JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label))), ["打开", "恢复", "关闭终端"]);
+
+  // When no derived desks exist, derived zone is hidden.
+  const noDerived = { ...baseChat, desks: [baseChat.desks[0]] };
+  ctx.desks = new Map([[baseChat.desks[0].key, baseChat.desks[0]]]);
+  ctx.drawn = new Set([baseChat.desks[0].key]);
+  context.renderOffice(noDerived, ctx, { running: 0, review: 0 }, false);
+  assert.equal(el.derivedZone.hidden, true);
+  assert.equal(el.derivedDesks.children.length, 0);
+});
+
+test("Actions.workspaceMenu includes 关闭全部派生终端（N） when workspace has derived sessions", async () => {
+  const bodyChildren = [];
+  const closedWorkspaces = [];
+  const makeMenuNode = (tag, attrs = {}, ...kids) => {
+    const flat = kids.flat(Infinity).filter(x => x != null && x !== false);
+    const listeners = {};
+    return {
+      tag, attrs, children: flat, listeners, hidden: Boolean(attrs?.hidden), style: {},
+      textContent: flat.every(x => typeof x === "string") ? flat.join("") : "",
+      addEventListener(ev, fn) { (listeners[ev] ||= []).push(fn); },
+      setAttribute() {},
+      replaceChildren(...nodes) { this.children = nodes.flat().filter(Boolean); },
+      append(...nodes) { this.children.push(...nodes.flat().filter(Boolean)); },
+      getBoundingClientRect: () => ({ width: 140, height: 120 }),
+      querySelector() { return null; },
+      focus() {},
+    };
+  };
+  const context = vm.createContext({
+    AN: {
+      h: makeMenuNode,
+      $: () => null,
+      L: zh => zh,
+      load: async () => ({}),
+      chatName: g => g.title || g.group,
+    },
+    document: { body: { append(...n) { bodyChildren.push(...n); } }, addEventListener() {}, querySelectorAll: () => [] },
+    window: { addEventListener() {} },
+    state: {
+      groupsData: [{ group: "ws-1", title: "主会话", label: "Claude Code" }],
+    },
+    ChatTerminal: {
+      derivedOf: id => (id === "ws-1" ? [{ terminal: 10 }, { terminal: 11 }] : []),
+      closeDerived: id => closedWorkspaces.push(id),
+      exitedOf: () => null,
+    },
+    setTimeout, clearTimeout, innerWidth: 1000, innerHeight: 800,
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../actions.js`, "utf8")}\nglobalThis.Actions = Actions;`, context);
+  context.Actions.workspaceMenu("ws-1", { clientX: 10, clientY: 10, preventDefault() {}, stopPropagation() {} });
+  const menu = bodyChildren.find(n => n.tag === "div.ctx");
+  const closeAllBtn = menu.children.find(b => b.textContent.includes("关闭全部派生终端"));
+  assert.ok(closeAllBtn);
+  assert.equal(closeAllBtn.textContent, "关闭全部派生终端（2）");
+  closeAllBtn.listeners.click[0]();
+  assert.deepEqual(closedWorkspaces, ["ws-1"]);
+});
+
+test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/stop/close-derived endpoints", async () => {
+  const storage = new Map();
+  const win = { fetch: async () => ({ ok: true, json: async () => ({}) }), addEventListener() {}, dispatchEvent() {}, postMessage() {} };
+  const context = vm.createContext({
+    AN: {},
+    URL,
+    URLSearchParams,
+    Response,
+    location: { search: "?mock", protocol: "http:", hostname: "localhost", href: "http://localhost/preview.html?mock" },
+    document: { documentElement: { dataset: { theme: "dark" } }, addEventListener() {} },
+    localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) },
+    window: win,
+    fetch: win.fetch,
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
+    Date, Math, JSON, Map, Set, Array, Object, Number, String, Boolean, Promise, RegExp, Error,
+    structuredClone, setTimeout, clearTimeout,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../mock.js`, "utf8"), context);
+  const loadJson = async (url, method = "GET") => (await win.fetch(url, method === "POST" ? { method: "POST", body: "{}" } : {})).json();
+  const termState = await loadJson("/app/terminal/state?shown=3");
+  const derivedStates = termState.sessions.filter(s => s.derived).map(s => s.derived_state);
+  for (const s of ["running", "waiting", "uncollected", "idle", "dormant"]) {
+    assert.ok(derivedStates.includes(s), `mock.js missing derived_state=${s}`);
+  }
+  const chat = await loadJson("/app/chats/s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50");
+  assert.equal(chat.desks.filter(d => d.derived).length, 5);
+  const woke = await loadJson("/app/terminal/wake?session=7", "POST");
+  assert.equal(woke.session.id, 7);
+  assert.equal(woke.session.derived_state, "idle");
+  assert.equal(woke.session.exit, null);
+  await loadJson("/app/terminal/stop?session=6", "POST");
+  const afterStop = await loadJson("/app/terminal/state");
+  assert.equal(afterStop.sessions.find(s => s.id === 6).derived_state, "dormant");
+  const closed = await loadJson("/app/terminal/close-derived?workspace=s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50", "POST");
+  assert.equal(closed.closed, 5);
 });
