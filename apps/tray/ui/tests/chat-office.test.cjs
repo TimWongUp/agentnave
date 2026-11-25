@@ -4570,5 +4570,7 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   context.state.groupsData[1].derived.push({ key: "thread:fresh", provider: "codex", model: "gpt-6.1" });
   assert.equal(context.ChatTerminal.follow("term-120"), "ws-hist");
   assert.equal(context.state.hashKey, "desk:thread:fresh");
-  assert.equal(context.ChatTerminal.consumeOpenDesk("ws-hist", "thread:fresh"), true);
+  // asking for the messages meanwhile drops that wish
+  context.ChatTerminal.stayOnMessages("ws-hist", "thread:fresh");
+  assert.equal(context.ChatTerminal.consumeOpenDesk("ws-hist", "thread:fresh"), false);
 });

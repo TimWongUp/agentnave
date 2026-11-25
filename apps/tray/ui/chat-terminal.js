@@ -846,6 +846,7 @@ const ChatTerminal = (() => {
   function stayOnMessages(group, deskKey) {
     const job = t.waking.get(ofDesk(group, deskKey)?.id) || t.waking.get(`${group}|${deskKey}`);
     if (job) job.open = false;
+    t.wantDeskTerminal = null;
   }
   // Clicking a derived row in the sidebar opens its desk's messages in the parent workspace
   // without starting a process; rows without a desk key or known parent fall back to term-N.

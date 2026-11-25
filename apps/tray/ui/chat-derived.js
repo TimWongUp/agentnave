@@ -24,7 +24,9 @@ const ChatDerived = (() => {
   function mood(d, _ctx, group = groupOf()) {
     const x = terminalFor(d, group);
     const waking = x ? ChatTerminal.isWaking(x.id) : ChatTerminal?.reviving?.(group, d.key);
-    const ds = waking ? "waking" : x ? ChatTerminal.derivedStateOf(x) : "idle";
+    // Its terminal is matched by the native session, which a call just sent does not have yet.
+    const starting = d.status === "running" && d.key?.startsWith("task:");
+    const ds = waking ? "waking" : x ? ChatTerminal.derivedStateOf(x) : starting ? "starting" : "idle";
     const [kind, zh, en] = STATES[ds] || STATES.idle;
     const word = L(zh, en);
     return { mood: kind, say: kind === "working" ? [word] : word, word, away: null };
