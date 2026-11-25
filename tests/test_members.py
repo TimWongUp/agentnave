@@ -2345,3 +2345,138 @@ def test_t3_quota_stops_only_the_models_each_full_window_covers(
     now = datetime(2026, 11, 24, 10, tzinfo=UTC)
     assert all(exhausted_windows(driver, limits, model, now) for model in stopped)
     assert not any(exhausted_windows(driver, limits, model, now) for model in free)
+
+
+def test_decision_seats_multi_provider_defaults_and_validation() -> None:
+    # Backward compatibility: legacy document defaults to gemini / gemini-decision-1 / None.
+    legacy = DecisionSeatsFile.model_validate({"version": 1})
+    assert legacy.decision_provider == "gemini"
+    assert legacy.decision_model == "gemini-decision-1"
+    assert legacy.decision_base_url is None
+
+    # Fixed providers accept omitted or exact model (trimmed) and reject non-empty base URLs.
+    openai = DecisionSeatsFile.model_validate({"version": 1, "decision_provider": "openai"})
+    assert openai.decision_model == "gpt-6-luna" and openai.decision_base_url is None
+    gemini_empty_url = DecisionSeatsFile.model_validate(
+        {"version": 1, "decision_model": "  gemini-decision-1 ", "decision_base_url": ""}
+    )
+    assert gemini_empty_url.decision_model == "gemini-decision-1"
+    assert gemini_empty_url.decision_base_url is None
+
+    # TypeSafe and OpenRouter provide defaults and allow visible ASCII model IDs up to 200 chars.
+    ts = DecisionSeatsFile.model_validate({"version": 1, "decision_provider": "typesafe"})
+    assert ts.decision_model == "jev-latest"
+    or_doc = DecisionSeatsFile.model_validate({"version": 1, "decision_provider": "openrouter"})
+    assert or_doc.decision_model == "liquid/d1.2-ultra"
+    custom_id = "m" * 200
+    assert (
+        DecisionSeatsFile.model_validate(
+            {"version": 1, "decision_provider": "openrouter", "decision_model": f" {custom_id} "}
+        ).decision_model
+        == custom_id
+    )
+
+    # Ollama defaults base_url, requires explicit model, and normalizes trailing slashes.
+    ollama = DecisionSeatsFile.model_validate(
+        {
+            "version": 1,
+            "decision_provider": "ollama",
+            "decision_model": "qwen3:0.6b",
+        }
+    )
+    assert ollama.decision_base_url == "http://127.0.0.1:11434"
+    ollama_trimmed = DecisionSeatsFile.model_validate(
+        {
+            "version": 1,
+            "decision_provider": "ollama",
+            "decision_model": "qwen3:0.6b",
+            "decision_base_url": " http://[::1]:11434/ ",
+        }
+    )
+    assert ollama_trimmed.decision_base_url == "http://[::1]:11434"
+    assert (
+        DecisionSeatsFile.model_validate(
+            {
+                "version": 1,
+                "decision_provider": "ollama",
+                "decision_model": "qwen3:0.6b",
+                "decision_base_url": "http://LOCALHOST:11434///",
+            }
+        ).decision_base_url
+        == "http://LOCALHOST:11434"
+    )
+    assert (
+        DecisionSeatsFile.model_validate(
+            {
+                "version": 1,
+                "decision_provider": "custom",
+                "decision_model": "custom-1",
+                "decision_base_url": "https://decision.example.com/api/",
+            }
+        ).decision_base_url
+        == "https://decision.example.com/api"
+    )
+
+    # Invalid provider/model/base_url combinations are rejected.
+    invalid_cases: list[dict[str, Any]] = [
+        {"decision_provider": "unknown"},
+        {"decision_provider": "gemini", "decision_model": "other-model"},
+        {"decision_provider": "gemini", "decision_model": ""},
+        {"decision_provider": "gemini", "decision_model": None},
+        {"decision_provider": "openai", "decision_model": "gpt-5"},
+        {"decision_provider": "gemini", "decision_base_url": "https://example.com"},
+        {"decision_provider": "openai", "decision_base_url": "https://api.openai.com"},
+        {"decision_provider": "typesafe", "decision_base_url": "https://api.typesafe.ai"},
+        {"decision_provider": "openrouter", "decision_base_url": "https://openrouter.ai"},
+        {"decision_provider": "typesafe", "decision_model": ""},
+        {"decision_provider": "typesafe", "decision_model": "bad model"},
+        {"decision_provider": "openrouter", "decision_model": "模型"},
+        {"decision_provider": "openrouter", "decision_model": "x" * 201},
+        {"decision_provider": "ollama"},  # missing required model
+        {"decision_provider": "ollama", "decision_model": ""},
+        {"decision_provider": "custom", "decision_base_url": "https://example.com"},
+        {"decision_provider": "custom", "decision_model": "m"},
+        {"decision_provider": "custom", "decision_model": "m", "decision_base_url": ""},
+    ]
+    for case in invalid_cases:
+        with pytest.raises(ValidationError):
+            DecisionSeatsFile.model_validate({"version": 1, **case})
+
+
+@pytest.mark.parametrize(
+    ("url", "accepted"),
+    [
+        ("https://example.com/v1", True),
+        ("http://localhost:11434", True),
+        ("http://127.0.0.1:11434/v1/", True),
+        ("http://127.0.0.2:8080", True),
+        ("http://[::1]:11434", True),
+        ("https://example.com/" + "a" * 492, True),
+        ("https://example.com/" + "a" * 493, False),
+        ("http://192.168.1.2:11434", False),
+        ("http://example.com", False),
+        ("ftp://127.0.0.1:11434", False),
+        ("https://user:pass@example.com", False),
+        ("https://@example.com", False),
+        ("https://evil.com\\@127.0.0.1", False),
+        ("https://example.com/v1?x=1", False),
+        ("https://example.com/v1?", False),
+        ("https://example.com/v1#frag", False),
+        ("https://example.com/v1#", False),
+        ("https://example.com:99999", False),
+        ("https://example.com:", False),
+        ("https://example.com/with space", False),
+    ],
+)
+def test_decision_base_url_security_boundaries(url: str, accepted: bool) -> None:
+    payload = {
+        "version": 1,
+        "decision_provider": "custom",
+        "decision_model": "decider",
+        "decision_base_url": url,
+    }
+    if accepted:
+        assert DecisionSeatsFile.model_validate(payload).decision_base_url == url.rstrip("/")
+    else:
+        with pytest.raises(ValidationError):
+            DecisionSeatsFile.model_validate(payload)

@@ -365,3 +365,281 @@ def test_a_deeply_nested_reply_is_a_bad_response(endpoint: _Endpoint) -> None:
     with pytest.raises(DecisionError) as raised:
         endpoint.client().decide("task", CANDIDATES)
     assert raised.value.code == "rate_limited"
+
+
+def test_loopback_calls_bypass_configured_http_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentnave.decision_systemone import SystemOneDecisionClient
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    found = _Endpoint()
+    try:
+        client = SystemOneDecisionClient(found.url, "qwen3:0.6b", api_key=None, timeout=5)
+        assert client.decide("task", CANDIDATES).choice == "b"
+        assert len(found.requests) == 1
+        assert "authorization" not in found.requests[0][1]
+    finally:
+        found.server.shutdown()
+        found.server.server_close()
+
+
+def test_systemone_client_single_batch_omitted_probabilities_and_errors(
+    endpoint: _Endpoint,
+) -> None:
+    from agentnave.decision_systemone import (
+        OPENROUTER_ENDPOINT,
+        TYPESAFE_ENDPOINT,
+        SystemOneDecisionClient,
+        build_batch_request,
+        build_request,
+        resolve_systemone_endpoint,
+    )
+
+    assert TYPESAFE_ENDPOINT == "https://api.typesafe.ai/v1/systemone"
+    assert OPENROUTER_ENDPOINT == "https://openrouter.ai/api/v1/systemone"
+    assert resolve_systemone_endpoint("http://127.0.0.1:11434") == (
+        "http://127.0.0.1:11434/v1/systemone"
+    )
+    assert resolve_systemone_endpoint("http://127.0.0.1:11434/") == (
+        "http://127.0.0.1:11434/v1/systemone"
+    )
+    assert resolve_systemone_endpoint("https://host.test/v1") == "https://host.test/v1/systemone"
+    assert (
+        resolve_systemone_endpoint("https://host.test/v1beta/")
+        == "https://host.test/v1beta/systemone"
+    )
+    assert (
+        resolve_systemone_endpoint("https://host.test/api/v1/systemone/")
+        == "https://host.test/api/v1/systemone"
+    )
+
+    # Omitted probabilities (e.g. OpenRouter models) and null probabilities are tolerated.
+    endpoint.reply = lambda: (200, {}, json.dumps({"answers": {"seat": {"choice": "a"}}}).encode())
+    client = SystemOneDecisionClient(endpoint.url, "liquid/d1.2-ultra", api_key="or-secret")
+    assert client.decide("Task: one", CANDIDATES) == Decision("a", {}, None)
+    [(path, headers, body)] = endpoint.requests
+    assert path == "/v1beta/decisions"
+    assert headers["authorization"] == "Bearer or-secret"
+    assert headers["content-type"] == "application/json"
+    assert body == build_request("liquid/d1.2-ultra", "Task: one", CANDIDATES)
+    assert "state" in body and "input" not in body
+
+    endpoint.reply = lambda: (
+        200,
+        {},
+        json.dumps({"answers": {"seat": {"choice": "b", "probabilities": None}}}).encode(),
+    )
+    assert client.decide("Task: two", CANDIDATES) == Decision("b", {}, None)
+
+    # Batch request with partial failure.
+    other = {"c": "role c"}
+    questions = [DecisionQuestion("One", CANDIDATES), DecisionQuestion("Two", other)]
+    endpoint.reply = lambda: (
+        200,
+        {},
+        json.dumps(
+            {
+                "answers": {
+                    "seat1": {"choice": "z"},
+                    "seat2": {"choice": "c", "probabilities": {"c": 0.9}, "confidence": 0.9},
+                }
+            }
+        ).encode(),
+    )
+    first, second = client.decide_many(questions)
+    assert isinstance(first, DecisionError) and first.code == "bad_response"
+    assert second == Decision("c", {"c": 0.9}, 0.9)
+    assert endpoint.requests[-1][2] == build_batch_request("liquid/d1.2-ultra", questions)
+
+    # Ollama-style error body and secret scrubbing (400 with "api key" is rejected, not Google auth).
+    endpoint.reply = lambda: (400, {}, json.dumps({"error": "bad api key or-secret"}).encode())
+    with pytest.raises(DecisionError) as err400:
+        client.decide("task", CANDIDATES)
+    assert err400.value.code == "rejected"
+    assert "or-secret" not in err400.value.message and "***" in err400.value.message
+
+
+def test_openai_decisions_client_arrays_refusal_probabilities_and_batch(
+    endpoint: _Endpoint,
+) -> None:
+    from agentnave.decision_openai import (
+        ENDPOINT as OPENAI_ENDPOINT,
+    )
+    from agentnave.decision_openai import (
+        MODEL as OPENAI_MODEL,
+    )
+    from agentnave.decision_openai import (
+        OpenAIDecisionClient,
+        build_batch_request,
+        build_request,
+        parse_batch_response,
+        parse_response,
+    )
+
+    assert OPENAI_ENDPOINT == "https://api.openai.com/v1/decisions"
+    assert OPENAI_MODEL == "gpt-6-luna"
+
+    client = OpenAIDecisionClient("sk-openai-secret", endpoint=endpoint.url, timeout=5)
+    endpoint.reply = lambda: (
+        200,
+        {},
+        json.dumps(
+            {
+                "answers": [
+                    {
+                        "type": "choice",
+                        "name": "seat",
+                        "choice": "b",
+                        "probabilities": [
+                            {"value": "a", "probability": 0.2},
+                            {"value": "b", "probability": 0.8},
+                        ],
+                        "confidence": 0.85,
+                    }
+                ]
+            }
+        ).encode(),
+    )
+    decision = client.decide("Task: fix", CANDIDATES)
+    assert decision == Decision("b", {"a": 0.2, "b": 0.8}, 0.85)
+    [(_, headers, body)] = endpoint.requests
+    assert headers["authorization"] == "Bearer sk-openai-secret"
+    assert body == build_request("Task: fix", CANDIDATES)
+    assert body["questions"][0]["choices"] == [
+        {"value": "a", "description": CANDIDATES["a"]},
+        {"value": "b", "description": CANDIDATES["b"]},
+    ]
+
+    # Positional fallback when name is omitted, and missing probabilities allowed.
+    assert parse_response({"answers": [{"choice": "a"}]}, CANDIDATES) == Decision("a", {}, None)
+
+    # Refusal and invalid probability items become bad_response.
+    bad_bodies: list[object] = [
+        {"answers": [{"name": "seat", "type": "refusal", "refusal": "cannot decide"}]},
+        {"answers": [{"name": "other", "choice": "a"}]},
+        {"answers": [{"name": "seat", "choice": "a", "probabilities": {"a": 0.5}}]},
+        {"answers": [{"name": "seat", "choice": "a", "probabilities": [{"value": "a"}]}]},
+        {
+            "answers": [
+                {
+                    "name": "seat",
+                    "choice": "a",
+                    "probabilities": [{"value": "a", "probability": float("nan")}],
+                }
+            ]
+        },
+        {"answers": {}},
+    ]
+    for bad in bad_bodies:
+        with pytest.raises(DecisionError) as raised:
+            parse_response(bad, CANDIDATES)
+        assert raised.value.code == "bad_response"
+
+    # Batch matches by name even out of order; refusal/missing fails only its slot.
+    other = {"c": "role c"}
+    questions = [DecisionQuestion("One", CANDIDATES), DecisionQuestion("Two", other)]
+    endpoint.reply = lambda: (
+        200,
+        {},
+        json.dumps(
+            {
+                "answers": [
+                    {
+                        "name": "seat2",
+                        "choice": "c",
+                        "probabilities": [{"value": "c", "probability": 1.0}],
+                    },
+                    {"name": "seat1", "type": "refusal"},
+                ]
+            }
+        ).encode(),
+    )
+    first, second = client.decide_many(questions)
+    assert isinstance(first, DecisionError) and first.code == "bad_response"
+    assert second == Decision("c", {"c": 1.0}, None)
+    assert endpoint.requests[-1][2] == build_batch_request(questions)
+
+    # Positional fallback in batch when names are omitted.
+    assert parse_batch_response({"answers": [{"choice": "a"}, {"choice": "c"}]}, questions) == [
+        Decision("a"),
+        Decision("c"),
+    ]
+
+
+def test_client_for_config_key_policies_across_providers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave.decision_gemini import GeminiDecisionClient
+    from agentnave.decision_openai import OpenAIDecisionClient
+    from agentnave.decision_systemone import SystemOneDecisionClient
+    from agentnave.seat_recommendation import (
+        DecisionModelConfig,
+        RecommendationError,
+        client_for_config,
+    )
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+
+    # ollama does not read decision-keys.json even if missing or broken.
+    (tmp_path / "decision-keys.json").write_text("{broken")
+    ollama_client = client_for_config(
+        DecisionModelConfig("ollama", "qwen3:0.6b", "http://127.0.0.1:11434")
+    )
+    assert isinstance(ollama_client, SystemOneDecisionClient)
+
+    # custom reports config_error when decision-keys.json is broken, but works when missing.
+    with pytest.raises(RecommendationError) as custom_broken:
+        client_for_config(DecisionModelConfig("custom", "m", "https://example.com"))
+    assert custom_broken.value.code == "config_error"
+
+    (tmp_path / "decision-keys.json").unlink()
+    custom_nokey = client_for_config(DecisionModelConfig("custom", "m", "https://example.com"))
+    assert isinstance(custom_nokey, SystemOneDecisionClient)
+
+    for provider, model in (
+        ("gemini", "gemini-decision-1"),
+        ("openai", "gpt-6-luna"),
+        ("typesafe", "jev-latest"),
+        ("openrouter", "liquid/d1.2-ultra"),
+    ):
+        with pytest.raises(RecommendationError) as missing:
+            client_for_config(DecisionModelConfig(provider, model, None))  # type: ignore[arg-type]
+        assert missing.value.code == "no_key"
+
+    (tmp_path / "decision-keys.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "keys": {
+                    "gemini": "g-key",
+                    "openai": "o-key",
+                    "typesafe": "t-key",
+                    "openrouter": "r-key",
+                    "custom": "c-key",
+                },
+            }
+        )
+    )
+    assert isinstance(
+        client_for_config(DecisionModelConfig("gemini", "gemini-decision-1")),
+        GeminiDecisionClient,
+    )
+    assert isinstance(
+        client_for_config(DecisionModelConfig("openai", "gpt-6-luna")),
+        OpenAIDecisionClient,
+    )
+    assert isinstance(
+        client_for_config(DecisionModelConfig("typesafe", "jev-latest")),
+        SystemOneDecisionClient,
+    )
+    assert isinstance(
+        client_for_config(DecisionModelConfig("openrouter", "liquid/d1.2-ultra")),
+        SystemOneDecisionClient,
+    )
+    assert isinstance(
+        client_for_config(DecisionModelConfig("custom", "m", "https://example.com")),
+        SystemOneDecisionClient,
+    )

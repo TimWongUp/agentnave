@@ -1,4 +1,4 @@
-"""Recommend one of the user's own seats for a task with a decision model (ADR-0087).
+"""Recommend one of the user's own seats for a task with a decision model (ADR-0087, ADR-0123).
 
 The service only recommends; the boss dispatches with start_agent and may choose otherwise.
 """
@@ -6,11 +6,12 @@ The service only recommends; the boss dispatches with start_agent and may choose
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
-from agentnave.decision_gemini import KEY_NAME, GeminiDecisionClient
+from agentnave.decision_gemini import MODEL as GEMINI_MODEL
+from agentnave.decision_gemini import GeminiDecisionClient
 from agentnave.decision_model import (
     Decision,
     DecisionClient,
@@ -19,13 +20,25 @@ from agentnave.decision_model import (
     DecisionQuestion,
     read_decision_key,
 )
+from agentnave.decision_openai import MODEL as OPENAI_MODEL
+from agentnave.decision_openai import OpenAIDecisionClient
 from agentnave.decision_seats import effective_decision_seats
+from agentnave.decision_systemone import (
+    OPENROUTER_ENDPOINT,
+    TYPESAFE_ENDPOINT,
+    SystemOneDecisionClient,
+    resolve_systemone_endpoint,
+)
 from agentnave.host import Host
 from agentnave.members import MemberFileError, SettingsFileError, list_members
 from agentnave.orchestration_roles import (
+    DEFAULT_DECISION_PROVIDER,
+    DEFAULT_OLLAMA_BASE_URL,
     IMAGE_KIND,
     CustomSeatDifficulty,
     CustomSeatStatus,
+    DecisionProvider,
+    DecisionSeatsFile,
     SeatMetadata,
 )
 
@@ -50,10 +63,25 @@ type RecommendationErrorCode = Literal[
     "bad_response",
 ]
 
-# decision_model name -> (key name in decision-keys.json, client for that key)
-_MODELS: dict[str, tuple[str, Callable[[str], DecisionClient]]] = {
-    "gemini-decision-1": (KEY_NAME, GeminiDecisionClient),
-}
+
+@dataclass(frozen=True)
+class DecisionModelConfig:
+    """Resolved decision provider, model, and optional base URL from decision-seats.json."""
+
+    provider: DecisionProvider = DEFAULT_DECISION_PROVIDER
+    model: str = GEMINI_MODEL
+    base_url: str | None = None
+
+
+def decision_config(document: DecisionSeatsFile | None) -> DecisionModelConfig:
+    """Extract DecisionModelConfig from a validated DecisionSeatsFile (or defaults when missing)."""
+    if document is None:
+        return DecisionModelConfig()
+    return DecisionModelConfig(
+        provider=document.decision_provider,
+        model=document.decision_model,
+        base_url=document.decision_base_url,
+    )
 
 
 class RecommendationError(Exception):
@@ -96,8 +124,31 @@ def _native_settings(seat: CustomSeatStatus) -> dict[str, str | None]:
 
 
 def new_client(model: str, key: str) -> DecisionClient:
-    """The client of the selected decision model; tests replace this."""
-    return _MODELS[model][1](key)
+    """Create a built-in client for a fixed model name; tests replace this."""
+    if model == OPENAI_MODEL:
+        return OpenAIDecisionClient(key, model=model)
+    if model == GEMINI_MODEL:
+        return GeminiDecisionClient(key)
+    raise KeyError(model)
+
+
+_DEFAULT_NEW_CLIENT = new_client
+
+
+def _build_client(config: DecisionModelConfig, key: str | None) -> DecisionClient:
+    if config.provider == "gemini":
+        return GeminiDecisionClient(key or "")
+    if config.provider == "openai":
+        return OpenAIDecisionClient(key or "", model=config.model)
+    if config.provider == "typesafe":
+        return SystemOneDecisionClient(TYPESAFE_ENDPOINT, config.model, api_key=key)
+    if config.provider == "openrouter":
+        return SystemOneDecisionClient(OPENROUTER_ENDPOINT, config.model, api_key=key)
+    if config.provider == "ollama":
+        endpoint = resolve_systemone_endpoint(config.base_url or DEFAULT_OLLAMA_BASE_URL)
+        return SystemOneDecisionClient(endpoint, config.model, api_key=None)
+    endpoint = resolve_systemone_endpoint(config.base_url or "")
+    return SystemOneDecisionClient(endpoint, config.model, api_key=key)
 
 
 # What is still undecided when the work starts. Each seat's line carries its own meaning, so a
@@ -161,9 +212,9 @@ def task_text(task: str, access: Access, staged: bool = False) -> str:
 
 @dataclass(frozen=True)
 class _Catalog:
-    """What a recommendation chooses from: the decision model and the seats in the user's file."""
+    """What a recommendation chooses from: the decision config and the seats in the user's file."""
 
-    decision_model: str
+    config: DecisionModelConfig
     seats: Mapping[str, CustomSeatStatus]
 
 
@@ -180,7 +231,7 @@ def _catalog(host: Host, excluded: frozenset[str]) -> _Catalog:
         seats = list_members(excluded, host).orchestration.custom_seats
     except (MemberFileError, SettingsFileError, OSError, ValueError) as exc:
         raise RecommendationError("config_error", str(exc)) from exc
-    return _Catalog(document.decision_model, seats)
+    return _Catalog(decision_config(document), seats)
 
 
 def _usable(
@@ -233,7 +284,7 @@ async def recommend(
         raise usable
     if len(usable) == 1:
         return _noted(_only(*next(iter(usable.items()))), staged)
-    client = client_for_model(catalog.decision_model)
+    client = client_for_config(catalog.config)
     try:
         decision = await asyncio.to_thread(
             client.decide, task_text(task, access, staged), _described(usable)
@@ -266,7 +317,7 @@ async def recommend_many(
         else:
             pending.append((index, usable))
     if pending:
-        client = client_for_model(catalog.decision_model)
+        client = client_for_config(catalog.config)
         questions = [
             DecisionQuestion(
                 task_text(tasks[index][0], tasks[index][1], staged[index]), _described(usable)
@@ -286,18 +337,37 @@ async def recommend_many(
     return [result for result in results if result is not None]
 
 
-def client_for_model(model: str) -> DecisionClient:
-    key_name = _MODELS[model][0]
+def _resolve_key(provider: DecisionProvider, model: str) -> str | None:
+    if provider == "ollama":
+        return None
     try:
-        key = read_decision_key(key_name)
+        key = read_decision_key(provider)
     except DecisionKeysFileError as exc:
         raise RecommendationError("config_error", str(exc)) from exc
-    if key is None:
+    if key is None and provider != "custom":
         raise RecommendationError(
             "no_key",
-            f"No API key is set for {model}; choose a seat from list_members yourself.",
+            f"No API key is set for {provider} ({model}); choose a seat from list_members "
+            "yourself.",
         )
-    return new_client(model, key)
+    return key
+
+
+def client_for_config(config: DecisionModelConfig) -> DecisionClient:
+    """Resolve API key policy and construct the DecisionClient for config."""
+    key = _resolve_key(config.provider, config.model)
+    if new_client is not _DEFAULT_NEW_CLIENT:
+        return new_client(config.model, key or "")
+    return _build_client(config, key)
+
+
+def client_for_model(model: str) -> DecisionClient:
+    """Backward-compatible entry point for fixed Gemini/OpenAI model names."""
+    if model == OPENAI_MODEL:
+        return client_for_config(DecisionModelConfig(provider="openai", model=model))
+    if model == GEMINI_MODEL:
+        return client_for_config(DecisionModelConfig(provider="gemini", model=model))
+    raise KeyError(model)
 
 
 def _described(usable: Mapping[str, CustomSeatStatus]) -> dict[str, str]:
@@ -361,9 +431,13 @@ def _no_candidates(access: Access, matching: Mapping[str, CustomSeatStatus]) -> 
 __all__ = [
     "MAX_DECISION_TEXT",
     "Candidate",
+    "DecisionModelConfig",
     "Recommendation",
     "RecommendationError",
+    "client_for_config",
+    "client_for_model",
     "clip_for_decision",
+    "decision_config",
     "new_client",
     "recommend",
     "recommend_many",

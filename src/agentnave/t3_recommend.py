@@ -32,7 +32,6 @@ from agentnave.t3_seats import (
 
 MAX_T3_TASKS = 8
 _TASK_SUMMARY_MAX = 80
-_DEFAULT_DECISION_MODEL = "gemini-decision-1"
 
 T3_IMAGE_BRIEF_SUFFIX = (
     "Generate the image with your own image tool or your native image-generation subagent; using "
@@ -204,12 +203,12 @@ def _summarize_task(text: str) -> str:
     return collapsed[: _TASK_SUMMARY_MAX - 1] + "…"
 
 
-def _decision_model_name() -> str:
+def _decision_config() -> seat_recommendation.DecisionModelConfig:
     try:
         doc = read_decision_seats()
-    except DecisionSeatsFileError:
-        return _DEFAULT_DECISION_MODEL
-    return doc.decision_model if doc is not None else _DEFAULT_DECISION_MODEL
+    except DecisionSeatsFileError as exc:
+        raise seat_recommendation.RecommendationError("config_error", str(exc)) from exc
+    return seat_recommendation.decision_config(doc)
 
 
 def _filter_candidates(
@@ -423,7 +422,7 @@ async def _run_decision_batch(
     pending: Sequence[tuple[int, T3RecommendTask, dict[str, tuple[T3Seat, _CandidateFilter]]]],
 ) -> list[tuple[int, _Selection]]:
     try:
-        client = seat_recommendation.client_for_model(_decision_model_name())
+        client = seat_recommendation.client_for_config(_decision_config())
     except seat_recommendation.RecommendationError as exc:
         raise _decision_failure_error(exc.code, exc.message, pending) from None
     questions = [

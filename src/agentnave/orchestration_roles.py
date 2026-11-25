@@ -6,6 +6,8 @@ runtime grouping, visibility and access. Contract tests check the aliases agains
 
 from __future__ import annotations
 
+import ipaddress
+import urllib.parse
 from collections.abc import Sequence
 from functools import cache
 from pathlib import Path
@@ -39,7 +41,8 @@ type ProviderName = Literal[
 # A fixed group's medium seat is optional; only a bound one is published.
 type Difficulty = Literal["easy", "medium", "hard"]
 type CustomSeatDifficulty = Literal["easy", "medium", "hard"]
-type DecisionModelName = Literal["gemini-decision-1"]
+type DecisionProvider = Literal["gemini", "openai", "typesafe", "openrouter", "ollama", "custom"]
+type DecisionModelName = str
 type OrchestrationPreset = Literal["off", "meetings", "split", "parallel", "decision", "custom"]
 type OrchestrationGroup = Literal[
     "explorer",
@@ -284,16 +287,131 @@ class CustomSeat(SeatMetadata):
         )
 
 
+DEFAULT_DECISION_PROVIDER: DecisionProvider = "gemini"
+DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
+DECISION_DEFAULT_MODELS: dict[DecisionProvider, str] = {
+    "gemini": "gemini-decision-1",
+    "openai": "gpt-6-luna",
+    "typesafe": "jev-latest",
+    "openrouter": "liquid/d1.2-ultra",
+}
+FIXED_DECISION_MODELS: dict[DecisionProvider, str] = {
+    "gemini": "gemini-decision-1",
+    "openai": "gpt-6-luna",
+}
+_BASE_URL_PROVIDERS = frozenset({"ollama", "custom"})
+_DECISION_MODEL_MAX_LENGTH = 200
+_DECISION_BASE_URL_MAX_LENGTH = 512
+
+
+def is_loopback_host(host: str) -> bool:
+    """True for localhost, 127.0.0.1, ::1, and any loopback IP address."""
+    stripped = host.strip("[]")
+    if stripped.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(stripped).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_decision_base_url(raw: str) -> str:
+    """Validate and normalize a decision endpoint base URL (matching the tray rules)."""
+    cleaned = raw.strip().rstrip("/")
+    if not cleaned:
+        raise ValueError("decision_base_url must not be empty")
+    if len(cleaned) > _DECISION_BASE_URL_MAX_LENGTH:
+        raise ValueError(
+            f"decision_base_url must be at most {_DECISION_BASE_URL_MAX_LENGTH} characters"
+        )
+    if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in cleaned):
+        raise ValueError("decision_base_url must not contain spaces or control characters")
+    try:
+        parsed = urllib.parse.urlsplit(cleaned)
+    except ValueError as exc:
+        raise ValueError("decision_base_url must be a valid URL") from exc
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("decision_base_url must be an http or https URL with a host")
+    authority = cleaned.split("://", 1)[1].split("/", 1)[0]
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or "@" in parsed.netloc
+        or "@" in authority
+        or "\\" in authority
+    ):
+        raise ValueError("decision_base_url must not contain userinfo")
+    if parsed.query or parsed.fragment or "?" in cleaned or "#" in cleaned:
+        raise ValueError("decision_base_url must not contain query or fragment")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("decision_base_url has an invalid port") from exc
+    if authority.endswith(":") or port == 0:
+        raise ValueError("decision_base_url has an invalid port")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("decision_base_url must contain a host")
+    if parsed.scheme == "http" and not is_loopback_host(host):
+        raise ValueError(
+            "decision_base_url allows http only for loopback hosts (localhost, 127.0.0.1, ::1)"
+        )
+    return cleaned
+
+
 class DecisionSeatsFile(BaseModel):
     """App-owned custom seat catalog; a boss uses it while its orchestration mode is decision."""
 
     model_config = ConfigDict(extra="ignore", strict=True)
 
     version: int = Field(ge=1, le=1)
-    decision_model: DecisionModelName = "gemini-decision-1"
+    decision_provider: DecisionProvider = DEFAULT_DECISION_PROVIDER
+    decision_model: str = ""
+    decision_base_url: str | None = None
     random_candidates: bool = False
     # Two to 255 candidates is what the decision model accepts.
     seats: list[CustomSeat] = Field(default_factory=list[CustomSeat], max_length=255)
+
+    @model_validator(mode="after")
+    def validate_decision_target(self) -> DecisionSeatsFile:
+        provider = self.decision_provider
+        if "decision_model" not in self.model_fields_set:
+            if provider not in DECISION_DEFAULT_MODELS:
+                raise ValueError(f"decision_model is required for decision_provider={provider!r}")
+            self.decision_model = DECISION_DEFAULT_MODELS[provider]
+        else:
+            model = self.decision_model.strip()
+            fixed = FIXED_DECISION_MODELS.get(provider)
+            if fixed is not None:
+                if model != fixed:
+                    raise ValueError(f"decision_model for {provider!r} must be {fixed!r}")
+            elif (
+                not model
+                or len(model) > _DECISION_MODEL_MAX_LENGTH
+                or not all("!" <= ch <= "~" for ch in model)
+            ):
+                raise ValueError(
+                    f"decision_model must contain 1–{_DECISION_MODEL_MAX_LENGTH} visible ASCII "
+                    "characters"
+                )
+            self.decision_model = model
+
+        raw_url = self.decision_base_url.strip() if self.decision_base_url is not None else ""
+        if provider not in _BASE_URL_PROVIDERS:
+            if raw_url:
+                raise ValueError(
+                    f"decision_base_url is only allowed for ollama and custom, not {provider!r}"
+                )
+            self.decision_base_url = None
+        elif provider == "ollama":
+            self.decision_base_url = (
+                validate_decision_base_url(raw_url) if raw_url else DEFAULT_OLLAMA_BASE_URL
+            )
+        else:
+            if not raw_url:
+                raise ValueError("decision_base_url is required for decision_provider='custom'")
+            self.decision_base_url = validate_decision_base_url(raw_url)
+        return self
 
     @field_validator("seats")
     @classmethod
