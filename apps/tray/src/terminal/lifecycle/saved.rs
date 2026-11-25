@@ -199,7 +199,7 @@ impl Terminals {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(in crate::terminal) fn save_launches_in(&self, dir: &Path) {
         *self.store() = Store {
             dir: Some(dir.to_path_buf()),

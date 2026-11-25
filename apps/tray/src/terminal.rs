@@ -207,31 +207,32 @@ impl Running {
         // A resumed Codex screen reports working while it loads the thread; once the app-server
         // reports the thread, that report alone tells whether a turn runs.
         #[cfg(unix)]
-        let thread_known = self.derived.is_some()
-            && self
+        let (thread_known, thread_active) = {
+            let status = self
                 .codex
                 .as_ref()
                 .zip(self.native.as_deref())
-                .is_some_and(|(c, sid)| c.thread_status(sid).is_some());
+                .and_then(|(c, sid)| c.thread_status(sid));
+            (
+                self.derived.is_some()
+                    && !matches!(
+                        status,
+                        None | Some(
+                            codex_server::ThreadStatus::Unknown
+                                | codex_server::ThreadStatus::NotLoaded
+                        )
+                    ),
+                matches!(status, Some(codex_server::ThreadStatus::Active { .. })),
+            )
+        };
         #[cfg(not(unix))]
-        let thread_known = false;
-        if match osc.as_deref() {
-            Some("blocked") => true,
-            Some("working") => !thread_known,
-            _ => false,
-        } {
-            return true;
-        }
-        #[cfg(unix)]
-        if self.codex.as_ref().is_some_and(|c| {
-            self.native.as_deref().is_some_and(|sid| {
-                c.thread_status(sid)
-                    .is_some_and(|s| matches!(s, codex_server::ThreadStatus::Active { .. }))
-            })
-        }) {
-            return true;
-        }
-        false
+        let (thread_known, thread_active) = (false, false);
+        thread_active
+            || match osc.as_deref() {
+                Some("blocked") => true,
+                Some("working") => !thread_known,
+                _ => false,
+            }
     }
 
     fn describe(&self, root: &Path) -> Value {
@@ -516,6 +517,10 @@ impl Terminals {
         }
         if derived.busy || derived.active_invocation_id.is_some() {
             return Err("派生终端正忙，无法同时续派".to_owned());
+        }
+        // The user may have started to type since the dispatch last looked.
+        if running.session.has_draft() || derived::shows_busy(&running.session) {
+            return Err(derived::LIVE_BUSY_ERR.to_owned());
         }
         derived.busy = true;
         derived.blocked_kind = None;

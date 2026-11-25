@@ -55,7 +55,7 @@ pub(in crate::terminal) fn tick(
 
 impl Terminals {
     pub(super) fn collapse_idle(&self, beat: &Beat) {
-        let (mut due, leases) = {
+        let (due, leases) = {
             let mut state = self.lock();
             (state.due(beat), state.leases_of_ended())
         };
@@ -67,7 +67,7 @@ impl Terminals {
         // Codex pushes thread states only over a subscription that may have been lost, so they are
         // read afresh before they end anything.
         #[cfg(unix)]
-        self.refresh_codex(&mut due);
+        let due = self.refresh_codex(due);
         let (ended, removed) = {
             let mut state = self.lock();
             let mut ended: Vec<Ending> = Vec::new();
@@ -93,7 +93,7 @@ impl Terminals {
     }
 
     #[cfg(unix)]
-    fn refresh_codex(&self, due: &mut HashSet<u64>) {
+    fn refresh_codex(&self, mut due: HashSet<u64>) -> HashSet<u64> {
         let clients: Vec<_> = self
             .lock()
             .open
@@ -106,6 +106,7 @@ impl Terminals {
                 due.remove(&id);
             }
         }
+        due
     }
 }
 

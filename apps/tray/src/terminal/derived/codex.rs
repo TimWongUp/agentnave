@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::super::codex_server::{self, InterruptRpcOutcome, ThreadStatus, TurnStartConfig};
-use super::super::lifecycle::{Relaunched, ResumeSlot, WakePlan};
+use super::super::lifecycle::{Relaunched, ResumeSlot, Reviving, WakePlan};
 use super::super::session::Session;
 use super::super::spawn_requests::{
     BlockedReceipt, Coordinator, ParentRef, Receipt, ReceiptState, RunConfig, RunHandle,
@@ -17,7 +17,7 @@ use super::super::spawn_requests::{
 };
 use super::super::{DerivedHandle, DerivedInfo, NewDerived, Terminals, installed_path};
 use super::{
-    UNSETTLED_DISPATCH_BUSY_ERR, account_mismatch, acquire_isolation_for_terminal,
+    ROW_CLOSED_ERR, UNSETTLED_DISPATCH_BUSY_ERR, account_mismatch, acquire_isolation_for_terminal,
     cleanup_derived_startup, cwd_mismatch, detect_screen_blocker, finished_cancel_outcome,
     native_logs,
 };
@@ -26,6 +26,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const THREAD_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_STEP: Duration = Duration::from_millis(80);
 const RESUME_RETRY_GAP: Duration = Duration::from_millis(250);
+const RESUME_SLOW_GAP: Duration = Duration::from_secs(2);
 const INTERRUPT_RETRY_TIMEOUT: Duration = Duration::from_secs(4);
 const INTERRUPT_RETRY_GAP: Duration = Duration::from_millis(200);
 const INTERRUPT_CONFIRM_TIMEOUT: Duration = if cfg!(test) {
@@ -342,6 +343,9 @@ pub(super) fn open_or_launch_codex(
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
+    if held.as_ref().is_some_and(Reviving::is_gone) {
+        return Err(ROW_CLOSED_ERR.to_owned());
+    }
     let reserved = terminals.reserve_id();
     let CodexProcess {
         session,
@@ -485,14 +489,19 @@ fn follow_woken(started: CodexProcess, plan: &WakePlan) {
     }
     let ready_file = guard.0.clone();
     drop(guard);
-    let deadline = Instant::now() + THREAD_WAIT_TIMEOUT;
-    while Instant::now() < deadline && session.exit().is_none() {
+    // The TUI may first wait for the user, at a trust or sign-in question, for as long as that takes.
+    let quick = Instant::now() + THREAD_WAIT_TIMEOUT;
+    while session.exit().is_none() {
         if client.loaded_threads().contains(&plan.native)
             && client.resume_thread(&plan.native).is_ok()
         {
             break;
         }
-        thread::sleep(RESUME_RETRY_GAP);
+        thread::sleep(if Instant::now() < quick {
+            RESUME_RETRY_GAP
+        } else {
+            RESUME_SLOW_GAP
+        });
     }
     if let Some(path) = ready_file {
         let _ = fs::remove_file(path);

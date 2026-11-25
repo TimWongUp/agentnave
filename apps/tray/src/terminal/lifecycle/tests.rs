@@ -432,6 +432,15 @@ fn a_redispatch_and_a_collapse_never_cross() {
     let office = Office::new();
     let (id, session) = office.derived("claude");
     office.beat(Duration::ZERO);
+    // What the user began to type or run since the dispatch looked is not typed over.
+    report(&session, "working");
+    assert!(
+        office
+            .terminals
+            .try_claim_derived_turn(id, "inv-1", None)
+            .is_err()
+    );
+    report(&session, "done");
     // Claimed first: the collapse that was due is off.
     office
         .terminals
@@ -478,10 +487,14 @@ fn a_redispatch_and_a_collapse_never_cross() {
 
     // Let go of without a process, the row can be taken again.
     drop(office.terminals.resume_slot("claude", SID).unwrap());
-    assert!(matches!(
-        office.terminals.resume_slot("claude", SID),
-        Ok(ResumeSlot::Dormant(_))
-    ));
+    let Ok(ResumeSlot::Dormant(slot)) = office.terminals.resume_slot("claude", SID) else {
+        panic!("the row is not free to take");
+    };
+
+    // Closed while it is held, the row does not come back with the process being started.
+    assert!(!slot.is_gone());
+    office.terminals.close(Some(id));
+    assert!(slot.is_gone());
 }
 
 #[test]

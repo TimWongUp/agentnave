@@ -146,23 +146,21 @@ impl Running {
     }
 
     fn waits_for_user(&self) -> bool {
-        if self
-            .derived
-            .as_ref()
-            .is_some_and(|d| d.blocked_kind.is_some())
-            || self.session.osc_snapshot().1.as_deref() == Some("blocked")
-        {
-            return true;
-        }
         #[cfg(unix)]
-        if let (Some(codex), Some(native)) = (&self.codex, self.native.as_deref())
-            && codex
-                .thread_status(native)
-                .is_some_and(|status| status.is_waiting_on_approval())
-        {
-            return true;
-        }
-        false
+        let thread_waits = self
+            .codex
+            .as_ref()
+            .zip(self.native.as_deref())
+            .and_then(|(codex, native)| codex.thread_status(native))
+            .is_some_and(|status| status.is_waiting_on_approval());
+        #[cfg(not(unix))]
+        let thread_waits = false;
+        thread_waits
+            || self
+                .derived
+                .as_ref()
+                .is_some_and(|d| d.blocked_kind.is_some())
+            || self.session.osc_snapshot().1.as_deref() == Some("blocked")
     }
 
     /// Whether the CLI shows that it takes input by now.

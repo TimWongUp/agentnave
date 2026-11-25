@@ -50,7 +50,7 @@ fn coordinator_slot() -> &'static Mutex<Option<super::spawn_requests::Coordinato
     COORDINATOR.get_or_init(|| Mutex::new(None))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn set_coordinator(coordinator: super::spawn_requests::Coordinator) {
     *coordinator_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(coordinator);
 }

@@ -54,6 +54,14 @@ impl Reviving {
         }
     }
 
+    /// Whether the row held was closed meanwhile.
+    pub(in crate::terminal) fn is_gone(&self) -> bool {
+        match &self.held {
+            Held::Row(id) => !self.terminals.lock().open.iter().any(|r| r.id == *id),
+            Held::Session(..) => false,
+        }
+    }
+
     /// Holds a session that has no row, unless something else already does.
     pub(super) fn session(
         terminals: &Terminals,

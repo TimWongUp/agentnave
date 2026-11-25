@@ -300,6 +300,9 @@ where
     if handle.is_pre_start_cancelled() {
         return Err("启动前已取消".to_owned());
     }
+    if held.as_ref().is_some_and(Reviving::is_gone) {
+        return Err(ROW_CLOSED_ERR.to_owned());
+    }
     let launched = spawn_new(lease, isolation_id);
     drop(held);
     launched.map(|h| (h, false))
@@ -389,6 +392,7 @@ pub(super) fn account_mismatch(
     }
 }
 
+pub(super) const ROW_CLOSED_ERR: &str = "派生终端已关闭";
 pub(super) const LIVE_BUSY_ERR: &str = "派生终端正在输入或运行中";
 
 /// Its screen shows a turn running or a box waiting for an answer.
