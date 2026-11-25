@@ -264,7 +264,16 @@ fn models_at(base: &str, key: &str) -> Result<Vec<SummaryModel>, String> {
         key,
     )?;
     let items = catalog_items(&value).ok_or("摘要服务未返回模型列表")?;
-    let models = parse_models(&items);
+    let mut models = parse_models(&items);
+    let secret = key.trim();
+    if !secret.is_empty() {
+        let echoes = |text: &str| text == secret || (secret.len() >= 8 && text.contains(secret));
+        models.retain(|model| {
+            !echoes(&model.id)
+                && !echoes(&model.display_name)
+                && !model.owned_by.as_deref().is_some_and(echoes)
+        });
+    }
     if models.is_empty() {
         return Err("摘要服务没有返回可用模型".into());
     }

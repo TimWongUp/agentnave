@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import urllib.parse
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -20,13 +21,16 @@ OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/systemone"
 
 
 def resolve_systemone_endpoint(base_url: str) -> str:
-    """Resolve an Ollama or custom base URL to its System One POST endpoint."""
-    base = base_url.strip().rstrip("/")
-    if base.endswith("/systemone"):
-        return base
-    if base.endswith(("/v1", "/v1beta")):
-        return f"{base}/systemone"
-    return f"{base}/v1/systemone"
+    """Resolve an Ollama or custom base URL to its System One POST endpoint (path only)."""
+    parsed = urllib.parse.urlsplit(base_url.strip())
+    path = parsed.path.rstrip("/")
+    if path.endswith("/systemone"):
+        next_path = path
+    elif path.endswith(("/v1", "/v1beta")):
+        next_path = f"{path}/systemone"
+    else:
+        next_path = f"{path}/v1/systemone"
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, next_path, "", ""))
 
 
 def build_request(model: str, text: str, candidates: Mapping[str, str]) -> dict[str, Any]:

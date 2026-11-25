@@ -102,7 +102,13 @@ def _send_once(
     try:
         request = urllib.request.Request(endpoint, data=data, headers=dict(headers), method="POST")
         with urllib.request.build_opener(*handlers).open(request, timeout=timeout) as response:
-            return response.read(MAX_RESPONSE_BYTES)
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                raise DecisionError("bad_response", "The decision model reply is too large.")
+            remaining = getattr(response, "length", None)
+            if isinstance(remaining, int) and remaining > 0:
+                raise http.client.IncompleteRead(raw, remaining)
+            return raw
     except urllib.error.HTTPError as exc:
         raise _http_error(exc, api_key=api_key, auth_on_400_api_key=auth_on_400_api_key) from None
     except (OSError, http.client.HTTPException) as exc:

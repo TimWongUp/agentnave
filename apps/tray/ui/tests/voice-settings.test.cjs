@@ -178,3 +178,16 @@ test("saved voice and summary keys show a masked preview that is never a value",
   assert.equal(english.labelled("elevenlabs API key").attrs.placeholder, "sk_3…a8b2 · Paste a new key to replace");
   assert.equal(pickerOptions(english, "Summary model").at(-1).children.at(-1), "Enter model ID manually…");
 });
+
+test("failed summary platform switch preserves an open manual model input and typed draft", async () => {
+  const app = page(provider("gpt-a"), LISTED);
+  await app.open();
+  pickerOptions(app, "摘要模型").at(-1).listeners.click();
+  const input = app.labelled("手填摘要模型 ID");
+  input.value = "my-draft-model";
+  input.listeners.input();
+  app.state.failSave = true;
+  pickerOptions(app, "摘要平台").find((item) => app.text(item) === "自定义").listeners.click();
+  await new Promise(setImmediate);
+  assert.equal(app.labelled("手填摘要模型 ID").value, "my-draft-model");
+});

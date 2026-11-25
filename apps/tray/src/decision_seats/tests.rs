@@ -913,24 +913,73 @@ mod catalog {
 
     #[test]
     fn catalog_urls_follow_the_address_the_service_is_given() {
-        assert_eq!(models::ollama_root("http://h:1/v1/systemone"), "http://h:1");
-        assert_eq!(models::ollama_root("http://h:1/v1"), "http://h:1");
-        assert_eq!(models::ollama_root("http://h:1"), "http://h:1");
         assert_eq!(
-            models::custom_models_url("https://a.example"),
+            models::ollama_tags_url("http://h:1/v1/systemone").unwrap(),
+            "http://h:1/api/tags"
+        );
+        assert_eq!(
+            models::ollama_tags_url("http://h:1/v1").unwrap(),
+            "http://h:1/api/tags"
+        );
+        assert_eq!(
+            models::ollama_tags_url("http://h:1").unwrap(),
+            "http://h:1/api/tags"
+        );
+        // Host names like `v1` or `systemone` must never be stripped as path suffixes.
+        assert_eq!(
+            models::ollama_tags_url("https://v1").unwrap(),
+            "https://v1/api/tags"
+        );
+        assert_eq!(
+            models::custom_models_url("https://systemone").unwrap(),
+            "https://systemone/v1/models"
+        );
+        assert_eq!(
+            models::custom_models_url("https://a.example").unwrap(),
             "https://a.example/v1/models"
         );
         assert_eq!(
-            models::custom_models_url("https://a.example/v1beta"),
+            models::custom_models_url("https://a.example/v1beta").unwrap(),
             "https://a.example/v1beta/models"
         );
         assert_eq!(
-            models::custom_models_url("https://a.example/api/models"),
+            models::custom_models_url("https://a.example/api/models").unwrap(),
             "https://a.example/api/models"
         );
         assert_eq!(
-            models::custom_models_url("https://a.example/v1/systemone"),
+            models::custom_models_url("https://a.example/v1/systemone").unwrap(),
             "https://a.example/v1/models"
         );
+    }
+
+    #[test]
+    fn saving_a_key_clears_only_its_own_root_and_echoed_keys_are_dropped() {
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        let (base, seen) = serve(|_| {
+            (
+                200,
+                json!({"data": [{"id": "sk-secret-echo-1234", "name": "ok"}, {"id": "real-decider", "name": "Decider"}]}),
+            )
+        });
+        save_custom(dir_a.path(), &base);
+        save_key(
+            dir_a.path(),
+            &json!({"provider": "custom", "key": "sk-secret-echo-1234"}),
+        )
+        .unwrap();
+        let listed = fetch_models(dir_a.path(), "custom", None, true).unwrap();
+        assert_eq!(
+            listed,
+            vec![json!({"id": "real-decider", "name": "real-decider"})]
+        );
+        // Saving a key in another data root must not clear dir_a's cache.
+        save_key(
+            dir_b.path(),
+            &json!({"provider": "gemini", "key": "gm-other"}),
+        )
+        .unwrap();
+        fetch_models(dir_a.path(), "custom", None, false).unwrap();
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 }

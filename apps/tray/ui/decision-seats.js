@@ -22,6 +22,7 @@
 
   let saved = null; // { document | null, error, key_set, keys, key_previews, key_error, providers } from GET /app/decision-seats.
   let sourceDraft = null; // { provider, model, base_url } when the source differs from saved; else null.
+  const providerDrafts = new Map(); // provider -> { provider, model, base_url } kept while browsing other platforms in this draft.
   const catalogs = new Map(); // `${provider}|${base_url}` -> { state: "loading" | "ready" | "error", models, error }
   let draft = null; // The cards as edited; null while they are what is saved.
   let randomDraft = null; // Boolean when the random-candidates switch differs from saved; else null.
@@ -249,7 +250,8 @@
     const text = address.trim();
     let url;
     try { url = new URL(text); } catch { return L("API 地址无效", "The API address is not valid"); }
-    if (text.length > 512) return L("API 地址过长", "The API address is too long");
+    const normalized = url.href.replace(/\/+$/, "");
+    if (text.length > 512 || normalized.length > 512) return L("API 地址过长", "The API address is too long");
     if (url.username || url.password || /[?#]/.test(text) || /^[a-z][a-z0-9+.-]*:\/*[^/]*@/i.test(text)) return L("API 地址不能包含账号、查询参数或片段", "The API address cannot hold an account, query or fragment");
     const authority = text.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i)?.[1] ?? "";
     if (url.port === "0" || authority.endsWith(":")) return L("API 地址无效", "The API address is not valid");
@@ -320,6 +322,7 @@
       if (!keep) {
         draft = null;
         sourceDraft = null;
+        providerDrafts.clear();
         randomDraft = null;
         prefilled = false;
         manualModel = false;
@@ -345,6 +348,7 @@
     saved = { ...saved, document: doc, error: null };
     draft = null;
     sourceDraft = null;
+    providerDrafts.clear();
     randomDraft = null;
     manualModel = false;
     render();
@@ -375,6 +379,7 @@
     expanded.clear();
     draft = null;
     sourceDraft = null;
+    providerDrafts.clear();
     randomDraft = null;
     prefilled = false;
     manualModel = false;
@@ -425,7 +430,12 @@
     S.advancedEdited();
   }
   const chooseProvider = (id) => {
+    const current = source();
+    if (sourceDraft) providerDrafts.set(current.provider, { ...current });
+    else providerDrafts.delete(current.provider);
     const meta = sourceMeta(id);
+    const recalled = providerDrafts.get(id);
+    if (recalled) return chooseSource({ ...recalled });
     chooseSource(id === savedSource().provider ? savedSource() : { provider: id, model: meta.default_model || "", base_url: "" });
   };
   const chooseModel = (model, rerender = true) => {
@@ -436,7 +446,8 @@
   };
 
   async function storeKey(key) {
-    const provider = source().provider;
+    const target = { ...source() };
+    const provider = target.provider;
     keyBusy = true;
     keyMessage = null;
     render();
@@ -445,11 +456,13 @@
       saved.keys = data.keys || { ...(saved.keys || { gemini: Boolean(saved.key_set) }), [provider]: data.key_set };
       saved.key_previews = data.key_previews || {};
       saved.key_set = data.key_set;
-      keyDraft = "";
-      keyMessage = { text: key ? L("密钥已保存", "Key saved") : L("密钥已清除", "Key cleared"), error: false };
-      if (key && provider === "typesafe") startCatalog(source(), true);
+      if (source().provider === provider) {
+        keyDraft = "";
+        keyMessage = { text: key ? L("密钥已保存", "Key saved") : L("密钥已清除", "Key cleared"), error: false };
+        if (key && provider === "typesafe" && S.viewingDecision?.()) startCatalog(target, true);
+      }
     } catch (error) {
-      keyMessage = { text: error.message, error: true };
+      if (source().provider === provider) keyMessage = { text: error.message, error: true };
     }
     keyBusy = false;
     render();

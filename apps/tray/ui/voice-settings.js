@@ -254,10 +254,12 @@
   const platformIcon = id => h("img.voice-platform-icon", { alt: "", src: art.url(["magpie", "custom"].includes(id) ? "logo-default.svg" : `platform/${id}.svg`) });
   const MANUAL_MODEL = "__manual__";
   function summarySource() {
-    return picker(L("摘要平台", "Summary platform"), config.summary_platforms, config.summary.provider, id => {
-      drafts.model = null;
-      manualSummary = false;
-      summarySave({ provider: id, ...(id === config.summary.provider ? {} : { model: "", effort: "" }) });
+    return picker(L("摘要平台", "Summary platform"), config.summary_platforms, config.summary.provider, async id => {
+      if (await summarySave({ provider: id, ...(id === config.summary.provider ? {} : { model: "", effort: "" }) })) {
+        drafts.model = null;
+        manualSummary = false;
+        render();
+      }
     }, platformIcon);
   }
   const summaryPlatform = () => !["chatgpt", "magpie", "custom"].includes(config.summary.provider);
@@ -372,11 +374,19 @@
     } else {
       const typing = typable && (manualSummary || Boolean(config.summary.model && !choices.some(item => item.id === config.summary.model)));
       const items = typable ? [...choices, { id: MANUAL_MODEL, name: L("手动输入模型 ID…", "Enter model ID manually…") }] : choices;
-      const select = picker(L("摘要模型", "Summary model"), items, typing ? MANUAL_MODEL : config.summary.model, id => {
-        drafts.model = null;
-        manualSummary = id === MANUAL_MODEL;
-        if (manualSummary) { render(); document.getElementById("summary-model-id")?.focus?.(); return; }
-        summarySave({ model: id, ...(id === config.summary.model ? {} : { effort: "" }) });
+      const select = picker(L("摘要模型", "Summary model"), items, typing ? MANUAL_MODEL : config.summary.model, async id => {
+        if (id === MANUAL_MODEL) {
+          drafts.model = null;
+          manualSummary = true;
+          render();
+          document.getElementById("summary-model-id")?.focus?.();
+          return;
+        }
+        if (await summarySave({ model: id, ...(id === config.summary.model ? {} : { effort: "" }) })) {
+          drafts.model = null;
+          manualSummary = false;
+          render();
+        }
       });
       parts.push(row(L("摘要模型", "Summary model"), h("div.s-field", {}, select, refresh)));
       if (typing) parts.push(row(L("摘要模型 ID", "Summary model ID"), h("div.s-field", {}, ...summaryModelInput())));

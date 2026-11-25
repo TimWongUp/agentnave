@@ -641,3 +641,73 @@ def test_client_for_config_key_policies_across_providers(
         client_for_config(DecisionModelConfig("custom", "m", "https://example.com")),
         SystemOneDecisionClient,
     )
+
+
+def test_resolve_systemone_endpoint_never_matches_host_suffix() -> None:
+    from agentnave.decision_systemone import resolve_systemone_endpoint
+
+    assert resolve_systemone_endpoint("https://systemone") == "https://systemone/v1/systemone"
+    assert resolve_systemone_endpoint("https://v1") == "https://v1/v1/systemone"
+    assert (
+        resolve_systemone_endpoint("https://example.com/v1beta/")
+        == "https://example.com/v1beta/systemone"
+    )
+    assert (
+        resolve_systemone_endpoint("https://example.com/custom/systemone")
+        == "https://example.com/custom/systemone"
+    )
+
+
+def test_truncated_http_200_body_triggers_single_network_retry() -> None:
+    import socket
+    import threading
+
+    from agentnave.decision_systemone import SystemOneDecisionClient
+
+    attempts = 0
+    done = threading.Event()
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+    port = server.getsockname()[1]
+
+    def serve() -> None:
+        nonlocal attempts
+        while not done.is_set():
+            server.settimeout(0.2)
+            try:
+                conn, _ = server.accept()
+            except TimeoutError:
+                continue
+            with conn:
+                conn.recv(4096)
+                attempts += 1
+                if attempts == 1:
+                    # Declare full length, send truncated JSON, and close socket.
+                    conn.sendall(
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: 200\r\n\r\n"
+                        b'{"answers":{"seat":{"cho'
+                    )
+                else:
+                    body = json.dumps({"answers": {"seat": {"choice": "a"}}}).encode()
+                    conn.sendall(
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: application/json\r\n"
+                        + f"Content-Length: {len(body)}\r\n\r\n".encode()
+                        + body
+                    )
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        client = SystemOneDecisionClient(
+            endpoint=f"http://127.0.0.1:{port}/v1/systemone", model="m", timeout=5
+        )
+        assert client.decide("Task", CANDIDATES) == Decision("a", {}, None)
+        assert attempts == 2
+    finally:
+        done.set()
+        thread.join(timeout=2)
+        server.close()

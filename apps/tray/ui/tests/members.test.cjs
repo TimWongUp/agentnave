@@ -1829,6 +1829,41 @@ test("TypeSafe lists its models only once its key is saved", async () => {
   assert.deepEqual(Array.from(control(app, "decision/model").children.filter((child) => child && child.tagName === "optgroup").map((group) => group.attrs.label)), ["推荐", "可用模型"]);
 });
 
+test("switching platforms keeps unsaved custom model draft, and delayed TypeSafe save never fetches another platform", async () => {
+  let resolveKey;
+  const calls = [];
+  const app = advancedEditor(async (url, options = {}) => {
+    calls.push({ url, method: options.method || "GET" });
+    if (url === "/app/decision-seats") return { ok: true, json: async () => PLATFORM_FILE({ version: 1, decision_provider: "custom", decision_model: "old-m", decision_base_url: "https://a.example/v1", seats: [] }) };
+    if (url === "/app/decision-key") return new Promise((resolve) => { resolveKey = () => resolve({ ok: true, json: async () => ({ provider: "typesafe", key_set: true, keys: { ...KEYS_OFF, typesafe: true }, key_previews: { typesafe: "••••-key" } }) }); });
+    return { ok: true, json: async () => ({ models: [] }) };
+  });
+  app.run(`orchestration = { error: null, files: [], bosses: [{ keys: ["codex"], ids: ["codex"], labels: ["Codex"], mark: "codex" }], roles: [], document: { version: 1, preset: "decision", enabled_roles: [] } };`);
+  app.load("seat-rows.js");
+  app.load("decision-seats.js");
+  app.run('orchestration.presets = { decision: "decision" }; viewMode("decision");');
+  const decision = (code) => app.run(`(${code})(window.AgentNaveDecisionSeats)`);
+  await decision((d) => d.load());
+  // Editing Custom, glancing at OpenAI, and coming back keeps the typed draft and dirty flag.
+  control(app, "decision/model-id").listeners.input({ target: { value: "new-m" } });
+  control(app, "decision/provider").listeners.change({ target: { value: "openai" } });
+  control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
+  assert.equal(decisionFile(app).decision_model, "new-m");
+  assert.equal(decision((d) => d.changed()), true);
+  // Start saving TypeSafe key, then switch to Custom with an unsaved address before the reply lands.
+  control(app, "decision/provider").listeners.change({ target: { value: "typesafe" } });
+  const [input, save] = topRow(app, "TypeSafe AI 密钥").children[1].children[0].children;
+  input.listeners.input({ target: { value: "ts-secret" } });
+  const saving = save.listeners.click();
+  control(app, "decision/provider").listeners.change({ target: { value: "custom" } });
+  control(app, "decision/address").listeners.input({ target: { value: "https://unsaved.example/v1" } });
+  app.run('$("pane-orchestration").hidden = true;');
+  resolveKey();
+  await saving;
+  await settle();
+  assert.equal(calls.filter((call) => call.url.startsWith("/app/decision-models")).length, 0);
+});
+
 test("a local Ollama and a custom endpoint take an address, which is checked before saving", async () => {
   const { app, calls, decision } = decisionEditor("decision", PLATFORM_FILE(), null, (url) => (url.searchParams.get("provider") === "custom" ? { error: "模型目录返回 404" } : { models: [{ id: "system-one:1b", name: "system-one:1b" }] }));
   await decision((d) => d.load());
@@ -1845,7 +1880,7 @@ test("a local Ollama and a custom endpoint take an address, which is checked bef
   assert.deepEqual(decisionFile(app), { version: 1, decision_provider: "ollama", decision_model: "system-one:1b", seats: [] });
   address(" http://localhost:11434/v1/ ");
   assert.equal(decisionFile(app).decision_base_url, "http://localhost:11434/v1");
-  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "https://example.com/v1?", "https://example.com/v1#", "https://example.com:0/v1", "https://example.com:/v1", "http://localhost:0", "http://[::ffff:127.0.0.1]:11434", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`]) {
+  for (const bad of ["http://example.com", "https://user@example.com", "https://example.com/v1?key=1", "https://example.com/#x", "https://example.com/v1?", "https://example.com/v1#", "https://example.com:0/v1", "https://example.com:/v1", "http://localhost:0", "http://[::ffff:127.0.0.1]:11434", "ftp://localhost", "not a url", `https://example.com/${"a".repeat(512)}`, `https://example.com/${"é".repeat(100)}`]) {
     address(bad);
     assert.match(decision((d) => d.problem()), /API/, bad);
   }

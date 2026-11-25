@@ -109,6 +109,6 @@ pub(crate) fn save_key(root: &Path, payload: &Value) -> Result<&'static str, Str
     }
     let document = json!({"version": 1, "keys": keys});
     crate::private_keys::write_private_json(root, KEYS_FILE, &document)?;
-    super::models::clear_cache();
+    super::models::clear_cache_for(root);
     Ok(source.id)
 }

@@ -232,18 +232,14 @@ pub(super) fn fetch_catalog(
                 parse_typesafe,
             )
         }
-        "ollama" => fetch(
-            &format!("{}/api/tags", ollama_root(&base)),
-            None,
-            &auth_denied,
-            parse_ollama,
-        ),
-        _ => fetch(
-            &custom_models_url(&base),
-            key.as_deref(),
-            &auth_denied,
-            parse_listed,
-        ),
+        "ollama" => {
+            let url = ollama_tags_url(&base)?;
+            fetch(&url, None, &auth_denied, parse_ollama)
+        }
+        _ => {
+            let url = custom_models_url(&base)?;
+            fetch(&url, key.as_deref(), &auth_denied, parse_listed)
+        }
     }?;
     lock_cache().insert(cache_key, models.clone());
     Ok(models)
@@ -301,9 +297,11 @@ fn cache_key(root: &Path, source: &Source, base: &str, key: Option<&str>) -> Str
     format!("{}|{}|{}|{}", root.to_string_lossy(), source.id, base, key)
 }
 
-/// Forgets every list read so far; a saved or cleared key changes what a source answers.
-pub(super) fn clear_cache() {
-    lock_cache().clear();
+/// Forgets this data root's cached lists; a saved or cleared key changes what a source answers,
+/// without disturbing unrelated data roots.
+pub(super) fn clear_cache_for(root: &Path) {
+    let prefix = format!("{}|", root.to_string_lossy());
+    lock_cache().retain(|key, _| !key.starts_with(&prefix));
 }
 
 fn lock_cache() -> std::sync::MutexGuard<'static, HashMap<String, Vec<Value>>> {
@@ -341,21 +339,30 @@ fn catalog_base(root: &Path, source: &Source, given: Option<&str>) -> Result<Str
     super::normalize_address(&chosen).map_err(|error| (400, error))
 }
 
-/// `<root>` of an Ollama address: the server itself, not its OpenAI-style route.
-pub(super) fn ollama_root(base: &str) -> &str {
-    let base = base.strip_suffix("/v1/systemone").unwrap_or(base);
-    base.strip_suffix("/v1").unwrap_or(base)
+/// Ollama's `/api/tags` URL derived from the URL path only, never trimming the host.
+pub(super) fn ollama_tags_url(base: &str) -> Result<String, Failure> {
+    let mut url = reqwest::Url::parse(base).map_err(|_| (400, "地址无效".to_string()))?;
+    let path = url.path().trim_end_matches('/');
+    let path = path.strip_suffix("/v1/systemone").unwrap_or(path);
+    let path = path.strip_suffix("/v1").unwrap_or(path);
+    url.set_path(&format!("{path}/api/tags"));
+    Ok(url.into())
 }
 
-pub(super) fn custom_models_url(base: &str) -> String {
-    let base = base.strip_suffix("/systemone").unwrap_or(base);
-    if base.ends_with("/models") {
-        base.to_owned()
-    } else if base.ends_with("/v1") || base.ends_with("/v1beta") {
-        format!("{base}/models")
+/// Custom System One `/models` URL derived from the URL path only, never trimming the host.
+pub(super) fn custom_models_url(base: &str) -> Result<String, Failure> {
+    let mut url = reqwest::Url::parse(base).map_err(|_| (400, "地址无效".to_string()))?;
+    let path = url.path().trim_end_matches('/');
+    let path = path.strip_suffix("/systemone").unwrap_or(path);
+    let next = if path.ends_with("/models") {
+        path.to_owned()
+    } else if path.ends_with("/v1") || path.ends_with("/v1beta") {
+        format!("{path}/models")
     } else {
-        format!("{base}/v1/models")
-    }
+        format!("{path}/v1/models")
+    };
+    url.set_path(&next);
+    Ok(url.into())
 }
 
 fn fetch(
@@ -400,7 +407,15 @@ fn fetch(
     }
     let document: Value =
         serde_json::from_slice(&bytes).map_err(|_| (502, "模型目录返回了无效 JSON".to_string()))?;
-    Ok(parse(&document))
+    let mut models = parse(&document);
+    // Drop any model entry that echoes back the Bearer key sent to the catalog endpoint.
+    if let Some(secret) = key.map(str::trim).filter(|k| !k.is_empty()) {
+        let echoes = |text: &str| text == secret || (secret.len() >= 8 && text.contains(secret));
+        models.retain(|item| {
+            !item["id"].as_str().is_some_and(echoes) && !item["name"].as_str().is_some_and(echoes)
+        });
+    }
+    Ok(models)
 }
 
 fn entry(id: &str, name: Option<&str>) -> Value {
