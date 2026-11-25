@@ -1733,12 +1733,21 @@ test("going back to Gemini saves its own model whatever the saved platform was",
   assert.equal(decision((d) => d.changed()), false);
 });
 
-test("the model list is asked for on load, on choosing, after a key and on refresh, never by drawing the page", async () => {
-  const { app, calls, decision } = decisionEditor("decision", PLATFORM_FILE({ version: 1, decision_provider: "ollama", decision_model: "system-one:1b", seats: [] }), null, () => ({ models: [{ id: "system-one:1b", name: "system-one:1b" }] }));
+test("the model list is asked for only when the decision panel is open, on choosing, after a key and on refresh, never by drawing the page", async () => {
+  const { app, calls, decision } = decisionEditor("split", PLATFORM_FILE({ version: 1, decision_provider: "ollama", decision_model: "system-one:1b", seats: [] }), null, () => ({ models: [{ id: "system-one:1b", name: "system-one:1b" }] }));
   const asked = () => calls.filter((call) => call.url.startsWith("/app/decision-models")).length;
+  // Loading while another mode or another settings tab is active asks nothing.
   await decision((d) => d.load());
   await settle();
-  assert.equal(asked(), 1, "once the file is in");
+  assert.equal(asked(), 0, "another orchestration mode");
+  app.run('$("pane-orchestration").hidden = true; viewMode("decision");');
+  await decision((d) => d.load());
+  await settle();
+  assert.equal(asked(), 0, "another settings tab");
+  // Opening the decision panel in the orchestration tab asks once.
+  app.run('$("pane-orchestration").hidden = false; viewMode("decision");');
+  await settle();
+  assert.equal(asked(), 1, "once the decision panel is open");
   // A half-typed address and any number of redraws ask nothing.
   const address = (value) => control(app, "decision/address").listeners.input({ target: { value } });
   address("http://localhost:1");

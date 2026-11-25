@@ -323,8 +323,8 @@
         randomDraft = null;
         prefilled = false;
         manualModel = false;
-        // The first list is asked for once the file is in, not whenever the page is drawn.
-        if (!locked() && listsOnChoice(source().provider)) startCatalog(source(), false);
+        // The first list is asked for only while the decision panel itself is open, not from another tab or mode.
+        loadVisibleCatalog();
       }
     } catch (error) {
       S.showNotice(L(`无法读取决策模型推荐工位设置：${error.message}`, `Failed to load decision-model seat settings: ${error.message}`), true);
@@ -408,6 +408,11 @@
 
   // Platforms whose list comes with choosing them: the open ones, and TypeSafe once its key is saved.
   const listsOnChoice = (provider) => provider === "openrouter" || provider === "ollama" || (provider === "typesafe" && keySet(provider));
+  const loadVisibleCatalog = () => {
+    const current = savedSource();
+    if (!locked() && !sourceDraft && S.viewingDecision?.() && listsOnChoice(current.provider)) startCatalog(current, false);
+  };
+  const viewed = () => loadVisibleCatalog();
 
   function chooseSource(next) {
     const meta = sourceMeta(next.provider);
@@ -725,5 +730,5 @@
         el("div", { className: "s-row" }, el("label", { className: "s-label", htmlFor: "decision-add" }, L("添加工位", "Add seat")), addMenu()))));
   }
 
-  window.AgentNaveDecisionSeats = { load, panel, changed, problem, save, discard, entered, cards, document: fileDocument, prefill, addCard };
+  window.AgentNaveDecisionSeats = { load, panel, changed, problem, save, discard, entered, viewed, cards, document: fileDocument, prefill, addCard };
 }

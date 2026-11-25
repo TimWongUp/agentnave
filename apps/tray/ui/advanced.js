@@ -237,6 +237,7 @@
       editor.value = orchestrationPresetText(orchestrationView === "off" ? "split" : orchestrationView, false) || "";
     }
     orchestrationView = mode;
+    if (mode === "decision") window.AgentNaveDecisionSeats?.viewed?.();
     renderOrchestration();
     renderAdvancedBar();
   }
@@ -1001,6 +1002,7 @@
   Object.assign(S, {
     orchestrationWanted, orchestrationChanged, loadOrchestration, saveOrchestration, orchestrationPresetText,
     renderOrchestrationText, orchestrationSupportsT3: () => orchestrationView !== "meetings", // off still gets the T3-only block
+    viewingDecision: () => orchestrationView === "decision" && !$("pane-orchestration")?.hidden,
     viewMode, setOrchestrationSeat, taskScopeNote, renderOrchestration, renderRuleFiles, seatsShown, seatConflicts,
     seatConflictText, memberSaveErrors, listSeatModel, setReviewSeat, seatSelects, seatBlock, renderReviewSeats,
     advancedChanges, renderAdvancedBar, advancedEdited, discardAdvanced, bindAdvanced, REVIEW_ROLES,
