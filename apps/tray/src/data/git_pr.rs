@@ -1,4 +1,4 @@
-//! Non-isolated working directory checks for ADR-0115 Git/PR status and write guards.
+//! Non-isolated working directory checks for the read-only ADR-0115 Git/PR status (ADR-0126).
 
 use std::path::{Path, PathBuf};
 
