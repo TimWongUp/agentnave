@@ -304,11 +304,9 @@ fn discover_finds_t3_settings_multi_account_homes_desktop_workbuddy_kimi_minimax
     assert_eq!(hermes.len(), 2);
 
     // OpenCode DB via env override and XDG fallback.
-    let env_oc = |k: &str| (k == "OPENCODE_DB").then(|| "/custom/oc.db".to_owned());
-    assert_eq!(
-        discover::opencode_db_in(&home, &env_oc),
-        Path::new("/custom/oc.db")
-    );
+    let custom_oc = dir.path().join("custom/oc.db");
+    let env_oc = |k: &str| (k == "OPENCODE_DB").then(|| custom_oc.to_string_lossy().into_owned());
+    assert_eq!(discover::opencode_db_in(&home, &env_oc), custom_oc);
     assert_eq!(
         discover::opencode_db_in(&home, &no_env),
         home.join(".local/share/opencode/opencode.db")
@@ -582,15 +580,20 @@ fn antigravity_batch_cwd_and_project_attribution_alignment() {
         "CREATE TABLE conversation_summaries(conversation_id TEXT PRIMARY KEY, workspace_uris TEXT NOT NULL);",
     )
     .unwrap();
+    let (uri, expected_cwd) = if cfg!(windows) {
+        ("file:///C:/work/my%20app", r"C:\work\my app")
+    } else {
+        ("file:///work/my%20app", "/work/my app")
+    };
     sdb.execute(
-        "INSERT INTO conversation_summaries VALUES ('conv-1', '[\"file:///work/my%20app\"]')",
-        [],
+        "INSERT INTO conversation_summaries VALUES ('conv-1', ?1)",
+        [format!("[\"{uri}\"]")],
     )
     .unwrap();
     drop(sdb);
 
     let cwds = parsers::antigravity::load_cwds(&agy_root);
-    assert_eq!(cwds.get("conv-1").map(String::as_str), Some("/work/my app"));
+    assert_eq!(cwds.get("conv-1").map(String::as_str), Some(expected_cwd));
 
     let mut state = parsers::initial();
     let line = json!({"source":"MODEL","step_index":1,"created_at":"2026-11-20T10:00:00Z","model":"gemini-2.5-pro","input_tokens":100,"cache_read_tokens":50,"output_tokens":10});
@@ -602,7 +605,7 @@ fn antigravity_batch_cwd_and_project_attribution_alignment() {
         Some(&cwds),
     );
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].cwd, "/work/my app");
+    assert_eq!(events[0].cwd, expected_cwd);
 
     // ProjectResolver merges native cwd, boss key, and worker window.
     let proj_map: HashMap<String, String> = HashMap::new();

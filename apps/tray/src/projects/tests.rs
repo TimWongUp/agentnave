@@ -676,22 +676,19 @@ fn t3_worktrees_collapse_to_main_repo_while_bare_t3_and_usage_codex_are_other() 
     // Hermes cache scratch directory is never classified as a user project.
     machine.make("home/.hermes/cache/scratch");
     assert_eq!(machine.place(home.join(".hermes/cache/scratch")), OTHER);
+    assert!(super::env::is_macos_var_folders_temp(Path::new(
+        "/private/var/folders/ab/cd1234/T/tmp.XY6hmjaCUM"
+    )));
+    assert!(super::env::is_macos_var_folders_temp(Path::new(
+        "/var/folders/ab/cd1234/T/work"
+    )));
+    assert!(!super::env::is_macos_var_folders_temp(Path::new(
+        "/private/var/folders/ab/cd1234/C/cache"
+    )));
     #[cfg(target_os = "macos")]
     {
-        assert!(
-            machine
-                .env
-                .is_scratch(Path::new("/private/var/folders/ab/cd1234/T/tmp.XY6hmjaCUM"))
-        );
-        assert!(
-            machine
-                .env
-                .is_scratch(Path::new("/var/folders/ab/cd1234/T/work"))
-        );
-        assert!(
-            !machine
-                .env
-                .is_scratch(Path::new("/private/var/folders/ab/cd1234/C/cache"))
-        );
+        let detected = Env::detect();
+        assert!(detected.is_scratch(Path::new("/private/var/folders/ab/cd1234/T/tmp.XY6hmjaCUM")));
+        assert!(!detected.is_scratch(Path::new("/private/var/folders/ab/cd1234/C/cache")));
     }
 }

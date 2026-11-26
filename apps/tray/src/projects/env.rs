@@ -17,6 +17,9 @@ pub(super) struct Env {
     /// Bare workspace roots excluded from non-git usage project attribution (e.g. `~/Documents/Codex`).
     pub usage_bare: Vec<PathBuf>,
     pub auto: Vec<AutoRule>,
+    /// Enabled only by `Env::detect()` on macOS so injected test fixtures under `TMPDIR`
+    /// (`/private/var/folders/.../T/...`) are never swallowed as scratch.
+    macos_var_folders: bool,
 }
 
 /// What the places were read from; a change means they are read again.
@@ -76,6 +79,7 @@ impl Env {
                 .collect(),
             scratch,
             home,
+            macos_var_folders: false,
         }
     }
 
@@ -89,29 +93,16 @@ impl Env {
             .into_iter()
             .flatten()
             .collect();
-        Self::new(auto::detect(), temp, crate::data_files::data_root(), bare)
+        let mut env = Self::new(auto::detect(), temp, crate::data_files::data_root(), bare);
+        env.macos_var_folders = cfg!(target_os = "macos");
+        env
     }
 
     pub(super) fn is_scratch(&self, path: &std::path::Path) -> bool {
         if self.scratch.iter().any(|root| within(path, root)) {
             return true;
         }
-        #[cfg(target_os = "macos")]
-        {
-            // Any per-user macOS LaunchServices temp root: `/[private/]var/folders/<xx>/<yy>/T/...`.
-            let rest = path
-                .strip_prefix("/private/var/folders")
-                .or_else(|_| path.strip_prefix("/var/folders"));
-            if let Ok(rel) = rest
-                && rel
-                    .components()
-                    .nth(2)
-                    .is_some_and(|c| c.as_os_str() == "T")
-            {
-                return true;
-            }
-        }
-        false
+        self.macos_var_folders && is_macos_var_folders_temp(path)
     }
 
     pub(super) fn is_bare(&self, path: &std::path::Path) -> bool {
@@ -127,6 +118,18 @@ impl Env {
     pub(super) fn is_auto(&self, path: &std::path::Path) -> bool {
         self.auto.iter().any(|rule| rule.covers(path))
     }
+}
+
+/// Any per-user macOS LaunchServices temp root: `/[private/]var/folders/<xx>/<yy>/T/...`.
+pub(super) fn is_macos_var_folders_temp(path: &std::path::Path) -> bool {
+    let rest = path
+        .strip_prefix("/private/var/folders")
+        .or_else(|_| path.strip_prefix("/var/folders"));
+    rest.is_ok_and(|rel| {
+        rel.components()
+            .nth(2)
+            .is_some_and(|c| c.as_os_str() == "T")
+    })
 }
 
 pub(super) fn stamp() -> Stamp {
