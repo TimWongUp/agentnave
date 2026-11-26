@@ -1165,10 +1165,16 @@ const ChatTerminal = (() => {
     return true;
   }
   const hasTerminal = (group) => Boolean(byId(pendingId(group)) || ofWorkspace(group));
+  const bossActivity = (group) => {
+    const x = byId(pendingId(group)) || ofWorkspace(group);
+    if (!x || x.exit != null || x.derived) return null;
+    const a = x.activity;
+    return a === "blocked" || a === "working" || a === "idle" ? a : "unknown";
+  };
   const displayState = (group) => {
     const x = terminalOf(group);
     const derived = derivedOf(group).map((d) => [d.terminal, byId(d.terminal)?.started, d.derived_state, d.waking, d.resumable, d.pending_results, d.display_title]);
-    return [x ? [x.id, x.started, x.exit != null, x.derived_state, t.waking.has(x.id)] : null, derived, reviving(group, openDeskKey())];
+    return [x ? [x.id, x.started, x.exit != null, x.derived_state, x.activity, t.waking.has(x.id)] : null, bossActivity(group), derived, reviving(group, openDeskKey())];
   };
   const bossOpensTerminal = (group) => {
     const agent = byId(pendingId(group));
@@ -1225,5 +1231,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, rowPath, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, stayOnMessages, revive, closeDerived, focusFrame, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, rowPath, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, bossActivity, running, showing, showingDerived, exitedOf, openBoss, openDerived, stayOnMessages, revive, closeDerived, focusFrame, close, stop };
 })();

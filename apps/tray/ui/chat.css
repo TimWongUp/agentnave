@@ -555,6 +555,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .label .cli { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 3px 5px; font-size: 11px; color: var(--muted); }
 .label .st { margin-top: 2px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 [data-mood="working"] .label .st, [data-mood="speaking"] .label .st { color: var(--run); }
+[data-mood="review"] .label .st { color: var(--review); }
 [data-mood="failed"] .label .st { color: var(--bad); }
 /* a desk's role is its label's last line; the line keeps its height when there is no role */
 /* the role shows whole, wrapping to a second line before it is cut */

@@ -8,6 +8,7 @@
 //! terminal with `?session=<id>`.
 
 mod account;
+mod activity;
 #[cfg(unix)]
 mod codex_server;
 mod derived;
@@ -256,6 +257,7 @@ impl Running {
             .map(|sid| thread_desk_key(&self.provider, sid));
         json!({"id": self.id, "provider": self.provider, "art_model": art_model, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": active,
+            "activity": (!is_derived && self.session.exit().is_none()).then(|| self.boss_activity()),
             // Tells the processes apart that ran in this row.
             "started": self.started.duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64()),
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,

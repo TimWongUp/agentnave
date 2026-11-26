@@ -37,18 +37,75 @@ function office(character = (_host, model) => model || "default", terminal = und
   vm.runInContext(readFileSync(`${__dirname}/../chat-office.js`, "utf8"), context);
   const rec = Object.fromEntries(["lid", "scene", "desk", "chair", "open", "closed", "portrait", "cli", "st", "state"].map(key => [key, node()]));
   rec.laptop = { laptop: { dress(set) { rec.laptop.set = set; } } };
-  return { rec, boss: context.el.boss, update: c => context.updateBoss(rec, c, { running: 0, review: 0 }) };
+  return { rec, boss: context.el.boss, update: (c, n = { running: 0, review: 0 }) => context.updateBoss(rec, c, n) };
 }
 
 test("a boss whose terminal CLI runs shows as working", () => {
   let open = true;
-  const { rec, boss, update } = office(undefined, { running: group => open && group === "ws" });
+  let act = "working";
+  const { rec, boss, update } = office(undefined, {
+    running: group => open && group === "ws",
+    bossActivity: group => (open && group === "ws" ? act : null),
+  });
   update({ group: "ws", host: "claude", label: "Claude Code", messages: [] });
   assert.equal(boss.dataset.mood, "working");
   assert.equal(rec.st.textContent, "工作中");
+  act = "idle";
+  update({ group: "ws", host: "claude", label: "Claude Code", messages: [] });
+  assert.notEqual(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "空闲");
+  act = "unknown";
+  update({ group: "ws", host: "claude", label: "Claude Code", messages: [] });
+  assert.notEqual(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "终端运行中");
   open = false;
   update({ group: "ws", host: "claude", label: "Claude Code", messages: [] });
   assert.notEqual(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "空闲");
+});
+
+test("boss office status follows the ADR-0127 §4 priority table", () => {
+  let activity = "blocked";
+  const { rec, boss, update } = office(undefined, {
+    running: () => activity !== null,
+    bossActivity: () => activity,
+  });
+  const base = { group: "ws", host: "codex", label: "Codex CLI", messages: [] };
+
+  // 1. Blocked confirmation outranks running tasks and meetings.
+  update(base, { running: 2, review: 1 });
+  assert.equal(boss.dataset.mood, "review");
+  assert.equal(rec.st.textContent, "等待确认");
+
+  // 2. Waiting on tasks outranks review and working terminal.
+  activity = "working";
+  update(base, { running: 2, review: 1 });
+  assert.equal(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "等 2 个回复");
+
+  // 3. Review meeting outranks working terminal.
+  update(base, { running: 0, review: 1 });
+  assert.equal(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "会议进行中");
+
+  // 4. Working terminal.
+  update(base, { running: 0, review: 0 });
+  assert.equal(boss.dataset.mood, "working");
+  assert.equal(rec.st.textContent, "工作中");
+
+  // 5. Idle terminal.
+  activity = "idle";
+  update(base, { running: 0, review: 0 });
+  assert.equal(rec.st.textContent, "空闲");
+
+  // 6. Live terminal without an explicit signal.
+  activity = "unknown";
+  update(base, { running: 0, review: 0 });
+  assert.equal(rec.st.textContent, "终端运行中");
+
+  // 7. No App terminal.
+  activity = null;
+  update(base, { running: 0, review: 0 });
   assert.equal(rec.st.textContent, "空闲");
 });
 
