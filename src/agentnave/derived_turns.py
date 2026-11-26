@@ -156,12 +156,13 @@ def _read_jsonl_rows(path: Path) -> tuple[list[dict[str, object]], bool]:
 
 
 def _unwrap_claude_pasted(text: str) -> str:
-    match = _RE_CLAUDE_PASTED_HEAD.match(text)
+    # Claude can record blank lines before the tag.
+    trimmed = text.strip()
+    match = _RE_CLAUDE_PASTED_HEAD.match(trimmed)
     if match is None:
         return text
     open_end = match.end()
     close = f'</pasted_content id="{match.group(1)}">'
-    trimmed = text.rstrip()
     if trimmed.endswith(close):
         body = trimmed[open_end : len(trimmed) - len(close)]
         return body.removesuffix("\n")

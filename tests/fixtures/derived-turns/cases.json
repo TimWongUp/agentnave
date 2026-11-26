@@ -183,6 +183,19 @@
         }
       ],
       "expected_user_turn_indices": [1]
+    },
+    {
+      "name": "claude_legacy_pasted_prompt_after_instructions",
+      "provider": "claude",
+      "file": "claude_pasted.jsonl",
+      "tasks": [
+        {
+          "prompt": "Remember the code word",
+          "native_anchor": null,
+          "has_forward": false
+        }
+      ],
+      "expected_user_turn_indices": [1]
     }
   ],
   "unrecognized_file": "unrecognized.jsonl"
