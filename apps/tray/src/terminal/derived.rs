@@ -427,27 +427,48 @@ pub(super) fn cwd_mismatch(existing: &Path, requested: &Path) -> Option<String> 
 }
 
 pub(super) fn detect_screen_blocker(session: &Session) -> Option<(&'static str, &'static str)> {
-    let lowered = session.recent_screen_text(4096).to_ascii_lowercase();
-    if lowered.contains("do you trust")
-        || lowered.contains("trust this folder")
-        || lowered.contains("trust this workspace")
-        || lowered.contains("yes, i trust")
+    screen_blocker_in_text(&session.recent_screen_text(4096))
+}
+
+fn screen_blocker_in_text(text: &str) -> Option<(&'static str, &'static str)> {
+    let squashed = squash(text);
+    if [
+        "doyoutrust",
+        "trustthisfolder",
+        "trustthisworkspace",
+        "yes,itrust",
+    ]
+    .iter()
+    .any(|phrase| squashed.contains(phrase))
     {
         return Some(("trust", "等待目录信任确认"));
     }
-    detect_auth_blocker_in_text(&lowered)
+    detect_auth_blocker_in_text(text)
 }
 
 pub(super) fn detect_auth_blocker_in_text(text: &str) -> Option<(&'static str, &'static str)> {
-    let lowered = text.to_ascii_lowercase();
-    if lowered.contains("select login method")
-        || lowered.contains("please run /login")
-        || lowered.contains("not logged in")
-        || lowered.contains("sign in to continue")
+    let squashed = squash(text);
+    if [
+        "selectloginmethod",
+        "pleaserun/login",
+        "notloggedin",
+        "signintocontinue",
+    ]
+    .iter()
+    .any(|phrase| squashed.contains(phrase))
     {
         return Some(("auth", "等待账号登录确认"));
     }
     None
+}
+
+/// Lower case without whitespace: Codex moves the cursor over the blanks between words instead of
+/// writing them, so its dialogs have no spaces once the escape sequences are stripped.
+fn squash(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 pub(super) fn update_blocker_if_changed(

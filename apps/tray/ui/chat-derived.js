@@ -21,11 +21,19 @@ const ChatDerived = (() => {
     return ChatTerminal.ofDesk(group, d.key) || null;
   }
 
+  // A terminal is matched by its native session, which a call just sent does not have yet (Codex
+  // asks about trust before it starts one): the workspace's one such terminal of that CLI is it.
+  function unnamedTerminal(d, group) {
+    const found = (ChatTerminal?.all?.() || []).filter(
+      (x) => x.derived && x.parent_workspace_id === group && !x.native && x.provider === d.provider && x.exit == null,
+    );
+    return found.length === 1 ? found[0] : null;
+  }
+
   function mood(d, _ctx, group = groupOf()) {
-    const x = terminalFor(d, group);
-    const waking = x ? ChatTerminal.isWaking(x.id) : ChatTerminal?.reviving?.(group, d.key);
-    // Its terminal is matched by the native session, which a call just sent does not have yet.
     const starting = d.status === "running" && d.key?.startsWith("task:");
+    const x = terminalFor(d, group) || (starting ? unnamedTerminal(d, group) : null);
+    const waking = x ? ChatTerminal.isWaking(x.id) : ChatTerminal?.reviving?.(group, d.key);
     const ds = waking ? "waking" : x ? ChatTerminal.derivedStateOf(x) : starting ? "starting" : "idle";
     const [kind, zh, en] = STATES[ds] || STATES.idle;
     const word = L(zh, en);
