@@ -16,7 +16,7 @@
   kill-on-close Job Object 的专用 supervisor，不得用 Windows process group 冒充树级所有权。
 - stdout 的 JSON 结果遵守 `InvocationResult` 稳定字段；Provider 业务终态必须尽量保全输出和原生 `session_id`。
 - 交互 TUI 的驱动、回合终点判断、推送投递和终端拥有者，先查 herdr（<https://github.com/herdrdev/herdr>，Apache-2.0）和 magpie（<https://github.com/yetone/magpie>，MIT）怎么做：有成熟做法就复用或移植，移植代码保留许可证要求的署名并在 PR 注明出处；它们没覆盖或与现行 ADR 冲突时才自行设计，冲突先修订 ADR。
-- 办公室的会话界面、Git 与 PR 的显示和操作，先参考 Claude 桌面端的交互和 t3code（<https://github.com/pingdotgg/t3code>，MIT）的做法，规则同上。
+- 办公室的会话界面与 Git、PR 状态的显示，先参考 Claude 桌面端的交互和 t3code（<https://github.com/pingdotgg/t3code>，MIT）的做法，规则同上；托盘不做提交、推送、开 PR 等 Git 写操作（ADR-0126）。
 
 ## Code readability
 
