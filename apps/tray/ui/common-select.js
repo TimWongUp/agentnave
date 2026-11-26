@@ -5,19 +5,31 @@
 // menu that lays the chosen item over the box. The <select> still holds the value and fires
 // "change", so pages keep using it as before.
 {
+  const TYPE_MS = 500; // typed characters closer together than this spell one prefix
   let open = null; // { select, menu, items, active }
+  let typed = "", typedTimer = 0;
+  let menus = 0;
+  const ids = new WeakMap(); // select -> its list's id, the same each time it opens
+
+  const disabled = (item) => item.getAttribute("aria-disabled") === "true";
+
+  function forgetTyped() {
+    clearTimeout(typedTimer);
+    typed = "";
+  }
 
   function close() {
     if (!open) return;
+    forgetTyped();
     open.menu.remove();
-    open.select.removeAttribute("aria-expanded");
+    for (const name of ["aria-expanded", "aria-controls", "aria-activedescendant"]) open.select.removeAttribute(name);
     open = null;
   }
 
   function choose(index) {
-    const { select } = open;
+    const { select, items } = open;
     close();
-    if (index < 0 || select.options[index].disabled || index === select.selectedIndex) return;
+    if (index < 0 || disabled(items[index]) || index === select.selectedIndex) return;
     select.selectedIndex = index;
     select.dispatchEvent(new Event("input", { bubbles: true }));
     select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -26,28 +38,84 @@
   function highlight(index) {
     open.active = index;
     open.items.forEach((item, i) => item.classList.toggle("active", i === index));
-    open.items[index]?.scrollIntoView({ block: "nearest" });
+    const item = open.items[index];
+    if (!item) return open.select.removeAttribute("aria-activedescendant");
+    open.select.setAttribute("aria-activedescendant", item.id);
+    item.scrollIntoView({ block: "nearest" });
+  }
+
+  // Typed characters move the highlight as in a native list; only Enter or a click chooses.
+  function typeahead(character) {
+    clearTimeout(typedTimer);
+    typed += character.toLocaleLowerCase();
+    typedTimer = setTimeout(forgetTyped, TYPE_MS);
+    // One letter typed again and again steps through the options starting with it.
+    const [first, ...rest] = typed;
+    const repeated = rest.every((c) => c === first);
+    const prefix = repeated ? first : typed;
+    const from = Math.max(0, open.active + (repeated ? 1 : 0));
+    const count = open.items.length;
+    for (let step = 0; step < count; step++) {
+      const index = (from + step) % count, item = open.items[index];
+      if (!disabled(item) && item.textContent.trim().toLocaleLowerCase().startsWith(prefix)) return highlight(index);
+    }
+  }
+
+  function createOption(select, option, group, index, id) {
+    const item = document.createElement("div");
+    item.className = "select-option";
+    item.id = `${id}-option-${index}`;
+    item.setAttribute("role", "option");
+    item.textContent = option.textContent;
+    if (index === select.selectedIndex) item.setAttribute("aria-selected", "true");
+    if (option.disabled || group?.disabled) item.setAttribute("aria-disabled", "true");
+    item.addEventListener("mousedown", (e) => e.preventDefault());
+    item.addEventListener("click", () => choose(index));
+    item.addEventListener("mousemove", () => open && open.active !== index && highlight(index));
+    return item;
+  }
+
+  function createGroup(label) {
+    const box = document.createElement("div");
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", label);
+    const heading = document.createElement("div");
+    heading.className = "select-group-label";
+    heading.setAttribute("aria-hidden", "true");
+    heading.textContent = label;
+    box.append(heading);
+    return box;
+  }
+
+  // The options in the box's order, each <optgroup> under its heading. Only options are items,
+  // so keys and the pointer pass over headings.
+  function fill(menu, select) {
+    const items = [];
+    const add = (parent, option, group) => {
+      const item = createOption(select, option, group, items.length, menu.id);
+      items.push(item);
+      parent.append(item);
+    };
+    for (const child of select.children) {
+      if (child.tagName === "OPTION") add(menu, child);
+      if (child.tagName !== "OPTGROUP") continue;
+      const box = createGroup(child.label);
+      for (const option of child.children) add(box, option, child);
+      menu.append(box);
+    }
+    return items;
   }
 
   function show(select) {
     close();
+    if (!ids.has(select)) ids.set(select, `select-menu-${++menus}`);
     const menu = document.createElement("div");
     menu.className = "select-menu";
+    menu.id = ids.get(select);
     menu.setAttribute("role", "listbox");
-    const items = [...select.options].map((option, index) => {
-      const item = document.createElement("div");
-      item.className = "select-option";
-      item.setAttribute("role", "option");
-      item.textContent = option.textContent;
-      if (index === select.selectedIndex) item.setAttribute("aria-selected", "true");
-      if (option.disabled) item.setAttribute("aria-disabled", "true");
-      item.addEventListener("mousedown", (e) => e.preventDefault());
-      item.addEventListener("click", () => choose(index));
-      item.addEventListener("mousemove", () => open && open.active !== index && highlight(index));
-      menu.append(item);
-      return item;
-    });
-    document.body.append(menu);
+    const items = fill(menu, select);
+    // A modal dialog sits in the top layer: a list outside it would be drawn under it.
+    (select.closest("dialog[open]") || document.body).append(menu);
     const box = select.getBoundingClientRect();
     const below = innerHeight - box.bottom - 8;
     const above = box.top - 8;
@@ -58,6 +126,7 @@
     menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - menu.offsetWidth - 8))}px`;
     menu.style.top = up ? `${box.top - 4 - menu.offsetHeight}px` : `${box.bottom + 4}px`;
     select.setAttribute("aria-expanded", "true");
+    select.setAttribute("aria-controls", menu.id);
     open = { select, menu, items, active: select.selectedIndex };
     highlight(select.selectedIndex);
   }
@@ -86,7 +155,7 @@
       close();
       return;
     }
-    const enabled = open.items.map((_, i) => i).filter((i) => !open.select.options[i].disabled);
+    const enabled = open.items.map((_, i) => i).filter((i) => !disabled(open.items[i]));
     const step = (direction) => {
       const next = direction > 0 ? enabled.find((i) => i > open.active) : enabled.filter((i) => i < open.active).pop();
       if (next !== undefined) highlight(next);
@@ -101,9 +170,15 @@
       Escape: close,
       Tab: close,
     };
-    // A typed letter would change the box underneath the open list.
+    // A space inside a typed prefix is part of it; alone it chooses.
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key !== " " || typed)) {
+      e.preventDefault();
+      return typeahead(e.key);
+    }
+    // A key combination would change the box underneath the open list.
     if (!keys[e.key]) return e.key.length === 1 && e.preventDefault();
     if (e.key !== "Tab") e.preventDefault();
+    forgetTyped();
     keys[e.key]();
   }, true);
 
