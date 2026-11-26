@@ -428,8 +428,8 @@
         AN.L("打开后，计划确认后互不依赖的写入步骤由 boss 并行派给多个可写工位；关闭时并行写入须你对当前任务指明。", "On: once the plan is confirmed, the boss sends independent write steps to several writable seats at once. Off: parallel writes need you to say so for the task.")),
       switchRow(`${preset}/meetings`, dispatchOptionOn(shown, preset, "meetings"), (on) => setDispatchOption(preset, "meetings", on),
         AN.L("有分歧时主动开会", "Hold meetings on trade-offs"), meetingsTip),
-      switchRow("lead-only", shown.lead_only === true, setLeadOnly, AN.L("boss 只负责编排（两个派活档共用）", "Boss only orchestrates (shared by both dispatch presets)"),
-        AN.L("打开后小事也交给员工，boss 只拆分、写简报和验收；更慢，也更费员工额度。关闭时 boss 自己做小事，你也可以对某个任务说「这次只负责编排」。", "On: even small tasks go to employees, and the boss only splits work, writes briefs and checks results; slower and uses more employee quota. Off: the boss does small tasks itself, and you can still say \"only orchestrate this time\" for one task.")));
+      switchRow("lead-only", shown.lead_only === true, setLeadOnly, AN.L("boss 只负责编排", "Boss only orchestrates"),
+        AN.L("两个派活档共用。打开后小事也交给员工，boss 只拆分、写简报和验收；更慢，也更费员工额度。关闭时 boss 自己做小事，你也可以对某个任务说「这次只负责编排」。", "Shared by both dispatch presets. On: even small tasks go to employees, and the boss only splits work, writes briefs and checks results; slower and uses more employee quota. Off: the boss does small tasks itself, and you can still say \"only orchestrate this time\" for one task.")));
   }
 
   // Count and seats are saved together; no seat picked at the default count leaves the key out, and

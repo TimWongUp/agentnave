@@ -134,7 +134,7 @@
         throw new Error(state.error || L("安装失败，请重试。", "Installation failed, please try again."));
       if (state?.state === "done") return;
     }
-    throw new Error(L("安装超时，请稍后到“设置 → 版本与更新”查看。", "Installation timed out. Check Settings → About later."));
+    throw new Error(L("安装超时，请稍后到“设置 → 关于”查看。", "Installation timed out. Check Settings → About later."));
   }
 
   // ---- vocabulary ---------------------------------------------------------------------

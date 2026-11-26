@@ -236,6 +236,7 @@
     confirmScenes();
     incDocVersion();
     S.renderCards();
+    void S.saveMembers?.();
   }
 
   function applyDeepSeekRoute(options, route) {

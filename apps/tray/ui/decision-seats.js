@@ -30,6 +30,7 @@
   let prefilled = false; // The first catalog was already made in this draft.
   let keyDraft = "";
   let keyBusy = false;
+  let confirmDeleteKey = false;
   let manualModel = false; // The model id is typed: chosen in the list's last entry, or typed since.
   let keyMessage = null; // { text, error }
   let cardCount = 0;
@@ -389,6 +390,7 @@
     prefilled = false;
     manualModel = false;
     keyDraft = "";
+    confirmDeleteKey = false;
     keyMessage = null;
   }
 
@@ -428,6 +430,7 @@
     const meta = sourceMeta(next.provider);
     sourceDraft = sameJson(next, savedSource()) ? null : next;
     keyDraft = "";
+    confirmDeleteKey = false;
     keyMessage = null;
     manualModel = false;
     const savedBase = next.provider === savedSource().provider ? savedSource().base_url : "";
@@ -456,6 +459,7 @@
     const target = { ...source() };
     const provider = target.provider;
     keyBusy = true;
+    confirmDeleteKey = false;
     keyMessage = null;
     render();
     try {
@@ -465,7 +469,7 @@
       saved.key_set = data.key_set;
       if (source().provider === provider) {
         keyDraft = "";
-        keyMessage = { text: key ? L("密钥已保存", "Key saved") : L("密钥已清除", "Key cleared"), error: false };
+        keyMessage = { text: key ? L("密钥已保存", "Key saved") : L("密钥已删除", "Key deleted"), error: false };
         if (key && provider === "typesafe" && S.viewingDecision?.()) startCatalog(target, true);
       }
     } catch (error) {
@@ -597,13 +601,29 @@
       placeholder: set ? (preview ? L(`${preview} · 粘贴新密钥可替换`, `${preview} · Paste a new key to replace`) : L("已保存，粘贴新密钥可替换", "Saved; paste a new key to replace")) : L("粘贴密钥", "Paste API key"),
       title: preview || null,
       onInput: (e) => { keyDraft = e.target.value; save.disabled = keyBusy || !keyDraft.trim(); },
+      onKeydown: (e) => {
+        if (e.key !== "Enter" || keyBusy || !keyDraft.trim()) return;
+        e.preventDefault();
+        void storeKey(keyDraft);
+      },
     });
     input.value = keyDraft;
-    const clear = el("button", { type: "button", disabled: keyBusy || !set, onClick: () => storeKey("") }, L("清除", "Clear"));
+    const confirming = confirmDeleteKey && set;
+    const remove = el("button", { type: "button", className: "danger key-delete", disabled: keyBusy || !set || confirming, onClick: () => { confirmDeleteKey = true; render(); } }, L("删除", "Delete"));
+    let confirmBox = null;
+    if (confirming) {
+      const keep = el("button", { type: "button", disabled: keyBusy, onClick: () => { confirmDeleteKey = false; render(); } }, L("保留", "Keep"));
+      const confirmBtn = el("button", { type: "button", className: "danger", disabled: keyBusy, onClick: () => { confirmDeleteKey = false; void storeKey(""); } }, L("确认删除", "Delete"));
+      confirmBox = el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认删除 ${name} 密钥`, `Confirm deleting ${name} API key`) },
+        el("p", {}, L(`删除后将移除已保存的 ${name} 密钥，无法撤销。`, `Deleting removes the saved ${name} API key and cannot be undone.`)),
+        el("div", { className: "btn-group" }, keep, confirmBtn));
+      keep.focus?.({ preventScroll: true });
+    }
     return el("div", { className: "s-row" },
       el("label", { className: "s-label", htmlFor: "decision-key" }, label),
       el("div", { className: "s-stack" },
-        el("div", { className: "s-field" }, input, save, clear),
+        el("div", { className: "s-field" }, input, save, remove),
+        confirmBox,
         saved.key_error && el("p", { className: "s-muted is-bad" }, saved.key_error),
         keyMessage && el("p", { className: `s-muted${keyMessage.error ? " is-bad" : ""}`, role: "status" }, keyMessage.text)));
   }
@@ -750,5 +770,12 @@
         el("div", { className: "s-row" }, el("label", { className: "s-label", htmlFor: "decision-add" }, L("添加工位", "Add seat")), addMenu()))));
   }
 
-  window.AgentNaveDecisionSeats = { load, panel, changed, problem, save, discard, entered, viewed, cards, document: fileDocument, prefill, addCard };
+  const hasKeyDraft = () => Boolean(keyDraft.trim());
+  const discardKeyDraft = () => {
+    keyDraft = "";
+    confirmDeleteKey = false;
+    render();
+  };
+
+  window.AgentNaveDecisionSeats = { load, panel, changed, problem, save, discard, entered, viewed, cards, document: fileDocument, prefill, addCard, hasKeyDraft, discardKeyDraft };
 }

@@ -634,7 +634,9 @@ const ChatTerminal = (() => {
     const activeDerived = derivedList.filter(isDerivedActive).length;
     const draftDerived = derivedList.filter((s) => Boolean(s.has_draft)).length;
 
-    if (mode === "close" && x && !x.derived && !activeDerived && !draftDerived) return true;
+    // Closing skips the question only for a terminal whose CLI has already exited; a live new agent
+    // that has dispatched nothing cannot be reconnected afterwards.
+    if (mode === "close" && x && !x.derived && x.exit != null && !activeDerived && !draftDerived) return true;
 
     const running = x ? hasRunningMembers(x) : false;
     const resumable = x && !x.derived && canResume(x);
@@ -660,7 +662,7 @@ const ChatTerminal = (() => {
         )));
       }
     } else {
-      if (mode === "stop" && x) {
+      if ((mode === "stop" || mode === "close") && x) {
         if (!x.workspaces?.length) {
           reasons.push(h("p.act-note", {}, L(
             "这个新 agent 还没有派过活，结束终端后不能在 App 里续接这段对话。",
@@ -949,10 +951,14 @@ const ChatTerminal = (() => {
   const toMessages = h("button", { type: "button" }, L("消息", "Messages"));
   const toTerminal = h("button", { type: "button" }, L("终端", "Terminal"));
   const stopButton = h("button.dr-stop", { type: "button" }, L("结束终端", "Stop terminal"));
+  // Beside a desk, a room or the isolated directories the controls still belong to the boss's terminal;
+  // its mark sits before them so that is never in doubt.
+  const bossTag = h("span.dr-boss", { role: "img", hidden: true });
   const box = h("div.dr-term");
   modes.append(toMessages, toTerminal);
   // Right of 「‹ 全部」, which comes and goes: the header is right-aligned, so these stay put.
   el.drAll.after(modes, stopButton);
+  modes.before(bossTag);
   el.tl.after(box);
   const switchTo = (on) => () => {
     if (!state.loaded) return;
@@ -1030,6 +1036,26 @@ const ChatTerminal = (() => {
     const term = x && on && (!isDerived || live || watchingEnded) ? x : null;
     return { x, derivedDesk, isDerived, ds, live, on, watchingEnded, term, hasWidth: usesTermWidth(group) };
   }
+  // The stop button names whose terminal it acts on, and the boss's mark stands before the controls
+  // whenever the drawer is about something else than the boss.
+  function describeControls(x, isDerived, action) {
+    const name = isDerived ? (x?.display_title || L("派生终端", "derived terminal")) : "boss";
+    const who = x ? L(`${name}（${cliLabel(x)}）`, `${name} (${cliLabel(x)})`) : name;
+    const label = action ? L(`${action[0]} ${who}的终端`, `${action[1]} ${who} terminal`) : stopButton.textContent;
+    setAttr(stopButton, "title", label);
+    setAttr(stopButton, "aria-label", label);
+    const kind = typeof state !== "undefined" ? state?.drawer?.kind : null;
+    const aside = !isDerived && !!x && ["desk", "room", "isolated"].includes(kind) && !(el.drawer?.classList?.contains?.("term-mode"));
+    bossTag.hidden = !aside || (modes.hidden && stopButton.hidden);
+    if (bossTag.hidden) return;
+    const tip = L(`右侧的终端操作属于 ${who}`, `The terminal controls at right belong to ${who}`);
+    setAttr(bossTag, "title", tip);
+    setAttr(bossTag, "aria-label", tip);
+    if (bossTag.dataset.key !== x.provider) {
+      bossTag.dataset.key = x.provider;
+      bossTag.replaceChildren(AN.hostTile(x.provider));
+    }
+  }
   // The office's terminal `x`, shown in place of the messages when `on`. The switch and the stop
   // button depend only on the terminal, never on which side is showing, so neither moves.
   function show(x, on, group = state?.loaded, view = null) {
@@ -1048,6 +1074,7 @@ const ChatTerminal = (() => {
     const ended = x?.exit != null;
     const deskKey = openDeskKey();
     const isReviving = Boolean(isDerived && group && reviving(group, deskKey));
+    let action = null; // [中文, English] of what the button does to the terminal
     if (isDerived) {
       const canRevive = !live && Boolean(x || deskKey?.startsWith("thread:"));
       t.derivedRevive = canRevive ? { id: x?.id, group, deskKey } : null;
@@ -1055,14 +1082,18 @@ const ChatTerminal = (() => {
       stopButton.disabled = !live && isReviving;
       stopButton.classList.toggle("start", !live);
       setText(stopButton, L("续接", "Resume"));
+      action = ["续接", "Resume"];
     } else {
       t.derivedRevive = null;
       stopButton.hidden = Boolean(!x && !t.resumable && !t.handover);
       stopButton.disabled = false;
       stopButton.classList.toggle("start", !x || ended);
-      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : !x || (ended && x.workspaces.length && RESUMES.has(x.provider)) ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
+      const resuming = !x || (ended && x.workspaces.length && RESUMES.has(x.provider));
+      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : resuming ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
       setText(stopButton, btnLabel);
+      action = t.handover ? null : resuming ? ["续接", "Resume"] : ended ? ["启动", "Start"] : ["结束", "Stop"];
     }
+    describeControls(x, isDerived, action);
     t.owned = x?.id ?? null;
     setAttr(toMessages, "aria-pressed", term ? "false" : "true");
     setAttr(toTerminal, "aria-pressed", term ? "true" : "false");

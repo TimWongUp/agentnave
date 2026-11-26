@@ -39,13 +39,15 @@ window.ChatUsage = (() => {
     lang = document.documentElement.lang;
     costEl.textContent = costText(item.total);
     tokensEl.textContent = compact(item.total.total_tokens);
-    hitEl.textContent = pct(item.total.cache_hit_rate);
+    const hit = pct(item.total.cache_hit_rate);
+    hitEl.textContent = L(`命中 ${hit}`, `${hit} hit`);
     const workers = item.workers || {};
+    const meaning = L("花费 · token · 缓存命中率", "cost · tokens · cache hit rate");
     if (num(workers.calls) > 0) {
       const boss = item.boss || {};
-      root.title = `Boss ${costText(boss)} · ${compact(boss.total_tokens)} · ${L("员工", "Employees")} ${costText(workers)} · ${compact(workers.total_tokens)}`;
+      root.title = `${meaning}\nBoss ${costText(boss)} · ${compact(boss.total_tokens)} · ${L("员工", "Employees")} ${costText(workers)} · ${compact(workers.total_tokens)}`;
     } else {
-      root.removeAttribute("title");
+      root.title = meaning;
     }
     refreshBtn.setAttribute("aria-label", L("刷新", "Refresh"));
     refreshBtn.setAttribute("title", L("刷新", "Refresh"));

@@ -801,7 +801,7 @@ test("DeepSeek route selection is explicit, model scoped and preserves other set
 
 test("DeepSeek route rows show a visible bilingual note without leaking internal fields", () => {
   const forbidden = /\b(provider|stored_credentials|deepseek-account|deepseek-official|options)\b/;
-  const zhApp = poolEditor();
+  const zhApp = poolEditor(async (_url, options) => ({ ok: true, json: async () => ({ saved: true, document: JSON.parse(options?.body || "{}") }) }));
   zhApp.run('detected.deepseek = { installed: true, models: [{ id: "custom-model" }] }');
   assert.equal(zhApp.run("deepSeekRouteRows().length"), 0);
   zhApp.run('detected.deepseek = { installed: true, models: [{ id: "deepseek-flash" }] }');
@@ -811,7 +811,7 @@ test("DeepSeek route rows show a visible bilingual note without leaking internal
   assert.equal(zhNote.attrs.className, "member-muted member-note");
   assert.equal(zhNote.attrs.hidden, undefined);
   const zhText = zhNote.children.join("");
-  assert.match(zhText, /登录账号.*保存/);
+  assert.match(zhText, /登录账号.*使用该账号/);
   assert.match(zhText, /官方 API Key.*官方 API/);
   assert.match(zhText, /沿用 CLI 设置.*不改变路由/);
   assert.match(zhText, /选中.*模型时生效/);
@@ -833,7 +833,7 @@ test("DeepSeek route rows show a visible bilingual note without leaking internal
   assert.equal(enNote.attrs.className, "member-muted member-note");
   assert.equal(enNote.attrs.hidden, undefined);
   const enText = enNote.children.join("");
-  assert.match(enText, /Signed-in account.*save settings/i);
+  assert.match(enText, /Signed-in account.*chosen model/i);
   assert.match(enText, /Official API key.*official API/i);
   assert.match(enText, /Follow CLI settings.*leaves routing unchanged/i);
   assert.match(enText, /when that model is selected/i);
@@ -855,10 +855,10 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   `);
   assert.equal(app.run('findKey(poolRows("codex"), "codex/pool/allow/old")'), null, "a saved model the CLI no longer lists is not offered");
   assert.equal(app.run('seatOptions({ provider: "codex", model: "old" }).find((o) => o.attrs.value === "old").attrs.disabled'), true, "a seat bound to it shows it as unavailable");
-  app.run(`
-    poolPick("codex/pool/ticked");
-    poolPick("codex/pool/allow/b", false);
-  `);
+  app.run('poolPick("codex/pool/ticked")');
+  await new Promise(setImmediate);
+  app.run('poolPick("codex/pool/allow/b", false)');
+  await new Promise(setImmediate);
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
   assert.deepEqual(app.doc().modes.task.codex.models, []);
   assert.equal(app.doc().modes.task.codex.default, "a");
@@ -872,26 +872,29 @@ test("one CLI pool bounds solo tasks, meetings and seats and lets no left-out mo
   assert.equal(app.run('seatOptions({ provider: "codex", model: "b" }).find((o) => o.attrs.value === "b").attrs.disabled'), true);
   assert.deepEqual(JSON.parse(app.run('JSON.stringify(seatOptions({ provider: "codex", model: "a" }).map((o) => o.attrs.value))')), ["a"]);
   assert.equal(app.run('poolConflicts("codex").length'), 2);
+  const postsBeforeFix = posts.length;
   await app.run("saveMembers()");
-  assert.deepEqual(posts, []);
+  assert.equal(posts.length, postsBeforeFix, "invalid out-of-pool default blocks POST");
   app.run('changeSlot("codex", "discussion", { model: "a" })');
   assert.match(app.run("seatConflictText(seatConflicts()[0])"), /安全评审 用的 b/);
   assert.equal(app.run("memberSaveErrors().length"), 0);
-  await app.run("saveMembers()");
-  assert.deepEqual(posts, ["/app/members"], "the pool can be saved before rebinding a conflicting seat");
+  await new Promise(setImmediate);
+  assert.equal(posts.length, postsBeforeFix + 1, "fixing the default auto-saves immediately before rebinding a conflicting seat");
 
   // A role cannot widen the pool: the saved list refuses the seat before anything is written.
   app.run('reviewSeats = {}; markSaved()');
   assert.equal(app.run("memberSaveErrors().length"), 0);
   await assert.rejects(app.run('listSeatModel({ provider: "codex", model: "b" })'), /不在 Codex CLI 的可用模型里/);
-  assert.deepEqual(posts, ["/app/members"]);
+  assert.equal(posts.length, postsBeforeFix + 1);
 
   // Only the ticked is an explicit list, so a model the CLI lists later is not let in.
   app.run('poolPick("codex/pool/ticked"); detected.codex.models.push({ id: "next" })');
+  await new Promise(setImmediate);
   assert.deepEqual(app.doc().clis.codex.allowed_models, ["a"]);
   assert.equal(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'), false);
   // All models drops the list, so later models count and the default and conflicts stay right.
   app.run('poolPick("codex/pool/all")');
+  await new Promise(setImmediate);
   assert.equal(Object.hasOwn(app.doc().clis.codex, "allowed_models"), false);
   assert.equal(app.run('poolConflicts("codex").length'), 0);
   assert.equal(app.run('seatOptions({ provider: "codex", model: "a" }).some((o) => o.attrs.value === "next")'), true);
@@ -926,7 +929,7 @@ test("a model the CLI no longer lists is marked but blocks no save, and nothing 
 });
 
 test("every model lifts a scene list an older file kept", () => {
-  const app = poolEditor();
+  const app = poolEditor(async (_url, options) => ({ ok: true, json: async () => ({ saved: true, document: JSON.parse(options?.body || "{}") }) }));
   app.run(`
     currentDoc.modes.task.codex.models = ["a"];
     currentDoc.modes.task.codex.default = "a";
@@ -941,7 +944,7 @@ test("every model lifts a scene list an older file kept", () => {
 });
 
 test("every model is ticked until one is unticked, and no list size is refused", () => {
-  const app = poolEditor();
+  const app = poolEditor(async (_url, options) => ({ ok: true, json: async () => ({ saved: true, document: JSON.parse(options?.body || "{}") }) }));
   app.run(`
     function poolText(nodes) {
       return (nodes || []).flat(Infinity).flatMap((node) => typeof node === "string" ? [node]
@@ -982,7 +985,7 @@ test("every model is ticked until one is unticked, and no list size is refused",
 });
 
 test("older scene lists keep working until the pool is edited, and then stop narrowing it", () => {
-  const app = poolEditor();
+  const app = poolEditor(async (_url, options) => ({ ok: true, json: async () => ({ saved: true, document: JSON.parse(options?.body || "{}") }) }));
   app.run(`
     currentDoc.clis.codex.models = { a: {}, b: {} };
     currentDoc.modes.task.codex = { models: ["a"], overrides: {}, default: "a" };
@@ -1638,8 +1641,19 @@ test("the key goes out once and the page afterwards only knows that one is set",
   assert.ok(!JSON.stringify(roleChildren(app)).includes("AIza-secret"));
   assert.match(JSON.stringify(keyRow()), /已保存，粘贴新密钥可替换/);
   assert.equal(keyRow().children[1].children[0].children[2].disabled, false);
-  // Clearing sends an empty key.
-  await keyRow().children[1].children[0].children[2].listeners.click();
+  // Deleting requires inline confirmation and then sends an empty key.
+  const delBtn = keyRow().children[1].children[0].children[2];
+  assert.equal(delBtn.children[0], "删除");
+  delBtn.listeners.click();
+  const confirmBox = keyRow().children[1].children[1];
+  assert.equal(confirmBox.className, "disable-confirm");
+  const [keepBtn] = confirmBox.children[1].children;
+  assert.equal(keepBtn.children[0], "保留");
+  keepBtn.listeners.click();
+  assert.equal(calls.filter((call) => call.url === "/app/decision-key").length, 1);
+  keyRow().children[1].children[0].children[2].listeners.click();
+  keyRow().children[1].children[1].children[1].children[1].listeners.click();
+  await new Promise(setImmediate);
   assert.deepEqual(calls.filter((call) => call.url === "/app/decision-key").at(-1).body, { provider: "gemini", key: "" });
 });
 
@@ -2845,7 +2859,9 @@ test("a saved key is shown by its masked preview, which is never the field's val
   assert.equal(input().attrs.placeholder, "sk-p…9a8b · 粘贴新密钥可替换");
   assert.equal(input().value, "");
   assert.ok(!JSON.stringify(roleChildren(app)).includes("0123456789a8b"));
-  await topRow(app, "密钥").children[1].children[0].children[2].listeners.click();
+  topRow(app, "密钥").children[1].children[0].children[2].listeners.click();
+  topRow(app, "密钥").children[1].children[1].children[1].children[1].listeners.click();
+  await new Promise(setImmediate);
   assert.equal(input().attrs.placeholder, "粘贴密钥");
   assert.equal(calls.filter((call) => call.url === "/app/decision-key").length, 2);
   // A tray that does not send previews keeps the old wording.
@@ -2853,4 +2869,110 @@ test("a saved key is shown by its masked preview, which is never the field's val
   const old = decisionEditor("decision", PLATFORM_FILE(null, { gemini: true }));
   await old.decision((d) => d.load());
   assert.equal(topRow(old.app, "密钥").children[1].children[0].children[0].attrs.placeholder, "已保存，粘贴新密钥可替换");
+});
+
+test("employees auto-save serializes rapid edits, skips invalid drafts, reverts backend errors, and saves max-running immediately", async () => {
+  const pending = [];
+  const savedDocs = [];
+  let failLimit = false;
+  const app = poolEditor(async (url, options = {}) => {
+    if (url === "/app/settings" && options.method === "POST") {
+      if (failLimit) return { ok: false, status: 500, json: async () => ({ error: "无法写入上限" }) };
+      return { ok: true, json: async () => ({ saved: true }) };
+    }
+    if (url === "/app/settings") return { ok: true, json: async () => ({ settings: { version: 1, max_running: 8 } }) };
+    if (url === "/app/members" && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      return new Promise((resolve) => pending.push({ body, resolve }));
+    }
+    return { ok: true, json: async () => ({}) };
+  });
+  await app.run("loadLimit()");
+  app.run("$('max-running').value = '5'");
+  await app.run("saveLimitImmediate()");
+  assert.equal(app.run("$('max-running').value"), "5");
+  assert.equal(app.run("$('notice').textContent"), "设置已保存");
+  failLimit = true;
+  app.run("$('max-running').value = '12'");
+  await app.run("saveLimitImmediate()");
+  assert.equal(app.run("$('max-running').value"), "5", "failed limit save restores previous value");
+  assert.match(app.run("$('notice').textContent"), /无法写入上限/);
+
+  // Rapid valid edits queue rather than racing.
+  app.run('writePool("codex", ["a", "b"]); changeSlot("codex", "task", { model: "b" });');
+  assert.equal(pending.length, 1, "only one POST in flight at a time");
+  savedDocs.push(pending[0].body);
+  pending.shift().resolve({ ok: true, json: async () => ({ saved: true }) });
+  await new Promise(setImmediate);
+  assert.equal(pending.length, 1, "queued follow-up flushes latest state after first settles");
+  assert.equal(pending[0].body.modes.task.codex.default, "b");
+  savedDocs.push(pending[0].body);
+  pending.shift().resolve({ ok: true, json: async () => ({ saved: true }) });
+  await new Promise(setImmediate);
+  assert.equal(app.run("dirty"), false);
+  assert.equal(app.run("$('notice').textContent"), "设置已保存");
+
+  // Transient invalid state skips POST, keeps draft, and saves once fixed.
+  app.run('writePool("codex", []);');
+  await new Promise(setImmediate);
+  assert.equal(pending.length, 0);
+  assert.equal(app.run("dirty"), true);
+  assert.match(app.run("$('notice').textContent"), /至少选一个模型/);
+  app.run('changeSlot("codex", "discussion", { model: "b" }); writePool("codex", ["b"]);');
+  assert.equal(pending.length, 1);
+  pending.shift().resolve({ ok: true, json: async () => ({ saved: true }) });
+  await new Promise(setImmediate);
+  assert.equal(app.run("dirty"), false);
+
+  // Backend error reverts currentDoc back to savedSnapshot.
+  app.run('writePool("codex", ["a", "b"]);');
+  assert.equal(pending.length, 1);
+  pending.shift().resolve({ ok: true, json: async () => ({ saved: true }) });
+  await new Promise(setImmediate);
+  app.run('changeSlot("codex", "task", { model: "a" });');
+  assert.equal(pending.length, 1);
+  pending.shift().resolve({ ok: false, status: 500, json: async () => ({ error: "写盘失败" }) });
+  await new Promise(setImmediate);
+  assert.equal(app.doc().modes.task.codex.default, "b");
+  assert.equal(app.run("dirty"), false);
+  assert.match(app.run("$('notice').textContent"), /写盘失败/);
+});
+
+test("decision key supports Enter-to-save and exposes hasKeyDraft/discardKeyDraft, and lead_only moves note to tooltip", async () => {
+  const { app, calls, decision } = decisionEditor("split", PLATFORM_FILE(null, { gemini: false }));
+  await decision((d) => d.load());
+  const leadRow = app.run('$("orchestration-split").children[2]');
+  assert.equal(leadRow.children[0].children[0], "boss 只负责编排");
+  assert.match(leadRow.children[0].children[1].attrs["aria-label"], /两个派活档共用/);
+
+  app.run('viewMode("decision")');
+  assert.equal(decision((d) => d.hasKeyDraft()), false);
+  const input = topRow(app, "Gemini 密钥").children[1].children[0].children[0];
+  input.listeners.input({ target: { value: "AIza-enter" } });
+  assert.equal(decision((d) => d.hasKeyDraft()), true);
+  let prevented = false;
+  input.listeners.keydown({ key: "Enter", preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  await new Promise(setImmediate);
+  assert.deepEqual(calls.filter((c) => c.url === "/app/decision-key").at(-1).body, { provider: "gemini", key: "AIza-enter" });
+  assert.equal(decision((d) => d.hasKeyDraft()), false);
+
+  topRow(app, "Gemini 密钥").children[1].children[0].children[0].listeners.input({ target: { value: "draft-only" } });
+  assert.equal(decision((d) => d.hasKeyDraft()), true);
+  decision((d) => d.discardKeyDraft());
+  assert.equal(decision((d) => d.hasKeyDraft()), false);
+});
+
+test("Antigravity interactive tooltip removes quota wording and keeps version requirement", () => {
+  const app = editor();
+  app.run(`
+    document.createElement = (tag) => ({ tag, attrs: {}, dataset: {}, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener() {}, appendChild() {} });
+    AN.settings.el = (tag, attrs, ...children) => ({ tag, attrs, children });
+    AN.settings.textNode = (s) => s;
+  `);
+  app.load("member-cards.js");
+  const row = app.run('renderInteractive("antigravity")');
+  const tip = row.children[0].children[1].attrs["aria-label"];
+  assert.doesNotMatch(tip, /省额度/);
+  assert.match(tip, /1\.5\.10/);
 });

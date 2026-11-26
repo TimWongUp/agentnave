@@ -2,7 +2,7 @@
 {
   const S = AN.settings ||= {};
   const {
-    $, L, discardAdvanced, el, loadMembers, loadStatus, probeWhenStale, refreshDetection, saveMembers,
+    $, L, discardAdvanced, el, loadMembers, loadStatus, probeWhenStale, refreshDetection,
     setTab, triggerCheckUpdate, unsaved
   } = S;
   Object.assign(S, { renderLeaveConfirm, confirmLeave });
@@ -14,54 +14,96 @@
   $("refresh-detection").addEventListener("click", () => refreshDetection());
   window.addEventListener("focus", probeWhenStale);
   document.addEventListener("visibilitychange", probeWhenStale);
-  $("save-btn").addEventListener("click", saveMembers);
-  $("max-running").addEventListener("change", () => {
-    const feedback = $("save-feedback");
-    feedback.textContent = "";
-    feedback.className = "save-feedback";
-    S.refreshDirty();
-    S.updateControls();
-  });
+  $("max-running").addEventListener("change", () => { void S.saveLimitImmediate?.(); });
 
   $("btn-check-update").addEventListener("click", () => triggerCheckUpdate());
   // Updating goes through the shared dialog: it shows what changed first and then the progress.
   $("btn-apply-update").addEventListener("click", () => AN.updateFlow());
   $("btn-retry-update").addEventListener("click", () => AN.updateFlow());
 
+  let leaveDialog = null;
+  function closeLeaveDialog() {
+    if (!leaveDialog) return;
+    if (leaveDialog.open) leaveDialog.close?.();
+    leaveDialog.open = false;
+    leaveDialog.remove?.();
+    leaveDialog = null;
+  }
+
+  function discardAllLeaveChanges() {
+    S.dirty = false;
+    S.discardMembersDraft?.();
+    window.AgentNaveVoiceSettings?.discardDrafts?.();
+    window.AgentNaveDecisionSeats?.discardKeyDraft?.();
+    discardAdvanced();
+  }
+
+  function proceedLeaveTarget() {
+    const target = S.leaveTarget;
+    S.leaveTarget = null;
+    discardAllLeaveChanges();
+    closeLeaveDialog();
+    const box = $("advanced-leave-confirm");
+    if (box) {
+      box.hidden = true;
+      box.replaceChildren();
+    }
+    if (typeof target === "function") target();
+    else if (!window.AgentNaveSettingsFrame?.navigate(target)) location.href = target;
+  }
+
   // The app's web view does not show beforeunload prompts, so hold back in-app navigation.
   function renderLeaveConfirm() {
-    const advanced = ["orchestration", "advanced"].includes(S.currentTab);
-    const box = $(advanced ? "advanced-leave-confirm" : "leave-confirm");
-    const other = $(advanced ? "leave-confirm" : "advanced-leave-confirm");
-    other.hidden = true;
-    other.replaceChildren();
-    box.hidden = !S.leaveTarget;
-    if (!S.leaveTarget) return box.replaceChildren();
-    if (box.childElementCount) return;
+    const box = $("advanced-leave-confirm");
+    const showAdvanced = Boolean(S.leaveTarget) && S.advancedChanges().length > 0 && ["orchestration", "advanced"].includes(S.currentTab);
+    if (box) {
+      box.hidden = !showAdvanced;
+      if (!showAdvanced) box.replaceChildren();
+      else if (!box.childElementCount) {
+        const stay = el("button", { type: "button", onClick: () => { S.leaveTarget = null; renderLeaveConfirm(); } }, L("继续编辑", "Keep editing"));
+        box.replaceChildren(
+          el("p", {}, L("有未保存的修改，离开设置页会丢失这些修改。", "You have unsaved changes. Leaving Settings will discard them.")),
+          el("div", { className: "btn-group" }, stay,
+            el("button", { type: "button", className: "danger", onClick: proceedLeaveTarget }, L("放弃修改并离开", "Discard and leave"))));
+        stay.focus({ preventScroll: true });
+      }
+    }
+    const showDialog = Boolean(S.leaveTarget) && !showAdvanced;
+    if (!showDialog) {
+      closeLeaveDialog();
+      return;
+    }
+    if (leaveDialog) return;
     const stay = el("button", { type: "button", onClick: () => { S.leaveTarget = null; renderLeaveConfirm(); } }, L("继续编辑", "Keep editing"));
-    box.replaceChildren(
-      el("p", {}, L("有未保存的修改，离开设置页会丢失这些修改。", "You have unsaved changes. Leaving Settings will discard them.")),
-      el("div", { className: "btn-group" }, stay,
-        el("button", { type: "button", className: "danger", onClick: () => {
-          const target = S.leaveTarget;
-          S.leaveTarget = null;
-          S.dirty = false;
-          discardAdvanced();
-          if (typeof target === "function") target();
-          else if (!window.AgentNaveSettingsFrame?.navigate(target)) location.href = target;
-        } }, L("放弃修改并离开", "Discard and leave"))));
-    stay.focus({ preventScroll: true });
+    const leave = el("button", { type: "button", className: "danger", onClick: proceedLeaveTarget }, L("放弃修改并离开", "Discard and leave"));
+    const body = S.busy
+      ? L("正在保存设置，现在离开可能会丢失未完成的修改。", "Settings are still saving. Leaving now may lose unfinished changes.")
+      : L("有未保存的修改或草稿，离开设置页会丢失这些内容。", "You have unsaved changes or drafts. Leaving Settings will discard them.");
+    leaveDialog = el("dialog", { className: "upd leave-dialog", "aria-label": L("离开设置页", "Leave settings") },
+      el("h2", { className: "upd-title" }, L("离开设置页", "Leave settings")),
+      el("p", { className: "upd-p" }, body),
+      el("div", { className: "upd-row" }, stay, leave));
+    leaveDialog.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      S.leaveTarget = null;
+      renderLeaveConfirm();
+    });
+    document.body?.appendChild?.(leaveDialog);
+    if (typeof leaveDialog.showModal === "function") leaveDialog.showModal();
+    else leaveDialog.open = true;
+    stay.focus?.({ preventScroll: true });
   }
   function confirmLeave(target) {
     if (!(unsaved() || S.busy)) return false;
     S.leaveTarget = target;
-    // The confirmation sits in the save bar of the page holding the edits.
-    const tab = S.dirty || !S.advancedChanges().length ? "members"
-      : ["orchestration", "advanced"].includes(S.currentTab) ? S.currentTab
-      : (S.orchestrationChanged() || window.AgentNaveDecisionSeats?.changed() || window.AgentNaveT3Seats?.seatsChanged()) ? "orchestration" : "advanced";
-    if (S.currentTab !== tab) {
-      setTab(tab);
-      history.replaceState(null, "", `#${tab}`);
+    // The confirmation sits in the save bar of the page holding the edits when advanced changes exist.
+    if (S.advancedChanges().length > 0) {
+      const tab = ["orchestration", "advanced"].includes(S.currentTab) ? S.currentTab
+        : (S.orchestrationChanged() || window.AgentNaveDecisionSeats?.changed() || window.AgentNaveT3Seats?.seatsChanged()) ? "orchestration" : "advanced";
+      if (S.currentTab !== tab) {
+        setTab(tab);
+        history.replaceState(null, "", `#${tab}`);
+      }
     }
     renderLeaveConfirm();
     return true;

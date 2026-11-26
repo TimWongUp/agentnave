@@ -665,7 +665,7 @@ test("a folded column peeks on its button or the window edge and leaves 300ms af
   const side = node(), conv = node(), sideToggle = node(), convToggle = node(), attrs = {}, timers = [], doc = node();
   let renders = 0;
   const context = vm.createContext({
-    state: { sideCollapsed: true, convCollapsed: true, chat: {} }, narrow: { matches: false }, overlay: { matches: false }, innerWidth: 1200,
+    state: { sideCollapsed: true, convCollapsed: true, chat: {} }, narrow: { matches: false }, overlay: { matches: false }, rail: { matches: false }, innerWidth: 1200,
     el: { app: { querySelector: () => side, toggleAttribute(name, on) { attrs[name] = on; }, getBoundingClientRect: () => ({ top: 48 }) },
       sideToggle, convToggle, drawer: conv },
     document: { addEventListener: (name, fn) => { doc.listeners[name] = fn; }, activeElement: {} },
@@ -745,12 +745,12 @@ test("boss office keeps only the meetings list (including ended meetings) and om
 
 test("crossing a breakpoint drops both peeks before the page is drawn again", () => {
   const source = readFileSync(`${__dirname}/../chat-state.js`, "utf8");
-  const start = source.indexOf("for (const query of [narrow, overlay])");
+  const start = source.indexOf("for (const query of [narrow, overlay, rail])");
   const listeners = [], removed = [], order = [];
   const query = { addEventListener: (_name, fn) => listeners.push(fn) };
   const state = { sidePeek: true, convPeek: true, chat: {} };
   const context = vm.createContext({
-    narrow: query, overlay: query, state, el: { app: { removeAttribute: name => removed.push(name) } },
+    narrow: query, overlay: query, rail: query, state, el: { app: { removeAttribute: name => removed.push(name) } },
     sync() { order.push("sync"); }, renderList() {}, renderAll: () => order.push(`draw ${state.convPeek}`),
   });
   vm.runInContext(source.slice(start, source.indexOf("\n\n", start)), context);
@@ -856,6 +856,7 @@ test("deleteIsolated keeps its button disabled until completion or cancel and ig
     addEventListener(name, fn) { this.listeners[name] = fn; },
     append(...items) { this.children.push(...items); },
     querySelector() { return { focus() {} }; },
+    focus() {},
     showModal() { this.open = true; },
     close() { this.open = false; },
   });
@@ -993,6 +994,7 @@ test("cleanup respects handover_ms, pending state, and expired empty_claimed wor
       addEventListener(name, fn) { this.listeners[name] = fn; },
       append(...items) { this.children.push(...items); },
       querySelector() { return { focus() {} }; },
+      focus() {},
       showModal() { this.open = true; },
       close() { this.open = false; },
     };
@@ -1154,6 +1156,7 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
     replaceChildren(...items) { this.children = items.flat(); },
     addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
     scrollIntoView() {},
+    getBoundingClientRect: () => ({ left: 12, bottom: 30 }),
     closest: () => null,
   });
   const h = (tag, attrs = {}, ...children) => {
@@ -1169,6 +1172,8 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
     ["agentnave.office.fold.project:/w/deep", "1"],
   ]);
   const menuCalls = [];
+  const rowMenus = [];
+  const menuEvents = [];
   const context = vm.createContext({
     AN: {
       h, $: id => els.get(id) || makeNode(id), L: zh => zh,
@@ -1201,8 +1206,9 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
       menu() { return false; },
     },
     Actions: {
-      picked: new Set(), pick: () => false, workspaceMenu() {},
-      projectMenu(section) { menuCalls.push(section.key); },
+      picked: new Set(), pick: () => false,
+      workspaceMenu(id, e) { rowMenus.push([id, e.clientX, e.clientY]); },
+      projectMenu(section, e) { menuCalls.push(section.key); menuEvents.push([e.clientX, e.clientY]); },
     },
     addEventListener() {},
     matchMedia: () => ({ matches: false, addEventListener() {} }),
@@ -1254,6 +1260,18 @@ test("sidebar ignores legacy groupBy storage, renders empty manual projects, rev
     fn({ target: { closest: sel => sel === ".gl-grp-add" } });
   }
   assert.deepEqual(menuCalls, ["/w/app", "/w/p0", "/w/solo"]);
+
+  // The ⋯ on a header or an agent row opens the same menu just below itself, without reaching the row's own click.
+  let stopped = 0;
+  const click = { preventDefault() {}, stopPropagation() { stopped++; } };
+  context.state.heads.get("project:/w/app").more.listeners.click[0](click);
+  assert.deepEqual(menuCalls.slice(-1), ["/w/app"]);
+  assert.deepEqual(menuEvents.at(-1), [12, 34]);
+  const rowMore = context.state.items.get("g-codex").el.children.at(-1);
+  rowMore.listeners.keydown[0]({ key: "Enter", ...click });
+  assert.deepEqual(rowMenus, [["g-codex", 12, 34]]);
+  assert.equal(stopped, 2);
+  menuCalls.length = 3;
 
   // Pending handover items stay visible even when :handover is folded, and folded headers show status dots.
   storage.set("agentnave.office.fold.project::handover", "1");
@@ -1772,6 +1790,14 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
     assert.equal(calls.length, before, "cancelling must not stop");
   }
 
+  // Closing a live new agent that dispatched nothing asks first, as stopping it does; an exited terminal closes silently.
+  asks.length = 0;
+  const beforeClose = calls.length;
+  await context.ChatTerminal.close(3);
+  assert.equal(asks.length, 1);
+  assert.ok(asks[0].body.some(p => p.textContent.includes("还没有派过活")));
+  assert.equal(calls.length, beforeClose, "cancelling must not close");
+
   // Derived terminal confirmation rules: idle stops & closes directly; busy/blocked confirm on both stop & close; running members add warning.
   sessions = [
     ...sessions,
@@ -1810,10 +1836,16 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
   // Exited postMessage updates header immediately.
   context.ChatTerminal.column("ws-idle", "claude");
   assert.equal(stopButton.textContent, "结束终端");
+  assert.equal(stopButton.attributes.title, "结束 boss（Claude Code）的终端", "the button names whose terminal it ends");
+  assert.equal(stopButton.attributes["aria-label"], stopButton.attributes.title);
   assert.equal(context.el.drSub.textContent, "Claude Code");
   msgListeners[0]({ data: { type: "agentnave:terminal", action: "exited", session: 1, code: 0 } });
   assert.equal(context.el.drSub.textContent, "Claude Code · 已结束");
   assert.equal(stopButton.textContent, "续接");
+  assert.equal(stopButton.attributes.title, "续接 boss（Claude Code）的终端");
+  asks.length = 0;
+  await context.ChatTerminal.close(1);
+  assert.equal(asks.length, 0, "a terminal whose CLI has exited closes without asking");
 
   // 409 elsewhere confirm on resume: Cancel aborts, Continue resends with confirm=1.
   sessions = [];
@@ -1991,6 +2023,7 @@ test("derived terminals nest under parent workspace without counting self-chat a
       replaceChildren(...nodes) { this.children = nodes; },
       append(...nodes) { this.children.push(...nodes); },
       after(...nodes) { this._after = nodes; },
+      before() {},
       querySelector() { return null; },
       focus() {},
       remove() {},
@@ -2351,6 +2384,7 @@ test("leaving terminal mode clears .term-mode before applyFolds and long/peer/br
     FIG: 100,
     narrow: { matches: false },
     overlay: { matches: false },
+    rail: { matches: false },
     reduceMotion: { matches: true },
     stored: () => null,
     store() {},
@@ -2890,6 +2924,7 @@ test("isolatedConfirmBody notes merged PR instead of unmerged-commit warning and
     addEventListener(name, fn) { this.listeners[name] = fn; },
     append(...items) { this.children.push(...items); },
     querySelector() { return { focus() {} }; },
+    focus() {},
     showModal() { this.open = true; },
     close() { this.open = false; },
   });
@@ -3342,6 +3377,7 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
       replaceChildren(...nodes) { this.children = nodes.flat().filter(Boolean); },
       append(...nodes) { this.children.push(...nodes.flat().filter(Boolean)); },
       after(...nodes) { this._after = nodes; },
+      before() {},
       before() {},
       querySelector() { return null; },
       querySelectorAll() { return []; },
@@ -3850,6 +3886,7 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
     boss: makeNode("section"),
     desks: Object.assign(makeNode("div"), { clientWidth: 560 }),
     derivedZone: Object.assign(makeNode("section"), { hidden: true }),
+    desksZone: Object.assign(makeNode("section"), { hidden: false }),
     derivedDesks: makeNode("div"),
     derivedCount: makeNode("span"),
     rooms: makeNode("div"),
@@ -3994,6 +4031,17 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
   context.renderOffice(noDerived, ctx, { running: 0, review: 0 }, false);
   assert.equal(el.derivedZone.hidden, true);
   assert.equal(el.derivedDesks.children.length, 0);
+  assert.equal(el.desksZone.hidden, false, "open desks stay while a regular desk exists");
+
+  // With only derived desks the empty "open desks" box is not drawn at all; with none at all, its text is one short line.
+  const onlyDerived = { ...baseChat, desks: baseChat.desks.filter(d => d.derived) };
+  ctx.desks = new Map(onlyDerived.desks.map(d => [d.key, d]));
+  ctx.drawn = new Set(onlyDerived.desks.map(d => d.key));
+  context.renderOffice(onlyDerived, ctx, { running: 0, review: 0 }, false);
+  assert.equal(el.desksZone.hidden, true);
+  context.renderOffice({ ...baseChat, desks: [] }, { ...ctx, desks: new Map(), drawn: new Set() }, { running: 0, review: 0 }, false);
+  assert.equal(el.desksZone.hidden, false);
+  assert.equal(el.desks.children[0].children[0], "boss 派活后，工位出现在这里");
 });
 
 test("Actions.workspaceMenu includes 关闭全部派生终端（N） when workspace has derived sessions", async () => {
@@ -4109,6 +4157,7 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
       replaceChildren(...nodes) { this.children = nodes.flat().filter(Boolean); },
       append(...nodes) { this.children.push(...nodes.flat().filter(Boolean)); },
       after(...nodes) { this._after = nodes; },
+      before() {},
       before() {},
       querySelector() { return null; },
       querySelectorAll() { return []; },

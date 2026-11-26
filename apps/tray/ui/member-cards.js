@@ -177,7 +177,7 @@
     },
     antigravity: {
       key: "antigravity_interactive",
-      tip: () => L("用终端界面驱动 Antigravity CLI，代替 -p 以省额度；需要 agy 1.5.10 或更新版本。", "Drives Antigravity CLI through its terminal UI instead of -p to save quota; requires agy 1.5.10 or later."),
+      tip: () => L("用终端界面驱动 Antigravity CLI，代替 -p；需要 agy 1.5.10 或更新版本。", "Drives Antigravity CLI through its terminal UI instead of -p; requires agy 1.5.10 or later."),
     },
   };
 
@@ -218,8 +218,8 @@
       });
     if (!rows.length) return [];
     return [...rows, el("p", { className: "member-muted member-note" }, L(
-      "在 DeepSeek Harness 登录账号后，需为所选模型选择“登录账号”并保存；“官方 API Key”使用官方 API 方式；“沿用 CLI 设置”不改变路由；仅选中对应模型时生效。",
-      "After signing in to DeepSeek Harness, select “Signed-in account” for the chosen model and save settings; “Official API key” uses the official API route; “Follow CLI settings” leaves routing unchanged. Applies only when that model is selected."))];
+      "在 DeepSeek Harness 登录账号后，为所选模型选择“登录账号”即可使用该账号；“官方 API Key”使用官方 API 方式；“沿用 CLI 设置”不改变路由；仅选中对应模型时生效。",
+      "After signing in to DeepSeek Harness, select “Signed-in account” for the chosen model; “Official API key” uses the official API route; “Follow CLI settings” leaves routing unchanged. Applies only when that model is selected."))];
   }
 
   function codexSourceUnavailable() {
@@ -380,7 +380,7 @@
 
     const confirm = S.pendingDisable === provider
       ? el("div", { className: "disable-confirm", role: "group", "aria-label": L(`确认移除 ${name}`, `Confirm removing ${name}`) },
-        el("p", {}, L(`移除会清除 ${name} 的默认模型。重新启用不会恢复；点击“保存设置”后才会生效。`, `Removing clears default models for ${name}. Re-enabling will not restore them; takes effect after clicking “Save settings”.`)),
+        el("p", {}, L(`移除会清除 ${name} 的默认模型，重新启用不会恢复。`, `Removing clears default models for ${name}. Re-enabling will not restore them.`)),
         el("div", { className: "btn-group" },
           el("button", { type: "button", dataset: { focusKey: `${provider}/cancel-disable` }, onClick: () => { S.pendingDisable = null; S.renderCards(); } }, L("保留", "Keep")),
           el("button", { type: "button", className: "danger", dataset: { focusKey: `${provider}/confirm-disable` }, onClick: () => setProviderEnabled(provider, false, true) }, L("确认移除", "Remove"))))
@@ -477,48 +477,82 @@
     if (S.orchestration) S.renderOrchestration();
   }
 
-  // Save members.json with race version checking
-  async function saveMembers() {
-    if (S.busy || !S.dirty || S.documentError || emptyScene()) return;
-    const errors = S.memberSaveErrors();
-    if (errors.length) {
-      showNotice(errors[0].message, true);
-      S.updateControls();
-      return;
+  let memberSaving = false;
+  let activeSavePromise = null;
+  let saveQueued = false;
+
+  function memberValidationError() {
+    if (S.documentError) return S.documentError;
+    const emptyRestricted = emptyScene();
+    if (emptyRestricted) {
+      return L(`${SCENES[emptyRestricted] || emptyRestricted}至少要用一个员工`, `${SCENES[emptyRestricted] || emptyRestricted} must enable at least one employee`);
     }
-    S.busy = true;
-    S.updateControls();
-    const feedback = $("save-feedback");
-    feedback.textContent = L("正在保存…", "Saving…");
-    feedback.className = "save-feedback";
+    const errors = S.memberSaveErrors?.() || S.configurationErrors?.() || [];
+    return errors.length ? errors[0].message : null;
+  }
 
-    const saving = JSON.stringify(confirmScenes());
-    const sourceChanged = S.currentDoc.clis?.codex?.executable_source !== JSON.parse(S.savedSnapshot || "{}").clis?.codex?.executable_source;
-    let saved = false;
-
+  async function flushMemberSaves() {
+    let anySourceChanged = false;
     try {
-      if (saving !== S.savedSnapshot) {
-        await apiPostMembers(JSON.parse(saving));
-        S.savedSnapshot = saving;
-      }
-      if (limitChanged()) await saveLimit();
-      S.refreshDirty();
-      // Saved membership decides each card's place and the folded uninstalled list.
-      S.renderCards();
-      feedback.textContent = L("设置已保存 · 参数是否有效以 boss 读取时的校验为准", "Settings saved · Option validity is verified when read by the boss");
-      feedback.className = "save-feedback success";
-      showNotice(L("设置已保存", "Settings saved"));
-      saved = true;
-    } catch (err) {
-      feedback.textContent = L(`保存失败: ${err.message}`, `Save failed: ${err.message}`);
-      feedback.className = "save-feedback error";
-      showNotice(err.message, true);
-      S.refreshDirty();
+      do {
+        saveQueued = false;
+        if (S.documentError) continue;
+        const invalid = memberValidationError();
+        if (invalid) {
+          showNotice(invalid, true);
+          S.updateControls();
+          continue;
+        }
+        const savingDoc = confirmScenes(structuredClone(S.currentDoc));
+        const saving = JSON.stringify(savingDoc);
+        if (saving === S.savedSnapshot) {
+          S.markSaved(S.savedSnapshot);
+          S.updateControls();
+          continue;
+        }
+        const versionAtStart = S.docVersion;
+        const savedObj = JSON.parse(S.savedSnapshot || "{}");
+        const sourceChanged = S.currentDoc.clis?.codex?.executable_source !== savedObj.clis?.codex?.executable_source;
+        S.busy = true;
+        S.updateControls();
+        try {
+          await apiPostMembers(savingDoc);
+          S.markSaved(saving, versionAtStart);
+          anySourceChanged ||= sourceChanged;
+          if (!saveQueued) {
+            S.renderCards();
+            showNotice(L("设置已保存", "Settings saved"));
+          }
+        } catch (err) {
+          if (!saveQueued && S.docVersion === versionAtStart && S.savedSnapshot) {
+            S.currentDoc = JSON.parse(S.savedSnapshot);
+            S.markSaved(S.savedSnapshot);
+            S.renderCards();
+          } else {
+            S.refreshDirty();
+          }
+          showNotice(err.message, true);
+        } finally {
+          S.busy = false;
+          S.updateControls();
+        }
+      } while (saveQueued);
     } finally {
-      S.busy = false;
-      S.updateControls();
-      if (saved && sourceChanged) void refreshDetection(true);
+      memberSaving = false;
+      activeSavePromise = null;
+      if (anySourceChanged) void refreshDetection(true);
     }
+  }
+
+  // Auto-save members.json immediately, serializing rapid edits without dropping updates.
+  function saveMembers() {
+    if (memberSaving) {
+      saveQueued = true;
+      return activeSavePromise;
+    }
+    memberSaving = true;
+    activeSavePromise = flushMemberSaves();
+    return activeSavePromise;
   }
 
   function renderErrorBanner() {

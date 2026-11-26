@@ -125,6 +125,13 @@ test("a stale GET cannot overwrite preferences broadcast from another window", a
 test("settings.html scripts load in declared order and language switch respects unsaved changes", async () => {
   const html = readFileSync(`${__dirname}/../settings.html`, "utf8");
   const scripts = [...html.matchAll(/<script src="([^"]+)" defer><\/script>/g)].map(m => m[1]);
+  assert.doesNotMatch(html, /小人/);
+  assert.doesNotMatch(html, /id="save-btn"|id="members-badge"|id="leave-confirm"/);
+  assert.match(html, /id="nav-avatars"[^>]*data-en="Characters">角色形象</);
+  const paneAvatars = html.slice(html.indexOf('id="pane-avatars"'), html.indexOf('id="pane-general"'));
+  const paneGeneral = html.slice(html.indexOf('id="pane-general"'), html.indexOf('id="pane-storage"'));
+  assert.match(paneAvatars, /id="general-motion"/);
+  assert.doesNotMatch(paneGeneral, /id="general-motion"/);
 
   const elements = new Map();
   function makeNode(tag = "div", id = "") {
@@ -167,6 +174,7 @@ test("settings.html scripts load in declared order and language switch respects 
   root.dataset = { theme: "system", motion: "system", lang: "system" };
   const document = {
     documentElement: root, hidden: false, visibilityState: "visible", activeElement: null,
+    body: makeNode("body"),
     currentScript: { src: "http://127.0.0.1/avatars.js" },
     getElementById: getEl,
     createElement: tag => makeNode(tag),
@@ -178,7 +186,7 @@ test("settings.html scripts load in declared order and language switch respects 
     addEventListener() {},
   };
   const context = {
-    window: null, document, navigator: { language: "zh-CN" },
+    window: null, document, navigator: { language: "zh-CN", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)" },
     location: { protocol: "http:", hostname: "127.0.0.1", search: "", hash: "#general", href: "http://127.0.0.1/settings/#general", reload() { reloaded += 1; } },
     history: { replaceState(_s, _t, url) { context.location.hash = url; } },
     localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
@@ -304,4 +312,36 @@ test("settings.html scripts load in declared order and language switch respects 
   assert.equal(translated.childNodes[0].nodeValue, "继续");
   assert.equal(reloaded, 1, "the mounted office can change language without another document reload");
 
+  // #20.1 & #07: tray_count is a switch, and turning it off hides tray_font; opening avatars loads general-motion.
+  context.AN.settings.setTab("avatars");
+  await new Promise(r => setImmediate(r));
+  assert.equal(getEl("general-motion").children.length, 2);
+  const launchRows = () => getEl("general-launch").children;
+  const trayCountRow = launchRows().find(r => r.children[0].children[0] === "菜单栏显示工作人数");
+  assert.equal(trayCountRow.children[1].attributes.type, "checkbox");
+  assert.equal(trayCountRow.children[1].className, "switch-input");
+  assert.ok(launchRows().some(r => r.children[0].children[0] === "菜单栏数字字体"));
+  trayCountRow.children[1].checked = false;
+  await trayCountRow.children[1].listeners.change[0]();
+  assert.equal(launchRows().some(r => r.children[0].children[0] === "菜单栏数字字体"), false);
+
+  // #09: Leaving Settings with Voice or Decision key drafts opens lightweight leave dialog focusing Keep editing.
+  let navigated = null;
+  context.window.AgentNaveSettingsFrame = { navigate: (url) => { navigated = url; return true; } };
+  context.window.AgentNaveVoiceSettings = { hasDrafts: () => true, discardDrafts() { this.discarded = true; } };
+  assert.equal(context.AN.settings.confirmLeave("http://127.0.0.1/chat/"), true);
+  assert.equal(getEl("advanced-leave-confirm").hidden, true);
+  const leaveDlg = document.body.children.find(c => c.className?.includes("leave-dialog"));
+  assert.ok(leaveDlg && leaveDlg.open);
+  const [dlgStay] = leaveDlg.children[2].children;
+  assert.equal(dlgStay.children[0].textContent, "继续编辑");
+  dlgStay.listeners.click[0]();
+  assert.equal(leaveDlg.open, false);
+  assert.equal(navigated, null);
+
+  assert.equal(context.AN.settings.confirmLeave("http://127.0.0.1/chat/"), true);
+  const leaveDlg2 = document.body.children.find(c => c.className?.includes("leave-dialog"));
+  leaveDlg2.children[2].children[1].listeners.click[0]();
+  assert.equal(context.window.AgentNaveVoiceSettings.discarded, true);
+  assert.equal(navigated, "http://127.0.0.1/chat/");
 });

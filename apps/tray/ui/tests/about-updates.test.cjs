@@ -100,6 +100,53 @@ test("opening the about page checks only once the chosen hours are stale", async
   }
 });
 
+test("about page sets #update-badge tooltip/aria-label and renders clickable #hosts link when local service is absent", async () => {
+  const nodes = new Map();
+  let clickedTab = null;
+  const makeNode = (tag = "div") => ({
+    tagName: tag.toUpperCase(), textContent: "", hidden: false, disabled: false, className: "", dataset: {}, attrs: {}, children: [],
+    listeners: {},
+    classList: { toggle() {} },
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    removeAttribute(k) { delete this.attrs[k]; },
+    addEventListener(type, fn) { this.listeners[type] = fn; },
+    replaceChildren(...kids) { this.children = kids; },
+  });
+  let status = { version: "2.0.0", update: { state: "available", version: "2.1.0" }, service: null, last_checked: new Date().toISOString(), check_answered: true };
+  const S = {
+    $: id => { if (!nodes.has(id)) nodes.set(id, makeNode()); return nodes.get(id); },
+    L: zh => zh,
+    apiGetStatus: async () => status,
+    apiCheckUpdate: async () => status,
+    bindAdvanced() {},
+    showNotice() {},
+    setTab(tab) { clickedTab = tab; },
+  };
+  const window = { AgentNaveAboutSettings: { interval: async () => 4 }, dispatchEvent() {}, addEventListener() {} };
+  vm.runInNewContext(readFileSync(`${__dirname}/../update-settings.js`, "utf8"), {
+    window, AN: { settings: S }, history: { replaceState() {} },
+    document: { hidden: false, addEventListener() {}, createElement: (tag) => makeNode(tag) },
+    CustomEvent: class { constructor(type, { detail }) { this.detail = detail; } },
+    setInterval: () => 0, clearInterval() {}, setTimeout,
+  });
+  await S.loadStatus();
+  const badge = nodes.get("update-badge");
+  assert.equal(badge.hidden, false);
+  assert.equal(badge.attrs.title, "有新版本");
+  assert.equal(badge.attrs["aria-label"], "有新版本");
+
+  const link = nodes.get("service-msg").children.find((c) => c && typeof c === "object" && c.tagName === "A");
+  assert.ok(link, "missing local service renders an anchor to #hosts");
+  assert.equal(link.attrs.href, "#hosts");
+  link.listeners.click({ preventDefault() {} });
+  assert.equal(clickedTab, "hosts");
+
+  status = { version: "2.0.0", update: { state: "none" }, service: { state: "done", version: "2.0.0" }, last_checked: new Date().toISOString(), check_answered: true };
+  await S.loadStatus();
+  assert.equal(badge.hidden, true);
+  assert.equal(badge.attrs.title, undefined);
+});
+
 test("the update flow checks again on every click and keeps an offline service upgrade", async () => {
   async function click(status, answer = status) {
     const posts = [], titles = [];

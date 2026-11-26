@@ -64,6 +64,9 @@ function drawListen(button, target = button.target) {
   button.target = target;
   button.hidden = !(voiceNow ? voiceNow.enabled : voiceConfig?.enabled);
   button.disabled = !voiceReady() && !asked(target) && !listening(target);
+  // Say why it is greyed out when the missing key is the reason, not a failed settings read.
+  setAttr(button, "title", button.disabled && voiceNow?.error_source !== "load"
+    ? L("请先在 设置 → 语音 中配置密钥", "Configure an API key in Settings → Voice first") : null);
   const on = listening(target), waiting = !on && asked(target);
   setText(button, waiting ? L("取消收听", "Cancel listening") : on ? L("停止收听", "Stop listening") : L("收听", "Listen"));
   button.dataset.waiting = String(waiting);
@@ -336,9 +339,26 @@ function showBody(kind, retry) {
 }
 
 // ---------------------------------------------------------------- update / service notices
+// Pasting a command is the fallback: offered once a retry ended in the same error again.
+const serviceRetry = { count: 0, error: null, again: false };
+function retryService() {
+  const error = state.appStatus?.service?.error ?? null;
+  if (error !== serviceRetry.error) serviceRetry.again = false;
+  serviceRetry.count++;
+  serviceRetry.error = error;
+}
+// `fresh` says the status was read after the last Retry, so its failure is that retry's outcome.
+function followServiceRetry(service, fresh) {
+  if (service?.state === "failed") {
+    if (fresh && serviceRetry.count && service.error === serviceRetry.error) serviceRetry.again = true;
+  } else if (!["upgrading", "installing"].includes(service?.state)) {
+    Object.assign(serviceRetry, { error: null, again: false });
+  }
+}
 function notice(title, detail, action, target, secondary) {
   const button = (text, to) => {
     const link = h("a.notice-action", { href: to }, text);
+    if (to === "/app/upgrade-service") link.addEventListener("click", retryService);
     if (to === "/app/copy-service-command")
       link.addEventListener("click", () => { link.textContent = L("已复制", "Copied"); setTimeout(() => (link.textContent = text), 2000); });
     return link;
@@ -348,14 +368,20 @@ function notice(title, detail, action, target, secondary) {
 function notices(status, offline) {
   const out = [];
   // Only what needs the user: a found update or its progress is the header's update button.
-  if (status?.update?.state === "failed") out.push(notice(L("更新失败", "Update failed"), status.update.error || L("检查网络后重试", "Check your network and try again"), L("重试", "Retry"), "/app/update"));
-  if (status?.service?.state === "failed") out.push(notice(L("升级本机服务失败", "Service upgrade failed"), status.service.error, L("重试", "Retry"), "/app/upgrade-service", [L("复制命令", "Copy command"), "/app/copy-service-command"]));
+  const { update, service } = status || {};
+  const serviceFailed = service?.state === "failed";
+  // An update that stopped at its service step failed for the reason the service card gives.
+  if (update?.state === "failed" && !(serviceFailed && update.step === "service")) out.push(notice(L("更新失败", "Update failed"), update.error || L("检查网络后重试", "Check your network and try again"), L("重试", "Retry"), "/app/update"));
+  if (serviceFailed) {
+    const command = serviceRetry.again && service.error === serviceRetry.error;
+    out.push(notice(L("升级本机服务失败", "Service upgrade failed"), service.error, L("重试", "Retry"), "/app/upgrade-service", command ? [L("复制命令", "Copy command"), "/app/copy-service-command"] : null));
+  }
   if (offline) out.push(notice(L("读取中断，正在重试", "Connection interrupted, retrying"), L("下方显示的是最近一次成功读取的内容", "Showing the last successfully loaded state below")));
   return out;
 }
 let lastNotices = "";
 function renderNotices(status, offline) {
-  const key = JSON.stringify([status?.update, status?.service, offline]);
+  const key = JSON.stringify([status?.update, status?.service, offline, serviceRetry.again]);
   if (key === lastNotices) return;
   lastNotices = key;
   $("notices").replaceChildren(...notices(status, offline));
@@ -415,8 +441,12 @@ function render(data) {
 
 async function refresh() {
   void AN.providerHealth?.refresh(document.getElementById("provider-health-alert"));
+  const retries = serviceRetry.count;
   const [stageResult, statusResult] = await Promise.allSettled([load("/app/stage"), load("/app/status")]);
-  if (statusResult.status === "fulfilled") state.appStatus = statusResult.value;
+  if (statusResult.status === "fulfilled") {
+    state.appStatus = statusResult.value;
+    followServiceRetry(state.appStatus.service, retries === serviceRetry.count);
+  }
   if (stageResult.status === "rejected") {
     const shown = state.blocks.size + state.quiet.size > 0;
     if (!shown) showBody("error", () => { state.calm = ""; run(); });

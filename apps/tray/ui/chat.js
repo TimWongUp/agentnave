@@ -87,16 +87,27 @@ el.convToggle.addEventListener("click", () => {
 });
 
 // The workspace column folds away the same way; the grid itself is told through data-side.
+// Between 761 and 1100px the list is a 64px rail that never folds away: its button lays the full list over
+// the office and back instead (the peek stays until a click outside it, Escape, or a choice in it).
+const railMode = () => rail.matches && !narrow.matches;
 function renderSideToggle() {
   const L = AN.L || ((zh) => zh);
-  const shut = state.sideCollapsed;
+  const rail = railMode();
+  const shut = rail ? !state.sidePeek : state.sideCollapsed;
   const label = shut ? L("显示项目列表", "Show project list") : L("隐藏项目列表", "Hide project list");
-  if (el.app.dataset.side !== (shut ? "off" : "on")) el.app.dataset.side = shut ? "off" : "on";
+  const side = rail || !state.sideCollapsed ? "on" : "off";
+  if (el.app.dataset.side !== side) el.app.dataset.side = side;
   setAttr(el.sideToggle, "aria-expanded", shut ? "false" : "true");
   setAttr(el.sideToggle, "aria-label", label);
   setAttr(el.sideToggle, "title", label);
 }
+function toggleRailPeek(on) {
+  setPeek("side", on);
+  if (on) slideIn(el.app.querySelector(".side"));
+  renderSideToggle();
+}
 el.sideToggle.addEventListener("click", () => {
+  if (railMode()) return toggleRailPeek(!state.sidePeek);
   state.sideCollapsed = !state.sideCollapsed;
   store(SIDE_COLLAPSED_KEY, state.sideCollapsed ? "1" : null);
   state.sidePeek = false;
@@ -105,6 +116,21 @@ el.sideToggle.addEventListener("click", () => {
   renderSideToggle();
 });
 renderSideToggle();
+const sideColumn = el.app.querySelector(".side");
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (!railMode() || !state.sidePeek) return;
+    if (!sideColumn.contains(e.target) && !el.sideToggle.contains(e.target)) toggleRailPeek(false);
+  },
+  true,
+);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && railMode() && state.sidePeek) toggleRailPeek(false);
+});
+sideColumn.addEventListener("click", (e) => {
+  if (railMode() && state.sidePeek && e.target.closest?.(".gi")) toggleRailPeek(false);
+});
 // The conversation button belongs at the bar's right end, beside the theme switch.
 document.querySelector("header.bar .bar-end")?.append(el.convToggle);
 
@@ -113,7 +139,7 @@ document.querySelector("header.bar .bar-end")?.append(el.convToggle);
 const PEEK_EDGE = 6;
 const PEEK_DELAY = 300;
 const PEEK = {
-  side: { panel: el.app.querySelector(".side"), button: el.sideToggle, can: () => state.sideCollapsed && !narrow.matches, atEdge: (x) => x <= PEEK_EDGE },
+  side: { panel: el.app.querySelector(".side"), button: el.sideToggle, can: () => state.sideCollapsed && !rail.matches, atEdge: (x) => x <= PEEK_EDGE },
   conv: { panel: el.drawer, button: el.convToggle, can: () => state.convCollapsed && !overlay.matches, atEdge: (x) => x >= innerWidth - PEEK_EDGE },
 };
 const peekTimers = {};
@@ -130,6 +156,7 @@ function showPeek(name) {
 function hidePeekSoon(name) {
   const { panel, button } = PEEK[name];
   clearTimeout(peekTimers[name]);
+  if (name === "side" && railMode()) return; // the rail's list stays until it is dismissed
   peekTimers[name] = setTimeout(() => {
     // only keyboard focus holds it open; a click leaves focus behind that the pointer has already left
     if (panel.matches(":hover") || button.matches(":hover") || panel.querySelector(":focus-visible")) return;

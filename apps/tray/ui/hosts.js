@@ -442,7 +442,20 @@ function renderSummary() {
   );
   refresh.classList.toggle("pending", S.refreshing);
   $("refresh-result").textContent = S.refreshing ? "" : S.refreshResult;
-  $("hosts-badge").hidden = !attention && !reloads && !faults;
+  const hostsBadge = $("hosts-badge");
+  const badgeParts = [];
+  if (attention) badgeParts.push(L(`${attention} 个 boss 需要处理`, `${attention} boss needs attention`));
+  if (reloads) badgeParts.push(L(`${reloads} 个 boss 待生效`, `${reloads} pending reload`));
+  if (faults) badgeParts.push(L(`${faults} 个 boss 连接中断`, `${faults} connection lost`));
+  const badgeTip = badgeParts.join(L("、", ", "));
+  hostsBadge.hidden = !badgeParts.length;
+  if (badgeTip) {
+    hostsBadge.setAttribute("title", badgeTip);
+    hostsBadge.setAttribute("aria-label", badgeTip);
+  } else {
+    hostsBadge.removeAttribute?.("title");
+    hostsBadge.removeAttribute?.("aria-label");
+  }
   // The general reload note only matters while some host still needs a reload.
   $("reload-notice").hidden = !reloads;
 }

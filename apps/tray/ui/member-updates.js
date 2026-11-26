@@ -256,7 +256,15 @@
     }
   }
 
+  const copyTimers = new WeakMap();
+
   async function copyInstallCommand(command, button) {
+    const resetLabel = L("复制", "Copy");
+    const scheduleReset = () => {
+      if (typeof setTimeout !== "function") return;
+      if (typeof clearTimeout === "function") clearTimeout(copyTimers.get(button));
+      copyTimers.set(button, setTimeout(() => { button.textContent = resetLabel; }, 1500));
+    };
     try {
       try { await navigator.clipboard.writeText(command); }
       catch (_) {
@@ -269,7 +277,11 @@
         } finally { input.remove(); button.focus({ preventScroll: true }); }
       }
       button.textContent = L("已复制", "Copied");
-    } catch (_) { button.textContent = L("复制失败", "Copy failed"); }
+      scheduleReset();
+    } catch (_) {
+      button.textContent = L("复制失败", "Copy failed");
+      scheduleReset();
+    }
   }
 
   function renderMissingClis(missing) {

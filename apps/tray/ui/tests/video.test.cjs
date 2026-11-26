@@ -799,7 +799,9 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
   assert.equal(tip.textContent, "?");
   assert.match(tip.attrs["aria-label"], /150–300 MB/);
   const radios = () => root.findAll(el => el.attrs.role === "radio");
-  assert.equal(radios()[0].textContent, "CSS 小人");
+  const modeNote = () => root.findAll(el => el.className.includes("char-mode-note"))[0];
+  assert.equal(radios()[0].textContent, "CSS 形象");
+  assert.equal(modeNote().hidden, true);
   assert.equal(radios()[0].disabled, false);
   assert.equal(radios()[1].disabled, true);
   assert.equal(radios()[1].attrs.title, "请先安装 272p 视频包");
@@ -809,14 +811,16 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
 
   radios()[2].click();
   await new Promise(r => setImmediate(r));
-  assert.equal(status.textContent, "已切换为 544p 视频小人");
+  assert.equal(status.textContent, "已切换为 544p 视频形象");
   assert.equal(radios()[2].attrs["aria-checked"], "true");
+  assert.equal(modeNote().hidden, false);
 
   // Deleting the active 544p pack falls back to CSS ("static") and disables the 544p button.
-  const del544 = root.findAll(el => el.tagName === "BUTTON" && el.textContent === "删除")[0];
+  const del544 = root.findAll(el => el.tagName === "BUTTON" && el.textContent === "删除（42.0 MB）")[0];
   del544.click();
   await new Promise(r => setImmediate(r));
   assert.equal(radios()[0].attrs["aria-checked"], "true");
+  assert.equal(modeNote().hidden, true);
   assert.equal(radios()[2].disabled, true);
   assert.deepEqual(badges(), ["未安装 · 105.9 MB", "未安装 · 308.4 MB"]);
   assert.ok(posts.some(p => p.path === "/app/preferences" && p.body?.general?.character_style === "static"));
@@ -833,11 +837,11 @@ test("avatar settings disables uninstalled video tiers, falls back to CSS on del
   assert.equal(radios()[1].disabled, false);
   radios()[1].click();
   await new Promise(r => setImmediate(r));
-  assert.equal(status.textContent, "已切换为 272p 视频小人");
+  assert.equal(status.textContent, "已切换为 272p 视频形象");
 
   radios()[0].click();
   await new Promise(r => setImmediate(r));
-  assert.equal(status.textContent, "已切换为 CSS 小人");
+  assert.equal(status.textContent, "已切换为 CSS 形象");
 
   // Preview in the family editor always uses staticOnly.
   assert.equal(root.findAll(el => el.attrs["data-static-only"] === "true").length, 1);

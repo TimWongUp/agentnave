@@ -120,8 +120,7 @@
     });
     problemsSwitch.addEventListener("change", () => void save("problems", problemsSwitch.checked));
 
-    const offClass = off ? ".is-off" : "";
-    root.replaceChildren(
+    const rows = [
       h("div.s-row", {},
         h("span.s-label", {}, notifyLabel),
         h("div.s-control", {},
@@ -129,29 +128,34 @@
             ["off", L("不提醒", "Off")],
             ["system", L("系统通知", "System notification")],
           ], false),
-          testBtn,
+          off ? null : testBtn,
         ),
       ),
-      h(`div.s-row${offClass}`, {},
-        h("span.s-label", {}, scopeLabel),
-        segment(scopeLabel, "scope", [
-          ["all", L("私聊任务和会议", "Private tasks and meetings")],
-          ["meetings", L("只提醒会议", "Meetings only")],
-        ], off),
-      ),
-      h(`div.s-row${offClass}`, {},
-        h("span.s-label", {}, thresholdLabel, AN.settings.settingTip(L("任务或会议做完时，耗时超过这个时长才提醒，短任务不打扰；失败或受阻是否提醒看下一项。", "When a task or meeting finishes, notify only if it ran longer than this; failures and blocks follow the next setting."))),
-        segment(thresholdLabel, "threshold", [
-          [0, L("不限", "Any")],
-          [10, L("超过 10 分钟", "Over 10 min")],
-          [30, L("超过 30 分钟", "Over 30 min")],
-        ], off),
-      ),
-      h(`div.s-row${offClass}`, {},
-        h("span.s-label", {}, problemsLabel),
-        problemsSwitch,
-      ),
-    );
+    ];
+    if (!off) {
+      rows.push(
+        h("div.s-row", {},
+          h("span.s-label", {}, scopeLabel),
+          segment(scopeLabel, "scope", [
+            ["all", L("私聊任务和会议", "Private tasks and meetings")],
+            ["meetings", L("只提醒会议", "Meetings only")],
+          ], false),
+        ),
+        h("div.s-row", {},
+          h("span.s-label", {}, thresholdLabel, AN.settings.settingTip(L("任务或会议做完时，耗时超过这个时长才提醒，短任务不打扰；失败或受阻是否提醒看下一项。", "When a task or meeting finishes, notify only if it ran longer than this; failures and blocks follow the next setting."))),
+          segment(thresholdLabel, "threshold", [
+            [0, L("不限", "Any")],
+            [10, L("超过 10 分钟", "Over 10 min")],
+            [30, L("超过 30 分钟", "Over 30 min")],
+          ], false),
+        ),
+        h("div.s-row", {},
+          h("span.s-label", {}, problemsLabel),
+          problemsSwitch,
+        ),
+      );
+    }
+    root.replaceChildren(...rows);
   }
 
   async function refresh() {

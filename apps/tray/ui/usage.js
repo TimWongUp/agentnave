@@ -57,6 +57,8 @@
   }
 
   // ---- loading -----------------------------------------------------------------------
+  // A newly picked range keeps the last numbers on screen, dimmed, until it answers.
+  const switching = () => Boolean(state.data?.range && state.data.range !== state.range);
   async function fetchUsage() {
     clearTimeout(timer);
     const mine = ++seq, range = state.range;
@@ -69,6 +71,8 @@
       if (!data.scanning && state.grace === 0) state.manual = false;
     } catch {
       if (mine !== seq) return;
+      // Another range's numbers must not stand in for the one that could not be read.
+      if (switching()) state.data = null;
       state.error = true;
       state.manual = false;
     }
@@ -343,6 +347,7 @@
     button.dataset.busy = String(busy);
     label.classList.toggle("error", state.error);
     if (state.error) label.textContent = L("读取失败，稍后重试", "Couldn't read usage, retrying");
+    else if (switching()) label.textContent = L("读取中…", "Loading…");
     else if (busy) label.textContent = L("扫描中…", "Scanning…");
     else if (data?.updated_at) label.textContent = L(`更新于 ${AN.relTime(new Date(data.updated_at).toISOString())}`, `Updated ${AN.relTime(new Date(data.updated_at).toISOString())}`);
     else label.textContent = "";
@@ -354,7 +359,8 @@
   }
   function renderBody() {
     const data = state.data, body = document.getElementById("u-body");
-    const sig = `${state.view}|${state.range}|${document.documentElement.lang}|${Boolean(AN.fullModelNames?.())}|${JSON.stringify(data)}`;
+    // The data names its own range, so picking another one redraws only once that one arrives.
+    const sig = `${state.view}|${document.documentElement.lang}|${Boolean(AN.fullModelNames?.())}|${!data && state.error}|${JSON.stringify(data)}`;
     if (sig === state.sig) return;
     state.sig = sig;
     state.redraw = null;
@@ -365,13 +371,14 @@
     for (const button of document.querySelectorAll("#u-view button")) button.setAttribute("aria-checked", String(button.dataset.view === state.view));
     for (const button of document.querySelectorAll("#u-range button")) button.setAttribute("aria-checked", String(button.dataset.range === state.range));
     renderSync();
+    document.getElementById("u-body").setAttribute("aria-busy", String(switching()));
     renderBody();
     renderFoot();
   }
   function pick(next) {
     Object.assign(state, next);
     savePrefs();
-    if ("range" in next) { state.data = null; state.sig = ""; }
+    if ("range" in next) state.error = false;
     render();
     if ("range" in next) fetchUsage();
   }

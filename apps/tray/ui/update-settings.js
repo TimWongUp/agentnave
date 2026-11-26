@@ -93,7 +93,23 @@
     const errorText = $("update-error-text");
 
     // One action at a time: with an update found, "更新" leads and checking again stays secondary.
-    $("update-badge").hidden = !hasUpdate && updateInfo?.state !== "installing";
+    const updateBadge = $("update-badge");
+    const showUpdateBadge = hasUpdate || updateInfo?.state === "installing";
+    updateBadge.hidden = !showUpdateBadge;
+    const updateBadgeTip = updateInfo?.state === "installing"
+      ? L("正在更新", "Updating")
+      : hasAppUpdate
+        ? L("有新版本", "Update available")
+        : isServiceOutdated
+          ? L("本机服务可升级", "Local service upgrade available")
+          : "";
+    if (showUpdateBadge && updateBadgeTip) {
+      updateBadge.setAttribute("title", updateBadgeTip);
+      updateBadge.setAttribute("aria-label", updateBadgeTip);
+    } else {
+      updateBadge.removeAttribute?.("title");
+      updateBadge.removeAttribute?.("aria-label");
+    }
     btnCheck.disabled = isUpdating;
     btnCheck.textContent = hasUpdate ? L("重新检查", "Check again") : L("立即检查", "Check now");
     // While anything runs the progress line says what; a disabled action would only contradict it.
@@ -221,7 +237,26 @@
       $("service-version").textContent = installedService?.version ? `v${installedService.version}` : "—";
       serviceBadge.hidden = true;
       serviceMsg.hidden = Boolean(installedService?.installed);
-      serviceMsg.textContent = L("请在 boss 分区安装本机服务。", "Install the local service in the Boss section.");
+      if (typeof serviceMsg.replaceChildren === "function" && typeof document.createElement === "function") {
+        const link = document.createElement("a");
+        link.className = "inline-link";
+        link.setAttribute("href", "#hosts");
+        link.textContent = L("boss 分区", "Boss section");
+        link.addEventListener("click", (e) => {
+          if (typeof S.setTab === "function") {
+            e.preventDefault();
+            if (typeof history?.replaceState === "function") history.replaceState(null, "", "#hosts");
+            S.setTab("hosts");
+          }
+        });
+        if (L("zh", "en") === "en") {
+          serviceMsg.replaceChildren("Install the local service in the ", link, ".");
+        } else {
+          serviceMsg.replaceChildren("请在 ", link, " 安装本机服务。");
+        }
+      } else {
+        serviceMsg.textContent = L("请在 boss 分区安装本机服务。", "Install the local service in the Boss section.");
+      }
     } else {
       $("service-version").textContent = serviceInfo.version ? `v${serviceInfo.version}` : "—";
       const isServiceOutdated =
