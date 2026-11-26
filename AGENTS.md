@@ -3,7 +3,7 @@
 ## Scope and authority
 
 - `README.md` 面向首次使用者；当前行为以代码、Adapter、CLI/MCP schema 与测试为真源。
-- 项目特有术语见 `CONTEXT.md`；现行架构基线是 `docs/context/architecture.md`，ADR 索引与各篇状态见 `docs/adr/README.md`。
+- 项目特有术语见 `GLOSSARY.md`；现行架构基线是 `docs/context/architecture.md`，ADR 索引与各篇状态见 `docs/adr/README.md`。
 - 仓库外的旧版 AgentNave 上下文不是当前 Authority；除非用户明确要求，否则不读取或同步。
 
 ## Implementation boundaries
@@ -33,11 +33,9 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 - 开发环境：`uv sync --all-groups`。
 - MCP：`uv run agentnave-mcp`。
 - Python 门：`uv run ruff format --check .`、`uv run ruff check .`、`uv run pyright`、`uv run pytest`。
-- 托盘门（改动 `apps/tray` 时，在 `apps/tray` 下）：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`。
-- 托盘界面目测：`scripts/preview_tray.sh` 把当前分支编译成「AgentNave 预览」并打开（macOS），与已装正式版并存、读同一份数据；在 worktree 里运行时应用名带上 worktree 目录名（如「AgentNave 预览 fix-xxx」），每个 worktree 一份、互不覆盖；对应的 PR 合并或放弃后，退出并删掉 `~/Applications` 里这份预览，再清理 worktree；预览版不改 AgentNave 正式数据、宿主配置和 Skill（改动正式数据的请求一律拒绝，启动也不修复宿主接入），不更新、不升级服务；它自己的界面显示偏好、小人视频包、语音设置、密钥和缓存单独保存（视频包读取时先查预览版自己的目录，再回退正式版数据根）；语音请求只写预览版自己的数据目录。界面改动先用它给用户看，不必退出正式版。AGENTNAVE_PREVIEW 构建的 clippy 用 `AGENTNAVE_PREVIEW=1 CARGO_TARGET_DIR=target/preview cargo clippy --all-targets -- -D warnings`。
-- 真实 CLI 标准套件：`uv run python scripts/real_suite.py [--duration 秒] [--providers ...]`，用各 CLI 的便宜模型覆盖服务各模式并持续运行（默认 10 分钟），会消耗配额，执行前同样需要授权；加 `--real-history` 写入真实历史，可在托盘实时查看，标题用可读名称，工位角色为 `real-suite` 以便识别测试数据，事后在 App 清理；宿主自己的 CLI 不会被 `start_agent` 派发，需要覆盖它时从普通终端运行。
-- 接入为组员的 Provider CLI 必须同时接入为宿主（boss）；未经真实调用验收的宿主不接入。
-- 新增或接入 Provider CLI 的验收必须包含至少一次通过 AgentNave 发起的真实调用，不得以 fake executable 或代码模拟替代；真实调用会消耗配额，执行前仍须取得用户在当前会话的明确授权，未获授权时停下请求授权，不得声称接入完成。其他测试默认使用 fake executable。
+- 托盘门（改动 `apps/tray` 时，在 `apps/tray` 下）：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test`；涉及预览版构建时另跑 `AGENTNAVE_PREVIEW=1 CARGO_TARGET_DIR=target/preview cargo clippy --all-targets -- -D warnings`。
+- 托盘界面目测（macOS）：用 `scripts/preview_tray.sh` 编译并打开「AgentNave 预览」（在 worktree 里自动带目录名、互不覆盖），与正式版并存且不写正式数据、宿主配置或 Skill（隔离细则见 `docs/context/architecture.md`）。本机正式版（`/Applications/AgentNave.app` 及内嵌服务）只装已评审并合入 `origin/main` 的代码，未合并改动只用预览版；PR 合并或放弃后，先退出并删掉 `~/Applications` 中对应预览版，再清理 worktree。
+- 真实 CLI 验收与标准套件：新增或接入 Provider CLI 必须同时接入为宿主（boss），且至少包含一次通过 AgentNave 发起的真实调用验收，不得以 fake executable 或模拟替代（其他测试默认使用 fake executable）。`uv run python scripts/real_suite.py` 可用便宜模型持续覆盖各模式（参数见脚本头部说明；`--real-history` 会以 `real-suite` 角色写入真实历史，事后在 App 清理；宿主自身 CLI 不会被 `start_agent` 派发，需从普通终端覆盖）。任何真实 CLI 调用都会消耗配额，执行前须取得当前会话的明确授权；未获授权时停下请求授权，不得声称验收完成。
 
 ## Art assets
 
@@ -45,15 +43,25 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 
 ## Context change gate
 
-- 术语变化更新 `CONTEXT.md`；所有权、模块依赖方向、安全边界或跨进程／跨语言合同（中继与服务、服务与托盘、两端共用的数据根文件）变化时更新 `docs/context/architecture.md`，只写边界与合同要点，可以写数据根文件名及其写入方，不写参数、字段、路由或错误文本等能从代码、schema 和测试读到的细节；新增功能本身不是更新它的理由。难逆转且经过真实取舍的决定写 ADR。
+- 术语变化更新 `GLOSSARY.md`；所有权、模块依赖方向、安全边界或跨进程／跨语言合同（中继与服务、服务与托盘、两端共用的数据根文件）变化时更新 `docs/context/architecture.md`，只写边界与合同要点，可以写数据根文件名及其写入方，不写参数、字段、路由或错误文本等能从代码、schema 和测试读到的细节；新增功能本身不是更新它的理由。难逆转且经过真实取舍的决定写 ADR。
 - 精确实现、临时路线、分支、commit、测试输出和实时运行状态不写入长期上下文。
 
 ## Version releases
 
-- 用户明确要求更新本项目版本时，按完整发布任务执行：同一任务完成版本 PR、审查、合并，并等待对应 tag 与 GitHub Release 发布成功；用户明确限制交付范围时遵从该限制。
-- 本机正式版（`/Applications/AgentNave.app` 及其内嵌服务）只装已评审并合并到 `origin/main` 的代码；没合并的改动只用预览版给用户看。
-- 发版可以晚于本机安装，但发布的内容必须和本机正式版在用的一致：合并后先把 main 装到本机试用，发版时核对版本 PR 合并后的 main 和本机安装的代码是否一致（版本元数据除外），不一致就先重编重装。
+- 执行版本更新、核对发版与本机正式版一致性或处理发布工作流失败时，先读 `docs/agents/release-process.md`。
+- 用户明确要求更新版本时，按完整发布任务执行（版本 PR、审查、合并、等待 CI tag 与 GitHub Release 全部产物发布成功；用户明确缩小范围时遵从）。
+- 发布内容须与本机正式版一致（版本元数据除外），只经 `.github/workflows/python.yml` 自动发布，不手动建 tag／发布、不移动已有 tag、不绕过 CI 提前发布。
 
-- 版本 PR 同步更新版本（`pyproject.toml`、`src/agentnave/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档、`README.md` 与 `README.en.md` 中的配套版本和 `docs/releases/v<version>.md`；安装文档只保留当前版本的升级说明，替换上一版的说明，历史升级说明留在 `docs/releases/`。
-- 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release，并附上签名的 macOS 托盘安装包、更新包与 `latest.json`（需仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`）；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
-- 发布任务须等待该工作流和 GitHub Release 发布成功后交付。瞬时或外部故障解决后重跑原工作流；若需修改代码或发布元数据，则通过新 PR 再次增加版本，同版本普通 push 不重试此前发布。不绕过 CI 手动提前发布。
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues (`TimWongUp/agentnave`, via `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical five-role triage label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context (`GLOSSARY.md`, `docs/context/architecture.md`, and `docs/adr/`). See `docs/agents/domain.md`.

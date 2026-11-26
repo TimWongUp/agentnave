@@ -1,4 +1,10 @@
-//! The rules that turn a working directory into a project (see CONTEXT.md, "项目").
+//! Rules that turn a working directory into a tray Project (see `super::tests` for full cases
+//! and `crate::stage::origin` for workspace-to-cwd selection):
+//! 1. Empty, scratch/temp, data-root, and host auto-created directories always map to "其他".
+//! 2. Directories inside a git repo (including linked worktrees) or remembered in `memory.rs`
+//!    collapse to the main repository checkout, even after the directory is deleted.
+//! 3. Bare home, Desktop, and Downloads folders map to "其他"; other non-repo directories stay
+//!    their own project.
 
 use std::path::Path;
 
