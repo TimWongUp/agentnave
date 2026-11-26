@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import time
 from contextlib import AbstractContextManager, closing
 from dataclasses import replace
 from pathlib import Path
@@ -25,6 +26,7 @@ from agentnave.isolated import (
     repo_lock,
 )
 from agentnave.isolated import release as release_mod
+from agentnave.isolated import repo as isolated_repo
 from agentnave.isolated.release import _STATUS_ARGS  # pyright: ignore[reportPrivateUsage]
 from agentnave.isolated.repo import WORKTREES_DIR_NAME, run_git
 from agentnave.models import InvocationRequest
@@ -272,6 +274,34 @@ def test_failing_hook_or_filter_fails_creation_and_rolls_back(tmp_path: Path, fa
     assert _git(repo, "worktree", "list", "--porcelain").count("worktree ") == 1
     assert _git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/agentnave/") == ""
     dirs.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell hook")
+def test_hung_hook_is_killed_with_git_when_creation_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    pid_file = tmp_path / "hook.pid"
+    _script(repo / ".git" / "hooks" / "post-checkout", f"echo $$ > '{pid_file}'\nexec sleep 60\n")
+    monkeypatch.setattr(isolated_repo, "CREATE_GIT_TIMEOUT", 2.0)
+    dirs = IsolatedDirs(tmp_path / "data")
+    with pytest.raises(IsolationError, match="timed out"):
+        dirs.create(repo, workspace_id="ws-1")
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 5
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(pid)
+    assert dirs.unreleased_count("ws-1") == 0
+    dirs.close()
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def test_custom_filter_runs_on_create_and_an_untouched_worktree_is_released(

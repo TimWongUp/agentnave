@@ -117,6 +117,39 @@ impl GitRunner {
         extra_env: &[(&str, &str)],
         timeout: Duration,
     ) -> Result<GitOutput, String> {
+        self.run_os_inner(cwd, args, allowed_exit_codes, extra_env, timeout, &[])
+    }
+
+    /// Like `run`, also neutralizing the filter drivers configured in `filters_from`: a
+    /// non-forced `worktree remove` checks the target's status under that worktree's own
+    /// configuration (worktree config, `includeIf "onbranch:..."`).
+    pub(crate) fn run_filters_from(
+        &self,
+        cwd: &Path,
+        args: &[&str],
+        allowed_exit_codes: &[i32],
+        filters_from: &[&Path],
+    ) -> Result<GitOutput, String> {
+        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        self.run_os_inner(
+            cwd,
+            &args,
+            allowed_exit_codes,
+            &[],
+            DEFAULT_GIT_TIMEOUT,
+            filters_from,
+        )
+    }
+
+    fn run_os_inner(
+        &self,
+        cwd: &Path,
+        args: &[&OsStr],
+        allowed_exit_codes: &[i32],
+        extra_env: &[(&str, &str)],
+        timeout: Duration,
+        filters_from: &[&Path],
+    ) -> Result<GitOutput, String> {
         let mut cmd = Command::new("git");
         cmd.arg("--no-pager").arg("-C").arg(cwd);
         for item in [
@@ -142,7 +175,11 @@ impl GitRunner {
                 .iter()
                 .any(|name| *first == OsStr::new(name))
         }) {
-            for name in self.filter_driver_names(cwd)? {
+            let mut names = BTreeSet::new();
+            for dir in std::iter::once(cwd).chain(filters_from.iter().copied()) {
+                names.extend(self.filter_driver_names(dir)?);
+            }
+            for name in names {
                 if name.contains('=') {
                     return Err(format!("不支持的 Git filter 驱动名：{name}"));
                 }

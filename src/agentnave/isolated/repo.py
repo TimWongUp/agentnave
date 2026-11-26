@@ -6,6 +6,7 @@ import atexit
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -22,6 +23,8 @@ from agentnave.store import write_file
 WORKTREES_DIR_NAME = ".agentnave-worktrees"
 EXCLUDE_RULE = b"/.agentnave-worktrees/"
 DEFAULT_GIT_TIMEOUT = 30.0
+# Creating a worktree runs the repository's hooks and filters and may download LFS objects.
+CREATE_GIT_TIMEOUT = 600.0
 KILL_WAIT_SECONDS = 5.0
 MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024
 
@@ -213,7 +216,8 @@ def run_git(
     programs, signature verification (gpg.program), promisor lazy fetches and every filter driver
     (clean, smudge, process) in the effective configuration, whatever the attribute files say.
     Creating a worktree is the one exception: it passes disable_hooks=False and
-    neutralize_filters=False, so hooks, filters and LFS run as `git worktree add` runs them.
+    neutralize_filters=False, so hooks, filters, LFS and lazy fetches run as `git worktree add`
+    runs them; such a run gets its own process group, killed whole on timeout.
     filters_from names other worktrees the command runs Git in (a non-forced `worktree remove`
     checks the target's status): the drivers in their own configuration are neutralized too.
     """
@@ -251,8 +255,11 @@ def run_git(
     ):
         env.pop(name, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
-    # A partial clone would otherwise fetch missing objects from its promisor remote.
-    env["GIT_NO_LAZY_FETCH"] = "1"
+    if neutralize_filters:
+        # A partial clone would otherwise fetch missing objects from its promisor remote.
+        env["GIT_NO_LAZY_FETCH"] = "1"
+    # Hooks and filters may start their own children; give them a group to kill on timeout.
+    runs_repo_code = not disable_hooks or not neutralize_filters
     if extra_env:
         env.update(extra_env)
     try:
@@ -262,13 +269,14 @@ def run_git(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            start_new_session=runs_repo_code and os.name != "nt",
         )
     except OSError as exc:
         raise IsolationError(f"Failed to execute git: {exc}") from exc
     try:
         stdout, stderr_bytes = proc.communicate(input=stdin, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        proc.kill()
+        _kill_git(proc, tree=runs_repo_code)
         # Bounded: a surviving grandchild may keep the pipes open.
         with suppress(subprocess.TimeoutExpired):
             proc.communicate(timeout=KILL_WAIT_SECONDS)
@@ -280,6 +288,23 @@ def run_git(
         detail = stderr or f"exit status {proc.returncode}"
         raise IsolationError(f"git {' '.join(args[:2])} failed: {detail}")
     return GitResult(returncode=proc.returncode, stdout=stdout, stderr=stderr)
+
+
+def _kill_git(proc: subprocess.Popen[bytes], *, tree: bool) -> None:
+    """Kill git and, when it ran repository code, the hooks and filters it started."""
+    if tree and os.name == "nt":
+        with suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=KILL_WAIT_SECONDS,
+                check=False,
+            )
+    elif tree:
+        with suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    proc.kill()
 
 
 def parse_worktrees(porcelain_z: bytes) -> list[WorktreeEntry]:
@@ -486,7 +511,13 @@ def add_worktree_locked(
         cmd.extend(["-b", branch_name, "--", str(worktree_path), base_oid])
     else:
         cmd.extend(["--", str(worktree_path), branch_name])
-    run_git(cmd, cwd=main_root, disable_hooks=False, neutralize_filters=False)
+    run_git(
+        cmd,
+        cwd=main_root,
+        disable_hooks=False,
+        neutralize_filters=False,
+        timeout=CREATE_GIT_TIMEOUT,
+    )
     if is_link(worktree_path) or not worktree_path.is_dir():
         raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
     if filter_driver_names(worktree_path):
@@ -520,6 +551,7 @@ def _refresh_index_after_checkout(worktree_path: Path) -> None:
         cwd=worktree_path,
         allowed_exit_codes=(0, 1),
         neutralize_filters=False,
+        timeout=CREATE_GIT_TIMEOUT,
     )
 
 

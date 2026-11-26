@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::git::{GitRunner, decode_git_path};
+use super::git::{GitRunner, bytes_to_path, decode_git_path};
 use super::leases::{is_link, plain_entry, same_dir};
 
 const MAX_FINGERPRINT_ENTRIES: usize = 200_000;
@@ -203,9 +203,9 @@ pub(crate) fn nested_repositories_with_limit(
         if item.starts_with(b"160000 ")
             && let Some(pos) = item.iter().position(|&b| b == b'\t')
         {
-            let rel = decode_git_path(&item[pos + 1..]);
-            if !empty_or_missing_dir(&wt_path.join(&rel)) {
-                nested.insert(rel);
+            let raw = &item[pos + 1..];
+            if !empty_or_missing_dir(&wt_path.join(bytes_to_path(raw))) {
+                nested.insert(decode_git_path(raw));
             }
         }
     }
