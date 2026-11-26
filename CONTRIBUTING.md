@@ -73,20 +73,6 @@ HOME="$preview_home" python3 -m http.server 8765 --bind 127.0.0.1 --directory "$
 
 ## Version releases
 
-Prepare a release in a pull request: increase the stable `MAJOR.MINOR.PATCH` version in
-`pyproject.toml` and `src/agentnave/__init__.py`, refresh `uv.lock` with `uv lock`, update the install
-examples, replace the single upgrade note in `docs/installation.md` with this version's, and add
-`docs/releases/v<version>.md` with user-facing changes and migration instructions.
-The CI metadata check rejects inconsistent versions, decreases, and missing release notes.
+Releases are prepared via a version-bump pull request (updating package versions, lockfiles, paired docs, and `docs/releases/v<version>.md`) and published automatically by `.github/workflows/python.yml` after merging to `origin/main` (attaching the Python wheel, signed macOS/Windows tray installers, and `latest.json`). Never create or move release tags manually.
 
-After the version change is merged into `origin/main`, the existing Python workflow waits for
-Windows, macOS, and Linux verification jobs, then creates the version tag and GitHub Release at that
-exact push commit. Ordinary changes without a version bump do not publish. The Git installation
-channel remains canonical; this workflow does not publish to PyPI or upload binary distributions.
-
-After a transient or external failure is resolved, rerun the original workflow. If recovery requires
-code or release metadata changes, submit a new pull request with another version increase: reruns
-use the original commit, and an ordinary same-version push does not retry an earlier release.
-A published release at the same tag and commit is a no-op; a conflicting tag, missing tag for an
-existing release, or existing draft requires manual review and is never overwritten. Confirm that
-the release job and GitHub Release have completed before reporting a version as published.
+For the full pre-release checklist, file sync list, and CI failure-recovery rules, see [docs/agents/release-process.md](docs/agents/release-process.md).
