@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 /// What of `summary.json` the turns are counted under: the model an empty
-/// `modelUsage` falls back to, the session a subagent belongs to, and for a fork
-/// when it began (what it copied from its parent is older).
+/// `modelUsage` falls back to, the session a subagent belongs to, the working directory,
+/// and for a fork when it began (what it copied from its parent is older).
 fn summary(path: &Path, state: &mut Value) -> Option<()> {
     if state["summary"] == true {
         return Some(());
@@ -13,6 +13,14 @@ fn summary(path: &Path, state: &mut Value) -> Option<()> {
     let summary: Value = crate::usage::read_small_json(&path.parent()?.join("summary.json"))?;
     state["summary"] = json!(true);
     state["model"] = json!(string(&summary, "current_model_id"));
+    let cwd = summary["info"]["cwd"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| summary["cwd"].as_str().filter(|s| !s.is_empty()))
+        .unwrap_or("");
+    if !cwd.is_empty() {
+        state["cwd"] = json!(cwd);
+    }
     let parent = string(&summary, "parent_session_id");
     if !parent.is_empty() {
         let began = chrono::DateTime::parse_from_rfc3339(string(&summary, "created_at"))
@@ -52,6 +60,7 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Vec<Event> {
         return Vec::new();
     }
     let root = state["root"].as_str().unwrap_or(session);
+    let cwd = string(state, "cwd").to_owned();
     let turn = [
         string(&v["params"]["_meta"], "eventId"),
         string(update, "prompt_id"),
@@ -76,6 +85,7 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Vec<Event> {
                 model,
                 format!("grok:{session}:{turn}:{model}"),
             );
+            e.cwd = cwd.clone();
             e.read = number(usage, "cachedReadTokens");
             e.write5 = number(usage, "cacheCreationTokens");
             e.fresh = number(usage, "inputTokens").saturating_sub(e.read.saturating_add(e.write5));

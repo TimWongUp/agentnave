@@ -11,6 +11,10 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Option<Event> 
         "session" => {
             let id = string(v, "id");
             state["session"] = json!(id);
+            let cwd = string(v, "cwd");
+            if !cwd.is_empty() {
+                state["cwd"] = json!(cwd);
+            }
             state["version"] = json!(v["version"].as_i64().unwrap_or(0));
             state["seed_length"] = json!(v["seedLength"].as_i64().unwrap_or(0));
             state["seeding"] =
@@ -66,6 +70,7 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Option<Event> 
         model,
         format!("deepseek:{session}:{at}"),
     );
+    e.cwd = string(state, "cwd").to_owned();
     e.fresh = number(usage, "inputTokens");
     e.read = number(usage, "cacheReadTokens");
     e.write5 = number(usage, "cacheWriteTokens");

@@ -61,6 +61,9 @@ pub(super) struct HostDirs {
     pub codex_workspace: PathBuf,
     pub zcode_base: PathBuf,
     pub workbuddy_workspace: PathBuf,
+    /// T3 Code data root (`T3CODE_HOME` or `~/.t3`): non-git folders inside it are not projects,
+    /// while linked git worktrees under `<t3_home>/worktrees/...` still collapse via `.git` first.
+    pub t3_home: PathBuf,
 }
 
 pub(super) fn rules(dirs: &HostDirs) -> Vec<AutoRule> {
@@ -82,6 +85,12 @@ pub(super) fn rules(dirs: &HostDirs) -> Vec<AutoRule> {
             levels: &[&["default-workspace"]],
         },
     ];
+    if !dirs.t3_home.as_os_str().is_empty() {
+        rules.push(AutoRule {
+            root: dirs.t3_home.clone(),
+            levels: &[],
+        });
+    }
     rules.extend(dirs.claude.iter().map(|app| AutoRule {
         root: app.join("scratch-workspaces"),
         levels: &[&[CLAUDE_SCRATCH]],
@@ -151,6 +160,8 @@ pub(super) fn detect() -> HostDirs {
             .flat_map(|dir| [dir.join("Claude"), dir.join("Claude-3p")])
             .collect()
     };
+    let t3_home =
+        crate::t3_models::resolve_home(None, Some(&home)).unwrap_or_else(|| home.join(".t3"));
     HostDirs {
         zcode_base: env_dir("ZCODE_DATA_BASE_DIR").unwrap_or_else(|| home.join(".zcode")),
         home,
@@ -158,5 +169,6 @@ pub(super) fn detect() -> HostDirs {
         claude,
         codex_workspace,
         workbuddy_workspace,
+        t3_home,
     }
 }

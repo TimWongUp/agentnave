@@ -36,6 +36,7 @@ impl Machine {
             codex_workspace: home.join("Documents/Codex"),
             zcode_base: home.join(".zcode"),
             workbuddy_workspace: home.join("WorkBuddy"),
+            t3_home: home.join(".t3"),
         };
         let env = Env::new(
             dirs,
@@ -639,4 +640,58 @@ fn sidebar_state_persists_normalizes_and_recovers_from_corrupt_files() {
 
     let saved: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
     assert_eq!(saved["version"], 1);
+}
+
+#[test]
+fn t3_worktrees_collapse_to_main_repo_while_bare_t3_and_usage_codex_are_other() {
+    let machine = Machine::new();
+    let home = machine.home();
+    machine.make("home/Code/app/.git/worktrees/wt1");
+    machine.write("home/Code/app/.git/worktrees/wt1/commondir", "../..\n");
+    machine.write(
+        "home/.t3/worktrees/app/wt1/.git",
+        "gitdir: ../../../../Code/app/.git/worktrees/wt1\n",
+    );
+    machine.make("home/.t3/worktrees/app/wt1/src");
+    machine.make("home/.t3/userdata/providers");
+    assert_eq!(
+        machine.place(home.join(".t3/worktrees/app/wt1/src")),
+        "home/Code/app"
+    );
+    assert_eq!(machine.place(home.join(".t3")), OTHER);
+    assert_eq!(machine.place(home.join(".t3/userdata")), OTHER);
+    assert_eq!(machine.place(home.join(".t3/userdata/providers")), OTHER);
+
+    let codex_dir = home.join("Documents/Codex");
+    assert_eq!(
+        super::classify::classify_for_usage(&codex_dir.to_string_lossy(), &machine.env).key,
+        OTHER
+    );
+    let wt_proj = super::classify::classify_for_usage(
+        &home.join(".t3/worktrees/app/wt1/src").to_string_lossy(),
+        &machine.env,
+    );
+    assert_eq!(wt_proj.label, "app");
+
+    // Hermes cache scratch directory is never classified as a user project.
+    machine.make("home/.hermes/cache/scratch");
+    assert_eq!(machine.place(home.join(".hermes/cache/scratch")), OTHER);
+    #[cfg(target_os = "macos")]
+    {
+        assert!(
+            machine
+                .env
+                .is_scratch(Path::new("/private/var/folders/ab/cd1234/T/tmp.XY6hmjaCUM"))
+        );
+        assert!(
+            machine
+                .env
+                .is_scratch(Path::new("/var/folders/ab/cd1234/T/work"))
+        );
+        assert!(
+            !machine
+                .env
+                .is_scratch(Path::new("/private/var/folders/ab/cd1234/C/cache"))
+        );
+    }
 }

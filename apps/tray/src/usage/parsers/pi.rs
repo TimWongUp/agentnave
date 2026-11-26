@@ -11,6 +11,10 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Option<Event> 
             if state["header"] != true {
                 state["header"] = json!(true);
                 state["session"] = json!(string(v, "id"));
+                let cwd = string(v, "cwd");
+                if !cwd.is_empty() {
+                    state["cwd"] = json!(cwd);
+                }
                 if !string(v, "parentSession").is_empty() {
                     state["since"] = json!(timestamp(v, "timestamp").unwrap_or(0));
                 }
@@ -60,6 +64,7 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Option<Event> 
         format!("pi:{id}:{ts}")
     };
     let mut e = event("pi", session, session, ts, model, key);
+    e.cwd = string(state, "cwd").to_owned();
     e.fresh = number(usage, "input");
     e.read = number(usage, "cacheRead");
     e.write5 = number(usage, "cacheWrite");

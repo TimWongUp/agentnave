@@ -331,13 +331,16 @@ fn dst_midnight_gap_and_project_unpriced_and_thread_golden() {
     agg.add(&max_ev);
     agg.add(&max_ev);
 
-    // Probed Homes take precedence in scan::roots.
+    // Probed Homes take precedence and deduplicate in discover::roots_in.
+    let home_dir = tempfile::tempdir().unwrap();
+    let t3_dir = home_dir.path().join(".t3");
     let mut homes = crate::data::boss_app::Homes::default();
     homes.claude.push("/custom/claude".into());
     homes.codex.push("/custom/codex".into());
     homes.codex.push("/custom/codex".into());
     homes.other.push(("pi".into(), "/custom/pi".into()));
-    let discovered = scan::roots(&homes);
+    let no_env = |_: &str| None;
+    let discovered = discover::roots_in(home_dir.path(), &t3_dir, &[], &homes, &no_env);
     assert_eq!(
         discovered
             .iter()

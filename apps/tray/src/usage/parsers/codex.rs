@@ -17,10 +17,18 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Option<Event> 
     match string(v, "type") {
         "session_meta" => {
             state["session"] = json!(string(payload, "id"));
+            let cwd = string(payload, "cwd");
+            if !cwd.is_empty() {
+                state["cwd"] = json!(cwd);
+            }
             return None;
         }
         "turn_context" => {
             state["model"] = json!(string(payload, "model"));
+            let cwd = string(payload, "cwd");
+            if !cwd.is_empty() {
+                state["cwd"] = json!(cwd);
+            }
             return None;
         }
         "event_msg" if string(payload, "type") == "token_count" => {}
@@ -63,6 +71,7 @@ pub(super) fn parse(path: &Path, v: &Value, state: &mut Value) -> Option<Event> 
         string(state, "model"),
         format!("codex:{key}"),
     );
+    e.cwd = string(state, "cwd").to_owned();
     e.fresh = delta[0].saturating_sub(delta[1].saturating_add(delta[2]));
     e.read = delta[1];
     e.write5 = delta[2];

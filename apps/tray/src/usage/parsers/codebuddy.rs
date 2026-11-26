@@ -1,6 +1,6 @@
 use super::{event, number, stem, string};
 use crate::usage::Event;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::Path;
 
 fn cached(usage: &Value) -> i64 {
@@ -20,9 +20,14 @@ fn either(usage: &Value, key: &str, old: &str) -> i64 {
     number(usage, key).max(number(usage, old))
 }
 
-/// CodeBuddy's `inputTokens` includes the cache read and written. Lines of one reply
+/// CodeBuddy & WorkBuddy's `inputTokens` includes the cache read and written. Lines of one reply
 /// repeat its `messageId`, so the last one saved replaces the earlier ones.
-pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
+/// Reference: yetone/magpie `internal/sessions/calls_workbuddy.go` (MIT).
+pub(super) fn parse(provider: &str, path: &Path, v: &Value, state: &mut Value) -> Option<Event> {
+    let line_cwd = string(v, "cwd");
+    if !line_cwd.is_empty() {
+        state["cwd"] = json!(line_cwd);
+    }
     let data = &v["providerData"];
     let usage = &data["usage"];
     let model = match string(data, "model") {
@@ -45,11 +50,16 @@ pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
     };
     let message = string(data, "messageId");
     let key = if message.is_empty() {
-        format!("codebuddy:{session}:{ts}:{}", string(v, "id"))
+        format!("{provider}:{session}:{ts}:{}", string(v, "id"))
     } else {
-        format!("codebuddy:{message}")
+        format!("{provider}:{message}")
     };
-    let mut e = event("codebuddy", session, root, ts, model, key);
+    let mut e = event(provider, session, root, ts, model, key);
+    e.cwd = if !line_cwd.is_empty() {
+        line_cwd.to_owned()
+    } else {
+        string(state, "cwd").to_owned()
+    };
     let input = either(usage, "inputTokens", "input_tokens");
     e.read = cached(usage);
     e.write5 = either(usage, "cacheCreationTokens", "cache_creation_input_tokens");
