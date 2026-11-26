@@ -1,4 +1,4 @@
-"""Read user turns from native CLI transcripts for derived terminal sessions (ADR-0127)."""
+"""Read user turns from native CLI transcripts for derived terminal sessions (ADR-0128)."""
 
 from __future__ import annotations
 

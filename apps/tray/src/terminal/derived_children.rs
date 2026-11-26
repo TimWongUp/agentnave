@@ -1,4 +1,4 @@
-//! Guards against resuming a child workspace whose owning derived session is still alive (ADR-0127 §5).
+//! Guards against resuming a child workspace whose owning derived session is still alive (ADR-0128 §5).
 
 use std::path::Path;
 

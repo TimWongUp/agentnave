@@ -1,4 +1,4 @@
-//! Real activity state of a non-derived boss terminal for the office status badge (ADR-0127 §4).
+//! Real activity state of a non-derived boss terminal for the office status badge (ADR-0128 §4).
 
 #[cfg(all(test, unix))]
 mod tests;

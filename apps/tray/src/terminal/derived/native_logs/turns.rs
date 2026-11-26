@@ -1,4 +1,4 @@
-//! Read-only full-turn extraction and caching for derived session native logs (ADR-0127).
+//! Read-only full-turn extraction and caching for derived session native logs (ADR-0128).
 
 #[cfg(test)]
 mod tests;

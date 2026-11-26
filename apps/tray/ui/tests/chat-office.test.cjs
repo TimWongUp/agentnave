@@ -64,7 +64,7 @@ test("a boss whose terminal CLI runs shows as working", () => {
   assert.equal(rec.st.textContent, "空闲");
 });
 
-test("boss office status follows the ADR-0127 §4 priority table", () => {
+test("boss office status follows the ADR-0128 §4 priority table", () => {
   let activity = "blocked";
   const { rec, boss, update } = office(undefined, {
     running: () => activity !== null,

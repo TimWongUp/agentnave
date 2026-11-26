@@ -1,5 +1,5 @@
 //! Read-only mapping from derived sessions' native boss identity (`boss_key`) to their own
-//! subagent workspaces (ADR-0127 §5).
+//! subagent workspaces (ADR-0128 §5).
 
 #[cfg(test)]
 mod tests;
