@@ -127,11 +127,14 @@ fn codex_boss_follows_the_latest_confirmed_workspace() {
             waiting_on_approval: false,
         },
     );
-    let running = boss_running(
+    let mut running = boss_running(
         "codex",
         fake_session_with_osc(&[]),
         vec![boss_key("codex", old), boss_key("codex", current)],
         Some(client),
     );
+    assert_eq!(running.boss_activity(), "working");
+    // The terminal keeps the first chat's thread as its native one after moving on.
+    running.native = Some(old.to_owned());
     assert_eq!(running.boss_activity(), "working");
 }

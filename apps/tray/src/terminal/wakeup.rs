@@ -145,13 +145,24 @@ impl BossStatusRefresh {
             return;
         }
         self.reading.store(true, Ordering::SeqCst);
-        let reading = self.reading.clone();
+        let reading = Reading(self.reading.clone());
         thread::spawn(move || {
+            let _reading = reading;
             for codex in clients {
                 codex.refresh_threads();
             }
-            reading.store(false, Ordering::SeqCst);
         });
+    }
+}
+
+/// Clears the in-flight flag when the read ends, a panicking one included, so refreshing goes on.
+#[cfg(unix)]
+struct Reading(Arc<AtomicBool>);
+
+#[cfg(unix)]
+impl Drop for Reading {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 

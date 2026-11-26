@@ -1,4 +1,5 @@
-"""Read one anchored native CLI turn without falling back to another turn."""
+"""Native CLI logs shared by terminal reads: locate a session's log, scan its rows, judge Claude
+rows, and read one anchored turn without falling back to another turn."""
 
 from __future__ import annotations
 

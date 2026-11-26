@@ -1044,6 +1044,8 @@ const ChatTerminal = (() => {
       return;
     }
     t.terminal.set(state.loaded, on);
+    // Turns typed in the terminal meanwhile show once the messages are back.
+    if (!on && state.drawer?.kind === "desk" && typeof refreshDerivedTurns === "function") refreshDerivedTurns(state.loaded, state.drawer.key);
     if (state.chat && typeof renderAll === "function") {
       renderAll(state.chat);
       if (on && t.shown != null) focusFrame(t.shown);

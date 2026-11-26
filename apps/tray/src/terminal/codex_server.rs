@@ -652,24 +652,25 @@ impl Client {
             .map(|(status, _)| status.clone())
     }
 
-    /// Lock-only lookup of cached thread status by native thread id or boss key (never runs RPC).
+    /// Lock-only lookup of cached thread status by boss key, else by native thread id (never runs
+    /// RPC). The boss key goes first: the terminal keeps its first native id after the user moves
+    /// on to another chat in it.
     pub(super) fn cached_thread_status_for_boss(
         &self,
         native: Option<&str>,
         target_boss_key: Option<&str>,
     ) -> Option<ThreadStatus> {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(tid) = native.filter(|s| !s.is_empty())
-            && let Some((status, _)) = state.threads.get(tid)
+        if let Some(target) = target_boss_key.filter(|s| !s.is_empty())
+            && let Some((_, (status, _))) = state
+                .threads
+                .iter()
+                .find(|(tid, _)| boss_key("codex", tid) == target)
         {
             return Some(status.clone());
         }
-        let target = target_boss_key.filter(|s| !s.is_empty())?;
-        state
-            .threads
-            .iter()
-            .find(|(tid, _)| boss_key("codex", tid) == target)
-            .map(|(_, (status, _))| status.clone())
+        let tid = native.filter(|s| !s.is_empty())?;
+        state.threads.get(tid).map(|(status, _)| status.clone())
     }
 
     /// The thread is known to be idle, and no other one loaded beside it (a subagent's) works.
