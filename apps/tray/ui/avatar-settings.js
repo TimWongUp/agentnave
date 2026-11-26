@@ -8,10 +8,11 @@
     ...["s", "m"].flatMap((size) => [...art.STATES, ...art.EXTRA].map((state) => `${size}/${state}`)),
     ...art.STATES.map((state) => `h/${state}`),
   ];
-  let busy = false, replaced = {}, packs = {}, packsLoaded = false, pollTimer = 0;
+  let busy = false, replaced = {}, packs = {}, packsLoaded = false, pollTimer = 0, confirmResetFamily = null;
   let styleChoice = document.documentElement.dataset.characterStyle || "static";
   const refreshers = [];
   const videoBox = h("div.s-card");
+  const cssModeNote = h("p.s-muted.char-mode-note", { hidden: true }, L("当前使用视频模式，自定义立绘仅在切换为 CSS 形象时生效。", "Video mode is active; custom sprites apply only in CSS mode."));
   const megabytes = (bytes) => `${((bytes || 0) / 1048576).toFixed(1)} MB`;
 
   const PROMPT_TEMPLATE = `2D flat cel-shaded chibi anime character sprite, full body, front-facing, centered in a 1024x1024 square canvas, true transparent background (RGBA PNG).
@@ -119,10 +120,10 @@ print("Done ->", out_dir)`;
       styleChoice = choice;
       window.dispatchEvent(new CustomEvent("agentnave:preferences", { detail: { character_style: choice } }));
       if (choice === "static") {
-        status.textContent = L("已切换为 CSS 小人", "Switched to CSS characters");
+        status.textContent = L("已切换为 CSS 形象", "Switched to CSS characters");
       } else {
         const tier = choice.slice(6);
-        status.textContent = L(`已切换为 ${tier}p 视频小人`, `Switched to ${tier}p video characters`);
+        status.textContent = L(`已切换为 ${tier}p 视频形象`, `Switched to ${tier}p video characters`);
       }
     } catch (error) {
       status.textContent = error.message;
@@ -146,10 +147,11 @@ print("Done ->", out_dir)`;
   }
 
   function renderVideoPacks() {
+    cssModeNote.hidden = !styleChoice.startsWith("video-");
     const label = L("显示方式", "Display mode");
     const control = h("div.segment-control", { role: "radiogroup", "aria-label": label });
     for (const [choice, text, tier, missingHint] of [
-      ["static", L("CSS 小人", "CSS"), "", ""],
+      ["static", L("CSS 形象", "CSS"), "", ""],
       ["video-272", L("视频 272p", "Video 272p"), "272", L("请先安装 272p 视频包", "Install the 272p video pack first")],
       ["video-544", L("高清视频 544p", "HD video 544p"), "544", L("请先安装 544p 高清视频包", "Install the 544p HD video pack first")],
     ]) {
@@ -166,7 +168,7 @@ print("Done ->", out_dir)`;
       control.append(btn);
     }
     const tipText = L(
-      "视频小人在办公室窗口打开时会持续解码透明视频，比 CSS 小人多占用约 150–300 MB 内存与一定 GPU/CPU（544p 约为 272p 的两倍）；关闭或隐藏办公室窗口、滚出屏幕或开启「减少动效」时会自动释放解码器。",
+      "视频形象在办公室窗口打开时会持续解码透明视频，比 CSS 形象多占用约 150–300 MB 内存与一定 GPU/CPU（544p 约为 272p 的两倍）；关闭或隐藏办公室窗口、滚出屏幕或开启「减少动效」时会自动释放解码器。",
       "Video characters continuously decode alpha video while the office window is open, using ~150–300 MB more memory and extra GPU/CPU than CSS characters (544p uses roughly twice as much as 272p); decoders are released automatically when the window is hidden, scrolled offscreen, or Reduce motion is on.",
     );
     const tip = h("span.setting-tip", { tabindex: "0", role: "note", "aria-label": tipText }, "?");
@@ -189,7 +191,8 @@ print("Done ->", out_dir)`;
         imp.addEventListener("click", () => void packAction(tier, "import", L(`已导入 ${tier}p 视频包`, `Imported ${tier}p video pack`)));
         actions.append(imp);
         if (pack.installed) {
-          const del = h("button", { type: "button", disabled: busy }, L("删除", "Delete"));
+          const size = megabytes(pack?.bytes || (PACK_BYTES[packExt] || PACK_BYTES.mov)[tier]);
+          const del = h("button", { type: "button", disabled: busy }, L(`删除（${size}）`, `Delete (${size})`));
           del.addEventListener("click", () => void packAction(tier, "delete", L(`已删除 ${tier}p 视频包`, `Deleted ${tier}p video pack`)));
           actions.append(del);
         }
@@ -238,20 +241,43 @@ print("Done ->", out_dir)`;
       method: "POST", headers: { "X-AgentNave-Action": "1" }, body,
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || L("保存小人失败", "Failed to save character"));
+    if (!response.ok) throw new Error(data.error || L("保存形象失败", "Failed to save character"));
     replaced = data;
     await art.charactersChanged();
   }
   function editor(family, label) {
     const row = h("div.s-row.avatar-editor");
     const face = h("span.char-preview");
-    const input = h("input", { type: "file", webkitdirectory: "", multiple: true, hidden: true, "aria-label": L(`选择${label}小人文件夹`, `Choose ${label} character folder`) });
-    const upload = h("button", { type: "button" }, L("更换小人", "Replace character"));
+    const input = h("input", { type: "file", webkitdirectory: "", multiple: true, hidden: true, "aria-label": L(`选择${label}形象文件夹`, `Choose ${label} character folder`) });
+    const upload = h("button", { type: "button" }, L("更换形象", "Replace character"));
     const reset = h("button", { type: "button" }, L("恢复默认", "Restore default"));
+    const confirmBox = h("div.disable-confirm", { role: "group", "aria-label": L(`确认恢复 ${label} 默认形象`, `Confirm restoring default for ${label}`), hidden: true });
     function update() {
       face.replaceChildren(art.figure(art.character("", family), "m", true));
       upload.disabled = busy;
-      reset.disabled = busy || !replaced[family];
+      const confirming = confirmResetFamily === family && Boolean(replaced[family]);
+      reset.disabled = busy || !replaced[family] || confirming;
+      confirmBox.hidden = !confirming;
+      if (!confirming) {
+        confirmBox.replaceChildren();
+        return;
+      }
+      const keep = h("button", { type: "button", disabled: busy }, L("保留", "Keep"));
+      const confirmBtn = h("button.danger", { type: "button", disabled: busy }, L("确认恢复", "Restore"));
+      keep.addEventListener("click", () => {
+        confirmResetFamily = null;
+        refreshers.forEach((f) => f());
+        reset.focus?.({ preventScroll: true });
+      });
+      confirmBtn.addEventListener("click", () => {
+        confirmResetFamily = null;
+        void run(() => send(family, new Blob([])), L(`${label} 已恢复默认形象`, `Restored default character for ${label}`));
+      });
+      confirmBox.replaceChildren(
+        h("p", {}, L(`恢复默认会删除为 ${label} 导入的自定义 CSS 形象，无法撤销。`, `Restoring default deletes the custom CSS character sprites imported for ${label} and cannot be undone.`)),
+        h("div.btn-group", {}, keep, confirmBtn),
+      );
+      keep.focus?.({ preventScroll: true });
     }
     async function run(action, done) {
       busy = true; refreshers.forEach((f) => f());
@@ -259,13 +285,13 @@ print("Done ->", out_dir)`;
       catch (error) { status.textContent = error.message; }
       finally { busy = false; input.value = ""; refreshers.forEach((f) => f()); }
     }
-    upload.addEventListener("click", () => input.click());
-    input.addEventListener("change", () => { if (input.files.length) run(async () => send(family, await pack(input.files)), L(`${label} 的小人已更换`, `Replaced character for ${label}`)); });
-    reset.addEventListener("click", () => run(() => send(family, new Blob([])), L(`${label} 已恢复默认小人`, `Restored default character for ${label}`)));
+    upload.addEventListener("click", () => { confirmResetFamily = null; input.click(); });
+    input.addEventListener("change", () => { if (input.files.length) run(async () => send(family, await pack(input.files)), L(`${label} 的形象已更换`, `Replaced character for ${label}`)); });
+    reset.addEventListener("click", () => { confirmResetFamily = family; refreshers.forEach((f) => f()); });
     refreshers.push(update);
     update();
     row.append(h("span.s-label", {}, Avatars.create("family", family, ""), label),
-      h("div.s-control", {}, face, upload, reset), input);
+      h("div.s-stack", {}, h("div.s-control", {}, face, upload, reset), confirmBox), input);
     return row;
   }
   function copyBox(codeText, btnLabel) {
@@ -281,16 +307,16 @@ print("Done ->", out_dir)`;
   function buildGuideDialog() {
     const closeBtn = h("button.primary", { type: "button" }, L("关闭", "Close"));
     const dialog = h("dialog.char-guide-dialog", {},
-      h("h2.upd-title", {}, L("自制与更换 CSS 小人指南", "DIY & replace CSS characters guide")),
+      h("h2.upd-title", {}, L("自制与更换 CSS 形象指南", "DIY & replace CSS characters guide")),
       h("div.char-guide-body", {},
         h("section.char-guide-card", {},
           h("h3", {}, L("1. 目录结构与 27 张 WebP 规格", "1. Folder structure & 27-WebP specification")),
-          h("p", {}, L("点击某个模型家族的「更换小人」，选择包含 s/、m/、h/ 三个子文件夹的目录，共 27 张真透明底正方形 WebP（单张 ≤ 1 MB）：", "Click Replace character on a model family and choose a folder with s/, m/ and h/ subfolders containing 27 transparent square WebP images (≤ 1 MB each):")),
+          h("p", {}, L("点击某个模型家族的「更换形象」，选择包含 s/、m/、h/ 三个子文件夹的目录，共 27 张真透明底正方形 WebP（单张 ≤ 1 MB）：", "Click Replace character on a model family and choose a folder with s/, m/ and h/ subfolders containing 27 transparent square WebP images (≤ 1 MB each):")),
           h("ul", {},
             h("li", {}, L("s/：266×266，10 张（idle、blink、working、speaking、review、done、sleep、sad、walk-1、walk-2）", "s/: 266×266, 10 frames (idle, blink, working, speaking, review, done, sleep, sad, walk-1, walk-2)")),
             h("li", {}, L("m/：320×320，10 张（同上 10 个状态）", "m/: 320×320, 10 frames (same 10 states)")),
             h("li", {}, L("h/：96×96，7 张（前 7 个状态，不含 sad / walk-1 / walk-2，按同一头部方框裁切）", "h/: 96×96, 7 frames (first 7 states without sad / walk, cropped to the same head box)"))),
-          h("p.char-guide-note", {}, L("仅在「显示方式」选为「CSS 小人」时显示自定义立绘；切换为 272p / 544p 视频小人时统一播放内置视频包。", "Custom sets appear when Display mode is set to CSS; 272p / 544p video modes always play the built-in video packs."))),
+          h("p.char-guide-note", {}, L("仅在「显示方式」选为「CSS 形象」时显示自定义立绘；切换为 272p / 544p 视频形象时统一播放内置视频包。", "Custom sets appear when Display mode is set to CSS; 272p / 544p video modes always play the built-in video packs."))),
         h("section.char-guide-card", {},
           h("h3", {}, L("2. AI 生图规范与提示词模板", "2. AI image generation rules & prompt template")),
           h("ul", {},
@@ -311,8 +337,8 @@ print("Done ->", out_dir)`;
   const guideBtn = h("button.char-guide-btn", { type: "button" }, L("自制与更换指南", "DIY & replace guide"));
   guideBtn.addEventListener("click", () => guideDialog.showModal?.());
   const grid = h("div.s-card");
-  root.append(h("div.s-group", {}, h("h2.s-title", {}, L("小人动画", "Character animation")), videoBox),
-    h("div.s-group", {}, h("h2.s-title", {}, L("CSS 小人（按模型家族更换）", "CSS characters (per model family)"), h("span.s-title-aside", {}, guideBtn)), grid), guideDialog);
+  root.append(h("div.s-group", {}, h("h2.s-title", {}, L("角色动画", "Character animation")), videoBox),
+    h("div.s-group", {}, h("h2.s-title", {}, L("自定义 CSS 形象（按模型家族）", "Custom CSS characters (per model family)"), h("span.s-title-aside", {}, guideBtn)), cssModeNote, grid), guideDialog);
   renderVideoPacks();
   void loadPacks();
   fetch("/app/preferences", { cache: "no-store" }).then((r) => (r.ok ? r.json() : {})).then((data) => {

@@ -46,13 +46,13 @@
     {
       key: "battery_still",
       group: "motion",
-      label: () => L("用电池时小人不动", "Still characters on battery"),
+      label: () => L("用电池时暂停动画", "Pause animation on battery"),
       kind: "switch",
     },
     {
       key: "pause_unfocused",
       group: "motion",
-      label: () => L("窗口失焦时小人暂停", "Pause characters when unfocused"),
+      label: () => L("窗口失焦时暂停动画", "Pause animation when unfocused"),
       kind: "switch",
     },
     {
@@ -91,10 +91,7 @@
       group: "launch",
       macOnly: true,
       label: () => L("菜单栏显示工作人数", "Show active count in menu bar"),
-      choices: () => [
-        [true, L("显示", "Show")],
-        [false, L("隐藏", "Hide")],
-      ],
+      kind: "switch",
     },
     {
       key: "tray_font",
@@ -210,7 +207,8 @@
   function render() {
     if (!root || !data) return;
     // Only the macOS menu bar shows the count beside the icon.
-    const shown = ITEMS.filter((item) => !item.macOnly || shellOS() === "macos");
+    const showCount = Boolean(effectiveValue("tray_count"));
+    const shown = ITEMS.filter((item) => (!item.macOnly || shellOS() === "macos") && (item.key !== "tray_font" || showCount));
     for (const [name, box] of Object.entries(roots)) {
       box?.replaceChildren(...shown.filter((item) => item.group === name)
         .map((item) => h("div.s-row", {}, h("span.s-label", {}, item.label()), renderControl(item))));
@@ -246,10 +244,10 @@
     render();
   });
 
-  const visible = () => !$("pane-general")?.hidden && !document.hidden;
+  const visible = () => (!$("pane-general")?.hidden || !$("pane-avatars")?.hidden) && !document.hidden;
   document.addEventListener("visibilitychange", () => visible() && refresh());
   addEventListener("focus", () => visible() && refresh());
   addEventListener("hashchange", () => visible() && refresh());
   window.AgentNaveGeneralSettings = { load: refresh };
-  if (!$("pane-general")?.hidden) void refresh();
+  if (!$("pane-general")?.hidden || !$("pane-avatars")?.hidden) void refresh();
 }

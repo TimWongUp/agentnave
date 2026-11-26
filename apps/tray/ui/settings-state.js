@@ -297,10 +297,21 @@
     notice.classList.toggle("error", isError);
   }
 
-  function markSaved(snapshot = JSON.stringify(currentDoc)) {
+  let validationNoticeShown = false;
+
+  function markSaved(snapshot = JSON.stringify(currentDoc), version = docVersion) {
     savedSnapshot = snapshot;
-    savedVersion = docVersion;
+    savedVersion = version;
     S.refreshDirty();
+  }
+
+  function discardMembersDraft() {
+    if (savedSnapshot) currentDoc = JSON.parse(savedSnapshot);
+    savedVersion = docVersion;
+    pendingDisable = null;
+    validationNoticeShown = false;
+    S.refreshDirty();
+    S.renderCards?.();
   }
 
   // Key order carries no meaning: turning a CLI off and on again moves it to the end of its scene.
@@ -516,50 +527,30 @@
   }
 
   function updateControls() {
-    $("dirty-text").textContent = dirty ? L("有未保存的修改", "Unsaved changes") : "";
-    $("members-badge").hidden = !dirty;
     if (!unsaved() && !busy) leaveTarget = null;
     S.renderLeaveConfirm();
     S.renderAdvancedBar();
 
     const emptyRestricted = emptyScene();
-    const errors = S.memberSaveErrors();
-    const canSave = !busy && dirty && !documentError && !emptyRestricted && errors.length === 0;
+    const errors = S.memberSaveErrors?.() || configurationErrors();
 
-    $("save-btn").disabled = !canSave;
-    $("refresh-detection").disabled = busy || probing || S.cliBusy();
-    $("refresh-detection").textContent = probing ? L("正在检测…", "Detecting…") : L("刷新模型列表", "Refresh models");
-
-    // Feedback hints
-    const feedback = $("save-feedback");
-    if (emptyRestricted) {
-      feedback.textContent = L(`${SCENES[emptyRestricted] || emptyRestricted}至少要用一个员工`, `${SCENES[emptyRestricted] || emptyRestricted} must enable at least one employee`);
-      feedback.className = "save-feedback error";
-      feedback.dataset.validation = "true";
-    } else if (errors.length) {
-      feedback.textContent = errors[0].message;
-      feedback.className = "save-feedback error";
-      feedback.dataset.validation = "true";
-    } else if (feedback.dataset.validation === "true") {
-      delete feedback.dataset.validation;
-      feedback.textContent = "";
-      feedback.className = "save-feedback";
-    } else if (!dirty && !feedback.classList.contains("success")) {
-      feedback.textContent = "";
-      feedback.className = "save-feedback";
+    const maxRunning = $("max-running");
+    if (maxRunning) maxRunning.disabled = busy;
+    const refreshBtn = $("refresh-detection");
+    if (refreshBtn) {
+      refreshBtn.disabled = busy || probing || S.cliBusy();
+      refreshBtn.textContent = probing ? L("正在检测…", "Detecting…") : L("刷新模型列表", "Refresh models");
     }
 
-    // Permission summary tag
-    const permCount = countPermissionOptions();
-    const permSummary = $("permission-summary");
-    if (permSummary) {
-      if (permCount > 0) {
-        permSummary.hidden = false;
-        permSummary.textContent = L(`包含 ${permCount} 个权限类默认参数`, `Includes ${permCount} permission-related default ${permCount === 1 ? "option" : "options"}`);
-      } else {
-        permSummary.hidden = true;
-        permSummary.textContent = "";
-      }
+    if (emptyRestricted) {
+      validationNoticeShown = true;
+      showNotice(L(`${SCENES[emptyRestricted] || emptyRestricted}至少要用一个员工`, `${SCENES[emptyRestricted] || emptyRestricted} must enable at least one employee`), true);
+    } else if (errors.length && dirty) {
+      validationNoticeShown = true;
+      showNotice(errors[0].message, true);
+    } else if (validationNoticeShown) {
+      validationNoticeShown = false;
+      showNotice("");
     }
 
     // Readonly state if document error
@@ -618,6 +609,28 @@
     limitRevision += 1;
   }
 
+  async function saveLimitImmediate() {
+    if (busy) {
+      $("max-running").value = String(limitSaved());
+      return;
+    }
+    busy = true;
+    limitRevision += 1;
+    S.updateControls();
+    try {
+      await saveLimit();
+      showNotice(L("设置已保存", "Settings saved"));
+    } catch (error) {
+      $("max-running").value = String(limitSaved());
+      showNotice(error.message, true);
+    } finally {
+      busy = false;
+      limitRevision += 1;
+      S.refreshDirty();
+      S.updateControls();
+    }
+  }
+
   // This setting applies to both scenes and is saved as soon as it is selected.
   async function setInteractive(key, enabled) {
     if (busy || !limitDoc || limitError) return S.renderCards();
@@ -643,7 +656,9 @@
     }
   }
 
-  const unsaved = () => dirty || S.advancedChanges().length > 0;
+  const unsaved = () => dirty || S.advancedChanges().length > 0
+    || Boolean(window.AgentNaveVoiceSettings?.hasDrafts?.())
+    || Boolean(window.AgentNaveDecisionSeats?.hasKeyDraft?.());
 
   // Switch tabs
   function setTab(tab) {
@@ -664,6 +679,9 @@
       window.AgentNaveLanguageSettings?.load();
       window.AgentNaveGeneralSettings?.load();
       window.AgentNaveAlertsSettings?.load();
+    }
+    if (tab === "avatars") {
+      window.AgentNaveGeneralSettings?.load();
     }
     if (tab === "voice") window.AgentNaveVoiceSettings?.load();
     if (tab === "about") S.loadStatus().then(S.checkIfStale);
@@ -697,11 +715,12 @@
   Object.assign(S, {
     $, L, el, textNode, settingTip, PROVIDERS, PROVIDER_NAMES, apiGetMembers,
     apiPostReview, takeReview, renderPermission, apiPostMembers, apiGetStatus, apiCheckUpdate, SCENES,
-    showNotice, markSaved, sameJson, refreshDirty, incDocVersion, emptyScene, configurationErrors,
-    updateControls, countPermissionOptions, grantsPermission, limitChanged, loadLimit, saveLimit, setInteractive, unsaved, setTab, SCENE_IDS, OFF
+    showNotice, markSaved, discardMembersDraft, sameJson, refreshDirty, incDocVersion, emptyScene, configurationErrors,
+    updateControls, countPermissionOptions, grantsPermission, limitChanged, loadLimit, saveLimit, saveLimitImmediate, setInteractive, unsaved, setTab, SCENE_IDS, OFF
   });
   S.share({
     currentDoc: [() => currentDoc, (v) => { currentDoc = v; }],
+    docVersion: [() => docVersion],
     detected: [() => detected, (v) => { detected = v; }],
     currentTab: [() => currentTab],
     dirty: [() => dirty, (v) => { dirty = v; }],

@@ -57,13 +57,13 @@
 <nav class="nav subnav" aria-label="设置分区" data-en-label="Settings sections">
   <a draggable="false" id="nav-general" href="#general" data-en="General">常规</a>
   <a draggable="false" id="nav-hosts" href="#hosts">boss<span id="hosts-badge" class="badge-dot" hidden></span></a>
-  <a draggable="false" id="nav-members" href="#members" data-en="Employees">员工<span id="members-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
+  <a draggable="false" id="nav-members" href="#members" data-en="Employees">员工</a>
   <a draggable="false" id="nav-orchestration" href="#orchestration" data-en="Orchestration">编排<span id="advanced-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
-  <a draggable="false" id="nav-avatars" href="#avatars" data-en="Appearance">外观</a>
+  <a draggable="false" id="nav-avatars" href="#avatars" data-en="Characters">角色形象</a>
   <a draggable="false" id="nav-voice" href="#voice" data-en="Voice">语音</a>
   <a draggable="false" id="nav-storage" href="#storage" data-en="Data & Storage">数据与存储</a>
   <a draggable="false" id="nav-advanced" href="#advanced" data-en="Review">评审设置<span id="skills-badge" class="badge-dot" title="有未保存的修改" data-en-title="Unsaved changes" hidden></span></a>
-  <a draggable="false" id="nav-about" href="#about" data-en="About">关于<span id="update-badge" class="badge-dot" hidden></span></a>
+  <a draggable="false" id="nav-about" href="#about" data-en="About">关于<span id="update-badge" class="badge-dot" title="有新版本" data-en-title="Update available" aria-label="有新版本" data-en-label="Update available" hidden></span></a>
 </nav>
 <main>
 
@@ -91,24 +91,11 @@
     <div id="provider-health-section" class="s-group" hidden><h2 class="s-title" data-en="Dispatch paused">暂停派活</h2><div id="provider-health" class="s-card" aria-live="polite"></div></div>
 
     <div id="cli-cards"></div>
-
-    <aside class="s-bar">
-      <div id="leave-confirm" class="disable-confirm leave-confirm" role="alertdialog" aria-label="离开设置页" data-en-label="Leave settings" hidden></div>
-      <div class="s-bar-body">
-        <div class="s-bar-info">
-          <span id="dirty-text" class="dirty-label"></span>
-          <span id="permission-summary" class="permission-summary-tag" hidden></span>
-          <span id="save-feedback" class="save-feedback"></span>
-        </div>
-        <div class="s-bar-actions">
-          <button id="save-btn" class="primary" type="button" disabled data-en="Save settings">保存设置</button>
-        </div>
-      </div>
-    </aside>
   </section>
 
   <section id="pane-avatars" class="tab-pane" hidden aria-labelledby="nav-avatars">
     <div id="avatar-settings" aria-live="polite"></div>
+    <div class="s-group"><h2 class="s-title" data-en="Pause animation">暂停动画</h2><div id="general-motion" class="s-card"></div></div>
   </section>
 
   <section id="pane-general" class="tab-pane" hidden aria-labelledby="nav-general">
@@ -123,7 +110,6 @@
         </div>
       </div>
     </div></div>
-    <div class="s-group"><h2 class="s-title" data-en="Characters">小人</h2><div id="general-motion" class="s-card"></div></div>
     <div class="s-group"><h2 class="s-title" data-en="Startup & tray">启动与托盘</h2><div id="general-launch" class="s-card"></div></div>
     <div class="s-group"><h2 class="s-title" data-en="Notifications">提醒</h2><div id="alerts-settings" class="s-card"></div></div>
   </section>

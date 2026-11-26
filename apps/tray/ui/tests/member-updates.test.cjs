@@ -324,3 +324,42 @@ test("a save during the read after an update is not overwritten", async () => {
   await ui.run("renderCliUpdate('codex').children[0].attrs.onClick()");
   assert.deepEqual(ui.json("currentDoc"), { saved: true });
 });
+
+test("copying an install command resets the button label back to Copy after 1.5s", async () => {
+  const timers = [];
+  const controls = new Map();
+  const control = (id) => {
+    if (!controls.has(id)) controls.set(id, { options: [], dataset: {}, classList: { toggle() {}, contains() { return false; } } });
+    return controls.get(id);
+  };
+  const context = vm.createContext({
+    AN: {}, fetch: async () => ({ ok: true, json: async () => ({ codex: [{ label: "npm", command: "npm i -g @openai/codex" }] }) }),
+    navigator: { clipboard: { writeText: async () => {} } },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout() {},
+    document: { getElementById: control },
+    window: { addEventListener() {} },
+  });
+  const run = (code) => vm.runInContext(code, context);
+  run(readFileSync(`${__dirname}/../provider-health.js`, "utf8"));
+  run(readFileSync(`${__dirname}/../settings-state.js`, "utf8"));
+  mirrorSettings(context);
+  run(`
+    AN.settings.el = (tag, attrs, ...children) => ({ tag, attrs, children, textContent: children[0] || "", appendChild(child) { this.children.push(child); } });
+    AN.settings.textNode = (s) => s;
+    AN.settings.renderCards = () => {};
+  `);
+  run(readFileSync(`${__dirname}/../member-updates.js`, "utf8"));
+  mirrorSettings(context);
+  await run("loadCliInstallCommands()");
+  run("renderMissingClis(['codex']).children[0].attrs.onClick()");
+  const missing = run("renderMissingClis(['codex'])");
+  const copyBtn = missing.children[1].children[0].children[1].children[0].children[2];
+  assert.equal(copyBtn.textContent, "复制");
+  await copyBtn.attrs.onClick();
+  assert.equal(copyBtn.textContent, "已复制");
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].ms, 1500);
+  timers[0].fn();
+  assert.equal(copyBtn.textContent, "复制");
+});

@@ -36,6 +36,11 @@ function page(config, models = [], english = false) {
         state.config = { ...state.config, ...sent, summary: { ...state.config.summary, ...sent.summary } };
         return body(state.config);
       }
+      if (path === "/app/voice/key" && options.method === "POST") {
+        const { engine, key } = JSON.parse(options.body);
+        state.config = { ...state.config, keys: { ...state.config.keys, [engine]: Boolean(key) } };
+        return body(state.config);
+      }
       if (path === "/app/voice") return body(state.config);
       if (path === "/app/voice/summary/models") return body(state.models);
       if (path === "/app/voice/cache") return body({ bytes: 0 });
@@ -52,7 +57,7 @@ function page(config, models = [], english = false) {
   const rowOf = (label) => rows().find((row) => text(row.children[0]) === label);
   const labelled = (label) => walk(root).find((item) => item.attrs["aria-label"] === label);
   const open = async () => { await context.window.AgentNaveVoiceSettings.load(); await new Promise(setImmediate); };
-  return { open, rows, rowOf, labelled, walk, text, posts, state, root };
+  return { open, rows, rowOf, labelled, walk, text, posts, state, root, api: context.window.AgentNaveVoiceSettings };
 }
 
 const provider = (model, extra = {}) => ({
@@ -193,4 +198,79 @@ test("failed summary platform switch preserves an open manual model input and ty
   // Re-clicking the already-selected manual option keeps the typed draft too.
   pickerOptions(app, "摘要模型").at(-1).listeners.click();
   assert.equal(app.labelled("手填摘要模型 ID").value, "my-draft-model");
+});
+
+test("disabled master switch and disabled summary switch hide all dependent controls", async () => {
+  const off = page(provider("gpt-a", { enabled: false }), LISTED);
+  await off.open();
+  assert.equal(off.rows().length, 1);
+  assert.ok(off.labelled("语音播报"));
+  assert.equal(off.labelled("elevenlabs API 密钥"), undefined);
+  assert.equal(off.rowOf("引擎"), undefined);
+  assert.equal(off.rowOf("使用摘要模型"), undefined);
+
+  const noSummary = page({ ...provider("gpt-a"), summary: { ...provider("gpt-a").summary, enabled: false } }, LISTED);
+  await noSummary.open();
+  assert.ok(noSummary.labelled("elevenlabs API 密钥"));
+  assert.ok(noSummary.rowOf("使用摘要模型"));
+  assert.equal(noSummary.rowOf("摘要详细程度"), undefined);
+  assert.equal(noSummary.rowOf("朗读语言"), undefined);
+  assert.equal(noSummary.rowOf("摘要平台"), undefined);
+  assert.equal(noSummary.rowOf("摘要模型"), undefined);
+  assert.equal(noSummary.labelled("摘要 Prompt"), undefined);
+});
+
+test("voice key deletion requires inline confirmation, inputs save on Enter, and drafts report hasDrafts", async () => {
+  const app = page(provider("gpt-a", {
+    summary: { ...provider("gpt-a").summary, provider: "custom", base_url: "https://old.example/v1", model: "" },
+  }), []);
+  await app.open();
+  const api = app.walk(app.root);
+  assert.ok(api);
+
+  // Voice key Enter-to-save and inline Delete confirmation.
+  const keyInput = app.labelled("elevenlabs API 密钥");
+  keyInput.value = "el-secret-1";
+  keyInput.listeners.input();
+  keyInput.listeners.keydown({ key: "Enter", preventDefault() {} });
+  await new Promise(setImmediate);
+  assert.deepEqual(app.posts.at(-1), { path: "/app/voice/key", body: { engine: "elevenlabs", key: "el-secret-1" } });
+
+  const removeBtn = app.rowOf("ElevenLabs API 密钥").children[1].children[0].children[2];
+  removeBtn.listeners.click();
+  const confirm = app.walk(app.root).find((item) => item.className === "disable-confirm");
+  assert.ok(confirm, "inline delete confirmation appears");
+  const [keepBtn] = confirm.children[1].children;
+  keepBtn.listeners.click();
+  assert.equal(app.walk(app.root).find((item) => item.className === "disable-confirm"), undefined);
+  assert.equal(app.posts.filter((p) => p.path === "/app/voice/key").length, 1);
+
+  app.rowOf("ElevenLabs API 密钥").children[1].children[0].children[2].listeners.click();
+  app.walk(app.root).find((item) => item.className === "disable-confirm").children[1].children[1].listeners.click();
+  await new Promise(setImmediate);
+  assert.deepEqual(app.posts.at(-1), { path: "/app/voice/key", body: { engine: "elevenlabs", key: "" } });
+
+  // Summary API URL Enter-to-save and custom model ID Enter-to-save.
+  const urlInput = app.labelled("摘要 API 地址");
+  urlInput.value = "https://new.example/v1";
+  urlInput.listeners.input();
+  urlInput.listeners.keydown({ key: "Enter", preventDefault() {} });
+  await new Promise(setImmediate);
+  assert.equal(saves(app).at(-1).body.summary.base_url, "https://new.example/v1");
+
+  const modelInput = app.labelled("手填摘要模型 ID");
+  modelInput.value = "custom-enter-model";
+  modelInput.listeners.input();
+  modelInput.listeners.keydown({ key: "Enter", preventDefault() {} });
+  await new Promise(setImmediate);
+  assert.equal(saves(app).at(-1).body.summary.model, "custom-enter-model");
+  assert.equal(app.api.hasDrafts(), false);
+
+  // Unsaved key / URL / prompt drafts report hasDrafts() until saved or discarded.
+  app.labelled("elevenlabs API 密钥").value = "unsaved-key";
+  app.labelled("elevenlabs API 密钥").listeners.input();
+  assert.equal(app.api.hasDrafts(), true);
+  app.api.discardDrafts();
+  assert.equal(app.api.hasDrafts(), false);
+  assert.equal(app.labelled("elevenlabs API 密钥").value, "");
 });
