@@ -300,6 +300,7 @@ def _kill_git(proc: subprocess.Popen[bytes], *, tree: bool) -> None:
                 stderr=subprocess.DEVNULL,
                 timeout=KILL_WAIT_SECONDS,
                 check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
     elif tree:
         with suppress(OSError):
