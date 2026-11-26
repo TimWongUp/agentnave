@@ -14,7 +14,22 @@ use super::path::{self, canonical};
 use super::{OTHER, Project};
 
 /// Where `cwd` is grouped. Only the record of past answers is written, and no process runs.
-pub(super) fn classify(cwd: &str, env: &Env, mut memory: Option<&mut Memory>) -> Project {
+pub(super) fn classify(cwd: &str, env: &Env, memory: Option<&mut Memory>) -> Project {
+    classify_mode(cwd, env, memory, false)
+}
+
+/// Same as `classify`, additionally treating bare host workspace roots (such as `~/Documents/Codex`
+/// without `.git`) as `"other"` for usage attribution.
+pub(super) fn classify_for_usage(cwd: &str, env: &Env) -> Project {
+    classify_mode(cwd, env, None, true)
+}
+
+fn classify_mode(
+    cwd: &str,
+    env: &Env,
+    mut memory: Option<&mut Memory>,
+    usage_mode: bool,
+) -> Project {
     let Some(dir) = (!cwd.trim().is_empty())
         .then(|| canonical(Path::new(cwd.trim())))
         .flatten()
@@ -42,7 +57,7 @@ pub(super) fn classify(cwd: &str, env: &Env, mut memory: Option<&mut Memory>) ->
         }
         return project(&root, env);
     }
-    if env.is_auto(&dir) || env.is_bare(&dir) {
+    if env.is_auto(&dir) || env.is_bare(&dir) || (usage_mode && env.is_usage_bare(&dir)) {
         return Project::other();
     }
     project(&dir, env)

@@ -1,129 +1,87 @@
-use super::{db, frames, now, parsers, zcode};
+use super::{Event, buckets, db, discover, frames, hermes, now, parsers, query, zcode};
 use crate::data::boss_app::Homes;
+use crate::projects::{OTHER, Project};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_LINE: u64 = 4 * 1024 * 1024;
-const DAY: i64 = 86_400_000;
-
-fn env_dir(key: &str, fallback: PathBuf) -> PathBuf {
-    std::env::var_os(key)
-        .filter(|v| !v.is_empty())
-        .map_or(fallback, PathBuf::from)
-}
-
-fn push_unique(
-    dirs: &mut Vec<(&'static str, PathBuf, usize)>,
-    seen: &mut HashSet<(&'static str, PathBuf)>,
-    provider: &'static str,
-    path: PathBuf,
-    depth: usize,
-) {
-    if seen.insert((provider, path.clone())) {
-        dirs.push((provider, path, depth));
-    }
-}
-
-pub(super) fn roots(homes: &Homes) -> Vec<(&'static str, PathBuf, usize)> {
-    let home = dirs::home_dir().unwrap_or_default();
-    let mut dirs = Vec::new();
-    let mut seen = HashSet::new();
-
-    let claude = if homes.claude.is_empty() {
-        vec![env_dir("CLAUDE_CONFIG_DIR", home.join(".claude"))]
-    } else {
-        homes.claude.clone()
-    };
-    for root in claude {
-        push_unique(&mut dirs, &mut seen, "claude", root.join("projects"), 4);
-    }
-
-    let codex = if homes.codex.is_empty() {
-        vec![env_dir("CODEX_HOME", home.join(".codex"))]
-    } else {
-        homes.codex.clone()
-    };
-    for root in codex {
-        push_unique(&mut dirs, &mut seen, "codex", root.join("sessions"), 5);
-        push_unique(
-            &mut dirs,
-            &mut seen,
-            "codex",
-            root.join("archived_sessions"),
-            2,
-        );
-    }
-
-    for (provider, var, default, sub, depth) in [
-        ("pi", "PI_CODING_AGENT_DIR", ".pi/agent", "sessions", 2),
-        (
-            "codebuddy",
-            "CODEBUDDY_CONFIG_DIR",
-            ".codebuddy",
-            "projects",
-            4,
-        ),
-        ("deepseek", "DSH_HOME", ".dsh", "sessions", 3),
-        ("grok", "GROK_HOME", ".grok", "sessions", 3),
-    ] {
-        let found: Vec<PathBuf> = homes
-            .other
-            .iter()
-            .filter(|(host, _)| host == provider)
-            .map(|(_, path)| path.clone())
-            .collect();
-        let bases = if found.is_empty() {
-            vec![env_dir(var, home.join(default))]
-        } else {
-            found
-        };
-        for root in bases {
-            push_unique(&mut dirs, &mut seen, provider, root.join(sub), depth);
-        }
-    }
-
-    for (_, root) in homes
-        .other
-        .iter()
-        .filter(|(host, _)| matches!(host.as_str(), "antigravity" | "antigravity-acp"))
-    {
-        push_unique(&mut dirs, &mut seen, "antigravity", root.join("brain"), 5);
-    }
-    push_unique(
-        &mut dirs,
-        &mut seen,
-        "antigravity",
-        env_dir("ANTIGRAVITY_CLI_HOME", home.join(".gemini/antigravity-cli")).join("brain"),
-        5,
-    );
-    push_unique(
-        &mut dirs,
-        &mut seen,
-        "antigravity",
-        home.join(".gemini/antigravity/brain"),
-        5,
-    );
-
-    dirs
-}
+const DAY: i64 = buckets::DAY;
 
 type Found = Vec<(&'static str, PathBuf, SystemTime)>;
 
-fn recent(modified: SystemTime) -> bool {
+fn recent(modified: SystemTime, now_ms: i64) -> bool {
     modified
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
-        >= now() - 31 * DAY
+        >= now_ms.saturating_sub(buckets::RETENTION_WINDOW_MS)
+}
+
+/// Per-scan resolver caching `cwd -> Project` so each unique directory is only stat'd once,
+/// layered with AgentNave read-only worker/boss attribution windows.
+pub(super) struct ProjectResolver<'a> {
+    cwd_cache: HashMap<String, Project>,
+    windows: &'a [query::Window],
+    bosses: &'a [query::Boss],
+    classify: fn(&str) -> Project,
+}
+
+impl<'a> ProjectResolver<'a> {
+    pub(super) fn new(windows: &'a [query::Window], bosses: &'a [query::Boss]) -> Self {
+        Self {
+            cwd_cache: HashMap::new(),
+            windows,
+            bosses,
+            classify: crate::projects::classify_usage_dir,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_classifier(
+        windows: &'a [query::Window],
+        bosses: &'a [query::Boss],
+        classify: fn(&str) -> Project,
+    ) -> Self {
+        Self {
+            cwd_cache: HashMap::new(),
+            windows,
+            bosses,
+            classify,
+        }
+    }
+
+    fn classify_cwd(&mut self, cwd: &str) -> Project {
+        let trimmed = cwd.trim();
+        if trimmed.is_empty() {
+            return Project::other();
+        }
+        if let Some(cached) = self.cwd_cache.get(trimmed) {
+            return cached.clone();
+        }
+        let project = (self.classify)(trimmed);
+        self.cwd_cache.insert(trimmed.to_owned(), project.clone());
+        project
+    }
+
+    pub(super) fn resolve(&mut self, e: &Event) -> (Project, &'static str) {
+        if let Some((proj, worker)) = query::assign(e, self.windows, self.bosses) {
+            let role = if worker { "worker" } else { "boss" };
+            if proj.key != OTHER {
+                return (proj.clone(), role);
+            }
+            return (self.classify_cwd(&e.cwd), role);
+        }
+        (self.classify_cwd(&e.cwd), "native")
+    }
 }
 
 /// DeepSeek Harness keeps older format files beside the newest one: only the highest
 /// `session[.vN].jsonl[.zstd]` of a session folder is read, the later written of two kinds.
-fn latest_deepseek(dir: &Path, out: &mut Found) {
+fn latest_deepseek(dir: &Path, now_ms: i64, out: &mut Found) {
     let mut best: Option<(u32, SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let Ok(kind) = entry.file_type() else {
@@ -159,18 +117,23 @@ fn latest_deepseek(dir: &Path, out: &mut Found) {
         }
     }
     if let Some((_, modified, path)) = best
-        && recent(modified)
+        && recent(modified, now_ms)
     {
         out.push(("deepseek", path, modified));
     }
 }
 
+#[cfg(test)]
 pub(super) fn discover(dir: &Path, provider: &'static str, depth: usize, out: &mut Found) {
+    discover_at(dir, provider, depth, now(), out);
+}
+
+fn discover_at(dir: &Path, provider: &'static str, depth: usize, now_ms: i64, out: &mut Found) {
     if depth == 0 {
         return;
     }
     if provider == "deepseek" && depth == 1 {
-        return latest_deepseek(dir, out);
+        return latest_deepseek(dir, now_ms, out);
     }
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         let Ok(kind) = entry.file_type() else {
@@ -178,7 +141,7 @@ pub(super) fn discover(dir: &Path, provider: &'static str, depth: usize, out: &m
         };
         let path = entry.path();
         if kind.is_dir() {
-            discover(&path, provider, depth - 1, out);
+            discover_at(&path, provider, depth - 1, now_ms, out);
             continue;
         }
         if !kind.is_file() {
@@ -187,7 +150,9 @@ pub(super) fn discover(dir: &Path, provider: &'static str, depth: usize, out: &m
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let valid = match provider {
-            "claude" | "pi" | "codebuddy" => name.ends_with(".jsonl"),
+            "claude" | "claude-desktop" | "pi" | "codebuddy" | "workbuddy" => {
+                name.ends_with(".jsonl")
+            }
             "grok" => name == "updates.jsonl",
             "codex" => {
                 (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
@@ -196,32 +161,115 @@ pub(super) fn discover(dir: &Path, provider: &'static str, depth: usize, out: &m
                             .components()
                             .any(|c| c.as_os_str() == "archived_sessions"))
             }
+            "kimi" => name == "wire.jsonl",
+            "minimax" => name.starts_with("messages") && name.ends_with(".jsonl"),
             _ => name == "transcript_full.jsonl",
         };
         if valid
             && let Ok(modified) = entry.metadata().and_then(|m| m.modified())
-            && recent(modified)
+            && recent(modified, now_ms)
         {
             out.push((provider, path, modified));
         }
     }
 }
 
-pub(super) fn run(root: &Path, homes: &Homes) -> Result<(), Box<dyn std::error::Error>> {
+fn antigravity_root_of(transcript: &Path) -> Option<PathBuf> {
+    for ancestor in transcript.ancestors() {
+        if ancestor.file_name().and_then(|n| n.to_str()) == Some("brain") {
+            return ancestor.parent().map(discover::canon_key);
+        }
+    }
+    None
+}
+
+fn load_antigravity_cwds(
+    roots: &[discover::RootEntry],
+) -> HashMap<PathBuf, HashMap<String, String>> {
+    let mut map = HashMap::new();
+    for (provider, brain_dir, _) in roots {
+        if *provider != "antigravity" {
+            continue;
+        }
+        let Some(parent) = brain_dir.parent() else {
+            continue;
+        };
+        let key = discover::canon_key(parent);
+        if map.contains_key(&key) {
+            continue;
+        }
+        let loaded = parsers::antigravity::load_cwds(parent);
+        map.insert(key, loaded);
+    }
+    map
+}
+
+pub(super) fn run_with(
+    root: &Path,
+    homes: &Homes,
+    windows: &[query::Window],
+    bosses: &[query::Boss],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let scan_now = now();
+    let discovered_roots = discover::roots(homes);
+    let agy_cwds = load_antigravity_cwds(&discovered_roots);
     let mut files = Vec::new();
-    for (provider, path, depth) in roots(homes) {
-        discover(&path, provider, depth, &mut files);
+    for (provider, path, depth) in &discovered_roots {
+        discover_at(path, provider, *depth, scan_now, &mut files);
     }
     files.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1)));
     let mut conn = db::open(root)?;
+    let mut resolver = ProjectResolver::new(windows, bosses);
     for (provider, path, _) in files {
-        if let Err(e) = file(&mut conn, provider, &path) {
+        let cwds = if provider == "antigravity" {
+            antigravity_root_of(&path).and_then(|key| agy_cwds.get(&key))
+        } else {
+            None
+        };
+        if let Err(e) = file_with(&mut conn, provider, &path, cwds, &mut resolver, scan_now) {
             eprintln!("用量日志 {}：{e}", path.display());
         }
     }
-    let database = zcode::database();
-    if let Err(e) = zcode::scan(&mut conn, &database) {
-        eprintln!("用量日志 {}：{e}", database.display());
+    let mut resolve_fn = |e: &Event| resolver.resolve(e);
+    let zcode_db = zcode::database();
+    if let Err(e) = zcode::scan_provider(
+        &mut conn,
+        &zcode_db,
+        "zcode",
+        Duration::from_secs(2),
+        scan_now,
+        &mut resolve_fn,
+    ) {
+        eprintln!("用量日志 {}：{e}", zcode_db.display());
+    }
+    let opencode_db = discover::opencode_db();
+    if let Err(e) = zcode::scan_provider(
+        &mut conn,
+        &opencode_db,
+        "opencode",
+        Duration::from_secs(2),
+        scan_now,
+        &mut resolve_fn,
+    ) {
+        eprintln!("用量日志 {}：{e}", opencode_db.display());
+    }
+    for hermes_db in discover::hermes_dbs() {
+        if let Err(e) = hermes::scan_with(
+            &mut conn,
+            &hermes_db,
+            Duration::from_secs(2),
+            scan_now,
+            &mut resolve_fn,
+        ) {
+            eprintln!("用量日志 {}：{e}", hermes_db.display());
+        }
+    }
+    let devin_db = discover::devin_db();
+    if let Err(e) = zcode::scan_devin(&mut conn, &devin_db, scan_now, &mut resolve_fn) {
+        eprintln!("用量日志 {}：{e}", devin_db.display());
+    }
+    if let Err(e) = db::prune(&mut conn, scan_now) {
+        eprintln!("用量库清理失败：{e}");
     }
     Ok(())
 }
@@ -246,10 +294,23 @@ fn reader(path: &Path, offset: u64) -> io::Result<Box<dyn Read>> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn file(
     conn: &mut rusqlite::Connection,
     provider: &str,
     path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut resolver = ProjectResolver::new(&[], &[]);
+    file_with(conn, provider, path, None, &mut resolver, now())
+}
+
+pub(super) fn file_with(
+    conn: &mut rusqlite::Connection,
+    provider: &str,
+    path: &Path,
+    agy_cwds: Option<&HashMap<String, String>>,
+    resolver: &mut ProjectResolver<'_>,
+    now_ms: i64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let meta = fs::metadata(path)?;
     let size = meta.len() as i64;
@@ -269,11 +330,14 @@ pub(super) fn file(
     }
     let mut state = serde_json::from_str(&c.state).unwrap_or_else(|_| parsers::initial());
     let input = reader(path, c.offset as u64)?;
+    let retention_floor = now_ms.saturating_sub(buckets::RETENTION_WINDOW_MS);
+    let future_cap = now_ms.saturating_add(DAY);
     let tx = conn.transaction()?;
     let offset = lines(input, c.offset as u64, |line| {
-        for e in parsers::parse(provider, path, line, &mut state) {
-            if e.ts >= now() - 31 * DAY && e.ts <= now() + DAY {
-                db::save(&tx, &e)?;
+        for e in parsers::parse_with(provider, path, line, &mut state, agy_cwds) {
+            if e.ts >= retention_floor && e.ts <= future_cap {
+                let (project, role_kind) = resolver.resolve(&e);
+                db::save_event(&tx, &e, &project, role_kind, now_ms)?;
             }
         }
         Ok(())

@@ -2,6 +2,7 @@ use super::*;
 use serde_json::json;
 use std::path::Path;
 
+mod adr0129;
 mod regression;
 
 fn parse_all(
@@ -663,16 +664,25 @@ fn routing_prefixes_and_variant_suffixes_are_priced() {
 #[test]
 fn today_range_buckets_into_twenty_four_local_hours() {
     use chrono::{Local, TimeZone};
+    let dir = tempfile::tempdir().unwrap();
+    let conn = db::open_at(&dir.path().join("usage.db")).unwrap();
     let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 20).unwrap();
-    let keys = query::bucket_keys("today", &[day]);
-    assert_eq!(keys.len(), 24);
-    assert_eq!(keys[0], "00:00");
-    assert_eq!(keys[23], "23:00");
     let afternoon = Local
         .from_local_datetime(&day.and_hms_opt(14, 35, 0).unwrap())
         .earliest()
         .unwrap()
         .timestamp_millis();
-    assert_eq!(query::bucket_of("today", afternoon), "14:00");
-    assert_eq!(query::bucket_of("7d", afternoon), "2026-11-20");
+    let spec = query::QuerySpec {
+        range: "today",
+        custom: None,
+        granularity: None,
+    };
+    let resp = query::respond_db(&conn, &spec, afternoon, Vec::new()).unwrap();
+    let daily = resp["daily"].as_array().unwrap();
+    assert_eq!(daily.len(), 24);
+    assert_eq!(daily[0]["date"], "2026-11-20T00:00");
+    assert_eq!(daily[14]["date"], "2026-11-20T14:00");
+    assert_eq!(daily[14]["future"], false);
+    assert_eq!(daily[15]["future"], true);
+    assert_eq!(daily[23]["date"], "2026-11-20T23:00");
 }

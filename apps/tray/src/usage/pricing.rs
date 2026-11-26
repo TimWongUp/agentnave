@@ -129,7 +129,9 @@ pub(super) fn cost(e: &Event) -> Option<f64> {
     let write5 = component(e.write5, price("cache_write_5m"))?;
     let write1 = component(
         e.write1,
-        price("cache_write_1h").or_else(|| (e.provider == "claude").then_some(2.0 * input)),
+        price("cache_write_1h").or_else(|| {
+            matches!(e.provider.as_str(), "claude" | "claude-desktop").then_some(2.0 * input)
+        }),
     )?;
     let total = (e.fresh as f64 * input
         + e.read as f64 * read

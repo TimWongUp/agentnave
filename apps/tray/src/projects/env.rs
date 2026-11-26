@@ -14,7 +14,12 @@ pub(super) struct Env {
     pub scratch: Vec<PathBuf>,
     /// The home, desktop and downloads folders: only themselves are not a project.
     pub bare: Vec<PathBuf>,
+    /// Bare workspace roots excluded from non-git usage project attribution (e.g. `~/Documents/Codex`).
+    pub usage_bare: Vec<PathBuf>,
     pub auto: Vec<AutoRule>,
+    /// Enabled only by `Env::detect()` on macOS so injected test fixtures under `TMPDIR`
+    /// (`/private/var/folders/.../T/...`) are never swallowed as scratch.
+    macos_var_folders: bool,
 }
 
 /// What the places were read from; a change means they are read again.
@@ -46,12 +51,25 @@ impl Env {
         bare: Vec<PathBuf>,
     ) -> Self {
         let home = canonical(&dirs.home);
-        let scratch = normalized(temp.into_iter().chain([data_root]))
+        let mut scratch_roots: Vec<PathBuf> = temp.into_iter().chain([data_root]).collect();
+        if !dirs.home.as_os_str().is_empty() {
+            scratch_roots.push(dirs.home.join(".hermes/cache"));
+        }
+        let scratch = normalized(scratch_roots)
             .into_iter()
             .filter(|path| !too_broad(path, home.as_deref()))
             .collect();
+        let usage_bare = normalized(
+            [
+                dirs.codex_workspace.clone(),
+                dirs.workbuddy_workspace.clone(),
+            ]
+            .into_iter()
+            .filter(|p| !p.as_os_str().is_empty()),
+        );
         Self {
             bare: normalized(bare.into_iter().chain([dirs.home.clone()])),
+            usage_bare,
             auto: auto::rules(&dirs)
                 .into_iter()
                 .filter_map(|mut rule| {
@@ -61,6 +79,7 @@ impl Env {
                 .collect(),
             scratch,
             home,
+            macos_var_folders: false,
         }
     }
 
@@ -74,20 +93,43 @@ impl Env {
             .into_iter()
             .flatten()
             .collect();
-        Self::new(auto::detect(), temp, crate::data_files::data_root(), bare)
+        let mut env = Self::new(auto::detect(), temp, crate::data_files::data_root(), bare);
+        env.macos_var_folders = cfg!(target_os = "macos");
+        env
     }
 
     pub(super) fn is_scratch(&self, path: &std::path::Path) -> bool {
-        self.scratch.iter().any(|root| within(path, root))
+        if self.scratch.iter().any(|root| within(path, root)) {
+            return true;
+        }
+        self.macos_var_folders && is_macos_var_folders_temp(path)
     }
 
     pub(super) fn is_bare(&self, path: &std::path::Path) -> bool {
         self.bare.iter().any(|place| super::path::same(path, place))
     }
 
+    pub(super) fn is_usage_bare(&self, path: &std::path::Path) -> bool {
+        self.usage_bare
+            .iter()
+            .any(|place| super::path::same(path, place))
+    }
+
     pub(super) fn is_auto(&self, path: &std::path::Path) -> bool {
         self.auto.iter().any(|rule| rule.covers(path))
     }
+}
+
+/// Any per-user macOS LaunchServices temp root: `/[private/]var/folders/<xx>/<yy>/T/...`.
+pub(super) fn is_macos_var_folders_temp(path: &std::path::Path) -> bool {
+    let rest = path
+        .strip_prefix("/private/var/folders")
+        .or_else(|_| path.strip_prefix("/var/folders"));
+    rest.is_ok_and(|rel| {
+        rel.components()
+            .nth(2)
+            .is_some_and(|c| c.as_os_str() == "T")
+    })
 }
 
 pub(super) fn stamp() -> Stamp {
@@ -101,9 +143,14 @@ pub(super) fn stamp() -> Stamp {
                     .ok()
             })
             .collect(),
-        vars: ["CODEX_HOME", "ZCODE_DATA_BASE_DIR", "AGENTNAVE_DATA_DIR"]
-            .iter()
-            .map(std::env::var_os)
-            .collect(),
+        vars: [
+            "CODEX_HOME",
+            "ZCODE_DATA_BASE_DIR",
+            "AGENTNAVE_DATA_DIR",
+            "T3CODE_HOME",
+        ]
+        .iter()
+        .map(std::env::var_os)
+        .collect(),
     }
 }

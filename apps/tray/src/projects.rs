@@ -185,6 +185,11 @@ pub(crate) fn classify_dir(dir: &Path) -> Project {
     with_env(|env, _| classify::classify(&cwd, env, None))
 }
 
+/// Classify a session `cwd` for usage attribution (read-only, excludes bare host workspace roots).
+pub(crate) fn classify_usage_dir(cwd: &str) -> Project {
+    with_env(|env, _| classify::classify_for_usage(cwd, env))
+}
+
 /// Resolve all given working directories synchronously (reusing fresh cache entries) and return
 /// their non-`other` project keys.
 pub(crate) fn resolve_all(cwds: impl IntoIterator<Item = String>) -> BTreeSet<String> {

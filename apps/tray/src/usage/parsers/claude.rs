@@ -1,9 +1,13 @@
 use super::{event, number, stem, string, timestamp};
 use crate::usage::Event;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::Path;
 
-pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
+pub(super) fn parse(provider: &str, path: &Path, v: &Value, state: &mut Value) -> Option<Event> {
+    let line_cwd = string(v, "cwd");
+    if !line_cwd.is_empty() {
+        state["cwd"] = json!(line_cwd);
+    }
     let message = &v["message"];
     let id = string(message, "id");
     let model = string(message, "model");
@@ -11,6 +15,15 @@ pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
     {
         return None;
     }
+    let effective_provider = if provider == "claude"
+        && matches!(
+            string(v, "entrypoint"),
+            "claude-desktop" | "claude-desktop-3p"
+        ) {
+        "claude-desktop"
+    } else {
+        provider
+    };
     let session = v["sessionId"]
         .as_str()
         .filter(|s| !s.is_empty())
@@ -23,13 +36,18 @@ pub(super) fn parse(path: &Path, v: &Value) -> Option<Event> {
     };
     let usage = &message["usage"];
     let mut e = event(
-        "claude",
+        effective_provider,
         session,
         root,
         timestamp(v, "timestamp")?,
         model,
         format!("claude:{id}"),
     );
+    e.cwd = if !line_cwd.is_empty() {
+        line_cwd.to_owned()
+    } else {
+        string(state, "cwd").to_owned()
+    };
     e.fresh = number(usage, "input_tokens");
     e.read = number(usage, "cache_read_input_tokens");
     let creation = &usage["cache_creation"];

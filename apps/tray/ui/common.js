@@ -1008,7 +1008,12 @@
     return mark;
   }
   // ---- CLIs and desks, shared by the office and the menu bar panel ---------------------------
-  const CLI = { codex: "Codex", claude: "Claude Code", codebuddy: "CodeBuddy", grok: "Grok", antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness", zcode: "ZCode" };
+  const CLI = {
+    codex: "Codex", claude: "Claude Code", "claude-desktop": "Claude Desktop",
+    codebuddy: "CodeBuddy", workbuddy: "WorkBuddy", grok: "Grok",
+    antigravity: "Antigravity", pi: "Pi", deepseek: "DeepSeek Harness", zcode: "ZCode",
+    hermes: "Hermes", opencode: "OpenCode", kimi: "Kimi Code", minimax: "MiniMax Code", devin: "Devin",
+  };
   const cliName = (provider) => CLI[provider] || provider || "";
   // The boss tile and CLI badges show the CLI's mark, or its initial. A boss in a desktop app keeps the
   // claude or codex host and passes its app, claude-desktop or codex-desktop, for the mark.

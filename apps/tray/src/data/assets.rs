@@ -129,16 +129,16 @@ impl Reader {
 }
 
 fn usage_asset(resource: &str) -> Response {
+    let script = |bytes: &[u8]| Response::ok("text/javascript; charset=utf-8", bytes.to_vec());
     match resource {
         "" => page(include_bytes!("../../ui/usage.html")),
         "usage.css" => Response::ok(
             "text/css; charset=utf-8",
             include_bytes!("../../ui/usage.css").to_vec(),
         ),
-        "usage.js" => Response::ok(
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../ui/usage.js").to_vec(),
-        ),
+        "usage.js" => script(include_bytes!("../../ui/usage.js")),
+        "usage-picker.js" => script(include_bytes!("../../ui/usage-picker.js")),
+        "usage-chart.js" => script(include_bytes!("../../ui/usage-chart.js")),
         _ => Response::not_found(),
     }
 }

@@ -11,6 +11,8 @@
 <script src="/chat/appearance.js" defer></script>
 <script src="/settings/settings-frame.js" defer></script>
 <script src="/chat/common.js" defer></script>
+<script src="./usage-picker.js" defer></script>
+<script src="./usage-chart.js" defer></script>
 <script src="./usage.js" defer></script>
 </head>
 <body class="usage-page">
@@ -22,22 +24,44 @@
     <a draggable="false" href="/settings/" data-en="Settings">设置</a>
   </nav>
 </header>
-<main class="u-main">
-  <div class="u-controls">
-    <div class="u-seg" id="u-view" role="radiogroup" aria-label="视角" data-en-label="View">
-      <button type="button" role="radio" data-view="overall" data-en="Overall">总体消耗</button>
-      <button type="button" role="radio" data-view="projects" data-en="By project">按项目</button>
+<main class="u-main" id="u-app">
+  <div class="u-controls-wrap">
+    <div class="u-controls">
+      <div class="u-seg" id="u-view" role="radiogroup" aria-label="视角" data-en-label="View">
+        <button type="button" role="radio" data-view="overall" data-en="Overall">总体消耗</button>
+        <button type="button" role="radio" data-view="projects" data-en="By project">按项目</button>
+      </div>
+      <div class="u-seg" id="u-range" role="radiogroup" aria-label="时间范围" data-en-label="Time range">
+        <button type="button" role="radio" data-range="24h" data-en="24h">近 24 小时</button>
+        <button type="button" role="radio" data-range="today" data-en="Today">今天</button>
+        <button type="button" role="radio" data-range="7d" data-en="7 days">近 7 天</button>
+        <button type="button" role="radio" data-range="30d" data-en="30 days">近 30 天</button>
+        <button type="button" role="radio" data-range="custom" data-en="Custom" aria-haspopup="dialog" aria-expanded="false">自定义</button>
+      </div>
+      <div class="u-sync">
+        <span id="u-updated" class="u-updated" role="status"></span>
+        <button id="u-refresh" class="u-refresh" type="button" aria-label="刷新" title="刷新" data-en-label="Refresh" data-en-title="Refresh"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.5 10a6.5 6.5 0 1 1-2-4.7M16.5 3.5v3.3h-3.3"/></svg></button>
+      </div>
     </div>
-    <div class="u-seg" id="u-range" role="radiogroup" aria-label="时间范围" data-en-label="Time range">
-      <button type="button" role="radio" data-range="today" data-en="Today">今天</button>
-      <button type="button" role="radio" data-range="7d" data-en="7 days">近 7 天</button>
-      <button type="button" role="radio" data-range="30d" data-en="30 days">近 30 天</button>
-    </div>
-    <div class="u-sync">
-      <span id="u-updated" class="u-updated" role="status"></span>
-      <button id="u-refresh" class="u-refresh" type="button" aria-label="刷新" title="刷新" data-en-label="Refresh" data-en-title="Refresh"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16.5 10a6.5 6.5 0 1 1-2-4.7M16.5 3.5v3.3h-3.3"/></svg></button>
+    <div class="u-subbar" id="u-subbar">
+      <div class="u-seg" id="u-dim" role="radiogroup" aria-label="对比维度" data-en-label="Dimension">
+        <button type="button" role="radio" data-dim="provider" data-en="Tools">工具</button>
+        <button type="button" role="radio" data-dim="family" data-en="Families">模型系列</button>
+        <button type="button" role="radio" data-dim="model" data-en="Models">模型</button>
+      </div>
+      <div class="u-subbar-right">
+        <div class="u-seg" id="u-cache" role="radiogroup" aria-label="缓存口径" data-en-label="Cache mode" hidden>
+          <button type="button" role="radio" data-cache="with" data-en="With cache">含缓存</button>
+          <button type="button" role="radio" data-cache="net" data-en="Net">去缓存</button>
+        </div>
+        <div class="u-seg" id="u-metric" role="radiogroup" aria-label="指标" data-en-label="Metric">
+          <button type="button" role="radio" data-metric="cost" data-en="Cost">花费</button>
+          <button type="button" role="radio" data-metric="tokens" data-en="Tokens">Token</button>
+        </div>
+      </div>
     </div>
   </div>
+  <div class="u-pop" id="u-pop" role="dialog" aria-label="自定义时间" data-en-label="Custom time range" hidden></div>
   <div id="u-body" class="u-body" aria-live="polite"></div>
   <p id="u-foot" class="u-foot" hidden></p>
 </main>

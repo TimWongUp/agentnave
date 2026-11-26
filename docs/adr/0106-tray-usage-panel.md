@@ -1,8 +1,8 @@
 # ADR-0106：托盘拥有本机 CLI 用量统计与折算花费面板
 
-- 状态：已接受
+- 状态：部分修订
 - 日期：2026-11-20
-- 关系：扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘数据根写入边界（新增由托盘独占写入、服务不读取的 `usage.db` 与 `pricing-cache.json`）；保持 [ADR-0026](0026-sqlite-conversation-store.md) 与 [ADR-0048](0048-sqlite-schema-evolution.md) 的 `agentnave.db` 及服务核心只读隔离边界；遵守 [ADR-0029](0029-settings-without-free-text.md) 的无手填设置约束；复用 [ADR-0100](0100-app-uninstall.md) 的数据根卸载开关与 [ADR-0103](0103-tray-embedded-terminal.md) 的预览版目录隔离及内嵌覆盖约定；同步更新 [GLOSSARY.md](../../GLOSSARY.md)「Tray App」。
+- 关系：扩展 [ADR-0012](0012-tray-conversation-cleanup.md) 的托盘数据根写入边界（新增由托盘独占写入、服务不读取的 `usage.db` 与 `pricing-cache.json`）；保持 [ADR-0026](0026-sqlite-conversation-store.md) 与 [ADR-0048](0048-sqlite-schema-evolution.md) 的 `agentnave.db` 及服务核心只读隔离边界；遵守 [ADR-0029](0029-settings-without-free-text.md) 的无手填设置约束；复用 [ADR-0100](0100-app-uninstall.md) 的数据根卸载开关与 [ADR-0103](0103-tray-embedded-terminal.md) 的预览版目录隔离及内嵌覆盖约定；同步更新 [GLOSSARY.md](../../GLOSSARY.md)「Tray App」。覆盖范围、90 天预聚合小时桶、本机全项目持久化归因与删除语义由 [ADR-0129](0129-usage-90d-all-agents-and-projects.md) 修订。
 
 ## 背景
 
