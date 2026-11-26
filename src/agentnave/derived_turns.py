@@ -12,6 +12,7 @@ from typing import cast
 
 from agentnave import accounts
 from agentnave.adapters import get_adapter
+from agentnave.core import TASK_SEPARATOR
 from agentnave.store import TaskRecord
 
 _MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024
@@ -614,7 +615,9 @@ def _prompt_matches(turn_text: str, task: TaskMatch) -> bool:
     expected = _flat_whitespace(task.prompt)
     if not expected:
         return False
-    if _flat_whitespace(turn_text) == expected:
+    # The terminal received the service's instructions, then TASK_SEPARATOR, then the task.
+    flat = _flat_whitespace(turn_text)
+    if flat == expected or flat.endswith(f"{_flat_whitespace(TASK_SEPARATOR)} {expected}"):
         return True
     if task.has_forward and _FORWARDED_CONTEXT_MARKER in turn_text:
         _, _, tail = turn_text.partition(_FORWARDED_CONTEXT_MARKER)

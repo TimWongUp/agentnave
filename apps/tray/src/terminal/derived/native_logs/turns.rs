@@ -23,6 +23,8 @@ use crate::data_files::valid_uuid;
 
 const MAX_CACHE_ENTRIES: usize = 64;
 const FORWARDED_CONTEXT_MARKER: &str = "With that context, here's what I need:";
+/// What the service puts between its instructions and the task (`core.TASK_SEPARATOR`), flattened.
+const TASK_SEPARATOR: &str = "Here's the task:";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(in crate::terminal) struct NativeTurn {
@@ -739,7 +741,12 @@ fn prompt_matches(turn_text: &str, task: &TaskMatch) -> bool {
     if expected.is_empty() {
         return false;
     }
-    if flat_whitespace(turn_text) == expected {
+    // The terminal received the service's instructions, then the separator, then the task.
+    let is_task = |text: &str| {
+        let flat = flat_whitespace(text);
+        flat == expected || flat.ends_with(&format!("{TASK_SEPARATOR} {expected}"))
+    };
+    if is_task(turn_text) {
         return true;
     }
     if task.has_forward

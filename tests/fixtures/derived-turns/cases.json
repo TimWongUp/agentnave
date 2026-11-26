@@ -170,6 +170,19 @@
         }
       ],
       "expected_user_turn_indices": [1, 2]
+    },
+    {
+      "name": "codex_legacy_prompt_after_instructions",
+      "provider": "codex",
+      "file": "codex_wrapped.jsonl",
+      "tasks": [
+        {
+          "prompt": "Check lint status",
+          "native_anchor": null,
+          "has_forward": false
+        }
+      ],
+      "expected_user_turn_indices": [1]
     }
   ],
   "unrecognized_file": "unrecognized.jsonl"
