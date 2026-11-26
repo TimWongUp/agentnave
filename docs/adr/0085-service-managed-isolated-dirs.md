@@ -1,6 +1,6 @@
 # ADR-0085：隔离目录由服务创建、登记和回收，是否隔离仍由 boss 决定
 
-- 状态：部分修订（「只显式释放」「不自动回收未释放的目录」由 [ADR-0092](0092-auto-release-untouched-isolated-dirs.md) 修订；「App 也不提供清理入口」由 [ADR-0098](0098-tray-deletes-isolated-dirs.md) 修订）
+- 状态：部分修订（「只显式释放」「不自动回收未释放的目录」由 [ADR-0092](0092-auto-release-untouched-isolated-dirs.md) 修订；「App 也不提供清理入口」由 [ADR-0098](0098-tray-deletes-isolated-dirs.md) 修订；「环境」一条中跳过 hooks 与 LFS、拒绝子模块与自定义 filter 由 [ADR-0125](0125-isolated-dirs-follow-git-worktree.md) 修订）
 - 日期：2026-11-12
 - 派生会话的隔离目录由托盘在终端启动前接过使用租约、持有到终端关闭，首轮结算不自动释放，由 [ADR-0109](0109-in-app-derived-sessions.md) 修订。
 - 修订 [ADR-0002](0002-lightweight-cli-subagent-adapter.md) 中「AgentNave 不提供 worktree」一条；扩展 [ADR-0043](0043-service-prompt-instructions.md) 的服务追加说明。
