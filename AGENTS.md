@@ -3,7 +3,7 @@
 ## Scope and authority
 
 - `README.md` 面向首次使用者；当前行为以代码、Adapter、CLI/MCP schema 与测试为真源。
-- 项目特有术语见 `CONTEXT.md`；现行架构基线是 `docs/context/architecture.md`，ADR 索引与各篇状态见 `docs/adr/README.md`。
+- 项目特有术语见 `GLOSSARY.md`；现行架构基线是 `docs/context/architecture.md`，ADR 索引与各篇状态见 `docs/adr/README.md`。
 - 仓库外的旧版 AgentNave 上下文不是当前 Authority；除非用户明确要求，否则不读取或同步。
 
 ## Implementation boundaries
@@ -45,7 +45,7 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 
 ## Context change gate
 
-- 术语变化更新 `CONTEXT.md`；所有权、模块依赖方向、安全边界或跨进程／跨语言合同（中继与服务、服务与托盘、两端共用的数据根文件）变化时更新 `docs/context/architecture.md`，只写边界与合同要点，可以写数据根文件名及其写入方，不写参数、字段、路由或错误文本等能从代码、schema 和测试读到的细节；新增功能本身不是更新它的理由。难逆转且经过真实取舍的决定写 ADR。
+- 术语变化更新 `GLOSSARY.md`；所有权、模块依赖方向、安全边界或跨进程／跨语言合同（中继与服务、服务与托盘、两端共用的数据根文件）变化时更新 `docs/context/architecture.md`，只写边界与合同要点，可以写数据根文件名及其写入方，不写参数、字段、路由或错误文本等能从代码、schema 和测试读到的细节；新增功能本身不是更新它的理由。难逆转且经过真实取舍的决定写 ADR。
 - 精确实现、临时路线、分支、commit、测试输出和实时运行状态不写入长期上下文。
 
 ## Version releases
@@ -57,3 +57,17 @@ Python、Rust、JS 的生产代码按下列规定写。行数是触发检查的�
 - 版本 PR 同步更新版本（`pyproject.toml`、`src/agentnave/__init__.py`、`apps/tray/Cargo.toml`）、`uv.lock`、`apps/tray/Cargo.lock`、安装文档、`README.md` 与 `README.en.md` 中的配套版本和 `docs/releases/v<version>.md`；安装文档只保留当前版本的升级说明，替换上一版的说明，历史升级说明留在 `docs/releases/`。
 - 版本号变更合入 `origin/main` 后，由 `.github/workflows/python.yml` 在 macOS/Linux 验证通过后自动创建对应 tag 和 GitHub Release，并附上签名的 macOS 托盘安装包、更新包与 `latest.json`（需仓库 Secret `TAURI_SIGNING_PRIVATE_KEY`）；普通合并不发布，相同版本不重复发布，也不移动已有 tag。
 - 发布任务须等待该工作流和 GitHub Release 发布成功后交付。瞬时或外部故障解决后重跑原工作流；若需修改代码或发布元数据，则通过新 PR 再次增加版本，同版本普通 push 不重试此前发布。不绕过 CI 手动提前发布。
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues (`TimWongUp/agentnave`, via `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical five-role triage label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context (`GLOSSARY.md`, `docs/context/architecture.md`, and `docs/adr/`). See `docs/agents/domain.md`.

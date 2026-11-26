@@ -1,5 +1,5 @@
 //! The repository each working directory belonged to, kept for directories that are gone: an
-//! agent worktree that was removed still belongs to the checkout it came from (see CONTEXT.md,
+//! agent worktree that was removed still belongs to the checkout it came from (see GLOSSARY.md,
 //! "项目"). Only this app reads and writes the file, under its own config directory.
 
 use std::collections::{BTreeMap, BTreeSet};

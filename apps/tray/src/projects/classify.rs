@@ -1,4 +1,4 @@
-//! The rules that turn a working directory into a project (see CONTEXT.md, "项目").
+//! The rules that turn a working directory into a project (see GLOSSARY.md, "项目").
 
 use std::path::Path;
 
