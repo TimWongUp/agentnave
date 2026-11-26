@@ -84,6 +84,7 @@ const el = {
   floor: $("floor"),
   boss: $("boss"),
   desks: $("desks"),
+  desksZone: $("desks")?.closest(".desks-zone"),
   derivedZone: $("derived-zone"),
   derivedDesks: $("derived-desks"),
   derivedCount: $("derived-count"),
@@ -214,6 +215,7 @@ for (const query of [narrow, overlay])
     state.sidePeek = state.convPeek = false;
     el.app.removeAttribute("data-side-peek");
     el.app.removeAttribute("data-conv-peek");
+    if (typeof renderSideToggle === "function") renderSideToggle(); // the 761–920px rail never folds away
     sync();
     renderList();
     if (state.chat) renderAll(state.chat);
@@ -236,6 +238,23 @@ function projectTitleOf(g) {
   const alias = sidebarData().project_aliases?.[g.project_key]?.trim();
   if (alias) return alias;
   return g.project_label || state.projects?.find((p) => p.key === g.project_key)?.label || "";
+}
+// The ⋯ on a row opens that row's context menu just below itself, for the keyboard and for anyone who
+// never right-clicks. It sits inside the row, so its click must not reach the row's own.
+function moreButton(cls, open) {
+  const label = L("更多操作", "More actions");
+  const button = h(`span.${cls}`, { role: "button", tabindex: "0", title: label, "aria-label": label, "aria-haspopup": "menu" }, "⋯");
+  const run = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const box = button.getBoundingClientRect();
+    open({ clientX: box.left, clientY: box.bottom + 4, preventDefault() {}, stopPropagation() {} });
+  };
+  button.addEventListener("click", run);
+  button.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !e.isComposing) run(e);
+  });
+  return button;
 }
 function createItem(g) {
   const rec = {
@@ -261,6 +280,7 @@ function createItem(g) {
       rec.meta,
       (rec.bottom = h("span.gi-bottom", {}, rec.iso)),
     ),
+    moreButton("gi-more", (e) => ChatTerminal.menu(rec.id, e) || Actions.workspaceMenu(rec.id, e)),
   );
   rec.el.addEventListener("click", (e) => {
     if (e.button) return;
@@ -524,6 +544,7 @@ function headNode(section, folded = false) {
       rec.pin,
       rec.dot,
       rec.count,
+      (rec.more = moreButton("gl-grp-more", (e) => rec.section && Actions.projectMenu(rec.section, e))),
     );
     rec.el.addEventListener("click", () => toggleFold(id));
     rec.el.addEventListener("contextmenu", (e) => {
@@ -551,6 +572,7 @@ function headNode(section, folded = false) {
         : null;
   setAttr(rec.dot, "title", dotTitle);
   setText(rec.count, String(section.items.length));
+  rec.more.hidden = Boolean(section.pinned || section.key === ChatGroups.handover);
   rec.section = section;
   ChatTerminal.headAction(rec);
   if (typeof ChatSidebar !== "undefined") ChatSidebar.attachDrag?.(rec);

@@ -7,7 +7,7 @@
 // renderList, openScope) only from event handlers, once both scripts have run.
 const Actions = {};
 {
-  const { h, $, L, load, chatName } = AN;
+  const { h, $, L, load, chatName, urgent } = AN;
   const picked = new Set(); // workspace ids picked for a batch action
   let anchor = null; // the last workspace clicked, where a Shift range starts
   const DAYS = [7, 30, 90, 180];
@@ -113,34 +113,74 @@ const Actions = {};
 
   // ---- dialogs ----------------------------------------------------------------------------
   // One modal at a time: a title, a body, and buttons; resolves with the button's value.
-  function ask({ title, body = [], buttons, input }) {
+  // A button's `check` runs before it closes the dialog (its `busy` label shows meanwhile, and every
+  // button waits); `input.validate` judges the text as it is typed and holds the checked buttons back;
+  // `disabledWhen` holds a button back while it returns true, re-judged when `bindRefresh`'s function runs.
+  // With a `danger` button and no explicit `focus`, the first button without a value (Cancel) takes
+  // the focus, so Enter never confirms a deletion.
+  function ask({ title, body = [], buttons, input, bindRefresh }) {
     return new Promise((resolve) => {
       const field = input && h("input.act-input", { type: "text", value: input.value, placeholder: input.placeholder || null, "aria-label": input.label, spellcheck: "false", autocorrect: "off", autocapitalize: "off", autocomplete: "off" });
       const error = h("p.act-error", { role: "alert", hidden: true });
       let focusButton = null;
-      const row = h("div.act-buttons", {}, buttons.map((b) => {
+      let busy = false;
+      let invalid = false;
+      const entries = buttons.map((b) => {
         const button = h(`button${b.danger ? ".danger" : ""}${b.primary ? ".primary" : ""}`, { type: "button" }, b.label);
         if (b.focus) focusButton = button;
+        return { b, button };
+      });
+      const sync = () => {
+        for (const { b, button } of entries) button.disabled = busy || (invalid && Boolean(b.check)) || Boolean(b.disabledWhen?.());
+      };
+      bindRefresh?.(sync);
+      const showError = (message) => {
+        error.textContent = message;
+        error.hidden = !message;
+      };
+      for (const entry of entries) {
+        const { b, button } = entry;
         button.addEventListener("click", async () => {
           if (!b.value) return finish(null);
           if (!b.check) return finish(b.value);
-          const message = await b.check(field?.value ?? "");
-          if (message) { error.textContent = message; error.hidden = false; return; }
+          if (busy) return;
+          busy = true;
+          if (b.busy) button.textContent = b.busy;
+          sync();
+          let message;
+          try {
+            message = await b.check(field?.value ?? "");
+          } finally {
+            busy = false;
+            button.textContent = b.label;
+            sync();
+          }
+          if (message) return showError(message);
           finish(b.value);
         });
-        return button;
-      }));
+      }
+      const row = h("div.act-buttons", {}, entries.map((entry) => entry.button));
       dialog.replaceChildren(h("h2.act-title", {}, title), ...body, field || "", error, row);
       const finish = (value) => {
         dialog.close();
         resolve(value === null ? null : { value, text: field?.value });
       };
-      dialog.oncancel = (e) => { e.preventDefault(); finish(null); };
-      if (field) field.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) row.querySelector(".primary")?.click();
-      });
+      dialog.oncancel = (e) => { e.preventDefault(); if (!busy) finish(null); };
+      if (field) {
+        field.addEventListener("input", () => {
+          const message = input.validate?.(field.value) || "";
+          invalid = Boolean(message);
+          showError(message);
+          sync();
+        });
+        field.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) row.querySelector(".primary")?.click();
+        });
+      }
+      sync();
       dialog.showModal();
-      (field || focusButton || row.querySelector(".primary") || row.querySelector("button")).focus();
+      const cancel = buttons.some((b) => b.danger) ? entries.find((entry) => !entry.b.value)?.button : null;
+      (field || focusButton || cancel || row.querySelector(".primary") || row.querySelector("button")).focus();
       if (field) field.select();
     });
   }
@@ -154,15 +194,22 @@ const Actions = {};
   }
 
   // ---- rename -----------------------------------------------------------------------------
+  // The titles' width rule of the servers (48 columns, CJK and fullwidth characters count two); the
+  // wide ranges here are the common ones, and the server's answer still has the last word.
+  const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1F64F}\u{1F900}-\u{1F9FF}\u{20000}-\u{3FFFD}]/u;
+  const TITLE_WIDTH = 48;
+  const titleWidth = (text) => [...text].reduce((sum, c) => sum + (WIDE.test(c) ? 2 : 1), 0);
+  const titleTooWide = (text) =>
+    titleWidth(text.trim()) > TITLE_WIDTH ? L("名字太长：最多 24 个汉字或 48 个英文字符", "Name too long: up to 24 Chinese or 48 English characters") : "";
   async function rename(id, current, what) {
     await ask({
       title: L(`给${what}改名`, `Rename ${what}`),
-      body: [h("p.act-note", {}, L("最多 24 个汉字或 48 个英文字符。", "Up to 24 Chinese or 48 English characters."))],
-      input: { value: current, label: L("新名字", "New name") },
+      input: { value: current, label: L("新名字", "New name"), validate: titleTooWide },
       buttons: [
         { label: L("取消", "Cancel") },
         {
           label: L("保存", "Save"),
+          busy: L("保存中…", "Saving…"),
           primary: true,
           value: "save",
           check: async (text) => {
@@ -186,13 +233,17 @@ const Actions = {};
 
   // ---- delete -----------------------------------------------------------------------------
   // Deletes the given conversations (and expired claimed boss-only workspaces) after confirming.
-  async function remove(names, items, what, cutoff = null, emptyIds = []) {
+  async function remove(names, items, what, cutoff = null, emptyIds = [], blocked = false) {
     const free = items.filter((i) => i.deletable);
     const kept = items.filter((i) => !i.deletable);
     if (!free.length && !emptyIds.length) {
+      // Conversations that are running or awaiting review are not "no conversations": say why they stay.
+      const why = kept.length || blocked
+        ? kept[0]?.reason || L("里面的会话都在运行、待审核或被宿主占用，结束后才能删除。", "All conversations here are running, awaiting review, or in use by a host; delete them once they finish.")
+        : L("里面没有可删除的会话。", "No deletable conversations found.");
       await ask({
         title: L(`${what}现在不能删除`, `Cannot delete ${what} right now`),
-        body: [h("p.act-note", {}, kept[0]?.reason || L("里面没有可删除的会话。", "No deletable conversations found."))],
+        body: [h("p.act-note", {}, why)],
         buttons: [{ label: L("知道了", "OK"), primary: true }],
       });
       return;
@@ -278,7 +329,9 @@ const Actions = {};
       try { all = await conversations(); } catch (error) { say(L(`无法读取会话：${error.message}`, `Failed to load conversations: ${error.message}`), true); return; }
       const set = new Set(used);
       const what = used.length > 1 ? L(` ${used.length} 个 agent`, `${used.length} agents`) : L(`agent“${groupName(used[0])}”`, `agent "${groupName(used[0])}"`);
-      await remove(used.map(groupName), all.filter((i) => set.has(i.group)), what);
+      // An agent that is running or awaiting review is kept even when the history lists nothing deletable for it.
+      const blocked = used.some((id) => urgent(state.groupsData.find((g) => g.group === id)?.status));
+      await remove(used.map(groupName), all.filter((i) => set.has(i.group)), what, null, [], blocked);
     }
     for (const id of ids) picked.delete(id);
     renderList();
@@ -493,10 +546,11 @@ const Actions = {};
     };
     const ungrouped = all.filter((i) => !i.group || !Number.isFinite(AN.at(i.updated)) || AN.at(i.updated) <= 0);
     const count = h("p.act-note");
+    let refreshButtons = () => {}; // handed over by the dialog, so a new day count can re-judge "Next"
     const dayLabel = (d) => L(`${d} 天`, `${d} days`);
     const choices = h("div.act-days", { role: "radiogroup", "aria-label": L("多久没有动静", "Inactive duration") }, DAYS.map((d) => {
       const b = h("button", { type: "button", role: "radio" }, dayLabel(d));
-      b.addEventListener("click", () => { days = d; paint(); });
+      b.addEventListener("click", () => { days = d; paint(); refreshButtons(); });
       return b;
     }));
     const paint = () => {
@@ -509,11 +563,12 @@ const Actions = {};
     paint();
     const answer = await ask({
       title: L("清理没有动静的 agent", "Clean up inactive agents"),
-      body: [h("p.act-note", {}, L("删除超过所选天数没有动静的 agent。进行中和待审核的不会删除。", "Deletes agents inactive for longer than the selected period. Running or review items are kept.")), choices, count],
+      body: [h("p.act-note", {}, L("进行中和待审核的会保留。", "In-progress and awaiting-review ones are kept.")), choices, count],
+      bindRefresh: (fn) => { refreshButtons = fn; },
       buttons: [
         { label: L("取消", "Cancel") },
         ...(ungrouped.length ? [{ label: L(`其他记录（${ungrouped.length}）…`, `Other records (${ungrouped.length})…`), value: "ungrouped" }] : []),
-        { label: L("下一步", "Next"), primary: true, value: "next" },
+        { label: L("下一步", "Next"), primary: true, value: "next", disabledWhen: () => !quiet(stateNow).length },
       ],
     });
     if (!answer) return;

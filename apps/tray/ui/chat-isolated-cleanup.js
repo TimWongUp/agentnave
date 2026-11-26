@@ -7,7 +7,7 @@ const ChatIsolatedCleanup = (() => {
   const REFRESH_MS = 30000;
   const SHOWN = 8;
 
-  const store = { report: null, recent: [], running: false, version: 0, loadedAt: 0, inflight: false };
+  const store = { report: null, recent: [], running: false, version: 0, loadedAt: 0, inflight: false, manual: null };
 
   const OUTCOME = {
     removed: () => L("已删除", "Deleted"),
@@ -83,7 +83,13 @@ const ChatIsolatedCleanup = (() => {
     store.running = true;
     changed();
     try {
-      apply(await AN.post("/app/isolated/cleanup/run", {}));
+      const next = await AN.post("/app/isolated/cleanup/run", {});
+      // what "Clean now" did this time, shown beside the last-cleanup time while that report is still the last
+      const entries = next?.report?.entries;
+      store.manual = Array.isArray(entries)
+        ? { at: next.report.at, count: entries.filter((e) => e.outcome === "removed" || e.outcome === "collapsed").length }
+        : null;
+      apply(next);
       if (typeof refresh === "function") void refresh();
     } catch (error) {
       store.running = false;
@@ -96,7 +102,10 @@ const ChatIsolatedCleanup = (() => {
   function panel(group) {
     const button = h("button.iso-clean-btn", { type: "button", disabled: store.running }, store.running ? L("清理中…", "Cleaning…") : L("立即清理", "Clean now"));
     button.addEventListener("click", () => void runNow());
-    const last = store.report ? L(`上次清理 ${relTime(store.report.at)}`, `Last cleanup ${relTime(store.report.at)}`) : "";
+    const ran = store.report && store.manual?.at === store.report.at ? store.manual.count : null;
+    const last = store.report
+      ? L(`上次清理 ${relTime(store.report.at)}`, `Last cleanup ${relTime(store.report.at)}`) + (ran == null ? "" : L(` · 本次清理 ${ran} 个`, ` · Cleaned ${ran} this run`))
+      : "";
     const lines = doneOf(group).slice(0, SHOWN).map((e) =>
       h("div.iso-clean-line", { title: e.detail && e.outcome === "failed" ? e.detail : "" },
         h(`span.iso-clean-word.${e.outcome}`, {}, OUTCOME[e.outcome]?.() || e.outcome),

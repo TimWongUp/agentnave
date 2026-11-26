@@ -809,14 +809,11 @@ function renderOffice(c, ctx, n, newGroup) {
     updateDesk(rec, d, ctx);
     return rec.el;
   });
+  // With only derived desks below there is nothing to put in this zone, so the zone is not drawn.
+  const onlyDerived = derivedDesks.length > 0 && !regularDesks.length && !c.optimized?.count;
+  if (el.desksZone) el.desksZone.hidden = onlyDerived;
   if (!deskNodes.length)
-    deskNodes.push(
-      h(
-        "div.zone-empty",
-        {},
-        L("还没有工位。boss 派出第一个私聊或会议席位后，工位会出现在这里；超出同时工作的员工上限的空闲工位归入「已优化」。", "No desks yet. Desks appear once boss dispatches the first private task or meeting seat; idle desks beyond the concurrent limit fold into Optimized."),
-      ),
-    );
+    deskNodes.push(h("div.zone-empty", {}, L("boss 派活后，工位出现在这里", "Desks appear here once boss dispatches work")));
   if (c.optimized?.count) deskNodes.push(optimizedNode(c.optimized, ctx));
   reconcile(el.desks, deskNodes);
   setText(el.deskCount, regularDesks.length ? ` · ${regularDesks.length}` : "");
