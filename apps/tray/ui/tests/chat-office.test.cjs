@@ -2082,6 +2082,7 @@ test("derived terminals nest under parent workspace without counting self-chat a
       after(...nodes) { this._after = nodes; },
       before() {},
       querySelector() { return null; },
+      closest() { return null; },
       focus() {},
       remove() {},
     };
@@ -3406,7 +3407,7 @@ test("GROUP.waiting localizes derived waiting status with review tone without ch
 
 test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown query, wake/stop/close/confirmStop, and menus", async () => {
   const makeNode = (tag = "div") => {
-    const cls = new Set();
+    const cls = new Set(String(tag).split(".").slice(1));
     const n = {
       tagName: String(tag).split(".")[0].toUpperCase(),
       hidden: false,
@@ -4116,6 +4117,7 @@ test("Actions.workspaceMenu includes 关闭全部派生终端（N） when worksp
       append(...nodes) { this.children.push(...nodes.flat().filter(Boolean)); },
       getBoundingClientRect: () => ({ width: 140, height: 120 }),
       querySelector() { return null; },
+      closest() { return null; },
       focus() {},
     };
   };
@@ -4194,7 +4196,7 @@ test("mock.js exposes 5 derived lifecycle states, derived desks, and wake/open-d
 
 test("historical derived rows merge stably, keep terminal width, highlight when open, and follow project fold/cap", async () => {
   const makeNode = (tag = "div") => {
-    const cls = new Set();
+    const cls = new Set(String(tag).split(".").slice(1));
     const n = {
       tagName: String(tag).split(".")[0].toUpperCase(),
       hidden: false, disabled: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], listeners: {},
@@ -4600,4 +4602,236 @@ test("derived desk message view merges user turns as 用户 without mutating c.m
   assert.equal(notice.textContent, "找不到原生会话日志（可能已被 CLI 清理）");
   scope.syncDerivedNotice("");
   assert.equal(notice.hidden, true);
+});
+
+test("derived subagent workspaces nest under derived rows (1-level), refuse duplicate resume, and count own busy on stop", async () => {
+  const makeNode = (tag = "div") => {
+    const cls = new Set(String(tag).split(".").slice(1));
+    const n = {
+      tagName: String(tag).split(".")[0].toUpperCase(),
+      hidden: false, disabled: false, textContent: "", title: "", dataset: {}, attributes: {}, children: [], listeners: {}, style: {},
+      classList: {
+        set: cls,
+        add(...xs) { xs.forEach(x => cls.add(x)); },
+        remove(...xs) { xs.forEach(x => cls.delete(x)); },
+        toggle(x, on) { if (on === undefined) { if (cls.has(x)) cls.delete(x); else cls.add(x); } else if (on) cls.add(x); else cls.delete(x); },
+        contains(x) { return cls.has(x); },
+      },
+      append(...xs) { this.children.push(...xs.flat().filter(Boolean)); },
+      after() {},
+      before() {},
+      setAttribute(k, v) { this.attributes[k] = String(v); },
+      removeAttribute(k) { delete this.attributes[k]; },
+      remove() {},
+      replaceChildren(...xs) { this.children = xs.flat().filter(Boolean); },
+      addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
+      querySelector() { return null; },
+      closest() { return null; },
+      focus() {},
+    };
+    return n;
+  };
+  const h = (tag, attrs = {}, ...kids) => {
+    const n = makeNode(tag);
+    Object.entries(attrs || {}).forEach(([k, v]) => {
+      if (k === "hidden" || k === "disabled" || k === "type" || k === "title") n[k] = v;
+      else n.attributes[k] = String(v);
+    });
+    n.children = kids.flat(Infinity).filter(x => x != null && x !== false);
+    if (n.children.every(x => typeof x === "string")) n.textContent = n.children.join("");
+    return n;
+  };
+  const drAllAfter = [];
+  const els = new Map([
+    ["app", makeNode("div")], ["list", makeNode("div")], ["head", makeNode("header")],
+    ["boss", makeNode("section")], ["drawer", makeNode("aside")],
+    ["dr-all", { ...makeNode("button"), after(...items) { drAllAfter.push(...items); } }],
+    ["dr-ico", makeNode("span")], ["dr-title", makeNode("span")], ["dr-sub", makeNode("span")],
+    ["dr-foot", makeNode("div")], ["timeline", makeNode("div")], ["tl-inner", makeNode("div")],
+    ["banner", makeNode("div")],
+  ]);
+  const el = {
+    app: els.get("app"), list: els.get("list"), drawer: els.get("drawer"),
+    drAll: els.get("dr-all"), drIco: els.get("dr-ico"), drTitle: els.get("dr-title"),
+    drSub: els.get("dr-sub"), drFoot: els.get("dr-foot"), tl: els.get("timeline"),
+    inner: els.get("tl-inner"), head: els.get("head"), boss: els.get("boss"),
+  };
+  const asked = [];
+  let sessions = [
+    {
+      id: 50,
+      provider: "codex",
+      cwd: "/repo",
+      exit: null,
+      derived: true,
+      derived_state: "idle",
+      derived_own_busy: true,
+      parent_workspace_id: "ws-boss",
+      desk_key: "thread:d1",
+      native: "n1",
+      boss_key: "s-derived-bk",
+      workspaces: [],
+    },
+    {
+      id: 1,
+      provider: "claude",
+      cwd: "/repo",
+      exit: null,
+      derived: false,
+      workspaces: ["ws-boss"],
+    },
+  ];
+  const groupsData = [
+    {
+      group: "ws-boss", host: "claude", app: "claude", label: "Claude Code", title: "Boss",
+      status: "idle", project_key: "project:/p1", project_label: "P1", project_path: "/p1",
+      updated: "2026-11-26T10:00:00Z", created: "2026-11-26T10:00:00Z",
+      derived: [{ key: "thread:d1", provider: "codex", model: "gpt-6.1", boss_key: "s-derived-bk", first_seen: "2026-11-26T10:00:00Z", last_active: "2026-11-26T10:00:00Z" }],
+    },
+    {
+      group: "ws-sub", host: "codex", app: "codex", label: "Codex", title: "Subagent",
+      owner: "s-derived-bk", parent_workspace_id: "ws-boss", parent_desk_key: "thread:d1",
+      status: "running", project_key: "project:/p1", project_label: "P1", project_path: "/p1",
+      updated: "2026-11-26T10:05:00Z", created: "2026-11-26T10:01:00Z",
+      derived: [{ key: "thread:too-deep", provider: "claude", model: "opus", boss_key: "s-deep-bk" }],
+    },
+    {
+      group: "ws-too-deep", host: "claude", app: "claude", label: "Claude Code", title: "Too Deep",
+      owner: "s-deep-bk", parent_workspace_id: "ws-sub", parent_desk_key: "thread:too-deep",
+      status: "idle", project_key: "project:/p1", project_label: "P1", project_path: "/p1",
+      updated: "2026-11-26T10:06:00Z", created: "2026-11-26T10:02:00Z",
+      derived: [],
+    },
+  ];
+  const commonAn = common();
+  const win = { addEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }) };
+  const AN = {
+    ...commonAn,
+    h,
+    $: id => els.get(id) || makeNode(id),
+    at: Date.parse,
+    ongoing: s => s || "idle",
+    isHidden: () => false,
+    onVisibility: () => {},
+    href: p => p,
+    load: async (url) => {
+      if (url === "/app/terminal/state") return { sessions, derived_titles: {}, clis: [], active: [] };
+      return {};
+    },
+    GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
+    urgent: s => s === "running" || s === "review",
+    avatar: () => makeNode("span"),
+    colorClass: () => "c0",
+    chatName: g => g.display_title || g.title || g.group,
+    shownName: g => g.display_title || g.title || g.group,
+    activities: () => [],
+    plain: x => x,
+    stickyOrder: items => items,
+    poll() {},
+    reducedMotion: { matches: false },
+    relTime: () => "刚刚",
+    clock: () => "10:00",
+    fullTime: () => "2026",
+    dayLabel: () => "今天",
+    hostTile: () => h("span"),
+    cliName: p => p,
+    pick: (tbl, s) => tbl[s] || [s || "—", "idle"],
+    setText: (n, v) => { n.textContent = v == null ? "" : String(v); },
+    setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = String(v); },
+    setClass: (n, v) => {
+      n.className = v;
+      n.classList.set.clear();
+      for (const c of String(v).split(/\s+/).filter(Boolean)) n.classList.set.add(c);
+    },
+    reconcile: (p, nodes) => { p.children = [...nodes]; },
+  };
+  const context = vm.createContext({
+    AN,
+    Actions: {
+      picked: new Set(),
+      ask: async (opts) => { asked.push(opts); return { value: "cancel" }; },
+      say() {},
+      workspaceMenu() {},
+    },
+    CHAT_PREFS: { view: "grouped", filter: "all", hideEmpty: false, itemSort: "updated", projectSort: "updated" },
+    fetch: async (url) => {
+      if (url === "/app/terminal/state") return { ok: true, status: 200, json: async () => ({ sessions, derived_titles: {}, clis: [], active: [] }) };
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
+    go() {},
+    renderAll() {},
+    refreshOffice() {},
+    measureAll() {},
+    syncListSelection() {},
+    renderSideToggle() {},
+    openScope() {},
+    URLSearchParams,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    matchMedia: () => ({ matches: false, addEventListener() {} }),
+    window: win,
+    document: { hidden: false, documentElement: { lang: "zh", dataset: {}, classList: { contains: () => false } }, addEventListener() {} },
+    location: { origin: "null", search: "", pathname: "/", hash: "" },
+    history: { pushState() {}, replaceState() {} },
+    addEventListener() {},
+    requestAnimationFrame: fn => fn(),
+    Date, Map, Set, Array, Object, JSON, Number, String, Boolean, Math, Error, Promise,
+    encodeURIComponent, decodeURIComponent,
+  });
+  vm.runInContext(readFileSync(`${__dirname}/../chat-groups.js`, "utf8"), context);
+  context.ChatGroups = win.ChatGroups;
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-state.js`, "utf8")}\nthis.state = state;\nthis.el = el;\nthis.renderList = renderList;`, context);
+  Object.assign(context.state, {
+    groupsData,
+    selected: "ws-sub",
+    loaded: "ws-sub",
+    chat: groupsData[1],
+    ctx: { desks: new Map(), rooms: new Map() },
+  });
+  vm.runInContext(`${readFileSync(`${__dirname}/../chat-terminal.js`, "utf8")}\nthis.ChatTerminal = ChatTerminal;`, context);
+  await context.ChatTerminal.refresh();
+
+  // 1. Subagent workspace is nested under derived row, capped at 1 level (ws-too-deep stays top-level).
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.ChatTerminal.derivedChildrenOf("ws-boss", "thread:d1").map(g => g.group))),
+    ["ws-sub"],
+  );
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.ChatTerminal.derivedChildrenOf("ws-sub", "thread:too-deep"))),
+    [],
+  );
+  const derivedId = context.ChatTerminal.derivedOf("ws-boss")[0].group;
+  context.renderList();
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.state.order)),
+    ["ws-too-deep", "ws-boss", derivedId, "ws-sub"],
+  );
+  assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-grandchild"), true);
+  assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-grandchild"), false);
+
+  // 2. While owning derived terminal lives, child workspace shows "打开派生终端" instead of "续接".
+  assert.equal(context.ChatTerminal.liveDerivedOwnerOf("ws-sub").id, 50);
+  context.ChatTerminal.column("ws-sub", "codex", "codex");
+  const stopBtn = drAllAfter.find(n => n.classList.contains("dr-stop"));
+  assert.equal(stopBtn.textContent, "打开派生终端");
+  assert.equal(stopBtn.hidden, false);
+
+  // Stop confirmation on boss AND on derived warns about own busy tasks.
+  await context.ChatTerminal.stop(50);
+  assert.ok(
+    asked.at(-1).body.some(node => String(node.textContent).includes("仍有组员在运行")),
+    "stopping derived with own_busy must warn about its own dispatched tasks",
+  );
+  await context.ChatTerminal.stop(1);
+  assert.ok(
+    asked.at(-1).body.some(node => String(node.textContent).includes("自己派出")),
+    "stopping parent boss must warn when derived session has own busy tasks",
+  );
+
+  // 3. Once derived session exits, liveDerivedOwnerOf returns null (resume allowed again).
+  sessions[0].exit = 0;
+  sessions[0].derived_state = "dormant";
+  await context.ChatTerminal.refresh();
+  assert.equal(context.ChatTerminal.liveDerivedOwnerOf("ws-sub"), null);
+  context.ChatTerminal.column("ws-sub", "codex", "codex");
+  assert.equal(stopBtn.textContent, "续接");
 });

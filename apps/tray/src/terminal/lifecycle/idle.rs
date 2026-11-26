@@ -146,11 +146,13 @@ impl State {
         let running = &mut self.open[at];
         let dispatched = running.is_dispatched(&beat.runs);
         let exited = running.session.exit().is_some();
+        let own_busy = running.is_a_busy_boss(beat);
         let quiet = !exited && !shown && !dispatched && running.is_quiet(beat);
         let Some(derived) = running.derived.as_mut() else {
             return Due::Keep;
         };
         let life = &mut derived.life;
+        life.own_busy = own_busy;
         life.outlived_boss &= boss == Boss::Gone;
         if life.reviving || (life.process.stopping && !exited) {
             return Due::Keep;

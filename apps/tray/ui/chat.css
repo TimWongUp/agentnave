@@ -91,6 +91,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.kbd-active:not(.on):not(.picked) { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .gi.on { background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .gi.gi-child { margin-left: 16px; min-height: 38px; padding: 4px 10px 4px 14px; }
+.gi.gi-child.gi-grandchild { margin-left: 30px; min-height: 36px; }
 .gi.gi-child .gi-host { width: 24px; height: 24px; }
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
@@ -212,6 +213,7 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side-peek] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
   .app[data-side-peek] .gi { justify-content: flex-start; padding: 5px 10px; }
   .app[data-side-peek] .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
+  .app[data-side-peek] .gi.gi-child.gi-grandchild { margin-left: 30px; }
   .app[data-side-peek] .gi-more { display: grid; }
 }
 
@@ -785,6 +787,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }
   .gi { justify-content: flex-start; padding: 5px 10px; }
   .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
+  .gi.gi-child.gi-grandchild { margin-left: 30px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }

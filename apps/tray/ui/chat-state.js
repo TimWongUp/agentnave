@@ -341,9 +341,10 @@ function syncListSelection() {
     setAttr(rec.el, "aria-current", on ? "true" : null);
   }
 }
-function updateItem(rec, g, flat = false) {
+function updateItem(rec, g, flat = false, level = 0) {
   rec.g = g;
   const isChild = isDerivedItem(g);
+  const isGrandchild = !isChild && level === 2;
   // A failure asks nothing of the user, so the list does not call it out.
   const dMeta = isChild ? ChatTerminal.derivedMeta(g) : null;
   const shown = g.status === "failed" ? "idle" : AN.ongoing(g.status);
@@ -354,7 +355,7 @@ function updateItem(rec, g, flat = false) {
   const name = shownName(g);
   setClass(
     rec.el,
-    `gi ${colorClass(g.color)} tone-${tone}${isChild ? " gi-child" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
+    `gi ${colorClass(g.color)} tone-${tone}${isChild || isGrandchild ? " gi-child" : ""}${isGrandchild ? " gi-grandchild" : ""}${on ? " on" : ""}${urgent(g.status) ? " hot" : ""}${pinned ? " pinned" : ""}${Actions.picked.has(g.group) ? " picked" : ""}`,
   );
   setAttr(rec.el, "href", href(isChild ? ChatTerminal.rowPath(g) : `/chat/${g.group}`));
   setAttr(rec.el, "aria-current", on ? "true" : null);
@@ -459,40 +460,53 @@ function renderList() {
 }
 // The cap may never hide a pending handover, work waiting on the reader, a pinned agent, the agent
 // already open, or an agent with a derived terminal still open under it.
-function mustShow(g) {
+function mustShowOwn(g) {
   return (
     g.handover === "pending" ||
     urgent(g.status) ||
     g.group === state.selected ||
-    isGroupPinned(g.group) ||
-    Boolean(ChatTerminal.derivedOf?.(g.group)?.some((d) => d.terminal != null))
+    isGroupPinned(g.group)
+  );
+}
+function mustShow(g) {
+  if (mustShowOwn(g)) return true;
+  const derived = ChatTerminal.derivedOf?.(g.group) || [];
+  if (derived.some((d) => d.terminal != null)) return true;
+  return derived.some((d) =>
+    (ChatTerminal.derivedChildrenOf?.(g.group, d.desk_key) || []).some(mustShowOwn),
   );
 }
 // A folded project keeps only pending handovers, urgent work, and the open agent visible.
 function stayVisibleWhenFolded(g) {
   return g.handover === "pending" || urgent(g.status) || g.group === state.selected;
 }
-// A "show more" button, made once and reused: reconcile matches nodes, so it keeps its place and
-// the click handler reads whatever this render decided it opens.
-function moreNode(id, text, act, folded) {
-  let rec = state.moreNodes.get(id);
-  if (!rec) {
-    rec = { el: h("button.gl-more", { type: "button" }) };
-    rec.el.addEventListener("click", () => rec.act?.());
-    state.moreNodes.set(id, rec);
-  }
-  rec.act = act;
-  setText(rec.el, text);
-  setAttr(rec.el, "data-folded", folded ? "true" : null);
-  state.liveMore.add(id);
-  return rec.el;
-}
-function itemNode(g, folded, flat = false) {
+function itemNode(g, folded, flat = false, level = 0) {
   let rec = state.items.get(g.group);
   if (!rec) state.items.set(g.group, (rec = createItem(g)));
-  updateItem(rec, g, flat);
+  updateItem(rec, g, flat, level);
   setAttr(rec.el, "data-folded", folded ? "true" : null);
   return rec.el;
+}
+function partitionNested(groups) {
+  const present = new Set(groups.map((g) => g.group));
+  const children = new Map();
+  const nestedIds = new Set();
+  for (const parent of groups) {
+    if (parent.handover === "pending") continue;
+    for (const d of ChatTerminal.derivedOf?.(parent.group) || []) {
+      const matched = (ChatTerminal.derivedChildrenOf?.(parent.group, d.desk_key) || []).filter((child) =>
+        present.has(child.group),
+      );
+      if (matched.length) {
+        children.set(`${parent.group}|${d.desk_key}`, matched);
+        for (const child of matched) nestedIds.add(child.group);
+      }
+    }
+  }
+  return {
+    topGroups: nestedIds.size ? groups.filter((g) => !nestedIds.has(g.group)) : groups,
+    children,
+  };
 }
 function isFolded(id) {
   if (!state.folded.has(id)) state.folded.set(id, stored(`${FOLD_KEY}.${id}`) === "1");
@@ -580,19 +594,39 @@ function headNode(section, folded = false) {
   if (typeof ChatSidebar !== "undefined") ChatSidebar.attachDrag?.(rec);
   return rec.el;
 }
+// A "show more" button, made once and reused: reconcile matches nodes, so it keeps its place and
+// the click handler reads whatever this render decided it opens.
+function moreNode(id, text, act, folded) {
+  let rec = state.moreNodes.get(id);
+  if (!rec) {
+    rec = { el: h("button.gl-more", { type: "button" }) };
+    rec.el.addEventListener("click", () => rec.act?.());
+    state.moreNodes.set(id, rec);
+  }
+  rec.act = act;
+  setText(rec.el, text);
+  setAttr(rec.el, "data-folded", folded ? "true" : null);
+  state.liveMore.add(id);
+  return rec.el;
+}
 function flatNodes(groups, { prefs, query }) {
   const nodes = [];
   const order = [];
   const searching = Boolean(query && query.trim());
-  const items = ChatGroups.arrangeFlat(groups, { projects: state.projects, urgent, L, sidebar: sidebarData(), prefs, query });
+  const arranged = ChatGroups.arrangeFlat(groups, { projects: state.projects, urgent, L, sidebar: sidebarData(), prefs, query });
+  const { topGroups: items, children: childMap } = partitionNested(arranged);
   const limit = searching ? Infinity : ChatGroups.caps.groups * ChatGroups.caps.items + state.moreFlat;
   const shown = ChatGroups.capped ? ChatGroups.capped(items, limit, mustShow) : items;
   for (const g of shown) {
     nodes.push(itemNode(g, false, true));
     order.push(g.group);
     for (const child of ChatTerminal.derivedOf?.(g.group) || []) {
-      nodes.push(itemNode(child, false, true));
+      nodes.push(itemNode(child, false, true, 1));
       order.push(child.group);
+      for (const gk of childMap.get(`${g.group}|${child.desk_key}`) || []) {
+        nodes.push(itemNode(gk, false, true, 2));
+        order.push(gk.group);
+      }
     }
   }
   if (items.length > shown.length) {
@@ -614,7 +648,8 @@ function groupedNodes(groups, { prefs, query } = {}) {
   const order = [];
   const live = new Set();
   const searching = Boolean(query && query.trim());
-  const sections = ChatGroups.arrange(groups, { projects: state.projects, urgent, L, sidebar: sidebarData(), prefs, query });
+  const { topGroups, children: fullChildMap } = searching ? { topGroups: groups, children: new Map() } : partitionNested(groups);
+  const sections = ChatGroups.arrange(topGroups, { projects: state.projects, urgent, L, sidebar: sidebarData(), prefs, query });
   const { sections: kept, hiddenGroups } = ChatGroups.capSections(sections, {
     groupLimit: searching ? Infinity : ChatGroups.caps.groups + state.moreGroups,
     itemLimit: (s) => (searching ? Infinity : ChatGroups.caps.items + (state.moreItems.get(`project:${s.key}`) || 0)),
@@ -625,18 +660,34 @@ function groupedNodes(groups, { prefs, query } = {}) {
     live.add(id);
     const folded = searching ? false : isFolded(id);
     nodes.push(headNode(section, folded));
+    const searchChildMap = searching ? partitionNested(section.shown).children : null;
+    const childMap = searchChildMap || fullChildMap;
+    const nestedInSection = searching
+      ? new Set([...childMap.values()].flat().map((c) => c.group))
+      : null;
     for (const g of section.shown) {
+      if (nestedInSection?.has(g.group)) continue;
       const children = ChatTerminal.derivedOf?.(g.group) || [];
       const hasTermChildren = children.some((d) => d.terminal != null);
+      const hasVisibleGrandchild = children.some((d) =>
+        (childMap.get(`${g.group}|${d.desk_key}`) || []).some(stayVisibleWhenFolded),
+      );
       // A folded group still shows what needs the reader, is open, or has a derived terminal.
-      const hidden = folded && !(stayVisibleWhenFolded(g) || hasTermChildren);
+      const hidden = folded && !(stayVisibleWhenFolded(g) || hasTermChildren || hasVisibleGrandchild);
       nodes.push(itemNode(g, hidden, false));
       if (!hidden) order.push(g.group);
       const deskKey = selectedDerivedDeskKey();
       for (const child of children) {
-        const childHidden = folded && child.terminal == null && !isItemOn(child, deskKey);
-        nodes.push(itemNode(child, childHidden));
+        const gks = childMap.get(`${g.group}|${child.desk_key}`) || [];
+        const childHasVisibleGk = gks.some(stayVisibleWhenFolded);
+        const childHidden = folded && child.terminal == null && !isItemOn(child, deskKey) && !childHasVisibleGk;
+        nodes.push(itemNode(child, childHidden, false, 1));
         if (!childHidden) order.push(child.group);
+        for (const gk of gks) {
+          const gkHidden = folded && !stayVisibleWhenFolded(gk);
+          nodes.push(itemNode(gk, gkHidden, false, 2));
+          if (!gkHidden) order.push(gk.group);
+        }
       }
     }
     if (section.hidden)

@@ -12,6 +12,7 @@ mod activity;
 #[cfg(unix)]
 mod codex_server;
 mod derived;
+mod derived_children;
 mod elsewhere;
 mod input_gate;
 mod lifecycle;
@@ -255,6 +256,14 @@ impl Running {
             .as_deref()
             .filter(|s| !s.is_empty())
             .map(|sid| thread_desk_key(&self.provider, sid));
+        let boss_key = is_derived
+            .then(|| {
+                self.native
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map(|sid| crate::data::boss_app::boss_key(&self.provider, sid))
+            })
+            .flatten();
         json!({"id": self.id, "provider": self.provider, "art_model": art_model, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": active,
             "activity": (!is_derived && self.session.exit().is_none()).then(|| self.boss_activity()),
@@ -268,7 +277,9 @@ impl Running {
             "parent_boss_key": self.derived.as_ref().map(|d| &d.parent_boss_key),
             "parent_workspace_id": self.derived.as_ref().and_then(|d| d.parent_workspace_id.as_deref()),
             "derived_busy": busy,
+            "derived_own_busy": self.derived.as_ref().is_some_and(|d| d.life.own_busy),
             "native": self.native,
+            "boss_key": boss_key,
             "isolation_id": self.derived.as_ref().and_then(|d| d.isolation_id.as_deref()),
             "desk_key": desk_key,
             "blocked_kind": self.derived.as_ref().and_then(|d| d.blocked_kind.as_deref())})
@@ -277,7 +288,7 @@ impl Running {
 
 /// Computes the service's private-thread desk key (`thread:<sha256(provider\0session_id)[:16]>`),
 /// matching `src/agentnave/naming.py::thread` and `stage.rs::task_desk`.
-pub(super) fn thread_desk_key(provider: &str, session_id: &str) -> String {
+pub(crate) fn thread_desk_key(provider: &str, session_id: &str) -> String {
     use sha2::{Digest, Sha256};
     use std::fmt::Write;
 
@@ -1223,7 +1234,11 @@ impl Terminals {
                 );
             }
         }
-        let Some((host, _, _)) = links::chat(&crate::data_files::data_root(), workspace) else {
+        let root = crate::data_files::data_root();
+        if let Some(refusal) = self.reject_if_live_derived_owner(&root, workspace) {
+            return refusal;
+        }
+        let Some((host, _, _)) = links::chat(&root, workspace) else {
             return Response::error(404, "找不到这段聊天的记录");
         };
         // A chat goes on as the account that began it; a removed account cannot be stood in for.
