@@ -42,7 +42,6 @@ const REMOVED_ENVS: &[&str] = &[
 pub(crate) struct GitOutput {
     pub code: i32,
     pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -194,7 +193,6 @@ impl GitRunner {
         Ok(GitOutput {
             code,
             stdout: out.stdout,
-            stderr: out.stderr,
         })
     }
 

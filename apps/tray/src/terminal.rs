@@ -684,14 +684,6 @@ impl Terminals {
             .collect()
     }
 
-    pub(crate) fn find_git_pr_terminal(&self, id: u64) -> Option<crate::git_pr::TerminalTarget> {
-        self.lock()
-            .open
-            .iter()
-            .find(|r| r.id == id)
-            .map(Self::running_to_git_pr_target)
-    }
-
     pub(crate) fn has_active_terminal_for_isolated(
         &self,
         isolation_id: &str,

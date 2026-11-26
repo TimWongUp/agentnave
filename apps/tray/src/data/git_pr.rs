@@ -35,16 +35,4 @@ impl Reader {
             .map(PathBuf::from)
             .collect()
     }
-
-    /// Whether any running task or meeting seat currently works in `dir` or a subdirectory
-    /// (excluding separate isolated worktrees nested under `dir`).
-    pub(crate) fn has_running_non_isolated_in_dir(&self, dir: &Path) -> bool {
-        let isolated_dirs: Vec<PathBuf> = crate::isolated::read(&self.root)
-            .into_iter()
-            .map(|d| PathBuf::from(d.path))
-            .collect();
-        self.running_cwds()
-            .iter()
-            .any(|cwd| is_non_isolated_in_dir(cwd, dir, &isolated_dirs))
-    }
 }

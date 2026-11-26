@@ -2670,7 +2670,7 @@ test("ChatGit prioritizes PR tones, hides desktop sessions and PRs when gh unava
   assert.equal(cliRec.prBadge.attributes["data-tone"], "git");
 });
 
-test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and renders op buttons gated by gh & working state", async () => {
+test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and renders status without write actions", async () => {
   const mkNode = (tag, attributes = {}, ...children) => {
     const node = {
       tag,
@@ -2722,22 +2722,6 @@ test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and 
   const bodyChildren = [];
   let postImpl = async (path, payload) => {
     posts.push([path, payload]);
-    if (path === "/app/git-pr/prepare" && payload.op === "commit") {
-      return {
-        op: "commit", branch: "feat/x", working: false,
-        files: [{ path: "a.rs", code: ".M", staged: false, unstaged: true, untracked: false, unmerged: false }],
-        has_staged: false, has_unstaged: true, has_unmerged: false,
-      };
-    }
-    if (path === "/app/git-pr/commit") {
-      throw new Error("git commit failed: nothing added");
-    }
-    if (path === "/app/git-pr/prepare" && payload.op === "merge_pr") {
-      return {
-        op: "merge_pr", repo: "o/r", number: 2,
-        allowed_methods: ["squash", "rebase"], default_method: "squash", delete_branch_on_merge: true, working: false,
-      };
-    }
     return { ok: true };
   };
   const context = vm.createContext({
@@ -2762,9 +2746,8 @@ test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and 
     setTimeout,
     clearTimeout,
   });
-  vm.runInContext(readFileSync(`${__dirname}/../chat-git-ops.js`, "utf8") + "\nglobalThis.ChatGitOps = ChatGitOps;", context);
   vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
-  const { ChatGit, ChatGitOps } = context;
+  const { ChatGit } = context;
 
   // openUrl strictly allows https://github.com/
   assert.equal(await ChatGit.openUrl("https://evil.example/o/r/pull/1"), false);
@@ -2796,7 +2779,7 @@ test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and 
     isolated: {},
   });
 
-  // Open hover card by clicking badge -> pins card and renders PR link, GitHub-fallback CI link, and op buttons.
+  // Open hover card by clicking badge -> pins card and renders PR link and GitHub-fallback CI link.
   const idleRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
   ChatGit.decorateItem(idleRec, { group: "ws-idle", cli_session: true });
   idleRec.prBadge.fire("click");
@@ -2812,50 +2795,14 @@ test("ChatGit opens only https://github.com/ links via /app/git-pr/open-url and 
   const ciChip = findAll(card, (n) => n.tag.startsWith("a.gp-chip"))[0];
   assert.equal(ciChip.attributes.href, "https://github.com/o/r/pull/2/checks");
 
-  const opButtons = findAll(card, (n) => n.className.startsWith("gp-op-btn"));
-  assert.equal(opButtons.length, 4); // Commit, Pull, Push, Create PR
-  assert.ok(opButtons.every((b) => !b.disabled));
-  const mergeBtn = findAll(card, (n) => n.className === "gp-pr-merge")[0];
-  assert.ok(mergeBtn && !mergeBtn.disabled);
+  // Read-only: no commit/pull/push/PR/merge controls are rendered for idle or busy CLI sessions.
+  assert.equal(findAll(card, (n) => n.className.includes("gp-op-btn") || n.className.includes("gp-pr-merge")).length, 0);
 
-  // Busy CLI disables all write buttons.
+  // Busy CLI is shown as a status tag only.
   const busyRec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
   ChatGit.decorateItem(busyRec, { group: "ws-busy", cli_session: true });
   busyRec.prBadge.fire("click");
-  const busyButtons = findAll(card, (n) => n.className.startsWith("gp-op-btn"));
-  assert.ok(busyButtons.length > 0 && busyButtons.every((b) => b.disabled));
-
-  // Commit confirmation dialog displays raw error on git failure and stays open.
-  await ChatGitOps.openCommit({ kind: "workspace", id: "ws-idle" });
-  const dlg = bodyChildren.find((n) => n.className.includes("gp-dialog"));
-  assert.ok(dlg && dlg.open);
-  const textarea = findAll(dlg, (n) => n.tag.startsWith("textarea"))[0];
-  textarea.value = "feat: test";
-  const commitBtn = findAll(dlg, (n) => n.tag === "button.primary")[0];
-  commitBtn.fire("click");
-  await new Promise((r) => setTimeout(r, 0));
-  const errBox = findAll(dlg, (n) => n.className === "gp-error")[0];
-  assert.equal(errBox.hidden, false);
-  assert.ok(errBox.textContent.includes("nothing added"));
-  assert.equal(dlg.open, true);
-  dlg.close();
-
-  // Merge PR dialog only lists repository-allowed methods (squash, rebase; no merge) and binds head_ref_oid.
-  const headOid = "0123456789abcdef0123456789abcdef01234567";
-  await ChatGitOps.openMergePr(
-    { kind: "workspace", id: "ws-idle" },
-    { repo: "o/r", number: 2, title: "Fix link", head_ref_oid: headOid },
-  );
-  const radios = findAll(dlg, (n) => n.attributes.role === "radio");
-  assert.deepEqual(radios.map((r) => r.attributes["data-method"]), ["squash", "rebase"]);
-  assert.equal(radios[0].attributes["aria-checked"], "true");
-  const mergeConfirmBtn = findAll(dlg, (n) => n.tag === "button.primary")[0];
-  mergeConfirmBtn.fire("click");
-  await new Promise((r) => setTimeout(r, 0));
-  const mergeCall = posts.find(([path]) => path === "/app/git-pr/pr/merge");
-  assert.ok(mergeCall, "expected POST /app/git-pr/pr/merge");
-  assert.equal(mergeCall[1].head_ref_oid, headOid);
-  assert.equal(mergeCall[1].method, "squash");
+  assert.equal(findAll(card, (n) => n.className.includes("gp-tag-busy")).length, 1);
 });
 
 test("ChatGit queuedReason preserves manual priority over focus and hover", async () => {
@@ -3093,159 +3040,6 @@ test("ChatGit never renders literal null in hover card or clean git badge", () =
   ChatGit.decorateItem(prsOnlyRec, { group: "ws-prs-only", cli_session: true });
   prsOnlyRec.prBadge.fire("click");
   assert.equal(hasLiteralNull(card), false);
-});
-
-test("Space key inside commit message and PR title/body inputs is not preventDefaulted by keydown handlers", async () => {
-  const docListeners = {};
-  const mkNode = (tag, attributes = {}, ...children) => {
-    const tagName = tag.split(".")[0].toUpperCase();
-    const node = {
-      tag,
-      tagName,
-      type: attributes.type || "",
-      className: tag.split(".").slice(1).join(" "),
-      attributes: { ...attributes },
-      hidden: Boolean(attributes.hidden),
-      disabled: Boolean(attributes.disabled),
-      value: attributes.value ?? "",
-      isConnected: false,
-      children: [],
-      listeners: {},
-      style: {},
-      textContent: "",
-      parentNode: null,
-      setAttribute(k, v) { this.attributes[k] = v; },
-      getAttribute(k) { return this.attributes[k] ?? null; },
-      hasAttribute(k) { return Object.hasOwn(this.attributes, k); },
-      removeAttribute(k) { delete this.attributes[k]; },
-      addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); },
-      append(...items) {
-        for (const item of items.flat(Infinity)) {
-          if (item == null || item === false) continue;
-          if (typeof item === "object") item.parentNode = this;
-          this.children.push(item);
-        }
-      },
-      replaceChildren(...items) {
-        this.children = [];
-        this.append(...items);
-      },
-      insertBefore(item, before) {
-        if (typeof item === "object" && item) item.parentNode = this;
-        const idx = this.children.indexOf(before);
-        if (idx >= 0) this.children.splice(idx, 0, item);
-        else this.children.push(item);
-      },
-      closest() { return null; },
-      contains(x) { return x === this || this.children.some((c) => typeof c === "object" && c?.contains?.(x)); },
-      getBoundingClientRect() { return { left: 20, right: 120, top: 40, bottom: 60, width: 100, height: 20 }; },
-      focus() {},
-      showModal() { this.open = true; },
-      close() { this.open = false; },
-    };
-    node.append(...children);
-    return node;
-  };
-  const dispatchBubblingKeydown = (target, key) => {
-    let defaultPrevented = false;
-    let propagationStopped = false;
-    const event = {
-      key,
-      target,
-      defaultPrevented: false,
-      preventDefault() { defaultPrevented = true; event.defaultPrevented = true; },
-      stopPropagation() { propagationStopped = true; },
-    };
-    let cur = target;
-    while (cur && !propagationStopped) {
-      for (const fn of cur.listeners?.keydown || []) fn(event);
-      cur = cur.parentNode;
-    }
-    if (!propagationStopped) {
-      for (const fn of docListeners.keydown || []) fn(event);
-    }
-    return { defaultPrevented, propagationStopped };
-  };
-  const findAll = (root, pred, out = []) => {
-    if (!root || typeof root !== "object") return out;
-    if (pred(root)) out.push(root);
-    for (const c of root.children || []) findAll(c, pred, out);
-    return out;
-  };
-
-  const bodyChildren = [];
-  const context = vm.createContext({
-    AN: {
-      h: mkNode,
-      L: (zh) => zh,
-      setText: (n, t) => { n.textContent = t; },
-      setAttr: (n, k, v) => { if (v == null) delete n.attributes[k]; else n.attributes[k] = v; },
-      relTime: () => "5 分钟前",
-      at: Date.parse,
-      deskName: (d) => d?.label || d?.key || "",
-      post: async (_path, payload) => {
-        if (payload.op === "commit") {
-          return {
-            op: "commit", branch: "feat/x", working: false,
-            files: [{ path: "a.rs", code: ".M", staged: false, unstaged: true, untracked: false, unmerged: false }],
-            has_staged: false, has_unstaged: true, has_unmerged: false,
-          };
-        }
-        if (payload.op === "create_pr") {
-          return { op: "create_pr", repo: "o/r", head: "feat/x", base: "main", title: "", body: "", working: false };
-        }
-        return {};
-      },
-      load: async () => ({}),
-    },
-    document: {
-      body: {
-        listeners: {},
-        append(...nodes) { for (const n of nodes) { if (n) n.isConnected = true; bodyChildren.push(n); } },
-      },
-      createElementNS: (_ns, tag) => mkNode(tag),
-      addEventListener(name, fn) { (docListeners[name] ||= []).push(fn); },
-    },
-    window: { addEventListener() {}, innerWidth: 1200, innerHeight: 800 },
-    setTimeout,
-    clearTimeout,
-  });
-  vm.runInContext(readFileSync(`${__dirname}/../chat-git-ops.js`, "utf8") + "\nglobalThis.ChatGitOps = ChatGitOps;", context);
-  vm.runInContext(readFileSync(`${__dirname}/../chat-git.js`, "utf8") + "\nglobalThis.ChatGit = ChatGit;", context);
-  const { ChatGit, ChatGitOps } = context;
-
-  // Also test ancestor shortcut handler (badge keydown) directly with an editable target vs badge target.
-  ChatGit._applyForTest({
-    gh_status: "ready",
-    terminals: {},
-    workspaces: { "ws-1": { git: { is_git: true, branch: "feat/x", changed_files: 1 }, prs: [] } },
-    isolated: {},
-  });
-  const rec = { el: mkNode("a.gi"), top: mkNode("span.gi-top") };
-  ChatGit.decorateItem(rec, { group: "ws-1", cli_session: true });
-  const nestedInput = mkNode("input", { type: "text" });
-  rec.prBadge.append(nestedInput);
-  assert.equal(dispatchBubblingKeydown(nestedInput, " ").defaultPrevented, false);
-
-  // Simulate an ancestor keydown handler on document that would preventDefault(" ") if not stopped.
-  docListeners.keydown ||= [];
-  docListeners.keydown.push((e) => {
-    if (e.key === " ") e.preventDefault();
-  });
-
-  // Commit message textarea: pressing Space must NOT be preventDefaulted.
-  await ChatGitOps.openCommit({ kind: "workspace", id: "ws-1" });
-  const dlg = bodyChildren.find((n) => n.className.includes("gp-dialog"));
-  const commitTextarea = findAll(dlg, (n) => n.tagName === "TEXTAREA")[0];
-  assert.equal(dispatchBubblingKeydown(commitTextarea, " ").defaultPrevented, false);
-  dlg.close();
-
-  // Create PR title input and description textarea: pressing Space must NOT be preventDefaulted.
-  await ChatGitOps.openCreatePr({ kind: "workspace", id: "ws-1" });
-  const prTitle = findAll(dlg, (n) => n.attributes.id === "gp-pr-title")[0];
-  const prBody = findAll(dlg, (n) => n.attributes.id === "gp-pr-body")[0];
-  assert.equal(dispatchBubblingKeydown(prTitle, " ").defaultPrevented, false);
-  assert.equal(dispatchBubblingKeydown(prBody, " ").defaultPrevented, false);
 });
 
 test("renderMarkdown renders http(s) as external anchors, file:// as text without raw syntax, and rejects unsafe schemes", () => {

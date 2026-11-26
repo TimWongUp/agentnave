@@ -16,53 +16,6 @@ use serde_json::Value;
 use crate::process::{OutputError, output};
 
 const GH_TIMEOUT: Duration = Duration::from_secs(15);
-const GH_WRITE_TIMEOUT: Duration = Duration::from_secs(45);
-const REPO_MERGE_FIELDS: &str = "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,\
-deleteBranchOnMerge,viewerDefaultMergeMethod";
-
-/// Allowed PR merge methods & branch deletion policy reported by GitHub for one repository.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RepoMergeSettings {
-    pub merge_commit_allowed: bool,
-    pub squash_merge_allowed: bool,
-    pub rebase_merge_allowed: bool,
-    pub delete_branch_on_merge: bool,
-    pub default_method: Option<String>,
-}
-
-impl RepoMergeSettings {
-    pub(crate) fn allowed_methods(&self) -> Vec<&'static str> {
-        let mut out = Vec::new();
-        if self.merge_commit_allowed {
-            out.push("merge");
-        }
-        if self.squash_merge_allowed {
-            out.push("squash");
-        }
-        if self.rebase_merge_allowed {
-            out.push("rebase");
-        }
-        out
-    }
-
-    pub(crate) fn effective_default(&self) -> Option<&'static str> {
-        let allowed = self.allowed_methods();
-        if let Some(pref) = self.default_method.as_deref()
-            && let Some(&matched) = allowed.iter().find(|&&m| m == pref)
-        {
-            return Some(matched);
-        }
-        allowed.first().copied()
-    }
-}
-
-/// Output of `gh pr create`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CreatedPr {
-    pub url: String,
-    pub number: Option<u64>,
-}
-
 /// Single-call JSON fields requested from `gh pr view --json`.
 pub(crate) const PR_VIEW_FIELDS: &str = "title,number,state,isDraft,additions,deletions,\
 statusCheckRollup,reviewDecision,mergeable,updatedAt,url,headRefName,headRefOid,baseRefName";
@@ -81,7 +34,6 @@ pub(crate) enum GhError {
     NotAuthenticated,
     RateLimited,
     NotFound,
-    HeadMismatch(String),
     Other(String),
 }
 
@@ -247,132 +199,6 @@ impl GhClient {
         ))
     }
 
-    /// Fetches allowed merge methods and `deleteBranchOnMerge` for `owner/repo`.
-    pub(crate) fn view_repo_merge_settings(
-        &self,
-        repo: &str,
-    ) -> Result<RepoMergeSettings, GhError> {
-        if split_repo(repo).is_none() {
-            return Err(GhError::Other("无效的 GitHub 仓库标识".into()));
-        }
-        let program = self.resolve_program().ok_or(GhError::NotInstalled)?;
-        let out = self.run_gh_with_timeout(
-            &program,
-            &["repo", "view", repo, "--json", REPO_MERGE_FIELDS],
-            GH_TIMEOUT,
-        )?;
-        if !out.status.success() {
-            return Err(classify_gh_error(&out));
-        }
-        let value: Value = serde_json::from_slice(&out.stdout)
-            .map_err(|e| GhError::Other(format!("解析 gh repo view 输出失败：{e}")))?;
-        let default_method = value["viewerDefaultMergeMethod"]
-            .as_str()
-            .map(|s| s.trim().to_ascii_lowercase())
-            .filter(|s| matches!(s.as_str(), "merge" | "squash" | "rebase"));
-        Ok(RepoMergeSettings {
-            merge_commit_allowed: value["mergeCommitAllowed"].as_bool().unwrap_or(false),
-            squash_merge_allowed: value["squashMergeAllowed"].as_bool().unwrap_or(false),
-            rebase_merge_allowed: value["rebaseMergeAllowed"].as_bool().unwrap_or(false),
-            delete_branch_on_merge: value["deleteBranchOnMerge"].as_bool().unwrap_or(false),
-            default_method,
-        })
-    }
-
-    /// Creates a pull request on GitHub via `gh pr create` without touching local branches.
-    pub(crate) fn create_pr(
-        &self,
-        repo: &str,
-        base: &str,
-        head: &str,
-        title: &str,
-        body: &str,
-        draft: bool,
-    ) -> Result<CreatedPr, GhError> {
-        if split_repo(repo).is_none() {
-            return Err(GhError::Other("无效的 GitHub 仓库标识".into()));
-        }
-        let program = self.resolve_program().ok_or(GhError::NotInstalled)?;
-        let mut args = vec![
-            "pr", "create", "--repo", repo, "--base", base, "--head", head, "--title", title,
-            "--body", body,
-        ];
-        if draft {
-            args.push("--draft");
-        }
-        let out = self.run_gh_with_timeout(&program, &args, GH_WRITE_TIMEOUT)?;
-        if !out.status.success() {
-            return Err(classify_gh_error(&out));
-        }
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let url = stdout
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|line| validate_github_url(line).is_ok())
-            .map(str::to_owned)
-            .unwrap_or_else(|| stdout.trim().to_owned());
-        let number = extract_github_pr_links(&url)
-            .into_iter()
-            .next()
-            .map(|(_, n)| n);
-        Ok(CreatedPr { url, number })
-    }
-
-    /// Merges a pull request on GitHub via `gh pr merge` using the selected strategy and binds
-    /// the merge to `head_oid` (`--match-head-commit`) so commits pushed after review are rejected.
-    /// Does not pass `--delete-branch` so GitHub honors repo `deleteBranchOnMerge` without
-    /// switching or deleting local branches.
-    pub(crate) fn merge_pr(
-        &self,
-        repo: &str,
-        number: u64,
-        method: &str,
-        head_oid: &str,
-    ) -> Result<String, GhError> {
-        if split_repo(repo).is_none() || number == 0 {
-            return Err(GhError::Other("无效的 PR 参数".into()));
-        }
-        if !(7..=64).contains(&head_oid.len()) || !head_oid.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(GhError::Other(
-                "缺少有效的 PR 头提交校验信息，请刷新后重试".into(),
-            ));
-        }
-        let flag = match method {
-            "merge" => "--merge",
-            "squash" => "--squash",
-            "rebase" => "--rebase",
-            _ => return Err(GhError::Other(format!("不支持的合并方式：{method}"))),
-        };
-        let program = self.resolve_program().ok_or(GhError::NotInstalled)?;
-        let num = number.to_string();
-        let out = self.run_gh_with_timeout(
-            &program,
-            &[
-                "pr",
-                "merge",
-                &num,
-                "--repo",
-                repo,
-                flag,
-                "--match-head-commit",
-                head_oid,
-            ],
-            GH_WRITE_TIMEOUT,
-        )?;
-        if !out.status.success() {
-            let err = classify_gh_error(&out);
-            if let GhError::Other(ref text) = err
-                && is_head_mismatch_error(text)
-            {
-                return Err(GhError::HeadMismatch(text.clone()));
-            }
-            return Err(err);
-        }
-        let text = combined_output(&out);
-        Ok(text)
-    }
-
     fn run_gh(&self, program: &Path, args: &[&str]) -> Result<std::process::Output, GhError> {
         self.run_gh_with_timeout(program, args, GH_TIMEOUT)
     }
@@ -410,51 +236,6 @@ impl GhClient {
             OutputError::Reader => GhError::Other("读取 gh 输出失败".into()),
         })
     }
-}
-
-fn combined_output(out: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    match (stderr.is_empty(), stdout.is_empty()) {
-        (false, true) => stderr,
-        (true, false) => stdout,
-        (false, false) => format!("{stderr}\n{stdout}"),
-        (true, true) => format!("gh exited with {}", out.status.code().unwrap_or(-1)),
-    }
-}
-
-fn classify_gh_error(out: &std::process::Output) -> GhError {
-    let text = combined_output(out);
-    let lower = text.to_ascii_lowercase();
-    if lower.contains("not logged")
-        || lower.contains("gh auth login")
-        || lower.contains("authentication")
-        || lower.contains("http 401")
-    {
-        return GhError::NotAuthenticated;
-    }
-    if lower.contains("rate limit") || lower.contains("http 429") {
-        return GhError::RateLimited;
-    }
-    if lower.contains("no pull requests found")
-        || lower.contains("could not resolve to a pullrequest")
-        || lower.contains("could not resolve to a repository")
-        || lower.contains("not found")
-        || lower.contains("http 404")
-    {
-        return GhError::NotFound;
-    }
-    GhError::Other(text)
-}
-
-fn is_head_mismatch_error(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.contains("head branch was modified")
-        || lower.contains("expected head")
-        || lower.contains("expectedheadoid")
-        || lower.contains("match-head-commit")
-        || (lower.contains("head")
-            && (lower.contains("mismatch") || lower.contains("does not match")))
 }
 
 /// Validates that `raw` is strictly an `https://github.com/...` URL safe to open in the browser.

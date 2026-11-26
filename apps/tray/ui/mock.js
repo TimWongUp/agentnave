@@ -1493,51 +1493,6 @@ All checks passed!
       window.__mockOpenedUrls.push(url);
       return { ok: true, url };
     }
-    if (path === "/app/git-pr/prepare") {
-      const op = body.op;
-      if (op === "commit") {
-        return {
-          op: "commit", branch: "feat/auth-cleanup", detached: false, working: false,
-          files: [
-            { path: "apps/tray/src/git_pr/ops.rs", code: "M.", staged: true, unstaged: false, untracked: false, unmerged: false },
-            { path: "apps/tray/ui/chat-git.js", code: ".M", staged: false, unstaged: true, untracked: false, unmerged: false },
-            { path: "apps/tray/ui/chat-git-ops.js", code: "??", staged: false, unstaged: false, untracked: true, unmerged: false },
-          ],
-          has_staged: true, has_unstaged: true, has_unmerged: false,
-        };
-      }
-      if (op === "pull") {
-        return { op: "pull", branch: "feat/auth-cleanup", detached: false, upstream: "origin/feat/auth-cleanup", ahead: 2, behind: 1, working: false };
-      }
-      if (op === "push") {
-        return { op: "push", branch: "feat/auth-cleanup", remote: "origin", remote_branch: "feat/auth-cleanup", set_upstream: false, upstream: "origin/feat/auth-cleanup", ahead: 2, behind: 0, working: false };
-      }
-      if (op === "create_pr") {
-        return { op: "create_pr", repo: "acme/app", head: "feat/auth-cleanup", base: "main", title: "feat: clean up OAuth session flow", body: "- extract token refresh helper\n- add race condition guard", remote: "origin", needs_push: true, working: false };
-      }
-      if (op === "merge_pr") {
-        return { op: "merge_pr", repo: body.repo || "acme/app", number: body.number || 214, allowed_methods: ["squash", "rebase"], default_method: "squash", delete_branch_on_merge: true, working: false };
-      }
-      throw Object.assign(new Error(`unsupported op: ${op}`), { status: 400 });
-    }
-    if (path === "/app/git-pr/commit") {
-      if (q.get("gitfail") === "commit") throw Object.assign(new Error("error: pathspec failed"), { status: 400 });
-      return { ok: true, sha: "9f3a2c1", output: "[feat/auth-cleanup 9f3a2c1] committed" };
-    }
-    if (path === "/app/git-pr/pull") {
-      if (q.get("gitfail") === "pull") throw Object.assign(new Error("分支已分叉，无法快进拉取（未自动合并或变基）：\nfatal: Not possible to fast-forward, aborting."), { status: 409 });
-      return { ok: true, branch: "feat/auth-cleanup", upstream: "origin/feat/auth-cleanup", up_to_date: false, sha: "7c4b8e2", output: "Fast-forward" };
-    }
-    if (path === "/app/git-pr/push") {
-      if (q.get("gitfail") === "push") throw Object.assign(new Error("! [rejected] feat/auth-cleanup -> feat/auth-cleanup (non-fast-forward)"), { status: 400 });
-      return { ok: true, branch: "feat/auth-cleanup", remote: "origin", upstream: "origin/feat/auth-cleanup", set_upstream: false, output: "Everything up-to-date" };
-    }
-    if (path === "/app/git-pr/pr/create") {
-      return { ok: true, repo: "acme/app", head: "feat/auth-cleanup", base: "main", url: "https://github.com/acme/app/pull/215", number: 215 };
-    }
-    if (path === "/app/git-pr/pr/merge") {
-      return { ok: true, repo: body.repo || "acme/app", number: body.number || 214, method: body.method || "squash", delete_branch_on_merge: true, output: "Merged" };
-    }
     if (path === "/app/isolated/inspect") {
       const iso = mockGitPr().isolated?.[body.id];
       const d = ISOLATED.find((x) => x.id === body.id);
@@ -1725,12 +1680,6 @@ All checks passed!
         (headBtn || badge).click();
       } else if (mode === "sidecard" && badge) {
         badge.click();
-      } else if (mode === "commit" && typeof ChatGitOps !== "undefined") {
-        void ChatGitOps.openCommit({ kind: "workspace", id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50" });
-      } else if (mode === "create_pr" && typeof ChatGitOps !== "undefined") {
-        void ChatGitOps.openCreatePr({ kind: "workspace", id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50" });
-      } else if (mode === "merge_pr" && typeof ChatGitOps !== "undefined") {
-        void ChatGitOps.openMergePr({ kind: "workspace", id: "s-3f9c1d7a5b2e4c808f6d9a1b7e2c4d50" }, mockGitPr().terminals["1"].prs[0]);
       } else if (mode === "isolated") {
         document.querySelector(".fh-sum .pill.act:not(.fh-git):not([hidden])")?.click();
       }

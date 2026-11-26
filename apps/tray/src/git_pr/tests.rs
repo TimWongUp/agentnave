@@ -904,44 +904,6 @@ fn non_isolated_dir_guard_matches_subpaths_and_excludes_isolated_worktrees() {
     ));
 }
 
-#[test]
-fn cache_invalidate_pr_by_branch_also_evicts_number_entry() {
-    let mut cache = Cache::default();
-    let now = Instant::now();
-    let pr = PrInfo {
-        repo: "acme/demo".into(),
-        number: 88,
-        title: "Fix".into(),
-        state: "open".into(),
-        is_draft: false,
-        additions: 1,
-        deletions: 0,
-        checks: Default::default(),
-        review_decision: None,
-        mergeable: "conflicting".into(),
-        updated_at: String::new(),
-        url: "https://github.com/acme/demo/pull/88".into(),
-        head_ref_name: "feat/fix".into(),
-        head_ref_oid: "aaaaaaa".into(),
-        base_ref_name: "main".into(),
-    };
-    cache.put_pr_by_branch("acme/demo", "feat/fix", now, Some(pr));
-    assert!(
-        cache
-            .get_pr_by_branch("acme/demo", "feat/fix", now)
-            .is_some()
-    );
-    assert!(cache.get_pr_by_number("acme/demo", 88, now).is_some());
-
-    cache.invalidate_pr("acme/demo", Some("feat/fix"), None);
-    assert!(
-        cache
-            .get_pr_by_branch("acme/demo", "feat/fix", now)
-            .is_none()
-    );
-    assert!(cache.get_pr_by_number("acme/demo", 88, now).is_none());
-}
-
 #[cfg(unix)]
 #[test]
 fn concurrent_fresh_refresh_runs_followup_pass_and_tracks_non_isolated_derived_terminal() {
