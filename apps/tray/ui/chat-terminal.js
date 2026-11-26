@@ -1166,7 +1166,7 @@ const ChatTerminal = (() => {
       stopButton.disabled = false;
       stopButton.classList.toggle("start", (!x && !t.derivedOwner) || ended);
       const resuming = !t.derivedOwner && (!x || (ended && x.workspaces.length && RESUMES.has(x.provider)));
-      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : t.derivedOwner ? L("打开派生终端", "Open derived terminal") : resuming ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
+      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : t.derivedOwner ? L("打开派生会话", "Open derived session") : resuming ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
       setText(stopButton, btnLabel);
       action = t.handover ? null : t.derivedOwner ? ["打开", "Open"] : resuming ? ["续接", "Resume"] : ended ? ["启动", "Start"] : ["结束", "Stop"];
     }

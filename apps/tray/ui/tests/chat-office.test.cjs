@@ -4808,11 +4808,11 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
   assert.equal(context.state.items.get("ws-sub").el.classList.contains("gi-grandchild"), true);
   assert.equal(context.state.items.get("ws-too-deep").el.classList.contains("gi-grandchild"), false);
 
-  // 2. While owning derived terminal lives, child workspace shows "打开派生终端" instead of "续接".
+  // 2. While owning derived terminal lives, child workspace shows "打开派生会话" instead of "续接".
   assert.equal(context.ChatTerminal.liveDerivedOwnerOf("ws-sub").id, 50);
   context.ChatTerminal.column("ws-sub", "codex", "codex");
   const stopBtn = drAllAfter.find(n => n.classList.contains("dr-stop"));
-  assert.equal(stopBtn.textContent, "打开派生终端");
+  assert.equal(stopBtn.textContent, "打开派生会话");
   assert.equal(stopBtn.hidden, false);
 
   // Stop confirmation on boss AND on derived warns about own busy tasks.
