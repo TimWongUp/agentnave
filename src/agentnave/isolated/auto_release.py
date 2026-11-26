@@ -25,11 +25,9 @@ from agentnave.isolated.repo import (
     IsolationError,
     RepoContext,
     add_worktree_locked,
-    check_tree_and_filters,
     control_char_in,
     discover_repo,
     ensure_info_exclude_locked,
-    has_active_hooks,
     is_link,
     parse_worktrees,
     ref_exists,
@@ -202,24 +200,6 @@ def _auto_release_locked(
     return replace(summary, auto_released=True), warnings
 
 
-def _rebuild_warnings(
-    main_root: Path,
-    *,
-    lfs_detected: bool,
-    extra_warnings: tuple[str, ...] = (),
-) -> tuple[str, ...]:
-    warnings: list[str] = []
-    hooks_skipped = has_active_hooks(main_root)
-    if hooks_skipped and lfs_detected:
-        warnings.append("Git hooks and LFS downloads were skipped; LFS files may contain pointers.")
-    elif hooks_skipped:
-        warnings.append("Git hooks were skipped when rebuilding the isolated directory.")
-    elif lfs_detected:
-        warnings.append("Git LFS downloads were skipped; LFS files may contain pointers.")
-    warnings.extend(extra_warnings)
-    return tuple(warnings)
-
-
 def plan_rebuild(
     *,
     isolation_id: str,
@@ -259,7 +239,6 @@ def plan_rebuild(
     rel = cwd_resolved.relative_to(wt_path)
     subdir_prefix = PurePosixPath(rel.as_posix()) if rel != Path(".") else PurePosixPath()
 
-    lfs_detected = False
     if base_oid is not None:
         try:
             run_git(
@@ -271,7 +250,6 @@ def plan_rebuild(
                 f"Original commit {base_oid[:12]} for isolated directory {isolation_id} is no "
                 "longer available in the repository; start a new thread with isolation instead."
             ) from exc
-        lfs_detected = check_tree_and_filters(ctx, base_oid)
 
     extra_warnings: list[str] = []
     include_source = ctx.main_root
@@ -287,19 +265,12 @@ def plan_rebuild(
                 f"Original .worktreeinclude source ({source_root}) is no longer present; "
                 "copied ignored files from main worktree instead."
             )
-    warnings = (
-        _rebuild_warnings(
-            ctx.main_root, lfs_detected=lfs_detected, extra_warnings=tuple(extra_warnings)
-        )
-        if base_oid is not None
-        else tuple(extra_warnings)
-    )
     return RebuildPlan(
         ctx=ctx,
         wt_path=wt_path,
         subdir_prefix=subdir_prefix,
         include_source=include_source,
-        warnings=warnings,
+        warnings=tuple(extra_warnings),
     )
 
 
@@ -468,10 +439,6 @@ def rebuild_collapsed_locked(
             f"Cannot rebuild isolated directory {existing.id}: branch {existing.branch} "
             "no longer exists"
         )
-    lfs_detected = check_tree_and_filters(ctx, target_oid)
-    warnings = _rebuild_warnings(
-        ctx.main_root, lfs_detected=lfs_detected, extra_warnings=plan.warnings
-    )
     ensure_info_exclude_locked(ctx.main_root)
     provisional_cwd = (
         wt_path.joinpath(*plan.subdir_prefix.parts) if plan.subdir_prefix.parts else wt_path
@@ -495,7 +462,7 @@ def rebuild_collapsed_locked(
             usage_generation=max(existing.usage_generation, 0) + 1,
             create_branch=False,
             copying_phase="rebuilding_copying_include",
-            warnings=warnings,
+            warnings=plan.warnings,
         )
     except BaseException:
         latest = store.get(existing.id)

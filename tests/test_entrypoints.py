@@ -2620,13 +2620,7 @@ def _init_git_repo(repo: Path) -> str:
         "user.email=test@example.com",
     ]
     subprocess.run([*git, "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
-    hook = repo / ".git" / "hooks" / "post-checkout"
-    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-    hook.chmod(0o755)
     (repo / ".gitignore").write_text("*.ignored\n", encoding="utf-8")
-    (repo / ".gitattributes").write_text(
-        "*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8"
-    )
     sub = repo / "packages" / "app"
     sub.mkdir(parents=True)
     (sub / "index.py").write_text("x = 1\n", encoding="utf-8")
@@ -2755,7 +2749,7 @@ async def test_mcp_isolated_task_lifecycle_receipts_and_release_flow(
         assert running["unreleased_isolation_count"] == 1
         assert "isolated directory instructions" in cast(list[str], running["defaults_applied"])
         warnings_text = " ".join(cast(list[str], running["warnings"]))
-        assert "Git hooks and LFS" in warnings_text and "Uncommitted changes" in warnings_text
+        assert "Uncommitted changes" in warnings_text
 
         listed_busy = _payload(
             (

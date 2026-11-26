@@ -592,6 +592,28 @@ fn rollback_checks_container_prunes_missing_dir_and_blocks_deleting_without_oid(
 }
 
 #[test]
+fn uninitialized_gitlink_is_not_a_nested_repository() {
+    let fx = setup_worktree_fixture("wt-0a1b2c3d4e5f");
+    let head = git_cmd(&fx.wt_path, &["rev-parse", "HEAD"]);
+    let cacheinfo = format!("160000,{head},vendor/sub");
+    git_cmd(
+        &fx.wt_path,
+        &["update-index", "--add", "--cacheinfo", &cacheinfo],
+    );
+    let sub = fx.wt_path.join("vendor/sub");
+    fs::create_dir_all(&sub).unwrap();
+    let runner = git::GitRunner::new().unwrap();
+    let scan = |runner: &git::GitRunner| {
+        state::nested_repositories(runner, &fx.wt_path, b"")
+            .unwrap()
+            .repos
+    };
+    assert!(scan(&runner).is_empty());
+    fs::write(sub.join("notes.txt"), "kept\n").unwrap();
+    assert_eq!(scan(&runner), vec!["vendor/sub".to_owned()]);
+}
+
+#[test]
 fn tracked_subdir_nested_git_and_bare_repo_are_detected_and_scan_limit_warns() {
     let fx = setup_worktree_fixture("wt-1234567890ab");
     let tracked_sub = fx.wt_path.join("packages/sub");

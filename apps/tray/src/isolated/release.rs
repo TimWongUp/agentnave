@@ -141,7 +141,7 @@ pub(super) fn remove_registered_worktree(
             args.push("--force");
         }
         args.extend(["--", wt_str.as_ref()]);
-        git.run(main_root, &args, &[0], &[])?;
+        git.run_filters_from(main_root, &args, &[0], &[wt_path.as_path()])?;
     } else if wt_path.exists() || is_link(&wt_path) {
         return Err(format!(
             "路径 {} 仍存在但未在 Git worktree 中登记，拒绝递归删除",

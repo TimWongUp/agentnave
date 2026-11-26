@@ -106,18 +106,34 @@ def nested_repositories(wt_path: Path, status_raw: bytes) -> list[str]:
     """Gitlinks and nested repositories anywhere in the tree, found without starting Git in them.
 
     The walk covers tracked, untracked and ignored directories alike: `status` does not list a
-    repository inside a tracked directory, nor a bare repository, nor an ignored one.
+    repository inside a tracked directory, nor a bare repository, nor an ignored one. A gitlink
+    left uninitialized, as `git worktree add` leaves it, is an empty directory with nothing to
+    lose and does not count.
     """
     nested: set[str] = set()
     listing = run_git(["ls-files", "-s", "-z"], cwd=wt_path).stdout
     for item in listing.split(b"\x00"):
         if item.startswith(b"160000 ") and b"\t" in item:
-            nested.add(decode_git_path(item.split(b"\t", 1)[1]))
+            rel = decode_git_path(item.split(b"\t", 1)[1])
+            if not _empty_or_missing_dir(wt_path / rel):
+                nested.add(rel)
     for token in status_raw.split(b"\x00"):
         if token.startswith(b"? ") and token.endswith(b"/"):
             nested.add(decode_git_path(token[2:]).rstrip("/"))
     nested.update(_walk_nested(wt_path))
     return sorted(nested)
+
+
+def _empty_or_missing_dir(path: Path) -> bool:
+    if is_link(path):
+        return False
+    try:
+        with os.scandir(path) as entries:
+            return next(entries, None) is None
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
 
 
 def _walk_nested(wt_path: Path) -> set[str]:

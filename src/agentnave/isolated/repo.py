@@ -6,10 +6,12 @@ import atexit
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -21,11 +23,12 @@ from agentnave.store import write_file
 WORKTREES_DIR_NAME = ".agentnave-worktrees"
 EXCLUDE_RULE = b"/.agentnave-worktrees/"
 DEFAULT_GIT_TIMEOUT = 30.0
+# Creating a worktree runs the repository's hooks and filters and may download LFS objects.
+CREATE_GIT_TIMEOUT = 600.0
 KILL_WAIT_SECONDS = 5.0
 MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024
 
 _OID_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
-_FILTER_ATTR_RE = re.compile(r"(?:^|\s)filter=([^\s#]+)")
 
 
 class IsolationError(ValueError):
@@ -204,6 +207,7 @@ def run_git(
     timeout: float = DEFAULT_GIT_TIMEOUT,
     max_output_bytes: int = MAX_GIT_OUTPUT_BYTES,
     disable_hooks: bool = True,
+    neutralize_filters: bool = True,
     filters_from: Sequence[Path] = (),
 ) -> GitResult:
     """Run git as an argument array without a shell, bounded in time and output size.
@@ -211,9 +215,11 @@ def run_git(
     Every call neutralizes repository-configured executables: fsmonitor, hooks, external diff
     programs, signature verification (gpg.program), promisor lazy fetches and every filter driver
     (clean, smudge, process) in the effective configuration, whatever the attribute files say.
-    Pass disable_hooks=False only for commands that read hook configuration. filters_from names
-    other worktrees the command runs Git in (a non-forced `worktree remove` checks the target's
-    status): the drivers in their own configuration are neutralized too.
+    Creating a worktree is the one exception: it passes disable_hooks=False and
+    neutralize_filters=False, so hooks, filters, LFS and lazy fetches run as `git worktree add`
+    runs them; such a run gets its own process group, killed whole on timeout.
+    filters_from names other worktrees the command runs Git in (a non-forced `worktree remove`
+    checks the target's status): the drivers in their own configuration are neutralized too.
     """
     cmd = ["git", "-C", str(cwd), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true"]
     # Never recurse into submodules or nested repositories, whose own config would run there.
@@ -228,7 +234,7 @@ def run_git(
         cmd.extend(["-c", f"core.hooksPath={empty_hooks_dir()}"])
     for item in config_overrides:
         cmd.extend(["-c", item])
-    if args and args[0] not in _NO_FILTER_COMMANDS:
+    if neutralize_filters and args and args[0] not in _NO_FILTER_COMMANDS:
         names = set(filter_driver_names(cwd))
         for other in filters_from:
             names.update(filter_driver_names(other))
@@ -249,8 +255,11 @@ def run_git(
     ):
         env.pop(name, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
-    # A partial clone would otherwise fetch missing objects from its promisor remote.
-    env["GIT_NO_LAZY_FETCH"] = "1"
+    if neutralize_filters:
+        # A partial clone would otherwise fetch missing objects from its promisor remote.
+        env["GIT_NO_LAZY_FETCH"] = "1"
+    # Hooks and filters may start their own children; give them a group to kill on timeout.
+    runs_repo_code = not disable_hooks or not neutralize_filters
     if extra_env:
         env.update(extra_env)
     try:
@@ -260,13 +269,14 @@ def run_git(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            start_new_session=runs_repo_code and os.name != "nt",
         )
     except OSError as exc:
         raise IsolationError(f"Failed to execute git: {exc}") from exc
     try:
         stdout, stderr_bytes = proc.communicate(input=stdin, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        proc.kill()
+        _kill_git(proc, tree=runs_repo_code)
         # Bounded: a surviving grandchild may keep the pipes open.
         with suppress(subprocess.TimeoutExpired):
             proc.communicate(timeout=KILL_WAIT_SECONDS)
@@ -278,6 +288,24 @@ def run_git(
         detail = stderr or f"exit status {proc.returncode}"
         raise IsolationError(f"git {' '.join(args[:2])} failed: {detail}")
     return GitResult(returncode=proc.returncode, stdout=stdout, stderr=stderr)
+
+
+def _kill_git(proc: subprocess.Popen[bytes], *, tree: bool) -> None:
+    """Kill git and, when it ran repository code, the hooks and filters it started."""
+    if tree and os.name == "nt":
+        with suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=KILL_WAIT_SECONDS,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+    elif tree:
+        with suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    proc.kill()
 
 
 def parse_worktrees(porcelain_z: bytes) -> list[WorktreeEntry]:
@@ -399,185 +427,9 @@ def resolve_target_commit(ctx: RepoContext, ref: str | None) -> str:
     return oid
 
 
-def check_tree_and_filters(ctx: RepoContext, base_oid: str) -> bool:
-    """Reject submodules (160000) and custom non-LFS filter drivers; report LFS presence.
-
-    Filters are looked up in every place Git reads attributes from, because checkout and status
-    run any configured smudge/clean command. When a source cannot be read, isolation is refused.
-    """
-    tree = run_git(["ls-tree", "-r", "-z", "--full-tree", base_oid], cwd=ctx.main_root).stdout
-    for entry in tree.split(b"\x00"):
-        if entry.startswith(b"160000 "):
-            raise IsolationError(
-                "Target commit contains Git submodules (160000); isolated directories reject them"
-            )
-    referenced = _referenced_filters(_attribute_texts(ctx, base_oid))
-    custom_drivers = _configured_custom_filters(ctx.source_root)
-    unsupported = sorted(referenced & custom_drivers)
-    if unsupported:
-        raise IsolationError(
-            "Repository configures unsupported custom Git filter driver(s) referenced in "
-            f"Git attributes: {', '.join(unsupported)}"
-        )
-    return "lfs" in referenced
-
-
-def _attribute_texts(ctx: RepoContext, base_oid: str) -> str:
-    """Text of every attribute source Git may consult for the target tree and source worktree."""
-    if os.environ.get("GIT_ATTR_SOURCE"):
-        raise IsolationError("GIT_ATTR_SOURCE is set; attribute sources cannot be verified")
-    attr_tree = run_git(
-        ["config", "--get", "attr.tree"], cwd=ctx.source_root, allowed_exit_codes=(0, 1)
-    )
-    if attr_tree.returncode == 0:
-        raise IsolationError("attr.tree is configured; attribute sources cannot be verified")
-    pathspec = ["--", ".gitattributes", "**/.gitattributes"]
-    texts = [
-        run_git(
-            ["grep", "-h", "-e", "filter=", base_oid, *pathspec],
-            cwd=ctx.source_root,
-            allowed_exit_codes=(0, 1),
-        ).stdout,
-        run_git(
-            ["grep", "-h", "--untracked", "-e", "filter=", *pathspec],
-            cwd=ctx.source_root,
-            allowed_exit_codes=(0, 1),
-        ).stdout,
-    ]
-    for path in _attribute_files(ctx):
-        try:
-            if path.is_file():
-                texts.append(path.read_bytes())
-            elif path.exists():
-                raise IsolationError(f"Attribute source is not a regular file: {path}")
-        except OSError as exc:
-            raise IsolationError(f"Cannot read attribute source {path}: {exc}") from exc
-    return "\n".join(text.decode("utf-8", errors="replace") for text in texts)
-
-
-def _attribute_files(ctx: RepoContext) -> list[Path]:
-    """Repository-local, configured global, default global and system attribute files."""
-    found: list[Path] = []
-    info = run_git(
-        ["rev-parse", "--path-format=absolute", "--git-path", "info/attributes"],
-        cwd=ctx.main_root,
-    ).line
-    found.append(Path(decode_git_path(info)))
-    configured = run_git(
-        ["config", "--path", "--get", "core.attributesfile"],
-        cwd=ctx.source_root,
-        allowed_exit_codes=(0, 1),
-    )
-    if configured.returncode == 0 and configured.stdout.strip():
-        path = Path(decode_git_path(configured.line))
-        if path.is_absolute():
-            found.append(path)
-        else:
-            # Git resolves a relative path against the worktree it runs in.
-            found.extend([ctx.source_root / path, ctx.main_root / path])
-    for variable, fallback in (
-        ("GIT_ATTR_GLOBAL", _default_global_attributes()),
-        ("GIT_ATTR_SYSTEM", None),
-    ):
-        reported = run_git(["var", variable], cwd=ctx.source_root, allowed_exit_codes=(0, 128))
-        if reported.returncode == 0 and reported.stdout.strip():
-            found.append(Path(decode_git_path(reported.line)))
-        elif fallback is not None:
-            found.append(fallback)
-    return found
-
-
-def _default_global_attributes() -> Path:
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg) if xdg else Path.home() / ".config"
-    return base / "git" / "attributes"
-
-
-def _referenced_filters(attributes_text: str) -> set[str]:
-    names: set[str] = set()
-    for line in attributes_text.splitlines():
-        stripped = line.lstrip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        names.update(_FILTER_ATTR_RE.findall(stripped))
-    return names
-
-
-def _configured_custom_filters(source_root: Path) -> set[str]:
-    res = run_git(
-        ["config", "--null", "--get-regexp", r"^filter\."],
-        cwd=source_root,
-        allowed_exit_codes=(0, 1),
-    )
-    if res.returncode == 1 or not res.stdout:
-        return set()
-    drivers: set[str] = set()
-    for raw in res.stdout.split(b"\x00"):
-        if not raw:
-            continue
-        text = raw.decode("utf-8", errors="replace")
-        if "\n" not in text:
-            continue
-        key, value = text.split("\n", 1)
-        if not key.startswith("filter.") or not value.strip():
-            continue
-        rest = key[len("filter.") :]
-        parts = rest.rsplit(".", 1)
-        if len(parts) != 2:
-            continue
-        driver, prop = parts
-        if prop in ("smudge", "clean", "process") and driver != "lfs":
-            drivers.add(driver)
-    return drivers
-
-
-def has_active_hooks(source_root: Path) -> bool:
-    cfg = run_git(
-        ["config", "--get", "core.hooksPath"],
-        cwd=source_root,
-        allowed_exit_codes=(0, 1),
-        disable_hooks=False,
-    )
-    if cfg.returncode == 0 and cfg.stdout.strip():
-        raw_hooks = Path(decode_git_path(cfg.line)).expanduser()
-        hooks_dir = raw_hooks if raw_hooks.is_absolute() else (source_root / raw_hooks)
-    else:
-        hooks_out = run_git(
-            ["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
-            cwd=source_root,
-            disable_hooks=False,
-        ).line
-        hooks_dir = Path(decode_git_path(hooks_out))
-    if not hooks_dir.is_dir():
-        return False
-    try:
-        entries = list(hooks_dir.iterdir())
-    except OSError:
-        return True
-    for entry in entries:
-        if entry.name.endswith(".sample") or entry.name.startswith("."):
-            continue
-        try:
-            mode = entry.stat().st_mode
-        except OSError:
-            continue
-        if not stat.S_ISREG(mode):
-            continue
-        if os.name == "nt" or os.access(entry, os.X_OK):
-            return True
-    return False
-
-
-def collect_creation_warnings(ctx: RepoContext, *, lfs_detected: bool) -> tuple[str, ...]:
-    """Build user-facing warnings for skipped hooks/LFS and uncopied dirty worktree state."""
+def collect_creation_warnings(ctx: RepoContext) -> tuple[str, ...]:
+    """Build user-facing warnings for uncopied dirty worktree state."""
     warnings: list[str] = []
-    hooks_skipped = has_active_hooks(ctx.source_root)
-    if hooks_skipped and lfs_detected:
-        warnings.append("Git hooks and LFS downloads were skipped; LFS files may contain pointers.")
-    elif hooks_skipped:
-        warnings.append("Git hooks were skipped when creating the isolated directory.")
-    elif lfs_detected:
-        warnings.append("Git LFS downloads were skipped; LFS files may contain pointers.")
     uncopied = _uncommitted_paths(ctx.source_root)
     if uncopied:
         shown = ", ".join(uncopied[:_UNCOPIED_SHOWN])
@@ -648,17 +500,14 @@ def add_worktree_locked(
     *,
     create_branch: bool = True,
 ) -> Path:
-    """Create the linked worktree on a managed branch with hooks and LFS disabled."""
+    """Create the linked worktree on a managed branch, running hooks, filters and LFS as git does."""
     container = main_root / WORKTREES_DIR_NAME
     if is_link(container):
         raise IsolationError(f"Unsafe {WORKTREES_DIR_NAME} link: {container}")
     container.mkdir(parents=True, exist_ok=True)
     if is_link(container) or not container.is_dir():
         raise IsolationError(f"Invalid {WORKTREES_DIR_NAME} container: {container}")
-    # Check out only after the branch exists: conditional includes (onbranch:) can add filter
-    # drivers that are invisible while the main checkout is on another branch, so the drivers
-    # to neutralize are enumerated from the new worktree itself.
-    cmd = ["worktree", "add", "--no-checkout"]
+    cmd = ["worktree", "add"]
     if create_branch:
         cmd.extend(["-b", branch_name, "--", str(worktree_path), base_oid])
     else:
@@ -666,13 +515,14 @@ def add_worktree_locked(
     run_git(
         cmd,
         cwd=main_root,
-        extra_env=_CHECKOUT_ENV,
+        disable_hooks=False,
+        neutralize_filters=False,
+        timeout=CREATE_GIT_TIMEOUT,
     )
     if is_link(worktree_path) or not worktree_path.is_dir():
         raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
-    check_out(worktree_path, base_oid)
-    if is_link(worktree_path) or not worktree_path.is_dir():
-        raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
+    if filter_driver_names(worktree_path):
+        _refresh_index_after_checkout(worktree_path)
     actual_head = (
         run_git(["rev-parse", "--verify", "HEAD^{commit}"], cwd=worktree_path)
         .stdout.strip()
@@ -689,17 +539,26 @@ def add_worktree_locked(
     return git_dir
 
 
-_CHECKOUT_ENV = {"GIT_LFS_SKIP_SMUDGE": "1"}
+def _refresh_index_after_checkout(worktree_path: Path) -> None:
+    """Record checked-out stat data so inspection, which runs no filters, sees files as clean.
 
-
-def check_out(worktree_path: Path, base_oid: str) -> None:
-    """Fill a worktree added with --no-checkout, with filter drivers seen from inside it."""
-    run_git(["reset", "--hard", "--quiet", base_oid], cwd=worktree_path, extra_env=_CHECKOUT_ENV)
+    Files written in the same second as the index stay racily clean, and Git re-reads them; with
+    filters neutralized a smudged file then differs from its blob. Refreshing after the second
+    turns over stores stat data Git trusts.
+    """
+    time.sleep(1.02 - time.time() % 1)
+    run_git(
+        ["update-index", "-q", "--refresh"],
+        cwd=worktree_path,
+        allowed_exit_codes=(0, 1),
+        neutralize_filters=False,
+        timeout=CREATE_GIT_TIMEOUT,
+    )
 
 
 def never_checked_out(worktree_path: Path) -> bool:
-    """True while a worktree added with --no-checkout has no index yet; git then reports
-    every tracked file as a staged deletion, which is not a change anyone made."""
+    """True while a worktree has no index yet, i.e. creation was interrupted during checkout; git
+    then reports every tracked file as a staged deletion, which is not a change anyone made."""
     index = run_git(
         ["rev-parse", "--path-format=absolute", "--git-path", "index"], cwd=worktree_path
     ).line

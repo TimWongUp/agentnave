@@ -37,7 +37,6 @@ from agentnave.isolated.repo import (
     IsolationError,
     RepoContext,
     add_worktree_locked,
-    check_tree_and_filters,
     collect_creation_warnings,
     control_char_in,
     decode_git_path,
@@ -201,8 +200,7 @@ class IsolatedDirs:
                     "isolated directories cannot be created for it"
                 )
         base_oid = resolve_target_commit(ctx, ref)
-        lfs_detected = check_tree_and_filters(ctx, base_oid)
-        warnings = collect_creation_warnings(ctx, lfs_detected=lfs_detected)
+        warnings = collect_creation_warnings(ctx)
         with self._mutating(), repo_lock(ctx.repo_common_dir):
             return self._create_locked(ctx, ws_id, base_oid, warnings)
 
