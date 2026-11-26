@@ -127,7 +127,7 @@ async function usage() {
     localStorage: { getItem: () => JSON.stringify({ view: "projects" }), setItem() {} },
     setTimeout: time.setTimeout, clearTimeout: time.clearTimeout,
   });
-  vm.runInContext(source("usage.js"), context);
+  for (const file of ["usage-picker.js", "usage-chart.js", "usage.js"]) vm.runInContext(source(file), context);
   const body = document.getElementById("u-body");
   const answer = async (index, name) => {
     const range = requests[index].path.split("=")[1];
