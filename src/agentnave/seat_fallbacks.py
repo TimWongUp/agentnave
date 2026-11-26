@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from agentnave import accounts, provider_health
@@ -53,6 +53,7 @@ def statuses[Role: str](
     health: dict[provider_health.Key, provider_health.Health],
     *,
     image_roles: frozenset[str] = frozenset(),
+    full: Mapping[tuple[str, str | None], int] | None = None,
 ) -> dict[Role, ReviewSeatStatus]:
     from agentnave.members import single_review_status
 
@@ -60,9 +61,9 @@ def statuses[Role: str](
     for role, seat in seats.items():
         choices = [c.alone() for c in [seat, *seat.fallbacks]]
         items = [
-            single_review_status({role: choice}, mode, excluded, host, installed, document, health)[
-                role
-            ]
+            single_review_status(
+                {role: choice}, mode, excluded, host, installed, document, health, full
+            )[role]
             for choice in choices
         ]
         if role == "image-generator" or role in image_roles:
@@ -103,6 +104,7 @@ def select(
     """Pick a usable configured choice; leave failures to the existing dispatch path."""
     if provider is not None:
         return seat, None
+    from agentnave.account_limits import full_accounts
     from agentnave.adapters import get_adapter
     from agentnave.members import (
         _member_modes,  # pyright: ignore[reportPrivateUsage]
@@ -122,11 +124,12 @@ def select(
     ]
     health = provider_health.active(data_root())
     choices = [c.alone() for c in [seat, *seat.fallbacks]]
+    full = full_accounts((c.provider, c.account) for c in choices)
     skipped: list[SkippedChoice] = []
     usable: list[tuple[int, ReviewSeat]] = []
     for index, choice in enumerate(choices):
         status = single_review_status(
-            {"seat": choice}, mode, excluded, host, installed, document, health
+            {"seat": choice}, mode, excluded, host, installed, document, health, full
         )["seat"]
         if image and accounts.is_host_account(host, choice.provider, choice.account):
             status.reason = IMAGE_HOST_CLI_REASON

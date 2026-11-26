@@ -1,20 +1,45 @@
 //! App settings shared with the service: `settings.json` in the data root.
 //!
-//! The service reads `max_running` before each start and retention before each cleanup pass.
-//! The App also caps how many desks an office draws. Only the App writes the file.
+//! The service reads `max_running` and `account_concurrency` before each start and retention
+//! before each cleanup pass. The App also caps how many desks an office draws. Only the App writes
+//! the file.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 const FILE: &str = "settings.json";
 pub const DEFAULT_MAX_RUNNING: u64 = 8;
 const MAX_RUNNING: std::ops::RangeInclusive<u64> = 1..=32;
+const ACCOUNT_CONCURRENCY: std::ops::RangeInclusive<u64> = 1..=10;
+/// Runs at once per account for a CLI that `account_concurrency` does not name (ADR-0127).
+// Like the helper below, no tray view needs the effective limit yet; the tests pin it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const DEFAULT_ACCOUNT_CONCURRENCY: u64 = 5;
 
 pub fn defaults() -> Value {
-    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true})
+    json!({"version": 1, "max_running": DEFAULT_MAX_RUNNING, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true, "account_concurrency": {}})
+}
+
+/// Each CLI's per-account limit: a missing map is empty and `null` means no limit. Unknown CLIs
+/// are held to the same values and kept.
+fn account_limits(value: Option<&Value>) -> Result<Map<String, Value>, String> {
+    let Some(value) = value else {
+        return Ok(Map::new());
+    };
+    let allowed = |limit: &Value| {
+        limit.is_null()
+            || limit
+                .as_u64()
+                .is_some_and(|n| ACCOUNT_CONCURRENCY.contains(&n))
+    };
+    value
+        .as_object()
+        .filter(|limits| limits.values().all(allowed))
+        .cloned()
+        .ok_or_else(|| "account_concurrency 必须为对象，值为 null 或 1–10 的整数".into())
 }
 
 /// The normalized known settings; the same rules as the service:
@@ -46,12 +71,14 @@ pub fn validate(document: &Value) -> Result<Value, String> {
     };
     let claude_interactive = interactive("claude_interactive")?;
     let antigravity_interactive = interactive("antigravity_interactive")?;
+    let account_concurrency = account_limits(object.get("account_concurrency"))?;
     Ok(json!({
         "version": 1,
         "max_running": max_running,
         "history_retention_days": retention,
         "claude_interactive": claude_interactive,
         "antigravity_interactive": antigravity_interactive,
+        "account_concurrency": account_concurrency,
     }))
 }
 
@@ -78,6 +105,27 @@ pub fn max_running(root: &Path) -> u64 {
         .unwrap_or(DEFAULT_MAX_RUNNING)
 }
 
+/// Default per-account limit when `account_concurrency` omits a CLI: 5 for Codex, Antigravity
+/// and Claude, unlimited for the rest (ADR-0127).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn default_account_concurrency(provider: &str) -> Option<u64> {
+    matches!(provider, "codex" | "antigravity" | "claude").then_some(DEFAULT_ACCOUNT_CONCURRENCY)
+}
+
+/// A CLI's effective per-account limit, `None` for no limit; the default when the file is missing
+/// or broken.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn account_concurrency(root: &Path, provider: &str) -> Option<u64> {
+    let document = read(root).ok().flatten();
+    match document
+        .as_ref()
+        .and_then(|document| document["account_concurrency"].get(provider))
+    {
+        Some(limit) => limit.as_u64(),
+        None => default_account_concurrency(provider),
+    }
+}
+
 /// What the settings page shows; a broken file reports why and offers the defaults to save.
 pub fn state(root: &Path) -> Value {
     match read(root) {
@@ -100,6 +148,10 @@ pub fn save(root: &Path, document: &Value) -> Result<(), String> {
     let saved_limit = merged.get("max_running").and_then(Value::as_u64);
     if !saved_limit.is_some_and(|limit| MAX_RUNNING.contains(&limit)) {
         merged.remove("max_running");
+    }
+    // The same for a broken saved account map.
+    if account_limits(merged.get("account_concurrency")).is_err() {
+        merged.remove("account_concurrency");
     }
     merged.extend(given.clone());
     let known = validate(&Value::Object(merged.clone()))?;

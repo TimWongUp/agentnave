@@ -12,6 +12,12 @@ from typing import IO, cast
 from uuid import uuid4
 
 from agentnave import accounts, provider_health
+from agentnave.account_limits import (
+    AccountSlotClaim,
+    acquire_slot,
+    check_account,
+    claim_known_slots,
+)
 from agentnave.adapters import get_adapter
 from agentnave.adapters.base import PreparedCommand
 from agentnave.conversations_store import (
@@ -55,7 +61,12 @@ from agentnave.isolated import ClaimedIsolation, CreatedIsolation, IsolationLeas
 from agentnave.isolated.prompts import TaskIsolationInfo
 from agentnave.locks import release_and_remove
 from agentnave.member_names import seat_identity, task_identity
-from agentnave.members import CapacityError, ProviderName, read_max_running
+from agentnave.members import (
+    CapacityError,
+    ProviderName,
+    read_max_running,
+    validate_provider_options,
+)
 from agentnave.models import InvocationRequest, InvocationStatus, RoundOrder
 from agentnave.orchestration_roles import SeatChoice
 from agentnave.push_capability import TrayIdentity
@@ -98,6 +109,7 @@ class _TaskStartup:
     cleanup_paths: tuple[Path, ...] = ()
     started: bool = False
     terminal: bool = False
+    slot: AccountSlotClaim | None = None
 
 
 class Conversations(ConversationStore):
@@ -318,6 +330,9 @@ class Conversations(ConversationStore):
             )
             self._check_capacity(len(seat_ids))
             return super().retry(group_id, seat_ids)
+
+    def _claim_accounts(self, seats: list[GroupSeat]) -> list[AccountSlotClaim | None]:
+        return claim_known_slots([(seat.provider, seat.account) for seat in seats])
 
     def post(
         self,
@@ -745,6 +760,10 @@ class Conversations(ConversationStore):
                     )
                 if startup.record.state.kind != "task":
                     raise ValueError("Tasks need a task conversation")
+            # Taken before anything is saved or prepared; the run holds it until it ends. A
+            # request whose options no CLI takes is refused first, so it creates nothing.
+            validate_provider_options(request)
+            startup.slot = acquire_slot(request.provider, request.account)
             if startup.hold is None:
                 startup.hold = self._acquire_hold(
                     request,
@@ -795,6 +814,7 @@ class Conversations(ConversationStore):
             invocation_id = self._launch_prepared_task(
                 startup, record, task, request, prepared, terminal_launch
             )
+            self.manager.on_run_end(invocation_id, startup.slot.release)
             startup.native_lock = None  # the run releases it when it ends
             startup.started = True
             startup.hold.consumed = True
@@ -992,6 +1012,8 @@ class Conversations(ConversationStore):
             return IsolationHold(request)
         self.manager.check_start(request)
         self._check_capacity(1)
+        # start_task takes the slot; refuse a full account before making a directory for it.
+        check_account(request.provider, request.account)
         hold = await to_thread_keeping(
             lambda held: release_hold(self.isolated, held),
             acquire_isolation,
@@ -1075,6 +1097,8 @@ class Conversations(ConversationStore):
 
         steps: list[Callable[[], None]] = []
         if not startup.started:
+            if startup.slot is not None:
+                steps.append(startup.slot.release)
             steps.append(drop_files)
         steps.append(give_back)
         if (record := startup.record) is not None:

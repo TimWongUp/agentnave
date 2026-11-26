@@ -31,7 +31,7 @@ AgentNave 是供 Manager（boss）通过本地 STDIO MCP 使用的薄进程边�
 - **单向编排提示与数据边界**：每次派发附加用户口吻的单向编排指令（不调 AgentNave、不转派、汇报未验证与阻塞；按需附只读或隔离目录边界），会议条目与转发内容标明为数据边界而非指令；依赖模型遵守，不构成安全边界（[ADR-0031](../adr/0031-prompt-only-orchestration.md)、[ADR-0043](../adr/0043-service-prompt-instructions.md)、[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。
 - **生命周期与终止边界**：Invocation 仅存进程内存（不跨重启恢复），`wait` 返回就绪子集（[ADR-0007](../adr/0007-wait-any-ready-subset.md)）；无总运行时限，停止靠显式 `cancel`。服务仅在输出超限、持续重试无输出或终态后退出宽限期满时主动终止进程树（[ADR-0049](../adr/0049-service-initiated-termination.md)、[ADR-0095](../adr/0095-provider-terminal-grace.md)）；长时间无实质进展只发一次不终止、不计冷却的提醒（[ADR-0116](../adr/0116-progress-stall-reminder.md)）。
 - **原生弹框代答**：支持原生弹框的 Adapter 保持运行中 stdin 通道，仅传回由工作区拥有者 boss 决定的答复；工具输入在交 boss 与落盘前打码，审计写入现有任务／席位 JSON 记录，不新增表结构（[ADR-0057](../adr/0057-boss-answers-native-prompts.md)）。
-- **并发与转发边界**：原生会话锁互斥禁止并发续接及跨工作区／跨账号续接（[ADR-0099](../adr/0099-handover-links-workspaces.md)、[ADR-0108](../adr/0108-multi-account-isolation.md)）。同时运行上限仅在接纳时检查（保留期空闲进程不计入，复用时重新接纳，[ADR-0025](../adr/0025-session-desks-and-running-limit.md)、[ADR-0120](../adr/0120-idle-keep-for-resume.md)）。转发仅允许引用本工作区或已认领的直接交接来源工作区（有方向、不传递）的已成功任务与已提交条目，历史只存 boss 原文。
+- **并发与转发边界**：原生会话锁互斥禁止并发续接及跨工作区／跨账号续接（[ADR-0099](../adr/0099-handover-links-workspaces.md)、[ADR-0108](../adr/0108-multi-account-isolation.md)）。同时运行上限（单服务进程）与单账号并发上限（跨服务进程、按账号槽位锁）均只在接纳时检查，保留期空闲进程不计入、复用时重新接纳；新线程选位遇满额账号按备选顺位跳过，显式点名、续接与会议席位直接拒绝（[ADR-0025](../adr/0025-session-desks-and-running-limit.md)、[ADR-0120](../adr/0120-idle-keep-for-resume.md)、[ADR-0127](../adr/0127-per-account-concurrency-limit.md)）。转发仅允许引用本工作区或已认领的直接交接来源工作区（有方向、不传递）的已成功任务与已提交条目，历史只存 boss 原文。
 
 ## 参数与默认值
 
@@ -61,6 +61,7 @@ AgentNave 是供 Manager（boss）通过本地 STDIO MCP 使用的薄进程边�
 | 位置与产物 | 写入方 | 读取方 | 预览版行为 | 锁、生命周期与故障边界 |
 | --- | --- | --- | --- | --- |
 | 数据根 `agentnave.db`、会话锁、`live/`、原生会话锁 | 服务；托盘（仅限会话改名／删除与工作区清理） | 服务、托盘 | 只读，拒绝一切写操作 | 每会话一把跨语言 OS 文件锁；视图快照与写入同事务提交；schema 仅服务迁移；`live/` 仅运行期存在；原生会话锁用完即删 |
+| 数据根 `account-slots/` | 服务 | 服务 | 只读不写 | 按 `(provider, bucket)` 存放永不删除的门控锁与每活跃回合一把 OS 槽位锁，回合结束删锁、进程退出内核自动释放（[ADR-0127](../adr/0127-per-account-concurrency-limit.md)） |
 | 数据根 `worktrees.db` | 服务；托盘（手动删除与自动清理） | 服务、托盘 | 只读不写 | 独立于会话库与历史清理；仅服务迁移 schema；损坏不影响普通派发；受仓库锁与租约保护 |
 | 数据根 `members.json`、`accounts.json`、`permissions.json`、`settings.json`、`cli-defaults.json` | 托盘（无 App 时前两者与 `settings.json` 可手写；`cli-defaults.json` 为探测缓存） | 服务（每次派发／清理现读）、托盘 | 只读不写 | 除 `cli-defaults.json` 与 `settings.json` 兜底外，损坏即返回 App 修复错误；默认账号不入 `accounts.json` |
 | 数据根 `review.json`、`orchestration.json` | 托盘 | 服务、托盘 | 只读不写 | 损坏时不套用并由 `list_members` 报告，普通工位调用拒绝（评审工位按自身配置校验）；有效档位由 App 计算保存 |

@@ -17,6 +17,7 @@ from mcp import Client
 
 import agentnave.conversations_store as conversations_module
 from agentnave import mcp_history, mcp_runtime, mcp_server, views
+from agentnave.account_limits import AccountCapacityError, acquire_slot, full_accounts
 from agentnave.adapters.base import PreparedCommand
 from agentnave.adapters.claude import ClaudeAdapter
 from agentnave.conversations import Conversations
@@ -3040,6 +3041,123 @@ async def test_app_limit_caps_cli_runs_across_tasks_and_seats(
             assert "fix or remove" in str(broken.content)
         await _cancel(client, sleeping["invocation_id"])
         await _cancel(client, second["invocation_id"])
+
+
+def _account_limit(root: Path, limit: int) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "settings.json").write_text(
+        json.dumps({"version": 1, "account_concurrency": {"claude": limit}})
+    )
+
+
+def _claude_slots(root: Path) -> int:
+    return len(
+        [
+            path
+            for path in (root / "account-slots" / "claude").glob("*/*.lock")
+            if path.name != "gate.lock"
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_account_limit_covers_private_runs_resumes_and_parallel_rounds(
+    tmp_path: Path, data_root: Path
+) -> None:
+    _account_limit(data_root, 2)
+    task = {"provider": "claude", "cwd": str(tmp_path)}
+    sleep = "Private instruction for you only:\nSLEEP"
+    async with Client(mcp) as client:
+        show = await _open(
+            client,
+            {
+                "title": "Cap",
+                "cwd": str(tmp_path),
+                "seats": [{"id": seat, "provider": "claude"} for seat in ("a", "b")],
+            },
+        )
+        done = await _call(client, "start_agent", {**task, "prompt": "one"})
+        session = (await _wait_task(client, done["invocation_id"]))["session_id"]
+        assert _claude_slots(data_root) == 0  # a finished run holds nothing, kept or not
+
+        first = await _call(client, "start_agent", {**task, "prompt": sleep})
+        round_input = {"group_id": show["group_id"], "seats": ["a", "b"], "prompt": "go"}
+        refused = await client.call_tool("run_round", round_input)
+        assert refused.is_error and "allows 2 concurrent runs" in str(refused.content)
+        assert "1 are running and this would start 2" in str(refused.content)
+        assert _claude_slots(data_root) == 1  # nothing of the round started
+
+        second = await _call(
+            client, "start_agent", {**task, "prompt": sleep, "session_id": session}
+        )
+        third = await client.call_tool("start_agent", {**task, "prompt": "three"})
+        assert third.is_error and "claude default account allows 2" in str(third.content)
+        await _cancel(client, second["invocation_id"])
+        await _cancel(client, first["invocation_id"])
+        assert _claude_slots(data_root) == 0
+
+        ran = await _run(client, round_input)
+        await _wait(client, ran["round_id"])
+        assert _claude_slots(data_root) == 0
+
+
+@pytest.mark.asyncio
+async def test_account_limit_on_serial_seats_and_seat_retries(
+    tmp_path: Path, data_root: Path
+) -> None:
+    _account_limit(data_root, 1)
+    studio = Conversations(InvocationManager(), data_root)
+    seats = [GroupSeat(seat, "claude", {}, tmp_path) for seat in ("a", "b")]
+    try:
+        serial = studio.open_show("One", tmp_path, seats, review=True, isolated=False).state.id
+        held = studio.run(serial, ["a", "b"], "serial", "go", {})
+        assert (await studio.wait(held.id, 30))[1] == "review_needed"
+        # Waiting for review holds no slot, so another server may take it before b starts.
+        elsewhere = acquire_slot("claude", None)
+        studio.decide(held.id, {"a": "publish"})
+        for _ in range(200):
+            if held.runs[1].status != "pending":
+                break
+            await asyncio.sleep(0.05)
+        assert held.runs[1].status == "failed"
+        error = held.runs[1].launch_error
+        assert error is not None and "per-account concurrency limit" in error.message
+        with pytest.raises(AccountCapacityError):
+            studio.run(
+                studio.open_show("Two", tmp_path, seats, review=False, isolated=False).state.id,
+                ["a"],
+                "serial",
+                "go",
+                {},
+            )
+        elsewhere.release()
+
+        _account_limit(data_root, 2)
+        parallel = studio.open_show("P", tmp_path, seats, review=False, isolated=False).state.id
+        round_ = studio.run(
+            parallel, ["a", "b"], "parallel", "go", {"a": "FAIL_TASK", "b": "SLEEP"}
+        )
+
+        async def lost() -> None:
+            for _ in range(10):
+                if (await studio.wait(round_.id, 30))[1] == "seat_lost":
+                    return
+            raise AssertionError(round_.runs)
+
+        await lost()
+        assert _claude_slots(data_root) == 1
+        elsewhere = acquire_slot("claude", None)
+        with pytest.raises(AccountCapacityError):
+            studio.retry(parallel, ["a"])
+        assert round_.runs[0].status == "failed"  # a refused retry changes nothing
+        elsewhere.release()
+        studio.retry(parallel, ["a"])
+        await lost()
+        await studio.cancel(round_.id)
+        assert full_accounts([("claude", None)]) == {} and _claude_slots(data_root) == 0
+    finally:
+        await studio.manager.shutdown()
+        await studio.close()
 
 
 @pytest.mark.asyncio

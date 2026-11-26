@@ -7,7 +7,7 @@
     getAllModelIds, hasPool, isSplit, known, limitChanged, loadCliInstallCommands, loadCliUpdates, markSaved,
     nativeDefault, outOfPool, renderCliInstallations, renderCliUpdate, renderCliUpdateError,
     renderCliUpdateSummary, renderCliVersion, renderCodexSource, renderMissingClis, renderPermission,
-    sameJson, saveLimit, savedEffort, sceneEffort, setDeepSeekRoute, setInteractive, setProviderEnabled, setSplit, settingTip,
+    sameJson, saveLimit, savedEffort, sceneEffort, setAccountConcurrency, setDeepSeekRoute, setInteractive, setProviderEnabled, setSplit, settingTip,
     showNotice, shownPool, slot, takeReview, textNode, unlisted, writePool
   } = S;
 
@@ -167,6 +167,30 @@
       dataset: { focusKey: `${provider}/membership` },
       onClick: () => setProviderEnabled(provider, !enabled),
     }, enabled ? L("移除", "Remove") : L("启用", "Enable"));
+  }
+
+  // CLIs whose per-account concurrency defaults to 5; all other CLIs default to unlimited (ADR-0127).
+  const DEFAULT_CONCURRENCY_CLIS = new Set(["codex", "antigravity", "claude"]);
+
+  // Runs at once on one account of a CLI: null is no limit.
+  function renderConcurrency(provider) {
+    const hasDefaultFive = DEFAULT_CONCURRENCY_CLIS.has(provider);
+    const saved = S.limitDoc?.account_concurrency?.[provider];
+    const chosen = saved === undefined ? (hasDefaultFive ? "5" : "") : String(saved ?? "");
+    const label = L("单账号并发上限", "Per-account concurrency");
+    const unlimitedLabel = hasDefaultFive ? L("不限", "Unlimited") : L("不限（默认）", "Unlimited (default)");
+    const choices = [["", unlimitedLabel], ...Array.from({ length: 10 }, (_, i) => String(i + 1))
+      .map((n) => [n, hasDefaultFive && n === "5" ? L("5（默认）", "5 (default)") : n])];
+    return el("div", { className: "s-row" },
+      el("span", { className: "s-label" }, label),
+      el("div", { className: "s-control" },
+        el("select", {
+          className: "member-model",
+          "aria-label": label,
+          dataset: { focusKey: `${provider}/concurrency` },
+          disabled: S.busy || !S.limitDoc || Boolean(S.limitError),
+          onChange: (e) => setAccountConcurrency(provider, e.target.value ? Number(e.target.value) : null),
+        }, choices.map(([value, text]) => el("option", { value, selected: value === chosen }, text)))));
   }
 
   // CLIs with an interactive runtime: the settings.json key and what turning it on means.
@@ -374,6 +398,7 @@
       ...cliErrors(provider, info),
       ...(provider === "deepseek" && enabled ? deepSeekRouteRows() : []),
       renderPermission(provider),
+      renderConcurrency(provider),
       renderInteractive(provider),
       provider === "claude" ? S.renderClaudeAccountsSection?.() : null,
       renderCliUpdateError(provider));
@@ -684,7 +709,7 @@
   }
 
   Object.assign(S, {
-    slotRows, poolSummary, poolRows, poolConflicts, renderInteractive, deepSeekRouteRows, renderCards, saveMembers,
+    slotRows, poolSummary, poolRows, poolConflicts, renderConcurrency, renderInteractive, deepSeekRouteRows, renderCards, saveMembers,
     renderErrorBanner, refreshDetection, probeWhenStale, loadMembers, refreshClaudeFlags
   });
   S.share({

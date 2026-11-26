@@ -99,6 +99,16 @@ class CapacityError(ValueError):
 
 
 DEFAULT_MAX_RUNNING = 8
+# Runs at once per account for subscription-throttled CLIs when settings.json omits them (ADR-0127).
+DEFAULT_ACCOUNT_CONCURRENCY = 5
+DEFAULT_ACCOUNT_CONCURRENCY_PROVIDERS = frozenset({"codex", "antigravity", "claude"})
+
+
+def default_account_concurrency(provider: str) -> int | None:
+    return (
+        DEFAULT_ACCOUNT_CONCURRENCY if provider in DEFAULT_ACCOUNT_CONCURRENCY_PROVIDERS else None
+    )
+
 
 # Cached native identity is advisory: execution controls saved for one model must not
 # be transferred to a different model if the CLI default changed since the last probe.
@@ -407,6 +417,41 @@ def check_excluded(mode: Mode, provider: str, excluded: frozenset[str]) -> None:
         raise ProviderExcludedError(f"Provider '{provider}' is excluded by this host")
 
 
+def _is_limit(value: object) -> bool:
+    # Same rules as the App: integers only, so true or 1.0 are not accepted as 1.
+    return type(value) is int and 1 <= value <= 32
+
+
+def _is_account_limit(value: object) -> bool:
+    return type(value) is int and 1 <= value <= 10
+
+
+def _is_account_concurrency(value: object) -> bool:
+    return isinstance(value, dict) and all(
+        item is None or _is_account_limit(item) for item in cast(dict[str, object], value).values()
+    )
+
+
+def _checked_settings(document: object) -> dict[str, object]:
+    """The content of settings.json as every reader accepts it; raises ValueError otherwise."""
+    settings = cast(dict[str, object], document) if isinstance(document, dict) else {}
+    version = settings.get("version")
+    if (
+        type(version) is not int
+        or version != 1
+        or not _is_limit(settings.get("max_running", DEFAULT_MAX_RUNNING))
+        or type(settings.get("claude_interactive", False)) is not bool
+        or type(settings.get("antigravity_interactive", False)) is not bool
+        or not _is_account_concurrency(settings.get("account_concurrency", {}))
+    ):
+        raise ValueError(
+            "needs version 1, max_running between 1 and 32, optional booleans "
+            "claude_interactive and antigravity_interactive and optional account_concurrency "
+            "mapping a CLI to 1..10 or null"
+        )
+    return settings
+
+
 def _read_settings() -> dict[str, object]:
     try:
         document = json.loads((data_root() / "settings.json").read_text(encoding="utf-8"))
@@ -416,29 +461,31 @@ def _read_settings() -> dict[str, object]:
         raise SettingsFileError(
             f"Unable to read settings.json: {exc}. {_repair('settings.json')}"
         ) from exc
-    settings = cast(dict[str, object], document) if isinstance(document, dict) else {}
-    version = settings.get("version")
-    value = settings.get("max_running", DEFAULT_MAX_RUNNING)
-    # Same rules as the App: integers only, so true or 1.0 are not accepted as 1.
-    if (
-        type(version) is not int
-        or version != 1
-        or type(value) is not int
-        or not 1 <= value <= 32
-        or type(settings.get("claude_interactive", False)) is not bool
-        or type(settings.get("antigravity_interactive", False)) is not bool
-    ):
+    try:
+        return _checked_settings(document)
+    except ValueError as exc:
         raise SettingsFileError(
-            "Invalid settings.json: needs version 1, max_running between 1 and 32 "
-            "and optional booleans claude_interactive and antigravity_interactive. "
-            + _repair("settings.json")
-        )
-    return settings
+            f"Invalid settings.json: {exc}. {_repair('settings.json')}"
+        ) from exc
 
 
 def read_max_running() -> int:
     """The App's limit on CLI runs (tasks plus seats) this server keeps active at once."""
     return cast(int, _read_settings().get("max_running", DEFAULT_MAX_RUNNING))
+
+
+def read_account_concurrencies() -> dict[str, int | None]:
+    """Each CLI's limit on runs at once per account, across servers; None is no limit."""
+    saved = cast(dict[str, int | None], _read_settings().get("account_concurrency", {}))
+    # get keeps an explicit null (no limit) apart from an absent CLI; unknown CLIs are ignored.
+    return {
+        provider: saved.get(provider, default_account_concurrency(provider))
+        for provider in get_args(ProviderName.__value__)
+    }
+
+
+def read_account_concurrency(provider: str) -> int | None:
+    return read_account_concurrencies().get(provider, default_account_concurrency(provider))
 
 
 def read_claude_interactive() -> bool:
@@ -454,23 +501,14 @@ def read_antigravity_interactive() -> bool:
 def read_history_retention_days(root: Path | None = None) -> int | None:
     """Invalid or unreadable settings disable deletion, never prevent service startup.
 
-    As with read_max_running, require version 1 and a strict integer; retention is
-    fail-closed because a broken configuration must not authorize deleting history.
+    As with read_max_running, the whole file must be valid; retention is fail-closed because
+    a broken configuration must not authorize deleting history.
     """
     path = (root or data_root()) / "settings.json"
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-        settings = cast(dict[str, object], document) if isinstance(document, dict) else {}
-        version = settings.get("version")
+        settings = _checked_settings(json.loads(path.read_text(encoding="utf-8")))
         value = settings.get("history_retention_days")
-        limit = settings.get("max_running", DEFAULT_MAX_RUNNING)
-        if (
-            type(version) is not int
-            or version != 1
-            or type(limit) is not int
-            or not 1 <= limit <= 32
-            or (value is not None and (type(value) is not int or value not in (30, 90, 180)))
-        ):
+        if value is not None and (type(value) is not int or value not in (30, 90, 180)):
             raise ValueError("invalid retention settings")
         return cast(int | None, value)
     except FileNotFoundError:
@@ -479,7 +517,7 @@ def read_history_retention_days(root: Path | None = None) -> int | None:
         logging.getLogger(__name__).warning(
             "History cleanup is disabled: invalid settings at %s; use version 1, "
             "max_running 1..32 and history_retention_days 30, 90 or 180 "
-            "(omit it or use null to keep history forever)",
+            "(omit it or use null to keep history forever); the other settings must be valid too",
             path,
         )
         return None
@@ -938,6 +976,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
 
     active_health = provider_health.active(data_root())
     document = read_members()
+    full = _full_accounts()
     roles = None
     custom = None
     orchestration_error = None
@@ -961,14 +1000,21 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     try:
         if saved_review := _read_app_file("review.json", ReviewFile, MemberFileError):
             review = _review_status(
-                saved_review.seats, task_mode, excluded, host, installed, document, active_health
+                saved_review.seats,
+                task_mode,
+                excluded,
+                host,
+                installed,
+                document,
+                active_health,
+                full=full,
             )
     except MemberFileError as exc:
         review_error = str(exc)
     orchestration = OrchestrationStatus()
     if custom is not None:
         orchestration = _custom().custom_orchestration_status(
-            custom, task_mode, excluded, host, installed, document, active_health
+            custom, task_mode, excluded, host, installed, document, active_health, full=full
         )
     elif roles is not None and enabled and not roles.decision(host):
         groups: dict[str, Any] = {
@@ -980,6 +1026,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 installed,
                 document,
                 active_health,
+                full=full,
             )
             for definition in role_catalog()
             if roles.group_enabled(definition.group)
@@ -1000,6 +1047,7 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
                 installed,
                 document,
                 active_health,
+                full=full,
             ).get("image-generator"),
         )
     permissions: dict[ProviderName, PermissionTier] = {}
@@ -1040,6 +1088,13 @@ def list_members(excluded: frozenset[str], host: Host) -> MemberList:
     )
 
 
+def _full_accounts() -> dict[tuple[str, str | None], int]:
+    """The accounts at their concurrency limit now; account_limits imports this module."""
+    from agentnave.account_limits import full_accounts, known_targets
+
+    return full_accounts(known_targets())
+
+
 def single_review_status[Role: str](
     review: dict[Role, ReviewSeat],
     mode: ModeStatus,
@@ -1048,8 +1103,13 @@ def single_review_status[Role: str](
     installed: Callable[[str], bool],
     document: MemberFile | None,
     active_health: dict[provider_health.Key, provider_health.Health],
+    full: Mapping[tuple[str, str | None], int] | None = None,
 ) -> dict[Role, ReviewSeatStatus]:
+    """full: the accounts at their concurrency limit, as account_limits.full_accounts gives."""
+    from agentnave.account_limits import full_reason
+
     task = mode.members
+    full = full or {}
     seats: dict[Role, ReviewSeatStatus] = {}
     for role, seat in review.items():
         member = next(
@@ -1093,12 +1153,15 @@ def single_review_status[Role: str](
             reason = "CLI is not installed"
         elif member is not None and member.error is not None:
             reason = member.error
+        elif (limit := full.get((seat.provider, seat.account))) is not None:
+            reason = full_reason(seat.provider, seat.account, limit)
         else:
             reason = None
         alternatives: list[ProviderName] = [
             m.provider
             for m in task
             if m.provider != seat.provider
+            and (m.provider, None) not in full
             and provider_health.matching(active_health, m.provider, m.model) is None
             and m.model == seat.model
             and m.permitted
@@ -1121,6 +1184,7 @@ def single_review_status[Role: str](
                     alternatives,
                     task,
                     unhealthy=active_health,
+                    full=full,
                     image=role == "image-generator",
                 )
             ),
@@ -1134,6 +1198,7 @@ def _seat_replacement(
     task: list[MemberStatus],
     *,
     unhealthy: dict[provider_health.Key, provider_health.Health],
+    full: Mapping[tuple[str, str | None], int],
     image: bool = False,
 ) -> SeatReplacement | None:
     """The same model on another CLI, else another CLI's App default model."""
@@ -1158,6 +1223,7 @@ def _seat_replacement(
             and m.permitted
             and m.error is None
             and m.provider != seat.provider
+            and (m.provider, None) not in full
             and provider_health.matching(unhealthy, m.provider, m.model) is None
         ),
         None,

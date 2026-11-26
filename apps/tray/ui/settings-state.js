@@ -560,8 +560,8 @@
     }
   }
 
-  // The running limit: settings.json, read by the service before each start. Saved with 员工; its
-  // draft is the menu itself.
+  // settings.json, read by the service before each start. The running limit is saved with 员工 and its
+  // draft is the menu itself; the per-CLI settings are saved as soon as they are picked.
   let limitDoc = null;
   let limitError = null;
   let limitRevision = 0; // Ignore reads started before an immediate save.
@@ -594,17 +594,25 @@
     S.renderCards();
   }
 
-  async function saveLimit() {
-    const value = Number($("max-running").value);
+  async function postSettings(change, failure) {
     const response = await fetch("/app/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-      body: JSON.stringify({ version: 1, max_running: value, ...(limitError ? { history_retention_days: null, claude_interactive: true, antigravity_interactive: true } : {}) }),
+      body: JSON.stringify({ version: 1, ...change }),
     });
     const data = await response.json();
-    if (!response.ok || data.error) throw new Error(data.error || L(`同时工作的员工上限保存失败（${response.status}）`, `Failed to save max concurrent employees (${response.status})`));
-    limitDoc = { ...(limitDoc || {}), version: 1, max_running: value };
-    if (limitError) Object.assign(limitDoc, { history_retention_days: null, claude_interactive: true, antigravity_interactive: true });
+    if (!response.ok || data.error) throw new Error(data.error || failure(response.status));
+  }
+
+  async function saveLimit() {
+    const value = Number($("max-running").value);
+    // A broken file is repaired by writing the other settings back at their defaults.
+    const repaired = limitError
+      ? { history_retention_days: null, claude_interactive: true, antigravity_interactive: true, account_concurrency: {} }
+      : {};
+    await postSettings({ max_running: value, ...repaired },
+      (status) => L(`同时工作的员工上限保存失败（${status}）`, `Failed to save max concurrent employees (${status})`));
+    limitDoc = { ...(limitDoc || {}), version: 1, max_running: value, ...repaired };
     limitError = null;
     limitRevision += 1;
   }
@@ -631,30 +639,33 @@
     }
   }
 
-  // This setting applies to both scenes and is saved as soon as it is selected.
-  async function setInteractive(key, enabled) {
+  // A setting that applies to both scenes and is saved as soon as it is selected. A failed write
+  // redraws the control with the saved value.
+  async function saveNow(change, failed) {
     if (busy || !limitDoc || limitError) return S.renderCards();
     busy = true;
     limitRevision += 1;
     S.updateControls();
     try {
-      const response = await fetch("/app/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-AgentNave-Action": "1" },
-        body: JSON.stringify({ version: 1, [key]: enabled }),
-      });
-      const data = await response.json();
-      if (!response.ok || data.error) throw new Error(data.error || L(`保存失败（${response.status}）`, `Save failed (${response.status})`));
-      limitDoc = { ...limitDoc, [key]: enabled };
+      await postSettings(change, (status) => L(`保存失败（${status}）`, `Save failed (${status})`));
+      limitDoc = { ...limitDoc, ...change };
       showNotice(L("设置已保存", "Settings saved"));
     } catch (error) {
-      showNotice(L(`交互模式保存失败：${error.message}`, `Failed to save interactive mode: ${error.message}`), true);
+      showNotice(failed(error.message), true);
     } finally {
       busy = false;
       limitRevision += 1;
       S.renderCards();
     }
   }
+
+  const setInteractive = (key, enabled) => saveNow({ [key]: enabled },
+    (reason) => L(`交互模式保存失败：${reason}`, `Failed to save interactive mode: ${reason}`));
+
+  // The whole map goes out, so the other CLIs' limits, unknown ones included, stay.
+  const setAccountConcurrency = (provider, limit) => saveNow(
+    { account_concurrency: { ...limitDoc?.account_concurrency, [provider]: limit } },
+    (reason) => L(`单账号并发上限保存失败：${reason}`, `Failed to save per-account concurrency: ${reason}`));
 
   const unsaved = () => dirty || S.advancedChanges().length > 0
     || Boolean(window.AgentNaveVoiceSettings?.hasDrafts?.())
@@ -716,7 +727,7 @@
     $, L, el, textNode, settingTip, PROVIDERS, PROVIDER_NAMES, apiGetMembers,
     apiPostReview, takeReview, renderPermission, apiPostMembers, apiGetStatus, apiCheckUpdate, SCENES,
     showNotice, markSaved, discardMembersDraft, sameJson, refreshDirty, incDocVersion, emptyScene, configurationErrors,
-    updateControls, countPermissionOptions, grantsPermission, limitChanged, loadLimit, saveLimit, saveLimitImmediate, setInteractive, unsaved, setTab, SCENE_IDS, OFF
+    updateControls, countPermissionOptions, grantsPermission, limitChanged, loadLimit, saveLimit, saveLimitImmediate, setInteractive, setAccountConcurrency, unsaved, setTab, SCENE_IDS, OFF
   });
   S.share({
     currentDoc: [() => currentDoc, (v) => { currentDoc = v; }],

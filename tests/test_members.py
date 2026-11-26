@@ -30,6 +30,7 @@ from agentnave.members import (
     _read_app_file,  # pyright: ignore[reportPrivateUsage]
     apply_member,
     list_members,
+    read_account_concurrencies,
     read_antigravity_interactive,
     read_claude_interactive,
     read_max_running,
@@ -376,6 +377,7 @@ def test_app_file_samples_agree_with_the_tray(
                 read_max_running(),
                 read_claude_interactive(),
                 read_antigravity_interactive(),
+                read_account_concurrencies(),
                 days,
             )
         return APP_MODELS[sample.parent.name].model_validate_json(sample.read_bytes())

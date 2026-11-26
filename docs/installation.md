@@ -559,11 +559,12 @@ with every host or availability of each account's models.
 ## Settings without the App
 
 Without the App (Linux, or a host that skips it), the service runs on defaults: each CLI uses its
-own model and effort, the permission tier is `full`, at most 8 CLI runs are active at once, no
+own model and effort, the permission tier is `full`, at most 8 CLI runs are active at once (and at
+most 5 per account of each CLI), no
 review or orchestration seats exist (the review Skill picks members itself), and saved history is
 kept forever. App-only features (voice, notifications, appearance, updates) are not available.
 
-To change the run limit or turn on automatic history cleanup, write `settings.json` in the data
+To change the run limits or turn on automatic history cleanup, write `settings.json` in the data
 root (`~/.agentnave/`, or `AGENTNAVE_DATA_DIR`). Do not hand-edit it when the App is installed;
 change the setting in the App instead.
 
@@ -572,10 +573,12 @@ change the setting in the App instead.
 ```
 
 `version` must be `1`. `max_running` is an integer from 1 to 32. `history_retention_days` is 30, 90
-or 180; omit it to keep history forever. Running services read the file without a restart: the
-run limit on the next call, cleanup at its next daily pass or when a service starts. A
+or 180; omit it to keep history forever. `account_concurrency` is optional and maps a CLI to the
+number of runs one of its accounts may have at once across all AgentNave servers: 1 to 10, or
+`null` for no limit, as in `{"claude": 2, "codex": null}`; omitted CLIs default to 5 for `codex`, `antigravity` and `claude`, and no limit for the rest. Running services read the file without a restart: the
+run limits on the next call, cleanup at its next daily pass or when a service starts. A
 cleanup deletes whole workspaces whose last activity is older than the limit and cannot be undone.
-Invalid `version` or `max_running` makes calls fail with the file's path and disables history
+Invalid `version`, `max_running` or `account_concurrency` makes calls fail with the file's path and disables history
 cleanup until fixed. Invalid `history_retention_days` only disables history cleanup and logs a
 service warning; calls still work. Orphan resource cleanup and expiration of empty pending
 handovers after 90 days run independently of the history retention setting. For hand-written

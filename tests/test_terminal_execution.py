@@ -296,8 +296,9 @@ async def test_conversation_persists_terminal_result_and_acknowledges(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agentnave import conversations as conversations_module
+    from agentnave.account_limits import full_accounts
     from agentnave.conversations import Conversations
-    from agentnave.members import CapacityError
+    from agentnave.members import CapacityError, data_root
     from agentnave.models import Host
 
     launch, path = setup_tray(tmp_path, monkeypatch)
@@ -311,6 +312,10 @@ async def test_conversation_persists_terminal_result_and_acknowledges(
 
     monkeypatch.setattr(terminal_execution, "read_turn", read_turn)
     monkeypatch.setattr(conversations_module, "read_max_running", lambda: 1)
+    data_root().mkdir(parents=True, exist_ok=True)
+    (data_root() / "settings.json").write_text(
+        json.dumps({"version": 1, "account_concurrency": {"codex": 1}})
+    )
     try:
         task = conversations.start_task(
             InvocationRequest("codex", "task", tmp_path),
@@ -321,6 +326,8 @@ async def test_conversation_persists_terminal_result_and_acknowledges(
         )
         await wait_for_file(tmp_path / "spawn-requests" / f"{task.invocation_id}.json")
         assert conversations.capacity()[0] == 1
+        # The derived session's boss turn holds its account's slot.
+        assert full_accounts([("codex", None)]) == {("codex", None): 1}
         with pytest.raises(CapacityError):
             conversations.start_task(
                 InvocationRequest("codex", "second", tmp_path),
@@ -355,6 +362,7 @@ async def test_conversation_persists_terminal_result_and_acknowledges(
             }
         ]
         assert conversations.capacity()[0] == 0
+        assert full_accounts([("codex", None)]) == {}
     finally:
         await manager.shutdown()
         await conversations.close()
