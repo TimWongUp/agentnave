@@ -24,6 +24,7 @@ const ChatDerived = (() => {
   // A terminal is matched by its native session, which a call just sent does not have yet (Codex
   // asks about trust before it starts one): the workspace's one such terminal of that CLI is it.
   function unnamedTerminal(d, group) {
+    if (typeof ChatTerminal === "undefined") return null;
     const found = (ChatTerminal?.all?.() || []).filter(
       (x) => x.derived && x.parent_workspace_id === group && !x.native && x.provider === d.provider && x.exit == null,
     );

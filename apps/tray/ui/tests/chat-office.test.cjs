@@ -3822,6 +3822,8 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.stop(1); // boss 1 has 3 active (10,11,12,17 -> 4 active) + 1 draft (12)
   assert.equal(asks.length, 1);
   assert.ok(asks[0].body.some(p => p.textContent.includes("有 4 个派生会话还没做完")));
+  // Only the one the boss dispatched (11) is reported back to it.
+  assert.ok(asks[0].body.some(p => p.textContent.includes("其中 1 个结束后会向 boss 回报未完成")));
   assert.ok(asks[0].body.some(p => p.textContent.includes("1 个有未发出的草稿")));
 
   // closeDerived confirms with counts when active/draft exist, and skips confirm when all idle/dormant/exited without drafts.

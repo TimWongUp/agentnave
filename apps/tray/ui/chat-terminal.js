@@ -633,7 +633,7 @@ const ChatTerminal = (() => {
     const derivedList = affectedDerivedOf(target);
     const activeDerived = derivedList.filter(isDerivedActive).length;
     // Only a turn the boss dispatched is reported back to it; one the user started is not.
-    const dispatchedDerived = derivedList.some((s) => isDerivedActive(s) && s.derived_busy);
+    const dispatchedDerived = derivedList.filter((s) => isDerivedActive(s) && s.derived_busy).length;
     const draftDerived = derivedList.filter((s) => Boolean(s.has_draft)).length;
 
     // Closing skips the question only for a terminal whose CLI has already exited; a live new agent
@@ -683,9 +683,11 @@ const ChatTerminal = (() => {
         }
       }
       if (activeDerived > 0) {
-        reasons.push(h("p.act-note.warn", {}, dispatchedDerived
+        reasons.push(h("p.act-note.warn", {}, dispatchedDerived === activeDerived
           ? L(`有 ${activeDerived} 个派生会话还没做完，结束后会向 boss 回报未完成。`, `${activeDerived} derived session(s) have not finished yet; stopping will report them to the boss as unfinished.`)
-          : L(`有 ${activeDerived} 个派生会话还没做完。`, `${activeDerived} derived session(s) have not finished yet.`)));
+          : dispatchedDerived
+            ? L(`有 ${activeDerived} 个派生会话还没做完，其中 ${dispatchedDerived} 个结束后会向 boss 回报未完成。`, `${activeDerived} derived session(s) have not finished yet; stopping will report ${dispatchedDerived} of them to the boss as unfinished.`)
+            : L(`有 ${activeDerived} 个派生会话还没做完。`, `${activeDerived} derived session(s) have not finished yet.`)));
       }
       if (draftDerived > 0) {
         reasons.push(h("p.act-note.warn", {}, L(
