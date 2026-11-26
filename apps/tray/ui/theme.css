@@ -78,6 +78,27 @@
   --term-bright-cyan: #7fe6dc;
   --term-bright-white: #f0f0f0;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Motion tokens — single source of truth across Office, Panel, Settings, Usage.
+     Enters align with standard tiers (100-150 / 150-200 / 200-260 / 250-350ms);
+     exits intentionally run ~25% snappier than enters. Controls stay zero-overshoot. */
+  --dur-press: 100ms;
+  --dur-hover: 120ms;
+  --dur-out: 150ms;
+  --dur-in: 180ms;
+  --dur-pop-out: 150ms;
+  --dur-pop: 210ms;
+  --dur-view-out: 220ms;
+  --dur-view: 280ms;
+  --dur-slide-out: 220ms;
+  --dur-slide: 280ms;
+  --shift-sm: 4px;
+  --shift-md: 6px;
+  --scale-pop: 0.97;
+  --scale-card-press: 0.985;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -237,3 +258,131 @@
 ::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
 ::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: var(--scrollbar) padding-box; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+
+/* Shared keyframes: one definition across all tray pages. */
+@keyframes an-spin { to { transform: rotate(360deg); } }
+@keyframes an-pulse { from { transform: scale(1); opacity: 1; } to { transform: scale(3); opacity: 0; } }
+@keyframes an-pulse-dot { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@keyframes an-drip {
+  0% { transform: none; }
+  5.88% { transform: translateY(0.6px) scale(0.975, 1.05); }
+  11.76% { transform: translateY(1.6px) scale(0.95, 1.125); }
+  17.65% { transform: translateY(3.0px) scale(0.9, 1.2); }
+  23.53% { transform: translateY(4.8px) scale(0.875, 1.25); }
+  29.41% { transform: translateY(6.4px) scale(1.1, 0.9); }
+  35.29% { transform: translateY(7.0px) scale(1.25, 0.75); }
+  41.18% { transform: translateY(6.4px) scale(1.15, 0.85); }
+  47.06% { transform: translateY(4.6px) scale(0.925, 1.15); }
+  52.94% { transform: translateY(2.2px) scale(0.9, 1.2); }
+  58.82% { transform: translateY(0.0px) scale(0.925, 1.125); }
+  64.71% { transform: translateY(-1.6px) scale(0.975, 1.05); }
+  70.59% { transform: translateY(-2.4px) scale(1.0, 1.0); }
+  76.47% { transform: translateY(-2.1px) scale(1.0, 1.0); }
+  82.35% { transform: translateY(-1.1px) scale(0.975, 1.025); }
+  88.24% { transform: translateY(0.2px) scale(1.05, 0.95); }
+  94.12% { transform: translateY(0.1px) scale(1.025, 0.975); }
+  100% { transform: none; }
+}
+
+/* Cancel in-flight popover transitions when the native window hides so nothing resumes frozen later. */
+:root[data-window-hidden] :is(.side-popover, .ctx, .voice-menu, .git-pr-card, .u-pop, .toast, .jump) {
+  transition: none !important;
+}
+
+/* Reduced motion: zero displacement & scale, keep brief opacity crossfades for popovers/views,
+   stop decorative loops, and slow activity spinners so loading states remain legible. */
+:root[data-motion="reduce"] {
+  --dur-press: 0ms;
+  --dur-hover: 0ms;
+  --dur-out: 0ms;
+  --dur-in: 0ms;
+  --dur-pop-out: 90ms;
+  --dur-pop: 100ms;
+  --dur-view-out: 90ms;
+  --dur-view: 110ms;
+  --dur-slide-out: 0ms;
+  --dur-slide: 0ms;
+  --shift-sm: 0px;
+  --shift-md: 0px;
+  --scale-pop: 1;
+  --scale-card-press: 1;
+  scroll-behavior: auto;
+}
+:root[data-motion="reduce"] .mark.drip .drop,
+:root[data-motion="reduce"] .pill.tone-run::after,
+:root[data-motion="reduce"] .state.tone-run > .dot::after,
+:root[data-motion="reduce"] .blk.run .bs.run::after,
+:root[data-motion="reduce"] .cell.working .face::after,
+:root[data-motion="reduce"] .say .dots i,
+:root[data-motion="reduce"] .zz,
+:root[data-motion="reduce"] .typing i,
+:root[data-motion="reduce"] .fig,
+:root[data-motion="reduce"] .fig *,
+:root[data-motion="reduce"] .fig *::before,
+:root[data-motion="reduce"] .fig *::after,
+:root[data-motion="reduce"] .walker.walk img,
+:root[data-motion="reduce"] .bar-voice .voice-waves,
+:root[data-motion="reduce"] .bar-voice .voice-waves i,
+:root[data-motion="reduce"] .voice-read .voice-waves i,
+:root[data-motion="reduce"] .loader-walk,
+:root[data-motion="reduce"] .loader-fig,
+:root[data-motion="reduce"] .loader-frame,
+:root[data-motion="reduce"] .loader-shadow,
+:root[data-motion="reduce"] .loader-dots i,
+:root[data-motion="reduce"] .hc-status.is-busy .dot,
+:root[data-motion="reduce"] .member-item-status.is-busy .member-status-dot,
+:root[data-motion="reduce"] .spinner-dot { animation: none !important; }
+:root[data-motion="reduce"] .bar-update[data-state="busy"] span,
+:root[data-motion="reduce"] .u-refresh[data-busy="true"] svg,
+:root[data-motion="reduce"] .spin,
+:root[data-motion="reduce"] .ob-spin { animation-duration: 2.4s !important; }
+:root[data-motion="reduce"] .tail:not([hidden])::after { animation: none !important; visibility: visible; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) {
+    --dur-press: 0ms;
+    --dur-hover: 0ms;
+    --dur-out: 0ms;
+    --dur-in: 0ms;
+    --dur-pop-out: 90ms;
+    --dur-pop: 100ms;
+    --dur-view-out: 90ms;
+    --dur-view: 110ms;
+    --dur-slide-out: 0ms;
+    --dur-slide: 0ms;
+    --shift-sm: 0px;
+    --shift-md: 0px;
+    --scale-pop: 1;
+    --scale-card-press: 1;
+    scroll-behavior: auto;
+  }
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .mark.drip .drop,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .pill.tone-run::after,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .state.tone-run > .dot::after,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .blk.run .bs.run::after,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .cell.working .face::after,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .say .dots i,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .zz,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .typing i,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .fig,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .fig *,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .fig *::before,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .fig *::after,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .walker.walk img,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .bar-voice .voice-waves,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .bar-voice .voice-waves i,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .voice-read .voice-waves i,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .loader-walk,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .loader-fig,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .loader-frame,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .loader-shadow,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .loader-dots i,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .hc-status.is-busy .dot,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .member-item-status.is-busy .member-status-dot,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .spinner-dot { animation: none !important; }
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .bar-update[data-state="busy"] span,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .u-refresh[data-busy="true"] svg,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .spin,
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .ob-spin { animation-duration: 2.4s !important; }
+  :root:not([data-motion="reduce"]):not([data-motion="full"]) .tail:not([hidden])::after { animation: none !important; visibility: visible; }
+}

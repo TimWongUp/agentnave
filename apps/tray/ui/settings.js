@@ -89,7 +89,7 @@
       renderLeaveConfirm();
     });
     document.body?.appendChild?.(leaveDialog);
-    if (typeof leaveDialog.showModal === "function") leaveDialog.showModal();
+    if (typeof leaveDialog.showModal === "function") { leaveDialog.showModal(); globalThis.ANMotion?.dialogEnter?.(leaveDialog); }
     else leaveDialog.open = true;
     stay.focus?.({ preventScroll: true });
   }

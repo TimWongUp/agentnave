@@ -674,17 +674,23 @@
   // Switch tabs
   function setTab(tab) {
     if (tab === "updates") tab = "about"; // Preserve old update links.
+    const changed = currentTab !== tab;
     // Status lines belong to the tab that produced them.
-    if (currentTab !== tab) {
+    if (changed) {
       showNotice("");
       window.scrollTo(0, 0); // A section opens at its top, not where the last one was left.
     }
+    const hadTab = Boolean(currentTab);
     currentTab = tab;
     window.AgentNavePaneLoader?.show(tab);
     for (const id of ["general", "hosts", "members", "orchestration", "avatars", "voice", "storage", "advanced", "about"]) {
       if (tab === id) $("nav-" + id).setAttribute("aria-current", "page");
       else $("nav-" + id).removeAttribute("aria-current");
       $("pane-" + id).hidden = tab !== id;
+    }
+    if (changed && hadTab) {
+      const pane = $("pane-" + tab);
+      if (pane && !pane.classList.contains("is-loading")) globalThis.ANMotion?.reveal?.(pane, { dy: 0, duration: 120 });
     }
     if (tab === "general") {
       window.AgentNaveLanguageSettings?.load();

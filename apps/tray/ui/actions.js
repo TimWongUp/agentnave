@@ -20,7 +20,6 @@ const Actions = {};
   // ---- context menu -----------------------------------------------------------------------
   function closeMenu() {
     menu.hidden = true;
-    menu.replaceChildren();
   }
   function openMenu(e, items) {
     e.preventDefault();
@@ -40,10 +39,14 @@ const Actions = {};
       }),
     );
     menu.hidden = false;
-    // Keep the menu inside the window.
-    const { width, height } = menu.getBoundingClientRect();
-    menu.style.left = `${Math.min(e.clientX, innerWidth - width - 6)}px`;
-    menu.style.top = `${Math.min(e.clientY, innerHeight - height - 6)}px`;
+    // Measure offsetWidth/offsetHeight so any active transition transform never skews clamping.
+    const width = menu.offsetWidth || menu.getBoundingClientRect().width;
+    const height = menu.offsetHeight || menu.getBoundingClientRect().height;
+    const flipX = e.clientX + width + 6 > innerWidth;
+    const flipY = e.clientY + height + 6 > innerHeight;
+    menu.setAttribute("data-origin", `${flipY ? "b" : "t"}${flipX ? "r" : "l"}`);
+    menu.style.left = `${Math.max(6, Math.min(e.clientX, innerWidth - width - 6))}px`;
+    menu.style.top = `${Math.max(6, Math.min(e.clientY, innerHeight - height - 6))}px`;
     menu.querySelector("button")?.focus({ preventScroll: true });
   }
   document.addEventListener("pointerdown", (e) => { if (!menu.hidden && !menu.contains(e.target)) closeMenu(); }, true);
@@ -179,6 +182,7 @@ const Actions = {};
       }
       sync();
       dialog.showModal();
+      globalThis.ANMotion?.dialogEnter?.(dialog);
       const cancel = buttons.some((b) => b.danger) ? entries.find((entry) => !entry.b.value)?.button : null;
       (field || focusButton || cancel || row.querySelector(".primary") || row.querySelector("button")).focus();
       if (field) field.select();

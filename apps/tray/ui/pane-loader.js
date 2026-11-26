@@ -14,7 +14,7 @@
   const CHARACTER = "deepseek";
   // The walk frames come apart into layers; the tail sits behind the body, the rest in front.
   const LAYERS = ["tail-", "", "lop-l-", "lop-r-", "tuft-"];
-  const WAIT_MS = 150, SHOW_MS = 400, GIVE_UP_MS = 60000, FADE_MS = 260;
+  const WAIT_MS = 150, SHOW_MS = 400, GIVE_UP_MS = 60000, FADE_MS = 210;
   const waiting = new Set(); // panes still within WAIT_MS
   const filled = (box) => box.childElementCount > 0 || box.textContent.trim() !== "";
   const frame = (n) => h(`span.loader-frame.f${n}`, {},
@@ -39,7 +39,8 @@
     pane.classList.remove("is-entering");
     pane.classList.add("is-loading");
     pane.append(node);
-    setTimeout(() => node.classList.add("shown"), 20); // after the first paint, so it fades in
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(() => node.classList.add("shown")));
+    else setTimeout(() => node.classList.add("shown"), 20);
     let stayed = false, left = false;
     const watcher = new MutationObserver(() => { if (stayed && arrived()) leave(); });
     const stay = setTimeout(() => { stayed = true; if (arrived()) leave(); }, SHOW_MS);
@@ -55,7 +56,7 @@
         node.remove();
         pane.classList.remove("is-loading");
         pane.classList.add("is-entering");
-        setTimeout(() => pane.classList.remove("is-entering"), 500);
+        setTimeout(() => pane.classList.remove("is-entering"), 320);
       }, FADE_MS);
     }
     watcher.observe(box, { childList: true, subtree: true, characterData: true });

@@ -268,6 +268,7 @@
     document.body.appendChild(dialog);
     login = { dialog, session, id: account.id };
     dialog.showModal();
+    globalThis.ANMotion?.dialogEnter?.(dialog);
   }
 
   // The login CLI ends by itself once the browser step is done; the state is read again then.
@@ -613,6 +614,7 @@
     };
     document.body.appendChild(dialog);
     dialog.showModal();
+    globalThis.ANMotion?.dialogEnter?.(dialog);
     input.focus?.({ preventScroll: true });
   }
 

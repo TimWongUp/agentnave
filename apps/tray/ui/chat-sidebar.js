@@ -159,7 +159,6 @@
   function closePopover() {
     if (!popover || popover.hidden) return;
     popover.hidden = true;
-    popover.replaceChildren();
     const btn = $("side-view-btn");
     if (btn) setAttr(btn, "aria-expanded", "false");
   }
@@ -242,9 +241,10 @@
 
   function positionPopover(boxEl, anchor) {
     const rect = anchor.getBoundingClientRect();
-    const box = boxEl.getBoundingClientRect();
-    const left = Math.max(6, Math.min(rect.left, innerWidth - box.width - 6));
-    const top = Math.max(6, Math.min(rect.bottom + 4, innerHeight - box.height - 6));
+    const width = boxEl.offsetWidth || boxEl.getBoundingClientRect().width;
+    const height = boxEl.offsetHeight || boxEl.getBoundingClientRect().height;
+    const left = Math.max(6, Math.min(rect.left, innerWidth - width - 6));
+    const top = Math.max(6, Math.min(rect.bottom + 4, innerHeight - height - 6));
     boxEl.style.left = `${left}px`;
     boxEl.style.top = `${top}px`;
   }
@@ -254,7 +254,6 @@
     newChatToken += 1;
     if (!newChatPop || newChatPop.hidden) return;
     newChatPop.hidden = true;
-    newChatPop.replaceChildren();
     newChatStep = null;
     const btn = $("new-chat");
     if (btn) setAttr(btn, "aria-expanded", "false");
@@ -286,7 +285,7 @@
       }
       if ((e.key === "ArrowLeft" || e.key === "Backspace") && newChatStep === "cli" && pickableProjects().length) {
         e.preventDefault();
-        renderNewChatProjects();
+        renderNewChatProjects(-1);
         return;
       }
       const buttons = [...newChatPop.querySelectorAll("button")];
@@ -301,7 +300,7 @@
     return newChatPop;
   }
 
-  function renderNewChatProjects() {
+  function renderNewChatProjects(dir = 0) {
     newChatToken += 1;
     const pop = ensureNewChatPop();
     const list = pickableProjects();
@@ -324,7 +323,9 @@
     });
     const pickOther = h("button.side-pop-item", { type: "button", role: "menuitem" }, L("选择其他文件夹…", "Choose folder…"));
     pickOther.addEventListener("click", () => void renderNewChatClis({ key: null, title: L("选择其他文件夹", "Choose folder") }, true));
-    pop.replaceChildren(h("div.side-pop-list", {}, ...rows), h("div.side-pop-sep"), pickOther);
+    const listBox = h("div.side-pop-list", {}, ...rows);
+    pop.replaceChildren(listBox, h("div.side-pop-sep"), pickOther);
+    if (dir) globalThis.ANMotion?.reveal?.(listBox, { dx: dir * 10, dy: 0, duration: 150 });
     if (newChatAnchor) positionPopover(pop, newChatAnchor);
     pop.querySelector("button")?.focus({ preventScroll: true });
   }
@@ -334,7 +335,7 @@
     const token = ++newChatToken;
     newChatStep = "cli";
     const back = canBack && h("button.side-pop-item.side-pop-back", { type: "button", role: "menuitem" }, `‹ ${choice.title}`);
-    if (back) back.addEventListener("click", () => renderNewChatProjects());
+    if (back) back.addEventListener("click", () => renderNewChatProjects(-1));
     const found = typeof ChatTerminal !== "undefined" && ChatTerminal.clis
       ? await ChatTerminal.clis().catch(() => [])
       : [];
@@ -358,6 +359,7 @@
       ? h("div.side-pop-list", {}, ...rows)
       : h("div.side-pop-empty", {}, L("没有检测到已安装的 CLI", "No installed CLI found"));
     pop.replaceChildren(...[back, back && h("div.side-pop-sep"), body].filter(Boolean));
+    if (canBack) globalThis.ANMotion?.reveal?.(body, { dx: 10, dy: 0, duration: 150 });
     if (newChatAnchor) positionPopover(pop, newChatAnchor);
     (rows[0] || pop.querySelector("button"))?.focus({ preventScroll: true });
   }

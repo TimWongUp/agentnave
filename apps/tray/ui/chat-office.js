@@ -809,7 +809,12 @@ function renderOffice(c, ctx, n, newGroup) {
   });
   for (const id of state.seatRecs.keys())
     if (!live.has(id)) state.seatRecs.delete(id);
-  reconcile(el.rooms, roomNodes);
+  const removedRoom = !newGroup && (el.rooms.children?.length || 0) > roomNodes.length;
+  if (removedRoom && globalThis.ANMotion?.flipY) {
+    globalThis.ANMotion.flipY([...roomNodes, el.desksZone, el.derivedZone], () => reconcile(el.rooms, roomNodes));
+  } else {
+    reconcile(el.rooms, roomNodes);
+  }
 
   for (const key of state.deskRecs.keys())
     if (!ctx.drawn.has(key)) state.deskRecs.delete(key);
@@ -836,32 +841,16 @@ function renderOffice(c, ctx, n, newGroup) {
   walk(!newGroup && state.ready, sat);
 }
 
-// After its seats walk back and a pause, an ended room shrinks to nothing with its own gap, so
-// the desks below slide up into its place and nothing jumps when it leaves the page.
+// After its seats walk back and a pause, an ended room fades out on the compositor (zero per-frame
+// layout), then surviving zones below FLIP smoothly upward when reconcile removes the room.
 function foldRoom(node) {
-  const style = getComputedStyle(node);
+  void node.offsetHeight;
   return node.animate(
     [
-      {
-        height: `${node.offsetHeight}px`,
-        marginTop: style.marginTop,
-        paddingTop: style.paddingTop,
-        paddingBottom: style.paddingBottom,
-        borderTopWidth: style.borderTopWidth,
-        borderBottomWidth: style.borderBottomWidth,
-        opacity: 1,
-      },
-      {
-        height: "0px",
-        marginTop: "0px",
-        paddingTop: "0px",
-        paddingBottom: "0px",
-        borderTopWidth: "0px",
-        borderBottomWidth: "0px",
-        opacity: 0,
-      },
+      { transform: "translate3d(0, 0, 0) scale(1)", opacity: 1 },
+      { transform: "translate3d(0, -10px, 0) scale(0.97)", opacity: 0 },
     ],
-    { duration: FOLD_MS, delay: WALK_MS + HOLD_MS, easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "forwards" },
+    { duration: FOLD_MS, delay: WALK_MS + HOLD_MS, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" },
   );
 }
 
@@ -932,6 +921,7 @@ function walk(animate, sat) {
   }
 }
 const TELEPORT_GAP_MS = 900;
+const activeWalks = new WeakMap(); // destination figure -> latest walk token
 // start is a figure, or the last place of one that has already left the page.
 function travel(start, end, name) {
   if (!start || !end?.isConnected) return;
@@ -957,26 +947,44 @@ function travel(start, end, name) {
   const scale = b.width / a.width;
   const run = moves(walker.animate(
     [
-      { transform: "none", opacity: 0.95 },
+      { transform: "translate3d(0, 0, 0)", opacity: 0.96 },
       {
-        transform: `translate(${(b.left - a.left) / 2}px, ${(b.top - a.top) / 2 - (walks ? 0 : 18)}px) scale(${(1 + scale) / 2})`,
+        transform: `translate3d(${(b.left - a.left) / 2}px, ${(b.top - a.top) / 2 - (walks ? 0 : 18)}px, 0) scale(${(1 + scale) / 2})`,
+        opacity: 1,
         offset: 0.5,
       },
       {
-        transform: `translate(${b.left - a.left}px, ${b.top - a.top}px) scale(${scale})`,
-        opacity: 0.95,
+        transform: `translate3d(${b.left - a.left}px, ${b.top - a.top}px, 0) scale(${scale})`,
+        opacity: 0.96,
+        offset: 0.9,
+      },
+      {
+        transform: `translate3d(${b.left - a.left}px, ${b.top - a.top}px, 0) scale(${scale})`,
+        opacity: 0,
       },
     ],
     walks
       ? { duration: WALK_MS, easing: "linear" }
-      : { duration: 900, easing: "ease-in-out" },
+      : { duration: 900, easing: "cubic-bezier(0.4, 0, 0.2, 1)" },
   ));
-  // The figure at the destination waits until the walker arrives, so the desk is never shown twice.
+  const token = {};
+  activeWalks.set(end, token);
+  // The figure at the destination waits until the walker arrives, then crossfades smoothly into place.
   end.style.visibility = "hidden";
-  run.onfinish = run.oncancel = () => {
+  const settle = (arrived) => {
     walker.remove();
+    if (activeWalks.get(end) !== token) return;
+    activeWalks.delete(end);
     end.style.visibility = "";
+    if (arrived && end.isConnected && typeof end.animate === "function" && canAnimate()) {
+      end.animate(
+        [{ opacity: 0.2, transform: "translate3d(0, -2px, 0)" }, { opacity: 1, transform: "translate3d(0, 0, 0)" }],
+        { duration: 120, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+      );
+    }
   };
+  run.onfinish = () => settle(true);
+  run.oncancel = () => settle(false);
 }
 
 // A character with a teleport vanishes where it was and appears at its destination; nothing crosses the room.
@@ -997,7 +1005,7 @@ function teleport(start, end, name, a, base) {
   }, TELEPORT_GAP_MS);
 }
 
-// An envelope travels between two office elements: dispatch, return, forward.
+// An envelope travels between two office elements along a smooth parabolic arc with a subtle arrival receipt.
 function fly(kind, from, to, delay) {
   if (!from || !to || !from.isConnected || !to.isConnected) return;
   const base = el.fx.getBoundingClientRect();
@@ -1006,28 +1014,39 @@ function fly(kind, from, to, delay) {
   if (!a.width || !b.width || !base.width) return;
   const dx = b.left + b.width / 2 - a.left - a.width / 2,
     dy = b.top + b.height / 2 - a.top - a.height / 2;
+  const dist = Math.hypot(dx, dy);
+  const duration = Math.round(Math.max(540, Math.min(900, 440 + dist * 0.65)));
+  const arc = Math.min(84, Math.max(32, dist * 0.22));
+  const dir = dx >= 0 ? 1 : -1;
   const token = h(`span.token.token-${kind}`);
   token.style.left = `${a.left + a.width / 2 - base.left}px`;
   token.style.top = `${a.top + a.height / 2 - base.top}px`;
   el.fx.append(token);
   const centre = "translate(-50%, -50%)";
-  const run = moves(token.animate(
-    [
-      { transform: `${centre} scale(.5)`, opacity: 0 },
-      { transform: `${centre} scale(1)`, opacity: 1, offset: 0.15 },
-      {
-        transform: `${centre} translate(${dx}px, ${dy - 30}px) scale(1)`,
-        opacity: 1,
-        offset: 0.6,
-      },
-      {
-        transform: `${centre} translate(${dx}px, ${dy}px) scale(.6)`,
-        opacity: 0,
-      },
-    ],
-    { duration: 1100, delay, easing: "ease-in-out", fill: "backwards" },
-  ));
-  run.onfinish = run.oncancel = () => token.remove();
+  const frames = [0, 0.14, 0.28, 0.44, 0.6, 0.76, 0.9, 1].map((t) => {
+    const px = dx * t;
+    const py = dy * t - 4 * arc * t * (1 - t);
+    const rot = dir * (1 - 2 * t) * 10;
+    const sc = t === 0 ? 0.55 : t < 0.2 ? 1.06 : t > 0.85 ? 0.68 : 1;
+    const op = t === 0 ? 0 : t < 0.2 ? 1 : t > 0.85 ? 0 : 1;
+    return {
+      transform: `${centre} translate3d(${px.toFixed(1)}px, ${py.toFixed(1)}px, 0) rotate(${rot.toFixed(1)}deg) scale(${sc})`,
+      opacity: op,
+      offset: t,
+    };
+  });
+  const run = moves(token.animate(frames, { duration, delay, easing: "cubic-bezier(0.22, 0.08, 0.24, 1)", fill: "backwards" }));
+  const done = (arrived) => {
+    token.remove();
+    if (arrived && to.isConnected && to.classList?.contains?.("scene") && typeof to.animate === "function" && canAnimate()) {
+      to.animate(
+        [{ transform: "scale(1)" }, { transform: "scale(1.018)", offset: 0.4 }, { transform: "scale(1)" }],
+        { duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+      );
+    }
+  };
+  run.onfinish = () => done(true);
+  run.oncancel = () => done(false);
 }
 // New messages since the previous poll tell what moved. Typing bubbles are in-place updates, not events.
 function ingest(c, ctx, newGroup) {

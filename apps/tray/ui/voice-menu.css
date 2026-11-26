@@ -2,15 +2,16 @@
 @keyframes voice-wave { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
 .bar-voice-wrap { position: relative; }
 .bar-voice-wrap[hidden] { display: none; }
-.bar-voice { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100px; height: 26px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--hover); color: var(--muted); font-size: 12px; font-weight: 550; cursor: pointer; }
+.bar-voice { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100px; height: 26px; padding: 0 8px; border: 0; border-radius: 8px; background: var(--hover); color: var(--muted); font-size: 12px; font-weight: 550; cursor: pointer; transition: background-color var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out); }
 .bar-voice:hover, .bar-voice[aria-expanded="true"] { color: var(--ink); }
 /* Sound waves move only while audio is actually playing. */
 .bar-voice-wrap:is([data-state="speaking"], [data-state="preparing"], [data-state="paused"]) .bar-voice { background: color-mix(in srgb, var(--run) 16%, transparent); color: var(--run); }
-.bar-voice-wrap[data-sounding="true"] .bar-voice .voice-waves i, .voice-read[data-sounding="true"] .voice-waves i { animation: voice-wave .9s ease-in-out infinite; }
+.bar-voice-wrap[data-sounding="true"] .bar-voice .voice-waves i, .voice-read[data-sounding="true"] .voice-waves i { animation: voice-wave .9s var(--ease-inout) infinite; }
 .bar-voice-wrap[data-sounding="true"] .bar-voice .voice-waves i:nth-child(2), .voice-read[data-sounding="true"] .voice-waves i:nth-child(2) { animation-delay: -.3s; }
 .bar-voice-wrap[data-sounding="true"] .bar-voice .voice-waves i:nth-child(3), .voice-read[data-sounding="true"] .voice-waves i:nth-child(3) { animation-delay: -.6s; }
-.voice-menu { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 40; display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: 320px; padding: 14px; border-radius: 14px; background: color-mix(in srgb, var(--solid) 74%, transparent); -webkit-backdrop-filter: blur(36px) saturate(180%); backdrop-filter: blur(36px) saturate(180%); box-shadow: 0 0 0 .5px var(--line-strong), 0 16px 44px #00000052, 0 2px 8px #00000024; }
-.voice-menu[hidden] { display: none; }
+/* Frosted glass popover: opacity + translateY only (no scale avoids WebKit backdrop-filter flicker). */
+.voice-menu { position: absolute; top: calc(100% + 8px); left: 50%; transform: translate3d(-50%, 0, 0); z-index: 40; display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: 320px; padding: 14px; border-radius: 14px; background: color-mix(in srgb, var(--solid) 74%, transparent); -webkit-backdrop-filter: blur(36px) saturate(180%); backdrop-filter: blur(36px) saturate(180%); box-shadow: 0 0 0 .5px var(--line-strong), 0 16px 44px #00000052, 0 2px 8px #00000024; opacity: 1; visibility: visible; transition: opacity var(--dur-pop) var(--ease-out), transform var(--dur-pop) var(--ease-out), visibility 0s; }
+.voice-menu[hidden] { display: flex !important; opacity: 0; transform: translate3d(-50%, calc(-1 * var(--shift-md)), 0); visibility: hidden; pointer-events: none; transition: opacity var(--dur-pop-out) var(--ease-out), transform var(--dur-pop-out) var(--ease-in), visibility 0s var(--dur-pop-out); }
 .voice-album { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 12px; }
 .voice-album[hidden] { display: none; }
 .voice-cover { position: relative; width: 56px; height: 56px; overflow: hidden; border-radius: 8px; background: var(--card-hover); box-shadow: 0 0 0 .5px var(--line), 0 3px 10px #00000038; }
@@ -51,11 +52,7 @@
 .voice-waves i { display: block; width: 2px; height: 5px; border-radius: 1px; background: currentColor; }
 .voice-waves i:nth-child(2) { height: 11px; }
 .voice-waves i:nth-child(3) { height: 8px; }
-:root[data-motion="reduce"] .bar-voice .voice-waves, :root[data-motion="reduce"] .bar-voice .voice-waves i, :root[data-motion="reduce"] .voice-read .voice-waves i { animation: none; }
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="reduce"]):not([data-motion="full"]) .bar-voice .voice-waves, :root:not([data-motion="reduce"]):not([data-motion="full"]) .bar-voice .voice-waves i, :root:not([data-motion="reduce"]):not([data-motion="full"]) .voice-read .voice-waves i { animation: none; }
-}
-.listen-here { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 108px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 11.5px; font-weight: 550; letter-spacing: 0; white-space: nowrap; cursor: pointer; }
+.listen-here { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 108px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 11.5px; font-weight: 550; letter-spacing: 0; white-space: nowrap; cursor: pointer; transition: background-color var(--dur-hover) var(--ease-out), color var(--dur-hover) var(--ease-out); }
 .listen-here[hidden] { display: none; }
 .listen-here[aria-pressed="true"] { background: color-mix(in srgb, var(--run) 16%, transparent); color: var(--run); }
 
@@ -66,9 +63,9 @@
 .voice-status[data-error="true"] { color: var(--bad); }
 .voice-controls { display: grid; grid-template-columns: repeat(5, 1fr); justify-items: center; align-items: center; height: 44px; }
 .voice-controls[hidden] { display: none; }
-.voice-controls > button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink); cursor: pointer; transition: background-color .12s, transform .08s; }
+.voice-controls > button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink); cursor: pointer; transition: background-color var(--dur-hover) var(--ease-out), transform var(--dur-press) var(--ease-out); }
 .voice-controls > button:hover:enabled { background: var(--card-hover); }
-.voice-controls > button:active:enabled { transform: scale(.92); }
+.voice-controls > button:active:enabled { transform: scale(.93); transition-duration: 0s; }
 .voice-controls > button::before { content: ""; width: var(--size, 18px); height: var(--size, 18px); background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
 /* Chain at the far left and stop at the far right, always in the same five places. */
 .voice-chain { --size: 20px; grid-area: 1 / 1; }

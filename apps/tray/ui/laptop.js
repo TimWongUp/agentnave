@@ -2,7 +2,7 @@
 // The desk laptop: a small 3D model seen from behind, in MacBook proportions. The base stays put and the
 // lid swings on its hinge, with the CLI mark printed on it at the desks. It is drawn only while it moves.
 (function () {
-  const W = 1563, D = 1103, T = 34, LID = 1060, LID_T = 18, R = 42, OPEN = 108, MOVE_MS = 420;
+  const W = 1563, D = 1103, T = 34, LID = 1060, LID_T = 18, R = 42, OPEN = 108, MOVE_MS = 360;
   const SCALE = 0.3, CX = 400, CY = 300, TOP = 120, VIEW_W = 800, VIEW_H = 600;
   // every desk is painted at the same 14° view, so seats and bosses share one camera; only the height differs
   const VIEW = { tilt: 14, depth: 11100 };
@@ -86,9 +86,21 @@
     el.append(svg);
     if (lid) el.append(lid);
     const id = `laptop-${++made}`;
-    let colour = SILVER, deg = null, run = null;
+    let colour = SILVER, deg = null, run = null, cachedW = 0, lidSize = 0;
+    function measure() {
+      const w = el.clientWidth;
+      cachedW = w;
+      if (!w || !lid) return w;
+      const size = w * 0.2;
+      if (size !== lidSize) {
+        lidSize = size;
+        lid.style.width = lid.style.height = `${size}px`;
+      }
+      return w;
+    }
     function draw(at) {
-      if (!el.clientWidth) { run = null; return; }
+      const w = cachedW || measure();
+      if (!w) { run = null; return; }
       deg = at;
       const edge = (u, r, n) => lidAt(at, u, r, n);
       const grad = `<defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${shade(colour, 1.14)}"/><stop offset="1" stop-color="${shade(colour, 0.92)}"/></linearGradient></defs>`;
@@ -98,26 +110,28 @@
         + path(LID_EDGE.map(([a, b]) => project(edge(a, b, -5))), "#2a2b30")
         + walls(project, LID_EDGE, (a, b, n) => edge(a, b, n), LID_T, colour.map((v) => v * 0.8), 1)
         + path(LID_EDGE.map(([a, b]) => project(edge(a, b, LID_T))), `url(#${id})`);
-      const size = el.clientWidth * 0.2;
+      const size = lidSize || w * 0.2;
       if (!lid || !size) return;
-      const unit = el.clientWidth / VIEW_W;
+      const unit = w / VIEW_W;
       const corners = [[0.655, 0.78], [0.345, 0.78], [0.345, 0.32], [0.655, 0.32]]
         .map(([u, v]) => project(edge(W * u, LID * v, LID_T + 1)))
         .map(([x, y]) => [x * unit, (y + TOP) * unit]);
-      lid.style.width = lid.style.height = `${size}px`;
       lid.style.transform = matrix(size, size, corners);
     }
     function sync() {
       const target = el.closest("[data-mood]")?.dataset.mood === "working" ? OPEN : 0;
-      if (!el.clientWidth) { run = null; return; }
-      if (deg === null) return draw(target);
+      const w = cachedW || measure();
+      if (!w) { run = null; return; }
+      if (deg === null || globalThis.ANAppearance?.reducedMotion?.matches) { run = null; return draw(target); }
       if (run === target || (run === null && deg === target)) return;
       const from = deg, start = performance.now();
       run = target;
       const step = (now) => {
         if (run !== target) return;
+        if (globalThis.ANAppearance?.reducedMotion?.matches) { run = null; return draw(target); }
         const t = Math.min(1, (now - start) / MOVE_MS);
-        draw(from + (target - from) * t * t * (3 - 2 * t));
+        const eased = 1 - Math.pow(1 - t, 3);
+        draw(from + (target - from) * eased);
         if (t < 1) requestAnimationFrame(step);
         else run = null;
       };
@@ -130,7 +144,7 @@
     }
     el.laptop = { sync, dress };
     new ResizeObserver(() => {
-      if (!el.clientWidth) { run = null; return; }
+      if (!measure()) { run = null; return; }
       if (deg !== null) draw(deg);
       sync();
     }).observe(el);

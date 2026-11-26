@@ -74,11 +74,20 @@ function setCollapsed(on) {
   el.app.removeAttribute("data-conv-peek");
   store(COLLAPSED_KEY, on ? "1" : null);
 }
-// An unfolded column slides in; the class is dropped and set again so a second unfold plays too.
-function slideIn(panel) {
-  panel.classList.remove("docking");
-  void panel.offsetWidth;
-  panel.classList.add("docking");
+// An unfolded column slides in via interruptible WAAPI (zero forced reflow, safe when blurred).
+const panelSlides = new WeakMap();
+function slideIn(panel, offset = null) {
+  if (!panel || typeof panel.animate !== "function") return;
+  const motion = globalThis.ANMotion;
+  if (!motion?.visibleAndFocused?.()) return;
+  panelSlides.get(panel)?.cancel?.();
+  const isRed = motion.reduced();
+  const fromX = offset ?? (panel.classList?.contains?.("conv") ? "100%" : "-100%");
+  const frames = isRed
+    ? [{ opacity: 0 }, { opacity: 1 }]
+    : [{ transform: `translate3d(${fromX}, 0, 0)`, opacity: 0.85 }, { transform: "translate3d(0, 0, 0)", opacity: 1 }];
+  const anim = panel.animate(frames, { duration: motion.ms("--dur-view", isRed ? 110 : 280), easing: isRed ? "linear" : motion.EASE_OUT });
+  panelSlides.set(panel, anim);
 }
 el.convToggle.addEventListener("click", () => {
   setCollapsed(!state.convCollapsed);
@@ -354,6 +363,7 @@ function renderConv(c, ctx, forceMeasure = false) {
   const wasVisible = Boolean(state.convVisible);
   state.convVisible = visible;
   el.drawer.hidden = overlay.matches && !visible;
+  if (overlay.matches && wasHidden && !el.drawer.hidden) slideIn(el.drawer, "40px");
   const folded = !overlay.matches && state.convCollapsed;
   el.drawer.classList.toggle("folded", folded);
   // The fold button is in the top bar; the overlay has its own close button.
@@ -523,7 +533,7 @@ el.tl.addEventListener(
   { passive: true },
 );
 el.jump.addEventListener("click", () => {
-  el.tl.scrollTo({ top: el.tl.scrollHeight, behavior: "smooth" });
+  el.tl.scrollTo({ top: el.tl.scrollHeight, behavior: globalThis.ANMotion?.scrollBehavior?.() || "smooth" });
 });
 window.addEventListener("resize", () => measureAll());
 if (document.fonts?.ready) document.fonts.ready.then(measureAll);
@@ -607,9 +617,7 @@ function renderTicker(c, ctx) {
   state.tickId = last.id;
   const { text } = eventText(last, ctx);
   el.tick.replaceChildren(h("time", {}, clock(last.time)), text);
-  el.tick.classList.remove("new");
-  void el.tick.offsetWidth;
-  el.tick.classList.add("new");
+  globalThis.ANMotion?.reveal?.(el.tick, { dy: 4, duration: globalThis.ANMotion.ms("--dur-in", 180) });
   setAttr(el.tick, "title", `${fullTime(last.time)} ${text}`);
 }
 

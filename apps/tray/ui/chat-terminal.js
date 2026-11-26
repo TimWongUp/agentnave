@@ -1029,6 +1029,7 @@ const ChatTerminal = (() => {
   const bossTag = h("span.dr-boss", { role: "img", hidden: true });
   const box = h("div.dr-term");
   modes.append(toMessages, toTerminal);
+  const modeThumb = globalThis.ANMotion?.attachThumb?.(modes, '[aria-pressed="true"]');
   // Right of 「‹ 全部」, which comes and goes: the header is right-aligned, so these stay put.
   el.drAll.after(modes, stopButton);
   modes.before(bossTag);
@@ -1178,6 +1179,7 @@ const ChatTerminal = (() => {
     t.owned = x?.id ?? null;
     setAttr(toMessages, "aria-pressed", term ? "false" : "true");
     setAttr(toTerminal, "aria-pressed", term ? "true" : "false");
+    modeThumb?.sync(false);
     for (const [id, f] of t.frames) f.hidden = !term || id !== term.id;
     if (!term) {
       t.shown = null;

@@ -83,6 +83,7 @@
     status.textContent = "";
     generation += 1;
     dialog.showModal();
+    globalThis.ANMotion?.dialogEnter?.(dialog);
     cancel.focus();
     refresh();
   }

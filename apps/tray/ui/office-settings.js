@@ -65,6 +65,7 @@
       }
     }
     page.frame.hidden = false;
+    if (page.loaded) globalThis.ANMotion?.reveal?.(page.frame, { dy: 0, duration: 150 });
     document.getElementById("app").inert = true;
     highlight();
     syncVisible();
@@ -108,6 +109,7 @@
     else if (data.action === "changed") { refreshVoice(); AN.art?.loadVideoPacks?.(); }
     else if (data.action === "loading") page.loaded = false;
     else if (data.action === "ready") {
+      const firstReady = !page.loaded;
       page.loaded = true;
       deliverPending(page);
       if (typeof data.language === "string") {
@@ -117,6 +119,7 @@
       if (typeof data.choice === "string") document.documentElement.dataset.lang = data.choice;
       send(page, { action: "preferences", general: window.ANAppearance?.preferences() });
       syncVisible();
+      if (firstReady && shown(page)) globalThis.ANMotion?.reveal?.(page.frame, { dy: 0, duration: 150 });
       refreshVoice();
     } else if (data.action === "preferences") {
       receiving = true;

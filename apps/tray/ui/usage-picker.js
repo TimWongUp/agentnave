@@ -108,14 +108,14 @@ window.UsagePicker = (() => {
       if (key === todayKey) btn.classList.add("today");
       return btn;
     });
+    // Pad to 42 slots (6 full weeks) so month transitions never jump popover height.
+    const trailing = Array.from({ length: Math.max(0, 42 - firstDow - daysInMonth) }, () => h("i"));
     const prevBtn = h("button", { type: "button", "data-month": "-1", "aria-label": L("上个月", "Previous month"), disabled: state.mk <= minMk }, "‹");
     const nextBtn = h("button", { type: "button", "data-month": "1", "aria-label": L("下个月", "Next month"), disabled: state.mk >= maxMk }, "›");
     const title = L(`${y} 年 ${m + 1} 月`, new Date(Date.UTC(y, m, 1)).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }));
-    calBox.replaceChildren(
-      h("div.u-cal-head", {}, prevBtn, h("b", {}, title), nextBtn),
-      h("div.u-cal-grid", {}, ...weekHeaders, ...blanks, ...dayButtons),
-    );
-    return dayButtons;
+    const grid = h("div.u-cal-grid", {}, ...weekHeaders, ...blanks, ...dayButtons, ...trailing);
+    calBox.replaceChildren(h("div.u-cal-head", {}, prevBtn, h("b", {}, title), nextBtn), grid);
+    return { dayButtons, grid };
   }
 
   function paintRange(dayButtons, state) {
@@ -144,7 +144,12 @@ window.UsagePicker = (() => {
         : winMin;
       return { nowMs, todayKey, minKey };
     };
-    const redrawCal = () => { dayButtons = renderCalendarGrid(calBox, picker, bounds()); paintRange(dayButtons, picker); };
+    const redrawCal = (dir = 0) => {
+      const res = renderCalendarGrid(calBox, picker, bounds());
+      dayButtons = res.dayButtons;
+      paintRange(dayButtons, picker);
+      if (dir) globalThis.ANMotion?.reveal?.(res.grid, { dx: dir * 10, dy: 0, duration: 150 });
+    };
     const place = () => {
       if (pop.hidden) return;
       const a = app?.getBoundingClientRect?.(), s = anchor?.getBoundingClientRect?.();
@@ -236,7 +241,7 @@ window.UsagePicker = (() => {
         return;
       }
       const monthDelta = btn.getAttribute?.("data-month") ?? btn.dataset?.month;
-      if (monthDelta != null) { picker.mk += Number(monthDelta); redrawCal(); return; }
+      if (monthDelta != null) { const d = Number(monthDelta); picker.mk += d; redrawCal(d); return; }
       if (btn.id === "u-apply" || btn.attributes?.id === "u-apply") applyCustom();
       else if (btn.id === "u-napply" || btn.attributes?.id === "u-napply") applyHours();
     });
