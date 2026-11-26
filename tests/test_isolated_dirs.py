@@ -279,19 +279,20 @@ def test_custom_filter_runs_on_create_and_an_untouched_worktree_is_released(
 ) -> None:
     repo = _init_repo(tmp_path / "repo")
     marker = tmp_path / "smudge-ran"
-    _git(repo, "config", "filter.secret.clean", "cat")
-    _git(repo, "config", "filter.secret.smudge", "cat")
+    # The smudge rewrites bytes, so the checked-out file differs from its blob.
+    _git(repo, "config", "filter.secret.clean", "tr A-Z a-z")
+    _git(repo, "config", "filter.secret.smudge", "tr a-z A-Z")
     _git(repo, "config", "filter.secret.required", "true")
     (repo / ".gitattributes").write_text("*.enc filter=secret\n", encoding="utf-8")
     (repo / "a.enc").write_text("secret\n", encoding="utf-8")
     _git(repo, "add", ".gitattributes", "a.enc")
     _git(repo, "commit", "-m", "encrypted file")
-    smudge = _script(tmp_path / "smudge.sh", f"touch '{marker.as_posix()}'\ncat\n")
+    smudge = _script(tmp_path / "smudge.sh", f"touch '{marker.as_posix()}'\ntr a-z A-Z\n")
     _git(repo, "config", "filter.secret.smudge", smudge)
     dirs = IsolatedDirs(tmp_path / "data")
     created = dirs.create(repo, workspace_id="ws-1")
     assert marker.exists()
-    assert (created.worktree_path / "a.enc").read_text(encoding="utf-8") == "secret\n"
+    assert (created.worktree_path / "a.enc").read_text(encoding="utf-8") == "SECRET\n"
     summary, warnings = dirs.settle_task(
         created.id, workspace_id="ws-1", lease=created.lease, auto_release=True
     )
@@ -811,6 +812,7 @@ def test_lfs_clean_filter_is_not_run_by_checks(tmp_path: Path) -> None:
     dirs = IsolatedDirs(tmp_path / "data")
     created = dirs.create(repo, workspace_id="ws-1")
     created.lease.release()
+    marker.unlink(missing_ok=True)  # Creation may run it, as git worktree add does.
     (created.worktree_path / "a.bin").write_text("bbbb\n", encoding="utf-8")
     assert dirs.summarize_changes(created.id).summary_status == "complete"
     assert not marker.exists()

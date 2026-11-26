@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -488,6 +489,8 @@ def add_worktree_locked(
     run_git(cmd, cwd=main_root, disable_hooks=False, neutralize_filters=False)
     if is_link(worktree_path) or not worktree_path.is_dir():
         raise IsolationError(f"Created worktree directory is invalid: {worktree_path}")
+    if filter_driver_names(worktree_path):
+        _refresh_index_after_checkout(worktree_path)
     actual_head = (
         run_git(["rev-parse", "--verify", "HEAD^{commit}"], cwd=worktree_path)
         .stdout.strip()
@@ -502,6 +505,22 @@ def add_worktree_locked(
         )
     ).resolve()
     return git_dir
+
+
+def _refresh_index_after_checkout(worktree_path: Path) -> None:
+    """Record checked-out stat data so inspection, which runs no filters, sees files as clean.
+
+    Files written in the same second as the index stay racily clean, and Git re-reads them; with
+    filters neutralized a smudged file then differs from its blob. Refreshing after the second
+    turns over stores stat data Git trusts.
+    """
+    time.sleep(1.02 - time.time() % 1)
+    run_git(
+        ["update-index", "-q", "--refresh"],
+        cwd=worktree_path,
+        allowed_exit_codes=(0, 1),
+        neutralize_filters=False,
+    )
 
 
 def never_checked_out(worktree_path: Path) -> bool:
