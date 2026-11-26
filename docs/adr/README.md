@@ -32,7 +32,7 @@
 | 0026 | [会话存储改为 SQLite](0026-sqlite-conversation-store.md) | 部分取代 | [ADR-0033](0033-boss-workspace-handover.md)、[ADR-0048](0048-sqlite-schema-evolution.md)、[ADR-0060](0060-tray-detects-orphaned-running-work.md) |
 | 0027 | [DeepSeek 官方路由自动恢复已存认证](0027-deepseek-official-route-stored-credentials.md) | 已接受 | — |
 | 0028 | [默认模型与档位跟随 CLI 自身设置](0028-follow-cli-default-model.md) | 部分取代 | [ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0042](0042-pass-cli-default-effort.md)、[ADR-0062](0062-service-owned-member-names.md) |
-| 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0108](0108-multi-account-isolation.md)、[ADR-0118](0118-link-existing-claude-account-dirs.md)、[ADR-0123](0123-multi-decision-model-providers.md)；提交说明与 PR 内容可手填由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充 |
+| 0029 | [设置页只提供选择，不提供手填输入](0029-settings-without-free-text.md) | 部分取代 | [ADR-0032](0032-cli-permission-tiers.md)、[ADR-0035](0035-member-cards-one-row-per-cli.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0044](0044-meeting-voice-cloud-and-key-input.md)、[ADR-0108](0108-multi-account-isolation.md)、[ADR-0118](0118-link-existing-claude-account-dirs.md)、[ADR-0123](0123-multi-decision-model-providers.md)；提交说明与 PR 内容可手填由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 补充（已由 [ADR-0126](0126-tray-git-status-read-only.md) 撤掉） |
 | 0030 | [App「技能」页提供可选 Skill，评审门控为首个，评审工位在 App 设置](0030-optional-review-gate-skill.md) | 部分取代 | [ADR-0036](0036-app-owns-service-skills.md)、[ADR-0037](0037-app-writes-orchestration-rules.md)、[ADR-0038](0038-role-applies-app-seat.md)；T3 主线程的适用范围由 [ADR-0121](0121-t3-code-orchestration.md) 修订 |
 | 0031 | [单向编排使用派发指令约束](0031-prompt-only-orchestration.md) | 已接受 | [ADR-0043](0043-service-prompt-instructions.md) |
 | 0032 | [App 按 CLI 设权限档位](0032-cli-permission-tiers.md) | 部分取代 | [ADR-0057](0057-boss-answers-native-prompts.md)、[ADR-0059](0059-claude-tier-fallback.md)、[ADR-0076](0076-full-permission-default.md) |
@@ -118,7 +118,7 @@
 | 0112 | [手机经 Tailscale 访问托盘的远程入口](0112-mobile-remote-via-tailscale.md) | 已被 ADR-0113 取代 | [ADR-0113](0113-chat-desktop-split-out.md) |
 | 0113 | [多 agent 聊天桌面端另立项目，AgentNave 保持以 MCP 编排为主](0113-chat-desktop-split-out.md) | 部分修订 | 「Git 与 PR 归新项目」由 [ADR-0115](0115-tray-git-status-and-basic-ops.md) 修订（只读状态与基础操作回到托盘）；取代 ADR-0111、ADR-0112；恢复 ADR-0103、ADR-0109 的原条款；保留 ADR-0111 对 ADR-0056、ADR-0072 依据的更正 |
 | 0114 | [Claude 与 agy 保持交互 TUI，boss 以用户身份驱动，结果靠宿主自己唤醒收取](0114-tui-runtime-like-a-user.md) | 已接受 | 修订 ADR-0003、0043、0056、0057、0062、0064、0067、0072、0082、0084、0104（作废 PTY 键入投递）、0107、0109；沿用 ADR-0031、0018、0049、0102、0105、0113；T3 主线程的适用范围由 [ADR-0121](0121-t3-code-orchestration.md) 修订 |
-| 0115 | [托盘显示 Git 与 PR 状态，并提供基础 Git 操作](0115-tray-git-status-and-basic-ops.md) | 已接受 | 修订 ADR-0113（Git 与 PR 的只读状态与基础操作回到托盘）、ADR-0098（用户打开规则后自动清理隔离目录）；补充 ADR-0029、ADR-0092 |
+| 0115 | [托盘显示 Git 与 PR 状态，并提供基础 Git 操作](0115-tray-git-status-and-basic-ops.md) | 部分修订 | 修订 ADR-0113（Git 与 PR 的只读状态与基础操作回到托盘）、ADR-0098（用户打开规则后自动清理隔离目录）；补充 ADR-0029、ADR-0092；基础操作与对 ADR-0029 的补充由 [ADR-0126](0126-tray-git-status-read-only.md) 撤掉 |
 | 0116 | [运行中任务长时间无实质进展时提醒 boss 一次](0116-progress-stall-reminder.md) | 已接受 | 补充 ADR-0049；沿用 ADR-0114 的到限提醒方式 |
 | 0117 | [普通私聊派发不必先读 Skill，用法放进工具描述与回执](0117-private-dispatch-without-skill.md) | 部分修订 | 修订 ADR-0068 的「归属」；沿用 ADR-0028、0032、0043、0056、0074、0114；T3 主线程的适用范围由 [ADR-0121](0121-t3-code-orchestration.md) 修订、[ADR-0122](0122-merge-split-and-parallel-presets.md) |
 | 0118 | [App 添加 Claude 账号可关联已有配置目录](0118-link-existing-claude-account-dirs.md) | 已接受 | 修订 ADR-0108（恢复关联已有目录）、ADR-0029（允许手填账号配置目录）、ADR-0022（具名账号接入行不显示「待确认生效」）；沿用 ADR-0108 外部目录账号边界 |
@@ -129,3 +129,4 @@
 | 0123 | [决策模型支持多平台与本机 System One 端点](0123-multi-decision-model-providers.md) | 已接受 | 修订 ADR-0029、ADR-0044、ADR-0087；沿用 ADR-0093、ADR-0121 |
 | 0124 | [派生会话空闲时结束进程、随时可续，随 boss 关闭，在办公室单独成区](0124-derived-session-lifecycle.md) | 已接受 | 修订 ADR-0109；沿用 ADR-0114、ADR-0120 |
 | 0125 | [建隔离目录和 git worktree add 一样执行仓库的 hooks、filter 与 LFS](0125-isolated-dirs-follow-git-worktree.md) | 已接受 | 修订 ADR-0085、ADR-0092；沿用 ADR-0098 |
+| 0126 | [托盘的 Git 与 PR 只显示状态，不再提供提交、推送、开 PR 等操作](0126-tray-git-status-read-only.md) | 已接受 | 修订 ADR-0115 第 3、5 节与对 ADR-0029 的补充 |

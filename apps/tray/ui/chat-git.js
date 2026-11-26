@@ -1,6 +1,6 @@
 "use strict";
-// Git workspace & GitHub PR status + user-confirmed basic Git ops for CLI sessions (ADR-0115).
-// No background polling: refreshes on initial load, window focus, turn end, and after Git ops.
+// Git workspace & GitHub PR status for CLI sessions (ADR-0115; read-only since ADR-0126).
+// No background polling: refreshes on initial load, window focus, and turn end.
 const ChatGit = (() => {
   const { h, L, setAttr, relTime } = AN;
   const SVG_NS = "http://www.w3.org/2000/svg";
@@ -266,61 +266,7 @@ const ChatGit = (() => {
     return [L(`CI 通过 (${checks.passed})`, `CI passed (${checks.passed})`), "good"];
   }
 
-  function opButton(label, disabled, run, primary = false) {
-    const btn = h(`button.gp-op-btn${primary ? ".primary" : ""}`, { type: "button", disabled }, label);
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (disabled) return;
-      hideCard();
-      run();
-    });
-    return btn;
-  }
-
-  function canPush(git, merged) {
-    if (!git?.is_git || git.detached || !git.branch) return false;
-    if (merged && !git.ahead) return false;
-    if (!git.upstream) return true;
-    if (git.ahead > 0) return true;
-    if (git.default_branch && git.branch !== git.default_branch && git.upstream.endsWith(`/${git.default_branch}`)) {
-      return true;
-    }
-    return false;
-  }
-
-  function canCreatePr(git, prs, ghReady, merged) {
-    if (!ghReady || !git?.is_git || git.detached || !git.branch || !git.github_repo) return false;
-    if (merged) return false;
-    if (git.default_branch && git.branch === git.default_branch) return false;
-    if (typeof git.ahead_of_default === "number" && git.ahead_of_default === 0) return false;
-    const hasOpenForBranch = (prs || []).some(
-      (pr) => (pr.state === "open" || pr.state === "draft") && pr.head_ref_name === git.branch,
-    );
-    return !hasOpenForBranch;
-  }
-
-  function buildOpsRow(git, prs, target, disabled, ghReady, cls = "gp-ops", merged = false) {
-    if (!git?.is_git || !target || typeof ChatGitOps === "undefined") return null;
-    const buttons = [];
-    if (git.changed_files > 0) {
-      buttons.push(opButton(L("提交", "Commit"), disabled, () => ChatGitOps.openCommit(target), true));
-    }
-    if (git.upstream && !git.detached) {
-      const pullLabel = git.behind > 0 ? L(`拉取 ↓${git.behind}`, `Pull ↓${git.behind}`) : L("拉取", "Pull");
-      buttons.push(opButton(pullLabel, disabled, () => ChatGitOps.openPull(target)));
-    }
-    if (canPush(git, merged)) {
-      const pushLabel = git.ahead > 0 ? L(`推送 ↑${git.ahead}`, `Push ↑${git.ahead}`) : L("推送", "Push");
-      buttons.push(opButton(pushLabel, disabled, () => ChatGitOps.openPush(target)));
-    }
-    if (canCreatePr(git, prs, ghReady, merged)) {
-      buttons.push(opButton(L("开 PR", "Create PR"), disabled, () => ChatGitOps.openCreatePr(target)));
-    }
-    return buttons.length ? h(`div.${cls}`, {}, ...buttons) : null;
-  }
-
-  function buildGitSection(git, prs, target, working, ghReady) {
+  function buildGitSection(git, working) {
     if (!git?.is_git) return null;
     const branchText = git.branch || (git.detached ? L("游离 HEAD", "Detached HEAD") : "HEAD");
     const syncParts = [];
@@ -357,7 +303,6 @@ const ChatGit = (() => {
         ...dirtyNodes,
         ...syncParts.map((text) => h("span.gp-sync", {}, text)),
       ),
-      buildOpsRow(git, prs, target, working, ghReady, "gp-ops"),
     );
   }
 
@@ -368,7 +313,7 @@ const ChatGit = (() => {
     return null;
   }
 
-  function buildPrRow(pr, target, working, ghReady) {
+  function buildPrRow(pr) {
     const tone = prTone(pr);
     const prIconKind = pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open";
     const chips = [];
@@ -385,18 +330,6 @@ const ChatGit = (() => {
     if (pr.additions || pr.deletions) {
       diffNodes.push(h("span.gp-add", {}, `+${pr.additions}`));
       diffNodes.push(h("span.gp-del", {}, `-${pr.deletions}`));
-    }
-    let mergeBtn = null;
-    if (ghReady && pr.state === "open" && target && typeof ChatGitOps !== "undefined") {
-      const mergeDisabled = working || pr.mergeable === "conflicting";
-      mergeBtn = h("button.gp-pr-merge", { type: "button", disabled: mergeDisabled }, L("合并 PR", "Merge PR"));
-      mergeBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (mergeDisabled) return;
-        hideCard();
-        void ChatGitOps.openMergePr(target, pr);
-      });
     }
     return h(
       "div.gp-pr",
@@ -415,14 +348,7 @@ const ChatGit = (() => {
         ...diffNodes,
         pr.updated_at && AN.at(pr.updated_at) ? h("time.gp-pr-time", {}, relTime(pr.updated_at)) : null,
       ),
-      chips.length || mergeBtn
-        ? h(
-            "div.gp-pr-foot",
-            {},
-            h("div.gp-pr-chips", {}, ...chips),
-            mergeBtn ? h("div.gp-pr-actions", {}, mergeBtn) : null,
-          )
-        : null,
+      chips.length ? h("div.gp-pr-foot", {}, h("div.gp-pr-chips", {}, ...chips)) : null,
     );
   }
 
@@ -441,11 +367,11 @@ const ChatGit = (() => {
     if (pin || pendingAnchor === anchor) cancelPendingOpen();
     clearTimeout(closeTimer);
     closeTimer = 0;
-    const { entry, target, working } = payload;
+    const { entry, working } = payload;
     const ghReady = store.snap.gh_status === "ready";
     const prs = ghReady && Array.isArray(entry.prs) ? entry.prs : [];
-    const gitNode = buildGitSection(entry.git, prs, target, Boolean(working), ghReady);
-    const prNodes = prs.map((pr) => buildPrRow(pr, target, Boolean(working), ghReady));
+    const gitNode = buildGitSection(entry.git, Boolean(working));
+    const prNodes = prs.map((pr) => buildPrRow(pr));
     if (!gitNode && !prNodes.length) return;
 
     const opening = card.hidden || cardAnchor !== anchor;
@@ -665,8 +591,6 @@ const ChatGit = (() => {
     const ghReady = store.snap.gh_status === "ready";
     const user = findIsolatedUser(d, ctx);
     const hasActiveTerminal = Boolean(user?.kind === "terminal" && (user.active || user.open));
-    const opsDisabled = d.status === "using" || d.status === "unfinished" || hasActiveTerminal;
-    const target = { kind: "isolated", id: d.id };
 
     if (git?.is_git) {
       const chunks = [];
@@ -704,16 +628,6 @@ const ChatGit = (() => {
       const tone = prTone(pr);
       const icoKind = pr.state === "merged" ? "merged" : pr.state === "closed" ? "closed" : "open";
       const ci = checksLabel(pr.checks);
-      let mergeBtn = null;
-      if (pr.state === "open" && typeof ChatGitOps !== "undefined") {
-        const mergeDisabled = opsDisabled || pr.mergeable === "conflicting";
-        mergeBtn = h("button.gp-pr-merge", { type: "button", disabled: mergeDisabled }, L("合并 PR", "Merge PR"));
-        mergeBtn.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (!mergeDisabled) void ChatGitOps.openMergePr(target, pr);
-        });
-      }
       nodes.push(
         h(
           "div.iso-pr",
@@ -727,14 +641,9 @@ const ChatGit = (() => {
             h(`span.gp-pr-state.gp-tone-${tone}`, {}, prStateLabel(pr.state)),
           ),
           ci ? githubAnchor(`a.gp-chip.gp-tone-${ci[1]}`, resolveChecksUrl(pr), ci[0]) : null,
-          mergeBtn,
         ),
       );
     }
-
-    const isoPrs = info?.pr ? [info.pr] : [];
-    const opsRow = buildOpsRow(git, isoPrs, target, opsDisabled, ghReady, "iso-ops", Boolean(info?.merged_pr));
-    if (opsRow) nodes.push(opsRow);
 
     if (user) {
       const userLabel = user.kind === "terminal"

@@ -1,4 +1,4 @@
-//! Non-isolated working directory checks for ADR-0115 Git/PR status and write guards.
+//! Non-isolated working directory checks for the read-only ADR-0115 Git/PR status (ADR-0126).
 
 use std::path::{Path, PathBuf};
 
@@ -34,17 +34,5 @@ impl Reader {
             .flat_map(|snap| crate::stage::running_in(&snap.view["director"]))
             .map(PathBuf::from)
             .collect()
-    }
-
-    /// Whether any running task or meeting seat currently works in `dir` or a subdirectory
-    /// (excluding separate isolated worktrees nested under `dir`).
-    pub(crate) fn has_running_non_isolated_in_dir(&self, dir: &Path) -> bool {
-        let isolated_dirs: Vec<PathBuf> = crate::isolated::read(&self.root)
-            .into_iter()
-            .map(|d| PathBuf::from(d.path))
-            .collect();
-        self.running_cwds()
-            .iter()
-            .any(|cwd| is_non_isolated_in_dir(cwd, dir, &isolated_dirs))
     }
 }

@@ -494,7 +494,7 @@ impl GitPr {
                     .put_gh_status(now, GhStatus::NotAuthenticated);
                 return None;
             }
-            Err(GhError::RateLimited | GhError::HeadMismatch(_) | GhError::Other(_)) => {
+            Err(GhError::RateLimited | GhError::Other(_)) => {
                 return None;
             }
         };
@@ -535,7 +535,7 @@ impl GitPr {
                     .put_gh_status(now, GhStatus::NotAuthenticated);
                 return None;
             }
-            Err(GhError::RateLimited | GhError::HeadMismatch(_) | GhError::Other(_)) => {
+            Err(GhError::RateLimited | GhError::Other(_)) => {
                 return None;
             }
         };
@@ -685,7 +685,7 @@ pub(crate) fn request(
             });
             Response::json(&snap)
         }),
-        _ => ops::request(app, reader, method, path, action, body),
+        _ => ops::request(method, path, action, body),
     }
 }
 

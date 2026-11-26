@@ -1015,12 +1015,6 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .gp-add { color: var(--done); font-family: var(--mono); font-weight: 600; }
 .gp-del { color: var(--bad); font-family: var(--mono); font-weight: 600; }
 .gp-sync { color: var(--muted); }
-.gp-ops { display: grid; grid-template-columns: repeat(auto-fit, minmax(74px, 1fr)); gap: 6px; padding-top: 4px; }
-.gp-op-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); font-size: 11.5px; font-weight: 550; cursor: pointer; white-space: nowrap; transition: background 0.12s, border-color 0.12s; }
-.gp-op-btn:hover:not(:disabled) { background: var(--card-hover); border-color: var(--line-strong); }
-.gp-op-btn.primary { background: color-mix(in srgb, var(--accent) 14%, var(--card)); border-color: color-mix(in srgb, var(--accent) 36%, var(--line)); color: var(--accent); }
-.gp-op-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, var(--card)); }
-.gp-op-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .gp-prs { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .gp-git:first-child:empty + .gp-prs, .gp-prs:first-child { padding-top: 0; border-top: 0; }
 .gp-pr { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: 8px; background: var(--card); }
@@ -1034,10 +1028,6 @@ button.pill { border: 0; font-family: inherit; cursor: pointer; }
 .gp-pr-time { margin-left: auto; color: var(--faint); }
 .gp-pr-foot { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .gp-pr-chips { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
-.gp-pr-actions { flex: none; display: flex; align-items: center; gap: 4px; margin-left: auto; }
-.gp-pr-merge { height: 22px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--show) 36%, var(--line)); border-radius: 5px; background: color-mix(in srgb, var(--show) 14%, transparent); color: var(--show); font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-.gp-pr-merge:hover:not(:disabled) { background: color-mix(in srgb, var(--show) 24%, transparent); }
-.gp-pr-merge:disabled { opacity: 0.45; cursor: not-allowed; }
 .gp-chip { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; line-height: 16px; text-decoration: none; background: var(--card-hover); color: var(--soft); }
 a.gp-chip { cursor: pointer; }
 a.gp-chip:hover { text-decoration: underline; }
@@ -1059,29 +1049,8 @@ a.gp-chip:hover { text-decoration: underline; }
 .iso-pr-link > .gp-pr-ref, .iso-pr-link > .gp-pr-state { flex: none; }
 .iso-pr-link:hover .iso-pr-title { text-decoration: underline; }
 .iso-pr-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
-.iso-ops { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; padding-top: 2px; }
 .iso-user { display: flex; align-items: center; min-width: 0; }
 .iso-user-btn { display: block; max-width: 100%; text-align: left; padding: 2px 8px; border-radius: 6px; background: var(--card-hover); color: var(--accent); font-size: 11.5px; font-weight: 550; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .iso-user-btn:hover { background: color-mix(in srgb, var(--accent) 14%, var(--card-hover)); text-decoration: underline; }
 .act-note.iso-merged { color: var(--show); }
 .iso-merged-link { color: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
-
-/* ---- Git/PR confirmation dialogs (ADR-0115 §3) ---- */
-dialog.gp-dialog { width: min(460px, 92vw); }
-.gp-dlg-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
-.gp-dlg-count { margin-left: auto; font-size: 11.5px; color: var(--soft); font-variant-numeric: tabular-nums; }
-.gp-dlg-pr-title { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
-.gp-arrow { color: var(--faint); font-weight: 600; }
-.gp-file-list { list-style: none; margin: 0 0 10px; padding: 6px 8px; max-height: 168px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; }
-.gp-file-item { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.gp-file-code { flex: none; width: 14px; text-align: center; font-family: var(--mono); font-weight: 700; font-size: 11px; }
-.gp-file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); color: var(--ink); }
-.gp-file-empty { color: var(--muted); padding: 4px 2px; }
-.gp-field { display: flex; flex-direction: column; align-items: stretch; gap: 5px; margin-top: 10px; }
-.gp-field-label { font-size: 12px; font-weight: 550; color: var(--soft); }
-.gp-field .act-input { margin-top: 0; }
-.gp-textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: 12.5px/1.45 inherit; resize: vertical; }
-.gp-check { display: inline-flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12.5px; color: var(--ink); cursor: pointer; }
-.gp-methods { margin-top: 2px; }
-.gp-error { margin: 12px 0 0; padding: 8px 10px; max-height: 180px; overflow: auto; border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--line)); border-radius: 7px; background: color-mix(in srgb, var(--bad) 10%, var(--bg)); color: var(--bad); font: 11.5px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; }
-.gp-error[hidden] { display: none; }

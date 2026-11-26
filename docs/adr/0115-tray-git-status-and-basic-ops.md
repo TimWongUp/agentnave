@@ -1,6 +1,6 @@
 # ADR-0115：托盘显示 Git 与 PR 状态，并提供基础 Git 操作
 
-- 状态：已接受
+- 状态：已接受；第 3 节的写操作、第 5 节「可直接在隔离目录上提交、推送、开 PR」与对 ADR-0029 的补充由 [ADR-0126](0126-tray-git-status-read-only.md) 撤掉，只保留打开链接
 - 日期：2026-11-23
 - 修订：[ADR-0113](0113-chat-desktop-split-out.md) 中「Git 与 PR（含 PR 监听和 Auto-fix）归新项目」一条：只读状态与基础操作回到 AgentNave 托盘，PR 监听、Auto-fix、diff 与评审界面仍归 agent-desk。
 - 补充：[ADR-0029](0029-settings-without-free-text.md)：设置项仍不手填；提交说明、PR 标题这类内容输入照 Claude 桌面端可以手填。
