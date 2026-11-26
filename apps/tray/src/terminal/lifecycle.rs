@@ -4,7 +4,7 @@
 
 mod boss;
 mod idle;
-mod open;
+pub(super) mod open;
 mod revive;
 mod saved;
 #[cfg(all(test, unix))]

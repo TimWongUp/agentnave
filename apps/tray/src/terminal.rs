@@ -312,6 +312,12 @@ pub(crate) fn request(
         ("GET", "/app/terminal/output") => {
             terminals.output(id, number(query, "from"), param(query, "view"))
         }
+        ("GET", "/app/terminal/derived-turns") => terminals.derived_turns(
+            param(query, "workspace").unwrap_or_default(),
+            &param(query, "desk")
+                .and_then(crate::usage::percent_decode)
+                .unwrap_or_default(),
+        ),
         (_, "/app/terminal/pick") => response::action(method, action, || terminals.pick(app)),
         (_, "/app/terminal/start") => {
             response::post(method, action, body, |payload| terminals.start(&payload))

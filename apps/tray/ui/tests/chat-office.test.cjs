@@ -4417,3 +4417,130 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
   context.ChatTerminal.stayOnMessages("ws-hist", "thread:fresh");
   assert.equal(context.ChatTerminal.consumeOpenDesk("ws-hist", "thread:fresh"), false);
 });
+
+test("derived desk message view merges user turns as 用户 without mutating c.messages and surfaces log errors", async () => {
+  const { context } = auditUI();
+  const h = context.h;
+  const chatJs = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const extract = (name) => {
+    const start = chatJs.indexOf(`function ${name}(`);
+    const next = chatJs.indexOf("\nfunction ", start + 1);
+    return chatJs.slice(start, next === -1 ? chatJs.length : next);
+  };
+  const notice = h("div.dr-derived-note", { role: "status" });
+  notice.hidden = true;
+  const inner = h("div.dr-inner");
+  const tl = h("div.dr-tl", {}, notice, inner);
+  const requests = [];
+  let nextReply = {
+    turns: [
+      {
+        index: 1,
+        anchor: { prompt_id: "u1" },
+        user_text: "用户在终端里追问一句",
+        user_time: "2026-11-26T10:01:00Z",
+        assistant_text: "终端里的回复",
+        assistant_time: "2026-11-26T10:01:05Z",
+        status: "succeeded",
+        model: "claude-opus-4-6",
+      },
+    ],
+  };
+  const renderCalls = [];
+  const state = {
+    chat: null,
+    ctx: null,
+    drawer: { kind: "desk", key: "thread:s1" },
+    derivedTurns: { cache: new Map(), pending: new Map() },
+  };
+  const scope = {
+    AN: context.AN,
+    h,
+    state,
+    el: { tl, inner, derivedNotice: notice },
+    setText: context.setText,
+    ChatTerminal: { ofDesk: () => null },
+    load: async (url) => {
+      requests.push(url);
+      return nextReply;
+    },
+    renderConv: (...args) => renderCalls.push(args),
+  };
+  vm.runInNewContext(
+    [
+      extract("syncDerivedNotice"),
+      extract("isDerivedDeskView"),
+      extract("derivedTurnsVersionKey"),
+      extract("requestDerivedTurns"),
+      extract("buildDerivedUserMessages"),
+      extract("mergeDerivedMessages"),
+    ].join("\n"),
+    scope,
+  );
+  const chat = {
+    group: "s-ws",
+    created: "2026-11-26T10:00:00Z",
+    messages: [
+      {
+        id: "m-boss",
+        kind: "prompt",
+        speaker: { role: "boss", label: "boss" },
+        desk: "thread:s1",
+        text: "boss prompt",
+        time: "2026-11-26T10:00:00Z",
+        message_id: "msg-1",
+      },
+    ],
+  };
+  const desk = {
+    key: "thread:s1",
+    derived: true,
+    provider: "claude",
+    model: "claude-opus-4-6",
+    tasks: 1,
+    status: "idle",
+  };
+  const ctx = { desks: new Map([["thread:s1", desk]]) };
+  state.chat = chat;
+  state.ctx = ctx;
+
+  assert.equal(scope.isDerivedDeskView(chat, ctx, "thread:s1"), true);
+  assert.equal(scope.requestDerivedTurns(chat, ctx, "thread:s1"), null);
+  await state.derivedTurns.pending.get("s-ws|thread:s1");
+  assert.equal(requests[0], "/app/terminal/derived-turns?workspace=s-ws&desk=thread%3As1");
+  assert.equal(renderCalls.length, 1);
+
+  const cached = scope.requestDerivedTurns(chat, ctx, "thread:s1");
+  assert.equal(cached.turns.length, 1);
+  const built = scope.buildDerivedUserMessages(chat, desk, "thread:s1", cached.turns);
+  const merged = scope.mergeDerivedMessages(chat.messages, built);
+  assert.equal(chat.messages.length, 1, "c.messages must remain untouched");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(merged.map(m => m.text))),
+    ["boss prompt", "用户在终端里追问一句", "终端里的回复"],
+  );
+  assert.equal(merged[1].speaker.role, "user");
+  assert.equal(context.speakerName(merged[1]), "用户");
+  context.renderMarkdown = (node, text) => { context.setText(node, String(text)); };
+  const rec = context.createMessage(merged[1]);
+  rec.el.toggleAttribute = (name, on) => {
+    if (on) rec.el.attributes[name] = "";
+    else delete rec.el.attributes[name];
+  };
+  context.updateMessage(rec, merged[1], { ...ctx, c: chat }, merged[1].id);
+  const classes = String(rec.el.className).split(/\s+/);
+  assert.equal(classes.includes("msg"), true);
+  assert.equal(classes.includes("user"), true);
+
+  // When error comes back, notice banner shows while boss message remains.
+  nextReply = { turns: [], error: "找不到原生会话日志（可能已被 CLI 清理）" };
+  desk.tasks = 2;
+  scope.requestDerivedTurns(chat, ctx, "thread:s1");
+  await state.derivedTurns.pending.get("s-ws|thread:s1");
+  const errEntry = scope.requestDerivedTurns(chat, ctx, "thread:s1");
+  scope.syncDerivedNotice(errEntry.error);
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.textContent, "找不到原生会话日志（可能已被 CLI 清理）");
+  scope.syncDerivedNotice("");
+  assert.equal(notice.hidden, true);
+});

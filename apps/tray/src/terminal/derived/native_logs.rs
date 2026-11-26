@@ -1,5 +1,7 @@
 //! Pure read-only native log/transcript/rollout inspectors for derived terminal turns (ADR-0109, ADR-0114).
 
+pub(in crate::terminal) mod turns;
+
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};

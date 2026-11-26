@@ -10,6 +10,7 @@ use std::time::Instant;
 use serde_json::{Value, json};
 
 use super::super::account::{self, Active};
+use super::super::derived::native_logs::turns::TaskMatch;
 use super::super::{
     Attach, DerivedInfo, NewDerived, Terminals, derived, links, thread_desk_key, wakeup,
 };
@@ -24,20 +25,18 @@ const PENDING_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The latest call of a desk that ran in an App terminal, as the service history has it.
 #[derive(Debug)]
-pub(super) struct Found {
-    provider: String,
-    native: String,
-    cwd: PathBuf,
-    model: Option<String>,
-    effort: Option<String>,
-    account: Option<String>,
-    isolation_id: Option<String>,
-    workspace: String,
+pub(in crate::terminal) struct Found {
+    pub(in crate::terminal) provider: String,
+    pub(in crate::terminal) native: String,
+    pub(in crate::terminal) cwd: PathBuf,
+    pub(in crate::terminal) model: Option<String>,
+    pub(in crate::terminal) effort: Option<String>,
+    pub(in crate::terminal) account: Option<String>,
+    pub(in crate::terminal) isolation_id: Option<String>,
+    pub(in crate::terminal) workspace: String,
 }
 
-/// The latest task of `desk` in `workspace` that ran in an App terminal on a native session.
-pub(super) fn find(root: &Path, workspace: &str, desk: &str) -> Result<Found, &'static str> {
-    const MISSING: &str = "服务历史里没有这个工位在 App 终端里运行过的会话";
+fn task_bodies(root: &Path, workspace: &str) -> Result<Vec<Value>, &'static str> {
     let connection = crate::db::read(root)
         .ok()
         .flatten()
@@ -51,32 +50,113 @@ pub(super) fn find(root: &Path, workspace: &str, desk: &str) -> Result<Found, &'
     let bodies = query
         .query_map([workspace], |row| row.get::<_, String>(0))
         .map_err(|_| "读不到服务历史")?;
-    let text = |task: &Value, key: &str| {
-        task[key]
-            .as_str()
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-    };
-    bodies
+    Ok(bodies
         .filter_map(|body| serde_json::from_str::<Value>(&body.ok()?).ok())
+        .collect())
+}
+
+fn non_empty_task_field(task: &Value, key: &str) -> Option<String> {
+    task[key]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn to_task_match(task: &Value) -> TaskMatch {
+    TaskMatch {
+        prompt: task["prompt"].as_str().unwrap_or_default().to_owned(),
+        native_anchor: task.get("native_anchor").filter(|v| v.is_object()).cloned(),
+        has_forward: task["forward"]
+            .as_array()
+            .is_some_and(|arr| !arr.is_empty()),
+    }
+}
+
+/// The latest task of `desk` in `workspace` that ran in an App terminal on a native session,
+/// alongside all matching tasks for that native session in chronological order.
+pub(in crate::terminal) fn find_session_with_tasks(
+    root: &Path,
+    workspace: &str,
+    desk: &str,
+) -> Result<(Found, Vec<TaskMatch>), &'static str> {
+    const MISSING: &str = "服务历史里没有这个工位在 App 终端里运行过的会话";
+    let bodies = task_bodies(root, workspace)?;
+    let mut terminal_matches: Vec<(String, String, Value)> = bodies
+        .iter()
         .filter(|task| task["execution_mode"] == "terminal")
         .filter_map(|task| {
-            let provider = text(&task, "provider")?;
-            let native = text(&task, "session_id")?;
-            (thread_desk_key(&provider, &native) == desk).then_some((provider, native, task))
+            let provider = non_empty_task_field(task, "provider")?;
+            let native = non_empty_task_field(task, "session_id")?;
+            (thread_desk_key(&provider, &native) == desk).then_some((
+                provider,
+                native,
+                task.clone(),
+            ))
         })
-        .max_by_key(|(_, _, task)| timestamp(task["time"].as_str().unwrap_or_default()))
-        .map(|(provider, native, task)| Found {
-            cwd: PathBuf::from(text(&task, "cwd").unwrap_or_default()),
-            model: text(&task, "model"),
-            effort: text(&task, "effort"),
-            account: text(&task, "account"),
-            isolation_id: text(&task, "isolation_id"),
-            workspace: workspace.to_owned(),
-            provider,
-            native,
+        .collect();
+    terminal_matches
+        .sort_by_key(|(_, _, task)| timestamp(task["time"].as_str().unwrap_or_default()));
+    let (provider, native, latest) = terminal_matches.last().cloned().ok_or(MISSING)?;
+    let mut session_tasks: Vec<(i64, TaskMatch)> = bodies
+        .iter()
+        .filter(|task| {
+            non_empty_task_field(task, "provider").as_deref() == Some(provider.as_str())
+                && non_empty_task_field(task, "session_id").as_deref() == Some(native.as_str())
         })
-        .ok_or(MISSING)
+        .map(|task| {
+            (
+                timestamp(task["time"].as_str().unwrap_or_default()).unwrap_or_default(),
+                to_task_match(task),
+            )
+        })
+        .collect();
+    session_tasks.sort_by_key(|(at, _)| *at);
+    let found = Found {
+        cwd: PathBuf::from(non_empty_task_field(&latest, "cwd").unwrap_or_default()),
+        model: non_empty_task_field(&latest, "model"),
+        effort: non_empty_task_field(&latest, "effort"),
+        account: non_empty_task_field(&latest, "account"),
+        isolation_id: non_empty_task_field(&latest, "isolation_id"),
+        workspace: workspace.to_owned(),
+        provider,
+        native,
+    };
+    Ok((found, session_tasks.into_iter().map(|(_, m)| m).collect()))
+}
+
+pub(in crate::terminal) fn find_pending_terminal_tasks(
+    root: &Path,
+    workspace: &str,
+    provider: &str,
+    native: &str,
+) -> Vec<TaskMatch> {
+    let Ok(bodies) = task_bodies(root, workspace) else {
+        return Vec::new();
+    };
+    let mut matched: Vec<(i64, TaskMatch)> = bodies
+        .iter()
+        .filter(|task| task["execution_mode"] == "terminal")
+        .filter(|task| {
+            non_empty_task_field(task, "provider").as_deref() == Some(provider)
+                && matches!(
+                    non_empty_task_field(task, "session_id").as_deref(),
+                    Some(sid) if sid == native
+                )
+        })
+        .map(|task| {
+            (
+                timestamp(task["time"].as_str().unwrap_or_default()).unwrap_or_default(),
+                to_task_match(task),
+            )
+        })
+        .collect();
+    matched.sort_by_key(|(at, _)| *at);
+    matched.into_iter().map(|(_, m)| m).collect()
+}
+
+/// The latest task of `desk` in `workspace` that ran in an App terminal on a native session.
+pub(super) fn find(root: &Path, workspace: &str, desk: &str) -> Result<Found, &'static str> {
+    find_session_with_tasks(root, workspace, desk).map(|(found, _)| found)
 }
 
 /// Whose terminal a session goes into: its row, or a new one with the session held meanwhile.

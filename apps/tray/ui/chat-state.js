@@ -149,6 +149,7 @@ const state = {
   opener: null,
   scopeKey: "",
   nodes: new Map(),
+  derivedTurns: { cache: new Map(), pending: new Map() },
   expanded: new Set(),
   seenIds: new Set(),
   unseen: 0,

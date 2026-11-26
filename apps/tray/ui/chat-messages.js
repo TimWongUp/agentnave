@@ -86,28 +86,32 @@ function renderMarkdown(root, text) {
 // ---------------------------------------------------------------- reading a message
 // ctx = lookup tables of the payload being rendered (see contextOf).
 const isBoss = (m) => m.speaker?.role === "manager";
+const isUser = (m) => m.speaker?.role === "user";
+const isSender = (m) => isBoss(m) || isUser(m);
 function speakerDesk(m, ctx) {
   return m.desk && ctx.desks.get(m.desk);
 }
 function speakerName(m) {
   const s = m.speaker || {};
   if (s.role === "system") return s.label || L("系统", "System");
+  if (isUser(m)) return L("用户", "User");
   if (isBoss(m)) return "boss";
   // A message signs with the name it was said under, not what its desk goes by now.
   return AN.deskName(s);
 }
 // The role leads the name and the CLI follows it, so several "默认模型" desks stay apart.
 function speakerRole(m) {
-  return isBoss(m) ? "" : m.speaker?.identity?.role || "";
+  return isSender(m) ? "" : m.speaker?.identity?.role || "";
 }
 function speakerSub(m) {
   const s = m.speaker || {};
-  if (s.role === "system" || isBoss(m)) return "";
+  if (s.role === "system" || isSender(m)) return "";
   return AN.cliOf(s);
 }
 function speakerFace(m, ctx) {
   const s = m.speaker || {};
   if (s.role === "system") return null;
+  if (isUser(m)) return h("span.avatar.user-ava", {}, L("用", "U"));
   // A boss wears the character of the model it ran when it spoke, a former boss included.
   if (isBoss(m)) return ART.head(ART.character(s.provider || ctx.c.host, s.model), "idle");
   const d = speakerDesk(m, ctx);
@@ -164,6 +168,7 @@ function verbOf(m, ctx) {
   const room = t?.kind === "room" ? ctx.rooms.get(t.id) : null;
   if (m.kind === "handover") return ["", []];
   if (m.kind === "typing") return ["", [], L("正在输入…", "Typing…"), ""];
+  if (isUser(m)) return ["", []];
   if (m.kind === "instruction") return ["", targets(m, ctx), "", L("仅 TA 可见", "Private")];
   // A private task has one recipient, so only a meeting names who a message is for.
   const to = t?.kind === "room" ? targets(m, ctx) : [];
@@ -444,7 +449,7 @@ function updateMessage(rec, m, ctx, id) {
     (m.thread?.kind === "room" && m.visibility !== "public" && !isBoss(m));
   setClass(
     rec.el,
-    `msg${isBoss(m) ? " boss" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.reply_to ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
+    `msg${isBoss(m) ? " boss" : ""}${isUser(m) ? " user" : ""}${priv ? " private" : ""}${m.status === "review" ? " pending" : ""}${m.reply_to ? " reply" : ""}${m.kind === "typing" ? " typing-msg" : ""}${m.kind === "forward" ? " forward" : ""}${flashing}`,
   );
   setText(rec.verb, verb);
   setText(rec.verb2, verb2);

@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "name": "claude_mixed_anchored",
+      "provider": "claude",
+      "file": "claude_mixed.jsonl",
+      "tasks": [
+        {
+          "prompt": "Inspect the build setup",
+          "native_anchor": {"prompt_id": "p-boss-1"},
+          "has_forward": false
+        }
+      ],
+      "expected_all_turns": [
+        {
+          "index": 0,
+          "anchor": {"prompt_id": "p-boss-1"},
+          "user_text": "Inspect the build setup",
+          "user_time": "2026-11-26T10:01:00Z",
+          "assistant_text": "Build uses uv and cargo.",
+          "assistant_time": "2026-11-26T10:01:11Z",
+          "status": "succeeded",
+          "model": "claude-sonnet-4-6"
+        },
+        {
+          "index": 1,
+          "anchor": {"prompt_id": "p-user-1"},
+          "user_text": "What tests exist?",
+          "user_time": "2026-11-26T10:02:00Z",
+          "assistant_text": "pytest and cargo test.\n\nBackground check also passed.",
+          "assistant_time": "2026-11-26T10:02:11Z",
+          "status": "succeeded",
+          "model": "claude-sonnet-4-6"
+        },
+        {
+          "index": 2,
+          "anchor": {"prompt_id": "p-user-2"},
+          "user_text": "Run full deploy",
+          "user_time": "2026-11-26T10:03:00Z",
+          "assistant_text": null,
+          "assistant_time": null,
+          "status": "interrupted",
+          "model": null
+        }
+      ],
+      "expected_user_turn_indices": [1, 2]
+    },
+    {
+      "name": "claude_mixed_legacy",
+      "provider": "claude",
+      "file": "claude_mixed.jsonl",
+      "tasks": [
+        {
+          "prompt": "Inspect the build setup",
+          "native_anchor": null,
+          "has_forward": false
+        }
+      ],
+      "expected_user_turn_indices": [1, 2]
+    },
+    {
+      "name": "codex_duplicate_prompt_anchored",
+      "provider": "codex",
+      "file": "codex_mixed.jsonl",
+      "tasks": [
+        {
+          "prompt": "Check lint status",
+          "native_anchor": {"turn_id": "t-boss-1", "client_user_message_id": "inv-boss-1"},
+          "has_forward": false
+        }
+      ],
+      "expected_all_turns": [
+        {
+          "index": 0,
+          "anchor": {"turn_id": "t-boss-1", "client_user_message_id": "inv-boss-1"},
+          "user_text": "Check lint status",
+          "user_time": "2026-11-26T10:01:01Z",
+          "assistant_text": "Lint is clean.",
+          "assistant_time": "2026-11-26T10:01:10Z",
+          "status": "succeeded",
+          "model": "gpt-5.3-codex"
+        },
+        {
+          "index": 1,
+          "anchor": {"turn_id": "t-user-1"},
+          "user_text": "Check lint status",
+          "user_time": "2026-11-26T10:02:01Z",
+          "assistant_text": "Still clean after your edit.",
+          "assistant_time": "2026-11-26T10:02:08Z",
+          "status": "succeeded",
+          "model": "gpt-5.3-codex"
+        },
+        {
+          "index": 2,
+          "anchor": {"turn_id": "t-user-2"},
+          "user_text": "Abort this turn",
+          "user_time": "2026-11-26T10:03:01Z",
+          "assistant_text": null,
+          "assistant_time": "2026-11-26T10:03:05Z",
+          "status": "interrupted",
+          "model": null
+        },
+        {
+          "index": 3,
+          "anchor": {"turn_id": "t-user-3"},
+          "user_text": "Still running turn",
+          "user_time": "2026-11-26T10:04:01Z",
+          "assistant_text": null,
+          "assistant_time": null,
+          "status": "running",
+          "model": null
+        }
+      ],
+      "expected_user_turn_indices": [1, 2, 3]
+    },
+    {
+      "name": "antigravity_mixed_anchored",
+      "provider": "antigravity",
+      "file": "antigravity_mixed.jsonl",
+      "tasks": [
+        {
+          "prompt": "Summarize README",
+          "native_anchor": {"user_input_index": 0},
+          "has_forward": false
+        }
+      ],
+      "expected_all_turns": [
+        {
+          "index": 0,
+          "anchor": {"user_input_index": 0},
+          "user_text": "Summarize README",
+          "user_time": "2026-11-26T10:01:00Z",
+          "assistant_text": "README explains setup.",
+          "assistant_time": "2026-11-26T10:01:06Z",
+          "status": "succeeded",
+          "model": "gemini-3.8-flash-high"
+        },
+        {
+          "index": 1,
+          "anchor": {"user_input_index": 3},
+          "user_text": "Check tests too",
+          "user_time": "2026-11-26T10:02:00Z",
+          "assistant_text": "Unit tests live under tests/.\n\nIntegration tests also pass.",
+          "assistant_time": "2026-11-26T10:02:09Z",
+          "status": "succeeded",
+          "model": "gemini-3.8-flash-high"
+        },
+        {
+          "index": 2,
+          "anchor": {"user_input_index": 7},
+          "user_text": "Pending user prompt",
+          "user_time": "2026-11-26T10:03:00Z",
+          "assistant_text": null,
+          "assistant_time": null,
+          "status": "running",
+          "model": null
+        }
+      ],
+      "expected_user_turn_indices": [1, 2]
+    },
+    {
+      "name": "antigravity_mixed_legacy",
+      "provider": "antigravity",
+      "file": "antigravity_mixed.jsonl",
+      "tasks": [
+        {
+          "prompt": "Summarize README",
+          "native_anchor": null,
+          "has_forward": false
+        }
+      ],
+      "expected_user_turn_indices": [1, 2]
+    }
+  ],
+  "unrecognized_file": "unrecognized.jsonl"
+}
