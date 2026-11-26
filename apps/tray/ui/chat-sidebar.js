@@ -142,8 +142,12 @@
   }
 
   function focusSearch() {
-    if (typeof state !== "undefined" && typeof narrow !== "undefined" && state.sideCollapsed && !narrow.matches) {
-      if (typeof setPeek === "function") setPeek("side", true);
+    if (typeof state !== "undefined" && typeof narrow !== "undefined" && !narrow.matches) {
+      if (typeof railMode === "function" && railMode()) {
+        if (typeof toggleRailPeek === "function") toggleRailPeek(true);
+      } else if (state.sideCollapsed && typeof setPeek === "function") {
+        setPeek("side", true);
+      }
     }
     const input = $("side-search-input");
     if (!input) return;

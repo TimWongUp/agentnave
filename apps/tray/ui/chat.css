@@ -95,14 +95,15 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
 .gi.gi-child .gi-meta { color: var(--tone, var(--muted)); font-variant-numeric: tabular-nums; line-height: 16px; min-height: 16px; }
-.gi-more, .gl-grp-more { position: absolute; z-index: 1; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; font-size: 15px; line-height: 1; color: var(--muted); background: var(--surface); box-shadow: 0 0 0 1px var(--line); opacity: 0; cursor: pointer; }
-.gi-more { right: 6px; top: 50%; margin-top: -11px; }
-.gl-grp-more { right: 36px; top: 50%; margin-top: -11px; }
+.gi-more, .gl-grp-more { z-index: 2; display: grid; place-items: center; height: 22px; border-radius: 6px; font-size: 15px; line-height: 1; color: var(--muted); background: var(--surface); box-shadow: 0 0 0 1px var(--line); opacity: 0; cursor: pointer; }
+.gi-more { flex: none; width: 0; margin-left: -9px; overflow: hidden; box-shadow: none; pointer-events: none; }
+.gl-grp-more { position: absolute; right: 36px; top: 50%; width: 22px; margin-top: -11px; }
 .gi-more[hidden], .gl-grp-more[hidden] { display: none; }
-:is(.gi, .gl-grp):is(:hover, :focus-within) > :is(.gi-more, .gl-grp-more), :is(.gi-more, .gl-grp-more):focus-visible { opacity: 1; }
+.gi:is(:hover, :focus-within) > .gi-more, .gi-more:focus-visible { width: 22px; margin-left: 0; overflow: visible; box-shadow: 0 0 0 1px var(--line); opacity: 1; pointer-events: auto; }
+.gl-grp:is(:hover, :focus-within) > .gl-grp-more, .gl-grp-more:focus-visible { opacity: 1; }
 .gl-grp:has(> .gl-grp-more:not([hidden])):is(:hover, :focus-within) .gl-grp-n { visibility: hidden; }
 .gi-more:hover, .gl-grp-more:hover { color: var(--ink); background: var(--card-hover); }
-@media (hover: none) { .gi-more, .gl-grp-more { opacity: 1; } }
+@media (hover: none) { .gi-more { width: 22px; margin-left: 0; overflow: visible; box-shadow: 0 0 0 1px var(--line); opacity: 1; pointer-events: auto; } .gl-grp-more { opacity: 1; } }
 .gi-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
 .gi-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 12px; color: var(--muted); }
 .gi-label { min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -169,21 +170,6 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side="off"] .gi::before { left: 2px; }
   .app[data-side="off"] .gi-more { display: grid; }
 }
-/* 761–920px: the list is a 64px rail; its button lays the full list over the office and back, so the rail never disappears */
-@media (max-width: 920px) and (min-width: 761px) {
-  .app[data-side-peek] { position: relative; }
-  .app[data-side-peek] > .floor-wrap { grid-column: 2; }
-  .app[data-side-peek] .side { position: absolute; z-index: 40; top: 0; bottom: 0; left: 0; width: var(--side-w, 248px); box-shadow: 8px 0 30px #0006; }
-  .app[data-side-peek] .split-side { display: none; }
-  .app[data-side-peek] :is(.side-head, .side-search, .gl-grp, .gi-body) { display: flex; }
-  .app[data-side-peek] .gl-sec { display: block; }
-  .app[data-side-peek] .gl-more { display: block; padding: 6px 10px; text-align: left; font-size: 13px; }
-  .app[data-side-peek] .gl-more::after { content: none; }
-  .app[data-side-peek] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
-  .app[data-side-peek] .gi { justify-content: flex-start; padding: 5px 10px; }
-  .app[data-side-peek] .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
-  .app[data-side-peek] .gi-more { display: grid; }
-}
 @media not all and (max-width: 920px) {
   .app:has(> .conv.folded) { --conv-col: 0px; }
   .conv.folded { position: absolute; z-index: 40; top: 0; right: 0; bottom: 0; width: var(--conv-track); transform: translateX(100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; }
@@ -212,6 +198,21 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .gl-more, .gl-more[data-folded="true"] { display: block; padding: 4px 0; text-align: center; font-size: 0; }
   .gl-more::after { content: "⋯"; font-size: 16px; line-height: 1; }
   .gi::before { left: 2px; }
+  /* 761–1100px: the list is a 64px rail; its button lays the full list over the office and back, so the rail never disappears */
+  .app[data-side-peek] { position: relative; }
+  .app[data-side-peek] > .floor-wrap { grid-column: 2; }
+  .app[data-side-peek] > .conv { grid-column: 3; }
+  .app[data-side-peek] > .conv.folded { grid-column: auto; }
+  .app[data-side-peek] .side { position: absolute; z-index: 40; top: 0; bottom: 0; left: 0; width: var(--side-w, 248px); box-shadow: 8px 0 30px #0006; }
+  .app[data-side-peek] .split-side { display: none; }
+  .app[data-side-peek] :is(.side-head, .side-search, .gl-grp, .gi-body) { display: flex; }
+  .app[data-side-peek] .gl-sec { display: block; }
+  .app[data-side-peek] .gl-more { display: block; padding: 6px 10px; text-align: left; font-size: 13px; }
+  .app[data-side-peek] .gl-more::after { content: none; }
+  .app[data-side-peek] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
+  .app[data-side-peek] .gi { justify-content: flex-start; padding: 5px 10px; }
+  .app[data-side-peek] .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
+  .app[data-side-peek] .gi-more { display: grid; }
 }
 
 /* ---- floor ---- */

@@ -42,6 +42,7 @@ const {
 
 const narrow = window.matchMedia("(max-width: 760px)");
 const overlay = window.matchMedia("(max-width: 920px)"); // the conversation slides over the floor
+const rail = window.matchMedia("(max-width: 1100px)"); // the workspace list shrinks to a 64px rail
 const reduceMotion = AN.reducedMotion;
 const FOLD_PX = 320; // a bubble taller than this is folded behind "展开全文"
 const NEAR_BOTTOM = 64; // within this distance of the bottom the reader "follows" the chat
@@ -209,13 +210,13 @@ window.addEventListener("hashchange", () => {
   sync();
   refresh();
 });
-for (const query of [narrow, overlay])
+for (const query of [narrow, overlay, rail])
   query.addEventListener("change", () => {
     // a breakpoint changes which columns can peek: start from the settled state
     state.sidePeek = state.convPeek = false;
     el.app.removeAttribute("data-side-peek");
     el.app.removeAttribute("data-conv-peek");
-    if (typeof renderSideToggle === "function") renderSideToggle(); // the 761–920px rail never folds away
+    if (typeof renderSideToggle === "function") renderSideToggle(); // the 761–1100px rail never folds away
     sync();
     renderList();
     if (state.chat) renderAll(state.chat);

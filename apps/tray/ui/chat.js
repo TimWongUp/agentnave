@@ -87,9 +87,9 @@ el.convToggle.addEventListener("click", () => {
 });
 
 // The workspace column folds away the same way; the grid itself is told through data-side.
-// Between 761 and 920px the list is a 64px rail that never folds away: its button lays the full list over
+// Between 761 and 1100px the list is a 64px rail that never folds away: its button lays the full list over
 // the office and back instead (the peek stays until a click outside it, Escape, or a choice in it).
-const railMode = () => overlay.matches && !narrow.matches;
+const railMode = () => rail.matches && !narrow.matches;
 function renderSideToggle() {
   const L = AN.L || ((zh) => zh);
   const rail = railMode();
@@ -139,7 +139,7 @@ document.querySelector("header.bar .bar-end")?.append(el.convToggle);
 const PEEK_EDGE = 6;
 const PEEK_DELAY = 300;
 const PEEK = {
-  side: { panel: el.app.querySelector(".side"), button: el.sideToggle, can: () => state.sideCollapsed && !overlay.matches, atEdge: (x) => x <= PEEK_EDGE },
+  side: { panel: el.app.querySelector(".side"), button: el.sideToggle, can: () => state.sideCollapsed && !rail.matches, atEdge: (x) => x <= PEEK_EDGE },
   conv: { panel: el.drawer, button: el.convToggle, can: () => state.convCollapsed && !overlay.matches, atEdge: (x) => x >= innerWidth - PEEK_EDGE },
 };
 const peekTimers = {};

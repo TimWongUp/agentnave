@@ -800,7 +800,7 @@ fn finish_upgrade(app: &AppHandle) {
             return Ok(());
         }
         let dirs = service_dirs(app).ok_or("宿主目录检测尚未完成，请刷新检测后重试")?;
-        let uv = find_uv().ok_or("未找到 uv，请先安装 uv 或复制命令在终端运行")?;
+        let uv = find_uv().ok_or("未找到 uv，请先安装 uv 后重试")?;
         // Install beside the running service instead of over it; the active manifest then moves
         // the hosts over, which takes effect when each host next starts its server.
         let target = version_dirs(app, &dirs, VERSION).ok_or("无法定位应用数据目录")?;

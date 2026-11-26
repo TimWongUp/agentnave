@@ -212,7 +212,7 @@ test("a manual isolated cleanup reports how many directories this run removed", 
   assert.equal(last(), "上次清理 刚刚 · 本次清理 2 个");
 });
 
-test("below 920px the sidebar button lays the full list over the 64px rail and back", () => {
+test("between 761px and 1100px the sidebar button lays the full list over the 64px rail and back", () => {
   const { h } = dom();
   const chat = source("chat.js");
   const slice = chat.slice(chat.indexOf("// The workspace column folds away"), chat.indexOf("// The conversation button belongs"));
@@ -221,10 +221,10 @@ test("below 920px the sidebar button lays the full list over the 64px rail and b
   const toggle = h("button");
   const app = { dataset: {}, querySelector: () => side, removeAttribute() {} };
   const state = { sideCollapsed: true, sidePeek: false };
-  const overlay = { matches: true };
+  const rail = { matches: true };
   const peeks = [];
   const context = vm.createContext({
-    AN: { L: (zh) => zh }, overlay, narrow: { matches: false }, state, el: { app, sideToggle: toggle },
+    AN: { L: (zh) => zh }, rail, narrow: { matches: false }, state, el: { app, sideToggle: toggle },
     setAttr: (node, key, value) => { node.attrs[key] = value; },
     setPeek: (name, on) => { assert.equal(name, "side"); state.sidePeek = on; peeks.push(on); },
     slideIn() {}, store() {}, SIDE_COLLAPSED_KEY: "k",
@@ -253,7 +253,7 @@ test("below 920px the sidebar button lays the full list over the 64px rail and b
   side.listeners.click[0]({ target: { closest: (selector) => (selector === ".gi" ? {} : null) } });
   assert.equal(state.sidePeek, false, "choosing an agent closes the list");
 
-  overlay.matches = false;
+  rail.matches = false;
   toggle.listeners.click[0]();
   assert.equal(state.sideCollapsed, false, "wide windows still fold and unfold");
   assert.equal(app.dataset.side, "on");

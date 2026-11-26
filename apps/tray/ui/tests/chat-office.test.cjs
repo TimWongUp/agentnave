@@ -665,7 +665,7 @@ test("a folded column peeks on its button or the window edge and leaves 300ms af
   const side = node(), conv = node(), sideToggle = node(), convToggle = node(), attrs = {}, timers = [], doc = node();
   let renders = 0;
   const context = vm.createContext({
-    state: { sideCollapsed: true, convCollapsed: true, chat: {} }, narrow: { matches: false }, overlay: { matches: false }, innerWidth: 1200,
+    state: { sideCollapsed: true, convCollapsed: true, chat: {} }, narrow: { matches: false }, overlay: { matches: false }, rail: { matches: false }, innerWidth: 1200,
     el: { app: { querySelector: () => side, toggleAttribute(name, on) { attrs[name] = on; }, getBoundingClientRect: () => ({ top: 48 }) },
       sideToggle, convToggle, drawer: conv },
     document: { addEventListener: (name, fn) => { doc.listeners[name] = fn; }, activeElement: {} },
@@ -745,12 +745,12 @@ test("boss office keeps only the meetings list (including ended meetings) and om
 
 test("crossing a breakpoint drops both peeks before the page is drawn again", () => {
   const source = readFileSync(`${__dirname}/../chat-state.js`, "utf8");
-  const start = source.indexOf("for (const query of [narrow, overlay])");
+  const start = source.indexOf("for (const query of [narrow, overlay, rail])");
   const listeners = [], removed = [], order = [];
   const query = { addEventListener: (_name, fn) => listeners.push(fn) };
   const state = { sidePeek: true, convPeek: true, chat: {} };
   const context = vm.createContext({
-    narrow: query, overlay: query, state, el: { app: { removeAttribute: name => removed.push(name) } },
+    narrow: query, overlay: query, rail: query, state, el: { app: { removeAttribute: name => removed.push(name) } },
     sync() { order.push("sync"); }, renderList() {}, renderAll: () => order.push(`draw ${state.convPeek}`),
   });
   vm.runInContext(source.slice(start, source.indexOf("\n\n", start)), context);
@@ -2384,6 +2384,7 @@ test("leaving terminal mode clears .term-mode before applyFolds and long/peer/br
     FIG: 100,
     narrow: { matches: false },
     overlay: { matches: false },
+    rail: { matches: false },
     reduceMotion: { matches: true },
     stored: () => null,
     store() {},
