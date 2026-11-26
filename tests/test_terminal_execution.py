@@ -295,6 +295,8 @@ async def test_terminal_schema_requires_matching_tray(monkeypatch: pytest.Monkey
 async def test_conversation_persists_terminal_result_and_acknowledges(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import sqlite3
+
     from agentnave import conversations as conversations_module
     from agentnave.account_limits import full_accounts
     from agentnave.conversations import Conversations
@@ -354,6 +356,25 @@ async def test_conversation_persists_terminal_result_and_acknowledges(
         await asyncio.gather(*conversations.collectors)
         saved = conversations.records[task.conversation_id].state.tasks[-1]
         assert saved.output == "answer" and saved.execution_mode == "terminal"
+        assert saved.native_anchor == {"turn_id": "turn", "client_user_message_id": "client"}
+        with sqlite3.connect(tmp_path / "agentnave.db") as db:
+            columns = [row[1] for row in db.execute("PRAGMA table_info(tasks)").fetchall()]
+            assert columns == [
+                "id",
+                "conversation_id",
+                "position",
+                "provider",
+                "session_id",
+                "status",
+                "body",
+            ]
+            body = json.loads(
+                db.execute("SELECT body FROM tasks WHERE id = ?", (saved.id,)).fetchone()[0]
+            )
+            assert body["native_anchor"] == {
+                "turn_id": "turn",
+                "client_user_message_id": "client",
+            }
         assert manager.settled_requests == [
             {
                 "tray_pid": 42,

@@ -688,11 +688,9 @@ def _transcript_path(provider: str, account: str | None, session_id: str) -> Pat
 
 
 def _to_task_match(task: TaskRecord) -> TaskMatch:
-    raw_anchor: object = getattr(task, "native_anchor", None)
-    parsed_anchor = _obj(raw_anchor)
     return TaskMatch(
         prompt=task.prompt,
-        native_anchor=parsed_anchor or None,
+        native_anchor=dict(task.native_anchor) if task.native_anchor else None,
         has_forward=bool(task.forward),
     )
 
