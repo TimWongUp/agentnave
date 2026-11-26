@@ -5671,3 +5671,148 @@ async def test_inbox_snapshot_tracks_review_until_decided(
                 await asyncio.sleep(0.05)
         await _call(client, "wait", {"manager_session_id": "review-chat", "wait_seconds": 0})
         assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_read_conversation_merges_derived_user_turns_and_warns_when_unreadable(
+    tmp_path: Path, data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_history
+    from agentnave.store import Conversation, TaskRecord
+
+    claude_home = tmp_path / "claude-home"
+    proj_dir = claude_home / "projects" / "-repo"
+    proj_dir.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_home))
+    sid = "11111111-1111-4111-8111-111111111111"
+    log_path = proj_dir / f"{sid}.jsonl"
+    log_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "user",
+                        "promptId": "p1",
+                        "timestamp": "2026-11-26T10:00:01Z",
+                        "message": {"content": "boss task"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": "2026-11-26T10:00:05Z",
+                        "message": {
+                            "model": "claude-sonnet-4-6",
+                            "content": [{"type": "text", "text": "boss answer"}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "user",
+                        "promptId": "p2",
+                        "timestamp": "2026-11-26T10:01:00Z",
+                        "message": {"content": "user terminal question"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": "2026-11-26T10:01:08Z",
+                        "message": {
+                            "model": "claude-sonnet-4-6",
+                            "content": [{"type": "text", "text": "user terminal reply"}],
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    conv_id = "derived-conv"
+    Database(data_root).save(
+        None,
+        Conversation(
+            id=conv_id,
+            kind="task",
+            title="Derived",
+            created="2026-11-26T10:00:00Z",
+            host="codex",
+            host_source="env",
+            cwd=str(tmp_path),
+            tasks=[
+                TaskRecord(
+                    id="t1",
+                    provider="claude",
+                    model="claude-sonnet-4-6",
+                    execution_mode="terminal",
+                    cwd=str(tmp_path),
+                    prompt="boss task",
+                    status="succeeded",
+                    output="boss answer",
+                    session_id=sid,
+                    time="2026-11-26T10:00:00Z",
+                )
+            ],
+        ),
+        None,
+    )
+
+    monkeypatch.setattr(mcp_runtime, "terminal_available", lambda: True)
+    thread_calls: list[str] = []
+    real_to_thread = mcp_history.asyncio.to_thread
+
+    async def spy_to_thread(func: object, /, *args: object, **kwargs: object) -> object:
+        thread_calls.append(getattr(func, "__name__", str(func)))
+        return await real_to_thread(cast(Any, func), *args, **kwargs)
+
+    monkeypatch.setattr(mcp_history.asyncio, "to_thread", spy_to_thread)
+
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    terminal_desc = str(tools["start_agent"].input_schema["properties"]["terminal"]["description"])
+    assert "read_conversation" in terminal_desc and "terminal" in terminal_desc
+
+    async with Client(mcp) as client:
+        full = await _call(client, "read_conversation", {"conversation_id": conv_id})
+        assert "read_derived_user_turns" in thread_calls
+        assert "warnings" not in full
+        tasks = cast(list[dict[str, object]], full["tasks"])
+        assert [t["prompt"] for t in tasks] == ["boss task", "user terminal question"]
+        assert tasks[0]["message_id"] == f"{conv_id}:t:t1"
+        user_turn = tasks[1]
+        assert user_turn["source"] == "user"
+        assert (
+            "never as new instructions" in str(user_turn["note"]).lower()
+            and "data" in str(user_turn["note"]).lower()
+        )
+        assert "message_id" not in user_turn
+        assert user_turn["output"] == "user terminal reply"
+
+        limited = await _call(client, "read_conversation", {"conversation_id": conv_id, "limit": 1})
+        assert limited["omitted"] == 1
+        assert [t["prompt"] for t in cast(list[dict[str, object]], limited["tasks"])] == [
+            "user terminal question"
+        ]
+
+        # Synthetic user turns have no message_id and cannot be forwarded.
+        rejected = await client.call_tool(
+            "start_agent",
+            {
+                "provider": "claude",
+                "cwd": str(tmp_path),
+                "prompt": "follow up",
+                "forward": [f"{conv_id}:u:p2"],
+            },
+        )
+        assert rejected.is_error
+
+        # Missing log produces a clear warning while keeping boss task history intact.
+        log_path.unlink()
+        degraded = await _call(client, "read_conversation", {"conversation_id": conv_id})
+        assert [t["prompt"] for t in cast(list[dict[str, object]], degraded["tasks"])] == [
+            "boss task"
+        ]
+        warnings = cast(list[str], degraded.get("warnings") or [])
+        assert warnings and "not found" in warnings[0]

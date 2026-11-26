@@ -249,7 +249,8 @@ async def start_agent(
         bool | None,
         Field(
             description="Run this task in an App terminal the user can open. Before starting a new "
-            "one, ask the user whether to and which seat or CLI, unless they asked for it this turn."
+            "one, ask the user whether to and which seat or CLI, unless they asked for it this turn. "
+            "The user may also chat directly inside that terminal; call read_conversation when you need those turns."
         ),
     ] = None,
     wait: Annotated[bool, Field(description=DISPATCH_WAIT)] = False,

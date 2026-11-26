@@ -280,3 +280,54 @@ def test_read_turn_retries_codex_rollout_flush_and_partial_last_line(
         )
     finally:
         writer.join()
+
+
+def test_derived_turns_shared_fixtures(tmp_path: Path) -> None:
+    import json
+
+    from agentnave.derived_turns import (
+        NativeLogError,
+        TaskMatch,
+        filter_user_turns,
+        read_native_turns,
+    )
+
+    fixtures_dir = Path(__file__).parent / "fixtures" / "derived-turns"
+    manifest = json.loads((fixtures_dir / "cases.json").read_text(encoding="utf-8"))
+    for case in manifest["cases"]:
+        provider = str(case["provider"])
+        turns = read_native_turns(provider, fixtures_dir / str(case["file"]))
+        expected_all = case.get("expected_all_turns")
+        if expected_all is not None:
+            actual = [
+                {
+                    "index": turn.index,
+                    "anchor": turn.anchor,
+                    "user_text": turn.user_text,
+                    "user_time": turn.user_time,
+                    "assistant_text": turn.assistant_text,
+                    "assistant_time": turn.assistant_time,
+                    "status": turn.status,
+                    "model": turn.model,
+                }
+                for turn in turns
+            ]
+            assert actual == expected_all, case["name"]
+        tasks = [
+            TaskMatch(
+                prompt=str(t["prompt"]),
+                native_anchor=t.get("native_anchor"),
+                has_forward=bool(t.get("has_forward", False)),
+            )
+            for t in case["tasks"]
+        ]
+        user_turns = filter_user_turns(turns, provider, tasks)
+        assert [t.index for t in user_turns] == case["expected_user_turn_indices"], case["name"]
+
+    bad_file = fixtures_dir / str(manifest["unrecognized_file"])
+    for provider in ("claude", "codex", "antigravity"):
+        with pytest.raises(NativeLogError, match="unrecognized"):
+            read_native_turns(provider, bad_file)
+
+    with pytest.raises(NativeLogError, match="unavailable"):
+        read_native_turns("claude", tmp_path / "missing.jsonl")
