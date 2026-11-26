@@ -7,12 +7,13 @@
 
 ## 背景
 
-服务建隔离目录时绕开了仓库配置的 hooks，跳过 LFS 下载，并拒绝有子模块或自定义 filter 的仓库。Claude Code、T3 Code 等宿主建 worktree 时直接执行 `git worktree add`，这三样都照 git 的默认行为处理。结果是同一个仓库里，宿主建的 worktree 有 `post-checkout` 钩子准备好的环境（例如 CodeGraph 索引）和完整的 LFS 文件，AgentNave 的隔离目录却没有；有子模块或自定义 filter 的仓库更是无法隔离。
+服务建隔离目录时绕开了仓库配置的 hooks，跳过 LFS 下载，并拒绝有子模块或自定义 filter 的仓库。T3 Code 建 worktree 时执行普通的 `git worktree add`，这三样都照 git 的默认行为处理；Claude Code 的 `--worktree` 与此前的 AgentNave 一样跳过 hooks、filter 与 LFS。结果是同一个仓库里，手动或经 T3 建的 worktree 有 `post-checkout` 钩子准备好的环境（例如 CodeGraph 索引）和完整的 LFS 文件，AgentNave 的隔离目录却没有；有子模块或自定义 filter 的仓库更是无法隔离。两种做法里选了跟 git 和 T3 一致，这是用户的决定。
 
 ## 决定
 
-- **建目录跟 git 一致**：新建与续接时原位重建隔离目录，都和 `git worktree add` 一样执行仓库配置的 hooks、filter 与 LFS 下载；有子模块的仓库照常建，子模块和 git 默认一样不初始化。这是用户的决定。
+- **建目录跟 git 一致**：新建与续接时原位重建隔离目录，都和 `git worktree add` 一样执行仓库配置的 hooks、filter 与 LFS 下载；有子模块的仓库照常建，子模块和 git 默认一样不初始化。
 - **检查与删除不变**：判断能否释放、自动释放与托盘删除时，仍不执行仓库的 hooks、filter 与文件监视程序，不进入嵌套仓库。`git worktree remove` 本来也不执行 hooks。
+- **没初始化的子模块不算嵌套仓库**：它只是一个空目录，没有可丢的东西，不挡自动释放，与 T3 Code 一致；子模块目录里有任何内容时仍按嵌套仓库要求确认。
 
 ## 取舍
 

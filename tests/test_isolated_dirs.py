@@ -301,7 +301,7 @@ def test_custom_filter_runs_on_create_and_an_untouched_worktree_is_released(
     dirs.close()
 
 
-def test_submodule_stays_uninitialized_and_the_worktree_is_still_released(tmp_path: Path) -> None:
+def test_uninitialized_submodule_does_not_hold_up_release(tmp_path: Path) -> None:
     sub_repo = _init_repo(tmp_path / "sub")
     repo = _init_repo(tmp_path / "repo")
     _git(
@@ -319,11 +319,13 @@ def test_submodule_stays_uninitialized_and_the_worktree_is_still_released(tmp_pa
     created.lease.release()
     submodule = created.worktree_path / "vendor" / "sub"
     assert submodule.is_dir() and not any(submodule.iterdir())
-    # A gitlink counts as a nested repository for release, so the first call asks for confirmation.
+    # An uninitialized gitlink is an empty directory, not a nested repository.
+    assert dirs.summarize_changes(created.id).nested_repos == ()
+    (submodule / "notes.txt").write_text("kept\n", encoding="utf-8")
     first = dirs.release(created.id, workspace_id="ws-1")
     assert first.status == "confirmation_required" and first.nested_repos == ("vendor/sub",)
-    done = dirs.release(created.id, workspace_id="ws-1", confirmation=first.confirmation)
-    assert done.status == "deleted"
+    (submodule / "notes.txt").unlink()
+    assert dirs.release(created.id, workspace_id="ws-1").status == "deleted"
     assert not created.worktree_path.exists()
     dirs.close()
 

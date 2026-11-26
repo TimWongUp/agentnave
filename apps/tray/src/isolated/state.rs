@@ -170,6 +170,18 @@ fn scan_nested_tree(wt_path: &Path, found: &mut BTreeSet<String>, limit: usize) 
     false
 }
 
+/// An uninitialized gitlink, as `git worktree add` leaves it, is an empty directory with nothing
+/// to lose.
+fn empty_or_missing_dir(path: &Path) -> bool {
+    if is_link(path) {
+        return false;
+    }
+    match fs::read_dir(path) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
 /// Detect gitlinks, untracked/tracked/ignored nested repositories, bare repos, and unreadable dirs.
 pub(crate) fn nested_repositories(
     git: &GitRunner,
@@ -191,7 +203,10 @@ pub(crate) fn nested_repositories_with_limit(
         if item.starts_with(b"160000 ")
             && let Some(pos) = item.iter().position(|&b| b == b'\t')
         {
-            nested.insert(decode_git_path(&item[pos + 1..]));
+            let rel = decode_git_path(&item[pos + 1..]);
+            if !empty_or_missing_dir(&wt_path.join(&rel)) {
+                nested.insert(rel);
+            }
         }
     }
     for token in status_raw.split(|&b| b == 0) {
