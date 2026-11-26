@@ -1,5 +1,7 @@
 //! Pure read-only native log/transcript/rollout inspectors for derived terminal turns (ADR-0109, ADR-0114).
 
+pub(in crate::terminal) mod turns;
+
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -73,6 +75,7 @@ pub(super) enum TranscriptLine {
 }
 
 /// Read the next line up to `MAX_TRANSCRIPT_LINE_BYTES`, preserving row alignment for oversized lines.
+/// A `Line` still being written has no trailing `\n`.
 pub(super) fn read_bounded_line(reader: &mut BufReader<File>, out: &mut String) -> TranscriptLine {
     let mut buf = Vec::new();
     let Ok(n) = reader
@@ -528,7 +531,6 @@ pub(super) enum CodexRolloutTurn {
     Failed(Option<String>),
 }
 
-#[cfg(unix)]
 pub(super) fn codex_homes() -> Vec<PathBuf> {
     if let Some(dir) = std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty()) {
         return vec![PathBuf::from(dir)];
@@ -538,7 +540,6 @@ pub(super) fn codex_homes() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-#[cfg(unix)]
 pub(super) fn codex_rollout_path_for_thread(homes: &[PathBuf], thread_id: &str) -> Option<PathBuf> {
     if thread_id.is_empty() || thread_id.contains(['/', '\\']) {
         return None;

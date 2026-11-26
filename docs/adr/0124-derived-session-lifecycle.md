@@ -1,6 +1,6 @@
 # ADR-0124：派生会话空闲时结束进程、随时可续，随 boss 关闭，在办公室单独成区
 
-- 状态：已接受
+- 状态：已接受（第 4 节「`read_conversation` 按会话读取暂不做」由 [ADR-0128](0128-derived-session-full-conversation.md) 作废）
 - 日期：2026-11-25
 - 修订：[ADR-0109](0109-in-app-derived-sessions.md)
   - 第 1 节「派生终端在 App 左栏挂在派发它的 agent 下方」：补上状态与办公室分区（本篇第 1 节）。

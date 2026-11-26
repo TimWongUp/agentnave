@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::{Value, json};
 
 use super::super::account::Active;
+use super::super::derived_children::PLAIN_HOLDER_ERR;
 use super::super::session::Session;
 use super::super::{
     Attach, DerivedHandle, DerivedLaunchConfig, NewDerived, Running, State, Terminals, derived,
@@ -237,6 +238,9 @@ impl Terminals {
         provider: &str,
         native: &str,
     ) -> Result<ResumeSlot, String> {
+        if self.has_live_plain_holder(provider, native) {
+            return Err(PLAIN_HOLDER_ERR.to_owned());
+        }
         let deadline = Instant::now() + PENDING_WAIT;
         loop {
             {

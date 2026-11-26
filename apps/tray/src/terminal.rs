@@ -8,9 +8,12 @@
 //! terminal with `?session=<id>`.
 
 mod account;
+mod activity;
 #[cfg(unix)]
 mod codex_server;
 mod derived;
+mod derived_children;
+mod derived_turns;
 mod elsewhere;
 mod input_gate;
 mod lifecycle;
@@ -254,8 +257,17 @@ impl Running {
             .as_deref()
             .filter(|s| !s.is_empty())
             .map(|sid| thread_desk_key(&self.provider, sid));
+        let boss_key = is_derived
+            .then(|| {
+                self.native
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map(|sid| crate::data::boss_app::boss_key(&self.provider, sid))
+            })
+            .flatten();
         json!({"id": self.id, "provider": self.provider, "art_model": art_model, "cwd": self.cwd.display().to_string(),
             "exit": self.session.exit(), "active": active,
+            "activity": (!is_derived && self.session.exit().is_none()).then(|| self.boss_activity()),
             // Tells the processes apart that ran in this row.
             "started": self.started.duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64()),
             "workspaces": self.workspaces, "project_key": crate::projects::OTHER,
@@ -266,7 +278,9 @@ impl Running {
             "parent_boss_key": self.derived.as_ref().map(|d| &d.parent_boss_key),
             "parent_workspace_id": self.derived.as_ref().and_then(|d| d.parent_workspace_id.as_deref()),
             "derived_busy": busy,
+            "derived_own_busy": self.derived.as_ref().is_some_and(|d| d.life.own_busy),
             "native": self.native,
+            "boss_key": boss_key,
             "isolation_id": self.derived.as_ref().and_then(|d| d.isolation_id.as_deref()),
             "desk_key": desk_key,
             "blocked_kind": self.derived.as_ref().and_then(|d| d.blocked_kind.as_deref())})
@@ -275,7 +289,7 @@ impl Running {
 
 /// Computes the service's private-thread desk key (`thread:<sha256(provider\0session_id)[:16]>`),
 /// matching `src/agentnave/naming.py::thread` and `stage.rs::task_desk`.
-pub(super) fn thread_desk_key(provider: &str, session_id: &str) -> String {
+pub(crate) fn thread_desk_key(provider: &str, session_id: &str) -> String {
     use sha2::{Digest, Sha256};
     use std::fmt::Write;
 
@@ -312,6 +326,12 @@ pub(crate) fn request(
         ("GET", "/app/terminal/output") => {
             terminals.output(id, number(query, "from"), param(query, "view"))
         }
+        ("GET", "/app/terminal/derived-turns") => terminals.derived_turns(
+            param(query, "workspace").unwrap_or_default(),
+            &param(query, "desk")
+                .and_then(crate::usage::percent_decode)
+                .unwrap_or_default(),
+        ),
         (_, "/app/terminal/pick") => response::action(method, action, || terminals.pick(app)),
         (_, "/app/terminal/start") => {
             response::post(method, action, body, |payload| terminals.start(&payload))
@@ -1154,11 +1174,11 @@ impl Terminals {
         let resume = workspaces
             .last()
             .filter(|_| session::resumes(&provider))
-            .map(|workspace| chat_session(workspace, &provider, account.as_ref()))
+            .map(|workspace| self.continuable_chat(workspace, &provider, account.as_ref()))
             .transpose();
         let resume = match resume {
             Ok(resume) => resume,
-            Err(error) => return Response::error(409, error),
+            Err(refusal) => return refusal,
         };
         if let Some(chat) = &resume
             && let Some(refusal) = self.unless_elsewhere(&chat.key, attach)
@@ -1215,7 +1235,8 @@ impl Terminals {
                 );
             }
         }
-        let Some((host, _, _)) = links::chat(&crate::data_files::data_root(), workspace) else {
+        let root = crate::data_files::data_root();
+        let Some((host, _, _)) = links::chat(&root, workspace) else {
             return Response::error(404, "找不到这段聊天的记录");
         };
         // A chat goes on as the account that began it; a removed account cannot be stood in for.
@@ -1227,9 +1248,9 @@ impl Terminals {
                 return Response::error(409, refusal);
             }
         };
-        let chat = match chat_session(workspace, &host, account.as_ref()) {
+        let chat = match self.continuable_chat(workspace, &host, account.as_ref()) {
             Ok(found) => found,
-            Err(error) => return Response::error(409, error),
+            Err(refusal) => return refusal,
         };
         let Some(cwd) = crate::data::boss_app::session_cwd_of(&host, &chat.record, &chat.id) else {
             return Response::error(409, "会话记录里没有它的文件夹");
@@ -1285,6 +1306,9 @@ impl Terminals {
         native: &str,
         attach: &Attach,
     ) -> Option<Response> {
+        if self.has_live_plain_holder(provider, native) {
+            return Some(Response::error(409, derived_children::PLAIN_HOLDER_ERR));
+        }
         let key = crate::data::boss_app::boss_key(provider, native);
         if let Some(refusal) = self.unless_elsewhere(&key, attach) {
             return Some(refusal);
@@ -1487,21 +1511,26 @@ struct Chat {
     key: String,
 }
 
-/// The native ID and session record of a workspace's boss chat, when its CLI is `provider` and
-/// can continue it. A chat of a named account is looked for in that account's folder.
-fn chat_session(
-    workspace: &str,
-    provider: &str,
-    account: Option<&Active>,
-) -> Result<Chat, &'static str> {
-    chat_session_in(
-        &crate::data_files::data_root(),
-        workspace,
-        provider,
-        account,
-    )
+impl Terminals {
+    /// The chat of a workspace to continue in a terminal of its own: never one a live derived
+    /// session holds, as a second process on it would fight the first.
+    fn continuable_chat(
+        &self,
+        workspace: &str,
+        provider: &str,
+        account: Option<&Active>,
+    ) -> Result<Chat, Response> {
+        let root = crate::data_files::data_root();
+        if let Some(refusal) = self.reject_if_live_derived_owner(&root, workspace) {
+            return Err(refusal);
+        }
+        chat_session_in(&root, workspace, provider, account)
+            .map_err(|error| Response::error(409, error))
+    }
 }
 
+/// The native ID and session record of a workspace's boss chat, when its CLI is `provider` and
+/// can continue it. A chat of a named account is looked for in that account's folder.
 fn chat_session_in(
     root: &Path,
     workspace: &str,

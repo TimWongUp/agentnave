@@ -1185,6 +1185,13 @@ class Conversations(ConversationStore):
             task.reported_model = result.reported_model or task.reported_model
             task.error = error
             task.prompts = self._prompt_audit(task.prompts, invocation_id)
+            terminal_run = self.manager.terminal_runs.get(invocation_id)
+            if (
+                terminal_run is not None
+                and terminal_run.anchor
+                and (result.error is None or result.error.code != "foreign_session")
+            ):
+                task.native_anchor = dict(terminal_run.anchor)
             summary = self.isolation_summaries.get(invocation_id)
             if summary is not None and summary.auto_released:
                 task.isolation_auto_released = True

@@ -364,6 +364,7 @@ function renderConv(c, ctx, forceMeasure = false) {
   setAttr(el.convToggle, "aria-label", hint);
   setAttr(el.convToggle, "title", hint);
   if (!visible) {
+    if (typeof syncDerivedNotice === "function") syncDerivedNotice("");
     AN.voice?.controls(false, null, ctx);
     // a drawer that is only folded keeps its conversation, scroll position and unread count included
     if (overlay.matches) state.scopeKey = "";
@@ -384,10 +385,12 @@ function renderConv(c, ctx, forceMeasure = false) {
     desk, desk ? chat => deskStream(chat.messages, contextOf(chat), desk).shown : null,
     desk ? chat => { const next = contextOf(chat); return chat.messages.filter(m => inDesk(m, desk, next)); } : null);
   if (state.drawer.kind === "all") {
+    if (typeof syncDerivedNotice === "function") syncDerivedNotice("");
     renderDirectory(c, ctx);
     return;
   }
   if (state.drawer.kind === "isolated") {
+    if (typeof syncDerivedNotice === "function") syncDerivedNotice("");
     renderIsolatedDrawer(c, ctx);
     return;
   }
@@ -401,10 +404,24 @@ function renderConv(c, ctx, forceMeasure = false) {
     state.expanded.clear();
     el.inner.replaceChildren();
     el.tl.scrollTop = 0;
+    if (state.drawer.kind === "desk" && typeof refreshDerivedTurns === "function") refreshDerivedTurns(c.group, state.drawer.key);
   }
   const stream = state.drawer.kind === "desk" ? deskStream(c.messages, ctx, state.drawer.key) : null;
   state.peers = stream?.peers || new Set();
-  const shown = threaded(stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx)));
+  let combined = stream ? stream.shown : c.messages.filter((m) => inScope(m, ctx));
+  let derivedNotice = "";
+  if (stream && typeof isDerivedDeskView === "function" && isDerivedDeskView(c, ctx, state.drawer.key)) {
+    const fetched = requestDerivedTurns(c, ctx, state.drawer.key);
+    if (fetched?.error) derivedNotice = fetched.error;
+    if (fetched?.turns?.length) {
+      combined = mergeDerivedMessages(
+        combined,
+        buildDerivedUserMessages(c, ctx.desks.get(state.drawer.key), state.drawer.key, fetched.turns),
+      );
+    }
+  }
+  if (typeof syncDerivedNotice === "function") syncDerivedNotice(derivedNotice);
+  const shown = threaded(combined);
   const head = scopeHead(c, ctx, shown);
   if (el.drIco.dataset.key !== head.key) {
     el.drIco.dataset.key = head.key;

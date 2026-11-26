@@ -34,6 +34,7 @@ const ChatTerminal = (() => {
     openOnce: null,
     wantDeskTerminal: null,
     derivedRevive: null,
+    derivedOwner: null,
     away: false, // the window was hidden since the list was last read
   };
   AN.onVisibility?.(() => {
@@ -287,6 +288,8 @@ const ChatTerminal = (() => {
       parent_workspace_id: parentGroup,
       desk_key: deskKey,
       native: x.native ?? null,
+      boss_key: x.boss_key ?? opts.desk?.boss_key ?? null,
+      derived_own_busy: Boolean(x.derived_own_busy),
       exit: x.exit ?? null,
       pending_results: x.pending_results ?? 0,
       waking,
@@ -333,6 +336,8 @@ const ChatTerminal = (() => {
       parent_workspace_id: parentGroup,
       desk_key: deskKey,
       native: null,
+      boss_key: d.boss_key ?? null,
+      derived_own_busy: false,
       exit: null,
       pending_results: 0,
       waking,
@@ -384,6 +389,45 @@ const ChatTerminal = (() => {
       rows.push(toItemRow(x, { rowId }));
     });
     return rows;
+  }
+
+  function derivedChildrenOf(parentGroup, deskKey) {
+    if (!parentGroup || !deskKey || typeof state === "undefined" || !Array.isArray(state?.groupsData)) return [];
+    const parent = state.groupsData.find((g) => g.group === parentGroup);
+    if (parent?.parent_workspace_id) return []; // one-level nesting only
+    const derivedRow = derivedOf(parentGroup).find((d) => d.desk_key === deskKey);
+    const liveTerm = ofDesk(parentGroup, deskKey);
+    const bossKey = derivedRow?.boss_key || liveTerm?.boss_key || null;
+    return state.groupsData.filter(
+      (g) =>
+        g.group !== parentGroup &&
+        g.handover !== "pending" &&
+        ((g.parent_workspace_id === parentGroup && g.parent_desk_key === deskKey) ||
+          Boolean(bossKey && g.owner === bossKey)),
+    );
+  }
+
+  function liveDerivedOwnerOf(group) {
+    if (!group) return null;
+    const g = typeof state !== "undefined" && Array.isArray(state?.groupsData)
+      ? state.groupsData.find((item) => item.group === group)
+      : null;
+    const parentWs = g?.parent_workspace_id || "";
+    const parentDesk = g?.parent_desk_key || "";
+    const owner = g?.owner || group;
+    const x = t.list.find(
+      (item) =>
+        item.derived &&
+        isDerivedLive(item) &&
+        ((parentWs && parentDesk && item.parent_workspace_id === parentWs && item.desk_key === parentDesk) ||
+          Boolean(owner && item.boss_key === owner)),
+    );
+    if (!x) return null;
+    return {
+      id: x.id,
+      parentGroup: x.parent_workspace_id || parentWs,
+      deskKey: x.desk_key || parentDesk,
+    };
   }
 
   function derivedSummary(parentGroup) {
@@ -605,6 +649,21 @@ const ChatTerminal = (() => {
   }
   const canResume = (x) => Boolean(x?.workspaces?.length && RESUMES.has(x.provider));
   function hasRunningMembers(x) {
+    if (x?.derived) {
+      if (x.derived_own_busy) return true;
+      const bossKey = x.boss_key || null;
+      const groups = typeof state !== "undefined" && Array.isArray(state?.groupsData) ? state.groupsData : [];
+      if (
+        groups.some(
+          (g) =>
+            (g.status === "running" || g.status === "review") &&
+            ((bossKey && g.owner === bossKey) ||
+              (x.parent_workspace_id && x.desk_key && g.parent_workspace_id === x.parent_workspace_id && g.parent_desk_key === x.desk_key)),
+        )
+      ) {
+        return true;
+      }
+    }
     const ws = x?.workspaces?.at(-1);
     if (!ws) return false;
     if (state.chat?.group === ws && Array.isArray(state.chat.desks)) {
@@ -632,13 +691,14 @@ const ChatTerminal = (() => {
     const x = isBatch ? null : target;
     const derivedList = affectedDerivedOf(target);
     const activeDerived = derivedList.filter(isDerivedActive).length;
+    const ownBusyDerived = derivedList.filter((s) => Boolean(s.derived_own_busy) || (s.derived && hasRunningMembers(s))).length;
     // Only a turn the boss dispatched is reported back to it; one the user started is not.
     const dispatchedDerived = derivedList.filter((s) => isDerivedActive(s) && s.derived_busy).length;
     const draftDerived = derivedList.filter((s) => Boolean(s.has_draft)).length;
 
     // Closing skips the question only for a terminal whose CLI has already exited; a live new agent
     // that has dispatched nothing cannot be reconnected afterwards.
-    if (mode === "close" && x && !x.derived && x.exit != null && !activeDerived && !draftDerived) return true;
+    if (mode === "close" && x && !x.derived && x.exit != null && !activeDerived && !ownBusyDerived && !draftDerived) return true;
 
     const running = x ? hasRunningMembers(x) : false;
     const resumable = x && !x.derived && canResume(x);
@@ -658,8 +718,8 @@ const ChatTerminal = (() => {
       }
       if (running) {
         reasons.push(h("p.act-note.warn", {}, L(
-          "这个 agent 目前仍有组员在运行任务。",
-          "This agent still has members running tasks.",
+          "这个 agent 目前仍有组员在运行或待收取的任务。",
+          "This agent still has members running or awaiting collection.",
         )));
       }
     } else {
@@ -688,6 +748,12 @@ const ChatTerminal = (() => {
           : dispatchedDerived
             ? L(`有 ${activeDerived} 个派生会话还没做完，其中 ${dispatchedDerived} 个结束后会向 boss 回报未完成。`, `${activeDerived} derived session(s) have not finished yet; stopping will report ${dispatchedDerived} of them to the boss as unfinished.`)
             : L(`有 ${activeDerived} 个派生会话还没做完。`, `${activeDerived} derived session(s) have not finished yet.`)));
+      }
+      if (ownBusyDerived > 0) {
+        reasons.push(h("p.act-note.warn", {}, L(
+          `有 ${ownBusyDerived} 个派生会话自己派出的任务尚未结束或待收取。`,
+          `${ownBusyDerived} derived session(s) still have dispatched tasks running or awaiting collection.`,
+        )));
       }
       if (draftDerived > 0) {
         reasons.push(h("p.act-note.warn", {}, L(
@@ -745,6 +811,11 @@ const ChatTerminal = (() => {
       if (data.elsewhere) {
         if (!(await confirmElsewhere(data.elsewhere))) return null;
         response = await act(`${url}&confirm=1`, "");
+      } else if (data.derived_terminal) {
+        const dt = data.derived_terminal;
+        const rowId = dt.parent_workspace_id && dt.desk_key ? derivedRowId(dt.parent_workspace_id, dt.desk_key) : PREFIX + dt.id;
+        void openDerived(rowId);
+        return null;
       } else {
         Actions.say(data.error || L("操作失败", "Failed"), true);
         return null;
@@ -973,6 +1044,8 @@ const ChatTerminal = (() => {
       return;
     }
     t.terminal.set(state.loaded, on);
+    // Turns typed in the terminal meanwhile show once the messages are back.
+    if (!on && state.drawer?.kind === "desk" && typeof refreshDerivedTurns === "function") refreshDerivedTurns(state.loaded, state.drawer.key);
     if (state.chat && typeof renderAll === "function") {
       renderAll(state.chat);
       if (on && t.shown != null) focusFrame(t.shown);
@@ -986,6 +1059,12 @@ const ChatTerminal = (() => {
     const x = byId(t.owned);
     if (t.derivedRevive) void revive(t.derivedRevive);
     else if (t.handover) void newAgent(event, null, t.handover);
+    else if (t.derivedOwner) {
+      const rowId = t.derivedOwner.parentGroup && t.derivedOwner.deskKey
+        ? derivedRowId(t.derivedOwner.parentGroup, t.derivedOwner.deskKey)
+        : PREFIX + t.derivedOwner.id;
+      void openDerived(rowId);
+    }
     else if (x) void (x.exit == null ? stop(x.id) : restart(x.id));
     else if (t.resumable) void resume(t.resumable);
   });
@@ -1087,13 +1166,13 @@ const ChatTerminal = (() => {
       action = ["续接", "Resume"];
     } else {
       t.derivedRevive = null;
-      stopButton.hidden = Boolean(!x && !t.resumable && !t.handover);
+      stopButton.hidden = Boolean(!x && !t.resumable && !t.handover && !t.derivedOwner);
       stopButton.disabled = false;
-      stopButton.classList.toggle("start", !x || ended);
-      const resuming = !x || (ended && x.workspaces.length && RESUMES.has(x.provider));
-      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : resuming ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
+      stopButton.classList.toggle("start", (!x && !t.derivedOwner) || ended);
+      const resuming = !t.derivedOwner && (!x || (ended && x.workspaces.length && RESUMES.has(x.provider)));
+      const btnLabel = t.handover ? L("转交到终端", "Hand over to terminal") : t.derivedOwner ? L("打开派生会话", "Open derived session") : resuming ? L("续接", "Resume") : ended ? L("启动", "Start") : L("结束终端", "Stop terminal");
       setText(stopButton, btnLabel);
-      action = t.handover ? null : resuming ? ["续接", "Resume"] : ended ? ["启动", "Start"] : ["结束", "Stop"];
+      action = t.handover ? null : t.derivedOwner ? ["打开", "Open"] : resuming ? ["续接", "Resume"] : ended ? ["启动", "Start"] : ["结束", "Stop"];
     }
     describeControls(x, isDerived, action);
     t.owned = x?.id ?? null;
@@ -1152,7 +1231,8 @@ const ChatTerminal = (() => {
   function column(group, host, app) {
     const view = stateFor(group);
     t.handover = !view.isDerived && (!view.x || view.x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
-    t.resumable = !view.isDerived && !view.x && !t.handover && RESUMES.has(host) ? group : null;
+    t.derivedOwner = !view.isDerived && (!view.x || view.x.exit != null) ? liveDerivedOwnerOf(group) : null;
+    t.resumable = !view.isDerived && !view.x && !t.handover && !t.derivedOwner && RESUMES.has(host) ? group : null;
     show(view.x, view.on, group, view);
     if (t.shown == null && reviving(group, openDeskKey())) setText(el.drSub, L("正在恢复", "Resuming"));
   }
@@ -1167,10 +1247,16 @@ const ChatTerminal = (() => {
     return true;
   }
   const hasTerminal = (group) => Boolean(byId(pendingId(group)) || ofWorkspace(group));
+  const bossActivity = (group) => {
+    const x = byId(pendingId(group)) || ofWorkspace(group);
+    if (!x || x.exit != null || x.derived) return null;
+    const a = x.activity;
+    return a === "blocked" || a === "working" || a === "idle" ? a : "unknown";
+  };
   const displayState = (group) => {
     const x = terminalOf(group);
     const derived = derivedOf(group).map((d) => [d.terminal, byId(d.terminal)?.started, d.derived_state, d.waking, d.resumable, d.pending_results, d.display_title]);
-    return [x ? [x.id, x.started, x.exit != null, x.derived_state, t.waking.has(x.id)] : null, derived, reviving(group, openDeskKey())];
+    return [x ? [x.id, x.started, x.exit != null, x.derived_state, x.activity, t.waking.has(x.id)] : null, bossActivity(group), derived, reviving(group, openDeskKey())];
   };
   const bossOpensTerminal = (group) => {
     const agent = byId(pendingId(group));
@@ -1227,5 +1313,5 @@ const ChatTerminal = (() => {
     void refresh().then(() => refreshOffice());
   });
 
-  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, rowPath, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, running, showing, showingDerived, exitedOf, openBoss, openDerived, stayOnMessages, revive, closeDerived, focusFrame, close, stop };
+  return { refresh, all: () => t.list, pending, derivedOf, derivedAll, derivedChildrenOf, liveDerivedOwnerOf, liveDerivedCount, derivedStateOf, derivedMeta, derivedSummary, rowPath, isDerivedRowId, isWaking: (id) => t.waking.has(id), reviving, ofDesk, follow, pendingId, headAction, decorate, menu, prepare, column, office, readMessages, newAgent, clis, start, consumeOpen, consumeOpenDesk, hasTerminal, displayState, bossOpensTerminal, bossActivity, running, showing, showingDerived, exitedOf, openBoss, openDerived, stayOnMessages, revive, closeDerived, focusFrame, close, stop };
 })();

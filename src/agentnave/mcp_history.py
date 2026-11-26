@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import suppress
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from mcp.server.mcpserver.context import Context
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from agentnave import accounts, provider_health, views
+from agentnave import accounts, derived_turns, provider_health, views
 from agentnave import mcp_runtime as runtime
 from agentnave.conversations import (
     Conversations,
@@ -482,13 +483,30 @@ async def read_conversation(
         raise ToolError("Unknown conversation_id; use list.") from exc
     except (OSError, ValueError) as exc:
         raise _rejected(exc) from exc
-    return views.timeline(
+    has_terminal = record.state.kind == "task" and any(
+        task.execution_mode == "terminal" for task in record.state.tasks
+    )
+    data = views.timeline(
         record.state,
         since_round=since_round,
         include_private=include_private,
-        limit=limit,
+        limit=None if has_terminal else limit,
         peers=naming_peers(record),
     ) | {"writable": writable}
+    if has_terminal:
+        user_entries, warnings = await asyncio.to_thread(
+            derived_turns.read_derived_user_turns, list(record.state.tasks)
+        )
+        merged = derived_turns.merge_task_timeline(
+            cast(list[dict[str, object]], data.get("tasks") or []), user_entries
+        )
+        if limit is not None and len(merged) > limit:
+            data["omitted"] = len(merged) - limit
+            merged = merged[-limit:]
+        data["tasks"] = merged
+        if warnings:
+            data["warnings"] = warnings
+    return data
 
 
 __all__ = [

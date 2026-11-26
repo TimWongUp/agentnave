@@ -1,0 +1,7 @@
+{"type":"session_meta","timestamp":"2026-11-26T11:00:00Z","payload":{"id":"22222222-2222-4222-8222-222222222222"}}
+{"type":"event_msg","timestamp":"2026-11-26T11:01:00Z","payload":{"type":"task_started","turn_id":"t-boss-1"}}
+{"type":"event_msg","timestamp":"2026-11-26T11:01:01Z","payload":{"type":"item_completed","turn_id":"t-boss-1","item":{"type":"UserMessage","id":"u-1","content":[{"type":"text","text":"Please handle this within your current permissions without bypassing them.\n\nHere's the task:\nCheck lint status"}]}}}
+{"type":"event_msg","timestamp":"2026-11-26T11:01:10Z","payload":{"type":"task_complete","turn_id":"t-boss-1","last_agent_message":"Lint is clean."}}
+{"type":"event_msg","timestamp":"2026-11-26T11:02:00Z","payload":{"type":"task_started","turn_id":"t-user-1"}}
+{"type":"event_msg","timestamp":"2026-11-26T11:02:01Z","payload":{"type":"item_completed","turn_id":"t-user-1","item":{"type":"UserMessage","id":"u-2","content":[{"type":"text","text":"How many files?"}]}}}
+{"type":"event_msg","timestamp":"2026-11-26T11:02:08Z","payload":{"type":"task_complete","turn_id":"t-user-1","last_agent_message":"Three."}}

@@ -1,4 +1,5 @@
 //! Read-only projections of Studio snapshots for the stage and manager chats.
+mod children;
 mod group;
 mod links;
 mod origin;
@@ -519,10 +520,34 @@ pub(crate) struct Places<'a> {
     pub renamed: &'a BTreeSet<String>,
 }
 
+pub(crate) use children::{DerivedHierarchy, read_hierarchy};
 pub(crate) use origin::origin_cwds;
 
 /// `limit` is the App's running limit (`settings.json`), which also caps the desks drawn.
+#[cfg(test)]
 pub(crate) fn respond(
+    path: &str,
+    snapshots: Vec<Snapshot>,
+    data_exists: bool,
+    limit: usize,
+    handovers: &HashMap<String, Handover>,
+    apps: &HashMap<String, &'static str>,
+    places: &Places,
+) -> Response {
+    respond_with(
+        path,
+        snapshots,
+        data_exists,
+        limit,
+        handovers,
+        apps,
+        places,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn respond_with(
     path: &str,
     mut snapshots: Vec<Snapshot>,
     data_exists: bool,
@@ -530,6 +555,7 @@ pub(crate) fn respond(
     handovers: &HashMap<String, Handover>,
     apps: &HashMap<String, &'static str>,
     places: &Places,
+    hierarchy: Option<&DerivedHierarchy>,
 ) -> Response {
     let requested = path.strip_prefix("/app/chats/");
     let complete = requested.is_some_and(|path| path.ends_with("/history"));
@@ -572,12 +598,21 @@ pub(crate) fn respond(
         value["boss_messages"] = json!(group.boss_messages());
         value["omitted"] = json!(omitted);
         value["threads"] = json!(group.threads());
+        if let Some(hierarchy) = hierarchy {
+            children::enrich_requested_group(&mut value, id, hierarchy);
+        }
         return Response::json(&value);
     }
     if path == "/app/stage" {
         panel_response(groups, &snapshots, &stage_ids, data_exists)
     } else {
-        list_response(groups, &snapshots, places.manual_projects, places.sidebar)
+        list_response(
+            groups,
+            &snapshots,
+            places.manual_projects,
+            places.sidebar,
+            hierarchy,
+        )
     }
 }
 
@@ -814,11 +849,12 @@ fn list_response(
     snapshots: &[Snapshot],
     manual_projects: &[ManualProject],
     sidebar: &SidebarState,
+    hierarchy: Option<&DerivedHierarchy>,
 ) -> Response {
     let mut previews = PREVIEWS.lock().unwrap_or_else(|p| p.into_inner());
     let mut kept = HashMap::new();
     let mut other_count = 0;
-    let groups: Vec<_> = groups
+    let mut groups: Vec<_> = groups
         .into_iter()
         .filter(|g| {
             if g.handover.pending {
@@ -874,6 +910,9 @@ fn list_response(
         })
         .collect();
     *previews = kept;
+    if let Some(hierarchy) = hierarchy {
+        children::enrich_groups_value(&mut groups, hierarchy);
+    }
     let projects = crate::projects::manual::values(manual_projects);
     Response::json(&json!({
         "groups": groups,

@@ -60,7 +60,7 @@ fn list_keeps_pending_workspaces_beyond_the_other_workspace_limit() {
         .map(|i| super::Group::new(format!("workspace-{i}")))
         .collect();
     groups[201].handover.pending = true;
-    let response = super::list_response(groups, &[], &[], &Default::default());
+    let response = super::list_response(groups, &[], &[], &Default::default(), None);
     let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let listed = body["groups"].as_array().unwrap();
     assert_eq!(listed.len(), 201);

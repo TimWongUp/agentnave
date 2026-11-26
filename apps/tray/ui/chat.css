@@ -91,6 +91,7 @@ body.chat-page { height: 100vh; display: flex; flex-direction: column; overflow:
 .gi.kbd-active:not(.on):not(.picked) { background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .gi.on { background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .gi.gi-child { margin-left: 16px; min-height: 38px; padding: 4px 10px 4px 14px; }
+.gi.gi-child.gi-grandchild { margin-left: 30px; min-height: 36px; }
 .gi.gi-child .gi-host { width: 24px; height: 24px; }
 .gi.gi-child .gi-host .avatar, .gi.gi-child .gi-host .host-letter { width: 24px; height: 24px; border-radius: 7px; font-size: 11px; }
 .gi.gi-child .gi-label { font-size: 12px; font-weight: 550; }
@@ -212,6 +213,7 @@ body:has(:is(.office-settings, .office-usage):not([hidden])) .bar-toggle { visib
   .app[data-side-peek] :is(.gl-more, .gi)[data-folded="true"] { display: none; }
   .app[data-side-peek] .gi { justify-content: flex-start; padding: 5px 10px; }
   .app[data-side-peek] .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
+  .app[data-side-peek] .gi.gi-child.gi-grandchild { margin-left: 30px; }
   .app[data-side-peek] .gi-more { display: grid; }
 }
 
@@ -555,6 +557,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
 .label .cli { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 3px 5px; font-size: 11px; color: var(--muted); }
 .label .st { margin-top: 2px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 [data-mood="working"] .label .st, [data-mood="speaking"] .label .st { color: var(--run); }
+[data-mood="review"] .label .st { color: var(--review); }
 [data-mood="failed"] .label .st { color: var(--bad); }
 /* a desk's role is its label's last line; the line keeps its height when there is no role */
 /* the role shows whole, wrapping to a second line before it is cut */
@@ -784,6 +787,7 @@ html[data-on-battery="true"][data-battery-still="true"] :is(.fig, .fig *, .fig *
   .gl-more[data-folded="true"], .gi[data-folded="true"] { display: none; }
   .gi { justify-content: flex-start; padding: 5px 10px; }
   .gi.gi-child { margin-left: 16px; padding: 4px 10px 4px 14px; }
+  .gi.gi-child.gi-grandchild { margin-left: 30px; }
   .app[data-view="list"] .floor-wrap { display: none; }
   .app[data-view="chat"] .side { display: none; }
   .side { border-right: 0; }
@@ -896,15 +900,17 @@ dialog.act::backdrop { background: #0006; }
 .tp-im .sep::before, .tp-im .sep::after { display: none; }
 .tp-im .msg { --im-bub: var(--im-member); --im-ink: var(--im-member-ink); position: relative; display: flex; flex-direction: column; min-height: 34px; margin: 14px 0 0; padding: 0 42px 0 42px; border: 0; }
 .tp-im .msg.boss { --im-bub: var(--im-boss); --im-ink: var(--im-boss-ink); align-items: flex-end; }
+.tp-im .msg.user { --im-bub: var(--im-aside); --im-ink: var(--ink); align-items: flex-end; }
 .tp-im .msg.boss.private { --im-bub: var(--im-aside); }
 /* like WeChat, the name line starts level with the avatar's top edge */
 .tp-im .m-h { position: relative; flex-wrap: nowrap; min-height: 12px; font-size: 11px; line-height: 12px; }
-.tp-im .msg.boss .m-h { flex-wrap: wrap; justify-content: flex-end; }
+.tp-im .msg:is(.boss, .user) .m-h { flex-wrap: wrap; justify-content: flex-end; }
 .tp-im .m-h > time { display: none; }
 .tp-im .m-h > .m-ava { position: absolute; top: 0; left: -42px; }
-.tp-im .msg.boss .m-h > .m-ava { right: -42px; left: auto; }
+.tp-im .msg:is(.boss, .user) .m-h > .m-ava { right: -42px; left: auto; }
 .tp-im .m-ava :is(.avatar, .head) { width: 34px; height: 34px; border-radius: 27%; font-size: 13px; }
 .tp-im .m-ava .head { background: var(--im-member) center / cover; }
+.tp-im .m-ava .user-ava { background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--ink); font-weight: 650; display: grid; place-items: center; }
 .tp-im .m-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 650; color: var(--ink); }
 .tp-im .m-role { flex-shrink: 1; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
 .tp-im .m-who { flex-shrink: 999; min-width: 0; margin-left: 2px; overflow: hidden; text-overflow: ellipsis; }
@@ -912,13 +918,14 @@ dialog.act::backdrop { background: #0006; }
 .tp-room .msg.boss .m-verb:not(.m-tag) { display: none; }
 /* the tail hangs from the header, outside the bubble that a fold clips, and points at the avatar */
 .tp-im .m-h::after { content: ""; position: absolute; z-index: 1; top: calc(100% + 9px); left: -4px; width: 9px; height: 9px; background: var(--im-bub); transform: rotate(45deg); }
-.tp-im .msg.boss .m-h::after { right: -4px; left: auto; }
+.tp-im .msg:is(.boss, .user) .m-h::after { right: -4px; left: auto; }
 .tp-im .msg .bub { width: fit-content; max-width: 100%; box-sizing: border-box; margin: 5px 0 0; padding: 8px 11px; border-radius: 6px; background: var(--im-bub); color: var(--im-ink); font-size: 13px; }
 .tp-im .msg .bub.fold::after { height: 76px; background: linear-gradient(to bottom, transparent, var(--im-bub) 58%); }
 .tp-im .msg .bub:has(~ .more:not([hidden])) { padding-bottom: 30px; }
 .tp-im .more { position: relative; z-index: 2; order: 1; display: block; width: fit-content; margin: -27px 0 0 5px; }
 .tp-im .more[hidden] { display: none; }
-.tp-im .msg.boss .more { margin: -27px 5px 0 0; }
+.tp-im .msg:is(.boss, .user) .more { margin: -27px 5px 0 0; }
+.dr-derived-note { margin: 8px 14px 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: color-mix(in srgb, var(--warn) 10%, var(--card)); color: var(--soft); font-size: 12px; line-height: 1.45; }
 .tp-im .m-meta { order: 2; flex: none; margin: 6px 0 0; }
 .tp-im .note { width: fit-content; max-width: 88%; margin: 12px auto 0; padding: 3px 10px; border-radius: 6px; background: color-mix(in srgb, var(--faint) 18%, transparent); justify-content: center; text-align: center; }
 .tp-im .m-meta.m-round { align-self: center; max-width: 88%; margin-top: 12px; padding: 3px 10px; border-radius: 6px; background: color-mix(in srgb, var(--faint) 18%, transparent); font-size: 11.5px; color: var(--muted); }

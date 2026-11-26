@@ -1,0 +1,18 @@
+{"type":"user","isMeta":true,"promptId":"meta-1","timestamp":"2026-11-26T10:00:00Z","message":{"content":"<local-command-caveat>Caveat: local command</local-command-caveat>"}}
+{"type":"user","promptId":"cmd-1","timestamp":"2026-11-26T10:00:01Z","message":{"content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>"}}
+{"type":"user","promptId":"cmd-2","timestamp":"2026-11-26T10:00:02Z","message":{"content":"<local-command-stdout></local-command-stdout>"}}
+{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"promptId":"compact-1","timestamp":"2026-11-26T10:00:03Z","message":{"content":"Summary of earlier conversation"}}
+{"type":"user","promptId":"p-boss-1","timestamp":"2026-11-26T10:01:00Z","message":{"content":"Inspect the build setup"}}
+{"type":"assistant","timestamp":"2026-11-26T10:01:05Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"t1","name":"Read"}]}}
+{"type":"user","promptId":"p-boss-1","timestamp":"2026-11-26T10:01:06Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}
+{"type":"assistant","timestamp":"2026-11-26T10:01:10Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"Build uses uv and cargo."}]}}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-11-26T10:01:11Z"}
+{"type":"user","isSidechain":true,"promptId":"side-1","timestamp":"2026-11-26T10:01:12Z","message":{"content":"Sidechain prompt"}}
+{"type":"user","promptId":"p-user-1","timestamp":"2026-11-26T10:02:00Z","message":{"content":"<pasted_content id=\"p1\">What tests exist?</pasted_content id=\"p1\">"}}
+{"type":"assistant","timestamp":"2026-11-26T10:02:04Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"pytest and cargo test."}]}}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-11-26T10:02:05Z"}
+{"type":"user","promptId":"p-user-1-bg","promptSource":"system","turnOrigin":"task_notification","origin":{"kind":"task-notification"},"timestamp":"2026-11-26T10:02:08Z","message":{"content":"<task-notification><task-id>bg-1</task-id></task-notification>"}}
+{"type":"assistant","timestamp":"2026-11-26T10:02:10Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"Background check also passed."}]}}
+{"type":"system","subtype":"turn_duration","timestamp":"2026-11-26T10:02:11Z"}
+{"type":"user","promptId":"p-user-2","timestamp":"2026-11-26T10:03:00Z","message":{"content":"Run full deploy"}}
+{"type":"user","promptId":"p-user-2","timestamp":"2026-11-26T10:03:02Z","message":{"content":"[Request interrupted by user]"}}

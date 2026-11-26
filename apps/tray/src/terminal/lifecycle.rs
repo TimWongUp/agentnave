@@ -4,7 +4,7 @@
 
 mod boss;
 mod idle;
-mod open;
+pub(super) mod open;
 mod revive;
 mod saved;
 #[cfg(all(test, unix))]
@@ -81,6 +81,8 @@ pub(super) struct Life {
     config_assumed: bool,
     /// Last CLI title observed for this derived session so restarts keep the same name.
     pub(super) title: Option<String>,
+    /// Whether this derived session itself dispatched tasks still running or awaiting collection.
+    pub(super) own_busy: bool,
 }
 
 /// What is known of the CLI process a derived terminal currently runs.

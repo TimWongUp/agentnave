@@ -66,6 +66,7 @@ type RouteKey = (
     (
         Vec<crate::projects::ManualProject>,
         crate::projects::SidebarState,
+        Option<crate::stage::DerivedHierarchy>,
     ),
 );
 
@@ -402,14 +403,16 @@ impl Reader {
             .as_secs()
             / ROUTE_REUSE.as_secs();
         let limit = crate::settings::max_running(&self.root) as usize;
-        let (handovers, links, apps, titles) = match &database {
+        let (handovers, links, apps, titles, hierarchy) = match &database {
             Ok(Some(connection)) => (
                 handovers(connection),
                 links(connection),
                 self.boss_apps.of(connection, || self.boss_homes()),
                 self.boss_apps.titles(connection, || self.boss_homes()),
+                (path == "/app/chats" || crate::stage::requested_group(path).is_some())
+                    .then(|| crate::stage::read_hierarchy(Some(connection))),
             ),
-            _ => (None, None, Vec::new(), Vec::new()),
+            _ => (None, None, Vec::new(), Vec::new(), None),
         };
         // Records of directories are only forgotten when every workspace was read.
         let complete = !overview.missing
@@ -520,7 +523,7 @@ impl Reader {
             dirs.clone(),
             (key_origins, projects.clone().into_iter().collect()),
             key_links,
-            (manual_projects.clone(), sidebar.clone()),
+            (manual_projects.clone(), sidebar.clone(), hierarchy.clone()),
         );
         let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((saved, _, response)) = routes.get(path)
@@ -528,7 +531,7 @@ impl Reader {
         {
             return response.clone();
         }
-        let response = crate::stage::respond(
+        let response = crate::stage::respond_with(
             path,
             snapshots,
             data_exists,
@@ -545,6 +548,7 @@ impl Reader {
                 titles: &title_map,
                 renamed: &renamed,
             },
+            hierarchy.as_ref(),
         );
         // Focus routes vary; keep the few most recently asked for, not every group ever opened.
         if routes.len() >= 8 && !routes.contains_key(path) {

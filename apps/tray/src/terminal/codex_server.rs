@@ -387,6 +387,22 @@ impl Client {
     }
 
     #[cfg(test)]
+    pub(super) fn new_for_test() -> Arc<Self> {
+        Arc::new(Self {
+            sock: PathBuf::new(),
+            state: Arc::default(),
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_thread_status_for_test(&self, tid: &str, status: ThreadStatus) {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.thread_seq += 1;
+        let seq = state.thread_seq;
+        state.threads.insert(tid.to_owned(), (status, seq));
+    }
+
+    #[cfg(test)]
     pub(super) fn thread_status_for_test(&self, tid: &str) -> Option<ThreadStatus> {
         self.state
             .lock()
@@ -634,6 +650,27 @@ impl Client {
             .threads
             .get(tid)
             .map(|(status, _)| status.clone())
+    }
+
+    /// Lock-only lookup of cached thread status by boss key, else by native thread id (never runs
+    /// RPC). The boss key goes first: the terminal keeps its first native id after the user moves
+    /// on to another chat in it.
+    pub(super) fn cached_thread_status_for_boss(
+        &self,
+        native: Option<&str>,
+        target_boss_key: Option<&str>,
+    ) -> Option<ThreadStatus> {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(target) = target_boss_key.filter(|s| !s.is_empty())
+            && let Some((_, (status, _))) = state
+                .threads
+                .iter()
+                .find(|(tid, _)| boss_key("codex", tid) == target)
+        {
+            return Some(status.clone());
+        }
+        let tid = native.filter(|s| !s.is_empty())?;
+        state.threads.get(tid).map(|(status, _)| status.clone())
     }
 
     /// The thread is known to be idle, and no other one loaded beside it (a subagent's) works.

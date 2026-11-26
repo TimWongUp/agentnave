@@ -191,6 +191,35 @@ def t3_active_mode() -> T3OrchestrationMode | None:
     return _t3_active_mode(HOST)
 
 
+def is_derived_session(root: Path | None = None) -> bool:
+    """Whether this process runs inside an App-managed derived terminal session."""
+    if os.environ.get("AGENTNAVE_DERIVED_SESSION") == "1":
+        return True
+    if sys.platform != "darwin":
+        return False
+    from agentnave.push_capability import find_tray, has_ancestor_in
+    from agentnave.terminal_requests import read_tray
+
+    resolved_root = data_root() if root is None else root
+    tray = find_tray(resolved_root, None)
+    snapshot = read_tray(resolved_root, tray) if tray else None
+    if not snapshot:
+        return False
+    derived_raw = snapshot.get("derived_pids")
+    if not isinstance(derived_raw, list):
+        return False
+    derived_pids = {
+        item
+        for item in cast(list[object], derived_raw)
+        if isinstance(item, int) and not isinstance(item, bool) and item > 1
+    }
+    return bool(derived_pids and has_ancestor_in(derived_pids, stop_pid=tray.pid if tray else None))
+
+
+def _push_disabled(_root: Path, _provider: str | None) -> bool:
+    return False
+
+
 def wait_guidance(
     *,
     again: bool = False,
@@ -200,6 +229,7 @@ def wait_guidance(
     started_at = (
         ctx.request_context.lifespan_context.inbox_snapshot.started_at if ctx is not None else 0.0
     )
+    can_push = _push_disabled if is_derived_session() else app_can_push
     return build_wait_guidance(
         HOST,
         root=data_root(),
@@ -207,7 +237,7 @@ def wait_guidance(
         started_at=started_at,
         boss_key=boss_key,
         again=again,
-        can_push=app_can_push,
+        can_push=can_push,
         watch_supported=watch_host_cli_supported,
         # The command's quoting is only known to survive POSIX shells (ADR-0121).
         t3_main=current_t3_mode(HOST) == "main" and sys.platform != "win32",
@@ -217,22 +247,16 @@ def wait_guidance(
 def terminal_available() -> bool:
     if sys.platform != "darwin" or os.environ.get("AGENTNAVE_DERIVED_SESSION") == "1":
         return False
-    from agentnave.push_capability import find_tray, has_ancestor_in
+    from agentnave.push_capability import find_tray
     from agentnave.terminal_requests import read_tray
 
-    tray = find_tray(data_root(), None)
-    snapshot = read_tray(data_root(), tray) if tray else None
+    root = data_root()
+    if is_derived_session(root):
+        return False
+    tray = find_tray(root, None)
+    snapshot = read_tray(root, tray) if tray else None
     if not snapshot:
         return False
-    derived_raw = snapshot.get("derived_pids")
-    if isinstance(derived_raw, list):
-        derived_pids = {
-            item
-            for item in cast(list[object], derived_raw)
-            if isinstance(item, int) and not isinstance(item, bool) and item > 1
-        }
-        if derived_pids and has_ancestor_in(derived_pids, stop_pid=tray.pid if tray else None):
-            return False
     providers = snapshot.get("terminal_providers")
     return isinstance(providers, list) and any(
         name in ("claude", "codex", "antigravity") for name in cast(list[object], providers)

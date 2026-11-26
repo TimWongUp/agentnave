@@ -295,6 +295,8 @@ async def test_terminal_schema_requires_matching_tray(monkeypatch: pytest.Monkey
 async def test_conversation_persists_terminal_result_and_acknowledges(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import sqlite3
+
     from agentnave import conversations as conversations_module
     from agentnave.account_limits import full_accounts
     from agentnave.conversations import Conversations
@@ -354,6 +356,25 @@ async def test_conversation_persists_terminal_result_and_acknowledges(
         await asyncio.gather(*conversations.collectors)
         saved = conversations.records[task.conversation_id].state.tasks[-1]
         assert saved.output == "answer" and saved.execution_mode == "terminal"
+        assert saved.native_anchor == {"turn_id": "turn", "client_user_message_id": "client"}
+        with sqlite3.connect(tmp_path / "agentnave.db") as db:
+            columns = [row[1] for row in db.execute("PRAGMA table_info(tasks)").fetchall()]
+            assert columns == [
+                "id",
+                "conversation_id",
+                "position",
+                "provider",
+                "session_id",
+                "status",
+                "body",
+            ]
+            body = json.loads(
+                db.execute("SELECT body FROM tasks WHERE id = ?", (saved.id,)).fetchone()[0]
+            )
+            assert body["native_anchor"] == {
+                "turn_id": "turn",
+                "client_user_message_id": "client",
+            }
         assert manager.settled_requests == [
             {
                 "tray_pid": 42,
@@ -986,6 +1007,56 @@ def test_terminal_unavailable_when_ancestor_is_derived_terminal(
     # Sibling derived terminal PID (not in our ancestor chain) must not block boss terminal.
     derived_pids[:] = [99]
     assert mcp_runtime.terminal_available()
+
+
+def test_codex_derived_session_wait_uses_blocking_wait_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentnave import mcp_runtime, push_capability, wait_guidance
+    from agentnave.host import Host
+
+    def can_push(_root: Path, _provider: str | None) -> bool:
+        return True
+
+    def no_tray(_root: Path, _provider: str | None) -> TrayIdentity | None:
+        return None
+
+    parents = {80: 20, 20: 10, 10: 1}
+
+    def parent_of(pid: int) -> int:
+        return parents[pid]
+
+    def find_tray(_root: Path, _provider: str | None) -> TrayIdentity | None:
+        return TrayIdentity(10, 1.0)
+
+    def read_derived_tray(_root: Path, _tray: TrayIdentity) -> dict[str, object]:
+        return {"terminal_providers": ["codex"], "derived_pids": [20]}
+
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
+    monkeypatch.setattr(mcp_runtime, "app_can_push", can_push)
+    monkeypatch.setattr(mcp_runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(push_capability.sys, "platform", "darwin")
+
+    # 1. Normal Codex boss session keeps push guidance.
+    monkeypatch.delenv("AGENTNAVE_DERIVED_SESSION", raising=False)
+    monkeypatch.setattr(push_capability, "find_tray", no_tray)
+    assert mcp_runtime.wait_guidance() == wait_guidance.PUSH_NEXT
+    assert mcp_runtime.wait_guidance(again=True) == wait_guidance.PUSH_AGAIN
+
+    # 2. AGENTNAVE_DERIVED_SESSION=1 forces blocking wait for Codex.
+    monkeypatch.setenv("AGENTNAVE_DERIVED_SESSION", "1")
+    assert mcp_runtime.wait_guidance() == wait_guidance.CODEX_WAIT_NEXT
+    assert mcp_runtime.wait_guidance(again=True) == wait_guidance.CODEX_WAIT_AGAIN
+
+    # 3. Ancestor PID in derived_pids also forces blocking wait for Codex.
+    monkeypatch.delenv("AGENTNAVE_DERIVED_SESSION", raising=False)
+    monkeypatch.setattr(push_capability.os, "getppid", lambda: 80)
+    monkeypatch.setattr(push_capability, "read_process_parent", parent_of)
+    monkeypatch.setattr(push_capability, "find_tray", find_tray)
+    monkeypatch.setattr(terminal_requests, "read_tray", read_derived_tray)
+    assert mcp_runtime.wait_guidance() == wait_guidance.CODEX_WAIT_NEXT
+    assert mcp_runtime.wait_guidance(again=True) == wait_guidance.CODEX_WAIT_AGAIN
 
 
 def test_terminal_available_ignores_push_providers_list(

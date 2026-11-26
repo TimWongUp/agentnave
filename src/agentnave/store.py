@@ -147,6 +147,7 @@ class TaskRecord(BaseModel):
     # Message ids this task had injected into its prompt; the saved prompt stays the manager's.
     forward: list[str] = Field(default_factory=lambda: [])
     prompts: list[dict[str, object]] = Field(default_factory=list[dict[str, object]])
+    native_anchor: dict[str, object] | None = None
 
 
 class Conversation(BaseModel):
