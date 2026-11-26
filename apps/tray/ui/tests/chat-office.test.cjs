@@ -1819,7 +1819,9 @@ test("terminal confirm rules cover 409 elsewhere, stop terminal conditions, and 
     const before = calls.length;
     await context.ChatTerminal[op](id);
     assert.equal(asks.length, 1);
-    assert.ok(asks[0].body.some(p => p.textContent.includes("这一轮还没做完，结束后会向 boss 回报未完成。")));
+    // Only the boss's own dispatch (11) is reported back to it.
+    const note = id === 11 ? "这一轮还没做完，结束后会向 boss 回报未完成。" : "这一轮还没做完。";
+    assert.ok(asks[0].body.some(p => p.textContent === note));
     assert.equal(asks[0].body.some(p => p.textContent.includes("还没有派过活")), false);
     assert.equal(calls.length, before, `cancelling derived ${op} must not post`);
   }
@@ -3820,6 +3822,8 @@ test("derived lifecycle: sidebar status/duration/fallback, boss summary, shown q
   await context.ChatTerminal.stop(1); // boss 1 has 3 active (10,11,12,17 -> 4 active) + 1 draft (12)
   assert.equal(asks.length, 1);
   assert.ok(asks[0].body.some(p => p.textContent.includes("有 4 个派生会话还没做完")));
+  // Only the one the boss dispatched (11) is reported back to it.
+  assert.ok(asks[0].body.some(p => p.textContent.includes("其中 1 个结束后会向 boss 回报未完成")));
   assert.ok(asks[0].body.some(p => p.textContent.includes("1 个有未发出的草稿")));
 
   // closeDerived confirms with counts when active/draft exist, and skips confirm when all idle/dormant/exited without drafts.
@@ -3911,6 +3915,7 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
   ];
   const ChatTerminal = {
     ofDesk: (group, key) => terminalSessions.find(s => s.parent_workspace_id === group && (s.desk_key === key || `thread:${s.native}` === key)),
+    all: () => terminalSessions,
     derivedStateOf: x => x.derived_state,
     isWaking: () => false,
     reviving: () => reviving,
@@ -4010,6 +4015,18 @@ test("ChatDerived renders separate office derived zone, matches ofDesk states, r
   context.renderOffice(baseChat, ctx, { running: 0, review: 0 }, false);
   assert.equal(r4.say.children[0], "正在恢复");
   reviving = false;
+
+  // A call just sent has no native session yet: its desk takes the state of the workspace's one
+  // terminal of that CLI still without one, such as Codex asking about trust.
+  const sent = { key: "task:c1:t1", provider: "codex", model: "gpt-6.1", derived: true, status: "running", first_seen: "2026-11-19T00:00:00Z", last_active: "2026-11-19T00:00:00Z" };
+  terminalSessions.push({ id: 104, derived: true, provider: "codex", parent_workspace_id: "ws-1", native: null, exit: null, derived_state: "waiting" });
+  ctx.desks.set(sent.key, sent);
+  ctx.drawn.add(sent.key);
+  context.renderOffice({ ...baseChat, desks: [...baseChat.desks, sent] }, ctx, { running: 0, review: 0 }, false);
+  assert.equal(state.deskRecs.get(sent.key).say.children[0], "等待确认");
+  terminalSessions.pop();
+  ctx.desks.delete(sent.key);
+  ctx.drawn.delete(sent.key);
 
   // Derived desk context menus: Open, Resume (when no live process), and Close terminal (when terminal row exists).
   const labels = () => JSON.parse(JSON.stringify(menus.at(-1).map(i => i.label)));
