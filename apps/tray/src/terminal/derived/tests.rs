@@ -24,6 +24,19 @@ mod security;
 mod wake_args;
 
 #[test]
+fn trust_dialog_is_seen_in_codex_screen_text_without_spaces() {
+    // Codex 0.171 in a folder it has not trusted, escape sequences stripped.
+    let codex = "Folderaccess/private/tmp/untrusted Trustthisfolder?Codexcanread,edit,andrunfileshere.\
+                 ›1.Trustandcontinue 2.BacktoAgentCommandCenter";
+    assert_eq!(screen_blocker_in_text(codex).map(|b| b.0), Some("trust"));
+    assert_eq!(
+        screen_blocker_in_text("Do you trust the contents of this project?").map(|b| b.0),
+        Some("trust")
+    );
+    assert_eq!(screen_blocker_in_text("› Ask Codex to do anything"), None);
+}
+
+#[test]
 fn claude_args_merge_theme_and_permission_prompt_skip_into_single_settings() {
     let cfg = RunConfig {
         provider: "claude".to_owned(),
