@@ -698,6 +698,75 @@ test("a failed settings read cannot make a limit save reset other runtime settin
   assert.deepEqual(sent, { version: 1, max_running: 3 });
 });
 
+// The row's select, and which of its options is selected.
+const concurrency = (app, provider) => app.run(`renderConcurrency('${provider}').children[1].children[0]`);
+const picked = (app, provider) => concurrency(app, provider).children.flat()
+  .filter((option) => option.attrs.selected).map((option) => option.attrs.value).join(",");
+
+test("per-account concurrency shows the default, no limit and a saved number", async () => {
+  const app = runtimeEditor(async () => ({ ok: true, json: async () => ({
+    settings: { version: 1, max_running: 8, account_concurrency: { codex: null, claude: 2 } } }) }));
+  assert.equal(concurrency(app, "pi").attrs.disabled, true);
+  await app.run("loadLimit()");
+  assert.equal(app.run("renderConcurrency('pi').children[0].children[0]"), "单账号并发上限");
+  assert.equal(concurrency(app, "pi").attrs.disabled, false);
+  assert.equal(picked(app, "antigravity"), "5");
+  assert.equal(picked(app, "pi"), "");
+  assert.equal(picked(app, "codex"), "");
+  assert.equal(picked(app, "claude"), "2");
+  const agyOptions = concurrency(app, "antigravity").children.flat();
+  assert.equal(agyOptions.map((option) => option.attrs.value).join(), ["", ...Array.from({ length: 10 }, (_, i) => String(i + 1))].join());
+  assert.equal([0, 1, 5].map((i) => agyOptions[i].children[0]).join(), "不限,1,5（默认）");
+  const piOptions = concurrency(app, "pi").children.flat();
+  assert.equal([0, 1, 5].map((i) => piOptions[i].children[0]).join(), "不限（默认）,1,5");
+});
+
+test("per-account concurrency saves the whole map at once and rolls a failed write back", async () => {
+  const calls = [];
+  let refuse = false;
+  const app = runtimeEditor(async (_url, options) => {
+    if (options.method !== "POST") return { ok: true, json: async () => ({
+      settings: { version: 1, max_running: 8, account_concurrency: { codex: 2, "future-cli": 3 } } }) };
+    calls.push(JSON.parse(options.body));
+    return refuse ? { ok: false, json: async () => ({ error: "预览版不修改正式数据" }) }
+      : { ok: true, json: async () => ({ saved: true }) };
+  });
+  await app.run("loadLimit()");
+  app.run("$('max-running').value = '3'");
+  const pick = (provider, value) => concurrency(app, provider).attrs.onChange({ target: { value } });
+  await pick("claude", "");
+  assert.deepEqual(calls, [{ version: 1, account_concurrency: { codex: 2, "future-cli": 3, claude: null } }]);
+  await pick("codex", "8");
+  assert.deepEqual(calls[1].account_concurrency, { codex: 8, "future-cli": 3, claude: null });
+  assert.equal(picked(app, "claude"), "");
+  assert.equal(app.run("limitChanged()"), true);
+  refuse = true;
+  const saving = pick("codex", "1");
+  assert.equal(concurrency(app, "codex").attrs.disabled, true);
+  await saving;
+  assert.equal(picked(app, "codex"), "8");
+  assert.equal(app.run("busy"), false);
+  assert.match(app.run("$('notice').textContent"), /预览版不修改正式数据/);
+});
+
+test("a broken settings file keeps per-account concurrency disabled until a limit save resets it", async () => {
+  const calls = [];
+  const app = runtimeEditor(async (_url, options) => {
+    if (options.method !== "POST") return { ok: true, json: async () => ({
+      settings: { version: 1, max_running: 8, account_concurrency: {} }, error: "account_concurrency 必须为对象" }) };
+    calls.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ saved: true }) };
+  });
+  await app.run("loadLimit()");
+  assert.equal(concurrency(app, "claude").attrs.disabled, true);
+  await app.run("setAccountConcurrency('claude', 2)");
+  assert.equal(calls.length, 0);
+  app.run("$('max-running').value = '3'");
+  await app.run("saveLimit()");
+  assert.deepEqual(calls[0].account_concurrency, {});
+  assert.equal(concurrency(app, "claude").attrs.disabled, false);
+});
+
 function poolEditor(fetch) {
   const app = runtimeEditor(fetch);
   app.run("AN.L = (zh) => zh");

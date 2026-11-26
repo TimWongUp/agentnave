@@ -1426,7 +1426,7 @@ All checks passed!
       const provider = new URLSearchParams(path.split("?")[1]).get("provider");
       return { provider, models: (mockDecisionModels[provider] || []).map((id) => ({ id, name: id })) };
     }
-    if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true, antigravity_interactive: true } };
+    if (path === "/app/settings") return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true, antigravity_interactive: true, account_concurrency: {} } };
     if (path === "/app/preferences") return preferencesView();
     if (path === "/app/characters" || path === "/avatars/avatar-settings") return {};
     if (path === "/app/storage") return { path: "/preview/.agentnave", bytes: 48234496, retention_days: mockRetentionDays };
@@ -1586,7 +1586,7 @@ All checks passed!
     if (path === "/app/settings") {
       if (q.has("preview")) throw Object.assign(new Error("预览版不修改正式数据"), { status: 403 });
       if (Object.hasOwn(body, "history_retention_days")) mockRetentionDays = body.history_retention_days;
-      return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true, antigravity_interactive: true } };
+      return { settings: { version: 1, max_running: 8, history_retention_days: mockRetentionDays, claude_interactive: true, antigravity_interactive: true, account_concurrency: {} } };
     }
     if (path === "/app/voice") {
       Object.assign(mockVoice, body);

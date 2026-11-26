@@ -206,13 +206,13 @@ PY
 
 ## 8. 其他设置
 
-不问用户，直接写默认值：同时运行上限 8，历史自动清理 90 天。第 10 步总结里要说明超过 90 天的旧对话记录会被自动删除，可以改成永不、30 或 180 天。
+不问用户，直接写默认值：同时运行上限 8，历史自动清理 90 天；单账号并发上限（`codex`/`antigravity`/`claude` 默认 5、其余默认不限）不用写（要改时见 §3.5 的 `account_concurrency`）。第 10 步总结里要说明超过 90 天的旧对话记录会被自动删除，可以改成永不、30 或 180 天。
 
 ```bash
 mkdir -p "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}"
 jq -n '{version:1,max_running:8,history_retention_days:90}' > "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}/settings.json"
 ```
-验证：用 `python3 -m json.tool` 检查格式。`version` 必须是整数 1，`max_running` 必须是 1–32 的整数，否则派发报 `SettingsFileError` 并关闭清理；仅 `history_retention_days` 非法时关闭清理并记录 warning，派发仍可用。清理设置在服务启动或下一轮清理时生效，最长 24 小时（§7.1）。
+验证：用 `python3 -m json.tool` 检查格式。`version` 必须是整数 1，`max_running` 必须是 1–32 的整数，写了 `account_concurrency` 时它必须是对象、各值为 1–10 或 `null`，否则派发报 `SettingsFileError` 并关闭清理；仅 `history_retention_days` 非法时关闭清理并记录 warning，派发仍可用。清理设置在服务启动或下一轮清理时生效，最长 24 小时（§7.1）。
 
 ## 9. 安装 skill
 
@@ -248,7 +248,7 @@ OTHER=agentnave-meeting; [ "$MAIN" = agentnave-meeting ] && OTHER=agentnave-mana
 - 启用了哪些 CLI，各用什么模型
 - 工位和评审工位怎么分配
 - 权限档位（默认完全放开，可按 CLI 改为自动）
-- 历史自动清理 90 天、同时运行上限 8，说明旧记录会被删，可以改
+- 历史自动清理 90 天、同时运行上限 8、单账号并发上限 5，说明旧记录会被删，可以改
 - 一句话：权限、清理、并发这些默认值想改随时说
 - 连接器名字
 - skill 装在哪里

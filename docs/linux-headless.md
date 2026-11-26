@@ -183,7 +183,7 @@ cp -a "${AGENTNAVE_DATA_DIR:-$HOME/.agentnave}" "$HOME/agentnave-backup-$(date +
 
 ### 3.5 其余可选文件
 
-- `settings.json`：`{"version":1,"max_running":8}`，同时运行的 CLI 数量上限，取值 1–32；`history_retention_days` 取 30、90 或 180，省略或写 `null` 表示永久保留（`read_max_running`、`read_history_retention_days`）。
+- `settings.json`：`{"version":1,"max_running":8}`，同时运行的 CLI 数量上限，取值 1–32；`history_retention_days` 取 30、90 或 180，省略或写 `null` 表示永久保留（`read_max_running`、`read_history_retention_days`）；`account_concurrency` 可选，按 CLI 设单账号跨服务进程的并发上限（`{"claude":2,"codex":null}`），取 1–10 或 `null`（不限），未写时 `codex`/`antigravity`/`claude` 默认 5、其余默认不限（`read_account_concurrency`）。
 - `cli-defaults.json`：App 检测到的各 CLI 默认模型，可以不写。
 
 Codex 在非 Git 目录也可直接派发，无需额外配置；1.0 忽略旧的 `cli-options.json`。
@@ -375,8 +375,9 @@ mv members.json.tmp members.json                             # 3) 原子替换
 | 通用与专项工位、角色开关 | `orchestration.json`：`explorer`、`worker` 与五个专项键的 `.{easy,hard}`，可选 `.medium` → `{provider,model,effort?,fallbacks?}`；`enabled_roles` | `ReviewSeat`；`orchestration_roles.json` | `list_members.orchestration`（含 `scopes`） | 不需要 |
 | 评审工位（评审设置） | `review.json`：`seats.<role>` | `ReviewFile`；`ui/skills.js`、`ui/advanced.js` | `list_members.review`/`review_error` | 不需要 |
 | 评审门（是否启用 agentnave-review） | **没有对应的服务配置文件**。App 会把这个 skill 按宿主开关（`ui/skills.js`，`/app/hosts/skill`），bot 这边就是装或卸 skill 目录（§6.5） | `apps/tray/src/hosts.rs` | 看 bot 的 skill 列表 | bot 下次读 skill 时生效 |
-| 同时运行上限（默认 8） | `settings.json`：`max_running`，1–32 | `settings.rs`；`members.py` 的 `read_max_running`；`conversations.py` 在每次启动前读取 | 超出时报 `CapacityError`；`version` 或 `max_running` 非法时派发报 `SettingsFileError` 并给出文件路径。`list_members` 不显示这个值 | 不需要 |
-| 历史自动清理 | `settings.json`：`history_retention_days`，取 `null`/30/90/180 | `settings.rs`；`retention.py`（服务启动时执行一次，之后每 24 小时一次） | `version` 或 `max_running` 非法会阻止派发并关闭清理；仅保留天数非法时关闭清理、记录 warning，派发仍可用 | 下一轮清理时生效，最长要等 24 小时；想立刻生效就重启服务 |
+| 同时运行上限（默认 8） | `settings.json`：`max_running`，1–32 | `settings.rs`；`members.py` 的 `read_max_running`；`conversations.py` 在每次启动前读取 | 超出时报 `CapacityError`；`version`、`max_running` 或 `account_concurrency` 非法时派发报 `SettingsFileError` 并给出文件路径。`list_members` 不显示这个值 | 不需要 |
+| 单账号并发上限（`codex`/`antigravity`/`claude` 默认 5，其余默认不限） | `settings.json`：`account_concurrency`，`<cli>` = 1–10 或 `null`（不限） | `settings.rs`；`members.py` 的 `read_account_concurrencies`；`account_limits.py`（跨服务进程按账号计数） | 新线程的工位与 `auto` 选位跳到备选；点名、续接和会议报 `AccountCapacityError` | 不需要 |
+| 历史自动清理 | `settings.json`：`history_retention_days`，取 `null`/30/90/180 | `settings.rs`；`retention.py`（服务启动时执行一次，之后每 24 小时一次） | `version`、`max_running` 或 `account_concurrency` 非法会阻止派发并关闭清理；仅保留天数非法时关闭清理、记录 warning，派发仍可用 | 下一轮清理时生效，最长要等 24 小时；想立刻生效就重启服务 |
 | 手动清理或重命名对话 | 没有对应文件。App 直接改 `agentnave.db`，同时持有对话锁（`manage.rs`，ADR-0012/0026） | — | — | ⚠️ 不建议手改数据库 |
 | CLI 默认模型检测 | `cli-defaults.json`（App 检测到后写入，可以不写） | `detect.rs` 的 `NATIVE_FILE`；`members.py` 的 `cli_default_model` | `defaults_applied` | 不需要 |
 | boss 全局规则文件 | 有 App 时按 `orchestration_rules.json` 写进各宿主的规则文件；无头宿主默认见 `agentnave-manager` 的 `references/headless.md`，其他档位按 `orchestration_rules.json` 写进 bot 指令入口（§3.2、§6.6） | `orchestration_rules.json` | — | — |

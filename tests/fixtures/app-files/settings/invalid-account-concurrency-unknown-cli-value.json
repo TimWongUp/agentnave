@@ -1,0 +1,4 @@
+{
+  "version": 1,
+  "account_concurrency": { "future-cli": 0 }
+}

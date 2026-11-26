@@ -30,7 +30,7 @@ fn settings_default_validate_and_save_atomically() {
     assert_eq!(max_running(root.path()), 2);
     assert_eq!(
         state(root.path())["settings"],
-        json!({"version": 1, "max_running": 2, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true})
+        json!({"version": 1, "max_running": 2, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true, "account_concurrency": {}})
     );
     save(
         root.path(),
@@ -40,7 +40,7 @@ fn settings_default_validate_and_save_atomically() {
     let saved: Value = serde_json::from_slice(&fs::read(root.path().join(FILE)).unwrap()).unwrap();
     assert_eq!(
         saved,
-        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true})
+        json!({"version": 1, "max_running": 5, "future": true, "x": 1, "history_retention_days": null, "claude_interactive": true, "antigravity_interactive": true, "account_concurrency": {}})
     );
     // Saving one other key keeps the saved limit, and a broken saved limit falls back.
     save(root.path(), &json!({"version": 1, "y": 2})).unwrap();
@@ -157,4 +157,85 @@ fn claude_interactive_defaults_on_and_partial_saves_preserve_other_settings() {
     )
     .unwrap_err();
     assert!(error.contains("antigravity_interactive"));
+}
+
+#[test]
+fn account_concurrency_defaults_to_five_and_null_means_no_limit() {
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(account_concurrency(root.path(), "claude"), Some(5));
+    assert_eq!(account_concurrency(root.path(), "codex"), Some(5));
+    assert_eq!(account_concurrency(root.path(), "antigravity"), Some(5));
+    assert_eq!(account_concurrency(root.path(), "pi"), None);
+    assert_eq!(account_concurrency(root.path(), "grok"), None);
+    assert_eq!(
+        state(root.path())["settings"]["account_concurrency"],
+        json!({})
+    );
+    assert_eq!(
+        validate(&json!({"version": 1})).unwrap()["account_concurrency"],
+        json!({})
+    );
+    let limits = json!({"claude": 1, "codex": 10, "grok": null, "future-cli": 3});
+    save(
+        root.path(),
+        &json!({"version": 1, "account_concurrency": limits}),
+    )
+    .unwrap();
+    assert_eq!(account_concurrency(root.path(), "claude"), Some(1));
+    assert_eq!(account_concurrency(root.path(), "codex"), Some(10));
+    assert_eq!(account_concurrency(root.path(), "antigravity"), Some(5));
+    assert_eq!(account_concurrency(root.path(), "grok"), None);
+    assert_eq!(account_concurrency(root.path(), "pi"), None);
+    assert_eq!(
+        state(root.path())["settings"]["account_concurrency"],
+        limits
+    );
+    // Saving another setting keeps every CLI's limit, unknown ones included.
+    save(root.path(), &json!({"version": 1, "max_running": 4})).unwrap();
+    assert_eq!(
+        state(root.path())["settings"]["account_concurrency"],
+        limits
+    );
+    assert_eq!(max_running(root.path()), 4);
+}
+
+#[test]
+fn account_concurrency_is_strict_and_a_broken_saved_map_does_not_block_saving() {
+    let root = tempfile::tempdir().unwrap();
+    for bad in [
+        json!(null),
+        json!(5),
+        json!([]),
+        json!("5"),
+        json!({"claude": 0}),
+        json!({"claude": 11}),
+        json!({"claude": -1}),
+        json!({"claude": 5.0}),
+        json!({"claude": true}),
+        json!({"claude": "5"}),
+        json!({"claude": 5, "future-cli": 0}),
+    ] {
+        let document = json!({"version": 1, "max_running": 3, "account_concurrency": bad});
+        let error = save(root.path(), &document).unwrap_err();
+        assert!(error.contains("account_concurrency"), "{bad}: {error}");
+        assert!(!root.path().join(FILE).exists(), "{bad}");
+
+        fs::write(
+            root.path().join(FILE),
+            serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap();
+        assert!(state(root.path())["error"].is_string(), "{bad}");
+        assert_eq!(account_concurrency(root.path(), "claude"), Some(5));
+        save(
+            root.path(),
+            &json!({"version": 1, "claude_interactive": false}),
+        )
+        .unwrap();
+        let healed = state(root.path());
+        assert_eq!(healed["error"], Value::Null, "{bad}");
+        assert_eq!(healed["settings"]["account_concurrency"], json!({}));
+        assert_eq!(healed["settings"]["max_running"], 3);
+        fs::remove_file(root.path().join(FILE)).unwrap();
+    }
 }

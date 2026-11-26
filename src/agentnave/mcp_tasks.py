@@ -17,6 +17,7 @@ from pydantic import AfterValidator, Field, ValidatorFunctionWrapHandler, WrapVa
 
 from agentnave import accounts, provider_health
 from agentnave import mcp_runtime as runtime
+from agentnave.account_limits import AccountCapacityError
 from agentnave.conversations import (
     Conversations,
     TaskStart,
@@ -46,6 +47,7 @@ from agentnave.mcp_payloads import (
     WaitPayload,
 )
 from agentnave.mcp_recommend import choose_auto_seat, recommendation_payload
+from agentnave.mcp_reselect import selectable_choices, with_reselection
 from agentnave.mcp_runtime import (
     ACCESS,
     DISPATCH_WAIT,
@@ -497,6 +499,8 @@ async def _acquire_and_start_task(
                     resumed_task=arguments.resumed_task,
                     manager_workspace=manager_workspace,
                 )
+            except AccountCapacityError:
+                raise  # not an isolation failure: another choice may still start
             except (ValueError, OSError) as exc:
                 if not launch.isolation_auto:
                     raise
@@ -537,6 +541,19 @@ async def _acquire_and_start_task(
 
 
 async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPayload:
+    """_launch_once, choosing again when the chosen account filled up meanwhile."""
+    choices = selectable_choices(
+        launch.seat or review_role(launch.role),
+        runtime.HOST,
+        explicit=launch.session_id is not None
+        or launch.provider is not None
+        or launch.account is not None
+        or "model" in (launch.provider_options or {}),
+    )
+    return await with_reselection(lambda: _launch_once(ctx, launch), choices)
+
+
+async def _launch_once(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPayload:
     """Resolve the seat and defaults, acquire isolation, start the task and describe it.
 
     The shared start path of start_agent and start_agents; failures are ToolErrors. A seat
@@ -649,6 +666,8 @@ async def launch_task(ctx: Context[Runtime], launch: TaskLaunch) -> TaskStartPay
             )
         except KeyError as exc:
             raise ToolError("Unknown conversation_id; use list.") from exc
+        except AccountCapacityError:
+            raise  # launch_task chooses again or reports it
         except ValueError as exc:
             error = invocation_request_error(provider, exc)
             if seat_applied:

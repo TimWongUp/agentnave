@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "account_concurrency": {
+    "claude": 1,
+    "codex": 10,
+    "grok": null,
+    "future-cli": 3
+  }
+}

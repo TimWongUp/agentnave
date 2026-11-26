@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from agentnave.adapters import get_adapter
 from agentnave.core import InvocationManager
@@ -27,6 +27,9 @@ from agentnave.models import (
 from agentnave.naming import MemberIdentity, MemberName
 from agentnave.native_prompts import NativePrompt
 from agentnave.threaded import to_thread_keeping
+
+if TYPE_CHECKING:
+    from agentnave.account_limits import AccountSlotClaim
 
 type SeatRunStatus = Literal[
     "pending", "running", "succeeded", "failed", "blocked", "cancelled", "not_started"
@@ -211,6 +214,8 @@ class Groups:
         self.active_lease_paths: set[Path] = set()
         # Leases taken ahead of a seat's synchronous launch (see claim_seats), or why not.
         self._seat_claims: dict[tuple[str, str], ClaimedIsolation | Exception] = {}
+        # Account slots of seats admitted with their round and about to launch.
+        self._account_claims: dict[tuple[str, str], AccountSlotClaim] = {}
         self._groups: dict[str, Group] = {}
         self._rounds: dict[str, Round] = {}
         self.on_inbox_change: Callable[[], None] | None = None
@@ -284,6 +289,23 @@ class Groups:
                 # One lease that cannot be removed must not keep the others held.
                 logging.getLogger(__name__).exception("Could not release a seat lease")
 
+    def _claim_accounts(self, seats: list[GroupSeat]) -> list[AccountSlotClaim | None]:
+        """Account slots for seats about to start, all or none; these groups keep no limits."""
+        return [None] * len(seats)
+
+    def _reserve_accounts(self, group: Group, seat_ids: list[str]) -> None:
+        """Admit the seats a round launches at once, before the round changes anything."""
+        claims = self._claim_accounts([group.seats[seat_id] for seat_id in seat_ids])
+        for seat_id, claim in zip(seat_ids, claims, strict=True):
+            if claim is not None:
+                self._account_claims[(group.id, seat_id)] = claim
+
+    def _drop_account_claims(self, group_id: str, seat_ids: list[str]) -> None:
+        """Give back the slots of seats that never launched."""
+        for seat_id in seat_ids:
+            if claim := self._account_claims.pop((group_id, seat_id), None):
+                claim.release()
+
     def adopt(self, group: Group) -> Group:
         """Register a group, including one restored from saved state."""
         self._groups[group.id] = group
@@ -317,6 +339,8 @@ class Groups:
             raise ValueError("instructions name seats outside this round: " + ", ".join(outside))
         if not prompt.strip():
             raise ValueError("prompt must not be empty")
+        # A serial round admits only its first seat; each later one at its own launch.
+        self._reserve_accounts(group, seat_ids if order == "parallel" else seat_ids[:1])
         group.rounds += 1
         round_ = Round(
             uuid.uuid4().hex,
@@ -339,8 +363,11 @@ class Groups:
         group.active = round_
         self._rounds[round_.id] = round_
         # Launch synchronously so returned invocation ids are cancellable at once.
-        for run in round_.runs if order == "parallel" else round_.runs[:1]:
-            self._launch(round_, run, len(group.entries))
+        try:
+            for run in round_.runs if order == "parallel" else round_.runs[:1]:
+                self._launch(round_, run, len(group.entries))
+        finally:
+            self._drop_account_claims(group_id, seat_ids)
         round_.task = asyncio.create_task(self._drive(round_))
         if self.on_inbox_change is not None:
             round_.task.add_done_callback(
@@ -371,20 +398,24 @@ class Groups:
         """Start lost seats of the running parallel round again from the same snapshot: nothing
         is committed before every seat ended, so they still cannot see each other's answers."""
         round_, runs = self._validate_retry(group_id, seat_ids)
-        for item in seat_ids:
-            run = runs[item]
-            run.status = "pending"
-            run.invocation_id = None
-            run.result = None
-            run.launch_error = None
-            run.blockers = []
-            run.prompts = []
-            run.reported_prompts.clear()
-            run.reported_blockers = 0
-            run.reported_lost = False
-            run.output_returned = False
-            self._launch(round_, run, run.snapshot)
-            round_.finishing.append(asyncio.create_task(self._finish(round_, run)))
+        self._reserve_accounts(round_.group, seat_ids)
+        try:
+            for item in seat_ids:
+                run = runs[item]
+                run.status = "pending"
+                run.invocation_id = None
+                run.result = None
+                run.launch_error = None
+                run.blockers = []
+                run.prompts = []
+                run.reported_prompts.clear()
+                run.reported_blockers = 0
+                run.reported_lost = False
+                run.output_returned = False
+                self._launch(round_, run, run.snapshot)
+                round_.finishing.append(asyncio.create_task(self._finish(round_, run)))
+        finally:
+            self._drop_account_claims(group_id, seat_ids)
         round_.notify()
         return round_
 
@@ -557,10 +588,13 @@ class Groups:
 
     def _launch(self, round_: Round, run: SeatRun, snapshot: int) -> None:
         prepared = self._seat_claims.pop((round_.group.id, run.seat_id), None)
+        slot = self._account_claims.pop((round_.group.id, run.seat_id), None)
         try:
-            notify = self._launch_seat(round_, run, snapshot, prepared)
+            notify = self._launch_seat(round_, run, snapshot, prepared, slot)
         except BaseException:
             self._discard_claim(prepared)  # whatever went wrong, no lease stays behind
+            if slot is not None:
+                slot.release()
             raise
         if notify:
             round_.notify()
@@ -571,10 +605,14 @@ class Groups:
         run: SeatRun,
         snapshot: int,
         prepared: ClaimedIsolation | Exception | None,
+        slot: AccountSlotClaim | None,
     ) -> bool:
-        """Start one seat; True when waiters should be woken."""
+        """Start one seat; True when waiters should be woken. slot: the account slot taken
+        when the round was admitted; this call releases it unless the seat's run now owns it."""
         if round_.cancelling:
             self._discard_claim(prepared)
+            if slot is not None:
+                slot.release()
             run.status = "not_started"
             return False
         seat = round_.group.seats[run.seat_id]
@@ -593,6 +631,8 @@ class Groups:
             )
             run.launch_error = InvocationError(code, round_.error)
             self._discard_claim(prepared)
+            if slot is not None:
+                slot.release()
             return False
         claimed = None
         try:
@@ -620,12 +660,18 @@ class Groups:
                 read_only=seat.access == "read",
                 account=seat.account,
             )
+            if slot is None:
+                slot = self._claim_accounts([seat])[0]
             run.invocation_id = (
                 self.manager.start(req, on_settled=on_settled, isolated=True)
                 if on_settled is not None
                 else self.manager.start(req)
             )
+            if slot is not None:
+                self.manager.on_run_end(run.invocation_id, slot.release)
         except BaseException as exc:
+            if slot is not None:
+                slot.release()
             if claimed is not None:
                 self.active_lease_paths.discard(claimed.lease.path)
                 claimed.lease.release()

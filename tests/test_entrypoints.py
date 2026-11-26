@@ -4576,6 +4576,152 @@ async def test_start_agents_refuses_the_whole_call_beyond_the_free_capacity(
         )
 
 
+def _write_account_limits(**limits: int | None) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "settings.json").write_text(json.dumps({"version": 1, "account_concurrency": limits}))
+
+
+def _two_claude_accounts(tmp_path: Path) -> None:
+    root = Path(os.environ["AGENTNAVE_DATA_DIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    listed = [
+        {
+            "id": name,
+            "provider": "claude",
+            "label": name,
+            "dir": str(tmp_path / name),
+            "managed": False,
+        }
+        for name in ("work", "spare")
+    ]
+    (root / "accounts.json").write_text(json.dumps({"version": 1, "accounts": listed}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("random_candidates", [False, True])
+async def test_full_accounts_send_new_threads_to_the_next_seat_choice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    decision: _FakeDecisionClient,
+    random_candidates: bool,
+) -> None:
+    from agentnave import seat_fallbacks
+
+    _install_fake_claude(tmp_path, monkeypatch)
+    _two_claude_accounts(tmp_path)
+    _write_decision_key()
+    _write_account_limits(claude=1)
+    seat = _own_seat(
+        "a",
+        "claude",
+        "read",
+        account="work",
+        fallbacks=[{"provider": "claude", "model": "spare-model", "account": "spare"}],
+    )
+    _write_own_seats([seat], random_candidates=random_candidates)
+
+    def first_candidate(_count: int) -> int:
+        return 0
+
+    monkeypatch.setattr(seat_fallbacks, "choose_index", first_candidate)
+    task = {"prompt": "sleep", "cwd": str(tmp_path), "seat": "a", "manager_session_id": "boss-1"}
+
+    async def listed(client: Client) -> dict[str, object]:
+        members = _payload((await client.call_tool("list_members", {})).structured_content)
+        return _payload(_payload(_payload(members["orchestration"])["custom_seats"])["a"])
+
+    async with Client(mcp) as client:
+        first = _payload((await client.call_tool("start_agent", task)).structured_content)
+        assert first["account"] == "work"
+        status = await listed(client)
+        assert status["account"] == "spare" and status["fallback_position"] == 1
+        # One seat is left, so the decision model is not called and auto takes the fallback.
+        auto = await client.call_tool("start_agent", {**task, "seat": "auto", "access": "read"})
+        assert not auto.is_error, auto.content
+        second = _payload(auto.structured_content)
+        assert second["account"] == "spare"
+        if not random_candidates:
+            receipt = _payload(second["seat_fallback"])
+            assert "account 'work' is at its per-account concurrency limit of 1" in str(receipt)
+
+        status = await listed(client)
+        assert status["available"] is False and "limit of 1" in str(status["reason"])
+        none_left = await client.call_tool("start_agent", task)
+        assert none_left.is_error and "No other choice of this seat" in str(none_left.content)
+        # A named CLI or account is never switched.
+        named = await client.call_tool(
+            "start_agent", {**task, "provider": "claude", "account": "work"}
+        )
+        assert named.is_error and "claude account 'work' allows 1" in str(named.content)
+        assert "No other choice" not in str(named.content)
+        for item in (first, second):
+            await client.call_tool("cancel", {"id": item["invocation_id"]})
+
+
+@pytest.mark.asyncio
+async def test_a_slot_taken_between_choosing_and_starting_chooses_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    from agentnave import account_limits
+
+    _ = decision
+    _install_fake_claude(tmp_path, monkeypatch)
+    _two_claude_accounts(tmp_path)
+    _write_account_limits(claude=1)
+    fallback = {"provider": "claude", "model": "spare-model", "account": "spare"}
+    _write_own_seats([_own_seat("a", "claude", "write", account="work", fallbacks=[fallback])])
+    snapshot = account_limits.full_accounts
+    stolen: list[account_limits.AccountSlotClaim] = []
+
+    def raced(candidates: object) -> dict[tuple[str, str | None], int]:
+        found = snapshot(cast(list[tuple[str, str | None]], list(cast(list[object], candidates))))
+        if not stolen:  # another server takes the slot right after this one looked
+            stolen.append(account_limits.acquire_slot("claude", "work"))
+        return found
+
+    monkeypatch.setattr(account_limits, "full_accounts", raced)
+    async with Client(mcp) as client:
+        started = await _start_and_wait(client, cwd=str(tmp_path), seat="a")
+        assert started["account"] == "spare"
+        assert "limit of 1" in str(started["seat_fallback"])
+    stolen[0].release()
+
+
+@pytest.mark.asyncio
+async def test_start_agents_spreads_a_batch_over_accounts_as_they_fill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: _FakeDecisionClient
+) -> None:
+    _install_fake_claude(tmp_path, monkeypatch)
+    _two_claude_accounts(tmp_path)
+    _write_decision_key()
+    _write_account_limits(claude=1)
+    fallback = {"provider": "claude", "model": "spare-model", "account": "spare"}
+    _write_own_seats(
+        [
+            _own_seat("a", "claude", "read", account="work", fallbacks=[fallback]),
+            _own_seat("b", "claude", "read", difficulty="hard"),
+        ]
+    )
+    decision.answers = [Decision("a", {"a": 0.9}, confidence=0.9)] * 3
+    one = {"access": "read", "prompt": "sleep"}
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "start_agents",
+            {"cwd": str(tmp_path), "manager_session_id": "boss-1", "tasks": [one, one, one]},
+        )
+        assert not result.is_error, result.content
+        results = [
+            _payload(item)
+            for item in cast(list[object], _payload(result.structured_content)["results"])
+        ]
+        assert [item.get("account") for item in results] == ["work", "spare", None]
+        assert results[2]["status"] == "not_started"
+        assert "per-account concurrency limit" in str(results[2]["error"])
+        for item in results[:2]:
+            await client.call_tool("cancel", {"id": item["invocation_id"]})
+
+
 @pytest.mark.asyncio
 async def test_start_agents_exists_only_in_the_decision_mode(
     tmp_path: Path, decision: _FakeDecisionClient

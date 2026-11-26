@@ -8,6 +8,7 @@ details of an account (email, organization) live in the App and never reach this
 
 from __future__ import annotations
 
+import hashlib
 import os
 import unicodedata
 from collections.abc import Iterable
@@ -186,6 +187,35 @@ def same_home(adapter: ProviderAdapter, first: str | None, second: str | None) -
         return home_of(adapter, first) == home_of(adapter, second)
     except ValueError:
         return False
+
+
+def concurrency_bucket(
+    provider: str, account: str | None, adapter: ProviderAdapter | None = None
+) -> str:
+    """The name one account's runs are counted under (ADR-0127), safe as a directory name.
+
+    The default account is whatever the inherited configuration directory holds: a registered
+    account's runs when it is that one's, else a bucket of that directory.
+    """
+    if account is not None:
+        found = resolve(provider, account)
+        assert found is not None
+        return found.id
+    from agentnave.adapters import get_adapter
+
+    adapter = adapter or get_adapter(provider)
+    inherited = home_of(adapter, None)
+    if not inherited:
+        return RESERVED_ACCOUNT_ID
+    try:
+        document = read_accounts()
+    except AccountsFileError:
+        document = None  # the default account never needs the file to start
+    for known in document.accounts if document is not None else ():
+        if known.provider == adapter.name and normal_dir(known.dir) == inherited:
+            return known.id
+    digest = hashlib.sha256(inherited.encode("utf-8", "surrogateescape")).hexdigest()[:12]
+    return f"{RESERVED_ACCOUNT_ID}-{digest}"
 
 
 def host_account(host: Host) -> str | None:

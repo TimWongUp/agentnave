@@ -7,7 +7,7 @@ Imports members at load; members reaches this module through a late import.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import get_args
 
 from agentnave import accounts, provider_health
@@ -105,6 +105,8 @@ def custom_orchestration_status(
     installed: Callable[[str], bool],
     document: MemberFile | None,
     active_health: dict[provider_health.Key, provider_health.Health],
+    *,
+    full: Mapping[tuple[str, str | None], int] | None = None,
 ) -> OrchestrationStatus:
     """The user's own seats instead of the fixed groups and the fixed image seat."""
     statuses = _review_status(
@@ -116,6 +118,7 @@ def custom_orchestration_status(
         document,
         active_health,
         image_roles=frozenset(seat.id for seat in custom.values() if seat.kind == IMAGE_KIND),
+        full=full,
     )
     return OrchestrationStatus(
         enabled=True,

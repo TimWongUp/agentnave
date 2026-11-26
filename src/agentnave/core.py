@@ -801,6 +801,12 @@ class InvocationManager:
             record.task.add_done_callback(lambda _: self.on_inbox_change and self.on_inbox_change())
         return invocation_id
 
+    def on_run_end(self, invocation_id: str, callback: Callable[[], None]) -> None:
+        """Call back on the event loop once this run's task ends, however it ends."""
+        task = self._record(invocation_id).task
+        assert task is not None
+        task.add_done_callback(lambda _: callback())
+
     def reserve(self, request: InvocationRequest) -> IO[bytes] | None:
         """Claim the request's native session for one run, across every server sharing the
         lock directory; release_and_remove removes it once the run ends."""
