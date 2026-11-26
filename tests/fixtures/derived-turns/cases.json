@@ -196,6 +196,54 @@
         }
       ],
       "expected_user_turn_indices": [1]
+    },
+    {
+      "name": "claude_session_only_anchor_falls_back_to_prompt_text",
+      "provider": "claude",
+      "file": "claude_mixed.jsonl",
+      "tasks": [
+        {
+          "prompt": "Inspect the build setup",
+          "native_anchor": {"session_id": "11111111-1111-4111-8111-111111111111"},
+          "has_forward": false
+        }
+      ],
+      "expected_user_turn_indices": [1, 2]
+    },
+    {
+      "name": "claude_skips_bad_json_lines",
+      "provider": "claude",
+      "file": "claude_bad_lines.jsonl",
+      "tasks": [
+        {
+          "prompt": "Inspect the build setup",
+          "native_anchor": {"prompt_id": "p-boss-1"},
+          "has_forward": false
+        }
+      ],
+      "expected_all_turns": [
+        {
+          "index": 0,
+          "anchor": {"prompt_id": "p-boss-1"},
+          "user_text": "Inspect the build setup",
+          "user_time": "2026-11-26T10:01:00Z",
+          "assistant_text": "Build uses uv and cargo.",
+          "assistant_time": "2026-11-26T10:01:11Z",
+          "status": "succeeded",
+          "model": "claude-sonnet-4-6"
+        },
+        {
+          "index": 1,
+          "anchor": {"prompt_id": "p-user-1"},
+          "user_text": "What tests exist?",
+          "user_time": "2026-11-26T10:02:00Z",
+          "assistant_text": "pytest and cargo test.",
+          "assistant_time": "2026-11-26T10:02:05Z",
+          "status": "succeeded",
+          "model": "claude-sonnet-4-6"
+        }
+      ],
+      "expected_user_turn_indices": [1]
     }
   ],
   "unrecognized_file": "unrecognized.jsonl"

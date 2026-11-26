@@ -23,7 +23,23 @@ fn workspace_owner(root: &Path, workspace: &str) -> String {
         .unwrap_or_else(|| workspace.to_owned())
 }
 
+/// Why a derived session's process cannot be started while a plain terminal holds its chat.
+pub(super) const PLAIN_HOLDER_ERR: &str =
+    "这段对话已在普通终端里运行，请先关闭那个终端，不能另开第二个进程";
+
 impl Terminals {
+    /// Whether a live plain (non-derived) terminal here holds the chat of this native session.
+    pub(super) fn has_live_plain_holder(&self, provider: &str, native: &str) -> bool {
+        let key = boss_key(provider, native);
+        self.lock().open.iter().any(|r| {
+            r.derived.is_none()
+                && r.session.exit().is_none()
+                && r.provider == provider
+                && (r.native.as_deref() == Some(native)
+                    || r.workspaces.last().map(String::as_str) == Some(key.as_str()))
+        })
+    }
+
     /// If `workspace` is owned by a live derived terminal session, refuse opening a duplicate
     /// standalone process and point to that derived terminal instead.
     pub(super) fn reject_if_live_derived_owner(
@@ -140,5 +156,38 @@ mod tests {
         let body: Value = serde_json::from_slice(&resp.body).unwrap();
         assert_eq!(body["derived_terminal"]["id"], tid);
         assert_eq!(body["derived_terminal"]["parent_workspace_id"], "s-boss-ws");
+    }
+
+    #[test]
+    fn refuses_to_wake_a_session_a_live_plain_terminal_holds() {
+        use std::time::SystemTime;
+
+        use super::super::Running;
+        use super::PLAIN_HOLDER_ERR;
+
+        let terminals = Terminals::default();
+        let sid = "66666666-6666-4666-8666-666666666666";
+        assert!(!terminals.has_live_plain_holder("claude", sid));
+        terminals.lock().open.push(Running {
+            id: 1,
+            provider: "claude".to_owned(),
+            cwd: std::env::temp_dir(),
+            session: live_session(),
+            workspaces: vec![boss_key("claude", sid)],
+            native: None,
+            title_located: false,
+            title_searched: None,
+            started: SystemTime::now(),
+            pending: 0,
+            account: None,
+            codex: None,
+            derived: None,
+        });
+        assert!(terminals.has_live_plain_holder("claude", sid));
+        assert!(!terminals.has_live_plain_holder("codex", sid));
+        assert_eq!(
+            terminals.resume_slot("claude", sid).err().as_deref(),
+            Some(PLAIN_HOLDER_ERR)
+        );
     }
 }

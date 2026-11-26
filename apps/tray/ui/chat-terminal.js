@@ -1227,7 +1227,7 @@ const ChatTerminal = (() => {
   function column(group, host, app) {
     const view = stateFor(group);
     t.handover = !view.isDerived && (!view.x || view.x.exit != null) && ["claude-desktop", "antigravity-desktop"].includes(app) ? group : null;
-    t.derivedOwner = !view.isDerived && !view.x ? liveDerivedOwnerOf(group) : null;
+    t.derivedOwner = !view.isDerived && (!view.x || view.x.exit != null) ? liveDerivedOwnerOf(group) : null;
     t.resumable = !view.isDerived && !view.x && !t.handover && !t.derivedOwner && RESUMES.has(host) ? group : null;
     show(view.x, view.on, group, view);
     if (t.shown == null && reviving(group, openDeskKey())) setText(el.drSub, L("正在恢复", "Resuming"));

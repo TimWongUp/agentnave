@@ -61,15 +61,22 @@ def _optional_end_prompt_id(anchor: dict[str, object]) -> str | None:
     return raw
 
 
-def rows(path: Path, *, max_rows: int | None = None) -> list[dict[str, object]]:
+def scan_rows(
+    path: Path, *, max_rows: int | None = None, skip_invalid: bool = False
+) -> tuple[list[dict[str, object]], bool]:
+    """Read complete JSONL lines; also report whether the file held any non-blank content.
+
+    A line that is not a JSON object raises unless `skip_invalid`, which drops it instead.
+    """
     if max_rows == 0:
-        return []
+        return [], False
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         fd = os.open(path, flags)
     except OSError as exc:
         raise ValueError("native transcript missing or inaccessible") from exc
     result: list[dict[str, object]] = []
+    has_content = False
     with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode):
@@ -89,37 +96,80 @@ def rows(path: Path, *, max_rows: int | None = None) -> list[dict[str, object]]:
                 if not ended:
                     break
                 # Count complete oversized lines as a row placeholder to keep end_row_index aligned.
+                has_content = True
                 result.append({})
                 if max_rows is not None and len(result) >= max_rows:
                     break
                 continue
             if not line.endswith(b"\n"):
                 break
+            if skip_invalid and not line.strip():
+                continue
+            has_content = True
             try:
                 value: object = json.loads(line)
             except ValueError as exc:
+                if skip_invalid:
+                    continue
                 raise ValueError("invalid native transcript line") from exc
             if isinstance(value, dict):
                 result.append(cast(dict[str, object], value))
                 if max_rows is not None and len(result) >= max_rows:
                     break
-    return result
+    return result, has_content
+
+
+def rows(path: Path, *, max_rows: int | None = None) -> list[dict[str, object]]:
+    return scan_rows(path, max_rows=max_rows)[0]
+
+
+def transcript_paths(
+    provider: str, account: str | None, session_id: str, *, include_archived: bool = False
+) -> list[Path]:
+    """Safe regular native transcript files of this session; `include_archived` adds Codex's archive."""
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", session_id):
+        raise ValueError("invalid native session ID")
+    home = accounts.home_of(get_adapter(provider), account)
+    if provider == "claude":
+        root = Path(home or Path.home() / ".claude") / "projects"
+        return _matches(root, f"*/{session_id}.jsonl")
+    if provider == "codex":
+        codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        found = _matches(codex_home / "sessions", f"**/rollout-*-{session_id}.jsonl")
+        if not found and include_archived:
+            found = _matches(codex_home / "archived_sessions", f"rollout-*-{session_id}.jsonl")
+        return found
+    if provider == "antigravity":
+        agy_root = Path(
+            os.environ.get("AGENTNAVE_AGY_HOME") or Path.home() / ".gemini/antigravity-cli"
+        )
+        root = agy_root / "brain"
+        path = root / session_id / ".system_generated/logs/transcript_full.jsonl"
+        return [path] if _is_regular_in_root(path, root) else []
+    raise ValueError("unsupported terminal provider")
+
+
+def _matches(root: Path, pattern: str) -> list[Path]:
+    return [path for path in root.glob(pattern) if _is_regular_in_root(path, root)]
 
 
 def read_turn(
     provider: str, account: str | None, session_id: str, anchor: dict[str, object]
 ) -> str:
     """Locate this account's native transcript and read the exact anchored turn."""
-    if not re.fullmatch(r"[0-9a-fA-F-]{36}", session_id):
-        raise ValueError("invalid native session ID")
-    home = accounts.home_of(get_adapter(provider), account)
+    if provider == "codex":
+        key = anchor.get("turn_id")
+        client_id = anchor.get("client_user_message_id")
+        if not isinstance(client_id, str) or not client_id:
+            raise ValueError("missing Codex client_user_message_id")
+        if not isinstance(key, str) or not key:
+            raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
+        return _read_codex_turn_with_retry(account, session_id, key, client_id)
     if provider == "claude":
-        root = Path(home or Path.home() / ".claude") / "projects"
-        matches = list(root.glob(f"*/{session_id}.jsonl"))
         key = anchor.get("prompt_id")
         end_prompt_id = _optional_end_prompt_id(anchor)
         end_row_index = _optional_end_row_index(anchor)
-        matches = [p for p in matches if _is_regular_in_root(p, root)]
+        matches = transcript_paths(provider, account, session_id)
         if len(matches) != 1:
             raise ValueError("native transcript missing or ambiguous")
         if not isinstance(key, str) or not key:
@@ -130,26 +180,12 @@ def read_turn(
             end_prompt_id=end_prompt_id,
             end_row_index=end_row_index,
         )
-    if provider == "codex":
-        root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
-        key = anchor.get("turn_id")
-        client_id = anchor.get("client_user_message_id")
-        if not isinstance(client_id, str) or not client_id:
-            raise ValueError("missing Codex client_user_message_id")
-        if not isinstance(key, str) or not key:
-            raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
-        return _read_codex_turn_with_retry(root, session_id, key, client_id)
     if provider == "antigravity":
-        agy_root = Path(
-            os.environ.get("AGENTNAVE_AGY_HOME") or Path.home() / ".gemini/antigravity-cli"
-        )
-        root = agy_root / "brain"
-        matches = [root / session_id / ".system_generated/logs/transcript_full.jsonl"]
         index = anchor.get("user_input_index")
         if not isinstance(index, int) or isinstance(index, bool):
             raise ValueError("missing Antigravity user_input_index")
         end_row_index = _optional_end_row_index(anchor)
-        matches = [p for p in matches if _is_regular_in_root(p, root)]
+        matches = transcript_paths(provider, account, session_id)
         if len(matches) != 1:
             raise ValueError("native transcript missing or ambiguous")
         return antigravity_turn(
@@ -173,16 +209,14 @@ def _codex_user_message_clients(entries: list[dict[str, object]], turn_id: str) 
     return clients
 
 
-def _read_codex_turn_with_retry(root: Path, session_id: str, turn_id: str, client_id: str) -> str:
+def _read_codex_turn_with_retry(
+    account: str | None, session_id: str, turn_id: str, client_id: str
+) -> str:
     """Retry briefly while Codex flushes the rollout JSONL after turn/completed."""
     deadline = time.monotonic() + CODEX_READ_RETRY_SECONDS
     last_error = "native transcript missing, ambiguous, or missing turn anchor"
     while True:
-        matches = [
-            p
-            for p in root.glob(f"*/*/*/rollout-*-{session_id}.jsonl")
-            if _is_regular_in_root(p, root)
-        ]
+        matches = transcript_paths("codex", account, session_id)
         if len(matches) > 1:
             raise ValueError("native transcript missing, ambiguous, or missing turn anchor")
         if len(matches) == 1:
@@ -203,7 +237,7 @@ def _read_codex_turn_with_retry(root: Path, session_id: str, turn_id: str, clien
         time.sleep(min(CODEX_READ_POLL_SECONDS, remaining))
 
 
-def _claude_user_text(row: dict[str, object]) -> str | None:
+def claude_user_text(row: dict[str, object]) -> str | None:
     if row.get("type") != "user" or row.get("isSidechain") or row.get("isMeta"):
         return None
     content = _object(row.get("message")).get("content")
@@ -223,7 +257,7 @@ def _claude_user_text(row: dict[str, object]) -> str | None:
     return "\n".join(parts) if has_prompt_block else None
 
 
-def _is_claude_task_notification(row: dict[str, object]) -> bool:
+def is_claude_task_notification(row: dict[str, object]) -> bool:
     if row.get("type") != "user" or row.get("isSidechain"):
         return False
     origin_kind = _object(row.get("origin")).get("kind")
@@ -231,7 +265,7 @@ def _is_claude_task_notification(row: dict[str, object]) -> bool:
         return True
     if row.get("turnOrigin") in ("task_notification", "task-notification"):
         return True
-    text = _claude_user_text(row)
+    text = claude_user_text(row)
     if text is None:
         return False
     trimmed = text.strip()
@@ -244,8 +278,8 @@ def _is_claude_task_notification(row: dict[str, object]) -> bool:
     )
 
 
-def _is_claude_interrupt_row(row: dict[str, object]) -> bool:
-    text = _claude_user_text(row)
+def is_claude_interrupt_row(row: dict[str, object]) -> bool:
+    text = claude_user_text(row)
     if text is None:
         return False
     trimmed = text.strip()
@@ -254,7 +288,7 @@ def _is_claude_interrupt_row(row: dict[str, object]) -> bool:
 
 def _claude_user_prompt_id(row: dict[str, object]) -> str | None:
     """Return promptId only for genuine human non-meta user prompts (not task-notifications or interrupts)."""
-    if _is_claude_task_notification(row) or _is_claude_interrupt_row(row):
+    if is_claude_task_notification(row) or is_claude_interrupt_row(row):
         return None
     event = transcript_event(row, "")
     if event is None or not is_user_prompt(event):
@@ -295,7 +329,7 @@ def claude_turn(
             continue
         if row.get("isMeta"):
             continue
-        if active and _is_claude_task_notification(row):
+        if active and is_claude_task_notification(row):
             if current_reply:
                 replies.append(current_reply)
                 current_reply = ""
@@ -306,7 +340,7 @@ def claude_turn(
                 current_prompt_id = None
             subturn_ended = False
             continue
-        if _is_claude_interrupt_row(row):
+        if is_claude_interrupt_row(row):
             continue
         user_pid = _claude_user_prompt_id(row)
         if user_pid is not None:

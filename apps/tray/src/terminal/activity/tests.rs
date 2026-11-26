@@ -114,3 +114,24 @@ fn codex_boss_resolves_cached_thread_status_by_boss_key() {
     client.set_thread_status_for_test(tid, ThreadStatus::Unknown);
     assert_eq!(running.boss_activity(), "unknown");
 }
+
+#[test]
+fn codex_boss_follows_the_latest_confirmed_workspace() {
+    let old = "11111111-1111-4111-8111-111111111111";
+    let current = "22222222-2222-4222-8222-222222222222";
+    let client = CodexClient::new_for_test();
+    client.set_thread_status_for_test(old, ThreadStatus::Idle);
+    client.set_thread_status_for_test(
+        current,
+        ThreadStatus::Active {
+            waiting_on_approval: false,
+        },
+    );
+    let running = boss_running(
+        "codex",
+        fake_session_with_osc(&[]),
+        vec![boss_key("codex", old), boss_key("codex", current)],
+        Some(client),
+    );
+    assert_eq!(running.boss_activity(), "working");
+}

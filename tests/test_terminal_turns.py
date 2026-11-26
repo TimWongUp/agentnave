@@ -331,3 +331,24 @@ def test_derived_turns_shared_fixtures(tmp_path: Path) -> None:
 
     with pytest.raises(NativeLogError, match="unavailable"):
         read_native_turns("claude", tmp_path / "missing.jsonl")
+
+
+def test_derived_turns_read_a_log_larger_than_eight_megabytes(tmp_path: Path) -> None:
+    import json
+
+    from agentnave.derived_turns import read_native_turns
+
+    filler = json.dumps({"type": "attachment", "note": "x" * 1_000_000}) + "\n"
+    user = {"type": "user", "promptId": "p1", "message": {"content": "hello"}}
+    reply = {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": "hi"}]},
+    }
+    path = tmp_path / "big.jsonl"
+    path.write_text(
+        filler * 9 + json.dumps(user) + "\n" + json.dumps(reply) + "\n", encoding="utf-8"
+    )
+    assert path.stat().st_size > 8 * 1024 * 1024
+
+    turns = read_native_turns("claude", path)
+    assert [(turn.user_text, turn.assistant_text) for turn in turns] == [("hello", "hi")]

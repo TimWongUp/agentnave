@@ -4480,11 +4480,11 @@ test("historical derived rows merge stably, keep terminal width, highlight when 
 test("derived desk message view merges user turns as 用户 without mutating c.messages and surfaces log errors", async () => {
   const { context } = auditUI();
   const h = context.h;
-  const chatJs = readFileSync(`${__dirname}/../chat.js`, "utf8");
+  const turnsJs = readFileSync(`${__dirname}/../chat-derived-turns.js`, "utf8");
   const extract = (name) => {
-    const start = chatJs.indexOf(`function ${name}(`);
-    const next = chatJs.indexOf("\nfunction ", start + 1);
-    return chatJs.slice(start, next === -1 ? chatJs.length : next);
+    const start = turnsJs.indexOf(`function ${name}(`);
+    const next = turnsJs.indexOf("\nfunction ", start + 1);
+    return turnsJs.slice(start, next === -1 ? turnsJs.length : next);
   };
   const notice = h("div.dr-derived-note", { role: "status" });
   notice.hidden = true;
@@ -4530,6 +4530,7 @@ test("derived desk message view merges user turns as 用户 without mutating c.m
       extract("syncDerivedNotice"),
       extract("isDerivedDeskView"),
       extract("derivedTurnsVersionKey"),
+      extract("refreshDerivedTurns"),
       extract("requestDerivedTurns"),
       extract("buildDerivedUserMessages"),
       extract("mergeDerivedMessages"),
@@ -4556,7 +4557,7 @@ test("derived desk message view merges user turns as 用户 without mutating c.m
     derived: true,
     provider: "claude",
     model: "claude-opus-4-6",
-    tasks: 1,
+    private: { tasks: 1, running: 0 },
     status: "idle",
   };
   const ctx = { desks: new Map([["thread:s1", desk]]) };
@@ -4593,15 +4594,24 @@ test("derived desk message view merges user turns as 用户 without mutating c.m
 
   // When error comes back, notice banner shows while boss message remains.
   nextReply = { turns: [], error: "找不到原生会话日志（可能已被 CLI 清理）" };
-  desk.tasks = 2;
+  desk.private.tasks = 2;
   scope.requestDerivedTurns(chat, ctx, "thread:s1");
   await state.derivedTurns.pending.get("s-ws|thread:s1");
+  assert.equal(requests.length, 2, "a new task on the desk reads the turns again");
   const errEntry = scope.requestDerivedTurns(chat, ctx, "thread:s1");
   scope.syncDerivedNotice(errEntry.error);
   assert.equal(notice.hidden, false);
   assert.equal(notice.textContent, "找不到原生会话日志（可能已被 CLI 清理）");
   scope.syncDerivedNotice("");
   assert.equal(notice.hidden, true);
+
+  // Entering the desk's messages reads them again even though nothing the key holds changed.
+  scope.requestDerivedTurns(chat, ctx, "thread:s1");
+  assert.equal(requests.length, 2);
+  scope.refreshDerivedTurns("s-ws", "thread:s1");
+  assert.equal(scope.requestDerivedTurns(chat, ctx, "thread:s1").error, errEntry.error, "stale turns show meanwhile");
+  await state.derivedTurns.pending.get("s-ws|thread:s1");
+  assert.equal(requests.length, 3);
 });
 
 test("derived subagent workspaces nest under derived rows (1-level), refuse duplicate resume, and count own busy on stop", async () => {
@@ -4680,6 +4690,8 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
       derived: false,
       workspaces: ["ws-boss"],
     },
+    // An ended terminal of the subagent workspace, which its live owner still holds.
+    { id: 2, provider: "codex", cwd: "/repo", exit: 0, derived: false, workspaces: ["ws-sub"] },
   ];
   const groupsData = [
     {
@@ -4715,7 +4727,7 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
     onVisibility: () => {},
     href: p => p,
     load: async (url) => {
-      if (url === "/app/terminal/state") return { sessions, derived_titles: {}, clis: [], active: [] };
+      if (url.startsWith("/app/terminal/state")) return { sessions, derived_titles: {}, clis: [], active: [] };
       return {};
     },
     GROUP: { running: ["运行中", "run"], idle: ["空闲", "idle"] },
@@ -4755,7 +4767,7 @@ test("derived subagent workspaces nest under derived rows (1-level), refuse dupl
     },
     CHAT_PREFS: { view: "grouped", filter: "all", hideEmpty: false, itemSort: "updated", projectSort: "updated" },
     fetch: async (url) => {
-      if (url === "/app/terminal/state") return { ok: true, status: 200, json: async () => ({ sessions, derived_titles: {}, clis: [], active: [] }) };
+      if (url.startsWith("/app/terminal/state")) return { ok: true, status: 200, json: async () => ({ sessions, derived_titles: {}, clis: [], active: [] }) };
       return { ok: true, status: 200, json: async () => ({}) };
     },
     go() {},

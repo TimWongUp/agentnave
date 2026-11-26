@@ -97,9 +97,13 @@ pub(super) fn start(app: AppHandle) {
     thread::spawn(move || {
         terminals.prune_saved_launches(&root);
         let mut state = WakeupState::default();
+        #[cfg(unix)]
+        let mut boss_status = BossStatusRefresh::default();
         while !STOP.load(Ordering::SeqCst) {
             coordinator.poll(&terminals);
             let now = Instant::now();
+            #[cfg(unix)]
+            boss_status.tick(&terminals, now);
             let seen = scan_with(&terminals, &root, &mut state, now, |notice| {
                 crate::alerts::notify_unread(&app, notice.count, notice.derived);
             });
@@ -107,6 +111,48 @@ pub(super) fn start(app: AppHandle) {
             thread::sleep(Duration::from_millis(250));
         }
     });
+}
+
+/// A boss's Codex terminal never resumes its thread over the App's connection, so no status
+/// notification reaches the App; the status its badge shows is read anew at this interval.
+#[cfg(unix)]
+const BOSS_STATUS_REFRESH: Duration = Duration::from_secs(2);
+
+#[cfg(unix)]
+#[derive(Default)]
+struct BossStatusRefresh {
+    next: Option<Instant>,
+    reading: Arc<AtomicBool>,
+}
+
+#[cfg(unix)]
+impl BossStatusRefresh {
+    /// Starts a read on its own thread, so a slow Codex server never holds up the scan.
+    fn tick(&mut self, terminals: &Terminals, now: Instant) {
+        if self.reading.load(Ordering::SeqCst) || self.next.is_some_and(|at| now < at) {
+            return;
+        }
+        self.next = Some(now + BOSS_STATUS_REFRESH);
+        let clients: Vec<Arc<CodexClient>> = terminals
+            .lock()
+            .open
+            .iter()
+            .filter(|r| r.derived.is_none() && r.session.exit().is_none())
+            .filter_map(|r| r.codex.clone())
+            .filter(|codex| codex.is_connected())
+            .collect();
+        if clients.is_empty() {
+            return;
+        }
+        self.reading.store(true, Ordering::SeqCst);
+        let reading = self.reading.clone();
+        thread::spawn(move || {
+            for codex in clients {
+                codex.refresh_threads();
+            }
+            reading.store(false, Ordering::SeqCst);
+        });
+    }
 }
 
 pub(super) fn shutdown() {

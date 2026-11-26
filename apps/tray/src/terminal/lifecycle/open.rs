@@ -97,20 +97,7 @@ pub(in crate::terminal) fn find_session_with_tasks(
     terminal_matches
         .sort_by_key(|(_, _, task)| timestamp(task["time"].as_str().unwrap_or_default()));
     let (provider, native, latest) = terminal_matches.last().cloned().ok_or(MISSING)?;
-    let mut session_tasks: Vec<(i64, TaskMatch)> = bodies
-        .iter()
-        .filter(|task| {
-            non_empty_task_field(task, "provider").as_deref() == Some(provider.as_str())
-                && non_empty_task_field(task, "session_id").as_deref() == Some(native.as_str())
-        })
-        .map(|task| {
-            (
-                timestamp(task["time"].as_str().unwrap_or_default()).unwrap_or_default(),
-                to_task_match(task),
-            )
-        })
-        .collect();
-    session_tasks.sort_by_key(|(at, _)| *at);
+    let session_tasks = session_task_matches(&bodies, &provider, &native);
     let found = Found {
         cwd: PathBuf::from(non_empty_task_field(&latest, "cwd").unwrap_or_default()),
         model: non_empty_task_field(&latest, "model"),
@@ -121,27 +108,17 @@ pub(in crate::terminal) fn find_session_with_tasks(
         provider,
         native,
     };
-    Ok((found, session_tasks.into_iter().map(|(_, m)| m).collect()))
+    Ok((found, session_tasks))
 }
 
-pub(in crate::terminal) fn find_pending_terminal_tasks(
-    root: &Path,
-    workspace: &str,
-    provider: &str,
-    native: &str,
-) -> Vec<TaskMatch> {
-    let Ok(bodies) = task_bodies(root, workspace) else {
-        return Vec::new();
-    };
+/// The tasks that ran on one native session, in chronological order. The session's log holds the
+/// turns of every one of them, whichever mode it ran in.
+fn session_task_matches(bodies: &[Value], provider: &str, native: &str) -> Vec<TaskMatch> {
     let mut matched: Vec<(i64, TaskMatch)> = bodies
         .iter()
-        .filter(|task| task["execution_mode"] == "terminal")
         .filter(|task| {
             non_empty_task_field(task, "provider").as_deref() == Some(provider)
-                && matches!(
-                    non_empty_task_field(task, "session_id").as_deref(),
-                    Some(sid) if sid == native
-                )
+                && non_empty_task_field(task, "session_id").as_deref() == Some(native)
         })
         .map(|task| {
             (
@@ -152,6 +129,17 @@ pub(in crate::terminal) fn find_pending_terminal_tasks(
         .collect();
     matched.sort_by_key(|(at, _)| *at);
     matched.into_iter().map(|(_, m)| m).collect()
+}
+
+pub(in crate::terminal) fn find_pending_terminal_tasks(
+    root: &Path,
+    workspace: &str,
+    provider: &str,
+    native: &str,
+) -> Vec<TaskMatch> {
+    task_bodies(root, workspace)
+        .map(|bodies| session_task_matches(&bodies, provider, native))
+        .unwrap_or_default()
 }
 
 /// The latest task of `desk` in `workspace` that ran in an App terminal on a native session.

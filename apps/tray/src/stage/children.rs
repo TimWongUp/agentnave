@@ -4,7 +4,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{Value, json};
 
@@ -43,33 +43,30 @@ pub(crate) fn read_hierarchy(connection: Option<&rusqlite::Connection>) -> Deriv
         }
     }
 
+    // Only a session that is some workspace's owner can have subagent workspaces, so only those
+    // terminal sessions are kept; the rest of the history is filtered out in SQL, body unread.
+    let owners: HashSet<&str> = workspace_owners.values().map(String::as_str).collect();
     let mut derived_boss_keys = BTreeMap::new();
     if let Ok(mut stmt) = connection.prepare(
-        "SELECT c.manager_session, t.provider, t.session_id, t.body \
+        "SELECT DISTINCT c.manager_session, t.provider, t.session_id \
          FROM tasks t JOIN conversations c ON c.id = t.conversation_id \
-         WHERE c.manager_session IS NOT NULL AND t.provider IS NOT NULL AND t.session_id IS NOT NULL",
+         WHERE c.manager_session IS NOT NULL AND t.provider IS NOT NULL \
+           AND t.session_id IS NOT NULL AND t.session_id <> '' \
+           AND json_extract(t.body, '$.execution_mode') = 'terminal'",
     ) && let Ok(rows) = stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
         ))
     }) {
-        for (manager_ws, provider, sid, body) in rows.flatten() {
-            if sid.is_empty() {
-                continue;
+        for (manager_ws, provider, sid) in rows.flatten() {
+            let bk = boss_key(&provider, &sid);
+            if owners.contains(bk.as_str()) {
+                derived_boss_keys
+                    .entry((manager_ws, thread_desk_key(&provider, &sid)))
+                    .or_insert(bk);
             }
-            let Ok(parsed) = serde_json::from_str::<Value>(&body) else {
-                continue;
-            };
-            if parsed["execution_mode"] != "terminal" {
-                continue;
-            }
-            let desk = thread_desk_key(&provider, &sid);
-            derived_boss_keys
-                .entry((manager_ws, desk))
-                .or_insert_with(|| boss_key(&provider, &sid));
         }
     }
     DerivedHierarchy {

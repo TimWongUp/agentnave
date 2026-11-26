@@ -27,7 +27,7 @@ impl Running {
             use super::codex_server::ThreadStatus;
             let status = codex.cached_thread_status_for_boss(
                 self.native.as_deref(),
-                self.workspaces.first().map(String::as_str),
+                self.workspaces.last().map(String::as_str),
             );
             return match status {
                 Some(ThreadStatus::Active {

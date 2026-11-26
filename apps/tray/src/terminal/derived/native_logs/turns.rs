@@ -5,7 +5,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
@@ -14,9 +14,9 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{
-    MAX_TRANSCRIPT_LINE_BYTES, agy_home, agy_transcript_path, claude_homes, claude_transcript_path,
+    TranscriptLine, agy_home, agy_transcript_path, claude_homes, claude_transcript_path,
     codex_homes, codex_rollout_path_for_thread, flat_whitespace, is_claude_interrupt_row,
-    is_claude_task_notification, is_safe_path_under_root, open_regular_readonly,
+    is_claude_task_notification, is_safe_path_under_root, open_regular_readonly, read_bounded_line,
     unwrap_claude_pasted,
 };
 use crate::data_files::valid_uuid;
@@ -55,74 +55,30 @@ struct CachedTurns {
 static TURNS_CACHE: LazyLock<Mutex<HashMap<(String, PathBuf), CachedTurns>>> =
     LazyLock::new(Mutex::default);
 
-enum BoundedLine {
-    Eof,
-    Partial,
-    Oversized,
-    Line(String),
-}
-
-fn read_complete_bounded_line(reader: &mut BufReader<fs::File>) -> BoundedLine {
-    let mut buf = Vec::new();
-    let Ok(n) = reader
-        .by_ref()
-        .take((MAX_TRANSCRIPT_LINE_BYTES + 1) as u64)
-        .read_until(b'\n', &mut buf)
-    else {
-        return BoundedLine::Eof;
-    };
-    if n == 0 {
-        return BoundedLine::Eof;
-    }
-    if buf.len() <= MAX_TRANSCRIPT_LINE_BYTES {
-        if !buf.ends_with(b"\n") {
-            return BoundedLine::Partial;
-        }
-        return BoundedLine::Line(String::from_utf8_lossy(&buf).into_owned());
-    }
-    let mut ended = buf.ends_with(b"\n");
-    while !ended {
-        let Ok(avail) = reader.fill_buf() else {
-            return BoundedLine::Eof;
-        };
-        if avail.is_empty() {
-            return BoundedLine::Eof;
-        }
-        if let Some(pos) = avail.iter().position(|&b| b == b'\n') {
-            reader.consume(pos + 1);
-            ended = true;
-        } else {
-            let step = avail.len();
-            reader.consume(step);
-        }
-    }
-    BoundedLine::Oversized
-}
-
+/// Complete JSON-object rows and whether the file held any non-blank line; lines that are not
+/// JSON objects are skipped, and an unfinished trailing line is left for the next read.
 fn read_rows(path: &Path) -> Result<(Vec<Value>, bool), String> {
     let file = open_regular_readonly(path)
         .ok_or_else(|| "找不到原生会话日志（可能已被 CLI 清理）".to_owned())?;
     let mut reader = BufReader::new(file);
     let mut rows = Vec::new();
     let mut has_non_empty = false;
+    let mut line = String::new();
     loop {
-        match read_complete_bounded_line(&mut reader) {
-            BoundedLine::Eof | BoundedLine::Partial => break,
-            BoundedLine::Oversized => {
-                has_non_empty = true;
-            }
-            BoundedLine::Line(line) => {
+        match read_bounded_line(&mut reader, &mut line) {
+            TranscriptLine::Eof => break,
+            TranscriptLine::Oversized => has_non_empty = true,
+            TranscriptLine::Line => {
+                if !line.ends_with('\n') {
+                    break;
+                }
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
                 has_non_empty = true;
-                let value: Value = serde_json::from_str(trimmed)
-                    .map_err(|_| "原生会话日志格式无法识别".to_owned())?;
-                if let Value::Object(_) = value {
+                if let Ok(value @ Value::Object(_)) = serde_json::from_str::<Value>(trimmed) {
                     rows.push(value);
-                } else {
-                    return Err("原生会话日志格式无法识别".to_owned());
                 }
             }
         }
@@ -399,6 +355,100 @@ fn is_recognized_codex_row(row: &Value) -> bool {
     )
 }
 
+fn apply_codex_event(acc: &mut CodexTurnAcc, payload: &Value, ts: Option<String>) {
+    match payload["type"].as_str() {
+        Some("task_started") => {
+            if acc.started_time.is_none() {
+                acc.started_time = ts;
+            }
+        }
+        Some("item_completed") => {
+            let item = &payload["item"];
+            if item["type"].as_str() == Some("UserMessage") {
+                if let Some(text) = codex_user_item_text(item) {
+                    acc.user_text = Some(text);
+                }
+                acc.client_id = non_empty_str(&item["client_id"]);
+                acc.user_time = ts.or_else(|| acc.started_time.clone());
+            } else if item["type"].as_str() == Some("AgentMessage")
+                && let Some(text) = codex_user_item_text(item)
+            {
+                acc.fallback_reply = Some(text);
+                if acc.assistant_time.is_none() {
+                    acc.assistant_time = ts;
+                }
+            }
+        }
+        Some("user_message") => {
+            if acc.user_text.is_none()
+                && let Some(text) = non_empty_str(&payload["message"])
+            {
+                acc.user_text = Some(text);
+                acc.user_time = ts.or_else(|| acc.started_time.clone());
+            }
+        }
+        Some("agent_message") => {
+            if let Some(text) = non_empty_str(&payload["message"]) {
+                acc.fallback_reply = Some(text);
+                if acc.assistant_time.is_none() {
+                    acc.assistant_time = ts;
+                }
+            }
+        }
+        Some("task_complete") => {
+            let reply = non_empty_str(&payload["last_agent_message"])
+                .or_else(|| acc.fallback_reply.clone());
+            acc.assistant_text = reply;
+            if let Some(t) = ts {
+                acc.assistant_time = Some(t);
+            }
+            acc.status = Some("succeeded".to_owned());
+        }
+        Some("turn_aborted") => {
+            let reason = payload["reason"].as_str().unwrap_or_default();
+            acc.status = Some(if reason == "interrupted" {
+                "interrupted".to_owned()
+            } else {
+                "failed".to_owned()
+            });
+            if let Some(t) = ts {
+                acc.assistant_time = Some(t);
+            }
+        }
+        _ => {}
+    }
+}
+
+impl CodexTurnAcc {
+    /// The finished turn, or `None` when the log never recorded its user message.
+    fn finish(self, index: usize) -> Option<NativeTurn> {
+        let user_text = self.user_text?;
+        let mut anchor = serde_json::Map::new();
+        anchor.insert("turn_id".to_owned(), Value::String(self.turn_id));
+        if let Some(cid) = self.client_id {
+            anchor.insert("client_user_message_id".to_owned(), Value::String(cid));
+        }
+        let assistant_text = self.assistant_text.or_else(|| {
+            matches!(self.status.as_deref(), Some("succeeded")).then_some(self.fallback_reply)?
+        });
+        let model = if assistant_text.is_some() {
+            self.model
+        } else {
+            None
+        };
+        Some(NativeTurn {
+            index,
+            anchor: Value::Object(anchor),
+            user_text,
+            user_time: self.user_time.or(self.started_time),
+            assistant_text,
+            assistant_time: self.assistant_time,
+            status: self.status.unwrap_or_else(|| "running".to_owned()),
+            model,
+        })
+    }
+}
+
 pub(super) fn parse_codex_turns(
     rows: &[Value],
     has_non_empty: bool,
@@ -408,133 +458,37 @@ pub(super) fn parse_codex_turns(
     }
     let mut order: Vec<String> = Vec::new();
     let mut by_id: HashMap<String, CodexTurnAcc> = HashMap::new();
-    let ensure = |order: &mut Vec<String>, by_id: &mut HashMap<String, CodexTurnAcc>, tid: &str| {
-        if !by_id.contains_key(tid) {
-            order.push(tid.to_owned());
-            by_id.insert(
-                tid.to_owned(),
-                CodexTurnAcc {
-                    turn_id: tid.to_owned(),
-                    ..CodexTurnAcc::default()
-                },
-            );
-        }
-    };
     for row in rows {
         let row_type = row["type"].as_str();
-        let ts = non_empty_str(&row["timestamp"]);
-        if row_type == Some("turn_context") {
-            if let Some(tid) = non_empty_str(&row["payload"]["turn_id"]) {
-                ensure(&mut order, &mut by_id, &tid);
-                if let Some(model) = non_empty_str(&row["payload"]["model"]) {
-                    by_id.get_mut(&tid).unwrap().model = Some(model);
-                }
-            }
-            continue;
-        }
-        if row_type != Some("event_msg") {
+        if !matches!(row_type, Some("turn_context" | "event_msg")) {
             continue;
         }
         let payload = &row["payload"];
         let Some(tid) = non_empty_str(&payload["turn_id"]) else {
             continue;
         };
-        ensure(&mut order, &mut by_id, &tid);
-        let acc = by_id.get_mut(&tid).unwrap();
-        match payload["type"].as_str() {
-            Some("task_started") => {
-                if acc.started_time.is_none() {
-                    acc.started_time = ts;
-                }
+        let acc = by_id.entry(tid.clone()).or_insert_with(|| {
+            order.push(tid.clone());
+            CodexTurnAcc {
+                turn_id: tid,
+                ..CodexTurnAcc::default()
             }
-            Some("item_completed") => {
-                let item = &payload["item"];
-                if item["type"].as_str() == Some("UserMessage") {
-                    if let Some(text) = codex_user_item_text(item) {
-                        acc.user_text = Some(text);
-                    }
-                    acc.client_id = non_empty_str(&item["client_id"]);
-                    acc.user_time = ts.or_else(|| acc.started_time.clone());
-                } else if item["type"].as_str() == Some("AgentMessage")
-                    && let Some(text) = codex_user_item_text(item)
-                {
-                    acc.fallback_reply = Some(text);
-                    if acc.assistant_time.is_none() {
-                        acc.assistant_time = ts;
-                    }
-                }
+        });
+        if row_type == Some("turn_context") {
+            if let Some(model) = non_empty_str(&payload["model"]) {
+                acc.model = Some(model);
             }
-            Some("user_message") => {
-                if acc.user_text.is_none()
-                    && let Some(text) = non_empty_str(&payload["message"])
-                {
-                    acc.user_text = Some(text);
-                    acc.user_time = ts.or_else(|| acc.started_time.clone());
-                }
-            }
-            Some("agent_message") => {
-                if let Some(text) = non_empty_str(&payload["message"]) {
-                    acc.fallback_reply = Some(text);
-                    if acc.assistant_time.is_none() {
-                        acc.assistant_time = ts;
-                    }
-                }
-            }
-            Some("task_complete") => {
-                let reply = non_empty_str(&payload["last_agent_message"])
-                    .or_else(|| acc.fallback_reply.clone());
-                acc.assistant_text = reply;
-                if let Some(t) = ts {
-                    acc.assistant_time = Some(t);
-                }
-                acc.status = Some("succeeded".to_owned());
-            }
-            Some("turn_aborted") => {
-                let reason = payload["reason"].as_str().unwrap_or_default();
-                acc.status = Some(if reason == "interrupted" {
-                    "interrupted".to_owned()
-                } else {
-                    "failed".to_owned()
-                });
-                if let Some(t) = ts {
-                    acc.assistant_time = Some(t);
-                }
-            }
-            _ => {}
+        } else {
+            apply_codex_event(acc, payload, non_empty_str(&row["timestamp"]));
         }
     }
     let mut turns = Vec::new();
     for tid in order {
-        let Some(acc) = by_id.remove(&tid) else {
-            continue;
-        };
-        let Some(user_text) = acc.user_text else {
-            continue;
-        };
-        let mut anchor = serde_json::Map::new();
-        anchor.insert("turn_id".to_owned(), Value::String(acc.turn_id));
-        if let Some(cid) = acc.client_id {
-            anchor.insert("client_user_message_id".to_owned(), Value::String(cid));
+        if let Some(acc) = by_id.remove(&tid)
+            && let Some(turn) = acc.finish(turns.len())
+        {
+            turns.push(turn);
         }
-        let assistant_text = acc.assistant_text.or_else(|| {
-            matches!(acc.status.as_deref(), Some("succeeded")).then_some(acc.fallback_reply)?
-        });
-        let status = acc.status.unwrap_or_else(|| "running".to_owned());
-        let model = if assistant_text.is_some() {
-            acc.model
-        } else {
-            None
-        };
-        turns.push(NativeTurn {
-            index: turns.len(),
-            anchor: Value::Object(anchor),
-            user_text,
-            user_time: acc.user_time.or(acc.started_time),
-            assistant_text,
-            assistant_time: acc.assistant_time,
-            status,
-            model,
-        });
     }
     Ok(turns)
 }
@@ -685,14 +639,11 @@ pub(super) fn read_native_turns(provider: &str, path: &Path) -> Result<Vec<Nativ
             return entry.result.clone();
         }
     }
-    let result = match read_rows(path) {
-        Ok((rows, has_non_empty)) => match provider {
-            "claude" => parse_claude_turns(&rows, has_non_empty),
-            "codex" => parse_codex_turns(&rows, has_non_empty),
-            "antigravity" => parse_antigravity_turns(&rows, has_non_empty),
-            _ => Err("该 CLI 不支持读取原生会话日志".to_owned()),
-        },
-        Err(err) => Err(err),
+    let result = match provider_log(provider) {
+        Some(spec) => {
+            read_rows(path).and_then(|(rows, has_non_empty)| (spec.parse)(&rows, has_non_empty))
+        }
+        None => Err("该 CLI 不支持读取原生会话日志".to_owned()),
     };
     let mut cache = TURNS_CACHE.lock().unwrap_or_else(|p| p.into_inner());
     if cache.len() >= MAX_CACHE_ENTRIES && !cache.contains_key(&key) {
@@ -709,31 +660,58 @@ pub(super) fn read_native_turns(provider: &str, path: &Path) -> Result<Vec<Nativ
     result
 }
 
-fn anchor_matches(provider: &str, expected: &Value, actual: &Value) -> bool {
-    match provider {
-        "claude" => expected["prompt_id"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .is_some_and(|pid| actual["prompt_id"].as_str() == Some(pid)),
-        "codex" => expected["turn_id"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .is_some_and(|tid| {
-                actual["turn_id"].as_str() == Some(tid)
-                    && expected["client_user_message_id"]
-                        .as_str()
-                        .filter(|s| !s.is_empty())
-                        .is_none_or(|cid| {
-                            actual["client_user_message_id"]
-                                .as_str()
-                                .is_none_or(|actual_cid| actual_cid == cid)
-                        })
-            }),
-        "antigravity" => expected["user_input_index"]
-            .as_i64()
-            .is_some_and(|idx| actual["user_input_index"].as_i64() == Some(idx)),
-        _ => false,
-    }
+fn claude_anchor_matches(expected: &Value, actual: &Value) -> bool {
+    expected["prompt_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .is_some_and(|pid| actual["prompt_id"].as_str() == Some(pid))
+}
+
+fn codex_anchor_matches(expected: &Value, actual: &Value) -> bool {
+    expected["turn_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .is_some_and(|tid| {
+            actual["turn_id"].as_str() == Some(tid)
+                && expected["client_user_message_id"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .is_none_or(|cid| {
+                        actual["client_user_message_id"]
+                            .as_str()
+                            .is_none_or(|actual_cid| actual_cid == cid)
+                    })
+        })
+}
+
+fn antigravity_anchor_matches(expected: &Value, actual: &Value) -> bool {
+    expected["user_input_index"]
+        .as_i64()
+        .is_some_and(|idx| actual["user_input_index"].as_i64() == Some(idx))
+}
+
+/// What differs per CLI when reading its native log.
+struct ProviderLog {
+    parse: fn(&[Value], bool) -> Result<Vec<NativeTurn>, String>,
+    anchor_matches: fn(&Value, &Value) -> bool,
+}
+
+fn provider_log(provider: &str) -> Option<ProviderLog> {
+    Some(match provider {
+        "claude" => ProviderLog {
+            parse: parse_claude_turns,
+            anchor_matches: claude_anchor_matches,
+        },
+        "codex" => ProviderLog {
+            parse: parse_codex_turns,
+            anchor_matches: codex_anchor_matches,
+        },
+        "antigravity" => ProviderLog {
+            parse: parse_antigravity_turns,
+            anchor_matches: antigravity_anchor_matches,
+        },
+        _ => return None,
+    })
 }
 
 fn prompt_matches(turn_text: &str, task: &TaskMatch) -> bool {
@@ -762,19 +740,24 @@ pub(super) fn filter_user_turns(
     provider: &str,
     tasks: &[TaskMatch],
 ) -> Vec<NativeTurn> {
+    let anchor_matches = provider_log(provider).map(|spec| spec.anchor_matches);
     let mut claimed = vec![false; turns.len()];
     let mut unmatched_tasks = Vec::new();
     for task in tasks {
-        if let Some(anchor) = &task.native_anchor {
-            if let Some(pos) = turns
-                .iter()
-                .enumerate()
-                .position(|(i, turn)| !claimed[i] && anchor_matches(provider, anchor, &turn.anchor))
-            {
-                claimed[pos] = true;
-            }
-        } else {
-            unmatched_tasks.push(task);
+        let found =
+            task.native_anchor
+                .as_ref()
+                .zip(anchor_matches)
+                .and_then(|(anchor, matches)| {
+                    turns
+                        .iter()
+                        .enumerate()
+                        .position(|(i, turn)| !claimed[i] && matches(anchor, &turn.anchor))
+                });
+        match found {
+            Some(pos) => claimed[pos] = true,
+            // An anchor that names no turn (e.g. only the session was known) falls back to the text.
+            None => unmatched_tasks.push(task),
         }
     }
     for task in unmatched_tasks {
@@ -833,6 +816,11 @@ pub(in crate::terminal) fn find_transcript_path(
         "codex" => {
             let homes = codex_homes();
             codex_rollout_path_for_thread(&homes, session_id)
+                .filter(|path| {
+                    homes
+                        .iter()
+                        .any(|home| is_safe_path_under_root(path, &home.join("sessions")))
+                })
                 .or_else(|| codex_archived_path(&homes, session_id))
         }
         "antigravity" => {
@@ -853,100 +841,4 @@ pub(in crate::terminal) fn read_user_turns_at_path(
 ) -> Result<Vec<NativeTurn>, String> {
     let turns = read_native_turns(provider, path)?;
     Ok(filter_user_turns(&turns, provider, tasks))
-}
-
-impl crate::terminal::Terminals {
-    pub(in crate::terminal) fn derived_turns(
-        &self,
-        workspace: &str,
-        desk: &str,
-    ) -> crate::response::Response {
-        self.derived_turns_in(&crate::data_files::data_root(), workspace, desk)
-    }
-
-    pub(in crate::terminal) fn derived_turns_in(
-        &self,
-        root: &Path,
-        workspace: &str,
-        desk: &str,
-    ) -> crate::response::Response {
-        use crate::data_files::valid_id;
-        use crate::response::Response;
-        use crate::terminal::{account, lifecycle, thread_desk_key};
-
-        if !valid_id(workspace) || desk.is_empty() {
-            return Response::error(400, "需要有效的工作区 ID 和工位");
-        }
-        let live_match = {
-            let state = self.lock();
-            state
-                .open
-                .iter()
-                .find(|r| {
-                    r.derived
-                        .as_ref()
-                        .is_some_and(|d| d.parent_workspace_id.as_deref() == Some(workspace))
-                        && r.native.as_deref().is_some_and(|n| {
-                            !n.is_empty() && thread_desk_key(&r.provider, n) == desk
-                        })
-                })
-                .map(|r| {
-                    (
-                        r.provider.clone(),
-                        r.native.clone().unwrap_or_default(),
-                        r.account.as_ref().map(|a| a.dir.clone()),
-                        r.session.exit().is_none(),
-                    )
-                })
-        };
-        let (provider, native, account_id, live_account_dir, tasks, is_live) =
-            match lifecycle::open::find_session_with_tasks(root, workspace, desk) {
-                Ok((found, tasks)) => (
-                    found.provider,
-                    found.native,
-                    found.account,
-                    live_match.as_ref().and_then(|m| m.2.clone()),
-                    tasks,
-                    live_match.as_ref().is_some_and(|m| m.3),
-                ),
-                Err(reason) => {
-                    if let Some((provider, native, account_dir, alive)) = live_match {
-                        let tasks = lifecycle::open::find_pending_terminal_tasks(
-                            root, workspace, &provider, &native,
-                        );
-                        (provider, native, None, account_dir, tasks, alive)
-                    } else if reason != "读不到服务历史" && desk.starts_with("task:") {
-                        return Response::json(&json!({"turns": []}));
-                    } else {
-                        return Response::json(&json!({"turns": [], "error": reason}));
-                    }
-                }
-            };
-        let account_dir = if let Some(dir) = live_account_dir {
-            Some(dir)
-        } else {
-            match account::resolve_in(root, &provider, account_id.as_deref()) {
-                Ok(active) => active.map(|a| a.dir),
-                Err(err) => {
-                    return Response::json(&json!({
-                        "turns": [],
-                        "error": format!("账号不可用，无法读取原生日志：{err}"),
-                    }));
-                }
-            }
-        };
-        let Some(path) = find_transcript_path(&provider, account_dir.as_deref(), &native) else {
-            if is_live && tasks.is_empty() {
-                return Response::json(&json!({"turns": []}));
-            }
-            return Response::json(&json!({
-                "turns": [],
-                "error": "找不到原生会话日志（可能已被 CLI 清理）",
-            }));
-        };
-        match read_user_turns_at_path(&provider, &path, &tasks) {
-            Ok(turns) => Response::json(&json!({"turns": turns})),
-            Err(err) => Response::json(&json!({"turns": [], "error": err})),
-        }
-    }
 }

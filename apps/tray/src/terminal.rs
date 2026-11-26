@@ -13,6 +13,7 @@ mod activity;
 mod codex_server;
 mod derived;
 mod derived_children;
+mod derived_turns;
 mod elsewhere;
 mod input_gate;
 mod lifecycle;
@@ -1173,11 +1174,11 @@ impl Terminals {
         let resume = workspaces
             .last()
             .filter(|_| session::resumes(&provider))
-            .map(|workspace| chat_session(workspace, &provider, account.as_ref()))
+            .map(|workspace| self.continuable_chat(workspace, &provider, account.as_ref()))
             .transpose();
         let resume = match resume {
             Ok(resume) => resume,
-            Err(error) => return Response::error(409, error),
+            Err(refusal) => return refusal,
         };
         if let Some(chat) = &resume
             && let Some(refusal) = self.unless_elsewhere(&chat.key, attach)
@@ -1235,9 +1236,6 @@ impl Terminals {
             }
         }
         let root = crate::data_files::data_root();
-        if let Some(refusal) = self.reject_if_live_derived_owner(&root, workspace) {
-            return refusal;
-        }
         let Some((host, _, _)) = links::chat(&root, workspace) else {
             return Response::error(404, "找不到这段聊天的记录");
         };
@@ -1250,9 +1248,9 @@ impl Terminals {
                 return Response::error(409, refusal);
             }
         };
-        let chat = match chat_session(workspace, &host, account.as_ref()) {
+        let chat = match self.continuable_chat(workspace, &host, account.as_ref()) {
             Ok(found) => found,
-            Err(error) => return Response::error(409, error),
+            Err(refusal) => return refusal,
         };
         let Some(cwd) = crate::data::boss_app::session_cwd_of(&host, &chat.record, &chat.id) else {
             return Response::error(409, "会话记录里没有它的文件夹");
@@ -1308,6 +1306,9 @@ impl Terminals {
         native: &str,
         attach: &Attach,
     ) -> Option<Response> {
+        if self.has_live_plain_holder(provider, native) {
+            return Some(Response::error(409, derived_children::PLAIN_HOLDER_ERR));
+        }
         let key = crate::data::boss_app::boss_key(provider, native);
         if let Some(refusal) = self.unless_elsewhere(&key, attach) {
             return Some(refusal);
@@ -1510,21 +1511,26 @@ struct Chat {
     key: String,
 }
 
-/// The native ID and session record of a workspace's boss chat, when its CLI is `provider` and
-/// can continue it. A chat of a named account is looked for in that account's folder.
-fn chat_session(
-    workspace: &str,
-    provider: &str,
-    account: Option<&Active>,
-) -> Result<Chat, &'static str> {
-    chat_session_in(
-        &crate::data_files::data_root(),
-        workspace,
-        provider,
-        account,
-    )
+impl Terminals {
+    /// The chat of a workspace to continue in a terminal of its own: never one a live derived
+    /// session holds, as a second process on it would fight the first.
+    fn continuable_chat(
+        &self,
+        workspace: &str,
+        provider: &str,
+        account: Option<&Active>,
+    ) -> Result<Chat, Response> {
+        let root = crate::data_files::data_root();
+        if let Some(refusal) = self.reject_if_live_derived_owner(&root, workspace) {
+            return Err(refusal);
+        }
+        chat_session_in(&root, workspace, provider, account)
+            .map_err(|error| Response::error(409, error))
+    }
 }
 
+/// The native ID and session record of a workspace's boss chat, when its CLI is `provider` and
+/// can continue it. A chat of a named account is looked for in that account's folder.
 fn chat_session_in(
     root: &Path,
     workspace: &str,
