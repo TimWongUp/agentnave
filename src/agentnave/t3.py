@@ -27,10 +27,9 @@ T3_CHILD_REFUSED_TOOLS = frozenset(
     }
 )
 
-T3_CHILD_INSTRUCTIONS = (
-    "T3 Code delegated child thread: complete only your assigned task and report directly to the "
-    "parent thread. Do not recommend seats, dispatch subagents, hold meetings, or hand over; "
-    "those AgentNave tools are disabled here. "
+T3_INACTIVE_CHILD_NOTE = (
+    "In a T3 Code delegated child thread, complete only your assigned task and report directly to "
+    "the parent thread; seat recommendation, dispatch, meetings, and handover are refused. "
 )
 
 _cached_mode: T3Mode | None = None
@@ -86,6 +85,8 @@ def detect_t3_mode(
 ) -> T3Mode:
     """Determine whether this server serves a T3 Code main thread, child thread, or neither."""
     source = os.environ if env is None else env
+    if source.get("TERM_PROGRAM", "").strip().lower() == "t3code":
+        return "none"
     thread_id = source.get("T3CODE_THREAD_ID", "").strip()
     if not thread_id:
         return "none"

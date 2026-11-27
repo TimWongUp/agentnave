@@ -631,6 +631,27 @@ def test_t3_mode_detection_rules_ancestors_platform_and_cache(
     assert t3.detect_t3_mode(buddy, env={"T3CODE_THREAD_ID": "thread:delegated-task:x"}) == "child"
     assert t3.detect_t3_mode(buddy, env={}) == "none"
 
+    # T3 built-in terminal (TERM_PROGRAM=t3code, case-insensitive) always returns "none"
+    # regardless of T3CODE_THREAD_ID (main or child) and across all recognized hosts.
+    for term_val in ("t3code", "T3Code", "  T3CODE  "):
+        for thread_val in ("thread-main-1", "thread:delegated-task:child-1"):
+            for recognized_host in (claude, codex, agy, buddy):
+                assert (
+                    t3.detect_t3_mode(
+                        recognized_host,
+                        env={
+                            "TERM_PROGRAM": term_val,
+                            "CLAUDE_CODE_ENTRYPOINT": "t3-code",
+                            "T3CODE_THREAD_ID": thread_val,
+                        },
+                        parent_pid=40,
+                        read_parent=single_claude_parents.__getitem__,
+                        read_argv=single_claude_argv.__getitem__,
+                        platform="darwin",
+                    )
+                    == "none"
+                )
+
     # Other hosts are not recognized; Grok's processes never carry T3CODE_THREAD_ID.
     for other in ("grok", "pi", "deepseek", "zcode", None):
         assert (

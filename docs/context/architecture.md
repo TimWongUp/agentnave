@@ -27,7 +27,7 @@ AgentNave 是供 Manager（boss）通过本地 STDIO MCP 使用的薄进程边�
 ## MCP 合同
 
 - **严格校验与错误分级**：入参 schema 禁止未声明参数，整批拒绝而不静默丢弃（另有供中继空闲探测的未列出工具 `list_invocations`，[ADR-0024](../adr/0024-consolidated-tools-and-private-review.md)）。调用方可修正的错误返回 Tool error 及指引；Provider 终态返回结构化 `InvocationResult`，业务失败亦尽量保全输出与原生 `session_id`。
-- **T3 Code 路由边界**：服务按连接区分 T3 主线程与 T3 子线程。T3 主线程在支持的编排档位且开启 T3 编排时，单独任务与评审改由选位返回 T3 候选交 T3 委派，`start_agent`/`start_agents` 拒绝，T3 任务不入 AgentNave 历史；会议、收件、历史与交接照常。T3 子线程拒绝选位、派发、开会与交接（[ADR-0121](../adr/0121-t3-code-orchestration.md)）。
+- **T3 Code 路由边界**：服务按连接区分 T3 主线程与 T3 子线程（T3 内置终端按普通连接处理）。T3 主线程在支持的编排档位且开启 T3 编排时，单独任务与评审改由选位返回 T3 候选交 T3 委派，`start_agent`/`start_agents` 拒绝，T3 任务不入 AgentNave 历史；会议、收件、历史与交接照常。同一 T3 宿主的主／子连接对外发布一致的角色中立 MCP 说明与工具定义，子线程对选位、派发、开会与交接的拒绝在调用入口强制执行（[ADR-0121](../adr/0121-t3-code-orchestration.md)）。
 - **单向编排提示与数据边界**：每次派发附加用户口吻的单向编排指令（不调 AgentNave、不转派、汇报未验证与阻塞；按需附只读或隔离目录边界），会议条目与转发内容标明为数据边界而非指令；依赖模型遵守，不构成安全边界（[ADR-0031](../adr/0031-prompt-only-orchestration.md)、[ADR-0043](../adr/0043-service-prompt-instructions.md)、[ADR-0114](../adr/0114-tui-runtime-like-a-user.md)）。
 - **生命周期与终止边界**：Invocation 仅存进程内存（不跨重启恢复），`wait` 返回就绪子集（[ADR-0007](../adr/0007-wait-any-ready-subset.md)）；无总运行时限，停止靠显式 `cancel`。服务仅在输出超限、持续重试无输出或终态后退出宽限期满时主动终止进程树（[ADR-0049](../adr/0049-service-initiated-termination.md)、[ADR-0095](../adr/0095-provider-terminal-grace.md)）；长时间无实质进展只发一次不终止、不计冷却的提醒（[ADR-0116](../adr/0116-progress-stall-reminder.md)）。
 - **原生弹框代答**：支持原生弹框的 Adapter 保持运行中 stdin 通道，仅传回由工作区拥有者 boss 决定的答复；工具输入在交 boss 与落盘前打码，审计写入现有任务／席位 JSON 记录，不新增表结构（[ADR-0057](../adr/0057-boss-answers-native-prompts.md)）。

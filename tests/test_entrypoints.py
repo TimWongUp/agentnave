@@ -5763,10 +5763,11 @@ def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
         for trigger in ("meetings", "reviews", "handover", "parallel write", "not_started"):
             assert trigger in text
 
-    # T3 main (active) and child instructions stay within the 3,500-byte limit too.
+    # T3 main and child threads publish byte-identical role-neutral instructions within 3,500 bytes.
     from agentnave import t3, t3_mcp
     from agentnave.t3_seats import T3OrchestrationMode
 
+    t3_hosts = ("claude", "codex", "antigravity", "codebuddy")
     t3_cases: tuple[tuple[T3OrchestrationMode, str], ...] = (
         ("decision", "decision model picks seats"),
         ("split", "with seat from recommend_seat()"),
@@ -5781,30 +5782,37 @@ def test_mcp_instructions_stay_within_byte_limit_and_scope() -> None:
         assert "unless the user named a CLI, T3 account or model" in first_sentence
         assert expected_picker in first_sentence
         assert "list_members is for meeting members only" in prefix
-        for host_name in ("claude", "codex"):
+        assert "t3_worktree_handoff" in prefix
+        assert "in-T3 thread handoff belong to T3" not in prefix
+        assert "delegated child thread" in prefix
+        for host_name in t3_hosts:
             host = Host(host_name, "env")
             t3_main = mcp_runtime.build_mcp_instructions(
                 host, longest_provider_selection, t3_mode="main", t3_preset=preset_mode
             )
+            t3_child = mcp_runtime.build_mcp_instructions(
+                host, longest_provider_selection, t3_mode="child", t3_preset=preset_mode
+            )
+            assert t3_main == t3_child, (preset_mode, host_name)
             assert len(t3_main.encode("utf-8")) <= 3500, (preset_mode, host_name)
             assert t3_main.startswith(prefix)
             assert "only for meetings, reviews, or handover." in t3_main
             assert "parallel write tasks" not in t3_main
             assert "not_started" not in t3_main
 
-    for host_name in ("claude", "codex"):
+    for host_name in t3_hosts:
         host = Host(host_name, "env")
-        # Main thread when T3 orchestration is off or mode has no T3 uses unchanged ordinary instructions.
-        t3_inactive = mcp_runtime.build_mcp_instructions(
+        ordinary = mcp_runtime.build_mcp_instructions(host, longest_provider_selection)
+        # Inactive T3 main and child threads stay byte-identical with the conditional child note.
+        t3_inactive_main = mcp_runtime.build_mcp_instructions(
             host, longest_provider_selection, t3_mode="main", t3_preset=None
         )
-        assert t3_inactive == mcp_runtime.build_mcp_instructions(host, longest_provider_selection)
-
-        t3_child = mcp_runtime.build_mcp_instructions(
-            host, longest_provider_selection, t3_mode="child"
+        t3_inactive_child = mcp_runtime.build_mcp_instructions(
+            host, longest_provider_selection, t3_mode="child", t3_preset=None
         )
-        assert len(t3_child.encode("utf-8")) <= 3500, host_name
-        assert t3_child.startswith(t3.T3_CHILD_INSTRUCTIONS)
+        assert t3_inactive_main == t3_inactive_child, host_name
+        assert t3_inactive_main == t3.T3_INACTIVE_CHILD_NOTE + ordinary
+        assert len(t3_inactive_main.encode("utf-8")) <= 3500, host_name
 
 
 @pytest.mark.asyncio
@@ -5974,42 +5982,113 @@ async def test_t3_child_thread_refuses_orchestration_tools_and_keeps_readonly_an
     from agentnave import t3
 
     monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env"))
-    monkeypatch.setenv("T3CODE_THREAD_ID", "thread:delegated-task:child-1")
-    t3.reset_t3_mode_cache()
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "t3-code")
 
-    # Child instructions sit at the front and stay within the 3,500-byte budget.
-    for host_name in ("claude", "codex"):
-        text = mcp_runtime.build_mcp_instructions(
-            Host(host_name, "env"), mcp_runtime.PROVIDER_SELECTION, t3_mode="child"
-        )
-        assert text.startswith(t3.T3_CHILD_INSTRUCTIONS)
-        assert len(text.encode("utf-8")) <= 3500
+    active_seats: dict[str, Any] = {
+        "version": 1,
+        "enabled": True,
+        "seats": [
+            {
+                "id": "w1",
+                "kind": "worker",
+                "role": "实现",
+                "description": "改代码",
+                "access": "write",
+                "difficulty": "easy",
+                "candidates": [{"instance": "inst-1", "model": "m-1", "options": []}],
+            }
+        ],
+    }
 
-    # Child thread refuses the 6 orchestration/handover tools regardless of any T3 switch.
-    refused_calls: list[tuple[str, dict[str, Any]]] = [
-        ("recommend_seat", {"task": "check", "access": "read"}),
-        ("start_agent", {"prompt": "hi", "cwd": str(tmp_path)}),
-        ("start_agents", {"tasks": [], "cwd": str(tmp_path)}),
-        ("run_round", {"prompt": "hi"}),
-        ("decide_answers", {"round_id": "r1", "decisions": {"a": "publish"}}),
-        ("handover", {}),
-    ]
+    # Main and child produce byte-identical instructions and list_tools across all 4 states
+    # (active decision, active split/custom, inactive/off/meetings/missing, and broken t3-seats.json).
+    states: tuple[tuple[str, dict[str, Any] | str | None], ...] = (
+        ("decision", active_seats),
+        ("split", active_seats),
+        ("custom", active_seats),
+        ("off", active_seats),
+        ("meetings", active_seats),
+        ("decision", {**active_seats, "enabled": False}),
+        ("decision", None),
+        ("decision", "{broken"),
+    )
     async with Client(mcp) as client:
-        for name, args in refused_calls:
-            res = await client.call_tool(name, args)
-            assert res.is_error is True, name
-            msg = str(res.content)
-            assert "T3 Code delegated child thread" in msg
-            assert name in msg
+        for host_name in ("claude", "codex", "antigravity", "codebuddy"):
+            monkeypatch.setattr(mcp_runtime, "HOST", Host(host_name, "env", host_name))
+            for preset, seats_cfg in states:
+                (tmp_path / "orchestration.json").write_text(
+                    json.dumps({"version": 1, "preset": preset}), encoding="utf-8"
+                )
+                t3_path = tmp_path / "t3-seats.json"
+                if isinstance(seats_cfg, str):
+                    t3_path.write_text(seats_cfg, encoding="utf-8")
+                elif seats_cfg is not None:
+                    t3_path.write_text(json.dumps(seats_cfg), encoding="utf-8")
+                elif t3_path.exists():
+                    t3_path.unlink()
 
-        # Read-only tools still work normally.
-        listed = await client.call_tool("list", {"scope": "all"})
-        assert listed.is_error is False
-        members_res = await client.call_tool("list_members", {})
-        assert members_res.is_error is False
-        waited = await client.call_tool("wait", {"wait_seconds": 0})
-        assert waited.is_error is False
+                monkeypatch.setenv("T3CODE_THREAD_ID", "thread-main-1")
+                t3.reset_t3_mode_cache()
+                main_inst = mcp_runtime.build_mcp_instructions(
+                    mcp_runtime.HOST,
+                    mcp_runtime.PROVIDER_SELECTION,
+                    t3_mode=t3.current_t3_mode(mcp_runtime.HOST),
+                    t3_preset=mcp_runtime.t3_active_mode(),
+                )
+                main_tools = [
+                    tool.model_dump()
+                    for tool in (await client.list_tools(cache_mode="refresh")).tools
+                ]
+
+                monkeypatch.setenv("T3CODE_THREAD_ID", "thread:delegated-task:child-1")
+                t3.reset_t3_mode_cache()
+                child_inst = mcp_runtime.build_mcp_instructions(
+                    mcp_runtime.HOST,
+                    mcp_runtime.PROVIDER_SELECTION,
+                    t3_mode=t3.current_t3_mode(mcp_runtime.HOST),
+                    t3_preset=mcp_runtime.t3_active_mode(),
+                )
+                child_tools = [
+                    tool.model_dump()
+                    for tool in (await client.list_tools(cache_mode="refresh")).tools
+                ]
+                assert child_inst == main_inst, (host_name, preset, seats_cfg)
+                assert len(child_inst.encode("utf-8")) <= 3500
+                assert child_tools == main_tools, (host_name, preset, seats_cfg)
+
+        # Child thread refuses all 6 orchestration/handover tools both when T3 is active and inactive.
+        monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env", "codex"))
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread:delegated-task:child-1")
+        t3.reset_t3_mode_cache()
+        refused_calls: list[tuple[str, dict[str, Any]]] = [
+            ("recommend_seat", {"task": "check", "access": "read"}),
+            ("start_agent", {"prompt": "hi", "cwd": str(tmp_path)}),
+            ("start_agents", {"tasks": [], "cwd": str(tmp_path)}),
+            ("run_round", {"prompt": "hi"}),
+            ("decide_answers", {"round_id": "r1", "decisions": {"a": "publish"}}),
+            ("handover", {}),
+        ]
+        for enabled in (True, False):
+            (tmp_path / "orchestration.json").write_text(
+                json.dumps({"version": 1, "preset": "decision"}), encoding="utf-8"
+            )
+            (tmp_path / "t3-seats.json").write_text(
+                json.dumps({**active_seats, "enabled": enabled}), encoding="utf-8"
+            )
+            for name, args in refused_calls:
+                res = await client.call_tool(name, args)
+                assert res.is_error is True, (enabled, name)
+                msg = str(res.content)
+                assert "T3 Code delegated child thread" in msg
+                assert name in msg
+
+            # Read-only tools still work normally.
+            listed = await client.call_tool("list", {"scope": "all"})
+            assert listed.is_error is False
+            members_res = await client.call_tool("list_members", {})
+            assert members_res.is_error is False
+            waited = await client.call_tool("wait", {"wait_seconds": 0})
+            assert waited.is_error is False
 
 
 def _write_t3_seats(document: dict[str, Any]) -> None:
@@ -6031,6 +6110,7 @@ async def test_t3_image_seat_keeps_its_saved_order_and_carries_the_image_brief()
 
     from agentnave.t3_cache import InstanceAvailability
     from agentnave.t3_recommend import (
+        T3_CHILD_IDENTITY_SUFFIX,
         T3_IMAGE_BRIEF_SUFFIX,
         T3RecommendTask,
         recommend_t3_seats,
@@ -6091,8 +6171,8 @@ async def test_t3_image_seat_keeps_its_saved_order_and_carries_the_image_brief()
     assert [item["target"]["model"] for item in art["candidates"]] == ["m-a", "m-b"]
     assert [item["target"]["model"] for item in code["candidates"]] == ["m-a", "m-b"]
     assert rng.calls == 1, "only the ordinary seat takes part in shuffling"
-    assert art["brief_suffix"] == T3_IMAGE_BRIEF_SUFFIX
-    assert "brief_suffix" not in code
+    assert art["brief_suffix"] == f"{T3_CHILD_IDENTITY_SUFFIX} {T3_IMAGE_BRIEF_SUFFIX}"
+    assert code["brief_suffix"] == T3_CHILD_IDENTITY_SUFFIX
 
     # The decision mode's only usable writable seat takes the same path.
     only = await recommend_t3_seats(
@@ -6104,7 +6184,7 @@ async def test_t3_image_seat_keeps_its_saved_order_and_carries_the_image_brief()
     )
     alone = cast(list[dict[str, Any]], cast(dict[str, Any], only)["results"])[0]
     assert [item["target"]["model"] for item in alone["candidates"]] == ["m-a", "m-b"]
-    assert alone["brief_suffix"] == T3_IMAGE_BRIEF_SUFFIX
+    assert alone["brief_suffix"] == f"{T3_CHILD_IDENTITY_SUFFIX} {T3_IMAGE_BRIEF_SUFFIX}"
     assert rng.calls == 1
 
 
@@ -6450,7 +6530,8 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert [item["seat"] for item in fixed_items] == ["worker-easy", "worker-easy"]
         fixed_next = cast(str, cast(dict[str, Any], fixed_res.structured_content)["next"])
         assert "acp-mcp-call" not in fixed_next
-        # Antigravity has no direct delegate_task in T3, so its receipt names T3's ACP fallback.
+        # Antigravity gets the platform-specific conditional direct/ACP stdin bridge hint even when
+        # T3_WRITE_NEXT (or T3_STAGED_NEXT) is also appended.
         monkeypatch.setattr(mcp_runtime, "HOST", Host("antigravity", "env", "antigravity"))
         agy_res = await client.call_tool(
             "recommend_seat",
@@ -6458,7 +6539,10 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         )
         assert agy_res.is_error is False, agy_res.content
         agy_next = cast(str, cast(dict[str, Any], agy_res.structured_content)["next"])
-        assert agy_next.startswith(fixed_next) and "acp-mcp-call delegate_task" in agy_next
+        assert agy_next.startswith(fixed_next)
+        assert t3_recommend.T3_WRITE_NEXT in fixed_next
+        assert agy_next.endswith(t3_recommend.antigravity_delegate_next())
+        assert "delegate_task -" in agy_next
         monkeypatch.setattr(mcp_runtime, "HOST", Host("codex", "env", "codex"))
         unknown_fixed = await client.call_tool(
             "recommend_seat",
@@ -6558,7 +6642,9 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert item0["status"] == "selected"
         assert item0["seat"] == "explorer-easy" and item0["role"] == "探索"
         assert item0["difficulty"] == "easy"
-        assert item0["brief_suffix"] == READ_ONLY_INSTRUCTIONS
+        assert item0["brief_suffix"] == (
+            f"{t3_recommend.T3_CHILD_IDENTITY_SUFFIX} {READ_ONLY_INSTRUCTIONS}"
+        )
         uuid.UUID(str(item0["clientRequestId"]))
         # Exhausted candidate was filtered; options: [] is preserved verbatim on the 2nd usable one.
         assert item0["candidates"] == [
@@ -6619,9 +6705,11 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         batch_payload = cast(dict[str, Any], batch_res.structured_content)
         r0, r1, r2 = cast(list[dict[str, Any]], batch_payload["results"])
         assert r0["status"] == "selected" and r0["seat"] == "worker-hard"
-        assert "brief_suffix" not in r0  # write task has no brief_suffix
+        assert r0["brief_suffix"] == t3_recommend.T3_CHILD_IDENTITY_SUFFIX
         assert r1["status"] == "selected" and r1["seat"] == "correctness-reviewer"
-        assert r1["brief_suffix"] == READ_ONLY_INSTRUCTIONS
+        assert r1["brief_suffix"] == (
+            f"{t3_recommend.T3_CHILD_IDENTITY_SUFFIX} {READ_ONLY_INSTRUCTIONS}"
+        )
         assert r1["candidates"][0]["target"]["options"] == []
         assert r2["status"] == "unavailable" and r2["seat"] == "security-reviewer"
         assert r2["earliest_reset_at"] == future_a  # earliest of future_a and future_b
@@ -6644,9 +6732,24 @@ async def test_t3_main_orchestration_recommend_list_members_refusal_and_wait(
         assert bad_access.is_error is True and "read-only" in str(bad_access.content)
         bad_seat_access = await client.call_tool(
             "recommend_seat",
-            {"tasks": [{"task": "edit", "access": "read", "seat": "write-a"}]},
+            {"tasks": [{"task": "edit", "access": "write", "seat": "read-only"}]},
         )
-        assert bad_seat_access.is_error is True and "access='write'" in str(bad_seat_access.content)
+        assert bad_seat_access.is_error is True and "access='read'" in str(bad_seat_access.content)
+        # Explicit non-image writable seat with access='read' is accepted as staged read->write.
+        staged_explicit = await client.call_tool(
+            "recommend_seat",
+            {"tasks": [{"task": "investigate bug", "access": "read", "seat": "write-a"}]},
+        )
+        assert staged_explicit.is_error is False, staged_explicit.content
+        staged_payload = cast(dict[str, Any], staged_explicit.structured_content)
+        staged_item = cast(list[dict[str, Any]], staged_payload["results"])[0]
+        assert staged_item["seat"] == "worker-easy"
+        assert staged_item["brief_suffix"] == (
+            f"{t3_recommend.T3_CHILD_IDENTITY_SUFFIX} "
+            f"{t3_recommend.T3_STAGED_READ_ONLY_INSTRUCTIONS}"
+        )
+        assert t3_recommend.T3_STAGED_NEXT in str(staged_payload["next"])
+        assert t3_recommend.T3_WRITE_NEXT in str(staged_payload["next"])
 
         # 8. random_candidates=False keeps saved order without dedup across batch items.
         ordered_res = await client.call_tool(

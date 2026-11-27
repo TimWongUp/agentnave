@@ -2,8 +2,10 @@
 
 Separate from `decision-seats.json` and `review.json`: T3 orchestration follows the host's
 orchestration preset (split/parallel, decision, custom) for the bosses the App selected in
-`bosses`, and applies only to T3 Code main threads, never affecting non-T3 connections. A selected
-boss whose preset is off dispatches like split inside T3 only; meetings has no T3 mode.
+`bosses`, and applies to T3 Code main and child connections alike for byte-identical MCP
+discovery (child threads remain hard-refused at tool-call entry), never affecting non-T3
+connections. A selected boss whose preset is off dispatches like split inside T3 only; meetings
+has no T3 mode.
 """
 
 from __future__ import annotations
@@ -229,13 +231,15 @@ def read_t3_seats() -> T3SeatsFile | None:
 
 
 def effective_t3_seats(host: Host) -> T3SeatsFile | None:
-    """Return the active T3 catalog for a T3 main thread the App selected, else None.
+    """Return the active T3 catalog for a T3 connection (main or child) the App selected, else None.
 
-    Non-T3 connections, T3 child threads, unselected bosses and meetings/unreadable modes never touch
-    t3-seats.json. A broken file on a split/decision/custom T3 main thread raises T3SeatsFileError;
-    for an off boss it reads as not selected.
+    Both main and child threads resolve the same catalog so MCP discovery stays byte-identical
+    across shared host caches; child threads remain hard-refused at tool-call entry. Non-T3
+    connections, unselected bosses, and meetings/unreadable modes never touch t3-seats.json. A
+    broken file on a split/decision/custom T3 connection raises T3SeatsFileError; for an off boss
+    it reads as not selected.
     """
-    if current_t3_mode(host) != "main":
+    if current_t3_mode(host) not in ("main", "child"):
         return None
     general = _orchestration_state(host)[0]
     if general not in ("off", "split", "parallel", "decision", "custom"):

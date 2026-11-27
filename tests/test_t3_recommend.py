@@ -13,7 +13,17 @@ from mcp.server.mcpserver.exceptions import ToolError
 from agentnave import seat_recommendation
 from agentnave.decision_model import Decision
 from agentnave.t3_cache import InstanceAvailability
-from agentnave.t3_recommend import T3RecommendTask, recommend_t3_seats
+from agentnave.t3_recommend import (
+    T3_CHILD_IDENTITY_SUFFIX,
+    T3_STAGED_NEXT,
+    T3_STAGED_NOTE,
+    T3_STAGED_READ_ONLY_INSTRUCTIONS,
+    T3_WRITE_NEXT,
+    T3RecommendTask,
+    antigravity_delegate_next,
+    normalize_t3_recommend_args,
+    recommend_t3_seats,
+)
 from agentnave.t3_seats import T3SeatsFile
 
 
@@ -218,3 +228,231 @@ async def test_t3_recommend_passes_full_provider_config_for_cloud_providers(
         seat_recommendation.DecisionModelConfig("typesafe", "jev-latest", None),
         seat_recommendation.DecisionModelConfig("openrouter", "liquid/d1.2-ultra", None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_t3_staged_may_implement_validation_selection_and_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTNAVE_DATA_DIR", str(tmp_path))
+    doc = T3SeatsFile.model_validate(
+        {
+            "version": 1,
+            "enabled": True,
+            "seats": [
+                {
+                    "id": "r-easy",
+                    "kind": "explorer",
+                    "role": "探索",
+                    "description": "只读排查",
+                    "access": "read",
+                    "difficulty": "easy",
+                    "candidates": [{"instance": "i-r", "model": "m-r", "options": []}],
+                },
+                {
+                    "id": "w-easy",
+                    "kind": "worker",
+                    "role": "通用实现",
+                    "description": "简单修改",
+                    "access": "write",
+                    "difficulty": "easy",
+                    "candidates": [{"instance": "i-1", "model": "m-1", "options": []}],
+                },
+                {
+                    "id": "w-hard",
+                    "kind": "worker",
+                    "role": "通用实现",
+                    "description": "复杂架构",
+                    "access": "write",
+                    "difficulty": "hard",
+                    "candidates": [{"instance": "i-2", "model": "m-2", "options": []}],
+                },
+                {
+                    "id": "art",
+                    "kind": "image",
+                    "role": "插画",
+                    "description": "生成插画",
+                    "access": "write",
+                    "candidates": [{"instance": "i-img", "model": "m-img", "options": []}],
+                },
+            ],
+            "review": {
+                "correctness-reviewer": [{"instance": "i-rev", "model": "m-rev", "options": []}]
+            },
+        }
+    )
+
+    def ok(_inst: str, _model: str) -> InstanceAvailability:
+        return InstanceAvailability(available=True)
+
+    # Validation errors.
+    with pytest.raises(ToolError, match="may_implement=true is only valid with access='read'"):
+        await recommend_t3_seats(
+            [T3RecommendTask(task="edit", access="write", may_implement=True)],
+            doc,
+            mode="decision",
+            probe_instance=ok,
+        )
+    for staged_flag in (False, True):
+        with pytest.raises(ToolError, match="Image generation seat"):
+            await recommend_t3_seats(
+                [
+                    T3RecommendTask(
+                        task="look", access="read", seat="art", may_implement=staged_flag
+                    )
+                ],
+                doc,
+                mode="split",
+                probe_instance=ok,
+            )
+    with pytest.raises(ToolError, match="not a writable seat"):
+        await recommend_t3_seats(
+            [T3RecommendTask(task="look", access="read", seat="explorer-easy", may_implement=True)],
+            doc,
+            mode="split",
+            probe_instance=ok,
+        )
+    with pytest.raises(ToolError, match="cannot be used with may_implement=true"):
+        await recommend_t3_seats(
+            [
+                T3RecommendTask(
+                    task="look", access="read", seat="correctness-reviewer", may_implement=True
+                )
+            ],
+            doc,
+            mode="split",
+            probe_instance=ok,
+        )
+    with pytest.raises(ToolError, match="seat_required") as missing_exc:
+        await recommend_t3_seats(
+            [T3RecommendTask(task="investigate", access="read", may_implement=True)],
+            doc,
+            mode="split",
+            probe_instance=ok,
+        )
+    missing_msg = str(missing_exc.value)
+    assert "worker-easy" in missing_msg and "worker-hard" in missing_msg
+    assert "art" not in missing_msg and "explorer-easy" not in missing_msg
+
+    # Legacy single-item normalization keeps may_implement.
+    assert normalize_t3_recommend_args(
+        {"task": "check", "access": "read", "may_implement": True, "manager_session_id": "boss-1"}
+    ) == {"tasks": [{"task": "check", "access": "read", "may_implement": True}]}
+
+    # Decision mode auto-selection for may_implement=True excludes image seats and uses staged text.
+    recorded: list[tuple[str, dict[str, str]]] = []
+
+    class _FakeClient:
+        def decide(self, text: str, candidates: Any) -> Decision:
+            raise AssertionError("T3 uses decide_many")
+
+        def decide_many(self, questions: Any) -> list[Decision]:
+            for q in questions:
+                recorded.append((q.text, dict(q.candidates)))
+            return [Decision("worker-hard") for _ in questions]
+
+    def _fake_client_for_config(_cfg: seat_recommendation.DecisionModelConfig) -> _FakeClient:
+        return _FakeClient()
+
+    monkeypatch.setattr(seat_recommendation, "client_for_config", _fake_client_for_config)
+    staged_payload = await recommend_t3_seats(
+        [T3RecommendTask(task="find root cause before fixing", access="read", may_implement=True)],
+        doc,
+        mode="decision",
+        probe_instance=ok,
+    )
+    assert len(recorded) == 1
+    assert "may turn to implementation" in recorded[0][0]
+    assert set(recorded[0][1]) == {"worker-easy", "worker-hard"}
+    assert "art" not in recorded[0][1]
+    staged_item = staged_payload.get("results", [])[0]
+    assert staged_item.get("seat") == "worker-hard"
+    assert staged_item.get("note") == T3_STAGED_NOTE
+    assert staged_item.get("brief_suffix") == (
+        f"{T3_CHILD_IDENTITY_SUFFIX} {T3_STAGED_READ_ONLY_INSTRUCTIONS}"
+    )
+    assert T3_STAGED_NEXT in staged_payload["next"]
+    assert T3_WRITE_NEXT in staged_payload["next"]
+
+    # Pure read-only omits T3_STAGED_NEXT and T3_WRITE_NEXT; pure write includes T3_WRITE_NEXT only.
+    read_payload = await recommend_t3_seats(
+        [T3RecommendTask(task="just inspect", access="read")],
+        doc,
+        mode="decision",
+        probe_instance=ok,
+    )
+    assert T3_STAGED_NEXT not in read_payload["next"]
+    assert T3_WRITE_NEXT not in read_payload["next"]
+
+    write_payload = await recommend_t3_seats(
+        [T3RecommendTask(task="apply fix", access="write", seat="worker-easy")],
+        doc,
+        mode="split",
+        probe_instance=ok,
+    )
+    assert T3_STAGED_NEXT not in write_payload["next"]
+    assert T3_WRITE_NEXT in write_payload["next"]
+    assert "t3_worktree_handoff" in T3_WRITE_NEXT
+    assert "t3_thread_read" in T3_WRITE_NEXT
+    assert "--force" in T3_WRITE_NEXT
+
+
+def test_non_t3_staged_usable_excludes_image_seats() -> None:
+    from agentnave.orchestration_roles import CustomSeatStatus
+
+    worker = CustomSeatStatus(
+        kind="worker",
+        role="通用实现",
+        description="改代码",
+        access="write",
+        difficulty="easy",
+        provider="claude",
+        model="sonnet",
+    )
+    image = CustomSeatStatus(
+        kind="image",
+        role="插画",
+        description="生成插画",
+        access="write",
+        provider="codex",
+        model="gpt",
+    )
+    catalog_both = seat_recommendation._Catalog(  # pyright: ignore[reportPrivateUsage]
+        seat_recommendation.DecisionModelConfig(), {"worker": worker, "art": image}
+    )
+    usable_staged = seat_recommendation._usable(  # pyright: ignore[reportPrivateUsage]
+        catalog_both, "read", staged=True
+    )
+    assert isinstance(usable_staged, dict) and set(usable_staged) == {"worker"}
+    usable_write = seat_recommendation._usable(  # pyright: ignore[reportPrivateUsage]
+        catalog_both, "write", staged=False
+    )
+    assert isinstance(usable_write, dict) and set(usable_write) == {"worker", "art"}
+
+    catalog_image_only = seat_recommendation._Catalog(  # pyright: ignore[reportPrivateUsage]
+        seat_recommendation.DecisionModelConfig(), {"art": image}
+    )
+    err = seat_recommendation._usable(  # pyright: ignore[reportPrivateUsage]
+        catalog_image_only, "read", staged=True
+    )
+    assert isinstance(err, seat_recommendation.RecommendationError)
+    assert err.code == "no_candidates"
+
+
+def test_antigravity_delegate_next_is_conditional_and_platform_specific() -> None:
+    for posix in ("darwin", "linux"):
+        text = antigravity_delegate_next(posix)
+        assert "call it directly" in text
+        assert "clientRequestId" in text
+        assert "acp-mcp-call delegate_task - <<'T3_JSON'" in text
+        assert "- < payload.json" in text
+        assert "T3_ACP_MCP_CALL" not in text
+        assert "PowerShell" not in text
+
+    win = antigravity_delegate_next("win32")
+    assert "call it directly" in win
+    assert "clientRequestId" in win
+    assert "| & $env:T3_ACP_MCP_CALL delegate_task -" in win
+    assert "\\uXXXX" in win
+    assert "ELECTRON_RUN_AS_NODE" not in win
+    assert "<<'T3_JSON'" not in win

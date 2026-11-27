@@ -231,7 +231,11 @@ def _usable(
 ) -> dict[str, CustomSeatStatus] | RecommendationError:
     """The seats that can be dispatched now for this access, or why there are none."""
     wanted: Access = "write" if staged else access
-    matching = {seat_id: seat for seat_id, seat in catalog.seats.items() if seat.access == wanted}
+    matching = {
+        seat_id: seat
+        for seat_id, seat in catalog.seats.items()
+        if seat.access == wanted and (not staged or seat.kind != IMAGE_KIND)
+    }
     usable = {seat_id: seat for seat_id, seat in matching.items() if seat.available is None}
     if not usable:
         reason = _no_candidates(wanted, matching)
